@@ -90,6 +90,11 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-material-reentry-swarm-reconciler.ts"
 
 fail_if_matches \
+  "Jangar primitive policy validation must read ApprovalPolicy, Budget, and SecretBinding through the Agents service boundary" \
+  'RESOURCE_MAP\.(ApprovalPolicy|Budget|SecretBinding)|KubernetesClient|kube\.get' \
+  "${ROOT_DIR}/services/jangar/src/server/primitives-policy.ts"
+
+fail_if_matches \
   "Agents GitOps must not ship the old sample Argo WorkflowTemplate schedule bridge" \
   'agents-primitives-echo|kind: WorkflowTemplate|codex-workflow' \
   "${ROOT_DIR}/argocd/applications/agents"

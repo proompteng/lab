@@ -1,5 +1,5 @@
+import { fetchControlPlaneResourceFromAgentsService } from '~/server/agents-service-proxy'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
-import { RESOURCE_MAP, type KubernetesClient } from '~/server/primitives-kube'
 
 const asArray = (value: unknown): string[] => {
   if (!Array.isArray(value)) return []
@@ -63,10 +63,32 @@ export type PolicyChecks = {
   subject?: { kind: string; name: string; namespace?: string }
 }
 
-export const validateApprovalPolicies = async (namespace: string, policies: string[], kube: KubernetesClient) => {
+type PolicyResourceKind = 'ApprovalPolicy' | 'Budget' | 'SecretBinding'
+type PolicyResourceGetter = (
+  kind: PolicyResourceKind,
+  name: string,
+  namespace: string,
+) => Promise<Record<string, unknown> | null>
+
+const getPolicyResourceFromAgentsService: PolicyResourceGetter = async (kind, name, namespace) => {
+  const result = await fetchControlPlaneResourceFromAgentsService({ kind, name, namespace })
+  if (result.ok) {
+    return asRecord(result.body.resource)
+  }
+  if (result.status === 404) {
+    return null
+  }
+  throw new Error(result.error ?? `Agents service returned HTTP ${result.status}`)
+}
+
+export const validateApprovalPolicies = async (
+  namespace: string,
+  policies: string[],
+  getResource: PolicyResourceGetter = getPolicyResourceFromAgentsService,
+) => {
   const missing: string[] = []
   for (const policy of policies) {
-    const resource = await kube.get(RESOURCE_MAP.ApprovalPolicy, policy, namespace)
+    const resource = await getResource('ApprovalPolicy', policy, namespace)
     if (!resource) {
       missing.push(policy)
       continue
@@ -81,8 +103,12 @@ export const validateApprovalPolicies = async (namespace: string, policies: stri
   }
 }
 
-export const validateBudget = async (namespace: string, budgetRef: string, kube: KubernetesClient) => {
-  const budget = await kube.get(RESOURCE_MAP.Budget, budgetRef, namespace)
+export const validateBudget = async (
+  namespace: string,
+  budgetRef: string,
+  getResource: PolicyResourceGetter = getPolicyResourceFromAgentsService,
+) => {
+  const budget = await getResource('Budget', budgetRef, namespace)
   if (!budget) {
     throw new Error(`budget not found: ${budgetRef}`)
   }
@@ -131,9 +157,9 @@ export const validateSecretBinding = async (
   bindingName: string,
   subject: { kind: string; name: string; namespace?: string },
   requiredSecrets: string[],
-  kube: KubernetesClient,
+  getResource: PolicyResourceGetter = getPolicyResourceFromAgentsService,
 ) => {
-  const binding = await kube.get(RESOURCE_MAP.SecretBinding, bindingName, namespace)
+  const binding = await getResource('SecretBinding', bindingName, namespace)
   if (!binding) {
     throw new Error(`secret binding not found: ${bindingName}`)
   }
@@ -162,15 +188,19 @@ export const validateSecretBinding = async (
   }
 }
 
-export const validatePolicies = async (namespace: string, checks: PolicyChecks, kube: KubernetesClient) => {
+export const validatePolicies = async (
+  namespace: string,
+  checks: PolicyChecks,
+  getResource: PolicyResourceGetter = getPolicyResourceFromAgentsService,
+) => {
   const approvalPolicies = asArray(checks.approvalPolicies)
   if (approvalPolicies.length > 0) {
-    await validateApprovalPolicies(namespace, approvalPolicies, kube)
+    await validateApprovalPolicies(namespace, approvalPolicies, getResource)
   }
 
   const budgetRef = asString(checks.budgetRef)
   if (budgetRef) {
-    await validateBudget(namespace, budgetRef, kube)
+    await validateBudget(namespace, budgetRef, getResource)
   }
 
   const bindingRef = asString(checks.secretBindingRef)
@@ -179,7 +209,7 @@ export const validatePolicies = async (namespace: string, checks: PolicyChecks, 
     if (!subject) {
       throw new Error('secret binding requires a subject')
     }
-    await validateSecretBinding(namespace, bindingRef, subject, asArray(checks.requiredSecrets), kube)
+    await validateSecretBinding(namespace, bindingRef, subject, asArray(checks.requiredSecrets), getResource)
   }
 }
 
