@@ -395,6 +395,38 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/migrations"
 
 fail_if_matches \
+  "Jangar database typing must not reintroduce Agents-owned table contracts after migration ownership moved to services/agents" \
+  'agent_run_idempotency_keys|agents_control_plane_cache|agents_control_plane_component_heartbeats|agents_comms|workflow_comms|memory_resources|orchestration_runs' \
+  "${ROOT_DIR}/services/jangar/src/server/db.ts"
+
+allowed_agents_comms_bridge="${ROOT_DIR}/services/agents/src/server/migrations/20260519_agents_comms_agent_messages.ts"
+agents_comms_bridge_matches="$(
+  if command -v rg >/dev/null 2>&1; then
+    rg -l \
+      --glob '!**/__tests__/**' \
+      --glob '!**/*.test.*' \
+      'workflow_comms\.agent_messages' \
+      "${ROOT_DIR}/services/agents/src/server" || true
+  else
+    grep -R -E -l \
+      --exclude-dir='__tests__' \
+      --exclude='*.test.*' \
+      'workflow_comms\.agent_messages' \
+      "${ROOT_DIR}/services/agents/src/server" 2>/dev/null || true
+  fi
+)"
+if [[ -z "${agents_comms_bridge_matches}" ]]; then
+  echo "Agents extraction boundary violation: Agents legacy workflow_comms copy bridge must remain explicit in the one backfill migration." >&2
+  exit 1
+fi
+for bridge_match in ${agents_comms_bridge_matches}; do
+  if [[ "${bridge_match}" != "${allowed_agents_comms_bridge}" ]]; then
+    echo "Agents extraction boundary violation: workflow_comms.agent_messages is allowed only in ${allowed_agents_comms_bridge}, found ${bridge_match}." >&2
+    exit 1
+  fi
+done
+
+fail_if_matches \
   "Agents GitOps must not ship the old sample Argo WorkflowTemplate schedule bridge" \
   'agents-primitives-echo|kind: WorkflowTemplate|codex-workflow' \
   "${ROOT_DIR}/argocd/applications/agents"

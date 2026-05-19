@@ -15,6 +15,35 @@ describe('migration registration', () => {
     expect(__test__.getRegisteredMigrations()).toEqual(migrationFiles)
   })
 
+  it('keeps Agents-owned historical migrations as no-op tombstones', () => {
+    const tombstoneMigrationFiles = [
+      '20251229_workflow_comms_agent_messages',
+      '20260111_jangar_primitives',
+      '20260111_jangar_primitives_indexes',
+      '20260205_agents_control_plane_cache',
+      '20260208_jangar_agentrun_idempotency',
+      '20260308_agents_control_plane_component_heartbeats',
+    ]
+    const ddlPatterns = [
+      /\bsql`/i,
+      /\bcreate\s+(schema|table|index|unique\s+index)\b/i,
+      /\balter\s+table\b/i,
+      /\binsert\s+into\b/i,
+      /\bdelete\s+from\b/i,
+      /\bdrop\s+(schema|table|index)\b/i,
+    ]
+
+    for (const name of tombstoneMigrationFiles) {
+      expect(__test__.getRegisteredMigrations()).toContain(name)
+      const migrationPath = new URL(`../migrations/${name}.ts`, import.meta.url)
+      const content = readFileSync(fileURLToPath(migrationPath), 'utf8')
+
+      for (const pattern of ddlPatterns) {
+        expect(content).not.toMatch(pattern)
+      }
+    }
+  })
+
   it('keeps the Torghut quant pipeline health account/window index registered', () => {
     const migrationPath = new URL(
       '../migrations/20260505_torghut_quant_pipeline_health_window_index.ts',
