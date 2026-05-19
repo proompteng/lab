@@ -2324,6 +2324,23 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 (output_dir / "summary.json").read_text(encoding="utf-8")
             )
             self.assertEqual(summary["epoch_id"], payload["epoch_id"])
+            candidate_board = json.loads(
+                (output_dir / "candidate-board.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                candidate_board["schema_version"],
+                "torghut.profit-candidate-board.v1",
+            )
+            self.assertEqual(
+                candidate_board["current_answer"], "no_promotion_ready_candidate"
+            )
+            self.assertEqual(candidate_board["best_research_candidate"]["rank"], 1)
+            self.assertTrue(candidate_board["best_research_candidate"]["blockers"])
+            self.assertEqual(summary["candidate_board"], candidate_board)
+            self.assertEqual(
+                summary["artifacts"]["candidate_board"],
+                str((output_dir / "candidate-board.json").resolve()),
+            )
             self.assertEqual(
                 summary["false_positive_table"], payload["false_positive_table"]
             )
@@ -2954,6 +2971,82 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 oracle_candidate_found=False,
             ),
             program,
+        )
+
+    def test_candidate_board_helpers_keep_blockers_explicit(self) -> None:
+        evidence = runner.CandidateEvidenceBundle(
+            schema_version="torghut.candidate-evidence-bundle.v1",
+            evidence_bundle_id="ev-test",
+            candidate_id="candidate-test",
+            candidate_spec_id="spec-test",
+            dataset_snapshot_id="snapshot-test",
+            feature_spec_hash="hash-test",
+            code_commit="commit-test",
+            replay_artifact_refs=("replay.json",),
+            objective_scorecard={},
+            fold_metrics=(),
+            stress_metrics=(),
+            cost_calibration={},
+            null_comparator={},
+            promotion_readiness={},
+        )
+
+        self.assertEqual(runner._candidate_board_int_field({"bad": object()}, "bad"), 0)
+        self.assertEqual(
+            runner._candidate_board_blockers(
+                selected_for_replay=True,
+                evidence=None,
+                scorecard={},
+            ),
+            ["replay_evidence_missing"],
+        )
+        self.assertEqual(
+            runner._candidate_board_blockers(
+                selected_for_replay=True,
+                evidence=evidence,
+                scorecard={"target_met": True, "oracle_passed": False},
+            ),
+            ["profit_target_oracle_failed"],
+        )
+        self.assertEqual(
+            runner._candidate_board_status(
+                selected_for_replay=True,
+                evidence=None,
+                scorecard={},
+                in_best_portfolio=False,
+                portfolio_oracle_passed=False,
+            ),
+            "selected_pending_replay_evidence",
+        )
+        self.assertEqual(
+            runner._candidate_board_status(
+                selected_for_replay=True,
+                evidence=evidence,
+                scorecard={"oracle_passed": True},
+                in_best_portfolio=False,
+                portfolio_oracle_passed=False,
+            ),
+            "candidate_oracle_passed",
+        )
+        self.assertEqual(
+            runner._candidate_board_status(
+                selected_for_replay=True,
+                evidence=evidence,
+                scorecard={"target_met": True, "oracle_passed": False},
+                in_best_portfolio=False,
+                portfolio_oracle_passed=False,
+            ),
+            "blocked_by_oracle",
+        )
+        self.assertEqual(
+            runner._candidate_board_status(
+                selected_for_replay=True,
+                evidence=evidence,
+                scorecard={},
+                in_best_portfolio=True,
+                portfolio_oracle_passed=True,
+            ),
+            "portfolio_component_passed_oracle",
         )
 
     def test_candidate_universe_symbols_default_to_chip_coverage_when_empty(
