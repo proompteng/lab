@@ -1,5 +1,9 @@
 import { type V1Lease } from '@kubernetes/client-node'
 
+import {
+  fetchAgentRunResourcesFromAgentsService,
+  type AgentsAgentRunResourceListInput,
+} from '~/server/agents-service-proxy'
 import { asRecord, asString } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP, type KubernetesClient } from '~/server/primitives-kube'
 
@@ -145,6 +149,14 @@ export type KubeGateway = {
   probeNamespacedResource: (resource: string, namespace: string) => Promise<KubeGatewayResourceAccess>
   serviceExists: (namespace: string, name: string) => Promise<boolean>
   listSwarms: (namespace: string) => Promise<KubeGatewaySwarm[]>
+}
+
+type AgentRunResourceLister = (
+  input: AgentsAgentRunResourceListInput,
+) => ReturnType<typeof fetchAgentRunResourcesFromAgentsService>
+
+type KubeGatewayDeps = {
+  listAgentRunResources?: AgentRunResourceLister
 }
 
 const normalizeMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
@@ -314,7 +326,39 @@ const withLeaseNamespace = (namespace: string, lease: V1Lease) => ({
   },
 })
 
-export const createKubeGateway = (client: KubernetesClient = createKubernetesClient()): KubeGateway => ({
+const parseAgentRunResource = (item: Record<string, unknown>): KubeGatewayAgentRun | null => {
+  const metadata = parseMetadata(item.metadata)
+  if (!metadata) return null
+
+  const spec = asRecord(item.spec) ?? {}
+  const status = asRecord(item.status) ?? {}
+  const agentRef = asRecord(spec.agentRef)
+  const implementationSpecRef = asRecord(spec.implementationSpecRef)
+  const runtime = asRecord(spec.runtime)
+
+  return {
+    metadata,
+    spec: {
+      parameters: parseStringMap(spec.parameters),
+      agentRefName: asString(agentRef?.name),
+      implementationSpecRefName: asString(implementationSpecRef?.name),
+      runtimeType: asString(runtime?.type),
+    },
+    status: {
+      phase: asString(status.phase),
+      reason: asString(status.reason),
+      message: asString(status.message),
+      startedAt: asString(status.startedAt),
+      finishedAt: asString(status.finishedAt),
+      conditions: parseConditions(status.conditions),
+    },
+  }
+}
+
+export const createKubeGateway = (
+  client: KubernetesClient = createKubernetesClient(),
+  deps: KubeGatewayDeps = {},
+): KubeGateway => ({
   listDeployments: async (namespace) =>
     wrapTransport('kube deployments list failed', async () => {
       const items = parseListItems(await client.list('deployments', namespace), 'kube deployments list')
@@ -344,41 +388,15 @@ export const createKubeGateway = (client: KubernetesClient = createKubernetesCli
         .filter((entry): entry is KubeGatewayDeployment => entry !== null)
     }),
   listAgentRuns: async (namespace, labelSelector) =>
-    wrapTransport('kube agentruns list failed', async () => {
-      const items = parseListItems(
-        await client.list(RESOURCE_MAP.AgentRun, namespace, labelSelector),
-        'kube agentruns list',
-      )
-
+    wrapTransport('agents service agentruns list failed', async () => {
+      const listAgentRunResources = deps.listAgentRunResources ?? fetchAgentRunResourcesFromAgentsService
+      const result = await listAgentRunResources({ namespace, labelSelector })
+      if (!result.ok) {
+        throw new Error(result.error ?? `Agents service returned HTTP ${result.status}`)
+      }
+      const items = parseListItems(result.body, 'agents service agentruns list')
       return items
-        .map((item): KubeGatewayAgentRun | null => {
-          const metadata = parseMetadata(item.metadata)
-          if (!metadata) return null
-
-          const spec = asRecord(item.spec) ?? {}
-          const status = asRecord(item.status) ?? {}
-          const agentRef = asRecord(spec.agentRef)
-          const implementationSpecRef = asRecord(spec.implementationSpecRef)
-          const runtime = asRecord(spec.runtime)
-
-          return {
-            metadata,
-            spec: {
-              parameters: parseStringMap(spec.parameters),
-              agentRefName: asString(agentRef?.name),
-              implementationSpecRefName: asString(implementationSpecRef?.name),
-              runtimeType: asString(runtime?.type),
-            },
-            status: {
-              phase: asString(status.phase),
-              reason: asString(status.reason),
-              message: asString(status.message),
-              startedAt: asString(status.startedAt),
-              finishedAt: asString(status.finishedAt),
-              conditions: parseConditions(status.conditions),
-            },
-          }
-        })
+        .map((item) => parseAgentRunResource(item))
         .filter((entry): entry is KubeGatewayAgentRun => entry !== null)
     }),
   listJobs: async (namespace, labelSelector) =>

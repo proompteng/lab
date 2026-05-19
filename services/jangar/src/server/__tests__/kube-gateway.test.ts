@@ -126,6 +126,83 @@ describe('kube gateway', () => {
     expect(client.list).toHaveBeenCalledWith('jobs.batch', 'agents', 'schedules.proompteng.ai/schedule')
   })
 
+  it('lists AgentRuns through the Agents service boundary', async () => {
+    const client = createClient({ list: vi.fn() })
+    const listAgentRunResources = vi.fn(async () => ({
+      ok: true as const,
+      status: 200,
+      body: {
+        ok: true,
+        kind: 'AgentRun',
+        namespace: 'agents',
+        items: [
+          {
+            metadata: {
+              name: 'whitepaper-run',
+              namespace: 'agents',
+              generation: 7,
+              labels: { app: 'whitepaper' },
+              creationTimestamp: '2026-01-20T00:00:00Z',
+            },
+            spec: {
+              parameters: { runId: 'wp-1' },
+              agentRef: { name: 'codex' },
+              implementationSpecRef: { name: 'whitepaper-impl' },
+              runtime: { type: 'job' },
+            },
+            status: {
+              phase: 'Succeeded',
+              reason: 'Completed',
+              message: 'done',
+              startedAt: '2026-01-20T00:01:00Z',
+              finishedAt: '2026-01-20T00:02:00Z',
+              conditions: [{ type: 'Complete', status: 'True', reason: 'Succeeded' }],
+            },
+          },
+        ],
+      },
+    }))
+
+    const gateway = createKubeGateway(client, { listAgentRunResources })
+    const agentRuns = await gateway.listAgentRuns('agents', 'app=whitepaper')
+
+    expect(listAgentRunResources).toHaveBeenCalledWith({ namespace: 'agents', labelSelector: 'app=whitepaper' })
+    expect(client.list).not.toHaveBeenCalled()
+    expect(agentRuns).toEqual([
+      {
+        metadata: {
+          name: 'whitepaper-run',
+          namespace: 'agents',
+          generation: 7,
+          labels: { app: 'whitepaper' },
+          annotations: {},
+          creationTimestamp: '2026-01-20T00:00:00Z',
+        },
+        spec: {
+          parameters: { runId: 'wp-1' },
+          agentRefName: 'codex',
+          implementationSpecRefName: 'whitepaper-impl',
+          runtimeType: 'job',
+        },
+        status: {
+          phase: 'Succeeded',
+          reason: 'Completed',
+          message: 'done',
+          startedAt: '2026-01-20T00:01:00Z',
+          finishedAt: '2026-01-20T00:02:00Z',
+          conditions: [
+            {
+              type: 'Complete',
+              status: 'True',
+              reason: 'Succeeded',
+              lastTransitionTime: null,
+            },
+          ],
+        },
+      },
+    ])
+  })
+
   it('classifies transport failures', async () => {
     const gateway = createKubeGateway(
       createClient({
