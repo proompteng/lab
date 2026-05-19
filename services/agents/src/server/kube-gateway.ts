@@ -1,4 +1,5 @@
 import { type V1Lease } from '@kubernetes/client-node'
+import { Context, Data, Effect, Layer } from 'effect'
 
 import { asRecord, asString } from './primitives'
 import { createKubernetesClient, RESOURCE_MAP, type KubernetesClient } from './kube-types'
@@ -17,6 +18,28 @@ export class KubeGatewayError extends Error {
     }
   }
 }
+
+export class KubeGatewayInvalidPayloadError extends Data.TaggedError('KubeGatewayInvalidPayloadError')<{
+  readonly context: string
+}> {}
+
+export class KubeGatewayTransportError extends Data.TaggedError('KubeGatewayTransportError')<{
+  readonly context: string
+  readonly cause: unknown
+}> {}
+
+type KubeGatewayEffectError = KubeGatewayInvalidPayloadError | KubeGatewayTransportError
+
+type KubeGatewayClientService = {
+  client: KubernetesClient
+}
+
+export class KubeGatewayClient extends Context.Tag('KubeGatewayClient')<
+  KubeGatewayClient,
+  KubeGatewayClientService
+>() {}
+
+export const KubeGatewayClientLive = (client: KubernetesClient) => Layer.succeed(KubeGatewayClient, { client })
 
 export type KubeGatewayCondition = {
   type: string | null
@@ -229,6 +252,22 @@ const parseListItems = (payload: unknown, context: string) => {
   })
 }
 
+const parseListItemsEffect = (payload: unknown, context: string) =>
+  Effect.try({
+    try: () => {
+      const record = asRecord(payload)
+      if (!record || !Array.isArray(record.items)) {
+        throw new KubeGatewayInvalidPayloadError({ context })
+      }
+
+      return record.items.filter((item): item is Record<string, unknown> => {
+        return item !== null && typeof item === 'object' && !Array.isArray(item)
+      })
+    },
+    catch: (cause) =>
+      cause instanceof KubeGatewayInvalidPayloadError ? cause : new KubeGatewayInvalidPayloadError({ context }),
+  })
+
 const wrapTransport = async <T>(context: string, run: () => Promise<T>): Promise<T> => {
   try {
     return await run()
@@ -237,6 +276,122 @@ const wrapTransport = async <T>(context: string, run: () => Promise<T>): Promise
     throw new KubeGatewayError('transport', `${context}: ${normalizeMessage(error)}`, { cause: error })
   }
 }
+
+const toKubeGatewayError = (error: KubeGatewayEffectError) => {
+  if (error instanceof KubeGatewayInvalidPayloadError) {
+    return new KubeGatewayError('invalid_payload', `${error.context} returned invalid list payload`)
+  }
+  return new KubeGatewayError('transport', `${error.context}: ${normalizeMessage(error.cause)}`, {
+    cause: error.cause,
+  })
+}
+
+const runKubeGatewayEffect = <T>(
+  client: KubernetesClient,
+  effect: Effect.Effect<T, KubeGatewayEffectError, KubeGatewayClient>,
+) =>
+  Effect.runPromise(effect.pipe(Effect.provide(KubeGatewayClientLive(client)), Effect.either)).then((result) => {
+    if (result._tag === 'Left') {
+      throw toKubeGatewayError(result.left)
+    }
+    return result.right
+  })
+
+const clientListEffect = (resource: string, namespace: string, labelSelector: string | undefined, context: string) =>
+  Effect.gen(function* () {
+    const service = yield* KubeGatewayClient
+    return yield* Effect.tryPromise({
+      try: () => service.client.list(resource, namespace, labelSelector),
+      catch: (cause) => new KubeGatewayTransportError({ context, cause }),
+    })
+  })
+
+const listAgentRunsEffect = (namespace: string, labelSelector?: string) =>
+  Effect.gen(function* () {
+    const items = yield* parseListItemsEffect(
+      yield* clientListEffect(RESOURCE_MAP.AgentRun, namespace, labelSelector, 'kube agentruns list failed'),
+      'kube agentruns list',
+    )
+
+    return items
+      .map((item): KubeGatewayAgentRun | null => {
+        const metadata = parseMetadata(item.metadata)
+        if (!metadata) return null
+
+        const spec = asRecord(item.spec) ?? {}
+        const status = asRecord(item.status) ?? {}
+        const agentRef = asRecord(spec.agentRef)
+        const implementationSpecRef = asRecord(spec.implementationSpecRef)
+        const runtime = asRecord(spec.runtime)
+
+        return {
+          metadata,
+          spec: {
+            parameters: parseStringMap(spec.parameters),
+            agentRefName: asString(agentRef?.name),
+            implementationSpecRefName: asString(implementationSpecRef?.name),
+            runtimeType: asString(runtime?.type),
+          },
+          status: {
+            phase: asString(status.phase),
+            reason: asString(status.reason),
+            message: asString(status.message),
+            startedAt: asString(status.startedAt),
+            finishedAt: asString(status.finishedAt),
+            conditions: parseConditions(status.conditions),
+          },
+        }
+      })
+      .filter((entry): entry is KubeGatewayAgentRun => entry !== null)
+  })
+
+const listJobsEffect = (namespace: string, labelSelector?: string) =>
+  Effect.gen(function* () {
+    const items = yield* parseListItemsEffect(
+      yield* clientListEffect('jobs.batch', namespace, labelSelector, 'kube jobs list failed'),
+      'kube jobs list',
+    )
+
+    return items
+      .map((item): KubeGatewayJob | null => {
+        const metadata = parseMetadata(item.metadata)
+        if (!metadata) return null
+
+        const status = asRecord(item.status) ?? {}
+
+        return {
+          metadata,
+          status: {
+            active: asNonNegativeInteger(status.active),
+            failed: asNonNegativeInteger(status.failed),
+            startTime: asString(status.startTime),
+            completionTime: asString(status.completionTime),
+            conditions: parseConditions(status.conditions),
+          },
+        }
+      })
+      .filter((entry): entry is KubeGatewayJob => entry !== null)
+  })
+
+const isNotFoundError = (error: unknown) => {
+  const message = normalizeMessage(error).toLowerCase()
+  return message.includes('notfound') || message.includes('not found')
+}
+
+const getLeaseEffect = (namespace: string, name: string) =>
+  Effect.gen(function* () {
+    const service = yield* KubeGatewayClient
+    return yield* Effect.tryPromise({
+      try: () => service.client.get('lease', name, namespace) as Promise<V1Lease | null>,
+      catch: (cause) => cause,
+    }).pipe(
+      Effect.catchAll((cause) =>
+        isNotFoundError(cause)
+          ? Effect.succeed(null)
+          : Effect.fail(new KubeGatewayTransportError({ context: 'kube lease get failed', cause })),
+      ),
+    )
+  })
 
 const parseItemNames = (items: Record<string, unknown>[]) =>
   items
@@ -347,67 +502,8 @@ export const createKubeGateway = (client: KubernetesClient = createKubernetesCli
         .filter((entry): entry is KubeGatewayDeployment => entry !== null)
     }),
   listAgentRuns: async (namespace, labelSelector) =>
-    wrapTransport('kube agentruns list failed', async () => {
-      const items = parseListItems(
-        await client.list(RESOURCE_MAP.AgentRun, namespace, labelSelector),
-        'kube agentruns list',
-      )
-
-      return items
-        .map((item): KubeGatewayAgentRun | null => {
-          const metadata = parseMetadata(item.metadata)
-          if (!metadata) return null
-
-          const spec = asRecord(item.spec) ?? {}
-          const status = asRecord(item.status) ?? {}
-          const agentRef = asRecord(spec.agentRef)
-          const implementationSpecRef = asRecord(spec.implementationSpecRef)
-          const runtime = asRecord(spec.runtime)
-
-          return {
-            metadata,
-            spec: {
-              parameters: parseStringMap(spec.parameters),
-              agentRefName: asString(agentRef?.name),
-              implementationSpecRefName: asString(implementationSpecRef?.name),
-              runtimeType: asString(runtime?.type),
-            },
-            status: {
-              phase: asString(status.phase),
-              reason: asString(status.reason),
-              message: asString(status.message),
-              startedAt: asString(status.startedAt),
-              finishedAt: asString(status.finishedAt),
-              conditions: parseConditions(status.conditions),
-            },
-          }
-        })
-        .filter((entry): entry is KubeGatewayAgentRun => entry !== null)
-    }),
-  listJobs: async (namespace, labelSelector) =>
-    wrapTransport('kube jobs list failed', async () => {
-      const items = parseListItems(await client.list('jobs.batch', namespace, labelSelector), 'kube jobs list')
-
-      return items
-        .map((item): KubeGatewayJob | null => {
-          const metadata = parseMetadata(item.metadata)
-          if (!metadata) return null
-
-          const status = asRecord(item.status) ?? {}
-
-          return {
-            metadata,
-            status: {
-              active: asNonNegativeInteger(status.active),
-              failed: asNonNegativeInteger(status.failed),
-              startTime: asString(status.startTime),
-              completionTime: asString(status.completionTime),
-              conditions: parseConditions(status.conditions),
-            },
-          }
-        })
-        .filter((entry): entry is KubeGatewayJob => entry !== null)
-    }),
+    runKubeGatewayEffect(client, listAgentRunsEffect(namespace, labelSelector)),
+  listJobs: async (namespace, labelSelector) => runKubeGatewayEffect(client, listJobsEffect(namespace, labelSelector)),
   listPods: async (namespace, labelSelector) =>
     wrapTransport('kube pods list failed', async () => {
       const items = parseListItems(await client.list('pods', namespace, labelSelector), 'kube pods list')
@@ -462,16 +558,7 @@ export const createKubeGateway = (client: KubernetesClient = createKubernetesCli
       const items = parseListItems(await client.list('crd', ''), 'kube crds list')
       return parseItemNames(items)
     }),
-  getLease: async (namespace, name) =>
-    wrapTransport('kube lease get failed', async () => {
-      return (await client.get('lease', name, namespace)) as V1Lease | null
-    }).catch((error) => {
-      const message = normalizeMessage(error).toLowerCase()
-      if (message.includes('notfound') || message.includes('not found')) {
-        return null
-      }
-      throw error
-    }),
+  getLease: async (namespace, name) => runKubeGatewayEffect(client, getLeaseEffect(namespace, name)),
   createLease: async (namespace, lease) =>
     wrapTransport('kube lease create failed', async () => {
       return (await client.apply(withLeaseNamespace(namespace, lease) as unknown as Record<string, unknown>)) as V1Lease
