@@ -1,6 +1,11 @@
 import { sql } from 'kysely'
 
 import { resolveStoreDb, type Db } from '~/server/db'
+import {
+  selectCodexJudgeRunById,
+  selectCodexJudgeRunByWorkflow,
+  selectCodexJudgeRunByWorkflowUid,
+} from '~/server/codex-judge-run-rows'
 import { ensureMigrations } from '~/server/kysely-migrations'
 
 export type CodexRunRecord = {
@@ -531,18 +536,12 @@ export const createCodexJudgeStore = (
   const ready = ensureSchema(db)
 
   const getRunByWorkflow = async (workflowName: string, namespace?: string | null) => {
-    if (!workflowName) return null
-    const row = await db
-      .selectFrom('codex_judge.runs')
-      .selectAll()
-      .where('workflow_name', '=', workflowName)
-      .where('workflow_namespace', '=', namespace ?? null)
-      .executeTakeFirst()
+    const row = await selectCodexJudgeRunByWorkflow(db, workflowName, namespace)
     return row ? rowToRun(row as Record<string, unknown>) : null
   }
 
   const getRunById = async (runId: string) => {
-    const row = await db.selectFrom('codex_judge.runs').selectAll().where('id', '=', runId).executeTakeFirst()
+    const row = await selectCodexJudgeRunById(db, runId)
     return row ? rowToRun(row as Record<string, unknown>) : null
   }
 
@@ -821,27 +820,12 @@ export const createCodexJudgeStore = (
   }
 
   const upsertRunComplete = async (input: UpsertRunCompleteInput) => {
-    const existingById = input.runId
-      ? await db.selectFrom('codex_judge.runs').selectAll().where('id', '=', input.runId).executeTakeFirst()
-      : null
-    const existingByUid = existingById
-      ? null
-      : input.workflowUid
-        ? await db
-            .selectFrom('codex_judge.runs')
-            .selectAll()
-            .where('workflow_uid', '=', input.workflowUid)
-            .executeTakeFirst()
-        : null
+    const existingById = await selectCodexJudgeRunById(db, input.runId)
+    const existingByUid = existingById ? null : await selectCodexJudgeRunByWorkflowUid(db, input.workflowUid)
     const existingByName =
       existingById || existingByUid
         ? null
-        : await db
-            .selectFrom('codex_judge.runs')
-            .selectAll()
-            .where('workflow_name', '=', input.workflowName)
-            .where('workflow_namespace', '=', input.workflowNamespace ?? null)
-            .executeTakeFirst()
+        : await selectCodexJudgeRunByWorkflow(db, input.workflowName, input.workflowNamespace)
 
     const existing = existingById ?? existingByUid ?? existingByName
 
@@ -918,18 +902,11 @@ export const createCodexJudgeStore = (
 
   const attachNotify = async (input: AttachNotifyInput) => {
     const normalizedWorkflowName = input.workflowName?.trim() || input.runId?.trim() || ''
-    const rowById = input.runId
-      ? await db.selectFrom('codex_judge.runs').selectAll().where('id', '=', input.runId).executeTakeFirst()
-      : null
+    const rowById = await selectCodexJudgeRunById(db, input.runId)
     const row = rowById
       ? rowById
       : normalizedWorkflowName
-        ? await db
-            .selectFrom('codex_judge.runs')
-            .selectAll()
-            .where('workflow_name', '=', normalizedWorkflowName)
-            .where('workflow_namespace', '=', input.workflowNamespace ?? null)
-            .executeTakeFirst()
+        ? await selectCodexJudgeRunByWorkflow(db, normalizedWorkflowName, input.workflowNamespace)
         : null
     if (!row) {
       if (!normalizedWorkflowName || !input.repository || !input.issueNumber || !input.branch) {

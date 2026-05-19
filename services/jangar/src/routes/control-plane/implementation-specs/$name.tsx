@@ -34,7 +34,6 @@ type SpecOption = SpecDraft & {
   namespace: string
   updatedAt: string | null
 }
-
 const DEFAULT_RUN_IMAGE =
   'registry.ide-newton.ts.net/lab/agents-codex-runner@sha256:954cb108ece9df370aa441117723144948141ba02fd52c2e3fa1ff91847dda7a'
 const DEFAULT_STEP_NAME = 'implement'

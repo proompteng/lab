@@ -10,16 +10,55 @@ fail_if_matches() {
   local pattern="$2"
   shift 2
 
-  if rg -n \
-    --glob '!**/__tests__/**' \
-    --glob '!**/*.test.*' \
-    --glob '!**/*_test.go' \
-    --glob '!guard-extraction-boundaries.sh' \
-    "${pattern}" \
-    "$@"; then
+  if search_matches "${pattern}" "$@"; then
     echo "Agents extraction boundary violation: ${description}" >&2
     exit 1
   fi
+}
+
+search_matches() {
+  local pattern="$1"
+  shift
+
+  if command -v rg >/dev/null 2>&1; then
+    rg -n \
+      --glob '!**/__tests__/**' \
+      --glob '!**/*.test.*' \
+      --glob '!**/*_test.go' \
+      --glob '!guard-extraction-boundaries.sh' \
+      "${pattern}" \
+      "$@"
+    return
+  fi
+
+  grep -R -E -n \
+    --exclude-dir='__tests__' \
+    --exclude='*.test.*' \
+    --exclude='*_test.go' \
+    --exclude='guard-extraction-boundaries.sh' \
+    -- "${pattern}" "$@" 2>/dev/null
+}
+
+matches_multiline() {
+  local pattern="$1"
+  shift
+
+  if command -v rg >/dev/null 2>&1; then
+    rg -U "${pattern}" "$@" >/dev/null
+    return
+  fi
+
+  python3 - "$pattern" "$@" <<'PY'
+import pathlib
+import re
+import sys
+
+pattern = sys.argv[1]
+for candidate in sys.argv[2:]:
+    if re.search(pattern, pathlib.Path(candidate).read_text()):
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
 }
 
 fail_if_path_exists() {
@@ -251,12 +290,12 @@ fail_if_matches "rendered Helm chart must use Agents-owned images, env, DB secre
 fail_if_matches "rendered Agents GitOps app must use Agents-owned images, env, DB secret, and runner paths" "${rendered_forbidden}" "${rendered_argo}"
 fail_if_matches "rendered Agents GitOps app must use the chart-managed agents-codex-runner path" "${agents_runtime_forbidden}" "${rendered_argo}"
 
-if ! rg -U 'name: AGENTS_SWARM_PRIMITIVE_ENABLED\n\s+value: "true"' "${rendered_argo}" >/dev/null; then
+if ! matches_multiline 'name: AGENTS_SWARM_PRIMITIVE_ENABLED\n\s+value: "true"' "${rendered_argo}"; then
   echo "Agents extraction boundary violation: rendered Agents GitOps app must enable the Swarm primitive when it ships the supporting controller." >&2
   exit 1
 fi
 
-if ! rg -U 'apiGroups:\n\s+- swarm\.proompteng\.ai\n\s+resources:\n\s+- swarms' "${rendered_argo}" >/dev/null; then
+if ! matches_multiline 'apiGroups:\n\s+- swarm\.proompteng\.ai\n\s+resources:\n\s+- swarms' "${rendered_argo}"; then
   echo "Agents extraction boundary violation: rendered Agents GitOps app must grant Swarm RBAC when the Swarm primitive is enabled." >&2
   exit 1
 fi
