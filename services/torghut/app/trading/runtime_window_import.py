@@ -130,6 +130,9 @@ def _runtime_promotion_blocking_reasons(
     *,
     inserted: int,
     total_session_samples: int,
+    total_decision_count: int,
+    total_trade_count: int,
+    total_order_count: int,
     average_slippage: Decimal,
     average_post_cost: Decimal,
     latest_three_budget_ok: bool,
@@ -141,6 +144,12 @@ def _runtime_promotion_blocking_reasons(
         reasons.append("runtime_window_evidence_missing")
     if total_session_samples < manifest.min_sample_count_for_live_canary:
         reasons.append("sample_count_below_canary_minimum")
+    if total_decision_count <= 0:
+        reasons.append("runtime_decision_count_zero")
+    if total_order_count <= 0:
+        reasons.append("runtime_order_count_zero")
+    if total_trade_count <= 0:
+        reasons.append("runtime_trade_count_zero")
     if average_slippage > budget:
         reasons.append("slippage_budget_exceeded")
     if not latest_three_budget_ok:
@@ -434,6 +443,9 @@ def persist_observed_runtime_windows(
         (Decimal(bucket.market_session_count) for bucket in sorted_buckets),
         Decimal("0"),
     )
+    total_decision_count = sum(bucket.decision_count for bucket in sorted_buckets)
+    total_trade_count = sum(bucket.trade_count for bucket in sorted_buckets)
+    total_order_count = sum(bucket.order_count for bucket in sorted_buckets)
     total_post_cost = sum(
         (
             bucket.post_cost_expectancy_bps * Decimal(bucket.market_session_count)
@@ -464,6 +476,9 @@ def persist_observed_runtime_windows(
     promotion_blocking_reasons = _runtime_promotion_blocking_reasons(
         inserted=inserted,
         total_session_samples=total_session_samples,
+        total_decision_count=total_decision_count,
+        total_trade_count=total_trade_count,
+        total_order_count=total_order_count,
         average_slippage=average_slippage,
         average_post_cost=average_post_cost,
         latest_three_budget_ok=latest_three_budget_ok,
@@ -535,6 +550,9 @@ def persist_observed_runtime_windows(
                 "observed_stage": observed_stage,
                 "window_count": inserted,
                 "market_session_samples": total_session_samples,
+                "decision_count": total_decision_count,
+                "trade_count": total_trade_count,
+                "order_count": total_order_count,
                 "promotion_allowed": promotion_allowed,
                 "promotion_blocking_reasons": promotion_blocking_reasons,
                 "runtime_observation": runtime_payload,
@@ -555,6 +573,9 @@ def persist_observed_runtime_windows(
                 "observed_stage": observed_stage,
                 "window_count": inserted,
                 "market_session_samples": total_session_samples,
+                "decision_count": total_decision_count,
+                "trade_count": total_trade_count,
+                "order_count": total_order_count,
                 "avg_abs_slippage_bps": str(average_slippage),
                 "avg_post_cost_expectancy_bps": str(average_post_cost),
                 "latest_three_within_budget": latest_three_budget_ok,
@@ -572,6 +593,9 @@ def persist_observed_runtime_windows(
         "observed_stage": observed_stage,
         "window_count": inserted,
         "market_session_samples": total_session_samples,
+        "decision_count": total_decision_count,
+        "trade_count": total_trade_count,
+        "order_count": total_order_count,
         "avg_abs_slippage_bps": str(average_slippage),
         "avg_post_cost_expectancy_bps": str(average_post_cost),
         "latest_three_within_budget": latest_three_budget_ok,

@@ -8,6 +8,18 @@ from typing import Any, Mapping, cast
 
 
 PROFIT_TARGET_ORACLE_SCHEMA_VERSION = "torghut.profit-target-oracle.v1"
+_ACCEPTED_MARKET_IMPACT_STRESS_MODELS = frozenset(
+    {
+        "almgren_chriss",
+        "almgren-chriss",
+        "square_root",
+        "square-root",
+        "power_law",
+        "power-law",
+        "portfolio_square_root_impact",
+        "portfolio_power_law_impact",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -38,6 +50,8 @@ class ProfitTargetOraclePolicy:
     require_executable_replay: bool = True
     min_executable_order_count: int = 1
     require_executable_replay_notional_within_buying_power: bool = True
+    require_market_impact_stress: bool = True
+    min_market_impact_stress_cost_bps: Decimal = Decimal("1")
     max_missing_sleeve_daily_net_count: int = 0
 
     def to_payload(self) -> dict[str, Any]:
@@ -78,6 +92,13 @@ class ProfitTargetOraclePolicy:
             "require_executable_replay": self.require_executable_replay,
             "min_executable_order_count": self.min_executable_order_count,
             "require_executable_replay_notional_within_buying_power": self.require_executable_replay_notional_within_buying_power,
+            "require_market_impact_stress": self.require_market_impact_stress,
+            "min_market_impact_stress_cost_bps": str(
+                self.min_market_impact_stress_cost_bps
+            ),
+            "accepted_market_impact_stress_models": sorted(
+                _ACCEPTED_MARKET_IMPACT_STRESS_MODELS
+            ),
             "max_missing_sleeve_daily_net_count": self.max_missing_sleeve_daily_net_count,
         }
 
@@ -108,6 +129,10 @@ def _boolish(value: Any) -> bool:
     }
 
 
+def _string(value: Any) -> str:
+    return str(value if value is not None else "").strip()
+
+
 def _numeric_check(
     *,
     metric: str,
@@ -130,6 +155,22 @@ def _numeric_check(
         "threshold": str(threshold),
         "passed": passed,
     }
+
+
+def _artifact_refs(scorecard: Mapping[str, Any], *keys: str) -> list[str]:
+    refs: list[str] = []
+    for key in keys:
+        raw_value = scorecard.get(key)
+        if isinstance(raw_value, list):
+            for item in cast(list[Any], raw_value):
+                normalized = _string(item)
+                if normalized:
+                    refs.append(normalized)
+            continue
+        normalized = _string(raw_value)
+        if normalized:
+            refs.append(normalized)
+    return refs
 
 
 def _start_equity(
@@ -509,6 +550,93 @@ def evaluate_profit_target_oracle(
                 threshold=executable_buying_power,
             )
         )
+    market_impact_artifact_refs = _artifact_refs(
+        scorecard,
+        "market_impact_stress_artifact_ref",
+        "market_impact_stress_artifact_refs",
+        "impact_stress_artifact_ref",
+        "cost_shock_artifact_ref",
+    )
+    market_impact_artifact_present = bool(market_impact_artifact_refs)
+    market_impact_passed = _boolish(
+        scorecard.get("market_impact_stress_passed")
+        or scorecard.get("cost_shock_stress_passed")
+        or scorecard.get("nonlinear_market_impact_stress_passed")
+    )
+    market_impact_model = _string(
+        scorecard.get("market_impact_stress_model")
+        or scorecard.get("market_impact_cost_model")
+        or scorecard.get("cost_shock_model")
+    ).lower()
+    checks.append(
+        {
+            "metric": "market_impact_stress_passed",
+            "observed": str(market_impact_passed).lower(),
+            "operator": "eq",
+            "threshold": "true",
+            "source_marker": "realistic_market_impact_arxiv_2603_29086_2026",
+            "passed": market_impact_passed
+            if policy.require_market_impact_stress
+            else True,
+        }
+    )
+    checks.append(
+        {
+            "metric": "market_impact_stress_artifact_present",
+            "observed": str(market_impact_artifact_present).lower(),
+            "operator": "eq",
+            "threshold": "true",
+            "source_marker": "realistic_market_impact_arxiv_2603_29086_2026",
+            "passed": market_impact_artifact_present
+            if policy.require_market_impact_stress
+            else True,
+        }
+    )
+    checks.append(
+        {
+            "metric": "market_impact_stress_model",
+            "observed": market_impact_model,
+            "operator": "in",
+            "threshold": sorted(_ACCEPTED_MARKET_IMPACT_STRESS_MODELS),
+            "source_marker": "order_flow_market_impact_arxiv_2601_23172_2026",
+            "passed": (market_impact_model in _ACCEPTED_MARKET_IMPACT_STRESS_MODELS)
+            if policy.require_market_impact_stress
+            else True,
+        }
+    )
+    checks.append(
+        _numeric_check(
+            metric="market_impact_stress_cost_bps",
+            observed=_decimal(
+                scorecard.get("market_impact_stress_cost_bps")
+                or scorecard.get("market_impact_cost_bps")
+                or scorecard.get("cost_shock_bps")
+            ),
+            operator="gte",
+            threshold=policy.min_market_impact_stress_cost_bps
+            if policy.require_market_impact_stress
+            else Decimal("0"),
+        )
+    )
+    market_impact_net_pnl = _decimal(
+        scorecard.get("market_impact_stress_net_pnl_per_day")
+        or scorecard.get("post_impact_net_pnl_per_day")
+        or scorecard.get("cost_shock_net_pnl_per_day")
+    )
+    market_impact_net_check = _numeric_check(
+        metric="market_impact_stress_net_pnl_per_day",
+        observed=market_impact_net_pnl,
+        operator="gte",
+        threshold=target_net_pnl_per_day,
+    )
+    if not policy.require_market_impact_stress:
+        market_impact_net_check["passed"] = True
+    checks.append(
+        {
+            **market_impact_net_check,
+            "source_marker": "double_oos_cost_sensitivity_arxiv_2602_10785_2026",
+        }
+    )
     blockers = [
         f"{item['metric']}_failed" for item in checks if not bool(item["passed"])
     ]

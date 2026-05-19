@@ -16,35 +16,88 @@ def _executable_scorecard_fields() -> dict[str, object]:
         "executable_replay_order_count": 4,
         "executable_replay_account_buying_power": "20000",
         "executable_replay_max_notional_per_trade": "10000",
+        "market_impact_stress_passed": True,
+        "market_impact_stress_artifact_ref": "/tmp/market-impact-stress.json",
+        "market_impact_stress_model": "square_root",
+        "market_impact_stress_cost_bps": "6",
+        "market_impact_stress_net_pnl_per_day": "535",
+    }
+
+
+def _passing_scorecard() -> dict[str, object]:
+    return {
+        "net_pnl_per_day": "535",
+        "active_day_ratio": "1",
+        "positive_day_ratio": "1",
+        "best_day_share": "0.23",
+        "max_single_day_contribution_share": "0.23",
+        "max_cluster_contribution_share": "0.34",
+        "max_single_symbol_contribution_share": "0.25",
+        "worst_day_loss": "0",
+        "max_drawdown": "0",
+        "avg_filled_notional_per_day": "700000",
+        "regime_slice_pass_rate": "0.55",
+        "posterior_edge_lower": "0.01",
+        "shadow_parity_status": "within_budget",
+        "trading_day_count": 20,
+        "daily_net": {f"2026-04-{day:02d}": "535" for day in range(1, 21)},
+        **_executable_scorecard_fields(),
     }
 
 
 class TestProfitTargetOracle(TestCase):
     def test_profit_target_oracle_accepts_full_doc71_contract(self) -> None:
         result = evaluate_profit_target_oracle(
-            {
-                "net_pnl_per_day": "535",
-                "active_day_ratio": "1",
-                "positive_day_ratio": "1",
-                "best_day_share": "0.23",
-                "max_single_day_contribution_share": "0.23",
-                "max_cluster_contribution_share": "0.34",
-                "max_single_symbol_contribution_share": "0.25",
-                "worst_day_loss": "0",
-                "max_drawdown": "0",
-                "avg_filled_notional_per_day": "700000",
-                "regime_slice_pass_rate": "0.55",
-                "posterior_edge_lower": "0.01",
-                "shadow_parity_status": "within_budget",
-                "trading_day_count": 20,
-                "daily_net": {f"2026-04-{day:02d}": "535" for day in range(1, 21)},
-                **_executable_scorecard_fields(),
-            },
+            _passing_scorecard(),
             target_net_pnl_per_day=Decimal("500"),
         )
 
         self.assertTrue(result["passed"])
         self.assertEqual(result["blockers"], [])
+
+    def test_profit_target_oracle_rejects_missing_market_impact_stress(
+        self,
+    ) -> None:
+        scorecard = _passing_scorecard()
+        for key in tuple(scorecard):
+            if key.startswith("market_impact_stress"):
+                del scorecard[key]
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn("market_impact_stress_passed_failed", result["blockers"])
+        self.assertIn(
+            "market_impact_stress_artifact_present_failed", result["blockers"]
+        )
+        self.assertIn("market_impact_stress_model_failed", result["blockers"])
+        self.assertIn("market_impact_stress_cost_bps_failed", result["blockers"])
+        self.assertIn("market_impact_stress_net_pnl_per_day_failed", result["blockers"])
+
+    def test_profit_target_oracle_rejects_failed_market_impact_stress(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "market_impact_stress_passed": False,
+            "market_impact_stress_model": "linear_fixed_bps",
+            "market_impact_stress_cost_bps": "0",
+            "market_impact_stress_net_pnl_per_day": "420",
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn("market_impact_stress_passed_failed", result["blockers"])
+        self.assertIn("market_impact_stress_model_failed", result["blockers"])
+        self.assertIn("market_impact_stress_cost_bps_failed", result["blockers"])
+        self.assertIn("market_impact_stress_net_pnl_per_day_failed", result["blockers"])
 
     def test_profit_target_oracle_accepts_controlled_down_days(self) -> None:
         result = evaluate_profit_target_oracle(

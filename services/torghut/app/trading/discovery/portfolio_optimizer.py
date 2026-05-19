@@ -355,6 +355,42 @@ def _executable_replay_max_notional(bundle: CandidateEvidenceBundle) -> Decimal:
     )
 
 
+def _market_impact_stress_passed(bundle: CandidateEvidenceBundle) -> bool:
+    scorecard = _scorecard(bundle)
+    return _boolish(
+        scorecard.get("market_impact_stress_passed")
+        or scorecard.get("cost_shock_stress_passed")
+        or scorecard.get("nonlinear_market_impact_stress_passed")
+    )
+
+
+def _market_impact_stress_artifact_ref(bundle: CandidateEvidenceBundle) -> str:
+    scorecard = _scorecard(bundle)
+    return _string(
+        scorecard.get("market_impact_stress_artifact_ref")
+        or scorecard.get("impact_stress_artifact_ref")
+        or scorecard.get("cost_shock_artifact_ref")
+    )
+
+
+def _market_impact_stress_net_per_day(bundle: CandidateEvidenceBundle) -> Decimal:
+    scorecard = _scorecard(bundle)
+    return _decimal(
+        scorecard.get("market_impact_stress_net_pnl_per_day")
+        or scorecard.get("post_impact_net_pnl_per_day")
+        or scorecard.get("cost_shock_net_pnl_per_day")
+    )
+
+
+def _market_impact_stress_cost_bps(bundle: CandidateEvidenceBundle) -> Decimal:
+    scorecard = _scorecard(bundle)
+    return _decimal(
+        scorecard.get("market_impact_stress_cost_bps")
+        or scorecard.get("market_impact_cost_bps")
+        or scorecard.get("cost_shock_bps")
+    )
+
+
 def _positive_net_contribution(bundle: CandidateEvidenceBundle) -> Decimal:
     return max(_net_per_day(bundle), Decimal("0"))
 
@@ -629,6 +665,18 @@ def _portfolio_scorecard(
     executable_max_notionals = [
         _executable_replay_max_notional(bundle) for bundle in selected
     ]
+    market_impact_artifact_refs = [
+        ref
+        for ref in (_market_impact_stress_artifact_ref(bundle) for bundle in selected)
+        if ref
+    ]
+    market_impact_stress_net_pnl_per_day = sum(
+        (
+            _market_impact_stress_net_per_day(bundle) * weight
+            for bundle, weight in zip(selected, weights, strict=True)
+        ),
+        Decimal("0"),
+    )
     scorecard = {
         "net_pnl_per_day": str(net_per_day),
         "portfolio_post_cost_net_pnl_per_day": str(net_per_day),
@@ -688,6 +736,22 @@ def _portfolio_scorecard(
         "executable_replay_max_notional_per_trade": str(
             max(executable_max_notionals, default=Decimal("0"))
         ),
+        "market_impact_stress_passed": bool(selected)
+        and all(_market_impact_stress_passed(bundle) for bundle in selected),
+        "market_impact_stress_artifact_refs": market_impact_artifact_refs,
+        "market_impact_stress_artifact_ref": market_impact_artifact_refs[0]
+        if market_impact_artifact_refs
+        else "",
+        "market_impact_stress_model": "portfolio_square_root_impact",
+        "market_impact_stress_cost_bps": str(
+            max(
+                (_market_impact_stress_cost_bps(bundle) for bundle in selected),
+                default=Decimal("0"),
+            )
+        ),
+        "market_impact_stress_net_pnl_per_day": str(
+            market_impact_stress_net_pnl_per_day
+        ),
         "daily_net": {day: str(value) for day, value in sorted(daily_net.items())},
         "daily_filled_notional": {
             day: str(value) for day, value in sorted(daily_notional.items())
@@ -742,6 +806,9 @@ def _portfolio_selection_key(
         _scorecard_decimal(scorecard, "active_day_ratio"),
         _scorecard_decimal(scorecard, "positive_day_ratio"),
         _scorecard_decimal(scorecard, "min_daily_net_pnl"),
+        Decimal(1 if bool(scorecard.get("market_impact_stress_passed")) else 0),
+        _scorecard_decimal(scorecard, "market_impact_stress_net_pnl_per_day"),
+        -_scorecard_decimal(scorecard, "market_impact_stress_cost_bps"),
         _scorecard_decimal(scorecard, "net_pnl_per_day"),
         -_scorecard_decimal(scorecard, "missing_sleeve_daily_net_count"),
         _scorecard_decimal(scorecard, "avg_filled_notional_per_day"),
