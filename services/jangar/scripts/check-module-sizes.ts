@@ -4,7 +4,6 @@ import { relative, resolve } from 'node:path'
 const MAX_NEW_FILE_LINES = 800
 
 const LEGACY_LINE_CAPS: Record<string, number> = {
-  'src/server/supporting-primitives-controller.ts': 3352,
   'src/server/codex-judge.ts': 2729,
   'src/server/atlas-store.ts': 2219,
   'src/server/orchestration-controller.ts': 2140,
@@ -28,7 +27,6 @@ const LEGACY_LINE_CAPS: Record<string, number> = {
   'src/server/torghut-quant-metrics.ts': 929,
   'src/server/github-review-actions.ts': 928,
   'src/server/github-client.ts': 905,
-  'src/server/implementation-source-webhooks.ts': 900,
   'src/routes/atlas/search.tsx': 891,
   'src/routes/v1/agent-runs.ts': 886,
   'src/routes/control-plane/implementation-specs/$name.tsx': 862,
