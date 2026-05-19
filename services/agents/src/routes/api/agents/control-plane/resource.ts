@@ -21,6 +21,7 @@ export const Route = createFileRoute('/api/agents/control-plane/resource')({
     handlers: {
       GET: async ({ request }: AgentsServerRouteArgs) => getPrimitiveResource(request),
       POST: async ({ request }: AgentsServerRouteArgs) => postPrimitiveResource(request),
+      PATCH: async ({ request }: AgentsServerRouteArgs) => patchPrimitiveResourceMetadata(request),
       DELETE: async ({ request }: AgentsServerRouteArgs) => deletePrimitiveResource(request),
     },
   },
@@ -189,6 +190,79 @@ export const deletePrimitiveResource = async (request: Request, deps: { kubeClie
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return errorResponse(message, 500, { kind: resolved.kind, namespace, name })
+  }
+}
+
+const normalizeMetadataPatchMap = (value: unknown, fieldName: string) => {
+  if (value === undefined || value === null) return null
+  const record = asRecord(value)
+  if (!record) {
+    throw new Error(`${fieldName} must be an object`)
+  }
+
+  const result: Record<string, string | null> = {}
+  for (const [rawKey, rawValue] of Object.entries(record)) {
+    const key = rawKey.trim()
+    if (!key) {
+      throw new Error(`${fieldName} keys must be non-empty strings`)
+    }
+    if (rawValue === null) {
+      result[key] = null
+      continue
+    }
+    if (typeof rawValue !== 'string') {
+      throw new Error(`${fieldName}.${key} must be a string or null`)
+    }
+    result[key] = rawValue
+  }
+
+  return Object.keys(result).length > 0 ? result : null
+}
+
+const parseMetadataPatchPayload = (payload: Record<string, unknown>) => {
+  const metadata = asRecord(payload.metadata) ?? {}
+  const annotations = normalizeMetadataPatchMap(metadata.annotations ?? payload.annotations, 'metadata.annotations')
+  const labels = normalizeMetadataPatchMap(metadata.labels ?? payload.labels, 'metadata.labels')
+
+  if (!annotations && !labels) {
+    throw new Error('metadata.annotations or metadata.labels is required')
+  }
+
+  return {
+    metadata: {
+      ...(annotations ? { annotations } : {}),
+      ...(labels ? { labels } : {}),
+    },
+  }
+}
+
+export const patchPrimitiveResourceMetadata = async (
+  request: Request,
+  deps: { kubeClient?: KubernetesClient } = {},
+) => {
+  const url = new URL(request.url)
+  const kindParam = url.searchParams.get('kind')
+  const name = asString(url.searchParams.get('name'))
+  const resolved = resolvePrimitiveKind(kindParam)
+  if (!resolved) {
+    return errorResponse('kind is required', 400)
+  }
+  if (!name) {
+    return errorResponse('name is required', 400)
+  }
+
+  const namespace = normalizeNamespace(url.searchParams.get('namespace'), 'agents')
+  const kube = deps.kubeClient ?? createKubernetesClient()
+
+  try {
+    const payload = await parseJsonBody(request)
+    const patch = parseMetadataPatchPayload(payload)
+    const resource = await kube.patch(resolved.resource, name, namespace, patch)
+    return okResponse({ ok: true, kind: resolved.kind, namespace, resource })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const status = message.includes('metadata.') || message.includes('required') ? 400 : 500
+    return errorResponse(message, status, { kind: resolved.kind, namespace, name })
   }
 }
 

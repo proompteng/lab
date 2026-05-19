@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { RESOURCE_MAP, type KubernetesClient } from '~/server/primitives-kube'
 import {
   getWhitepaperFinalizeConsumerHealth,
   startWhitepaperFinalizeConsumer,
@@ -30,12 +29,6 @@ const buildAgentRun = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 })
 
-const buildKube = (items: Record<string, unknown>[] = []) =>
-  ({
-    list: vi.fn(async () => ({ items })),
-    patch: vi.fn(async (_resource, _name, _namespace, patch) => patch as Record<string, unknown>),
-  }) as unknown as KubernetesClient
-
 describe('whitepaper finalize consumer', () => {
   afterEach(() => {
     stopWhitepaperFinalizeConsumer()
@@ -47,42 +40,45 @@ describe('whitepaper finalize consumer', () => {
     process.env.JANGAR_WHITEPAPER_FINALIZE_ENABLED = 'true'
     process.env.JANGAR_WHITEPAPER_FINALIZE_CONSUMER_ENABLED = 'true'
     process.env.JANGAR_WHITEPAPER_FINALIZE_NAMESPACES = 'agents'
+    process.env.JANGAR_WHITEPAPER_FINALIZE_SCAN_INTERVAL_MS = '300000'
 
-    const kube = buildKube([buildAgentRun()])
+    const listAgentRuns = vi.fn(async (_namespace: string) => [buildAgentRun()])
+    const patchAgentRunAnnotations = vi.fn(async () => {})
     const finalize = vi.fn(async (_input: WhitepaperFinalizeTerminalStatusInput) => {})
-    const watchStop = vi.fn()
-    const startWatch = vi.fn(() => ({ stop: watchStop }))
 
-    startWhitepaperFinalizeConsumer({ kube, finalize, startWatch })
+    startWhitepaperFinalizeConsumer({ listAgentRuns, patchAgentRunAnnotations, finalize })
 
     await vi.waitFor(() => expect(finalize).toHaveBeenCalledTimes(1))
-    expect(kube.list).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'agents')
-    expect(kube.patch).toHaveBeenCalledWith(
-      RESOURCE_MAP.AgentRun,
-      'whitepaper-run',
-      'agents',
+    expect(listAgentRuns).toHaveBeenCalledWith('agents')
+    expect(patchAgentRunAnnotations).toHaveBeenCalledWith(
       expect.objectContaining({
-        metadata: {
-          annotations: expect.objectContaining({
-            'jangar.proompteng.ai/whitepaper-finalized-phase': 'Succeeded',
-            'jangar.proompteng.ai/whitepaper-finalized-run-id': 'wp-consumer',
-          }),
-        },
+        name: 'whitepaper-run',
+        namespace: 'agents',
+        annotations: expect.objectContaining({
+          'jangar.proompteng.ai/whitepaper-finalized-phase': 'Succeeded',
+          'jangar.proompteng.ai/whitepaper-finalized-run-id': 'wp-consumer',
+        }),
       }),
     )
     expect(getWhitepaperFinalizeConsumerHealth()).toMatchObject({
       enabled: true,
+      mode: 'agents-service-poll',
       started: true,
       namespaces: ['agents'],
+      scanIntervalMs: 300000,
     })
 
     stopWhitepaperFinalizeConsumer()
-    expect(watchStop).toHaveBeenCalledTimes(1)
+    expect(getWhitepaperFinalizeConsumerHealth()).toMatchObject({
+      started: false,
+      scanIntervalMs: null,
+    })
   })
 
-  it('ignores already-finalized watch events', async () => {
+  it('ignores already-finalized AgentRun resources from the Agents service', async () => {
     process.env.JANGAR_WHITEPAPER_FINALIZE_ENABLED = 'true'
     process.env.JANGAR_WHITEPAPER_FINALIZE_CONSUMER_ENABLED = 'true'
+    process.env.JANGAR_WHITEPAPER_FINALIZE_SCAN_INTERVAL_MS = '300000'
 
     const finalizedRun = buildAgentRun({
       metadata: {
@@ -95,21 +91,14 @@ describe('whitepaper finalize consumer', () => {
         },
       },
     })
-    const kube = buildKube([])
+    const listAgentRuns = vi.fn(async (_namespace: string) => [finalizedRun])
+    const patchAgentRunAnnotations = vi.fn(async () => {})
     const finalize = vi.fn(async (_input: WhitepaperFinalizeTerminalStatusInput) => {})
-    const watchHandlers: Array<(event: { type?: string; object?: Record<string, unknown> }) => void | Promise<void>> =
-      []
-    const startWatch = vi.fn((options) => {
-      watchHandlers.push(options.onEvent)
-      return { stop: vi.fn() }
-    })
 
-    startWhitepaperFinalizeConsumer({ kube, finalize, startWatch })
-    expect(watchHandlers[0]).toBeDefined()
-    await watchHandlers[0]?.({ type: 'MODIFIED', object: finalizedRun })
+    startWhitepaperFinalizeConsumer({ listAgentRuns, patchAgentRunAnnotations, finalize })
 
-    await new Promise((resolve) => setTimeout(resolve, 0))
+    await vi.waitFor(() => expect(listAgentRuns).toHaveBeenCalledTimes(1))
     expect(finalize).not.toHaveBeenCalled()
-    expect(kube.patch).not.toHaveBeenCalled()
+    expect(patchAgentRunAnnotations).not.toHaveBeenCalled()
   })
 })

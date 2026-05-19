@@ -17,7 +17,7 @@ vi.mock('~/server/kube-types', async () => {
   }
 })
 
-import { getPrimitiveResource } from './resource'
+import { getPrimitiveResource, patchPrimitiveResourceMetadata } from './resource'
 
 const cacheResource = (name: string, lastSeenAt: string) => ({
   resource: {
@@ -177,5 +177,82 @@ describe('agents control-plane resource route', () => {
       },
     })
     expect(kube.get).toHaveBeenCalledTimes(1)
+  })
+
+  it('patches resource metadata through the Agents-owned Kubernetes boundary', async () => {
+    const kube = {
+      patch: vi.fn(async (_resource, _name, _namespace, patch) => ({
+        apiVersion: 'agents.proompteng.ai/v1alpha1',
+        kind: 'AgentRun',
+        metadata: {
+          name: 'whitepaper-run',
+          namespace: 'agents',
+          annotations: (patch as { metadata: { annotations: Record<string, string> } }).metadata.annotations,
+        },
+      })),
+    }
+
+    const response = await patchPrimitiveResourceMetadata(
+      new Request(
+        'http://localhost/api/agents/control-plane/resource?kind=AgentRun&name=whitepaper-run&namespace=agents',
+        {
+          body: JSON.stringify({
+            metadata: {
+              annotations: {
+                'jangar.proompteng.ai/whitepaper-finalized-phase': 'Succeeded',
+                'jangar.proompteng.ai/whitepaper-finalized-run-id': 'wp-consumer',
+              },
+            },
+          }),
+          headers: { 'content-type': 'application/json' },
+          method: 'PATCH',
+        },
+      ),
+      { kubeClient: kube as never },
+    )
+
+    expect(response.status).toBe(200)
+    expect(kube.patch).toHaveBeenCalledWith('agentruns.agents.proompteng.ai', 'whitepaper-run', 'agents', {
+      metadata: {
+        annotations: {
+          'jangar.proompteng.ai/whitepaper-finalized-phase': 'Succeeded',
+          'jangar.proompteng.ai/whitepaper-finalized-run-id': 'wp-consumer',
+        },
+      },
+    })
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      kind: 'AgentRun',
+      namespace: 'agents',
+      resource: {
+        kind: 'AgentRun',
+        metadata: {
+          name: 'whitepaper-run',
+          namespace: 'agents',
+        },
+      },
+    })
+  })
+
+  it('rejects metadata patch requests without annotations or labels', async () => {
+    const kube = { patch: vi.fn() }
+    const response = await patchPrimitiveResourceMetadata(
+      new Request(
+        'http://localhost/api/agents/control-plane/resource?kind=AgentRun&name=whitepaper-run&namespace=agents',
+        {
+          body: JSON.stringify({ metadata: {} }),
+          headers: { 'content-type': 'application/json' },
+          method: 'PATCH',
+        },
+      ),
+      { kubeClient: kube as never },
+    )
+
+    expect(response.status).toBe(400)
+    expect(kube.patch).not.toHaveBeenCalled()
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: 'metadata.annotations or metadata.labels is required',
+    })
   })
 })

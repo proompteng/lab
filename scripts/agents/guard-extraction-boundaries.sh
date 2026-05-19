@@ -65,6 +65,11 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/torghut-market-context-dispatch.ts"
 
 fail_if_matches \
+  "Jangar whitepaper finalizer must consume AgentRuns through the Agents service boundary, not direct Kubernetes watch/list/patch" \
+  'createKubernetesClient|RESOURCE_MAP\.AgentRun|startResourceWatch|kube\.list|kube\.patch' \
+  "${ROOT_DIR}/services/jangar/src/server/whitepaper-finalize-consumer.ts"
+
+fail_if_matches \
   "Agents GitOps must not ship the old sample Argo WorkflowTemplate schedule bridge" \
   'agents-primitives-echo|kind: WorkflowTemplate|codex-workflow' \
   "${ROOT_DIR}/argocd/applications/agents"

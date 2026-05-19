@@ -1,6 +1,9 @@
-import { startResourceWatch, type WatchHandle, type WatchOptions } from '~/server/kube-watch'
+import {
+  fetchAgentRunResourcesFromAgentsService,
+  patchAgentRunAnnotationsViaAgentsService,
+  type AgentsAgentRunAnnotationsPatchInput,
+} from '~/server/agents-service-proxy'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
-import { createKubernetesClient, RESOURCE_MAP, type KubernetesClient } from '~/server/primitives-kube'
 import { resolveWhitepaperControlConfig } from '~/server/whitepaper-config'
 import { maybeFinalizeWhitepaperRun, type WhitepaperFinalizeTerminalStatusInput } from '~/server/whitepaper-finalize'
 
@@ -11,14 +14,19 @@ const DEFAULT_NAMESPACE = 'agents'
 
 type WhitepaperFinalizeConsumerState = {
   started: boolean
-  handles: WatchHandle[]
+  intervals: Array<ReturnType<typeof setInterval>>
   inFlight: Set<string>
+  completed: Set<string>
   namespaces: string[]
+  scanIntervalMs: number | null
 }
 
+type ListAgentRuns = (namespace: string) => Promise<Record<string, unknown>[]>
+type PatchAgentRunAnnotations = (input: AgentsAgentRunAnnotationsPatchInput) => Promise<void>
+
 type WhitepaperFinalizeConsumerDeps = {
-  kube?: KubernetesClient
-  startWatch?: (options: WatchOptions) => WatchHandle
+  listAgentRuns?: ListAgentRuns
+  patchAgentRunAnnotations?: PatchAgentRunAnnotations
   finalize?: (input: WhitepaperFinalizeTerminalStatusInput) => Promise<void>
 }
 
@@ -30,9 +38,11 @@ const getState = (): WhitepaperFinalizeConsumerState => {
   if (!globalState.__jangarWhitepaperFinalizeConsumer) {
     globalState.__jangarWhitepaperFinalizeConsumer = {
       started: false,
-      handles: [],
+      intervals: [],
       inFlight: new Set<string>(),
+      completed: new Set<string>(),
       namespaces: [],
+      scanIntervalMs: null,
     }
   }
   return globalState.__jangarWhitepaperFinalizeConsumer
@@ -58,6 +68,12 @@ const resolveNamespaces = (env: Record<string, string | undefined> = process.env
 const shouldStart = (env: Record<string, string | undefined> = process.env) =>
   resolveWhitepaperControlConfig(env).enabled && parseBoolean(env.JANGAR_WHITEPAPER_FINALIZE_CONSUMER_ENABLED, true)
 
+const resolveScanIntervalMs = (env: Record<string, string | undefined> = process.env) => {
+  const parsed = Number(env.JANGAR_WHITEPAPER_FINALIZE_SCAN_INTERVAL_MS)
+  if (!Number.isFinite(parsed) || parsed <= 0) return 30_000
+  return Math.max(5_000, Math.min(Math.trunc(parsed), 300_000))
+}
+
 const isTerminalPhase = (phase: string | null) => phase === 'Succeeded' || phase === 'Failed' || phase === 'Cancelled'
 
 const getMetadata = (resource: Record<string, unknown>) => asRecord(resource.metadata) ?? {}
@@ -75,7 +91,7 @@ const wasFinalized = (resource: Record<string, unknown>, runId: string, phase: s
 }
 
 const patchFinalizedAnnotations = async (
-  kube: Pick<KubernetesClient, 'patch'>,
+  patchAgentRunAnnotations: PatchAgentRunAnnotations,
   resource: Record<string, unknown>,
   runId: string,
   phase: string,
@@ -85,14 +101,13 @@ const patchFinalizedAnnotations = async (
   const namespace = asString(metadata.namespace) ?? DEFAULT_NAMESPACE
   if (!name) return
 
-  await kube.patch(RESOURCE_MAP.AgentRun, name, namespace, {
-    metadata: {
-      annotations: {
-        ...getAnnotations(resource),
-        [FINALIZED_PHASE_ANNOTATION]: phase,
-        [FINALIZED_RUN_ID_ANNOTATION]: runId,
-        [FINALIZED_AT_ANNOTATION]: new Date().toISOString(),
-      },
+  await patchAgentRunAnnotations({
+    name,
+    namespace,
+    annotations: {
+      [FINALIZED_PHASE_ANNOTATION]: phase,
+      [FINALIZED_RUN_ID_ANNOTATION]: runId,
+      [FINALIZED_AT_ANNOTATION]: new Date().toISOString(),
     },
   })
 }
@@ -107,7 +122,7 @@ const buildProcessKey = (resource: Record<string, unknown>, phase: string) => {
 
 const processAgentRun = async (
   state: WhitepaperFinalizeConsumerState,
-  kube: KubernetesClient,
+  patchAgentRunAnnotations: PatchAgentRunAnnotations,
   resource: Record<string, unknown>,
   finalize: (input: WhitepaperFinalizeTerminalStatusInput) => Promise<void>,
 ) => {
@@ -120,6 +135,7 @@ const processAgentRun = async (
   if (wasFinalized(resource, runId, phase)) return
 
   const key = buildProcessKey(resource, phase)
+  if (state.completed.has(key)) return
   if (state.inFlight.has(key)) return
 
   state.inFlight.add(key)
@@ -130,7 +146,8 @@ const processAgentRun = async (
       previousPhase: null,
       nextPhase: phase,
     })
-    await patchFinalizedAnnotations(kube, resource, runId, phase)
+    await patchFinalizedAnnotations(patchAgentRunAnnotations, resource, runId, phase)
+    state.completed.add(key)
   } catch (error) {
     console.warn('[jangar][whitepaper-finalize-consumer] failed to finalize AgentRun', {
       runName: asString(readNested(resource, ['metadata', 'name'])) ?? null,
@@ -148,16 +165,36 @@ const listItems = (payload: Record<string, unknown>) => {
   return items.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
 }
 
+const listAgentRunsFromAgentsService: ListAgentRuns = async (namespace) => {
+  const result = await fetchAgentRunResourcesFromAgentsService({ namespace, limit: 500 })
+  if (!result.ok) {
+    throw new Error(
+      `Agents service AgentRun resource list failed (${result.status}): ${result.error ?? 'unknown error'}`,
+    )
+  }
+  return listItems(asRecord(result.body) ?? {})
+}
+
+const patchAgentRunAnnotationsThroughAgentsService: PatchAgentRunAnnotations = async (input) => {
+  const result = await patchAgentRunAnnotationsViaAgentsService(input)
+  if (!result.ok) {
+    throw new Error(
+      `Agents service AgentRun annotation patch failed (${result.status}): ${result.error ?? 'unknown error'}`,
+    )
+  }
+}
+
 const scanNamespace = async (
   state: WhitepaperFinalizeConsumerState,
-  kube: KubernetesClient,
+  listAgentRuns: ListAgentRuns,
+  patchAgentRunAnnotations: PatchAgentRunAnnotations,
   namespace: string,
   finalize: (input: WhitepaperFinalizeTerminalStatusInput) => Promise<void>,
 ) => {
   try {
-    const payload = await kube.list(RESOURCE_MAP.AgentRun, namespace)
-    for (const item of listItems(payload)) {
-      await processAgentRun(state, kube, item, finalize)
+    const items = await listAgentRuns(namespace)
+    for (const item of items) {
+      await processAgentRun(state, patchAgentRunAnnotations, item, finalize)
     }
   } catch (error) {
     console.warn('[jangar][whitepaper-finalize-consumer] failed to scan AgentRuns', {
@@ -172,40 +209,36 @@ export const startWhitepaperFinalizeConsumer = (deps: WhitepaperFinalizeConsumer
   if (state.started) return
   if (!shouldStart()) return
 
-  const kube = deps.kube ?? createKubernetesClient()
-  const startWatch = deps.startWatch ?? startResourceWatch
+  const listAgentRuns = deps.listAgentRuns ?? listAgentRunsFromAgentsService
+  const patchAgentRunAnnotations = deps.patchAgentRunAnnotations ?? patchAgentRunAnnotationsThroughAgentsService
   const finalize = deps.finalize ?? maybeFinalizeWhitepaperRun
   const namespaces = resolveNamespaces()
+  const scanIntervalMs = resolveScanIntervalMs()
 
   state.started = true
   state.namespaces = namespaces
+  state.scanIntervalMs = scanIntervalMs
 
   for (const namespace of namespaces) {
-    void scanNamespace(state, kube, namespace, finalize)
-    state.handles.push(
-      startWatch({
-        resource: RESOURCE_MAP.AgentRun,
-        namespace,
-        onEvent: (event) => {
-          if (event.type === 'DELETED') return
-          const resource = asRecord(event.object)
-          if (!resource) return
-          void processAgentRun(state, kube, resource, finalize)
-        },
-        onError: (error) => console.warn('[jangar][whitepaper-finalize-consumer] AgentRun watch failed', error),
-      }),
-    )
+    const scan = () => void scanNamespace(state, listAgentRuns, patchAgentRunAnnotations, namespace, finalize)
+    scan()
+    const interval = setInterval(scan, scanIntervalMs)
+    const maybeNodeInterval = interval as ReturnType<typeof setInterval> & { unref?: () => void }
+    maybeNodeInterval.unref?.()
+    state.intervals.push(interval)
   }
 }
 
 export const stopWhitepaperFinalizeConsumer = () => {
   const state = getState()
-  for (const handle of state.handles.splice(0)) {
-    handle.stop()
+  for (const interval of state.intervals.splice(0)) {
+    clearInterval(interval)
   }
   state.inFlight.clear()
+  state.completed.clear()
   state.started = false
   state.namespaces = []
+  state.scanIntervalMs = null
 }
 
 export const getWhitepaperFinalizeConsumerHealth = () => {
@@ -213,7 +246,9 @@ export const getWhitepaperFinalizeConsumerHealth = () => {
   return {
     enabled: shouldStart(),
     started: state.started,
+    mode: 'agents-service-poll',
     namespaces: state.namespaces,
     inFlight: state.inFlight.size,
+    scanIntervalMs: state.scanIntervalMs,
   }
 }

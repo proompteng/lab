@@ -2,8 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   buildAgentsServiceProxyUrl,
+  fetchAgentRunResourcesFromAgentsService,
   fetchAgentRunsFromAgentsService,
   fetchAgentsServiceJson,
+  patchAgentRunAnnotationsViaAgentsService,
   proxyAgentsServiceRequest,
   resolveAgentsServiceBaseUrl,
   submitAgentRunToAgentsService,
@@ -210,6 +212,113 @@ describe('agents-service-proxy', () => {
             payload: {},
           },
         ],
+      },
+    })
+  })
+
+  it('lists raw AgentRun resources through the Agents control-plane boundary', async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          kind: 'AgentRun',
+          namespace: 'agents',
+          total: 1,
+          items: [{ kind: 'AgentRun', metadata: { name: 'whitepaper-run' }, status: { phase: 'Succeeded' } }],
+        }),
+        {
+          headers: { 'content-type': 'application/json' },
+          status: 200,
+        },
+      )
+    })
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+
+    const result = await fetchAgentRunResourcesFromAgentsService(
+      { namespace: 'agents', limit: 500, labelSelector: 'app=whitepaper', phase: 'Succeeded' },
+      { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
+    )
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
+    expect(url.toString()).toBe(
+      'http://agents.test/api/agents/control-plane/resources?kind=AgentRun&namespace=agents&labelSelector=app%3Dwhitepaper&phase=Succeeded&limit=500',
+    )
+    expect(init.method).toBe('GET')
+    expect((init.headers as Headers).get('x-agents-client')).toBe('jangar')
+    expect(result).toEqual({
+      ok: true,
+      status: 200,
+      body: {
+        ok: true,
+        kind: 'AgentRun',
+        namespace: 'agents',
+        total: 1,
+        items: [{ kind: 'AgentRun', metadata: { name: 'whitepaper-run' }, status: { phase: 'Succeeded' } }],
+      },
+    })
+  })
+
+  it('patches AgentRun annotations through the Agents control-plane boundary', async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          kind: 'AgentRun',
+          resource: {
+            kind: 'AgentRun',
+            metadata: { name: 'whitepaper-run', annotations: { finalized: 'true' } },
+          },
+        }),
+        {
+          headers: { 'content-type': 'application/json' },
+          status: 200,
+        },
+      )
+    })
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+
+    const result = await patchAgentRunAnnotationsViaAgentsService(
+      {
+        name: 'whitepaper-run',
+        namespace: 'agents',
+        annotations: {
+          'jangar.proompteng.ai/whitepaper-finalized-phase': 'Succeeded',
+          'jangar.proompteng.ai/whitepaper-finalized-run-id': 'wp-consumer',
+        },
+      },
+      { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
+    )
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
+    expect(url.toString()).toBe(
+      'http://agents.test/api/agents/control-plane/resource?kind=AgentRun&name=whitepaper-run&namespace=agents',
+    )
+    expect(init.method).toBe('PATCH')
+    expect(init.headers).toMatchObject({
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'x-agents-client': 'jangar',
+    })
+    expect(JSON.parse(init.body as string)).toEqual({
+      metadata: {
+        annotations: {
+          'jangar.proompteng.ai/whitepaper-finalized-phase': 'Succeeded',
+          'jangar.proompteng.ai/whitepaper-finalized-run-id': 'wp-consumer',
+        },
+      },
+    })
+    expect(result).toEqual({
+      ok: true,
+      status: 200,
+      body: {
+        ok: true,
+        kind: 'AgentRun',
+        resource: {
+          kind: 'AgentRun',
+          metadata: { name: 'whitepaper-run', annotations: { finalized: 'true' } },
+        },
       },
     })
   })
