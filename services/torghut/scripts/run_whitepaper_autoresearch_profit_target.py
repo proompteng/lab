@@ -2426,6 +2426,11 @@ def _profitability_next_epoch_plan(
     target: Decimal,
     remediation: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
+    direct_candidate_specs_artifacts = [
+        str(path)
+        for path in cast(Sequence[Path], getattr(args, "candidate_specs", ()) or ())
+        if str(path)
+    ]
     flags: dict[str, str] = {
         "--target-net-pnl-per-day": str(target),
         "--program": str(getattr(args, "program", _DEFAULT_PORTFOLIO_PROFIT_PROGRAM)),
@@ -2556,12 +2561,15 @@ def _profitability_next_epoch_plan(
         "--output-dir",
         "<next-epoch-output-dir>",
     ]
+    for path in direct_candidate_specs_artifacts:
+        argv.extend(["--candidate-specs", path])
     for key, value in flags.items():
         argv.extend([key, value])
     return {
         "entrypoint": "services/torghut/scripts/run_whitepaper_autoresearch_profit_target.py",
         "flags": flags,
         "argv": argv,
+        "direct_candidate_specs_artifacts": direct_candidate_specs_artifacts,
         "applied_recommended_flags": applied_recommended_flags,
         "rejected_recommended_flags": rejected_recommended_flags,
         "no_fast_path_policy": {

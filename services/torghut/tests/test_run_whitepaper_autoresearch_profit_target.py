@@ -2804,6 +2804,11 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     encoding="utf-8"
                 )
             )
+            profitability_goal = json.loads(
+                (output_dir / "profitability-search-goal.json").read_text(
+                    encoding="utf-8"
+                )
+            )
 
         self.assertEqual(captured_spec_ids, ["spec-direct-a", "spec-direct-b"])
         self.assertEqual(payload["candidate_spec_count"], 2)
@@ -2822,6 +2827,20 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertEqual(
             compiler_report["status"], "loaded_candidate_specs_for_direct_replay"
+        )
+        self.assertEqual(
+            profitability_goal["recommended_next_epoch"][
+                "direct_candidate_specs_artifacts"
+            ],
+            [str(selected_specs_path)],
+        )
+        self.assertIn(
+            "--candidate-specs",
+            profitability_goal["recommended_next_epoch"]["argv"],
+        )
+        self.assertIn(
+            str(selected_specs_path),
+            profitability_goal["recommended_next_epoch"]["argv"],
         )
         source_compiler_mock.assert_not_called()
         candidate_compiler_mock.assert_not_called()
