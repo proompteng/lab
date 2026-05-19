@@ -18,6 +18,7 @@ import {
   type AgentOption,
   type PrimitiveResource,
 } from '@/data/agents-control-plane'
+import { AGENTS_AGENT_RUNS_API_PATH } from '@/data/agents-api-paths'
 import { randomUuid } from '@/lib/uuid'
 
 type SpecDraft = {
@@ -475,7 +476,7 @@ function ImplementationSpecRunPage() {
     const deliveryId = randomUuid()
     const runtimeConfig = ttlValue != null ? { ttlSecondsAfterFinished: ttlValue } : undefined
     try {
-      const response = await fetch('/v1/agent-runs', {
+      const response = await fetch(AGENTS_AGENT_RUNS_API_PATH, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',

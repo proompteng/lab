@@ -71,6 +71,57 @@ describe('Agents HTTP runtime', () => {
     await expect(response.json()).resolves.toEqual({ ok: true })
   })
 
+  it('answers CORS preflight for allowed Jangar browser calls to Agents routes', async () => {
+    const runtime = await createAgentsHttpRuntime({
+      routeSources: {
+        './routes/v1/agent-runs.ts':
+          "export const Route = createFileRoute('/v1/agent-runs')({ server: { handlers: { POST: handler } } })",
+      },
+      routeModules: {
+        './routes/v1/agent-runs.ts': async () => ({
+          Route: {
+            options: {
+              server: {
+                handlers: {
+                  POST: () => new Response(JSON.stringify({ ok: true })),
+                },
+              },
+            },
+          },
+        }),
+      },
+    })
+
+    const response = await runtime.handleRequest(
+      new Request('https://agents.k8s.proompteng.ai/v1/agent-runs', {
+        method: 'OPTIONS',
+        headers: {
+          origin: 'https://jangar.k8s.proompteng.ai',
+          'access-control-request-method': 'POST',
+          'access-control-request-headers': 'content-type,idempotency-key',
+        },
+      }),
+    )
+
+    expect(response.status).toBe(204)
+    expect(response.headers.get('access-control-allow-origin')).toBe('https://jangar.k8s.proompteng.ai')
+    expect(response.headers.get('access-control-allow-headers')).toBe('content-type,idempotency-key')
+  })
+
+  it('adds CORS response headers to allowed Jangar browser Agents reads', async () => {
+    const runtime = await buildRouteRuntime()
+
+    const response = await runtime.handleRequest(
+      new Request('https://agents.k8s.proompteng.ai/v1/agent-runs/run%201', {
+        headers: { origin: 'https://jangar.k8s.proompteng.ai' },
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('access-control-allow-origin')).toBe('https://jangar.k8s.proompteng.ai')
+    await expect(response.json()).resolves.toEqual({ ok: true, id: 'run 1' })
+  })
+
   it('serves injected Prometheus metrics before route fallback handling', async () => {
     const runtime = await createAgentsHttpRuntime({
       routeSources: {},

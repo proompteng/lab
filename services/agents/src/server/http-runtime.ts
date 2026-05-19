@@ -59,6 +59,10 @@ type WebSocketRequest = Request & {
 const serverRoutePattern = /createFileRoute\(\s*(['"`])([^'"`]+)\1\s*\)/
 const serverMethods = ['DELETE', 'GET', 'OPTIONS', 'PATCH', 'POST', 'PUT'] as const
 const defaultClientOutputDirCandidates = () => [resolve(process.cwd(), '.output/public')]
+const defaultCorsAllowedOrigins = ['https://jangar.k8s.proompteng.ai']
+const defaultCorsAllowedMethods = 'DELETE, GET, OPTIONS, PATCH, POST, PUT'
+const defaultCorsAllowedHeaders = 'accept, authorization, content-type, idempotency-key'
+const corsMaxAgeSeconds = '86400'
 
 const isWebSocketUpgradeRequest = (request: Request) => request.headers.get('upgrade')?.toLowerCase() === 'websocket'
 
@@ -119,6 +123,53 @@ const shouldServeClientPath = (pathname: string, serverRouteRoots: ReadonlySet<s
   const firstSegment = getFirstPathSegment(pathname)
   return firstSegment === null || !serverRouteRoots.has(firstSegment)
 }
+
+const resolveCorsAllowedOrigins = () => {
+  const configured = process.env.AGENTS_CORS_ALLOWED_ORIGINS
+  const values = configured?.split(',') ?? defaultCorsAllowedOrigins
+  return new Set(values.map((value) => value.trim()).filter((value) => value.length > 0))
+}
+
+const resolveCorsOrigin = (request: Request, allowedOrigins: ReadonlySet<string>) => {
+  const origin = request.headers.get('origin')?.trim()
+  if (!origin || !allowedOrigins.has(origin)) return null
+  return origin
+}
+
+const isCorsManagedRequest = (request: Request, serverRouteRoots: ReadonlySet<string>) => {
+  const { pathname } = new URL(request.url)
+  const firstSegment = getFirstPathSegment(pathname)
+  return firstSegment !== null && serverRouteRoots.has(firstSegment)
+}
+
+const withCorsHeaders = (response: Response, request: Request, allowedOrigins: ReadonlySet<string>) => {
+  const origin = resolveCorsOrigin(request, allowedOrigins)
+  if (!origin) return response
+
+  const headers = new Headers(response.headers)
+  headers.set('access-control-allow-origin', origin)
+  headers.set('access-control-allow-methods', defaultCorsAllowedMethods)
+  headers.set(
+    'access-control-allow-headers',
+    request.headers.get('access-control-request-headers') || defaultCorsAllowedHeaders,
+  )
+  headers.set('access-control-max-age', corsMaxAgeSeconds)
+  headers.append('vary', 'Origin')
+  headers.append('vary', 'Access-Control-Request-Headers')
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  })
+}
+
+const isCorsPreflightRequest = (request: Request) =>
+  request.method.toUpperCase() === 'OPTIONS' &&
+  request.headers.has('origin') &&
+  request.headers.has('access-control-request-method')
+
+const corsPreflightResponse = (request: Request, allowedOrigins: ReadonlySet<string>) =>
+  withCorsHeaders(new Response(null, { status: 204 }), request, allowedOrigins)
 
 const getResolvedWebSocketHooks = (request: Request) =>
   (request as WebSocketRequest).context?.__agentsResolvedWebSocketHooks
@@ -305,7 +356,17 @@ export const createAgentsHttpRuntime = async (options: AgentsHttpRuntimeOptions)
     app.head('/**', serveClient)
   }
 
-  const handleRequest = toWebHandler(app)
+  const rawHandleRequest = toWebHandler(app)
+  const corsAllowedOrigins = resolveCorsAllowedOrigins()
+  const handleRequest = async (request: Request) => {
+    if (isCorsManagedRequest(request, serverRouteRoots) && isCorsPreflightRequest(request)) {
+      return corsPreflightResponse(request, corsAllowedOrigins)
+    }
+
+    const response = await rawHandleRequest(request)
+    if (!isCorsManagedRequest(request, serverRouteRoots)) return response
+    return withCorsHeaders(response, request, corsAllowedOrigins)
+  }
   const adapter = wsAdapter({
     resolve: (request) => getResolvedWebSocketHooks(request) ?? {},
   })

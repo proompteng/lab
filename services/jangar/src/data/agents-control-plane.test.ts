@@ -108,7 +108,7 @@ describe('normalizeControlPlaneStatusPayload', () => {
 
     expect(result).toEqual({ ok: true, items: [], total: 0, kind: 'AgentRun', namespace: 'agents' })
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/agents/control-plane/resources?kind=AgentRun&namespace=agents&limit=50',
+      'https://agents.k8s.proompteng.ai/api/agents/control-plane/resources?kind=AgentRun&namespace=agents&limit=50',
       {
         signal: undefined,
       },

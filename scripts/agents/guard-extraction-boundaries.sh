@@ -125,35 +125,14 @@ if ! matches_multiline 'services:\n\s+- name: agents\n\s+port: 80' "${ARGO_DIR}/
   exit 1
 fi
 
-require_matches \
-  "Agents GitOps kustomization must include the Jangar-host compatibility Agents IngressRoute" \
+fail_if_path_exists \
+  "Agents GitOps must not retain the Jangar-host compatibility Agents IngressRoute after Jangar browser callers use the canonical Agents API host" \
+  "${ARGO_DIR}/ingressroute-jangar-agents-api.yaml"
+
+fail_if_matches \
+  "Agents GitOps kustomization must not include the removed Jangar-host compatibility Agents IngressRoute" \
   'ingressroute-jangar-agents-api\.yaml' \
   "${ARGO_DIR}/kustomization.yaml"
-
-require_matches \
-  "Jangar-host Agents route must be marked as compatibility after canonical Agents host is available" \
-  'agents\.proompteng\.ai/compatibility-route' \
-  "${ARGO_DIR}/ingressroute-jangar-agents-api.yaml"
-
-require_matches \
-  "Jangar-host Agents compatibility route must point at canonical agents.k8s.proompteng.ai host" \
-  'agents\.proompteng\.ai/canonical-host: "agents\.k8s\.proompteng\.ai"' \
-  "${ARGO_DIR}/ingressroute-jangar-agents-api.yaml"
-
-require_matches \
-  "Jangar-host compatibility /api/agents route must be owned by the Agents namespace" \
-  'Host\(.*jangar\.k8s\.proompteng\.ai.*\) && PathPrefix\(.*\/api\/agents.*\)' \
-  "${ARGO_DIR}/ingressroute-jangar-agents-api.yaml"
-
-require_matches \
-  "Jangar-host compatibility /v1/agent-runs route must be owned by the Agents namespace" \
-  'Host\(.*jangar\.k8s\.proompteng\.ai.*\) && PathPrefix\(.*\/v1\/agent-runs.*\)' \
-  "${ARGO_DIR}/ingressroute-jangar-agents-api.yaml"
-
-if ! matches_multiline 'services:\n\s+- name: agents\n\s+port: 80' "${ARGO_DIR}/ingressroute-jangar-agents-api.yaml"; then
-  echo "Agents extraction boundary violation: Jangar-host compatibility Agents IngressRoute must target the Agents service." >&2
-  exit 1
-fi
 
 if matches_multiline 'kubernetesCRD:\n\s+enabled:\s*false' "${TRAEFIK_VALUES}"; then
   echo "Agents extraction boundary violation: Traefik GitOps must not disable the Kubernetes CRD provider required for Agents direct IngressRoute ownership." >&2
