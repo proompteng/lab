@@ -1,5 +1,5 @@
-import { assessAgentRunIngestion } from '~/server/agents-controller'
-import { isRuntimeTestEnv } from '~/server/agents-controller/runtime-config'
+import { assessAgentRunIngestion } from '@proompteng/agents/server/agents-controller'
+import { isRuntimeTestEnv } from '@proompteng/agents/server/agents-controller/runtime-config'
 import type {
   AdmissionPassportStatus,
   RecoveryWarrantExecutionClass,

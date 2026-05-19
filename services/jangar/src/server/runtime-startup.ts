@@ -1,16 +1,14 @@
-import { ensureAgentCommsRuntime, ensureControllerRuntimes } from './agent-comms-runtime'
-import { startAgentctlGrpcServer } from './agentctl-grpc'
+import { ensureAgentCommsRuntime } from './agent-comms-runtime'
 import { startControlPlaneCache } from './control-plane-cache'
 import type { JangarRuntimeStartup } from './runtime-profile'
 import { startTorghutQuantRuntime } from './torghut-quant-runtime'
+import { startWhitepaperFinalizeConsumer } from './whitepaper-finalize-consumer'
 
 type StartupState = {
   agentCommsStarted: boolean
-  controllerRuntimesStarted: boolean
   controlPlaneCacheStarted: boolean
   torghutQuantRuntimeStarted: boolean
-  grpcBootAttempted: boolean
-  grpcShutdownInstalled: boolean
+  whitepaperFinalizeConsumerStarted: boolean
 }
 
 const globalState = globalThis as typeof globalThis & {
@@ -21,11 +19,9 @@ const getState = (): StartupState => {
   if (!globalState.__jangarRuntimeStartup) {
     globalState.__jangarRuntimeStartup = {
       agentCommsStarted: false,
-      controllerRuntimesStarted: false,
       controlPlaneCacheStarted: false,
       torghutQuantRuntimeStarted: false,
-      grpcBootAttempted: false,
-      grpcShutdownInstalled: false,
+      whitepaperFinalizeConsumerStarted: false,
     }
   }
 
@@ -40,11 +36,6 @@ export const ensureRuntimeStartup = (startup: JangarRuntimeStartup) => {
     ensureAgentCommsRuntime()
   }
 
-  if (startup.controllerRuntimes && !state.controllerRuntimesStarted) {
-    state.controllerRuntimesStarted = true
-    ensureControllerRuntimes()
-  }
-
   if (startup.controlPlaneCache && !state.controlPlaneCacheStarted) {
     state.controlPlaneCacheStarted = true
     void startControlPlaneCache()
@@ -55,22 +46,8 @@ export const ensureRuntimeStartup = (startup: JangarRuntimeStartup) => {
     startTorghutQuantRuntime()
   }
 
-  if (!startup.agentctlGrpc || state.grpcBootAttempted) return
-
-  state.grpcBootAttempted = true
-  const instance = startAgentctlGrpcServer()
-  if (!instance) return
-
-  if (state.grpcShutdownInstalled) return
-  state.grpcShutdownInstalled = true
-  const shutdown = () => {
-    instance.server.tryShutdown((error) => {
-      if (error) {
-        console.error('[jangar] agentctl grpc shutdown failed', error)
-      }
-    })
+  if (startup.whitepaperFinalizeConsumer && !state.whitepaperFinalizeConsumerStarted) {
+    state.whitepaperFinalizeConsumerStarted = true
+    startWhitepaperFinalizeConsumer()
   }
-
-  process.on('SIGTERM', shutdown)
-  process.on('SIGINT', shutdown)
 }

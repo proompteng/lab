@@ -14,7 +14,7 @@ import type {
   SourceServingContractVerdictExchange,
   TorghutRevenueRepairQueueItem,
 } from '~/data/agents-control-plane'
-import { assessAgentRunIngestion, getAgentsControllerHealth } from '~/server/agents-controller'
+import { assessAgentRunIngestion, getAgentsControllerHealth } from '@proompteng/agents/server/agents-controller'
 import { buildControllerIngestionSettlement } from '~/server/control-plane-controller-ingestion-settlement'
 import { buildRuntimeAdmissionSnapshot, findAdmissionPassport } from '~/server/control-plane-runtime-admission'
 import {
@@ -27,7 +27,7 @@ import { getGithubReviewIngestPressureSummary } from '~/server/github-review-ing
 import { getLeaderElectionStatus } from '~/server/leader-election'
 import { getMemoryProviderHealth } from '~/server/memory-provider-health'
 import { getMetricsSinkPressureSummary } from '~/server/metrics'
-import { getOrchestrationControllerHealth } from '~/server/orchestration-controller'
+import { getOrchestrationControllerHealth } from '@proompteng/agents/server/orchestration-controller'
 import { getSupportingControllerHealth } from '~/server/supporting-primitives-controller'
 import { buildExecutionTrust } from '~/server/control-plane-status'
 import {

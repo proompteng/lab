@@ -47,7 +47,7 @@ vi.mock('~/server/control-plane-runtime-admission', async () => {
   }
 })
 
-import * as agentsControllerModule from '~/server/agents-controller'
+import * as agentsControllerModule from '@proompteng/agents/server/agents-controller'
 import { resolveBooleanFeatureToggle } from '~/server/feature-flags'
 import { asString } from '~/server/primitives-http'
 import type { KubernetesClient } from '~/server/primitives-kube'

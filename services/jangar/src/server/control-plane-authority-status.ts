@@ -1,4 +1,4 @@
-import type { getAgentsControllerHealth } from '~/server/agents-controller'
+import type { getAgentsControllerHealth } from '@proompteng/agents/server/agents-controller'
 import { isHeartbeatFresh, type ControlPlaneHeartbeatRow } from '~/server/control-plane-heartbeat-store'
 import type { ControllerStatus, RuntimeAdapterStatus } from '~/server/control-plane-status-types'
 

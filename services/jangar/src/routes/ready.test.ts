@@ -53,9 +53,9 @@ const githubReviewIngestMocks = vi.hoisted(() => ({
   getGithubReviewIngestPressureSummary: vi.fn(),
 }))
 
-vi.mock('~/server/agents-controller', () => agentsControllerMocks)
+vi.mock('@proompteng/agents/server/agents-controller', () => agentsControllerMocks)
 vi.mock('~/server/leader-election', () => leaderElectionMocks)
-vi.mock('~/server/orchestration-controller', () => orchestrationControllerMocks)
+vi.mock('@proompteng/agents/server/orchestration-controller', () => orchestrationControllerMocks)
 vi.mock('~/server/supporting-primitives-controller', () => supportingControllerMocks)
 vi.mock('~/server/memory-provider-health', () => memoryProviderHealthMocks)
 vi.mock('~/server/control-plane-watch-reliability', () => watchReliabilityMocks)
