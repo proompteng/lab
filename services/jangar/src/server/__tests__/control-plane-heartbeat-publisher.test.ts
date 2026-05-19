@@ -41,6 +41,24 @@ describe('control-plane heartbeat publisher', () => {
     vi.clearAllMocks()
   })
 
+  it('does not publish controller heartbeats by default from Jangar', async () => {
+    const createStore = vi.fn(() => ({
+      ready: Promise.resolve(),
+      close: async () => undefined,
+      upsertHeartbeat: vi.fn(async () => undefined),
+      getHeartbeat: async () => null,
+    }))
+
+    const published = await publishControlPlaneHeartbeatsOnce({
+      now: () => new Date('2026-03-08T12:00:00Z'),
+      getLeaderStatus: () => leaderStatus,
+      createStore,
+    })
+
+    expect(published).toBe(0)
+    expect(createStore).not.toHaveBeenCalled()
+  })
+
   it('publishes authoritative controller rows from the leader workload', async () => {
     const upsertHeartbeat = vi.fn(async () => undefined)
 

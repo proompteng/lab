@@ -1,5 +1,3 @@
-import { assessAgentRunIngestion } from '@proompteng/agents/server/agents-controller'
-import { isRuntimeTestEnv } from '@proompteng/agents/server/agents-controller/runtime-config'
 import type {
   AdmissionPassportStatus,
   RecoveryWarrantExecutionClass,
@@ -124,6 +122,7 @@ import {
   TERMINAL_FAILURE_PHASES,
   TERMINAL_SUCCESS_PHASES,
 } from '~/server/supporting-primitives-swarm-analysis'
+import { assessAgentRunIngestionViaAgentsService } from '~/server/supporting-primitives-agentrun-ingestion'
 import { shouldApplyStatus } from '~/server/status-utils'
 
 const DEFAULT_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY = 'jangar.supporting_controller.enabled'
@@ -194,6 +193,10 @@ const SCHEDULE_RUNNER_STATUS_RECONCILE_INTERVAL_MS = 30_000
 const SWARM_STAGE_LABEL = 'swarm.proompteng.ai/stage'
 const SWARM_NAME_LABEL = 'swarm.proompteng.ai/name'
 const AGENTRUN_TEMPLATE_ANNOTATION = 'agents.proompteng.ai/template'
+const AGENTRUN_INGESTION_NOT_READY_REASON = 'agentrun_ingestion_not_ready'
+
+const isRuntimeTestEnv = (env: Record<string, string | undefined> = process.env) =>
+  env.NODE_ENV === 'test' || Boolean(env.VITEST)
 
 const nowIso = () => new Date().toISOString()
 
@@ -2152,8 +2155,10 @@ const reconcileSwarm = async (
   } else {
     requirementDispatchNamespaces.add(swarmNamespace)
   }
-  const requirementDispatchAssessments = Array.from(requirementDispatchNamespaces).map((targetNamespace) =>
-    assessAgentRunIngestion(targetNamespace),
+  const requirementDispatchAssessments = await Promise.all(
+    Array.from(requirementDispatchNamespaces).map((targetNamespace) =>
+      assessAgentRunIngestionViaAgentsService(targetNamespace),
+    ),
   )
   const requirementDispatchPauseAssessment =
     requirementDispatchAssessments.find((assessment) => assessment.dispatchPaused) ?? null
