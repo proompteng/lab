@@ -1,15 +1,11 @@
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import {
-  createAgentsHttpRuntime,
-  type AgentsHttpRuntime,
-  type AgentsHttpRuntimeOptions,
-} from '@proompteng/agents/server/http-runtime'
+import { createJangarHttpRuntime, type JangarHttpRuntime, type JangarHttpRuntimeOptions } from './http-runtime'
 
 import { getPrometheusMetricsPath, isPrometheusMetricsEnabled, renderPrometheusMetrics } from './metrics'
 
-export type JangarRuntime = AgentsHttpRuntime
+export type JangarRuntime = JangarHttpRuntime
 
 const serverRouteModules = import.meta.glob([
   '../routes/api/**/*.{ts,tsx}',
@@ -56,8 +52,8 @@ export const getClientOutputDirCandidates = ({
   )
 
 export const createJangarRuntime = async (options: { serveClient?: boolean } = {}): Promise<JangarRuntime> =>
-  createAgentsHttpRuntime({
-    routeModules: serverRouteModules as AgentsHttpRuntimeOptions['routeModules'],
+  createJangarHttpRuntime({
+    routeModules: serverRouteModules as JangarHttpRuntimeOptions['routeModules'],
     routeSources: serverRouteSources,
     serveClient: options.serveClient,
     clientOutputDirCandidates: getClientOutputDirCandidates,
