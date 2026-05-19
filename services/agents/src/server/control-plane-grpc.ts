@@ -22,15 +22,10 @@ type RuntimeEnvValue = {
   value: string
 }
 
-const readRuntimeEnv = (canonicalName: string, legacyName: string): RuntimeEnvValue => {
+const readRuntimeEnv = (canonicalName: string): RuntimeEnvValue => {
   const canonicalValue = process.env[canonicalName]?.trim()
   if (canonicalValue) {
     return { name: canonicalName, value: canonicalValue }
-  }
-
-  const legacyValue = process.env[legacyName]?.trim()
-  if (legacyValue) {
-    return { name: legacyName, value: legacyValue }
   }
 
   return { name: canonicalName, value: '' }
@@ -69,7 +64,7 @@ const parseGrpcPort = (portInput: string, fallback: number): number | null => {
 }
 
 const parseGrpcTimeoutMs = () => {
-  const raw = process.env.AGENTS_GRPC_HEALTH_TIMEOUT_MS ?? process.env.JANGAR_GRPC_HEALTH_TIMEOUT_MS
+  const raw = process.env.AGENTS_GRPC_HEALTH_TIMEOUT_MS
   const parsed = Number.parseInt(raw ?? '', 10)
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULT_GRPC_HEALTH_TIMEOUT_MS
 }
@@ -118,7 +113,7 @@ const checkGrpcEndpointReachability = async (host: string, port: number, timeout
 
 export const resolveGrpcStatus = async (): Promise<GrpcStatus> => {
   const grpcConfig = resolveAgentctlGrpcConfig(process.env)
-  const enabledEnv = readRuntimeEnv('AGENTS_GRPC_ENABLED', 'JANGAR_GRPC_ENABLED')
+  const enabledEnv = readRuntimeEnv('AGENTS_GRPC_ENABLED')
   const parsedEnabled = parseBooleanFlag(enabledEnv.value)
   if (!parsedEnabled.valid) {
     return {
@@ -139,9 +134,9 @@ export const resolveGrpcStatus = async (): Promise<GrpcStatus> => {
   }
 
   const host = grpcConfig.host
-  const addressOverride = readRuntimeEnv('AGENTS_GRPC_ADDRESS', 'JANGAR_GRPC_ADDRESS').value
+  const addressOverride = readRuntimeEnv('AGENTS_GRPC_ADDRESS').value
   if (!addressOverride) {
-    const portEnv = readRuntimeEnv('AGENTS_GRPC_PORT', 'JANGAR_GRPC_PORT')
+    const portEnv = readRuntimeEnv('AGENTS_GRPC_PORT')
     const resolvedPort = parseGrpcPort(portEnv.value, DEFAULT_GRPC_PORT)
     if (resolvedPort === null) {
       return {

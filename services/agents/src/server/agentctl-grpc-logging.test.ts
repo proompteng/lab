@@ -9,7 +9,6 @@ describe('agentctl gRPC runtime logging', () => {
     vi.restoreAllMocks()
     process.env = { ...ORIGINAL_ENV }
     delete process.env.AGENTS_RUNTIME_SERVICE
-    delete process.env.JANGAR_GRPC_ENABLED
     delete process.env.AGENTS_GRPC_ENABLED
   })
 
@@ -27,11 +26,11 @@ describe('agentctl gRPC runtime logging', () => {
     expect(info).toHaveBeenCalledWith('[agents] agentctl grpc disabled for control plane')
   })
 
-  it('keeps legacy Jangar labels outside Agents runtime mode', () => {
+  it('uses Agents log labels without runtime identity env', () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {})
 
     expect(startAgentctlGrpcServer()).toBeNull()
 
-    expect(info).toHaveBeenCalledWith('[jangar] agentctl grpc disabled for control plane')
+    expect(info).toHaveBeenCalledWith('[agents] agentctl grpc disabled for control plane')
   })
 })

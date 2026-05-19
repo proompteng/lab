@@ -1,21 +1,9 @@
-type EnvSource = Record<string, string | undefined>
+import { parseBooleanEnv, readAgentsEnv, readAgentsRawEnv, type EnvSource } from './runtime-env'
 
-const TRUE_VALUES = new Set(['1', 'true', 'yes', 'y', 'on', 'enabled'])
-const FALSE_VALUES = new Set(['0', 'false', 'no', 'n', 'off', 'disabled'])
 const DNS_LABEL_REGEX = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
 
-const readEnv = (env: EnvSource, name: string) => env[name] ?? env[`JANGAR_${name.slice('AGENTS_'.length)}`]
-
-const parseBooleanEnv = (value: string | undefined, fallback: boolean) => {
-  if (value == null) return fallback
-  const normalized = value.trim().toLowerCase()
-  if (TRUE_VALUES.has(normalized)) return true
-  if (FALSE_VALUES.has(normalized)) return false
-  return fallback
-}
-
 const isControllerClusterScoped = (env: EnvSource = process.env) =>
-  parseBooleanEnv(env.AGENTS_RBAC_CLUSTER_SCOPED ?? env.JANGAR_RBAC_CLUSTER_SCOPED, false)
+  parseBooleanEnv(readAgentsEnv(env, 'AGENTS_RBAC_CLUSTER_SCOPED'), false)
 
 export const assertClusterScopedForWildcard = (namespaces: string[], label: string, env: EnvSource = process.env) => {
   if (!namespaces.includes('*')) return
@@ -99,9 +87,7 @@ export const parseNamespaceScopeEnv = (
   options: { fallback: string[]; label: string },
   env: EnvSource = process.env,
 ): string[] => {
-  const raw = envName.startsWith('AGENTS_')
-    ? readEnv(env, envName)
-    : (env[envName] ?? env[`AGENTS_${envName.slice('JANGAR_'.length)}`])
+  const raw = readAgentsRawEnv(env, envName)
   if (raw == null) return options.fallback
   if (raw.trim() === '') {
     throw new NamespaceScopeConfigError(

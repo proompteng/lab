@@ -1,4 +1,5 @@
 import type { AuditEventRecord } from './primitives-store'
+import { normalizeEnvValue, readAgentsEnv, type EnvSource } from './runtime-env'
 
 type AuditSinkType = 'none' | 'stdout' | 'http'
 
@@ -10,20 +11,10 @@ type AuditHttpSinkConfig = {
 
 type AuditSinkConfig = { type: 'none' } | { type: 'stdout' } | { type: 'http'; http: AuditHttpSinkConfig }
 
-type EnvSource = Record<string, string | undefined>
-
 const DEFAULT_HTTP_TIMEOUT_MS = 2000
 
-const normalizeString = (value: string | undefined) => {
-  const trimmed = value?.trim() ?? ''
-  return trimmed.length > 0 ? trimmed : null
-}
-
-const readAgentsEnv = (env: EnvSource, agentsName: string, legacyJangarName?: string) =>
-  normalizeString(env[agentsName]) ?? (legacyJangarName ? normalizeString(env[legacyJangarName]) : null)
-
 const parseOptionalJsonRecord = (value: string | undefined) => {
-  const trimmed = normalizeString(value)
+  const trimmed = normalizeEnvValue(value)
   if (!trimmed) return {}
   try {
     const parsed = JSON.parse(trimmed) as unknown
@@ -40,7 +31,7 @@ const parseOptionalJsonRecord = (value: string | undefined) => {
 }
 
 const parseOptionalInt = (value: string | undefined) => {
-  const trimmed = normalizeString(value)
+  const trimmed = normalizeEnvValue(value)
   if (!trimmed) return null
   const parsed = Number.parseInt(trimmed, 10)
   if (!Number.isFinite(parsed) || parsed <= 0) return null
@@ -50,28 +41,23 @@ const parseOptionalInt = (value: string | undefined) => {
 let cachedConfig: AuditSinkConfig | null = null
 
 export const resolveAgentsAuditSinkConfig = (env: EnvSource = process.env): AuditSinkConfig => {
-  const type = (readAgentsEnv(env, 'AGENTS_AUDIT_SINK_TYPE', 'JANGAR_AUDIT_SINK_TYPE') ?? 'none')
-    .trim()
-    .toLowerCase() as AuditSinkType
+  const type = (readAgentsEnv(env, 'AGENTS_AUDIT_SINK_TYPE') ?? 'none').trim().toLowerCase() as AuditSinkType
 
   if (type === 'stdout') {
     return { type: 'stdout' }
   }
 
   if (type === 'http') {
-    const url = readAgentsEnv(env, 'AGENTS_AUDIT_SINK_HTTP_URL', 'JANGAR_AUDIT_SINK_HTTP_URL')
+    const url = readAgentsEnv(env, 'AGENTS_AUDIT_SINK_HTTP_URL')
     if (!url) return { type: 'none' }
     return {
       type: 'http',
       http: {
         url,
-        headers: parseOptionalJsonRecord(
-          readAgentsEnv(env, 'AGENTS_AUDIT_SINK_HTTP_HEADERS_JSON', 'JANGAR_AUDIT_SINK_HTTP_HEADERS_JSON') ?? undefined,
-        ),
+        headers: parseOptionalJsonRecord(readAgentsEnv(env, 'AGENTS_AUDIT_SINK_HTTP_HEADERS_JSON') ?? undefined),
         timeoutMs:
-          parseOptionalInt(
-            readAgentsEnv(env, 'AGENTS_AUDIT_SINK_HTTP_TIMEOUT_MS', 'JANGAR_AUDIT_SINK_HTTP_TIMEOUT_MS') ?? undefined,
-          ) ?? DEFAULT_HTTP_TIMEOUT_MS,
+          parseOptionalInt(readAgentsEnv(env, 'AGENTS_AUDIT_SINK_HTTP_TIMEOUT_MS') ?? undefined) ??
+          DEFAULT_HTTP_TIMEOUT_MS,
       },
     }
   }
