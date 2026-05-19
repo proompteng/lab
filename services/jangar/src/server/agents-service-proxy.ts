@@ -21,11 +21,7 @@ const normalizeNonEmpty = (value: string | undefined | null) => {
 }
 
 export const resolveAgentsServiceBaseUrl = (env: EnvSource = process.env) =>
-  (
-    normalizeNonEmpty(env.AGENTS_SERVICE_BASE_URL) ??
-    normalizeNonEmpty(env.JANGAR_AGENTS_SERVICE_BASE_URL) ??
-    DEFAULT_AGENTS_SERVICE_BASE_URL
-  ).replace(/\/+$/, '')
+  (normalizeNonEmpty(env.AGENTS_SERVICE_BASE_URL) ?? DEFAULT_AGENTS_SERVICE_BASE_URL).replace(/\/+$/, '')
 
 const copyHeaders = (source: Headers, omit: Set<string>) => {
   const headers = new Headers()
@@ -64,6 +60,12 @@ export type AgentsOrchestrationRunSubmitInput = {
   namespace: string
   parameters?: Record<string, string>
   policy?: Record<string, unknown>
+}
+
+export type AgentsAgentRunSubmitInput = {
+  deliveryId: string
+  payload: Record<string, unknown>
+  dryRun?: string | null
 }
 
 export type AgentsOrchestrationRunSubmitResult = {
@@ -125,7 +127,7 @@ export const fetchAgentsServiceJson = async <T>(
   const targetUrl = new URL(path.startsWith('/') ? path : `/${path}`, `${baseUrl}/`)
   const requestHeaders = new Headers({
     accept: 'application/json',
-    'x-jangar-agents-proxy': 'true',
+    'x-agents-client': 'jangar',
   })
 
   try {
@@ -157,6 +159,53 @@ export const fetchAgentsServiceJson = async <T>(
   }
 }
 
+export const submitAgentRunToAgentsService = async (
+  input: AgentsAgentRunSubmitInput,
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<Record<string, unknown>>> => {
+  const baseUrl = resolveAgentsServiceBaseUrl(env)
+  const targetUrl = new URL('/v1/agent-runs', `${baseUrl}/`)
+  if (input.dryRun != null) {
+    targetUrl.searchParams.set('dryRun', input.dryRun)
+  }
+
+  try {
+    const upstream = await fetch(targetUrl, {
+      body: JSON.stringify(input.payload),
+      headers: {
+        accept: 'application/json',
+        'content-type': 'application/json',
+        'idempotency-key': input.deliveryId,
+        'x-agents-client': 'jangar',
+      },
+      method: 'POST',
+    })
+
+    const body = await readJsonBody(upstream)
+    if (upstream.ok && body !== null) {
+      return {
+        ok: true,
+        status: upstream.status,
+        body,
+      }
+    }
+
+    return {
+      ok: false,
+      status: upstream.status,
+      body,
+      error: getBodyError(body) ?? upstream.statusText ?? `Agents service returned HTTP ${upstream.status}`,
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      status: 0,
+      body: null,
+      error: getErrorMessage(error),
+    }
+  }
+}
+
 export const submitOrchestrationRunToAgentsService = async (
   input: AgentsOrchestrationRunSubmitInput,
   env: EnvSource = process.env,
@@ -174,7 +223,7 @@ export const submitOrchestrationRunToAgentsService = async (
       accept: 'application/json',
       'content-type': 'application/json',
       'idempotency-key': input.deliveryId,
-      'x-jangar-agents-proxy': 'true',
+      'x-agents-client': 'jangar',
     },
     method: 'POST',
   })
@@ -212,7 +261,7 @@ export const submitAgentMessagesToAgentsService = async (
     headers: {
       accept: 'application/json',
       'content-type': 'application/json',
-      'x-jangar-agents-proxy': 'true',
+      'x-agents-client': 'jangar',
     },
     method: 'POST',
   })
@@ -237,7 +286,7 @@ export const proxyAgentsServiceRequest = async (request: Request, path: string, 
   const method = request.method.toUpperCase()
   const targetUrl = buildAgentsServiceProxyUrl(request, path, env)
   const requestHeaders = copyHeaders(request.headers, HOP_BY_HOP_HEADERS)
-  requestHeaders.set('x-jangar-agents-proxy', 'true')
+  requestHeaders.set('x-agents-client', 'jangar')
 
   const body = method === 'GET' || method === 'HEAD' ? undefined : await request.arrayBuffer()
   const upstream = await fetch(targetUrl, {

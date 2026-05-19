@@ -56,7 +56,7 @@ const readAgentsReadyPayload = async () => {
   const response = await fetch(url, {
     headers: {
       accept: 'application/json',
-      'x-jangar-agents-proxy': 'true',
+      'x-agents-client': 'jangar',
     },
   })
   const payload = asRecord(await response.json().catch(() => null))

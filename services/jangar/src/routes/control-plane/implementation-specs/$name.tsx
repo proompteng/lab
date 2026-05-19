@@ -475,7 +475,7 @@ function ImplementationSpecRunPage() {
     const deliveryId = randomUuid()
     const runtimeConfig = ttlValue != null ? { ttlSecondsAfterFinished: ttlValue } : undefined
     try {
-      const response = await fetch('/v1/agent-runs', {
+      const response = await fetch('/api/control-plane/agent-runs', {
         method: 'POST',
         headers: {
           'content-type': 'application/json',

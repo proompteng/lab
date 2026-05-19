@@ -28,7 +28,6 @@ const LEGACY_LINE_CAPS: Record<string, number> = {
   'src/server/github-review-actions.ts': 928,
   'src/server/github-client.ts': 905,
   'src/routes/atlas/search.tsx': 891,
-  'src/routes/v1/agent-runs.ts': 886,
   'src/routes/control-plane/implementation-specs/$name.tsx': 862,
   'src/server/torghut-quant-runtime.ts': 818,
 }

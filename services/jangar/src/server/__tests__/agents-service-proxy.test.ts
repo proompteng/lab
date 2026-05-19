@@ -5,6 +5,7 @@ import {
   fetchAgentsServiceJson,
   proxyAgentsServiceRequest,
   resolveAgentsServiceBaseUrl,
+  submitAgentRunToAgentsService,
   submitAgentMessagesToAgentsService,
   submitOrchestrationRunToAgentsService,
 } from '~/server/agents-service-proxy'
@@ -73,7 +74,7 @@ describe('agents-service-proxy', () => {
     expect((init.headers as Headers).get('x-request-id')).toBe('req-1')
     expect((init.headers as Headers).get('connection')).toBeNull()
     expect((init.headers as Headers).get('content-length')).toBeNull()
-    expect((init.headers as Headers).get('x-jangar-agents-proxy')).toBe('true')
+    expect((init.headers as Headers).get('x-agents-client')).toBe('jangar')
     expect(new TextDecoder().decode(init.body as ArrayBuffer)).toBe('{"metadata":{"name":"agent-a"}}')
 
     expect(response.status).toBe(202)
@@ -101,11 +102,58 @@ describe('agents-service-proxy', () => {
     expect(url.toString()).toBe('http://agents.test/health')
     expect(init.method).toBe('GET')
     expect((init.headers as Headers).get('accept')).toBe('application/json')
-    expect((init.headers as Headers).get('x-jangar-agents-proxy')).toBe('true')
+    expect((init.headers as Headers).get('x-agents-client')).toBe('jangar')
     expect(result).toEqual({
       ok: true,
       status: 200,
       body: { status: 'ok' },
+    })
+  })
+
+  it('submits AgentRun creation through the Agents service boundary', async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          agentRun: { id: 'run-1', deliveryId: 'delivery-1' },
+          resource: { kind: 'AgentRun', metadata: { name: 'demo-agent-run' } },
+        }),
+        {
+          headers: { 'content-type': 'application/json' },
+          status: 201,
+        },
+      )
+    })
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+
+    const result = await submitAgentRunToAgentsService(
+      {
+        deliveryId: 'delivery-1',
+        dryRun: 'true',
+        payload: { agentRef: { name: 'demo-agent' } },
+      },
+      { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
+    )
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
+    expect(url.toString()).toBe('http://agents.test/v1/agent-runs?dryRun=true')
+    expect(init.method).toBe('POST')
+    expect(init.body).toBe(JSON.stringify({ agentRef: { name: 'demo-agent' } }))
+    expect(init.headers).toMatchObject({
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'idempotency-key': 'delivery-1',
+      'x-agents-client': 'jangar',
+    })
+    expect(result).toEqual({
+      ok: true,
+      status: 201,
+      body: {
+        ok: true,
+        agentRun: { id: 'run-1', deliveryId: 'delivery-1' },
+        resource: { kind: 'AgentRun', metadata: { name: 'demo-agent-run' } },
+      },
     })
   })
 
@@ -155,7 +203,7 @@ describe('agents-service-proxy', () => {
       accept: 'application/json',
       'content-type': 'application/json',
       'idempotency-key': 'delivery-1',
-      'x-jangar-agents-proxy': 'true',
+      'x-agents-client': 'jangar',
     })
     expect(result).toEqual({
       orchestrationRun: {
@@ -206,8 +254,9 @@ describe('agents-service-proxy', () => {
     const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
     expect(url.toString()).toBe('http://agents.test/api/agents/messages')
     expect(init.method).toBe('POST')
-    expect((init.headers as Record<string, string>)['x-jangar-agents-proxy']).toBe('true')
-    expect(JSON.parse(String(init.body))).toMatchObject({
+    expect((init.headers as Record<string, string>)['x-agents-client']).toBe('jangar')
+    expect(typeof init.body).toBe('string')
+    expect(JSON.parse(init.body as string)).toMatchObject({
       skipIfExisting: { runId: 'run-1' },
       messages: [{ runId: 'run-1', content: 'hello' }],
     })

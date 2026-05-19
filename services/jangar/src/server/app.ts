@@ -9,7 +9,6 @@ export type JangarRuntime = JangarHttpRuntime
 
 const serverRouteModules = import.meta.glob([
   '../routes/api/**/*.{ts,tsx}',
-  '../routes/v1/**/*.{ts,tsx}',
   '../routes/openai/**/*.{ts,tsx}',
   '../routes/health.tsx',
   '../routes/ready.tsx',
@@ -20,7 +19,6 @@ const serverRouteModules = import.meta.glob([
 const serverRouteSources = import.meta.glob(
   [
     '../routes/api/**/*.{ts,tsx}',
-    '../routes/v1/**/*.{ts,tsx}',
     '../routes/openai/**/*.{ts,tsx}',
     '../routes/health.tsx',
     '../routes/ready.tsx',

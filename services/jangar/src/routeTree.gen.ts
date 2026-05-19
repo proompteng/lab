@@ -19,12 +19,6 @@ import { Route as LibraryIndexRouteImport } from './routes/library/index'
 import { Route as ControlPlaneIndexRouteImport } from './routes/control-plane/index'
 import { Route as AtlasIndexRouteImport } from './routes/atlas/index'
 import { Route as AgentsIndexRouteImport } from './routes/agents/index'
-import { Route as V1OrchestrationsRouteImport } from './routes/v1/orchestrations'
-import { Route as V1OrchestrationRunsRouteImport } from './routes/v1/orchestration-runs'
-import { Route as V1MemoryQueriesRouteImport } from './routes/v1/memory-queries'
-import { Route as V1MemoriesRouteImport } from './routes/v1/memories'
-import { Route as V1AgentsRouteImport } from './routes/v1/agents'
-import { Route as V1AgentRunsRouteImport } from './routes/v1/agent-runs'
 import { Route as TorghutVisualsRouteImport } from './routes/torghut/visuals'
 import { Route as TorghutTradingRouteImport } from './routes/torghut/trading'
 import { Route as TorghutSymbolsRouteImport } from './routes/torghut/symbols'
@@ -70,12 +64,6 @@ import { Route as ControlPlaneAgentsIndexRouteImport } from './routes/control-pl
 import { Route as ControlPlaneAgentRunsIndexRouteImport } from './routes/control-plane/agent-runs/index'
 import { Route as ControlPlaneAgentProvidersIndexRouteImport } from './routes/control-plane/agent-providers/index'
 import { Route as ApiWhitepapersIndexRouteImport } from './routes/api/whitepapers/index'
-import { Route as V1RunsIdRouteImport } from './routes/v1/runs/$id'
-import { Route as V1OrchestrationsIdRouteImport } from './routes/v1/orchestrations/$id'
-import { Route as V1OrchestrationRunsIdRouteImport } from './routes/v1/orchestration-runs/$id'
-import { Route as V1MemoriesIdRouteImport } from './routes/v1/memories/$id'
-import { Route as V1AgentsIdRouteImport } from './routes/v1/agents/$id'
-import { Route as V1AgentRunsIdRouteImport } from './routes/v1/agent-runs/$id'
 import { Route as TorghutControlPlaneSimulationRouteImport } from './routes/torghut/control-plane/simulation'
 import { Route as TerminalsSessionIdFullscreenRouteImport } from './routes/terminals/$sessionId/fullscreen'
 import { Route as OpenaiV1ModelsRouteImport } from './routes/openai/v1/models'
@@ -108,6 +96,7 @@ import { Route as ApiMemoriesStatsRouteImport } from './routes/api/memories/stat
 import { Route as ApiMemoriesCountRouteImport } from './routes/api/memories/count'
 import { Route as ApiGithubPullsRouteImport } from './routes/api/github/pulls'
 import { Route as ApiGithubIssuesRouteImport } from './routes/api/github/issues'
+import { Route as ApiControlPlaneAgentRunsRouteImport } from './routes/api/control-plane/agent-runs'
 import { Route as ApiCodexRunsRouteImport } from './routes/api/codex/runs'
 import { Route as ApiCodexRunCompleteRouteImport } from './routes/api/codex/run-complete'
 import { Route as ApiCodexRerunRouteImport } from './routes/api/codex/rerun'
@@ -237,36 +226,6 @@ const AtlasIndexRoute = AtlasIndexRouteImport.update({
 const AgentsIndexRoute = AgentsIndexRouteImport.update({
   id: '/agents/',
   path: '/agents/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const V1OrchestrationsRoute = V1OrchestrationsRouteImport.update({
-  id: '/v1/orchestrations',
-  path: '/v1/orchestrations',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const V1OrchestrationRunsRoute = V1OrchestrationRunsRouteImport.update({
-  id: '/v1/orchestration-runs',
-  path: '/v1/orchestration-runs',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const V1MemoryQueriesRoute = V1MemoryQueriesRouteImport.update({
-  id: '/v1/memory-queries',
-  path: '/v1/memory-queries',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const V1MemoriesRoute = V1MemoriesRouteImport.update({
-  id: '/v1/memories',
-  path: '/v1/memories',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const V1AgentsRoute = V1AgentsRouteImport.update({
-  id: '/v1/agents',
-  path: '/v1/agents',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const V1AgentRunsRoute = V1AgentRunsRouteImport.update({
-  id: '/v1/agent-runs',
-  path: '/v1/agent-runs',
   getParentRoute: () => rootRouteImport,
 } as any)
 const TorghutVisualsRoute = TorghutVisualsRouteImport.update({
@@ -510,36 +469,6 @@ const ApiWhitepapersIndexRoute = ApiWhitepapersIndexRouteImport.update({
   path: '/api/whitepapers/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const V1RunsIdRoute = V1RunsIdRouteImport.update({
-  id: '/v1/runs/$id',
-  path: '/v1/runs/$id',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const V1OrchestrationsIdRoute = V1OrchestrationsIdRouteImport.update({
-  id: '/$id',
-  path: '/$id',
-  getParentRoute: () => V1OrchestrationsRoute,
-} as any)
-const V1OrchestrationRunsIdRoute = V1OrchestrationRunsIdRouteImport.update({
-  id: '/$id',
-  path: '/$id',
-  getParentRoute: () => V1OrchestrationRunsRoute,
-} as any)
-const V1MemoriesIdRoute = V1MemoriesIdRouteImport.update({
-  id: '/$id',
-  path: '/$id',
-  getParentRoute: () => V1MemoriesRoute,
-} as any)
-const V1AgentsIdRoute = V1AgentsIdRouteImport.update({
-  id: '/$id',
-  path: '/$id',
-  getParentRoute: () => V1AgentsRoute,
-} as any)
-const V1AgentRunsIdRoute = V1AgentRunsIdRouteImport.update({
-  id: '/$id',
-  path: '/$id',
-  getParentRoute: () => V1AgentRunsRoute,
-} as any)
 const TorghutControlPlaneSimulationRoute =
   TorghutControlPlaneSimulationRouteImport.update({
     id: '/simulation',
@@ -718,6 +647,12 @@ const ApiGithubIssuesRoute = ApiGithubIssuesRouteImport.update({
   path: '/api/github/issues',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiControlPlaneAgentRunsRoute =
+  ApiControlPlaneAgentRunsRouteImport.update({
+    id: '/api/control-plane/agent-runs',
+    path: '/api/control-plane/agent-runs',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiCodexRunsRoute = ApiCodexRunsRouteImport.update({
   id: '/api/codex/runs',
   path: '/api/codex/runs',
@@ -1205,12 +1140,6 @@ export interface FileRoutesByFullPath {
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/trading': typeof TorghutTradingRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
-  '/v1/agent-runs': typeof V1AgentRunsRouteWithChildren
-  '/v1/agents': typeof V1AgentsRouteWithChildren
-  '/v1/memories': typeof V1MemoriesRouteWithChildren
-  '/v1/memory-queries': typeof V1MemoryQueriesRoute
-  '/v1/orchestration-runs': typeof V1OrchestrationRunsRouteWithChildren
-  '/v1/orchestrations': typeof V1OrchestrationsRouteWithChildren
   '/agents/': typeof AgentsIndexRoute
   '/atlas/': typeof AtlasIndexRoute
   '/control-plane/': typeof ControlPlaneIndexRoute
@@ -1227,6 +1156,7 @@ export interface FileRoutesByFullPath {
   '/api/codex/rerun': typeof ApiCodexRerunRoute
   '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
   '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
+  '/api/control-plane/agent-runs': typeof ApiControlPlaneAgentRunsRoute
   '/api/github/issues': typeof ApiGithubIssuesRoute
   '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
   '/api/memories/count': typeof ApiMemoriesCountRoute
@@ -1259,12 +1189,6 @@ export interface FileRoutesByFullPath {
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/terminals/$sessionId/fullscreen': typeof TerminalsSessionIdFullscreenRoute
   '/torghut/control-plane/simulation': typeof TorghutControlPlaneSimulationRoute
-  '/v1/agent-runs/$id': typeof V1AgentRunsIdRoute
-  '/v1/agents/$id': typeof V1AgentsIdRoute
-  '/v1/memories/$id': typeof V1MemoriesIdRoute
-  '/v1/orchestration-runs/$id': typeof V1OrchestrationRunsIdRoute
-  '/v1/orchestrations/$id': typeof V1OrchestrationsIdRoute
-  '/v1/runs/$id': typeof V1RunsIdRoute
   '/api/whitepapers/': typeof ApiWhitepapersIndexRoute
   '/control-plane/agent-providers/': typeof ControlPlaneAgentProvidersIndexRoute
   '/control-plane/agent-runs/': typeof ControlPlaneAgentRunsIndexRoute
@@ -1384,12 +1308,6 @@ export interface FileRoutesByTo {
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/trading': typeof TorghutTradingRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
-  '/v1/agent-runs': typeof V1AgentRunsRouteWithChildren
-  '/v1/agents': typeof V1AgentsRouteWithChildren
-  '/v1/memories': typeof V1MemoriesRouteWithChildren
-  '/v1/memory-queries': typeof V1MemoryQueriesRoute
-  '/v1/orchestration-runs': typeof V1OrchestrationRunsRouteWithChildren
-  '/v1/orchestrations': typeof V1OrchestrationsRouteWithChildren
   '/agents': typeof AgentsIndexRoute
   '/atlas': typeof AtlasIndexRoute
   '/control-plane': typeof ControlPlaneIndexRoute
@@ -1406,6 +1324,7 @@ export interface FileRoutesByTo {
   '/api/codex/rerun': typeof ApiCodexRerunRoute
   '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
   '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
+  '/api/control-plane/agent-runs': typeof ApiControlPlaneAgentRunsRoute
   '/api/github/issues': typeof ApiGithubIssuesRoute
   '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
   '/api/memories/count': typeof ApiMemoriesCountRoute
@@ -1438,12 +1357,6 @@ export interface FileRoutesByTo {
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/terminals/$sessionId/fullscreen': typeof TerminalsSessionIdFullscreenRoute
   '/torghut/control-plane/simulation': typeof TorghutControlPlaneSimulationRoute
-  '/v1/agent-runs/$id': typeof V1AgentRunsIdRoute
-  '/v1/agents/$id': typeof V1AgentsIdRoute
-  '/v1/memories/$id': typeof V1MemoriesIdRoute
-  '/v1/orchestration-runs/$id': typeof V1OrchestrationRunsIdRoute
-  '/v1/orchestrations/$id': typeof V1OrchestrationsIdRoute
-  '/v1/runs/$id': typeof V1RunsIdRoute
   '/api/whitepapers': typeof ApiWhitepapersIndexRoute
   '/control-plane/agent-providers': typeof ControlPlaneAgentProvidersIndexRoute
   '/control-plane/agent-runs': typeof ControlPlaneAgentRunsIndexRoute
@@ -1566,12 +1479,6 @@ export interface FileRoutesById {
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/trading': typeof TorghutTradingRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
-  '/v1/agent-runs': typeof V1AgentRunsRouteWithChildren
-  '/v1/agents': typeof V1AgentsRouteWithChildren
-  '/v1/memories': typeof V1MemoriesRouteWithChildren
-  '/v1/memory-queries': typeof V1MemoryQueriesRoute
-  '/v1/orchestration-runs': typeof V1OrchestrationRunsRouteWithChildren
-  '/v1/orchestrations': typeof V1OrchestrationsRouteWithChildren
   '/agents/': typeof AgentsIndexRoute
   '/atlas/': typeof AtlasIndexRoute
   '/control-plane/': typeof ControlPlaneIndexRoute
@@ -1588,6 +1495,7 @@ export interface FileRoutesById {
   '/api/codex/rerun': typeof ApiCodexRerunRoute
   '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
   '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
+  '/api/control-plane/agent-runs': typeof ApiControlPlaneAgentRunsRoute
   '/api/github/issues': typeof ApiGithubIssuesRoute
   '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
   '/api/memories/count': typeof ApiMemoriesCountRoute
@@ -1620,12 +1528,6 @@ export interface FileRoutesById {
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/terminals/$sessionId/fullscreen': typeof TerminalsSessionIdFullscreenRoute
   '/torghut/control-plane/simulation': typeof TorghutControlPlaneSimulationRoute
-  '/v1/agent-runs/$id': typeof V1AgentRunsIdRoute
-  '/v1/agents/$id': typeof V1AgentsIdRoute
-  '/v1/memories/$id': typeof V1MemoriesIdRoute
-  '/v1/orchestration-runs/$id': typeof V1OrchestrationRunsIdRoute
-  '/v1/orchestrations/$id': typeof V1OrchestrationsIdRoute
-  '/v1/runs/$id': typeof V1RunsIdRoute
   '/api/whitepapers/': typeof ApiWhitepapersIndexRoute
   '/control-plane/agent-providers/': typeof ControlPlaneAgentProvidersIndexRoute
   '/control-plane/agent-runs/': typeof ControlPlaneAgentRunsIndexRoute
@@ -1749,12 +1651,6 @@ export interface FileRouteTypes {
     | '/torghut/symbols'
     | '/torghut/trading'
     | '/torghut/visuals'
-    | '/v1/agent-runs'
-    | '/v1/agents'
-    | '/v1/memories'
-    | '/v1/memory-queries'
-    | '/v1/orchestration-runs'
-    | '/v1/orchestrations'
     | '/agents/'
     | '/atlas/'
     | '/control-plane/'
@@ -1771,6 +1667,7 @@ export interface FileRouteTypes {
     | '/api/codex/rerun'
     | '/api/codex/run-complete'
     | '/api/codex/runs'
+    | '/api/control-plane/agent-runs'
     | '/api/github/issues'
     | '/api/github/pulls'
     | '/api/memories/count'
@@ -1803,12 +1700,6 @@ export interface FileRouteTypes {
     | '/openai/v1/models'
     | '/terminals/$sessionId/fullscreen'
     | '/torghut/control-plane/simulation'
-    | '/v1/agent-runs/$id'
-    | '/v1/agents/$id'
-    | '/v1/memories/$id'
-    | '/v1/orchestration-runs/$id'
-    | '/v1/orchestrations/$id'
-    | '/v1/runs/$id'
     | '/api/whitepapers/'
     | '/control-plane/agent-providers/'
     | '/control-plane/agent-runs/'
@@ -1928,12 +1819,6 @@ export interface FileRouteTypes {
     | '/torghut/symbols'
     | '/torghut/trading'
     | '/torghut/visuals'
-    | '/v1/agent-runs'
-    | '/v1/agents'
-    | '/v1/memories'
-    | '/v1/memory-queries'
-    | '/v1/orchestration-runs'
-    | '/v1/orchestrations'
     | '/agents'
     | '/atlas'
     | '/control-plane'
@@ -1950,6 +1835,7 @@ export interface FileRouteTypes {
     | '/api/codex/rerun'
     | '/api/codex/run-complete'
     | '/api/codex/runs'
+    | '/api/control-plane/agent-runs'
     | '/api/github/issues'
     | '/api/github/pulls'
     | '/api/memories/count'
@@ -1982,12 +1868,6 @@ export interface FileRouteTypes {
     | '/openai/v1/models'
     | '/terminals/$sessionId/fullscreen'
     | '/torghut/control-plane/simulation'
-    | '/v1/agent-runs/$id'
-    | '/v1/agents/$id'
-    | '/v1/memories/$id'
-    | '/v1/orchestration-runs/$id'
-    | '/v1/orchestrations/$id'
-    | '/v1/runs/$id'
     | '/api/whitepapers'
     | '/control-plane/agent-providers'
     | '/control-plane/agent-runs'
@@ -2109,12 +1989,6 @@ export interface FileRouteTypes {
     | '/torghut/symbols'
     | '/torghut/trading'
     | '/torghut/visuals'
-    | '/v1/agent-runs'
-    | '/v1/agents'
-    | '/v1/memories'
-    | '/v1/memory-queries'
-    | '/v1/orchestration-runs'
-    | '/v1/orchestrations'
     | '/agents/'
     | '/atlas/'
     | '/control-plane/'
@@ -2131,6 +2005,7 @@ export interface FileRouteTypes {
     | '/api/codex/rerun'
     | '/api/codex/run-complete'
     | '/api/codex/runs'
+    | '/api/control-plane/agent-runs'
     | '/api/github/issues'
     | '/api/github/pulls'
     | '/api/memories/count'
@@ -2163,12 +2038,6 @@ export interface FileRouteTypes {
     | '/openai/v1/models'
     | '/terminals/$sessionId/fullscreen'
     | '/torghut/control-plane/simulation'
-    | '/v1/agent-runs/$id'
-    | '/v1/agents/$id'
-    | '/v1/memories/$id'
-    | '/v1/orchestration-runs/$id'
-    | '/v1/orchestrations/$id'
-    | '/v1/runs/$id'
     | '/api/whitepapers/'
     | '/control-plane/agent-providers/'
     | '/control-plane/agent-runs/'
@@ -2291,12 +2160,6 @@ export interface RootRouteChildren {
   TorghutSymbolsRoute: typeof TorghutSymbolsRoute
   TorghutTradingRoute: typeof TorghutTradingRoute
   TorghutVisualsRoute: typeof TorghutVisualsRoute
-  V1AgentRunsRoute: typeof V1AgentRunsRouteWithChildren
-  V1AgentsRoute: typeof V1AgentsRouteWithChildren
-  V1MemoriesRoute: typeof V1MemoriesRouteWithChildren
-  V1MemoryQueriesRoute: typeof V1MemoryQueriesRoute
-  V1OrchestrationRunsRoute: typeof V1OrchestrationRunsRouteWithChildren
-  V1OrchestrationsRoute: typeof V1OrchestrationsRouteWithChildren
   AgentsIndexRoute: typeof AgentsIndexRoute
   AtlasIndexRoute: typeof AtlasIndexRoute
   ControlPlaneIndexRoute: typeof ControlPlaneIndexRoute
@@ -2313,6 +2176,7 @@ export interface RootRouteChildren {
   ApiCodexRerunRoute: typeof ApiCodexRerunRoute
   ApiCodexRunCompleteRoute: typeof ApiCodexRunCompleteRoute
   ApiCodexRunsRoute: typeof ApiCodexRunsRouteWithChildren
+  ApiControlPlaneAgentRunsRoute: typeof ApiControlPlaneAgentRunsRoute
   ApiGithubIssuesRoute: typeof ApiGithubIssuesRoute
   ApiGithubPullsRoute: typeof ApiGithubPullsRouteWithChildren
   ApiTorghutSymbolsRoute: typeof ApiTorghutSymbolsRouteWithChildren
@@ -2340,7 +2204,6 @@ export interface RootRouteChildren {
   LibraryWhitepapersRunIdRoute: typeof LibraryWhitepapersRunIdRoute
   LibraryWhitepapersSearchRoute: typeof LibraryWhitepapersSearchRoute
   OpenaiV1ModelsRoute: typeof OpenaiV1ModelsRoute
-  V1RunsIdRoute: typeof V1RunsIdRoute
   ApiWhitepapersIndexRoute: typeof ApiWhitepapersIndexRoute
   ControlPlaneAgentProvidersIndexRoute: typeof ControlPlaneAgentProvidersIndexRoute
   ControlPlaneAgentRunsIndexRoute: typeof ControlPlaneAgentRunsIndexRoute
@@ -2479,48 +2342,6 @@ declare module '@tanstack/react-router' {
       path: '/agents'
       fullPath: '/agents/'
       preLoaderRoute: typeof AgentsIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/v1/orchestrations': {
-      id: '/v1/orchestrations'
-      path: '/v1/orchestrations'
-      fullPath: '/v1/orchestrations'
-      preLoaderRoute: typeof V1OrchestrationsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/v1/orchestration-runs': {
-      id: '/v1/orchestration-runs'
-      path: '/v1/orchestration-runs'
-      fullPath: '/v1/orchestration-runs'
-      preLoaderRoute: typeof V1OrchestrationRunsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/v1/memory-queries': {
-      id: '/v1/memory-queries'
-      path: '/v1/memory-queries'
-      fullPath: '/v1/memory-queries'
-      preLoaderRoute: typeof V1MemoryQueriesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/v1/memories': {
-      id: '/v1/memories'
-      path: '/v1/memories'
-      fullPath: '/v1/memories'
-      preLoaderRoute: typeof V1MemoriesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/v1/agents': {
-      id: '/v1/agents'
-      path: '/v1/agents'
-      fullPath: '/v1/agents'
-      preLoaderRoute: typeof V1AgentsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/v1/agent-runs': {
-      id: '/v1/agent-runs'
-      path: '/v1/agent-runs'
-      fullPath: '/v1/agent-runs'
-      preLoaderRoute: typeof V1AgentRunsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/torghut/visuals': {
@@ -2838,48 +2659,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiWhitepapersIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/v1/runs/$id': {
-      id: '/v1/runs/$id'
-      path: '/v1/runs/$id'
-      fullPath: '/v1/runs/$id'
-      preLoaderRoute: typeof V1RunsIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/v1/orchestrations/$id': {
-      id: '/v1/orchestrations/$id'
-      path: '/$id'
-      fullPath: '/v1/orchestrations/$id'
-      preLoaderRoute: typeof V1OrchestrationsIdRouteImport
-      parentRoute: typeof V1OrchestrationsRoute
-    }
-    '/v1/orchestration-runs/$id': {
-      id: '/v1/orchestration-runs/$id'
-      path: '/$id'
-      fullPath: '/v1/orchestration-runs/$id'
-      preLoaderRoute: typeof V1OrchestrationRunsIdRouteImport
-      parentRoute: typeof V1OrchestrationRunsRoute
-    }
-    '/v1/memories/$id': {
-      id: '/v1/memories/$id'
-      path: '/$id'
-      fullPath: '/v1/memories/$id'
-      preLoaderRoute: typeof V1MemoriesIdRouteImport
-      parentRoute: typeof V1MemoriesRoute
-    }
-    '/v1/agents/$id': {
-      id: '/v1/agents/$id'
-      path: '/$id'
-      fullPath: '/v1/agents/$id'
-      preLoaderRoute: typeof V1AgentsIdRouteImport
-      parentRoute: typeof V1AgentsRoute
-    }
-    '/v1/agent-runs/$id': {
-      id: '/v1/agent-runs/$id'
-      path: '/$id'
-      fullPath: '/v1/agent-runs/$id'
-      preLoaderRoute: typeof V1AgentRunsIdRouteImport
-      parentRoute: typeof V1AgentRunsRoute
-    }
     '/torghut/control-plane/simulation': {
       id: '/torghut/control-plane/simulation'
       path: '/simulation'
@@ -3102,6 +2881,13 @@ declare module '@tanstack/react-router' {
       path: '/api/github/issues'
       fullPath: '/api/github/issues'
       preLoaderRoute: typeof ApiGithubIssuesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/control-plane/agent-runs': {
+      id: '/api/control-plane/agent-runs'
+      path: '/api/control-plane/agent-runs'
+      fullPath: '/api/control-plane/agent-runs'
+      preLoaderRoute: typeof ApiControlPlaneAgentRunsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/codex/runs': {
@@ -3754,64 +3540,6 @@ const TorghutControlPlaneRouteChildren: TorghutControlPlaneRouteChildren = {
 const TorghutControlPlaneRouteWithChildren =
   TorghutControlPlaneRoute._addFileChildren(TorghutControlPlaneRouteChildren)
 
-interface V1AgentRunsRouteChildren {
-  V1AgentRunsIdRoute: typeof V1AgentRunsIdRoute
-}
-
-const V1AgentRunsRouteChildren: V1AgentRunsRouteChildren = {
-  V1AgentRunsIdRoute: V1AgentRunsIdRoute,
-}
-
-const V1AgentRunsRouteWithChildren = V1AgentRunsRoute._addFileChildren(
-  V1AgentRunsRouteChildren,
-)
-
-interface V1AgentsRouteChildren {
-  V1AgentsIdRoute: typeof V1AgentsIdRoute
-}
-
-const V1AgentsRouteChildren: V1AgentsRouteChildren = {
-  V1AgentsIdRoute: V1AgentsIdRoute,
-}
-
-const V1AgentsRouteWithChildren = V1AgentsRoute._addFileChildren(
-  V1AgentsRouteChildren,
-)
-
-interface V1MemoriesRouteChildren {
-  V1MemoriesIdRoute: typeof V1MemoriesIdRoute
-}
-
-const V1MemoriesRouteChildren: V1MemoriesRouteChildren = {
-  V1MemoriesIdRoute: V1MemoriesIdRoute,
-}
-
-const V1MemoriesRouteWithChildren = V1MemoriesRoute._addFileChildren(
-  V1MemoriesRouteChildren,
-)
-
-interface V1OrchestrationRunsRouteChildren {
-  V1OrchestrationRunsIdRoute: typeof V1OrchestrationRunsIdRoute
-}
-
-const V1OrchestrationRunsRouteChildren: V1OrchestrationRunsRouteChildren = {
-  V1OrchestrationRunsIdRoute: V1OrchestrationRunsIdRoute,
-}
-
-const V1OrchestrationRunsRouteWithChildren =
-  V1OrchestrationRunsRoute._addFileChildren(V1OrchestrationRunsRouteChildren)
-
-interface V1OrchestrationsRouteChildren {
-  V1OrchestrationsIdRoute: typeof V1OrchestrationsIdRoute
-}
-
-const V1OrchestrationsRouteChildren: V1OrchestrationsRouteChildren = {
-  V1OrchestrationsIdRoute: V1OrchestrationsIdRoute,
-}
-
-const V1OrchestrationsRouteWithChildren =
-  V1OrchestrationsRoute._addFileChildren(V1OrchestrationsRouteChildren)
-
 interface ApiCodexRunsRouteChildren {
   ApiCodexRunsListRoute: typeof ApiCodexRunsListRoute
   ApiCodexRunsRecentRoute: typeof ApiCodexRunsRecentRoute
@@ -3975,12 +3703,6 @@ const rootRouteChildren: RootRouteChildren = {
   TorghutSymbolsRoute: TorghutSymbolsRoute,
   TorghutTradingRoute: TorghutTradingRoute,
   TorghutVisualsRoute: TorghutVisualsRoute,
-  V1AgentRunsRoute: V1AgentRunsRouteWithChildren,
-  V1AgentsRoute: V1AgentsRouteWithChildren,
-  V1MemoriesRoute: V1MemoriesRouteWithChildren,
-  V1MemoryQueriesRoute: V1MemoryQueriesRoute,
-  V1OrchestrationRunsRoute: V1OrchestrationRunsRouteWithChildren,
-  V1OrchestrationsRoute: V1OrchestrationsRouteWithChildren,
   AgentsIndexRoute: AgentsIndexRoute,
   AtlasIndexRoute: AtlasIndexRoute,
   ControlPlaneIndexRoute: ControlPlaneIndexRoute,
@@ -3997,6 +3719,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiCodexRerunRoute: ApiCodexRerunRoute,
   ApiCodexRunCompleteRoute: ApiCodexRunCompleteRoute,
   ApiCodexRunsRoute: ApiCodexRunsRouteWithChildren,
+  ApiControlPlaneAgentRunsRoute: ApiControlPlaneAgentRunsRoute,
   ApiGithubIssuesRoute: ApiGithubIssuesRoute,
   ApiGithubPullsRoute: ApiGithubPullsRouteWithChildren,
   ApiTorghutSymbolsRoute: ApiTorghutSymbolsRouteWithChildren,
@@ -4028,7 +3751,6 @@ const rootRouteChildren: RootRouteChildren = {
   LibraryWhitepapersRunIdRoute: LibraryWhitepapersRunIdRoute,
   LibraryWhitepapersSearchRoute: LibraryWhitepapersSearchRoute,
   OpenaiV1ModelsRoute: OpenaiV1ModelsRoute,
-  V1RunsIdRoute: V1RunsIdRoute,
   ApiWhitepapersIndexRoute: ApiWhitepapersIndexRoute,
   ControlPlaneAgentProvidersIndexRoute: ControlPlaneAgentProvidersIndexRoute,
   ControlPlaneAgentRunsIndexRoute: ControlPlaneAgentRunsIndexRoute,
