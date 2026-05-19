@@ -100,7 +100,7 @@ type AgentsControlPlaneResourcesCurrent = {
   updated_at: Generated<Timestamp>
 }
 
-type WorkflowCommsAgentMessage = {
+type AgentsCommsAgentMessage = {
   id: Generated<string>
   workflow_uid: string | null
   workflow_name: string | null
@@ -126,7 +126,7 @@ export type AgentsDatabase = {
   orchestration_runs: OrchestrationRuns
   audit_events: AuditEvents
   'agents_control_plane.resources_current': AgentsControlPlaneResourcesCurrent
-  'workflow_comms.agent_messages': WorkflowCommsAgentMessage
+  'agents_comms.agent_messages': AgentsCommsAgentMessage
 }
 
 let db: Db | null | undefined

@@ -118,8 +118,12 @@ describe('agent comms subscriber consume', () => {
       'agents.workflow.general.status',
     )
     const argo = __test__.normalizePayload(JSON.stringify({ content: 'argo update' }), 'argo.workflow.general.status')
-    const workflowComms = __test__.normalizePayload(
+    const agentsMessages = __test__.normalizePayload(
       JSON.stringify({ content: 'stored update' }),
+      'agents.agent_messages.general.status',
+    )
+    const workflowComms = __test__.normalizePayload(
+      JSON.stringify({ content: 'legacy stored update' }),
       'workflow_comms.agent_messages.general.status',
     )
 
@@ -130,11 +134,13 @@ describe('agent comms subscriber consume', () => {
     expect(agents?.attrs?.runtime).toBe('native')
     expect(argo?.channel).toBe('general')
     expect(argo?.attrs?.runtime).toBe('argo')
+    expect(agentsMessages?.channel).toBe('general')
+    expect(agentsMessages?.attrs?.runtime).toBe('agents_comms')
     expect(workflowComms?.channel).toBe('general')
-    expect(workflowComms?.attrs?.runtime).toBe('workflow_comms')
+    expect(workflowComms?.attrs?.runtime).toBe('legacy_workflow_comms')
   })
 
-  it('promotes swarm persona attrs into dashboard-visible agent and role fields', () => {
+  it('keeps swarm persona attrs out of canonical agent and role fields', () => {
     const message = __test__.normalizePayload(
       JSON.stringify({
         agent_id: 'Unknown',
@@ -150,8 +156,8 @@ describe('agent comms subscriber consume', () => {
       'workflow.general.run-started',
     )
 
-    expect(message?.agentId).toBe('marco-silva-jangar-deployer')
-    expect(message?.role).toBe('deployer')
+    expect(message?.agentId).toBe('Unknown')
+    expect(message?.role).toBe('Assistant')
     expect(message?.attrs?.swarmHumanName).toBe('Marco Silva')
   })
 })

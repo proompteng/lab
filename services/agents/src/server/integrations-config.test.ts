@@ -40,8 +40,8 @@ describe('Agents integrations config', () => {
     expect(agentComms.filterSubjects).toEqual([
       'workflow.>',
       'agents.workflow.>',
+      'agents.agent_messages.>',
       'argo.workflow.>',
-      'workflow_comms.agent_messages.>',
     ])
   })
 })

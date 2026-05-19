@@ -99,9 +99,12 @@ const parseSubject = (subject: string) => {
   const prefix = (() => {
     if (parts[0] === 'workflow') return { offset: 1, runtime: 'native' }
     if (parts[0] === 'agents' && parts[1] === 'workflow') return { offset: 2, runtime: 'native' }
+    if (parts[0] === 'agents' && parts[1] === 'agent_messages') {
+      return { offset: 2, runtime: 'agents_comms' }
+    }
     if (parts[0] === 'argo' && parts[1] === 'workflow') return { offset: 2, runtime: 'argo' }
     if (parts[0] === 'workflow_comms' && parts[1] === 'agent_messages') {
-      return { offset: 2, runtime: 'workflow_comms' }
+      return { offset: 2, runtime: 'legacy_workflow_comms' }
     }
     return null
   })()
@@ -143,11 +146,10 @@ const normalizePayload = (raw: string, subject: string): AgentMessageInput | nul
     new Date().toISOString()
   const kind = coerceNonEmptyString(payload.kind) ?? subjectInfo?.kind ?? 'message'
   const payloadRole = coerceNonEmptyString(payload.role)
-  const swarmAgentRole = coerceNonEmptyString(attrsPayload.swarmAgentRole)
   const role =
     payloadRole && payloadRole.toLowerCase() !== 'assistant'
       ? payloadRole
-      : (swarmAgentRole ?? payloadRole ?? (kind === 'status' || kind === 'error' ? 'system' : 'assistant'))
+      : (payloadRole ?? (kind === 'status' || kind === 'error' ? 'system' : 'assistant'))
   const content =
     coerceNonEmptyString(payload.content ?? payload.text ?? payload.message ?? payload.status ?? payload.error) ??
     (kind === 'status' ? 'status update' : null)
@@ -167,12 +169,10 @@ const normalizePayload = (raw: string, subject: string): AgentMessageInput | nul
     payload.step_id ?? payload.stepId ?? payload.workflow_step ?? payload.workflowStep,
   )
   const payloadAgentId = coerceNonEmptyString(payload.agent_id ?? payload.agentId)
-  const swarmAgentIdentity = coerceNonEmptyString(attrsPayload.swarmAgentIdentity)
-  const swarmHumanName = coerceNonEmptyString(attrsPayload.swarmHumanName)
   const agentId =
     payloadAgentId && payloadAgentId.toLowerCase() !== 'unknown'
       ? payloadAgentId
-      : (swarmAgentIdentity ?? swarmHumanName ?? subjectInfo?.agentId ?? payloadAgentId ?? null)
+      : (subjectInfo?.agentId ?? payloadAgentId ?? null)
   const channel = coerceNonEmptyString(payload.channel) ?? subjectInfo?.channel ?? null
   const stage = coerceNonEmptyString(payload.stage ?? payload.workflow_stage ?? payload.workflowStage)
 

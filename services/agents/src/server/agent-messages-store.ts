@@ -51,7 +51,7 @@ type AgentMessagesStoreOptions = {
   createDb?: (url: string) => Db
 }
 
-const SCHEMA = 'workflow_comms'
+const SCHEMA = 'agents_comms'
 const TABLE = 'agent_messages'
 const INSERT_BATCH_SIZE = 500
 const DEFAULT_LIST_LIMIT = 500

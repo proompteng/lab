@@ -7,6 +7,7 @@ import * as agentsPrimitivesIndexesMigration from './migrations/20260111_agents_
 import * as agentsAgentRunIdempotencyMigration from './migrations/20260208_agents_agentrun_idempotency'
 import * as agentsControlPlaneCacheMigration from './migrations/20260205_agents_control_plane_cache'
 import * as agentsWorkflowCommsAgentMessagesMigration from './migrations/20260212_agents_workflow_comms_agent_messages'
+import * as agentsCommsAgentMessagesMigration from './migrations/20260519_agents_comms_agent_messages'
 
 type MigrationMap = Record<string, Migration>
 
@@ -24,6 +25,7 @@ const migrations: MigrationMap = {
   '20260205_agents_control_plane_cache': agentsControlPlaneCacheMigration,
   '20260208_agents_agentrun_idempotency': agentsAgentRunIdempotencyMigration,
   '20260212_agents_workflow_comms_agent_messages': agentsWorkflowCommsAgentMessagesMigration,
+  '20260519_agents_comms_agent_messages': agentsCommsAgentMessagesMigration,
 }
 
 const AGENTS_MIGRATION_TABLE = 'agents_kysely_migration'

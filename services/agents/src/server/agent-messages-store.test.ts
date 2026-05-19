@@ -50,7 +50,7 @@ const makeFakeDb = (rows: unknown[]) => {
       const params = (compiledQuery.parameters ?? []) as readonly unknown[]
       calls.push({ sql: compiledQuery.sql, params })
 
-      if (compiledQuery.sql.toLowerCase().includes('from "workflow_comms"."agent_messages"')) {
+      if (compiledQuery.sql.toLowerCase().includes('from "agents_comms"."agent_messages"')) {
         return { rows: rows as R[] }
       }
 

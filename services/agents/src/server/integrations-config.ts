@@ -7,8 +7,8 @@ const DEFAULT_FEATURE_FLAGS_ENTITY_ID = 'agents'
 const DEFAULT_AGENT_COMMS_FILTER_SUBJECTS = [
   'workflow.>',
   'agents.workflow.>',
+  'agents.agent_messages.>',
   'argo.workflow.>',
-  'workflow_comms.agent_messages.>',
 ]
 
 const parseFilterSubjects = (value: string | undefined) =>
