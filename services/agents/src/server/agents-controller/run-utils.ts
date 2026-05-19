@@ -49,7 +49,7 @@ export const resolveRunGoal = (
     }
   }
 
-  const objective = resolveParam(parameters, ['goalObjective', 'objective', 'swarmRequirementObjective'])
+  const objective = resolveParam(parameters, ['goalObjective', 'objective'])
   if (!objective) return null
   const tokenBudget = parsePositiveInteger(parameters.goalTokenBudget ?? parameters.tokenBudget)
   return {
