@@ -129,6 +129,10 @@ class StrategyObjective:
     extended_max_worst_day_loss_pct_equity: Decimal = Decimal('0.08')
     extended_max_drawdown_pct_equity: Decimal = Decimal('0.12')
     min_total_net_pnl_to_drawdown_ratio: Decimal = Decimal('3.00')
+    require_double_oos: bool = True
+    min_double_oos_independent_window_count: int = 2
+    min_double_oos_pass_rate: Decimal = Decimal('1.00')
+    require_double_oos_cost_shock_above_target: bool = True
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -152,6 +156,10 @@ class StrategyObjective:
             'extended_max_worst_day_loss_pct_equity': str(self.extended_max_worst_day_loss_pct_equity),
             'extended_max_drawdown_pct_equity': str(self.extended_max_drawdown_pct_equity),
             'min_total_net_pnl_to_drawdown_ratio': str(self.min_total_net_pnl_to_drawdown_ratio),
+            'require_double_oos': self.require_double_oos,
+            'min_double_oos_independent_window_count': self.min_double_oos_independent_window_count,
+            'min_double_oos_pass_rate': str(self.min_double_oos_pass_rate),
+            'require_double_oos_cost_shock_above_target': self.require_double_oos_cost_shock_above_target,
         }
 
 
@@ -531,6 +539,18 @@ def load_strategy_autoresearch_program(
         min_total_net_pnl_to_drawdown_ratio=_coerce_decimal(
             objective_payload.get('min_total_net_pnl_to_drawdown_ratio'),
             default='3.00',
+        ),
+        require_double_oos=bool(objective_payload.get('require_double_oos', True)),
+        min_double_oos_independent_window_count=max(
+            0,
+            int(objective_payload.get('min_double_oos_independent_window_count', 2)),
+        ),
+        min_double_oos_pass_rate=_coerce_decimal(
+            objective_payload.get('min_double_oos_pass_rate'),
+            default='1.00',
+        ),
+        require_double_oos_cost_shock_above_target=bool(
+            objective_payload.get('require_double_oos_cost_shock_above_target', True)
         ),
     )
     snapshot_policy_payload = _mapping(payload.get('snapshot_policy'))

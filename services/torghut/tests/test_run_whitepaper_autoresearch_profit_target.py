@@ -2783,6 +2783,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             replay_plan_path = replay_dir / "runtime-replay-plan.json"
             market_impact_path = replay_dir / "market-impact-stress.json"
             delay_depth_path = replay_dir / "delay-adjusted-depth-stress.json"
+            double_oos_path = replay_dir / "double-oos-walkforward.json"
             gate_path = gates_dir / "gate-evaluation.json"
             proof_path = promotion_dir / "portfolio-proof-receipt.json"
             summary_path = runtime_root / "summary.json"
@@ -2850,6 +2851,19 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                         "generated_at": "2026-05-19T13:00:00Z",
                         "fillable_notional_per_day": "300000",
                         "post_delay_depth_net_pnl_per_day": "605",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            double_oos_path.write_text(
+                json.dumps(
+                    {
+                        "objective_met": True,
+                        "independent_window_count": 2,
+                        "pass_rate": "1.00",
+                        "post_double_oos_net_pnl_per_day": "615",
+                        "post_cost_shock_net_pnl_per_day": "575",
                     }
                 )
                 + "\n",
@@ -2927,6 +2941,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     "replay_plan_path": str(replay_plan_path),
                     "market_impact_stress_report_path": str(market_impact_path),
                     "delay_adjusted_depth_stress_report_path": str(delay_depth_path),
+                    "double_oos_report_path": str(double_oos_path),
                 },
                 target=Decimal("500"),
                 oracle_policy=policy,
@@ -2965,6 +2980,19 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertTrue(
             updated.objective_scorecard["delay_adjusted_depth_stress_passed"]
+        )
+        self.assertEqual(
+            updated.objective_scorecard["double_oos_artifact_ref"],
+            str(double_oos_path),
+        )
+        self.assertEqual(
+            updated.objective_scorecard["double_oos_independent_window_count"],
+            2,
+        )
+        self.assertEqual(updated.objective_scorecard["double_oos_pass_rate"], "1.00")
+        self.assertEqual(
+            updated.objective_scorecard["double_oos_cost_shock_net_pnl_per_day"],
+            "575",
         )
         self.assertIn(str(approval_replay_path), updated.evidence_refs)
 

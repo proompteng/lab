@@ -27,6 +27,12 @@ def _executable_scorecard_fields() -> dict[str, object]:
         "delay_adjusted_depth_stress_ms": "250",
         "delay_adjusted_depth_fillable_notional_per_day": "525000",
         "delay_adjusted_depth_stress_net_pnl_per_day": "520",
+        "double_oos_passed": True,
+        "double_oos_artifact_ref": "/tmp/double-oos-report.json",
+        "double_oos_independent_window_count": 2,
+        "double_oos_pass_rate": "1",
+        "double_oos_net_pnl_per_day": "530",
+        "double_oos_cost_shock_net_pnl_per_day": "515",
     }
 
 
@@ -165,6 +171,55 @@ class TestProfitTargetOracle(TestCase):
         self.assertIn(
             "delay_adjusted_depth_stress_net_pnl_per_day_failed",
             result["blockers"],
+        )
+
+    def test_profit_target_oracle_rejects_missing_double_oos_proof(self) -> None:
+        scorecard = _passing_scorecard()
+        for key in tuple(scorecard):
+            if key.startswith("double_oos"):
+                del scorecard[key]
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn("double_oos_passed_failed", result["blockers"])
+        self.assertIn("double_oos_artifact_present_failed", result["blockers"])
+        self.assertIn("double_oos_independent_window_count_failed", result["blockers"])
+        self.assertIn("double_oos_pass_rate_failed", result["blockers"])
+        self.assertIn("double_oos_net_pnl_per_day_failed", result["blockers"])
+        self.assertIn(
+            "double_oos_cost_shock_net_pnl_per_day_failed", result["blockers"]
+        )
+
+    def test_profit_target_oracle_rejects_single_double_oos_window(self) -> None:
+        result = evaluate_profit_target_oracle(
+            {
+                **_passing_scorecard(),
+                "double_oos_independent_window_count": 1,
+            },
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn("double_oos_independent_window_count_failed", result["blockers"])
+
+    def test_profit_target_oracle_rejects_double_oos_cost_shock_below_target(
+        self,
+    ) -> None:
+        result = evaluate_profit_target_oracle(
+            {
+                **_passing_scorecard(),
+                "double_oos_cost_shock_net_pnl_per_day": "499.99",
+            },
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn(
+            "double_oos_cost_shock_net_pnl_per_day_failed", result["blockers"]
         )
 
     def test_profit_target_oracle_accepts_controlled_down_days(self) -> None:

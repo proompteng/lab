@@ -107,6 +107,18 @@ _RUNTIME_CLOSURE_PROOF_ORACLE_BLOCKERS = frozenset(
         "market_impact_stress_model_failed",
         "market_impact_stress_cost_bps_failed",
         "market_impact_stress_net_pnl_per_day_failed",
+        "delay_adjusted_depth_stress_passed_failed",
+        "delay_adjusted_depth_stress_artifact_present_failed",
+        "delay_adjusted_depth_stress_model_failed",
+        "delay_adjusted_depth_stress_ms_failed",
+        "delay_adjusted_depth_fillable_notional_per_day_failed",
+        "delay_adjusted_depth_stress_net_pnl_per_day_failed",
+        "double_oos_passed_failed",
+        "double_oos_artifact_present_failed",
+        "double_oos_independent_window_count_failed",
+        "double_oos_pass_rate_failed",
+        "double_oos_net_pnl_per_day_failed",
+        "double_oos_cost_shock_net_pnl_per_day_failed",
     }
 )
 _FAMILY_PRIOR_HARD_BLOCK_ORACLE_BLOCKERS = frozenset(
@@ -340,6 +352,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--min-avg-filled-notional-per-day", default="300000")
     parser.add_argument("--min-observed-trading-days", type=int, default=20)
     parser.add_argument("--min-regime-slice-pass-rate", default="0.45")
+    parser.add_argument("--no-require-double-oos", action="store_true")
+    parser.add_argument(
+        "--min-double-oos-independent-window-count", type=int, default=2
+    )
+    parser.add_argument("--min-double-oos-pass-rate", default="1.00")
     parser.add_argument(
         "--require-no-flat-days",
         action="store_true",
@@ -1118,6 +1135,13 @@ def _oracle_policy_from_args(args: argparse.Namespace) -> ProfitTargetOraclePoli
         min_cash=_decimal(getattr(args, "min_cash", "0"), default="0"),
         max_negative_cash_observation_count=max(
             0, _int_arg(args, "max_negative_cash_observation_count", 0)
+        ),
+        require_double_oos=not bool(getattr(args, "no_require_double_oos", False)),
+        min_double_oos_independent_window_count=max(
+            0, _int_arg(args, "min_double_oos_independent_window_count", 2)
+        ),
+        min_double_oos_pass_rate=_decimal(
+            getattr(args, "min_double_oos_pass_rate", "1.00"), default="1.00"
         ),
     )
 
@@ -5017,6 +5041,9 @@ def _runtime_closure_artifact_refs(
         "delay_adjusted_depth_stress_report_path",
         "delay_depth_stress_report_path",
         "latency_depth_stress_artifact_path",
+        "double_oos_report_path",
+        "double_oos_artifact_path",
+        "walkforward_double_oos_report_path",
         "stress_metrics_path",
         "profitability_stage_manifest_path",
         "promotion_prerequisites_path",
@@ -5154,6 +5181,44 @@ def _runtime_closure_delay_adjusted_depth_stress_update(
     }
 
 
+def _runtime_closure_double_oos_update(
+    runtime_closure: Mapping[str, Any],
+) -> dict[str, Any]:
+    double_oos_report_path = _string(
+        runtime_closure.get("double_oos_report_path")
+        or runtime_closure.get("double_oos_artifact_path")
+        or runtime_closure.get("walkforward_double_oos_report_path")
+    )
+    double_oos_report = _load_json_mapping_artifact(double_oos_report_path)
+    if not double_oos_report:
+        return {}
+    return {
+        "double_oos_passed": _boolish(
+            double_oos_report.get("objective_met") or double_oos_report.get("passed")
+        ),
+        "double_oos_artifact_ref": double_oos_report_path,
+        "double_oos_independent_window_count": max(
+            _runtime_report_int(double_oos_report.get("independent_window_count")),
+            _runtime_report_int(double_oos_report.get("window_count")),
+            _runtime_report_int(double_oos_report.get("fold_count")),
+        ),
+        "double_oos_pass_rate": str(_decimal(double_oos_report.get("pass_rate"))),
+        "double_oos_net_pnl_per_day": str(
+            _decimal(
+                double_oos_report.get("net_pnl_per_day")
+                or double_oos_report.get("post_double_oos_net_pnl_per_day")
+            )
+        ),
+        "double_oos_cost_shock_net_pnl_per_day": str(
+            _decimal(
+                double_oos_report.get("cost_shock_net_pnl_per_day")
+                or double_oos_report.get("post_cost_shock_net_pnl_per_day")
+                or double_oos_report.get("market_impact_stress_net_pnl_per_day")
+            )
+        ),
+    }
+
+
 def _runtime_closure_scorecard_update(
     *,
     portfolio: PortfolioCandidateSpec,
@@ -5189,6 +5254,7 @@ def _runtime_closure_scorecard_update(
     delay_depth_update = _runtime_closure_delay_adjusted_depth_stress_update(
         runtime_closure
     )
+    double_oos_update = _runtime_closure_double_oos_update(runtime_closure)
     return {
         "runtime_closure_proof": {
             "status": _string(runtime_closure.get("status")) or "missing",
@@ -5202,6 +5268,9 @@ def _runtime_closure_scorecard_update(
             ),
             "delay_adjusted_depth_stress_artifact_ref": delay_depth_update.get(
                 "delay_adjusted_depth_stress_artifact_ref", ""
+            ),
+            "double_oos_artifact_ref": double_oos_update.get(
+                "double_oos_artifact_ref", ""
             ),
         },
         "runtime_closure_artifact_refs": list(artifact_refs),
@@ -5225,6 +5294,7 @@ def _runtime_closure_scorecard_update(
         ),
         **market_impact_update,
         **delay_depth_update,
+        **double_oos_update,
     }
 
 
@@ -5585,6 +5655,29 @@ def _candidate_board_payload(
                         "executable_replay_orders_submitted_total",
                     ),
                 ),
+                "double_oos_passed": _boolish(scorecard.get("double_oos_passed")),
+                "double_oos_artifact_ref": _string(
+                    scorecard.get("double_oos_artifact_ref")
+                    or scorecard.get("double_oos_report_ref")
+                    or scorecard.get("walk_forward_oos_artifact_ref")
+                ),
+                "double_oos_independent_window_count": _candidate_board_first_int_field(
+                    scorecard,
+                    (
+                        "double_oos_independent_window_count",
+                        "double_oos_fold_count",
+                        "oos_fold_count",
+                    ),
+                ),
+                "double_oos_pass_rate": _candidate_board_decimal_field(
+                    scorecard, "double_oos_pass_rate"
+                ),
+                "double_oos_net_pnl_per_day": _candidate_board_decimal_field(
+                    scorecard, "double_oos_net_pnl_per_day"
+                ),
+                "double_oos_cost_shock_net_pnl_per_day": _candidate_board_decimal_field(
+                    scorecard, "double_oos_cost_shock_net_pnl_per_day"
+                ),
                 "blockers": blockers,
                 "replay_artifact_refs": list(evidence.replay_artifact_refs)
                 if evidence is not None
@@ -5829,6 +5922,21 @@ def run_whitepaper_autoresearch_profit_target(
             ),
             "min_cash": str(
                 max(_decimal(getattr(args, "min_cash", "0")), objective.min_cash)
+            ),
+            "no_require_double_oos": bool(getattr(args, "no_require_double_oos", False))
+            or not bool(getattr(objective, "require_double_oos", True)),
+            "min_double_oos_independent_window_count": max(
+                _int_arg(args, "min_double_oos_independent_window_count", 2),
+                int(getattr(objective, "min_double_oos_independent_window_count", 2)),
+            ),
+            "min_double_oos_pass_rate": str(
+                max(
+                    _decimal(getattr(args, "min_double_oos_pass_rate", "1.00")),
+                    _decimal(
+                        getattr(objective, "min_double_oos_pass_rate", "1.00"),
+                        default="1.00",
+                    ),
+                )
             ),
         }
     )

@@ -64,6 +64,10 @@ objective:
   min_regime_slice_pass_rate: '0.45'
   max_gross_exposure_pct_equity: '1.0'
   min_cash: '0'
+  require_double_oos: true
+  min_double_oos_independent_window_count: 2
+  min_double_oos_pass_rate: '1.00'
+  require_double_oos_cost_shock_above_target: true
   stop_when_objective_met: true
 research_sources:
   - source_id: tradefm_market_microstructure_2026
