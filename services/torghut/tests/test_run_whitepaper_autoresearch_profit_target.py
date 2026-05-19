@@ -129,6 +129,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             paper_run_id=[],
             source_jsonl=[],
             feedback_evidence_jsonl=[],
+            candidate_specs=[],
             seed_recent_whitepapers=True,
             target_net_pnl_per_day="500",
             max_candidates=8,
@@ -2707,6 +2708,157 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         optimizer_mock.assert_not_called()
         runtime_mock.assert_not_called()
 
+    def test_candidate_specs_replay_skips_compiler_and_replays_selected_specs(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            selected_specs_path = Path(tmpdir) / "selected-candidate-specs.jsonl"
+            specs = (
+                self._candidate_spec("spec-direct-a"),
+                self._candidate_spec(
+                    "spec-direct-b",
+                    family_template_id="momentum_pullback_v1",
+                    selection_mode="pullback",
+                ),
+            )
+            selected_specs_path.write_text(
+                "\n".join(
+                    json.dumps(spec.to_payload(), sort_keys=True) for spec in specs
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            captured_spec_ids: list[str] = []
+
+            def fake_replay(
+                *,
+                args: Namespace,
+                output_dir: Path,
+                specs: Sequence[runner.CandidateSpec],
+            ) -> runner.EpochReplayResult:
+                del args
+                captured_spec_ids.extend(spec.candidate_spec_id for spec in specs)
+                bundle = runner.evidence_bundle_from_frontier_candidate(
+                    candidate_spec_id=specs[0].candidate_spec_id,
+                    candidate={
+                        "candidate_id": "cand-direct-a",
+                        "objective_scorecard": {
+                            "net_pnl_per_day": "25",
+                            "active_day_ratio": "1",
+                            "positive_day_ratio": "1",
+                        },
+                    },
+                    dataset_snapshot_id="snap-direct",
+                    result_path=str(output_dir / "direct-a.json"),
+                )
+                return runner.EpochReplayResult(
+                    evidence_bundles=(bundle,),
+                    replay_results=({"status": "ok"},),
+                )
+
+            args = self._args(output_dir)
+            args.seed_recent_whitepapers = False
+            args.candidate_specs = [selected_specs_path]
+            args.replay_mode = "real"
+            args.portfolio_size_min = 1
+
+            with (
+                patch.object(
+                    runner,
+                    "compile_sources_to_hypothesis_cards",
+                    side_effect=AssertionError("source compiler must not run"),
+                ) as source_compiler_mock,
+                patch.object(
+                    runner,
+                    "compile_whitepaper_candidate_specs",
+                    side_effect=AssertionError("candidate compiler must not run"),
+                ) as candidate_compiler_mock,
+                patch.object(
+                    runner,
+                    "_select_candidate_specs_for_replay",
+                    side_effect=AssertionError("selection must not run"),
+                ) as selection_mock,
+                patch.object(
+                    runner,
+                    "_run_replay_with_optional_timeout",
+                    side_effect=fake_replay,
+                ) as replay_mock,
+            ):
+                payload = runner.run_whitepaper_autoresearch_profit_target(args)
+
+            selection = json.loads(
+                (output_dir / "candidate-selection-manifest.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            selected_candidate_specs = [
+                json.loads(line)
+                for line in (output_dir / "selected-candidate-specs.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if line
+            ]
+            compiler_report = json.loads(
+                (output_dir / "candidate-compiler-report.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+
+        self.assertEqual(captured_spec_ids, ["spec-direct-a", "spec-direct-b"])
+        self.assertEqual(payload["candidate_spec_count"], 2)
+        self.assertEqual(payload["replay_candidate_spec_count"], 2)
+        self.assertEqual(
+            payload["selected_candidate_spec_ids"], ["spec-direct-a", "spec-direct-b"]
+        )
+        self.assertEqual(selection["selection_mode"], "direct_candidate_specs_handoff")
+        self.assertEqual(
+            selection["selected_candidate_spec_ids"],
+            ["spec-direct-a", "spec-direct-b"],
+        )
+        self.assertEqual(
+            [spec["candidate_spec_id"] for spec in selected_candidate_specs],
+            ["spec-direct-a", "spec-direct-b"],
+        )
+        self.assertEqual(
+            compiler_report["status"], "loaded_candidate_specs_for_direct_replay"
+        )
+        source_compiler_mock.assert_not_called()
+        candidate_compiler_mock.assert_not_called()
+        selection_mock.assert_not_called()
+        replay_mock.assert_called_once()
+
+    def test_candidate_specs_replay_rejects_duplicate_spec_ids(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            selected_specs_path = Path(tmpdir) / "selected-candidate-specs.jsonl"
+            spec = self._candidate_spec("spec-direct-duplicate")
+            selected_specs_path.write_text(
+                "\n".join(
+                    json.dumps(spec.to_payload(), sort_keys=True) for _ in range(2)
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            args = self._args(output_dir)
+            args.seed_recent_whitepapers = False
+            args.candidate_specs = [selected_specs_path]
+            args.replay_mode = "real"
+
+            with patch.object(
+                runner,
+                "_run_replay_with_optional_timeout",
+                side_effect=AssertionError("invalid input must not run replay"),
+            ) as replay_mock:
+                payload = runner.run_whitepaper_autoresearch_profit_target(args)
+
+        self.assertEqual(payload["status"], "invalid_candidate_specs")
+        self.assertIn(
+            "candidate_specs_jsonl_duplicate_candidate_spec_id",
+            payload["failure_reason"],
+        )
+        replay_mock.assert_not_called()
+
     def test_main_treats_selection_only_as_success(self) -> None:
         with (
             patch.object(runner, "_parse_args", return_value=Namespace()),
@@ -4973,6 +5125,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     "synthetic",
                     "--source-jsonl",
                     str(source_path),
+                    "--candidate-specs",
+                    str(Path(tmpdir) / "selected-candidate-specs.jsonl"),
                     "--clickhouse-password-env",
                     "TORGHUT_CLICKHOUSE_PASSWORD",
                     "--max-total-frontier-candidates",
@@ -4988,6 +5142,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertTrue(parsed.seed_recent_whitepapers)
         self.assertEqual(parsed.replay_mode, "synthetic")
         self.assertEqual(parsed.source_jsonl, [source_path])
+        self.assertEqual(
+            parsed.candidate_specs, [Path(tmpdir) / "selected-candidate-specs.jsonl"]
+        )
         self.assertEqual(parsed.clickhouse_password_env, "TORGHUT_CLICKHOUSE_PASSWORD")
         self.assertEqual(parsed.symbols, ",".join(_CHIP_UNIVERSE))
         self.assertEqual(

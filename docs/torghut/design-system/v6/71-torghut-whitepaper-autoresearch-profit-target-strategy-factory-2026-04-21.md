@@ -405,6 +405,7 @@ Inputs:
 --portfolio-size-min default 2
 --portfolio-size-max default 8
 --selection-only
+--candidate-specs repeatable selected CandidateSpec JSONL handoff for direct replay
 --train-days
 --holdout-days
 --full-window-start-date

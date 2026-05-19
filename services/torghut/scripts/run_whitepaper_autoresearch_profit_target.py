@@ -38,6 +38,7 @@ from app.trading.discovery.candidate_specs import (
     CandidateSpec,
 )
 from app.trading.discovery.candidate_specs import candidate_spec_id_for_payload
+from app.trading.discovery.candidate_specs import candidate_spec_from_payload
 from app.trading.discovery.evidence_bundles import (
     CandidateEvidenceBundle,
     evidence_bundle_from_frontier_candidate,
@@ -182,6 +183,17 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "Prior real-replay candidate evidence bundles to feed back into the "
             "pre-replay MLX ranker for the next autoresearch epoch."
+        ),
+    )
+    parser.add_argument(
+        "--candidate-specs",
+        action="append",
+        default=[],
+        type=Path,
+        help=(
+            "JSONL file of CandidateSpec payloads to replay directly. Use this "
+            "with a prior selected-candidate-specs.jsonl artifact to skip "
+            "whitepaper source compilation and pre-replay reselection."
         ),
     )
     parser.add_argument(
@@ -476,26 +488,36 @@ def _evidence_bundle_payloads_for_epoch_summary(
 
 
 def _candidate_spec_from_payload(payload: Mapping[str, Any]) -> CandidateSpec:
-    return CandidateSpec(
-        schema_version="torghut.candidate-spec.v1",
-        candidate_spec_id=_string(payload.get("candidate_spec_id")),
-        hypothesis_id=_string(payload.get("hypothesis_id")),
-        family_template_id=_string(payload.get("family_template_id")),
-        candidate_kind=cast(Any, _string(payload.get("candidate_kind")) or "sleeve"),
-        runtime_family=_string(payload.get("runtime_family")),
-        runtime_strategy_name=_string(payload.get("runtime_strategy_name")),
-        feature_contract=_mapping(payload.get("feature_contract")),
-        parameter_space=_mapping(payload.get("parameter_space")),
-        strategy_overrides=_mapping(payload.get("strategy_overrides")),
-        objective=_mapping(payload.get("objective")),
-        hard_vetoes=_mapping(payload.get("hard_vetoes")),
-        expected_failure_modes=tuple(
-            str(item)
-            for item in cast(Sequence[Any], payload.get("expected_failure_modes") or ())
-            if str(item).strip()
-        ),
-        promotion_contract=_mapping(payload.get("promotion_contract")),
-    )
+    return candidate_spec_from_payload(payload)
+
+
+def _load_candidate_specs_jsonl(paths: Sequence[Path]) -> tuple[CandidateSpec, ...]:
+    specs: list[CandidateSpec] = []
+    seen: set[str] = set()
+    for path in paths:
+        if not path.exists():
+            raise ValueError(f"candidate_specs_jsonl_missing:{path}")
+        for line_number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            if not line.strip():
+                continue
+            try:
+                payload = json.loads(line)
+                spec = _candidate_spec_from_payload(_mapping(payload))
+            except Exception as exc:
+                raise ValueError(
+                    f"candidate_specs_jsonl_invalid:{path}:{line_number}:{exc}"
+                ) from exc
+            if spec.candidate_spec_id in seen:
+                raise ValueError(
+                    f"candidate_specs_jsonl_duplicate_candidate_spec_id:{path}:{line_number}:{spec.candidate_spec_id}"
+                )
+            seen.add(spec.candidate_spec_id)
+            specs.append(spec)
+    if not specs:
+        raise ValueError("candidate_specs_jsonl_empty")
+    return tuple(specs)
 
 
 def _summary_scorecard_feedback_bundles_for_epoch(
@@ -4135,6 +4157,109 @@ def _select_candidate_specs_for_replay(
     }
 
 
+def _candidate_selection_for_direct_replay(
+    *,
+    specs: Sequence[CandidateSpec],
+    proposal_rows: Sequence[Mapping[str, Any]],
+    candidate_specs_paths: Sequence[Path],
+) -> dict[str, Any]:
+    proposal_by_spec = {
+        _string(row.get("candidate_spec_id")): row
+        for row in _list_of_mappings(list(proposal_rows))
+        if _string(row.get("candidate_spec_id"))
+    }
+    rows: list[dict[str, Any]] = []
+    for index, spec in enumerate(specs, start=1):
+        params = _mapping(spec.strategy_overrides.get("params"))
+        universe = spec.strategy_overrides.get("universe_symbols")
+        universe_key = (
+            ",".join(
+                sorted(_string(item).upper() for item in universe if _string(item))
+            )
+            if isinstance(universe, Sequence) and not isinstance(universe, str)
+            else ""
+        )
+        proposal = _mapping(proposal_by_spec.get(spec.candidate_spec_id))
+        rows.append(
+            {
+                "candidate_spec_id": spec.candidate_spec_id,
+                "family_template_id": spec.family_template_id,
+                "runtime_family": spec.runtime_family,
+                "runtime_strategy_name": spec.runtime_strategy_name,
+                "capital_profile": _string(params.get("capital_profile")) or None,
+                "feedback_remediation_profile": _string(
+                    params.get("feedback_remediation_profile")
+                )
+                or None,
+                "universe_key": universe_key,
+                "signal_key": "|".join(
+                    part
+                    for part in (
+                        _string(params.get("signal_motif")),
+                        _string(params.get("selection_mode")),
+                        _string(params.get("rank_feature")),
+                    )
+                    if part
+                ),
+                "execution_signature": _candidate_spec_execution_signature(spec),
+                "duplicate_of_candidate_spec_id": None,
+                "pre_replay_score": str(_pre_replay_candidate_score(spec)),
+                "proposal_score": proposal.get("proposal_score"),
+                "proposal_training_source": proposal.get("training_source")
+                or "direct_candidate_specs_handoff",
+                "rank": index,
+                "selected_for_replay": True,
+                "selection_reason": "direct_candidate_specs_handoff",
+                "replay_order": index,
+                "selection_hash": _stable_hash(
+                    {
+                        "candidate_spec_id": spec.candidate_spec_id,
+                        "source_paths": [str(path) for path in candidate_specs_paths],
+                        "replay_order": index,
+                    }
+                ),
+            }
+        )
+    return {
+        "schema_version": "torghut.whitepaper-autoresearch-selection.v1",
+        "selection_mode": "direct_candidate_specs_handoff",
+        "candidate_specs_artifacts": [str(path) for path in candidate_specs_paths],
+        "budget": {
+            "max_candidates": len(specs),
+            "top_k": len(specs),
+            "exploration_slots_requested": 0,
+            "exploration_slots_effective": 0,
+            "exploration_slots": 0,
+            "feedback_block_reaudit_slots_requested": 0,
+            "feedback_block_reaudit_slots_effective": 0,
+            "feedback_block_reaudit_selected_count": 0,
+            "portfolio_size_min": 1,
+            "selected_count": len(specs),
+            "compiled_candidate_count": len(specs),
+            "unique_execution_signature_count": len(
+                {_candidate_spec_execution_signature(spec) for spec in specs}
+            ),
+            "eligible_candidate_count": len(specs),
+            "replay_order_policy": "preserve_candidate_specs_jsonl_order",
+            "capital_feasible_candidate_count": sum(
+                1
+                for spec in specs
+                if Decimal(
+                    str(
+                        candidate_spec_capital_features(spec).get(
+                            "capital_feasible_flag", 0
+                        )
+                    )
+                )
+                >= Decimal("1")
+            ),
+        },
+        "proposal_score_confidence": _proposal_score_confidence(proposal_rows),
+        "selected_candidate_spec_ids": [spec.candidate_spec_id for spec in specs],
+        "rows": rows,
+    }
+
+
 def _synthetic_net_for_spec(spec: CandidateSpec, *, rank: int) -> Decimal:
     family_bonus = {
         "microbar_cross_sectional_pairs_v1": Decimal("215"),
@@ -5887,17 +6012,27 @@ def run_whitepaper_autoresearch_profit_target(
     output_dir.mkdir(parents=True, exist_ok=True)
     program = _load_epoch_program(args)
     objective = program.objective
-    try:
-        candidate_universe_symbols = _candidate_universe_symbols_for_compilation(args)
-    except ValueError as exc:
-        return _write_failure_summary(
-            output_dir=output_dir,
-            epoch_id=epoch_id,
-            status="invalid_universe",
-            reason=str(exc),
-            started_at=started_at,
-            extra={"symbols": str(getattr(args, "symbols", "") or "")},
-        )
+    candidate_specs_paths = tuple(
+        path.resolve()
+        for path in cast(Sequence[Path], getattr(args, "candidate_specs", ()) or ())
+    )
+    direct_candidate_specs_replay = bool(candidate_specs_paths)
+    if direct_candidate_specs_replay:
+        candidate_universe_symbols: tuple[str, ...] = ()
+    else:
+        try:
+            candidate_universe_symbols = _candidate_universe_symbols_for_compilation(
+                args
+            )
+        except ValueError as exc:
+            return _write_failure_summary(
+                output_dir=output_dir,
+                epoch_id=epoch_id,
+                status="invalid_universe",
+                reason=str(exc),
+                started_at=started_at,
+                extra={"symbols": str(getattr(args, "symbols", "") or "")},
+            )
     args = argparse.Namespace(
         **{
             **vars(args),
@@ -6018,48 +6153,81 @@ def run_whitepaper_autoresearch_profit_target(
     target = _decimal(args.target_net_pnl_per_day, default=_DEFAULT_DAILY_PROFIT_TARGET)
     oracle_policy = _oracle_policy_from_args(args)
     selection_only = bool(getattr(args, "selection_only", False))
-    explicit_source_inputs = bool(
-        args.seed_recent_whitepapers
-        or getattr(args, "source_jsonl", [])
-        or getattr(args, "paper_run_id", [])
-    )
-    sources = (
-        list(_program_whitepaper_sources(program)) if not explicit_source_inputs else []
-    )
-    if args.seed_recent_whitepapers:
-        sources.extend(_program_whitepaper_sources(program))
-        sources.extend(RECENT_WHITEPAPER_SEEDS)
-    for source_jsonl in getattr(args, "source_jsonl", []):
-        sources.extend(sources_from_jsonl(source_jsonl))
-    sources.extend(_load_sources_from_db(args.paper_run_id))
-    sources = _dedupe_whitepaper_sources(sources)
-    if not sources:
-        return _write_failure_summary(
-            output_dir=output_dir,
-            epoch_id=epoch_id,
-            status="no_sources",
-            reason="no_whitepaper_sources",
-            started_at=started_at,
+    if direct_candidate_specs_replay:
+        sources: list[WhitepaperResearchSource] = []
+        hypothesis_cards: list[HypothesisCard] = []
+        try:
+            candidate_specs = list(_load_candidate_specs_jsonl(candidate_specs_paths))
+        except ValueError as exc:
+            return _write_failure_summary(
+                output_dir=output_dir,
+                epoch_id=epoch_id,
+                status="invalid_candidate_specs",
+                reason=str(exc),
+                started_at=started_at,
+                extra={
+                    "candidate_specs": [str(path) for path in candidate_specs_paths]
+                },
+            )
+        candidate_compilation_blockers: tuple[CandidateCompilationBlocker, ...] = ()
+        candidate_compiler_report: dict[str, Any] = {
+            "schema_version": "torghut.whitepaper-candidate-compiler-report.v1",
+            "status": "loaded_candidate_specs_for_direct_replay",
+            "candidate_specs_artifacts": [str(path) for path in candidate_specs_paths],
+            "candidate_spec_count": len(candidate_specs),
+            "executable_spec_count": len(candidate_specs),
+            "blockers": [],
+        }
+    else:
+        explicit_source_inputs = bool(
+            args.seed_recent_whitepapers
+            or getattr(args, "source_jsonl", [])
+            or getattr(args, "paper_run_id", [])
         )
+        sources = (
+            list(_program_whitepaper_sources(program))
+            if not explicit_source_inputs
+            else []
+        )
+        if args.seed_recent_whitepapers:
+            sources.extend(_program_whitepaper_sources(program))
+            sources.extend(RECENT_WHITEPAPER_SEEDS)
+        for source_jsonl in getattr(args, "source_jsonl", []):
+            sources.extend(sources_from_jsonl(source_jsonl))
+        sources.extend(_load_sources_from_db(args.paper_run_id))
+        sources = _dedupe_whitepaper_sources(sources)
+        if not sources:
+            return _write_failure_summary(
+                output_dir=output_dir,
+                epoch_id=epoch_id,
+                status="no_sources",
+                reason="no_whitepaper_sources",
+                started_at=started_at,
+            )
 
-    hypothesis_cards: list[HypothesisCard] = compile_sources_to_hypothesis_cards(
-        sources
-    )
-    compilation = compile_whitepaper_candidate_specs(
-        hypothesis_cards=hypothesis_cards,
-        target_net_pnl_per_day=target,
-        family_template_dir=args.family_template_dir.resolve(),
-        seed_sweep_dir=args.seed_sweep_dir.resolve(),
-        universe_symbols=candidate_universe_symbols,
-    )
-    candidate_specs = list(compilation.executable_specs)
-    candidate_specs = _candidate_specs_with_oracle_policy(
-        candidate_specs, oracle_policy=oracle_policy
-    )
+        hypothesis_cards = compile_sources_to_hypothesis_cards(sources)
+        compilation = compile_whitepaper_candidate_specs(
+            hypothesis_cards=hypothesis_cards,
+            target_net_pnl_per_day=target,
+            family_template_dir=args.family_template_dir.resolve(),
+            seed_sweep_dir=args.seed_sweep_dir.resolve(),
+            universe_symbols=candidate_universe_symbols,
+        )
+        candidate_specs = list(compilation.executable_specs)
+        candidate_specs = _candidate_specs_with_oracle_policy(
+            candidate_specs, oracle_policy=oracle_policy
+        )
+        candidate_compilation_blockers = tuple(compilation.blockers)
+        candidate_compiler_report = compilation.to_payload()
     blocker_by_spec: dict[str, list[CandidateCompilationBlocker]] = {}
-    for blocker in compilation.blockers:
+    for blocker in candidate_compilation_blockers:
         blocker_by_spec.setdefault(blocker.candidate_spec_id, []).append(blocker)
-    if args.persist_results and args.replay_mode == "real" and not selection_only:
+    if (
+        args.persist_results
+        and args.replay_mode == "real"
+        and not selection_only
+        and not direct_candidate_specs_replay
+    ):
         for source in sources:
             source_specs = [
                 spec
@@ -6091,7 +6259,9 @@ def run_whitepaper_autoresearch_profit_target(
         output_dir / "candidate-specs.jsonl",
         [spec.to_payload() for spec in candidate_specs],
     )
-    _write_json(output_dir / "candidate-compiler-report.json", compilation.to_payload())
+    _write_json(
+        output_dir / "candidate-compiler-report.json", candidate_compiler_report
+    )
 
     if not candidate_specs:
         return _write_failure_summary(
@@ -6132,17 +6302,27 @@ def run_whitepaper_autoresearch_profit_target(
         output_dir / "pre-replay-mlx-proposal-scores.jsonl",
         pre_replay_proposal_rows,
     )
-    replay_candidate_specs, candidate_selection = _select_candidate_specs_for_replay(
-        specs=candidate_specs,
-        proposal_rows=pre_replay_proposal_rows,
-        top_k=int(args.top_k),
-        exploration_slots=int(args.exploration_slots),
-        feedback_block_reaudit_slots=int(
-            getattr(args, "feedback_block_reaudit_slots", 0) or 0
-        ),
-        max_candidates=int(args.max_candidates),
-        portfolio_size_min=int(args.portfolio_size_min),
-    )
+    if direct_candidate_specs_replay:
+        replay_candidate_specs = list(candidate_specs)
+        candidate_selection = _candidate_selection_for_direct_replay(
+            specs=replay_candidate_specs,
+            proposal_rows=pre_replay_proposal_rows,
+            candidate_specs_paths=candidate_specs_paths,
+        )
+    else:
+        replay_candidate_specs, candidate_selection = (
+            _select_candidate_specs_for_replay(
+                specs=candidate_specs,
+                proposal_rows=pre_replay_proposal_rows,
+                top_k=int(args.top_k),
+                exploration_slots=int(args.exploration_slots),
+                feedback_block_reaudit_slots=int(
+                    getattr(args, "feedback_block_reaudit_slots", 0) or 0
+                ),
+                max_candidates=int(args.max_candidates),
+                portfolio_size_min=int(args.portfolio_size_min),
+            )
+        )
     candidate_selection = {
         **candidate_selection,
         "proposal_model": {
@@ -6179,7 +6359,7 @@ def run_whitepaper_autoresearch_profit_target(
             "source_count": len(sources),
             "hypothesis_count": len(hypothesis_cards),
             "candidate_spec_count": len(candidate_specs),
-            "candidate_compiler_blocker_count": len(compilation.blockers),
+            "candidate_compiler_blocker_count": len(candidate_compilation_blockers),
             "feedback_evidence_bundle_count": len(feedback_evidence_bundles),
             "pre_replay_proposal_score_count": len(pre_replay_proposal_rows),
             "replay_candidate_spec_count": len(replay_candidate_specs),
@@ -6618,7 +6798,7 @@ def run_whitepaper_autoresearch_profit_target(
         "source_count": len(sources),
         "hypothesis_count": len(hypothesis_cards),
         "candidate_spec_count": len(candidate_specs),
-        "candidate_compiler_blocker_count": len(compilation.blockers),
+        "candidate_compiler_blocker_count": len(candidate_compilation_blockers),
         "evidence_bundle_count": len(replay_result.evidence_bundles),
         "candidate_evidence_bundle_payloads": _evidence_bundle_payloads_for_epoch_summary(
             replay_result.evidence_bundles
@@ -6628,6 +6808,9 @@ def run_whitepaper_autoresearch_profit_target(
             _MAX_PERSISTED_FEEDBACK_EVIDENCE_BUNDLES,
         ),
         "replay_candidate_spec_count": len(replay_candidate_specs),
+        "selected_candidate_spec_ids": [
+            spec.candidate_spec_id for spec in replay_candidate_specs
+        ],
         "replay_incomplete": replay_result.incomplete,
         "replay_failure_reasons": replay_failure_reasons,
         "pre_replay_proposal_score_count": len(pre_replay_proposal_rows),
