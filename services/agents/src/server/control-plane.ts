@@ -5,7 +5,7 @@ import { createAgentsHealthHandler } from './health'
 import { createAgentsHttpRuntime, type AgentsHttpRuntime } from './http-runtime'
 import { createKubernetesClient } from './kube-types'
 import { getLeaderElectionStatus, requireLeaderForMutationHttp } from './leader-election'
-import { recordAgentQueueDepth } from './metrics'
+import { recordAgentQueueDepth, renderAgentsPrometheusMetrics } from './metrics'
 import { createPrimitivesStore } from './primitives-store'
 import { validatePolicies } from './primitives-policy'
 import { createAgentsReadyHandler, type AgentRunIngestionAssessment, type AgentsControllerHealthState } from './ready'
@@ -154,7 +154,7 @@ const metricsPath = () => process.env.AGENTS_PROMETHEUS_METRICS_PATH ?? defaultM
 
 const renderMetrics = async () => ({
   ok: true as const,
-  body: '# Agents metrics endpoint is active; metric emission is provided by the configured runtime sink.\n',
+  body: renderAgentsPrometheusMetrics(),
 })
 
 const loadRouteSources = async (sources: RouteSourceSpec[]) => {

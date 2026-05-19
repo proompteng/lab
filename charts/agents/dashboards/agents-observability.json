@@ -39,7 +39,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (outcome) (rate(jangar_agent_run_outcomes_total[5m]))",
+          "expr": "sum by (outcome) (rate(agents_agent_run_outcomes_total[5m]))",
           "legendFormat": "{{outcome}}",
           "refId": "A"
         }
@@ -69,7 +69,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(jangar_reconcile_duration_ms_bucket{kind=\"agentrun\"}[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(agents_reconcile_duration_ms_bucket{kind=\"agentrun\"}[5m])) by (le))",
           "legendFormat": "p95",
           "refId": "A"
         }
@@ -97,7 +97,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(jangar_agents_queue_depth_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(agents_agent_queue_depth_bucket[5m])) by (le))",
           "legendFormat": "p95 queue depth",
           "refId": "A"
         }
@@ -125,7 +125,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (state) (rate(jangar_sse_connections_total[5m]))",
+          "expr": "sum by (state) (rate(agents_sse_connections_total[5m]))",
           "legendFormat": "{{state}}",
           "refId": "A"
         }
@@ -137,7 +137,7 @@
   "refresh": "30s",
   "schemaVersion": 36,
   "style": "dark",
-  "tags": ["agents", "jangar"],
+  "tags": ["agents"],
   "templating": {
     "list": []
   },
