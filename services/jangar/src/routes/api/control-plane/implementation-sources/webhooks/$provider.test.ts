@@ -8,13 +8,13 @@ vi.mock('~/server/implementation-source-webhooks', () => webhookMocks)
 
 import { Route } from './$provider'
 
-describe('implementation source webhook route', () => {
+describe('control-plane implementation source webhook route', () => {
   afterEach(() => {
     vi.clearAllMocks()
   })
 
   it('proxies provider webhook POST requests to the Agents service', async () => {
-    const request = new Request('http://jangar.test/api/agents/implementation-sources/webhooks/github', {
+    const request = new Request('http://jangar.test/api/control-plane/implementation-sources/webhooks/github', {
       body: '{}',
       method: 'POST',
     })
