@@ -4323,6 +4323,51 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "7200",
         )
 
+    def test_remediation_surfaces_recent_trading_day_shortfall(self) -> None:
+        remediation = runner._candidate_search_remediation(
+            failure_reason="ValueError:insufficient_recent_trading_days:9<11",
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": "spec-selected",
+                        "selected_for_replay": True,
+                    }
+                ]
+            },
+            evidence_bundles=(),
+            false_positive_table=(
+                {
+                    "candidate_spec_id": "spec-selected",
+                    "evidence_status": "missing",
+                    "failure_reasons": ["replay_evidence_missing"],
+                },
+            ),
+            best_false_negative_table=(),
+            replay_timeout_seconds=600,
+            max_frontier_candidates_per_spec=1,
+            current_train_days=6,
+            current_holdout_days=3,
+            current_second_oos_days=2,
+        )
+
+        self.assertEqual(
+            remediation["recent_trading_days"]["available_recent_trading_days"],
+            9,
+        )
+        self.assertEqual(
+            remediation["recent_trading_days"]["required_recent_trading_days"],
+            11,
+        )
+        self.assertEqual(
+            remediation["recent_trading_days"]["required_window"],
+            {"train_days": 6, "holdout_days": 3, "second_oos_days": 2},
+        )
+        day_action = remediation["next_actions"][0]
+        self.assertEqual(
+            day_action["action"], "inspect_or_backfill_recent_ta_signal_days"
+        )
+        self.assertIn("torghut.ta_signals", day_action["recommended_operator_probe"])
+
     def test_remediation_prioritizes_missing_promotion_proof(self) -> None:
         remediation = runner._candidate_search_remediation(
             failure_reason="portfolio_optimizer_produced_no_candidate",

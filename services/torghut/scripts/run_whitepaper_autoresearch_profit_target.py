@@ -1751,6 +1751,28 @@ def _best_false_negative_table(
     return rows[: max(0, limit)]
 
 
+def _recent_trading_days_shortfall(failure_reason: str) -> dict[str, int] | None:
+    marker = "insufficient_recent_trading_days:"
+    marker_index = failure_reason.find(marker)
+    if marker_index < 0:
+        return None
+    remainder = failure_reason[marker_index + len(marker) :]
+    token = remainder.splitlines()[0].split()[0] if remainder.strip() else ""
+    available_text, separator, required_text = token.partition("<")
+    if separator != "<":
+        return None
+    try:
+        available = int(available_text)
+        required = int(required_text)
+    except ValueError:
+        return None
+    return {
+        "available_recent_trading_days": available,
+        "required_recent_trading_days": required,
+        "missing_recent_trading_days": max(0, required - available),
+    }
+
+
 def _candidate_search_remediation(
     *,
     failure_reason: str,
@@ -1765,6 +1787,9 @@ def _candidate_search_remediation(
     current_portfolio_size_min: int = 2,
     current_max_candidates: int = 64,
     current_max_total_frontier_candidates: int = 0,
+    current_train_days: int = 6,
+    current_holdout_days: int = 3,
+    current_second_oos_days: int = 2,
 ) -> dict[str, Any]:
     failure_counts: dict[str, int] = {}
     for row in _list_of_mappings(list(false_positive_table)):
@@ -1841,6 +1866,41 @@ def _candidate_search_remediation(
         >= observed_selection_budget["eligible_candidate_count"]
     )
     next_actions: list[dict[str, Any]] = []
+    recent_day_shortfall = _recent_trading_days_shortfall(failure_reason)
+    recent_day_diagnostics: dict[str, Any] | None = None
+    if recent_day_shortfall is not None:
+        recent_day_diagnostics = {
+            **recent_day_shortfall,
+            "required_window": {
+                "train_days": max(1, int(current_train_days)),
+                "holdout_days": max(1, int(current_holdout_days)),
+                "second_oos_days": max(0, int(current_second_oos_days)),
+            },
+            "clickhouse_recent_days_query": (
+                "SELECT toDate(event_ts) AS trading_day, count() AS rows, "
+                "min(event_ts) AS first_event_ts, max(event_ts) AS last_event_ts "
+                "FROM torghut.ta_signals WHERE source = 'ta' AND window_size = 'PT1S' "
+                "GROUP BY trading_day ORDER BY trading_day DESC LIMIT 20"
+            ),
+        }
+        next_actions.append(
+            {
+                "priority": 1,
+                "action": "inspect_or_backfill_recent_ta_signal_days",
+                "reason": (
+                    "real replay cannot build the requested train/holdout/double-OOS "
+                    "window from available TA PT1S signal days"
+                ),
+                "recent_trading_days": recent_day_diagnostics,
+                "recommended_operator_probe": recent_day_diagnostics[
+                    "clickhouse_recent_days_query"
+                ],
+                "recommended_archive_probe": (
+                    "python services/torghut/scripts/archive_recent_kafka_trading_days.py "
+                    "--archive-root $ARCHIVE_ROOT --scan-root $HISTORICAL_RUN_ROOT --json"
+                ),
+            }
+        )
     if (
         observed_selection_budget["selected_count"] <= 0
         and observed_selection_budget["pre_replay_feedback_blocked_candidate_count"] > 0
@@ -1895,6 +1955,7 @@ def _candidate_search_remediation(
             "candidate_surface_exhausted": candidate_surface_exhausted,
             "replayable_candidate_surface_exhausted": replayable_candidate_surface_exhausted,
             "observed_selection_budget": observed_selection_budget,
+            "recent_trading_days": recent_day_diagnostics,
             "next_actions": next_actions,
         }
     if "TimeoutError:real_replay_timeout_seconds" in failure_reason:
@@ -2135,6 +2196,7 @@ def _candidate_search_remediation(
         "candidate_surface_exhausted": candidate_surface_exhausted,
         "replayable_candidate_surface_exhausted": replayable_candidate_surface_exhausted,
         "observed_selection_budget": observed_selection_budget,
+        "recent_trading_days": recent_day_diagnostics,
         "next_actions": next_actions,
     }
 
@@ -6506,6 +6568,9 @@ def run_whitepaper_autoresearch_profit_target(
             current_max_total_frontier_candidates=int(
                 getattr(args, "max_total_frontier_candidates", 0) or 0
             ),
+            current_train_days=int(getattr(args, "train_days", 6) or 6),
+            current_holdout_days=int(getattr(args, "holdout_days", 3) or 3),
+            current_second_oos_days=int(getattr(args, "second_oos_days", 2) or 2),
         )
         remediation_path = output_dir / "candidate-search-remediation.json"
         _write_json(remediation_path, remediation)
@@ -6753,6 +6818,9 @@ def run_whitepaper_autoresearch_profit_target(
             current_max_total_frontier_candidates=int(
                 getattr(args, "max_total_frontier_candidates", 0) or 0
             ),
+            current_train_days=int(getattr(args, "train_days", 6) or 6),
+            current_holdout_days=int(getattr(args, "holdout_days", 3) or 3),
+            current_second_oos_days=int(getattr(args, "second_oos_days", 2) or 2),
         )
         _write_json(remediation_path, candidate_search_remediation)
     candidate_board = _candidate_board_payload(
