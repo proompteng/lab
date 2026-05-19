@@ -104,6 +104,30 @@ const execCapture = async (cmd: string[], env?: Record<string, string | undefine
   }
 }
 
+const execCaptureWithInput = async (cmd: string[], input: string, env?: Record<string, string | undefined>) => {
+  const subprocess = Bun.spawn(cmd, {
+    stdin: 'pipe',
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: buildEnv(env),
+  })
+
+  void subprocess.stdin?.write(input)
+  void subprocess.stdin?.end()
+
+  const [exitCode, stdout, stderr] = await Promise.all([
+    subprocess.exited,
+    new Response(subprocess.stdout).text(),
+    new Response(subprocess.stderr).text(),
+  ])
+
+  return {
+    exitCode,
+    stdout: stdout.trim(),
+    stderr: stderr.trim(),
+  }
+}
+
 const buildEnv = (env?: Record<string, string | undefined>) =>
   Object.fromEntries(
     Object.entries(env ? { ...process.env, ...env } : process.env).filter(([, value]) => value !== undefined),
@@ -121,6 +145,7 @@ const transientKubectlErrorPatterns = [
   /connection refused/i,
   /unable to connect to the server/i,
   /no route to host/i,
+  /etcdserver: request timed out/i,
   /server is currently unable to handle the request/i,
   /service unavailable/i,
   /Error from server \(Forbidden\): unknown/i,
@@ -512,19 +537,31 @@ const runDiagnosticsCommand = async (cmd: string[]) => {
 }
 
 const applyYaml = async (namespace: string, manifest: string) => {
-  const subprocess = Bun.spawn(['kubectl', ...buildKubectlApplyArgs({ namespace })], {
-    stdin: 'pipe',
-    stdout: 'inherit',
-    stderr: 'inherit',
-  })
+  const cmd = ['kubectl', ...buildKubectlApplyArgs({ namespace })]
+  const deadline = Date.now() + 60_000
+  let attempt = 1
+  let lastError = ''
 
-  void subprocess.stdin?.write(manifest)
-  void subprocess.stdin?.end()
+  while (Date.now() < deadline) {
+    const result = await execCaptureWithInput(cmd, manifest)
+    const details = formatCommandResult(result)
+    if (result.exitCode === 0) {
+      if (details) console.log(details)
+      return
+    }
 
-  const exitCode = await subprocess.exited
-  if (exitCode !== 0) {
-    fatal(`kubectl apply failed (${exitCode})`)
+    lastError = details
+    if (!isTransientKubectlError(details)) {
+      fatal(`kubectl apply failed (${result.exitCode})`, details)
+    }
+
+    const delayMs = Math.min(1000 * attempt, 5000)
+    console.error(`kubectl apply failed with a transient API error; retrying attempt ${attempt + 1} in ${delayMs}ms.`)
+    await sleep(delayMs)
+    attempt += 1
   }
+
+  fatal('Timed out retrying kubectl apply after transient API errors.', lastError)
 }
 
 const waitForAgentRun = async (namespace: string, name: string, timeoutMs: number) => {
