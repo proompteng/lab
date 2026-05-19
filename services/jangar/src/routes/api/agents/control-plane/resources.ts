@@ -7,7 +7,10 @@ const AGENTS_SERVICE_PATH = '/api/agents/control-plane/resources'
 export const Route = createFileRoute('/api/agents/control-plane/resources')({
   server: {
     handlers: {
-      GET: async ({ request }: JangarServerRouteArgs) => proxyAgentsServiceRequest(request, AGENTS_SERVICE_PATH),
+      GET: async ({ request }: JangarServerRouteArgs) => proxyAgentsControlPlaneResources(request),
     },
   },
 })
+
+export const proxyAgentsControlPlaneResources = (request: Request) =>
+  proxyAgentsServiceRequest(request, AGENTS_SERVICE_PATH)

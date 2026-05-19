@@ -25,7 +25,7 @@ This doc defines a minimal, consistent condition set and naming conventions.
   - `services/jangar/api/agents/v1alpha1/types.go`
 - Controllers construct and upsert conditions:
   - `services/jangar/src/server/agents-controller.ts` (`buildConditions`, `upsertCondition` usage for `Accepted`, `InProgress`, `Blocked`, etc.)
-  - ImplementationSource webhook controller sets conditions similarly: `services/jangar/src/server/implementation-source-webhooks.ts`.
+  - ImplementationSource webhook controller sets conditions similarly: `services/agents/src/server/implementation-source-webhooks.ts`.
 - No centralized spec exists for condition types and transitions.
 
 ## Design

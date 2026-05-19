@@ -19,6 +19,10 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('argo\\.workflows\\.completions')
     expect(content).toContain('reflection-(allowed|auto)-namespaces')
     expect(content).toContain('jangar-db-ca')
+    expect(content).toContain('legacy generic Agents /api/control-plane API compatibility aliases')
+    expect(content).toContain(
+      '/api/control-plane/(agent-events|agent-runs|events|implementation-sources|logs|resource|resources|status|stream)',
+    )
     expect(content).toContain('agents-control-plane runtime profile')
     expect(content).toContain('agents-controllers runtime profile')
   })

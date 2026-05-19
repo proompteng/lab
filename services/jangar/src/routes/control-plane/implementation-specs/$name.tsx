@@ -12,7 +12,6 @@ import { createFileRoute } from '@tanstack/react-router'
 import * as React from 'react'
 import { getMetadataValue, getResourceUpdatedAt } from '@/components/agents-control-plane'
 import { parseNamespaceSearch } from '@/components/agents-control-plane-search'
-import { AGENTS_AGENT_RUNS_API_PATH } from '@/data/agents-api-paths'
 import {
   fetchAgentOptions,
   fetchPrimitiveDetail,
@@ -476,7 +475,7 @@ function ImplementationSpecRunPage() {
     const deliveryId = randomUuid()
     const runtimeConfig = ttlValue != null ? { ttlSecondsAfterFinished: ttlValue } : undefined
     try {
-      const response = await fetch(AGENTS_AGENT_RUNS_API_PATH, {
+      const response = await fetch('/v1/agent-runs', {
         method: 'POST',
         headers: {
           'content-type': 'application/json',

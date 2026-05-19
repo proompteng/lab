@@ -354,7 +354,7 @@ Status fields:
 
 Webhook configuration:
 
-- Endpoint: `POST /api/control-plane/implementation-sources/webhooks/{provider}` where `{provider}` is `github` or `linear`.
+- Endpoint: `POST /api/agents/implementation-sources/webhooks/{provider}` where `{provider}` is `github` or `linear`.
 - Secret: reuse `spec.auth.secretRef` value as the webhook signing secret.
 - GitHub headers: `X-Hub-Signature-256` (preferred) or `X-Hub-Signature`.
 - Linear headers: `Linear-Signature` with `Linear-Event: issue`.

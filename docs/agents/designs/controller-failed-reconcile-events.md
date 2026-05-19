@@ -21,7 +21,7 @@ When reconciles fail, the current primary signal is logs (and possibly status co
 
 - Controllers update status for many CRDs via `setStatus(...)` helpers:
   - `services/jangar/src/server/agents-controller.ts`
-  - `services/jangar/src/server/implementation-source-webhooks.ts` (status updates)
+  - `services/agents/src/server/implementation-source-webhooks.ts` (status updates)
 - Kubernetes client wrapper currently supports listing Events but not creating them:
   - `services/jangar/src/server/primitives-kube.ts` includes `listEvents(...)` but no `createEvent(...)`.
 - Watch processing is not observable beyond container logs:

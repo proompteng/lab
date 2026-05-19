@@ -264,7 +264,7 @@ describe('verify-deployment', () => {
         statusServicePort: '80',
         controlPlaneStatusNamespace: 'agents',
       }),
-    ).toBe('/api/v1/namespaces/jangar/services/jangar:80/proxy/api/control-plane/status?namespace=agents')
+    ).toBe('/api/v1/namespaces/jangar/services/jangar:80/proxy/api/agents/control-plane/status?namespace=agents')
   })
 
   it('rejects unknown admission passport consumers', () => {

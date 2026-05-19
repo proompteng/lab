@@ -232,7 +232,7 @@ The chart should render ConfigMap `data.settings` from values in a way that guar
    - Add unit tests for reload and precedence.
 2. Adopt high-value knobs
    - Update `services/jangar/src/server/agents-controller.ts` to source runner Job defaults via settings helper (keep `AgentRun.spec.runtime.config` highest precedence).
-   - Update webhook tuning in `services/jangar/src/server/implementation-source-webhooks.ts`.
+   - Update webhook tuning in `services/agents/src/server/implementation-source-webhooks.ts`.
    - Update any “controller knobs” that are currently parsed once at startup (ensure re-reads happen per reconcile tick or on update).
 3. Chart plumbing
    - Add chart template + values/schema.

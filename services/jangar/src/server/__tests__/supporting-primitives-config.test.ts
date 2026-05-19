@@ -14,11 +14,11 @@ describe('resolveSupportingPrimitivesConfig', () => {
   it('keeps explicit runtime admission URLs configurable for Jangar domain consumers', () => {
     const config = resolveSupportingPrimitivesConfig({
       JANGAR_RUNTIME_ADMISSION_STATUS_URL:
-        'http://jangar.jangar.svc.cluster.local/api/control-plane/status?view=schedule-runner',
+        'http://agents.agents.svc.cluster.local/api/agents/control-plane/status?view=schedule-runner',
     })
 
     expect(config.runtimeAdmissionStatusUrl).toBe(
-      'http://jangar.jangar.svc.cluster.local/api/control-plane/status?view=schedule-runner',
+      'http://agents.agents.svc.cluster.local/api/agents/control-plane/status?view=schedule-runner',
     )
   })
 

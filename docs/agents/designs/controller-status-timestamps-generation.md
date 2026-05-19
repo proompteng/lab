@@ -28,7 +28,7 @@ This doc defines a consistent contract and identifies places in code that should
   - `services/jangar/api/agents/v1alpha1/types.go` (e.g. `AgentStatus`, `AgentRunStatus`)
 - Controllers update status using helpers (varies by resource):
   - `services/jangar/src/server/agents-controller.ts` uses `setStatus(...)` patterns and sets `observedGeneration` and timestamps in many flows.
-  - Webhook status updates in `services/jangar/src/server/implementation-source-webhooks.ts` set `observedGeneration` for ImplementationSource.
+  - Webhook status updates in `services/agents/src/server/implementation-source-webhooks.ts` set `observedGeneration` for ImplementationSource.
 - Chart does not map any values for this behavior (code-defined).
 
 ## Design

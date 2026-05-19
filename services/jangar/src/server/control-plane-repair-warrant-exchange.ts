@@ -469,7 +469,7 @@ const closureRequirementsForDimension = (dimension: RepairWarrantDimension) => {
 }
 
 const validationRefsForDimension = (dimension: RepairWarrantDimension) => {
-  const common = ['GET /api/control-plane/status?namespace=agents']
+  const common = ['GET /api/agents/control-plane/status?namespace=agents']
   if (dimension === 'execution_tca') return [...common, 'GET /trading/status execution_tca']
   if (dimension === 'market_context') return [...common, 'GET /trading/status market_context']
   if (dimension === 'forecast_registry') return [...common, 'GET /trading/status forecast']

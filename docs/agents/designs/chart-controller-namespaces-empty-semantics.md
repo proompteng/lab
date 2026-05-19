@@ -25,7 +25,7 @@ Controllers reconcile CRDs in a set of namespaces. The chart exposes `controller
   - `JANGAR_AGENTS_CONTROLLER_NAMESPACES`: `charts/agents/templates/deployment-controllers.yaml`
   - helper: `charts/agents/templates/_helpers.tpl` (`agents.controllerNamespaces`)
 - Runtime parsing:
-  - `services/jangar/src/server/implementation-source-webhooks.ts` reads `process.env.JANGAR_AGENTS_CONTROLLER_NAMESPACES`.
+  - `services/agents/src/server/implementation-source-webhooks.ts` reads Agents controller namespace configuration.
   - Controllers use namespace scoping utilities in `services/jangar/src/server/namespace-scope.ts`.
 - Cluster desired state sets `controller.namespaces: [agents]` in `argocd/applications/agents/values.yaml`.
 

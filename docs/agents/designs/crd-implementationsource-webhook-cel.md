@@ -20,7 +20,7 @@ ImplementationSource supports webhook-driven ingestion. Certain fields must be p
 ## Current State
 
 - CRD exists: `charts/agents/crds/agents.proompteng.ai_implementationsources.yaml`.
-- Webhook runtime logic: `services/jangar/src/server/implementation-source-webhooks.ts`.
+- Webhook runtime logic: `services/agents/src/server/implementation-source-webhooks.ts`.
 - Signature verification expects a secret when webhook enabled (see `selectVerifiedSources(...)`).
 
 ## Design

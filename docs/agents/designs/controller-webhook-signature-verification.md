@@ -21,11 +21,11 @@ ImplementationSource webhooks are an ingress boundary. Signature verification is
 ## Current State
 
 - Signature verification code:
-  - GitHub: `verifyGitHubSignature(...)` in `services/jangar/src/server/implementation-source-webhooks.ts`
+  - GitHub: `verifyGitHubSignature(...)` in `services/agents/src/server/implementation-source-webhooks.ts`
   - Linear: `verifyLinearSignature(...)` in the same file
   - Verification selects candidate ImplementationSources and checks secrets: `selectVerifiedSources(...)`
 - Secret lookup:
-  - Reads secret data via Kubernetes client (kubectl): `getSecretData(...)` in `implementation-source-webhooks.ts` and `services/jangar/src/server/primitives-kube.ts`.
+  - Reads secret data via Kubernetes client (kubectl): `getSecretData(...)` in `implementation-source-webhooks.ts` and `services/agents/src/server/primitives-kube.ts`.
 - On invalid signature, responds 401: `implementation-source-webhooks.ts` (e.g. “Invalid webhook signature”).
 - Chart does not provide first-class values for webhook signing secrets (they are referenced in CRDs).
 

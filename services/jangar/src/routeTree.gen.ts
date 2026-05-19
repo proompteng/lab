@@ -97,13 +97,6 @@ import { Route as ApiMemoriesStatsRouteImport } from './routes/api/memories/stat
 import { Route as ApiMemoriesCountRouteImport } from './routes/api/memories/count'
 import { Route as ApiGithubPullsRouteImport } from './routes/api/github/pulls'
 import { Route as ApiGithubIssuesRouteImport } from './routes/api/github/issues'
-import { Route as ApiControlPlaneStreamRouteImport } from './routes/api/control-plane/stream'
-import { Route as ApiControlPlaneStatusRouteImport } from './routes/api/control-plane/status'
-import { Route as ApiControlPlaneResourcesRouteImport } from './routes/api/control-plane/resources'
-import { Route as ApiControlPlaneResourceRouteImport } from './routes/api/control-plane/resource'
-import { Route as ApiControlPlaneEventsRouteImport } from './routes/api/control-plane/events'
-import { Route as ApiControlPlaneAgentRunsRouteImport } from './routes/api/control-plane/agent-runs'
-import { Route as ApiControlPlaneAgentEventsRouteImport } from './routes/api/control-plane/agent-events'
 import { Route as ApiCodexRunsRouteImport } from './routes/api/codex/runs'
 import { Route as ApiCodexRunCompleteRouteImport } from './routes/api/codex/run-complete'
 import { Route as ApiCodexRerunRouteImport } from './routes/api/codex/rerun'
@@ -163,7 +156,6 @@ import { Route as ApiTorghutMarketContextProvidersNewsRouteImport } from './rout
 import { Route as ApiTorghutMarketContextProvidersFundamentalsRouteImport } from './routes/api/torghut/market-context/providers/fundamentals'
 import { Route as ApiTorghutDecisionEngineRunsIdRouteImport } from './routes/api/torghut/decision-engine/runs/$id'
 import { Route as ApiOpenwebuiRichUiRenderRenderIdRouteImport } from './routes/api/openwebui/rich-ui/render/$renderId'
-import { Route as ApiControlPlaneImplementationSourcesWebhooksProviderRouteImport } from './routes/api/control-plane/implementation-sources/webhooks/$provider'
 import { Route as ApiTorghutTradingControlPlaneQuantStreamRouteImport } from './routes/api/torghut/trading/control-plane/quant/stream'
 import { Route as ApiTorghutTradingControlPlaneQuantSnapshotRouteImport } from './routes/api/torghut/trading/control-plane/quant/snapshot'
 import { Route as ApiTorghutTradingControlPlaneQuantSeriesRouteImport } from './routes/api/torghut/trading/control-plane/quant/series'
@@ -657,44 +649,6 @@ const ApiGithubIssuesRoute = ApiGithubIssuesRouteImport.update({
   path: '/api/github/issues',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiControlPlaneStreamRoute = ApiControlPlaneStreamRouteImport.update({
-  id: '/api/control-plane/stream',
-  path: '/api/control-plane/stream',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiControlPlaneStatusRoute = ApiControlPlaneStatusRouteImport.update({
-  id: '/api/control-plane/status',
-  path: '/api/control-plane/status',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiControlPlaneResourcesRoute =
-  ApiControlPlaneResourcesRouteImport.update({
-    id: '/api/control-plane/resources',
-    path: '/api/control-plane/resources',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const ApiControlPlaneResourceRoute = ApiControlPlaneResourceRouteImport.update({
-  id: '/api/control-plane/resource',
-  path: '/api/control-plane/resource',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiControlPlaneEventsRoute = ApiControlPlaneEventsRouteImport.update({
-  id: '/api/control-plane/events',
-  path: '/api/control-plane/events',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiControlPlaneAgentRunsRoute =
-  ApiControlPlaneAgentRunsRouteImport.update({
-    id: '/api/control-plane/agent-runs',
-    path: '/api/control-plane/agent-runs',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const ApiControlPlaneAgentEventsRoute =
-  ApiControlPlaneAgentEventsRouteImport.update({
-    id: '/api/control-plane/agent-events',
-    path: '/api/control-plane/agent-events',
-    getParentRoute: () => rootRouteImport,
-  } as any)
 const ApiCodexRunsRoute = ApiCodexRunsRouteImport.update({
   id: '/api/codex/runs',
   path: '/api/codex/runs',
@@ -1028,12 +982,6 @@ const ApiOpenwebuiRichUiRenderRenderIdRoute =
     path: '/api/openwebui/rich-ui/render/$renderId',
     getParentRoute: () => rootRouteImport,
   } as any)
-const ApiControlPlaneImplementationSourcesWebhooksProviderRoute =
-  ApiControlPlaneImplementationSourcesWebhooksProviderRouteImport.update({
-    id: '/api/control-plane/implementation-sources/webhooks/$provider',
-    path: '/api/control-plane/implementation-sources/webhooks/$provider',
-    getParentRoute: () => rootRouteImport,
-  } as any)
 const ApiTorghutTradingControlPlaneQuantStreamRoute =
   ApiTorghutTradingControlPlaneQuantStreamRouteImport.update({
     id: '/api/torghut/trading/control-plane/quant/stream',
@@ -1187,13 +1135,6 @@ export interface FileRoutesByFullPath {
   '/api/codex/rerun': typeof ApiCodexRerunRoute
   '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
   '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
-  '/api/control-plane/agent-events': typeof ApiControlPlaneAgentEventsRoute
-  '/api/control-plane/agent-runs': typeof ApiControlPlaneAgentRunsRoute
-  '/api/control-plane/events': typeof ApiControlPlaneEventsRoute
-  '/api/control-plane/resource': typeof ApiControlPlaneResourceRoute
-  '/api/control-plane/resources': typeof ApiControlPlaneResourcesRoute
-  '/api/control-plane/status': typeof ApiControlPlaneStatusRoute
-  '/api/control-plane/stream': typeof ApiControlPlaneStreamRoute
   '/api/github/issues': typeof ApiGithubIssuesRoute
   '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
   '/api/memories/count': typeof ApiMemoriesCountRoute
@@ -1286,7 +1227,6 @@ export interface FileRoutesByFullPath {
   '/api/torghut/market-context/': typeof ApiTorghutMarketContextIndexRoute
   '/api/whitepapers/$runId/': typeof ApiWhitepapersRunIdIndexRoute
   '/control-plane/torghut/quant/': typeof ControlPlaneTorghutQuantIndexRoute
-  '/api/control-plane/implementation-sources/webhooks/$provider': typeof ApiControlPlaneImplementationSourcesWebhooksProviderRoute
   '/api/openwebui/rich-ui/render/$renderId': typeof ApiOpenwebuiRichUiRenderRenderIdRoute
   '/api/torghut/decision-engine/runs/$id': typeof ApiTorghutDecisionEngineRunsIdRoute
   '/api/torghut/market-context/providers/fundamentals': typeof ApiTorghutMarketContextProvidersFundamentalsRoute
@@ -1360,13 +1300,6 @@ export interface FileRoutesByTo {
   '/api/codex/rerun': typeof ApiCodexRerunRoute
   '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
   '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
-  '/api/control-plane/agent-events': typeof ApiControlPlaneAgentEventsRoute
-  '/api/control-plane/agent-runs': typeof ApiControlPlaneAgentRunsRoute
-  '/api/control-plane/events': typeof ApiControlPlaneEventsRoute
-  '/api/control-plane/resource': typeof ApiControlPlaneResourceRoute
-  '/api/control-plane/resources': typeof ApiControlPlaneResourcesRoute
-  '/api/control-plane/status': typeof ApiControlPlaneStatusRoute
-  '/api/control-plane/stream': typeof ApiControlPlaneStreamRoute
   '/api/github/issues': typeof ApiGithubIssuesRoute
   '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
   '/api/memories/count': typeof ApiMemoriesCountRoute
@@ -1459,7 +1392,6 @@ export interface FileRoutesByTo {
   '/api/torghut/market-context': typeof ApiTorghutMarketContextIndexRoute
   '/api/whitepapers/$runId': typeof ApiWhitepapersRunIdIndexRoute
   '/control-plane/torghut/quant': typeof ControlPlaneTorghutQuantIndexRoute
-  '/api/control-plane/implementation-sources/webhooks/$provider': typeof ApiControlPlaneImplementationSourcesWebhooksProviderRoute
   '/api/openwebui/rich-ui/render/$renderId': typeof ApiOpenwebuiRichUiRenderRenderIdRoute
   '/api/torghut/decision-engine/runs/$id': typeof ApiTorghutDecisionEngineRunsIdRoute
   '/api/torghut/market-context/providers/fundamentals': typeof ApiTorghutMarketContextProvidersFundamentalsRoute
@@ -1536,13 +1468,6 @@ export interface FileRoutesById {
   '/api/codex/rerun': typeof ApiCodexRerunRoute
   '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
   '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
-  '/api/control-plane/agent-events': typeof ApiControlPlaneAgentEventsRoute
-  '/api/control-plane/agent-runs': typeof ApiControlPlaneAgentRunsRoute
-  '/api/control-plane/events': typeof ApiControlPlaneEventsRoute
-  '/api/control-plane/resource': typeof ApiControlPlaneResourceRoute
-  '/api/control-plane/resources': typeof ApiControlPlaneResourcesRoute
-  '/api/control-plane/status': typeof ApiControlPlaneStatusRoute
-  '/api/control-plane/stream': typeof ApiControlPlaneStreamRoute
   '/api/github/issues': typeof ApiGithubIssuesRoute
   '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
   '/api/memories/count': typeof ApiMemoriesCountRoute
@@ -1635,7 +1560,6 @@ export interface FileRoutesById {
   '/api/torghut/market-context/': typeof ApiTorghutMarketContextIndexRoute
   '/api/whitepapers/$runId/': typeof ApiWhitepapersRunIdIndexRoute
   '/control-plane/torghut/quant/': typeof ControlPlaneTorghutQuantIndexRoute
-  '/api/control-plane/implementation-sources/webhooks/$provider': typeof ApiControlPlaneImplementationSourcesWebhooksProviderRoute
   '/api/openwebui/rich-ui/render/$renderId': typeof ApiOpenwebuiRichUiRenderRenderIdRoute
   '/api/torghut/decision-engine/runs/$id': typeof ApiTorghutDecisionEngineRunsIdRoute
   '/api/torghut/market-context/providers/fundamentals': typeof ApiTorghutMarketContextProvidersFundamentalsRoute
@@ -1713,13 +1637,6 @@ export interface FileRouteTypes {
     | '/api/codex/rerun'
     | '/api/codex/run-complete'
     | '/api/codex/runs'
-    | '/api/control-plane/agent-events'
-    | '/api/control-plane/agent-runs'
-    | '/api/control-plane/events'
-    | '/api/control-plane/resource'
-    | '/api/control-plane/resources'
-    | '/api/control-plane/status'
-    | '/api/control-plane/stream'
     | '/api/github/issues'
     | '/api/github/pulls'
     | '/api/memories/count'
@@ -1812,7 +1729,6 @@ export interface FileRouteTypes {
     | '/api/torghut/market-context/'
     | '/api/whitepapers/$runId/'
     | '/control-plane/torghut/quant/'
-    | '/api/control-plane/implementation-sources/webhooks/$provider'
     | '/api/openwebui/rich-ui/render/$renderId'
     | '/api/torghut/decision-engine/runs/$id'
     | '/api/torghut/market-context/providers/fundamentals'
@@ -1886,13 +1802,6 @@ export interface FileRouteTypes {
     | '/api/codex/rerun'
     | '/api/codex/run-complete'
     | '/api/codex/runs'
-    | '/api/control-plane/agent-events'
-    | '/api/control-plane/agent-runs'
-    | '/api/control-plane/events'
-    | '/api/control-plane/resource'
-    | '/api/control-plane/resources'
-    | '/api/control-plane/status'
-    | '/api/control-plane/stream'
     | '/api/github/issues'
     | '/api/github/pulls'
     | '/api/memories/count'
@@ -1985,7 +1894,6 @@ export interface FileRouteTypes {
     | '/api/torghut/market-context'
     | '/api/whitepapers/$runId'
     | '/control-plane/torghut/quant'
-    | '/api/control-plane/implementation-sources/webhooks/$provider'
     | '/api/openwebui/rich-ui/render/$renderId'
     | '/api/torghut/decision-engine/runs/$id'
     | '/api/torghut/market-context/providers/fundamentals'
@@ -2061,13 +1969,6 @@ export interface FileRouteTypes {
     | '/api/codex/rerun'
     | '/api/codex/run-complete'
     | '/api/codex/runs'
-    | '/api/control-plane/agent-events'
-    | '/api/control-plane/agent-runs'
-    | '/api/control-plane/events'
-    | '/api/control-plane/resource'
-    | '/api/control-plane/resources'
-    | '/api/control-plane/status'
-    | '/api/control-plane/stream'
     | '/api/github/issues'
     | '/api/github/pulls'
     | '/api/memories/count'
@@ -2160,7 +2061,6 @@ export interface FileRouteTypes {
     | '/api/torghut/market-context/'
     | '/api/whitepapers/$runId/'
     | '/control-plane/torghut/quant/'
-    | '/api/control-plane/implementation-sources/webhooks/$provider'
     | '/api/openwebui/rich-ui/render/$renderId'
     | '/api/torghut/decision-engine/runs/$id'
     | '/api/torghut/market-context/providers/fundamentals'
@@ -2237,13 +2137,6 @@ export interface RootRouteChildren {
   ApiCodexRerunRoute: typeof ApiCodexRerunRoute
   ApiCodexRunCompleteRoute: typeof ApiCodexRunCompleteRoute
   ApiCodexRunsRoute: typeof ApiCodexRunsRouteWithChildren
-  ApiControlPlaneAgentEventsRoute: typeof ApiControlPlaneAgentEventsRoute
-  ApiControlPlaneAgentRunsRoute: typeof ApiControlPlaneAgentRunsRoute
-  ApiControlPlaneEventsRoute: typeof ApiControlPlaneEventsRoute
-  ApiControlPlaneResourceRoute: typeof ApiControlPlaneResourceRoute
-  ApiControlPlaneResourcesRoute: typeof ApiControlPlaneResourcesRoute
-  ApiControlPlaneStatusRoute: typeof ApiControlPlaneStatusRoute
-  ApiControlPlaneStreamRoute: typeof ApiControlPlaneStreamRoute
   ApiGithubIssuesRoute: typeof ApiGithubIssuesRoute
   ApiGithubPullsRoute: typeof ApiGithubPullsRouteWithChildren
   ApiTorghutSymbolsRoute: typeof ApiTorghutSymbolsRouteWithChildren
@@ -2319,7 +2212,6 @@ export interface RootRouteChildren {
   ApiTorghutMarketContextIndexRoute: typeof ApiTorghutMarketContextIndexRoute
   ApiWhitepapersRunIdIndexRoute: typeof ApiWhitepapersRunIdIndexRoute
   ControlPlaneTorghutQuantIndexRoute: typeof ControlPlaneTorghutQuantIndexRoute
-  ApiControlPlaneImplementationSourcesWebhooksProviderRoute: typeof ApiControlPlaneImplementationSourcesWebhooksProviderRoute
   ApiOpenwebuiRichUiRenderRenderIdRoute: typeof ApiOpenwebuiRichUiRenderRenderIdRoute
   ApiTorghutMarketContextProvidersFundamentalsRoute: typeof ApiTorghutMarketContextProvidersFundamentalsRoute
   ApiTorghutMarketContextProvidersNewsRoute: typeof ApiTorghutMarketContextProvidersNewsRoute
@@ -2955,55 +2847,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiGithubIssuesRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/control-plane/stream': {
-      id: '/api/control-plane/stream'
-      path: '/api/control-plane/stream'
-      fullPath: '/api/control-plane/stream'
-      preLoaderRoute: typeof ApiControlPlaneStreamRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/control-plane/status': {
-      id: '/api/control-plane/status'
-      path: '/api/control-plane/status'
-      fullPath: '/api/control-plane/status'
-      preLoaderRoute: typeof ApiControlPlaneStatusRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/control-plane/resources': {
-      id: '/api/control-plane/resources'
-      path: '/api/control-plane/resources'
-      fullPath: '/api/control-plane/resources'
-      preLoaderRoute: typeof ApiControlPlaneResourcesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/control-plane/resource': {
-      id: '/api/control-plane/resource'
-      path: '/api/control-plane/resource'
-      fullPath: '/api/control-plane/resource'
-      preLoaderRoute: typeof ApiControlPlaneResourceRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/control-plane/events': {
-      id: '/api/control-plane/events'
-      path: '/api/control-plane/events'
-      fullPath: '/api/control-plane/events'
-      preLoaderRoute: typeof ApiControlPlaneEventsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/control-plane/agent-runs': {
-      id: '/api/control-plane/agent-runs'
-      path: '/api/control-plane/agent-runs'
-      fullPath: '/api/control-plane/agent-runs'
-      preLoaderRoute: typeof ApiControlPlaneAgentRunsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/control-plane/agent-events': {
-      id: '/api/control-plane/agent-events'
-      path: '/api/control-plane/agent-events'
-      fullPath: '/api/control-plane/agent-events'
-      preLoaderRoute: typeof ApiControlPlaneAgentEventsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/api/codex/runs': {
       id: '/api/codex/runs'
       path: '/api/codex/runs'
@@ -3417,13 +3260,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiOpenwebuiRichUiRenderRenderIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/control-plane/implementation-sources/webhooks/$provider': {
-      id: '/api/control-plane/implementation-sources/webhooks/$provider'
-      path: '/api/control-plane/implementation-sources/webhooks/$provider'
-      fullPath: '/api/control-plane/implementation-sources/webhooks/$provider'
-      preLoaderRoute: typeof ApiControlPlaneImplementationSourcesWebhooksProviderRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/api/torghut/trading/control-plane/quant/stream': {
       id: '/api/torghut/trading/control-plane/quant/stream'
       path: '/api/torghut/trading/control-plane/quant/stream'
@@ -3820,13 +3656,6 @@ const rootRouteChildren: RootRouteChildren = {
   ApiCodexRerunRoute: ApiCodexRerunRoute,
   ApiCodexRunCompleteRoute: ApiCodexRunCompleteRoute,
   ApiCodexRunsRoute: ApiCodexRunsRouteWithChildren,
-  ApiControlPlaneAgentEventsRoute: ApiControlPlaneAgentEventsRoute,
-  ApiControlPlaneAgentRunsRoute: ApiControlPlaneAgentRunsRoute,
-  ApiControlPlaneEventsRoute: ApiControlPlaneEventsRoute,
-  ApiControlPlaneResourceRoute: ApiControlPlaneResourceRoute,
-  ApiControlPlaneResourcesRoute: ApiControlPlaneResourcesRoute,
-  ApiControlPlaneStatusRoute: ApiControlPlaneStatusRoute,
-  ApiControlPlaneStreamRoute: ApiControlPlaneStreamRoute,
   ApiGithubIssuesRoute: ApiGithubIssuesRoute,
   ApiGithubPullsRoute: ApiGithubPullsRouteWithChildren,
   ApiTorghutSymbolsRoute: ApiTorghutSymbolsRouteWithChildren,
@@ -3912,8 +3741,6 @@ const rootRouteChildren: RootRouteChildren = {
   ApiTorghutMarketContextIndexRoute: ApiTorghutMarketContextIndexRoute,
   ApiWhitepapersRunIdIndexRoute: ApiWhitepapersRunIdIndexRoute,
   ControlPlaneTorghutQuantIndexRoute: ControlPlaneTorghutQuantIndexRoute,
-  ApiControlPlaneImplementationSourcesWebhooksProviderRoute:
-    ApiControlPlaneImplementationSourcesWebhooksProviderRoute,
   ApiOpenwebuiRichUiRenderRenderIdRoute: ApiOpenwebuiRichUiRenderRenderIdRoute,
   ApiTorghutMarketContextProvidersFundamentalsRoute:
     ApiTorghutMarketContextProvidersFundamentalsRoute,

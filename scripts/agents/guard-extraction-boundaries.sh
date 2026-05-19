@@ -229,6 +229,25 @@ fail_if_matches \
   'installJangarEnvCompatibility|toAgentsEnvName|toJangarEnvName' \
   "${ROOT_DIR}/services/jangar/src"
 
+fail_if_path_exists \
+  "Jangar must not retain legacy generic Agents /api/control-plane API compatibility aliases" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/control-plane/agent-events.ts" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/control-plane/agent-runs.ts" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/control-plane/events.ts" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/control-plane/logs.ts" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/control-plane/resource.ts" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/control-plane/resources.ts" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/control-plane/status.ts" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/control-plane/stream.ts" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/control-plane/implementation-sources/webhooks"
+
+fail_if_matches \
+  "Jangar browser and server code must use canonical Agents APIs instead of legacy /api/control-plane aliases" \
+  '/api/control-plane/(agent-events|agent-runs|events|implementation-sources|logs|resource|resources|status|stream)' \
+  "${ROOT_DIR}/services/jangar/src" \
+  "${ROOT_DIR}/services/jangar/README.md" \
+  "${ROOT_DIR}/packages/scripts/src/jangar"
+
 fail_if_matches \
   "Jangar workflow status must not reuse Agents controller namespace envs" \
   'JANGAR_AGENTS_CONTROLLER_NAMESPACES|AGENTS_ORCHESTRATION_CONTROLLER|AGENTS_SUPPORTING_CONTROLLER|AGENTS_PRIMITIVES_RECONCILER|AGENTS_RBAC_CLUSTER_SCOPED' \

@@ -239,7 +239,7 @@ const currentAcceptedWarrant = (warrant: WarrantState) =>
 
 const requiredValidationCommands = (actionClass: DependencyVerdictActionClass) =>
   compactStrings([
-    'curl -fsS http://localhost:8080/api/control-plane/status?namespace=agents | jq .dependency_verdict_exchange',
+    'curl -fsS http://agents.agents.svc.cluster.local/api/agents/control-plane/status?namespace=agents | jq .dependency_verdict_exchange',
     'curl -fsS http://torghut.torghut.svc.cluster.local/trading/consumer-evidence | jq .route_warrant_exchange',
     ...(actionClass === 'paper' || actionClass === 'live'
       ? [

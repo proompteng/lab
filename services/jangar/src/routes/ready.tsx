@@ -211,7 +211,7 @@ const buildReadyPathSourceServingExchange = (now: Date, namespace: string): Sour
   blocked_action_classes: [],
   reason_codes: ['source_serving_contract_unavailable_on_ready_hot_path'],
   verdicts: [],
-  rollback_target: 'use /api/control-plane/status for full source-serving rollout proof',
+  rollback_target: 'use /api/agents/control-plane/status for full source-serving rollout proof',
 })
 
 const buildReadyPathDatabaseStatus = (): DatabaseStatus => ({
@@ -351,7 +351,7 @@ const buildReadyPathControllerWitness = (input: {
           input.agentRunIngestion.status === 'healthy' ? [] : [`agentrun_ingestion_${input.agentRunIngestion.status}`],
       },
     ],
-    rollback_target: 'use /api/control-plane/status for full controller witness proof',
+    rollback_target: 'use /api/agents/control-plane/status for full controller witness proof',
   }
 }
 

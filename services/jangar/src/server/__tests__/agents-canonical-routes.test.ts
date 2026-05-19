@@ -7,6 +7,8 @@ const agentsProxyMocks = vi.hoisted(() => ({
 vi.mock('~/server/agents-service-proxy', () => agentsProxyMocks)
 
 import { getAgentsEvents } from '~/routes/api/agents/events'
+import { proxyAgentsControlPlaneResource } from '~/routes/api/agents/control-plane/resource'
+import { proxyAgentsControlPlaneResources } from '~/routes/api/agents/control-plane/resources'
 import { getAgentsControlPlaneStatus } from '~/routes/api/agents/control-plane/status'
 import { streamAgentsControlPlaneEvents } from '~/routes/api/agents/control-plane/stream'
 import { proxyV1AgentRuns } from '~/routes/v1/agent-runs'
@@ -30,6 +32,31 @@ describe('canonical Agents proxy routes', () => {
 
     expect(response.status).toBe(200)
     expect(agentsProxyMocks.proxyAgentsServiceRequest).toHaveBeenCalledWith(request, '/api/agents/control-plane/stream')
+  })
+
+  it('proxies control-plane resource lists through the canonical Agents path', async () => {
+    const request = new Request('http://jangar.test/api/agents/control-plane/resources?kind=AgentRun')
+    const response = await proxyAgentsControlPlaneResources(request)
+
+    expect(response.status).toBe(200)
+    expect(agentsProxyMocks.proxyAgentsServiceRequest).toHaveBeenCalledWith(
+      request,
+      '/api/agents/control-plane/resources',
+    )
+  })
+
+  it('proxies control-plane resource writes through the canonical Agents path', async () => {
+    const request = new Request('http://jangar.test/api/agents/control-plane/resource?kind=AgentRun', {
+      body: '{}',
+      method: 'POST',
+    })
+    const response = await proxyAgentsControlPlaneResource(request)
+
+    expect(response.status).toBe(200)
+    expect(agentsProxyMocks.proxyAgentsServiceRequest).toHaveBeenCalledWith(
+      request,
+      '/api/agents/control-plane/resource',
+    )
   })
 
   it('proxies agent event streams through the canonical Agents events path', async () => {
