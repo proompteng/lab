@@ -13,6 +13,7 @@ import {
 } from '../primitives-policy'
 
 import { type AgentRunPayload, type WorkflowStepPayload, parseGoal, parseOptionalNumber } from './agent-runs-payload'
+import { buildDeliveryIdLabels } from './delivery-labels'
 
 export type AgentRunIdempotencyRecord = {
   namespace: string
@@ -835,9 +836,7 @@ export const postAgentRunsHandler = async (request: Request, deps: AgentRunsApiD
       metadata: {
         generateName: `${parsed.agentRef.name}-`,
         namespace: parsed.namespace,
-        labels: {
-          'jangar.proompteng.ai/delivery-id': deliveryId,
-        },
+        labels: buildDeliveryIdLabels(deliveryId),
       },
       spec: {
         agentRef: parsed.agentRef,

@@ -1,6 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { asString, errorResponse, normalizeNamespace, okResponse } from '~/server/primitives-http'
-import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
+import {
+  getAgentHandler as getAgentServiceHandler,
+  type ResourceReadDependencies,
+} from '@proompteng/agents/routes/v1/agents/$id'
+import '~/server/agents-v1-runtime'
 
 export const Route = createFileRoute('/v1/agents/$id')({
   server: {
@@ -10,21 +13,7 @@ export const Route = createFileRoute('/v1/agents/$id')({
   },
 })
 
-export const getAgentHandler = async (
-  id: string,
-  request: Request,
-  deps: { kubeClient?: ReturnType<typeof createKubernetesClient> } = {},
-) => {
-  const url = new URL(request.url)
-  const namespace = normalizeNamespace(url.searchParams.get('namespace'))
-  const kube = deps.kubeClient ?? createKubernetesClient()
+type JangarResourceReadDependencies = Partial<ResourceReadDependencies>
 
-  try {
-    const resource = await kube.get(RESOURCE_MAP.Agent, id, namespace)
-    if (!resource) return errorResponse('Agent not found', 404)
-    return okResponse({ ok: true, agent: resource })
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return errorResponse(message, 500, { namespace, id: asString(id) })
-  }
-}
+export const getAgentHandler = async (id: string, request: Request, deps: JangarResourceReadDependencies = {}) =>
+  getAgentServiceHandler(id, request, deps)

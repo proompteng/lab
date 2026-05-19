@@ -71,11 +71,11 @@ describe('classifyAgentsImageMode', () => {
     expect(result.matchedPaths).toEqual(['services/agents/src/server/agents-controller/runtime-config.ts'])
   })
 
-  it('builds a local image for transitional Jangar runtime changes', () => {
+  it('reuses the published Agents image for Jangar-only runtime changes', () => {
     const result = classifyAgentsImageMode(['services/jangar/src/server/control-plane-status.ts'])
-    expect(result.mode).toBe('build-local-image')
-    expect(result.needsLocalAgentsImage).toBe(true)
-    expect(result.matchedPaths).toEqual(['services/jangar/src/server/control-plane-status.ts'])
+    expect(result.mode).toBe('reuse-published-image')
+    expect(result.needsLocalAgentsImage).toBe(false)
+    expect(result.matchedPaths).toEqual([])
   })
 
   it('builds a local image when bun.lock changes', () => {
@@ -145,6 +145,9 @@ describe('agents-ci workflow local Agents image build', () => {
     const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
 
     expect(workflow).toContain('-f "${WORKSPACE}/services/agents/Dockerfile"')
+    expect(workflow).toContain('--target control-plane')
+    expect(workflow).toContain('--target controller')
+    expect(workflow).toContain('BUILT_AGENTS_CONTROLLER_IMAGE_REPOSITORY')
     expect(workflow).toContain('--build-arg "AGENTS_VERSION=${AGENTS_VERSION}"')
     expect(workflow).not.toContain('-f "${WORKSPACE}/services/jangar/Dockerfile"')
     expect(workflow).not.toContain('--build-arg "JANGAR_VERSION=')

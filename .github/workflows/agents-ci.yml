@@ -291,7 +291,8 @@ jobs:
           set -euxo pipefail
 
           WORKSPACE="${GITHUB_WORKSPACE}"
-          IMAGE_REPOSITORY="${AGENTS_IMAGE_REPOSITORY:-agents-control-plane-local}"
+          CONTROL_PLANE_IMAGE_REPOSITORY="${AGENTS_CONTROL_PLANE_IMAGE_REPOSITORY:-${AGENTS_IMAGE_REPOSITORY:-agents-control-plane-local}}"
+          CONTROLLER_IMAGE_REPOSITORY="${AGENTS_CONTROLLER_IMAGE_REPOSITORY:-agents-controller-local}"
           DEFAULT_IMAGE_TAG_SUFFIX="${GITHUB_SHA:-unknown}"
           IMAGE_TAG="${AGENTS_IMAGE_TAG:-ci-$DEFAULT_IMAGE_TAG_SUFFIX}"
           PRUNE_DIR="$(mktemp -d /tmp/agents-prune-XXXXXX)"
@@ -402,7 +403,7 @@ jobs:
           }
 
           PREP_TIMEOUT_MINUTES=25
-          echo "Pruning Agents control-plane build context to ${PRUNE_DIR}"
+          echo "Pruning Agents image build context to ${PRUNE_DIR}"
           run_step "Prune turbo context" timeout "${PREP_TIMEOUT_MINUTES}m" bunx turbo prune \
             --scope=@proompteng/agents \
             --scope=@proompteng/otel \
@@ -448,21 +449,23 @@ jobs:
 
           AGENTS_VERSION="$(git -C "${WORKSPACE}" rev-parse --short HEAD)"
           AGENTS_COMMIT="$(git -C "${WORKSPACE}" rev-parse HEAD)"
-          IMAGE="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+          CONTROL_PLANE_IMAGE="${CONTROL_PLANE_IMAGE_REPOSITORY}:${IMAGE_TAG}"
+          CONTROLLER_IMAGE="${CONTROLLER_IMAGE_REPOSITORY}:${IMAGE_TAG}"
 
           # Use the mirror.gcr.io Bun mirror in CI to avoid Docker Hub anonymous pull limits.
           # Local image rebuilds fail with explicit diagnostics on timeout.
-          # ARC arm64 runners can spend well over 18 minutes in the pruned control-plane docker
+          # ARC arm64 runners can spend well over 18 minutes in a pruned Agents docker
           # build while still making forward progress, so give the local image build enough headroom
           # to complete instead of terminating a healthy build.
           BUILD_TIMEOUT_MINUTES=30
           KIND_LOAD_TIMEOUT_MINUTES=20
 
+          IMAGE="${CONTROL_PLANE_IMAGE}"
           if run_with_progress "Docker build" "${BUILD_TIMEOUT_MINUTES}" env DOCKER_BUILDKIT=1 docker build \
             -f "${WORKSPACE}/services/agents/Dockerfile" \
             --target control-plane \
             --network=host \
-            -t "${IMAGE}" \
+            -t "${CONTROL_PLANE_IMAGE}" \
             --build-arg "AGENTS_VERSION=${AGENTS_VERSION}" \
             --build-arg "AGENTS_COMMIT=${AGENTS_COMMIT}" \
             --build-arg "AGENTS_BUILD_CI=true" \
@@ -471,19 +474,50 @@ jobs:
             --build-arg "BUN_BASE_IMAGE=mirror.gcr.io/oven/bun" \
             --progress=plain \
             "${PRUNE_DIR}"; then
-            echo "Built local image ${IMAGE}."
+            echo "Built local control-plane image ${CONTROL_PLANE_IMAGE}."
           else
-            run_step_failure "Failed to build local image ${IMAGE}" "$?"
+            run_step_failure "Failed to build local image ${CONTROL_PLANE_IMAGE}" "$?"
           fi
 
+          IMAGE="${CONTROLLER_IMAGE}"
+          if run_with_progress "Docker build" "${BUILD_TIMEOUT_MINUTES}" env DOCKER_BUILDKIT=1 docker build \
+            -f "${WORKSPACE}/services/agents/Dockerfile" \
+            --target controller \
+            --network=host \
+            -t "${CONTROLLER_IMAGE}" \
+            --build-arg "AGENTS_VERSION=${AGENTS_VERSION}" \
+            --build-arg "AGENTS_COMMIT=${AGENTS_COMMIT}" \
+            --build-arg "AGENTS_BUILD_CI=true" \
+            --build-arg "AGENTS_BUILD_SOURCEMAP=0" \
+            --build-arg "AGENTS_BUILD_LOG_LEVEL=warn" \
+            --build-arg "BUN_BASE_IMAGE=mirror.gcr.io/oven/bun" \
+            --progress=plain \
+            "${PRUNE_DIR}"; then
+            echo "Built local controller image ${CONTROLLER_IMAGE}."
+          else
+            run_step_failure "Failed to build local image ${CONTROLLER_IMAGE}" "$?"
+          fi
+
+          IMAGE="${CONTROL_PLANE_IMAGE}"
           if ! run_kind_load_with_fallback; then
-            run_step_failure "Failed to preload local image ${IMAGE} into kind cluster ${KIND_CLUSTER_NAME}" "$?"
+            run_step_failure "Failed to preload local image ${CONTROL_PLANE_IMAGE} into kind cluster ${KIND_CLUSTER_NAME}" "$?"
+          fi
+
+          IMAGE="${CONTROLLER_IMAGE}"
+          if ! run_kind_load_with_fallback; then
+            run_step_failure "Failed to preload local image ${CONTROLLER_IMAGE} into kind cluster ${KIND_CLUSTER_NAME}" "$?"
           fi
 
           {
-            echo "BUILT_AGENTS_IMAGE_REPOSITORY=${IMAGE_REPOSITORY}"
+            echo "BUILT_AGENTS_IMAGE_REPOSITORY=${CONTROL_PLANE_IMAGE_REPOSITORY}"
             echo "BUILT_AGENTS_IMAGE_TAG=${IMAGE_TAG}"
             echo "BUILT_AGENTS_IMAGE_DIGEST="
+            echo "BUILT_AGENTS_CONTROL_PLANE_IMAGE_REPOSITORY=${CONTROL_PLANE_IMAGE_REPOSITORY}"
+            echo "BUILT_AGENTS_CONTROL_PLANE_IMAGE_TAG=${IMAGE_TAG}"
+            echo "BUILT_AGENTS_CONTROL_PLANE_IMAGE_DIGEST="
+            echo "BUILT_AGENTS_CONTROLLER_IMAGE_REPOSITORY=${CONTROLLER_IMAGE_REPOSITORY}"
+            echo "BUILT_AGENTS_CONTROLLER_IMAGE_TAG=${IMAGE_TAG}"
+            echo "BUILT_AGENTS_CONTROLLER_IMAGE_DIGEST="
             echo "BUILT_AGENTS_IMAGE_SOURCE_SHA=${GITHUB_SHA}"
           } >> "${GITHUB_ENV}"
 

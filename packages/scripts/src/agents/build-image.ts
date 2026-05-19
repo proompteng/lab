@@ -49,10 +49,11 @@ const parsePlatforms = (value: string | undefined): string[] | undefined => {
   return platforms.length > 0 ? platforms : undefined
 }
 
-const defaultPruneScopesForTarget = (target: string | undefined): string[] =>
-  target === 'controller'
-    ? ['@proompteng/jangar']
-    : ['@proompteng/agents', '@proompteng/otel', '@proompteng/temporal-bun-sdk']
+const defaultPruneScopesForTarget = (target: string | undefined): string[] => [
+  '@proompteng/agents',
+  '@proompteng/otel',
+  '@proompteng/temporal-bun-sdk',
+]
 
 const parsePruneScopes = (value: string | undefined, target?: string): string[] => {
   const fallback = defaultPruneScopesForTarget(target)
@@ -60,7 +61,11 @@ const parsePruneScopes = (value: string | undefined, target?: string): string[] 
     .split(/[\s,]+/)
     .map((scope) => scope.trim())
     .filter(Boolean)
-  return scopes.length > 0 ? scopes : fallback
+  const normalizedScopes = scopes.length > 0 ? scopes : fallback
+  if (normalizedScopes.includes('@proompteng/jangar')) {
+    throw new Error('Agents images must not prune or package @proompteng/jangar')
+  }
+  return normalizedScopes
 }
 
 const parseCacheMode = (value: string | undefined): DockerCacheMode | undefined => {
@@ -74,11 +79,6 @@ const parseCacheMode = (value: string | undefined): DockerCacheMode | undefined 
 const readAgentsEnv = (agentsName: string, legacyJangarName?: string) =>
   process.env[agentsName]?.trim() || (legacyJangarName ? process.env[legacyJangarName]?.trim() : undefined)
 
-const copyPrebuiltServerOutput = (source: string, destination: string) => {
-  cpSync(source, destination, { recursive: true })
-  rmSync(resolve(destination, 'public'), { recursive: true, force: true })
-}
-
 const createPrunedContext = async (target?: string): Promise<{ dir: string; cleanup: () => void }> => {
   ensureCli('bunx')
 
@@ -87,7 +87,6 @@ const createPrunedContext = async (target?: string): Promise<{ dir: string; clea
 
   try {
     const scopes = parsePruneScopes(process.env.AGENTS_BUILD_PRUNE_SCOPE, target)
-    const includesJangar = scopes.includes('@proompteng/jangar')
     await run(
       'bunx',
       ['turbo', 'prune', ...scopes.flatMap((scope) => ['--scope', scope]), '--docker', `--out-dir=${dir}`],
@@ -104,34 +103,10 @@ const createPrunedContext = async (target?: string): Promise<{ dir: string; clea
       cpSync(skillsSource, resolve(dir, 'skills'), { recursive: true })
     }
 
-    // Transitional until agentctl is fully owned by services/agents.
-    const agentctlSource = resolve(repoRoot, 'services/jangar/agentctl')
-    if (includesJangar && existsSync(agentctlSource)) {
-      cpSync(agentctlSource, resolve(dir, 'full/services/jangar/agentctl'), { recursive: true })
-      cpSync(agentctlSource, resolve(dir, 'json/services/jangar/agentctl'), { recursive: true })
-    }
-
     const cxToolsSource = resolve(repoRoot, 'packages/cx-tools')
     if (existsSync(cxToolsSource)) {
       cpSync(cxToolsSource, resolve(dir, 'full/packages/cx-tools'), { recursive: true })
       cpSync(cxToolsSource, resolve(dir, 'json/packages/cx-tools'), { recursive: true })
-    }
-
-    // By default we do NOT copy a locally-built `.output` into the Docker build context.
-    // Copying `.output` can silently ship stale server bundles if the local build was done on a different commit.
-    // If you really need the faster transitional path, opt in explicitly.
-    if (
-      includesJangar &&
-      readAgentsEnv('AGENTS_USE_PREBUILT_OUTPUT', 'JANGAR_USE_PREBUILT_OUTPUT')?.toLowerCase() === 'true'
-    ) {
-      const outputSource = resolve(repoRoot, 'services/jangar/.output')
-      const outputEntry = resolve(outputSource, 'server/index.mjs')
-      const outputProto = resolve(outputSource, 'server/proto/proompteng/jangar/v1/agentctl.proto')
-      if (existsSync(outputEntry) && existsSync(outputProto)) {
-        copyPrebuiltServerOutput(outputSource, resolve(dir, 'full/services/jangar/.output'))
-      } else if (existsSync(outputSource)) {
-        console.warn('Skipping prebuilt .output: missing services/jangar/.output/server/index.mjs or agentctl.proto')
-      }
     }
 
     return { dir, cleanup }
@@ -257,7 +232,6 @@ if (import.meta.main) {
 
 export const __private = {
   buildArgsFromEnv,
-  copyPrebuiltServerOutput,
   execGit,
   parsePlatforms,
   parsePruneScopes,

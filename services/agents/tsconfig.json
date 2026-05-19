@@ -10,6 +10,8 @@
       "~/*": ["./src/*"],
       "@proompteng/codex": ["../../packages/codex/src/index.ts"],
       "@proompteng/codex/*": ["../../packages/codex/src/*"],
+      "@proompteng/otel": ["../../packages/otel/src/index.ts"],
+      "@proompteng/otel/*": ["../../packages/otel/src/*.ts"],
       "@proompteng/temporal-bun-sdk": ["../../packages/temporal-bun-sdk/src/index.ts"],
       "@proompteng/temporal-bun-sdk/*": [
         "../../packages/temporal-bun-sdk/src/*/index.ts",
