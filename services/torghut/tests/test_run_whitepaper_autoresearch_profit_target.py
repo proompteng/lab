@@ -2411,6 +2411,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             self.assertTrue((output_dir / "candidate-specs.jsonl").exists())
             self.assertTrue((output_dir / "candidate-compiler-report.json").exists())
             self.assertTrue((output_dir / "candidate-selection-manifest.json").exists())
+            self.assertTrue((output_dir / "selected-candidate-specs.jsonl").exists())
             self.assertTrue((output_dir / "pre-replay-mlx-ranker-model.json").exists())
             self.assertTrue(
                 (output_dir / "pre-replay-mlx-proposal-scores.jsonl").exists()
@@ -2479,6 +2480,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 payload["artifacts"]["mlx_snapshot_manifest"],
                 str((output_dir / "mlx-snapshot-manifest.json").resolve()),
             )
+            self.assertEqual(
+                payload["artifacts"]["selected_candidate_specs"],
+                str((output_dir / "selected-candidate-specs.jsonl").resolve()),
+            )
             self.assertTrue(
                 (output_dir / "whitepaper-autoresearch-diagnostics.ipynb").exists()
             )
@@ -2513,6 +2518,17 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             )
             self.assertEqual(
                 selection["proposal_model"]["proposal_stage"], "pre_replay"
+            )
+            selected_candidate_specs = [
+                json.loads(line)
+                for line in (output_dir / "selected-candidate-specs.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if line
+            ]
+            self.assertEqual(
+                [spec["candidate_spec_id"] for spec in selected_candidate_specs],
+                selection["selected_candidate_spec_ids"],
             )
             candidate_specs = [
                 json.loads(line)
@@ -2642,6 +2658,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 (output_dir / "pre-replay-mlx-proposal-scores.jsonl").exists()
             )
             self.assertTrue((output_dir / "candidate-selection-manifest.json").exists())
+            self.assertTrue((output_dir / "selected-candidate-specs.jsonl").exists())
             self.assertTrue(
                 (output_dir / "whitepaper-autoresearch-diagnostics.ipynb").exists()
             )
@@ -2655,6 +2672,13 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             self.assertFalse((output_dir / "candidate-board.json").exists())
             self.assertFalse((output_dir / "profitability-search-goal.json").exists())
             self.assertFalse((output_dir / "runtime-closure" / "summary.json").exists())
+            selected_candidate_specs = [
+                json.loads(line)
+                for line in (output_dir / "selected-candidate-specs.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if line
+            ]
 
         self.assertEqual(payload["status"], "selection_only")
         self.assertEqual(payload["status_reason"], "pre_replay_selection_only")
@@ -2669,6 +2693,14 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertGreater(payload["candidate_spec_count"], 0)
         self.assertGreater(payload["pre_replay_proposal_score_count"], 0)
         self.assertGreater(payload["replay_candidate_spec_count"], 0)
+        self.assertEqual(
+            payload["artifacts"]["selected_candidate_specs"],
+            str((output_dir / "selected-candidate-specs.jsonl").resolve()),
+        )
+        self.assertEqual(
+            [spec["candidate_spec_id"] for spec in selected_candidate_specs],
+            payload["selected_candidate_spec_ids"],
+        )
         replay_mock.assert_not_called()
         persist_mock.assert_not_called()
         ledger_mock.assert_not_called()

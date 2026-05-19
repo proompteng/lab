@@ -6154,8 +6154,15 @@ def run_whitepaper_autoresearch_profit_target(
         "proposal_scores_artifact": str(
             output_dir / "pre-replay-mlx-proposal-scores.jsonl"
         ),
+        "selected_candidate_specs_artifact": str(
+            output_dir / "selected-candidate-specs.jsonl"
+        ),
     }
     _write_json(output_dir / "candidate-selection-manifest.json", candidate_selection)
+    _write_jsonl(
+        output_dir / "selected-candidate-specs.jsonl",
+        [spec.to_payload() for spec in replay_candidate_specs],
+    )
     if selection_only:
         selected_candidate_spec_ids = [
             spec.candidate_spec_id for spec in replay_candidate_specs
@@ -6210,6 +6217,9 @@ def run_whitepaper_autoresearch_profit_target(
                 "candidate_specs": str(output_dir / "candidate-specs.jsonl"),
                 "candidate_selection_manifest": str(
                     output_dir / "candidate-selection-manifest.json"
+                ),
+                "selected_candidate_specs": str(
+                    output_dir / "selected-candidate-specs.jsonl"
                 ),
                 "pre_replay_proposal_scores": str(
                     output_dir / "pre-replay-mlx-proposal-scores.jsonl"
@@ -6363,6 +6373,9 @@ def run_whitepaper_autoresearch_profit_target(
                     "profitability_search_goal": str(profitability_goal_path),
                     "candidate_selection_manifest": str(
                         output_dir / "candidate-selection-manifest.json"
+                    ),
+                    "selected_candidate_specs": str(
+                        output_dir / "selected-candidate-specs.jsonl"
                     ),
                     "feedback_evidence_source_manifest": str(
                         output_dir / "feedback-evidence-source-manifest.json"
@@ -6641,6 +6654,9 @@ def run_whitepaper_autoresearch_profit_target(
             "candidate_specs": str(output_dir / "candidate-specs.jsonl"),
             "candidate_selection_manifest": str(
                 output_dir / "candidate-selection-manifest.json"
+            ),
+            "selected_candidate_specs": str(
+                output_dir / "selected-candidate-specs.jsonl"
             ),
             "pre_replay_proposal_scores": str(
                 output_dir / "pre-replay-mlx-proposal-scores.jsonl"
