@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest'
 import {
   buildAgentsControlPlaneStatus,
   getAgentsControlPlaneStatus,
-  projectAgentsControlPlaneStatus,
   type AgentsControlPlaneStatusDependencies,
 } from './control-plane-status'
 import type { GrpcStatus } from './control-plane-grpc'
@@ -101,25 +100,6 @@ describe('buildAgentsControlPlaneStatus', () => {
     })
     expect(status.namespaces).toEqual([{ namespace: 'agents', status: 'healthy', degraded_components: [] }])
     expect(status.torghut_consumer_evidence.status).toBe('disabled')
-  })
-
-  it('preserves the schedule-runner projection contract', () => {
-    const status = buildAgentsControlPlaneStatus({ namespace: 'agents', service: 'agents', grpc, now }, deps)
-    const projected = projectAgentsControlPlaneStatus(status, 'runner')
-
-    expect(projected).toMatchObject({
-      service: 'agents',
-      generated_at: '2026-05-19T12:00:00.000Z',
-      runtime_kits: [],
-      admission_passports: [],
-      serving_passport_id: null,
-      recovery_warrants: [],
-      runtime_proof_cells: [],
-      stage_clearance_packets: [],
-      stage_credit_ledger: null,
-    })
-    expect(projected).not.toHaveProperty('controllers')
-    expect(projected).not.toHaveProperty('database')
   })
 
   it('wraps status-service dependency failures in an Effect error', async () => {

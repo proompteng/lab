@@ -69,7 +69,7 @@ describe('control-plane status route', () => {
     })
   })
 
-  it('supports the compatibility schedule-runner projection', async () => {
+  it('ignores legacy projection parameters and serves the full Agents-owned contract', async () => {
     const response = await buildControlPlaneStatusResponse(
       new Request('http://agents.test/api/agents/control-plane/status?namespace=agents&view=schedule-runner'),
       deps,
@@ -82,8 +82,8 @@ describe('control-plane status route', () => {
       runtime_kits: [],
       admission_passports: [],
       stage_clearance_packets: [],
+      controllers: expect.arrayContaining([expect.objectContaining({ name: 'agents-controller' })]),
+      database: expect.any(Object),
     })
-    expect(payload).not.toHaveProperty('controllers')
-    expect(payload).not.toHaveProperty('database')
   })
 })

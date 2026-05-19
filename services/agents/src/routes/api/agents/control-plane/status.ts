@@ -2,7 +2,6 @@ import { createFileRoute, type AgentsServerRouteArgs } from '../../../../server/
 
 import {
   getAgentsControlPlaneStatus,
-  projectAgentsControlPlaneStatus,
   type AgentsControlPlaneStatusDependencies,
 } from '../../../../server/control-plane-status'
 import { errorResponse, okResponse } from '../../../../server/http'
@@ -22,7 +21,6 @@ export const buildControlPlaneStatusResponse = async (
 ) => {
   const url = new URL(request.url)
   const namespace = normalizeNamespace(url.searchParams.get('namespace'), 'agents')
-  const view = url.searchParams.get('view') ?? url.searchParams.get('projection')
 
   try {
     const status = await getAgentsControlPlaneStatus(
@@ -32,7 +30,7 @@ export const buildControlPlaneStatusResponse = async (
       },
       deps,
     )
-    return okResponse(projectAgentsControlPlaneStatus(status, view))
+    return okResponse(status)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return errorResponse(message, 500, { namespace })
