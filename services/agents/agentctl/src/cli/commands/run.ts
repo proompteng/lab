@@ -143,7 +143,7 @@ const submitRunKube = async (
       generateName: `${input.agent}-`,
       namespace,
       labels: {
-        'jangar.proompteng.ai/delivery-id': deliveryId,
+        'agents.proompteng.ai/delivery-id': deliveryId,
       },
     },
     spec: buildRunSpec(input),

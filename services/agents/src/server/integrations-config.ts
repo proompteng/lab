@@ -1,4 +1,4 @@
-type EnvSource = Record<string, string | undefined>
+import { normalizeEnvValue, parseBooleanEnv, parsePositiveIntEnv, readAgentsEnv, type EnvSource } from './runtime-env'
 
 const DEFAULT_NATS_URL = 'nats://nats.nats.svc.cluster.local:4222'
 const DEFAULT_FEATURE_FLAGS_TIMEOUT_MS = 500
@@ -10,33 +10,6 @@ const DEFAULT_AGENT_COMMS_FILTER_SUBJECTS = [
   'argo.workflow.>',
   'workflow_comms.agent_messages.>',
 ]
-
-const TRUE_BOOLEAN_VALUES = new Set(['1', 'true', 'yes', 'on', 'enabled'])
-const FALSE_BOOLEAN_VALUES = new Set(['0', 'false', 'no', 'off', 'disabled'])
-
-const normalizeNonEmpty = (value: string | undefined | null) => {
-  const normalized = value?.trim()
-  return normalized && normalized.length > 0 ? normalized : null
-}
-
-const readAgentsEnv = (env: EnvSource, name: string) =>
-  env[name] ?? (name.startsWith('AGENTS_') ? env[`JANGAR_${name.slice('AGENTS_'.length)}`] : undefined)
-
-const parseBoolean = (value: string | undefined, fallback: boolean) => {
-  const normalized = normalizeNonEmpty(value)?.toLowerCase()
-  if (!normalized) return fallback
-  if (TRUE_BOOLEAN_VALUES.has(normalized)) return true
-  if (FALSE_BOOLEAN_VALUES.has(normalized)) return false
-  return fallback
-}
-
-const parsePositiveInt = (value: string | undefined, fallback: number) => {
-  const normalized = normalizeNonEmpty(value)
-  if (!normalized) return fallback
-  const parsed = Number.parseInt(normalized, 10)
-  if (!Number.isFinite(parsed) || parsed <= 0) return fallback
-  return Math.floor(parsed)
-}
 
 const parseFilterSubjects = (value: string | undefined) =>
   (value ?? '')
@@ -69,15 +42,15 @@ export type FeatureFlagsClientConfig = {
 }
 
 export const resolveAgentCommsSubscriberConfig = (env: EnvSource = process.env): AgentCommsSubscriberConfig => {
-  const filterSubjects = parseFilterSubjects(readAgentsEnv(env, 'AGENTS_AGENT_COMMS_SUBJECTS'))
+  const filterSubjects = parseFilterSubjects(readAgentsEnv(env, 'AGENTS_AGENT_COMMS_SUBJECTS') ?? undefined)
   return {
     disabled:
       env.NODE_ENV === 'test' ||
       Boolean(env.VITEST) ||
       readAgentsEnv(env, 'AGENTS_AGENT_COMMS_SUBSCRIBER_DISABLED') === 'true',
-    natsUrl: normalizeNonEmpty(env.NATS_URL) ?? DEFAULT_NATS_URL,
-    natsUser: normalizeNonEmpty(env.NATS_USER) ?? undefined,
-    natsPassword: normalizeNonEmpty(env.NATS_PASSWORD) ?? undefined,
+    natsUrl: normalizeEnvValue(env.NATS_URL) ?? DEFAULT_NATS_URL,
+    natsUser: normalizeEnvValue(env.NATS_USER) ?? undefined,
+    natsPassword: normalizeEnvValue(env.NATS_PASSWORD) ?? undefined,
     streamName: 'agent-comms',
     consumerName: 'agents-agent-comms',
     pullBatchSize: 250,
@@ -91,12 +64,15 @@ export const resolveAgentCommsSubscriberConfig = (env: EnvSource = process.env):
 }
 
 export const resolveFeatureFlagsClientConfig = (env: EnvSource = process.env): FeatureFlagsClientConfig => ({
-  enabled: parseBoolean(readAgentsEnv(env, 'AGENTS_FEATURE_FLAGS_ENABLED'), true),
-  endpoint: normalizeNonEmpty(readAgentsEnv(env, 'AGENTS_FEATURE_FLAGS_URL'))?.replace(/\/+$/, '') ?? null,
-  timeoutMs: parsePositiveInt(readAgentsEnv(env, 'AGENTS_FEATURE_FLAGS_TIMEOUT_MS'), DEFAULT_FEATURE_FLAGS_TIMEOUT_MS),
+  enabled: parseBooleanEnv(readAgentsEnv(env, 'AGENTS_FEATURE_FLAGS_ENABLED'), true),
+  endpoint: normalizeEnvValue(readAgentsEnv(env, 'AGENTS_FEATURE_FLAGS_URL'))?.replace(/\/+$/, '') ?? null,
+  timeoutMs: parsePositiveIntEnv(
+    readAgentsEnv(env, 'AGENTS_FEATURE_FLAGS_TIMEOUT_MS'),
+    DEFAULT_FEATURE_FLAGS_TIMEOUT_MS,
+  ),
   namespaceKey:
-    normalizeNonEmpty(readAgentsEnv(env, 'AGENTS_FEATURE_FLAGS_NAMESPACE')) ?? DEFAULT_FEATURE_FLAGS_NAMESPACE,
-  entityId: normalizeNonEmpty(readAgentsEnv(env, 'AGENTS_FEATURE_FLAGS_ENTITY_ID')) ?? DEFAULT_FEATURE_FLAGS_ENTITY_ID,
+    normalizeEnvValue(readAgentsEnv(env, 'AGENTS_FEATURE_FLAGS_NAMESPACE')) ?? DEFAULT_FEATURE_FLAGS_NAMESPACE,
+  entityId: normalizeEnvValue(readAgentsEnv(env, 'AGENTS_FEATURE_FLAGS_ENTITY_ID')) ?? DEFAULT_FEATURE_FLAGS_ENTITY_ID,
 })
 
 export const validateIntegrationsConfig = (env: EnvSource = process.env) => {
