@@ -119,7 +119,6 @@ class AutoResearchPromptBuilder(
       put("autoResearch.promptVersion", PROMPT_VERSION)
       put("autoResearch.generatedAt", timestamp)
       put("autoResearch.agentRun", agentRunName)
-      put("autoResearch.argoWorkflow", agentRunName)
       trimmed?.let { put("autoResearch.userPrompt", it.take(MAX_METADATA_LENGTH)) }
     }
   }

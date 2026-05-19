@@ -24,7 +24,7 @@ class AgentRunClientTest {
   private val minioConfig =
     MinioConfig(
       endpoint = "http://minio:9000",
-      bucket = "argo-workflows",
+      bucket = "agents-artifacts",
       accessKey = "access",
       secretKey = "secret",
       secure = false,

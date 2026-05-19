@@ -31,16 +31,16 @@ class AutoResearchServiceTest {
     val capturedRequest: CapturingSlot<CodexResearchRequest> = slot()
 
     every { promptBuilder.buildPrompt("Focus on HBM supply chain") } returns "FINAL PROMPT"
-    every { promptBuilder.buildMetadata("Focus on HBM supply chain", "argo-auto-research") } returns metadata
+    every { promptBuilder.buildMetadata("Focus on HBM supply chain", "agents-auto-research") } returns metadata
     every {
       codexResearchService.startResearch(
         capture(capturedRequest),
-        "argo-auto-research",
+        "agents-auto-research",
         "artifact-key",
       )
     } returns launchResult
 
-    val result = service.startResearch(request, "argo-auto-research", "artifact-key")
+    val result = service.startResearch(request, "agents-auto-research", "artifact-key")
 
     assertEquals(launchResult, result)
     val codexRequest = capturedRequest.captured
@@ -48,9 +48,9 @@ class AutoResearchServiceTest {
     assertEquals(metadata, codexRequest.metadata)
 
     verify(exactly = 1) { promptBuilder.buildPrompt("Focus on HBM supply chain") }
-    verify(exactly = 1) { promptBuilder.buildMetadata("Focus on HBM supply chain", "argo-auto-research") }
+    verify(exactly = 1) { promptBuilder.buildMetadata("Focus on HBM supply chain", "agents-auto-research") }
     verify(exactly = 1) {
-      codexResearchService.startResearch(capturedRequest.captured, "argo-auto-research", "artifact-key")
+      codexResearchService.startResearch(capturedRequest.captured, "agents-auto-research", "artifact-key")
     }
     confirmVerified(promptBuilder, codexResearchService)
   }

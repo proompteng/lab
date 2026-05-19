@@ -126,10 +126,9 @@ Run `./gradlew ktlintCheck` (the same plugin also supports `./gradlew ktlintForm
     "workflowId": "wf-123",
     "runId": "run-123",
     "agentRunName": "auto-research-123",
-    "argoWorkflowName": "auto-research-123",
     "artifactReferences": [
       {
-        "bucket": "argo-workflows",
+        "bucket": "agents-artifacts",
         "key": "codex-research/auto-research-123/codex-artifact.json",
         "endpoint": "http://observability-minio.minio.svc.cluster.local:9000"
       }

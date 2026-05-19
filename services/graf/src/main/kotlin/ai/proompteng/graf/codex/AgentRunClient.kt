@@ -168,8 +168,7 @@ class AgentRunClient(
     return listResponse.runs.firstOrNull { record ->
       record.deliveryId == runName ||
         extractString(record.payload, "request", "idempotencyKey") == runName ||
-        extractString(record.payload, "request", "parameters", "autoResearch.agentRun") == runName ||
-        extractString(record.payload, "request", "parameters", "autoResearch.argoWorkflow") == runName
+        extractString(record.payload, "request", "parameters", "autoResearch.agentRun") == runName
     } ?: throw IllegalStateException("AgentRun record not found for request $runName")
   }
 

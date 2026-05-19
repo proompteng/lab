@@ -59,8 +59,7 @@ class GraphResourceTest {
     val body = response.entity as AutoResearchLaunchResponse
     assertEquals("wf-123", body.workflowId)
     assertEquals("run-123", body.runId)
-    assertTrue(body.agentRunName.startsWith("${autoResearchConfig.workflowNamePrefix}-"))
-    assertEquals(body.agentRunName, body.argoWorkflowName)
+    assertTrue(body.agentRunName.startsWith("${autoResearchConfig.agentRunNamePrefix}-"))
     assertEquals("bucket", body.artifactReferences.first().bucket)
     assertEquals("codex-research/${body.agentRunName}/codex-artifact.json", body.artifactReferences.first().key)
     assertEquals("Map new HBM supply", requestSlot.captured.userPrompt)
@@ -82,8 +81,7 @@ class GraphResourceTest {
     assertEquals(Response.Status.ACCEPTED.statusCode, response.status)
     val body = response.entity as AutoResearchLaunchResponse
     assertEquals("wf-999", body.workflowId)
-    assertTrue(body.agentRunName.startsWith("${autoResearchConfig.workflowNamePrefix}-"))
-    assertEquals(body.agentRunName, body.argoWorkflowName)
+    assertTrue(body.agentRunName.startsWith("${autoResearchConfig.agentRunNamePrefix}-"))
     assertTrue(requestSlot.captured.userPrompt.isNullOrBlank())
   }
 }

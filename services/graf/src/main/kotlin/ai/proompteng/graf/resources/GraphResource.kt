@@ -145,8 +145,8 @@ class GraphResource(
   @Path("/autoresearch")
   @GrafRouteTemplate("POST /v1/autoresearch")
   suspend fun startAutoResearch(payload: AutoResearchRequest): Response {
-    val workflowPrefix = autoResearchConfig.workflowNamePrefix
-    val agentRunName = "$workflowPrefix-${UUID.randomUUID()}"
+    val agentRunPrefix = autoResearchConfig.agentRunNamePrefix
+    val agentRunName = "$agentRunPrefix-${UUID.randomUUID()}"
     val artifactKey = "codex-research/$agentRunName/codex-artifact.json"
     val launch =
       withContext(Dispatchers.IO) {

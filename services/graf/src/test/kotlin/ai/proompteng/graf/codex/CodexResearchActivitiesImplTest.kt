@@ -121,9 +121,9 @@ class CodexResearchActivitiesImplTest {
         CodexResearchWorkflowInput(
           prompt = "prompt",
           metadata = emptyMap(),
-          argoWorkflowName = "name",
+          agentRunName = "name",
           artifactKey = "key",
-          argoPollTimeoutSeconds = 7200,
+          agentRunPollTimeoutSeconds = 7200,
         ),
       )
 
@@ -159,9 +159,9 @@ class CodexResearchActivitiesImplTest {
         CodexResearchWorkflowInput(
           prompt = "prompt",
           metadata = emptyMap(),
-          argoWorkflowName = "name",
+          agentRunName = "name",
           artifactKey = "key",
-          argoPollTimeoutSeconds = 7200,
+          agentRunPollTimeoutSeconds = 7200,
         ),
       )
 
@@ -183,9 +183,9 @@ class CodexResearchActivitiesImplTest {
         CodexResearchWorkflowInput(
           prompt = "prompt",
           metadata = emptyMap(),
-          argoWorkflowName = "name",
+          agentRunName = "name",
           artifactKey = "key",
-          argoPollTimeoutSeconds = 7200,
+          agentRunPollTimeoutSeconds = 7200,
         ),
       )
 

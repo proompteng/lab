@@ -73,9 +73,9 @@ class CodexResearchService(
         CodexResearchWorkflowInput(
           prompt = request.prompt,
           metadata = request.metadata,
-          argoWorkflowName = agentRunName,
+          agentRunName = agentRunName,
           artifactKey = artifactKey,
-          argoPollTimeoutSeconds = agentRunPollTimeoutSeconds,
+          agentRunPollTimeoutSeconds = agentRunPollTimeoutSeconds,
         )
       val execution =
         try {

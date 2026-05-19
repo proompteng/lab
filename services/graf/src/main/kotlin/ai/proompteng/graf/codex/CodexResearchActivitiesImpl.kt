@@ -27,37 +27,6 @@ class CodexResearchActivitiesImpl(
   private val artifactFetcher: MinioArtifactFetcher,
   private val json: Json,
 ) : CodexResearchActivities {
-  override fun submitArgoWorkflow(request: SubmitArgoWorkflowRequest): SubmitArgoWorkflowResult =
-    runBlocking {
-      val result =
-        agentRunClient.submitRun(
-          SubmitAgentRunRequest(
-            runName = request.workflowName,
-            prompt = request.prompt,
-            metadata = request.metadata,
-            artifactKey = request.artifactKey,
-          ),
-        )
-      SubmitArgoWorkflowResult(result.runName)
-    }
-
-  override fun waitForArgoWorkflow(
-    workflowName: String,
-    timeoutSeconds: Long,
-  ): CompletedArgoWorkflow =
-    runBlocking {
-      val context = Activity.getExecutionContext()
-      val result =
-        agentRunClient.waitForCompletion(workflowName, timeoutSeconds) {
-          context.heartbeat("waiting for AgentRun $workflowName")
-        }
-      CompletedArgoWorkflow(
-        phase = result.phase,
-        finishedAt = result.finishedAt,
-        artifactReferences = result.artifactReferences,
-      )
-    }
-
   override fun submitAgentRun(request: SubmitAgentRunRequest): SubmitAgentRunResult = runBlocking { agentRunClient.submitRun(request) }
 
   override fun waitForAgentRun(

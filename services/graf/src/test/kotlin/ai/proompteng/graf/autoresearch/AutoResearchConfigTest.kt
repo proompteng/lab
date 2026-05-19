@@ -33,6 +33,6 @@ class AutoResearchConfigTest {
     assertEquals("stream", config.streamId)
     assertEquals("guidance", config.defaultOperatorGuidance)
     assertEquals("goal", config.defaultGoalsText)
-    assertTrue(config.workflowNamePrefix.startsWith("te-st-stage"))
+    assertTrue(config.agentRunNamePrefix.startsWith("te-st-stage"))
   }
 }

@@ -28,15 +28,12 @@ data class AgentsConfig(
           ?: "agents-sa"
       val tokenPath =
         env["AGENTS_SERVICE_ACCOUNT_TOKEN_PATH"]?.takeIf { it.isNotBlank() }
-          ?: env["ARGO_SERVICE_ACCOUNT_TOKEN_PATH"]?.takeIf { it.isNotBlank() }
       val bearerToken = env["AGENTS_BEARER_TOKEN"]?.takeIf { it.isNotBlank() }
       val pollIntervalSeconds =
         env["AGENTS_RUN_POLL_INTERVAL_SECONDS"]?.toLongOrNull()
-          ?: env["ARGO_WORKFLOW_POLL_INTERVAL_SECONDS"]?.toLongOrNull()
           ?: 10L
       val pollTimeoutSeconds =
         env["AGENTS_RUN_POLL_TIMEOUT_SECONDS"]?.toLongOrNull()
-          ?: env["ARGO_WORKFLOW_POLL_TIMEOUT_SECONDS"]?.toLongOrNull()
           ?: DEFAULT_POLL_TIMEOUT_SECONDS
       val ttlSecondsAfterFinished =
         env["AGENTS_RUN_TTL_SECONDS_AFTER_FINISHED"]?.toLongOrNull()

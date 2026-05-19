@@ -5,13 +5,6 @@ import io.temporal.activity.ActivityInterface
 
 @ActivityInterface
 interface CodexResearchActivities {
-  fun submitArgoWorkflow(request: SubmitArgoWorkflowRequest): SubmitArgoWorkflowResult
-
-  fun waitForArgoWorkflow(
-    workflowName: String,
-    timeoutSeconds: Long,
-  ): CompletedArgoWorkflow
-
   fun submitAgentRun(request: SubmitAgentRunRequest): SubmitAgentRunResult
 
   fun waitForAgentRun(

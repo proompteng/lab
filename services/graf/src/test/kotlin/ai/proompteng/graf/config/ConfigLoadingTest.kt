@@ -57,22 +57,6 @@ class AgentsConfigTest {
     assertEquals("binding", config.secretBindingRef)
     assertEquals(listOf("one", "two"), config.secrets)
   }
-
-  @Test
-  fun `fromEnvironment keeps Argo poll aliases for one compatibility release`() {
-    val config =
-      AgentsConfig.fromEnvironment(
-        mapOf(
-          "ARGO_SERVICE_ACCOUNT_TOKEN_PATH" to "/legacy/token",
-          "ARGO_WORKFLOW_POLL_INTERVAL_SECONDS" to "12",
-          "ARGO_WORKFLOW_POLL_TIMEOUT_SECONDS" to "34",
-        ),
-      )
-
-    assertEquals("/legacy/token", config.tokenPath)
-    assertEquals(12L, config.pollIntervalSeconds)
-    assertEquals(34L, config.pollTimeoutSeconds)
-  }
 }
 
 class TemporalConfigTest {
