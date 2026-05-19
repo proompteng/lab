@@ -6,7 +6,6 @@ import {
   isStandbyLeaderElectionReady,
   uniqueStrings,
 } from '@proompteng/agents/server/ready'
-import { isAgentsRuntimeService, resolveRuntimeServiceName } from '@proompteng/agents/server/runtime-identity'
 
 import type {
   ControlPlaneControllerWitnessQuorum,
@@ -14,6 +13,7 @@ import type {
   SourceServingContractVerdictExchange,
   TorghutRevenueRepairQueueItem,
 } from '~/data/agents-control-plane'
+import { isAgentsRuntimeService, resolveRuntimeServiceName } from '~/server/runtime-identity'
 import { assessAgentRunIngestion, getAgentsControllerHealth } from '@proompteng/agents/server/agents-controller'
 import { buildControllerIngestionSettlement } from '~/server/control-plane-controller-ingestion-settlement'
 import { buildRuntimeAdmissionSnapshot, findAdmissionPassport } from '~/server/control-plane-runtime-admission'
