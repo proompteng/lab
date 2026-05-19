@@ -18,10 +18,7 @@ from app.trading.discovery.portfolio_candidates import (
 from app.trading.discovery.profit_target_oracle import evaluate_profit_target_oracle
 from app.trading.discovery.profit_target_oracle import ProfitTargetOraclePolicy
 
-MAX_CLUSTER_CONTRIBUTION_SHARE = Decimal("0.40")
-MAX_SINGLE_SYMBOL_CONTRIBUTION_SHARE = Decimal("0.35")
 MAX_ALLOWED_PAIRWISE_CORRELATION = Decimal("0.85")
-MAX_PORTFOLIO_GROSS_EXPOSURE_PCT_EQUITY = Decimal("1.0")
 PORTFOLIO_SEARCH_BEAM_WIDTH = 256
 PORTFOLIO_WEIGHTING_EQUAL_COUNT = "equal_count"
 PORTFOLIO_WEIGHTING_GROSS_EXPOSURE_BUDGET = "gross_exposure_budget"
@@ -165,38 +162,47 @@ def _non_composable_hard_vetoes(bundle: CandidateEvidenceBundle) -> tuple[str, .
 
 def _capital_safety_rejection(
     bundle: CandidateEvidenceBundle,
+    *,
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> dict[str, Any] | None:
+    policy = oracle_policy or ProfitTargetOraclePolicy()
     max_gross = _max_gross_exposure_pct_equity(bundle)
     min_cash = _min_cash(bundle)
     negative_cash_observations = _negative_cash_observation_count(bundle)
-    if max_gross > MAX_PORTFOLIO_GROSS_EXPOSURE_PCT_EQUITY:
+    if max_gross > policy.max_gross_exposure_pct_equity:
         return {
             "candidate_id": bundle.candidate_id,
             "reason": "frontier_capital_violation",
             "max_gross_exposure_pct_equity": str(max_gross),
-            "limit": str(MAX_PORTFOLIO_GROSS_EXPOSURE_PCT_EQUITY),
+            "limit": str(policy.max_gross_exposure_pct_equity),
         }
-    if min_cash < 0:
+    if min_cash < policy.min_cash:
         return {
             "candidate_id": bundle.candidate_id,
             "reason": "frontier_negative_cash",
             "min_cash": str(min_cash),
+            "limit": str(policy.min_cash),
         }
-    if negative_cash_observations > 0:
+    if negative_cash_observations > policy.max_negative_cash_observation_count:
         return {
             "candidate_id": bundle.candidate_id,
             "reason": "frontier_negative_cash_observed",
             "negative_cash_observation_count": negative_cash_observations,
+            "limit": policy.max_negative_cash_observation_count,
         }
     return None
 
 
-def _candidate_passes_minimums(bundle: CandidateEvidenceBundle) -> bool:
+def _candidate_passes_minimums(
+    bundle: CandidateEvidenceBundle,
+    *,
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
+) -> bool:
     if not evidence_bundle_is_valid(bundle):
         return False
     if _non_composable_hard_vetoes(bundle):
         return False
-    if _capital_safety_rejection(bundle) is not None:
+    if _capital_safety_rejection(bundle, oracle_policy=oracle_policy) is not None:
         return False
     if _net_per_day(bundle) <= 0:
         return False
@@ -277,8 +283,10 @@ def _correlation(left: Mapping[str, Decimal], right: Mapping[str, Decimal]) -> D
 
 def _portfolio_daily_net(
     selected: Sequence[CandidateEvidenceBundle],
+    *,
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> dict[str, Decimal]:
-    weights = _portfolio_weights(selected)
+    weights = _portfolio_weights(selected, oracle_policy=oracle_policy)
     daily_totals: dict[str, Decimal] = {}
     for bundle, weight in zip(selected, weights, strict=True):
         for day, value in _daily_net(bundle).items():
@@ -288,8 +296,10 @@ def _portfolio_daily_net(
 
 def _portfolio_daily_filled_notional(
     selected: Sequence[CandidateEvidenceBundle],
+    *,
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> dict[str, Decimal]:
-    weights = _portfolio_weights(selected)
+    weights = _portfolio_weights(selected, oracle_policy=oracle_policy)
     daily_totals: dict[str, Decimal] = {}
     for bundle, weight in zip(selected, weights, strict=True):
         for day, value in _daily_filled_notional(bundle).items():
@@ -359,8 +369,10 @@ def _contribution_shares(values: Mapping[str, Decimal]) -> dict[str, Decimal]:
 
 def _cluster_contribution_shares(
     selected: Sequence[CandidateEvidenceBundle],
+    *,
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> dict[str, Decimal]:
-    weights = _portfolio_weights(selected)
+    weights = _portfolio_weights(selected, oracle_policy=oracle_policy)
     contributions: dict[str, Decimal] = {}
     for bundle, weight in zip(selected, weights, strict=True):
         cluster = _cluster_id(bundle)
@@ -389,8 +401,10 @@ def _bundle_symbol_shares(bundle: CandidateEvidenceBundle) -> dict[str, Decimal]
 
 def _symbol_contribution_shares(
     selected: Sequence[CandidateEvidenceBundle],
+    *,
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> dict[str, Decimal]:
-    weights = _portfolio_weights(selected)
+    weights = _portfolio_weights(selected, oracle_policy=oracle_policy)
     contributions: dict[str, Decimal] = {}
     for bundle, weight in zip(selected, weights, strict=True):
         bundle_positive_net = _positive_net_contribution(bundle) * weight
@@ -438,7 +452,10 @@ def _equal_weights(selected: Sequence[CandidateEvidenceBundle]) -> tuple[Decimal
 
 def _gross_exposure_budget_weights(
     selected: Sequence[CandidateEvidenceBundle],
+    *,
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> tuple[Decimal, ...] | None:
+    policy = oracle_policy or ProfitTargetOraclePolicy()
     exposures = tuple(_max_gross_exposure_pct_equity(bundle) for bundle in selected)
     if not exposures or any(exposure <= 0 for exposure in exposures):
         return None
@@ -447,30 +464,43 @@ def _gross_exposure_budget_weights(
         return None
     scale = min(
         Decimal("1"),
-        MAX_PORTFOLIO_GROSS_EXPOSURE_PCT_EQUITY / total_exposure,
+        policy.max_gross_exposure_pct_equity / total_exposure,
     )
     return tuple(scale for _ in selected)
 
 
 def _portfolio_weights(
     selected: Sequence[CandidateEvidenceBundle],
+    *,
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> tuple[Decimal, ...]:
-    gross_budget_weights = _gross_exposure_budget_weights(selected)
+    gross_budget_weights = _gross_exposure_budget_weights(
+        selected, oracle_policy=oracle_policy
+    )
     if gross_budget_weights is not None:
         return gross_budget_weights
     return _equal_weights(selected)
 
 
-def _portfolio_weighting_mode(selected: Sequence[CandidateEvidenceBundle]) -> str:
-    if _gross_exposure_budget_weights(selected) is not None:
+def _portfolio_weighting_mode(
+    selected: Sequence[CandidateEvidenceBundle],
+    *,
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
+) -> str:
+    if (
+        _gross_exposure_budget_weights(selected, oracle_policy=oracle_policy)
+        is not None
+    ):
         return PORTFOLIO_WEIGHTING_GROSS_EXPOSURE_BUDGET
     return PORTFOLIO_WEIGHTING_EQUAL_COUNT
 
 
 def _portfolio_max_gross_exposure_pct_equity(
     selected: Sequence[CandidateEvidenceBundle],
+    *,
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> Decimal:
-    weights = _portfolio_weights(selected)
+    weights = _portfolio_weights(selected, oracle_policy=oracle_policy)
     return sum(
         (
             _max_gross_exposure_pct_equity(bundle) * weight
@@ -480,8 +510,12 @@ def _portfolio_max_gross_exposure_pct_equity(
     )
 
 
-def _portfolio_min_cash(selected: Sequence[CandidateEvidenceBundle]) -> Decimal:
-    weights = _portfolio_weights(selected)
+def _portfolio_min_cash(
+    selected: Sequence[CandidateEvidenceBundle],
+    *,
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
+) -> Decimal:
+    weights = _portfolio_weights(selected, oracle_policy=oracle_policy)
     return sum(
         (
             _min_cash(bundle) * weight
@@ -527,8 +561,8 @@ def _portfolio_scorecard(
     target_net_pnl_per_day: Decimal,
     oracle_policy: ProfitTargetOraclePolicy,
 ) -> dict[str, Any]:
-    weights = _portfolio_weights(selected)
-    daily_net = _portfolio_daily_net(selected)
+    weights = _portfolio_weights(selected, oracle_policy=oracle_policy)
+    daily_net = _portfolio_daily_net(selected, oracle_policy=oracle_policy)
     trading_day_count = _portfolio_trading_day_count(selected, daily_net)
     missing_day_count = max(0, trading_day_count - len(daily_net))
     missing_sleeve_daily_net_count = _missing_sleeve_daily_net_count(
@@ -554,11 +588,13 @@ def _portfolio_scorecard(
         if positive_total > 0
         else Decimal("0")
     )
-    cluster_shares = _cluster_contribution_shares(selected)
-    symbol_shares = _symbol_contribution_shares(selected)
+    cluster_shares = _cluster_contribution_shares(selected, oracle_policy=oracle_policy)
+    symbol_shares = _symbol_contribution_shares(selected, oracle_policy=oracle_policy)
     min_day = min(values, default=Decimal("0"))
     worst_day_loss = abs(min_day) if min_day < 0 else Decimal("0")
-    daily_notional = _portfolio_daily_filled_notional(selected)
+    daily_notional = _portfolio_daily_filled_notional(
+        selected, oracle_policy=oracle_policy
+    )
     notional_missing_day_count = max(0, trading_day_count - len(daily_notional))
     notional_values = [daily_notional[day] for day in sorted(daily_notional)] + (
         [Decimal("0")] * notional_missing_day_count
@@ -592,7 +628,9 @@ def _portfolio_scorecard(
         "portfolio_post_cost_net_pnl_per_day": str(net_per_day),
         "target_net_pnl_per_day": str(target_net_pnl_per_day),
         "target_met": net_per_day >= target_net_pnl_per_day,
-        "portfolio_weighting_mode": _portfolio_weighting_mode(selected),
+        "portfolio_weighting_mode": _portfolio_weighting_mode(
+            selected, oracle_policy=oracle_policy
+        ),
         "portfolio_sleeve_weights": {
             bundle.candidate_id: str(weight)
             for bundle, weight in zip(selected, weights, strict=True)
@@ -603,9 +641,11 @@ def _portfolio_scorecard(
         "worst_day_loss": str(worst_day_loss),
         "max_drawdown": str(_max_drawdown_from_daily(daily_net)),
         "max_gross_exposure_pct_equity": str(
-            _portfolio_max_gross_exposure_pct_equity(selected)
+            _portfolio_max_gross_exposure_pct_equity(
+                selected, oracle_policy=oracle_policy
+            )
         ),
-        "min_cash": str(_portfolio_min_cash(selected)),
+        "min_cash": str(_portfolio_min_cash(selected, oracle_policy=oracle_policy)),
         "negative_cash_observation_count": _portfolio_negative_cash_observation_count(
             selected
         ),
@@ -743,14 +783,6 @@ def _portfolio_addition_rejection(
     requested_portfolio_size_min: int,
     max_allowed_correlation: Decimal,
 ) -> dict[str, Any] | None:
-    cluster = _cluster_id(bundle)
-    selected_clusters = {_cluster_id(item) for item in selected}
-    if cluster in selected_clusters:
-        return {
-            "candidate_id": bundle.candidate_id,
-            "reason": "cluster_cap",
-            "cluster": cluster,
-        }
     max_correlation = _max_pairwise_correlation(bundle, selected)
     if selected and max_correlation > max_allowed_correlation:
         return {
@@ -908,14 +940,16 @@ def optimize_portfolio_candidate(
     capital_safety_rejections = [
         rejection
         for rejection in (
-            _capital_safety_rejection(bundle)
+            _capital_safety_rejection(bundle, oracle_policy=oracle_policy)
             for bundle in evidence_bundles
             if evidence_bundle_is_valid(bundle)
         )
         if rejection is not None
     ]
     eligible = [
-        bundle for bundle in evidence_bundles if _candidate_passes_minimums(bundle)
+        bundle
+        for bundle in evidence_bundles
+        if _candidate_passes_minimums(bundle, oracle_policy=oracle_policy)
     ]
     ordered = sorted(
         eligible,
@@ -950,7 +984,7 @@ def optimize_portfolio_candidate(
     )
     max_drawdown = _decimal(objective_scorecard.get("max_drawdown"))
     sleeves: list[Mapping[str, Any]] = []
-    weights = _portfolio_weights(selected)
+    weights = _portfolio_weights(selected, oracle_policy=oracle_policy)
     for sleeve_index, bundle in enumerate(selected, start=1):
         weight = weights[sleeve_index - 1]
         base_runtime_strategy_name = (
@@ -1029,7 +1063,7 @@ def optimize_portfolio_candidate(
         target_net_pnl_per_day=target_net_pnl_per_day,
         sleeves=tuple(sleeves),
         capital_budget={
-            "mode": _portfolio_weighting_mode(selected),
+            "mode": _portfolio_weighting_mode(selected, oracle_policy=oracle_policy),
             "max_sleeves": portfolio_size_max,
             "sleeve_weights": {
                 bundle.candidate_id: str(weight)
