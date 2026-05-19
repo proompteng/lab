@@ -5,6 +5,8 @@ metadata:
   namespace: agents
 spec:
   binary: /bin/sh
+  adapter:
+    type: exec
   argsTemplate:
     - -c
     - >-

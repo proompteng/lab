@@ -242,25 +242,12 @@ quarantined implement warrants reject the matching requirement Signal once with 
 rollback for the proof layer only is `JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT=false`; the passport admission gate remains
 active.
 
-Schedule-runner pods also verify the stamped passport and sealed warrant against the current
-`/api/agents/control-plane/status?namespace=<schedule namespace>` response immediately before creating the AgentRun or
-OrchestrationRun. A launch-capable swarm runner manifest missing its admission passport stamp, a current non-`allow`
-passport, stale freshness window, unhealthy cited runtime kit, non-sealed or passport-mismatched recovery warrant, or
-stale/unhealthy required proof cell fails the runner before work is launched. If the stamped passport id or runtime-kit
-digest drifted but the current status payload is still admitted, the runner refreshes the outgoing run annotations and
-parameters to the current passport, warrant, and proof-cell ids before launch. Emergency rollback for this fire-time
-check only is
-`JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK=false`; setting
-`JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=false` also disables generated runner admission and proof checks so advisory
-rollback schedules do not fail because they intentionally lack passport stamps. Generated runner pods also carry the
-top-level runtime-admission enforcement flag, and the fire-time runner command treats that flag as the primary rollback
-switch before it performs passport or proof lookups.
-The fire-time status timeout defaults to `15000` ms via `JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS`. If the
-full status projection is too slow for the runtime-admission check, the runner retries against the same service's
-`/ready` authority projection, which carries the admission passports, recovery warrants, runtime kits, and proof cells
-needed for the passport/proof gate. Stage-clearance hold mode still requires the full status projection because `/ready`
-does not carry clearance packets. Generated runner CronJobs use `backoffLimit: 1` to avoid turning one slow projection
-into a burst of repeated failed runner pods.
+Agents-owned schedule reconciliation verifies the stamped passport and sealed warrant against the current
+`/api/agents/control-plane/status?namespace=<schedule namespace>` response before creating the AgentRun or
+OrchestrationRun. Jangar consumes that status projection for domain stage-clearance decisions through
+`JANGAR_RUNTIME_ADMISSION_STATUS_URL`; the timeout defaults to `15000` ms via
+`JANGAR_RUNTIME_ADMISSION_STATUS_TIMEOUT_MS`. Stage-clearance hold mode requires the full status projection because
+`/ready` does not carry clearance packets.
 
 Binary runtime-kit components must be executable, not just present on disk. The source Codex NATS helpers and the
 installed `/usr/local/bin/codex-nats-*` wrappers both satisfy that command-path contract; a non-executable helper keeps
@@ -864,23 +851,9 @@ Control-plane cache freshness (API read path):
 - `JANGAR_CONTROL_PLANE_CACHE_ALLOW_STALE` (optional; default: `true`)
   - Set to `false`/`0` to force live Kubernetes reads when cache rows exceed the freshness window.
 
-Agents controller AgentRun ingestion:
-
-- `JANGAR_AGENTS_CONTROLLER_RESYNC_INTERVAL_SECONDS` (optional; default: `60`)
-  - Periodic relist interval used to adopt new or drifted `AgentRun` resources even if a live watch event is missed.
-- `JANGAR_AGENTS_CONTROLLER_UNTOUCHED_WARN_AFTER_SECONDS` (optional; default: `120`)
-  - Age threshold for marking `agentrun_ingestion` degraded when untouched runs are accumulating.
-- `JANGAR_AGENTS_CONTROLLER_DEBUG_LOGS` (optional; default: `false`)
-  - Enables queue/watch/adoption debug logs in the agents controller; default logging remains decision-focused.
-
-Control-plane status now includes an additive `agentrun_ingestion` block in
-`/api/agents/control-plane/status?namespace=<ns>` with:
-
-- `status` / `message`
-- `last_watch_event_at`
-- `last_resync_at`
-- `untouched_run_count`
-- `oldest_untouched_age_seconds`
+AgentRun ingestion and controller reconciliation are owned by `services/agents`.
+Jangar reads the Agents service status surface and does not configure controller
+resync, adoption, or debug loops directly.
 
 Execution trust is now a mandatory part of `/api/agents/control-plane/status` and `/ready`.
 Tracked swarm selection and response fan-out remain configurable via:

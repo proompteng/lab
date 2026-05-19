@@ -1,8 +1,16 @@
+import { execFile } from 'node:child_process'
 import { readFileSync } from 'node:fs'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 
 import { describe, expect, it } from 'vitest'
 
 const dockerfile = () => readFileSync(new URL('../../Dockerfile.codex-runner', import.meta.url), 'utf8')
+const repoRoot = fileURLToPath(new URL('../../../../', import.meta.url))
+const execFileAsync = promisify(execFile)
 
 const finalStage = () => {
   const content = dockerfile()
@@ -40,5 +48,32 @@ describe('Agents Codex runner image layout', () => {
     expect(content).not.toContain('COPY services/agents /app/services/agents')
     expect(content).not.toContain('COPY packages/codex /opt/proompteng/packages/codex')
     expect(content).not.toContain('cp -R /opt/proompteng/packages/codex')
+  })
+
+  it('bundles the runner without runtime-resolving Effect or source TS modules', async () => {
+    const outDir = await mkdtemp(join(tmpdir(), 'agents-runner-bundle-'))
+    const outfile = join(outDir, 'agent-runner.js')
+
+    try {
+      const { stdout, stderr } = await execFileAsync(
+        'bun',
+        ['build', 'services/agents/scripts/codex/agent-runner.ts', '--target', 'bun', '--outfile', outfile],
+        {
+          cwd: repoRoot,
+          maxBuffer: 10 * 1024 * 1024,
+        },
+      )
+
+      expect(`${stderr}\n${stdout}`).toContain('agent-runner.js')
+
+      const bundle = await readFile(outfile, 'utf8')
+      expect(bundle).toContain('// services/agents/src/runner/codex-app-server.ts')
+      expect(bundle).not.toMatch(/from ["']effect["']/)
+      expect(bundle).not.toMatch(/require\(["']effect["']\)/)
+      expect(bundle).not.toMatch(/import\(["']effect["']\)/)
+      expect(bundle).not.toMatch(/from ["']\.\.\/\.\.\/src\/runner\/codex-app-server["']/)
+    } finally {
+      await rm(outDir, { recursive: true, force: true })
+    }
   })
 })

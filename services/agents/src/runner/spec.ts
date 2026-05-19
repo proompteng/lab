@@ -232,13 +232,6 @@ export const resolveAdapter = (rawSpec: AgentRunnerSpec): ResolvedAgentRunnerAda
     }
   }
 
-  if (spec.providerSpec) {
-    return {
-      type: 'exec',
-      provider: resolveExecProvider(spec.providerSpec),
-    }
-  }
-
   if (spec.provider === 'codex' || spec.provider === 'codex-runner') {
     return {
       type: 'codex-app-server',

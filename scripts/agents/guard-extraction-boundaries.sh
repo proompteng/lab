@@ -92,10 +92,15 @@ fail_if_matches \
   'createKubernetesClient|RESOURCE_MAP\.(AgentRun|OrchestrationRun)|agents\.proompteng\.ai/v1alpha1|orchestration\.proompteng\.ai/v1alpha1' \
   "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-swarm-analysis.ts"
 
-fail_if_matches \
-  "Jangar schedule runner must submit scheduled AgentRun and OrchestrationRun resources through the Agents service boundary" \
-  'KUBERNETES_SERVICE_HOST|KUBERNETES_SERVICE_PORT|/apis/\$\{target\.group\}|node:https|requestKubernetesJson|/var/run/secrets/kubernetes\.io/serviceaccount/token' \
+fail_if_path_exists \
+  "Jangar must not retain the schedule-runner implementation after Agents owns schedule reconciliation" \
   "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-schedule-runner.ts"
+
+fail_if_matches \
+  "Jangar must not retain schedule-runner image, service-account, or fire-time env ownership" \
+  'JANGAR_SCHEDULE_RUNNER|scheduleRunnerImage|scheduleRunnerNodeSelector|scheduleRunnerAdmission|buildScheduleRunnerCommand' \
+  "${ROOT_DIR}/services/jangar/src" \
+  "${ROOT_DIR}/services/jangar/README.md"
 
 fail_if_matches \
   "Jangar material-reentry Swarm reconciler must consume Swarms through the Agents service boundary" \
@@ -121,7 +126,10 @@ fail_if_matches \
   "Jangar must call the Agents service boundary instead of importing Agents package internals" \
   '@proompteng/agents' \
   "${ROOT_DIR}/services/jangar/package.json" \
-  "${ROOT_DIR}/services/jangar/src"
+  "${ROOT_DIR}/services/jangar/src" \
+  "${ROOT_DIR}/services/jangar/tsconfig.json" \
+  "${ROOT_DIR}/services/jangar/tsconfig.oxlint.json" \
+  "${ROOT_DIR}/services/jangar/vitest.config.ts"
 
 fail_if_matches \
   "Jangar runtime must not expose removed Agents controller profiles" \
@@ -134,7 +142,32 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-config.ts" \
   "${ROOT_DIR}/services/jangar/Dockerfile" \
   "${ROOT_DIR}/services/jangar/playwright.config.ts" \
-  "${ROOT_DIR}/services/jangar/scripts/openwebui-e2e.sh"
+  "${ROOT_DIR}/services/jangar/scripts/openwebui-e2e.sh" \
+  "${ROOT_DIR}/argocd/applications/jangar"
+
+fail_if_matches \
+  "Jangar docs must not advertise removed Agents controller runtime config" \
+  'controller-runtime-config|JANGAR_AGENTS_CONTROLLER_' \
+  "${ROOT_DIR}/services/jangar/README.md" \
+  "${ROOT_DIR}/docs/jangar/application-architecture.md"
+
+fail_if_matches \
+  "Jangar runtime must not own generic Agents runner image selection" \
+  'JANGAR_AGENT_RUNNER_IMAGE|JANGAR_AGENT_IMAGE|defaultWorkloadImage|resolveDefaultWorkloadImage' \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-config.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-swarm-config.ts" \
+  "${ROOT_DIR}/services/jangar/README.md"
+
+fail_if_path_exists \
+  "Jangar must not retain Agents controller runtime config after the controller extraction" \
+  "${ROOT_DIR}/services/jangar/src/server/controller-runtime-config.ts"
+
+fail_if_matches \
+  "Jangar workflow status must not reuse Agents controller namespace envs" \
+  'JANGAR_AGENTS_CONTROLLER_NAMESPACES|AGENTS_ORCHESTRATION_CONTROLLER|AGENTS_SUPPORTING_CONTROLLER|AGENTS_PRIMITIVES_RECONCILER|AGENTS_RBAC_CLUSTER_SCOPED' \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-workflows.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/namespace-scope.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/runtime-validation.ts"
 
 fail_if_matches \
   "Jangar kube helper must not carry Agents CRD aliases after the control-plane extraction" \

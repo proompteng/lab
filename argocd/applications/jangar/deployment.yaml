@@ -152,22 +152,10 @@ spec:
               value: "false"
             - name: JANGAR_GITHUB_MERGE_FORCE
               value: "false"
-            - name: JANGAR_AGENTS_CONTROLLER_ENABLED
-              value: "false"
-            - name: JANGAR_PRIMITIVES_RECONCILER
-              value: "false"
-            - name: JANGAR_ORCHESTRATION_CONTROLLER_ENABLED_FLAG_KEY
-              value: jangar_orchestration_controller_enabled
-            - name: JANGAR_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY
-              value: jangar_supporting_controller_enabled
             - name: JANGAR_STAGE_CLEARANCE_ENFORCEMENT
               value: hold
             - name: JANGAR_STAGE_CLEARANCE_HOLD_STAGES
               value: implement,verify
-            - name: JANGAR_AGENTS_CONTROLLER_ENABLED_FLAG_KEY
-              value: jangar_agents_controller_enabled
-            - name: JANGAR_PRIMITIVES_RECONCILER_FLAG_KEY
-              value: jangar_primitives_reconciler_enabled
             - name: JANGAR_CI_MAX_WAIT_MS
               value: "3600000"
             - name: JANGAR_REVIEW_MAX_WAIT_MS

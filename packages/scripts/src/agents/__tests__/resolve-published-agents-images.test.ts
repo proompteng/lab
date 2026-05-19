@@ -31,6 +31,11 @@ controllers:
     repository: registry.example/lab/agents-controller
     tag: controller12
     digest: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+runner:
+  image:
+    repository: registry.example/lab/agents-codex-runner
+    tag: runner12
+    digest: sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
 `,
       'utf8',
     )
@@ -48,6 +53,12 @@ controllers:
         tag: 'controller12',
         digest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
         ref: 'registry.example/lab/agents-controller:controller12@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+      },
+      runner: {
+        repository: 'registry.example/lab/agents-codex-runner',
+        tag: 'runner12',
+        digest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+        ref: 'registry.example/lab/agents-codex-runner:runner12@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
       },
     })
 
@@ -69,6 +80,9 @@ controlPlane: {}
 controllers:
   image:
     repository: registry.example/lab/agents-controller
+runner:
+  image:
+    repository: registry.example/lab/agents-codex-runner
 `,
       'utf8',
     )
@@ -86,6 +100,12 @@ controllers:
         tag: 'abcdef12',
         digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
         ref: 'registry.example/lab/agents-controller:abcdef12@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      },
+      runner: {
+        repository: 'registry.example/lab/agents-codex-runner',
+        tag: 'abcdef12',
+        digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        ref: 'registry.example/lab/agents-codex-runner:abcdef12@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       },
     })
 

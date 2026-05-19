@@ -19,9 +19,12 @@ describe('agent-runner spec', () => {
     })
   })
 
-  it('preserves legacy binary providers through the exec adapter', () => {
+  it('preserves legacy binary providers only through the explicit exec adapter', () => {
     const spec: AgentRunnerSpec = {
       provider: 'smoke-runner',
+      adapter: {
+        type: 'exec',
+      },
       providerSpec: {
         binary: '/bin/sh',
         argsTemplate: ['-c', 'echo {{inputs.stage}}'],
@@ -38,6 +41,18 @@ describe('agent-runner spec', () => {
     const args = adapter.provider.argsTemplate?.map((arg) => renderTemplate(arg, buildTemplateContext(spec)))
     expect(adapter.provider.binary).toBe('/bin/sh')
     expect(args).toEqual(['-c', 'echo verify'])
+  })
+
+  it('rejects providerSpec-only specs instead of silently falling back to exec', () => {
+    expect(() =>
+      resolveAdapter({
+        provider: 'smoke-runner',
+        providerSpec: {
+          binary: '/bin/sh',
+          argsTemplate: ['-c', 'echo smoke'],
+        },
+      }),
+    ).toThrow('Missing agent-runner adapter for provider "smoke-runner"')
   })
 
   it('requires a supported schema version', () => {

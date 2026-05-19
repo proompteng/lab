@@ -4,6 +4,8 @@ metadata:
   name: smoke-runner
 spec:
   binary: /bin/sh
+  adapter:
+    type: exec
   argsTemplate:
     - -c
     - echo "stage={{inputs.stage}}" && exit 0

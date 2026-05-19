@@ -319,11 +319,6 @@ export const normalizeLabelValue = (value: string) => {
   return trimmed || 'swarm'
 }
 
-export const resolveDefaultWorkloadImage = () => {
-  const candidate = resolveSupportingPrimitivesConfig(process.env).defaultWorkloadImage ?? ''
-  return candidate.length > 0 ? candidate : null
-}
-
 export const parseStringList = (raw: unknown) => {
   if (!Array.isArray(raw)) return []
   return raw.map((item) => (typeof item === 'string' ? item.trim() : '')).filter((item) => item.length > 0)

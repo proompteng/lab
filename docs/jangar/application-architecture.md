@@ -33,7 +33,6 @@ The cleanup program moved the highest-risk application boundaries behind explici
 
 - Config
   - `services/jangar/src/server/chat-config.ts`
-  - `services/jangar/src/server/controller-runtime-config.ts`
   - `services/jangar/src/server/control-plane-config.ts`
   - `services/jangar/src/server/integrations-config.ts`
   - `services/jangar/src/server/memory-config.ts`

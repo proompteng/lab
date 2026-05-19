@@ -4,6 +4,8 @@ metadata:
   name: codex-spark-smoke
 spec:
   binary: /bin/bash
+  adapter:
+    type: exec
   argsTemplate:
     - -lc
     - |-

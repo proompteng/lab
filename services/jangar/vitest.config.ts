@@ -7,7 +7,6 @@ const codexStub = fileURLToPath(new URL('./src/test-utils/codex-stub.ts', import
 const bunStub = fileURLToPath(new URL('./src/test-utils/bun-stub.ts', import.meta.url))
 const temporalBunSdkStub = fileURLToPath(new URL('./src/test-utils/temporal-bun-sdk-stub.ts', import.meta.url))
 const jsdomEnvSetup = fileURLToPath(new URL('./src/test-utils/vitest-jsdom-env.ts', import.meta.url))
-const agentsSourceRoot = fileURLToPath(new URL('../agents/src', import.meta.url))
 const discordSource = fileURLToPath(new URL('../../packages/discord/src/index.ts', import.meta.url))
 
 export default defineConfig({
@@ -15,10 +14,6 @@ export default defineConfig({
     alias: {
       '~': root,
       '@': root,
-      '@proompteng/agents': agentsSourceRoot,
-      '@proompteng/agents/server/agents-controller': `${agentsSourceRoot}/server/agents-controller`,
-      '@proompteng/agents/server/agents-controller/*': `${agentsSourceRoot}/server/agents-controller/*`,
-      '@proompteng/agents/*': `${agentsSourceRoot}/*`,
       '@proompteng/codex': codexStub,
       '@proompteng/codex/*': codexStub,
       '@proompteng/discord': discordSource,
@@ -36,10 +31,6 @@ export default defineConfig({
     alias: {
       '~': root,
       '@': root,
-      '@proompteng/agents': agentsSourceRoot,
-      '@proompteng/agents/server/agents-controller': `${agentsSourceRoot}/server/agents-controller`,
-      '@proompteng/agents/server/agents-controller/*': `${agentsSourceRoot}/server/agents-controller/*`,
-      '@proompteng/agents/*': `${agentsSourceRoot}/*`,
       '@proompteng/codex': codexStub,
       '@proompteng/codex/*': codexStub,
       '@proompteng/discord': discordSource,

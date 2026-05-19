@@ -8,7 +8,7 @@ import {
   SWARM_EVIDENCE_PRESSURE_ANNOTATION_REASON_CODES,
   SWARM_EVIDENCE_PRESSURE_ANNOTATION_REQUIRED_REPAIR_RECEIPTS,
   SWARM_EVIDENCE_PRESSURE_ANNOTATION_WATCH_BACKOFF_STATE,
-} from '~/server/supporting-primitives-schedule-runner'
+} from '~/server/supporting-primitives-swarm-annotations'
 
 export type EvidencePressureTrace = {
   ledgerId: string

@@ -16,7 +16,7 @@ import {
   SWARM_MATERIAL_EVIDENCE_ANNOTATION_SELECTED_TICKET,
   SWARM_MATERIAL_EVIDENCE_ANNOTATION_SELECTED_VALUE_GATE,
   SWARM_MATERIAL_EVIDENCE_ANNOTATION_SETTLEMENT_ID,
-} from '~/server/supporting-primitives-schedule-runner'
+} from '~/server/supporting-primitives-swarm-annotations'
 
 export type MaterialEvidenceSettlementTrace = {
   settlementId: string

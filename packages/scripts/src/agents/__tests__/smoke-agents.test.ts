@@ -120,6 +120,32 @@ describe('buildHelmArgs', () => {
     )
   })
 
+  it('allows a separate runner image pin for AgentRun jobs', () => {
+    const valuesFile = resolve(process.cwd(), 'scripts/agents/values-ci.yaml')
+    const args = buildHelmArgs({
+      releaseName: 'agents',
+      namespace: 'agents-ci',
+      valuesFile,
+      createNamespace: false,
+      imageRepository: 'registry.example/agents-control-plane',
+      controlPlaneImageRepository: 'registry.example/agents-control-plane',
+      controllersImageRepository: 'registry.example/agents-controller',
+      runnerImageRepository: 'registry.example/agents-codex-runner',
+      imageTag: 'ci',
+      runnerImageTag: 'runner-ci',
+      imageDigestSet: false,
+      imageDigest: '',
+      runnerImageDigestSet: true,
+      runnerImageDigest: 'sha256:3333333333333333333333333333333333333333333333333333333333333333',
+    })
+
+    expect(args).toContain('runner.image.repository=registry.example/agents-codex-runner')
+    expect(args).toContain('runner.image.tag=runner-ci')
+    expect(args).toContain(
+      'runner.image.digest=sha256:3333333333333333333333333333333333333333333333333333333333333333',
+    )
+  })
+
   it('omits image digest when the env key is unset', () => {
     const valuesFile = resolve(process.cwd(), 'charts/agents/values-local.yaml')
     const args = buildHelmArgs({
@@ -280,6 +306,28 @@ const objectAt = (value: unknown, key: string) =>
   value && typeof value === 'object' ? ((value as Record<string, unknown>)[key] as unknown) : undefined
 
 describe('scheduled AgentRun templates', () => {
+  it('requires every checked-in AgentProvider fixture to declare a normalized adapter', () => {
+    const agentProviderFiles = [
+      'argocd/applications/agents/agents-primitives-agentprovider.yaml',
+      'argocd/applications/agents/codex-agentprovider.yaml',
+      'argocd/applications/agents/codex-spark-agentprovider.yaml',
+      'argocd/applications/agents/codex-spark-smoke-agentprovider.yaml',
+      'argocd/applications/agents/graf-codex-agentprovider.yaml',
+      'charts/agents/examples/agentprovider-native-workflow.yaml',
+      'charts/agents/examples/agentprovider-sample.yaml',
+      'charts/agents/examples/agentprovider-smoke.yaml',
+    ]
+
+    for (const path of agentProviderFiles) {
+      const provider = readYamlObjects(path).find((manifest) => objectAt(manifest, 'kind') === 'AgentProvider')
+      const spec = objectAt(provider, 'spec')
+      const adapter = objectAt(spec, 'adapter')
+
+      expect(adapter, `${path} must declare spec.adapter`).toBeTruthy()
+      expect(objectAt(adapter, 'type'), `${path} must declare spec.adapter.type`).toEqual(expect.any(String))
+    }
+  })
+
   it('configures default runner resource requests for swarm jobs', () => {
     const values = readYamlObjects('argocd/applications/agents/values.yaml')[0]
     const controller = objectAt(values, 'controller')

@@ -99,13 +99,13 @@ export const resolveWatchReliabilityBlockRestartsThreshold = () =>
 export const resolveWorkflowNamespaces = (optionsNamespace: string) => {
   const fallback = uniqueStrings([optionsNamespace, ...DEFAULT_WORKFLOWS_NAMESPACES])
   try {
-    const parsed = parseNamespaceScopeEnv('JANGAR_AGENTS_CONTROLLER_NAMESPACES', {
+    const parsed = parseNamespaceScopeEnv('JANGAR_WORKFLOW_RELIABILITY_NAMESPACES', {
       fallback,
       label: 'workflow reliability status',
     })
     return uniqueStrings(parsed)
   } catch (error) {
-    console.warn(`[jangar] failed to parse JANGAR_AGENTS_CONTROLLER_NAMESPACES: ${normalizeMessage(error)}`)
+    console.warn(`[jangar] failed to parse JANGAR_WORKFLOW_RELIABILITY_NAMESPACES: ${normalizeMessage(error)}`)
     return fallback
   }
 }

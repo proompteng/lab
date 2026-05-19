@@ -262,15 +262,19 @@ jobs:
           CONTROLLER_IMAGE_REPOSITORY="${{ steps.published_agents_images.outputs.controller_image_repository }}"
           CONTROLLER_IMAGE_TAG="${{ steps.published_agents_images.outputs.controller_image_tag }}"
           CONTROLLER_IMAGE_DIGEST="${{ steps.published_agents_images.outputs.controller_image_digest }}"
+          RUNNER_IMAGE_REPOSITORY="${{ steps.published_agents_images.outputs.runner_image_repository }}"
+          RUNNER_IMAGE_TAG="${{ steps.published_agents_images.outputs.runner_image_tag }}"
+          RUNNER_IMAGE_DIGEST="${{ steps.published_agents_images.outputs.runner_image_digest }}"
           IMAGE_SOURCE_SHA="${{ steps.published_agents_images.outputs.source_sha }}"
 
-          if [ -z "${CONTROL_PLANE_IMAGE_DIGEST}" ] || [ -z "${CONTROLLER_IMAGE_DIGEST}" ]; then
+          if [ -z "${CONTROL_PLANE_IMAGE_DIGEST}" ] || [ -z "${CONTROLLER_IMAGE_DIGEST}" ] || [ -z "${RUNNER_IMAGE_DIGEST}" ]; then
             echo "Published Agents image digest is empty."
             exit 1
           fi
 
           echo "Using published Agents control-plane image ${CONTROL_PLANE_IMAGE_REPOSITORY}:${CONTROL_PLANE_IMAGE_TAG}@${CONTROL_PLANE_IMAGE_DIGEST}"
           echo "Using published Agents controller image ${CONTROLLER_IMAGE_REPOSITORY}:${CONTROLLER_IMAGE_TAG}@${CONTROLLER_IMAGE_DIGEST}"
+          echo "Using published Agents runner image ${RUNNER_IMAGE_REPOSITORY}:${RUNNER_IMAGE_TAG}@${RUNNER_IMAGE_DIGEST}"
           {
             echo "BUILT_AGENTS_CONTROL_PLANE_IMAGE_REPOSITORY=${CONTROL_PLANE_IMAGE_REPOSITORY}"
             echo "BUILT_AGENTS_CONTROL_PLANE_IMAGE_TAG=${CONTROL_PLANE_IMAGE_TAG}"
@@ -278,10 +282,13 @@ jobs:
             echo "BUILT_AGENTS_CONTROLLER_IMAGE_REPOSITORY=${CONTROLLER_IMAGE_REPOSITORY}"
             echo "BUILT_AGENTS_CONTROLLER_IMAGE_TAG=${CONTROLLER_IMAGE_TAG}"
             echo "BUILT_AGENTS_CONTROLLER_IMAGE_DIGEST=${CONTROLLER_IMAGE_DIGEST}"
+            echo "BUILT_AGENTS_RUNNER_IMAGE_REPOSITORY=${RUNNER_IMAGE_REPOSITORY}"
+            echo "BUILT_AGENTS_RUNNER_IMAGE_TAG=${RUNNER_IMAGE_TAG}"
+            echo "BUILT_AGENTS_RUNNER_IMAGE_DIGEST=${RUNNER_IMAGE_DIGEST}"
             echo "BUILT_AGENTS_IMAGE_SOURCE_SHA=${IMAGE_SOURCE_SHA}"
           } >> "${GITHUB_ENV}"
 
-      - name: Build and preload local Agents control-plane image into kind
+      - name: Build and preload local Agents images into kind
         if: steps.agents_image_mode.outputs.NEEDS_LOCAL_AGENTS_IMAGE == 'true'
         run: |
           set -euxo pipefail
@@ -289,6 +296,7 @@ jobs:
           WORKSPACE="${GITHUB_WORKSPACE}"
           CONTROL_PLANE_IMAGE_REPOSITORY="${AGENTS_CONTROL_PLANE_IMAGE_REPOSITORY:-${AGENTS_IMAGE_REPOSITORY:-agents-control-plane-local}}"
           CONTROLLER_IMAGE_REPOSITORY="${AGENTS_CONTROLLER_IMAGE_REPOSITORY:-agents-controller-local}"
+          RUNNER_IMAGE_REPOSITORY="${AGENTS_RUNNER_IMAGE_REPOSITORY:-agents-codex-runner-local}"
           DEFAULT_IMAGE_TAG_SUFFIX="${GITHUB_SHA:-unknown}"
           IMAGE_TAG="${AGENTS_IMAGE_TAG:-ci-$DEFAULT_IMAGE_TAG_SUFFIX}"
           PRUNE_DIR="$(mktemp -d /tmp/agents-prune-XXXXXX)"
@@ -447,6 +455,7 @@ jobs:
           AGENTS_COMMIT="$(git -C "${WORKSPACE}" rev-parse HEAD)"
           CONTROL_PLANE_IMAGE="${CONTROL_PLANE_IMAGE_REPOSITORY}:${IMAGE_TAG}"
           CONTROLLER_IMAGE="${CONTROLLER_IMAGE_REPOSITORY}:${IMAGE_TAG}"
+          RUNNER_IMAGE="${RUNNER_IMAGE_REPOSITORY}:${IMAGE_TAG}"
 
           # Use the mirror.gcr.io Bun mirror in CI to avoid Docker Hub anonymous pull limits.
           # Local image rebuilds fail with explicit diagnostics on timeout.
@@ -494,6 +503,44 @@ jobs:
             run_step_failure "Failed to build local image ${CONTROLLER_IMAGE}" "$?"
           fi
 
+          IMAGE="${RUNNER_IMAGE}"
+          if run_with_progress "Runner Docker build" "${BUILD_TIMEOUT_MINUTES}" env DOCKER_BUILDKIT=1 docker build \
+            -f "${WORKSPACE}/services/agents/Dockerfile.codex-runner" \
+            --network=host \
+            -t "${RUNNER_IMAGE}" \
+            --build-arg "BUN_BASE_IMAGE=mirror.gcr.io/oven/bun" \
+            --progress=plain \
+            "${PRUNE_DIR}"; then
+            echo "Built local runner image ${RUNNER_IMAGE}."
+          else
+            run_step_failure "Failed to build local image ${RUNNER_IMAGE}" "$?"
+          fi
+
+          RUNNER_SMOKE_SPEC="$(mktemp /tmp/agents-runner-smoke-XXXXXX.json)"
+          RUNNER_SMOKE_RUN="$(mktemp /tmp/agents-runner-run-XXXXXX.json)"
+          cat > "${RUNNER_SMOKE_SPEC}" <<'JSON'
+          {
+            "schemaVersion": "agents.proompteng.ai/runner/v1",
+            "provider": "runner-image-smoke",
+            "providerSpec": {
+              "binary": "/bin/sh",
+              "argsTemplate": ["-c", "echo agents-runner-image-smoke"]
+            },
+            "payloads": {
+              "eventFilePath": "/tmp/run.json"
+            },
+            "adapter": {
+              "type": "exec"
+            }
+          }
+          JSON
+          printf '{}\n' > "${RUNNER_SMOKE_RUN}"
+          docker run --rm \
+            -v "${RUNNER_SMOKE_SPEC}:/tmp/agent-runner.json:ro" \
+            -v "${RUNNER_SMOKE_RUN}:/tmp/run.json:ro" \
+            "${RUNNER_IMAGE}" \
+            agent-runner /tmp/agent-runner.json
+
           IMAGE="${CONTROL_PLANE_IMAGE}"
           if ! run_kind_load_with_fallback; then
             run_step_failure "Failed to preload local image ${CONTROL_PLANE_IMAGE} into kind cluster ${KIND_CLUSTER_NAME}" "$?"
@@ -502,6 +549,11 @@ jobs:
           IMAGE="${CONTROLLER_IMAGE}"
           if ! run_kind_load_with_fallback; then
             run_step_failure "Failed to preload local image ${CONTROLLER_IMAGE} into kind cluster ${KIND_CLUSTER_NAME}" "$?"
+          fi
+
+          IMAGE="${RUNNER_IMAGE}"
+          if ! run_kind_load_with_fallback; then
+            run_step_failure "Failed to preload local image ${RUNNER_IMAGE} into kind cluster ${KIND_CLUSTER_NAME}" "$?"
           fi
 
           {
@@ -514,6 +566,9 @@ jobs:
             echo "BUILT_AGENTS_CONTROLLER_IMAGE_REPOSITORY=${CONTROLLER_IMAGE_REPOSITORY}"
             echo "BUILT_AGENTS_CONTROLLER_IMAGE_TAG=${IMAGE_TAG}"
             echo "BUILT_AGENTS_CONTROLLER_IMAGE_DIGEST="
+            echo "BUILT_AGENTS_RUNNER_IMAGE_REPOSITORY=${RUNNER_IMAGE_REPOSITORY}"
+            echo "BUILT_AGENTS_RUNNER_IMAGE_TAG=${IMAGE_TAG}"
+            echo "BUILT_AGENTS_RUNNER_IMAGE_DIGEST="
             echo "BUILT_AGENTS_IMAGE_SOURCE_SHA=${GITHUB_SHA}"
           } >> "${GITHUB_ENV}"
 
@@ -535,6 +590,9 @@ jobs:
           AGENTS_CONTROLLER_IMAGE_REPOSITORY: ${{ env.BUILT_AGENTS_CONTROLLER_IMAGE_REPOSITORY }}
           AGENTS_CONTROLLER_IMAGE_TAG: ${{ env.BUILT_AGENTS_CONTROLLER_IMAGE_TAG }}
           AGENTS_CONTROLLER_IMAGE_DIGEST: ${{ env.BUILT_AGENTS_CONTROLLER_IMAGE_DIGEST }}
+          AGENTS_RUNNER_IMAGE_REPOSITORY: ${{ env.BUILT_AGENTS_RUNNER_IMAGE_REPOSITORY }}
+          AGENTS_RUNNER_IMAGE_TAG: ${{ env.BUILT_AGENTS_RUNNER_IMAGE_TAG }}
+          AGENTS_RUNNER_IMAGE_DIGEST: ${{ env.BUILT_AGENTS_RUNNER_IMAGE_DIGEST }}
           AGENTCTL_BIN: services/agents/agentctl/dist/agentctl
         run: bun run packages/scripts/src/agents/smoke-agents.ts
 

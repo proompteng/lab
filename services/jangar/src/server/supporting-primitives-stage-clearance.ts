@@ -47,7 +47,7 @@ import {
   SWARM_STAGE_CREDIT_ANNOTATION_RUNNER_SLOT_FUTURE_EXPIRES_AT,
   SWARM_STAGE_CREDIT_ANNOTATION_RUNNER_SLOT_FUTURE_ID,
   SWARM_STAGE_CREDIT_ANNOTATION_SELECTED_REPAIR_LOT,
-} from '~/server/supporting-primitives-schedule-runner'
+} from '~/server/supporting-primitives-swarm-annotations'
 import type { StageName } from '~/server/supporting-primitives-swarm-config'
 
 export { stageClearanceStatusForStage } from '~/server/supporting-primitives-stage-clearance-status'
@@ -311,10 +311,10 @@ export const fetchStageClearanceStatusSnapshot = async (
   namespace: string,
   config = resolveSupportingPrimitivesConfig(process.env),
 ) => {
-  const url = new URL(config.scheduleRunnerAdmissionStatusUrl)
+  const url = new URL(config.runtimeAdmissionStatusUrl)
   url.searchParams.set('namespace', namespace)
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), config.scheduleRunnerAdmissionStatusTimeoutMs)
+  const timeout = setTimeout(() => controller.abort(), config.runtimeAdmissionStatusTimeoutMs)
   let response: Response
   try {
     response = await fetch(url, { headers: { accept: 'application/json' }, signal: controller.signal })
