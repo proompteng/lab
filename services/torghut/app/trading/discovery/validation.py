@@ -171,6 +171,7 @@ def _candidate_status(*, passed: bool) -> str:
 
 _SURFACE_CORRELATION_METRICS = ("sharpe", "cagr", "total_return")
 _MIN_WALK_FORWARD_SURFACE_CORRELATION = 0.20
+_TRANSACTION_COST_STRESS_MULTIPLIERS = (1.5, 2.0)
 
 
 def _summary_metric(summary: PerformanceSummary, metric: str) -> float | None:
@@ -217,6 +218,37 @@ def _walk_forward_surface_correlation_bundle(
         "metric_correlations": correlations,
         "surface_correlation": surface_correlation,
         "min_surface_correlation": _MIN_WALK_FORWARD_SURFACE_CORRELATION,
+    }
+
+
+def _transaction_cost_stress_bundle(
+    *,
+    gross_edge_mean: float,
+    cost_drag_mean: float,
+    net_edge_mean: float,
+) -> dict[str, Any]:
+    stressed_cases = [
+        {
+            "cost_multiplier": multiplier,
+            "projected_net_return_mean": float(
+                gross_edge_mean - abs(cost_drag_mean) * multiplier
+            ),
+        }
+        for multiplier in _TRANSACTION_COST_STRESS_MULTIPLIERS
+    ]
+    worst_projected_net = min(
+        (item["projected_net_return_mean"] for item in stressed_cases),
+        default=net_edge_mean,
+    )
+    return {
+        "source": "transaction_cost_trap_ssrn_6422358_2025",
+        "proxy_method": "gross_return_minus_stressed_cost_drag",
+        "base_net_return_mean": net_edge_mean,
+        "gross_return_mean": gross_edge_mean,
+        "cost_drag_mean": cost_drag_mean,
+        "stress_cases": stressed_cases,
+        "worst_projected_net_return_mean": worst_projected_net,
+        "required_min_projected_net_return_mean": 0.0,
     }
 
 
@@ -470,6 +502,11 @@ def build_strategy_factory_evaluation(
         all_candidates
     )
     surface_correlation = surface_correlation_bundle["surface_correlation"]
+    cost_stress_bundle = _transaction_cost_stress_bundle(
+        gross_edge_mean=gross_edge_mean,
+        cost_drag_mean=cost_drag_mean,
+        net_edge_mean=net_edge_mean,
+    )
 
     validation_tests = [
         ValidationTestResult(
@@ -540,6 +577,15 @@ def build_strategy_factory_evaluation(
                 "calibration_status": cost_status,
             },
             artifact_name="execution-reality-report-v1.json",
+        ),
+        ValidationTestResult(
+            test_name="transaction_cost_stress",
+            status=_candidate_status(
+                passed=float(cost_stress_bundle["worst_projected_net_return_mean"])
+                > 0.0
+            ),
+            metric_bundle=cost_stress_bundle,
+            artifact_name="transaction-cost-stress-report-v1.json",
         ),
         ValidationTestResult(
             test_name="posterior_edge",
