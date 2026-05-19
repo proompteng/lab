@@ -167,10 +167,15 @@ export const renderInputFiles = (inputFiles: AgentProviderInputFile[] | undefine
     content: renderTemplate(file.content, context),
   }))
 
-export const renderOutputArtifacts = (artifacts: AgentProviderOutputArtifact[] | undefined, context: TemplateContext) =>
+export const renderOutputArtifacts = (
+  artifacts: AgentProviderOutputArtifact[] | undefined,
+  context: TemplateContext,
+): AgentProviderOutputArtifact[] =>
   (artifacts ?? []).map((artifact) => ({
-    ...artifact,
-    path: artifact.path ? renderTemplate(artifact.path, context) : artifact.path,
+    name: artifact.name,
+    ...(artifact.path ? { path: renderTemplate(artifact.path, context) } : {}),
+    ...(artifact.key ? { key: renderTemplate(artifact.key, context) } : {}),
+    ...(artifact.url ? { url: renderTemplate(artifact.url, context) } : {}),
   }))
 
 const mergeProviderSpec = (

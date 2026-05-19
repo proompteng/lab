@@ -14,14 +14,17 @@ import { Context, Data, Effect, Layer, ManagedRuntime } from 'effect'
 
 import { ensureFileDirectory } from '../../scripts/codex/lib/fs'
 
+import { uploadOutputArtifacts } from './artifact-upload'
 import {
   asNumber,
   asString,
   buildTemplateContext,
+  type AgentProviderOutputArtifact,
   type AgentRunnerGoal,
   type AgentRunnerSpec,
   type CodexAppServerAdapterConfig,
   isRecord,
+  renderOutputArtifacts,
   renderTemplate,
 } from './spec'
 
@@ -44,6 +47,7 @@ export type CodexAppServerRunnerStatus = {
   artifacts: {
     statusPath?: string
     logPath?: string
+    outputArtifacts?: AgentProviderOutputArtifact[]
   }
   error?: string
 }
@@ -60,6 +64,7 @@ export type CodexAppServerRunnerClient = {
 export type RunCodexAppServerAdapterOptions = {
   createClient?: (options: CodexAppServerOptions) => CodexAppServerRunnerClient
   runCommand?: CommandRunner
+  uploadArtifacts?: typeof uploadOutputArtifacts
   now?: () => Date
   abortSignal?: AbortSignal
 }
@@ -677,12 +682,17 @@ export const runCodexAppServerAdapter = async (
   let exitCode = 1
   let errorMessage: string | undefined
   let caughtError: unknown
+  let outputArtifacts = renderOutputArtifacts(spec.providerSpec?.outputArtifacts, buildTemplateContext(spec))
   let client: CodexAppServerRunnerClient | null = null
   let logStream: Awaited<ReturnType<typeof openLog>> = null
 
   try {
     throwIfCancelled(options.abortSignal)
     const runPayload = await loadRunPayload(spec)
+    outputArtifacts = renderOutputArtifacts(spec.providerSpec?.outputArtifacts, {
+      ...buildTemplateContext(spec),
+      run: runPayload,
+    })
     throwIfCancelled(options.abortSignal)
     const prompt = resolvePrompt(spec, adapter, runPayload)
     const baseInstructions =
@@ -745,6 +755,7 @@ export const runCodexAppServerAdapter = async (
     } finally {
       cancellationWaiter?.cleanup()
     }
+    outputArtifacts = await (options.uploadArtifacts ?? uploadOutputArtifacts)(outputArtifacts)
     exitCode = 0
   } catch (error) {
     let runnerError = error
@@ -785,6 +796,7 @@ export const runCodexAppServerAdapter = async (
       artifacts: {
         statusPath,
         logPath,
+        ...(outputArtifacts.length > 0 ? { outputArtifacts } : {}),
       },
       ...(errorMessage ? { error: errorMessage } : {}),
     }

@@ -4,6 +4,7 @@ import { type createKubernetesClient, RESOURCE_MAP } from '../kube-types'
 import { type Condition, upsertCondition } from './conditions'
 import { parseStringList } from './env-config'
 import { hashAgentRunImmutableSpec } from './immutable-spec'
+import { buildRunSpecContext, renderProviderOutputArtifacts } from './job-runtime'
 import type { AgentsPrimitivesStoreRef } from './mutable-state'
 import { resolveMemory } from './namespace-state'
 import { isAgentRunTemplate, reconcileAgentRunDeletion, reconcileAgentRunTemplate } from './agent-run-template'
@@ -1055,6 +1056,10 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       const vcsContext = vcsResolution.context ?? null
       const vcsStatus = vcsResolution.status ?? undefined
       const resolvedParameters = applyVcsMetadataToParameters(parameters, vcsContext)
+      const declaredArtifacts = renderProviderOutputArtifacts(
+        asRecord(provider.spec) ?? {},
+        buildRunSpecContext(agentRun, agent, implResource, resolvedParameters, memory, vcsContext),
+      )
 
       let newRuntimeRef: RuntimeRef | null = null
       try {
@@ -1112,6 +1117,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
           startedAt: nowIso(),
           conditions: upsertCondition(updated, { type: 'InProgress', status: 'True', reason: 'Running' }),
           vcs: vcsStatus ?? undefined,
+          ...(declaredArtifacts.length > 0 ? { artifacts: declaredArtifacts } : {}),
           contract: contractStatus,
           specHash: hashAgentRunImmutableSpec(agentRun),
           ...(systemPromptResolution.systemPromptHash

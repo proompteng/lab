@@ -87,6 +87,23 @@ spec:
                   - name
                   type: object
                 type: array
+              secretEnv:
+                items:
+                  properties:
+                    key:
+                      type: string
+                    name:
+                      type: string
+                    optional:
+                      type: boolean
+                    secretName:
+                      type: string
+                  required:
+                  - key
+                  - name
+                  - secretName
+                  type: object
+                type: array
             required:
             - binary
             type: object

@@ -5,6 +5,7 @@ import { chmod, readFile, writeFile } from 'node:fs/promises'
 import process from 'node:process'
 
 import { runCodexAppServerAdapter } from '../../src/runner/codex-app-server'
+import { uploadOutputArtifacts } from '../../src/runner/artifact-upload'
 import {
   buildTemplateContext,
   type AgentProviderInputFile,
@@ -193,7 +194,7 @@ const runExecAdapter = async (spec: AgentRunnerSpec, provider: AgentProviderSpec
   const renderedArgs = renderTemplateArray(provider.argsTemplate, context)
   const renderedEnv = renderTemplateRecord(provider.envTemplate, context)
   const inputFiles = renderInputFiles(provider.inputFiles, context)
-  const outputArtifacts = renderOutputArtifacts(provider.outputArtifacts, context)
+  let outputArtifacts = renderOutputArtifacts(provider.outputArtifacts, context)
   const statusPath = spec.artifacts?.statusPath
   const logPath = spec.artifacts?.logPath
 
@@ -208,6 +209,9 @@ const runExecAdapter = async (spec: AgentRunnerSpec, provider: AgentProviderSpec
     const result = await spawnWithLogs(provider.binary, renderedArgs, env, logPath)
     exitCode = result.exitCode
     signal = result.signal
+    if (exitCode === 0) {
+      outputArtifacts = await uploadOutputArtifacts(outputArtifacts, { env })
+    }
   } catch (error) {
     errorMessage = toErrorMessage(error)
     exitCode = 1

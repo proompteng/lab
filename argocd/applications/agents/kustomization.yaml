@@ -7,6 +7,8 @@ resources:
   - codex-run-complete-kafkasource.yaml
   - codex-secretbinding.yaml
   - codex-agent.yaml
+  - graf-codex-agentprovider.yaml
+  - graf-codex-agent.yaml
   - codex-spark-agent.yaml
   - codex-spark-smoke-agentprovider.yaml
   - codex-spark-smoke-agent.yaml

@@ -75,6 +75,97 @@ describe('agents controller job-runtime module', () => {
     expect(context.inputs).toEqual({ stage: 'plan', task: 'validation' })
   })
 
+  it('emits provider output artifact declarations into codex app-server runner specs', async () => {
+    const applied: Record<string, unknown>[] = []
+    const kube = {
+      get: vi.fn(async () => null),
+      apply: vi.fn(async (resource: Record<string, unknown>) => {
+        applied.push(resource)
+        return resource
+      }),
+    }
+
+    await submitJobRun(
+      kube as never,
+      { metadata: { name: 'run-1', uid: 'run-uid-1', namespace: 'agents' }, spec: {} },
+      { metadata: { name: 'agent-a' }, spec: {} },
+      {
+        metadata: { name: 'codex' },
+        spec: {
+          secretEnv: [
+            {
+              name: 'CODEX_GRAF_BEARER_TOKEN',
+              secretName: 'graf-api',
+              key: 'bearer-tokens',
+              optional: true,
+            },
+          ],
+          outputArtifacts: [
+            {
+              name: 'codex-artifact',
+              path: '/workspace/{{ inputs.stage }}/artifact.json',
+              key: 'codex-research/{{ agentRun.name }}/codex-artifact.json',
+            },
+          ],
+        },
+      },
+      { metadata: { name: 'impl-a' }, source: { provider: 'github' }, summary: 'Run summary' },
+      null,
+      'agents',
+      'registry.example/agents-codex-runner:tag',
+      'job',
+      { parameters: { stage: 'research' } },
+    )
+
+    const specConfigMap = applied.find(
+      (resource) =>
+        resource.kind === 'ConfigMap' &&
+        typeof (resource.data as Record<string, unknown> | undefined)?.['agent-runner.json'] === 'string',
+    )
+    const data = specConfigMap?.data as Record<string, string> | undefined
+    const runSpec = JSON.parse(data?.['run.json'] ?? '{}') as Record<string, unknown>
+    const runnerSpec = JSON.parse(data?.['agent-runner.json'] ?? '{}') as Record<string, unknown>
+    const job = applied.find((resource) => resource.kind === 'Job')
+    const env = (
+      ((job?.spec as Record<string, unknown>)?.template as Record<string, unknown>)?.spec as Record<string, unknown>
+    )?.containers
+    const agentRunnerEnv = (((env as Record<string, unknown>[] | undefined)?.[0] as Record<string, unknown>)?.env ??
+      []) as Record<string, unknown>[]
+
+    expect(runnerSpec).toMatchObject({
+      schemaVersion: 'agents.proompteng.ai/runner/v1',
+      provider: 'codex',
+      inputs: { stage: 'research' },
+      adapter: { type: 'codex-app-server' },
+      providerSpec: {
+        outputArtifacts: [
+          {
+            name: 'codex-artifact',
+            path: '/workspace/{{ inputs.stage }}/artifact.json',
+            key: 'codex-research/{{ agentRun.name }}/codex-artifact.json',
+          },
+        ],
+      },
+    })
+    expect(runSpec.artifacts).toEqual([
+      {
+        name: 'codex-artifact',
+        path: '/workspace/research/artifact.json',
+        key: 'codex-research/run-1/codex-artifact.json',
+      },
+    ])
+    expect(agentRunnerEnv).toContainEqual({
+      name: 'CODEX_GRAF_BEARER_TOKEN',
+      valueFrom: {
+        secretKeyRef: {
+          name: 'graf-api',
+          key: 'bearer-tokens',
+          optional: true,
+        },
+      },
+    })
+  })
+
   it('returns an existing deterministic job for the same AgentRun', async () => {
     const existingJob = {
       metadata: {

@@ -142,7 +142,55 @@ const buildJobResources = (workload: Record<string, unknown>) => {
   }
 }
 
+const buildProviderSecretEnv = (providerSpec: Record<string, unknown>): EnvVar[] => {
+  const secretEnv = Array.isArray(providerSpec.secretEnv) ? providerSpec.secretEnv : []
+  return secretEnv
+    .map((entry): EnvVar | null => {
+      const record = asRecord(entry)
+      if (!record) return null
+      const name = asString(record.name)?.trim()
+      const secretName = asString(record.secretName)?.trim()
+      const key = asString(record.key)?.trim()
+      if (!name || !secretName || !key) return null
+      const envVar: EnvVar = {
+        name,
+        valueFrom: {
+          secretKeyRef: {
+            name: secretName,
+            key,
+            ...(record.optional === true ? { optional: true } : {}),
+          },
+        },
+      }
+      return envVar
+    })
+    .filter((entry): entry is EnvVar => entry !== null)
+}
+
 const { buildEventPayload } = createImplementationContractTools(resolveParam)
+
+export const renderProviderOutputArtifacts = (
+  providerSpec: Record<string, unknown>,
+  context: Record<string, unknown>,
+): Array<Record<string, unknown>> => {
+  const outputArtifacts = Array.isArray(providerSpec.outputArtifacts) ? providerSpec.outputArtifacts : []
+  return outputArtifacts
+    .map((artifact): Record<string, unknown> | null => {
+      const record = asRecord(artifact)
+      const name = asString(record?.name)?.trim()
+      if (!name) return null
+      const path = asString(record?.path)
+      const key = asString(record?.key)
+      const url = asString(record?.url)
+      return {
+        name,
+        ...(path ? { path: renderTemplate(path, context) } : {}),
+        ...(key ? { key: renderTemplate(key, context) } : {}),
+        ...(url ? { url: renderTemplate(url, context) } : {}),
+      }
+    })
+    .filter((artifact): artifact is Record<string, unknown> => artifact !== null)
+}
 
 export const buildRunSpec = (
   agentRun: Record<string, unknown>,
@@ -316,6 +364,7 @@ const buildAgentRunnerSpec = (
 ) => {
   const explicitAdapter = asRecord(providerSpec.adapter)
   const binary = asString(providerSpec.binary)
+  const outputArtifacts = Array.isArray(providerSpec.outputArtifacts) ? providerSpec.outputArtifacts : []
   const defaultAdapter =
     binary && binary !== '/usr/local/bin/agent-runner' && !binary.endsWith('/agent-runner')
       ? {
@@ -344,6 +393,7 @@ const buildAgentRunnerSpec = (
       logPath: '/workspace/.agent/runner.log',
       logRetentionSeconds,
     },
+    ...(outputArtifacts.length > 0 ? { providerSpec: { outputArtifacts } } : {}),
     adapter,
   }
 }
@@ -421,7 +471,6 @@ export const submitJobRun = async (
 
   const providerSpec = asRecord(provider.spec) ?? {}
   const inputFiles = Array.isArray(providerSpec.inputFiles) ? providerSpec.inputFiles : []
-  const outputArtifacts = Array.isArray(providerSpec.outputArtifacts) ? providerSpec.outputArtifacts : []
   const binary = asString(providerSpec.binary) ?? '/usr/local/bin/agent-runner'
   const providerName = asString(readNested(provider, ['metadata', 'name'])) ?? ''
 
@@ -429,6 +478,7 @@ export const submitJobRun = async (
   const vcsContext = options.vcs?.context ?? null
   const vcsRuntime = options.vcs?.runtime ?? null
   const context = buildRunSpecContext(agentRun, agent, implementation, parameters, memory, vcsContext)
+  const outputArtifacts = renderProviderOutputArtifacts(providerSpec, context)
 
   const argsTemplate = Array.isArray(providerSpec.argsTemplate) ? providerSpec.argsTemplate : []
   const args = argsTemplate.map((arg) => renderTemplate(String(arg), context))
@@ -438,6 +488,7 @@ export const submitJobRun = async (
     name: key,
     value: renderTemplate(String(value), context),
   }))
+  env.push(...buildProviderSecretEnv(providerSpec))
   if (providerName) {
     env.push({ name: 'AGENT_PROVIDER', value: providerName })
   }
@@ -500,7 +551,7 @@ export const submitJobRun = async (
     implementation,
     parameters,
     memory,
-    Array.isArray(outputArtifacts) ? outputArtifacts : [],
+    outputArtifacts,
     providerName,
     vcsContext,
     options.systemPrompt ?? null,

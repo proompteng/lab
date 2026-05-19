@@ -53,6 +53,7 @@ describe('codex app-server runner adapter', () => {
       `${JSON.stringify({
         implementation: { text: 'implement the feature' },
         systemPrompt: 'system instructions',
+        parameters: { artifactName: 'research-result' },
         goal: { objective: 'ship the feature', tokenBudget: 1234 },
       })}\n`,
       'utf8',
@@ -75,12 +76,24 @@ describe('codex app-server runner adapter', () => {
     const exitCode = await runCodexAppServerAdapter(
       {
         provider: 'codex-runner',
+        inputs: {
+          stage: 'research',
+        },
         payloads: {
           eventFilePath: runPath,
         },
         artifacts: {
           statusPath,
           logPath,
+        },
+        providerSpec: {
+          outputArtifacts: [
+            {
+              name: 'codex-artifact',
+              path: '/workspace/{{ inputs.stage }}/{{ run.parameters.artifactName }}.json',
+              key: 'codex-research/{{ run.parameters.artifactName }}.json',
+            },
+          ],
         },
       },
       {
@@ -96,6 +109,11 @@ describe('codex app-server runner adapter', () => {
           createdClients.push(options)
           return fakeClient
         },
+        uploadArtifacts: async (artifacts) =>
+          artifacts.map((artifact) => ({
+            ...artifact,
+            url: artifact.key ? `s3://argo-workflows/${artifact.key}` : artifact.url,
+          })),
       },
     )
 
@@ -128,6 +146,16 @@ describe('codex app-server runner adapter', () => {
       status: 'succeeded',
       threadId: 'thread-1',
       turnId: 'turn-1',
+    })
+    expect(status.artifacts).toMatchObject({
+      outputArtifacts: [
+        {
+          name: 'codex-artifact',
+          path: '/workspace/research/research-result.json',
+          key: 'codex-research/research-result.json',
+          url: 's3://argo-workflows/codex-research/research-result.json',
+        },
+      ],
     })
     expect(await readFile(logPath, 'utf8')).toContain('"delta":"done"')
   })

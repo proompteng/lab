@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   AGENT_RUNNER_SCHEMA_VERSION,
   buildTemplateContext,
+  renderOutputArtifacts,
   renderTemplate,
   resolveAdapter,
   type AgentRunnerSpec,
@@ -50,5 +51,35 @@ describe('agent-runner spec', () => {
     expect(resolveAdapter({ schemaVersion: AGENT_RUNNER_SCHEMA_VERSION, provider: 'codex' }).type).toBe(
       'codex-app-server',
     )
+  })
+
+  it('renders outputArtifact path, key, and url templates', () => {
+    expect(
+      renderOutputArtifacts(
+        [
+          {
+            name: 'codex-artifact',
+            path: '/workspace/{{ inputs.stage }}/artifact.json',
+            key: 'codex-research/{{ inputs.run }}/artifact.json',
+            url: 's3://{{ inputs.bucket }}/codex-research/{{ inputs.run }}/artifact.json',
+          },
+        ],
+        buildTemplateContext({
+          provider: 'codex',
+          inputs: {
+            stage: 'research',
+            run: 'run-1',
+            bucket: 'argo-workflows',
+          },
+        }),
+      ),
+    ).toEqual([
+      {
+        name: 'codex-artifact',
+        path: '/workspace/research/artifact.json',
+        key: 'codex-research/run-1/artifact.json',
+        url: 's3://argo-workflows/codex-research/run-1/artifact.json',
+      },
+    ])
   })
 })
