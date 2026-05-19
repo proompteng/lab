@@ -1,5 +1,8 @@
+import {
+  fetchControlPlaneResourceFromAgentsService,
+  type AgentsControlPlaneResourceGetInput,
+} from '~/server/agents-service-proxy'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
-import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 import { PROVIDER_CAPACITY_EXHAUSTED_REASON } from '~/server/provider-capacity-reasons'
 import { hashNameSuffix, makeHashedName } from '~/server/supporting-primitives-naming'
 import {
@@ -499,12 +502,25 @@ export const makeGenerateName = (base: string, suffix: string) => {
   return `${trimmed || 'run'}-`
 }
 
+type StageTargetResourceFetcher = (
+  input: AgentsControlPlaneResourceGetInput,
+) => ReturnType<typeof fetchControlPlaneResourceFromAgentsService>
+
 export const resolveStageTargetResource = async (
-  kube: ReturnType<typeof createKubernetesClient>,
   targetRef: StageTargetRef,
+  deps: { fetchResource?: StageTargetResourceFetcher } = {},
 ) => {
-  if (targetRef.kind === 'AgentRun') {
-    return kube.get(RESOURCE_MAP.AgentRun, targetRef.name, targetRef.namespace)
+  const fetchResource = deps.fetchResource ?? fetchControlPlaneResourceFromAgentsService
+  const result = await fetchResource({
+    kind: targetRef.kind,
+    name: targetRef.name,
+    namespace: targetRef.namespace,
+  })
+  if (result.ok) {
+    return asRecord(result.body.resource)
   }
-  return kube.get(RESOURCE_MAP.OrchestrationRun, targetRef.name, targetRef.namespace)
+  if (result.status === 404) {
+    return null
+  }
+  throw new Error(result.error ?? `Agents service returned HTTP ${result.status}`)
 }

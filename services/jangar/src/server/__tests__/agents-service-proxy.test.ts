@@ -5,6 +5,7 @@ import {
   fetchAgentRunResourcesFromAgentsService,
   fetchAgentRunsFromAgentsService,
   fetchAgentsServiceJson,
+  fetchControlPlaneResourceFromAgentsService,
   patchAgentRunAnnotationsViaAgentsService,
   proxyAgentsServiceRequest,
   resolveAgentsServiceBaseUrl,
@@ -319,6 +320,47 @@ describe('agents-service-proxy', () => {
           kind: 'AgentRun',
           metadata: { name: 'whitepaper-run', annotations: { finalized: 'true' } },
         },
+      },
+    })
+  })
+
+  it('gets individual control-plane resources through the Agents service boundary', async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          kind: 'OrchestrationRun',
+          namespace: 'agents',
+          resource: { kind: 'OrchestrationRun', metadata: { name: 'swarm-plan' } },
+        }),
+        {
+          headers: { 'content-type': 'application/json' },
+          status: 200,
+        },
+      )
+    })
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+
+    const result = await fetchControlPlaneResourceFromAgentsService(
+      { kind: 'OrchestrationRun', name: 'swarm-plan', namespace: 'agents' },
+      { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
+    )
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
+    expect(url.toString()).toBe(
+      'http://agents.test/api/agents/control-plane/resource?kind=OrchestrationRun&name=swarm-plan&namespace=agents',
+    )
+    expect(init.method).toBe('GET')
+    expect((init.headers as Headers).get('x-agents-client')).toBe('jangar')
+    expect(result).toEqual({
+      ok: true,
+      status: 200,
+      body: {
+        ok: true,
+        kind: 'OrchestrationRun',
+        namespace: 'agents',
+        resource: { kind: 'OrchestrationRun', metadata: { name: 'swarm-plan' } },
       },
     })
   })

@@ -107,6 +107,19 @@ export type AgentsControlPlaneResourcesResult = {
   items: Record<string, unknown>[]
 }
 
+export type AgentsControlPlaneResourceGetInput = {
+  kind: string
+  name: string
+  namespace?: string | null
+}
+
+export type AgentsControlPlaneResourceResult = {
+  ok: boolean
+  kind?: string | null
+  namespace?: string | null
+  resource?: Record<string, unknown> | null
+}
+
 export type AgentsAgentRunAnnotationsPatchInput = {
   name: string
   namespace: string
@@ -293,6 +306,17 @@ export const fetchAgentRunResourcesFromAgentsService = async (
   if (input.limit && input.limit > 0) params.set('limit', String(Math.trunc(input.limit)))
 
   return fetchAgentsServiceJson<AgentsControlPlaneResourcesResult>(`/api/agents/control-plane/resources?${params}`, env)
+}
+
+export const fetchControlPlaneResourceFromAgentsService = async (
+  input: AgentsControlPlaneResourceGetInput,
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<AgentsControlPlaneResourceResult>> => {
+  const params = new URLSearchParams({ kind: input.kind, name: input.name })
+  const namespace = input.namespace?.trim()
+  if (namespace) params.set('namespace', namespace)
+
+  return fetchAgentsServiceJson<AgentsControlPlaneResourceResult>(`/api/agents/control-plane/resource?${params}`, env)
 }
 
 export const patchAgentRunAnnotationsViaAgentsService = async (

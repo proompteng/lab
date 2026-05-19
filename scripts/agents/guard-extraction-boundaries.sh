@@ -75,6 +75,11 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/kube-gateway.ts"
 
 fail_if_matches \
+  "Jangar swarm analysis must read AgentRun and OrchestrationRun targets through the Agents service boundary" \
+  'createKubernetesClient|RESOURCE_MAP\.(AgentRun|OrchestrationRun)' \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-swarm-analysis.ts"
+
+fail_if_matches \
   "Agents GitOps must not ship the old sample Argo WorkflowTemplate schedule bridge" \
   'agents-primitives-echo|kind: WorkflowTemplate|codex-workflow' \
   "${ROOT_DIR}/argocd/applications/agents"
