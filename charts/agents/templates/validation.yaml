@@ -98,7 +98,6 @@
 {{- $controlPlaneImage := .Values.controlPlane.image | default dict -}}
 {{- $controlPlaneDigest := $controlPlaneImage.digest | default .Values.image.digest | default "" -}}
 {{- $runnerImage := .Values.runner.image | default dict -}}
-{{- $runtime := .Values.runtime | default dict -}}
 {{- $controlPlaneRunnerOverride := index $controlPlaneEnvVars "AGENTS_AGENT_RUNNER_IMAGE" | default "" -}}
 {{- $controllersRunnerOverride := index $controllersEnvVars "AGENTS_AGENT_RUNNER_IMAGE" | default "" -}}
 {{- if not (regexMatch $sha256DigestPattern (toString $controlPlaneDigest)) -}}
@@ -112,16 +111,6 @@
 {{- if not (regexMatch $sha256DigestPattern (toString ($runnerImage.digest | default ""))) -}}
 {{- $errors = append $errors "imagePolicy.requireDigest=true requires runner.image.digest to be a sha256 digest when runner.image.repository is used for Deployment/agents." -}}
 {{- end -}}
-{{- else if $runtime.agentRunnerImage -}}
-{{- if not (regexMatch $sha256ImageReferencePattern (toString $runtime.agentRunnerImage)) -}}
-{{- $errors = append $errors "imagePolicy.requireDigest=true requires runtime.agentRunnerImage to end with an @sha256 digest when runner.image.repository is not set." -}}
-{{- end -}}
-{{- end -}}
-{{- if and $runtime.agentImage (not (regexMatch $sha256ImageReferencePattern (toString $runtime.agentImage))) -}}
-{{- $errors = append $errors "imagePolicy.requireDigest=true requires runtime.agentImage to end with an @sha256 digest." -}}
-{{- end -}}
-{{- if and $runtime.scheduleRunnerImage (not (regexMatch $sha256ImageReferencePattern (toString $runtime.scheduleRunnerImage))) -}}
-{{- $errors = append $errors "imagePolicy.requireDigest=true requires runtime.scheduleRunnerImage to end with an @sha256 digest." -}}
 {{- end -}}
 {{- if $controllersEnabled -}}
 {{- $controllersImage := .Values.controllers.image | default dict -}}
@@ -136,10 +125,6 @@
 {{- else if $runnerImage.repository -}}
 {{- if not (regexMatch $sha256DigestPattern (toString ($runnerImage.digest | default ""))) -}}
 {{- $errors = append $errors "imagePolicy.requireDigest=true requires runner.image.digest to be a sha256 digest when runner.image.repository is used for Deployment/agents-controllers." -}}
-{{- end -}}
-{{- else if $runtime.agentRunnerImage -}}
-{{- if not (regexMatch $sha256ImageReferencePattern (toString $runtime.agentRunnerImage)) -}}
-{{- $errors = append $errors "imagePolicy.requireDigest=true requires runtime.agentRunnerImage to end with an @sha256 digest when controllers.enabled=true and runner.image.repository is not set." -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

@@ -170,21 +170,6 @@ spec:
             {{- if and (not (hasKey $envVars "AGENTS_AGENT_RUNNER_IMAGE")) .Values.runner.image.repository }}
             - name: AGENTS_AGENT_RUNNER_IMAGE
               value: "{{ .Values.runner.image.repository }}:{{ .Values.runner.image.tag }}{{- if .Values.runner.image.digest }}@{{ .Values.runner.image.digest }}{{ end }}"
-            {{- else if and .Values.runtime.agentRunnerImage (not (hasKey $envVars "AGENTS_AGENT_RUNNER_IMAGE")) }}
-            - name: AGENTS_AGENT_RUNNER_IMAGE
-              value: {{ .Values.runtime.agentRunnerImage | quote }}
-            {{- end }}
-            {{- if and .Values.runtime.agentImage (not (hasKey $envVars "AGENTS_AGENT_IMAGE")) }}
-            - name: AGENTS_AGENT_IMAGE
-              value: {{ .Values.runtime.agentImage | quote }}
-            {{- end }}
-            {{- if and .Values.runtime.scheduleRunnerImage (not (hasKey $envVars "AGENTS_SCHEDULE_RUNNER_IMAGE")) }}
-            - name: AGENTS_SCHEDULE_RUNNER_IMAGE
-              value: {{ .Values.runtime.scheduleRunnerImage | quote }}
-            {{- end }}
-            {{- if and .Values.runtime.scheduleServiceAccount (not (hasKey $envVars "AGENTS_SCHEDULE_SERVICE_ACCOUNT")) }}
-            - name: AGENTS_SCHEDULE_SERVICE_ACCOUNT
-              value: {{ .Values.runtime.scheduleServiceAccount | quote }}
             {{- end }}
             {{- if and .Values.audit.sink.type (ne .Values.audit.sink.type "none") (not (hasKey $envVars "AGENTS_AUDIT_SINK_TYPE")) }}
             - name: AGENTS_AUDIT_SINK_TYPE
