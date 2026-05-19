@@ -116,6 +116,61 @@ describe('agents controller system-prompt module', () => {
     })
   })
 
+  it('fails when agent default ConfigMap ref is missing the requested key', async () => {
+    const kube = {
+      get: vi.fn().mockResolvedValue({
+        data: { 'other-key': 'not-used' },
+      }),
+    }
+    const result = await resolveSystemPrompt({
+      kube,
+      namespace: 'agents',
+      agentRun: { spec: {} },
+      agent: {
+        spec: {
+          defaults: {
+            systemPromptRef: { kind: 'ConfigMap', name: 'prompt-config', key: 'system-prompt.md' },
+          },
+        },
+      },
+      runSecrets: [],
+      allowedSecrets: [],
+    })
+
+    expect(kube.get).toHaveBeenCalledWith('configmap', 'prompt-config', 'agents')
+    expect(result).toEqual({
+      ok: false,
+      reason: 'MissingSystemPromptRef',
+      message: 'ConfigMap prompt-config is missing key system-prompt.md',
+    })
+  })
+
+  it('categorizes kube transport errors while reading system prompt refs', async () => {
+    const kube = {
+      get: vi.fn().mockRejectedValue(new Error('apiserver unavailable')),
+    }
+    const result = await resolveSystemPrompt({
+      kube,
+      namespace: 'agents',
+      agentRun: { spec: {} },
+      agent: {
+        spec: {
+          defaults: {
+            systemPromptRef: { kind: 'ConfigMap', name: 'prompt-config', key: 'system-prompt.md' },
+          },
+        },
+      },
+      runSecrets: [],
+      allowedSecrets: [],
+    })
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'SystemPromptRefReadFailed',
+      message: 'failed to read ConfigMap prompt-config: apiserver unavailable',
+    })
+  })
+
   it('fails when Agent defaults have no system prompt configured', async () => {
     const result = await resolveSystemPrompt({
       kube: { get: vi.fn() },
