@@ -11,7 +11,7 @@ const baseEnv = {
   KAFKA_CODEX_TOPIC_STRUCTURED: 'github.issues.codex.tasks',
   KAFKA_CODEX_JUDGE_TOPIC: 'github.webhook.codex.judge',
   KAFKA_DISCORD_COMMAND_TOPIC: 'discord.commands.incoming',
-  JANGAR_BASE_URL: 'http://jangar',
+  ATLAS_BASE_URL: 'http://jangar',
   DISCORD_PUBLIC_KEY: 'public-key',
 }
 
@@ -81,6 +81,17 @@ describe('loadConfig', () => {
     expect(config.codex.triggerLogins).toEqual(['serviceuser'])
   })
 
+  it('accepts the legacy JANGAR_BASE_URL alias for Atlas enrichment', () => {
+    const env = {
+      ...baseEnv,
+      ATLAS_BASE_URL: undefined,
+      JANGAR_BASE_URL: 'http://legacy-jangar/',
+    }
+
+    const config = loadConfig(env)
+    expect(config.atlas.baseUrl).toBe('http://legacy-jangar')
+  })
+
   it('throws when required env is missing', () => {
     expect(() => loadConfig({ ...baseEnv, KAFKA_BROKERS: '' })).toThrow()
     expect(() => loadConfig({ ...baseEnv, GITHUB_WEBHOOK_SECRET: undefined })).toThrow()
@@ -88,6 +99,6 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ ...baseEnv, KAFKA_CODEX_JUDGE_TOPIC: undefined })).toThrow()
     expect(() => loadConfig({ ...baseEnv, KAFKA_DISCORD_COMMAND_TOPIC: undefined })).toThrow()
     expect(() => loadConfig({ ...baseEnv, DISCORD_PUBLIC_KEY: undefined })).toThrow()
-    expect(() => loadConfig({ ...baseEnv, JANGAR_BASE_URL: undefined })).toThrow()
+    expect(() => loadConfig({ ...baseEnv, ATLAS_BASE_URL: undefined, JANGAR_BASE_URL: undefined })).toThrow()
   })
 })

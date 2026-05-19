@@ -57,7 +57,7 @@ type WebSocketRequest = Request & {
 }
 
 const serverRoutePattern = /createFileRoute\(\s*(['"`])([^'"`]+)\1\s*\)/
-const serverMethods = ['DELETE', 'GET', 'PATCH', 'POST', 'PUT'] as const
+const serverMethods = ['DELETE', 'GET', 'OPTIONS', 'PATCH', 'POST', 'PUT'] as const
 const defaultClientOutputDirCandidates = () => [resolve(process.cwd(), '.output/public')]
 
 const isWebSocketUpgradeRequest = (request: Request) => request.headers.get('upgrade')?.toLowerCase() === 'websocket'
@@ -238,6 +238,9 @@ const registerServerRoutes = (app: ReturnType<typeof createApp>, definitions: Ag
             break
           case 'GET':
             app.get(path, wrappedHandler)
+            break
+          case 'OPTIONS':
+            app.options(path, wrappedHandler)
             break
           case 'PATCH':
             app.patch(path, wrappedHandler)

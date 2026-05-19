@@ -1,6 +1,6 @@
 import type { AgentsServerRouteHandler } from './http-runtime'
 
-type AgentsServerRouteMethod = 'DELETE' | 'GET' | 'PATCH' | 'POST' | 'PUT'
+type AgentsServerRouteMethod = 'DELETE' | 'GET' | 'OPTIONS' | 'PATCH' | 'POST' | 'PUT'
 
 export type AgentsServerRouteArgs = Parameters<AgentsServerRouteHandler>[0]
 

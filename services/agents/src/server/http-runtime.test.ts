@@ -42,6 +42,35 @@ describe('Agents HTTP runtime', () => {
     await expect(response.json()).resolves.toEqual({ ok: true, id: 'run 1' })
   })
 
+  it('registers OPTIONS server route handlers', async () => {
+    const runtime = await createAgentsHttpRuntime({
+      routeSources: {
+        './routes/api/agents/codex/notify.ts':
+          "export const Route = createFileRoute('/api/agents/codex/notify')({ server: { handlers: { OPTIONS: handler } } })",
+      },
+      routeModules: {
+        './routes/api/agents/codex/notify.ts': async () => ({
+          Route: {
+            options: {
+              server: {
+                handlers: {
+                  OPTIONS: () => new Response(JSON.stringify({ ok: true })),
+                },
+              },
+            },
+          },
+        }),
+      },
+    })
+
+    const response = await runtime.handleRequest(
+      new Request('http://agents.local/api/agents/codex/notify', { method: 'OPTIONS' }),
+    )
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({ ok: true })
+  })
+
   it('serves injected Prometheus metrics before route fallback handling', async () => {
     const runtime = await createAgentsHttpRuntime({
       routeSources: {},

@@ -8,6 +8,14 @@ const requireEnv = (env: NodeJS.ProcessEnv, name: string): string => {
   return value
 }
 
+const requireFirstEnv = (env: NodeJS.ProcessEnv, names: string[]): string => {
+  for (const name of names) {
+    const value = env[name]
+    if (value) return value
+  }
+  throw new Error(`Missing required environment variable: ${names[0]}`)
+}
+
 const DEFAULT_IDEMPOTENCY_TTL_MS = 10 * 60 * 1000
 const DEFAULT_IDEMPOTENCY_MAX_ENTRIES = 10_000
 
@@ -74,7 +82,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
     throw new Error('KAFKA_BROKERS must include at least one broker host:port')
   }
 
-  const atlasBaseUrl = requireEnv(env, 'JANGAR_BASE_URL').replace(/\/+$/, '')
+  const atlasBaseUrl = requireFirstEnv(env, ['ATLAS_BASE_URL', 'JANGAR_BASE_URL']).replace(/\/+$/, '')
   const idempotencyTtlSecondsRaw = env.FROUSSARD_WEBHOOK_IDEMPOTENCY_TTL_SECONDS
   const idempotencyTtlMs =
     typeof idempotencyTtlSecondsRaw === 'string' && idempotencyTtlSecondsRaw.trim() !== ''

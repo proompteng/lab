@@ -62,8 +62,10 @@ spec:
                 secretKeyRef:
                   key: public-key
                   name: discord-bot
-            - name: JANGAR_BASE_URL
+            - name: ATLAS_BASE_URL
               value: http://jangar.jangar.svc.cluster.local
+            - name: CODEX_CALLBACK_BASE_URL
+              value: http://agents.agents.svc.cluster.local
             - name: OTEL_SERVICE_NAME
               value: froussard
             - name: OTEL_SERVICE_NAMESPACE

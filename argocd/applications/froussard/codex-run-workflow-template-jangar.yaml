@@ -118,8 +118,8 @@ spec:
                 name: discord-codex-bot
                 key: category-id
                 optional: true
-          - name: JANGAR_BASE_URL
-            value: http://jangar.jangar.svc.cluster.local
+          - name: CODEX_CALLBACK_BASE_URL
+            value: http://agents.agents.svc.cluster.local
           - name: NATS_URL
             value: nats://nats.nats.svc.cluster.local:4222
           - name: NATS_USER
@@ -251,7 +251,7 @@ spec:
               preflight_fail "Missing MinIO credentials"
             fi
             export MINIO_BUCKET="${ARTIFACT_BUCKET:-argo-workflows}"
-            if ! bun /workspace/lab/services/jangar/scripts/minio-presign-check.ts >/dev/null 2>&1; then
+            if ! bun /workspace/lab/services/agents/scripts/minio-presign-check.ts >/dev/null 2>&1; then
               preflight_fail "MinIO signed URL check failed"
             fi
             if [[ "${CODEX_NATS_SOAK_REQUIRED:-true}" != "false" && "${CODEX_NATS_SOAK_REQUIRED:-true}" != "0" ]]; then
@@ -357,8 +357,8 @@ spec:
               exit 1
             fi
 
-            if [[ -z "${JANGAR_BASE_URL:-}" ]]; then
-              echo "Missing JANGAR_BASE_URL" >&2
+            if [[ -z "${CODEX_CALLBACK_BASE_URL:-}" ]]; then
+              echo "Missing CODEX_CALLBACK_BASE_URL" >&2
               exit 1
             fi
 
@@ -376,12 +376,12 @@ spec:
               exit 1
             fi
 
-            JANGAR_NOTIFY_URL="${JANGAR_BASE_URL%/}/api/codex/notify"
-            JANGAR_COMPLETE_URL="${JANGAR_BASE_URL%/}/api/codex/run-complete"
-            for endpoint in "$JANGAR_NOTIFY_URL" "$JANGAR_COMPLETE_URL"; do
+            CODEX_NOTIFY_URL="${CODEX_CALLBACK_BASE_URL%/}/api/agents/codex/notify"
+            CODEX_COMPLETE_URL="${CODEX_CALLBACK_BASE_URL%/}/api/agents/codex/run-complete"
+            for endpoint in "$CODEX_NOTIFY_URL" "$CODEX_COMPLETE_URL"; do
               status=$(curl -s -o /dev/null -w '%{http_code}' -X OPTIONS "$endpoint" || true)
               if [[ "$status" == "000" ]]; then
-                echo "Jangar endpoint unreachable: $endpoint" >&2
+                echo "Codex callback endpoint unreachable: $endpoint" >&2
                 exit 1
               fi
             done
@@ -416,6 +416,7 @@ spec:
             AGENT_SPEC=$(mktemp)
             cat > "$AGENT_SPEC" <<JSON
             {
+              "schemaVersion": "agents.proompteng.ai/runner/v1",
               "provider": "codex",
               "inputs": {
                 "base": "${BASE_BRANCH}",
@@ -423,7 +424,7 @@ spec:
                 "stage": "${WORKFLOW_STAGE}"
               },
               "payloads": {
-                "eventBodyPath": "$EVENT_FILE"
+                "eventFilePath": "$EVENT_FILE"
               },
               "artifacts": {
                 "statusPath": "/workspace/lab/.agent-status.json",
