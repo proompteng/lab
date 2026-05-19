@@ -24,13 +24,13 @@ const migrationsMocks = vi.hoisted(() => ({
 vi.mock('~/server/db', () => dbMocks)
 vi.mock('~/server/kysely-migrations', () => migrationsMocks)
 
-import { createControlPlaneCacheStore } from '../control-plane-cache-store'
+import { createControlPlaneCacheStore } from './control-plane-cache-store'
 
 describe('control plane cache store', () => {
   const previousDatabaseUrl = process.env.DATABASE_URL
 
   beforeEach(() => {
-    process.env.DATABASE_URL = 'postgresql://jangar:secret@db.example:5432/jangar'
+    process.env.DATABASE_URL = 'postgresql://agents:secret@db.example:5432/agents'
     dbMocks.createKyselyDb.mockReset()
     dbMocks.getDb.mockReset()
     migrationsMocks.ensureMigrations.mockClear()
@@ -67,13 +67,13 @@ describe('control plane cache store', () => {
     dbMocks.createKyselyDb.mockReturnValue(dedicatedDb)
 
     const store = createControlPlaneCacheStore({
-      url: 'postgresql://jangar:secret@other-db.example:5432/jangar',
+      url: 'postgresql://agents:secret@other-db.example:5432/agents',
     })
     await store.ready
     await store.close()
 
     expect(dbMocks.getDb).not.toHaveBeenCalled()
-    expect(dbMocks.createKyselyDb).toHaveBeenCalledWith('postgresql://jangar:secret@other-db.example:5432/jangar')
+    expect(dbMocks.createKyselyDb).toHaveBeenCalledWith('postgresql://agents:secret@other-db.example:5432/agents')
     expect(migrationsMocks.ensureMigrations).toHaveBeenCalledWith(dedicatedDb)
     expect(destroy).toHaveBeenCalledTimes(1)
   })

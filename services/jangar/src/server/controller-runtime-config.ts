@@ -8,12 +8,6 @@ type ControllerToggleConfig = {
   enabledFlagKey: string
 }
 
-export type ControlPlaneCacheConfig = {
-  enabled: boolean
-  namespaces: string[]
-  clusterId: string
-}
-
 export type OrchestrationControllerConfig = ControllerToggleConfig
 export type PrimitivesReconcilerConfig = ControllerToggleConfig
 export type SupportingControllerConfig = ControllerToggleConfig
@@ -65,17 +59,6 @@ const parseNamespaces = (raw: string | undefined, fallback: string[], label: str
 export const isControllerClusterScoped = (env: EnvSource = process.env) =>
   parseBooleanEnv(readEnv(env, 'AGENTS_RBAC_CLUSTER_SCOPED'), false)
 
-export const resolveControlPlaneCacheConfig = (env: EnvSource = process.env): ControlPlaneCacheConfig => ({
-  enabled: parseBooleanEnv(readEnv(env, 'AGENTS_CONTROL_PLANE_CACHE_ENABLED'), false),
-  namespaces: parseNamespaces(
-    readEnv(env, 'AGENTS_CONTROL_PLANE_CACHE_NAMESPACES') ?? readEnv(env, 'AGENTS_PRIMITIVES_NAMESPACES'),
-    ['agents'],
-    'control plane cache',
-    isControllerClusterScoped(env),
-  ),
-  clusterId: readEnv(env, 'AGENTS_CONTROL_PLANE_CACHE_CLUSTER')?.trim() || 'default',
-})
-
 export const resolveOrchestrationControllerConfig = (env: EnvSource = process.env): OrchestrationControllerConfig => ({
   enabled: parseBooleanEnv(readEnv(env, 'AGENTS_ORCHESTRATION_CONTROLLER_ENABLED'), true),
   namespaces: parseNamespaces(
@@ -116,7 +99,6 @@ export const resolveSupportingControllerConfig = (env: EnvSource = process.env):
 })
 
 export const validateControllerRuntimeConfig = (env: EnvSource = process.env) => {
-  resolveControlPlaneCacheConfig(env)
   resolveOrchestrationControllerConfig(env)
   resolvePrimitivesReconcilerConfig(env)
   resolveSupportingControllerConfig(env)

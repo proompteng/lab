@@ -9,15 +9,15 @@ const kubeClientMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('~/server/control-plane-cache-store', () => cacheStoreMocks)
-vi.mock('~/server/primitives-kube', async () => {
-  const actual = await vi.importActual<typeof import('~/server/primitives-kube')>('~/server/primitives-kube')
+vi.mock('~/server/kube-types', async () => {
+  const actual = await vi.importActual<typeof import('~/server/kube-types')>('~/server/kube-types')
   return {
     ...actual,
     createKubernetesClient: kubeClientMocks.createKubernetesClient,
   }
 })
 
-import { listPrimitiveResources } from '@proompteng/agents/routes/api/agents/control-plane/resources'
+import { getPrimitiveResource } from './resource'
 
 const cacheResource = (name: string, lastSeenAt: string) => ({
   resource: {
@@ -32,7 +32,7 @@ const cacheResource = (name: string, lastSeenAt: string) => ({
   resourceUpdatedAt: lastSeenAt,
 })
 
-describe('agents control-plane resources route', () => {
+describe('agents control-plane resource route', () => {
   afterEach(() => {
     vi.clearAllMocks()
     vi.useRealTimers()
@@ -41,11 +41,11 @@ describe('agents control-plane resources route', () => {
     delete process.env.AGENTS_CONTROL_PLANE_CACHE_ALLOW_STALE
   })
 
-  it('returns cached list with freshness metadata when cache is fresh', async () => {
+  it('returns cached resource with freshness metadata when cache is fresh', async () => {
     vi.useFakeTimers()
-    vi.setSystemTime(new Date('2026-01-20T00:00:40Z'))
+    vi.setSystemTime(new Date('2026-01-20T00:00:10Z'))
 
-    process.env.AGENTS_CONTROL_PLANE_CACHE_ENABLED = 'on'
+    process.env.AGENTS_CONTROL_PLANE_CACHE_ENABLED = '1'
     process.env.AGENTS_CONTROL_PLANE_CACHE_STALE_SECONDS = '60'
     process.env.AGENTS_CONTROL_PLANE_CACHE_ALLOW_STALE = '1'
 
@@ -56,20 +56,17 @@ describe('agents control-plane resources route', () => {
       upsertResource: vi.fn(),
       markDeleted: vi.fn(),
       markNotSeenSince: vi.fn(),
-      getResource: vi.fn(),
-      listResources: vi.fn(async () => ({
-        total: 2,
-        items: [cacheResource('agent-a', '2026-01-20T00:00:20Z'), cacheResource('agent-b', '2026-01-20T00:00:30Z')],
-      })),
+      getResource: vi.fn(async () => cacheResource('agent-a', '2026-01-20T00:00:08Z')),
+      listResources: vi.fn(),
     }
     cacheStoreMocks.createControlPlaneCacheStore.mockReturnValue(cachedStore)
     const kube = {
-      list: vi.fn(async () => ({ items: [] })),
-    } as unknown as ReturnType<(typeof import('~/server/primitives-kube'))['createKubernetesClient']>
+      get: vi.fn(async () => ({ status: 'miss', metadata: { name: 'agent-a' } })),
+    } as unknown as ReturnType<(typeof import('~/server/kube-types'))['createKubernetesClient']>
     kubeClientMocks.createKubernetesClient.mockReturnValue(kube)
 
-    const response = await listPrimitiveResources(
-      new Request('http://localhost/api/agents/control-plane/resources?kind=Agent&namespace=agents'),
+    const response = await getPrimitiveResource(
+      new Request('http://localhost/api/agents/control-plane/resource?kind=Agent&name=agent-a&namespace=agents'),
       { kubeClient: kube as never, cacheStoreFactory: () => cachedStore as never },
     )
 
@@ -77,17 +74,20 @@ describe('agents control-plane resources route', () => {
     const payload = (await response.json()) as Record<string, unknown>
     expect(payload.ok).toBe(true)
     expect(payload.kind).toBe('Agent')
-    expect(payload.total).toBe(2)
-    expect(payload.cache).toMatchObject({ source: 'control-plane-cache', stale: false, stale_count: 0 })
-    expect(Array.isArray(payload.items)).toBe(true)
-    expect(kube.list).not.toHaveBeenCalled()
+    expect(payload.cache).toMatchObject({
+      source: 'control-plane-cache',
+      stale: false,
+      fresh: true,
+      max_age_seconds: 60,
+    })
+    expect(payload.resource).toMatchObject({ apiVersion: 'agents.proompteng.ai/v1alpha1', kind: 'Agent' })
   })
 
-  it('returns cached list with stale metadata when stale reads are allowed', async () => {
+  it('returns stale cached resource with metadata when stale reads are allowed', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-20T00:00:10Z'))
 
-    process.env.AGENTS_CONTROL_PLANE_CACHE_ENABLED = 'on'
+    process.env.AGENTS_CONTROL_PLANE_CACHE_ENABLED = '1'
     process.env.AGENTS_CONTROL_PLANE_CACHE_STALE_SECONDS = '5'
     process.env.AGENTS_CONTROL_PLANE_CACHE_ALLOW_STALE = '1'
 
@@ -98,20 +98,17 @@ describe('agents control-plane resources route', () => {
       upsertResource: vi.fn(),
       markDeleted: vi.fn(),
       markNotSeenSince: vi.fn(),
-      getResource: vi.fn(),
-      listResources: vi.fn(async () => ({
-        total: 1,
-        items: [cacheResource('agent-a', '2026-01-20T00:00:00Z')],
-      })),
+      getResource: vi.fn(async () => cacheResource('agent-a', '2026-01-20T00:00:00Z')),
+      listResources: vi.fn(),
     }
     cacheStoreMocks.createControlPlaneCacheStore.mockReturnValue(cachedStore)
     const kube = {
-      list: vi.fn(async () => ({ items: [] })),
+      get: vi.fn(async () => ({ status: 'miss', metadata: { name: 'agent-a' } })),
     }
     kubeClientMocks.createKubernetesClient.mockReturnValue(kube as never)
 
-    const response = await listPrimitiveResources(
-      new Request('http://localhost/api/agents/control-plane/resources?kind=Agent&namespace=agents'),
+    const response = await getPrimitiveResource(
+      new Request('http://localhost/api/agents/control-plane/resource?kind=Agent&name=agent-a&namespace=agents'),
       { kubeClient: kube as never, cacheStoreFactory: () => cachedStore as never },
     )
 
@@ -123,18 +120,18 @@ describe('agents control-plane resources route', () => {
       source: 'control-plane-cache',
       stale: true,
       fresh: false,
-      stale_count: 1,
-      oldest_age_seconds: 10,
+      max_age_seconds: 5,
+      age_seconds: 10,
     })
-    expect(kube.list).not.toHaveBeenCalled()
+    expect(kube.get).not.toHaveBeenCalled()
   })
 
-  it('falls back to Kubernetes list when cache has stale rows and stale reads are disabled', async () => {
+  it('falls back to Kubernetes when cached resource is stale and stale reads are disabled', async () => {
     vi.useFakeTimers()
-    vi.setSystemTime(new Date('2026-01-20T00:03:00Z'))
+    vi.setSystemTime(new Date('2026-01-20T00:02:00Z'))
 
-    process.env.AGENTS_CONTROL_PLANE_CACHE_ENABLED = 'on'
-    process.env.AGENTS_CONTROL_PLANE_CACHE_STALE_SECONDS = '60'
+    process.env.AGENTS_CONTROL_PLANE_CACHE_ENABLED = '1'
+    process.env.AGENTS_CONTROL_PLANE_CACHE_STALE_SECONDS = '30'
     process.env.AGENTS_CONTROL_PLANE_CACHE_ALLOW_STALE = 'false'
 
     const cachedStore = {
@@ -144,42 +141,41 @@ describe('agents control-plane resources route', () => {
       upsertResource: vi.fn(),
       markDeleted: vi.fn(),
       markNotSeenSince: vi.fn(),
-      getResource: vi.fn(),
-      listResources: vi.fn(async () => ({
-        total: 1,
-        items: [cacheResource('agent-a', '2026-01-20T00:01:00Z')],
-      })),
+      getResource: vi.fn(async () => cacheResource('agent-a', '2026-01-20T00:01:00Z')),
+      listResources: vi.fn(),
     }
     cacheStoreMocks.createControlPlaneCacheStore.mockReturnValue(cachedStore)
     const kube = {
-      list: vi.fn(async () => ({
-        items: [{ kind: 'Agent', metadata: { name: 'agent-live' }, spec: {}, status: {} }],
+      get: vi.fn(async () => ({
+        apiVersion: 'agents.proompteng.ai/v1alpha1',
+        kind: 'Agent',
+        metadata: { name: 'agent-a' },
+        spec: {},
+        status: {},
       })),
-    } as unknown as ReturnType<(typeof import('~/server/primitives-kube'))['createKubernetesClient']>
+    } as unknown as ReturnType<(typeof import('~/server/kube-types'))['createKubernetesClient']>
     kubeClientMocks.createKubernetesClient.mockReturnValue(kube)
 
-    const response = await listPrimitiveResources(
-      new Request('http://localhost/api/agents/control-plane/resources?kind=Agent&namespace=agents'),
+    const response = await getPrimitiveResource(
+      new Request('http://localhost/api/agents/control-plane/resource?kind=Agent&name=agent-a&namespace=agents'),
       { kubeClient: kube as never, cacheStoreFactory: () => cachedStore as never },
     )
 
     expect(response.status).toBe(200)
     const payload = (await response.json()) as Record<string, unknown>
     expect(payload.ok).toBe(true)
+    expect(payload.kind).toBe('Agent')
+    expect(payload.resource).toMatchObject({ apiVersion: 'agents.proompteng.ai/v1alpha1' })
     expect(payload.cache).toMatchObject({
       source: 'control-plane-cache',
       stale: true,
       fresh: false,
-      stale_count: 1,
       cache_fallback: {
         source: 'control-plane-cache',
         reason: 'stale_cache_fallback_disabled',
         replacement: 'live-read',
       },
     })
-    expect(payload.total).toBe(1)
-    expect(Array.isArray(payload.items)).toBe(true)
-    expect((payload.items as Array<{ metadata?: Record<string, unknown> }>)[0]?.metadata?.name).toBe('agent-live')
-    expect(kube.list).toHaveBeenCalledTimes(1)
+    expect(kube.get).toHaveBeenCalledTimes(1)
   })
 })

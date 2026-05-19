@@ -9,16 +9,17 @@ const kubeClientMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('~/server/control-plane-cache-store', () => cacheStoreMocks)
-vi.mock('~/server/primitives-kube', async () => {
-  const actual = await vi.importActual<typeof import('~/server/primitives-kube')>('~/server/primitives-kube')
+vi.mock('~/server/kube-types', async () => {
+  const actual = await vi.importActual<typeof import('~/server/kube-types')>('~/server/kube-types')
   return {
     ...actual,
     createKubernetesClient: kubeClientMocks.createKubernetesClient,
   }
 })
 
-import { getControlPlaneSummary } from '@proompteng/agents/routes/api/agents/control-plane/summary'
-import { RESOURCE_MAP } from '~/server/primitives-kube'
+import { RESOURCE_MAP } from '~/server/kube-types'
+
+import { getControlPlaneSummary } from './summary'
 
 const buildList = (items: Record<string, unknown>[] = []) => ({ items })
 
