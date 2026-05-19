@@ -24,7 +24,7 @@ Options:
   --content <text>      Publish a single event with the provided content.
   --log-file <path>     Tail a log file and publish each line as an event.
   --channel <value>     Channel name for run-specific events (default: run).
-  --publish-general     Also publish each event to <subject-prefix>.general.<kind> (default: workflow.general.<kind>).
+  --publish-general     Also publish each event to <subject-prefix>.general.<kind> (default: agentrun.general.<kind>).
   --status <value>      Optional status value for status events.
   --exit-code <value>   Optional exit code for status events.
   --attrs-json <value>  Optional JSON payload merged into attrs.
@@ -34,12 +34,12 @@ Environment:
   NATS_URL              NATS server URL.
   NATS_CREDS            Optional credentials content.
   NATS_CREDS_FILE       Optional credentials file path.
-  NATS_SUBJECT_PREFIX   Subject prefix (default: workflow).
-  WORKFLOW_NAME         Workflow name.
-  WORKFLOW_UID          Workflow uid.
-  WORKFLOW_NAMESPACE    Workflow namespace.
-  WORKFLOW_STAGE        Optional workflow stage.
-  WORKFLOW_STEP         Optional workflow step (e.g. pod name).
+  NATS_SUBJECT_PREFIX   Subject prefix (default: agentrun).
+  AGENT_RUN_NAME        AgentRun name.
+  AGENT_RUN_UID         AgentRun uid.
+  AGENT_RUN_NAMESPACE   AgentRun namespace.
+  AGENT_RUN_STAGE       Optional AgentRun stage.
+  AGENT_RUN_STEP        Optional AgentRun step (e.g. pod name).
   AGENT_ID              Agent identifier.
   AGENT_ROLE            Optional agent role (defaults to assistant).
   RUN_ID                Optional Codex run id for Jangar correlation.
@@ -129,11 +129,11 @@ const buildPayload = (
   options: Options,
   content: string,
   context: {
-    workflowNamespace: string
-    workflowName: string
-    workflowUid: string
-    workflowStage: string | null
-    workflowStep: string | null
+    agentRunNamespace: string
+    agentRunName: string
+    agentRunUid: string
+    agentRunStage: string | null
+    agentRunStep: string | null
     agentId: string
     agentRole: string
     runId: string | null
@@ -150,12 +150,18 @@ const buildPayload = (
     sent_at: sentAt,
     timestamp: sentAt,
     kind: options.kind,
-    workflow_uid: context.workflowUid,
-    workflow_name: context.workflowName,
-    workflow_namespace: context.workflowNamespace,
-    workflowUid: context.workflowUid,
-    workflowName: context.workflowName,
-    workflowNamespace: context.workflowNamespace,
+    agent_run_uid: context.agentRunUid,
+    agent_run_name: context.agentRunName,
+    agent_run_namespace: context.agentRunNamespace,
+    agentRunUid: context.agentRunUid,
+    agentRunName: context.agentRunName,
+    agentRunNamespace: context.agentRunNamespace,
+    workflow_uid: context.agentRunUid,
+    workflow_name: context.agentRunName,
+    workflow_namespace: context.agentRunNamespace,
+    workflowUid: context.agentRunUid,
+    workflowName: context.agentRunName,
+    workflowNamespace: context.agentRunNamespace,
     agent_id: context.agentId,
     role: context.agentRole,
     channel,
@@ -166,13 +172,17 @@ const buildPayload = (
   if (context.repository) payload.repository = context.repository
   if (context.issueNumber) payload.issueNumber = context.issueNumber
   if (context.branch) payload.branch = context.branch
-  if (context.workflowStep) payload.step_id = context.workflowStep
-  if (context.workflowStage) payload.stage = context.workflowStage
-  if (context.workflowStage) payload.workflow_stage = context.workflowStage
-  if (context.workflowStep) payload.workflow_step = context.workflowStep
+  if (context.agentRunStep) payload.step_id = context.agentRunStep
+  if (context.agentRunStage) payload.stage = context.agentRunStage
+  if (context.agentRunStage) payload.agent_run_stage = context.agentRunStage
+  if (context.agentRunStep) payload.agent_run_step = context.agentRunStep
+  if (context.agentRunStage) payload.workflow_stage = context.agentRunStage
+  if (context.agentRunStep) payload.workflow_step = context.agentRunStep
   if (context.runId) payload.runId = context.runId
-  if (context.workflowStep) payload.workflowStep = context.workflowStep
-  if (context.workflowStage) payload.workflowStage = context.workflowStage
+  if (context.agentRunStep) payload.agentRunStep = context.agentRunStep
+  if (context.agentRunStage) payload.agentRunStage = context.agentRunStage
+  if (context.agentRunStep) payload.workflowStep = context.agentRunStep
+  if (context.agentRunStage) payload.workflowStage = context.agentRunStage
   if (options.status) payload.status = options.status
   if (options.exitCode) {
     const parsed = Number(options.exitCode)
@@ -259,14 +269,17 @@ const main = async () => {
     return
   }
 
-  const workflowNamespace = process.env.WORKFLOW_NAMESPACE?.trim() || 'jangar'
-  const workflowName = process.env.WORKFLOW_NAME?.trim() || 'unknown'
-  const workflowUid = process.env.WORKFLOW_UID?.trim() || 'unknown'
-  const workflowStage = coerceNonEmpty(process.env.WORKFLOW_STAGE)
-  const workflowStep = coerceNonEmpty(process.env.WORKFLOW_STEP ?? process.env.STEP_ID)
+  const agentRunNamespace =
+    coerceNonEmpty(process.env.AGENT_RUN_NAMESPACE) ?? coerceNonEmpty(process.env.WORKFLOW_NAMESPACE) ?? 'agents'
+  const agentRunName =
+    coerceNonEmpty(process.env.AGENT_RUN_NAME) ?? coerceNonEmpty(process.env.WORKFLOW_NAME) ?? 'unknown'
+  const agentRunUid = coerceNonEmpty(process.env.AGENT_RUN_UID) ?? coerceNonEmpty(process.env.WORKFLOW_UID) ?? 'unknown'
+  const agentRunStage = coerceNonEmpty(process.env.AGENT_RUN_STAGE ?? process.env.WORKFLOW_STAGE)
+  const agentRunStep = coerceNonEmpty(process.env.AGENT_RUN_STEP ?? process.env.WORKFLOW_STEP ?? process.env.STEP_ID)
   const agentId = process.env.AGENT_ID?.trim() || 'unknown'
   const agentRole = coerceNonEmpty(process.env.AGENT_ROLE) ?? 'assistant'
   const runId =
+    coerceNonEmpty(process.env.AGENT_RUN_ID) ??
     coerceNonEmpty(process.env.RUN_ID) ??
     coerceNonEmpty(process.env.CODEX_RUN_ID) ??
     coerceNonEmpty(process.env.JANGAR_RUN_ID)
@@ -274,20 +287,20 @@ const main = async () => {
   const issueNumberRaw = coerceNonEmpty(process.env.CODEX_ISSUE_NUMBER) ?? coerceNonEmpty(process.env.ISSUE_NUMBER)
   const issueNumber = issueNumberRaw ? Number.parseInt(issueNumberRaw, 10) : null
   const branch = coerceNonEmpty(process.env.CODEX_BRANCH) ?? coerceNonEmpty(process.env.HEAD_BRANCH)
-  const subjectPrefix = process.env.NATS_SUBJECT_PREFIX?.trim() || 'workflow'
+  const subjectPrefix = process.env.NATS_SUBJECT_PREFIX?.trim() || 'agentrun'
 
   const creds = resolveCredsFile()
   const natsArgs = buildNatsArgs(creds.path)
 
-  const runSubject = `${subjectPrefix}.${workflowNamespace}.${workflowName}.${workflowUid}.agent.${agentId}.${options.kind}`
+  const runSubject = `${subjectPrefix}.${agentRunNamespace}.${agentRunName}.${agentRunUid}.agent.${agentId}.${options.kind}`
   const generalSubject = `${subjectPrefix}.general.${options.kind}`
 
   const context = {
-    workflowNamespace,
-    workflowName,
-    workflowUid,
-    workflowStage,
-    workflowStep,
+    agentRunNamespace,
+    agentRunName,
+    agentRunUid,
+    agentRunStage,
+    agentRunStep,
     agentId,
     agentRole,
     runId,

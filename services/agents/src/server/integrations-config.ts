@@ -5,6 +5,8 @@ const DEFAULT_FEATURE_FLAGS_TIMEOUT_MS = 500
 const DEFAULT_FEATURE_FLAGS_NAMESPACE = 'default'
 const DEFAULT_FEATURE_FLAGS_ENTITY_ID = 'agents'
 const DEFAULT_AGENT_COMMS_FILTER_SUBJECTS = [
+  'agentrun.>',
+  'agents.agentrun.>',
   'workflow.>',
   'agents.workflow.>',
   'agents.agent_messages.>',

@@ -158,6 +158,7 @@ export type GetRunHistoryInput = {
 }
 
 export type UpsertRunCompleteInput = {
+  runId?: string | null
   repository: string
   issueNumber: number
   branch: string
@@ -178,7 +179,8 @@ export type UpsertRunCompleteInput = {
 }
 
 export type AttachNotifyInput = {
-  workflowName: string
+  runId?: string | null
+  workflowName?: string | null
   workflowNamespace?: string | null
   notifyPayload: Record<string, unknown>
   repository?: string
@@ -819,25 +821,32 @@ export const createCodexJudgeStore = (
   }
 
   const upsertRunComplete = async (input: UpsertRunCompleteInput) => {
-    const existingByUid = input.workflowUid
-      ? await db
-          .selectFrom('codex_judge.runs')
-          .selectAll()
-          .where('workflow_uid', '=', input.workflowUid)
-          .executeTakeFirst()
+    const existingById = input.runId
+      ? await db.selectFrom('codex_judge.runs').selectAll().where('id', '=', input.runId).executeTakeFirst()
       : null
-    const existingByName = existingByUid
+    const existingByUid = existingById
       ? null
-      : await db
-          .selectFrom('codex_judge.runs')
-          .selectAll()
-          .where('workflow_name', '=', input.workflowName)
-          .where('workflow_namespace', '=', input.workflowNamespace ?? null)
-          .executeTakeFirst()
+      : input.workflowUid
+        ? await db
+            .selectFrom('codex_judge.runs')
+            .selectAll()
+            .where('workflow_uid', '=', input.workflowUid)
+            .executeTakeFirst()
+        : null
+    const existingByName =
+      existingById || existingByUid
+        ? null
+        : await db
+            .selectFrom('codex_judge.runs')
+            .selectAll()
+            .where('workflow_name', '=', input.workflowName)
+            .where('workflow_namespace', '=', input.workflowNamespace ?? null)
+            .executeTakeFirst()
 
-    const existing = existingByUid ?? existingByName
+    const existing = existingById ?? existingByUid ?? existingByName
 
     if (existing) {
+      const existingId = String(existing.id)
       const existingStatus = String(existing.status)
       const nextStatus =
         existingStatus === 'run_complete' || existingStatus === 'notified' ? 'run_complete' : existingStatus
@@ -864,7 +873,7 @@ export const createCodexJudgeStore = (
           finished_at: input.finishedAt ? new Date(input.finishedAt) : null,
           updated_at: sql`now()`,
         })
-        .where('id', '=', String(existing.id))
+        .where('id', '=', existingId)
         .returningAll()
         .executeTakeFirstOrThrow()
       return enforceSingleActiveRun(rowToRun(updated as Record<string, unknown>))
@@ -908,14 +917,22 @@ export const createCodexJudgeStore = (
   }
 
   const attachNotify = async (input: AttachNotifyInput) => {
-    const row = await db
-      .selectFrom('codex_judge.runs')
-      .selectAll()
-      .where('workflow_name', '=', input.workflowName)
-      .where('workflow_namespace', '=', input.workflowNamespace ?? null)
-      .executeTakeFirst()
+    const normalizedWorkflowName = input.workflowName?.trim() || input.runId?.trim() || ''
+    const rowById = input.runId
+      ? await db.selectFrom('codex_judge.runs').selectAll().where('id', '=', input.runId).executeTakeFirst()
+      : null
+    const row = rowById
+      ? rowById
+      : normalizedWorkflowName
+        ? await db
+            .selectFrom('codex_judge.runs')
+            .selectAll()
+            .where('workflow_name', '=', normalizedWorkflowName)
+            .where('workflow_namespace', '=', input.workflowNamespace ?? null)
+            .executeTakeFirst()
+        : null
     if (!row) {
-      if (!input.repository || !input.issueNumber || !input.branch) {
+      if (!normalizedWorkflowName || !input.repository || !input.issueNumber || !input.branch) {
         return null
       }
 
@@ -934,7 +951,7 @@ export const createCodexJudgeStore = (
           issue_number: input.issueNumber,
           branch: input.branch,
           attempt,
-          workflow_name: input.workflowName,
+          workflow_name: normalizedWorkflowName,
           workflow_namespace: input.workflowNamespace ?? null,
           stage: input.stage ?? null,
           status: 'notified',

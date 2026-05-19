@@ -162,6 +162,8 @@ const EventBodySchema = S.Struct({
 })
 
 const RunCompletePayloadSchema = S.Struct({
+  apiVersion: S.optional(S.String),
+  kind: S.optional(S.String),
   metadata: S.optional(
     S.Struct({
       name: S.optional(S.String),
@@ -183,6 +185,16 @@ const RunCompletePayloadSchema = S.Struct({
   ),
   artifacts: S.optional(S.Array(S.Unknown)),
   stage: S.optional(S.String),
+  runId: S.optional(S.String),
+  run_id: S.optional(S.String),
+  agentRunId: S.optional(S.String),
+  agent_run_id: S.optional(S.String),
+  agentRunName: S.optional(S.String),
+  agent_run_name: S.optional(S.String),
+  agentRunNamespace: S.optional(S.String),
+  agent_run_namespace: S.optional(S.String),
+  agentRunUid: S.optional(S.String),
+  agent_run_uid: S.optional(S.String),
   workflowName: S.optional(S.String),
   workflowNamespace: S.optional(S.String),
   workflowUid: S.optional(S.String),
@@ -225,6 +237,14 @@ const normalizeOptionalString = (value: unknown) => {
   if (typeof value !== 'string') return null
   const trimmed = value.trim()
   return trimmed.length > 0 ? trimmed : null
+}
+
+const firstNonEmptyString = (...values: unknown[]) => {
+  for (const value of values) {
+    const normalized = normalizeOptionalString(value)
+    if (normalized) return normalized
+  }
+  return null
 }
 
 const normalizeStringMap = (value: unknown) => {
@@ -514,6 +534,65 @@ const parseRunCompletePayload = (payload: Record<string, unknown>) => {
     })
     .filter((artifact): artifact is NonNullable<typeof artifact> => Boolean(artifact))
 
+  const agentRunMetadataName =
+    firstNonEmptyString(data.kind, decodedPayload.kind) === 'AgentRun' ||
+    firstNonEmptyString(data.apiVersion, decodedPayload.apiVersion)?.startsWith('agents.proompteng.ai/')
+      ? firstNonEmptyString(metadataRecord.name)
+      : null
+  const runId = firstNonEmptyString(
+    decodedPayload.runId,
+    decodedPayload.run_id,
+    decodedPayload.agentRunId,
+    decodedPayload.agent_run_id,
+    data.runId,
+    data.run_id,
+    data.agentRunId,
+    data.agent_run_id,
+  )
+  const agentRunName = firstNonEmptyString(
+    decodedPayload.agentRunName,
+    decodedPayload.agent_run_name,
+    data.agentRunName,
+    data.agent_run_name,
+    agentRunMetadataName,
+  )
+  const agentRunNamespace = firstNonEmptyString(
+    decodedPayload.agentRunNamespace,
+    decodedPayload.agent_run_namespace,
+    data.agentRunNamespace,
+    data.agent_run_namespace,
+    agentRunMetadataName ? metadataRecord.namespace : null,
+  )
+  const agentRunUid = firstNonEmptyString(
+    decodedPayload.agentRunUid,
+    decodedPayload.agent_run_uid,
+    data.agentRunUid,
+    data.agent_run_uid,
+    agentRunMetadataName ? metadataRecord.uid : null,
+  )
+  const workflowName = firstNonEmptyString(
+    decodedPayload.workflowName,
+    data.workflowName,
+    data.workflow_name,
+    agentRunName,
+    runId,
+    metadataRecord.name,
+  )
+  const workflowNamespace = firstNonEmptyString(
+    decodedPayload.workflowNamespace,
+    data.workflowNamespace,
+    data.workflow_namespace,
+    agentRunNamespace,
+    metadataRecord.namespace,
+  )
+  const workflowUid = firstNonEmptyString(
+    decodedPayload.workflowUid,
+    data.workflowUid,
+    data.workflow_uid,
+    agentRunUid,
+    metadataRecord.uid,
+  )
+
   return {
     repository,
     issueNumber,
@@ -528,16 +607,13 @@ const parseRunCompletePayload = (payload: Record<string, unknown>) => {
     issueUrl,
     turnId,
     threadId,
-    workflowName:
-      typeof decodedPayload.workflowName === 'string' && decodedPayload.workflowName.trim()
-        ? decodedPayload.workflowName.trim()
-        : String(metadataRecord.name ?? ''),
-    workflowUid:
-      (typeof decodedPayload.workflowUid === 'string' ? decodedPayload.workflowUid.trim() : '') ||
-      (typeof metadataRecord.uid === 'string' ? metadataRecord.uid : null),
-    workflowNamespace:
-      (typeof decodedPayload.workflowNamespace === 'string' ? decodedPayload.workflowNamespace.trim() : '') ||
-      (typeof metadataRecord.namespace === 'string' ? metadataRecord.namespace : null),
+    runId,
+    agentRunName,
+    agentRunNamespace,
+    agentRunUid,
+    workflowName: workflowName ?? '',
+    workflowUid,
+    workflowNamespace,
     stage: typeof decodedPayload.stage === 'string' ? decodedPayload.stage : null,
     phase: typeof rawStatus.phase === 'string' ? rawStatus.phase : null,
     startedAt:
@@ -553,19 +629,13 @@ const parseRunCompletePayload = (payload: Record<string, unknown>) => {
 
 const parseNotifyPayload = (payload: Record<string, unknown>) => {
   const rawData = (payload.data as Record<string, unknown> | string | undefined) ?? payload
-  const data = typeof rawData === 'string' ? safeParseJson(rawData) : rawData
-  const workflowName =
-    typeof data.workflow_name === 'string'
-      ? data.workflow_name
-      : typeof data.workflowName === 'string'
-        ? data.workflowName
-        : ''
-  const workflowNamespace =
-    typeof data.workflow_namespace === 'string'
-      ? data.workflow_namespace
-      : typeof data.workflowNamespace === 'string'
-        ? data.workflowNamespace
-        : null
+  const parsedData = typeof rawData === 'string' ? safeParseJson(rawData) : rawData
+  const data = isRecord(parsedData) ? parsedData : {}
+  const runId = firstNonEmptyString(data.runId, data.run_id, data.agentRunId, data.agent_run_id)
+  const agentRunName = firstNonEmptyString(data.agentRunName, data.agent_run_name)
+  const agentRunNamespace = firstNonEmptyString(data.agentRunNamespace, data.agent_run_namespace)
+  const workflowName = firstNonEmptyString(data.workflow_name, data.workflowName, agentRunName, runId) ?? ''
+  const workflowNamespace = firstNonEmptyString(data.workflow_namespace, data.workflowNamespace, agentRunNamespace)
   const repository = normalizeRepo(data.repository)
   const issueNumber = Number(data.issue_number ?? data.issueNumber ?? 0)
   const branch =
@@ -597,6 +667,9 @@ const parseNotifyPayload = (payload: Record<string, unknown>) => {
   const iteration = iterationRaw > 0 ? iterationRaw : null
   const iterationCycle = iterationCycleRaw > 0 ? iterationCycleRaw : null
   return {
+    runId,
+    agentRunName,
+    agentRunNamespace,
     workflowName,
     workflowNamespace,
     repository,
@@ -2464,6 +2537,8 @@ export const __private = {
   fetchArtifactBuffer,
   findCommitShaInValue,
   normalizeBranchRef,
+  parseNotifyPayload,
+  parseRunCompletePayload,
   resolveCiContext,
   processRerunQueue,
   writeMemories,
@@ -2472,7 +2547,10 @@ export const handleRunComplete = async (payload: Record<string, unknown>) => {
   await ensureStoreReady()
   const parsed = parseRunCompletePayload(payload)
   const existing =
-    parsed.workflowName.length > 0 ? await store.getRunByWorkflow(parsed.workflowName, parsed.workflowNamespace) : null
+    (parsed.runId ? await store.getRunById(parsed.runId) : null) ??
+    (parsed.workflowName.length > 0
+      ? await store.getRunByWorkflow(parsed.workflowName, parsed.workflowNamespace)
+      : null)
   const resolvedRepository = parsed.repository || existing?.repository || UNKNOWN_REPOSITORY
   const resolvedIssueNumber =
     parsed.issueNumber > 0 ? parsed.issueNumber : existing?.issueNumber ? Number(existing.issueNumber) : 0
@@ -2489,6 +2567,7 @@ export const handleRunComplete = async (payload: Record<string, unknown>) => {
   const resolvedThreadId = parsed.threadId ?? existing?.threadId ?? null
 
   const run = await store.upsertRunComplete({
+    runId: parsed.runId,
     repository: resolvedRepository,
     issueNumber: resolvedIssueNumber,
     branch: resolvedBranch,
@@ -2517,6 +2596,10 @@ export const handleRunComplete = async (payload: Record<string, unknown>) => {
       iteration: parsed.iteration,
       iteration_cycle: parsed.iterationCycle,
       iterations: parsed.iterations,
+      runId: parsed.runId,
+      agentRunName: parsed.agentRunName,
+      agentRunNamespace: parsed.agentRunNamespace,
+      agentRunUid: parsed.agentRunUid,
     },
     startedAt: parsed.startedAt,
     finishedAt: parsed.finishedAt,
@@ -2600,11 +2683,12 @@ export const handleRerunRequest = async (payload: Record<string, unknown>) => {
 export const handleNotify = async (payload: Record<string, unknown>) => {
   await ensureStoreReady()
   const parsed = parseNotifyPayload(payload)
-  if (!parsed.workflowName) {
-    throw new Error('notify payload missing workflow name')
+  if (!parsed.workflowName && !parsed.runId) {
+    throw new Error('notify payload missing AgentRun or workflow identity')
   }
 
   const run = await store.attachNotify({
+    runId: parsed.runId,
     workflowName: parsed.workflowName,
     workflowNamespace: parsed.workflowNamespace,
     notifyPayload: parsed.notifyPayload,

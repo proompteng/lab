@@ -151,8 +151,8 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
             pullNumber,
             issueNumber: pull.number,
             body:
-              executionContext.workflowIdentifier && executionContext.workflowIdentifier.length > 0
-                ? `${CODEX_READY_TO_MERGE_COMMENT}\n_Workflow: ${executionContext.workflowIdentifier}_`
+              executionContext.agentRunIdentifier && executionContext.agentRunIdentifier.length > 0
+                ? `${CODEX_READY_TO_MERGE_COMMENT}\n_AgentRun: ${executionContext.agentRunIdentifier}_`
                 : CODEX_READY_TO_MERGE_COMMENT,
             marker: CODEX_READY_COMMENT_MARKER,
           }

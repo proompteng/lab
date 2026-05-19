@@ -112,6 +112,17 @@ describe('agent comms subscriber consume', () => {
   })
 
   it('normalizes every configured workflow subject family for Agents visibility', () => {
+    const agentRun = __test__.normalizePayload(
+      JSON.stringify({
+        content: 'agentrun update',
+        agent_run_id: 'run-1',
+        agent_run_name: 'demo',
+        agent_run_namespace: 'agents',
+        agent_run_uid: 'abc',
+        agent_run_stage: 'implementation',
+      }),
+      'agentrun.agents.demo.abc.agent.codex.status',
+    )
     const native = __test__.normalizePayload(JSON.stringify({ content: 'native update' }), 'workflow.general.status')
     const agents = __test__.normalizePayload(
       JSON.stringify({ content: 'agents update' }),
@@ -127,6 +138,12 @@ describe('agent comms subscriber consume', () => {
       'workflow_comms.agent_messages.general.status',
     )
 
+    expect(agentRun?.runId).toBe('run-1')
+    expect(agentRun?.workflowName).toBe('demo')
+    expect(agentRun?.workflowNamespace).toBe('agents')
+    expect(agentRun?.workflowUid).toBe('abc')
+    expect(agentRun?.stage).toBe('implementation')
+    expect(agentRun?.attrs?.runtime).toBe('agents_comms')
     expect(native?.channel).toBe('general')
     expect(native?.kind).toBe('status')
     expect(native?.attrs?.runtime).toBe('native')

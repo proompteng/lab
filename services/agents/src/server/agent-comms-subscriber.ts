@@ -97,6 +97,8 @@ const parseSubject = (subject: string) => {
   const parts = subject.split('.')
   if (parts.length < 2) return null
   const prefix = (() => {
+    if (parts[0] === 'agentrun') return { offset: 1, runtime: 'agents_comms' }
+    if (parts[0] === 'agents' && parts[1] === 'agentrun') return { offset: 2, runtime: 'agents_comms' }
     if (parts[0] === 'workflow') return { offset: 1, runtime: 'native' }
     if (parts[0] === 'agents' && parts[1] === 'workflow') return { offset: 2, runtime: 'native' }
     if (parts[0] === 'agents' && parts[1] === 'agent_messages') {
@@ -156,17 +158,30 @@ const normalizePayload = (raw: string, subject: string): AgentMessageInput | nul
 
   if (!content) return null
 
-  const runId = coerceString(payload.run_id ?? payload.runId ?? payload.runID)
+  const runId = coerceString(
+    payload.run_id ?? payload.runId ?? payload.runID ?? payload.agent_run_id ?? payload.agentRunId,
+  )
   const workflowUid =
-    coerceNonEmptyString(payload.workflow_uid ?? payload.workflowUid) ?? subjectInfo?.workflowUid ?? null
+    coerceNonEmptyString(payload.workflow_uid ?? payload.workflowUid ?? payload.agent_run_uid ?? payload.agentRunUid) ??
+    subjectInfo?.workflowUid ??
+    null
   const workflowName =
-    coerceNonEmptyString(payload.workflow_name ?? payload.workflowName) ?? subjectInfo?.workflowName ?? null
+    coerceNonEmptyString(
+      payload.workflow_name ?? payload.workflowName ?? payload.agent_run_name ?? payload.agentRunName,
+    ) ??
+    subjectInfo?.workflowName ??
+    null
   const workflowNamespace =
-    coerceNonEmptyString(payload.workflow_namespace ?? payload.workflowNamespace) ??
+    coerceNonEmptyString(
+      payload.workflow_namespace ??
+        payload.workflowNamespace ??
+        payload.agent_run_namespace ??
+        payload.agentRunNamespace,
+    ) ??
     subjectInfo?.workflowNamespace ??
     null
   const stepId = coerceNonEmptyString(
-    payload.step_id ?? payload.stepId ?? payload.workflow_step ?? payload.workflowStep,
+    payload.step_id ?? payload.stepId ?? payload.workflow_step ?? payload.workflowStep ?? payload.agent_run_step,
   )
   const payloadAgentId = coerceNonEmptyString(payload.agent_id ?? payload.agentId)
   const agentId =
@@ -174,7 +189,9 @@ const normalizePayload = (raw: string, subject: string): AgentMessageInput | nul
       ? payloadAgentId
       : (subjectInfo?.agentId ?? payloadAgentId ?? null)
   const channel = coerceNonEmptyString(payload.channel) ?? subjectInfo?.channel ?? null
-  const stage = coerceNonEmptyString(payload.stage ?? payload.workflow_stage ?? payload.workflowStage)
+  const stage = coerceNonEmptyString(
+    payload.stage ?? payload.workflow_stage ?? payload.workflowStage ?? payload.agent_run_stage,
+  )
 
   const runtime =
     coerceNonEmptyString(payload.runtime ?? payload.runtime_type ?? payload.runtimeType) ?? subjectInfo?.runtime ?? null

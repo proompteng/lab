@@ -77,7 +77,7 @@ const buildImplementationPrompt = ({
     `- Keep the progress comment anchored by ${PROGRESS_COMMENT_MARKER} current using`,
     '  services/jangar/scripts/codex/codex-progress-comment.ts.',
     '- Run all required formatters/linters/tests per repo instructions; fix and rerun until green.',
-    '- To emit workflow updates, use `/usr/local/bin/codex-nats-publish` (see examples below).',
+    '- To emit AgentRun updates, use `/usr/local/bin/codex-nats-publish` (see examples below).',
     `- Commit in logical units referencing #${issueNumber}; push the branch.`,
     '- Open a ready-to-merge PR using the default template per repo instructions; link the issue.',
     '- Finish only when required CI is green; fix failures and re-run the smallest necessary checks until it is.',

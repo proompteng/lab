@@ -102,6 +102,11 @@ fail_if_matches \
   'github-codex-implementation-workflow-template|codex-run-workflow-template-jangar|codex-autonomous-workflow-template|github-codex-post-deploy-workflow-template' \
   "${ROOT_DIR}/argocd/applications/froussard"
 
+fail_if_matches \
+  "Froussard webhook/runtime identity must be AgentRun-native, not Argo workflow-native" \
+  'ARGO_WORKFLOW_|workflowIdentifier|_Workflow:' \
+  "${ROOT_DIR}/apps/froussard/src"
+
 rendered_chart="$(mktemp)"
 rendered_argo="$(mktemp)"
 cleanup() {

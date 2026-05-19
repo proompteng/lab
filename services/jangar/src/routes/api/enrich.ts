@@ -219,7 +219,8 @@ const resolveAtlasEventInput = (payload: Record<string, unknown>) => {
     normalizeOptionalText((payloadValue as { after?: unknown })?.after) ??
     normalizeOptionalText((payloadValue as { head_commit?: { id?: unknown } })?.head_commit?.id)
 
-  const workflowIdentifier = normalizeOptionalText(metadata?.workflowIdentifier)
+  const agentRunIdentifier = normalizeOptionalText(metadata?.agentRunIdentifier)
+  const workflowIdentifier = normalizeOptionalText(metadata?.workflowIdentifier) ?? agentRunIdentifier
   const receivedAt = normalizeOptionalText(metadata?.receivedAt)
 
   return {
@@ -230,6 +231,7 @@ const resolveAtlasEventInput = (payload: Record<string, unknown>) => {
     eventType,
     installationId,
     senderLogin,
+    agentRunIdentifier,
     workflowIdentifier,
     receivedAt,
     payload: webhookPayload,

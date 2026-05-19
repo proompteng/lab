@@ -711,4 +711,51 @@ describe('codex judge guardrails', () => {
     expect(harness.store.updateRunStatus).not.toHaveBeenCalled()
     expect(harness.store.updateDecision).not.toHaveBeenCalled()
   })
+
+  it('parses AgentRun identity as the primary run-complete identity', async () => {
+    const privateApi = await requirePrivate()
+
+    const parsed = privateApi.parseRunCompletePayload({
+      apiVersion: 'agents.proompteng.ai/v1alpha1',
+      kind: 'AgentRun',
+      metadata: {
+        name: 'agentrun-123',
+        namespace: 'agents',
+        uid: 'uid-123',
+      },
+      agentRunId: 'run-123',
+      status: { phase: 'Succeeded' },
+    })
+
+    expect(parsed.runId).toBe('run-123')
+    expect(parsed.agentRunName).toBe('agentrun-123')
+    expect(parsed.agentRunNamespace).toBe('agents')
+    expect(parsed.agentRunUid).toBe('uid-123')
+    expect(parsed.workflowName).toBe('agentrun-123')
+    expect(parsed.workflowNamespace).toBe('agents')
+    expect(parsed.workflowUid).toBe('uid-123')
+  })
+
+  it('parses AgentRun notify identity without requiring legacy workflow fields', async () => {
+    const privateApi = await requirePrivate()
+
+    const parsed = privateApi.parseNotifyPayload({
+      agent_run_id: 'run-456',
+      agent_run_name: 'agentrun-456',
+      agent_run_namespace: 'agents',
+      last_assistant_message: 'opened PR',
+    })
+
+    expect(parsed.runId).toBe('run-456')
+    expect(parsed.agentRunName).toBe('agentrun-456')
+    expect(parsed.agentRunNamespace).toBe('agents')
+    expect(parsed.workflowName).toBe('agentrun-456')
+    expect(parsed.workflowNamespace).toBe('agents')
+    expect(parsed.notifyPayload).toEqual(
+      expect.objectContaining({
+        agent_run_id: 'run-456',
+        agent_run_name: 'agentrun-456',
+      }),
+    )
+  })
 })

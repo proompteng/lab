@@ -46,7 +46,7 @@ export interface WorkflowExecutionContext {
     }
   }
   deliveryId: string
-  workflowIdentifier?: string | null
+  agentRunIdentifier?: string | null
 }
 
 export const executeWorkflowCommands = async (

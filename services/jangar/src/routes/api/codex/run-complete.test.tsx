@@ -64,4 +64,33 @@ describe('/api/codex/run-complete', () => {
     })
     expect(handleRunComplete).not.toHaveBeenCalled()
   })
+
+  it('forwards AgentRun-native completion payloads without requiring workflow aliases', async () => {
+    const handleRunComplete = vi.fn(async () => ({ id: 'run-1' }))
+    const submitCodexCallback = vi.fn(async () => ({
+      ok: true as const,
+      status: 202,
+      body: { ok: true, callback: { kind: 'run-complete' } },
+    }))
+    const payload = {
+      apiVersion: 'agents.proompteng.ai/v1alpha1',
+      kind: 'AgentRun',
+      metadata: { name: 'agentrun-1', namespace: 'agents', uid: 'uid-1' },
+      agent_run_id: 'run-1',
+      status: { phase: 'Succeeded' },
+    }
+
+    const response = await postRunComplete(
+      new Request('http://jangar.test/api/codex/run-complete', {
+        body: JSON.stringify(payload),
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
+      }),
+      { handleRunComplete, submitCodexCallback },
+    )
+
+    expect(response.status).toBe(200)
+    expect(submitCodexCallback).toHaveBeenCalledWith({ kind: 'run-complete', payload })
+    expect(handleRunComplete).toHaveBeenCalledWith(payload)
+  })
 })

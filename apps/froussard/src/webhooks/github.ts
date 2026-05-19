@@ -247,7 +247,7 @@ const buildAtlasPayload = (options: {
   actionValue?: string
   hookId: string
   senderLogin?: string
-  workflowIdentifier?: string | null
+  agentRunIdentifier?: string | null
   identifiers: ReturnType<typeof extractEventIdentifiers>
 }) => {
   const context = extractAtlasContext(options.payload)
@@ -263,7 +263,7 @@ const buildAtlasPayload = (options: {
       action: options.actionValue ?? null,
       hookId: options.hookId,
       sender: options.senderLogin ?? null,
-      workflowIdentifier: options.workflowIdentifier ?? null,
+      agentRunIdentifier: options.agentRunIdentifier ?? null,
       identifiers: options.identifiers,
       receivedAt: new Date().toISOString(),
       payload: options.payload,
@@ -279,7 +279,7 @@ const triggerAtlasEnrichment = async (options: {
   actionValue?: string
   hookId: string
   senderLogin?: string
-  workflowIdentifier?: string | null
+  agentRunIdentifier?: string | null
   identifiers: ReturnType<typeof extractEventIdentifiers>
 }): Promise<void> => {
   const url = `${options.config.baseUrl}${ATLAS_ENRICH_PATH}`
@@ -307,7 +307,7 @@ const triggerAtlasEnrichment = async (options: {
       actionValue: options.actionValue,
       hookId: options.hookId,
       senderLogin: options.senderLogin,
-      workflowIdentifier: options.workflowIdentifier,
+      agentRunIdentifier: options.agentRunIdentifier,
       identifiers: options.identifiers,
     }),
   )
@@ -419,8 +419,8 @@ export const createGithubWebhookHandler = ({
 
     const headers = buildHeaders(deliveryId, eventName, signatureHeader, contentType, hookId, actionValue)
 
-    const workflowIdentifier =
-      process.env.ARGO_WORKFLOW_NAME ?? process.env.ARGO_WORKFLOW_UID ?? process.env.ARGO_WORKFLOW_NAMESPACE ?? null
+    const agentRunIdentifier =
+      process.env.AGENT_RUN_NAME ?? process.env.AGENT_RUN_UID ?? process.env.AGENT_RUN_NAMESPACE ?? null
 
     const executionContext: WorkflowExecutionContext = {
       runtime,
@@ -437,7 +437,7 @@ export const createGithubWebhookHandler = ({
         },
       },
       deliveryId,
-      workflowIdentifier,
+      agentRunIdentifier,
     }
 
     let codexStageTriggered: WorkflowStage | null = null
@@ -459,7 +459,7 @@ export const createGithubWebhookHandler = ({
         pullNumber: identifiers.pullNumber ?? null,
         commentId: identifiers.commentId ?? null,
         discussionId: identifiers.discussionId ?? null,
-        workflowIdentifier,
+        agentRunIdentifier,
       },
       'github webhook dispatch',
     )
@@ -517,7 +517,7 @@ export const createGithubWebhookHandler = ({
           actionValue,
           hookId,
           senderLogin,
-          workflowIdentifier,
+          agentRunIdentifier,
           identifiers,
         }).catch((error) => {
           logger.warn(
