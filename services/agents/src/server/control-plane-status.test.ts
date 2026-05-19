@@ -69,7 +69,7 @@ const deps: AgentsControlPlaneStatusDependencies = {
 }
 
 describe('buildAgentsControlPlaneStatus', () => {
-  it('builds the generic Agents-owned status shape with compatibility fields', () => {
+  it('builds the generic Agents-owned status shape without domain placeholders', () => {
     const status = buildAgentsControlPlaneStatus({ namespace: 'agents', service: 'agents', grpc, now }, deps)
 
     expect(status.service).toBe('agents')
@@ -99,7 +99,9 @@ describe('buildAgentsControlPlaneStatus', () => {
       untouched_run_count: 0,
     })
     expect(status.namespaces).toEqual([{ namespace: 'agents', status: 'healthy', degraded_components: [] }])
-    expect(status.torghut_consumer_evidence.status).toBe('disabled')
+    expect(status).not.toHaveProperty('torghut_consumer_evidence')
+    expect(status).not.toHaveProperty('dependency_quorum')
+    expect(status).not.toHaveProperty('material_action_verdicts')
   })
 
   it('wraps status-service dependency failures in an Effect error', async () => {

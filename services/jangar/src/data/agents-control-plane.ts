@@ -3118,6 +3118,136 @@ const parseResponse = async (response: Response) => {
   return payload
 }
 
+const defaultEmpiricalDependencyStatus = (message: string): EmpiricalDependencyStatus => ({
+  status: 'unknown',
+  endpoint: '',
+  message,
+  authoritative: false,
+})
+
+const defaultDomainStatusMessage = 'not emitted by generic Agents control-plane status'
+
+const buildControlPlaneStatusFallbacks = (
+  namespace: string,
+  generatedAt: string,
+): Pick<
+  ControlPlaneStatus,
+  | 'dependency_quorum'
+  | 'failure_domain_leases'
+  | 'material_action_verdict_epoch'
+  | 'material_action_verdicts'
+  | 'authority_provenance_settlement'
+  | 'evidence_pressure_ledger'
+  | 'terminal_debt_compaction_ledger'
+  | 'empirical_services'
+  | 'rollout_health'
+> => ({
+  dependency_quorum: {
+    decision: 'unknown',
+    reasons: [defaultDomainStatusMessage],
+    message: defaultDomainStatusMessage,
+    segments: [],
+    degradation_scope: undefined,
+  },
+  failure_domain_leases: {
+    mode: 'shadow',
+    design_artifact: '',
+    lease_set_digest: 'generic-agents-status',
+    generated_at: generatedAt,
+    leases: [],
+    holdbacks: [],
+  },
+  material_action_verdict_epoch: {
+    mode: 'shadow',
+    design_artifact: '',
+    epoch_id: 'generic-agents-status',
+    generated_at: generatedAt,
+    expires_at: generatedAt,
+    namespace,
+    producer_revision: '',
+    dependency_quorum_ref: '',
+    negative_evidence_router_epoch_ref: '',
+    action_slo_budget_refs: [],
+    action_clock_refs: [],
+    rollout_health_ref: '',
+    controller_witness_ref: '',
+    watch_reliability_ref: '',
+    database_projection_ref: '',
+    empirical_services_ref: '',
+    torghut_capital_ref: null,
+    contradiction_refs: [],
+    final_verdicts: [],
+  },
+  material_action_verdicts: [],
+  authority_provenance_settlement: {
+    schema_version: 'jangar.authority-provenance-settlement.v1',
+    settlement_id: 'generic-agents-status',
+    namespace,
+    generated_at: generatedAt,
+    fresh_until: generatedAt,
+    governing_design_refs: [],
+    evidence_mode: 'observe',
+    surfaces: [],
+    winning_authority: 'none',
+    settlement_state: 'settled',
+    action_class_decisions: [],
+    reentry_windows: [],
+    rollback_target: '',
+    handoff_summary: defaultDomainStatusMessage,
+  },
+  evidence_pressure_ledger: null,
+  terminal_debt_compaction_ledger: null,
+  empirical_services: {
+    forecast: defaultEmpiricalDependencyStatus(defaultDomainStatusMessage),
+    lean: defaultEmpiricalDependencyStatus(defaultDomainStatusMessage),
+    jobs: defaultEmpiricalDependencyStatus(defaultDomainStatusMessage),
+  },
+  rollout_health: {
+    status: 'unknown',
+    observed_deployments: 0,
+    degraded_deployments: 0,
+    deployments: [],
+    message: defaultDomainStatusMessage,
+  },
+})
+
+const mergeRecord = <T extends Record<string, unknown>>(fallback: T, value: unknown): T => ({
+  ...fallback,
+  ...(asRecord(value) ?? {}),
+})
+
+export const normalizeControlPlaneStatusPayload = (
+  payload: Record<string, unknown>,
+  namespace: string,
+): ControlPlaneStatus => {
+  const generatedAt = typeof payload.generated_at === 'string' ? payload.generated_at : new Date().toISOString()
+  const fallbacks = buildControlPlaneStatusFallbacks(namespace, generatedAt)
+
+  return {
+    ...fallbacks,
+    ...payload,
+    dependency_quorum: mergeRecord(fallbacks.dependency_quorum, payload.dependency_quorum),
+    failure_domain_leases: mergeRecord(fallbacks.failure_domain_leases, payload.failure_domain_leases),
+    material_action_verdict_epoch: mergeRecord(
+      fallbacks.material_action_verdict_epoch,
+      payload.material_action_verdict_epoch,
+    ),
+    material_action_verdicts: Array.isArray(payload.material_action_verdicts)
+      ? (payload.material_action_verdicts as MaterialActionVerdict[])
+      : fallbacks.material_action_verdicts,
+    authority_provenance_settlement: mergeRecord(
+      fallbacks.authority_provenance_settlement,
+      payload.authority_provenance_settlement,
+    ),
+    empirical_services: {
+      forecast: mergeRecord(fallbacks.empirical_services.forecast, asRecord(payload.empirical_services)?.forecast),
+      lean: mergeRecord(fallbacks.empirical_services.lean, asRecord(payload.empirical_services)?.lean),
+      jobs: mergeRecord(fallbacks.empirical_services.jobs, asRecord(payload.empirical_services)?.jobs),
+    },
+    rollout_health: mergeRecord(fallbacks.rollout_health, payload.rollout_health),
+  } as ControlPlaneStatus
+}
+
 export const fetchPrimitiveList = async (params: {
   kind: AgentPrimitiveKind
   namespace: string
@@ -3377,5 +3507,5 @@ export const fetchControlPlaneStatus = async (params: {
     }
   }
 
-  return { ok: true, status: payload as ControlPlaneStatus }
+  return { ok: true, status: normalizeControlPlaneStatusPayload(payload as Record<string, unknown>, params.namespace) }
 }

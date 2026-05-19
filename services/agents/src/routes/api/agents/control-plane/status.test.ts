@@ -81,9 +81,11 @@ describe('control-plane status route', () => {
       service: 'agents',
       runtime_kits: [],
       admission_passports: [],
-      stage_clearance_packets: [],
       controllers: expect.arrayContaining([expect.objectContaining({ name: 'agents-controller' })]),
       database: expect.any(Object),
     })
+    expect(payload).not.toHaveProperty('stage_clearance_packets')
+    expect(payload).not.toHaveProperty('torghut_consumer_evidence')
+    expect(payload).not.toHaveProperty('dependency_quorum')
   })
 })

@@ -126,52 +126,6 @@ export type AgentsControlPlaneStatus = {
     target_namespaces: number
     message: string
   }
-  dependency_quorum: { status: 'unknown'; message: string }
-  failure_domain_leases: { status: 'unknown'; leases: unknown[]; message: string }
-  reconciled_action_clocks: unknown[]
-  negative_evidence_router: { status: 'unknown'; routes: unknown[]; message: string }
-  action_slo_budgets: unknown[]
-  torghut_action_slo_budgets: unknown[]
-  dependency_verdict_exchange: { status: 'unknown'; message: string }
-  source_serving_contract_verdict_exchange: { status: 'unknown'; message: string }
-  control_plane_controller_witness: { status: 'unknown'; message: string }
-  controller_ingestion_settlement: { status: 'unknown'; message: string }
-  material_action_verdict_epoch: { status: 'unknown'; message: string }
-  material_action_verdicts: unknown[]
-  material_action_activation_receipts: unknown[]
-  action_custody_receipts: unknown[]
-  stage_clearance_packets: unknown[]
-  projection_foreclosure_notary: unknown | null
-  stage_credit_ledger: unknown | null
-  ready_truth_arbiter: { serving_readiness: 'unknown'; message: string }
-  revenue_repair_settlement_custody: { status: 'unknown'; message: string }
-  verify_trust_foreclosure_board: { status: 'unknown'; message: string }
-  rollout_proof_passport: { status: 'unknown'; message: string }
-  runner_capacity_futures: unknown[]
-  stage_launch_tickets: unknown[]
-  authority_provenance_settlement: { status: 'unknown'; message: string }
-  evidence_pressure_ledger: unknown | null
-  terminal_debt_compaction_ledger: unknown | null
-  ready_action_exchange: { status: 'unknown'; message: string }
-  repair_bid_admission: { status: 'unknown'; message: string }
-  material_gate_digest: { status: 'unknown'; message: string }
-  material_evidence_settlement_spine: { status: 'unknown'; message: string }
-  material_reentry_clearinghouse: unknown | null
-  repair_slot_escrow: unknown | null
-  repair_warrant_exchange: { status: 'unknown'; message: string }
-  consumer_evidence_leases: { status: 'unknown'; leases: unknown[]; message: string }
-  clearance_market_ledger: unknown | null
-  source_rollout_truth_exchange: { status: 'unknown'; message: string }
-  route_stability_escrow: { status: 'unknown'; message: string }
-  execution_trust: {
-    status: 'unknown'
-    reason: string
-    last_evaluated_at: string
-    blocking_windows: unknown[]
-    evidence_summary: string[]
-  }
-  swarms: unknown[]
-  stages: unknown[]
   rollout_health: {
     status: 'unknown'
     observed_deployments: number
@@ -179,12 +133,6 @@ export type AgentsControlPlaneStatus = {
     deployments: unknown[]
     message: string
   }
-  empirical_services: {
-    forecast: { status: 'unknown'; endpoint: string; message: string; authoritative: boolean }
-    lean: { status: 'unknown'; endpoint: string; message: string; authoritative: boolean }
-    jobs: { status: 'unknown'; endpoint: string; message: string; authoritative: boolean }
-  }
-  torghut_consumer_evidence: { status: 'disabled'; reason_codes: string[]; message: string }
   namespaces: Array<{
     namespace: string
     status: 'healthy' | 'degraded'
@@ -231,8 +179,7 @@ export class AgentsControlPlaneStatusApi extends Context.Tag('AgentsControlPlane
   AgentsControlPlaneStatusService
 >() {}
 
-const compatibilityUnavailableMessage =
-  'generic Agents status does not include domain-specific material control-plane evidence'
+const genericCollectionUnavailableMessage = 'runtime collection is not yet emitted by the generic Agents control plane'
 
 const buildAuthority = (namespace: string, now: Date, message: string): HeartbeatAuthoritySource => ({
   mode: 'local',
@@ -350,18 +297,6 @@ const buildAgentRunIngestionStatus = (
   }
 }
 
-const buildUnknownDependency = (message = compatibilityUnavailableMessage) => ({
-  status: 'unknown' as const,
-  message,
-})
-
-const buildEmpiricalDependency = () => ({
-  status: 'unknown' as const,
-  endpoint: '',
-  message: compatibilityUnavailableMessage,
-  authoritative: false,
-})
-
 const buildDegradedComponents = (input: {
   controllers: ControllerStatus[]
   runtimeAdapters: RuntimeAdapterStatus[]
@@ -456,70 +391,14 @@ export const buildAgentsControlPlaneStatus = (
       collection_errors: 0,
       collected_namespaces: 0,
       target_namespaces: 1,
-      message: compatibilityUnavailableMessage,
+      message: genericCollectionUnavailableMessage,
     },
-    dependency_quorum: buildUnknownDependency(),
-    failure_domain_leases: { status: 'unknown', leases: [], message: compatibilityUnavailableMessage },
-    reconciled_action_clocks: [],
-    negative_evidence_router: { status: 'unknown', routes: [], message: compatibilityUnavailableMessage },
-    action_slo_budgets: [],
-    torghut_action_slo_budgets: [],
-    dependency_verdict_exchange: buildUnknownDependency(),
-    source_serving_contract_verdict_exchange: buildUnknownDependency(),
-    control_plane_controller_witness: buildUnknownDependency(),
-    controller_ingestion_settlement: buildUnknownDependency(),
-    material_action_verdict_epoch: buildUnknownDependency(),
-    material_action_verdicts: [],
-    material_action_activation_receipts: [],
-    action_custody_receipts: [],
-    stage_clearance_packets: [],
-    projection_foreclosure_notary: null,
-    stage_credit_ledger: null,
-    ready_truth_arbiter: { serving_readiness: 'unknown', message: compatibilityUnavailableMessage },
-    revenue_repair_settlement_custody: buildUnknownDependency(),
-    verify_trust_foreclosure_board: buildUnknownDependency(),
-    rollout_proof_passport: buildUnknownDependency(),
-    runner_capacity_futures: [],
-    stage_launch_tickets: [],
-    authority_provenance_settlement: buildUnknownDependency(),
-    evidence_pressure_ledger: null,
-    terminal_debt_compaction_ledger: null,
-    ready_action_exchange: buildUnknownDependency(),
-    repair_bid_admission: buildUnknownDependency(),
-    material_gate_digest: buildUnknownDependency(),
-    material_evidence_settlement_spine: buildUnknownDependency(),
-    material_reentry_clearinghouse: null,
-    repair_slot_escrow: null,
-    repair_warrant_exchange: buildUnknownDependency(),
-    consumer_evidence_leases: { status: 'unknown', leases: [], message: compatibilityUnavailableMessage },
-    clearance_market_ledger: null,
-    source_rollout_truth_exchange: buildUnknownDependency(),
-    route_stability_escrow: buildUnknownDependency(),
-    execution_trust: {
-      status: 'unknown',
-      reason: compatibilityUnavailableMessage,
-      last_evaluated_at: now.toISOString(),
-      blocking_windows: [],
-      evidence_summary: [],
-    },
-    swarms: [],
-    stages: [],
     rollout_health: {
       status: 'unknown',
       observed_deployments: 0,
       degraded_deployments: 0,
       deployments: [],
-      message: compatibilityUnavailableMessage,
-    },
-    empirical_services: {
-      forecast: buildEmpiricalDependency(),
-      lean: buildEmpiricalDependency(),
-      jobs: buildEmpiricalDependency(),
-    },
-    torghut_consumer_evidence: {
-      status: 'disabled',
-      reason_codes: ['torghut_consumer_evidence_not_owned_by_agents_status'],
-      message: 'Torghut consumer evidence is not part of the generic Agents control-plane status contract',
+      message: genericCollectionUnavailableMessage,
     },
     namespaces: [
       {
