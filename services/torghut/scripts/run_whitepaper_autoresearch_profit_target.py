@@ -102,6 +102,11 @@ _RUNTIME_CLOSURE_PROOF_ORACLE_BLOCKERS = frozenset(
         "executable_replay_account_buying_power_failed",
         "executable_replay_max_notional_per_trade_failed",
         "executable_replay_notional_within_buying_power_failed",
+        "market_impact_stress_passed_failed",
+        "market_impact_stress_artifact_present_failed",
+        "market_impact_stress_model_failed",
+        "market_impact_stress_cost_bps_failed",
+        "market_impact_stress_net_pnl_per_day_failed",
     }
 )
 _FAMILY_PRIOR_HARD_BLOCK_ORACLE_BLOCKERS = frozenset(
@@ -1330,6 +1335,16 @@ def _persist_epoch_ledgers(
             )
         if portfolio is not None:
             portfolio_payload = portfolio.to_payload()
+            promotion_readiness = _mapping(summary.get("promotion_readiness"))
+            if promotion_readiness:
+                portfolio_payload["promotion_readiness"] = dict(promotion_readiness)
+            portfolio_status = "blocked"
+            if bool(portfolio.objective_scorecard.get("oracle_passed")):
+                portfolio_status = (
+                    "promotion_ready"
+                    if _boolish(promotion_readiness.get("promotable"))
+                    else "target_met"
+                )
             session.add(
                 AutoresearchPortfolioCandidate(
                     portfolio_candidate_id=portfolio.portfolio_candidate_id,
@@ -1339,9 +1354,7 @@ def _persist_epoch_ledgers(
                     objective_scorecard_json=dict(portfolio.objective_scorecard),
                     optimizer_report_json=dict(portfolio.optimizer_report),
                     payload_json=portfolio_payload,
-                    status="target_met"
-                    if bool(portfolio.objective_scorecard.get("oracle_passed"))
-                    else "blocked",
+                    status=portfolio_status,
                 )
             )
         session.commit()
@@ -1882,6 +1895,11 @@ def _candidate_search_remediation(
                 "executable_replay_order_count",
                 "executable_replay_account_buying_power",
                 "executable_replay_max_notional_per_trade",
+                "market_impact_stress_passed",
+                "market_impact_stress_artifact_ref",
+                "market_impact_stress_model",
+                "market_impact_stress_cost_bps",
+                "market_impact_stress_net_pnl_per_day",
             ],
         }
         if non_proof_failure_counts:
@@ -5127,6 +5145,75 @@ def _runtime_closure_scorecard_update(
     }
 
 
+def _runtime_closure_pending_promotion_steps(
+    runtime_closure: Mapping[str, Any],
+) -> tuple[str, ...]:
+    return tuple(
+        step
+        for step in (
+            _string(item)
+            for item in cast(
+                Sequence[Any], runtime_closure.get("next_required_steps") or ()
+            )
+        )
+        if step and step != "promotion_review"
+    )
+
+
+def _runtime_closure_promotion_prerequisite_blockers(
+    runtime_closure: Mapping[str, Any],
+) -> tuple[str, ...]:
+    prerequisites = _mapping(runtime_closure.get("promotion_prerequisites"))
+    if not prerequisites:
+        return ("promotion_prerequisites_missing",)
+    if _boolish(prerequisites.get("allowed")):
+        return ()
+    reasons = tuple(
+        reason
+        for reason in (
+            _string(item)
+            for item in cast(Sequence[Any], prerequisites.get("reasons") or ())
+        )
+        if reason
+    )
+    return reasons or ("promotion_prerequisites_denied",)
+
+
+def _promotion_readiness_payload(
+    *,
+    oracle_candidate_found: bool,
+    status: str,
+    blockers: Sequence[str],
+    runtime_closure: Mapping[str, Any],
+) -> dict[str, Any]:
+    blocker_list = list(
+        dict.fromkeys(_string(item) for item in blockers if _string(item))
+    )
+    if oracle_candidate_found:
+        blocker_list = list(
+            dict.fromkeys(
+                (
+                    *blocker_list,
+                    *_runtime_closure_pending_promotion_steps(runtime_closure),
+                    *_runtime_closure_promotion_prerequisite_blockers(runtime_closure),
+                )
+            )
+        )
+    if oracle_candidate_found and not blocker_list:
+        return {
+            "status": "promotion_ready",
+            "promotable": True,
+            "blockers": [],
+        }
+    return {
+        "status": "blocked_pending_promotion_prerequisites"
+        if oracle_candidate_found and blocker_list
+        else status,
+        "promotable": False,
+        "blockers": blocker_list,
+    }
+
+
 def _candidate_board_score_rows(
     rows: Sequence[Mapping[str, Any]],
 ) -> dict[str, Mapping[str, Any]]:
@@ -5206,8 +5293,7 @@ def _candidate_board_payload(
     proposal_rows: Sequence[Mapping[str, Any]],
     evidence_bundles: Sequence[CandidateEvidenceBundle],
     portfolio: PortfolioCandidateSpec | None,
-    promotion_status: str,
-    promotion_blockers: Sequence[str],
+    promotion_readiness: Mapping[str, Any],
     runtime_closure: Mapping[str, Any],
 ) -> dict[str, Any]:
     pre_replay_by_spec = _candidate_board_score_rows(pre_replay_proposal_rows)
@@ -5293,19 +5379,16 @@ def _candidate_board_payload(
         )
     )
     best_research_candidate = rows[0] if rows else None
+    promotion_ready = _boolish(promotion_readiness.get("promotable"))
     return {
         "schema_version": "torghut.profit-candidate-board.v1",
         "epoch_id": epoch_id,
         "run_root": str(output_dir),
         "target_net_pnl_per_day": str(target),
         "current_answer": "promotion_candidate_found"
-        if portfolio_oracle_passed
+        if promotion_ready
         else "no_promotion_ready_candidate",
-        "promotion_readiness": {
-            "status": promotion_status,
-            "promotable": False,
-            "blockers": list(promotion_blockers),
-        },
+        "promotion_readiness": dict(promotion_readiness),
         "best_research_candidate": best_research_candidate,
         "best_portfolio_candidate_id": _string(
             portfolio_payload.get("portfolio_candidate_id")
@@ -5922,6 +6005,12 @@ def run_whitepaper_autoresearch_profit_target(
             "scheduler_v3_parity_missing",
             "shadow_validation_missing",
         ]
+    promotion_readiness = _promotion_readiness_payload(
+        oracle_candidate_found=oracle_candidate_found,
+        status=promotion_status,
+        blockers=promotion_blockers,
+        runtime_closure=runtime_closure,
+    )
     status = "ok" if oracle_candidate_found else "no_profit_target_candidate"
     status_reason = None
     if not oracle_candidate_found:
@@ -5980,8 +6069,7 @@ def run_whitepaper_autoresearch_profit_target(
         proposal_rows=proposal_rows,
         evidence_bundles=replay_result.evidence_bundles,
         portfolio=portfolio,
-        promotion_status=promotion_status,
-        promotion_blockers=promotion_blockers,
+        promotion_readiness=promotion_readiness,
         runtime_closure=runtime_closure,
     )
     candidate_board_path = output_dir / "candidate-board.json"
@@ -6049,11 +6137,7 @@ def run_whitepaper_autoresearch_profit_target(
         else None,
         "oracle_candidate_found": oracle_candidate_found,
         "profit_target_oracle": profit_target_oracle,
-        "promotion_readiness": {
-            "status": promotion_status,
-            "promotable": False,
-            "blockers": promotion_blockers,
-        },
+        "promotion_readiness": promotion_readiness,
         "runtime_closure": runtime_closure,
         "artifacts": {
             "epoch_manifest": str(output_dir / "epoch-manifest.json"),

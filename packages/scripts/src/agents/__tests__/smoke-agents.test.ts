@@ -533,6 +533,16 @@ Error from server (Forbidden): unknown`
     expect(isPermissionDeniedKubectlError(error)).toBe(false)
   })
 
+  it('treats kind etcd request timeouts during apply as transient', () => {
+    const error = `Error from server: error when retrieving current configuration of:
+Resource: "/v1, Resource=services", GroupVersionKind: "/v1, Kind=Service"
+Name: "agents-ci-postgres", Namespace: "agents-ci"
+from server for: "STDIN": etcdserver: request timed out`
+
+    expect(isTransientKubectlError(error)).toBe(true)
+    expect(isPermissionDeniedKubectlError(error)).toBe(false)
+  })
+
   it('keeps real namespace RBAC denials classified as permission errors', () => {
     const error =
       'Error from server (Forbidden): namespaces is forbidden: User "system:serviceaccount:agents:agents-sa" cannot get resource "namespaces" in API group "" at the cluster scope'

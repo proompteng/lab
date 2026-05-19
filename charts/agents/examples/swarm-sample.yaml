@@ -1,56 +1,45 @@
 apiVersion: swarm.proompteng.ai/v1alpha1
 kind: Swarm
 metadata:
-  name: torghut-quant
+  name: platform-swarm
   namespace: agents
 spec:
   owner:
-    id: trading-owner
-    channel: swarm://owner/trading
+    id: platform-owner
+    channel: swarm://owner/platform
   domains:
-    - quant-research
-    - autonomous-trading
+    - platform-reliability
+    - platform-evolution
   objectives:
-    - continuously discover and implement alpha/risk improvements
-    - optimize risk-adjusted outcomes under strict drawdown policy
-  mode: lights-out
+    - continuously discover and implement control-plane improvements
+    - expand platform capabilities through measurable delivery gates
+  mode: assisted
   timezone: UTC
-  # Example/demo cadence. The production overlay runs all stages hourly.
   cadence:
-    discoverEvery: 1m
-    planEvery: 5m
-    implementEvery: 15m
-    verifyEvery: 1m
+    discoverEvery: 30m
+    planEvery: 1h
+    implementEvery: 1h
+    verifyEvery: 30m
   discovery:
     minCitations: 2
-    minConfidence: 0.8
+    minConfidence: 0.75
     sources:
-      - name: market-regime-feed
+      - name: github-issues
       - name: runtime-alerts
   delivery:
     repoAllowlist:
-      - proompteng/lab
+      - example/platform
     requiredChecks:
       - lint
-      - pyright
+      - type-check
       - unit-tests
     mergePolicy: merge-queue
     deploymentTargets:
-      - torghut
-    rollout:
-      strategy: canary
-      steps:
-        - setWeight: 10
-          pause: 5m
-        - setWeight: 30
-          pause: 10m
-        - setWeight: 100
-          pause: 0m
-      analysisTemplateRef: default-canary-analysis
+      - agents
   risk:
     budgetRef: default-budget
     approvalPolicyRef: default-approval
-    freezeAfterFailures: 2
+    freezeAfterFailures: 3
     freezeDuration: 60m
   execution:
     discover:

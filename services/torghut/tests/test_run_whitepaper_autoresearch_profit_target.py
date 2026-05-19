@@ -2851,6 +2851,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 policy=policy,
             )
             scorecard["oracle_passed"] = False
+            self.assertIn(
+                "market_impact_stress_artifact_present_failed",
+                scorecard["profit_target_oracle"]["blockers"],
+            )
             portfolio = runner.PortfolioCandidateSpec(
                 schema_version="torghut.portfolio-candidate-spec.v1",
                 portfolio_candidate_id="portfolio-test",
@@ -2903,6 +2907,17 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(
             updated.objective_scorecard["executable_replay_artifact_ref"],
             str(approval_replay_path),
+        )
+        self.assertEqual(
+            updated.objective_scorecard["market_impact_stress_artifact_ref"],
+            str(market_impact_path),
+        )
+        self.assertEqual(
+            updated.objective_scorecard["market_impact_stress_model"], "square_root"
+        )
+        self.assertEqual(
+            updated.objective_scorecard["market_impact_stress_net_pnl_per_day"],
+            "610",
         )
         self.assertIn(str(approval_replay_path), updated.evidence_refs)
 
@@ -2963,6 +2978,26 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             runner._portfolio_executable_max_notional(portfolio), Decimal("50000")
         )
         self.assertFalse(runner._portfolio_needs_runtime_closure_proof(portfolio))
+        market_impact_only_portfolio = replace(
+            portfolio,
+            objective_scorecard={
+                "target_met": True,
+                "oracle_passed": False,
+                "profit_target_oracle": {
+                    "passed": False,
+                    "blockers": [
+                        "market_impact_stress_passed_failed",
+                        "market_impact_stress_artifact_present_failed",
+                        "market_impact_stress_model_failed",
+                        "market_impact_stress_cost_bps_failed",
+                        "market_impact_stress_net_pnl_per_day_failed",
+                    ],
+                },
+            },
+        )
+        self.assertTrue(
+            runner._portfolio_needs_runtime_closure_proof(market_impact_only_portfolio)
+        )
         self.assertIs(
             runner._runtime_closure_program_for_candidate(
                 program=program,
@@ -3048,6 +3083,36 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             ),
             "portfolio_component_passed_oracle",
         )
+        denied_readiness = runner._promotion_readiness_payload(
+            oracle_candidate_found=True,
+            status="ready_for_promotion_review",
+            blockers=[],
+            runtime_closure={
+                "status": "ready_for_promotion_review",
+                "next_required_steps": ["promotion_review"],
+                "promotion_prerequisites": {
+                    "allowed": False,
+                    "reasons": ["promotion_gate_report_denied"],
+                },
+            },
+        )
+        self.assertFalse(denied_readiness["promotable"])
+        self.assertEqual(
+            denied_readiness["status"], "blocked_pending_promotion_prerequisites"
+        )
+        self.assertEqual(denied_readiness["blockers"], ["promotion_gate_report_denied"])
+        allowed_readiness = runner._promotion_readiness_payload(
+            oracle_candidate_found=True,
+            status="ready_for_promotion_review",
+            blockers=[],
+            runtime_closure={
+                "status": "ready_for_promotion_review",
+                "next_required_steps": ["promotion_review"],
+                "promotion_prerequisites": {"allowed": True, "reasons": []},
+            },
+        )
+        self.assertTrue(allowed_readiness["promotable"])
+        self.assertEqual(allowed_readiness["status"], "promotion_ready")
 
     def test_candidate_universe_symbols_default_to_chip_coverage_when_empty(
         self,
@@ -3447,6 +3512,96 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertEqual(
             {spec.candidate_spec_id for spec in specs}, {"spec-repeatable"}
+        )
+
+    def test_epoch_ledgers_persist_promotion_ready_only_from_readiness_payload(
+        self,
+    ) -> None:
+        portfolio = runner.PortfolioCandidateSpec(
+            schema_version="torghut.portfolio-candidate-spec.v1",
+            portfolio_candidate_id="portfolio-readiness-test",
+            source_candidate_ids=("candidate-test",),
+            target_net_pnl_per_day=Decimal("500"),
+            sleeves=(),
+            capital_budget={},
+            correlation_budget={},
+            drawdown_budget={},
+            evidence_refs=(),
+            objective_scorecard={"oracle_passed": True, "target_met": True},
+            optimizer_report={},
+        )
+        started_at = datetime(2026, 5, 8, 17, 0, 0)
+        completed_at = datetime(2026, 5, 8, 17, 1, 0)
+
+        with patch(
+            "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+            side_effect=lambda: Session(self.engine),
+        ):
+            runner._persist_epoch_ledgers(
+                epoch_id="epoch-readiness-blocked",
+                status="ok",
+                target_net_pnl_per_day=Decimal("500"),
+                paper_run_ids=[],
+                sources=[],
+                candidate_specs=[],
+                proposal_rows=[],
+                portfolio=portfolio,
+                summary={
+                    "promotion_readiness": {
+                        "status": "blocked_pending_promotion_prerequisites",
+                        "promotable": False,
+                        "blockers": ["promotion_gate_report_denied"],
+                    }
+                },
+                runner_config={},
+                started_at=started_at,
+                completed_at=completed_at,
+            )
+            runner._persist_epoch_ledgers(
+                epoch_id="epoch-readiness-ready",
+                status="ok",
+                target_net_pnl_per_day=Decimal("500"),
+                paper_run_ids=[],
+                sources=[],
+                candidate_specs=[],
+                proposal_rows=[],
+                portfolio=replace(
+                    portfolio, portfolio_candidate_id="portfolio-readiness-ready"
+                ),
+                summary={
+                    "promotion_readiness": {
+                        "status": "promotion_ready",
+                        "promotable": True,
+                        "blockers": [],
+                    }
+                },
+                runner_config={},
+                started_at=started_at,
+                completed_at=completed_at,
+            )
+
+        with Session(self.engine) as session:
+            portfolios = (
+                session.execute(
+                    select(AutoresearchPortfolioCandidate).order_by(
+                        AutoresearchPortfolioCandidate.portfolio_candidate_id.asc()
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+        self.assertEqual(
+            [item.status for item in portfolios], ["promotion_ready", "target_met"]
+        )
+        blocked_payload = next(
+            item
+            for item in portfolios
+            if item.portfolio_candidate_id == "portfolio-readiness-test"
+        )
+        self.assertEqual(
+            blocked_payload.payload_json["promotion_readiness"]["blockers"],
+            ["promotion_gate_report_denied"],
         )
 
     def test_persistence_failure_preserves_artifacts_and_returns_infra_failure(

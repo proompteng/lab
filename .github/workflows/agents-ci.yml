@@ -17,12 +17,10 @@ on:
       - 'packages/discord/**'
       - 'packages/otel/**'
       - 'packages/scripts/src/agents/**'
-      - 'packages/scripts/src/jangar/**'
       - 'packages/scripts/src/shared/**'
       - 'packages/temporal-bun-sdk/**'
       - 'services/agents/**'
       - 'services/bumba/**'
-      - 'services/jangar/**'
       - 'scripts/agents/**'
       - 'scripts/download_crd_schema.py'
       - '.github/workflows/agents-build-push.yml'
@@ -43,12 +41,10 @@ on:
       - 'packages/discord/**'
       - 'packages/otel/**'
       - 'packages/scripts/src/agents/**'
-      - 'packages/scripts/src/jangar/**'
       - 'packages/scripts/src/shared/**'
       - 'packages/temporal-bun-sdk/**'
       - 'services/agents/**'
       - 'services/bumba/**'
-      - 'services/jangar/**'
       - 'scripts/agents/**'
       - 'scripts/download_crd_schema.py'
       - '.github/workflows/agents-build-push.yml'
@@ -179,7 +175,6 @@ jobs:
           --filter @proompteng/design
           --filter @proompteng/discord
           --filter @proompteng/agents
-          --filter @proompteng/jangar
           --filter @proompteng/otel
           --filter @proompteng/scripts
           --filter @proompteng/temporal-bun-sdk
@@ -192,7 +187,6 @@ jobs:
             packages/scripts/src/agents/__tests__/resolve-published-agents-images.test.ts \
             packages/scripts/src/agents/__tests__/smoke-agents.test.ts \
             packages/scripts/src/agents/__tests__/deploy-service.test.ts \
-            packages/scripts/src/jangar/__tests__/release-contract.test.ts \
             packages/scripts/src/shared/__tests__/docker.test.ts
 
       - name: Run Agents service unit tests
