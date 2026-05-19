@@ -8,16 +8,16 @@ describe('runtime identity', () => {
     expect(resolveRuntimeServiceName({ AGENTS_GITOPS_REVISION: 'abc123' })).toBe('agents')
   })
 
-  it('allows explicit compatibility override back to Jangar identity', () => {
+  it('ignores explicit compatibility override back to Jangar identity', () => {
     expect(
       isAgentsRuntimeService({
         AGENTS_RUNTIME_SERVICE: 'jangar',
         AGENTS_IMAGE: 'registry.example/lab/agents-controller:abc',
       }),
-    ).toBe(false)
+    ).toBe(true)
   })
 
-  it('keeps Jangar identity when no Agents runtime signal is present', () => {
-    expect(resolveRuntimeServiceName({ JANGAR_IMAGE: 'registry.example/lab/jangar:abc' })).toBe('jangar')
+  it('keeps Agents identity when only Jangar runtime signals are present', () => {
+    expect(resolveRuntimeServiceName({ JANGAR_IMAGE: 'registry.example/lab/jangar:abc' })).toBe('agents')
   })
 })

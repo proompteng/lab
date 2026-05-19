@@ -91,7 +91,7 @@ const getMemoryPool = (connectionString: string) => {
   if (existing) return existing
 
   const max = parsePositiveInt(
-    process.env.AGENTS_MEMORY_DB_POOL_MAX ?? process.env.JANGAR_MEMORY_DB_POOL_MAX ?? process.env.AGENTS_DB_POOL_MAX,
+    process.env.AGENTS_MEMORY_DB_POOL_MAX ?? process.env.AGENTS_DB_POOL_MAX,
     DEFAULT_MEMORY_DATABASE_POOL_MAX,
   )
   const created = new Pool({ connectionString, ssl: { rejectUnauthorized: false }, max })

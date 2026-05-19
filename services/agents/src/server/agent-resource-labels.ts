@@ -25,7 +25,6 @@ const buildCompatibleLabel = (label: AgentsResourceLabel, value: string): Record
   const keys = AGENTS_RESOURCE_LABELS[label]
   return {
     [keys.canonical]: value,
-    [keys.legacy]: value,
   }
 }
 
