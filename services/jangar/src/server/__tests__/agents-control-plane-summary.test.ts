@@ -44,9 +44,12 @@ describe('control plane summary route', () => {
     delete process.env.AGENTS_CONTROL_PLANE_CACHE_ENABLED
     delete process.env.AGENTS_CONTROL_PLANE_CACHE_STALE_SECONDS
     delete process.env.AGENTS_CONTROL_PLANE_CACHE_ALLOW_STALE
+    delete process.env.AGENTS_SWARM_PRIMITIVE_ENABLED
   })
 
   it('aggregates totals and run phases without cache when cache is disabled', async () => {
+    process.env.AGENTS_SWARM_PRIMITIVE_ENABLED = 'true'
+
     const lists: Record<string, Record<string, unknown>> = {
       [RESOURCE_MAP.Agent]: buildList([{}, {}]),
       [RESOURCE_MAP.AgentRun]: buildList([
