@@ -963,6 +963,96 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertIn("min_cash_below_oracle", failures)
         self.assertIn("negative_cash_observed", failures)
 
+    def test_candidate_quality_gate_flags_weak_profit_factor(self) -> None:
+        policy = runner.ProfitTargetOraclePolicy()
+
+        failures = runner._candidate_quality_gate_failures(
+            {
+                "net_pnl_per_day": "750",
+                "active_day_ratio": "1",
+                "positive_day_ratio": "0.67",
+                "profit_factor": "1.20",
+                "best_day_share": "0.1",
+                "worst_day_loss": "0",
+                "max_drawdown": "0",
+                "max_gross_exposure_pct_equity": "0.5",
+                "min_cash": "0",
+                "negative_cash_observation_count": "0",
+                "avg_filled_notional_per_day": "500000",
+                "regime_slice_pass_rate": "1",
+                "posterior_edge_lower": "0.01",
+                "shadow_parity_status": "within_budget",
+                "executable_replay_passed": True,
+                "executable_replay_artifact_ref": "/tmp/replay.json",
+                "executable_replay_order_count": "5",
+                "executable_replay_account_buying_power": "10000",
+                "executable_replay_max_notional_per_trade": "9000",
+            },
+            oracle_policy=policy,
+        )
+
+        self.assertEqual(failures, ["profit_factor_below_oracle"])
+
+    def test_oracle_policy_from_args_carries_full_promotion_risk_parameters(
+        self,
+    ) -> None:
+        policy = runner._oracle_policy_from_args(
+            Namespace(
+                min_profit_factor="1.65",
+                max_worst_day_loss="999999999",
+                max_drawdown="999999999",
+                max_worst_day_loss_pct_equity="0.06",
+                max_drawdown_pct_equity="0.09",
+                extended_max_worst_day_loss_pct_equity="0.10",
+                extended_max_drawdown_pct_equity="0.14",
+                min_total_net_pnl_to_drawdown_ratio="3.50",
+                max_gross_exposure_pct_equity="0.85",
+                min_cash="250",
+                max_negative_cash_observation_count=0,
+            )
+        )
+
+        self.assertEqual(policy.min_profit_factor, Decimal("1.65"))
+        self.assertEqual(policy.max_worst_day_loss, Decimal("999999999"))
+        self.assertEqual(policy.max_drawdown, Decimal("999999999"))
+        self.assertEqual(policy.max_worst_day_loss_pct_equity, Decimal("0.06"))
+        self.assertEqual(policy.max_drawdown_pct_equity, Decimal("0.09"))
+        self.assertEqual(policy.extended_max_worst_day_loss_pct_equity, Decimal("0.10"))
+        self.assertEqual(policy.extended_max_drawdown_pct_equity, Decimal("0.14"))
+        self.assertEqual(policy.min_total_net_pnl_to_drawdown_ratio, Decimal("3.50"))
+        self.assertEqual(policy.max_gross_exposure_pct_equity, Decimal("0.85"))
+        self.assertEqual(policy.min_cash, Decimal("250"))
+
+    def test_candidate_spec_contract_exposes_full_promotion_risk_parameters(
+        self,
+    ) -> None:
+        policy = runner.ProfitTargetOraclePolicy(
+            max_gross_exposure_pct_equity=Decimal("0.85"),
+            min_cash=Decimal("250"),
+            max_negative_cash_observation_count=0,
+        )
+
+        updated = runner._candidate_spec_with_oracle_policy(
+            self._candidate_spec("spec-full-promotion-policy"),
+            oracle_policy=policy,
+        )
+
+        self.assertEqual(
+            updated.hard_vetoes["required_max_gross_exposure_pct_equity"],
+            "0.85",
+        )
+        self.assertEqual(updated.hard_vetoes["required_min_cash"], "250")
+        self.assertEqual(
+            updated.hard_vetoes["required_max_negative_cash_observation_count"],
+            "0",
+        )
+        self.assertEqual(
+            updated.promotion_contract["profit_target_oracle_policy"][
+                "max_gross_exposure_pct_equity"
+            ],
+            "0.85",
+        )
+
     def test_pre_replay_ranker_keeps_best_duplicate_feedback_and_blocks_rejections(
         self,
     ) -> None:
@@ -4218,6 +4308,17 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(parsed.real_replay_shard_size, 0)
         self.assertEqual(parsed.real_replay_shard_timeout_seconds, 0)
         self.assertEqual(parsed.real_replay_shard_workers, 1)
+        self.assertEqual(parsed.max_worst_day_loss, "999999999")
+        self.assertEqual(parsed.max_drawdown, "999999999")
+        self.assertEqual(parsed.min_profit_factor, "1.50")
+        self.assertEqual(parsed.max_worst_day_loss_pct_equity, "0.05")
+        self.assertEqual(parsed.max_drawdown_pct_equity, "0.08")
+        self.assertEqual(parsed.extended_max_worst_day_loss_pct_equity, "0.08")
+        self.assertEqual(parsed.extended_max_drawdown_pct_equity, "0.12")
+        self.assertEqual(parsed.min_total_net_pnl_to_drawdown_ratio, "3.00")
+        self.assertEqual(parsed.max_gross_exposure_pct_equity, "1.0")
+        self.assertEqual(parsed.min_cash, "0")
+        self.assertEqual(parsed.max_negative_cash_observation_count, 0)
         self.assertFalse(parsed.persist_results)
 
     def test_decimal_arg_or_default_uses_explicit_cli_override(self) -> None:

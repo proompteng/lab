@@ -471,6 +471,19 @@ class TestStrategyAutoresearch(TestCase):
         )
         self.assertEqual(program.objective.min_cash, Decimal("0"))
 
+        policy = runner._portfolio_oracle_policy(program)
+        self.assertEqual(policy.min_profit_factor, Decimal("1.50"))
+        self.assertEqual(policy.max_worst_day_loss, Decimal("999999999"))
+        self.assertEqual(policy.max_drawdown, Decimal("999999999"))
+        self.assertEqual(policy.default_start_equity, Decimal("31590.02"))
+        self.assertEqual(policy.max_worst_day_loss_pct_equity, Decimal("0.05"))
+        self.assertEqual(policy.max_drawdown_pct_equity, Decimal("0.08"))
+        self.assertEqual(policy.extended_max_worst_day_loss_pct_equity, Decimal("0.08"))
+        self.assertEqual(policy.extended_max_drawdown_pct_equity, Decimal("0.12"))
+        self.assertEqual(policy.min_total_net_pnl_to_drawdown_ratio, Decimal("3.00"))
+        self.assertEqual(policy.max_gross_exposure_pct_equity, Decimal("1.0"))
+        self.assertEqual(policy.min_cash, Decimal("0"))
+
     def test_checked_in_500_portfolio_profit_program_includes_reversal_surfaces(
         self,
     ) -> None:

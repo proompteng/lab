@@ -317,12 +317,21 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--min-active-day-ratio", default="0.90")
     parser.add_argument("--min-positive-day-ratio", default="0.60")
+    parser.add_argument("--min-profit-factor", default="1.50")
     parser.add_argument("--min-daily-net-pnl", default=None)
-    parser.add_argument("--max-worst-day-loss", default="350")
-    parser.add_argument("--max-drawdown", default="900")
+    parser.add_argument("--max-worst-day-loss", default="999999999")
+    parser.add_argument("--max-drawdown", default="999999999")
     parser.add_argument("--max-best-day-share", default="0.25")
     parser.add_argument("--max-cluster-contribution-share", default="0.40")
     parser.add_argument("--max-single-symbol-contribution-share", default="0.35")
+    parser.add_argument("--max-worst-day-loss-pct-equity", default="0.05")
+    parser.add_argument("--max-drawdown-pct-equity", default="0.08")
+    parser.add_argument("--extended-max-worst-day-loss-pct-equity", default="0.08")
+    parser.add_argument("--extended-max-drawdown-pct-equity", default="0.12")
+    parser.add_argument("--min-total-net-pnl-to-drawdown-ratio", default="3.00")
+    parser.add_argument("--max-gross-exposure-pct-equity", default="1.0")
+    parser.add_argument("--min-cash", default="0")
+    parser.add_argument("--max-negative-cash-observation-count", type=int, default=0)
     parser.add_argument("--min-avg-filled-notional-per-day", default="300000")
     parser.add_argument("--min-regime-slice-pass-rate", default="0.45")
     parser.add_argument(
@@ -950,6 +959,39 @@ def _scorecard_total_net_pnl(scorecard: Mapping[str, Any]) -> Decimal:
     return net_pnl_per_day * Decimal(trading_day_count)
 
 
+def _scorecard_profit_factor(scorecard: Mapping[str, Any]) -> Decimal:
+    explicit = scorecard.get("profit_factor")
+    if explicit is not None:
+        return _decimal(explicit)
+    daily_net_payload = scorecard.get("daily_net")
+    if isinstance(daily_net_payload, Mapping) and daily_net_payload:
+        positive_total = sum(
+            (
+                _decimal(value)
+                for value in daily_net_payload.values()
+                if _decimal(value) > 0
+            ),
+            Decimal("0"),
+        )
+        negative_total = sum(
+            (
+                -_decimal(value)
+                for value in daily_net_payload.values()
+                if _decimal(value) < 0
+            ),
+            Decimal("0"),
+        )
+        if negative_total > 0:
+            return positive_total / negative_total
+        return Decimal("999999999") if positive_total > 0 else Decimal("0")
+    if (
+        _scorecard_total_net_pnl(scorecard) > 0
+        and _decimal(scorecard.get("worst_day_loss")) <= 0
+    ):
+        return Decimal("999999999")
+    return Decimal("0")
+
+
 def _risk_adjusted_drawdown_passes(
     *,
     observed: Decimal,
@@ -1002,6 +1044,9 @@ def _oracle_policy_from_args(args: argparse.Namespace) -> ProfitTargetOraclePoli
     return ProfitTargetOraclePolicy(
         min_active_day_ratio=min_active_day_ratio,
         min_positive_day_ratio=min_positive_day_ratio,
+        min_profit_factor=_decimal(
+            getattr(args, "min_profit_factor", "1.50"), default="1.50"
+        ),
         min_daily_net_pnl=min_daily_net_pnl,
         max_worst_day_loss=max_worst_day_loss,
         max_drawdown=max_drawdown,
@@ -1025,6 +1070,31 @@ def _oracle_policy_from_args(args: argparse.Namespace) -> ProfitTargetOraclePoli
         default_start_equity=_decimal(
             getattr(args, "start_equity", "31590.02"), default="31590.02"
         ),
+        max_worst_day_loss_pct_equity=_decimal(
+            getattr(args, "max_worst_day_loss_pct_equity", "0.05"), default="0.05"
+        ),
+        max_drawdown_pct_equity=_decimal(
+            getattr(args, "max_drawdown_pct_equity", "0.08"), default="0.08"
+        ),
+        extended_max_worst_day_loss_pct_equity=_decimal(
+            getattr(args, "extended_max_worst_day_loss_pct_equity", "0.08"),
+            default="0.08",
+        ),
+        extended_max_drawdown_pct_equity=_decimal(
+            getattr(args, "extended_max_drawdown_pct_equity", "0.12"),
+            default="0.12",
+        ),
+        min_total_net_pnl_to_drawdown_ratio=_decimal(
+            getattr(args, "min_total_net_pnl_to_drawdown_ratio", "3.00"),
+            default="3.00",
+        ),
+        max_gross_exposure_pct_equity=_decimal(
+            getattr(args, "max_gross_exposure_pct_equity", "1.0"), default="1.0"
+        ),
+        min_cash=_decimal(getattr(args, "min_cash", "0"), default="0"),
+        max_negative_cash_observation_count=max(
+            0, _int_arg(args, "max_negative_cash_observation_count", 0)
+        ),
     )
 
 
@@ -1046,6 +1116,13 @@ def _candidate_spec_with_oracle_policy(
         "required_min_profit_factor": str(oracle_policy.min_profit_factor),
         "required_max_worst_day_loss": str(oracle_policy.max_worst_day_loss),
         "required_max_drawdown": str(oracle_policy.max_drawdown),
+        "required_max_gross_exposure_pct_equity": str(
+            oracle_policy.max_gross_exposure_pct_equity
+        ),
+        "required_min_cash": str(oracle_policy.min_cash),
+        "required_max_negative_cash_observation_count": str(
+            oracle_policy.max_negative_cash_observation_count
+        ),
         "required_max_worst_day_loss_pct_equity": str(
             oracle_policy.max_worst_day_loss_pct_equity
         ),
@@ -1336,6 +1413,8 @@ def _candidate_quality_gate_failures(
         < oracle_policy.min_positive_day_ratio
     ):
         failures.append("positive_day_ratio_below_oracle")
+    if _scorecard_profit_factor(scorecard) < oracle_policy.min_profit_factor:
+        failures.append("profit_factor_below_oracle")
     if (
         _decimal(scorecard.get("best_day_share"), default="1")
         > oracle_policy.max_best_day_share
@@ -5036,15 +5115,21 @@ def run_whitepaper_autoresearch_profit_target(
                     objective.min_daily_net_pnl,
                 )
             ),
+            "min_profit_factor": str(
+                max(
+                    _decimal(getattr(args, "min_profit_factor", "1.50")),
+                    objective.min_profit_factor,
+                )
+            ),
             "max_worst_day_loss": str(
                 min(
-                    _decimal(getattr(args, "max_worst_day_loss", "350")),
+                    _decimal(getattr(args, "max_worst_day_loss", "999999999")),
                     objective.max_worst_day_loss,
                 )
             ),
             "max_drawdown": str(
                 min(
-                    _decimal(getattr(args, "max_drawdown", "900")),
+                    _decimal(getattr(args, "max_drawdown", "999999999")),
                     objective.max_drawdown,
                 )
             ),
@@ -5061,6 +5146,49 @@ def run_whitepaper_autoresearch_profit_target(
                     ),
                     objective.min_daily_notional,
                 )
+            ),
+            "max_worst_day_loss_pct_equity": str(
+                min(
+                    _decimal(getattr(args, "max_worst_day_loss_pct_equity", "0.05")),
+                    objective.max_worst_day_loss_pct_equity,
+                )
+            ),
+            "max_drawdown_pct_equity": str(
+                min(
+                    _decimal(getattr(args, "max_drawdown_pct_equity", "0.08")),
+                    objective.max_drawdown_pct_equity,
+                )
+            ),
+            "extended_max_worst_day_loss_pct_equity": str(
+                min(
+                    _decimal(
+                        getattr(args, "extended_max_worst_day_loss_pct_equity", "0.08")
+                    ),
+                    objective.extended_max_worst_day_loss_pct_equity,
+                )
+            ),
+            "extended_max_drawdown_pct_equity": str(
+                min(
+                    _decimal(getattr(args, "extended_max_drawdown_pct_equity", "0.12")),
+                    objective.extended_max_drawdown_pct_equity,
+                )
+            ),
+            "min_total_net_pnl_to_drawdown_ratio": str(
+                max(
+                    _decimal(
+                        getattr(args, "min_total_net_pnl_to_drawdown_ratio", "3.00")
+                    ),
+                    objective.min_total_net_pnl_to_drawdown_ratio,
+                )
+            ),
+            "max_gross_exposure_pct_equity": str(
+                min(
+                    _decimal(getattr(args, "max_gross_exposure_pct_equity", "1.0")),
+                    objective.max_gross_exposure_pct_equity,
+                )
+            ),
+            "min_cash": str(
+                max(_decimal(getattr(args, "min_cash", "0")), objective.min_cash)
             ),
         }
     )
