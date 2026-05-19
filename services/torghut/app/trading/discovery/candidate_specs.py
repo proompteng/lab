@@ -3155,6 +3155,55 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
 
     if has_any(
         (
+            "intraday volume",
+            "volume forecasting",
+            "volume forecast",
+            "vwap",
+            "volume weighted average price",
+            "volume-weighted average price",
+            "u-shape",
+            "u shaped",
+            "u-shaped",
+            "volume periodicity",
+            "periodic volume",
+            "morning afternoon volume",
+            "execution schedule",
+        )
+    ):
+        overlay_ids.append("intraday_volume_periodicity_execution")
+        overlay_contracts.append(
+            {
+                "overlay_id": "intraday_volume_periodicity_execution",
+                "required_evidence": [
+                    "intraday_volume_forecast",
+                    "clock_bucket_vwap_tracking_error",
+                    "fillable_notional_by_clock_bucket",
+                    "route_tca",
+                ],
+                "rank_metric": "post_cost_net_pnl_after_volume_periodicity_capacity",
+                "evidence_policy": "capacity_must_follow_intraday_volume_profile",
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_intraday_volume_forecast": True,
+                "required_min_clock_bucket_capacity_sample_count": "60",
+                "required_max_vwap_tracking_error_bps": "12",
+                "required_min_volume_periodicity_capacity_ratio": "1.00",
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_intraday_volume_forecast": True,
+                "requires_clock_bucket_capacity": True,
+                "requires_vwap_tracking_error": True,
+                "requires_route_tca": True,
+                "rejects_pooled_all_day_capacity_assumptions": True,
+            }
+        )
+
+    if has_any(
+        (
             "order-flow imbalance",
             "order flow imbalance",
             "order_flow_imbalance",
@@ -3789,6 +3838,25 @@ def _family_scores_for_hypothesis(
     if has_any(("relative_volume", "relative volume", "turnover")):
         bump("intraday_tsmom_v2", 2, "relative_volume_or_turnover")
         bump("breakout_reclaim_v2", 2, "relative_volume_or_turnover")
+    if has_any(
+        (
+            "intraday volume",
+            "volume forecasting",
+            "volume forecast",
+            "volume periodicity",
+            "periodic volume",
+            "vwap",
+            "volume weighted average price",
+            "volume-weighted average price",
+            "u-shape",
+            "u shaped",
+            "u-shaped",
+        )
+    ):
+        bump("opening_drive_leader_reclaim_v1", 10, "volume_periodicity_execution")
+        bump("late_day_continuation_v1", 8, "volume_periodicity_execution")
+        bump("intraday_tsmom_v2", 7, "volume_periodicity_execution")
+        bump("breakout_reclaim_v2", 6, "volume_periodicity_execution")
 
     if not any(scores.values()):
         bump("microbar_cross_sectional_pairs_v1", 1, "default_executable_microbar")

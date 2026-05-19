@@ -256,6 +256,11 @@ def candidate_spec_capital_features(spec: CandidateSpec) -> Mapping[str, float]:
         1.0,
     )
     features["inferred_universe_slot_floor"] = float(rank_count_floor)
+    features["configured_daily_notional_capacity"] = (
+        _float(features.get("max_notional_per_trade"))
+        * features["max_entries_per_session"]
+        * float(rank_count_floor)
+    )
     return features
 
 
@@ -265,6 +270,14 @@ def capital_budget_penalty(features: Mapping[str, float]) -> float:
         + max(0.0, _float(features.get("max_position_pct_equity")) - 1.0) * 35.0
         + max(0.0, _float(features.get("max_notional_pct_start_equity")) - 1.0) * 35.0
     )
+
+
+def configured_daily_notional_capacity_penalty(
+    *, configured_daily_notional_required_ratio: float
+) -> float:
+    if configured_daily_notional_required_ratio <= 0.0:
+        return 750.0
+    return max(0.0, 1.0 - configured_daily_notional_required_ratio) * 750.0
 
 
 def observed_capital_penalty(scorecard: Mapping[str, Any]) -> float:
@@ -514,6 +527,8 @@ def build_mlx_training_rows(
             "configured_max_gross_exposure_pct_equity",
             "estimated_max_gross_exposure_pct_equity",
             "max_entries_per_session",
+            "configured_daily_notional_capacity",
+            "configured_daily_notional_required_ratio",
             "capital_budget_overage_ratio",
             "capital_feasible_flag",
             "history_net_pnl_per_day",
@@ -565,6 +580,14 @@ def build_mlx_training_rows(
         )
         avg_filled_notional_required_ratio = (
             avg_filled_notional_per_day / required_min_daily_notional
+            if required_min_daily_notional > 0.0
+            else 0.0
+        )
+        configured_daily_notional_capacity = _float(
+            capital_features.get("configured_daily_notional_capacity")
+        )
+        configured_daily_notional_required_ratio = (
+            configured_daily_notional_capacity / required_min_daily_notional
             if required_min_daily_notional > 0.0
             else 0.0
         )
@@ -641,6 +664,8 @@ def build_mlx_training_rows(
             _float(capital_features.get("configured_max_gross_exposure_pct_equity")),
             _float(capital_features.get("estimated_max_gross_exposure_pct_equity")),
             _float(capital_features.get("max_entries_per_session")),
+            configured_daily_notional_capacity,
+            configured_daily_notional_required_ratio,
             _float(capital_features.get("capital_budget_overage_ratio")),
             _float(capital_features.get("capital_feasible_flag")),
             _float(scorecard.get("net_pnl_per_day")),
@@ -713,6 +738,9 @@ def build_mlx_training_rows(
             - post_cost_efficiency_penalty
             - historical_proof_penalty
             - capital_budget_penalty(capital_features)
+            - configured_daily_notional_capacity_penalty(
+                configured_daily_notional_required_ratio=configured_daily_notional_required_ratio
+            )
             - observed_capital_penalty(scorecard)
         )
         rows.append(

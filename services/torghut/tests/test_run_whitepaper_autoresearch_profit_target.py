@@ -1170,7 +1170,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(model["feedback_matched_spec_count"], 3)
         self.assertEqual(
             row_by_spec[string_veto_spec.candidate_spec_id]["feedback_replay_target"],
-            85.0,
+            -665.0,
         )
         self.assertEqual(
             row_by_spec[string_veto_spec.candidate_spec_id]["features"][
@@ -1408,6 +1408,62 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(
             selection["rows"][0]["selection_reason"],
             "pre_replay_mlx_family_feedback_blocked",
+        )
+
+    def test_candidate_selection_blocks_no_activity_feedback_from_reaudit(
+        self,
+    ) -> None:
+        spec = self._candidate_spec("spec-no-activity-feedback")
+        feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=spec.candidate_spec_id,
+            candidate={
+                "candidate_id": "cand-no-activity-feedback",
+                "family_template_id": spec.family_template_id,
+                "runtime_family": spec.runtime_family,
+                "runtime_strategy_name": spec.runtime_strategy_name,
+                "objective_scorecard": {
+                    "net_pnl_per_day": "75",
+                    "active_day_ratio": "0",
+                    "positive_day_ratio": "0",
+                    "decision_count": 0,
+                    "filled_count": 0,
+                    "orders_submitted_count": 0,
+                    "avg_filled_notional_per_day": "0",
+                },
+            },
+            dataset_snapshot_id="snap-no-activity-feedback",
+            result_path="feedback://no-activity",
+        )
+
+        _model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(spec,),
+            feedback_evidence_bundles=(feedback_bundle,),
+        )
+
+        self.assertEqual(rows[0]["training_source"], "feedback_real_replay")
+        self.assertEqual(
+            rows[0]["selection_reason"],
+            "pre_replay_mlx_no_activity_feedback_blocked",
+        )
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(spec,),
+            proposal_rows=rows,
+            top_k=1,
+            exploration_slots=0,
+            feedback_block_reaudit_slots=1,
+            max_candidates=1,
+            portfolio_size_min=1,
+        )
+
+        self.assertEqual(selected, [])
+        self.assertEqual(selection["budget"]["selected_count"], 0)
+        self.assertEqual(
+            selection["budget"]["feedback_block_reaudit_selected_count"], 0
+        )
+        self.assertEqual(
+            selection["rows"][0]["selection_reason"],
+            "pre_replay_mlx_no_activity_feedback_blocked",
         )
 
     def test_candidate_selection_blocks_failed_false_negative_rescue_family(
@@ -2349,6 +2405,94 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "synthetic_prior_exploration",
         )
         self.assertTrue(selection["rows"][0]["selected_for_replay"])
+
+    def test_candidate_selection_blocks_capacity_short_synthetic_probe(
+        self,
+    ) -> None:
+        spec = self._candidate_spec("spec-capacity-short-synthetic-prior-probe")
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(spec,),
+            proposal_rows=[
+                {
+                    "candidate_spec_id": spec.candidate_spec_id,
+                    "rank": 1,
+                    "proposal_score": -12.5,
+                    "selection_reason": "pre_replay_mlx_rank",
+                    "training_source": "synthetic_prior",
+                    "feedback_evidence_context_count": 1,
+                    "features": {
+                        "configured_daily_notional_required_ratio": 0.2,
+                    },
+                }
+            ],
+            top_k=1,
+            exploration_slots=1,
+            max_candidates=1,
+            portfolio_size_min=1,
+        )
+
+        self.assertEqual(selected, [])
+        self.assertEqual(selection["budget"]["eligible_candidate_count"], 0)
+        self.assertEqual(
+            selection["budget"][
+                "pre_replay_synthetic_capacity_insufficient_candidate_count"
+            ],
+            1,
+        )
+        self.assertEqual(
+            selection["budget"]["pre_replay_nonpositive_synthetic_exploration_count"],
+            0,
+        )
+        self.assertEqual(
+            selection["rows"][0]["selection_reason"],
+            "pre_replay_synthetic_capacity_insufficient",
+        )
+
+    def test_real_replay_evidence_promotes_summary_activity_counts(self) -> None:
+        with TemporaryDirectory() as tmp:
+            result_path = Path(tmp) / "result.json"
+            result_path.write_text(
+                json.dumps(
+                    {
+                        "summary": {
+                            "decision_count": 0,
+                            "filled_count": 0,
+                            "orders_submitted_count": 0,
+                            "avg_filled_notional_per_day": "0",
+                        },
+                        "top": [
+                            {
+                                "candidate_id": "cand-summary-activity",
+                                "objective_scorecard": {
+                                    "net_pnl_per_day": "0",
+                                    "active_day_ratio": "0",
+                                },
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            replay = runner._real_replay_result_from_factory_payload(
+                {
+                    "experiments": [
+                        {
+                            "result_path": str(result_path),
+                            "candidate_spec_id": "spec-summary-activity",
+                            "dataset_snapshot_id": "real-summary-activity",
+                        }
+                    ]
+                }
+            )
+
+        self.assertEqual(len(replay.evidence_bundles), 1)
+        scorecard = replay.evidence_bundles[0].objective_scorecard
+        self.assertEqual(scorecard["decision_count"], 0)
+        self.assertEqual(scorecard["filled_count"], 0)
+        self.assertEqual(scorecard["orders_submitted_count"], 0)
+        self.assertEqual(scorecard["avg_filled_notional_per_day"], "0")
 
     def test_candidate_selection_ignores_malformed_feedback_context_for_synthetic_prior(
         self,
@@ -5734,6 +5878,60 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(captured_budget, [11])
         self.assertEqual(len(result.evidence_bundles), 1)
 
+    def test_real_replay_caps_source_spec_frontier_budget_from_global_budget(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            result_path = output_dir / "result.json"
+            result_path.parent.mkdir(parents=True)
+            result_path.write_text(
+                json.dumps({"top": []}),
+                encoding="utf-8",
+            )
+            factory_payload = {
+                "experiments": [
+                    {
+                        "experiment_id": "spec-real-exp",
+                        "dataset_snapshot_id": "snap-real",
+                        "result_path": str(result_path),
+                    }
+                ]
+            }
+            captured_budget: list[int] = []
+
+            def fake_run(
+                factory_args: Namespace, *, source_specs: object
+            ) -> dict[str, object]:
+                captured_budget.append(int(factory_args.max_candidates_to_evaluate))
+                return factory_payload
+
+            with patch.object(
+                runner.strategy_factory_runner,
+                "run_strategy_factory_v2_from_specs",
+                side_effect=fake_run,
+            ):
+                cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
+                    [runner.RECENT_WHITEPAPER_SEEDS[0]]
+                )
+                compilation = runner.compile_whitepaper_candidate_specs(
+                    hypothesis_cards=cards,
+                    family_template_dir=Path("config/trading/families"),
+                    seed_sweep_dir=Path("config/trading"),
+                )
+                args = self._args(output_dir)
+                args.max_candidates = 24
+                args.max_frontier_candidates_per_spec = 64
+                args.max_total_frontier_candidates = 8
+                result = runner._run_real_replay(
+                    args,
+                    output_dir=output_dir,
+                    specs=compilation.executable_specs[:8],
+                )
+
+        self.assertEqual(captured_budget, [1])
+        self.assertEqual(len(result.evidence_bundles), 0)
+
     def test_real_replay_defaults_global_frontier_budget_to_candidate_budget(
         self,
     ) -> None:
@@ -6139,6 +6337,40 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             [2, 2, 2],
         )
         self.assertEqual([plan.args.top_k for plan in plans], [1, 1, 1])
+
+    def test_real_replay_shards_distribute_global_budget_across_one_spec_shards(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
+                [runner.RECENT_WHITEPAPER_SEEDS[0]]
+            )
+            compilation = runner.compile_whitepaper_candidate_specs(
+                hypothesis_cards=cards,
+                family_template_dir=Path("config/trading/families"),
+                seed_sweep_dir=Path("config/trading"),
+            )
+            specs = compilation.executable_specs[:8]
+            args = self._args(output_dir)
+            args.max_candidates = 24
+            args.top_k = 16
+            args.max_frontier_candidates_per_spec = 64
+            args.max_total_frontier_candidates = 8
+
+            plans = runner._build_real_replay_shards(
+                args=args,
+                output_dir=output_dir,
+                specs=specs,
+                shard_size=1,
+                shard_timeout_seconds=7,
+            )
+
+        self.assertEqual(len(plans), 8)
+        self.assertEqual(
+            [int(plan.args.max_total_frontier_candidates) for plan in plans],
+            [1] * 8,
+        )
 
     def test_real_replay_shards_runs_bounded_worker_pool(self) -> None:
         with TemporaryDirectory() as tmpdir:

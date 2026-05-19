@@ -10,6 +10,19 @@ from typing import Any, Literal, Mapping, Sequence, cast
 
 EVIDENCE_BUNDLE_SCHEMA_VERSION = "torghut.candidate-evidence-bundle.v1"
 VALID_COST_CALIBRATION_STATUSES = frozenset({"calibrated", "provisional"})
+REPLAY_ACTIVITY_SCORECARD_KEYS = (
+    "decision_count",
+    "trade_decision_count",
+    "paper_decision_count",
+    "runtime_decision_count",
+    "orders_submitted_count",
+    "submitted_order_count",
+    "filled_count",
+    "fill_count",
+    "filled_order_count",
+    "avg_filled_notional_per_day",
+    "daily_filled_notional",
+)
 
 
 def _stable_hash(payload: Mapping[str, Any]) -> str:
@@ -107,6 +120,7 @@ def evidence_bundle_from_frontier_candidate(
     candidate_id = _string(candidate.get("candidate_id")) or candidate_spec_id
     scorecard = _mapping(candidate.get("objective_scorecard"))
     full_window = _mapping(candidate.get("full_window"))
+    summary = _mapping(candidate.get("summary"))
     if not scorecard:
         scorecard = {
             "net_pnl_per_day": _string(full_window.get("net_per_day")),
@@ -115,6 +129,13 @@ def evidence_bundle_from_frontier_candidate(
             "best_day_share": _string(full_window.get("best_day_share")),
             "max_drawdown": _string(full_window.get("max_drawdown")),
         }
+    for key in REPLAY_ACTIVITY_SCORECARD_KEYS:
+        if key in scorecard:
+            continue
+        for source in (candidate, summary, full_window):
+            if key in source:
+                scorecard = {**scorecard, key: source[key]}
+                break
     daily_net = _mapping(full_window.get("daily_net"))
     if daily_net and "daily_net" not in scorecard:
         scorecard = {**scorecard, "daily_net": daily_net}

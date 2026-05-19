@@ -247,6 +247,57 @@ class TestCandidateSpecs(TestCase):
             "post_cost_nonlinear_impact",
         )
 
+    def test_intraday_volume_forecast_claim_adds_periodicity_capacity_contract(
+        self,
+    ) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-intraday-volume-forecast",
+            claims=[
+                {
+                    "claim_id": "intraday-volume-periodicity",
+                    "claim_type": "execution_assumption",
+                    "claim_text": (
+                        "Intraday volume forecasting and VWAP execution need "
+                        "u-shaped volume periodicity and clock-bucket capacity."
+                    ),
+                    "data_requirements": [
+                        "intraday_volume_forecast",
+                        "vwap",
+                        "route_tca",
+                    ],
+                    "confidence": "0.82",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+        first = specs[0]
+
+        self.assertIn(
+            "intraday_volume_periodicity_execution",
+            first.parameter_space["mechanism_overlay_ids"],
+        )
+        self.assertIn(
+            first.family_template_id,
+            {
+                "opening_drive_leader_reclaim_v1",
+                "late_day_continuation_v1",
+                "intraday_tsmom_v2",
+                "breakout_reclaim_v2",
+            },
+        )
+        self.assertTrue(first.hard_vetoes["required_intraday_volume_forecast"])
+        self.assertEqual(
+            first.hard_vetoes["required_min_volume_periodicity_capacity_ratio"],
+            "1.00",
+        )
+        self.assertTrue(first.promotion_contract["requires_clock_bucket_capacity"])
+        self.assertTrue(
+            first.promotion_contract["rejects_pooled_all_day_capacity_assumptions"]
+        )
+
     def test_execution_delay_depth_claim_adds_delay_adjusted_stress_contract(
         self,
     ) -> None:

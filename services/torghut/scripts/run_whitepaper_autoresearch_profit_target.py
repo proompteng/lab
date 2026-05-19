@@ -3097,12 +3097,50 @@ def _feedback_daily_net_has_loss(scorecard: Mapping[str, Any]) -> bool:
     )
 
 
+_REPLAY_ACTIVITY_COUNT_KEYS = (
+    "decision_count",
+    "trade_decision_count",
+    "paper_decision_count",
+    "runtime_decision_count",
+    "orders_submitted_count",
+    "submitted_order_count",
+    "filled_count",
+    "fill_count",
+    "filled_order_count",
+)
+
+
+def _feedback_has_no_replay_activity(scorecard: Mapping[str, Any]) -> bool:
+    explicit_activity = False
+    for key in _REPLAY_ACTIVITY_COUNT_KEYS:
+        if key not in scorecard:
+            continue
+        explicit_activity = True
+        if _decimal(scorecard.get(key)) > Decimal("0"):
+            return False
+    if "avg_filled_notional_per_day" in scorecard:
+        explicit_activity = True
+        if _decimal(scorecard.get("avg_filled_notional_per_day")) > Decimal("0"):
+            return False
+    daily_filled_notional = scorecard.get("daily_filled_notional")
+    if isinstance(daily_filled_notional, Mapping):
+        explicit_activity = True
+        if any(
+            _decimal(value) > Decimal("0")
+            for value in cast(Mapping[Any, Any], daily_filled_notional).values()
+        ):
+            return False
+    return explicit_activity
+
+
 def _feedback_family_prior_has_hard_block(
     scorecard: Mapping[str, Any],
     *,
     oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> bool:
     policy = oracle_policy or ProfitTargetOraclePolicy()
+    if _feedback_has_no_replay_activity(scorecard):
+        return True
     oracle_blockers = _oracle_blockers(scorecard)
     if oracle_blockers & _FAMILY_PRIOR_HARD_BLOCK_ORACLE_BLOCKERS:
         return True
@@ -3127,6 +3165,8 @@ def _feedback_risk_profile_has_penalty(
     oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> bool:
     policy = oracle_policy or ProfitTargetOraclePolicy()
+    if _feedback_has_no_replay_activity(scorecard):
+        return True
     oracle_blockers = _oracle_blockers(scorecard)
     if oracle_blockers & _RISK_PROFILE_FEEDBACK_ORACLE_BLOCKERS:
         return True
@@ -3167,6 +3207,8 @@ def _feedback_risk_profile_has_terminal_block(
 ) -> bool:
     if not scorecard:
         return False
+    if _feedback_has_no_replay_activity(scorecard):
+        return True
     policy = oracle_policy or ProfitTargetOraclePolicy()
     if not _feedback_risk_profile_has_penalty(scorecard, oracle_policy=policy):
         return False
@@ -3189,6 +3231,8 @@ def _feedback_has_policy_penalty(
     *,
     oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> bool:
+    if _feedback_has_no_replay_activity(scorecard):
+        return True
     return _feedback_risk_profile_has_penalty(
         scorecard, oracle_policy=oracle_policy
     ) or _feedback_daily_net_has_loss(scorecard)
@@ -3200,6 +3244,8 @@ def _feedback_is_blocked(
     oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> bool:
     policy = oracle_policy or ProfitTargetOraclePolicy()
+    if _feedback_has_no_replay_activity(scorecard):
+        return True
     if _feedback_scorecard_has_hard_veto(scorecard):
         return True
     if (
@@ -3552,6 +3598,10 @@ def _pre_replay_proposal_model_and_rows(
         has_policy_penalty = bundle is not None and _feedback_has_policy_penalty(
             bundle.objective_scorecard, oracle_policy=policy
         )
+        if bundle is not None and _feedback_has_no_replay_activity(
+            bundle.objective_scorecard
+        ):
+            return "pre_replay_mlx_no_activity_feedback_blocked"
         if source == "feedback_real_replay" and is_blocked:
             if bundle is not None and _feedback_has_nonpositive_expected_value(
                 bundle.objective_scorecard
@@ -3758,6 +3808,7 @@ _PRE_REPLAY_FEEDBACK_BLOCK_REASONS = frozenset(
         "pre_replay_mlx_risk_profile_feedback_blocked",
         "pre_replay_mlx_family_feedback_blocked",
         "pre_replay_mlx_false_negative_rescue_feedback_blocked",
+        "pre_replay_mlx_no_activity_feedback_blocked",
     }
 )
 _PRE_REPLAY_SELECTION_BLOCK_REASONS = frozenset(
@@ -3765,6 +3816,7 @@ _PRE_REPLAY_SELECTION_BLOCK_REASONS = frozenset(
         *_PRE_REPLAY_FEEDBACK_BLOCK_REASONS,
         "pre_replay_capital_budget_blocked",
         "pre_replay_mlx_synthetic_nonpositive_expected_value",
+        "pre_replay_synthetic_capacity_insufficient",
     }
 )
 
@@ -3827,6 +3879,14 @@ def _select_candidate_specs_for_replay(
         except (TypeError, ValueError):
             return 0
 
+    def proposal_feature(candidate_spec_id: str, key: str) -> Decimal:
+        features = _mapping(proposal_by_spec.get(candidate_spec_id, {}).get("features"))
+        return _decimal(features.get(key))
+
+    def proposal_has_feature(candidate_spec_id: str, key: str) -> bool:
+        features = _mapping(proposal_by_spec.get(candidate_spec_id, {}).get("features"))
+        return key in features
+
     def capital_blocked(spec: CandidateSpec) -> bool:
         features = capital_features_by_spec.get(spec.candidate_spec_id, {})
         oracle_policy = _mapping(
@@ -3863,6 +3923,14 @@ def _select_candidate_specs_for_replay(
             and proposal.get("proposal_score") is not None
             and score <= Decimal("0")
         ):
+            if proposal_has_feature(
+                spec.candidate_spec_id,
+                "configured_daily_notional_required_ratio",
+            ) and proposal_feature(
+                spec.candidate_spec_id,
+                "configured_daily_notional_required_ratio",
+            ) < Decimal("1"):
+                return "pre_replay_synthetic_capacity_insufficient"
             return "pre_replay_mlx_synthetic_nonpositive_expected_value"
         return ""
 
@@ -3942,6 +4010,8 @@ def _select_candidate_specs_for_replay(
         if is_feedback_block_reason(
             block_reason_by_spec.get(spec.candidate_spec_id, "")
         )
+        and block_reason_by_spec.get(spec.candidate_spec_id)
+        != "pre_replay_mlx_no_activity_feedback_blocked"
     ]
     rank_position_by_spec = {
         spec.candidate_spec_id: index for index, spec in enumerate(ordered, start=1)
@@ -4342,6 +4412,11 @@ def _select_candidate_specs_for_replay(
                 for reason in block_reason_by_spec.values()
                 if reason == "pre_replay_mlx_synthetic_nonpositive_expected_value"
             ),
+            "pre_replay_synthetic_capacity_insufficient_candidate_count": sum(
+                1
+                for reason in block_reason_by_spec.values()
+                if reason == "pre_replay_synthetic_capacity_insufficient"
+            ),
             "pre_replay_nonpositive_synthetic_exploration_count": len(
                 synthetic_prior_probe_exploration
             ),
@@ -4641,6 +4716,29 @@ def _run_real_replay(
         )
         for spec in specs
     ]
+    max_total_candidates_to_evaluate = max(
+        1,
+        int(
+            getattr(args, "max_total_frontier_candidates", 0)
+            or getattr(args, "max_candidates", 1)
+        ),
+    )
+    max_candidates_to_evaluate = int(
+        getattr(
+            args,
+            "max_frontier_candidates_per_spec",
+            _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
+        )
+    )
+    if source_specs:
+        per_spec_total_cap = max(
+            1,
+            (max_total_candidates_to_evaluate + len(source_specs) - 1)
+            // len(source_specs),
+        )
+        max_candidates_to_evaluate = max(
+            1, min(max_candidates_to_evaluate, per_spec_total_cap)
+        )
     factory_args = argparse.Namespace(
         output_dir=output_dir / "strategy-factory",
         experiment_id=[],
@@ -4668,18 +4766,8 @@ def _run_real_replay(
             getattr(args, "collect_train_gate_diagnostics", True)
         ),
         top_n=args.top_k,
-        max_candidates_to_evaluate=getattr(
-            args,
-            "max_frontier_candidates_per_spec",
-            _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
-        ),
-        max_total_candidates_to_evaluate=max(
-            1,
-            int(
-                getattr(args, "max_total_frontier_candidates", 0)
-                or getattr(args, "max_candidates", 1)
-            ),
-        ),
+        max_candidates_to_evaluate=max_candidates_to_evaluate,
+        max_total_candidates_to_evaluate=max_total_candidates_to_evaluate,
         persist_results=args.persist_results,
     )
     factory_payload = (
@@ -4717,8 +4805,11 @@ def _real_replay_result_from_factory_payload(
         )
         dataset_snapshot_id = str(item.get("dataset_snapshot_id") or "")
         experiment_promotion_readiness = item.get("promotion_readiness")
+        replay_summary = _mapping(result_payload.get("summary"))
         for frontier_candidate in top:
             candidate = dict(frontier_candidate)
+            if replay_summary and "summary" not in candidate:
+                candidate["summary"] = replay_summary
             candidate_spec_id = experiment_spec_id or _string(
                 candidate.get("candidate_spec_id")
             )
@@ -4909,14 +5000,20 @@ def _build_real_replay_shards(
             or getattr(args, "max_candidates", 1)
         ),
     )
+    per_spec_total_frontier_cap = max(
+        1,
+        (configured_total_frontier_budget + len(ordered_specs) - 1)
+        // max(1, len(ordered_specs)),
+    )
     plans: list[_ReplayShardPlan] = []
     for shard_index, start in enumerate(
         range(0, len(ordered_specs), bounded_shard_size), start=1
     ):
         shard_specs = tuple(ordered_specs[start : start + bounded_shard_size])
-        shard_frontier_budget = min(
-            configured_total_frontier_budget,
-            max(1, len(shard_specs) * max_frontier_candidates_per_spec),
+        shard_frontier_budget = max(
+            1,
+            len(shard_specs)
+            * min(max_frontier_candidates_per_spec, per_spec_total_frontier_cap),
         )
         shard_args = argparse.Namespace(
             **{

@@ -117,6 +117,7 @@ class TestMlxTrainingData(TestCase):
 
         self.assertEqual(features["max_entries_per_session"], 12.0)
         self.assertEqual(features["estimated_capital_slot_count"], 1.0)
+        self.assertEqual(features["configured_daily_notional_capacity"], 180000.0)
         self.assertLessEqual(
             features["estimated_max_gross_exposure_pct_equity"],
             1.0,
@@ -198,7 +199,7 @@ class TestMlxTrainingData(TestCase):
                 candidate={
                     "candidate_id": "cand-1",
                     "objective_scorecard": {
-                        "net_pnl_per_day": "500",
+                        "net_pnl_per_day": "3000",
                         "active_day_ratio": "1.0",
                         "positive_day_ratio": "1.0",
                         "negative_day_count": 0,
@@ -208,17 +209,17 @@ class TestMlxTrainingData(TestCase):
                         "market_impact_stress_passed": True,
                         "market_impact_stress_artifact_ref": "/tmp/impact.json",
                         "market_impact_liquidity_evidence_present": True,
-                        "market_impact_stress_net_pnl_per_day": "500",
+                        "market_impact_stress_net_pnl_per_day": "3000",
                         "delay_adjusted_depth_stress_passed": True,
                         "delay_adjusted_depth_stress_artifact_ref": "/tmp/depth.json",
                         "delay_adjusted_depth_fillable_notional_per_day": "300000",
-                        "delay_adjusted_depth_stress_net_pnl_per_day": "500",
+                        "delay_adjusted_depth_stress_net_pnl_per_day": "3000",
                         "double_oos_passed": True,
                         "double_oos_artifact_ref": "/tmp/oos.json",
                         "double_oos_independent_window_count": 2,
                         "double_oos_pass_rate": "1",
-                        "double_oos_net_pnl_per_day": "500",
-                        "double_oos_cost_shock_net_pnl_per_day": "500",
+                        "double_oos_net_pnl_per_day": "3000",
+                        "double_oos_cost_shock_net_pnl_per_day": "3000",
                     },
                 },
                 dataset_snapshot_id="snapshot-1",
@@ -503,6 +504,95 @@ class TestMlxTrainingData(TestCase):
         self.assertLess(
             row_by_spec[cost_killed.candidate_spec_id].target,
             row_by_spec[efficient.candidate_spec_id].target - 500.0,
+        )
+
+    def test_training_rows_penalize_configured_daily_notional_shortfall(self) -> None:
+        base_kwargs = {
+            "schema_version": "torghut.candidate-spec.v1",
+            "hypothesis_id": "H-CAPACITY",
+            "family_template_id": "breakout_reclaim_v2",
+            "candidate_kind": "configuration",
+            "runtime_family": "breakout_continuation_consistent",
+            "runtime_strategy_name": "breakout-continuation-long-v1",
+            "feature_contract": {},
+            "parameter_space": {},
+            "strategy_overrides": {
+                "max_position_pct_equity": "0.25",
+                "params": {
+                    "max_entries_per_session": "2",
+                    "top_n": "1",
+                    "max_gross_exposure_pct_equity": "1.0",
+                },
+            },
+            "objective": {"target_net_pnl_per_day": "500"},
+            "hard_vetoes": {"required_min_daily_notional": "300000"},
+            "expected_failure_modes": (),
+            "promotion_contract": {},
+        }
+        low_capacity = CandidateSpec(
+            candidate_spec_id="spec-low-capacity",
+            **{
+                **base_kwargs,
+                "strategy_overrides": {
+                    **base_kwargs["strategy_overrides"],
+                    "max_notional_per_trade": "10000",
+                },
+            },
+        )
+        full_capacity = CandidateSpec(
+            candidate_spec_id="spec-full-capacity",
+            **{
+                **base_kwargs,
+                "hypothesis_id": "H-CAPACITY-FULL",
+                "strategy_overrides": {
+                    **base_kwargs["strategy_overrides"],
+                    "max_notional_per_trade": "30000",
+                    "params": {
+                        **base_kwargs["strategy_overrides"]["params"],
+                        "max_entries_per_session": "10",
+                    },
+                },
+            },
+        )
+        bundles = [
+            evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=spec.candidate_spec_id,
+                candidate={
+                    "candidate_id": f"cand-{spec.candidate_spec_id}",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "25",
+                        "active_day_ratio": "1",
+                        "positive_day_ratio": "1",
+                        "negative_day_count": 0,
+                        "avg_filled_notional_per_day": "300000",
+                        "hard_vetoes": [],
+                    },
+                },
+                dataset_snapshot_id=f"snapshot-{spec.candidate_spec_id}",
+                result_path=f"/tmp/{spec.candidate_spec_id}.json",
+            )
+            for spec in (low_capacity, full_capacity)
+        ]
+
+        rows = build_mlx_training_rows(
+            candidate_specs=[low_capacity, full_capacity],
+            evidence_bundles=bundles,
+        )
+        row_by_spec = {row.candidate_spec_id: row for row in rows}
+        low_payload = row_by_spec[low_capacity.candidate_spec_id].to_payload()
+        full_payload = row_by_spec[full_capacity.candidate_spec_id].to_payload()
+
+        self.assertEqual(
+            low_payload["features"]["configured_daily_notional_required_ratio"],
+            20000.0 / 300000.0,
+        )
+        self.assertEqual(
+            full_payload["features"]["configured_daily_notional_required_ratio"],
+            1.0,
+        )
+        self.assertLess(
+            row_by_spec[low_capacity.candidate_spec_id].target,
+            row_by_spec[full_capacity.candidate_spec_id].target - 650.0,
         )
 
     def test_training_rows_penalize_missing_execution_proof_feedback(self) -> None:
