@@ -407,7 +407,7 @@ const resolveAgentRunReferences = (domain: MarketContextProviderDomain) =>
         implementationSpecName: 'torghut-market-context-news-v1',
       }
 
-export const buildMarketContextAgentRun = (params: {
+type MarketContextAgentRunPayloadParams = {
   symbol: string
   domain: MarketContextProviderDomain
   snapshotState: MarketContextSnapshotState
@@ -415,86 +415,63 @@ export const buildMarketContextAgentRun = (params: {
   requestId: string
   now: Date
   settings: MarketContextDispatchSettings
-}) => {
+}
+
+export const buildMarketContextAgentRunPayload = (params: MarketContextAgentRunPayloadParams) => {
   const refs = resolveAgentRunReferences(params.domain)
   const symbolName = params.symbol.toLowerCase().replace(/[^a-z0-9-]+/g, '-')
   return {
-    apiVersion: 'agents.proompteng.ai/v1alpha1',
-    kind: 'AgentRun',
+    namespace: params.settings.onDemandDispatchNamespace,
     metadata: {
       generateName: `torghut-market-context-${params.domain}-${symbolName}-`,
-      namespace: params.settings.onDemandDispatchNamespace,
       labels: {
         'torghut.proompteng.ai/purpose': 'market-context-on-demand',
         'torghut.proompteng.ai/domain': params.domain,
         'torghut.proompteng.ai/symbol': symbolName,
       },
     },
-    spec: {
-      agentRef: { name: refs.agentName },
-      implementationSpecRef: { name: refs.implementationSpecName },
-      runtime: {
-        type: 'job',
-        config: {
-          serviceAccountName: params.settings.onDemandDispatchServiceAccountName,
-          priorityClassName: params.settings.onDemandDispatchPriorityClassName,
-        },
-      },
-      ttlSecondsAfterFinished: params.settings.onDemandDispatchTtlSeconds,
-      vcsRef: {
-        name: params.settings.onDemandDispatchVcsRefName,
-      },
-      vcsPolicy: {
-        required: true,
-        mode: 'read-only',
-      },
-      workload: {
-        resources: {
-          requests: {
-            cpu: '100m',
-            memory: '256Mi',
-          },
-          limits: {
-            cpu: '750m',
-            memory: '1Gi',
-          },
-        },
-      },
-      parameters: {
-        executionMode: 'batch_task',
-        symbol: params.symbol,
-        domain: params.domain,
-        asOfUtc: toIso(params.now),
-        reason: `on_demand_${params.snapshotState}_snapshot_refresh`,
-        provider: params.provider,
-        callbackUrl: params.settings.onDemandDispatchCallbackUrl,
-        requestId: params.requestId,
-        repository: params.settings.onDemandDispatchRepository,
-        base: params.settings.onDemandDispatchBaseBranch,
-        head: params.settings.onDemandDispatchHeadBranch,
+    agentRef: { name: refs.agentName },
+    implementationSpecRef: { name: refs.implementationSpecName },
+    runtime: {
+      type: 'job',
+      config: {
+        serviceAccountName: params.settings.onDemandDispatchServiceAccountName,
+        priorityClassName: params.settings.onDemandDispatchPriorityClassName,
       },
     },
-  }
-}
-
-export const buildMarketContextAgentRunPayload = (params: Parameters<typeof buildMarketContextAgentRun>[0]) => {
-  const resource = buildMarketContextAgentRun(params)
-  const metadata = coercePayload(resource.metadata)
-  const spec = coercePayload(resource.spec)
-  return {
-    namespace: parseNonEmptyString(metadata.namespace) ?? params.settings.onDemandDispatchNamespace,
-    metadata: {
-      generateName: parseNonEmptyString(metadata.generateName) ?? undefined,
-      labels: coercePayload(metadata.labels),
+    ttlSecondsAfterFinished: params.settings.onDemandDispatchTtlSeconds,
+    vcsRef: {
+      name: params.settings.onDemandDispatchVcsRefName,
     },
-    agentRef: coercePayload(spec.agentRef),
-    implementationSpecRef: coercePayload(spec.implementationSpecRef),
-    runtime: coercePayload(spec.runtime),
-    ttlSecondsAfterFinished: spec.ttlSecondsAfterFinished,
-    vcsRef: coercePayload(spec.vcsRef),
-    vcsPolicy: coercePayload(spec.vcsPolicy),
-    workload: coercePayload(spec.workload),
-    parameters: coercePayload(spec.parameters),
+    vcsPolicy: {
+      required: true,
+      mode: 'read-only',
+    },
+    workload: {
+      resources: {
+        requests: {
+          cpu: '100m',
+          memory: '256Mi',
+        },
+        limits: {
+          cpu: '750m',
+          memory: '1Gi',
+        },
+      },
+    },
+    parameters: {
+      executionMode: 'batch_task',
+      symbol: params.symbol,
+      domain: params.domain,
+      asOfUtc: toIso(params.now),
+      reason: `on_demand_${params.snapshotState}_snapshot_refresh`,
+      provider: params.provider,
+      callbackUrl: params.settings.onDemandDispatchCallbackUrl,
+      requestId: params.requestId,
+      repository: params.settings.onDemandDispatchRepository,
+      base: params.settings.onDemandDispatchBaseBranch,
+      head: params.settings.onDemandDispatchHeadBranch,
+    },
   }
 }
 

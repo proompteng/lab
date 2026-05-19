@@ -121,12 +121,6 @@ export const resolveStageTargetRef = (stageSpec: Record<string, unknown>, defaul
   return { kind, name, namespace } satisfies StageTargetRef
 }
 
-export const resolveStageApiVersion = (kind: string) => {
-  if (kind === 'AgentRun') return 'agents.proompteng.ai/v1alpha1'
-  if (kind === 'OrchestrationRun') return 'orchestration.proompteng.ai/v1alpha1'
-  return ''
-}
-
 export const stageScheduleName = (swarmName: string, stage: StageName) => makeHashedName(swarmName, `${stage}-sched`)
 
 export const getRunTimestamp = (resource: Record<string, unknown>) => {

@@ -173,10 +173,10 @@ describe('torghut market-context agent helpers', () => {
     expect(decision.reason).toBe('stale_snapshot_refresh')
   })
 
-  it('builds on-demand market-context AgentRuns as repository-bound batch tasks', async () => {
-    const { buildMarketContextAgentRun } = await import('../torghut-market-context-dispatch')
+  it('builds on-demand market-context AgentRun API payloads as repository-bound batch tasks', async () => {
+    const { buildMarketContextAgentRunPayload } = await import('../torghut-market-context-dispatch')
 
-    const agentRun = buildMarketContextAgentRun({
+    const payload = buildMarketContextAgentRunPayload({
       symbol: 'NVDA',
       domain: 'news',
       snapshotState: 'stale',
@@ -201,9 +201,9 @@ describe('torghut market-context agent helpers', () => {
       },
     })
 
-    expect(agentRun.spec.vcsRef).toEqual({ name: 'github' })
-    expect(agentRun.spec.vcsPolicy).toEqual({ required: true, mode: 'read-only' })
-    expect(agentRun.spec.parameters).toMatchObject({
+    expect(payload.vcsRef).toEqual({ name: 'github' })
+    expect(payload.vcsPolicy).toEqual({ required: true, mode: 'read-only' })
+    expect(payload.parameters).toMatchObject({
       executionMode: 'batch_task',
       symbol: 'NVDA',
       domain: 'news',
@@ -215,7 +215,7 @@ describe('torghut market-context agent helpers', () => {
       base: 'main',
       head: 'main',
     })
-    expect(agentRun.spec.parameters).not.toHaveProperty('tradingStatusUrl')
+    expect(payload.parameters).not.toHaveProperty('tradingStatusUrl')
   })
 
   it('submits on-demand market-context AgentRuns through the Agents service boundary', async () => {
@@ -425,10 +425,10 @@ describe('torghut market-context agent helpers', () => {
     expect(decision.runName).toBe('torghut-market-context-fundamentals-nvda-abcde')
   })
 
-  it('builds market-context AgentRuns with repository metadata for the provider runner', async () => {
-    const { buildMarketContextAgentRun } = await import('../torghut-market-context-dispatch')
+  it('builds market-context AgentRun API payloads with repository metadata for the provider runner', async () => {
+    const { buildMarketContextAgentRunPayload } = await import('../torghut-market-context-dispatch')
 
-    const agentRun = buildMarketContextAgentRun({
+    const payload = buildMarketContextAgentRunPayload({
       symbol: 'ORCL',
       domain: 'fundamentals',
       snapshotState: 'missing',
@@ -453,9 +453,9 @@ describe('torghut market-context agent helpers', () => {
       },
     })
 
-    expect(agentRun.spec.vcsRef).toEqual({ name: 'github' })
-    expect(agentRun.spec.vcsPolicy).toEqual({ required: true, mode: 'read-only' })
-    expect(agentRun.spec.parameters).toMatchObject({
+    expect(payload.vcsRef).toEqual({ name: 'github' })
+    expect(payload.vcsPolicy).toEqual({ required: true, mode: 'read-only' })
+    expect(payload.parameters).toMatchObject({
       symbol: 'ORCL',
       domain: 'fundamentals',
       repository: 'proompteng/lab',

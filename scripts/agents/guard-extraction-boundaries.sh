@@ -73,8 +73,8 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/codex-judge-config.ts"
 
 fail_if_matches \
-  "Jangar market-context dispatch must submit AgentRuns through the Agents service boundary, not direct Kubernetes apply" \
-  'createKubernetesClient|RESOURCE_MAP\.AgentRun|\.apply\(' \
+  "Jangar market-context dispatch must submit AgentRuns through the Agents service boundary, not direct Kubernetes apply or raw CRD schemas" \
+  "createKubernetesClient|RESOURCE_MAP\\.AgentRun|\\.apply\\(|agents\\.proompteng\\.ai/v1alpha1|kind: 'AgentRun'|kind: \"AgentRun\"" \
   "${ROOT_DIR}/services/jangar/src/server/torghut-market-context-dispatch.ts"
 
 fail_if_matches \
@@ -89,7 +89,7 @@ fail_if_matches \
 
 fail_if_matches \
   "Jangar swarm analysis must read AgentRun and OrchestrationRun targets through the Agents service boundary" \
-  'createKubernetesClient|RESOURCE_MAP\.(AgentRun|OrchestrationRun)' \
+  'createKubernetesClient|RESOURCE_MAP\.(AgentRun|OrchestrationRun)|agents\.proompteng\.ai/v1alpha1|orchestration\.proompteng\.ai/v1alpha1' \
   "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-swarm-analysis.ts"
 
 fail_if_matches \
