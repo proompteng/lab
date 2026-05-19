@@ -316,7 +316,7 @@ describe('scheduled AgentRun templates', () => {
     const manifestPaths = [
       'argocd/applications/agents/swarm-agentrun-templates.yaml',
       'argocd/applications/agents/swarm-instances.yaml',
-      'argocd/applications/agents/torghut-market-context-batch.yaml',
+      'argocd/applications/torghut/agents-domain/torghut-market-context-batch.yaml',
     ]
     const manifests = manifestPaths.flatMap(readYamlObjects)
     const scheduledTemplateNames = new Set<string>()
