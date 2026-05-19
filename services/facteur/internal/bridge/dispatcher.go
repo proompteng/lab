@@ -31,7 +31,6 @@ type DispatchRequest struct {
 // DispatchResult captures AgentRun submission metadata to echo back to Discord.
 type DispatchResult struct {
 	Namespace     string
-	WorkflowName  string
 	AgentRunName  string
 	Message       string
 	CorrelationID string
@@ -40,11 +39,10 @@ type DispatchResult struct {
 
 // StatusReport summarises the configured Agents dispatch target.
 type StatusReport struct {
-	Namespace        string
-	WorkflowTemplate string
-	AgentName        string
-	Ready            bool
-	Message          string
+	Namespace string
+	AgentName string
+	Ready     bool
+	Message   string
 }
 
 // Dispatcher bridges Discord command handlers to the Agents service.
@@ -191,7 +189,6 @@ func (d *AgentRunDispatcher) Dispatch(ctx context.Context, req DispatchRequest) 
 
 	return DispatchResult{
 		Namespace:     result.Namespace,
-		WorkflowName:  result.AgentRunName,
 		AgentRunName:  result.AgentRunName,
 		Message:       message,
 		CorrelationID: correlationID,

@@ -132,9 +132,6 @@ func NewServeCommand() *cobra.Command {
 					TTLSecondsAfterFinished: cfg.Implementer.TTLSecondsAfterFinished,
 				}
 
-				for k, v := range cfg.Argo.Parameters {
-					implementerCfg.Parameters[k] = v
-				}
 				for k, v := range cfg.Implementer.Parameters {
 					implementerCfg.Parameters[k] = v
 				}

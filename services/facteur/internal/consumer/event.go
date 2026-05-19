@@ -102,13 +102,8 @@ func ProcessEvent(ctx context.Context, event *facteurpb.CommandEvent, dispatcher
 		}
 	}
 
-	runName := result.AgentRunName
-	if runName == "" {
-		runName = result.WorkflowName
-	}
-
 	span.SetAttributes(
-		attribute.String("facteur.agentrun_name", runName),
+		attribute.String("facteur.agentrun_name", result.AgentRunName),
 		attribute.String("facteur.agentrun_namespace", result.Namespace),
 	)
 	if result.CorrelationID != "" {

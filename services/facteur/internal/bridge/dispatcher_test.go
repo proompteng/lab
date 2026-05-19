@@ -41,7 +41,6 @@ func TestAgentRunDispatcherDispatch(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, "codex-agent-123", result.AgentRunName)
-	require.Equal(t, "codex-agent-123", result.WorkflowName)
 	require.Equal(t, "corr-123", result.CorrelationID)
 	require.Equal(t, "trace-456", result.TraceID)
 	require.Contains(t, result.Message, "AgentRun `codex-agent-123`")

@@ -15,7 +15,7 @@ import (
 func TestHandler_Dispatch(t *testing.T) {
 	ctx := context.Background()
 	fake := &fakeDispatcher{
-		dispatchResult: bridge.DispatchResult{Namespace: "agents", AgentRunName: "codex-agent-123", WorkflowName: "codex-agent-123", Message: "AgentRun codex-agent-123 queued."},
+		dispatchResult: bridge.DispatchResult{Namespace: "agents", AgentRunName: "codex-agent-123", Message: "AgentRun codex-agent-123 queued."},
 	}
 
 	handler, err := discord.NewHandler(map[string][]string{
@@ -109,7 +109,6 @@ func TestHandler_DispatchPersistsSession(t *testing.T) {
 		dispatchResult: bridge.DispatchResult{
 			Namespace:     "agents",
 			AgentRunName:  "codex-agent-123",
-			WorkflowName:  "codex-agent-123",
 			CorrelationID: "corr-123",
 		},
 	}

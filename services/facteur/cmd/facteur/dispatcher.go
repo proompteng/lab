@@ -19,17 +19,12 @@ func buildDispatcher(cfg *config.Config) (bridge.Dispatcher, agents.Submitter, e
 		return nil, nil, err
 	}
 
-	parameters := cloneStringMap(cfg.Argo.Parameters)
-	for k, v := range cfg.Implementer.Parameters {
-		parameters[k] = v
-	}
-
 	dispatcher, err := bridge.NewDispatcher(submitter, submitter, bridge.ServiceConfig{
 		Namespace:               cfg.Implementer.Namespace,
 		AgentName:               cfg.Implementer.AgentName,
 		RuntimeType:             cfg.Implementer.RuntimeType,
 		RuntimeConfig:           cfg.Implementer.RuntimeConfig,
-		Parameters:              parameters,
+		Parameters:              cloneStringMap(cfg.Implementer.Parameters),
 		Secrets:                 cfg.Implementer.Secrets,
 		SecretBindingRef:        cfg.Implementer.SecretBindingRef,
 		VCSProvider:             cfg.Implementer.VCSProvider,

@@ -14,7 +14,7 @@ import (
 )
 
 func TestProcessEventPersistsSession(t *testing.T) {
-	dispatcher := &stubDispatcher{result: bridge.DispatchResult{Namespace: "agents", AgentRunName: "codex-agent-123", WorkflowName: "codex-agent-123"}}
+	dispatcher := &stubDispatcher{result: bridge.DispatchResult{Namespace: "agents", AgentRunName: "codex-agent-123"}}
 	store := &stubStore{}
 
 	result, err := consumer.ProcessEvent(context.Background(), &facteurpb.CommandEvent{
@@ -32,7 +32,7 @@ func TestProcessEventPersistsSession(t *testing.T) {
 }
 
 func TestProcessEventDefaultsCorrelation(t *testing.T) {
-	dispatcher := &stubDispatcher{result: bridge.DispatchResult{Namespace: "agents", AgentRunName: "codex-agent-123", WorkflowName: "codex-agent-123"}}
+	dispatcher := &stubDispatcher{result: bridge.DispatchResult{Namespace: "agents", AgentRunName: "codex-agent-123"}}
 	store := &stubStore{}
 
 	result, err := consumer.ProcessEvent(context.Background(), &facteurpb.CommandEvent{

@@ -13,6 +13,7 @@ fail_if_matches() {
   if rg -n \
     --glob '!**/__tests__/**' \
     --glob '!**/*.test.*' \
+    --glob '!**/*_test.go' \
     --glob '!guard-extraction-boundaries.sh' \
     "${pattern}" \
     "$@"; then
@@ -76,6 +77,15 @@ fail_if_matches \
   "Facteur must dispatch Codex work through Agents AgentRuns, not direct runner WorkflowTemplates" \
   'kind: WorkflowTemplate|agents-codex-runner|agent-runner --spec|facteur-workflow|FACTEUR_ARGO_|facteur-dispatch' \
   "${ROOT_DIR}/argocd/applications/facteur"
+
+fail_if_matches \
+  "Facteur dispatch surfaces must expose Agents AgentRun names, not Argo workflow aliases" \
+  'ArgoConfig|cfg\.Argo|WorkflowName|WorkflowTemplate|workflowName|workflow_name|argo\.parameters' \
+  "${ROOT_DIR}/services/facteur/cmd" \
+  "${ROOT_DIR}/services/facteur/internal" \
+  "${ROOT_DIR}/services/facteur/config" \
+  "${ROOT_DIR}/proto/proompteng/facteur/v1/contract.proto" \
+  "${ROOT_DIR}/apps/froussard/src/proto/proompteng/facteur/v1/contract_pb.ts"
 
 fail_if_matches \
   "Froussard GitOps must not ship legacy Codex implementation WorkflowTemplates" \

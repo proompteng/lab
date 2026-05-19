@@ -68,13 +68,13 @@ func TestCommandEventAccessors(t *testing.T) {
 
 	result := &DispatchResult{
 		Namespace:     "argo",
-		WorkflowName:  "workflow",
+		AgentRunName:  "codex-agent-run",
 		Message:       "ok",
 		CorrelationId: "corr",
 		TraceId:       "trace",
 	}
 	require.Equal(t, "argo", result.GetNamespace())
-	require.Equal(t, "workflow", result.GetWorkflowName())
+	require.Equal(t, "codex-agent-run", result.GetAgentRunName())
 	require.Equal(t, "ok", result.GetMessage())
 	require.Equal(t, "corr", result.GetCorrelationId())
 	require.Equal(t, "trace", result.GetTraceId())

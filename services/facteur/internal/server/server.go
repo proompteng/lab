@@ -220,15 +220,10 @@ func registerRoutes(app *fiber.App, opts Options) {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "dispatch failed"})
 		}
 
-		runName := result.AgentRunName
-		if runName == "" {
-			runName = result.WorkflowName
-		}
-		log.Printf("event dispatch succeeded: command=%s agentrun=%s namespace=%s correlation=%s trace=%s", event.GetCommand(), runName, result.Namespace, result.CorrelationID, event.GetTraceId())
+		log.Printf("event dispatch succeeded: command=%s agentrun=%s namespace=%s correlation=%s trace=%s", event.GetCommand(), result.AgentRunName, result.Namespace, result.CorrelationID, event.GetTraceId())
 
 		return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
-			"agentRunName":  runName,
-			"workflowName":  runName,
+			"agentRunName":  result.AgentRunName,
 			"namespace":     result.Namespace,
 			"correlationId": result.CorrelationID,
 		})

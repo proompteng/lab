@@ -12,7 +12,6 @@ import (
 type Config struct {
 	Discord     DiscordConfig       `mapstructure:"discord"`
 	Redis       RedisConfig         `mapstructure:"redis"`
-	Argo        ArgoConfig          `mapstructure:"argo"`
 	RoleMap     map[string][]string `mapstructure:"role_map"`
 	Server      ServerConfig        `mapstructure:"server"`
 	Codex       CodexListenerConfig `mapstructure:"codex_listener"`
@@ -31,14 +30,6 @@ type DiscordConfig struct {
 // RedisConfig identifies the Redis DSN for session storage.
 type RedisConfig struct {
 	URL string `mapstructure:"url"`
-}
-
-// ArgoConfig contains legacy workflow settings accepted only as compatibility aliases.
-type ArgoConfig struct {
-	Namespace        string            `mapstructure:"namespace"`
-	WorkflowTemplate string            `mapstructure:"workflow_template"`
-	ServiceAccount   string            `mapstructure:"service_account"`
-	Parameters       map[string]string `mapstructure:"parameters"`
 }
 
 // ImplementerConfig controls Facteur-led Codex implementation orchestration behaviour.
@@ -124,10 +115,6 @@ func LoadWithOptions(opts Options) (*Config, error) {
 		{key: "discord.guild_id"},
 		{key: "redis.url"},
 		{key: "postgres.dsn"},
-		{key: "argo.namespace"},
-		{key: "argo.workflow_template"},
-		{key: "argo.service_account"},
-		{key: "argo.parameters"},
 		{key: "role_map"},
 		{key: "server.listen_address"},
 		{key: "codex_listener.enabled"},
@@ -194,9 +181,6 @@ func LoadWithOptions(opts Options) (*Config, error) {
 func normaliseConfig(cfg *Config) {
 	if cfg.RoleMap == nil {
 		cfg.RoleMap = map[string][]string{}
-	}
-	if cfg.Argo.Parameters == nil {
-		cfg.Argo.Parameters = map[string]string{}
 	}
 	if cfg.Implementer.Parameters == nil {
 		cfg.Implementer.Parameters = map[string]string{}

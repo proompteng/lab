@@ -44,7 +44,7 @@ message Response {
 
 message DispatchResult {
   string namespace = 1;
-  string workflow_name = 2;
+  string agent_run_name = 2;
   string message = 3;
   string correlation_id = 4;
   string trace_id = 5;

@@ -22,7 +22,7 @@ import (
 )
 
 func TestEventsEndpointDispatches(t *testing.T) {
-	dispatcher := &stubDispatcher{result: bridge.DispatchResult{Namespace: "agents", AgentRunName: "codex-agent-123", WorkflowName: "codex-agent-123", CorrelationID: "corr-1"}}
+	dispatcher := &stubDispatcher{result: bridge.DispatchResult{Namespace: "agents", AgentRunName: "codex-agent-123", CorrelationID: "corr-1"}}
 	store := &stubStore{}
 
 	srv, err := server.New(server.Options{Dispatcher: dispatcher, Store: store, SessionTTL: time.Minute})
@@ -48,11 +48,11 @@ func TestEventsEndpointDispatches(t *testing.T) {
 	var body map[string]any
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 	require.Equal(t, "codex-agent-123", body["agentRunName"])
-	require.Equal(t, "codex-agent-123", body["workflowName"])
+	require.NotContains(t, body, "workflowName")
 }
 
 func TestEventsEndpointLogsMetadata(t *testing.T) {
-	dispatcher := &stubDispatcher{result: bridge.DispatchResult{Namespace: "agents", AgentRunName: "codex-agent-123", WorkflowName: "codex-agent-123", CorrelationID: "corr-1"}}
+	dispatcher := &stubDispatcher{result: bridge.DispatchResult{Namespace: "agents", AgentRunName: "codex-agent-123", CorrelationID: "corr-1"}}
 	store := &stubStore{}
 
 	srv, err := server.New(server.Options{Dispatcher: dispatcher, Store: store, SessionTTL: time.Minute})
