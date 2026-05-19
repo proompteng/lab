@@ -1,9 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
-import {
-  postMemoryQueriesHandler as postMemoryQueriesServiceHandler,
-  type MemoryQueriesApiDependencies,
-} from '@proompteng/agents/routes/v1/memory-queries'
-import '~/server/agents-v1-runtime'
+import { proxyAgentsServiceRequest } from '~/server/agents-service-proxy'
+
+const AGENTS_SERVICE_PATH = '/v1/memory-queries'
 
 export const Route = createFileRoute('/v1/memory-queries')({
   server: {
@@ -13,7 +11,5 @@ export const Route = createFileRoute('/v1/memory-queries')({
   },
 })
 
-type JangarMemoryQueriesApiDependencies = Partial<MemoryQueriesApiDependencies>
-
-export const postMemoryQueriesHandler = async (request: Request, deps: JangarMemoryQueriesApiDependencies = {}) =>
-  postMemoryQueriesServiceHandler(request, deps)
+export const postMemoryQueriesHandler = async (request: Request, _deps: unknown = {}) =>
+  proxyAgentsServiceRequest(request, AGENTS_SERVICE_PATH)

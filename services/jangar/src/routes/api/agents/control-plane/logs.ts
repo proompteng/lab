@@ -1,12 +1,12 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { proxyAgentsServiceRequest } from '~/server/agents-service-proxy'
+
+const AGENTS_SERVICE_PATH = '/api/agents/control-plane/logs'
 
 export const Route = createFileRoute('/api/agents/control-plane/logs')({
   server: {
     handlers: {
-      GET: async ({ request }: JangarServerRouteArgs) => {
-        const { getAgentRunLogs } = await import('@proompteng/agents/routes/api/agents/control-plane/logs')
-        return getAgentRunLogs(request)
-      },
+      GET: async ({ request }: JangarServerRouteArgs) => proxyAgentsServiceRequest(request, AGENTS_SERVICE_PATH),
     },
   },
 })

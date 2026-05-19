@@ -70,6 +70,8 @@ spec:
               value: "32"
             - name: JANGAR_BUMBA_TASK_QUEUE
               value: jangar
+            - name: AGENTS_SERVICE_BASE_URL
+              value: http://agents.agents.svc.cluster.local
             - name: TEMPORAL_OTEL_ENABLED
               value: "true"
             - name: TEMPORAL_METRICS_EXPORTER

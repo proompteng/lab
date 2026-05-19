@@ -1,9 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import {
-  getOrchestrationRunHandler as getOrchestrationRunServiceHandler,
-  type OrchestrationRunReadDependencies,
-} from '@proompteng/agents/routes/v1/orchestration-runs/$id'
-import '~/server/agents-v1-runtime'
+import { proxyAgentsServiceRequest } from '~/server/agents-service-proxy'
 
 export const Route = createFileRoute('/v1/orchestration-runs/$id')({
   server: {
@@ -13,10 +9,5 @@ export const Route = createFileRoute('/v1/orchestration-runs/$id')({
   },
 })
 
-type JangarOrchestrationRunReadDependencies = Partial<OrchestrationRunReadDependencies>
-
-export const getOrchestrationRunHandler = async (
-  id: string,
-  request: Request,
-  deps: JangarOrchestrationRunReadDependencies = {},
-) => getOrchestrationRunServiceHandler(id, request, deps)
+export const getOrchestrationRunHandler = async (id: string, request: Request, _deps: unknown = {}) =>
+  proxyAgentsServiceRequest(request, `/v1/orchestration-runs/${encodeURIComponent(id)}`)
