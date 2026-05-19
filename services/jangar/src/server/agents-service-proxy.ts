@@ -76,6 +76,37 @@ export type AgentsOrchestrationRunSubmitter = (
   input: AgentsOrchestrationRunSubmitInput,
 ) => Promise<AgentsOrchestrationRunSubmitResult>
 
+export type AgentsAgentMessageInput = {
+  workflowUid: string | null
+  workflowName: string | null
+  workflowNamespace: string | null
+  runId: string | null
+  stepId: string | null
+  agentId: string | null
+  role: string
+  kind: string
+  timestamp: string | Date
+  channel: string | null
+  stage: string | null
+  content: string
+  attrs?: Record<string, unknown>
+  dedupeKey?: string | null
+}
+
+export type AgentsAgentMessagesSubmitInput = {
+  messages: AgentsAgentMessageInput[]
+  skipIfExisting?: {
+    runId?: string | null
+    workflowUid?: string | null
+  }
+}
+
+export type AgentsAgentMessagesSubmitResult = {
+  inserted: number
+  messages: Record<string, unknown>[]
+  skipped: boolean
+}
+
 const getErrorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 const readJsonBody = async (response: Response): Promise<Record<string, unknown> | null> =>
@@ -167,6 +198,38 @@ export const submitOrchestrationRunToAgentsService = async (
     orchestrationRun: orchestrationRun as Record<string, unknown>,
     resource,
     idempotent: body.idempotent === true,
+  }
+}
+
+export const submitAgentMessagesToAgentsService = async (
+  input: AgentsAgentMessagesSubmitInput,
+  env: EnvSource = process.env,
+): Promise<AgentsAgentMessagesSubmitResult> => {
+  const baseUrl = resolveAgentsServiceBaseUrl(env)
+  const targetUrl = new URL('/api/agents/messages', `${baseUrl}/`)
+  const upstream = await fetch(targetUrl, {
+    body: JSON.stringify(input),
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'x-jangar-agents-proxy': 'true',
+    },
+    method: 'POST',
+  })
+
+  const body = await readJsonBody(upstream)
+  if (!upstream.ok) {
+    const message = getBodyError(body) ?? upstream.statusText ?? `Agents service returned HTTP ${upstream.status}`
+    throw new Error(`Agents service agent messages submit failed (${upstream.status}): ${message}`)
+  }
+
+  const messages = Array.isArray(body?.messages) ? body.messages : []
+  return {
+    inserted: typeof body?.inserted === 'number' ? body.inserted : messages.length,
+    messages: messages.filter((message): message is Record<string, unknown> => {
+      return !!message && typeof message === 'object' && !Array.isArray(message)
+    }),
+    skipped: body?.skipped === true,
   }
 }
 

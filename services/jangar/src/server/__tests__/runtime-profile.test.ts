@@ -19,7 +19,6 @@ describe('runtime profile resolution', () => {
     expect(profile).toBe(JANGAR_RUNTIME_PROFILES.agentsControlPlane)
     expect(profile.serveClient).toBe(false)
     expect(profile.startup).toEqual({
-      agentComms: false,
       controlPlaneCache: true,
       torghutQuantRuntime: false,
       whitepaperFinalizeConsumer: false,

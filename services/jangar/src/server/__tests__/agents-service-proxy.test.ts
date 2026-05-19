@@ -5,6 +5,7 @@ import {
   fetchAgentsServiceJson,
   proxyAgentsServiceRequest,
   resolveAgentsServiceBaseUrl,
+  submitAgentMessagesToAgentsService,
   submitOrchestrationRunToAgentsService,
 } from '~/server/agents-service-proxy'
 
@@ -165,6 +166,52 @@ describe('agents-service-proxy', () => {
       resource: { kind: 'OrchestrationRun', metadata: { name: 'orchestration-run-1' } },
       idempotent: false,
     })
+  })
+
+  it('submits agent message batches to the Agents service', async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(JSON.stringify({ ok: true, inserted: 1, messages: [{ id: 'msg-1' }], skipped: false }), {
+        headers: { 'content-type': 'application/json' },
+        status: 201,
+      })
+    })
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+
+    const result = await submitAgentMessagesToAgentsService(
+      {
+        skipIfExisting: { runId: 'run-1' },
+        messages: [
+          {
+            workflowUid: null,
+            workflowName: null,
+            workflowNamespace: null,
+            runId: 'run-1',
+            stepId: null,
+            agentId: null,
+            role: 'assistant',
+            kind: 'message',
+            timestamp: '2026-05-19T12:00:00.000Z',
+            channel: null,
+            stage: null,
+            content: 'hello',
+            attrs: {},
+            dedupeKey: 'run-1:1',
+          },
+        ],
+      },
+      { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
+    )
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
+    expect(url.toString()).toBe('http://agents.test/api/agents/messages')
+    expect(init.method).toBe('POST')
+    expect((init.headers as Record<string, string>)['x-jangar-agents-proxy']).toBe('true')
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      skipIfExisting: { runId: 'run-1' },
+      messages: [{ runId: 'run-1', content: 'hello' }],
+    })
+    expect(result).toEqual({ inserted: 1, messages: [{ id: 'msg-1' }], skipped: false })
   })
 
   it('preserves idempotent orchestration submit responses from Agents', async () => {

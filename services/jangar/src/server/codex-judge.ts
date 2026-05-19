@@ -4,8 +4,10 @@ import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import * as S from '@effect/schema/Schema'
 import * as Either from 'effect/Either'
-import { publishAgentMessages } from '~/server/agent-messages-bus'
-import { createAgentMessagesStore } from '~/server/agent-messages-store'
+import {
+  submitAgentMessagesToAgentsService,
+  submitOrchestrationRunToAgentsService,
+} from '~/server/agents-service-proxy'
 import { resolveChatConfig } from '~/server/chat-config'
 import {
   buildBackfillDedupeKey,
@@ -26,7 +28,6 @@ import { resolveBooleanFeatureToggle } from '~/server/feature-flags'
 import { createGitHubClient, GitHubRateLimitError, type PullRequest } from '~/server/github-client'
 import { ingestGithubReviewEvent } from '~/server/github-review-ingest'
 import { createPostgresMemoriesStore } from '~/server/memories-store'
-import { submitOrchestrationRunToAgentsService } from '~/server/agents-service-proxy'
 
 type MemoryStoreFactory = () => ReturnType<typeof createPostgresMemoriesStore>
 
@@ -37,6 +38,7 @@ const globalOverrides = globalThis as typeof globalThis & {
   __codexJudgeMemoryStoreMock?: ReturnType<typeof createPostgresMemoriesStore>
   __codexJudgeMemoryStoreFactory?: MemoryStoreFactory
   __codexJudgeOrchestrationSubmitMock?: typeof submitOrchestrationRunToAgentsService
+  __codexJudgeAgentMessagesSubmitMock?: typeof submitAgentMessagesToAgentsService
 }
 
 let cachedStore: ReturnType<typeof createCodexJudgeStore> | null = null
@@ -74,6 +76,8 @@ const resolveGithub = () => {
 const getGithub = () => resolveGithub()
 const resolveOrchestrationSubmit = () =>
   globalOverrides.__codexJudgeOrchestrationSubmitMock ?? submitOrchestrationRunToAgentsService
+const resolveAgentMessagesSubmit = () =>
+  globalOverrides.__codexJudgeAgentMessagesSubmitMock ?? submitAgentMessagesToAgentsService
 const getMemoryStoreFactory = () => globalOverrides.__codexJudgeMemoryStoreFactory ?? createPostgresMemoriesStore
 
 const scheduledRuns = new Map<string, NodeJS.Timeout>()
@@ -1728,12 +1732,7 @@ const applyArtifactFallback = async (run: CodexRunRecord, artifacts: ResolvedArt
 }
 
 const backfillAgentMessages = async (run: CodexRunRecord, artifacts: ResolvedArtifact[]) => {
-  let agentStore: ReturnType<typeof createAgentMessagesStore> | null = null
   try {
-    agentStore = createAgentMessagesStore()
-    const hasMessages = await agentStore.hasMessages({ runId: run.id, workflowUid: run.workflowUid })
-    if (hasMessages) return
-
     const artifactMap = buildArtifactIndex(artifacts)
     const eventArtifact = artifactMap.get('implementation-events') ?? null
     const agentArtifact = artifactMap.get('implementation-agent-log') ?? null
@@ -1768,20 +1767,12 @@ const backfillAgentMessages = async (run: CodexRunRecord, artifacts: ResolvedArt
       dedupeKey: buildBackfillDedupeKey(run.id, message.attrs),
     }))
 
-    const inserted = await agentStore.insertMessages(records)
-    if (inserted.length > 0) {
-      publishAgentMessages(inserted)
-    }
+    await resolveAgentMessagesSubmit()({
+      skipIfExisting: { runId: run.id, workflowUid: run.workflowUid },
+      messages: records,
+    })
   } catch (error) {
     console.warn('Failed to backfill agent messages', error)
-  } finally {
-    if (agentStore) {
-      try {
-        await agentStore.close()
-      } catch (error) {
-        console.warn('Failed to close agent messages store', error)
-      }
-    }
   }
 }
 

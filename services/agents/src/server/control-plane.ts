@@ -97,6 +97,11 @@ const routeSources: RouteSourceSpec[] = [
     load: () => import('../routes/api/agents/events'),
   },
   {
+    file: 'src/routes/api/agents/messages.ts',
+    sourceUrl: new URL('../routes/api/agents/messages.ts', import.meta.url),
+    load: () => import('../routes/api/agents/messages'),
+  },
+  {
     file: 'src/routes/api/agents/control-plane/events.ts',
     sourceUrl: new URL('../routes/api/agents/control-plane/events.ts', import.meta.url),
     load: () => import('../routes/api/agents/control-plane/events'),

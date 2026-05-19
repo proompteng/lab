@@ -70,6 +70,7 @@
     "./routes/v1/orchestration-runs/$id": "./src/routes/v1/orchestration-runs/$id.ts",
     "./routes/v1/runs/$id": "./src/routes/v1/runs/$id.ts",
     "./routes/api/agents/events": "./src/routes/api/agents/events.ts",
+    "./routes/api/agents/messages": "./src/routes/api/agents/messages.ts",
     "./routes/api/agents/control-plane/events": "./src/routes/api/agents/control-plane/events.ts",
     "./routes/api/agents/control-plane/logs": "./src/routes/api/agents/control-plane/logs.ts",
     "./routes/api/agents/control-plane/resource": "./src/routes/api/agents/control-plane/resource.ts",

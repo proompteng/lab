@@ -1,5 +1,4 @@
 export type JangarRuntimeStartup = {
-  agentComms: boolean
   controlPlaneCache: boolean
   torghutQuantRuntime: boolean
   whitepaperFinalizeConsumer: boolean
@@ -19,21 +18,18 @@ export type JangarRuntimeProfile = {
 }
 
 const fullStartup: JangarRuntimeStartup = {
-  agentComms: true,
   controlPlaneCache: true,
   torghutQuantRuntime: true,
   whitepaperFinalizeConsumer: true,
 }
 
 const agentsControlPlaneStartup: JangarRuntimeStartup = {
-  agentComms: false,
   controlPlaneCache: true,
   torghutQuantRuntime: false,
   whitepaperFinalizeConsumer: false,
 }
 
 const controllersStartup: JangarRuntimeStartup = {
-  agentComms: true,
   controlPlaneCache: false,
   torghutQuantRuntime: false,
   whitepaperFinalizeConsumer: false,
@@ -64,7 +60,6 @@ export const JANGAR_RUNTIME_PROFILES = {
     name: 'test',
     serveClient: false,
     startup: {
-      agentComms: false,
       controlPlaneCache: false,
       torghutQuantRuntime: false,
       whitepaperFinalizeConsumer: false,
