@@ -2962,6 +2962,55 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
 
     if has_any(
         (
+            "delay-adjusted depth",
+            "delay adjusted depth",
+            "execution delay",
+            "execution_delay",
+            "market depth",
+            "market_depth",
+            "depth state",
+            "depth_state",
+            "latency stress",
+            "latency_stress",
+            "fillable",
+            "fillability",
+            "limit_fill_probability",
+        )
+    ):
+        overlay_ids.append("delay_adjusted_depth_stress")
+        overlay_contracts.append(
+            {
+                "overlay_id": "delay_adjusted_depth_stress",
+                "required_evidence": [
+                    "depth_proxy",
+                    "execution_delay",
+                    "fill_model",
+                    "route_tca",
+                    "live_paper_parity",
+                ],
+                "rank_metric": "post_cost_net_pnl_after_delay_adjusted_depth_stress",
+                "evidence_policy": "no_delay_fill_assumptions_are_not_promotion_proof",
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_delay_adjusted_depth_stress": True,
+                "required_max_route_latency_ms": "250",
+                "required_min_delay_depth_sample_count": "60",
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_delay_adjusted_depth_stress": True,
+                "requires_execution_delay_replay": True,
+                "requires_depth_proxy_fill_model": True,
+                "requires_route_tca": True,
+                "rejects_no_delay_fill_assumptions": True,
+            }
+        )
+
+    if has_any(
+        (
             "ohlcv-only",
             "ohlcv only",
             "ohlcv_derived",

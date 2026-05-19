@@ -29,6 +29,12 @@ def _executable_scorecard_fields(index: int | str = 0) -> dict[str, object]:
         "market_impact_stress_model": "square_root",
         "market_impact_stress_cost_bps": "6",
         "market_impact_stress_net_pnl_per_day": "535",
+        "delay_adjusted_depth_stress_passed": True,
+        "delay_adjusted_depth_stress_artifact_ref": f"/tmp/delay-adjusted-depth-stress-{index}.json",
+        "delay_adjusted_depth_stress_model": "latency_depth_haircut",
+        "delay_adjusted_depth_stress_ms": "250",
+        "delay_adjusted_depth_fillable_notional_per_day": "525000",
+        "delay_adjusted_depth_stress_net_pnl_per_day": "520",
     }
 
 
@@ -444,9 +450,21 @@ class TestPortfolioOptimizer(TestCase):
             portfolio.objective_scorecard["market_impact_stress_net_pnl_per_day"],
             "575",
         )
+        self.assertEqual(
+            portfolio.objective_scorecard[
+                "delay_adjusted_depth_stress_net_pnl_per_day"
+            ],
+            "1040",
+        )
+        self.assertEqual(
+            portfolio.objective_scorecard[
+                "delay_adjusted_depth_fillable_notional_per_day"
+            ],
+            "1050000",
+        )
         self.assertTrue(portfolio.objective_scorecard["oracle_passed"])
 
-    def test_portfolio_oracle_blocks_missing_market_impact_stress(
+    def test_portfolio_oracle_blocks_missing_stress_evidence(
         self,
     ) -> None:
         bundle = evidence_bundle_from_frontier_candidate(
@@ -506,6 +524,10 @@ class TestPortfolioOptimizer(TestCase):
         self.assertFalse(portfolio.objective_scorecard["oracle_passed"])
         self.assertIn(
             "market_impact_stress_passed_failed",
+            portfolio.objective_scorecard["profit_target_oracle"]["blockers"],
+        )
+        self.assertIn(
+            "delay_adjusted_depth_stress_passed_failed",
             portfolio.objective_scorecard["profit_target_oracle"]["blockers"],
         )
 

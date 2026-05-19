@@ -197,9 +197,7 @@ class TestCandidateSpecs(TestCase):
             specs[0].hard_vetoes["required_min_event_cluster_stability_score"],
             "0.60",
         )
-        self.assertTrue(
-            specs[0].promotion_contract["requires_lob_event_stream_parity"]
-        )
+        self.assertTrue(specs[0].promotion_contract["requires_lob_event_stream_parity"])
 
     def test_nonlinear_market_impact_claim_adds_route_tca_contract(self) -> None:
         cards = build_hypothesis_cards(
@@ -243,6 +241,51 @@ class TestCandidateSpecs(TestCase):
         self.assertEqual(
             specs[0].promotion_contract["ranking_cost_model"],
             "post_cost_nonlinear_impact",
+        )
+
+    def test_execution_delay_depth_claim_adds_delay_adjusted_stress_contract(
+        self,
+    ) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-depth-delay",
+            claims=[
+                {
+                    "claim_id": "execution-delay-depth-state",
+                    "claim_type": "feature_recipe",
+                    "claim_text": (
+                        "Market depth and execution delay jointly determine "
+                        "whether apparent liquidity is practically fillable."
+                    ),
+                    "data_requirements": [
+                        "market_depth",
+                        "execution_delay",
+                        "latency_stress",
+                        "limit_fill_probability",
+                        "route_tca",
+                    ],
+                    "confidence": "0.81",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("300")
+        )
+
+        self.assertIn(
+            "delay_adjusted_depth_stress",
+            specs[0].parameter_space["mechanism_overlay_ids"],
+        )
+        self.assertTrue(specs[0].hard_vetoes["required_delay_adjusted_depth_stress"])
+        self.assertEqual(
+            specs[0].hard_vetoes["required_max_route_latency_ms"],
+            "250",
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["requires_delay_adjusted_depth_stress"]
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["rejects_no_delay_fill_assumptions"]
         )
 
     def test_ohlcv_only_claim_adds_falsification_contract(self) -> None:

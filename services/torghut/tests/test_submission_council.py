@@ -654,6 +654,14 @@ class TestSubmissionCouncil(TestCase):
                         "market_impact_stress_model": "square_root",
                         "market_impact_stress_cost_bps": "6",
                         "market_impact_stress_net_pnl_per_day": "535",
+                        "delay_adjusted_depth_stress_passed": True,
+                        "delay_adjusted_depth_stress_artifact_ref": (
+                            "s3://proof/current-ready-delay-depth.json"
+                        ),
+                        "delay_adjusted_depth_stress_model": "latency_depth_haircut",
+                        "delay_adjusted_depth_stress_ms": "250",
+                        "delay_adjusted_depth_fillable_notional_per_day": "300000",
+                        "delay_adjusted_depth_stress_net_pnl_per_day": "525",
                     },
                     optimizer_report_json={"method": "current_optimizer"},
                     payload_json={"portfolio_candidate_id": "portfolio-current-ready"},

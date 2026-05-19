@@ -5014,6 +5014,10 @@ def _runtime_closure_artifact_refs(
         "portfolio_proof_receipt_path",
         "market_impact_stress_report_path",
         "market_impact_stress_artifact_path",
+        "delay_adjusted_depth_stress_report_path",
+        "delay_depth_stress_report_path",
+        "latency_depth_stress_artifact_path",
+        "stress_metrics_path",
         "profitability_stage_manifest_path",
         "promotion_prerequisites_path",
         "replay_plan_path",
@@ -5093,6 +5097,46 @@ def _runtime_closure_market_impact_stress_update(
     }
 
 
+def _runtime_closure_delay_adjusted_depth_stress_update(
+    runtime_closure: Mapping[str, Any],
+) -> dict[str, Any]:
+    delay_depth_report_path = _string(
+        runtime_closure.get("delay_adjusted_depth_stress_report_path")
+        or runtime_closure.get("delay_depth_stress_report_path")
+        or runtime_closure.get("latency_depth_stress_artifact_path")
+    )
+    delay_depth_report = _load_json_mapping_artifact(delay_depth_report_path)
+    if not delay_depth_report:
+        return {}
+    return {
+        "delay_adjusted_depth_stress_passed": _boolish(
+            delay_depth_report.get("objective_met") or delay_depth_report.get("passed")
+        ),
+        "delay_adjusted_depth_stress_artifact_ref": delay_depth_report_path,
+        "delay_adjusted_depth_stress_model": _string(
+            delay_depth_report.get("model") or delay_depth_report.get("stress_model")
+        ),
+        "delay_adjusted_depth_stress_ms": str(
+            _decimal(
+                delay_depth_report.get("stress_delay_ms")
+                or delay_depth_report.get("delay_ms")
+            )
+        ),
+        "delay_adjusted_depth_fillable_notional_per_day": str(
+            _decimal(
+                delay_depth_report.get("fillable_notional_per_day")
+                or delay_depth_report.get("depth_fillable_notional_per_day")
+            )
+        ),
+        "delay_adjusted_depth_stress_net_pnl_per_day": str(
+            _decimal(
+                delay_depth_report.get("post_delay_depth_net_pnl_per_day")
+                or delay_depth_report.get("stressed_net_pnl_per_day")
+            )
+        ),
+    }
+
+
 def _runtime_closure_scorecard_update(
     *,
     portfolio: PortfolioCandidateSpec,
@@ -5125,6 +5169,9 @@ def _runtime_closure_scorecard_update(
     )
     shadow_status = _string(shadow_validation.get("status")) or "missing"
     market_impact_update = _runtime_closure_market_impact_stress_update(runtime_closure)
+    delay_depth_update = _runtime_closure_delay_adjusted_depth_stress_update(
+        runtime_closure
+    )
     return {
         "runtime_closure_proof": {
             "status": _string(runtime_closure.get("status")) or "missing",
@@ -5135,6 +5182,9 @@ def _runtime_closure_scorecard_update(
             "executable_replay_artifact_refs": list(executable_artifact_refs),
             "market_impact_stress_artifact_ref": market_impact_update.get(
                 "market_impact_stress_artifact_ref", ""
+            ),
+            "delay_adjusted_depth_stress_artifact_ref": delay_depth_update.get(
+                "delay_adjusted_depth_stress_artifact_ref", ""
             ),
         },
         "runtime_closure_artifact_refs": list(artifact_refs),
@@ -5157,6 +5207,7 @@ def _runtime_closure_scorecard_update(
             _portfolio_executable_max_notional(portfolio)
         ),
         **market_impact_update,
+        **delay_depth_update,
     }
 
 
