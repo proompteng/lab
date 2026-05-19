@@ -1,8 +1,8 @@
 apiVersion: sources.knative.dev/v1
 kind: KafkaSource
 metadata:
-  name: jangar-codex-completions
-  namespace: jangar
+  name: agents-codex-completions
+  namespace: agents
 spec:
   bootstrapServers:
     - kafka-kafka-bootstrap.kafka:9092
@@ -29,6 +29,6 @@ spec:
     ref:
       apiVersion: v1
       kind: Service
-      name: jangar
-      namespace: jangar
-    uri: /api/codex/run-complete
+      name: agents
+      namespace: agents
+    uri: /api/agents/codex/run-complete

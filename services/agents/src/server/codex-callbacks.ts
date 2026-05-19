@@ -222,11 +222,11 @@ export const postCodexCallbackHandler = async (
       return errorResponse(message, 400)
     }
 
-    const built = buildCodexCallbackMessage(kind, payload)
     const result = await Effect.runPromise(
-      ingestAgentMessagesEffect({ messages: [built.message] }).pipe(Effect.provide(layer)),
+      ingestCodexCallbackEffect(kind, payload).pipe(Effect.provide(layer), Effect.either),
     )
-    return okResponse({ ok: true, callback: built.callback, ...result }, result.skipped ? 200 : 202)
+    if (result._tag === 'Left') throw result.left
+    return okResponse({ ok: true, ...result.right }, result.right.skipped ? 200 : 202)
   } catch (error) {
     const response = describeCodexCallbackError(error)
     return errorResponse(response.message, response.status)

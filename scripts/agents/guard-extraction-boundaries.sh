@@ -37,6 +37,11 @@ fail_if_matches \
   "${ROOT_DIR}/scripts/agents" \
   "${ROOT_DIR}/packages/scripts/src/agents"
 
+fail_if_matches \
+  "Jangar GitOps must not own Codex run-complete ingestion" \
+  'uri: /api/codex/run-complete|name: jangar-codex-completions' \
+  "${ROOT_DIR}/argocd/applications/jangar"
+
 rendered_chart="$(mktemp)"
 rendered_argo="$(mktemp)"
 cleanup() {
@@ -48,5 +53,7 @@ helm template agents "${CHART_DIR}" --namespace agents > "${rendered_chart}"
 kubectl kustomize "${ARGO_DIR}" --enable-helm > "${rendered_argo}"
 
 rendered_forbidden='JANGAR_|jangar-db-app|/etc/jangar|lab/jangar|/app/services/jangar|services/jangar|codex-implement|AGENTS_TORGHUT_STATUS_|AGENTS_WHITEPAPER_FINALIZE_'
+agents_runtime_forbidden='codex-universal|ghcr.io/openai/codex-universal'
 fail_if_matches "rendered Helm chart must use Agents-owned images, env, DB secret, and runner paths" "${rendered_forbidden}" "${rendered_chart}"
 fail_if_matches "rendered Agents GitOps app must use Agents-owned images, env, DB secret, and runner paths" "${rendered_forbidden}" "${rendered_argo}"
+fail_if_matches "rendered Agents GitOps app must use the chart-managed agents-codex-runner path" "${agents_runtime_forbidden}" "${rendered_argo}"

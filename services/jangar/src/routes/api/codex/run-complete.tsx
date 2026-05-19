@@ -1,6 +1,12 @@
 import { createFileRoute } from '@tanstack/react-router'
 
 import { handleRunComplete } from '~/server/codex-judge'
+import { submitCodexCallbackToAgentsService, type AgentsCodexCallbackSubmitter } from '~/server/agents-service-proxy'
+
+type PostRunCompleteDeps = {
+  submitCodexCallback?: AgentsCodexCallbackSubmitter
+  handleRunComplete?: (payload: Record<string, unknown>) => Promise<unknown>
+}
 
 export const Route = createFileRoute('/api/codex/run-complete')({
   server: {
@@ -22,11 +28,26 @@ const jsonResponse = (payload: unknown, status = 200) => {
   })
 }
 
-const postRunComplete = async (request: Request) => {
+export const postRunComplete = async (request: Request, deps: PostRunCompleteDeps = {}) => {
   try {
     const payload = (await request.json()) as Record<string, unknown>
-    const run = await handleRunComplete(payload)
-    return jsonResponse({ ok: true, run })
+    const agentsResult = await (deps.submitCodexCallback ?? submitCodexCallbackToAgentsService)({
+      kind: 'run-complete',
+      payload,
+    })
+    if (!agentsResult.ok) {
+      return jsonResponse(
+        {
+          ok: false,
+          error: agentsResult.error ?? 'Agents service Codex callback ingestion failed',
+          agentsStatus: agentsResult.status,
+        },
+        agentsResult.status > 0 ? agentsResult.status : 502,
+      )
+    }
+
+    const run = await (deps.handleRunComplete ?? handleRunComplete)(payload)
+    return jsonResponse({ ok: true, agents: agentsResult.body, run })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return jsonResponse({ ok: false, error: message }, 500)
