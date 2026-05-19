@@ -5,6 +5,7 @@ import {
   fetchAgentsServiceJson,
   proxyAgentsServiceRequest,
   resolveAgentsServiceBaseUrl,
+  submitOrchestrationRunToAgentsService,
 } from '~/server/agents-service-proxy'
 
 const originalFetch = globalThis.fetch
@@ -105,5 +106,113 @@ describe('agents-service-proxy', () => {
       status: 200,
       body: { status: 'ok' },
     })
+  })
+
+  it('submits orchestration runs through the Agents service boundary', async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          orchestrationRun: {
+            id: 'run-1',
+            deliveryId: 'delivery-1',
+            externalRunId: 'orchestration-run-1',
+          },
+          resource: { kind: 'OrchestrationRun', metadata: { name: 'orchestration-run-1' } },
+        }),
+        {
+          headers: { 'content-type': 'application/json' },
+          status: 201,
+        },
+      )
+    })
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+
+    const result = await submitOrchestrationRunToAgentsService(
+      {
+        deliveryId: 'delivery-1',
+        orchestrationRef: { name: 'codex-rerun' },
+        namespace: 'agents',
+        parameters: { repository: 'proompteng/lab', head: 'codex/rerun' },
+      },
+      { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
+    )
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
+    expect(url.toString()).toBe('http://agents.test/v1/orchestration-runs')
+    expect(init.method).toBe('POST')
+    expect(init.body).toBe(
+      JSON.stringify({
+        orchestrationRef: { name: 'codex-rerun' },
+        namespace: 'agents',
+        parameters: { repository: 'proompteng/lab', head: 'codex/rerun' },
+        policy: {},
+      }),
+    )
+    expect(init.headers).toMatchObject({
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'idempotency-key': 'delivery-1',
+      'x-jangar-agents-proxy': 'true',
+    })
+    expect(result).toEqual({
+      orchestrationRun: {
+        id: 'run-1',
+        deliveryId: 'delivery-1',
+        externalRunId: 'orchestration-run-1',
+      },
+      resource: { kind: 'OrchestrationRun', metadata: { name: 'orchestration-run-1' } },
+      idempotent: false,
+    })
+  })
+
+  it('preserves idempotent orchestration submit responses from Agents', async () => {
+    globalThis.fetch = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          idempotent: true,
+          orchestrationRun: { id: 'run-1', deliveryId: 'delivery-1' },
+          resource: null,
+        }),
+        { headers: { 'content-type': 'application/json' }, status: 200 },
+      )
+    }) as unknown as typeof globalThis.fetch
+
+    await expect(
+      submitOrchestrationRunToAgentsService(
+        {
+          deliveryId: 'delivery-1',
+          orchestrationRef: { name: 'codex-rerun' },
+          namespace: 'agents',
+        },
+        { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
+      ),
+    ).resolves.toEqual({
+      orchestrationRun: { id: 'run-1', deliveryId: 'delivery-1' },
+      resource: null,
+      idempotent: true,
+    })
+  })
+
+  it('surfaces Agents orchestration submit errors without falling back to local ownership', async () => {
+    globalThis.fetch = vi.fn(async () => {
+      return new Response(JSON.stringify({ ok: false, error: 'orchestration missing not found' }), {
+        headers: { 'content-type': 'application/json' },
+        status: 404,
+      })
+    }) as unknown as typeof globalThis.fetch
+
+    await expect(
+      submitOrchestrationRunToAgentsService(
+        {
+          deliveryId: 'delivery-1',
+          orchestrationRef: { name: 'missing' },
+          namespace: 'agents',
+        },
+        { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
+      ),
+    ).rejects.toThrow('Agents service orchestration submit failed (404): orchestration missing not found')
   })
 })

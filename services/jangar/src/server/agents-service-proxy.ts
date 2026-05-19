@@ -58,7 +58,33 @@ export type AgentsServiceJsonResult<T> =
       error: string | null
     }
 
+export type AgentsOrchestrationRunSubmitInput = {
+  deliveryId: string
+  orchestrationRef: { name: string }
+  namespace: string
+  parameters?: Record<string, string>
+  policy?: Record<string, unknown>
+}
+
+export type AgentsOrchestrationRunSubmitResult = {
+  orchestrationRun: Record<string, unknown>
+  resource: Record<string, unknown> | null
+  idempotent: boolean
+}
+
+export type AgentsOrchestrationRunSubmitter = (
+  input: AgentsOrchestrationRunSubmitInput,
+) => Promise<AgentsOrchestrationRunSubmitResult>
+
 const getErrorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
+const readJsonBody = async (response: Response): Promise<Record<string, unknown> | null> =>
+  response.json().catch(() => null) as Promise<Record<string, unknown> | null>
+
+const getBodyError = (body: Record<string, unknown> | null) => {
+  const error = body?.error
+  return typeof error === 'string' && error.trim().length > 0 ? error : null
+}
 
 export const fetchAgentsServiceJson = async <T>(
   path: string,
@@ -97,6 +123,50 @@ export const fetchAgentsServiceJson = async <T>(
       body: null,
       error: getErrorMessage(error),
     }
+  }
+}
+
+export const submitOrchestrationRunToAgentsService = async (
+  input: AgentsOrchestrationRunSubmitInput,
+  env: EnvSource = process.env,
+): Promise<AgentsOrchestrationRunSubmitResult> => {
+  const baseUrl = resolveAgentsServiceBaseUrl(env)
+  const targetUrl = new URL('/v1/orchestration-runs', `${baseUrl}/`)
+  const upstream = await fetch(targetUrl, {
+    body: JSON.stringify({
+      orchestrationRef: input.orchestrationRef,
+      namespace: input.namespace,
+      parameters: input.parameters ?? {},
+      policy: input.policy ?? {},
+    }),
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'idempotency-key': input.deliveryId,
+      'x-jangar-agents-proxy': 'true',
+    },
+    method: 'POST',
+  })
+
+  const body = await readJsonBody(upstream)
+  if (!upstream.ok) {
+    const message = getBodyError(body) ?? upstream.statusText ?? `Agents service returned HTTP ${upstream.status}`
+    throw new Error(`Agents service orchestration submit failed (${upstream.status}): ${message}`)
+  }
+
+  const orchestrationRun = body?.orchestrationRun
+  if (!body?.ok || !orchestrationRun || typeof orchestrationRun !== 'object' || Array.isArray(orchestrationRun)) {
+    throw new Error('Agents service orchestration submit response did not include an orchestrationRun')
+  }
+
+  const resource =
+    body.resource && typeof body.resource === 'object' && !Array.isArray(body.resource)
+      ? (body.resource as Record<string, unknown>)
+      : null
+  return {
+    orchestrationRun: orchestrationRun as Record<string, unknown>,
+    resource,
+    idempotent: body.idempotent === true,
   }
 }
 

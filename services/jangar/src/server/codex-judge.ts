@@ -26,7 +26,10 @@ import { resolveBooleanFeatureToggle } from '~/server/feature-flags'
 import { createGitHubClient, GitHubRateLimitError, type PullRequest } from '~/server/github-client'
 import { ingestGithubReviewEvent } from '~/server/github-review-ingest'
 import { createPostgresMemoriesStore } from '~/server/memories-store'
-import { submitOrchestrationRun } from '~/server/orchestration-submit'
+import {
+  type AgentsOrchestrationRunSubmitter,
+  submitOrchestrationRunToAgentsService,
+} from '~/server/agents-service-proxy'
 
 type MemoryStoreFactory = () => ReturnType<typeof createPostgresMemoriesStore>
 
@@ -36,7 +39,7 @@ const globalOverrides = globalThis as typeof globalThis & {
   __codexJudgeGithubMock?: ReturnType<typeof createGitHubClient>
   __codexJudgeMemoryStoreMock?: ReturnType<typeof createPostgresMemoriesStore>
   __codexJudgeMemoryStoreFactory?: MemoryStoreFactory
-  __codexJudgeOrchestrationSubmitMock?: typeof submitOrchestrationRun
+  __codexJudgeOrchestrationSubmitMock?: AgentsOrchestrationRunSubmitter
 }
 
 let cachedStore: ReturnType<typeof createCodexJudgeStore> | null = null
@@ -74,7 +77,8 @@ const resolveGithub = () => {
   return cachedGithub
 }
 const getGithub = () => resolveGithub()
-const resolveOrchestrationSubmit = () => globalOverrides.__codexJudgeOrchestrationSubmitMock ?? submitOrchestrationRun
+const resolveOrchestrationSubmit = () =>
+  globalOverrides.__codexJudgeOrchestrationSubmitMock ?? submitOrchestrationRunToAgentsService
 const getMemoryStoreFactory = () => globalOverrides.__codexJudgeMemoryStoreFactory ?? createPostgresMemoriesStore
 
 const scheduledRuns = new Map<string, NodeJS.Timeout>()
