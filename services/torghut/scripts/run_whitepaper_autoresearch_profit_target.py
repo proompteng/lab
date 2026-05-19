@@ -2835,66 +2835,123 @@ def _feedback_daily_net_has_loss(scorecard: Mapping[str, Any]) -> bool:
     )
 
 
-def _feedback_family_prior_has_hard_block(scorecard: Mapping[str, Any]) -> bool:
+def _feedback_family_prior_has_hard_block(
+    scorecard: Mapping[str, Any],
+    *,
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
+) -> bool:
+    policy = oracle_policy or ProfitTargetOraclePolicy()
     oracle_blockers = _oracle_blockers(scorecard)
     if oracle_blockers & _FAMILY_PRIOR_HARD_BLOCK_ORACLE_BLOCKERS:
         return True
-    if _decimal(scorecard.get("active_day_ratio"), default="1") < Decimal("1"):
+    if (
+        _decimal(scorecard.get("active_day_ratio"), default="1")
+        < policy.min_active_day_ratio
+    ):
         return True
-    if _decimal(scorecard.get("positive_day_ratio"), default="1") < Decimal("1"):
+    if (
+        _decimal(scorecard.get("positive_day_ratio"), default="1")
+        < policy.min_positive_day_ratio
+    ):
         return True
-    if _decimal(scorecard.get("best_day_share")) > Decimal("0.50"):
+    if _decimal(scorecard.get("best_day_share")) > policy.max_best_day_share:
         return True
-    return _feedback_daily_net_has_loss(scorecard)
+    return _feedback_has_nonpositive_expected_value(scorecard)
 
 
-def _feedback_risk_profile_has_penalty(scorecard: Mapping[str, Any]) -> bool:
+def _feedback_risk_profile_has_penalty(
+    scorecard: Mapping[str, Any],
+    *,
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
+) -> bool:
+    policy = oracle_policy or ProfitTargetOraclePolicy()
     oracle_blockers = _oracle_blockers(scorecard)
     if oracle_blockers & _RISK_PROFILE_FEEDBACK_ORACLE_BLOCKERS:
         return True
-    if _decimal(scorecard.get("active_day_ratio"), default="1") < Decimal("1"):
-        return True
-    if _decimal(scorecard.get("positive_day_ratio"), default="1") < Decimal("0.60"):
-        return True
-    if _decimal(scorecard.get("best_day_share")) > Decimal("0.35"):
-        return True
-    if _decimal(scorecard.get("max_single_day_contribution_share")) > Decimal("0.35"):
-        return True
-    if _decimal(scorecard.get("max_single_symbol_contribution_share")) > Decimal(
-        "0.35"
+    if (
+        _decimal(scorecard.get("active_day_ratio"), default="1")
+        < policy.min_active_day_ratio
     ):
         return True
-    if _decimal(scorecard.get("max_cluster_contribution_share")) > Decimal("0.40"):
+    if (
+        _decimal(scorecard.get("positive_day_ratio"), default="1")
+        < policy.min_positive_day_ratio
+    ):
+        return True
+    if _decimal(scorecard.get("best_day_share")) > policy.max_best_day_share:
+        return True
+    if (
+        _decimal(scorecard.get("max_single_day_contribution_share"))
+        > policy.max_best_day_share
+    ):
+        return True
+    if (
+        _decimal(scorecard.get("max_single_symbol_contribution_share"), default="1")
+        > policy.max_single_symbol_contribution_share
+    ):
+        return True
+    if (
+        _decimal(scorecard.get("max_cluster_contribution_share"), default="1")
+        > policy.max_cluster_contribution_share
+    ):
         return True
     return False
 
 
-def _feedback_risk_profile_has_terminal_block(scorecard: Mapping[str, Any]) -> bool:
-    if not _feedback_risk_profile_has_penalty(scorecard):
+def _feedback_risk_profile_has_terminal_block(
+    scorecard: Mapping[str, Any],
+    *,
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
+) -> bool:
+    if not scorecard:
+        return False
+    policy = oracle_policy or ProfitTargetOraclePolicy()
+    if not _feedback_risk_profile_has_penalty(scorecard, oracle_policy=policy):
         return False
     if _feedback_has_nonpositive_expected_value(scorecard):
         return True
-    if _decimal(scorecard.get("max_gross_exposure_pct_equity")) > Decimal("1.0"):
+    if (
+        _decimal(scorecard.get("max_gross_exposure_pct_equity"))
+        > policy.max_gross_exposure_pct_equity
+    ):
         return True
-    if _decimal(scorecard.get("min_cash")) < Decimal("0"):
+    if _decimal(scorecard.get("min_cash")) < policy.min_cash:
         return True
-    return _decimal(scorecard.get("negative_cash_observation_count")) > Decimal("0")
+    return _decimal(scorecard.get("negative_cash_observation_count")) > Decimal(
+        max(0, policy.max_negative_cash_observation_count)
+    )
 
 
-def _feedback_is_blocked(scorecard: Mapping[str, Any]) -> bool:
+def _feedback_has_policy_penalty(
+    scorecard: Mapping[str, Any],
+    *,
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
+) -> bool:
+    return _feedback_risk_profile_has_penalty(
+        scorecard, oracle_policy=oracle_policy
+    ) or _feedback_daily_net_has_loss(scorecard)
+
+
+def _feedback_is_blocked(
+    scorecard: Mapping[str, Any],
+    *,
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
+) -> bool:
+    policy = oracle_policy or ProfitTargetOraclePolicy()
     if _feedback_scorecard_has_hard_veto(scorecard):
         return True
-    if _decimal(scorecard.get("max_gross_exposure_pct_equity")) > Decimal("1.0"):
+    if (
+        _decimal(scorecard.get("max_gross_exposure_pct_equity"))
+        > policy.max_gross_exposure_pct_equity
+    ):
         return True
-    if _decimal(scorecard.get("min_cash")) < Decimal("0"):
+    if _decimal(scorecard.get("min_cash")) < policy.min_cash:
         return True
-    if _decimal(scorecard.get("negative_cash_observation_count")) > Decimal("0"):
+    if _decimal(scorecard.get("negative_cash_observation_count")) > Decimal(
+        max(0, policy.max_negative_cash_observation_count)
+    ):
         return True
-    return (
-        _decimal(scorecard.get("net_pnl_per_day")) <= Decimal("0")
-        or _decimal(scorecard.get("negative_day_count")) > Decimal("0")
-        or _feedback_daily_net_has_loss(scorecard)
-    )
+    return _decimal(scorecard.get("net_pnl_per_day")) <= Decimal("0")
 
 
 def _feedback_has_nonpositive_expected_value(scorecard: Mapping[str, Any]) -> bool:
@@ -2903,10 +2960,12 @@ def _feedback_has_nonpositive_expected_value(scorecard: Mapping[str, Any]) -> bo
 
 def _feedback_bundle_sort_value(
     bundle: CandidateEvidenceBundle,
+    *,
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> tuple[int, Decimal, str]:
     scorecard = bundle.objective_scorecard
     return (
-        0 if _feedback_is_blocked(scorecard) else 1,
+        0 if _feedback_is_blocked(scorecard, oracle_policy=oracle_policy) else 1,
         _decimal(scorecard.get("net_pnl_per_day")),
         _string(bundle.candidate_id),
     )
@@ -3024,7 +3083,9 @@ def _pre_replay_proposal_model_and_rows(
     *,
     specs: Sequence[CandidateSpec],
     feedback_evidence_bundles: Sequence[CandidateEvidenceBundle] = (),
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> tuple[Mapping[str, Any], list[dict[str, Any]]]:
+    policy = oracle_policy or ProfitTargetOraclePolicy()
     spec_ids = {spec.candidate_spec_id for spec in specs}
     execution_signature_by_spec = {
         spec.candidate_spec_id: _candidate_spec_execution_signature(spec)
@@ -3044,8 +3105,8 @@ def _pre_replay_proposal_model_and_rows(
             continue
         current = feedback_by_spec.get(bundle.candidate_spec_id)
         if current is None or _feedback_bundle_sort_value(
-            bundle
-        ) > _feedback_bundle_sort_value(current):
+            bundle, oracle_policy=policy
+        ) > _feedback_bundle_sort_value(current, oracle_policy=policy):
             feedback_by_spec[bundle.candidate_spec_id] = bundle
 
     feedback_by_execution_signature: dict[str, CandidateEvidenceBundle] = {}
@@ -3055,8 +3116,8 @@ def _pre_replay_proposal_model_and_rows(
             continue
         current = feedback_by_execution_signature.get(execution_signature)
         if current is None or _feedback_bundle_sort_value(
-            bundle
-        ) > _feedback_bundle_sort_value(current):
+            bundle, oracle_policy=policy
+        ) > _feedback_bundle_sort_value(current, oracle_policy=policy):
             feedback_by_execution_signature[execution_signature] = bundle
     signature_feedback_by_spec: dict[str, CandidateEvidenceBundle] = {}
     for spec in specs:
@@ -3076,8 +3137,8 @@ def _pre_replay_proposal_model_and_rows(
             continue
         current = feedback_by_shape.get(feedback_shape_key)
         if current is None or _feedback_bundle_sort_value(
-            bundle
-        ) > _feedback_bundle_sort_value(current):
+            bundle, oracle_policy=policy
+        ) > _feedback_bundle_sort_value(current, oracle_policy=policy):
             feedback_by_shape[feedback_shape_key] = bundle
     shape_feedback_by_spec: dict[str, CandidateEvidenceBundle] = {}
     for spec in specs:
@@ -3096,15 +3157,17 @@ def _pre_replay_proposal_model_and_rows(
 
     feedback_by_risk_profile: dict[str, CandidateEvidenceBundle] = {}
     for bundle in feedback_evidence_bundles:
-        if not _feedback_risk_profile_has_penalty(bundle.objective_scorecard):
+        if not _feedback_risk_profile_has_penalty(
+            bundle.objective_scorecard, oracle_policy=policy
+        ):
             continue
         risk_profile_key = _feedback_risk_profile_key(bundle)
         if not risk_profile_key:
             continue
         current = feedback_by_risk_profile.get(risk_profile_key)
         if current is None or _feedback_bundle_sort_value(
-            bundle
-        ) > _feedback_bundle_sort_value(current):
+            bundle, oracle_policy=policy
+        ) > _feedback_bundle_sort_value(current, oracle_policy=policy):
             feedback_by_risk_profile[risk_profile_key] = bundle
     risk_profile_feedback_by_spec: dict[str, CandidateEvidenceBundle] = {}
     for spec in specs:
@@ -3129,8 +3192,8 @@ def _pre_replay_proposal_model_and_rows(
             continue
         current = feedback_by_family.get(family_template_id)
         if current is None or _feedback_bundle_sort_value(
-            bundle
-        ) > _feedback_bundle_sort_value(current):
+            bundle, oracle_policy=policy
+        ) > _feedback_bundle_sort_value(current, oracle_policy=policy):
             feedback_by_family[family_template_id] = bundle
     family_feedback_by_spec: dict[str, CandidateEvidenceBundle] = {}
     for spec in specs:
@@ -3221,7 +3284,10 @@ def _pre_replay_proposal_model_and_rows(
         source = training_source_by_spec.get(candidate_spec_id, "synthetic_prior")
         bundle = feedback_bundle_by_spec.get(candidate_spec_id)
         is_blocked = bundle is not None and _feedback_is_blocked(
-            bundle.objective_scorecard
+            bundle.objective_scorecard, oracle_policy=policy
+        )
+        has_policy_penalty = bundle is not None and _feedback_has_policy_penalty(
+            bundle.objective_scorecard, oracle_policy=policy
         )
         if source == "feedback_real_replay" and is_blocked:
             if bundle is not None and _feedback_has_nonpositive_expected_value(
@@ -3229,23 +3295,33 @@ def _pre_replay_proposal_model_and_rows(
             ):
                 return "pre_replay_mlx_feedback_blocked"
             return "pre_replay_mlx_feedback_penalized"
+        if source == "feedback_real_replay" and has_policy_penalty:
+            return "pre_replay_mlx_feedback_penalized"
         if source == "feedback_execution_signature_replay" and is_blocked:
             if bundle is not None and _feedback_has_nonpositive_expected_value(
                 bundle.objective_scorecard
             ):
                 return "pre_replay_mlx_signature_feedback_blocked"
             return "pre_replay_mlx_signature_feedback_penalized"
+        if source == "feedback_execution_signature_replay" and has_policy_penalty:
+            return "pre_replay_mlx_signature_feedback_penalized"
         if source == "feedback_shape_prior" and bundle is not None:
-            if _feedback_family_prior_has_hard_block(bundle.objective_scorecard):
+            if _feedback_family_prior_has_hard_block(
+                bundle.objective_scorecard, oracle_policy=policy
+            ):
                 return "pre_replay_mlx_shape_feedback_blocked"
             if is_blocked:
                 return "pre_replay_mlx_family_feedback_penalized"
         if (
             source == "feedback_risk_profile_prior"
             and bundle is not None
-            and _feedback_risk_profile_has_penalty(bundle.objective_scorecard)
+            and _feedback_risk_profile_has_penalty(
+                bundle.objective_scorecard, oracle_policy=policy
+            )
         ):
-            if _feedback_risk_profile_has_terminal_block(bundle.objective_scorecard):
+            if _feedback_risk_profile_has_terminal_block(
+                bundle.objective_scorecard, oracle_policy=policy
+            ):
                 return "pre_replay_mlx_risk_profile_feedback_blocked"
             return "pre_replay_mlx_risk_profile_feedback_penalized"
         if (
@@ -3255,6 +3331,8 @@ def _pre_replay_proposal_model_and_rows(
         ):
             return "pre_replay_mlx_family_feedback_blocked"
         if source == "feedback_family_replay" and is_blocked:
+            return "pre_replay_mlx_family_feedback_penalized"
+        if source == "feedback_family_replay" and has_policy_penalty:
             return "pre_replay_mlx_family_feedback_penalized"
         return "pre_replay_mlx_rank"
 
@@ -3276,25 +3354,31 @@ def _pre_replay_proposal_model_and_rows(
         if (
             source == "feedback_shape_prior"
             and bundle is not None
-            and _feedback_family_prior_has_hard_block(bundle.objective_scorecard)
+            and _feedback_family_prior_has_hard_block(
+                bundle.objective_scorecard, oracle_policy=policy
+            )
         ):
             return min(-1_000_000.0, target_by_spec.get(candidate_spec_id, raw_score))
         if (
             source == "feedback_risk_profile_prior"
             and bundle is not None
-            and _feedback_risk_profile_has_terminal_block(bundle.objective_scorecard)
+            and _feedback_risk_profile_has_terminal_block(
+                bundle.objective_scorecard, oracle_policy=policy
+            )
         ):
             return min(-1_000_000.0, target_by_spec.get(candidate_spec_id, raw_score))
         if (
             source == "feedback_risk_profile_prior"
             and bundle is not None
-            and _feedback_risk_profile_has_penalty(bundle.objective_scorecard)
+            and _feedback_risk_profile_has_penalty(
+                bundle.objective_scorecard, oracle_policy=policy
+            )
         ):
             return min(-500_000.0, target_by_spec.get(candidate_spec_id, raw_score))
         if (
             source == "feedback_family_replay"
             and bundle is not None
-            and _feedback_is_blocked(bundle.objective_scorecard)
+            and _feedback_is_blocked(bundle.objective_scorecard, oracle_policy=policy)
         ):
             return min(-100_000.0, target_by_spec.get(candidate_spec_id, raw_score))
         return raw_score
@@ -5300,6 +5384,7 @@ def run_whitepaper_autoresearch_profit_target(
     pre_replay_model, pre_replay_proposal_rows = _pre_replay_proposal_model_and_rows(
         specs=candidate_specs,
         feedback_evidence_bundles=feedback_evidence_bundles,
+        oracle_policy=oracle_policy,
     )
     _write_json(output_dir / "pre-replay-mlx-ranker-model.json", pre_replay_model)
     _write_jsonl(

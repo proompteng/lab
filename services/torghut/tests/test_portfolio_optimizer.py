@@ -107,6 +107,83 @@ class TestPortfolioOptimizer(TestCase):
             portfolio_optimizer_module._candidate_passes_minimums(zero_pnl)
         )
 
+    def test_capital_safety_rejection_uses_oracle_policy(self) -> None:
+        def bundle(
+            candidate_id: str,
+            scorecard_updates: dict[str, object],
+        ) -> CandidateEvidenceBundle:
+            return evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=f"spec-{candidate_id}",
+                candidate={
+                    "candidate_id": candidate_id,
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "250",
+                        "active_day_ratio": "1.0",
+                        "positive_day_ratio": "1.0",
+                        "max_gross_exposure_pct_equity": "0.8",
+                        "min_cash": "100",
+                        "negative_cash_observation_count": 0,
+                        **scorecard_updates,
+                    },
+                },
+                dataset_snapshot_id="snapshot-policy-capital-safety",
+                result_path=f"/tmp/{candidate_id}.json",
+            )
+
+        strict_policy = ProfitTargetOraclePolicy(
+            max_gross_exposure_pct_equity=Decimal("0.75"),
+            min_cash=Decimal("250"),
+            max_negative_cash_observation_count=0,
+        )
+        relaxed_policy = ProfitTargetOraclePolicy(
+            max_gross_exposure_pct_equity=Decimal("1.25"),
+            min_cash=Decimal("-25"),
+            max_negative_cash_observation_count=1,
+        )
+
+        gross = bundle("policy-gross", {})
+        cash = bundle(
+            "policy-cash",
+            {"max_gross_exposure_pct_equity": "0.5"},
+        )
+        negative_cash = bundle(
+            "policy-negative-cash",
+            {
+                "max_gross_exposure_pct_equity": "0.5",
+                "min_cash": "300",
+                "negative_cash_observation_count": 1,
+            },
+        )
+
+        self.assertEqual(
+            portfolio_optimizer_module._capital_safety_rejection(
+                gross, oracle_policy=strict_policy
+            )["reason"],
+            "frontier_capital_violation",
+        )
+        self.assertEqual(
+            portfolio_optimizer_module._capital_safety_rejection(
+                cash, oracle_policy=strict_policy
+            )["reason"],
+            "frontier_negative_cash",
+        )
+        self.assertEqual(
+            portfolio_optimizer_module._capital_safety_rejection(
+                negative_cash, oracle_policy=strict_policy
+            )["reason"],
+            "frontier_negative_cash_observed",
+        )
+        self.assertIsNone(
+            portfolio_optimizer_module._capital_safety_rejection(
+                gross, oracle_policy=relaxed_policy
+            )
+        )
+        self.assertTrue(
+            portfolio_optimizer_module._candidate_passes_minimums(
+                negative_cash, oracle_policy=relaxed_policy
+            )
+        )
+
     def test_portfolio_uses_gross_exposure_budget_for_reported_low_gross_sleeves(
         self,
     ) -> None:
@@ -196,6 +273,91 @@ class TestPortfolioOptimizer(TestCase):
         self.assertEqual(
             [sleeve["expected_net_pnl_per_day"] for sleeve in portfolio.sleeves],
             ["300", "300"],
+        )
+        self.assertTrue(portfolio.objective_scorecard["target_met"])
+        self.assertTrue(portfolio.objective_scorecard["oracle_passed"])
+
+    def test_portfolio_gross_exposure_budget_uses_oracle_policy_limit(
+        self,
+    ) -> None:
+        def bundle(
+            candidate_id: str, symbol: str, cluster: str
+        ) -> CandidateEvidenceBundle:
+            return evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=f"spec-{candidate_id}",
+                candidate={
+                    "candidate_id": candidate_id,
+                    "runtime_family": "microbar_cross_sectional_pairs",
+                    "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                    "family_template_id": "microbar_cross_sectional_pairs_v1",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "300",
+                        "active_day_ratio": "1.0",
+                        "positive_day_ratio": "1.0",
+                        "worst_day_loss": "0",
+                        "max_drawdown": "0",
+                        "max_gross_exposure_pct_equity": "0.5",
+                        "min_cash": "5000",
+                        "negative_cash_observation_count": 0,
+                        "best_day_share": "0.2",
+                        "avg_filled_notional_per_day": "250000",
+                        "regime_slice_pass_rate": "0.55",
+                        "posterior_edge_lower": "0.01",
+                        "shadow_parity_status": "within_budget",
+                        "correlation_cluster": cluster,
+                        "symbol_contribution_shares": {symbol: "1.0"},
+                        **_executable_scorecard_fields(candidate_id),
+                    },
+                    "full_window": {
+                        "daily_net": {
+                            "2026-02-23": "300",
+                            "2026-02-24": "300",
+                            "2026-02-25": "300",
+                            "2026-02-26": "300",
+                            "2026-02-27": "300",
+                        },
+                        "daily_filled_notional": {
+                            "2026-02-23": "250000",
+                            "2026-02-24": "250000",
+                            "2026-02-25": "250000",
+                            "2026-02-26": "250000",
+                            "2026-02-27": "250000",
+                        },
+                    },
+                },
+                dataset_snapshot_id="snapshot-policy-gross-budget",
+                result_path=f"/tmp/{candidate_id}.json",
+            )
+
+        portfolio = optimize_portfolio_candidate(
+            evidence_bundles=[
+                bundle("cand-policy-gross-a", "AAPL", "policy-gross-a"),
+                bundle("cand-policy-gross-b", "AMZN", "policy-gross-b"),
+            ],
+            target_net_pnl_per_day=Decimal("400"),
+            oracle_policy=ProfitTargetOraclePolicy(
+                max_cluster_contribution_share=Decimal("0.50"),
+                max_single_symbol_contribution_share=Decimal("0.50"),
+                max_gross_exposure_pct_equity=Decimal("0.75"),
+                min_avg_filled_notional_per_day=Decimal("300000"),
+            ),
+            portfolio_size_min=2,
+            portfolio_size_max=2,
+        )
+
+        self.assertIsNotNone(portfolio)
+        assert portfolio is not None
+        self.assertEqual(
+            Decimal(str(portfolio.objective_scorecard["net_pnl_per_day"])),
+            Decimal("450.00"),
+        )
+        self.assertEqual(
+            portfolio.objective_scorecard["max_gross_exposure_pct_equity"],
+            "0.750",
+        )
+        self.assertEqual(
+            portfolio.capital_budget["sleeve_weights"],
+            {"cand-policy-gross-a": "0.75", "cand-policy-gross-b": "0.75"},
         )
         self.assertTrue(portfolio.objective_scorecard["target_met"])
         self.assertTrue(portfolio.objective_scorecard["oracle_passed"])

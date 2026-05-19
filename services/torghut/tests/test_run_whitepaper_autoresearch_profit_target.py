@@ -1906,6 +1906,78 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             )
         )
 
+    def test_feedback_risk_profile_uses_oracle_policy_and_allows_down_days(
+        self,
+    ) -> None:
+        policy = runner.ProfitTargetOraclePolicy(
+            min_active_day_ratio=Decimal("0.90"),
+            min_positive_day_ratio=Decimal("0.60"),
+            max_best_day_share=Decimal("0.25"),
+            max_single_symbol_contribution_share=Decimal("0.35"),
+            max_cluster_contribution_share=Decimal("0.40"),
+            max_gross_exposure_pct_equity=Decimal("1.25"),
+            min_cash=Decimal("-10"),
+            max_negative_cash_observation_count=1,
+        )
+        scorecard = {
+            "net_pnl_per_day": "250",
+            "active_day_ratio": "0.95",
+            "positive_day_ratio": "0.65",
+            "best_day_share": "0.20",
+            "max_single_day_contribution_share": "0.20",
+            "max_single_symbol_contribution_share": "0.30",
+            "max_cluster_contribution_share": "0.35",
+            "max_gross_exposure_pct_equity": "1.10",
+            "min_cash": "-5",
+            "negative_cash_observation_count": "1",
+            "negative_day_count": "1",
+            "daily_net": {
+                "2026-05-01": "-50",
+                "2026-05-02": "300",
+            },
+        }
+
+        self.assertFalse(
+            runner._feedback_risk_profile_has_penalty(scorecard, oracle_policy=policy)
+        )
+        self.assertFalse(runner._feedback_is_blocked(scorecard, oracle_policy=policy))
+        self.assertFalse(
+            runner._feedback_family_prior_has_hard_block(
+                scorecard, oracle_policy=policy
+            )
+        )
+        self.assertFalse(
+            runner._feedback_risk_profile_has_terminal_block(
+                {
+                    **scorecard,
+                    "profit_target_oracle": {
+                        "blockers": ["max_single_day_contribution_share_failed"]
+                    },
+                },
+                oracle_policy=policy,
+            )
+        )
+
+        strict_policy = replace(
+            policy,
+            max_gross_exposure_pct_equity=Decimal("1.0"),
+            min_cash=Decimal("0"),
+            max_negative_cash_observation_count=0,
+        )
+        self.assertTrue(
+            runner._feedback_is_blocked(scorecard, oracle_policy=strict_policy)
+        )
+        self.assertTrue(
+            runner._feedback_risk_profile_has_penalty(
+                {
+                    "active_day_ratio": "1",
+                    "positive_day_ratio": "1",
+                    "best_day_share": "0.20",
+                },
+                oracle_policy=policy,
+            )
+        )
+
     def test_feedback_shape_prior_penalizes_cash_blocks_without_family_veto(
         self,
     ) -> None:
