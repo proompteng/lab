@@ -3,9 +3,11 @@ import { type V1Lease } from '@kubernetes/client-node'
 import {
   fetchAgentRunResourcesFromAgentsService,
   type AgentsAgentRunResourceListInput,
+  fetchControlPlaneResourcesFromAgentsService,
+  type AgentsControlPlaneResourceListInput,
 } from '~/server/agents-service-proxy'
 import { asRecord, asString } from '~/server/primitives-http'
-import { createKubernetesClient, RESOURCE_MAP, type KubernetesClient } from '~/server/primitives-kube'
+import { createKubernetesClient, type KubernetesClient } from '~/server/primitives-kube'
 
 type KubeGatewayErrorKind = 'invalid_payload' | 'transport'
 
@@ -157,6 +159,9 @@ type AgentRunResourceLister = (
 
 type KubeGatewayDeps = {
   listAgentRunResources?: AgentRunResourceLister
+  listControlPlaneResources?: (
+    input: AgentsControlPlaneResourceListInput,
+  ) => ReturnType<typeof fetchControlPlaneResourcesFromAgentsService>
 }
 
 const normalizeMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
@@ -511,8 +516,13 @@ export const createKubeGateway = (
       return service !== null
     }),
   listSwarms: async (namespace) =>
-    wrapTransport('kube swarms list failed', async () => {
-      const items = parseListItems(await client.list(RESOURCE_MAP.Swarm, namespace), 'kube swarms list')
+    wrapTransport('agents service swarms list failed', async () => {
+      const listControlPlaneResources = deps.listControlPlaneResources ?? fetchControlPlaneResourcesFromAgentsService
+      const result = await listControlPlaneResources({ kind: 'Swarm', namespace })
+      if (!result.ok) {
+        throw new Error(result.error ?? `Agents service returned HTTP ${result.status}`)
+      }
+      const items = parseListItems(result.body, 'agents service swarms list')
 
       return items
         .map((item): KubeGatewaySwarm | null => {

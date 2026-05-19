@@ -203,19 +203,60 @@ describe('kube gateway', () => {
     ])
   })
 
+  it('lists Swarms through the Agents service boundary', async () => {
+    const client = createClient({ list: vi.fn() })
+    const listControlPlaneResources = vi.fn(async () => ({
+      ok: true as const,
+      status: 200,
+      body: {
+        ok: true,
+        kind: 'Swarm',
+        namespace: 'agents',
+        items: [
+          {
+            metadata: {
+              name: 'jangar-control-plane',
+              namespace: 'agents',
+              labels: { app: 'jangar' },
+              creationTimestamp: '2026-01-20T00:00:00Z',
+            },
+            status: { phase: 'Ready' },
+          },
+        ],
+      },
+    }))
+
+    const gateway = createKubeGateway(client, { listControlPlaneResources })
+    const swarms = await gateway.listSwarms('agents')
+
+    expect(listControlPlaneResources).toHaveBeenCalledWith({ kind: 'Swarm', namespace: 'agents' })
+    expect(client.list).not.toHaveBeenCalled()
+    expect(swarms).toEqual([
+      {
+        metadata: {
+          name: 'jangar-control-plane',
+          namespace: 'agents',
+          generation: null,
+          labels: { app: 'jangar' },
+          annotations: {},
+          creationTimestamp: '2026-01-20T00:00:00Z',
+        },
+        status: { phase: 'Ready' },
+      },
+    ])
+  })
+
   it('classifies transport failures', async () => {
-    const gateway = createKubeGateway(
-      createClient({
-        list: vi.fn(async () => {
-          throw new Error('kubectl unavailable')
-        }),
+    const gateway = createKubeGateway(createClient({}), {
+      listControlPlaneResources: vi.fn(async () => {
+        throw new Error('Agents service unavailable')
       }),
-    )
+    })
 
     await expect(gateway.listSwarms('agents')).rejects.toMatchObject({
       name: 'KubeGatewayError',
       kind: 'transport',
-      message: 'kube swarms list failed: kubectl unavailable',
+      message: 'agents service swarms list failed: Agents service unavailable',
     } satisfies Partial<KubeGatewayError>)
   })
 

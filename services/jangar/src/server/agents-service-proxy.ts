@@ -99,6 +99,10 @@ export type AgentsAgentRunResourceListInput = {
   runtime?: string | null
 }
 
+export type AgentsControlPlaneResourceListInput = AgentsAgentRunResourceListInput & {
+  kind: string
+}
+
 export type AgentsControlPlaneResourcesResult = {
   ok: boolean
   kind?: string | null
@@ -290,11 +294,11 @@ export const fetchAgentRunsFromAgentsService = async (
   return fetchAgentsServiceJson<AgentsAgentRunListResult>(`/v1/agent-runs${suffix}`, env)
 }
 
-export const fetchAgentRunResourcesFromAgentsService = async (
-  input: AgentsAgentRunResourceListInput = {},
+export const fetchControlPlaneResourcesFromAgentsService = async (
+  input: AgentsControlPlaneResourceListInput,
   env: EnvSource = process.env,
 ): Promise<AgentsServiceJsonResult<AgentsControlPlaneResourcesResult>> => {
-  const params = new URLSearchParams({ kind: 'AgentRun' })
+  const params = new URLSearchParams({ kind: input.kind })
   const namespace = input.namespace?.trim()
   if (namespace) params.set('namespace', namespace)
   const labelSelector = input.labelSelector?.trim()
@@ -307,6 +311,12 @@ export const fetchAgentRunResourcesFromAgentsService = async (
 
   return fetchAgentsServiceJson<AgentsControlPlaneResourcesResult>(`/api/agents/control-plane/resources?${params}`, env)
 }
+
+export const fetchAgentRunResourcesFromAgentsService = async (
+  input: AgentsAgentRunResourceListInput = {},
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<AgentsControlPlaneResourcesResult>> =>
+  fetchControlPlaneResourcesFromAgentsService({ kind: 'AgentRun', ...input }, env)
 
 export const fetchControlPlaneResourceFromAgentsService = async (
   input: AgentsControlPlaneResourceGetInput,

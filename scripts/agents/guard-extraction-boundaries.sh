@@ -70,8 +70,8 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/whitepaper-finalize-consumer.ts"
 
 fail_if_matches \
-  "Jangar KubeGateway must list AgentRuns through the Agents service boundary, not direct Kubernetes CRD access" \
-  'RESOURCE_MAP\.AgentRun|agentruns\.agents\.proompteng\.ai' \
+  "Jangar KubeGateway must list Agents CRDs through the Agents service boundary, not direct Kubernetes CRD access" \
+  'RESOURCE_MAP|agentruns\.agents\.proompteng\.ai|swarms\.swarm\.proompteng\.ai' \
   "${ROOT_DIR}/services/jangar/src/server/kube-gateway.ts"
 
 fail_if_matches \
