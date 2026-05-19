@@ -49,6 +49,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--source-kind", default="")
     parser.add_argument("--dataset-snapshot-ref", default="")
     parser.add_argument("--artifact-ref", action="append", default=[])
+    parser.add_argument("--delay-adjusted-depth-stress-report-ref", default="")
     parser.add_argument("--dependency-quorum-decision", default="allow")
     parser.add_argument("--continuity-ok", default="true")
     parser.add_argument("--drift-ok", default="true")
@@ -85,6 +86,13 @@ def _decimal_or_none(value: Any) -> Decimal | None:
         return Decimal(text)
     except Exception:
         return None
+
+
+def _nonnegative_int(value: Any) -> int:
+    try:
+        return max(0, int(Decimal(str(value))))
+    except Exception:
+        return 0
 
 
 def _strategy_name_candidates(*values: str | None) -> list[str]:
@@ -133,6 +141,20 @@ def _load_report_post_cost_expectancy_bps(artifact_refs: list[str]) -> Decimal |
             continue
         return (net_pnl / execution_notional) * Decimal("10000")
     return None
+
+
+def _load_json_artifact(ref: str) -> dict[str, Any]:
+    text = ref.strip()
+    if not text:
+        return {}
+    path = Path(text)
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return _as_mapping(payload)
 
 
 def _query_timestamps(
@@ -241,6 +263,12 @@ def main() -> int:
     artifact_refs = [
         str(item).strip() for item in args.artifact_ref if str(item).strip()
     ]
+    delay_depth_report_ref = str(
+        getattr(args, "delay_adjusted_depth_stress_report_ref", "") or ""
+    ).strip()
+    delay_depth_report = _load_json_artifact(delay_depth_report_ref)
+    if delay_depth_report_ref:
+        artifact_refs.append(delay_depth_report_ref)
     report_post_cost_expectancy_bps = _load_report_post_cost_expectancy_bps(
         artifact_refs
     )
@@ -300,6 +328,29 @@ def main() -> int:
             else None
         ),
     }
+    if delay_depth_report_ref:
+        runtime_observation_payload.update(
+            {
+                "delay_adjusted_depth_stress_artifact_ref": delay_depth_report_ref,
+                "delay_adjusted_depth_stress_report": delay_depth_report,
+                "delay_adjusted_depth_stress_checks_total": max(
+                    _nonnegative_int(delay_depth_report.get("stress_case_count")),
+                    _nonnegative_int(delay_depth_report.get("case_count")),
+                    _nonnegative_int(delay_depth_report.get("trading_day_count")),
+                )
+                if delay_depth_report
+                else 0,
+                "delay_adjusted_depth_stress_passed": delay_depth_report.get("passed")
+                if delay_depth_report
+                else False,
+                "delay_adjusted_depth_stress_checked_at": (
+                    delay_depth_report.get("generated_at")
+                    or delay_depth_report.get("checked_at")
+                )
+                if delay_depth_report
+                else None,
+            }
+        )
     with SessionLocal() as session:
         summary = persist_observed_runtime_windows(
             session=session,

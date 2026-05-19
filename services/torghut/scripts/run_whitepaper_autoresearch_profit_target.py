@@ -5038,6 +5038,13 @@ def _runtime_report_summary_int(
         return default
 
 
+def _runtime_report_int(value: Any, *, default: int = 0) -> int:
+    try:
+        return max(0, int(Decimal(str(value if value is not None else default))))
+    except Exception:
+        return default
+
+
 def _runtime_closure_start_equity(runtime_closure: Mapping[str, Any]) -> Decimal:
     replay_plan = _load_json_mapping_artifact(runtime_closure.get("replay_plan_path"))
     execution_context = _mapping(replay_plan.get("execution_context"))
@@ -5108,11 +5115,21 @@ def _runtime_closure_delay_adjusted_depth_stress_update(
     delay_depth_report = _load_json_mapping_artifact(delay_depth_report_path)
     if not delay_depth_report:
         return {}
+    checked_at = _string(
+        delay_depth_report.get("generated_at") or delay_depth_report.get("checked_at")
+    )
     return {
+        "delay_adjusted_depth_stress_checks_total": max(
+            _runtime_report_int(delay_depth_report.get("stress_case_count")),
+            _runtime_report_int(delay_depth_report.get("case_count")),
+            _runtime_report_int(delay_depth_report.get("trading_day_count")),
+        ),
         "delay_adjusted_depth_stress_passed": _boolish(
             delay_depth_report.get("objective_met") or delay_depth_report.get("passed")
         ),
+        "delay_adjusted_depth_stress_checked_at": checked_at,
         "delay_adjusted_depth_stress_artifact_ref": delay_depth_report_path,
+        "delay_adjusted_depth_stress_report": dict(delay_depth_report),
         "delay_adjusted_depth_stress_model": _string(
             delay_depth_report.get("model") or delay_depth_report.get("stress_model")
         ),

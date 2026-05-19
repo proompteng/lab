@@ -2846,6 +2846,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                         "objective_met": True,
                         "model": "latency_depth_haircut",
                         "stress_delay_ms": "250",
+                        "case_count": 2,
+                        "generated_at": "2026-05-19T13:00:00Z",
                         "fillable_notional_per_day": "300000",
                         "post_delay_depth_net_pnl_per_day": "605",
                     }
@@ -2953,6 +2955,17 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             updated.objective_scorecard["market_impact_stress_net_pnl_per_day"],
             "610",
         )
+        self.assertEqual(
+            updated.objective_scorecard["delay_adjusted_depth_stress_checks_total"],
+            2,
+        )
+        self.assertEqual(
+            updated.objective_scorecard["delay_adjusted_depth_stress_checked_at"],
+            "2026-05-19T13:00:00Z",
+        )
+        self.assertTrue(
+            updated.objective_scorecard["delay_adjusted_depth_stress_passed"]
+        )
         self.assertIn(str(approval_replay_path), updated.evidence_refs)
 
     def test_runtime_closure_proof_helpers_stay_fail_closed_on_edge_inputs(
@@ -3008,6 +3021,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             ),
             7,
         )
+        self.assertEqual(runner._runtime_report_int("bad", default=11), 11)
         self.assertEqual(
             runner._portfolio_executable_max_notional(portfolio), Decimal("50000")
         )

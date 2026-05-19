@@ -57,7 +57,8 @@ def _parse_args() -> argparse.Namespace:
             "Repeatable comma-separated key=value runtime import target. "
             "Supported keys: hypothesis_id,candidate_id,strategy_family,"
             "strategy_name,account_label,observed_stage,source_dsn_env,"
-            "dataset_snapshot_ref,source_manifest_ref,source_kind."
+            "dataset_snapshot_ref,source_manifest_ref,source_kind,"
+            "delay_adjusted_depth_stress_report_ref."
         ),
     )
     parser.add_argument("--runtime-window-hypothesis-id", default="H-TSMOM-01")
@@ -154,6 +155,7 @@ class RuntimeWindowImportTarget:
     dataset_snapshot_ref: str
     source_manifest_ref: str
     source_kind: str
+    delay_adjusted_depth_stress_report_ref: str
 
 
 def _parse_runtime_window_target_spec(spec: str) -> dict[str, str]:
@@ -229,6 +231,10 @@ def _runtime_window_targets(
                 ),
                 source_kind=value("source_kind", "runtime_window_source_kind")
                 or "paper_runtime_observed",
+                delay_adjusted_depth_stress_report_ref=value(
+                    "delay_adjusted_depth_stress_report_ref",
+                    "runtime_window_delay_adjusted_depth_stress_report_ref",
+                ),
             )
         )
     return targets
@@ -479,6 +485,15 @@ def _run_runtime_window_import_target(
     )
     if dataset_snapshot_ref is not None:
         command.extend(["--dataset-snapshot-ref", dataset_snapshot_ref])
+    delay_depth_report_ref = (
+        _as_text(target.delay_adjusted_depth_stress_report_ref)
+        or _as_text(runtime_manifest.get("delay_adjusted_depth_stress_report_ref"))
+        or _as_text(runtime_manifest.get("delay_adjusted_depth_stress_report_path"))
+    )
+    if delay_depth_report_ref is not None:
+        command.extend(
+            ["--delay-adjusted-depth-stress-report-ref", delay_depth_report_ref]
+        )
     result = subprocess.run(command, check=True, capture_output=True, text=True)
     payload = json.loads(result.stdout)
     return {

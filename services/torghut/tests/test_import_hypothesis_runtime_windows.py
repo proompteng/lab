@@ -10,7 +10,9 @@ from unittest.mock import patch
 
 from scripts.import_hypothesis_runtime_windows import (
     EXECUTION_ELIGIBLE_DECISION_STATUSES,
+    _load_json_artifact,
     _load_report_post_cost_expectancy_bps,
+    _nonnegative_int,
     _parse_args,
     _query_timestamps,
     _strategy_name_candidates,
@@ -139,6 +141,23 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             value = _load_report_post_cost_expectancy_bps([str(report_path)])
 
         self.assertEqual(value, Decimal("3.306984755680006238084907933"))
+
+    def test_json_artifact_and_nonnegative_int_helpers_fail_closed(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            missing_path = Path(temp_dir) / "missing.json"
+            invalid_path = Path(temp_dir) / "invalid.json"
+            valid_path = Path(temp_dir) / "valid.json"
+            invalid_path.write_text("{", encoding="utf-8")
+            valid_path.write_text('{"case_count": 2}', encoding="utf-8")
+
+            self.assertEqual(_load_json_artifact(""), {})
+            self.assertEqual(_load_json_artifact(str(missing_path)), {})
+            self.assertEqual(_load_json_artifact(str(invalid_path)), {})
+            self.assertEqual(_load_json_artifact(str(valid_path)), {"case_count": 2})
+
+        self.assertEqual(_nonnegative_int("3.9"), 3)
+        self.assertEqual(_nonnegative_int("-2"), 0)
+        self.assertEqual(_nonnegative_int("bad"), 0)
 
     def test_strategy_name_candidates_include_catalog_aliases(self) -> None:
         candidates = _strategy_name_candidates(
@@ -308,3 +327,95 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 "intraday-tsmom-v1",
             ],
         )
+
+    def test_main_attaches_delay_adjusted_depth_report_to_runtime_payload(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temp_dir:
+            report_path = Path(temp_dir) / "delay-depth.json"
+            report_path.write_text(
+                '{"passed": true, "case_count": 2, "checked_at": "2026-03-06T15:20:00Z"}',
+                encoding="utf-8",
+            )
+            args = SimpleNamespace(
+                run_id="run-depth",
+                candidate_id="chip-paper-microbar-composite@execution-proof",
+                hypothesis_id="H-MICRO-01",
+                observed_stage="paper",
+                strategy_family="microstructure_breakout",
+                source_dsn="postgresql://example",
+                source_dsn_env="DB_DSN",
+                strategy_name="microbar_volume_continuation_long_top2_chip_v1@paper",
+                account_label="TORGHUT_SIM",
+                window_start="2026-03-06T14:30:00Z",
+                window_end="2026-03-06T15:00:00Z",
+                bucket_minutes=30,
+                sample_minutes=5,
+                source_manifest_ref="config/trading/hypotheses/h-micro-01.json",
+                source_kind="simulation_paper_runtime",
+                dataset_snapshot_ref="runtime-depth-snapshot",
+                artifact_ref=[],
+                delay_adjusted_depth_stress_report_ref=str(report_path),
+                dependency_quorum_decision="allow",
+                continuity_ok="true",
+                drift_ok="true",
+                json=False,
+            )
+            fake_session = _FakeSession()
+            manifest = SimpleNamespace(
+                strategy_family="microstructure_breakout",
+                strategy_id="microbar_volume_continuation_long_top2_chip_v1@paper",
+                max_allowed_slippage_bps=Decimal("12"),
+            )
+
+            with (
+                patch(
+                    "scripts.import_hypothesis_runtime_windows._parse_args",
+                    return_value=args,
+                ),
+                patch(
+                    "scripts.import_hypothesis_runtime_windows.resolve_hypothesis_manifest",
+                    return_value=(
+                        SimpleNamespace(path="config/trading/hypotheses/h-micro-01.json"),
+                        manifest,
+                    ),
+                ),
+                patch(
+                    "scripts.import_hypothesis_runtime_windows._query_timestamps",
+                    return_value=([], [], []),
+                ),
+                patch(
+                    "scripts.import_hypothesis_runtime_windows.build_regular_session_buckets",
+                    return_value=[],
+                ),
+                patch(
+                    "scripts.import_hypothesis_runtime_windows.build_observed_runtime_buckets",
+                    return_value=[],
+                ),
+                patch(
+                    "scripts.import_hypothesis_runtime_windows.persist_observed_runtime_windows",
+                    return_value={"run_id": "run-depth"},
+                ) as persist_windows,
+                patch(
+                    "scripts.import_hypothesis_runtime_windows.SessionLocal",
+                    return_value=fake_session,
+                ),
+                patch("builtins.print"),
+            ):
+                exit_code = main()
+
+        self.assertEqual(exit_code, 0)
+        runtime_payload = persist_windows.call_args.kwargs[
+            "runtime_observation_payload"
+        ]
+        self.assertEqual(
+            runtime_payload["delay_adjusted_depth_stress_artifact_ref"],
+            str(report_path),
+        )
+        self.assertEqual(runtime_payload["delay_adjusted_depth_stress_checks_total"], 2)
+        self.assertEqual(runtime_payload["delay_adjusted_depth_stress_passed"], True)
+        self.assertEqual(
+            runtime_payload["delay_adjusted_depth_stress_checked_at"],
+            "2026-03-06T15:20:00Z",
+        )
+        self.assertIn(str(report_path), runtime_payload["artifact_refs"])

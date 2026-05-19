@@ -1980,10 +1980,15 @@ def _delay_adjusted_depth_stress_report(
     if not bool(report.get("objective_met")):
         reasons.append("approval_replay_objective_not_met")
     objective_met = not reasons
+    generated_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    candidate_id = _string(best_candidate.get("candidate_id"))
     return {
         "schema_version": "torghut.delay-adjusted-depth-stress-report.v1",
         "run_id": runner_run_id,
-        "candidate_id": _string(best_candidate.get("candidate_id")),
+        "candidate_id": candidate_id,
+        "report_id": f"{runner_run_id}:{candidate_id}:delay-adjusted-depth-stress",
+        "generated_at": generated_at,
+        "checked_at": generated_at,
         "runtime_family": _runtime_family(best_candidate),
         "runtime_strategy_name": _runtime_strategy_name(best_candidate),
         "runtime_strategy_names": list(
@@ -1998,6 +2003,8 @@ def _delay_adjusted_depth_stress_report(
         "objective_met": objective_met,
         "passed": objective_met,
         "reasons": reasons,
+        "case_count": len(daily_rows),
+        "stress_case_count": len(daily_rows),
         "target_net_pnl_per_day": _decimal_string(
             program.objective.target_net_pnl_per_day
         ),

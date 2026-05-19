@@ -1282,6 +1282,11 @@ def compile_hypothesis_runtime_statuses(
             elif delay_depth_stress.passed is False:
                 reasons.append("delay_adjusted_depth_stress_failed")
             if (
+                delay_depth_stress.checked_at is None
+                and requirements.max_delay_adjusted_depth_stress_age_minutes is not None
+            ):
+                reasons.append("delay_adjusted_depth_stress_missing")
+            if (
                 requirements.max_delay_adjusted_depth_stress_age_minutes is not None
                 and delay_depth_stress_age_minutes is not None
                 and delay_depth_stress_age_minutes
