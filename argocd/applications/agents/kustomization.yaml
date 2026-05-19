@@ -32,9 +32,7 @@ resources:
   - agents-primitives-signal-delivery.yaml
   - agents-primitives-artifact.yaml
   - agents-primitives-budget.yaml
-  - agents-primitives-secretbinding.yaml
   - agents-primitives-workspace.yaml
-  - agents-primitives-schedule.yaml
   - agents-primitives-orchestration.yaml
   - agents-primitives-sub-orchestration.yaml
   - agents-primitives-orchestrationrun.yaml

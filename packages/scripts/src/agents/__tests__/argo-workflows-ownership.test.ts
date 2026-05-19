@@ -10,10 +10,7 @@ const workflowScriptTemplatePaths = [
   'argocd/applications/argo-workflows/agents-sub-orchestration-workflowtemplate.yaml',
 ]
 
-const workflowTemplatePaths = [
-  ...workflowScriptTemplatePaths,
-  'argocd/applications/argo-workflows/agents-primitives-echo-workflowtemplate.yaml',
-]
+const workflowTemplatePaths = [...workflowScriptTemplatePaths]
 
 const readRepoFile = (path: string) => readFileSync(resolve(process.cwd(), path), 'utf8')
 
@@ -45,7 +42,6 @@ describe('Argo workflow primitive ownership', () => {
     expect(combinedManifests).not.toContain(' jq ')
     expect(combinedManifests).not.toContain('\njq ')
     expect(combinedManifests).toContain('agents-embeddings-config')
-    expect(combinedManifests).toContain('hello from agents primitives')
     expect(combinedManifests).toContain('/tmp/agents-checkpoint.mjs')
     expect(combinedManifests).toContain('/tmp/agents-memory-op.mjs')
   })

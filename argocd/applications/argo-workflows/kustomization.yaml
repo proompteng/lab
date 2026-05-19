@@ -15,7 +15,6 @@ resources:
   - alloy-deployment.yaml
   - codex-cluster-admin.yaml
   - agents-embeddings-config.yaml
-  - agents-primitives-echo-workflowtemplate.yaml
   - agents-approval-gate-workflowtemplate.yaml
   - agents-memory-op-workflowtemplate.yaml
   - agents-signal-wait-workflowtemplate.yaml

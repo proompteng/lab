@@ -65,6 +65,11 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/torghut-market-context-dispatch.ts"
 
 fail_if_matches \
+  "Agents GitOps must not ship the old sample Argo WorkflowTemplate schedule bridge" \
+  'agents-primitives-echo|kind: WorkflowTemplate|codex-workflow' \
+  "${ROOT_DIR}/argocd/applications/agents"
+
+fail_if_matches \
   "Facteur, Froussard, and shared Argo GitOps must not use the legacy codex-universal runtime" \
   'codex-universal|/usr/local/bin/codex-bootstrap|ghcr.io/openai/codex-universal' \
   "${ROOT_DIR}/argocd/applications/facteur" \
