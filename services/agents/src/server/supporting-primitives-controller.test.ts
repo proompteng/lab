@@ -160,13 +160,12 @@ describe('supporting primitives controller', () => {
     })
   })
 
-  it('materializes both new and legacy delivery placeholders in the schedule runner', () => {
+  it('materializes canonical delivery placeholders in the schedule runner', () => {
     const manifest = scheduleRunnerTest.materializeManifest(
       JSON.stringify({
         metadata: {
           labels: {
             'agents.proompteng.ai/delivery-id': '__AGENTS_DELIVERY_ID__',
-            'jangar.proompteng.ai/delivery-id': '__JANGAR_DELIVERY_ID__',
           },
         },
         spec: { idempotencyKey: '__AGENTS_DELIVERY_ID__' },
@@ -174,7 +173,6 @@ describe('supporting primitives controller', () => {
     )
     const labels = manifest.metadata as { labels: Record<string, string> }
     expect(labels.labels['agents.proompteng.ai/delivery-id']).not.toContain('__AGENTS')
-    expect(labels.labels['jangar.proompteng.ai/delivery-id']).not.toContain('__JANGAR')
     expect((manifest.spec as { idempotencyKey: string }).idempotencyKey).not.toContain('__AGENTS')
   })
 })

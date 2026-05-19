@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 
 import { createKubernetesClient } from './kube-types'
 
-const DELIVERY_PLACEHOLDERS = ['__AGENTS_DELIVERY_ID__', '__JANGAR_DELIVERY_ID__']
+const DELIVERY_PLACEHOLDERS = ['__AGENTS_DELIVERY_ID__']
 
 const materializeManifest = (raw: string) => {
   const deliveryId = randomUUID()

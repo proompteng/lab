@@ -68,20 +68,17 @@ const queuedResourceKeysByNamespace = new Map<string, Map<string, { rerun: boole
 
 const nowIso = () => new Date().toISOString()
 
-const readEnv = (agentsName: string, jangarName?: string) =>
-  process.env[agentsName]?.trim() || (jangarName ? process.env[jangarName]?.trim() : undefined) || ''
+const readEnv = (agentsName: string) => process.env[agentsName]?.trim() || ''
 
 const resolveSupportingRuntimeConfig = () => {
   const image =
-    readEnv('AGENTS_SCHEDULE_RUNNER_IMAGE', 'JANGAR_SCHEDULE_RUNNER_IMAGE') ||
-    readEnv('AGENTS_IMAGE', 'JANGAR_IMAGE') ||
+    readEnv('AGENTS_SCHEDULE_RUNNER_IMAGE') ||
+    readEnv('AGENTS_IMAGE') ||
     readEnv('AGENTS_RUNTIME_IMAGE') ||
     'ghcr.io/proompteng/agents-controller:latest'
   const serviceAccountName =
-    readEnv('AGENTS_SCHEDULE_SERVICE_ACCOUNT', 'JANGAR_SCHEDULE_SERVICE_ACCOUNT') ||
-    readEnv('AGENTS_SERVICE_ACCOUNT_NAME', 'JANGAR_SERVICE_ACCOUNT_NAME') ||
-    undefined
-  const nodeSelectorRaw = readEnv('AGENTS_SCHEDULE_RUNNER_NODE_SELECTOR', 'JANGAR_SCHEDULE_RUNNER_NODE_SELECTOR')
+    readEnv('AGENTS_SCHEDULE_SERVICE_ACCOUNT') || readEnv('AGENTS_SERVICE_ACCOUNT_NAME') || undefined
+  const nodeSelectorRaw = readEnv('AGENTS_SCHEDULE_RUNNER_NODE_SELECTOR')
   const nodeSelector = (() => {
     if (!nodeSelectorRaw) return null
     try {

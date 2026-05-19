@@ -1,6 +1,4 @@
-import { isAgentsRuntimeService } from '@proompteng/agents/server/runtime-identity'
-
-type EnvSource = Record<string, string | undefined>
+import { readAgentsEnv, type EnvSource } from './runtime-env'
 
 type ControllerToggleConfig = {
   enabled: boolean
@@ -19,15 +17,6 @@ export type PrimitivesReconcilerConfig = ControllerToggleConfig
 export type SupportingControllerConfig = ControllerToggleConfig
 
 const DNS_LABEL_REGEX = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
-
-const readEnv = (env: EnvSource, name: string) => {
-  if (name.startsWith('AGENTS_')) return env[name] ?? env[`JANGAR_${name.slice('AGENTS_'.length)}`]
-  if (name.startsWith('JANGAR_')) return env[`AGENTS_${name.slice('JANGAR_'.length)}`] ?? env[name]
-  return env[name]
-}
-
-const defaultFeatureFlagKey = (env: EnvSource, agentsKey: string, jangarKey: string) =>
-  isAgentsRuntimeService(env) ? agentsKey : jangarKey
 
 const parseBooleanEnv = (value: string | undefined, fallback: boolean) => {
   if (value == null) return fallback
@@ -63,59 +52,57 @@ const parseNamespaces = (raw: string | undefined, fallback: string[], label: str
 }
 
 export const isControllerClusterScoped = (env: EnvSource = process.env) =>
-  parseBooleanEnv(readEnv(env, 'AGENTS_RBAC_CLUSTER_SCOPED'), false)
+  parseBooleanEnv(readAgentsEnv(env, 'AGENTS_RBAC_CLUSTER_SCOPED') ?? undefined, false)
 
 export const isSwarmPrimitiveEnabled = (env: EnvSource = process.env) =>
   parseBooleanEnv(env.AGENTS_SWARM_PRIMITIVE_ENABLED, false)
 
 export const resolveControlPlaneCacheConfig = (env: EnvSource = process.env): ControlPlaneCacheConfig => ({
-  enabled: parseBooleanEnv(readEnv(env, 'AGENTS_CONTROL_PLANE_CACHE_ENABLED'), false),
+  enabled: parseBooleanEnv(readAgentsEnv(env, 'AGENTS_CONTROL_PLANE_CACHE_ENABLED') ?? undefined, false),
   namespaces: parseNamespaces(
-    readEnv(env, 'AGENTS_CONTROL_PLANE_CACHE_NAMESPACES') ?? readEnv(env, 'AGENTS_PRIMITIVES_NAMESPACES'),
+    readAgentsEnv(env, 'AGENTS_CONTROL_PLANE_CACHE_NAMESPACES') ??
+      readAgentsEnv(env, 'AGENTS_PRIMITIVES_NAMESPACES') ??
+      undefined,
     ['agents'],
     'control plane cache',
     isControllerClusterScoped(env),
   ),
-  clusterId: readEnv(env, 'AGENTS_CONTROL_PLANE_CACHE_CLUSTER')?.trim() || 'default',
+  clusterId: readAgentsEnv(env, 'AGENTS_CONTROL_PLANE_CACHE_CLUSTER') || 'default',
 })
 
 export const resolveOrchestrationControllerConfig = (env: EnvSource = process.env): OrchestrationControllerConfig => ({
-  enabled: parseBooleanEnv(readEnv(env, 'AGENTS_ORCHESTRATION_CONTROLLER_ENABLED'), true),
+  enabled: parseBooleanEnv(readAgentsEnv(env, 'AGENTS_ORCHESTRATION_CONTROLLER_ENABLED') ?? undefined, true),
   namespaces: parseNamespaces(
-    readEnv(env, 'AGENTS_ORCHESTRATION_CONTROLLER_NAMESPACES'),
+    readAgentsEnv(env, 'AGENTS_ORCHESTRATION_CONTROLLER_NAMESPACES') ?? undefined,
     ['agents'],
     'orchestration controller',
     isControllerClusterScoped(env),
   ),
   enabledFlagKey:
-    readEnv(env, 'AGENTS_ORCHESTRATION_CONTROLLER_ENABLED_FLAG_KEY')?.trim() ||
-    defaultFeatureFlagKey(env, 'agents.orchestration_controller.enabled', 'jangar.orchestration_controller.enabled'),
+    readAgentsEnv(env, 'AGENTS_ORCHESTRATION_CONTROLLER_ENABLED_FLAG_KEY') || 'agents.orchestration_controller.enabled',
 })
 
 export const resolvePrimitivesReconcilerConfig = (env: EnvSource = process.env): PrimitivesReconcilerConfig => ({
-  enabled: parseBooleanEnv(readEnv(env, 'AGENTS_PRIMITIVES_RECONCILER'), true),
+  enabled: parseBooleanEnv(readAgentsEnv(env, 'AGENTS_PRIMITIVES_RECONCILER') ?? undefined, true),
   namespaces: parseNamespaces(
-    readEnv(env, 'AGENTS_PRIMITIVES_NAMESPACES'),
+    readAgentsEnv(env, 'AGENTS_PRIMITIVES_NAMESPACES') ?? undefined,
     ['agents'],
     'primitives reconciler',
     isControllerClusterScoped(env),
   ),
-  enabledFlagKey:
-    readEnv(env, 'AGENTS_PRIMITIVES_RECONCILER_FLAG_KEY')?.trim() ||
-    defaultFeatureFlagKey(env, 'agents.primitives_reconciler.enabled', 'jangar.primitives_reconciler.enabled'),
+  enabledFlagKey: readAgentsEnv(env, 'AGENTS_PRIMITIVES_RECONCILER_FLAG_KEY') || 'agents.primitives_reconciler.enabled',
 })
 
 export const resolveSupportingControllerConfig = (env: EnvSource = process.env): SupportingControllerConfig => ({
-  enabled: parseBooleanEnv(readEnv(env, 'AGENTS_SUPPORTING_CONTROLLER_ENABLED'), true),
+  enabled: parseBooleanEnv(readAgentsEnv(env, 'AGENTS_SUPPORTING_CONTROLLER_ENABLED') ?? undefined, true),
   namespaces: parseNamespaces(
-    readEnv(env, 'AGENTS_SUPPORTING_CONTROLLER_NAMESPACES'),
+    readAgentsEnv(env, 'AGENTS_SUPPORTING_CONTROLLER_NAMESPACES') ?? undefined,
     ['agents'],
     'supporting controller',
     isControllerClusterScoped(env),
   ),
   enabledFlagKey:
-    readEnv(env, 'AGENTS_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY')?.trim() ||
-    defaultFeatureFlagKey(env, 'agents.supporting_controller.enabled', 'jangar.supporting_controller.enabled'),
+    readAgentsEnv(env, 'AGENTS_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY') || 'agents.supporting_controller.enabled',
 })
 
 export const validateControllerRuntimeConfig = (env: EnvSource = process.env) => {
@@ -126,8 +113,7 @@ export const validateControllerRuntimeConfig = (env: EnvSource = process.env) =>
 }
 
 export const __private = {
-  defaultFeatureFlagKey,
   parseBooleanEnv,
   parseNamespaces,
-  readEnv,
+  readEnv: readAgentsEnv,
 }
