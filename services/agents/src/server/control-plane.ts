@@ -1,6 +1,5 @@
 import { readFile } from 'node:fs/promises'
 
-import { installAgentsEnvCompatibility } from './env-compat'
 import { resolveBooleanFeatureToggle } from './feature-flags'
 import { createAgentsHealthHandler } from './health'
 import { createAgentsHttpRuntime, type AgentsHttpRuntime } from './http-runtime'
@@ -233,7 +232,6 @@ const configureRuntimeDependencies = () => {
 export const createAgentsControlPlaneRuntime = async (
   options: ControlPlaneRuntimeOptions = {},
 ): Promise<AgentsHttpRuntime & { handleHttpRequest: (request: Request) => Promise<Response> }> => {
-  installAgentsEnvCompatibility()
   configureRuntimeDependencies()
 
   const healthHandler = createAgentsHealthHandler({
