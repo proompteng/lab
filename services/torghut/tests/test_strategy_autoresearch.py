@@ -448,21 +448,22 @@ class TestStrategyAutoresearch(TestCase):
         self.assertEqual(program.objective.min_daily_net_pnl, Decimal("-999999999"))
         self.assertEqual(program.objective.min_active_day_ratio, Decimal("0.90"))
         self.assertEqual(program.objective.min_positive_day_ratio, Decimal("0.60"))
+        self.assertEqual(program.objective.min_profit_factor, Decimal("1.50"))
         self.assertEqual(program.objective.max_worst_day_loss, Decimal("999999999"))
         self.assertEqual(program.objective.max_drawdown, Decimal("999999999"))
         self.assertEqual(
             program.objective.max_worst_day_loss_pct_equity, Decimal("0.05")
         )
-        self.assertEqual(program.objective.max_drawdown_pct_equity, Decimal("0.10"))
+        self.assertEqual(program.objective.max_drawdown_pct_equity, Decimal("0.08"))
         self.assertEqual(
             program.objective.extended_max_worst_day_loss_pct_equity,
             Decimal("0.08"),
         )
         self.assertEqual(
-            program.objective.extended_max_drawdown_pct_equity, Decimal("0.15")
+            program.objective.extended_max_drawdown_pct_equity, Decimal("0.12")
         )
         self.assertEqual(
-            program.objective.min_total_net_pnl_to_drawdown_ratio, Decimal("2.00")
+            program.objective.min_total_net_pnl_to_drawdown_ratio, Decimal("3.00")
         )
         self.assertFalse(program.objective.require_every_day_active)
         self.assertEqual(

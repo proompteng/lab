@@ -1034,6 +1034,7 @@ def _candidate_spec_with_oracle_policy(
     objective = {
         **dict(spec.objective),
         "require_positive_day_ratio": str(oracle_policy.min_positive_day_ratio),
+        "require_profit_factor": str(oracle_policy.min_profit_factor),
     }
     hard_vetoes = {
         **dict(spec.hard_vetoes),
@@ -1042,6 +1043,7 @@ def _candidate_spec_with_oracle_policy(
             oracle_policy.min_avg_filled_notional_per_day
         ),
         "required_max_best_day_share": str(oracle_policy.max_best_day_share),
+        "required_min_profit_factor": str(oracle_policy.min_profit_factor),
         "required_max_worst_day_loss": str(oracle_policy.max_worst_day_loss),
         "required_max_drawdown": str(oracle_policy.max_drawdown),
         "required_max_worst_day_loss_pct_equity": str(
