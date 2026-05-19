@@ -118,6 +118,12 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-material-reentry-requirements.ts"
 
 fail_if_matches \
+  "Jangar must call the Agents service boundary instead of importing Agents package internals" \
+  '@proompteng/agents' \
+  "${ROOT_DIR}/services/jangar/package.json" \
+  "${ROOT_DIR}/services/jangar/src"
+
+fail_if_matches \
   "Jangar kube helper must not carry Agents CRD aliases after the control-plane extraction" \
   'agents\.proompteng\.ai|tools\.proompteng\.ai|orchestration\.proompteng\.ai|approvals\.proompteng\.ai|budgets\.proompteng\.ai|security\.proompteng\.ai|signals\.proompteng\.ai|schedules\.proompteng\.ai|swarm\.proompteng\.ai|artifacts\.proompteng\.ai|workspaces\.proompteng\.ai' \
   "${ROOT_DIR}/services/jangar/src/server/primitives-kube.ts"
