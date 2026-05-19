@@ -1150,6 +1150,13 @@ const startNamespaceWatches = async (
           ...toLogError(error),
         }),
       onRestart: (restartReason) => {
+        if (restartReason === 'closed') {
+          logAgentsControllerDebug('agentrun_watch_restarted', {
+            namespace,
+            reason: restartReason,
+          })
+          return
+        }
         logAgentsControllerWarn('agentrun_watch_restarted', {
           namespace,
           reason: restartReason,

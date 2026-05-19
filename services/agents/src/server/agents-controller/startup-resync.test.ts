@@ -10,6 +10,7 @@ vi.mock('../kube-watch', () => ({
   startResourceWatch: watchMocks.startResourceWatch,
 }))
 
+import type { WatchOptions } from '../kube-watch'
 import { RESOURCE_MAP } from '../kube-types'
 import { __test, stopAgentsController } from './index'
 
@@ -29,6 +30,11 @@ const buildKube = (overrides: Record<string, unknown> = {}) => ({
   list: vi.fn(async () => ({ items: [] })),
   ...overrides,
 })
+
+const flush = async () => {
+  await Promise.resolve()
+  await Promise.resolve()
+}
 
 describe('agents controller startup resync', () => {
   beforeEach(() => {
@@ -82,5 +88,36 @@ describe('agents controller startup resync', () => {
       await startup
       __test.stopWatchHandles(handles)
     }
+  })
+
+  it('does not resync AgentRuns for normal watch stream closures', async () => {
+    const list = vi.fn(async () => ({ items: [] }))
+    const kube = buildKube({ list })
+    const handles: Array<{ stop: () => void }> = []
+
+    await __test.startNamespaceWatches(
+      kube as never,
+      'agents',
+      { namespaces: new Map() } as never,
+      defaultConcurrency,
+      handles,
+      { agentRunResourceVersion: '42' },
+    )
+    await flush()
+
+    list.mockClear()
+    const watchCalls = watchMocks.startResourceWatch.mock.calls as unknown as Array<[WatchOptions]>
+    const agentRunWatch = watchCalls.find(([options]) => options.resource === RESOURCE_MAP.AgentRun)?.[0]
+    expect(agentRunWatch).toBeDefined()
+
+    agentRunWatch?.onRestart?.('closed')
+    await flush()
+    expect(list).not.toHaveBeenCalled()
+
+    agentRunWatch?.onRestart?.('watch_error')
+    await flush()
+    expect(list).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'agents')
+
+    __test.stopWatchHandles(handles)
   })
 })
