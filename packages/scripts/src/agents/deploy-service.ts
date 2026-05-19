@@ -515,6 +515,11 @@ const buildDatabaseSecretAliasManifest = (
   },
 })
 
+const resolveDatabaseSecretSource = (requirement: DatabaseSecretRequirement) => ({
+  sourceNamespace: process.env.AGENTS_DB_SECRET_SOURCE_NAMESPACE ?? requirement.namespace,
+  sourceName: process.env.AGENTS_DB_SECRET_SOURCE_NAME ?? requirement.name,
+})
+
 const ensureDatabaseSecretReady = async (requirement: DatabaseSecretRequirement | null) => {
   if (!requirement) return
   ensureCli('kubectl')
@@ -536,12 +541,11 @@ const ensureDatabaseSecretReady = async (requirement: DatabaseSecretRequirement 
 
   if (!parseBoolean(process.env.AGENTS_CREATE_DB_SECRET_ALIAS, false)) {
     fatal(
-      `Database secret ${requirement.namespace}/${requirement.name} is missing. Create/migrate the Agents database secret before applying, or set AGENTS_CREATE_DB_SECRET_ALIAS=true to copy the configured compatibility source secret for this rollout.`,
+      `Database secret ${requirement.namespace}/${requirement.name} is missing. Create/migrate the Agents database secret before applying, or set AGENTS_CREATE_DB_SECRET_ALIAS=true with AGENTS_DB_SECRET_SOURCE_NAME set explicitly to copy a compatibility source secret for this rollout.`,
     )
   }
 
-  const sourceNamespace = process.env.AGENTS_DB_SECRET_SOURCE_NAMESPACE ?? requirement.namespace
-  const sourceName = process.env.AGENTS_DB_SECRET_SOURCE_NAME ?? 'jangar-db-app'
+  const { sourceNamespace, sourceName } = resolveDatabaseSecretSource(requirement)
   const source = await capture(['kubectl', '-n', sourceNamespace, 'get', 'secret', sourceName, '-o', 'json'])
   const manifest = buildDatabaseSecretAliasManifest(JSON.parse(source) as KubernetesSecretManifest, {
     sourceNamespace,
@@ -694,5 +698,6 @@ export const __private = {
   updateValuesFile,
   readRunnerImagePin,
   resolveDatabaseSecretRequirement,
+  resolveDatabaseSecretSource,
   buildDatabaseSecretAliasManifest,
 }
