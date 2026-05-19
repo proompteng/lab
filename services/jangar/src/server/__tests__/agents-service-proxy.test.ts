@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   buildAgentsServiceProxyUrl,
+  fetchAgentRunsFromAgentsService,
   fetchAgentsServiceJson,
   proxyAgentsServiceRequest,
   resolveAgentsServiceBaseUrl,
@@ -154,6 +155,61 @@ describe('agents-service-proxy', () => {
         ok: true,
         agentRun: { id: 'run-1', deliveryId: 'delivery-1' },
         resource: { kind: 'AgentRun', metadata: { name: 'demo-agent-run' } },
+      },
+    })
+  })
+
+  it('lists AgentRun projections through the Agents service boundary', async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          runs: [
+            {
+              id: 'run-1',
+              agentName: 'codex',
+              deliveryId: 'delivery-1',
+              provider: 'job',
+              status: 'Running',
+              externalRunId: 'codex-run-1',
+              payload: {},
+            },
+          ],
+        }),
+        {
+          headers: { 'content-type': 'application/json' },
+          status: 200,
+        },
+      )
+    })
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+
+    const result = await fetchAgentRunsFromAgentsService(
+      { statuses: ['Running', 'Pending'], limit: 100 },
+      { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
+    )
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
+    expect(url.toString()).toBe('http://agents.test/v1/agent-runs?status=Running%2CPending&limit=100')
+    expect(init.method).toBe('GET')
+    expect((init.headers as Headers).get('x-agents-client')).toBe('jangar')
+    expect(result).toEqual({
+      ok: true,
+      status: 200,
+      body: {
+        ok: true,
+        runs: [
+          {
+            id: 'run-1',
+            agentName: 'codex',
+            deliveryId: 'delivery-1',
+            provider: 'job',
+            status: 'Running',
+            externalRunId: 'codex-run-1',
+            payload: {},
+          },
+        ],
       },
     })
   })

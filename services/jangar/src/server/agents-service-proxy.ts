@@ -68,6 +68,29 @@ export type AgentsAgentRunSubmitInput = {
   dryRun?: string | null
 }
 
+export type AgentsAgentRunListItem = {
+  id: string
+  agentName: string
+  deliveryId: string
+  provider: string
+  status: string
+  externalRunId: string | null
+  payload: Record<string, unknown>
+  createdAt?: string | null
+  updatedAt?: string | null
+}
+
+export type AgentsAgentRunListInput = {
+  agentName?: string | null
+  statuses?: string[] | null
+  limit?: number | null
+}
+
+export type AgentsAgentRunListResult = {
+  ok: boolean
+  runs: AgentsAgentRunListItem[]
+}
+
 export type AgentsOrchestrationRunSubmitResult = {
   orchestrationRun: Record<string, unknown>
   resource: Record<string, unknown> | null
@@ -215,6 +238,21 @@ export const submitAgentRunToAgentsService = async (
       error: getErrorMessage(error),
     }
   }
+}
+
+export const fetchAgentRunsFromAgentsService = async (
+  input: AgentsAgentRunListInput,
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<AgentsAgentRunListResult>> => {
+  const params = new URLSearchParams()
+  const agentName = input.agentName?.trim()
+  if (agentName) params.set('agentName', agentName)
+  const statuses = (input.statuses ?? []).map((status) => status.trim()).filter((status) => status.length > 0)
+  if (statuses.length > 0) params.set('status', statuses.join(','))
+  if (input.limit && input.limit > 0) params.set('limit', String(Math.trunc(input.limit)))
+
+  const suffix = params.size > 0 ? `?${params.toString()}` : ''
+  return fetchAgentsServiceJson<AgentsAgentRunListResult>(`/v1/agent-runs${suffix}`, env)
 }
 
 export const submitOrchestrationRunToAgentsService = async (

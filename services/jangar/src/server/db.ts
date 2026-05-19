@@ -480,62 +480,6 @@ type WorkflowCommsAgentMessage = {
   created_at: Generated<Timestamp>
 }
 
-type JangarAgentRuns = {
-  id: Generated<string>
-  agent_name: string
-  delivery_id: string
-  provider: string
-  status: string
-  external_run_id: string | null
-  payload: JsonValue
-  created_at: Generated<Timestamp>
-  updated_at: Generated<Timestamp>
-}
-
-type JangarAgentRunIdempotencyKeys = {
-  id: Generated<string>
-  namespace: string
-  agent_name: string
-  idempotency_key: string
-  agent_run_name: string | null
-  agent_run_uid: string | null
-  terminal_phase: string | null
-  terminal_at: Timestamp | null
-  created_at: Generated<Timestamp>
-  updated_at: Generated<Timestamp>
-}
-
-type JangarMemoryResources = {
-  id: Generated<string>
-  memory_name: string
-  provider: string
-  status: string
-  connection_secret: JsonValue | null
-  created_at: Generated<Timestamp>
-  updated_at: Generated<Timestamp>
-}
-
-type JangarOrchestrationRuns = {
-  id: Generated<string>
-  orchestration_name: string
-  delivery_id: string
-  provider: string
-  status: string
-  external_run_id: string | null
-  payload: JsonValue
-  created_at: Generated<Timestamp>
-  updated_at: Generated<Timestamp>
-}
-
-type JangarAuditEvents = {
-  id: Generated<string>
-  entity_type: string
-  entity_id: string
-  event_type: string
-  payload: JsonValue
-  created_at: Generated<Timestamp>
-}
-
 type AgentsControlPlaneResourcesCurrent = {
   id: Generated<string>
   cluster: Generated<string>
@@ -856,11 +800,6 @@ export type Database = {
   'jangar_github.pr_files': JangarGithubPrFiles
   'jangar_github.pr_worktrees': JangarGithubPrWorktrees
   'jangar_github.write_actions': JangarGithubWriteActions
-  agent_runs: JangarAgentRuns
-  agent_run_idempotency_keys: JangarAgentRunIdempotencyKeys
-  memory_resources: JangarMemoryResources
-  orchestration_runs: JangarOrchestrationRuns
-  audit_events: JangarAuditEvents
   'agents_control_plane.resources_current': AgentsControlPlaneResourcesCurrent
   'agents_control_plane.component_heartbeats': AgentsControlPlaneComponentHeartbeats
   'torghut_control_plane.quant_metrics_latest': TorghutQuantMetricsLatest

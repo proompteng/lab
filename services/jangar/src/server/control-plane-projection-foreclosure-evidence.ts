@@ -3,6 +3,7 @@ import type {
   StageClearancePacket,
   TorghutConsumerEvidenceStatus,
 } from '~/data/agents-control-plane'
+import { fetchAgentRunsFromAgentsService } from '~/server/agents-service-proxy'
 import { getDb } from '~/server/db'
 import type { KubeGateway, KubeGatewayAgentRun, KubeGatewayJob } from '~/server/kube-gateway'
 
@@ -94,31 +95,30 @@ export const collectProjectionForeclosureEvidence = async (input: {
   const evidence = emptyProjectionForeclosureEvidence()
   const db = getDb()
 
-  if (db) {
-    try {
-      const rows = await db
-        .selectFrom('agent_runs')
-        .select(['id', 'agent_name', 'delivery_id', 'status', 'external_run_id', 'payload', 'created_at', 'updated_at'])
-        .where('status', 'in', ACTIVE_PROJECTION_STATUS_QUERY_VALUES)
-        .orderBy('updated_at', 'desc')
-        .limit(100)
-        .execute()
-      evidence.agentRunProjections = rows
-        .filter((row) => ACTIVE_PROJECTION_STATUSES.has(normalizeStatus(row.status)))
-        .map((row) => ({
-          id: String(row.id),
-          agent_name: row.agent_name,
-          delivery_id: row.delivery_id,
-          status: row.status,
-          external_run_id: row.external_run_id,
-          payload: asRecord(row.payload),
-          created_at: toIso(row.created_at),
-          updated_at: toIso(row.updated_at),
-        }))
-    } catch (error) {
-      evidence.collectionErrors.push(`agent_runs projection collection failed: ${normalizeMessage(error)}`)
-    }
+  const agentRunResult = await fetchAgentRunsFromAgentsService({
+    statuses: ACTIVE_PROJECTION_STATUS_QUERY_VALUES,
+    limit: 100,
+  })
+  if (agentRunResult.ok) {
+    evidence.agentRunProjections = agentRunResult.body.runs
+      .filter((row) => ACTIVE_PROJECTION_STATUSES.has(normalizeStatus(row.status)))
+      .map((row) => ({
+        id: row.id,
+        agent_name: row.agentName,
+        delivery_id: row.deliveryId,
+        status: row.status,
+        external_run_id: row.externalRunId,
+        payload: asRecord(row.payload),
+        created_at: toIso(row.createdAt),
+        updated_at: toIso(row.updatedAt),
+      }))
+  } else {
+    evidence.collectionErrors.push(
+      `Agents service agent_runs projection collection failed: ${agentRunResult.error ?? `HTTP ${agentRunResult.status}`}`,
+    )
+  }
 
+  if (db) {
     try {
       const rows = await db
         .selectFrom('torghut_market_context_runs')

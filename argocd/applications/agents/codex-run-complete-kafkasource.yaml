@@ -8,7 +8,7 @@ spec:
     - kafka-kafka-bootstrap.kafka:9092
   topics:
     - argo.workflows.completions
-  consumerGroup: jangar-codex-completions
+  consumerGroup: agents-codex-completions
   initialOffset: earliest
   net:
     sasl:

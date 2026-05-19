@@ -44,6 +44,11 @@ export type AgentRunRecord = {
 export type AgentRunsApiStore = {
   ready: Promise<unknown>
   close: () => Promise<unknown>
+  listAgentRuns?: (input?: {
+    agentName?: string | null
+    statuses?: string[] | null
+    limit?: number | null
+  }) => Promise<unknown[]>
   getAgentRunsByAgent: (agentName: string) => Promise<unknown[]>
   getAgentRunByDeliveryId: (deliveryId: string) => Promise<AgentRunRecord | null>
   getAgentRunIdempotencyKey: (input: {
@@ -166,6 +171,21 @@ const parseAdmissionLimits = () => {
     queue: config.queue,
     rate: config.rate,
   }
+}
+
+const parseListLimit = (value: string | null) => {
+  if (!value) return 50
+  const parsed = Number.parseInt(value, 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) return 50
+  return Math.min(parsed, 500)
+}
+
+const parseStatusFilter = (value: string | null) => {
+  if (!value) return []
+  return value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
 }
 
 const normalizeRepository = (value: string) => value.trim().toLowerCase()
@@ -542,13 +562,21 @@ const evaluateAdmissionLimits = async (
 export const getAgentRunsHandler = async (request: Request, deps: Pick<AgentRunsApiDependencies, 'storeFactory'>) => {
   const url = new URL(request.url)
   const agentName = asString(url.searchParams.get('agentId')) ?? asString(url.searchParams.get('agentName'))
-  if (!agentName) return errorResponse('agentId is required', 400)
+  const statuses = parseStatusFilter(url.searchParams.get('status'))
+  const limit = parseListLimit(url.searchParams.get('limit'))
+  if (!agentName && statuses.length === 0) return errorResponse('agentId or status is required', 400)
 
   let store: AgentRunsApiStore | null = null
   try {
     store = deps.storeFactory()
     await store.ready
-    const runs = await store.getAgentRunsByAgent(agentName)
+    let runs: unknown[] | null = null
+    if (store.listAgentRuns) {
+      runs = await store.listAgentRuns({ agentName, statuses, limit })
+    } else if (agentName && statuses.length === 0) {
+      runs = await store.getAgentRunsByAgent(agentName)
+    }
+    if (!runs) return errorResponse('AgentRun list storage is not configured for status filters', 503)
     return okResponse({ ok: true, runs })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
