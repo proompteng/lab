@@ -9,11 +9,6 @@ const grpcEnvNames = [
   'AGENTS_GRPC_PORT',
   'AGENTS_GRPC_ADDRESS',
   'AGENTS_GRPC_HEALTH_TIMEOUT_MS',
-  'JANGAR_GRPC_ENABLED',
-  'JANGAR_GRPC_HOST',
-  'JANGAR_GRPC_PORT',
-  'JANGAR_GRPC_ADDRESS',
-  'JANGAR_GRPC_HEALTH_TIMEOUT_MS',
 ] as const
 
 const withEnv = async <T>(updates: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> => {
@@ -87,14 +82,14 @@ describe('resolveGrpcStatus', () => {
     expect(status.message).toContain('invalid AGENTS_GRPC_ENABLED value')
   })
 
-  it('returns degraded with the legacy env name when only JANGAR_GRPC_ENABLED is invalid', async () => {
+  it('ignores legacy JANGAR_GRPC_ENABLED when only the legacy name is set', async () => {
     const status = await withEnv({ JANGAR_GRPC_ENABLED: 'bogus' }, () => resolveGrpcStatus())
 
     expect(status).toMatchObject({
       enabled: false,
-      status: 'degraded',
+      status: 'disabled',
     })
-    expect(status.message).toContain('invalid JANGAR_GRPC_ENABLED value')
+    expect(status.message).toBe('gRPC disabled')
   })
 
   it('returns degraded when AGENTS_GRPC_PORT is malformed and no address override is set', async () => {

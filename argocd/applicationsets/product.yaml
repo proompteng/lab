@@ -120,6 +120,13 @@ spec:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: auto
                 enabled: "true"
+              - name: jangar-agents-domain
+                path: argocd/applications/jangar-agents-domain
+                namespace: agents
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                automation: auto
+                enabled: "true"
               - name: agents
                 path: argocd/applications/agents
                 namespace: agents

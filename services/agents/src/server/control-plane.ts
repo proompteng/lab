@@ -1,6 +1,5 @@
 import { readFile } from 'node:fs/promises'
 
-import { installAgentsEnvCompatibility } from './env-compat'
 import { resolveBooleanFeatureToggle } from './feature-flags'
 import { createAgentsHealthHandler } from './health'
 import { createAgentsHttpRuntime, type AgentsHttpRuntime } from './http-runtime'
@@ -147,12 +146,11 @@ const assessAgentRunIngestion = (
 }
 
 const isMetricsEnabled = () => {
-  const raw = process.env.AGENTS_PROMETHEUS_METRICS_ENABLED ?? process.env.JANGAR_PROMETHEUS_METRICS_ENABLED
+  const raw = process.env.AGENTS_PROMETHEUS_METRICS_ENABLED
   return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on'
 }
 
-const metricsPath = () =>
-  process.env.AGENTS_PROMETHEUS_METRICS_PATH ?? process.env.JANGAR_PROMETHEUS_METRICS_PATH ?? defaultMetricsPath
+const metricsPath = () => process.env.AGENTS_PROMETHEUS_METRICS_PATH ?? defaultMetricsPath
 
 const renderMetrics = async () => ({
   ok: true as const,
@@ -233,7 +231,6 @@ const configureRuntimeDependencies = () => {
 export const createAgentsControlPlaneRuntime = async (
   options: ControlPlaneRuntimeOptions = {},
 ): Promise<AgentsHttpRuntime & { handleHttpRequest: (request: Request) => Promise<Response> }> => {
-  installAgentsEnvCompatibility()
   configureRuntimeDependencies()
 
   const healthHandler = createAgentsHealthHandler({

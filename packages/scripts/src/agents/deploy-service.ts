@@ -217,22 +217,14 @@ const parseArgs = (argv: string[]): Partial<Options> => {
 
 const resolveOptions = (): Options => {
   const args = parseArgs(process.argv.slice(2))
-  const registry =
-    args.registry ??
-    process.env.AGENTS_IMAGE_REGISTRY ??
-    process.env.JANGAR_IMAGE_REGISTRY ??
-    'registry.ide-newton.ts.net'
+  const registry = args.registry ?? process.env.AGENTS_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
   const repository =
     args.repository ??
     process.env.AGENTS_CONTROLLER_IMAGE_REPOSITORY ??
     process.env.AGENTS_IMAGE_REPOSITORY ??
-    process.env.JANGAR_IMAGE_REPOSITORY ??
     'lab/agents-controller'
   const controlPlaneRepository =
-    args.controlPlaneRepository ??
-    process.env.AGENTS_CONTROL_PLANE_IMAGE_REPOSITORY ??
-    process.env.JANGAR_CONTROL_PLANE_IMAGE_REPOSITORY ??
-    'lab/agents-control-plane'
+    args.controlPlaneRepository ?? process.env.AGENTS_CONTROL_PLANE_IMAGE_REPOSITORY ?? 'lab/agents-control-plane'
   const runnerRepository =
     args.runnerRepository ??
     process.env.AGENTS_RUNNER_IMAGE_REPOSITORY ??
@@ -241,13 +233,8 @@ const resolveOptions = (): Options => {
   const runnerDockerfile =
     args.runnerDockerfile ?? process.env.AGENTS_RUNNER_DOCKERFILE ?? 'services/agents/Dockerfile.codex-runner'
   const codexAuthPath = resolveCodexAuthPath(args.codexAuthPath ?? process.env.CODEX_AUTH_PATH)
-  const tag =
-    args.tag ??
-    process.env.AGENTS_IMAGE_TAG ??
-    process.env.JANGAR_IMAGE_TAG ??
-    execGit(['rev-parse', '--short', 'HEAD'])
-  const platforms = parsePlatforms(process.env.AGENTS_IMAGE_PLATFORMS) ??
-    parsePlatforms(process.env.JANGAR_IMAGE_PLATFORMS) ?? ['linux/amd64', 'linux/arm64']
+  const tag = args.tag ?? process.env.AGENTS_IMAGE_TAG ?? execGit(['rev-parse', '--short', 'HEAD'])
+  const platforms = parsePlatforms(process.env.AGENTS_IMAGE_PLATFORMS) ?? ['linux/amd64', 'linux/arm64']
 
   return {
     kustomizePath: resolve(
@@ -515,6 +502,11 @@ const buildDatabaseSecretAliasManifest = (
   },
 })
 
+const resolveDatabaseSecretSource = (requirement: DatabaseSecretRequirement) => ({
+  sourceNamespace: process.env.AGENTS_DB_SECRET_SOURCE_NAMESPACE ?? requirement.namespace,
+  sourceName: process.env.AGENTS_DB_SECRET_SOURCE_NAME ?? requirement.name,
+})
+
 const ensureDatabaseSecretReady = async (requirement: DatabaseSecretRequirement | null) => {
   if (!requirement) return
   ensureCli('kubectl')
@@ -536,12 +528,11 @@ const ensureDatabaseSecretReady = async (requirement: DatabaseSecretRequirement 
 
   if (!parseBoolean(process.env.AGENTS_CREATE_DB_SECRET_ALIAS, false)) {
     fatal(
-      `Database secret ${requirement.namespace}/${requirement.name} is missing. Create/migrate the Agents database secret before applying, or set AGENTS_CREATE_DB_SECRET_ALIAS=true to copy the configured compatibility source secret for this rollout.`,
+      `Database secret ${requirement.namespace}/${requirement.name} is missing. Create/migrate the Agents database secret before applying, or set AGENTS_CREATE_DB_SECRET_ALIAS=true with AGENTS_DB_SECRET_SOURCE_NAME set explicitly to copy a compatibility source secret for this rollout.`,
     )
   }
 
-  const sourceNamespace = process.env.AGENTS_DB_SECRET_SOURCE_NAMESPACE ?? requirement.namespace
-  const sourceName = process.env.AGENTS_DB_SECRET_SOURCE_NAME ?? 'jangar-db-app'
+  const { sourceNamespace, sourceName } = resolveDatabaseSecretSource(requirement)
   const source = await capture(['kubectl', '-n', sourceNamespace, 'get', 'secret', sourceName, '-o', 'json'])
   const manifest = buildDatabaseSecretAliasManifest(JSON.parse(source) as KubernetesSecretManifest, {
     sourceNamespace,
@@ -694,5 +685,6 @@ export const __private = {
   updateValuesFile,
   readRunnerImagePin,
   resolveDatabaseSecretRequirement,
+  resolveDatabaseSecretSource,
   buildDatabaseSecretAliasManifest,
 }

@@ -76,8 +76,7 @@ const parseCacheMode = (value: string | undefined): DockerCacheMode | undefined 
   return undefined
 }
 
-const readAgentsEnv = (agentsName: string, legacyJangarName?: string) =>
-  process.env[agentsName]?.trim() || (legacyJangarName ? process.env[legacyJangarName]?.trim() : undefined)
+const readAgentsEnv = (agentsName: string) => process.env[agentsName]?.trim()
 
 const createPrunedContext = async (target?: string): Promise<{ dir: string; cleanup: () => void }> => {
   ensureCli('bunx')
@@ -122,19 +121,19 @@ const buildArgsFromEnv = (version: string, commit: string): Record<string, strin
     AGENTS_COMMIT: commit,
   }
 
-  const buildNodeOptions = readAgentsEnv('AGENTS_BUILD_NODE_OPTIONS', 'JANGAR_BUILD_NODE_OPTIONS')
+  const buildNodeOptions = readAgentsEnv('AGENTS_BUILD_NODE_OPTIONS')
   if (buildNodeOptions) buildArgs.AGENTS_BUILD_NODE_OPTIONS = buildNodeOptions
 
-  const buildMinify = readAgentsEnv('AGENTS_BUILD_MINIFY', 'JANGAR_BUILD_MINIFY')
+  const buildMinify = readAgentsEnv('AGENTS_BUILD_MINIFY')
   if (buildMinify) buildArgs.AGENTS_BUILD_MINIFY = buildMinify
 
-  const buildSourceMap = readAgentsEnv('AGENTS_BUILD_SOURCEMAP', 'JANGAR_BUILD_SOURCEMAP')
+  const buildSourceMap = readAgentsEnv('AGENTS_BUILD_SOURCEMAP')
   if (buildSourceMap) buildArgs.AGENTS_BUILD_SOURCEMAP = buildSourceMap
 
-  const buildCi = readAgentsEnv('AGENTS_BUILD_CI', 'JANGAR_BUILD_CI')
+  const buildCi = readAgentsEnv('AGENTS_BUILD_CI')
   if (buildCi) buildArgs.AGENTS_BUILD_CI = buildCi
 
-  const buildLogLevel = readAgentsEnv('AGENTS_BUILD_LOG_LEVEL', 'JANGAR_BUILD_LOG_LEVEL')
+  const buildLogLevel = readAgentsEnv('AGENTS_BUILD_LOG_LEVEL')
   if (buildLogLevel) buildArgs.AGENTS_BUILD_LOG_LEVEL = buildLogLevel
 
   if (process.env.BUILDX_VERSION) {
@@ -159,8 +158,7 @@ const resolveBuildConfiguration = (options: BuildImageOptions = {}): BuildConfig
   const codexAuthPath =
     options.codexAuthPath ?? process.env.CODEX_AUTH_PATH ?? resolve(process.env.HOME ?? '', '.codex/auth.json')
   const cacheRef = options.cacheRef ?? process.env.AGENTS_BUILD_CACHE_REF ?? `${registry}/${repository}:buildcache`
-  const cacheMode =
-    options.cacheMode ?? parseCacheMode(process.env.AGENTS_BUILD_CACHE_MODE ?? process.env.JANGAR_BUILD_CACHE_MODE)
+  const cacheMode = options.cacheMode ?? parseCacheMode(process.env.AGENTS_BUILD_CACHE_MODE)
   const platforms =
     options.platforms ??
     parsePlatforms(process.env.AGENTS_IMAGE_PLATFORMS) ??

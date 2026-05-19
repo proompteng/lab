@@ -89,7 +89,7 @@ export const resolveMemoriesIvfflatProbes = (
     MAX_MEMORIES_IVFFLAT_PROBES,
     parsePositiveInt(
       'AGENTS_MEMORIES_IVFFLAT_PROBES',
-      env.AGENTS_MEMORIES_IVFFLAT_PROBES ?? env.JANGAR_MEMORIES_IVFFLAT_PROBES ?? env.MEMORIES_IVFFLAT_PROBES,
+      env.AGENTS_MEMORIES_IVFFLAT_PROBES ?? env.MEMORIES_IVFFLAT_PROBES,
       fallback,
     ),
   )

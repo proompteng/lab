@@ -61,10 +61,10 @@ jobs:
           if [ -d skills ]; then
             cp -R skills "$PRUNE_DIR/skills"
           fi
-          if [ -d services/jangar/agentctl ]; then
-            mkdir -p "$PRUNE_DIR/full/services/jangar" "$PRUNE_DIR/json/services/jangar"
-            cp -R services/jangar/agentctl "$PRUNE_DIR/full/services/jangar/agentctl"
-            cp -R services/jangar/agentctl "$PRUNE_DIR/json/services/jangar/agentctl"
+          if [ -d services/agents/agentctl ]; then
+            mkdir -p "$PRUNE_DIR/full/services/agents" "$PRUNE_DIR/json/services/agents"
+            cp -R services/agents/agentctl "$PRUNE_DIR/full/services/agents/agentctl"
+            cp -R services/agents/agentctl "$PRUNE_DIR/json/services/agents/agentctl"
           fi
           if [ -d packages/cx-tools ]; then
             mkdir -p "$PRUNE_DIR/full/packages" "$PRUNE_DIR/json/packages"

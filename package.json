@@ -6,6 +6,7 @@
     "apps/*",
     "packages/*",
     "services/*",
+    "services/agents/*",
     "services/jangar/*"
   ],
   "scripts": {

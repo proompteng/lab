@@ -2,9 +2,9 @@
 
 Docs index: [README](README.md)
 
-This document describes how to build and publish `agentctl` (bundled with the Jangar service) for npm and Homebrew.
+This document describes how to build and publish `agentctl` (bundled with the Agents service) for npm and Homebrew.
 For install/usage guidance, see `docs/agents/agentctl.md`.
-`agentctl` ships with Jangar and defaults to Kubernetes API access (gRPC optional).
+`agentctl` ships with Agents and defaults to Kubernetes API access (gRPC optional).
 
 ## Prereqs
 
@@ -28,13 +28,13 @@ bun run --filter @proompteng/agentctl build:release
 
 Artifacts:
 
-- `services/jangar/agentctl/dist/agentctl.js` (Node-bundled CLI; installable via npm and used in release archives)
-- `services/jangar/agentctl/dist/agentctl-<os>-<arch>` (optional Bun-compiled binary)
-- `services/jangar/agentctl/dist/agentctl` (host binary helper for local runs when `build:bin` is used)
-- `services/jangar/agentctl/dist/release/agentctl-<version>-<os>-<arch>.tar.gz`
+- `services/agents/agentctl/dist/agentctl.js` (Node-bundled CLI; installable via npm and used in release archives)
+- `services/agents/agentctl/dist/agentctl-<os>-<arch>` (optional Bun-compiled binary)
+- `services/agents/agentctl/dist/agentctl` (host binary helper for local runs when `build:bin` is used)
+- `services/agents/agentctl/dist/release/agentctl-<version>-<os>-<arch>.tar.gz`
 - Each archive contains a single `agentctl` executable (Node-bundled JS with shebang).
-- `services/jangar/agentctl/dist/release/*.sha256`
-- `services/jangar/agentctl/dist/release/agentctl.rb` (Homebrew formula with checksums, generated when all targets are built)
+- `services/agents/agentctl/dist/release/*.sha256`
+- `services/agents/agentctl/dist/release/agentctl.rb` (Homebrew formula with checksums, generated when all targets are built)
 
 `build:release` builds all targets by default. To limit targets (e.g., per-OS builds in CI), set
 `AGENTCTL_TARGETS=darwin-amd64,darwin-arm64,linux-amd64,linux-arm64` or pass `--targets`.
@@ -59,7 +59,7 @@ bun run --filter @proompteng/agentctl validate:bin -- --server 127.0.0.1:50052
 
 ## Publish npm
 
-Before publishing, confirm the npm metadata is correct in `services/jangar/agentctl/package.json`:
+Before publishing, confirm the npm metadata is correct in `services/agents/agentctl/package.json`:
 
 - `name`, `version`, `description`, `license`, `repository`, and `homepage`
 - `bugs` points to the repo issues page and `publishConfig.access` is `public`
@@ -71,7 +71,7 @@ bun run --filter @proompteng/agentctl validate:metadata
 ```
 
 ```bash
-cd services/jangar/agentctl
+cd services/agents/agentctl
 npm run prepack # builds Node CLI + all platform binaries
 npm pack --dry-run # optional sanity check: ensures dist/ contains CLI + binaries
 npm publish --access public
@@ -87,7 +87,7 @@ npm publish --access public
    to generate `agentctl.rb` with verified checksums.
 4. Copy the generated `dist/release/agentctl.rb` into the Homebrew tap repo (`proompteng/homebrew-tap`) and commit
    (formula depends on `node`).
-5. If needed, the template lives at `services/jangar/agentctl/scripts/homebrew/agentctl.rb`.
+5. If needed, the template lives at `services/agents/agentctl/scripts/homebrew/agentctl.rb`.
 
 Example checksum:
 
@@ -119,5 +119,5 @@ flowchart LR
   User["Operator"] --> CLI["agentctl"]
   CLI -->|"kube mode (default)"| Kube["Kubernetes API"]
   CLI -->|"gRPC (optional)"| GRPC["Service/agents-grpc"]
-  GRPC --> CP["Jangar control plane"]
+  GRPC --> CP["Agents control plane"]
 ```

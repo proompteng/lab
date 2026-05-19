@@ -24,6 +24,11 @@ def _executable_scorecard_fields(index: int | str = 0) -> dict[str, object]:
         "executable_replay_order_count": 5,
         "executable_replay_account_buying_power": "20000",
         "executable_replay_max_notional_per_trade": "10000",
+        "market_impact_stress_passed": True,
+        "market_impact_stress_artifact_ref": f"/tmp/market-impact-stress-{index}.json",
+        "market_impact_stress_model": "square_root",
+        "market_impact_stress_cost_bps": "6",
+        "market_impact_stress_net_pnl_per_day": "535",
     }
 
 
@@ -363,6 +368,146 @@ class TestPortfolioOptimizer(TestCase):
         )
         self.assertTrue(portfolio.objective_scorecard["target_met"])
         self.assertTrue(portfolio.objective_scorecard["oracle_passed"])
+
+    def test_portfolio_aggregates_market_impact_stress_into_oracle(
+        self,
+    ) -> None:
+        def bundle(
+            candidate_id: str, symbol: str, stress_net: str
+        ) -> CandidateEvidenceBundle:
+            return evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=f"spec-{candidate_id}",
+                candidate={
+                    "candidate_id": candidate_id,
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "300",
+                        "active_day_ratio": "1.0",
+                        "positive_day_ratio": "1.0",
+                        "worst_day_loss": "0",
+                        "max_drawdown": "0",
+                        "max_gross_exposure_pct_equity": "0.5",
+                        "min_cash": "5000",
+                        "negative_cash_observation_count": 0,
+                        "best_day_share": "0.2",
+                        "max_single_day_contribution_share": "0.2",
+                        "max_cluster_contribution_share": "0.34",
+                        "max_single_symbol_contribution_share": "0.25",
+                        "avg_filled_notional_per_day": "250000",
+                        "regime_slice_pass_rate": "0.55",
+                        "posterior_edge_lower": "0.01",
+                        "shadow_parity_status": "within_budget",
+                        "symbol_contribution_shares": {symbol: "1.0"},
+                        **_executable_scorecard_fields(candidate_id),
+                        "market_impact_stress_net_pnl_per_day": stress_net,
+                    },
+                    "full_window": {
+                        "daily_net": {
+                            "2026-02-23": "300",
+                            "2026-02-24": "300",
+                            "2026-02-25": "300",
+                            "2026-02-26": "300",
+                        },
+                        "daily_filled_notional": {
+                            "2026-02-23": "250000",
+                            "2026-02-24": "250000",
+                            "2026-02-25": "250000",
+                            "2026-02-26": "250000",
+                        },
+                    },
+                },
+                dataset_snapshot_id="snapshot-impact-stress",
+                result_path=f"/tmp/{candidate_id}.json",
+            )
+
+        portfolio = optimize_portfolio_candidate(
+            evidence_bundles=[
+                bundle("impact-a", "AAPL", "290"),
+                bundle("impact-b", "AMZN", "285"),
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            oracle_policy=ProfitTargetOraclePolicy(
+                max_cluster_contribution_share=Decimal("0.50"),
+                max_single_symbol_contribution_share=Decimal("0.50"),
+                min_observed_trading_days=4,
+            ),
+            portfolio_size_min=2,
+            portfolio_size_max=2,
+        )
+
+        self.assertIsNotNone(portfolio)
+        assert portfolio is not None
+        self.assertEqual(
+            portfolio.objective_scorecard["market_impact_stress_model"],
+            "portfolio_square_root_impact",
+        )
+        self.assertEqual(
+            portfolio.objective_scorecard["market_impact_stress_net_pnl_per_day"],
+            "575",
+        )
+        self.assertTrue(portfolio.objective_scorecard["oracle_passed"])
+
+    def test_portfolio_oracle_blocks_missing_market_impact_stress(
+        self,
+    ) -> None:
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-impact-missing",
+            candidate={
+                "candidate_id": "impact-missing",
+                "objective_scorecard": {
+                    "net_pnl_per_day": "600",
+                    "active_day_ratio": "1.0",
+                    "positive_day_ratio": "1.0",
+                    "worst_day_loss": "0",
+                    "max_drawdown": "0",
+                    "max_gross_exposure_pct_equity": "0.5",
+                    "min_cash": "5000",
+                    "negative_cash_observation_count": 0,
+                    "best_day_share": "0.2",
+                    "max_single_day_contribution_share": "0.2",
+                    "max_cluster_contribution_share": "0.34",
+                    "max_single_symbol_contribution_share": "0.25",
+                    "avg_filled_notional_per_day": "500000",
+                    "regime_slice_pass_rate": "0.55",
+                    "posterior_edge_lower": "0.01",
+                    "shadow_parity_status": "within_budget",
+                    "executable_replay_passed": True,
+                    "executable_replay_artifact_ref": "/tmp/executable-replay.json",
+                    "executable_replay_order_count": 5,
+                    "executable_replay_account_buying_power": "20000",
+                    "executable_replay_max_notional_per_trade": "10000",
+                },
+                "full_window": {
+                    "daily_net": {
+                        "2026-02-23": "600",
+                        "2026-02-24": "600",
+                        "2026-02-25": "600",
+                    },
+                    "daily_filled_notional": {
+                        "2026-02-23": "500000",
+                        "2026-02-24": "500000",
+                        "2026-02-25": "500000",
+                    },
+                },
+            },
+            dataset_snapshot_id="snapshot-impact-missing",
+            result_path="/tmp/impact-missing.json",
+        )
+
+        portfolio = optimize_portfolio_candidate(
+            evidence_bundles=[bundle],
+            target_net_pnl_per_day=Decimal("500"),
+            oracle_policy=ProfitTargetOraclePolicy(min_observed_trading_days=3),
+            portfolio_size_min=1,
+            portfolio_size_max=1,
+        )
+
+        self.assertIsNotNone(portfolio)
+        assert portfolio is not None
+        self.assertFalse(portfolio.objective_scorecard["oracle_passed"])
+        self.assertIn(
+            "market_impact_stress_passed_failed",
+            portfolio.objective_scorecard["profit_target_oracle"]["blockers"],
+        )
 
     def test_portfolio_allows_research_candidates_pending_validation_contract(
         self,

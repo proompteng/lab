@@ -276,6 +276,21 @@ const readYamlObjects = (path: string) =>
     .map((document) => document.toJSON())
     .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
 
+const swarmAgentRunTemplatePaths = [
+  'argocd/applications/jangar-agents-domain/jangar-swarm-agentrun-templates.yaml',
+  'argocd/applications/torghut/agents-domain/torghut-swarm-agentrun-templates.yaml',
+]
+
+const swarmInstancePaths = [
+  'argocd/applications/jangar-agents-domain/jangar-swarm-instances.yaml',
+  'argocd/applications/torghut/agents-domain/torghut-swarm-instances.yaml',
+]
+
+const swarmImplementationSpecPaths = [
+  'argocd/applications/jangar-agents-domain/jangar-swarm-implspecs.yaml',
+  'argocd/applications/torghut/agents-domain/torghut-swarm-implspecs.yaml',
+]
+
 const objectAt = (value: unknown, key: string) =>
   value && typeof value === 'object' ? ((value as Record<string, unknown>)[key] as unknown) : undefined
 
@@ -314,8 +329,8 @@ describe('scheduled AgentRun templates', () => {
 
   it('keeps scheduled template retention aligned with the swarm brownout window', () => {
     const manifestPaths = [
-      'argocd/applications/agents/swarm-agentrun-templates.yaml',
-      'argocd/applications/agents/swarm-instances.yaml',
+      ...swarmAgentRunTemplatePaths,
+      ...swarmInstancePaths,
       'argocd/applications/torghut/agents-domain/torghut-market-context-batch.yaml',
     ]
     const manifests = manifestPaths.flatMap(readYamlObjects)
@@ -354,7 +369,7 @@ describe('scheduled AgentRun templates', () => {
   })
 
   it('keeps scheduled verify runs bounded to one release slice per cadence', () => {
-    const manifests = readYamlObjects('argocd/applications/agents/swarm-agentrun-templates.yaml')
+    const manifests = swarmAgentRunTemplatePaths.flatMap(readYamlObjects)
     const agentRunTemplates = new Map(
       manifests
         .filter((manifest) => manifest.kind === 'AgentRun')
@@ -374,7 +389,7 @@ describe('scheduled AgentRun templates', () => {
   })
 
   it('wires scheduled swarm runs to live business evidence surfaces', () => {
-    const manifests = readYamlObjects('argocd/applications/agents/swarm-agentrun-templates.yaml')
+    const manifests = swarmAgentRunTemplatePaths.flatMap(readYamlObjects)
     const agentRunTemplates = new Map(
       manifests
         .filter((manifest) => manifest.kind === 'AgentRun')
@@ -400,7 +415,7 @@ describe('scheduled AgentRun templates', () => {
   })
 
   it('mounts HF fallback secrets for Codex-backed swarm templates', () => {
-    const manifests = readYamlObjects('argocd/applications/agents/swarm-agentrun-templates.yaml')
+    const manifests = swarmAgentRunTemplatePaths.flatMap(readYamlObjects)
     const agentRunTemplates = manifests.filter((manifest) => manifest.kind === 'AgentRun')
 
     for (const template of agentRunTemplates) {
@@ -459,35 +474,51 @@ describe('scheduled AgentRun templates', () => {
   })
 
   it('keeps the deployer implementation spec focused on a bounded release slice', () => {
-    const manifests = readYamlObjects('argocd/applications/agents/swarm-implspecs.yaml')
-    const deployerSpec = manifests.find(
+    const manifests = swarmImplementationSpecPaths.flatMap(readYamlObjects)
+    const torghutDeployerSpec = manifests.find(
       (manifest) =>
         manifest.kind === 'ImplementationSpec' &&
-        objectAt(objectAt(manifest, 'metadata'), 'name') === 'swarm-deployer-v1',
+        objectAt(objectAt(manifest, 'metadata'), 'name') === 'torghut-swarm-deployer-v1',
     )
-    const text = stringAt(objectAt(deployerSpec, 'spec'), 'text')
+    const jangarDeployerSpec = manifests.find(
+      (manifest) =>
+        manifest.kind === 'ImplementationSpec' &&
+        objectAt(objectAt(manifest, 'metadata'), 'name') === 'jangar-swarm-deployer-v1',
+    )
+    const torghutText = stringAt(objectAt(torghutDeployerSpec, 'spec'), 'text')
+    const jangarText = stringAt(objectAt(jangarDeployerSpec, 'spec'), 'text')
 
-    expect(text).toContain('Select at most one unblock-first/high-impact PR')
-    expect(text).toContain('Ignore or close superseded release/promotion PRs')
-    expect(text).toContain('Do not use GitHub comments for routine status')
-    expect(text).toContain('Never request Codex review automatically')
-    expect(text).toContain('/trading/revenue-repair')
-    expect(text).not.toContain('codex:review-request')
+    expect(torghutText).toContain('Select at most one unblock-first/high-impact PR')
+    expect(torghutText).toContain('Ignore or close superseded release/promotion PRs')
+    expect(torghutText).toContain('Do not use GitHub comments for routine status')
+    expect(torghutText).toContain('Never request Codex review automatically')
+    expect(torghutText).toContain('/trading/revenue-repair')
+    expect(torghutText).not.toContain('codex:review-request')
+    expect(jangarText).toContain('Select at most one unblock-first/high-impact PR')
+    expect(jangarText).not.toContain('/trading/revenue-repair')
   })
 
   it('requires implementation runs to use live business evidence before selecting work', () => {
-    const manifests = readYamlObjects('argocd/applications/agents/swarm-implspecs.yaml')
-    const implementerSpec = manifests.find(
+    const manifests = swarmImplementationSpecPaths.flatMap(readYamlObjects)
+    const torghutImplementerSpec = manifests.find(
       (manifest) =>
         manifest.kind === 'ImplementationSpec' &&
-        objectAt(objectAt(manifest, 'metadata'), 'name') === 'swarm-autonomous-implementation-v1',
+        objectAt(objectAt(manifest, 'metadata'), 'name') === 'torghut-swarm-autonomous-implementation-v1',
     )
-    const text = stringAt(objectAt(implementerSpec, 'spec'), 'text')
+    const jangarImplementerSpec = manifests.find(
+      (manifest) =>
+        manifest.kind === 'ImplementationSpec' &&
+        objectAt(objectAt(manifest, 'metadata'), 'name') === 'jangar-swarm-autonomous-implementation-v1',
+    )
+    const torghutText = stringAt(objectAt(torghutImplementerSpec, 'spec'), 'text')
+    const jangarText = stringAt(objectAt(jangarImplementerSpec, 'spec'), 'text')
 
-    expect(text).toContain('Read `${swarmBusinessEvidenceUrl}` when provided')
-    expect(text).toContain('If the remote `${head}` branch is absent')
-    expect(text).toContain('top actionable `repair_queue` item')
-    expect(text).toContain('do not enable live submission while `business_state=repair_only`')
+    expect(torghutText).toContain('Read `${swarmBusinessEvidenceUrl}` when provided')
+    expect(torghutText).toContain('If the remote `${head}` branch is absent')
+    expect(torghutText).toContain('top actionable `repair_queue` item')
+    expect(torghutText).toContain('do not enable live submission while `business_state=repair_only`')
+    expect(jangarText).toContain('Read `${swarmBusinessEvidenceUrl}` when provided')
+    expect(jangarText).not.toContain('top actionable `repair_queue` item')
   })
 })
 
@@ -495,6 +526,16 @@ describe('kubectl error classification', () => {
   it('treats fresh-kind API resets as transient instead of RBAC failures', () => {
     const error = `E0306 08:40:45.536606   21508 memcache.go:265] couldn't get current server API group list: Get "https://127.0.0.1:45497/api?timeout=32s": read tcp 127.0.0.1:46302->127.0.0.1:45497: read: connection reset by peer - error from a previous attempt: read tcp 127.0.0.1:46300->127.0.0.1:45497: read: connection reset by peer
 Error from server (Forbidden): unknown`
+
+    expect(isTransientKubectlError(error)).toBe(true)
+    expect(isPermissionDeniedKubectlError(error)).toBe(false)
+  })
+
+  it('treats kind etcd request timeouts during apply as transient', () => {
+    const error = `Error from server: error when retrieving current configuration of:
+Resource: "/v1, Resource=services", GroupVersionKind: "/v1, Kind=Service"
+Name: "agents-ci-postgres", Namespace: "agents-ci"
+from server for: "STDIN": etcdserver: request timed out`
 
     expect(isTransientKubectlError(error)).toBe(true)
     expect(isPermissionDeniedKubectlError(error)).toBe(false)

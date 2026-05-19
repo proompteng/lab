@@ -338,8 +338,6 @@ const buildAgentRunnerSpec = (
     ...(asRecord(runSpec.goal) ? { goal: runSpec.goal } : {}),
     payloads: {
       eventFilePath: '/workspace/run.json',
-      // Keep legacy key as an alias so older provider templates keep working.
-      eventBodyPath: '/workspace/run.json',
     },
     artifacts: {
       statusPath: '/workspace/.agent/status.json',

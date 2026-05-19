@@ -6,8 +6,8 @@ Docs index: [README](../README.md)
 
 ## Current State
 
-- Code: agentctl lives in services/jangar/agentctl; no retry/backoff logic is implemented in the CLI.
-- Transport: gRPC server in services/jangar/src/server/agentctl-grpc.ts is enabled in the agents deployment.
+- Code: agentctl lives in services/agents/agentctl; no retry/backoff logic is implemented in the CLI.
+- Transport: gRPC server in services/agents/src/server/agentctl-grpc.ts is enabled in the agents deployment.
 - Cluster: gRPC service agents-grpc exists; kube mode remains the most complete interface.
 
 ## Problem
@@ -68,14 +68,14 @@ CLI failures reduce operator trust and automation reliability.
 - Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
 - GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
 - Product appset enablement: `argocd/applicationsets/product.yaml`
-- CRD Go types and codegen: `services/jangar/api/agents/v1alpha1/types.go`, `scripts/agents/validate-agents.sh`
+- CRD Go types and codegen: `services/agents/api/agents/v1alpha1/types.go`, `scripts/agents/validate-agents.sh`
 - Control plane + controllers code:
-  - Server entrypoints: `services/jangar/src/server/index.ts`, `services/jangar/src/server/app.ts`
-  - Agents/AgentRuns controller: `services/jangar/src/server/agents-controller.ts`
-  - Orchestrations: `services/jangar/src/server/orchestration-controller.ts`, `services/jangar/src/server/orchestration-submit.ts`
-  - Supporting primitives: `services/jangar/src/server/supporting-primitives-controller.ts`
-  - Policy checks (budgets/approval/etc): `services/jangar/src/server/primitives-policy.ts`
-- Codex runners (when applicable): `services/jangar/scripts/codex/codex-implement.ts`, `packages/codex/src/runner.ts`
+  - Server entrypoints: `services/agents/src/server/index.ts`, `services/agents/src/server/controller-entrypoint.ts`
+  - Agents/AgentRuns controller: `services/agents/src/server/agents-controller/`
+  - Orchestrations: `services/agents/src/server/orchestration-controller.ts`, `services/agents/src/server/v1/orchestration-submit.ts`
+  - Supporting primitives: `services/agents/src/server/supporting-primitives-controller.ts`
+  - Policy checks (budgets/approval/etc): `services/agents/src/server/primitives-policy.ts`
+- Codex runners (when applicable): `services/agents/src/runner/codex-app-server.ts`, `services/agents/scripts/codex/agent-runner.ts`
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (GitOps desired + live API server)
@@ -89,7 +89,7 @@ As of 2026-02-07 (repo `main`):
   - Control plane (`Deployment/agents`): `registry.ide-newton.ts.net/lab/jangar-control-plane:5436c9d2@sha256:b511d73a2622ea3a4f81f5507899bca1970a0e7b6a9742b42568362f1d682b9a`
   - Controllers (`Deployment/agents-controllers`): `registry.ide-newton.ts.net/lab/jangar:5436c9d2@sha256:d673055eb54af663963dedfee69e63de46059254b830eca2a52e97e641f00349`
 - Namespaced reconciliation: `controller.namespaces: [agents]` and `rbac.clusterScoped: false`. See `argocd/applications/agents/values.yaml`.
-- Database connectivity: `database.secretRef.name: jangar-db-app` / `key: uri`. See `argocd/applications/agents/values.yaml`.
+- Database connectivity: `database.secretRef.name: agents-db-app` / `key: uri`. See `argocd/applications/agents/values.yaml`.
 - gRPC enabled: `grpc.enabled: true` on port `50051`. See `argocd/applications/agents/values.yaml`.
 - Repo allowlist: `env.vars.JANGAR_GITHUB_REPOS_ALLOWED: proompteng/lab`. See `argocd/applications/agents/values.yaml`.
 - Runner auth (GitHub token): `envFromSecretRefs: [agents-github-token-env]`. See `argocd/applications/agents/values.yaml`.
@@ -135,13 +135,13 @@ Common mappings:
 - `orchestrationController.*` → `JANGAR_ORCHESTRATION_CONTROLLER_{ENABLED,NAMESPACES}`
 - `supportingController.*` → `JANGAR_SUPPORTING_CONTROLLER_{ENABLED,NAMESPACES}`
 - `grpc.*` → `JANGAR_GRPC_{ENABLED,HOST,PORT}` (unless overridden via `env.vars`)
-- `controller.jobTtlSecondsAfterFinished` → `JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS`
-- `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
+- `controller.jobTtlSecondsAfterFinished` → `AGENTS_AGENT_RUNNER_JOB_TTL_SECONDS`
+- `runtime.*` → `AGENTS_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
 
 1. Update code + chart + CRDs in one PR when changing APIs:
-   - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
+   - Go types (`services/agents/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
 2. Validate locally:
    - `scripts/agents/validate-agents.sh`
    - `scripts/argo-lint.sh`
@@ -167,5 +167,5 @@ flowchart LR
   User["Operator"] --> CLI["agentctl"]
   CLI -->|"kube mode (default)"| Kube["Kubernetes API"]
   CLI -->|"gRPC (optional)"| GRPC["Service/agents-grpc"]
-  GRPC --> CP["Jangar control plane"]
+  GRPC --> CP["Agents control plane"]
 ```

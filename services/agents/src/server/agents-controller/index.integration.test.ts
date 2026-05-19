@@ -218,7 +218,40 @@ const buildVcsProvider = (overrides: Record<string, unknown> = {}) => ({
 })
 
 describe('agents controller startup', () => {
+  it('uses the Agents-owned startup feature flag without the legacy Jangar gate', async () => {
+    const previousNodeEnv = process.env.NODE_ENV
+    const previousVitest = process.env.VITEST
+    process.env.NODE_ENV = 'development'
+    delete process.env.VITEST
+    featureFlagsMocks.resolveBooleanFeatureToggle.mockClear()
+    featureFlagsMocks.resolveBooleanFeatureToggle.mockResolvedValueOnce(true)
+
+    try {
+      await expect(__test.resolveAgentsControllerFeatureEnabled()).resolves.toBe(true)
+
+      expect(featureFlagsMocks.resolveBooleanFeatureToggle).toHaveBeenCalledTimes(1)
+      expect(featureFlagsMocks.resolveBooleanFeatureToggle).toHaveBeenCalledWith({
+        key: 'agents.agents_controller.enabled',
+        keyEnvVar: 'AGENTS_AGENTS_CONTROLLER_ENABLED_FLAG_KEY',
+        fallbackEnvVar: 'AGENTS_AGENTS_CONTROLLER_ENABLED',
+        defaultValue: true,
+      })
+    } finally {
+      if (previousNodeEnv === undefined) {
+        delete process.env.NODE_ENV
+      } else {
+        process.env.NODE_ENV = previousNodeEnv
+      }
+      if (previousVitest === undefined) {
+        delete process.env.VITEST
+      } else {
+        process.env.VITEST = previousVitest
+      }
+    }
+  })
+
   it('avoids duplicate startup when feature flag lookup is pending', async () => {
+    featureFlagsMocks.resolveBooleanFeatureToggle.mockClear()
     const previousNodeEnv = process.env.NODE_ENV
     const previousVitest = process.env.VITEST
     process.env.NODE_ENV = 'development'
@@ -511,7 +544,7 @@ describe('agents controller startup', () => {
 
   it('gates debug adoption logs behind the debug env flag', async () => {
     stopAgentsController()
-    const previousDebug = process.env.JANGAR_AGENTS_CONTROLLER_DEBUG_LOGS
+    const previousDebug = process.env.AGENTS_AGENTS_CONTROLLER_DEBUG_LOGS
     const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
     const state = { namespaces: new Map() }
     const kube = buildKube({
@@ -552,22 +585,22 @@ describe('agents controller startup', () => {
     })
 
     try {
-      delete process.env.JANGAR_AGENTS_CONTROLLER_DEBUG_LOGS
+      delete process.env.AGENTS_AGENTS_CONTROLLER_DEBUG_LOGS
       await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
       let messages = infoSpy.mock.calls.map((call) => String(call[0]))
       expect(messages.some((message) => message.includes('agentrun_resync_adopted'))).toBe(false)
 
       infoSpy.mockClear()
-      process.env.JANGAR_AGENTS_CONTROLLER_DEBUG_LOGS = 'true'
+      process.env.AGENTS_AGENTS_CONTROLLER_DEBUG_LOGS = 'true'
       await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
       messages = infoSpy.mock.calls.map((call) => String(call[0]))
       expect(messages.some((message) => message.includes('agentrun_resync_adopted'))).toBe(true)
     } finally {
       infoSpy.mockRestore()
       if (previousDebug === undefined) {
-        delete process.env.JANGAR_AGENTS_CONTROLLER_DEBUG_LOGS
+        delete process.env.AGENTS_AGENTS_CONTROLLER_DEBUG_LOGS
       } else {
-        process.env.JANGAR_AGENTS_CONTROLLER_DEBUG_LOGS = previousDebug
+        process.env.AGENTS_AGENTS_CONTROLLER_DEBUG_LOGS = previousDebug
       }
     }
   })
@@ -660,7 +693,7 @@ describe('AgentRun artifacts limits', () => {
     const kube = buildKube()
     const agentRun = buildAgentRun()
 
-    process.env.JANGAR_AGENTRUN_ARTIFACTS_MAX = '100'
+    process.env.AGENTS_AGENTRUN_ARTIFACTS_MAX = '100'
 
     try {
       const artifacts = Array.from({ length: 60 }, (_, index) => ({
@@ -673,7 +706,7 @@ describe('AgentRun artifacts limits', () => {
         artifacts,
       })
     } finally {
-      delete process.env.JANGAR_AGENTRUN_ARTIFACTS_MAX
+      delete process.env.AGENTS_AGENTRUN_ARTIFACTS_MAX
     }
 
     const status = getLastStatus(kube as never)
@@ -697,8 +730,8 @@ describe('AgentRun artifacts limits', () => {
     const kube = buildKube()
     const agentRun = buildAgentRun()
 
-    process.env.JANGAR_AGENTRUN_ARTIFACTS_MAX = '2'
-    process.env.JANGAR_AGENTRUN_ARTIFACTS_STRICT = 'true'
+    process.env.AGENTS_AGENTRUN_ARTIFACTS_MAX = '2'
+    process.env.AGENTS_AGENTRUN_ARTIFACTS_STRICT = 'true'
 
     try {
       await __test.setStatus(kube as never, agentRun, {
@@ -706,8 +739,8 @@ describe('AgentRun artifacts limits', () => {
         artifacts: [{ name: 'a1' }, { name: 'a2' }, { name: 'a3' }],
       })
     } finally {
-      delete process.env.JANGAR_AGENTRUN_ARTIFACTS_MAX
-      delete process.env.JANGAR_AGENTRUN_ARTIFACTS_STRICT
+      delete process.env.AGENTS_AGENTRUN_ARTIFACTS_MAX
+      delete process.env.AGENTS_AGENTRUN_ARTIFACTS_STRICT
     }
 
     const status = getLastStatus(kube as never)
@@ -797,8 +830,8 @@ describe('agents controller reconcileAgentRun', () => {
   })
 
   it('applies configured runner resource defaults when an AgentRun omits workload resources', async () => {
-    const previousResources = process.env.JANGAR_AGENT_RUNNER_RESOURCES
-    process.env.JANGAR_AGENT_RUNNER_RESOURCES = JSON.stringify({
+    const previousResources = process.env.AGENTS_AGENT_RUNNER_RESOURCES
+    process.env.AGENTS_AGENT_RUNNER_RESOURCES = JSON.stringify({
       requests: {
         cpu: '1',
         memory: '2Gi',
@@ -866,9 +899,9 @@ describe('agents controller reconcileAgentRun', () => {
       })
     } finally {
       if (previousResources === undefined) {
-        delete process.env.JANGAR_AGENT_RUNNER_RESOURCES
+        delete process.env.AGENTS_AGENT_RUNNER_RESOURCES
       } else {
-        process.env.JANGAR_AGENT_RUNNER_RESOURCES = previousResources
+        process.env.AGENTS_AGENT_RUNNER_RESOURCES = previousResources
       }
     }
   })
@@ -926,8 +959,8 @@ describe('agents controller reconcileAgentRun', () => {
   })
 
   it('fails AgentRun when immutable spec fields drift after Accepted', async () => {
-    const previousEnforcement = process.env.JANGAR_AGENTRUN_IMMUTABILITY_ENFORCED
-    process.env.JANGAR_AGENTRUN_IMMUTABILITY_ENFORCED = 'true'
+    const previousEnforcement = process.env.AGENTS_AGENTRUN_IMMUTABILITY_ENFORCED
+    process.env.AGENTS_AGENTRUN_IMMUTABILITY_ENFORCED = 'true'
     try {
       const kube = buildKube({
         get: vi.fn(async (resource: string) => {
@@ -969,16 +1002,16 @@ describe('agents controller reconcileAgentRun', () => {
       expect(findCondition(status, 'Failed')?.reason).toBe('SpecImmutableViolation')
     } finally {
       if (previousEnforcement === undefined) {
-        delete process.env.JANGAR_AGENTRUN_IMMUTABILITY_ENFORCED
+        delete process.env.AGENTS_AGENTRUN_IMMUTABILITY_ENFORCED
       } else {
-        process.env.JANGAR_AGENTRUN_IMMUTABILITY_ENFORCED = previousEnforcement
+        process.env.AGENTS_AGENTRUN_IMMUTABILITY_ENFORCED = previousEnforcement
       }
     }
   }, 15_000)
 
   it('does not fail terminal AgentRuns when an older stored immutable spec hash differs', async () => {
-    const previousEnforcement = process.env.JANGAR_AGENTRUN_IMMUTABILITY_ENFORCED
-    process.env.JANGAR_AGENTRUN_IMMUTABILITY_ENFORCED = 'true'
+    const previousEnforcement = process.env.AGENTS_AGENTRUN_IMMUTABILITY_ENFORCED
+    process.env.AGENTS_AGENTRUN_IMMUTABILITY_ENFORCED = 'true'
     try {
       const kube = buildKube()
       const terminalRun = buildAgentRun({
@@ -1007,9 +1040,9 @@ describe('agents controller reconcileAgentRun', () => {
       expect(kube.applyStatus).not.toHaveBeenCalled()
     } finally {
       if (previousEnforcement === undefined) {
-        delete process.env.JANGAR_AGENTRUN_IMMUTABILITY_ENFORCED
+        delete process.env.AGENTS_AGENTRUN_IMMUTABILITY_ENFORCED
       } else {
-        process.env.JANGAR_AGENTRUN_IMMUTABILITY_ENFORCED = previousEnforcement
+        process.env.AGENTS_AGENTRUN_IMMUTABILITY_ENFORCED = previousEnforcement
       }
     }
   })
@@ -1414,10 +1447,10 @@ describe('agents controller reconcileAgentRun', () => {
   })
 
   it('marks AgentRun failed when job runtime lacks an image', async () => {
-    const previousImage = process.env.JANGAR_AGENT_RUNNER_IMAGE
-    const previousAgentImage = process.env.JANGAR_AGENT_IMAGE
-    delete process.env.JANGAR_AGENT_RUNNER_IMAGE
-    delete process.env.JANGAR_AGENT_IMAGE
+    const previousImage = process.env.AGENTS_AGENT_RUNNER_IMAGE
+    const previousAgentImage = process.env.AGENTS_AGENT_IMAGE
+    delete process.env.AGENTS_AGENT_RUNNER_IMAGE
+    delete process.env.AGENTS_AGENT_IMAGE
     const kube = buildKube()
     const agentRun = buildAgentRun({
       spec: {
@@ -1434,8 +1467,8 @@ describe('agents controller reconcileAgentRun', () => {
     const condition = findCondition(status, 'InvalidSpec')
     expect(condition?.reason).toBe('MissingWorkloadImage')
 
-    if (previousImage) process.env.JANGAR_AGENT_RUNNER_IMAGE = previousImage
-    if (previousAgentImage) process.env.JANGAR_AGENT_IMAGE = previousAgentImage
+    if (previousImage) process.env.AGENTS_AGENT_RUNNER_IMAGE = previousImage
+    if (previousAgentImage) process.env.AGENTS_AGENT_IMAGE = previousAgentImage
   })
 
   it('marks AgentRun failed when temporal runtime lacks workflowType and taskQueue', async () => {
@@ -1473,8 +1506,8 @@ describe('agents controller reconcileAgentRun', () => {
   })
 
   it('deletes completed AgentRun after retention window', async () => {
-    const previousRetention = process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
-    process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '60'
+    const previousRetention = process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+    process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '60'
 
     try {
       const kube = buildKube()
@@ -1488,16 +1521,16 @@ describe('agents controller reconcileAgentRun', () => {
       expect(kube.delete).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents', { wait: false })
     } finally {
       if (previousRetention === undefined) {
-        delete process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+        delete process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
       } else {
-        process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
+        process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
       }
     }
   })
 
   it('respects per-run ttlSecondsAfterFinished override', async () => {
-    const previousRetention = process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
-    process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '3600'
+    const previousRetention = process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+    process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '3600'
 
     try {
       const kube = buildKube()
@@ -1518,16 +1551,16 @@ describe('agents controller reconcileAgentRun', () => {
       expect(kube.delete).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents', { wait: false })
     } finally {
       if (previousRetention === undefined) {
-        delete process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+        delete process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
       } else {
-        process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
+        process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
       }
     }
   })
 
   it('disables retention when per-run ttlSecondsAfterFinished is zero', async () => {
-    const previousRetention = process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
-    process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '60'
+    const previousRetention = process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+    process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '60'
 
     try {
       const kube = buildKube()
@@ -1548,16 +1581,16 @@ describe('agents controller reconcileAgentRun', () => {
       expect(kube.delete).not.toHaveBeenCalled()
     } finally {
       if (previousRetention === undefined) {
-        delete process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+        delete process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
       } else {
-        process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
+        process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
       }
     }
   })
 
   it('keeps completed AgentRun before retention window', async () => {
-    const previousRetention = process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
-    process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '3600'
+    const previousRetention = process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+    process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '3600'
 
     try {
       const kube = buildKube()
@@ -1570,9 +1603,9 @@ describe('agents controller reconcileAgentRun', () => {
       expect(kube.delete).not.toHaveBeenCalled()
     } finally {
       if (previousRetention === undefined) {
-        delete process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+        delete process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
       } else {
-        process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
+        process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
       }
     }
   })
@@ -1631,7 +1664,7 @@ describe('agents controller reconcileAgentRun', () => {
     expect(agentRunnerSpec.provider).toBe('provider-1')
     expect(agentRunnerSpec.adapter).toEqual({ type: 'codex-app-server' })
     expect(payloads.eventFilePath).toBe('/workspace/run.json')
-    expect(payloads.eventBodyPath).toBe('/workspace/run.json')
+    expect(payloads).not.toHaveProperty('eventBodyPath')
 
     const jobLabels = (job?.metadata as Record<string, unknown> | undefined)?.labels as
       | Record<string, string>
@@ -1645,12 +1678,12 @@ describe('agents controller reconcileAgentRun', () => {
   })
 
   it('injects NATS auth env from configured runner auth secret when allowlisted', async () => {
-    const previousSecretName = process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_SECRET_NAME
-    const previousUsernameKey = process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY
-    const previousPasswordKey = process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY
-    process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_SECRET_NAME = 'codex-nats-credentials'
-    process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY = 'NATS_USER'
-    process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY = 'NATS_PASSWORD'
+    const previousSecretName = process.env.AGENTS_AGENT_RUNNER_NATS_AUTH_SECRET_NAME
+    const previousUsernameKey = process.env.AGENTS_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY
+    const previousPasswordKey = process.env.AGENTS_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY
+    process.env.AGENTS_AGENT_RUNNER_NATS_AUTH_SECRET_NAME = 'codex-nats-credentials'
+    process.env.AGENTS_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY = 'NATS_USER'
+    process.env.AGENTS_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY = 'NATS_PASSWORD'
     try {
       const apply = vi.fn(async (resource: Record<string, unknown>) => {
         const metadata = (resource.metadata ?? {}) as Record<string, unknown>
@@ -1710,12 +1743,12 @@ describe('agents controller reconcileAgentRun', () => {
         secretKeyRef: { name: 'codex-nats-credentials', key: 'NATS_PASSWORD' },
       })
     } finally {
-      if (previousSecretName === undefined) delete process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_SECRET_NAME
-      else process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_SECRET_NAME = previousSecretName
-      if (previousUsernameKey === undefined) delete process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY
-      else process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY = previousUsernameKey
-      if (previousPasswordKey === undefined) delete process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY
-      else process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY = previousPasswordKey
+      if (previousSecretName === undefined) delete process.env.AGENTS_AGENT_RUNNER_NATS_AUTH_SECRET_NAME
+      else process.env.AGENTS_AGENT_RUNNER_NATS_AUTH_SECRET_NAME = previousSecretName
+      if (previousUsernameKey === undefined) delete process.env.AGENTS_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY
+      else process.env.AGENTS_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY = previousUsernameKey
+      if (previousPasswordKey === undefined) delete process.env.AGENTS_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY
+      else process.env.AGENTS_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY = previousPasswordKey
     }
   })
 
@@ -2187,12 +2220,12 @@ describe('agents controller reconcileAgentRun', () => {
   })
 
   it('injects auth secret volume and CODEX_AUTH env var', async () => {
-    const previousName = process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME
-    const previousKey = process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_KEY
-    const previousMountPath = process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH
-    process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME = 'codex-auth'
-    process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_KEY = 'auth.json'
-    process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH = '/root/.codex'
+    const previousName = process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_NAME
+    const previousKey = process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_KEY
+    const previousMountPath = process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH
+    process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_NAME = 'codex-auth'
+    process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_KEY = 'auth.json'
+    process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH = '/root/.codex'
 
     try {
       const apply = vi.fn(async (resource: Record<string, unknown>) => {
@@ -2269,30 +2302,30 @@ describe('agents controller reconcileAgentRun', () => {
       expect(authMount?.readOnly).toBe(true)
     } finally {
       if (previousName === undefined) {
-        delete process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME
+        delete process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_NAME
       } else {
-        process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME = previousName
+        process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_NAME = previousName
       }
       if (previousKey === undefined) {
-        delete process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_KEY
+        delete process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_KEY
       } else {
-        process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_KEY = previousKey
+        process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_KEY = previousKey
       }
       if (previousMountPath === undefined) {
-        delete process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH
+        delete process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH
       } else {
-        process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH = previousMountPath
+        process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH = previousMountPath
       }
     }
   })
 
   it('applies default scheduling config and allows per-run overrides', async () => {
     const previousEnv = {
-      nodeSelector: process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR,
-      affinity: process.env.JANGAR_AGENT_RUNNER_AFFINITY,
-      topologySpread: process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS,
-      priorityClass: process.env.JANGAR_AGENT_RUNNER_PRIORITY_CLASS,
-      schedulerName: process.env.JANGAR_AGENT_RUNNER_SCHEDULER_NAME,
+      nodeSelector: process.env.AGENTS_AGENT_RUNNER_NODE_SELECTOR,
+      affinity: process.env.AGENTS_AGENT_RUNNER_AFFINITY,
+      topologySpread: process.env.AGENTS_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS,
+      priorityClass: process.env.AGENTS_AGENT_RUNNER_PRIORITY_CLASS,
+      schedulerName: process.env.AGENTS_AGENT_RUNNER_SCHEDULER_NAME,
     }
     const defaultAffinity = {
       nodeAffinity: {
@@ -2312,11 +2345,11 @@ describe('agents controller reconcileAgentRun', () => {
         whenUnsatisfiable: 'ScheduleAnyway',
       },
     ]
-    process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR = JSON.stringify({ disktype: 'ssd' })
-    process.env.JANGAR_AGENT_RUNNER_AFFINITY = JSON.stringify(defaultAffinity)
-    process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS = JSON.stringify(defaultTopology)
-    process.env.JANGAR_AGENT_RUNNER_PRIORITY_CLASS = 'default-priority'
-    process.env.JANGAR_AGENT_RUNNER_SCHEDULER_NAME = 'default-scheduler'
+    process.env.AGENTS_AGENT_RUNNER_NODE_SELECTOR = JSON.stringify({ disktype: 'ssd' })
+    process.env.AGENTS_AGENT_RUNNER_AFFINITY = JSON.stringify(defaultAffinity)
+    process.env.AGENTS_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS = JSON.stringify(defaultTopology)
+    process.env.AGENTS_AGENT_RUNNER_PRIORITY_CLASS = 'default-priority'
+    process.env.AGENTS_AGENT_RUNNER_SCHEDULER_NAME = 'default-scheduler'
 
     try {
       let lastJob: Record<string, unknown> | null = null
@@ -2422,36 +2455,36 @@ describe('agents controller reconcileAgentRun', () => {
       expect(overridePodSpec.schedulerName).toBe('run-scheduler')
     } finally {
       if (previousEnv.nodeSelector === undefined) {
-        delete process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR
+        delete process.env.AGENTS_AGENT_RUNNER_NODE_SELECTOR
       } else {
-        process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR = previousEnv.nodeSelector
+        process.env.AGENTS_AGENT_RUNNER_NODE_SELECTOR = previousEnv.nodeSelector
       }
       if (previousEnv.affinity === undefined) {
-        delete process.env.JANGAR_AGENT_RUNNER_AFFINITY
+        delete process.env.AGENTS_AGENT_RUNNER_AFFINITY
       } else {
-        process.env.JANGAR_AGENT_RUNNER_AFFINITY = previousEnv.affinity
+        process.env.AGENTS_AGENT_RUNNER_AFFINITY = previousEnv.affinity
       }
       if (previousEnv.topologySpread === undefined) {
-        delete process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS
+        delete process.env.AGENTS_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS
       } else {
-        process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS = previousEnv.topologySpread
+        process.env.AGENTS_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS = previousEnv.topologySpread
       }
       if (previousEnv.priorityClass === undefined) {
-        delete process.env.JANGAR_AGENT_RUNNER_PRIORITY_CLASS
+        delete process.env.AGENTS_AGENT_RUNNER_PRIORITY_CLASS
       } else {
-        process.env.JANGAR_AGENT_RUNNER_PRIORITY_CLASS = previousEnv.priorityClass
+        process.env.AGENTS_AGENT_RUNNER_PRIORITY_CLASS = previousEnv.priorityClass
       }
       if (previousEnv.schedulerName === undefined) {
-        delete process.env.JANGAR_AGENT_RUNNER_SCHEDULER_NAME
+        delete process.env.AGENTS_AGENT_RUNNER_SCHEDULER_NAME
       } else {
-        process.env.JANGAR_AGENT_RUNNER_SCHEDULER_NAME = previousEnv.schedulerName
+        process.env.AGENTS_AGENT_RUNNER_SCHEDULER_NAME = previousEnv.schedulerName
       }
     }
   })
 
   it('ignores invalid topology spread env JSON with warnings', async () => {
-    const previousEnv = process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS
-    process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS = '{invalid'
+    const previousEnv = process.env.AGENTS_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS
+    process.env.AGENTS_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS = '{invalid'
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     try {
@@ -2495,15 +2528,15 @@ describe('agents controller reconcileAgentRun', () => {
     } finally {
       warnSpy.mockRestore()
       if (previousEnv === undefined) {
-        delete process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS
+        delete process.env.AGENTS_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS
       } else {
-        process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS = previousEnv
+        process.env.AGENTS_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS = previousEnv
       }
     }
   })
   it('marks AgentRun failed when controller blocks secrets', async () => {
-    const previousBlocked = process.env.JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS
-    process.env.JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS = 'blocked-secret'
+    const previousBlocked = process.env.AGENTS_AGENTS_CONTROLLER_BLOCKED_SECRETS
+    process.env.AGENTS_AGENTS_CONTROLLER_BLOCKED_SECRETS = 'blocked-secret'
 
     try {
       const kube = buildKube({
@@ -2540,16 +2573,16 @@ describe('agents controller reconcileAgentRun', () => {
       expect(condition?.reason).toBe('SecretBlocked')
     } finally {
       if (previousBlocked === undefined) {
-        delete process.env.JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS
+        delete process.env.AGENTS_AGENTS_CONTROLLER_BLOCKED_SECRETS
       } else {
-        process.env.JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS = previousBlocked
+        process.env.AGENTS_AGENTS_CONTROLLER_BLOCKED_SECRETS = previousBlocked
       }
     }
   })
 
   it('marks AgentRun failed when auth secret is not allowlisted', async () => {
-    const previousName = process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME
-    process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME = 'codex-auth'
+    const previousName = process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_NAME
+    process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_NAME = 'codex-auth'
 
     try {
       const kube = buildKube({
@@ -2583,9 +2616,9 @@ describe('agents controller reconcileAgentRun', () => {
       expect(condition?.reason).toBe('SecretNotAllowed')
     } finally {
       if (previousName === undefined) {
-        delete process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME
+        delete process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_NAME
       } else {
-        process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME = previousName
+        process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_NAME = previousName
       }
     }
   })
@@ -2794,8 +2827,8 @@ describe('agents controller reconcileAgentRun', () => {
   })
 
   it('continues and stops loop workflow steps with CEL expressions', async () => {
-    const previousLoopsEnabled = process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
-    process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
+    const previousLoopsEnabled = process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+    process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
     try {
       const jobStatuses = new Map<string, Record<string, unknown>>()
       const apply = vi.fn(async (resource: Record<string, unknown>) => {
@@ -2948,17 +2981,17 @@ describe('agents controller reconcileAgentRun', () => {
       expect((fourthStep.loop as Record<string, unknown> | undefined)?.stopReason).toBe('LoopConditionFalse')
     } finally {
       if (previousLoopsEnabled === undefined) {
-        delete process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+        delete process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
       } else {
-        process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
+        process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
       }
     }
   })
 
   it('reads loop control payload from a custom source path', async () => {
-    const previousLoopsEnabled = process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+    const previousLoopsEnabled = process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
     const loopControlPath = '/tmp/.agentrun/loop-control.json'
-    process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
+    process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
     try {
       const jobStatuses = new Map<string, Record<string, unknown>>()
       const apply = vi.fn(async (resource: Record<string, unknown>) => {
@@ -3118,16 +3151,16 @@ describe('agents controller reconcileAgentRun', () => {
       expect((fourthStep.loop as Record<string, unknown> | undefined)?.stopReason).toBe('LoopConditionFalse')
     } finally {
       if (previousLoopsEnabled === undefined) {
-        delete process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+        delete process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
       } else {
-        process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
+        process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
       }
     }
   })
 
   it('stops loop when control payload is missing and onMissing=stop', async () => {
-    const previousLoopsEnabled = process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
-    process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
+    const previousLoopsEnabled = process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+    process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
     try {
       const jobStatuses = new Map<string, Record<string, unknown>>()
       const apply = vi.fn(async (resource: Record<string, unknown>) => {
@@ -3228,16 +3261,16 @@ describe('agents controller reconcileAgentRun', () => {
       expect((secondStep.loop as Record<string, unknown> | undefined)?.completedIterations).toBe(1)
     } finally {
       if (previousLoopsEnabled === undefined) {
-        delete process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+        delete process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
       } else {
-        process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
+        process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
       }
     }
   })
 
   it('fails loop when control payload is missing and onMissing=fail', async () => {
-    const previousLoopsEnabled = process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
-    process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
+    const previousLoopsEnabled = process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+    process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
     try {
       const jobStatuses = new Map<string, Record<string, unknown>>()
       const apply = vi.fn(async (resource: Record<string, unknown>) => {
@@ -3338,16 +3371,16 @@ describe('agents controller reconcileAgentRun', () => {
       expect((secondStep.loop as Record<string, unknown> | undefined)?.stopReason).toBe('LoopConditionError')
     } finally {
       if (previousLoopsEnabled === undefined) {
-        delete process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+        delete process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
       } else {
-        process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
+        process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
       }
     }
   })
 
   it('fails loop when control payload is invalid and onInvalid=fail', async () => {
-    const previousLoopsEnabled = process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
-    process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
+    const previousLoopsEnabled = process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+    process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
     try {
       const jobStatuses = new Map<string, Record<string, unknown>>()
       const apply = vi.fn(async (resource: Record<string, unknown>) => {
@@ -3452,16 +3485,16 @@ describe('agents controller reconcileAgentRun', () => {
       expect((secondStep.loop as Record<string, unknown> | undefined)?.stopReason).toBe('LoopConditionError')
     } finally {
       if (previousLoopsEnabled === undefined) {
-        delete process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+        delete process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
       } else {
-        process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
+        process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
       }
     }
   })
 
   it('stops loop at maxIterations when no condition is provided', async () => {
-    const previousLoopsEnabled = process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
-    process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
+    const previousLoopsEnabled = process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+    process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
     try {
       const jobStatuses = new Map<string, Record<string, unknown>>()
       const apply = vi.fn(async (resource: Record<string, unknown>) => {
@@ -3590,9 +3623,9 @@ describe('agents controller reconcileAgentRun', () => {
       expect((fourthStep.loop as Record<string, unknown> | undefined)?.stopReason).toBe('LoopMaxIterationsReached')
     } finally {
       if (previousLoopsEnabled === undefined) {
-        delete process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+        delete process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
       } else {
-        process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
+        process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
       }
     }
   })
@@ -4396,8 +4429,8 @@ describe('agents controller reconcileAgentRun', () => {
   })
 
   it('uses controller retention default when spec override is missing', async () => {
-    const previousRetention = process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
-    process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '60'
+    const previousRetention = process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+    process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '60'
 
     try {
       const deleteMock = vi.fn(async () => ({}))
@@ -4412,9 +4445,9 @@ describe('agents controller reconcileAgentRun', () => {
       expect(deleteMock).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents', { wait: false })
     } finally {
       if (previousRetention === undefined) {
-        delete process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+        delete process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
       } else {
-        process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
+        process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
       }
     }
   })
@@ -4440,8 +4473,8 @@ describe('agents controller reconcileAgentRun', () => {
 
 describe('agents controller queue and rate limits', () => {
   it('blocks AgentRun when queue limit is exceeded', async () => {
-    const previousQueue = process.env.JANGAR_AGENTS_CONTROLLER_QUEUE_NAMESPACE
-    process.env.JANGAR_AGENTS_CONTROLLER_QUEUE_NAMESPACE = '1'
+    const previousQueue = process.env.AGENTS_AGENTS_CONTROLLER_QUEUE_NAMESPACE
+    process.env.AGENTS_AGENTS_CONTROLLER_QUEUE_NAMESPACE = '1'
 
     try {
       const kube = buildKube()
@@ -4475,9 +4508,9 @@ describe('agents controller queue and rate limits', () => {
       expect(condition?.message).toContain('queue limit')
     } finally {
       if (previousQueue === undefined) {
-        delete process.env.JANGAR_AGENTS_CONTROLLER_QUEUE_NAMESPACE
+        delete process.env.AGENTS_AGENTS_CONTROLLER_QUEUE_NAMESPACE
       } else {
-        process.env.JANGAR_AGENTS_CONTROLLER_QUEUE_NAMESPACE = previousQueue
+        process.env.AGENTS_AGENTS_CONTROLLER_QUEUE_NAMESPACE = previousQueue
       }
     }
   })
@@ -4520,13 +4553,13 @@ describe('agents controller queue and rate limits', () => {
   })
 
   it('blocks AgentRun when rate limit is exceeded', async () => {
-    const previousWindow = process.env.JANGAR_AGENTS_CONTROLLER_RATE_WINDOW_SECONDS
-    const previousNamespace = process.env.JANGAR_AGENTS_CONTROLLER_RATE_NAMESPACE
-    const previousCluster = process.env.JANGAR_AGENTS_CONTROLLER_RATE_CLUSTER
+    const previousWindow = process.env.AGENTS_AGENTS_CONTROLLER_RATE_WINDOW_SECONDS
+    const previousNamespace = process.env.AGENTS_AGENTS_CONTROLLER_RATE_NAMESPACE
+    const previousCluster = process.env.AGENTS_AGENTS_CONTROLLER_RATE_CLUSTER
 
-    process.env.JANGAR_AGENTS_CONTROLLER_RATE_WINDOW_SECONDS = '60'
-    process.env.JANGAR_AGENTS_CONTROLLER_RATE_NAMESPACE = '1'
-    process.env.JANGAR_AGENTS_CONTROLLER_RATE_CLUSTER = '1'
+    process.env.AGENTS_AGENTS_CONTROLLER_RATE_WINDOW_SECONDS = '60'
+    process.env.AGENTS_AGENTS_CONTROLLER_RATE_NAMESPACE = '1'
+    process.env.AGENTS_AGENTS_CONTROLLER_RATE_CLUSTER = '1'
     __test.resetControllerRateState()
 
     try {
@@ -4569,19 +4602,19 @@ describe('agents controller queue and rate limits', () => {
       __test.resetControllerRateState()
 
       if (previousWindow === undefined) {
-        delete process.env.JANGAR_AGENTS_CONTROLLER_RATE_WINDOW_SECONDS
+        delete process.env.AGENTS_AGENTS_CONTROLLER_RATE_WINDOW_SECONDS
       } else {
-        process.env.JANGAR_AGENTS_CONTROLLER_RATE_WINDOW_SECONDS = previousWindow
+        process.env.AGENTS_AGENTS_CONTROLLER_RATE_WINDOW_SECONDS = previousWindow
       }
       if (previousNamespace === undefined) {
-        delete process.env.JANGAR_AGENTS_CONTROLLER_RATE_NAMESPACE
+        delete process.env.AGENTS_AGENTS_CONTROLLER_RATE_NAMESPACE
       } else {
-        process.env.JANGAR_AGENTS_CONTROLLER_RATE_NAMESPACE = previousNamespace
+        process.env.AGENTS_AGENTS_CONTROLLER_RATE_NAMESPACE = previousNamespace
       }
       if (previousCluster === undefined) {
-        delete process.env.JANGAR_AGENTS_CONTROLLER_RATE_CLUSTER
+        delete process.env.AGENTS_AGENTS_CONTROLLER_RATE_CLUSTER
       } else {
-        process.env.JANGAR_AGENTS_CONTROLLER_RATE_CLUSTER = previousCluster
+        process.env.AGENTS_AGENTS_CONTROLLER_RATE_CLUSTER = previousCluster
       }
     }
   })

@@ -16,8 +16,6 @@ export const parseNumberEnv = (value: string | undefined, fallback: number, min 
 }
 
 export const readAgentsEnv = (name: string): string | undefined => {
-  if (name.startsWith('AGENTS_')) return process.env[name] ?? process.env[`JANGAR_${name.slice('AGENTS_'.length)}`]
-  if (name.startsWith('JANGAR_')) return process.env[`AGENTS_${name.slice('JANGAR_'.length)}`] ?? process.env[name]
   return process.env[name]
 }
 

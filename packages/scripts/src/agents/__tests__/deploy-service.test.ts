@@ -1,9 +1,25 @@
-import { describe, expect, it } from 'bun:test'
+import { afterEach, describe, expect, it } from 'bun:test'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { __private } from '../deploy-service'
+
+const envKeys = [
+  'AGENTS_IMAGE_TAG',
+  'AGENTS_IMAGE_PLATFORMS',
+  'JANGAR_IMAGE_REGISTRY',
+  'JANGAR_IMAGE_REPOSITORY',
+  'JANGAR_CONTROL_PLANE_IMAGE_REPOSITORY',
+  'JANGAR_IMAGE_TAG',
+  'JANGAR_IMAGE_PLATFORMS',
+]
+
+afterEach(() => {
+  for (const key of envKeys) {
+    delete process.env[key]
+  }
+})
 
 describe('agents deploy-service helpers', () => {
   it('parses runner and apply rollout flags', () => {
@@ -38,6 +54,22 @@ describe('agents deploy-service helpers', () => {
         platforms: ['linux/arm64'],
       },
     ])
+  })
+
+  it('ignores legacy Jangar image env aliases', () => {
+    process.env.JANGAR_IMAGE_REGISTRY = 'registry.example/jangar'
+    process.env.JANGAR_IMAGE_REPOSITORY = 'lab/jangar'
+    process.env.JANGAR_CONTROL_PLANE_IMAGE_REPOSITORY = 'lab/jangar-control-plane'
+    process.env.JANGAR_IMAGE_TAG = 'jangar-tag'
+    process.env.JANGAR_IMAGE_PLATFORMS = 'linux/s390x'
+
+    const options = __private.resolveOptions()
+
+    expect(options.registry).toBe('registry.ide-newton.ts.net')
+    expect(options.repository).toBe('lab/agents-controller')
+    expect(options.controlPlaneRepository).toBe('lab/agents-control-plane')
+    expect(options.tag).not.toBe('jangar-tag')
+    expect(options.platforms).toEqual(['linux/amd64', 'linux/arm64'])
   })
 
   it('treats local Codex auth as optional for runner image builds', () => {
@@ -215,6 +247,41 @@ runner:
         },
       }),
     ).toBeNull()
+  })
+
+  it('defaults database secret alias source to the Agents-owned target secret', () => {
+    const previousNamespace = process.env.AGENTS_DB_SECRET_SOURCE_NAMESPACE
+    const previousName = process.env.AGENTS_DB_SECRET_SOURCE_NAME
+    try {
+      delete process.env.AGENTS_DB_SECRET_SOURCE_NAMESPACE
+      delete process.env.AGENTS_DB_SECRET_SOURCE_NAME
+      expect(
+        __private.resolveDatabaseSecretSource({
+          namespace: 'agents',
+          name: 'agents-db-app',
+        }),
+      ).toEqual({
+        sourceNamespace: 'agents',
+        sourceName: 'agents-db-app',
+      })
+
+      process.env.AGENTS_DB_SECRET_SOURCE_NAMESPACE = 'jangar'
+      process.env.AGENTS_DB_SECRET_SOURCE_NAME = 'jangar-db-app'
+      expect(
+        __private.resolveDatabaseSecretSource({
+          namespace: 'agents',
+          name: 'agents-db-app',
+        }),
+      ).toEqual({
+        sourceNamespace: 'jangar',
+        sourceName: 'jangar-db-app',
+      })
+    } finally {
+      if (previousNamespace === undefined) delete process.env.AGENTS_DB_SECRET_SOURCE_NAMESPACE
+      else process.env.AGENTS_DB_SECRET_SOURCE_NAMESPACE = previousNamespace
+      if (previousName === undefined) delete process.env.AGENTS_DB_SECRET_SOURCE_NAME
+      else process.env.AGENTS_DB_SECRET_SOURCE_NAME = previousName
+    }
   })
 
   it('builds an Agents-owned compatibility database secret without source ownership metadata', () => {

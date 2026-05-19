@@ -1290,6 +1290,7 @@ data:
             self.assertTrue(Path(summary.candidate_configmap_path).exists())
             self.assertTrue(Path(summary.parity_replay_path).exists())
             self.assertTrue(Path(summary.approval_replay_path).exists())
+            self.assertTrue(Path(summary.market_impact_stress_report_path).exists())
             self.assertTrue(Path(summary.shadow_validation_path).exists())
             self.assertIn("live_shadow_validation", summary.next_required_steps)
 
@@ -1298,6 +1299,59 @@ data:
             )
             self.assertTrue(parity_report["objective_met"])
             self.assertEqual(parity_report["window_name"], "full_window")
+            market_impact_report = json.loads(
+                Path(summary.market_impact_stress_report_path).read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(market_impact_report["model"], "square_root")
+            self.assertGreater(Decimal(market_impact_report["impact_cost_bps"]), 0)
+
+            stage_manifest = json.loads(
+                Path(summary.profitability_stage_manifest_path).read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertIn(
+                "market_impact_stress",
+                stage_manifest["stages"]["validation"]["artifacts"],
+            )
+
+    def test_market_impact_stress_report_passes_only_after_square_root_cost(
+        self,
+    ) -> None:
+        report = runtime_closure._market_impact_stress_report(
+            runner_run_id="run-impact",
+            best_candidate={
+                "candidate_id": "cand-impact",
+                "runtime_family": "breakout_continuation_consistent",
+                "runtime_strategy_name": "breakout-continuation-long-v1",
+            },
+            approval_report={
+                "objective_met": True,
+                "summary": {
+                    "trading_day_count": 2,
+                    "net_pnl": "2400",
+                    "daily_net": {
+                        "2026-05-18": "1200",
+                        "2026-05-19": "1200",
+                    },
+                    "daily_filled_notional": {
+                        "2026-05-18": "300000",
+                        "2026-05-19": "300000",
+                    },
+                },
+                "scorecard": {"net_pnl_per_day": "1200"},
+            },
+            program=_program(),
+        )
+
+        self.assertTrue(report["objective_met"])
+        self.assertEqual(report["model"], "square_root")
+        self.assertGreater(Decimal(report["impact_cost_bps"]), Decimal("1"))
+        self.assertGreaterEqual(
+            Decimal(report["post_impact_net_pnl_per_day"]), Decimal("500")
+        )
 
     def test_write_runtime_closure_bundle_keeps_pending_parity_when_execution_skipped(
         self,

@@ -22,7 +22,7 @@ describe('Agents integrations config', () => {
     })
   })
 
-  it('keeps JANGAR feature flag and agent comms names as compatibility aliases', () => {
+  it('ignores legacy JANGAR feature flag and agent comms aliases', () => {
     const featureFlags = resolveFeatureFlagsClientConfig({
       JANGAR_FEATURE_FLAGS_ENABLED: 'false',
       JANGAR_FEATURE_FLAGS_URL: 'http://jangar-flags.local/',
@@ -33,10 +33,15 @@ describe('Agents integrations config', () => {
       JANGAR_AGENT_COMMS_SUBJECTS: 'agents.workflow.>,workflow.>',
     })
 
-    expect(featureFlags.enabled).toBe(false)
-    expect(featureFlags.endpoint).toBe('http://jangar-flags.local')
-    expect(featureFlags.timeoutMs).toBe(250)
-    expect(agentComms.disabled).toBe(true)
-    expect(agentComms.filterSubjects).toEqual(['agents.workflow.>', 'workflow.>'])
+    expect(featureFlags.enabled).toBe(true)
+    expect(featureFlags.endpoint).toBeNull()
+    expect(featureFlags.timeoutMs).toBe(500)
+    expect(agentComms.disabled).toBe(false)
+    expect(agentComms.filterSubjects).toEqual([
+      'workflow.>',
+      'agents.workflow.>',
+      'argo.workflow.>',
+      'workflow_comms.agent_messages.>',
+    ])
   })
 })

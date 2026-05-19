@@ -215,9 +215,9 @@ annotations:
     - kind: fixed
       description: "Make the kind quickstart complete an end-to-end smoke AgentRun with local pgvector Postgres."
     - kind: added
-      description: "Add Swarm CRD for always-on autonomous mission orchestration."
+      description: "Add optional Swarm CRD support for domain extension mission orchestration."
     - kind: changed
-      description: "Extend controller/runtime RBAC and control-plane summary wiring for Swarm resources."
+      description: "Keep Swarm examples domain-neutral so extension overlays own domain-specific behavior."
     - kind: added
       description: "Add AgentRun workflow step loop fields (fixed and conditional iteration semantics)."
     - kind: added

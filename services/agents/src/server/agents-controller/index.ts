@@ -91,7 +91,6 @@ const DEFAULT_TEMPORAL_PORT = 7233
 const DEFAULT_TEMPORAL_ADDRESS = `${DEFAULT_TEMPORAL_HOST}:${DEFAULT_TEMPORAL_PORT}`
 const IMPLEMENTATION_TEXT_LIMIT = 128 * 1024
 const DEFAULT_AGENTS_CONTROLLER_ENABLED_FLAG_KEY = 'agents.agents_controller.enabled'
-const LEGACY_AGENTS_CONTROLLER_ENABLED_FLAG_KEY = 'jangar.agents_controller.enabled'
 
 const BASE_REQUIRED_CRDS = [
   'agents.agents.proompteng.ai',
@@ -382,18 +381,11 @@ const shouldStartWithFeatureFlag = async () => {
   if (resolveAgentsControllerBehaviorConfig(process.env).enabled === false) return false
 
   const resolveToggle = runtimeDependencies.resolveBooleanFeatureToggle ?? resolveBooleanFeatureToggle
-  const legacyDefault = await resolveToggle({
-    key: LEGACY_AGENTS_CONTROLLER_ENABLED_FLAG_KEY,
-    keyEnvVar: 'JANGAR_AGENTS_CONTROLLER_ENABLED_FLAG_KEY',
-    fallbackEnvVar: 'JANGAR_AGENTS_CONTROLLER_ENABLED',
-    defaultValue: true,
-  })
-  if (!legacyDefault) return false
   return resolveToggle({
     key: DEFAULT_AGENTS_CONTROLLER_ENABLED_FLAG_KEY,
     keyEnvVar: 'AGENTS_AGENTS_CONTROLLER_ENABLED_FLAG_KEY',
     fallbackEnvVar: 'AGENTS_AGENTS_CONTROLLER_ENABLED',
-    defaultValue: legacyDefault,
+    defaultValue: true,
   })
 }
 
@@ -1417,6 +1409,7 @@ export const __test = {
   resolveAgentRunArtifactsLimitConfig,
   limitAgentRunStatusArtifacts,
   buildArtifactsLimitMessage,
+  resolveAgentsControllerFeatureEnabled: shouldStartWithFeatureFlag,
   reconcileAgentRun: reconcileAgentRunWithMetrics,
   reconcileVersionControlProvider,
   reconcileMemory,

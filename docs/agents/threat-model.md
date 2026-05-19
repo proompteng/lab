@@ -61,7 +61,7 @@ See also:
 ```mermaid
 flowchart LR
   Ext["External providers<br/>(GitHub/Linear/etc.)"] --> Webhook["Webhook ingestion"]
-  Webhook --> CP["Jangar control plane"]
+  Webhook --> CP["Agents control plane"]
   CP --> Kube["Kubernetes API"]
   CP --> Runs["Runner Jobs"]
   Secrets["Secrets"] --> CP

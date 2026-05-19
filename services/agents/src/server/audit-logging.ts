@@ -21,7 +21,6 @@ const normalizeHeaderValue = (value: string | null) => {
 export const resolveActorFromRequest = (request: Request) => {
   const candidates = [
     'x-agents-actor',
-    'x-jangar-actor',
     'x-forwarded-user',
     'x-forwarded-email',
     'x-auth-request-email',

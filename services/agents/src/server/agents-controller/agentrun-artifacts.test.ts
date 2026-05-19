@@ -7,14 +7,14 @@ import {
 } from '~/server/agents-controller/agentrun-artifacts'
 
 afterEach(() => {
-  delete process.env.JANGAR_AGENTRUN_ARTIFACTS_MAX
-  delete process.env.JANGAR_AGENTRUN_ARTIFACTS_STRICT
+  delete process.env.AGENTS_AGENTRUN_ARTIFACTS_MAX
+  delete process.env.AGENTS_AGENTRUN_ARTIFACTS_STRICT
 })
 
 describe('agentrun artifacts limits module', () => {
   it('uses env parsing fallbacks and accepts override values', () => {
-    process.env.JANGAR_AGENTRUN_ARTIFACTS_MAX = '7'
-    process.env.JANGAR_AGENTRUN_ARTIFACTS_STRICT = 'yes'
+    process.env.AGENTS_AGENTRUN_ARTIFACTS_MAX = '7'
+    process.env.AGENTS_AGENTRUN_ARTIFACTS_STRICT = 'yes'
 
     const fromEnv = resolveAgentRunArtifactsLimitConfig()
     expect(fromEnv).toEqual({
@@ -23,8 +23,8 @@ describe('agentrun artifacts limits module', () => {
       urlMaxLength: 2048,
     })
 
-    process.env.JANGAR_AGENTRUN_ARTIFACTS_MAX = 'invalid'
-    process.env.JANGAR_AGENTRUN_ARTIFACTS_STRICT = 'maybe'
+    process.env.AGENTS_AGENTRUN_ARTIFACTS_MAX = 'invalid'
+    process.env.AGENTS_AGENTRUN_ARTIFACTS_STRICT = 'maybe'
 
     const fallback = resolveAgentRunArtifactsLimitConfig()
     expect(fallback).toEqual({
@@ -42,7 +42,7 @@ describe('agentrun artifacts limits module', () => {
   })
 
   it('caps maxEntries to the hard limit of 50', () => {
-    process.env.JANGAR_AGENTRUN_ARTIFACTS_MAX = '100'
+    process.env.AGENTS_AGENTRUN_ARTIFACTS_MAX = '100'
     const config = resolveAgentRunArtifactsLimitConfig()
     expect(config.maxEntries).toBe(50)
   })

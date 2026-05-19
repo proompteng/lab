@@ -5,8 +5,6 @@ import { normalizeRepositoryKey, type RepoConcurrencyConfig } from './queue-stat
 type EnvSource = Record<string, string | undefined>
 
 const readAgentsEnv = (env: EnvSource, name: string): string | undefined => {
-  if (name.startsWith('AGENTS_')) return env[name] ?? env[`JANGAR_${name.slice('AGENTS_'.length)}`]
-  if (name.startsWith('JANGAR_')) return env[`AGENTS_${name.slice('JANGAR_'.length)}`] ?? env[name]
   return env[name]
 }
 
