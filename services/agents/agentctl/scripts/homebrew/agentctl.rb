@@ -1,6 +1,6 @@
 class Agentctl < Formula
-  desc "CLI for managing Agents through Kubernetes or Jangar gRPC"
-  homepage "https://github.com/proompteng/lab/tree/main/services/jangar/agentctl"
+  desc "CLI for managing Agents through Kubernetes or Agents gRPC"
+  homepage "https://github.com/proompteng/lab/tree/main/services/agents/agentctl"
   version "__VERSION__"
   license "MIT"
 

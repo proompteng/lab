@@ -3,14 +3,14 @@ name: agentctl packaging checks
 on:
   pull_request:
     paths:
-      - 'services/jangar/agentctl/**'
+      - 'services/agents/agentctl/**'
       - 'docs/agents/agentctl-release.md'
       - '.github/workflows/agentctl-*.yml'
   push:
     branches:
       - main
     paths:
-      - 'services/jangar/agentctl/**'
+      - 'services/agents/agentctl/**'
       - 'docs/agents/agentctl-release.md'
       - '.github/workflows/agentctl-*.yml'
   workflow_dispatch:

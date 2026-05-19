@@ -545,7 +545,7 @@ ENV JANGAR_BUILD_MINIFY=${JANGAR_BUILD_MINIFY}
 ENV JANGAR_BUILD_SOURCEMAP=${JANGAR_BUILD_SOURCEMAP}
 ENV CI=${JANGAR_BUILD_CI}
 ENV JANGAR_BUILD_LOG_LEVEL=${JANGAR_BUILD_LOG_LEVEL}
-RUN if [ -f .output/server/index.mjs ] && [ -f .output/server/proto/proompteng/jangar/v1/agentctl.proto ]; then \
+RUN if [ -f .output/server/index.mjs ] && [ -f .output/server/proto/proompteng/agents/v1/agentctl.proto ]; then \
     echo "Using complete prebuilt .output from build context"; \
   else \
     bun run build; \

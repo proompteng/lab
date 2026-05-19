@@ -16,7 +16,7 @@ const globalFlags = `Global flags:
 
 export const renderShortHelp = (version: string) => `agentctl ${version}
 
-Default transport: Kubernetes API (kube). Use --grpc for direct Jangar access.
+Default transport: Kubernetes API (kube). Use --grpc for direct Agents gRPC access.
 
 Quickstart:
   agentctl status

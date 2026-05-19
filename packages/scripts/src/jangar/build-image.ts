@@ -58,10 +58,10 @@ const createPrunedContext = async (): Promise<{ dir: string; cleanup: () => void
     if (existsSync(skillsSource)) {
       cpSync(skillsSource, resolve(dir, 'skills'), { recursive: true })
     }
-    const agentctlSource = resolve(repoRoot, 'services/jangar/agentctl')
+    const agentctlSource = resolve(repoRoot, 'services/agents/agentctl')
     if (existsSync(agentctlSource)) {
-      cpSync(agentctlSource, resolve(dir, 'full/services/jangar/agentctl'), { recursive: true })
-      cpSync(agentctlSource, resolve(dir, 'json/services/jangar/agentctl'), { recursive: true })
+      cpSync(agentctlSource, resolve(dir, 'full/services/agents/agentctl'), { recursive: true })
+      cpSync(agentctlSource, resolve(dir, 'json/services/agents/agentctl'), { recursive: true })
     }
     const cxToolsSource = resolve(repoRoot, 'packages/cx-tools')
     if (existsSync(cxToolsSource)) {
@@ -74,7 +74,7 @@ const createPrunedContext = async (): Promise<{ dir: string; cleanup: () => void
     if (process.env.JANGAR_USE_PREBUILT_OUTPUT?.trim().toLowerCase() === 'true') {
       const outputSource = resolve(repoRoot, 'services/jangar/.output')
       const outputEntry = resolve(outputSource, 'server/index.mjs')
-      const outputProto = resolve(outputSource, 'server/proto/proompteng/jangar/v1/agentctl.proto')
+      const outputProto = resolve(outputSource, 'server/proto/proompteng/agents/v1/agentctl.proto')
       if (existsSync(outputEntry) && existsSync(outputProto)) {
         cpSync(outputSource, resolve(dir, 'full/services/jangar/.output'), { recursive: true })
       } else if (existsSync(outputSource)) {

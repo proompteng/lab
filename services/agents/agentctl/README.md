@@ -1,7 +1,7 @@
 # agentctl
 
-`agentctl` is the CLI for managing Agents primitives through the Jangar controller. It defaults to Kubernetes
-API access using the current kube context; gRPC is optional for direct Jangar access.
+`agentctl` is the CLI for managing Agents primitives through the Agents control plane. It defaults to Kubernetes
+API access using the current kube context; gRPC is optional for direct Agents gRPC access.
 
 ## Install
 
@@ -22,7 +22,7 @@ brew install proompteng/tap/agentctl
 ## Modes
 
 - **Kube mode (default):** uses kubeconfig + context and shells out to `kubectl` (JSON output). Requires `kubectl` on PATH.
-- **gRPC mode (optional):** uses the Jangar gRPC endpoint; enable with `--grpc` or `AGENTCTL_MODE=grpc`.
+- **gRPC mode (optional):** uses the Agents gRPC endpoint; enable with `--grpc` or `AGENTCTL_MODE=grpc`.
 
 ## Quickstart
 
@@ -79,9 +79,12 @@ Environment overrides:
 - `AGENTCTL_TLS` (`1` to enable TLS)
 - `AGENTCTL_KUBECONFIG`
 - `AGENTCTL_CONTEXT`
-- `JANGAR_GRPC_ADDRESS` (server-side default if set)
+- `AGENTS_GRPC_ADDRESS` (server-side default if set)
+- `AGENTS_GRPC_TOKEN` (server-side token fallback if set)
 - `AGENTCTL_CA_CERT` (path to CA cert, optional)
 - `AGENTCTL_CLIENT_CERT` / `AGENTCTL_CLIENT_KEY` (mTLS, optional)
+
+`JANGAR_GRPC_ADDRESS` and `JANGAR_GRPC_TOKEN` remain accepted as deprecated compatibility aliases.
 
 ## Usage
 
@@ -188,7 +191,7 @@ Notes:
 - Use `--yes` to skip confirmation prompts (required for apply/delete in non-interactive contexts).
 
 By default, `agentctl` targets the Kubernetes API using your kube context. Use `--grpc` (or `AGENTCTL_MODE=grpc`) plus
-`--server` (or `--address`) to target the Jangar gRPC endpoint. `--output` supports `table` (default), `wide`, `json`,
+`--server` (or `--address`) to target the Agents gRPC endpoint. `--output` supports `table` (default), `wide`, `json`,
 `yaml`, `yaml-stream`, and `text`; `describe` defaults to `yaml` when `--output` is omitted.
 
 Port-forward example:

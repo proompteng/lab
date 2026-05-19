@@ -55,7 +55,7 @@ const main = async () => {
     errors.push('package.json type must be module')
   }
 
-  if (pkg.homepage !== 'https://github.com/proompteng/lab/tree/main/services/jangar/agentctl') {
+  if (pkg.homepage !== 'https://github.com/proompteng/lab/tree/main/services/agents/agentctl') {
     errors.push('package.json homepage must point to the agentctl directory')
   }
 
@@ -72,8 +72,8 @@ const main = async () => {
     errors.push('package.json repository.url must be https://github.com/proompteng/lab.git')
   }
 
-  if (pkg.repository?.directory !== 'services/jangar/agentctl') {
-    errors.push('package.json repository.directory must be services/jangar/agentctl')
+  if (pkg.repository?.directory !== 'services/agents/agentctl') {
+    errors.push('package.json repository.directory must be services/agents/agentctl')
   }
 
   const binPath = pkg.bin?.agentctl

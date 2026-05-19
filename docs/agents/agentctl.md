@@ -3,8 +3,7 @@
 Docs index: [README](README.md)
 
 `agentctl` is the CLI for managing Agents primitives. By default it talks directly to the Kubernetes API
-using your current kube context (argocd/virtctl-style). gRPC is optional and can be used when you need to
-reach Jangar directly.
+using your current kube context (argocd/virtctl-style). gRPC is optional and can be used when you need direct Agents API access.
 
 ## Install
 
@@ -24,11 +23,11 @@ brew install proompteng/tap/agentctl
 ## Modes
 
 - **Kube mode (default):** uses your kubeconfig + context and talks to the Kubernetes API directly.
-- **gRPC mode (optional):** uses the Jangar gRPC endpoint; enable with `--grpc` or `AGENTCTL_MODE=grpc`.
+- **gRPC mode (optional):** uses the Agents gRPC endpoint; enable with `--grpc` or `AGENTCTL_MODE=grpc`.
 
 ## Port-forward for gRPC access (optional)
 
-Jangar gRPC is cluster-only by default. For local usage, port-forward the `agents-grpc` service:
+Agents gRPC is cluster-only by default. For local usage, port-forward the `agents-grpc` service:
 
 ```bash
 kubectl -n agents port-forward svc/agents-grpc 50051:50051
@@ -49,8 +48,9 @@ agentctl --grpc --server 127.0.0.1:50051 status
 }
 ```
 
-If you set a token here, the Jangar server must be configured with the same
-`JANGAR_GRPC_TOKEN` value (for example via `env.vars.JANGAR_GRPC_TOKEN` in the chart values).
+If you set a token here, the Agents server must be configured with the same
+`AGENTS_GRPC_TOKEN` value (for example via `env.vars.AGENTS_GRPC_TOKEN` in the chart values).
+`JANGAR_GRPC_TOKEN` is still accepted as a deprecated compatibility alias.
 
 Kube mode uses:
 
@@ -66,7 +66,7 @@ TLS is supported on the client side. Use `--tls` and set:
 
 - `AGENTCTL_CA_CERT` (optional)
 - `AGENTCTL_CLIENT_CERT` / `AGENTCTL_CLIENT_KEY` (optional mTLS)
-  Jangar itself does not terminate TLS; use a gateway/mesh if you need TLS in production.
+  The Agents service does not terminate TLS; use a gateway/mesh if you need TLS in production.
 
 ## Usage
 
@@ -103,8 +103,8 @@ bun run --filter @proompteng/agentctl build
 bun run --filter @proompteng/agentctl build:bin
 ```
 
-The build produces `services/jangar/agentctl/dist/agentctl.js` (Node-bundled CLI). The optional
-`build:bin` step also produces a host binary at `services/jangar/agentctl/dist/agentctl`.
+The build produces `services/agents/agentctl/dist/agentctl.js` (Node-bundled CLI). The optional
+`build:bin` step also produces a host binary at `services/agents/agentctl/dist/agentctl`.
 
 ## Diagram
 
@@ -113,5 +113,5 @@ flowchart LR
   User["Operator"] --> CLI["agentctl"]
   CLI -->|"kube mode (default)"| Kube["Kubernetes API"]
   CLI -->|"gRPC (optional)"| GRPC["Service/agents-grpc"]
-  GRPC --> CP["Jangar control plane"]
+  GRPC --> CP["Agents control plane"]
 ```

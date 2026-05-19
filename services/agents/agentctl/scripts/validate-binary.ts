@@ -83,10 +83,10 @@ const loadAgentctlServiceDefinition = (): grpc.ServiceDefinition => {
   })
 
   const loaded = grpc.loadPackageDefinition(packageDefinition) as {
-    proompteng?: { jangar?: { v1?: { AgentctlService: AgentctlServiceDefinition } } }
+    proompteng?: { agents?: { v1?: { AgentctlService: AgentctlServiceDefinition } } }
   }
 
-  const service = loaded.proompteng?.jangar?.v1?.AgentctlService
+  const service = loaded.proompteng?.agents?.v1?.AgentctlService
   const definition = service?.service
   if (!definition) {
     throw new Error('agentctl proto missing AgentctlService definition')

@@ -1,22 +1,21 @@
 {
   "name": "@proompteng/agentctl",
   "version": "0.2.2",
-  "description": "CLI for managing Agents via Kubernetes or Jangar gRPC",
+  "description": "CLI for managing Agents via Kubernetes or Agents gRPC",
   "keywords": [
     "agents",
     "cli",
     "grpc",
-    "jangar",
     "kube",
     "kubernetes"
   ],
-  "homepage": "https://github.com/proompteng/lab/tree/main/services/jangar/agentctl",
+  "homepage": "https://github.com/proompteng/lab/tree/main/services/agents/agentctl",
   "bugs": "https://github.com/proompteng/lab/issues",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/proompteng/lab.git",
-    "directory": "services/jangar/agentctl"
+    "directory": "services/agents/agentctl"
   },
   "bin": {
     "agentctl": "./dist/agentctl.js"

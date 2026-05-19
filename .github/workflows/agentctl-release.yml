@@ -41,7 +41,7 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: agentctl-release-macos
-          path: services/jangar/agentctl/dist/release/*
+          path: services/agents/agentctl/dist/release/*
 
   build-linux:
     name: Build Linux binaries
@@ -74,7 +74,7 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: agentctl-release-linux
-          path: services/jangar/agentctl/dist/release/*
+          path: services/agents/agentctl/dist/release/*
 
   release:
     name: Publish GitHub release
@@ -182,5 +182,5 @@ jobs:
         if: ${{ steps.npm_token.outputs.skip != 'true' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        working-directory: services/jangar/agentctl
+        working-directory: services/agents/agentctl
         run: npm publish --access public
