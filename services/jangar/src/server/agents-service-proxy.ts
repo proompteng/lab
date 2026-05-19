@@ -45,6 +45,61 @@ export const buildAgentsServiceProxyUrl = (request: Request, path: string, env: 
   return targetUrl
 }
 
+export type AgentsServiceJsonResult<T> =
+  | {
+      ok: true
+      status: number
+      body: T
+    }
+  | {
+      ok: false
+      status: number
+      body: T | null
+      error: string | null
+    }
+
+const getErrorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
+export const fetchAgentsServiceJson = async <T>(
+  path: string,
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<T>> => {
+  const baseUrl = resolveAgentsServiceBaseUrl(env)
+  const targetUrl = new URL(path.startsWith('/') ? path : `/${path}`, `${baseUrl}/`)
+  const requestHeaders = new Headers({
+    accept: 'application/json',
+    'x-jangar-agents-proxy': 'true',
+  })
+
+  try {
+    const upstream = await fetch(targetUrl, {
+      headers: requestHeaders,
+      method: 'GET',
+    })
+    const body = (await upstream.json().catch(() => null)) as T | null
+    if (upstream.ok && body !== null) {
+      return {
+        ok: true,
+        status: upstream.status,
+        body,
+      }
+    }
+    return {
+      ok: false,
+      status: upstream.status,
+      body,
+      error: upstream.statusText || `Agents service returned HTTP ${upstream.status}`,
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      status: 0,
+      body: null,
+      error: getErrorMessage(error),
+    }
+  }
+}
+
 export const proxyAgentsServiceRequest = async (request: Request, path: string, env: EnvSource = process.env) => {
   const method = request.method.toUpperCase()
   const targetUrl = buildAgentsServiceProxyUrl(request, path, env)

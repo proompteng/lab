@@ -1,8 +1,8 @@
-import type { getAgentsControllerHealth } from '@proompteng/agents/server/agents-controller'
+import type { AgentsControllerHealthSnapshot } from '~/server/agents-control-plane-client'
 import { isHeartbeatFresh, type ControlPlaneHeartbeatRow } from '~/server/control-plane-heartbeat-store'
 import type { ControllerStatus, RuntimeAdapterStatus } from '~/server/control-plane-status-types'
 
-type ControllerHealth = ReturnType<typeof getAgentsControllerHealth>
+type ControllerHealth = AgentsControllerHealthSnapshot
 
 const buildAuthorityFromHeartbeat = (input: {
   component: string
