@@ -124,6 +124,12 @@ const shouldServeClientPath = (pathname: string, serverRouteRoots: ReadonlySet<s
   return firstSegment === null || !serverRouteRoots.has(firstSegment)
 }
 
+const isCorsManagedPath = (pathname: string) =>
+  pathname === '/api/agents' ||
+  pathname.startsWith('/api/agents/') ||
+  pathname === '/v1/agent-runs' ||
+  pathname.startsWith('/v1/agent-runs/')
+
 const resolveCorsAllowedOrigins = () => {
   const configured = process.env.AGENTS_CORS_ALLOWED_ORIGINS
   const values = configured?.split(',') ?? defaultCorsAllowedOrigins
@@ -138,6 +144,7 @@ const resolveCorsOrigin = (request: Request, allowedOrigins: ReadonlySet<string>
 
 const isCorsManagedRequest = (request: Request, serverRouteRoots: ReadonlySet<string>) => {
   const { pathname } = new URL(request.url)
+  if (!isCorsManagedPath(pathname)) return false
   const firstSegment = getFirstPathSegment(pathname)
   return firstSegment !== null && serverRouteRoots.has(firstSegment)
 }
@@ -149,10 +156,7 @@ const withCorsHeaders = (response: Response, request: Request, allowedOrigins: R
   const headers = new Headers(response.headers)
   headers.set('access-control-allow-origin', origin)
   headers.set('access-control-allow-methods', defaultCorsAllowedMethods)
-  headers.set(
-    'access-control-allow-headers',
-    request.headers.get('access-control-request-headers') || defaultCorsAllowedHeaders,
-  )
+  headers.set('access-control-allow-headers', defaultCorsAllowedHeaders)
   headers.set('access-control-max-age', corsMaxAgeSeconds)
   headers.append('vary', 'Origin')
   headers.append('vary', 'Access-Control-Request-Headers')

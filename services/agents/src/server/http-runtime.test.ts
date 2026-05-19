@@ -105,7 +105,9 @@ describe('Agents HTTP runtime', () => {
 
     expect(response.status).toBe(204)
     expect(response.headers.get('access-control-allow-origin')).toBe('https://jangar.k8s.proompteng.ai')
-    expect(response.headers.get('access-control-allow-headers')).toBe('content-type,idempotency-key')
+    expect(response.headers.get('access-control-allow-headers')).toBe(
+      'accept, authorization, content-type, idempotency-key',
+    )
   })
 
   it('adds CORS response headers to allowed Jangar browser Agents reads', async () => {
@@ -120,6 +122,113 @@ describe('Agents HTTP runtime', () => {
     expect(response.status).toBe(200)
     expect(response.headers.get('access-control-allow-origin')).toBe('https://jangar.k8s.proompteng.ai')
     await expect(response.json()).resolves.toEqual({ ok: true, id: 'run 1' })
+  })
+
+  it('does not add CORS headers to unrelated API routes', async () => {
+    const runtime = await createAgentsHttpRuntime({
+      routeSources: {
+        './routes/api/internal.ts':
+          "export const Route = createFileRoute('/api/internal')({ server: { handlers: { GET: handler } } })",
+      },
+      routeModules: {
+        './routes/api/internal.ts': async () => ({
+          Route: {
+            options: {
+              server: {
+                handlers: {
+                  GET: () => new Response(JSON.stringify({ ok: true })),
+                },
+              },
+            },
+          },
+        }),
+      },
+    })
+
+    const response = await runtime.handleRequest(
+      new Request('https://agents.k8s.proompteng.ai/api/internal', {
+        headers: { origin: 'https://jangar.k8s.proompteng.ai' },
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('access-control-allow-origin')).toBeNull()
+  })
+
+  it('adds CORS headers to AgentRun POST responses', async () => {
+    const runtime = await createAgentsHttpRuntime({
+      routeSources: {
+        './routes/v1/agent-runs.ts':
+          "export const Route = createFileRoute('/v1/agent-runs')({ server: { handlers: { POST: handler } } })",
+      },
+      routeModules: {
+        './routes/v1/agent-runs.ts': async () => ({
+          Route: {
+            options: {
+              server: {
+                handlers: {
+                  POST: () =>
+                    new Response(JSON.stringify({ ok: false, error: 'Idempotency-Key header is required' }), {
+                      status: 400,
+                      headers: { 'content-type': 'application/json' },
+                    }),
+                },
+              },
+            },
+          },
+        }),
+      },
+    })
+
+    const response = await runtime.handleRequest(
+      new Request('https://agents.k8s.proompteng.ai/v1/agent-runs', {
+        method: 'POST',
+        headers: {
+          origin: 'https://jangar.k8s.proompteng.ai',
+          'content-type': 'application/json',
+        },
+        body: '{}',
+      }),
+    )
+
+    expect(response.status).toBe(400)
+    expect(response.headers.get('access-control-allow-origin')).toBe('https://jangar.k8s.proompteng.ai')
+    await expect(response.json()).resolves.toMatchObject({ ok: false })
+  })
+
+  it('adds CORS headers to Agents SSE route responses', async () => {
+    const runtime = await createAgentsHttpRuntime({
+      routeSources: {
+        './routes/api/agents/events.ts':
+          "export const Route = createFileRoute('/api/agents/events')({ server: { handlers: { GET: handler } } })",
+      },
+      routeModules: {
+        './routes/api/agents/events.ts': async () => ({
+          Route: {
+            options: {
+              server: {
+                handlers: {
+                  GET: () =>
+                    new Response('event: ready\\n\\ndata: {}\\n\\n', {
+                      headers: { 'content-type': 'text/event-stream' },
+                    }),
+                },
+              },
+            },
+          },
+        }),
+      },
+    })
+
+    const response = await runtime.handleRequest(
+      new Request('https://agents.k8s.proompteng.ai/api/agents/events', {
+        headers: { origin: 'https://jangar.k8s.proompteng.ai' },
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toContain('text/event-stream')
+    expect(response.headers.get('access-control-allow-origin')).toBe('https://jangar.k8s.proompteng.ai')
   })
 
   it('serves injected Prometheus metrics before route fallback handling', async () => {
