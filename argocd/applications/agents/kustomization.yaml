@@ -14,9 +14,6 @@ resources:
   - codex-agentprovider.yaml
   - codex-spark-agentprovider.yaml
   - codex-agent-system-prompt-configmap.yaml
-  - codex-research-secretbinding.yaml
-  - codex-research-agent.yaml
-  - codex-research-agent-system-prompt-configmap.yaml
   - codex-versioncontrolprovider.yaml
   - sample-approvalpolicy.yaml
   - sample-budget.yaml

@@ -27,6 +27,10 @@ type PrimitiveKindConfig = {
   resource: string
 }
 
+type ListPrimitiveKindsOptions = {
+  includeSwarm?: boolean
+}
+
 const PRIMITIVE_KIND_CONFIG: PrimitiveKindConfig[] = [
   { kind: 'Agent', resource: RESOURCE_MAP.Agent },
   { kind: 'AgentRun', resource: RESOURCE_MAP.AgentRun },
@@ -64,4 +68,7 @@ export const resolvePrimitiveKind = (raw?: string | null) => {
   return KIND_LOOKUP.get(normalized) ?? null
 }
 
-export const listPrimitiveKinds = () => PRIMITIVE_KIND_CONFIG.map((entry) => entry.kind)
+export const listPrimitiveKinds = (options: ListPrimitiveKindsOptions = {}) =>
+  PRIMITIVE_KIND_CONFIG.filter((entry) => entry.kind !== 'Swarm' || options.includeSwarm === true).map(
+    (entry) => entry.kind,
+  )

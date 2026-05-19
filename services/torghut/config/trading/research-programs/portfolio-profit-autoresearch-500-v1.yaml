@@ -253,11 +253,29 @@ research_sources:
     published_at: '2026-03-30'
     claims:
       - claim_id: nonlinear_market_impact_changes_strategy_ranking
+        claim_type: feature_recipe
         summary: Nonlinear market-impact models materially change trading behavior and strategy ranking versus fixed-cost assumptions.
         implication: Rank candidate sleeves on realized route/TCA and stressed impact curves, not only fixed-bps replay costs.
+        data_requirements:
+          - route_tca
+          - turnover
+          - nonlinear_impact_curve
+          - market_impact_stress
+        asset_scope: us_equities_intraday
+        horizon_scope: intraday_execution
+        expected_direction: neutral
       - claim_id: turnover_penalty_prevents_pathological_trading
+        claim_type: risk_constraint
         summary: Cost-model-aware optimization sharply reduces pathological turnover and total daily costs.
         implication: Add turnover and impact stress as first-class promotion blockers for high-activity candidates.
+        data_requirements:
+          - route_tca
+          - turnover
+          - realized_slippage_bps
+          - market_impact_stress
+        asset_scope: us_equities_intraday
+        horizon_scope: intraday_execution
+        expected_direction: neutral
   - source_id: overreaction_intraday_momentum_aapl_2026
     title: 'Overreaction as an Indicator for Momentum in Algorithmic Trading: A Case of AAPL Stocks'
     url: https://arxiv.org/abs/2602.18912
@@ -297,11 +315,29 @@ research_sources:
     published_at: '2026-05-05'
     claims:
       - claim_id: ohlcv_only_intraday_falsification
+        claim_type: validation_requirement
         summary: OHLCV-only intraday momentum signals can fail under realistic execution constraints despite attractive naive backtests.
         implication: Require executable quote, route/TCA, and walk-forward evidence before any OHLCV-derived sleeve enters promotion review.
+        data_requirements:
+          - executable_quote_evidence
+          - route_tca
+          - walk_forward_replay
+          - live_paper_parity
+        asset_scope: futures_intraday
+        horizon_scope: intraday_ohlcv_falsification
+        expected_direction: neutral
       - claim_id: walk_forward_cost_constraints_required
+        claim_type: validation_requirement
         summary: Walk-forward validation and market-microstructure cost constraints are necessary to falsify overfit intraday signals.
         implication: Keep the no-cheating promotion path anchored to held-out replay, live-paper, and post-cost ledger proof.
+        data_requirements:
+          - held_out_replay
+          - post_cost_ledger
+          - market_microstructure_costs
+          - live_paper_parity
+        asset_scope: futures_intraday
+        horizon_scope: intraday_ohlcv_falsification
+        expected_direction: neutral
   - source_id: latent_microstructure_regime_detection_2026
     title: 'Early Detection of Latent Microstructure Regimes in Limit Order Books'
     url: https://arxiv.org/abs/2604.20949
@@ -440,11 +476,28 @@ research_sources:
     published_at: '2026-05-12'
     claims:
       - claim_id: orderbook_hawkes_impact
+        claim_type: feature_recipe
         summary: Order-book variables can enter Hawkes trade-arrival intensity through exogenous and endogenous components.
         implication: Add order-arrival clustering and depth-state features to execution-aware entry timing.
+        data_requirements:
+          - order_arrival_intensity
+          - depth_state
+          - clustered_order_events
+          - spread_bps
+        asset_scope: us_equities_intraday
+        horizon_scope: intraday_microstructure
+        expected_direction: neutral
       - claim_id: session_specific_endogenous_intensity
+        claim_type: validation_requirement
         summary: Opening, main-session, and closing-period order-book impact should be estimated separately.
         implication: Keep session-segment validation mandatory before promoting continuation or reversal candidates.
+        data_requirements:
+          - session_segment
+          - order_arrival_intensity
+          - walk_forward_replay
+        asset_scope: us_equities_intraday
+        horizon_scope: intraday_microstructure
+        expected_direction: neutral
   - source_id: payment_for_order_flow_execution_quality_2026
     title: 'Payment for Order Flow, Demystified: How Your Free Trade Actually Works'
     url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6704839
@@ -495,11 +548,29 @@ research_sources:
     published_at: '2026-04-27'
     claims:
       - claim_id: state_dependent_lob_hawkes_intensity
+        claim_type: feature_recipe
         summary: State-dependent Hawkes intensities for LOB events can encode volatility-signature dynamics missed by fixed-window OFI.
         implication: Add state-dependent order-arrival clustering as a validation feature for execution-aware entry timing.
+        data_requirements:
+          - lob_event_stream
+          - state_dependent_hawkes_intensity
+          - volatility_signature
+          - clustered_order_events
+        asset_scope: us_equities_intraday
+        horizon_scope: intraday_microstructure
+        expected_direction: neutral
       - claim_id: volatility_signature_hawkes_calibration
+        claim_type: validation_requirement
         summary: State-dependent Hawkes features require replay calibration against volatility-signature behavior.
         implication: Keep Hawkes-derived entry timing in research until quote quality, volatility signature, and walk-forward replay agree.
+        data_requirements:
+          - quote_quality
+          - volatility_signature
+          - walk_forward_replay
+          - live_paper_parity
+        asset_scope: us_equities_intraday
+        horizon_scope: intraday_microstructure
+        expected_direction: neutral
   - source_id: mpc_trade_execution_2026
     title: 'Model Predictive Control For Trade Execution'
     url: https://arxiv.org/abs/2603.28898

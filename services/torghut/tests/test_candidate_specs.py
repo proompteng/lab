@@ -132,6 +132,162 @@ class TestCandidateSpecs(TestCase):
         reloaded = candidate_spec_from_payload(first[0].to_payload())
         self.assertEqual(reloaded.candidate_spec_id, first[0].candidate_spec_id)
 
+    def test_structured_source_claims_survive_candidate_spec_payload(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-structured-claims",
+            claims=[
+                {
+                    "claim_id": "claim-structured-flow",
+                    "claim_type": "feature_recipe",
+                    "claim_text": "Order flow imbalance requires route/TCA aware feature contracts.",
+                    "data_requirements": ["order_flow_imbalance", "route_tca"],
+                    "asset_scope": "us_equities_intraday",
+                    "horizon_scope": "intraday_microstructure",
+                    "expected_direction": "neutral",
+                    "confidence": "0.82",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("300")
+        )
+
+        source_claims = specs[0].feature_contract["source_claims"]
+        self.assertEqual(source_claims[0]["claim_id"], "claim-structured-flow")
+        self.assertEqual(source_claims[0]["claim_type"], "feature_recipe")
+        self.assertIn("route_tca", source_claims[0]["data_requirements"])
+        self.assertEqual(
+            specs[0].to_vnext_experiment_payload()["candidate_spec"][
+                "feature_contract"
+            ]["source_claims"][0]["horizon_scope"],
+            "intraday_microstructure",
+        )
+
+    def test_cluster_lob_claim_adds_event_clustering_overlay_contract(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-clusterlob",
+            claims=[
+                {
+                    "claim_id": "clusterlob-clustered-ofi-alpha",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "ClusterLOB clustered order events and order-flow imbalance "
+                        "improve short-horizon LOB signals."
+                    ),
+                    "data_requirements": [
+                        "clustered_order_events",
+                        "order_flow_imbalance",
+                        "spread_bps",
+                    ],
+                    "confidence": "0.82",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("300")
+        )
+
+        self.assertEqual(
+            specs[0].parameter_space["mechanism_overlay_ids"],
+            ["cluster_lob_event_clustering"],
+        )
+        self.assertEqual(
+            specs[0].hard_vetoes["required_min_event_cluster_stability_score"],
+            "0.60",
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["requires_lob_event_stream_parity"]
+        )
+
+    def test_nonlinear_market_impact_claim_adds_route_tca_contract(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-realistic-impact",
+            claims=[
+                {
+                    "claim_id": "nonlinear-market-impact",
+                    "claim_type": "feature_recipe",
+                    "claim_text": (
+                        "Nonlinear market impact and square-root impact curves change "
+                        "strategy ranking under route/TCA stress."
+                    ),
+                    "data_requirements": [
+                        "route_tca",
+                        "turnover",
+                        "nonlinear_impact_curve",
+                        "market_impact_stress",
+                    ],
+                    "confidence": "0.82",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("300")
+        )
+
+        self.assertEqual(
+            specs[0].family_template_id,
+            "microstructure_continuation_matched_filter_v1",
+        )
+        self.assertNotEqual(specs[0].family_template_id, "mean_reversion_rebound_v1")
+        self.assertIn(
+            "nonlinear_market_impact_tca",
+            specs[0].parameter_space["mechanism_overlay_ids"],
+        )
+        self.assertEqual(
+            specs[0].hard_vetoes["required_impact_stress_model"],
+            "square_root_or_power_law",
+        )
+        self.assertEqual(
+            specs[0].promotion_contract["ranking_cost_model"],
+            "post_cost_nonlinear_impact",
+        )
+
+    def test_ohlcv_only_claim_adds_falsification_contract(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-ohlcv-falsification",
+            claims=[
+                {
+                    "claim_id": "ohlcv-alpha",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "OHLCV-derived intraday momentum can look attractive in "
+                        "naive backtests."
+                    ),
+                    "confidence": "0.75",
+                },
+                {
+                    "claim_id": "ohlcv-only-falsification",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "OHLCV-only signals require systematic falsification with "
+                        "executable quote, route/TCA, and walk-forward replay evidence."
+                    ),
+                    "data_requirements": [
+                        "executable_quote_evidence",
+                        "route_tca",
+                        "walk_forward_replay",
+                    ],
+                    "confidence": "0.80",
+                },
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("300")
+        )
+
+        self.assertIn(
+            "ohlcv_only_falsification",
+            specs[0].parameter_space["mechanism_overlay_ids"],
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["rejects_ohlcv_only_promotion_evidence"]
+        )
+        self.assertTrue(specs[0].promotion_contract["requires_walk_forward_replay"])
+
     def test_morning_momentum_claim_selects_opening_drive_family(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-morning-momentum",

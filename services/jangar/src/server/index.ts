@@ -1,11 +1,10 @@
-import { installAgentsEnvCompatibility } from '@proompteng/agents/server/env-compat'
-import { resolveRuntimeServiceName } from '@proompteng/agents/server/runtime-identity'
-
+import { installJangarEnvCompatibility } from './env-compat'
 import { bootRuntimeProfile } from './runtime-boot'
+import { resolveRuntimeServiceName } from './runtime-identity'
 import { resolveJangarRuntimeProfile } from './runtime-profile'
 import { resolveHttpServerListenConfig } from './runtime-entry-config'
 
-installAgentsEnvCompatibility()
+installJangarEnvCompatibility()
 
 const { port, hostname, idleTimeoutSeconds } = resolveHttpServerListenConfig()
 const runtimeProfile = resolveJangarRuntimeProfile()

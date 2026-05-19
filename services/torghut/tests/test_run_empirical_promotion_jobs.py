@@ -336,10 +336,11 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                 "portfolio-profit-autoresearch-500-v1",
                 "--runtime-window-target",
                 (
-                    "hypothesis_id=H-PAIRS-01,candidate_id=spec-d74b07b2aaab8d0cfa8a4c38,"
-                    "strategy_family=microbar_cross_sectional_pairs,"
-                    "strategy_name=microbar-cross-sectional-pairs-v1,"
-                    "source_manifest_ref=config/trading/hypotheses/h-pairs-01.json"
+                    "hypothesis_id=H-MICRO-01,candidate_id=chip-paper-microbar-composite@execution-proof,"
+                    "strategy_family=microstructure_breakout,"
+                    "strategy_name=microbar-volume-continuation-long-top2-chip-v1,"
+                    "source_manifest_ref=config/trading/hypotheses/h-micro-01.json,"
+                    "dataset_snapshot_ref=torghut-chip-full-day-20260505-4c330ce9-r1"
                 ),
                 "--json",
             ],
@@ -363,7 +364,7 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             "portfolio-profit-autoresearch-500-v1",
         )
         self.assertEqual(len(args.runtime_window_target), 1)
-        self.assertIn("H-PAIRS-01", args.runtime_window_target[0])
+        self.assertIn("H-MICRO-01", args.runtime_window_target[0])
         self.assertTrue(args.json)
 
     def test_runtime_window_target_accepts_json_payload(self) -> None:
@@ -526,12 +527,12 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             ),
             encoding="utf-8",
         )
-        pairs_path = self.tmp_dir / "h-pairs-01.json"
-        pairs_path.write_text(
+        micro_path = self.tmp_dir / "h-micro-01.json"
+        micro_path.write_text(
             json.dumps(
                 {
-                    "candidate_id": "spec-d74b07b2aaab8d0cfa8a4c38",
-                    "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
+                    "candidate_id": "chip-paper-microbar-composite@execution-proof",
+                    "dataset_snapshot_ref": "torghut-chip-full-day-20260505-4c330ce9-r1",
                 }
             ),
             encoding="utf-8",
@@ -548,10 +549,11 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                     f"source_manifest_ref={tsmom_path}"
                 ),
                 (
-                    "hypothesis_id=H-PAIRS-01,candidate_id=spec-d74b07b2aaab8d0cfa8a4c38,"
-                    f"strategy_family=microbar_cross_sectional_pairs,"
-                    f"strategy_name=microbar-cross-sectional-pairs-v1,"
-                    f"source_manifest_ref={pairs_path}"
+                    "hypothesis_id=H-MICRO-01,candidate_id=chip-paper-microbar-composite@execution-proof,"
+                    f"strategy_family=microstructure_breakout,"
+                    f"strategy_name=microbar-volume-continuation-long-top2-chip-v1,"
+                    f"source_manifest_ref={micro_path},"
+                    f"dataset_snapshot_ref=torghut-chip-full-day-20260505-4c330ce9-r1"
                 ),
             ],
             runtime_window_hypothesis_id="H-TSMOM-01",
@@ -589,14 +591,15 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertEqual(payload["target_count"], 2)
         self.assertEqual(
             [item["hypothesis_id"] for item in payload["imports"]],
-            ["H-TSMOM-01", "H-PAIRS-01"],
+            ["H-TSMOM-01", "H-MICRO-01"],
         )
         commands = [call.args[0] for call in run_mock.call_args_list]
         self.assertEqual(len(commands), 2)
         joined = "\n".join(" ".join(command) for command in commands)
         self.assertIn("spec-83161ae16d17828eabcc58cc", joined)
-        self.assertIn("spec-d74b07b2aaab8d0cfa8a4c38", joined)
-        self.assertIn("microbar-cross-sectional-pairs-v1", joined)
+        self.assertIn("chip-paper-microbar-composite@execution-proof", joined)
+        self.assertIn("microbar-volume-continuation-long-top2-chip-v1", joined)
+        self.assertIn("torghut-chip-full-day-20260505-4c330ce9-r1", joined)
 
     def test_main_writes_manifest_and_runs_empirical_promotion_job(self) -> None:
         created_at = datetime(2026, 5, 18, 8, 13, tzinfo=timezone.utc)

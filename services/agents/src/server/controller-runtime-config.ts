@@ -54,6 +54,9 @@ const parseNamespaces = (raw: string | undefined, fallback: string[], label: str
 export const isControllerClusterScoped = (env: EnvSource = process.env) =>
   parseBooleanEnv(readAgentsEnv(env, 'AGENTS_RBAC_CLUSTER_SCOPED') ?? undefined, false)
 
+export const isSwarmPrimitiveEnabled = (env: EnvSource = process.env) =>
+  parseBooleanEnv(env.AGENTS_SWARM_PRIMITIVE_ENABLED, false)
+
 export const resolveControlPlaneCacheConfig = (env: EnvSource = process.env): ControlPlaneCacheConfig => ({
   enabled: parseBooleanEnv(readAgentsEnv(env, 'AGENTS_CONTROL_PLANE_CACHE_ENABLED') ?? undefined, false),
   namespaces: parseNamespaces(

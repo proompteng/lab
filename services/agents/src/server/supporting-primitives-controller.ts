@@ -1,6 +1,6 @@
 import { isRuntimeTestEnv } from './agents-controller/runtime-config'
 import { AGENTS_RESOURCE_LABELS } from './agent-resource-labels'
-import { resolveSupportingControllerConfig } from './controller-runtime-config'
+import { isSwarmPrimitiveEnabled, resolveSupportingControllerConfig } from './controller-runtime-config'
 import { resolveBooleanFeatureToggle } from './feature-flags'
 import { createKubeGateway, type KubeGateway } from './kube-gateway'
 import { startResourceWatch } from './kube-watch'
@@ -11,7 +11,7 @@ import { shouldApplyStatus } from './status-utils'
 const DEFAULT_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY = 'agents.supporting_controller.enabled'
 const SCHEDULE_DELIVERY_PLACEHOLDER = '__AGENTS_DELIVERY_ID__'
 
-const REQUIRED_CRDS = [
+const BASE_REQUIRED_CRDS = [
   RESOURCE_MAP.Tool,
   RESOURCE_MAP.ToolRun,
   RESOURCE_MAP.ApprovalPolicy,
@@ -22,8 +22,10 @@ const REQUIRED_CRDS = [
   RESOURCE_MAP.Schedule,
   RESOURCE_MAP.Artifact,
   RESOURCE_MAP.Workspace,
-  RESOURCE_MAP.Swarm,
 ]
+
+const resolveRequiredCrds = () =>
+  isSwarmPrimitiveEnabled() ? [...BASE_REQUIRED_CRDS, RESOURCE_MAP.Swarm] : BASE_REQUIRED_CRDS
 
 type Condition = {
   type: string
@@ -142,7 +144,7 @@ const checkCrds = async (
   const namespace = resolveCrdCheckNamespace()
   const missing: string[] = []
   const forbidden: string[] = []
-  for (const name of REQUIRED_CRDS) {
+  for (const name of resolveRequiredCrds()) {
     const access = await kubeGateway.probeNamespacedResource(name, namespace)
     if (access === 'ok') continue
     if (access === 'forbidden') {
@@ -896,10 +898,10 @@ const reconcileResource = async (
   if (kind === 'Schedule') return reconcileSchedule(kube, resource, namespace)
   if (kind === 'Artifact') return reconcileArtifact(kube, resource)
   if (kind === 'Workspace') return reconcileWorkspace(kube, resource, namespace)
-  if (kind === 'Swarm') return reconcileSwarm(kube, resource)
+  if (kind === 'Swarm' && isSwarmPrimitiveEnabled()) return reconcileSwarm(kube, resource)
 }
 
-const RESOURCE_LIST_ORDER = [
+const BASE_RESOURCE_LIST_ORDER = [
   RESOURCE_MAP.Tool,
   RESOURCE_MAP.ToolRun,
   RESOURCE_MAP.ApprovalPolicy,
@@ -910,11 +912,13 @@ const RESOURCE_LIST_ORDER = [
   RESOURCE_MAP.Schedule,
   RESOURCE_MAP.Artifact,
   RESOURCE_MAP.Workspace,
-  RESOURCE_MAP.Swarm,
 ]
 
+const resolveResourceListOrder = () =>
+  isSwarmPrimitiveEnabled() ? [...BASE_RESOURCE_LIST_ORDER, RESOURCE_MAP.Swarm] : BASE_RESOURCE_LIST_ORDER
+
 const reconcileNamespace = async (kube: ReturnType<typeof createKubernetesClient>, namespace: string) => {
-  for (const resourceName of RESOURCE_LIST_ORDER) {
+  for (const resourceName of resolveResourceListOrder()) {
     const payload = await kube.list(resourceName, namespace)
     for (const item of listItems(payload)) {
       await reconcileResource(kube, item, namespace)
@@ -964,7 +968,7 @@ const handleResourceEvent = async (
 
 const startWatches = (kube: ReturnType<typeof createKubernetesClient>, namespaces: string[]) => {
   for (const namespace of namespaces) {
-    for (const resource of RESOURCE_LIST_ORDER) {
+    for (const resource of resolveResourceListOrder()) {
       watchHandles.push(
         startResourceWatch({
           resource,
@@ -1051,7 +1055,6 @@ export const stopSupportingPrimitivesController = () => {
 }
 
 export const __test__ = {
-  REQUIRED_CRDS,
   buildScheduleRunTemplate,
   checkCrds,
   reconcileArtifact,
@@ -1062,5 +1065,7 @@ export const __test__ = {
   reconcileSwarm,
   reconcileTool,
   reconcileWorkspace,
+  resolveRequiredCrds,
+  resolveResourceListOrder,
   resolveSupportingRuntimeConfig,
 }
