@@ -21,6 +21,7 @@
     "microstructure_features_present",
     "fresh_signal_continuity",
     "evidence_continuity_recent",
+    "delay_adjusted_depth_stress_recent",
     "drift_checks_recent",
     "positive_post_cost_expectancy"
   ],
@@ -30,6 +31,9 @@
     "min_feature_batch_rows": 1,
     "require_feature_rows": true,
     "require_drift_checks": true,
-    "require_evidence_continuity": true
+    "require_evidence_continuity": true,
+    "require_delay_adjusted_depth_stress": true,
+    "min_delay_adjusted_depth_stress_checks": 1,
+    "max_delay_adjusted_depth_stress_age_minutes": 30
   }
 }
