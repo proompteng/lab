@@ -84,8 +84,6 @@ Environment overrides:
 - `AGENTCTL_CA_CERT` (path to CA cert, optional)
 - `AGENTCTL_CLIENT_CERT` / `AGENTCTL_CLIENT_KEY` (mTLS, optional)
 
-`JANGAR_GRPC_ADDRESS` and `JANGAR_GRPC_TOKEN` remain accepted as deprecated compatibility aliases.
-
 ## Usage
 
 ```bash
