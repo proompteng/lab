@@ -295,13 +295,13 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(limits, 'ephemeral-storage')).toBe('16Gi')
   })
 
-  it('keeps domain admission env out of the Agents GitOps values while swarm primitive dispatch is disabled by default', () => {
+  it('enables Swarm primitive RBAC for the live controllers while keeping domain admission env out of Agents', () => {
     const values = readYamlObjects('argocd/applications/agents/values.yaml')[0]
     const controllers = objectAt(values, 'controllers')
     const env = objectAt(objectAt(controllers, 'env'), 'vars')
     const swarm = objectAt(values, 'swarm')
 
-    expect(objectAt(swarm, 'enabled')).toBe(false)
+    expect(objectAt(swarm, 'enabled')).toBe(true)
     expect(objectAt(env, 'AGENTS_MATERIAL_REENTRY_REQUIREMENT_SIGNALS')).toBeUndefined()
     expect(objectAt(env, 'AGENTS_SCHEDULE_RUNNER_ADMISSION_STATUS_URL')).toBeUndefined()
     expect(objectAt(env, 'AGENTS_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS')).toBeUndefined()
