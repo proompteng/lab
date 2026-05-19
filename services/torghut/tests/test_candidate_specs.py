@@ -189,9 +189,13 @@ class TestCandidateSpecs(TestCase):
             hypothesis_cards=cards, target_net_pnl_per_day=Decimal("300")
         )
 
-        self.assertEqual(
+        self.assertIn(
+            "cluster_lob_event_clustering",
             specs[0].parameter_space["mechanism_overlay_ids"],
-            ["cluster_lob_event_clustering"],
+        )
+        self.assertIn(
+            "ofi_lob_continuation_response",
+            specs[0].parameter_space["mechanism_overlay_ids"],
         )
         self.assertEqual(
             specs[0].hard_vetoes["required_min_event_cluster_stability_score"],
@@ -330,6 +334,19 @@ class TestCandidateSpecs(TestCase):
             specs[0].promotion_contract["rejects_ohlcv_only_promotion_evidence"]
         )
         self.assertTrue(specs[0].promotion_contract["requires_walk_forward_replay"])
+        self.assertEqual(
+            specs[0].hard_vetoes["required_min_ohlcv_falsification_trade_count"],
+            "120",
+        )
+        self.assertEqual(
+            specs[0].hard_vetoes["required_min_ohlcv_stable_split_pass_rate"],
+            "0.60",
+        )
+        self.assertTrue(specs[0].hard_vetoes["required_executable_quote_evidence"])
+        self.assertTrue(specs[0].promotion_contract["requires_minimum_trade_count"])
+        self.assertTrue(
+            specs[0].promotion_contract["rejects_naive_gross_ohlcv_backtests"]
+        )
 
     def test_morning_momentum_claim_selects_opening_drive_family(self) -> None:
         cards = build_hypothesis_cards(

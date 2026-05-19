@@ -604,6 +604,18 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "history_daily_target_shortfall",
             row_by_spec[losing_spec.candidate_spec_id]["features"],
         )
+        self.assertIn(
+            "history_market_impact_stress_passed",
+            row_by_spec[losing_spec.candidate_spec_id]["features"],
+        )
+        self.assertIn(
+            "history_delay_adjusted_depth_stress_passed",
+            row_by_spec[losing_spec.candidate_spec_id]["features"],
+        )
+        self.assertIn(
+            "history_double_oos_cost_shock_net_pnl_per_day",
+            row_by_spec[losing_spec.candidate_spec_id]["features"],
+        )
 
     def test_feedback_evidence_jsonl_round_trips(self) -> None:
         spec = self._candidate_spec("spec-feedback-jsonl")

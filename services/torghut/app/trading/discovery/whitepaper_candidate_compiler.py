@@ -68,6 +68,7 @@ FEATURE_ALIASES = {
     "fill_outcomes": "transaction_cost_stress",
     "fill_side_vector": "order_flow_imbalance",
     "gamma_exposure": "realized_volatility",
+    "gap_velocity": "opening_drive_bps",
     "hazard_rate": "information_arrival_rate",
     "historical_replay": "transaction_cost_stress",
     "hurst_regime": "realized_volatility",

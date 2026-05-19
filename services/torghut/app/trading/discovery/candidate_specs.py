@@ -1388,6 +1388,7 @@ _PORTFOLIO_ORACLE_COVERAGE_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], .
             "max_position_pct_equity": "2.0",
             "max_notional_per_trade": "63180",
             "params": {
+                "signal_motif": "ofi_lob_response_continuation",
                 "min_cross_section_continuation_rank": "0.42",
                 "min_cross_section_opening_window_return_rank": "0.34",
                 "max_gross_exposure_pct_equity": "4.0",
@@ -1402,6 +1403,29 @@ _PORTFOLIO_ORACLE_COVERAGE_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], .
                 "max_session_negative_exit_bps": "3",
                 "long_stop_loss_bps": "4",
                 "long_trailing_stop_activation_profit_bps": "4",
+                "long_trailing_stop_drawdown_bps": "2",
+            },
+        },
+        {
+            "universe_symbols": list(_PORTFOLIO_PLATFORM_COVERAGE_UNIVERSE_PROFILE),
+            "max_position_pct_equity": "2.0",
+            "max_notional_per_trade": "63180",
+            "params": {
+                "signal_motif": "ofi_lob_response_continuation",
+                "min_cross_section_continuation_rank": "0.50",
+                "min_cross_section_opening_window_return_rank": "0.40",
+                "min_recent_imbalance_pressure": "0.03",
+                "min_recent_microprice_bias_bps": "0.08",
+                "min_recent_above_opening_window_close_ratio": "0.48",
+                "min_recent_above_vwap_w5m_ratio": "0.48",
+                "max_gross_exposure_pct_equity": "3.0",
+                "entry_notional_max_multiplier": "0.50",
+                "max_entries_per_session": "4",
+                "entry_cooldown_seconds": "300",
+                "max_hold_seconds": "900",
+                "max_session_negative_exit_bps": "3",
+                "long_stop_loss_bps": "5",
+                "long_trailing_stop_activation_profit_bps": "5",
                 "long_trailing_stop_drawdown_bps": "2",
             },
         },
@@ -1458,6 +1482,7 @@ _PORTFOLIO_ORACLE_COVERAGE_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], .
             "max_position_pct_equity": "2.0",
             "max_notional_per_trade": "63180",
             "params": {
+                "signal_motif": "opening_ofi_leader_reclaim_continuation",
                 "min_cross_section_continuation_rank": "0.42",
                 "min_cross_section_opening_window_return_rank": "0.38",
                 "max_gross_exposure_pct_equity": "3.0",
@@ -1472,6 +1497,31 @@ _PORTFOLIO_ORACLE_COVERAGE_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], .
                 "max_session_negative_exit_bps": "3",
                 "long_stop_loss_bps": "4",
                 "long_trailing_stop_activation_profit_bps": "4",
+                "long_trailing_stop_drawdown_bps": "2",
+            },
+        },
+        {
+            "universe_symbols": list(_PORTFOLIO_PLATFORM_COVERAGE_UNIVERSE_PROFILE),
+            "max_position_pct_equity": "2.0",
+            "max_notional_per_trade": "63180",
+            "params": {
+                "signal_motif": "opening_ofi_leader_reclaim_continuation",
+                "min_cross_section_continuation_rank": "0.50",
+                "min_cross_section_opening_window_return_rank": "0.40",
+                "max_gross_exposure_pct_equity": "3.0",
+                "entry_notional_max_multiplier": "0.50",
+                "max_entries_per_session": "4",
+                "entry_cooldown_seconds": "300",
+                "leader_reclaim_start_minutes_since_open": "10",
+                "leader_reclaim_min_recent_imbalance_pressure": "0.03",
+                "leader_reclaim_min_recent_microprice_bias_bps": "0.06",
+                "leader_reclaim_min_recent_above_opening_window_close_ratio": "0.48",
+                "leader_reclaim_min_recent_above_vwap_w5m_ratio": "0.46",
+                "min_recent_imbalance_pressure": "0.02",
+                "min_recent_microprice_bias_bps": "0.05",
+                "max_session_negative_exit_bps": "3",
+                "long_stop_loss_bps": "5",
+                "long_trailing_stop_activation_profit_bps": "5",
                 "long_trailing_stop_drawdown_bps": "2",
             },
         },
@@ -2962,6 +3012,54 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
 
     if has_any(
         (
+            "order-flow imbalance",
+            "order flow imbalance",
+            "order_flow_imbalance",
+            "ofi",
+            "ofi memory",
+            "ofi_memory",
+            "response-ratio",
+            "response ratio",
+            "lob response",
+            "lob_response",
+            "horizon-dependent",
+            "horizon dependent",
+        )
+    ):
+        overlay_ids.append("ofi_lob_continuation_response")
+        overlay_contracts.append(
+            {
+                "overlay_id": "ofi_lob_continuation_response",
+                "required_evidence": [
+                    "order_flow_imbalance",
+                    "microprice_bias",
+                    "forecast_horizon",
+                    "route_tca",
+                    "walk_forward_replay",
+                ],
+                "rank_metric": "post_cost_net_pnl_after_ofi_response_horizon",
+                "evidence_policy": "ofi_response_requires_executable_lob_or_quote_evidence",
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_min_ofi_response_sample_count": "120",
+                "required_min_ofi_response_stable_split_pass_rate": "0.60",
+                "required_max_ofi_response_best_split_share": "0.35",
+                "required_executable_quote_evidence": True,
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_ofi_response_horizon_selection": True,
+                "requires_executable_quote_evidence": True,
+                "requires_route_tca": True,
+                "rejects_ohlcv_only_ofi_proxies": True,
+            }
+        )
+
+    if has_any(
+        (
             "delay-adjusted depth",
             "delay adjusted depth",
             "execution delay",
@@ -3033,12 +3131,28 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
                 "evidence_policy": "ohlcv_only_is_falsification_not_promotion_proof",
             }
         )
+        hard_vetoes.update(
+            {
+                "required_min_ohlcv_falsification_trade_count": "120",
+                "required_min_ohlcv_walk_forward_split_count": "4",
+                "required_min_ohlcv_stable_split_pass_rate": "0.60",
+                "required_max_ohlcv_best_split_share": "0.35",
+                "required_min_route_tca_sample_count": "60",
+                "required_executable_quote_evidence": True,
+            }
+        )
         promotion_contract.update(
             {
                 "rejects_ohlcv_only_promotion_evidence": True,
                 "requires_walk_forward_replay": True,
                 "requires_executable_quote_evidence": True,
                 "requires_route_tca": True,
+                "requires_minimum_trade_count": True,
+                "requires_multi_year_stability_check": True,
+                "rejects_naive_gross_ohlcv_backtests": True,
+                "positive_control_policy": (
+                    "gap_continuation_only_until_post_cost_live_paper_proof"
+                ),
             }
         )
 
@@ -3114,6 +3228,11 @@ def _family_scores_for_hypothesis(
         bump(
             "microstructure_continuation_matched_filter_v1",
             4,
+            "order_flow_or_lob_signal",
+        )
+        bump(
+            "opening_drive_leader_reclaim_v1",
+            3,
             "order_flow_or_lob_signal",
         )
     if has_any(
@@ -3230,7 +3349,7 @@ def _family_scores_for_hypothesis(
             "response ratio",
         )
     ):
-        bump("intraday_tsmom_v2", 4, "volatility_or_regime_state")
+        bump("intraday_tsmom_v2", 6, "volatility_or_regime_state")
         bump("momentum_pullback_v1", 2, "volatility_or_regime_state")
         bump("opening_drive_leader_reclaim_v1", 2, "volatility_or_regime_state")
         bump(
@@ -3311,6 +3430,11 @@ def _family_scores_for_hypothesis(
         bump(
             "microstructure_continuation_matched_filter_v1",
             4,
+            "microprice_or_multi_level_order_book",
+        )
+        bump(
+            "opening_drive_leader_reclaim_v1",
+            3,
             "microprice_or_multi_level_order_book",
         )
         bump("breakout_reclaim_v2", 2, "microprice_or_multi_level_order_book")

@@ -653,6 +653,7 @@ class TestSubmissionCouncil(TestCase):
                         "market_impact_stress_artifact_ref": "s3://proof/current-ready-impact.json",
                         "market_impact_stress_model": "square_root",
                         "market_impact_stress_cost_bps": "6",
+                        "market_impact_liquidity_evidence_present": True,
                         "market_impact_stress_net_pnl_per_day": "535",
                         "delay_adjusted_depth_stress_passed": True,
                         "delay_adjusted_depth_stress_artifact_ref": (

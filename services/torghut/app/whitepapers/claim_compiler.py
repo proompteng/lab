@@ -726,7 +726,7 @@ RECENT_WHITEPAPER_SEEDS: tuple[WhitepaperResearchSource, ...] = (
         claim_relations=(
             {
                 "relation_id": "ohlcv-falsification-requires-live-paper-proof",
-                "relation_type": "invalidates",
+                "relation_type": "requires_validation",
                 "source_claim_id": "walk-forward-cost-constraints-required",
                 "target_claim_id": "ohlcv-only-intraday-falsification",
                 "rationale": (

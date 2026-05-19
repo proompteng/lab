@@ -530,7 +530,40 @@ class TestWhitepaperCandidateCompiler(TestCase):
                 "microstructure_continuation_matched_filter_v1",
                 "microbar_cross_sectional_pairs_v1",
                 "intraday_tsmom_v2",
+                "opening_drive_leader_reclaim_v1",
             }.issubset(family_ids)
+        )
+        microstructure_or_opening_specs = [
+            spec
+            for spec in compilation.executable_specs
+            if spec.family_template_id
+            in {
+                "microstructure_continuation_matched_filter_v1",
+                "opening_drive_leader_reclaim_v1",
+            }
+        ]
+        self.assertTrue(
+            any(
+                spec.strategy_overrides.get("params", {}).get("signal_motif")
+                in {
+                    "ofi_lob_response_continuation",
+                    "opening_ofi_leader_reclaim_continuation",
+                }
+                for spec in microstructure_or_opening_specs
+            )
+        )
+        self.assertTrue(
+            any(
+                "ofi_lob_continuation_response"
+                in spec.parameter_space.get("mechanism_overlay_ids", [])
+                for spec in microstructure_or_opening_specs
+            )
+        )
+        self.assertTrue(
+            any(
+                spec.hard_vetoes.get("required_min_ofi_response_sample_count") == "120"
+                for spec in microstructure_or_opening_specs
+            )
         )
         self.assertFalse(
             [
@@ -543,6 +576,102 @@ class TestWhitepaperCandidateCompiler(TestCase):
             all(
                 spec.promotion_contract["synthetic_evidence_policy"]
                 == "validation_only_not_promotion_proof"
+                for spec in compilation.executable_specs
+            )
+        )
+
+    def test_structural_ohlcv_falsification_claims_stay_executable_but_not_promotable(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-arxiv-2605-04004",
+            claims=[
+                {
+                    "claim_id": "gap-continuation-positive-control",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "A gap-continuation setup can be retained only as a positive-control "
+                        "hypothesis because it showed statistical strength but failed minimum "
+                        "sample requirements."
+                    ),
+                    "data_requirements": [
+                        "gap_velocity",
+                        "executable_quote",
+                        "walk_forward_replay",
+                    ],
+                    "confidence": "0.70",
+                    "expected_failure_modes": [
+                        "insufficient_trade_count",
+                        "fails_transaction_cost_stress",
+                    ],
+                },
+                {
+                    "claim_id": "ohlcv-only-intraday-falsification",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "OHLCV-only intraday momentum signals can fail under realistic "
+                        "execution constraints despite attractive naive backtests."
+                    ),
+                    "data_requirements": [
+                        "executable_quote",
+                        "route_tca",
+                        "walk_forward_replay",
+                    ],
+                    "confidence": "0.76",
+                },
+                {
+                    "claim_id": "walk-forward-cost-constraints-required",
+                    "claim_type": "risk_constraint",
+                    "claim_text": (
+                        "Walk-forward validation and market-microstructure cost constraints "
+                        "are required to falsify overfit intraday signals."
+                    ),
+                    "data_requirements": [
+                        "walk_forward_replay",
+                        "transaction_cost_stress",
+                        "live_paper_parity",
+                    ],
+                    "confidence": "0.75",
+                },
+            ],
+            relations=[
+                {
+                    "relation_id": "ohlcv-falsification-requires-live-paper-proof",
+                    "relation_type": "requires_validation",
+                    "source_claim_id": "walk-forward-cost-constraints-required",
+                    "target_claim_id": "ohlcv-only-intraday-falsification",
+                }
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        self.assertTrue(compilation.executable_specs)
+        self.assertFalse(
+            [
+                blocker
+                for blocker in compilation.blockers
+                if blocker.reason == "contradictory_claim_relation"
+            ]
+        )
+        self.assertTrue(
+            any(
+                "ohlcv_only_falsification"
+                in spec.parameter_space.get("mechanism_overlay_ids", [])
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            any(
+                spec.hard_vetoes.get("required_min_ohlcv_falsification_trade_count")
+                == "120"
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract.get("rejects_ohlcv_only_promotion_evidence")
                 for spec in compilation.executable_specs
             )
         )
