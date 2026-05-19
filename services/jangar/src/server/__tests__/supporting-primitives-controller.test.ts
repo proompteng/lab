@@ -47,7 +47,6 @@ vi.mock('~/server/control-plane-runtime-admission', async () => {
   }
 })
 
-import * as agentsControllerModule from '@proompteng/agents/server/agents-controller'
 import { resolveBooleanFeatureToggle } from '~/server/feature-flags'
 import { asString } from '~/server/primitives-http'
 import type { KubernetesClient } from '~/server/primitives-kube'
@@ -420,6 +419,19 @@ describe('supporting primitives controller', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-20T00:00:00Z'))
     runtimeAdmissionMocks.buildRuntimeAdmissionSnapshot.mockReturnValue(buildAdmissionSnapshot())
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          status: 'ok',
+          reason_codes: [],
+          agentsController: {
+            started: true,
+            agentRunIngestion: [],
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    )
     kubectlCalls = new Map()
     resolveSwarmAvailability = (resource, call) => {
       if (resource === 'swarms' && call === 1) {
@@ -475,7 +487,6 @@ describe('supporting primitives controller', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     stopSupportingPrimitivesController()
-    agentsControllerModule.stopAgentsController()
     vi.useRealTimers()
     delete process.env.JANGAR_AGENT_RUNNER_IMAGE
     delete process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR
@@ -3070,16 +3081,27 @@ describe('supporting primitives controller', () => {
   })
 
   it('pauses requirement dispatch when AgentRun ingestion is degraded', async () => {
-    vi.spyOn(agentsControllerModule, 'assessAgentRunIngestion').mockReturnValue({
-      namespace: 'agents',
-      status: 'degraded',
-      message: 'no AgentRun watch events observed since controller start while untouched runs exist',
-      dispatchPaused: true,
-      lastWatchEventAt: null,
-      lastResyncAt: '2026-01-20T00:00:00Z',
-      untouchedRunCount: 2,
-      oldestUntouchedAgeSeconds: 180,
-    })
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          status: 'degraded',
+          reason_codes: ['agentrun_ingestion_not_ready'],
+          agentsController: {
+            started: true,
+            agentRunIngestion: [
+              {
+                namespace: 'agents',
+                lastWatchEventAt: null,
+                lastResyncAt: '2026-01-20T00:00:00Z',
+                untouchedRunCount: 2,
+                oldestUntouchedAgeSeconds: 180,
+              },
+            ],
+          },
+        }),
+        { status: 503, headers: { 'content-type': 'application/json' } },
+      ),
+    )
 
     const applyStatus = vi.fn().mockResolvedValue({})
     const apply = vi.fn().mockResolvedValue({})

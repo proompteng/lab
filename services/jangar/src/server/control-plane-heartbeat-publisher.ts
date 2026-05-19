@@ -1,4 +1,3 @@
-import { getAgentsControllerHealth } from '@proompteng/agents/server/agents-controller'
 import {
   createControlPlaneHeartbeatStore,
   resolveControlPlaneHeartbeatIntervalSeconds,
@@ -10,8 +9,6 @@ import {
 } from '~/server/control-plane-heartbeat-store'
 import { getLeaderElectionStatus, type LeaderElectionStatus } from '~/server/leader-election'
 import { parseNamespaceScopeEnv } from '~/server/namespace-scope'
-import { getOrchestrationControllerHealth } from '@proompteng/agents/server/orchestration-controller'
-import { getSupportingControllerHealth } from '~/server/supporting-primitives-controller'
 
 type ControllerHealthSnapshot = {
   enabled: boolean
@@ -40,6 +37,14 @@ type HeartbeatComponentState = {
 }
 
 const DEFAULT_NAMESPACES = ['agents']
+const DISABLED_CONTROLLER_HEALTH: ControllerHealthSnapshot = {
+  enabled: false,
+  started: false,
+  namespaces: [],
+  crdsReady: null,
+  missingCrds: [],
+  lastCheckedAt: null,
+}
 
 const globalState = globalThis as typeof globalThis & {
   __jangarControlPlaneHeartbeatPublisher?: {
@@ -248,9 +253,9 @@ export const publishControlPlaneHeartbeatsOnce = async (deps: PublisherDeps = {}
     now: (deps.now ?? (() => new Date()))(),
     leaderStatus: (deps.getLeaderStatus ?? getLeaderElectionStatus)(),
     podIdentity: (deps.resolvePodIdentity ?? resolveControlPlanePodIdentity)(),
-    agentsHealth: (deps.getAgentsHealth ?? getAgentsControllerHealth)(),
-    supportingHealth: (deps.getSupportingHealth ?? getSupportingControllerHealth)(),
-    orchestrationHealth: (deps.getOrchestrationHealth ?? getOrchestrationControllerHealth)(),
+    agentsHealth: deps.getAgentsHealth?.() ?? DISABLED_CONTROLLER_HEALTH,
+    supportingHealth: deps.getSupportingHealth?.() ?? DISABLED_CONTROLLER_HEALTH,
+    orchestrationHealth: deps.getOrchestrationHealth?.() ?? DISABLED_CONTROLLER_HEALTH,
     logWarning,
   })
 
