@@ -8,6 +8,7 @@ import {
 import { createControlPlaneCacheStore, type ControlPlaneCacheStore } from '../../../../server/control-plane-cache-store'
 import { resolveControlPlaneCacheReadConfig } from '../../../../server/control-plane-cache-config'
 import { type AgentPrimitiveKind, resolvePrimitiveKind } from '../../../../server/control-plane-primitive-kinds'
+import { isSwarmPrimitiveEnabled } from '../../../../server/controller-runtime-config'
 import { okResponse } from '../../../../server/http'
 import { createKubernetesClient, type KubernetesClient } from '../../../../server/kube-types'
 import { asRecord, asString, normalizeNamespace } from '../../../../server/primitives'
@@ -35,6 +36,9 @@ const SUMMARY_KINDS: AgentPrimitiveKind[] = [
   'Artifact',
   'Workspace',
 ]
+
+const resolveSummaryKinds = () =>
+  isSwarmPrimitiveEnabled() ? SUMMARY_KINDS : SUMMARY_KINDS.filter((kind) => kind !== 'Swarm')
 
 const RUN_PHASES = ['Pending', 'Running', 'Succeeded', 'Failed', 'Cancelled'] as const
 
@@ -144,7 +148,7 @@ export const getControlPlaneSummary = async (
   const cacheCheckedAt = new Date()
   const resources = {} as Record<AgentPrimitiveKind, SummaryEntry>
 
-  for (const kind of SUMMARY_KINDS) {
+  for (const kind of resolveSummaryKinds()) {
     const resolved = resolvePrimitiveKind(kind)
     if (!resolved) {
       resources[kind] = { total: 0, error: `Unknown kind: ${kind}` }
@@ -215,4 +219,8 @@ export const getControlPlaneSummary = async (
   }
 
   return okResponse({ ok: true, namespace, resources })
+}
+
+export const __test__ = {
+  resolveSummaryKinds,
 }

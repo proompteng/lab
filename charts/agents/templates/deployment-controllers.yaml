@@ -303,6 +303,10 @@ spec:
               value: {{ .Values.rbac.clusterScoped | default false | quote }}
             - name: AGENTS_PRIMITIVES_NAMESPACES
               value: {{ include "agents.controllerNamespaces" . | quote }}
+            {{- if not (hasKey $envVars "AGENTS_SWARM_PRIMITIVE_ENABLED") }}
+            - name: AGENTS_SWARM_PRIMITIVE_ENABLED
+              value: {{ .Values.swarm.enabled | default false | quote }}
+            {{- end }}
             {{- if .Values.controller.enabled }}
             - name: AGENTS_AGENTS_CONTROLLER_ENABLED
               value: "1"

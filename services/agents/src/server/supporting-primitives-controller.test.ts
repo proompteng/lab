@@ -1,8 +1,18 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { KubernetesClient } from './kube-types'
+import { RESOURCE_MAP, type KubernetesClient } from './kube-types'
 import { __test__ } from './supporting-primitives-controller'
 import { __test__ as scheduleRunnerTest } from './supporting-schedule-runner'
+
+const originalSwarmPrimitiveEnabled = process.env.AGENTS_SWARM_PRIMITIVE_ENABLED
+
+afterEach(() => {
+  if (originalSwarmPrimitiveEnabled === undefined) {
+    delete process.env.AGENTS_SWARM_PRIMITIVE_ENABLED
+  } else {
+    process.env.AGENTS_SWARM_PRIMITIVE_ENABLED = originalSwarmPrimitiveEnabled
+  }
+})
 
 const createKubeMock = (resources: Record<string, Record<string, unknown> | null> = {}) => {
   const applied: Record<string, unknown>[] = []
@@ -33,6 +43,16 @@ const createKubeMock = (resources: Record<string, Record<string, unknown> | null
 }
 
 describe('supporting primitives controller', () => {
+  it('keeps Swarm out of supporting CRD checks and watches unless explicitly enabled', () => {
+    delete process.env.AGENTS_SWARM_PRIMITIVE_ENABLED
+    expect(__test__.resolveRequiredCrds()).not.toContain(RESOURCE_MAP.Swarm)
+    expect(__test__.resolveResourceListOrder()).not.toContain(RESOURCE_MAP.Swarm)
+
+    process.env.AGENTS_SWARM_PRIMITIVE_ENABLED = 'true'
+    expect(__test__.resolveRequiredCrds()).toContain(RESOURCE_MAP.Swarm)
+    expect(__test__.resolveResourceListOrder()).toContain(RESOURCE_MAP.Swarm)
+  })
+
   it('validates Tool specs and writes standard status', async () => {
     const { kube, statuses } = createKubeMock()
     await __test__.reconcileTool(kube, {

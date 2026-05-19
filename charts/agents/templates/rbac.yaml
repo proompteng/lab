@@ -196,6 +196,7 @@ rules:
       - get
       - update
       - patch
+  {{- if .Values.swarm.enabled }}
   - apiGroups:
       - swarm.proompteng.ai
     resources:
@@ -215,6 +216,7 @@ rules:
       - get
       - update
       - patch
+  {{- end }}
   - apiGroups:
       - artifacts.proompteng.ai
     resources:
