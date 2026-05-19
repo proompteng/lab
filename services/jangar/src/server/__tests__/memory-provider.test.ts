@@ -18,7 +18,12 @@ vi.mock('pg', () => ({
   Pool: pgMocks.Pool,
 }))
 
-import { closeMemoryProviderPools, writeMemoryEmbedding, writeMemoryEvent } from '~/server/memory-provider'
+import {
+  closeMemoryProviderPools,
+  resolveMemoryConnection,
+  writeMemoryEmbedding,
+  writeMemoryEvent,
+} from '~/server/memory-provider'
 
 const connection = {
   dataset: 'test-memory',
@@ -137,5 +142,45 @@ describe('memory-provider', () => {
       ssl: { rejectUnauthorized: false },
       max: 1,
     })
+  })
+
+  it('resolves Memory CRD metadata through Agents service and reads only the backing Secret locally', async () => {
+    process.env.OPENAI_EMBEDDING_DIMENSION = '1536'
+    const getMemoryResource = vi.fn(async () => ({
+      spec: {
+        type: 'postgres',
+        connection: {
+          secretRef: {
+            name: 'memory-db',
+            key: 'url',
+          },
+        },
+      },
+    }))
+    const kube = {
+      get: vi.fn(async (resource: string, name: string, namespace: string) => {
+        if (resource === 'secret' && name === 'memory-db' && namespace === 'agents') {
+          return {
+            data: {
+              url: Buffer.from('postgresql://memory-user:memory-pass@postgres/memory').toString('base64'),
+            },
+          }
+        }
+        return null
+      }),
+    }
+
+    await expect(
+      resolveMemoryConnection('agent-memory', 'agents', kube as never, { getMemoryResource }),
+    ).resolves.toEqual({
+      dataset: 'agent-memory',
+      schema: 'public',
+      embeddingDimension: 1536,
+      connectionString: 'postgresql://memory-user:memory-pass@postgres/memory',
+    })
+
+    expect(getMemoryResource).toHaveBeenCalledWith('agent-memory', 'agents')
+    expect(kube.get).toHaveBeenCalledTimes(1)
+    expect(kube.get).toHaveBeenCalledWith('secret', 'memory-db', 'agents')
   })
 })

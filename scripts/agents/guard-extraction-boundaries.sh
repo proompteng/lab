@@ -95,6 +95,11 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/primitives-policy.ts"
 
 fail_if_matches \
+  "Jangar memory provider must read Memory resources through the Agents service boundary" \
+  'RESOURCE_MAP\.Memory|memories\.agents\.proompteng\.ai' \
+  "${ROOT_DIR}/services/jangar/src/server/memory-provider.ts"
+
+fail_if_matches \
   "Agents GitOps must not ship the old sample Argo WorkflowTemplate schedule bridge" \
   'agents-primitives-echo|kind: WorkflowTemplate|codex-workflow' \
   "${ROOT_DIR}/argocd/applications/agents"

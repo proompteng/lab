@@ -3,7 +3,8 @@ import { createHash } from 'node:crypto'
 import { Pool } from 'pg'
 
 import { resolveEmbeddingConfig } from './memory-config'
-import { type KubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
+import { fetchControlPlaneResourceFromAgentsService } from '~/server/agents-service-proxy'
+import type { KubernetesClient } from '~/server/primitives-kube'
 
 type MemoryConnection = {
   dataset: string
@@ -19,6 +20,7 @@ type MemoryQueryResult = {
 }
 
 type EnvSource = Record<string, string | undefined>
+type MemoryResourceGetter = (memoryName: string, namespace: string) => Promise<Record<string, unknown> | null>
 
 const DEFAULT_MEMORY_DATABASE_POOL_MAX = 2
 
@@ -190,12 +192,26 @@ const embedText = async (text: string, dimension: number) => {
 
 const vectorToPg = (vector: number[]) => `[${vector.join(',')}]`
 
+const getMemoryResourceFromAgentsService: MemoryResourceGetter = async (memoryName, namespace) => {
+  const result = await fetchControlPlaneResourceFromAgentsService({ kind: 'Memory', name: memoryName, namespace })
+  if (result.ok) {
+    const resource = result.body.resource
+    return resource && typeof resource === 'object' && !Array.isArray(resource) ? resource : null
+  }
+  if (result.status === 404) {
+    return null
+  }
+  throw new Error(result.error ?? `Agents service returned HTTP ${result.status}`)
+}
+
 export const resolveMemoryConnection = async (
   memoryName: string,
   namespace: string,
   kube: KubernetesClient,
+  deps: { getMemoryResource?: MemoryResourceGetter } = {},
 ): Promise<MemoryConnection> => {
-  const memory = await kube.get(RESOURCE_MAP.Memory, memoryName, namespace)
+  const getMemoryResource = deps.getMemoryResource ?? getMemoryResourceFromAgentsService
+  const memory = await getMemoryResource(memoryName, namespace)
   if (!memory) {
     throw new Error(`memory ${memoryName} not found in ${namespace}`)
   }
