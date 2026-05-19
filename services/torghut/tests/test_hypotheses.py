@@ -252,6 +252,32 @@ class TestHypothesisReadiness(TestCase):
         self.assertEqual(cont["observed"]["signal_lag_seconds"], None)
         self.assertEqual(cont["observed"]["feature_batch_rows_total"], 12)
 
+    def test_compile_hypothesis_runtime_statuses_uses_persisted_drift_readiness(
+        self,
+    ) -> None:
+        registry = load_hypothesis_registry()
+        statuses = compile_hypothesis_runtime_statuses(
+            registry=registry,
+            state=_state(feature_rows=12, drift_checks=0),
+            tca_summary={
+                "order_count": 0,
+                "avg_abs_slippage_bps": 0,
+                "avg_realized_shortfall_bps": 0,
+            },
+            market_context_status={"last_freshness_seconds": None},
+            jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                decision="allow",
+                reasons=[],
+                message="ok",
+            ),
+            feature_readiness={"drift_detection_checks_total": 3},
+            now=datetime(2026, 3, 6, 16, 0, tzinfo=timezone.utc),
+        )
+
+        micro = next(item for item in statuses if item["hypothesis_id"] == "H-MICRO-01")
+        self.assertNotIn("drift_checks_missing", micro["reasons"])
+        self.assertEqual(micro["observed"]["drift_detection_checks_total"], 3)
+
     def test_compile_hypothesis_runtime_statuses_promotes_canary_when_thresholds_are_met(
         self,
     ) -> None:
