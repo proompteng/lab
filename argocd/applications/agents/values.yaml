@@ -91,9 +91,6 @@ controllers:
       AGENTS_AGENT_RUNNER_NATS_AUTH_SECRET_NAME: nats-agents-credentials
       AGENTS_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY: username
       AGENTS_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY: password
-      AGENTS_MATERIAL_REENTRY_REQUIREMENT_SIGNALS: "false"
-      AGENTS_SCHEDULE_RUNNER_ADMISSION_STATUS_URL: http://agents.agents.svc.cluster.local/api/agents/control-plane/status?view=schedule-runner
-      AGENTS_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS: "30000"
 swarm:
   enabled: false
 resources:
