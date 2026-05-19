@@ -191,6 +191,15 @@ fail_if_matches \
   "${ROOT_DIR}/docs/jangar/application-architecture.md"
 
 fail_if_matches \
+  "Current Agents docs must not point controller, leader-election, retention, or runner-image ownership back to Jangar" \
+  'JANGAR_AGENT_RUNNER_IMAGE|JANGAR_AGENT_IMAGE|JANGAR_LEADER_ELECTION|JANGAR_AGENTS_CONTROLLER_|services/jangar/src/server/agents-controller|codex-implement|Jangar is the control plane|Jangar controllers|Jangar image' \
+  "${ROOT_DIR}/docs/agents/jangar-controller-design.md" \
+  "${ROOT_DIR}/docs/agents/leader-election-design.md" \
+  "${ROOT_DIR}/docs/agents/agent-run-retention-design.md" \
+  "${ROOT_DIR}/docs/agents/agentrun-creation-guide.md" \
+  "${ROOT_DIR}/docs/agents/runbooks.md"
+
+fail_if_matches \
   "Jangar runtime must not own generic Agents runner image selection" \
   'JANGAR_AGENT_RUNNER_IMAGE|JANGAR_AGENT_IMAGE|defaultWorkloadImage|resolveDefaultWorkloadImage' \
   "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-config.ts" \

@@ -15,7 +15,7 @@ See also:
 
 1. `helm install agents charts/agents -n agents --create-namespace`
 2. Verify CRDs: `kubectl get crd | rg agents.proompteng.ai`
-3. Verify Jangar: `kubectl -n agents get deploy,svc`
+3. Verify Agents services: `kubectl -n agents get deploy,svc`
 
 ## Upgrade
 
@@ -45,12 +45,11 @@ kubectl apply -n argocd -f argocd/applications/agents/application.yaml
 kubectl -n argocd get applications.argoproj.io agents
 ```
 
-The Application renders `argocd/applications/agents` (Helm + kustomize) and installs CRDs + Jangar
+The Application renders `argocd/applications/agents` (Helm + kustomize) and installs CRDs + Agents
 into the `agents` namespace using `argocd/applications/agents/values.yaml`.
-Update the values file with your Jangar image tag, database secret, and (optional) runner image via `runner.image.*`.
+Update the values file with your Agents image tags, database secret, and (optional) runner image via `runner.image.*`.
 The chart defaults `controller.jobTtlSecondsAfterFinished` to a safe value; set it to `0` to disable job cleanup.
-Runner image env precedence is: `env.vars.JANGAR_AGENT_RUNNER_IMAGE` > `runner.image.*` >
-`runtime.agentRunnerImage` (legacy fallback).
+Runner image env precedence is: `env.vars.AGENTS_AGENT_RUNNER_IMAGE` > `runner.image.*` > chart default.
 
 If `controller.namespaces` spans multiple namespaces or `"*"`, set `rbac.clusterScoped=true`.
 Guardrail rules that fail install-time validation:
@@ -118,7 +117,7 @@ Override `AGENTS_NAMESPACE`, `AGENTS_RELEASE_NAME`, `AGENTS_VALUES_FILE`, `AGENT
 If you do not have an external database handy, set `AGENTS_DB_BOOTSTRAP=true` to spin up a local
 Postgres in-cluster and wire `database.url` automatically (or provide `AGENTS_DB_URL` yourself).
 Ensure the `agentrun-workflow-smoke.yaml` workload image includes `agent-runner` or set
-`env.vars.JANGAR_AGENT_RUNNER_IMAGE` in your values.
+`env.vars.AGENTS_AGENT_RUNNER_IMAGE` in your values.
 
 ## Workflow runtime validation (native)
 
@@ -253,7 +252,7 @@ Expected outcomes:
 
 - each active `Workspace` has a same-named PVC labeled `workspaces.proompteng.ai/workspace=<workspace-name>`;
 - `Workspace.status.phase=Ready` requires the backing PVC to be `Bound`;
-- an `unsupported kubernetes resource: persistentvolumeclaim` controller log means the Jangar image is missing the
+- an `unsupported kubernetes resource: persistentvolumeclaim` controller log means the Agents controller image is missing the
   first-class PVC resource alias and should be rolled back or upgraded before relying on storage proof.
 
 During shadow lease synthesis, treat `failure_domain_leases.holdbacks[]` as deployer evidence, not an
@@ -437,7 +436,7 @@ uv run python scripts/orchestration_guard.py evaluate-failure \
 
 - Symptom: `/health` returns 500 with `ReferenceError: Cannot access 'aE' before initialization`.
 - Root cause: Jangar builds picked up an incompatible Nitro `latest` bundle output.
-- Fix: Pin Nitro to `3.0.0` in `services/jangar/package.json` and deploy a pinned Jangar image digest
+- Fix: Pin Nitro to `3.0.0` in `services/jangar/package.json` and deploy a pinned domain-app image digest
   (avoid `latest`).
 
 ## Stuck AgentRun

@@ -208,21 +208,21 @@ kubectl -n agents describe pod <agent-run-pod> | rg -n 'CreateContainerConfigErr
 Image resolution order (highest first):
 
 1. `AgentRun.spec.workload.image`
-2. `JANGAR_AGENT_RUNNER_IMAGE`
-3. `JANGAR_AGENT_IMAGE`
+2. `AGENTS_AGENT_RUNNER_IMAGE`
+3. chart `runner.image.*`
 
 Runner image entry points by interface:
 
 - HTTP `/v1/agent-runs`: `spec.workload.image` (and workflow step `spec.workflow.steps[].workload.image`)
 - gRPC `SubmitAgentRun`: `workload.image` (mapped into `AgentRun.spec.workload.image`)
 - Native `OrchestrationRun` AgentRun steps: `step.workload.image` (mapped into submitted `AgentRun.spec.workload.image`)
-- Controller fallback defaults: `JANGAR_AGENT_RUNNER_IMAGE`, then `JANGAR_AGENT_IMAGE`
+- Controller fallback defaults: `AGENTS_AGENT_RUNNER_IMAGE`, then the chart-managed runner image.
 
-Chart default wiring for `JANGAR_AGENT_RUNNER_IMAGE` (highest first):
+Chart default wiring for `AGENTS_AGENT_RUNNER_IMAGE` (highest first):
 
-1. `env.vars.JANGAR_AGENT_RUNNER_IMAGE`
+1. `env.vars.AGENTS_AGENT_RUNNER_IMAGE`
 2. `runner.image.*`
-3. `runtime.agentRunnerImage` (legacy fallback)
+3. chart default runner image
 
 Safe default for normal runs:
 
