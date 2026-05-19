@@ -58,10 +58,10 @@ const createPrunedContext = async (): Promise<{ dir: string; cleanup: () => void
     if (existsSync(skillsSource)) {
       cpSync(skillsSource, resolve(dir, 'skills'), { recursive: true })
     }
-    const agentctlSource = resolve(repoRoot, 'services/jangar/agentctl')
+    const agentctlSource = resolve(repoRoot, 'services/agents/agentctl')
     if (existsSync(agentctlSource)) {
-      cpSync(agentctlSource, resolve(dir, 'full/services/jangar/agentctl'), { recursive: true })
-      cpSync(agentctlSource, resolve(dir, 'json/services/jangar/agentctl'), { recursive: true })
+      cpSync(agentctlSource, resolve(dir, 'full/services/agents/agentctl'), { recursive: true })
+      cpSync(agentctlSource, resolve(dir, 'json/services/agents/agentctl'), { recursive: true })
     }
     const cxToolsSource = resolve(repoRoot, 'packages/cx-tools')
     if (existsSync(cxToolsSource)) {

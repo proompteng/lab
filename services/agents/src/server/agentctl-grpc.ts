@@ -153,7 +153,7 @@ const parseEntryMap = (entries: RuntimeEntry[]) => {
 }
 
 const resolveAuthToken = (metadata: grpc.Metadata) => {
-  const values = [metadata.get('authorization'), metadata.get('x-agents-token'), metadata.get('x-jangar-token')].flat()
+  const values = [metadata.get('authorization'), metadata.get('x-agents-token')].flat()
   const raw = values.find((value) => typeof value === 'string')
   if (!raw) return null
   if (raw.toLowerCase().startsWith('bearer ')) return raw.slice(7).trim()
