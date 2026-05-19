@@ -20,6 +20,7 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('agents\\.k8s\\.proompteng\\.ai')
     expect(content).toContain('proxyAgentsServiceRequest|buildAgentsServiceProxyUrl')
     expect(content).toContain('agents\\.proompteng\\.ai/compatibility-route')
+    expect(content).toContain('workflow_comms\\.agent_messages|legacy_workflow_comms')
     expect(content).toContain('argo\\.workflows\\.completions')
     expect(content).toContain('reflection-(allowed|auto)-namespaces')
     expect(content).toContain('jangar-db-ca')

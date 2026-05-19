@@ -111,7 +111,7 @@ describe('agent comms subscriber consume', () => {
     expect(insertMessages).toHaveBeenCalledTimes(1)
   })
 
-  it('normalizes every configured workflow subject family for Agents visibility', () => {
+  it('normalizes current workflow subject families for Agents visibility', () => {
     const agentRun = __test__.normalizePayload(
       JSON.stringify({
         content: 'agentrun update',
@@ -133,11 +133,6 @@ describe('agent comms subscriber consume', () => {
       JSON.stringify({ content: 'stored update' }),
       'agents.agent_messages.general.status',
     )
-    const workflowComms = __test__.normalizePayload(
-      JSON.stringify({ content: 'legacy stored update' }),
-      'workflow_comms.agent_messages.general.status',
-    )
-
     expect(agentRun?.runId).toBe('run-1')
     expect(agentRun?.workflowName).toBe('demo')
     expect(agentRun?.workflowNamespace).toBe('agents')
@@ -153,8 +148,12 @@ describe('agent comms subscriber consume', () => {
     expect(argo?.attrs?.runtime).toBe('argo')
     expect(agentsMessages?.channel).toBe('general')
     expect(agentsMessages?.attrs?.runtime).toBe('agents_comms')
-    expect(workflowComms?.channel).toBe('general')
-    expect(workflowComms?.attrs?.runtime).toBe('legacy_workflow_comms')
+    expect(
+      __test__.normalizePayload(
+        JSON.stringify({ content: 'legacy stored update' }),
+        'workflow_comms.agent_messages.general.status',
+      ),
+    ).toBeNull()
   })
 
   it('keeps swarm persona attrs out of canonical agent and role fields', () => {

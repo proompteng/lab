@@ -169,6 +169,14 @@ fail_if_matches \
   "${ROOT_DIR}/services/agents/Dockerfile.codex-runner"
 
 fail_if_matches \
+  "Agents runtime subscribers must not consume legacy workflow_comms agent-message subjects" \
+  'workflow_comms\.agent_messages|legacy_workflow_comms' \
+  "${ROOT_DIR}/services/agents/src/server/agent-comms-subscriber.ts" \
+  "${ROOT_DIR}/services/agents/src/server/integrations-config.ts" \
+  "${ROOT_DIR}/charts/agents" \
+  "${ROOT_DIR}/argocd/applications/agents"
+
+fail_if_matches \
   "Agents build and CI entrypoints must not call the Jangar Dockerfile or Jangar image builder" \
   'services/jangar/Dockerfile|\.\./jangar/build-image' \
   "${ROOT_DIR}/.github/workflows/agents-build-push.yml" \

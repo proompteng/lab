@@ -105,9 +105,6 @@ const parseSubject = (subject: string) => {
       return { offset: 2, runtime: 'agents_comms' }
     }
     if (parts[0] === 'argo' && parts[1] === 'workflow') return { offset: 2, runtime: 'argo' }
-    if (parts[0] === 'workflow_comms' && parts[1] === 'agent_messages') {
-      return { offset: 2, runtime: 'legacy_workflow_comms' }
-    }
     return null
   })()
   if (!prefix) return null
