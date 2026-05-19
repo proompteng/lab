@@ -1,4 +1,4 @@
-import { resolveAgentsServiceBaseUrl } from '~/server/agents-service-proxy'
+import { resolveAgentsServiceBaseUrl } from '~/server/agents-service-client'
 import { asRecord, asString } from '~/server/primitives-http'
 
 const AGENTRUN_INGESTION_NOT_READY_REASON = 'agentrun_ingestion_not_ready'

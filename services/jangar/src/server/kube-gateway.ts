@@ -5,7 +5,7 @@ import {
   type AgentsAgentRunResourceListInput,
   fetchControlPlaneResourcesFromAgentsService,
   type AgentsControlPlaneResourceListInput,
-} from '~/server/agents-service-proxy'
+} from '~/server/agents-service-client'
 import { asRecord, asString } from '~/server/primitives-http'
 import { createKubernetesClient, type KubernetesClient } from '~/server/primitives-kube'
 

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { sql } from 'kysely'
 
 import type { Db } from '~/server/db'
-import { submitAgentRunToAgentsService } from '~/server/agents-service-proxy'
+import { submitAgentRunToAgentsService } from '~/server/agents-service-client'
 import type { MarketContextProviderDomain } from '~/server/torghut-market-context-agents'
 import { isProviderCapacityMessage, resolveFailureCategoryFromMetadata } from '~/server/torghut-market-context-failures'
 

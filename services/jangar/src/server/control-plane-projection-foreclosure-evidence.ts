@@ -3,7 +3,7 @@ import type {
   StageClearancePacket,
   TorghutConsumerEvidenceStatus,
 } from '~/data/agents-control-plane'
-import { fetchAgentRunsFromAgentsService } from '~/server/agents-service-proxy'
+import { fetchAgentRunsFromAgentsService } from '~/server/agents-service-client'
 import { getDb } from '~/server/db'
 import type { KubeGateway, KubeGatewayAgentRun, KubeGatewayJob } from '~/server/kube-gateway'
 

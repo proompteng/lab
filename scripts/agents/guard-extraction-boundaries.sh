@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CHART_DIR="${ROOT_DIR}/charts/agents"
 ARGO_DIR="${ROOT_DIR}/argocd/applications/agents"
+TRAEFIK_VALUES="${ROOT_DIR}/argocd/applications/traefik/values.yaml"
 
 fail_if_matches() {
   local description="$1"
@@ -16,9 +17,32 @@ fail_if_matches() {
   fi
 }
 
+require_matches() {
+  local description="$1"
+  local pattern="$2"
+  shift 2
+
+  if ! search_matches "${pattern}" "$@" >/dev/null; then
+    echo "Agents extraction boundary violation: ${description}" >&2
+    exit 1
+  fi
+}
+
 search_matches() {
   local pattern="$1"
   shift
+
+  local paths=()
+  local path
+  for path in "$@"; do
+    if [[ -e "${path}" ]]; then
+      paths+=("${path}")
+    fi
+  done
+
+  if [[ "${#paths[@]}" -eq 0 ]]; then
+    return 1
+  fi
 
   if command -v rg >/dev/null 2>&1; then
     rg -n \
@@ -27,7 +51,7 @@ search_matches() {
       --glob '!**/*_test.go' \
       --glob '!guard-extraction-boundaries.sh' \
       "${pattern}" \
-      "$@"
+      "${paths[@]}"
     return
   fi
 
@@ -36,7 +60,7 @@ search_matches() {
     --exclude='*.test.*' \
     --exclude='*_test.go' \
     --exclude='guard-extraction-boundaries.sh' \
-    -- "${pattern}" "$@" 2>/dev/null
+    -- "${pattern}" "${paths[@]}" 2>/dev/null
 }
 
 matches_multiline() {
@@ -73,6 +97,43 @@ fail_if_path_exists() {
     fi
   done
 }
+
+fail_if_matches \
+  "Jangar must not reintroduce same-origin Agents API route proxy wrappers for /api/agents/* or /v1/agent-runs" \
+  "proxyAgentsServiceRequest|AGENTS_SERVICE_PATH|createFileRoute\\('/api/agents|createFileRoute\\('/v1/agent-runs" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/agents" \
+  "${ROOT_DIR}/services/jangar/src/routes/v1/agent-runs.ts"
+
+fail_if_matches \
+  "Jangar must not reintroduce Agents same-origin proxy helpers after direct Agents route ownership" \
+  'proxyAgentsServiceRequest|buildAgentsServiceProxyUrl' \
+  "${ROOT_DIR}/services/jangar/src/server/agents-service-client.ts" \
+  "${ROOT_DIR}/services/jangar/src"
+
+require_matches \
+  "Agents GitOps kustomization must include the direct jangar.k8s.proompteng.ai Agents IngressRoute" \
+  'ingressroute-jangar-agents-api\.yaml' \
+  "${ARGO_DIR}/kustomization.yaml"
+
+require_matches \
+  "direct jangar.k8s.proompteng.ai /api/agents route must be owned by the Agents namespace" \
+  'Host\(.*jangar\.k8s\.proompteng\.ai.*\) && PathPrefix\(.*\/api\/agents.*\)' \
+  "${ARGO_DIR}/ingressroute-jangar-agents-api.yaml"
+
+require_matches \
+  "direct jangar.k8s.proompteng.ai /v1/agent-runs route must be owned by the Agents namespace" \
+  'Host\(.*jangar\.k8s\.proompteng\.ai.*\) && PathPrefix\(.*\/v1\/agent-runs.*\)' \
+  "${ARGO_DIR}/ingressroute-jangar-agents-api.yaml"
+
+if ! matches_multiline 'services:\n\s+- name: agents\n\s+port: 80' "${ARGO_DIR}/ingressroute-jangar-agents-api.yaml"; then
+  echo "Agents extraction boundary violation: direct jangar.k8s.proompteng.ai Agents IngressRoute must target the Agents service." >&2
+  exit 1
+fi
+
+if matches_multiline 'kubernetesCRD:\n\s+enabled:\s*false' "${TRAEFIK_VALUES}"; then
+  echo "Agents extraction boundary violation: Traefik GitOps must not disable the Kubernetes CRD provider required for Agents direct IngressRoute ownership." >&2
+  exit 1
+fi
 
 fail_if_matches \
   "services/agents must not import or package Jangar-local runner paths" \
@@ -126,7 +187,7 @@ fail_if_matches \
   'submitCodexCallbackToAgentsService|AgentsCodexCallbackSubmitter|handleNotify|handleRunComplete' \
   "${ROOT_DIR}/services/jangar/src/routes/api/codex/notify.tsx" \
   "${ROOT_DIR}/services/jangar/src/routes/api/codex/run-complete.tsx" \
-  "${ROOT_DIR}/services/jangar/src/server/agents-service-proxy.ts"
+  "${ROOT_DIR}/services/jangar/src/server/agents-service-client.ts"
 
 fail_if_matches \
   "Jangar deploy verifier must read Agents control-plane status through the Agents service, not svc/jangar proxy routes" \

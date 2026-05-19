@@ -19,7 +19,6 @@ import { Route as LibraryIndexRouteImport } from './routes/library/index'
 import { Route as ControlPlaneIndexRouteImport } from './routes/control-plane/index'
 import { Route as AtlasIndexRouteImport } from './routes/atlas/index'
 import { Route as AgentsIndexRouteImport } from './routes/agents/index'
-import { Route as V1AgentRunsRouteImport } from './routes/v1/agent-runs'
 import { Route as TorghutVisualsRouteImport } from './routes/torghut/visuals'
 import { Route as TorghutTradingRouteImport } from './routes/torghut/trading'
 import { Route as TorghutSymbolsRouteImport } from './routes/torghut/symbols'
@@ -107,7 +106,6 @@ import { Route as ApiAtlasPathsRouteImport } from './routes/api/atlas/paths'
 import { Route as ApiAtlasIndexedRouteImport } from './routes/api/atlas/indexed'
 import { Route as ApiAtlasFileRouteImport } from './routes/api/atlas/file'
 import { Route as ApiAtlasAstRouteImport } from './routes/api/atlas/ast'
-import { Route as ApiAgentsEventsRouteImport } from './routes/api/agents/events'
 import { Route as ControlPlaneTorghutQuantIndexRouteImport } from './routes/control-plane/torghut/quant/index'
 import { Route as ApiWhitepapersRunIdIndexRouteImport } from './routes/api/whitepapers/$runId/index'
 import { Route as ApiTorghutMarketContextIndexRouteImport } from './routes/api/torghut/market-context/index'
@@ -139,11 +137,6 @@ import { Route as ApiTerminalsSessionIdInputRouteImport } from './routes/api/ter
 import { Route as ApiTerminalsSessionIdDeleteRouteImport } from './routes/api/terminals/$sessionId/delete'
 import { Route as ApiCodexRunsRecentRouteImport } from './routes/api/codex/runs/recent'
 import { Route as ApiCodexRunsListRouteImport } from './routes/api/codex/runs/list'
-import { Route as ApiAgentsControlPlaneStreamRouteImport } from './routes/api/agents/control-plane/stream'
-import { Route as ApiAgentsControlPlaneStatusRouteImport } from './routes/api/agents/control-plane/status'
-import { Route as ApiAgentsControlPlaneResourcesRouteImport } from './routes/api/agents/control-plane/resources'
-import { Route as ApiAgentsControlPlaneResourceRouteImport } from './routes/api/agents/control-plane/resource'
-import { Route as ApiAgentsControlPlaneEventsRouteImport } from './routes/api/agents/control-plane/events'
 import { Route as GithubPullsOwnerRepoNumberRouteImport } from './routes/github/pulls/$owner/$repo/$number'
 import { Route as ApiTorghutSimulationRunsIdRouteImport } from './routes/api/torghut/simulation/runs/$id'
 import { Route as ApiTorghutSimulationCampaignsIdRouteImport } from './routes/api/torghut/simulation/campaigns/$id'
@@ -223,11 +216,6 @@ const AtlasIndexRoute = AtlasIndexRouteImport.update({
 const AgentsIndexRoute = AgentsIndexRouteImport.update({
   id: '/agents/',
   path: '/agents/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const V1AgentRunsRoute = V1AgentRunsRouteImport.update({
-  id: '/v1/agent-runs',
-  path: '/v1/agent-runs',
   getParentRoute: () => rootRouteImport,
 } as any)
 const TorghutVisualsRoute = TorghutVisualsRouteImport.update({
@@ -699,11 +687,6 @@ const ApiAtlasAstRoute = ApiAtlasAstRouteImport.update({
   path: '/api/atlas/ast',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiAgentsEventsRoute = ApiAgentsEventsRouteImport.update({
-  id: '/api/agents/events',
-  path: '/api/agents/events',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ControlPlaneTorghutQuantIndexRoute =
   ControlPlaneTorghutQuantIndexRouteImport.update({
     id: '/control-plane/torghut/quant/',
@@ -880,36 +863,6 @@ const ApiCodexRunsListRoute = ApiCodexRunsListRouteImport.update({
   path: '/list',
   getParentRoute: () => ApiCodexRunsRoute,
 } as any)
-const ApiAgentsControlPlaneStreamRoute =
-  ApiAgentsControlPlaneStreamRouteImport.update({
-    id: '/api/agents/control-plane/stream',
-    path: '/api/agents/control-plane/stream',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const ApiAgentsControlPlaneStatusRoute =
-  ApiAgentsControlPlaneStatusRouteImport.update({
-    id: '/api/agents/control-plane/status',
-    path: '/api/agents/control-plane/status',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const ApiAgentsControlPlaneResourcesRoute =
-  ApiAgentsControlPlaneResourcesRouteImport.update({
-    id: '/api/agents/control-plane/resources',
-    path: '/api/agents/control-plane/resources',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const ApiAgentsControlPlaneResourceRoute =
-  ApiAgentsControlPlaneResourceRouteImport.update({
-    id: '/api/agents/control-plane/resource',
-    path: '/api/agents/control-plane/resource',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const ApiAgentsControlPlaneEventsRoute =
-  ApiAgentsControlPlaneEventsRouteImport.update({
-    id: '/api/agents/control-plane/events',
-    path: '/api/agents/control-plane/events',
-    getParentRoute: () => rootRouteImport,
-  } as any)
 const GithubPullsOwnerRepoNumberRoute =
   GithubPullsOwnerRepoNumberRouteImport.update({
     id: '/$owner/$repo/$number',
@@ -1118,13 +1071,11 @@ export interface FileRoutesByFullPath {
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/trading': typeof TorghutTradingRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
-  '/v1/agent-runs': typeof V1AgentRunsRoute
   '/agents/': typeof AgentsIndexRoute
   '/atlas/': typeof AtlasIndexRoute
   '/control-plane/': typeof ControlPlaneIndexRoute
   '/library/': typeof LibraryIndexRoute
   '/terminals/': typeof TerminalsIndexRoute
-  '/api/agents/events': typeof ApiAgentsEventsRoute
   '/api/atlas/ast': typeof ApiAtlasAstRoute
   '/api/atlas/file': typeof ApiAtlasFileRoute
   '/api/atlas/indexed': typeof ApiAtlasIndexedRoute
@@ -1191,11 +1142,6 @@ export interface FileRoutesByFullPath {
   '/github/pulls/': typeof GithubPullsIndexRoute
   '/library/whitepapers/': typeof LibraryWhitepapersIndexRoute
   '/terminals/$sessionId/': typeof TerminalsSessionIdIndexRoute
-  '/api/agents/control-plane/events': typeof ApiAgentsControlPlaneEventsRoute
-  '/api/agents/control-plane/resource': typeof ApiAgentsControlPlaneResourceRoute
-  '/api/agents/control-plane/resources': typeof ApiAgentsControlPlaneResourcesRoute
-  '/api/agents/control-plane/status': typeof ApiAgentsControlPlaneStatusRoute
-  '/api/agents/control-plane/stream': typeof ApiAgentsControlPlaneStreamRoute
   '/api/codex/runs/list': typeof ApiCodexRunsListRoute
   '/api/codex/runs/recent': typeof ApiCodexRunsRecentRoute
   '/api/terminals/$sessionId/delete': typeof ApiTerminalsSessionIdDeleteRoute
@@ -1283,13 +1229,11 @@ export interface FileRoutesByTo {
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/trading': typeof TorghutTradingRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
-  '/v1/agent-runs': typeof V1AgentRunsRoute
   '/agents': typeof AgentsIndexRoute
   '/atlas': typeof AtlasIndexRoute
   '/control-plane': typeof ControlPlaneIndexRoute
   '/library': typeof LibraryIndexRoute
   '/terminals': typeof TerminalsIndexRoute
-  '/api/agents/events': typeof ApiAgentsEventsRoute
   '/api/atlas/ast': typeof ApiAtlasAstRoute
   '/api/atlas/file': typeof ApiAtlasFileRoute
   '/api/atlas/indexed': typeof ApiAtlasIndexedRoute
@@ -1356,11 +1300,6 @@ export interface FileRoutesByTo {
   '/github/pulls': typeof GithubPullsIndexRoute
   '/library/whitepapers': typeof LibraryWhitepapersIndexRoute
   '/terminals/$sessionId': typeof TerminalsSessionIdIndexRoute
-  '/api/agents/control-plane/events': typeof ApiAgentsControlPlaneEventsRoute
-  '/api/agents/control-plane/resource': typeof ApiAgentsControlPlaneResourceRoute
-  '/api/agents/control-plane/resources': typeof ApiAgentsControlPlaneResourcesRoute
-  '/api/agents/control-plane/status': typeof ApiAgentsControlPlaneStatusRoute
-  '/api/agents/control-plane/stream': typeof ApiAgentsControlPlaneStreamRoute
   '/api/codex/runs/list': typeof ApiCodexRunsListRoute
   '/api/codex/runs/recent': typeof ApiCodexRunsRecentRoute
   '/api/terminals/$sessionId/delete': typeof ApiTerminalsSessionIdDeleteRoute
@@ -1451,13 +1390,11 @@ export interface FileRoutesById {
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/trading': typeof TorghutTradingRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
-  '/v1/agent-runs': typeof V1AgentRunsRoute
   '/agents/': typeof AgentsIndexRoute
   '/atlas/': typeof AtlasIndexRoute
   '/control-plane/': typeof ControlPlaneIndexRoute
   '/library/': typeof LibraryIndexRoute
   '/terminals/': typeof TerminalsIndexRoute
-  '/api/agents/events': typeof ApiAgentsEventsRoute
   '/api/atlas/ast': typeof ApiAtlasAstRoute
   '/api/atlas/file': typeof ApiAtlasFileRoute
   '/api/atlas/indexed': typeof ApiAtlasIndexedRoute
@@ -1524,11 +1461,6 @@ export interface FileRoutesById {
   '/github/pulls/': typeof GithubPullsIndexRoute
   '/library/whitepapers/': typeof LibraryWhitepapersIndexRoute
   '/terminals/$sessionId/': typeof TerminalsSessionIdIndexRoute
-  '/api/agents/control-plane/events': typeof ApiAgentsControlPlaneEventsRoute
-  '/api/agents/control-plane/resource': typeof ApiAgentsControlPlaneResourceRoute
-  '/api/agents/control-plane/resources': typeof ApiAgentsControlPlaneResourcesRoute
-  '/api/agents/control-plane/status': typeof ApiAgentsControlPlaneStatusRoute
-  '/api/agents/control-plane/stream': typeof ApiAgentsControlPlaneStreamRoute
   '/api/codex/runs/list': typeof ApiCodexRunsListRoute
   '/api/codex/runs/recent': typeof ApiCodexRunsRecentRoute
   '/api/terminals/$sessionId/delete': typeof ApiTerminalsSessionIdDeleteRoute
@@ -1620,13 +1552,11 @@ export interface FileRouteTypes {
     | '/torghut/symbols'
     | '/torghut/trading'
     | '/torghut/visuals'
-    | '/v1/agent-runs'
     | '/agents/'
     | '/atlas/'
     | '/control-plane/'
     | '/library/'
     | '/terminals/'
-    | '/api/agents/events'
     | '/api/atlas/ast'
     | '/api/atlas/file'
     | '/api/atlas/indexed'
@@ -1693,11 +1623,6 @@ export interface FileRouteTypes {
     | '/github/pulls/'
     | '/library/whitepapers/'
     | '/terminals/$sessionId/'
-    | '/api/agents/control-plane/events'
-    | '/api/agents/control-plane/resource'
-    | '/api/agents/control-plane/resources'
-    | '/api/agents/control-plane/status'
-    | '/api/agents/control-plane/stream'
     | '/api/codex/runs/list'
     | '/api/codex/runs/recent'
     | '/api/terminals/$sessionId/delete'
@@ -1785,13 +1710,11 @@ export interface FileRouteTypes {
     | '/torghut/symbols'
     | '/torghut/trading'
     | '/torghut/visuals'
-    | '/v1/agent-runs'
     | '/agents'
     | '/atlas'
     | '/control-plane'
     | '/library'
     | '/terminals'
-    | '/api/agents/events'
     | '/api/atlas/ast'
     | '/api/atlas/file'
     | '/api/atlas/indexed'
@@ -1858,11 +1781,6 @@ export interface FileRouteTypes {
     | '/github/pulls'
     | '/library/whitepapers'
     | '/terminals/$sessionId'
-    | '/api/agents/control-plane/events'
-    | '/api/agents/control-plane/resource'
-    | '/api/agents/control-plane/resources'
-    | '/api/agents/control-plane/status'
-    | '/api/agents/control-plane/stream'
     | '/api/codex/runs/list'
     | '/api/codex/runs/recent'
     | '/api/terminals/$sessionId/delete'
@@ -1952,13 +1870,11 @@ export interface FileRouteTypes {
     | '/torghut/symbols'
     | '/torghut/trading'
     | '/torghut/visuals'
-    | '/v1/agent-runs'
     | '/agents/'
     | '/atlas/'
     | '/control-plane/'
     | '/library/'
     | '/terminals/'
-    | '/api/agents/events'
     | '/api/atlas/ast'
     | '/api/atlas/file'
     | '/api/atlas/indexed'
@@ -2025,11 +1941,6 @@ export interface FileRouteTypes {
     | '/github/pulls/'
     | '/library/whitepapers/'
     | '/terminals/$sessionId/'
-    | '/api/agents/control-plane/events'
-    | '/api/agents/control-plane/resource'
-    | '/api/agents/control-plane/resources'
-    | '/api/agents/control-plane/status'
-    | '/api/agents/control-plane/stream'
     | '/api/codex/runs/list'
     | '/api/codex/runs/recent'
     | '/api/terminals/$sessionId/delete'
@@ -2120,13 +2031,11 @@ export interface RootRouteChildren {
   TorghutSymbolsRoute: typeof TorghutSymbolsRoute
   TorghutTradingRoute: typeof TorghutTradingRoute
   TorghutVisualsRoute: typeof TorghutVisualsRoute
-  V1AgentRunsRoute: typeof V1AgentRunsRoute
   AgentsIndexRoute: typeof AgentsIndexRoute
   AtlasIndexRoute: typeof AtlasIndexRoute
   ControlPlaneIndexRoute: typeof ControlPlaneIndexRoute
   LibraryIndexRoute: typeof LibraryIndexRoute
   TerminalsIndexRoute: typeof TerminalsIndexRoute
-  ApiAgentsEventsRoute: typeof ApiAgentsEventsRoute
   ApiAtlasAstRoute: typeof ApiAtlasAstRoute
   ApiAtlasFileRoute: typeof ApiAtlasFileRoute
   ApiAtlasIndexedRoute: typeof ApiAtlasIndexedRoute
@@ -2186,11 +2095,6 @@ export interface RootRouteChildren {
   ControlPlaneToolsIndexRoute: typeof ControlPlaneToolsIndexRoute
   ControlPlaneWorkspacesIndexRoute: typeof ControlPlaneWorkspacesIndexRoute
   LibraryWhitepapersIndexRoute: typeof LibraryWhitepapersIndexRoute
-  ApiAgentsControlPlaneEventsRoute: typeof ApiAgentsControlPlaneEventsRoute
-  ApiAgentsControlPlaneResourceRoute: typeof ApiAgentsControlPlaneResourceRoute
-  ApiAgentsControlPlaneResourcesRoute: typeof ApiAgentsControlPlaneResourcesRoute
-  ApiAgentsControlPlaneStatusRoute: typeof ApiAgentsControlPlaneStatusRoute
-  ApiAgentsControlPlaneStreamRoute: typeof ApiAgentsControlPlaneStreamRoute
   ApiTorghutDecisionEngineRunsRoute: typeof ApiTorghutDecisionEngineRunsRouteWithChildren
   ApiTorghutDecisionEngineStreamRoute: typeof ApiTorghutDecisionEngineStreamRoute
   ApiTorghutMarketContextHealthRoute: typeof ApiTorghutMarketContextHealthRoute
@@ -2299,13 +2203,6 @@ declare module '@tanstack/react-router' {
       path: '/agents'
       fullPath: '/agents/'
       preLoaderRoute: typeof AgentsIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/v1/agent-runs': {
-      id: '/v1/agent-runs'
-      path: '/v1/agent-runs'
-      fullPath: '/v1/agent-runs'
-      preLoaderRoute: typeof V1AgentRunsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/torghut/visuals': {
@@ -2917,13 +2814,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAtlasAstRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/agents/events': {
-      id: '/api/agents/events'
-      path: '/api/agents/events'
-      fullPath: '/api/agents/events'
-      preLoaderRoute: typeof ApiAgentsEventsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/control-plane/torghut/quant/': {
       id: '/control-plane/torghut/quant/'
       path: '/control-plane/torghut/quant'
@@ -3140,41 +3030,6 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/codex/runs/list'
       preLoaderRoute: typeof ApiCodexRunsListRouteImport
       parentRoute: typeof ApiCodexRunsRoute
-    }
-    '/api/agents/control-plane/stream': {
-      id: '/api/agents/control-plane/stream'
-      path: '/api/agents/control-plane/stream'
-      fullPath: '/api/agents/control-plane/stream'
-      preLoaderRoute: typeof ApiAgentsControlPlaneStreamRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/agents/control-plane/status': {
-      id: '/api/agents/control-plane/status'
-      path: '/api/agents/control-plane/status'
-      fullPath: '/api/agents/control-plane/status'
-      preLoaderRoute: typeof ApiAgentsControlPlaneStatusRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/agents/control-plane/resources': {
-      id: '/api/agents/control-plane/resources'
-      path: '/api/agents/control-plane/resources'
-      fullPath: '/api/agents/control-plane/resources'
-      preLoaderRoute: typeof ApiAgentsControlPlaneResourcesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/agents/control-plane/resource': {
-      id: '/api/agents/control-plane/resource'
-      path: '/api/agents/control-plane/resource'
-      fullPath: '/api/agents/control-plane/resource'
-      preLoaderRoute: typeof ApiAgentsControlPlaneResourceRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/agents/control-plane/events': {
-      id: '/api/agents/control-plane/events'
-      path: '/api/agents/control-plane/events'
-      fullPath: '/api/agents/control-plane/events'
-      preLoaderRoute: typeof ApiAgentsControlPlaneEventsRouteImport
-      parentRoute: typeof rootRouteImport
     }
     '/github/pulls/$owner/$repo/$number': {
       id: '/github/pulls/$owner/$repo/$number'
@@ -3639,13 +3494,11 @@ const rootRouteChildren: RootRouteChildren = {
   TorghutSymbolsRoute: TorghutSymbolsRoute,
   TorghutTradingRoute: TorghutTradingRoute,
   TorghutVisualsRoute: TorghutVisualsRoute,
-  V1AgentRunsRoute: V1AgentRunsRoute,
   AgentsIndexRoute: AgentsIndexRoute,
   AtlasIndexRoute: AtlasIndexRoute,
   ControlPlaneIndexRoute: ControlPlaneIndexRoute,
   LibraryIndexRoute: LibraryIndexRoute,
   TerminalsIndexRoute: TerminalsIndexRoute,
-  ApiAgentsEventsRoute: ApiAgentsEventsRoute,
   ApiAtlasAstRoute: ApiAtlasAstRoute,
   ApiAtlasFileRoute: ApiAtlasFileRoute,
   ApiAtlasIndexedRoute: ApiAtlasIndexedRoute,
@@ -3713,11 +3566,6 @@ const rootRouteChildren: RootRouteChildren = {
   ControlPlaneToolsIndexRoute: ControlPlaneToolsIndexRoute,
   ControlPlaneWorkspacesIndexRoute: ControlPlaneWorkspacesIndexRoute,
   LibraryWhitepapersIndexRoute: LibraryWhitepapersIndexRoute,
-  ApiAgentsControlPlaneEventsRoute: ApiAgentsControlPlaneEventsRoute,
-  ApiAgentsControlPlaneResourceRoute: ApiAgentsControlPlaneResourceRoute,
-  ApiAgentsControlPlaneResourcesRoute: ApiAgentsControlPlaneResourcesRoute,
-  ApiAgentsControlPlaneStatusRoute: ApiAgentsControlPlaneStatusRoute,
-  ApiAgentsControlPlaneStreamRoute: ApiAgentsControlPlaneStreamRoute,
   ApiTorghutDecisionEngineRunsRoute:
     ApiTorghutDecisionEngineRunsRouteWithChildren,
   ApiTorghutDecisionEngineStreamRoute: ApiTorghutDecisionEngineStreamRoute,

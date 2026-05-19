@@ -1,4 +1,4 @@
-import { fetchControlPlaneResourceFromAgentsService } from '~/server/agents-service-proxy'
+import { fetchControlPlaneResourceFromAgentsService } from '~/server/agents-service-client'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 
 const asArray = (value: unknown): string[] => {

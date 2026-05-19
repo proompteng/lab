@@ -1,4 +1,4 @@
-import { fetchAgentsServiceJson } from '~/server/agents-service-proxy'
+import { fetchAgentsServiceJson } from '~/server/agents-service-client'
 
 export type AgentsControllerHealthSnapshot = {
   enabled: boolean
