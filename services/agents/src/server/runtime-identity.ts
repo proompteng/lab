@@ -1,5 +1,5 @@
 export type AgentsRuntimeServiceName = 'agents'
 
-export const isAgentsRuntimeService = (_env: NodeJS.ProcessEnv = process.env) => true
+export const AGENTS_RUNTIME_SERVICE_NAME: AgentsRuntimeServiceName = 'agents'
 
-export const resolveRuntimeServiceName = (_env: NodeJS.ProcessEnv = process.env): AgentsRuntimeServiceName => 'agents'
+export const resolveRuntimeServiceName = (): AgentsRuntimeServiceName => AGENTS_RUNTIME_SERVICE_NAME
