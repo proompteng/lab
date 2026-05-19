@@ -68,7 +68,6 @@ _TA_CORE_REASON_CODES = frozenset(
     }
 )
 _AUTORESEARCH_PORTFOLIO_READY_STATUSES = (
-    "target_met",
     "paper_candidate",
     "promotion_ready",
     "ready_for_promotion",
@@ -958,7 +957,10 @@ def _load_profit_promotion_table_counts(session: Session) -> dict[str, int]:
             and current_oracle_passed
         ):
             current_oracle_ready += 1
-        if row.status == "blocked" or not current_oracle_passed:
+        if (
+            row.status not in _AUTORESEARCH_PORTFOLIO_READY_STATUSES
+            or not current_oracle_passed
+        ):
             current_policy_blocked += 1
 
     return {
