@@ -1291,6 +1291,10 @@ data:
             self.assertTrue(Path(summary.parity_replay_path).exists())
             self.assertTrue(Path(summary.approval_replay_path).exists())
             self.assertTrue(Path(summary.market_impact_stress_report_path).exists())
+            self.assertTrue(
+                Path(summary.delay_adjusted_depth_stress_report_path).exists()
+            )
+            self.assertTrue(Path(summary.stress_metrics_path).exists())
             self.assertTrue(Path(summary.shadow_validation_path).exists())
             self.assertIn("live_shadow_validation", summary.next_required_steps)
 
@@ -1306,6 +1310,18 @@ data:
             )
             self.assertEqual(market_impact_report["model"], "square_root")
             self.assertGreater(Decimal(market_impact_report["impact_cost_bps"]), 0)
+            delay_depth_report = json.loads(
+                Path(summary.delay_adjusted_depth_stress_report_path).read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(delay_depth_report["model"], "latency_depth_haircut")
+            self.assertGreater(Decimal(delay_depth_report["delay_depth_cost_bps"]), 0)
+            stress_metrics = json.loads(
+                Path(summary.stress_metrics_path).read_text(encoding="utf-8")
+            )
+            self.assertEqual(stress_metrics["schema_version"], "stress-metrics-v1")
+            self.assertGreaterEqual(stress_metrics["count"], 4)
 
             stage_manifest = json.loads(
                 Path(summary.profitability_stage_manifest_path).read_text(
@@ -1314,6 +1330,14 @@ data:
             )
             self.assertIn(
                 "market_impact_stress",
+                stage_manifest["stages"]["validation"]["artifacts"],
+            )
+            self.assertIn(
+                "delay_adjusted_depth_stress",
+                stage_manifest["stages"]["validation"]["artifacts"],
+            )
+            self.assertIn(
+                "stress_metrics",
                 stage_manifest["stages"]["validation"]["artifacts"],
             )
 
@@ -1351,6 +1375,43 @@ data:
         self.assertGreater(Decimal(report["impact_cost_bps"]), Decimal("1"))
         self.assertGreaterEqual(
             Decimal(report["post_impact_net_pnl_per_day"]), Decimal("500")
+        )
+
+    def test_delay_adjusted_depth_stress_report_blocks_no_delay_fill_assumption(
+        self,
+    ) -> None:
+        report = runtime_closure._delay_adjusted_depth_stress_report(
+            runner_run_id="run-depth-delay",
+            best_candidate={
+                "candidate_id": "cand-depth-delay",
+                "runtime_family": "microstructure_continuation",
+                "runtime_strategy_name": "microbar-volume-continuation-long-v1",
+            },
+            approval_report={
+                "objective_met": True,
+                "summary": {
+                    "trading_day_count": 2,
+                    "net_pnl": "1100",
+                    "daily_net": {
+                        "2026-05-18": "550",
+                        "2026-05-19": "550",
+                    },
+                    "daily_filled_notional": {
+                        "2026-05-18": "300000",
+                        "2026-05-19": "300000",
+                    },
+                },
+                "scorecard": {"net_pnl_per_day": "550"},
+            },
+            program=_program(),
+        )
+
+        self.assertFalse(report["objective_met"])
+        self.assertEqual(report["model"], "latency_depth_haircut")
+        self.assertEqual(report["stress_delay_ms"], "250")
+        self.assertIn(
+            "delay_adjusted_depth_fillable_notional_below_minimum",
+            report["reasons"],
         )
 
     def test_write_runtime_closure_bundle_keeps_pending_parity_when_execution_skipped(

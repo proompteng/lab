@@ -2582,6 +2582,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertIn("learning_from_book_short_run_efficiency_2026", source_ids)
         self.assertIn("idiosyncratic_trade_imbalance_2026", source_ids)
         self.assertIn("intraday_price_asymmetry_sp500_2026", source_ids)
+        self.assertIn("market_depth_execution_delays_2026", source_ids)
 
         weighted_microprice = next(
             source
@@ -2606,9 +2607,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertIn("feature_recipe", impact_claim_types)
         self.assertIn("risk_constraint", impact_claim_types)
         self.assertIn("route_tca", impact_source.claims[0]["data_requirements"])
-        self.assertEqual(
-            impact_source.claims[0]["horizon_scope"], "intraday_execution"
-        )
+        self.assertEqual(impact_source.claims[0]["horizon_scope"], "intraday_execution")
         self.assertTrue(runner.compile_sources_to_hypothesis_cards([impact_source]))
 
         latent_regime_source = next(
@@ -2630,6 +2629,21 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         book_claim_types = {str(claim["claim_type"]) for claim in book_source.claims}
         self.assertIn("feature_recipe", book_claim_types)
         self.assertIn("validation_requirement", book_claim_types)
+
+        depth_delay_source = next(
+            source
+            for source in sources
+            if source.run_id == "market_depth_execution_delays_2026"
+        )
+        depth_delay_claim_types = {
+            str(claim["claim_type"]) for claim in depth_delay_source.claims
+        }
+        self.assertIn("feature_recipe", depth_delay_claim_types)
+        self.assertIn("validation_requirement", depth_delay_claim_types)
+        self.assertIn("market_depth", depth_delay_source.claims[0]["data_requirements"])
+        self.assertIn(
+            "execution_delay", depth_delay_source.claims[0]["data_requirements"]
+        )
 
     def test_runtime_closure_replay_is_disabled_when_candidate_already_failed_oracle(
         self,
@@ -2768,6 +2782,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             shadow_path = replay_dir / "shadow-validation-plan.json"
             replay_plan_path = replay_dir / "runtime-replay-plan.json"
             market_impact_path = replay_dir / "market-impact-stress.json"
+            delay_depth_path = replay_dir / "delay-adjusted-depth-stress.json"
             gate_path = gates_dir / "gate-evaluation.json"
             proof_path = promotion_dir / "portfolio-proof-receipt.json"
             summary_path = runtime_root / "summary.json"
@@ -2820,6 +2835,19 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                         "model": "square_root",
                         "impact_cost_bps": "5",
                         "post_impact_net_pnl_per_day": "610",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            delay_depth_path.write_text(
+                json.dumps(
+                    {
+                        "objective_met": True,
+                        "model": "latency_depth_haircut",
+                        "stress_delay_ms": "250",
+                        "fillable_notional_per_day": "300000",
+                        "post_delay_depth_net_pnl_per_day": "605",
                     }
                 )
                 + "\n",
@@ -2896,6 +2924,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     "portfolio_proof_receipt_path": str(proof_path),
                     "replay_plan_path": str(replay_plan_path),
                     "market_impact_stress_report_path": str(market_impact_path),
+                    "delay_adjusted_depth_stress_report_path": str(delay_depth_path),
                 },
                 target=Decimal("500"),
                 oracle_policy=policy,

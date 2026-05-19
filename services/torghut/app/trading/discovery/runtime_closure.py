@@ -283,7 +283,9 @@ def _runtime_closure_policy(
         "promotion_require_expert_router_registry": False,
         "promotion_require_shadow_live_deviation": False,
         "promotion_require_simulation_calibration": False,
-        "promotion_require_stress_evidence": False,
+        "promotion_require_stress_evidence": True,
+        "promotion_min_stress_case_count": 4,
+        "promotion_stress_max_age_hours": 24,
         "promotion_require_janus_evidence": False,
         "gate6_require_profitability_evidence": False,
         "gate6_require_janus_evidence": False,
@@ -1467,6 +1469,8 @@ def _gate_report(
     shadow_plan: Mapping[str, Any],
     portfolio_optimizer_evidence_ref: str | None = None,
     portfolio_proof_receipt_ref: str | None = None,
+    stress_metrics_ref: str | None = None,
+    stress_metrics_count: int = 0,
 ) -> dict[str, Any]:
     runtime_family = _runtime_family(best_candidate) or "unknown"
     parity_pass = (
@@ -1597,6 +1601,16 @@ def _gate_report(
                     }
                 }
                 if portfolio_optimizer_evidence
+                else {}
+            ),
+            **(
+                {
+                    "stress_metrics": {
+                        "artifact_ref": stress_metrics_ref,
+                        "count": stress_metrics_count,
+                    }
+                }
+                if stress_metrics_ref
                 else {}
             ),
         },
@@ -1855,6 +1869,198 @@ def _market_impact_stress_report(
     }
 
 
+def _delay_adjusted_depth_stress_report(
+    *,
+    runner_run_id: str,
+    best_candidate: Mapping[str, Any],
+    approval_report: Mapping[str, Any],
+    program: StrategyAutoresearchProgram,
+    cost_model_config: CostModelConfig | None = None,
+) -> dict[str, Any]:
+    config = cost_model_config or CostModelConfig()
+    report = _mapping(approval_report)
+    summary = _mapping(report.get("summary"))
+    scorecard = _mapping(report.get("scorecard"))
+    daily_net = {
+        day: _decimal(value)
+        for day, value in _mapping(summary.get("daily_net")).items()
+    }
+    daily_notional = {
+        day: _decimal(value)
+        for day, value in _mapping(summary.get("daily_filled_notional")).items()
+    }
+    trading_days = max(_int(summary.get("trading_day_count")), len(daily_net))
+    total_filled_notional = sum(daily_notional.values(), Decimal("0"))
+    avg_filled_notional = (
+        total_filled_notional / Decimal(trading_days)
+        if trading_days > 0
+        else Decimal("0")
+    )
+    stress_delay_ms = Decimal("250")
+    depth_haircut_rate = min(
+        Decimal("0.50"),
+        max(Decimal("0.10"), stress_delay_ms / Decimal("1000")),
+    )
+    reference_notional = max(
+        program.objective.min_daily_notional,
+        avg_filled_notional,
+        Decimal("1"),
+    )
+    max_participation = (
+        config.max_participation_rate
+        if config.max_participation_rate > 0
+        else Decimal("0.1")
+    )
+    reference_adv = reference_notional / max_participation
+    daily_rows: list[dict[str, str]] = []
+    total_delay_depth_cost = Decimal("0")
+    total_fillable_notional = Decimal("0")
+    weighted_delay_depth_bps_notional = Decimal("0")
+    for day in sorted(daily_net):
+        notional = daily_notional.get(day, Decimal("0"))
+        participation = (
+            min(Decimal("1"), notional / reference_adv)
+            if reference_adv > 0 and notional > 0
+            else Decimal("0")
+        )
+        fillable_notional = notional * (Decimal("1") - depth_haircut_rate)
+        delay_depth_cost_bps = max(
+            Decimal("1"),
+            config.impact_bps_at_full_participation
+            * _decimal_sqrt(participation)
+            * depth_haircut_rate,
+        )
+        delay_depth_cost = (notional * delay_depth_cost_bps) / BPS_SCALE
+        post_delay_depth_net = daily_net[day] - delay_depth_cost
+        total_fillable_notional += fillable_notional
+        total_delay_depth_cost += delay_depth_cost
+        weighted_delay_depth_bps_notional += delay_depth_cost_bps * notional
+        daily_rows.append(
+            {
+                "day": day,
+                "net_pnl": _decimal_string(daily_net[day]),
+                "filled_notional": _decimal_string(notional),
+                "stress_delay_ms": _decimal_string(stress_delay_ms),
+                "depth_haircut_rate": _decimal_string(depth_haircut_rate),
+                "fillable_notional": _decimal_string(fillable_notional),
+                "participation_rate_proxy": _decimal_string(participation),
+                "delay_depth_cost_bps": _decimal_string(delay_depth_cost_bps),
+                "delay_depth_cost": _decimal_string(delay_depth_cost),
+                "post_delay_depth_net_pnl": _decimal_string(post_delay_depth_net),
+            }
+        )
+    delay_depth_cost_bps = (
+        weighted_delay_depth_bps_notional / total_filled_notional
+        if total_filled_notional > 0
+        else Decimal("0")
+    )
+    fillable_notional_per_day = (
+        total_fillable_notional / Decimal(trading_days)
+        if trading_days > 0
+        else Decimal("0")
+    )
+    net_pnl = _decimal(summary.get("net_pnl"))
+    post_delay_depth_net_pnl = net_pnl - total_delay_depth_cost
+    post_delay_depth_net_pnl_per_day = (
+        post_delay_depth_net_pnl / Decimal(trading_days)
+        if trading_days > 0
+        else Decimal("0")
+    )
+    reasons: list[str] = []
+    if trading_days <= 0:
+        reasons.append("delay_adjusted_depth_stress_trading_days_missing")
+    if total_filled_notional <= 0:
+        reasons.append("delay_adjusted_depth_stress_filled_notional_missing")
+    if delay_depth_cost_bps <= 0:
+        reasons.append("delay_adjusted_depth_stress_cost_bps_zero")
+    if fillable_notional_per_day < program.objective.min_daily_notional:
+        reasons.append("delay_adjusted_depth_fillable_notional_below_minimum")
+    if post_delay_depth_net_pnl_per_day < program.objective.target_net_pnl_per_day:
+        reasons.append("delay_adjusted_depth_stress_net_pnl_below_target")
+    if not bool(report.get("objective_met")):
+        reasons.append("approval_replay_objective_not_met")
+    objective_met = not reasons
+    return {
+        "schema_version": "torghut.delay-adjusted-depth-stress-report.v1",
+        "run_id": runner_run_id,
+        "candidate_id": _string(best_candidate.get("candidate_id")),
+        "runtime_family": _runtime_family(best_candidate),
+        "runtime_strategy_name": _runtime_strategy_name(best_candidate),
+        "runtime_strategy_names": list(
+            _portfolio_runtime_strategy_names(best_candidate)
+        ),
+        "model": "latency_depth_haircut",
+        "source_markers": [
+            "market_depth_execution_delays_ssrn_6440898_2026",
+            "latency_execution_policy_arxiv_2504_00846_2025",
+            "rl_market_limit_execution_arxiv_2507_06345_2026",
+        ],
+        "objective_met": objective_met,
+        "passed": objective_met,
+        "reasons": reasons,
+        "target_net_pnl_per_day": _decimal_string(
+            program.objective.target_net_pnl_per_day
+        ),
+        "net_pnl_per_day": _decimal_string(_decimal(scorecard.get("net_pnl_per_day"))),
+        "post_delay_depth_net_pnl_per_day": _decimal_string(
+            post_delay_depth_net_pnl_per_day
+        ),
+        "stressed_net_pnl_per_day": _decimal_string(post_delay_depth_net_pnl_per_day),
+        "net_pnl": _decimal_string(net_pnl),
+        "post_delay_depth_net_pnl": _decimal_string(post_delay_depth_net_pnl),
+        "delay_depth_cost": _decimal_string(total_delay_depth_cost),
+        "delay_depth_cost_bps": _decimal_string(delay_depth_cost_bps),
+        "stress_delay_ms": _decimal_string(stress_delay_ms),
+        "depth_haircut_rate": _decimal_string(depth_haircut_rate),
+        "reference_notional": _decimal_string(reference_notional),
+        "reference_adv_proxy": _decimal_string(reference_adv),
+        "max_participation_rate": _decimal_string(max_participation),
+        "trading_day_count": trading_days,
+        "total_filled_notional": _decimal_string(total_filled_notional),
+        "avg_filled_notional_per_day": _decimal_string(avg_filled_notional),
+        "fillable_notional_per_day": _decimal_string(fillable_notional_per_day),
+        "daily": daily_rows,
+    }
+
+
+def _stress_metrics_payload(
+    *,
+    market_impact_report: Mapping[str, Any] | None,
+    market_impact_ref: str | None,
+    delay_depth_report: Mapping[str, Any] | None,
+    delay_depth_ref: str | None,
+) -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
+    if market_impact_report is not None and market_impact_ref:
+        for row_mapping in _list_of_mappings(market_impact_report.get("daily")):
+            items.append(
+                {
+                    "case_id": f"market_impact:{_string(row_mapping.get('day'))}",
+                    "stress_type": "market_impact",
+                    "artifact_ref": market_impact_ref,
+                    "day": _string(row_mapping.get("day")),
+                    "passed": bool(market_impact_report.get("passed")),
+                }
+            )
+    if delay_depth_report is not None and delay_depth_ref:
+        for row_mapping in _list_of_mappings(delay_depth_report.get("daily")):
+            items.append(
+                {
+                    "case_id": f"delay_adjusted_depth:{_string(row_mapping.get('day'))}",
+                    "stress_type": "delay_adjusted_depth",
+                    "artifact_ref": delay_depth_ref,
+                    "day": _string(row_mapping.get("day")),
+                    "passed": bool(delay_depth_report.get("passed")),
+                }
+            )
+    return {
+        "schema_version": "stress-metrics-v1",
+        "generated_at": _now_iso(),
+        "count": len(items),
+        "items": items,
+    }
+
+
 def _profitability_stage_manifest(
     *,
     root: Path,
@@ -1869,6 +2075,8 @@ def _profitability_stage_manifest(
     portfolio_optimizer_evidence_path: Path | None,
     portfolio_proof_receipt_path: Path | None,
     market_impact_stress_report_path: Path | None,
+    delay_adjusted_depth_stress_report_path: Path | None,
+    stress_metrics_path: Path | None,
     parity_replay_path: Path | None,
     approval_replay_path: Path | None,
     shadow_validation_path: Path | None,
@@ -1932,6 +2140,17 @@ def _profitability_stage_manifest(
     ):
         artifact_hashes[str(market_impact_stress_report_path.relative_to(root))] = (
             _sha256_path(market_impact_stress_report_path)
+        )
+    if (
+        delay_adjusted_depth_stress_report_path is not None
+        and delay_adjusted_depth_stress_report_path.exists()
+    ):
+        artifact_hashes[
+            str(delay_adjusted_depth_stress_report_path.relative_to(root))
+        ] = _sha256_path(delay_adjusted_depth_stress_report_path)
+    if stress_metrics_path is not None and stress_metrics_path.exists():
+        artifact_hashes[str(stress_metrics_path.relative_to(root))] = _sha256_path(
+            stress_metrics_path
         )
     payload = {
         "schema_version": "profitability-stage-manifest-v1",
@@ -2052,6 +2271,20 @@ def _profitability_stage_manifest(
                         and market_impact_stress_report_path.exists()
                         else "fail",
                     },
+                    {
+                        "check": "delay_adjusted_depth_stress_present",
+                        "status": "pass"
+                        if delay_adjusted_depth_stress_report_path is not None
+                        and delay_adjusted_depth_stress_report_path.exists()
+                        else "fail",
+                    },
+                    {
+                        "check": "stress_metrics_present",
+                        "status": "pass"
+                        if stress_metrics_path is not None
+                        and stress_metrics_path.exists()
+                        else "fail",
+                    },
                 ],
                 "artifacts": {
                     "evaluation_report": _artifact(
@@ -2081,6 +2314,30 @@ def _profitability_stage_manifest(
                         }
                         if market_impact_stress_report_path is not None
                         and market_impact_stress_report_path.exists()
+                        else {}
+                    ),
+                    **(
+                        {
+                            "delay_adjusted_depth_stress": _artifact(
+                                delay_adjusted_depth_stress_report_path,
+                                stage="validation",
+                                check="delay_adjusted_depth_stress_present",
+                            )
+                        }
+                        if delay_adjusted_depth_stress_report_path is not None
+                        and delay_adjusted_depth_stress_report_path.exists()
+                        else {}
+                    ),
+                    **(
+                        {
+                            "stress_metrics": _artifact(
+                                stress_metrics_path,
+                                stage="validation",
+                                check="stress_metrics_present",
+                            )
+                        }
+                        if stress_metrics_path is not None
+                        and stress_metrics_path.exists()
                         else {}
                     ),
                 },
@@ -2223,6 +2480,8 @@ class RuntimeClosureBundleSummary:
     portfolio_optimizer_evidence_path: str
     portfolio_proof_receipt_path: str
     market_impact_stress_report_path: str
+    delay_adjusted_depth_stress_report_path: str
+    stress_metrics_path: str
     profitability_stage_manifest_path: str
     promotion_prerequisites_path: str
     replay_plan_path: str
@@ -2251,6 +2510,8 @@ class RuntimeClosureBundleSummary:
             "portfolio_optimizer_evidence_path": self.portfolio_optimizer_evidence_path,
             "portfolio_proof_receipt_path": self.portfolio_proof_receipt_path,
             "market_impact_stress_report_path": self.market_impact_stress_report_path,
+            "delay_adjusted_depth_stress_report_path": self.delay_adjusted_depth_stress_report_path,
+            "stress_metrics_path": self.stress_metrics_path,
             "profitability_stage_manifest_path": self.profitability_stage_manifest_path,
             "promotion_prerequisites_path": self.promotion_prerequisites_path,
             "replay_plan_path": self.replay_plan_path,
@@ -2292,6 +2553,8 @@ def write_runtime_closure_bundle(
             portfolio_optimizer_evidence_path="",
             portfolio_proof_receipt_path="",
             market_impact_stress_report_path="",
+            delay_adjusted_depth_stress_report_path="",
+            stress_metrics_path="",
             profitability_stage_manifest_path="",
             promotion_prerequisites_path="",
             replay_plan_path="",
@@ -2341,6 +2604,10 @@ def write_runtime_closure_bundle(
     market_impact_stress_report_path = (
         closure_root / "backtest" / "market-impact-stress.json"
     )
+    delay_adjusted_depth_stress_report_path = (
+        closure_root / "backtest" / "delay-adjusted-depth-stress.json"
+    )
+    stress_metrics_path = closure_root / "promotion" / "stress-metrics.json"
 
     candidate_spec = _candidate_spec(
         runner_run_id=runner_run_id,
@@ -2438,6 +2705,8 @@ def write_runtime_closure_bundle(
             _write_json(approval_report_path, approval_report)
 
     market_impact_stress_report: dict[str, Any] | None = None
+    delay_adjusted_depth_stress_report: dict[str, Any] | None = None
+    stress_metrics: dict[str, Any] | None = None
     if approval_report is not None:
         market_impact_stress_report = _market_impact_stress_report(
             runner_run_id=runner_run_id,
@@ -2446,6 +2715,27 @@ def write_runtime_closure_bundle(
             program=program,
         )
         _write_json(market_impact_stress_report_path, market_impact_stress_report)
+        delay_adjusted_depth_stress_report = _delay_adjusted_depth_stress_report(
+            runner_run_id=runner_run_id,
+            best_candidate=best_candidate,
+            approval_report=approval_report,
+            program=program,
+        )
+        _write_json(
+            delay_adjusted_depth_stress_report_path,
+            delay_adjusted_depth_stress_report,
+        )
+        stress_metrics = _stress_metrics_payload(
+            market_impact_report=market_impact_stress_report,
+            market_impact_ref=str(
+                market_impact_stress_report_path.relative_to(closure_root)
+            ),
+            delay_depth_report=delay_adjusted_depth_stress_report,
+            delay_depth_ref=str(
+                delay_adjusted_depth_stress_report_path.relative_to(closure_root)
+            ),
+        )
+        _write_json(stress_metrics_path, stress_metrics)
 
     shadow_plan = _shadow_validation_artifact(
         best_candidate=best_candidate,
@@ -2467,6 +2757,22 @@ def write_runtime_closure_bundle(
                 if market_impact_stress_report is not None
                 else ()
             ),
+            *(
+                (
+                    str(
+                        delay_adjusted_depth_stress_report_path.relative_to(
+                            closure_root
+                        )
+                    ),
+                )
+                if delay_adjusted_depth_stress_report is not None
+                else ()
+            ),
+            *(
+                (str(stress_metrics_path.relative_to(closure_root)),)
+                if stress_metrics is not None
+                else ()
+            ),
         ),
     )
     _write_json(portfolio_proof_receipt_path, portfolio_proof_receipt)
@@ -2485,6 +2791,14 @@ def write_runtime_closure_bundle(
         portfolio_proof_receipt_ref=str(
             portfolio_proof_receipt_path.relative_to(closure_root)
         ),
+        stress_metrics_ref=(
+            str(stress_metrics_path.relative_to(closure_root))
+            if stress_metrics is not None
+            else None
+        ),
+        stress_metrics_count=int(stress_metrics.get("count", 0))
+        if stress_metrics is not None
+        else 0,
     )
     _write_json(gate_report_path, gate_report)
     candidate_state = _candidate_state(
@@ -2536,6 +2850,12 @@ def write_runtime_closure_bundle(
         else None,
         market_impact_stress_report_path=market_impact_stress_report_path
         if market_impact_stress_report_path.exists()
+        else None,
+        delay_adjusted_depth_stress_report_path=delay_adjusted_depth_stress_report_path
+        if delay_adjusted_depth_stress_report_path.exists()
+        else None,
+        stress_metrics_path=stress_metrics_path
+        if stress_metrics_path.exists()
         else None,
         parity_replay_path=parity_replay_path if parity_replay_path.exists() else None,
         approval_replay_path=approval_replay_path
@@ -2604,6 +2924,14 @@ def write_runtime_closure_bundle(
         portfolio_proof_receipt_path=str(portfolio_proof_receipt_path),
         market_impact_stress_report_path=str(market_impact_stress_report_path)
         if market_impact_stress_report_path.exists()
+        else "",
+        delay_adjusted_depth_stress_report_path=str(
+            delay_adjusted_depth_stress_report_path
+        )
+        if delay_adjusted_depth_stress_report_path.exists()
+        else "",
+        stress_metrics_path=str(stress_metrics_path)
+        if stress_metrics_path.exists()
         else "",
         profitability_stage_manifest_path=str(profitability_stage_manifest_path),
         promotion_prerequisites_path=str(promotion_prerequisites_path),

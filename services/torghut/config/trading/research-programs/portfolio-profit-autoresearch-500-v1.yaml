@@ -465,11 +465,27 @@ research_sources:
     published_at: '2026-05-15'
     claims:
       - claim_id: execution_delay_depth_state
+        claim_type: feature_recipe
         summary: Market-depth state and execution delay jointly determine whether apparent liquidity is practically fillable.
         implication: Add delay-adjusted depth and route latency stress to fillability scoring instead of using spread alone.
+        horizon_scope: intraday_execution
+        data_requirements:
+          - market_depth
+          - execution_delay
+          - latency_stress
+          - limit_fill_probability
+          - route_tca
       - claim_id: delay_adjusted_liquidity_cost
+        claim_type: validation_requirement
         summary: Apparent liquidity can decay before an order reaches the venue.
         implication: Reject candidates whose live-paper fills depend on optimistic no-delay execution assumptions.
+        horizon_scope: intraday_execution
+        data_requirements:
+          - depth_proxy
+          - execution_delay
+          - fill_model
+          - route_tca
+          - live_paper_parity
   - source_id: orderbook_hawkes_random_environment_2026
     title: 'Assessing the Impact of the Order Book with a Hawkes Process in a Random Environment'
     url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5170318

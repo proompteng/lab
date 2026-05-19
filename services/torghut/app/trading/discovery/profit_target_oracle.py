@@ -20,6 +20,13 @@ _ACCEPTED_MARKET_IMPACT_STRESS_MODELS = frozenset(
         "portfolio_power_law_impact",
     }
 )
+_ACCEPTED_DELAY_ADJUSTED_DEPTH_STRESS_MODELS = frozenset(
+    {
+        "latency_depth_haircut",
+        "delay_depth_haircut",
+        "portfolio_latency_depth_haircut",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -52,6 +59,9 @@ class ProfitTargetOraclePolicy:
     require_executable_replay_notional_within_buying_power: bool = True
     require_market_impact_stress: bool = True
     min_market_impact_stress_cost_bps: Decimal = Decimal("1")
+    require_delay_adjusted_depth_stress: bool = True
+    min_delay_adjusted_depth_stress_ms: Decimal = Decimal("50")
+    min_delay_adjusted_depth_fillable_notional_per_day: Decimal = Decimal("300000")
     max_missing_sleeve_daily_net_count: int = 0
 
     def to_payload(self) -> dict[str, Any]:
@@ -98,6 +108,16 @@ class ProfitTargetOraclePolicy:
             ),
             "accepted_market_impact_stress_models": sorted(
                 _ACCEPTED_MARKET_IMPACT_STRESS_MODELS
+            ),
+            "require_delay_adjusted_depth_stress": self.require_delay_adjusted_depth_stress,
+            "min_delay_adjusted_depth_stress_ms": str(
+                self.min_delay_adjusted_depth_stress_ms
+            ),
+            "min_delay_adjusted_depth_fillable_notional_per_day": str(
+                self.min_delay_adjusted_depth_fillable_notional_per_day
+            ),
+            "accepted_delay_adjusted_depth_stress_models": sorted(
+                _ACCEPTED_DELAY_ADJUSTED_DEPTH_STRESS_MODELS
             ),
             "max_missing_sleeve_daily_net_count": self.max_missing_sleeve_daily_net_count,
         }
@@ -635,6 +655,109 @@ def evaluate_profit_target_oracle(
         {
             **market_impact_net_check,
             "source_marker": "double_oos_cost_sensitivity_arxiv_2602_10785_2026",
+        }
+    )
+    delay_depth_artifact_refs = _artifact_refs(
+        scorecard,
+        "delay_adjusted_depth_stress_artifact_ref",
+        "delay_adjusted_depth_stress_artifact_refs",
+        "delay_depth_stress_artifact_ref",
+        "latency_depth_stress_artifact_ref",
+    )
+    delay_depth_artifact_present = bool(delay_depth_artifact_refs)
+    delay_depth_passed = _boolish(
+        scorecard.get("delay_adjusted_depth_stress_passed")
+        or scorecard.get("delay_depth_stress_passed")
+        or scorecard.get("latency_depth_stress_passed")
+    )
+    delay_depth_model = _string(
+        scorecard.get("delay_adjusted_depth_stress_model")
+        or scorecard.get("delay_depth_stress_model")
+        or scorecard.get("latency_depth_stress_model")
+    ).lower()
+    checks.append(
+        {
+            "metric": "delay_adjusted_depth_stress_passed",
+            "observed": str(delay_depth_passed).lower(),
+            "operator": "eq",
+            "threshold": "true",
+            "source_marker": "market_depth_execution_delays_ssrn_6440898_2026",
+            "passed": delay_depth_passed
+            if policy.require_delay_adjusted_depth_stress
+            else True,
+        }
+    )
+    checks.append(
+        {
+            "metric": "delay_adjusted_depth_stress_artifact_present",
+            "observed": str(delay_depth_artifact_present).lower(),
+            "operator": "eq",
+            "threshold": "true",
+            "source_marker": "market_depth_execution_delays_ssrn_6440898_2026",
+            "passed": delay_depth_artifact_present
+            if policy.require_delay_adjusted_depth_stress
+            else True,
+        }
+    )
+    checks.append(
+        {
+            "metric": "delay_adjusted_depth_stress_model",
+            "observed": delay_depth_model,
+            "operator": "in",
+            "threshold": sorted(_ACCEPTED_DELAY_ADJUSTED_DEPTH_STRESS_MODELS),
+            "source_marker": "latency_execution_policy_arxiv_2504_00846_2025",
+            "passed": (
+                delay_depth_model in _ACCEPTED_DELAY_ADJUSTED_DEPTH_STRESS_MODELS
+            )
+            if policy.require_delay_adjusted_depth_stress
+            else True,
+        }
+    )
+    checks.append(
+        _numeric_check(
+            metric="delay_adjusted_depth_stress_ms",
+            observed=_decimal(
+                scorecard.get("delay_adjusted_depth_stress_ms")
+                or scorecard.get("delay_depth_stress_delay_ms")
+                or scorecard.get("latency_depth_stress_ms")
+            ),
+            operator="gte",
+            threshold=policy.min_delay_adjusted_depth_stress_ms
+            if policy.require_delay_adjusted_depth_stress
+            else Decimal("0"),
+        )
+    )
+    checks.append(
+        _numeric_check(
+            metric="delay_adjusted_depth_fillable_notional_per_day",
+            observed=_decimal(
+                scorecard.get("delay_adjusted_depth_fillable_notional_per_day")
+                or scorecard.get("delay_depth_stress_fillable_notional_per_day")
+                or scorecard.get("latency_depth_fillable_notional_per_day")
+            ),
+            operator="gte",
+            threshold=policy.min_delay_adjusted_depth_fillable_notional_per_day
+            if policy.require_delay_adjusted_depth_stress
+            else Decimal("0"),
+        )
+    )
+    delay_depth_net_pnl = _decimal(
+        scorecard.get("delay_adjusted_depth_stress_net_pnl_per_day")
+        or scorecard.get("delay_depth_stress_net_pnl_per_day")
+        or scorecard.get("latency_depth_stress_net_pnl_per_day")
+    )
+    delay_depth_net_check = _numeric_check(
+        metric="delay_adjusted_depth_stress_net_pnl_per_day",
+        observed=delay_depth_net_pnl,
+        operator="gte",
+        threshold=target_net_pnl_per_day,
+    )
+    if not policy.require_delay_adjusted_depth_stress:
+        delay_depth_net_check["passed"] = True
+    checks.append(
+        {
+            **delay_depth_net_check,
+            "source_marker": "rl_market_limit_execution_arxiv_2507_06345_2026",
         }
     )
     blockers = [

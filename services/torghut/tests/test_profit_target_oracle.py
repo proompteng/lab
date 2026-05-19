@@ -21,6 +21,12 @@ def _executable_scorecard_fields() -> dict[str, object]:
         "market_impact_stress_model": "square_root",
         "market_impact_stress_cost_bps": "6",
         "market_impact_stress_net_pnl_per_day": "535",
+        "delay_adjusted_depth_stress_passed": True,
+        "delay_adjusted_depth_stress_artifact_ref": "/tmp/delay-adjusted-depth-stress.json",
+        "delay_adjusted_depth_stress_model": "latency_depth_haircut",
+        "delay_adjusted_depth_stress_ms": "250",
+        "delay_adjusted_depth_fillable_notional_per_day": "525000",
+        "delay_adjusted_depth_stress_net_pnl_per_day": "520",
     }
 
 
@@ -98,6 +104,68 @@ class TestProfitTargetOracle(TestCase):
         self.assertIn("market_impact_stress_model_failed", result["blockers"])
         self.assertIn("market_impact_stress_cost_bps_failed", result["blockers"])
         self.assertIn("market_impact_stress_net_pnl_per_day_failed", result["blockers"])
+
+    def test_profit_target_oracle_rejects_missing_delay_adjusted_depth_stress(
+        self,
+    ) -> None:
+        scorecard = _passing_scorecard()
+        for key in tuple(scorecard):
+            if key.startswith("delay_adjusted_depth_stress") or key.startswith(
+                "delay_adjusted_depth_fillable"
+            ):
+                del scorecard[key]
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn("delay_adjusted_depth_stress_passed_failed", result["blockers"])
+        self.assertIn(
+            "delay_adjusted_depth_stress_artifact_present_failed",
+            result["blockers"],
+        )
+        self.assertIn("delay_adjusted_depth_stress_model_failed", result["blockers"])
+        self.assertIn("delay_adjusted_depth_stress_ms_failed", result["blockers"])
+        self.assertIn(
+            "delay_adjusted_depth_fillable_notional_per_day_failed",
+            result["blockers"],
+        )
+        self.assertIn(
+            "delay_adjusted_depth_stress_net_pnl_per_day_failed",
+            result["blockers"],
+        )
+
+    def test_profit_target_oracle_rejects_failed_delay_adjusted_depth_stress(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "delay_adjusted_depth_stress_passed": False,
+            "delay_adjusted_depth_stress_model": "optimistic_no_delay_fill",
+            "delay_adjusted_depth_stress_ms": "0",
+            "delay_adjusted_depth_fillable_notional_per_day": "250000",
+            "delay_adjusted_depth_stress_net_pnl_per_day": "460",
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn("delay_adjusted_depth_stress_passed_failed", result["blockers"])
+        self.assertIn("delay_adjusted_depth_stress_model_failed", result["blockers"])
+        self.assertIn("delay_adjusted_depth_stress_ms_failed", result["blockers"])
+        self.assertIn(
+            "delay_adjusted_depth_fillable_notional_per_day_failed",
+            result["blockers"],
+        )
+        self.assertIn(
+            "delay_adjusted_depth_stress_net_pnl_per_day_failed",
+            result["blockers"],
+        )
 
     def test_profit_target_oracle_accepts_controlled_down_days(self) -> None:
         result = evaluate_profit_target_oracle(

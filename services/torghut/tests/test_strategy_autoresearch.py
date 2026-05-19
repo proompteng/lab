@@ -520,6 +520,7 @@ class TestStrategyAutoresearch(TestCase):
                 "learning_from_book_short_run_efficiency_2026",
                 "idiosyncratic_trade_imbalance_2026",
                 "intraday_price_asymmetry_sp500_2026",
+                "market_depth_execution_delays_2026",
             }.issubset(source_ids)
         )
         impact_source = next(
@@ -530,6 +531,17 @@ class TestStrategyAutoresearch(TestCase):
         self.assertEqual(impact_source.claims[0].claim_type, "feature_recipe")
         self.assertIn("route_tca", impact_source.claims[0].data_requirements)
         self.assertEqual(impact_source.claims[0].horizon_scope, "intraday_execution")
+        depth_delay_source = next(
+            source
+            for source in program.research_sources
+            if source.source_id == "market_depth_execution_delays_2026"
+        )
+        self.assertEqual(depth_delay_source.claims[0].claim_type, "feature_recipe")
+        self.assertIn("market_depth", depth_delay_source.claims[0].data_requirements)
+        self.assertIn("execution_delay", depth_delay_source.claims[0].data_requirements)
+        self.assertEqual(
+            depth_delay_source.claims[0].horizon_scope, "intraday_execution"
+        )
 
         microbar_seed_names = {
             plan.seed_sweep_config.name

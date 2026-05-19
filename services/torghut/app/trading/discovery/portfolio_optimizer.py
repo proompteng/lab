@@ -391,6 +391,57 @@ def _market_impact_stress_cost_bps(bundle: CandidateEvidenceBundle) -> Decimal:
     )
 
 
+def _delay_adjusted_depth_stress_passed(bundle: CandidateEvidenceBundle) -> bool:
+    scorecard = _scorecard(bundle)
+    return _boolish(
+        scorecard.get("delay_adjusted_depth_stress_passed")
+        or scorecard.get("delay_depth_stress_passed")
+        or scorecard.get("latency_depth_stress_passed")
+    )
+
+
+def _delay_adjusted_depth_stress_artifact_ref(
+    bundle: CandidateEvidenceBundle,
+) -> str:
+    scorecard = _scorecard(bundle)
+    return _string(
+        scorecard.get("delay_adjusted_depth_stress_artifact_ref")
+        or scorecard.get("delay_depth_stress_artifact_ref")
+        or scorecard.get("latency_depth_stress_artifact_ref")
+    )
+
+
+def _delay_adjusted_depth_stress_net_per_day(
+    bundle: CandidateEvidenceBundle,
+) -> Decimal:
+    scorecard = _scorecard(bundle)
+    return _decimal(
+        scorecard.get("delay_adjusted_depth_stress_net_pnl_per_day")
+        or scorecard.get("delay_depth_stress_net_pnl_per_day")
+        or scorecard.get("latency_depth_stress_net_pnl_per_day")
+    )
+
+
+def _delay_adjusted_depth_stress_ms(bundle: CandidateEvidenceBundle) -> Decimal:
+    scorecard = _scorecard(bundle)
+    return _decimal(
+        scorecard.get("delay_adjusted_depth_stress_ms")
+        or scorecard.get("delay_depth_stress_delay_ms")
+        or scorecard.get("latency_depth_stress_ms")
+    )
+
+
+def _delay_adjusted_depth_fillable_notional_per_day(
+    bundle: CandidateEvidenceBundle,
+) -> Decimal:
+    scorecard = _scorecard(bundle)
+    return _decimal(
+        scorecard.get("delay_adjusted_depth_fillable_notional_per_day")
+        or scorecard.get("delay_depth_stress_fillable_notional_per_day")
+        or scorecard.get("latency_depth_fillable_notional_per_day")
+    )
+
+
 def _positive_net_contribution(bundle: CandidateEvidenceBundle) -> Decimal:
     return max(_net_per_day(bundle), Decimal("0"))
 
@@ -677,6 +728,27 @@ def _portfolio_scorecard(
         ),
         Decimal("0"),
     )
+    delay_depth_artifact_refs = [
+        ref
+        for ref in (
+            _delay_adjusted_depth_stress_artifact_ref(bundle) for bundle in selected
+        )
+        if ref
+    ]
+    delay_depth_stress_net_pnl_per_day = sum(
+        (
+            _delay_adjusted_depth_stress_net_per_day(bundle) * weight
+            for bundle, weight in zip(selected, weights, strict=True)
+        ),
+        Decimal("0"),
+    )
+    delay_depth_fillable_notional_per_day = sum(
+        (
+            _delay_adjusted_depth_fillable_notional_per_day(bundle) * weight
+            for bundle, weight in zip(selected, weights, strict=True)
+        ),
+        Decimal("0"),
+    )
     scorecard = {
         "net_pnl_per_day": str(net_per_day),
         "portfolio_post_cost_net_pnl_per_day": str(net_per_day),
@@ -752,6 +824,25 @@ def _portfolio_scorecard(
         "market_impact_stress_net_pnl_per_day": str(
             market_impact_stress_net_pnl_per_day
         ),
+        "delay_adjusted_depth_stress_passed": bool(selected)
+        and all(_delay_adjusted_depth_stress_passed(bundle) for bundle in selected),
+        "delay_adjusted_depth_stress_artifact_refs": delay_depth_artifact_refs,
+        "delay_adjusted_depth_stress_artifact_ref": delay_depth_artifact_refs[0]
+        if delay_depth_artifact_refs
+        else "",
+        "delay_adjusted_depth_stress_model": "portfolio_latency_depth_haircut",
+        "delay_adjusted_depth_stress_ms": str(
+            max(
+                (_delay_adjusted_depth_stress_ms(bundle) for bundle in selected),
+                default=Decimal("0"),
+            )
+        ),
+        "delay_adjusted_depth_fillable_notional_per_day": str(
+            delay_depth_fillable_notional_per_day
+        ),
+        "delay_adjusted_depth_stress_net_pnl_per_day": str(
+            delay_depth_stress_net_pnl_per_day
+        ),
         "daily_net": {day: str(value) for day, value in sorted(daily_net.items())},
         "daily_filled_notional": {
             day: str(value) for day, value in sorted(daily_notional.items())
@@ -809,6 +900,10 @@ def _portfolio_selection_key(
         Decimal(1 if bool(scorecard.get("market_impact_stress_passed")) else 0),
         _scorecard_decimal(scorecard, "market_impact_stress_net_pnl_per_day"),
         -_scorecard_decimal(scorecard, "market_impact_stress_cost_bps"),
+        Decimal(1 if bool(scorecard.get("delay_adjusted_depth_stress_passed")) else 0),
+        _scorecard_decimal(scorecard, "delay_adjusted_depth_stress_net_pnl_per_day"),
+        _scorecard_decimal(scorecard, "delay_adjusted_depth_fillable_notional_per_day"),
+        -_scorecard_decimal(scorecard, "delay_adjusted_depth_stress_ms"),
         _scorecard_decimal(scorecard, "net_pnl_per_day"),
         -_scorecard_decimal(scorecard, "missing_sleeve_daily_net_count"),
         _scorecard_decimal(scorecard, "avg_filled_notional_per_day"),
