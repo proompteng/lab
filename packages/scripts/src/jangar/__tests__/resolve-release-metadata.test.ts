@@ -14,8 +14,6 @@ const f22ToDddJangarBuildTriggerFiles = [
   'argocd/applications/jangar/deployment.yaml',
   'argocd/applications/jangar/kustomization.yaml',
   'docs/agents/jangar-controller-design.md',
-  'services/jangar/scripts/__tests__/agent-runner.test.ts',
-  'services/jangar/scripts/agent-runner.ts',
   'services/jangar/src/server/__tests__/agents-controller.test.ts',
   'services/jangar/src/server/agents-controller/job-runtime.ts',
   'services/torghut/README.md',

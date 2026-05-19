@@ -233,7 +233,8 @@ export class AgentsControlPlaneStatusApi extends Context.Tag('AgentsControlPlane
   AgentsControlPlaneStatusService
 >() {}
 
-const compatibilityUnavailableMessage = 'generic Agents status does not include Jangar material-control-plane evidence'
+const compatibilityUnavailableMessage =
+  'generic Agents status does not include domain-specific material control-plane evidence'
 
 const buildAuthority = (namespace: string, now: Date, message: string): HeartbeatAuthoritySource => ({
   mode: 'local',
