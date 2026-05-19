@@ -783,6 +783,22 @@ const resyncAgentRunsForNamespace = async (
   }
 }
 
+const queueAgentRunResync = (
+  kube: ReturnType<typeof createKubernetesClient>,
+  namespace: string,
+  state: ControllerState,
+  concurrency: ReturnType<typeof parseConcurrency>,
+  reason: 'periodic' | 'watch_restart' | 'manual',
+) => {
+  void resyncAgentRunsForNamespace(kube, namespace, state, concurrency, reason).catch((error) => {
+    logAgentsControllerWarn('agentrun_resync_failed', {
+      namespace,
+      reason,
+      ...toLogError(error),
+    })
+  })
+}
+
 const {
   reconcileAgent,
   reconcileAgentProvider,
@@ -1146,7 +1162,7 @@ const startNamespaceWatches = async (
           namespace,
           reason: restartReason,
         })
-        void resyncAgentRunsForNamespace(kube, namespace, state, concurrency, 'watch_restart')
+        queueAgentRunResync(kube, namespace, state, concurrency, 'watch_restart')
       },
     }),
   )
@@ -1212,13 +1228,15 @@ const startNamespaceWatches = async (
 
   const resyncInterval = resolveAgentRunResyncIntervalSeconds() * 1000
   const timer = setInterval(() => {
-    void resyncAgentRunsForNamespace(kube, namespace, state, concurrency, 'periodic')
+    queueAgentRunResync(kube, namespace, state, concurrency, 'periodic')
   }, resyncInterval)
   handles.push({
     stop: () => clearInterval(timer),
   })
 
-  await resyncAgentRunsForNamespace(kube, namespace, state, concurrency, 'manual')
+  // The initial resync can be large in production. Watches are already live here, so run it
+  // in the background instead of blocking controller startup and readiness.
+  queueAgentRunResync(kube, namespace, state, concurrency, 'manual')
 }
 
 const stopWatchHandles = (handles: Array<{ stop: () => void }>) => {
@@ -1407,6 +1425,7 @@ export const __test = {
   resolveVcsContext,
   getAgentRunUntouchedReasons,
   resyncAgentRunsForNamespace,
+  startNamespaceWatches,
   syncControllerAgentRunIngestionHealth,
   assessAgentRunIngestion,
   stopWatchHandles,
