@@ -1,13 +1,13 @@
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: Memory
 metadata:
-  name: jangar-primitives
-  namespace: jangar
+  name: agents-primitives
+  namespace: agents
 spec:
   type: postgres
   connection:
     secretRef:
-      name: jangar-db-app
+      name: agents-db-app
       key: uri
   capabilities:
     - vector

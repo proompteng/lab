@@ -1,8 +1,8 @@
 apiVersion: workspaces.proompteng.ai/v1alpha1
 kind: Workspace
 metadata:
-  name: jangar-primitives-workspace
-  namespace: jangar
+  name: agents-primitives-workspace
+  namespace: agents
 spec:
   size: 10Gi
   accessModes:

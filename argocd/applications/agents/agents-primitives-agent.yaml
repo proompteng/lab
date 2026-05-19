@@ -1,11 +1,11 @@
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: Agent
 metadata:
-  name: jangar-primitives-agent
-  namespace: jangar
+  name: agents-primitives-agent
+  namespace: agents
 spec:
   providerRef:
-    name: jangar-primitives-codex
+    name: agents-primitives-codex
   config:
     runtime:
       type: workflow
@@ -16,7 +16,7 @@ spec:
       head: codex/issue-2425-6cedebf4
       stage: implementation
     payloads:
-      promptJson: '{"summary":"jangar primitives"}'
+      promptJson: '{"summary":"agents primitives"}'
     observability:
       natsEnabled: true
       kafkaCompletions: true

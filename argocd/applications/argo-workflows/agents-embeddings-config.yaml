@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: jangar-embeddings-config
+  name: agents-embeddings-config
   namespace: argo-workflows
 data:
   openaiApiBaseUrl: http://saigak.saigak.svc.cluster.local:11434/v1

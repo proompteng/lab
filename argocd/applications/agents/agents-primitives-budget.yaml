@@ -1,8 +1,8 @@
 apiVersion: budgets.proompteng.ai/v1alpha1
 kind: Budget
 metadata:
-  name: jangar-primitives-budget
-  namespace: jangar
+  name: agents-primitives-budget
+  namespace: agents
 spec:
   limits:
     cpu: "36"

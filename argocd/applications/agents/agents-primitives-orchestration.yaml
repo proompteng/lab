@@ -1,15 +1,15 @@
 apiVersion: orchestration.proompteng.ai/v1alpha1
 kind: Orchestration
 metadata:
-  name: jangar-primitives
-  namespace: jangar
+  name: agents-primitives
+  namespace: agents
 spec:
   entrypoint: main
   steps:
     - name: agent-run
       kind: AgentRun
       agentRef:
-        name: jangar-primitives-agent
+        name: agents-primitives-agent
       with:
         repository: proompteng/lab
         base: main
@@ -19,30 +19,30 @@ spec:
       kind: ToolRun
       dependsOn: [agent-run]
       toolRef:
-        name: jangar-primitives-tool
+        name: agents-primitives-tool
       with:
         action: validate
     - name: memory-op
       kind: MemoryOp
       dependsOn: [tool-run]
-      memoryRef: jangar-primitives
+      memoryRef: agents-primitives
       with:
         operation: write
         payload: '{"event":"memory-op"}'
     - name: approval-gate
       kind: ApprovalGate
       dependsOn: [memory-op]
-      policyRef: jangar-primitives-approval
+      policyRef: agents-primitives-approval
     - name: signal-wait
       kind: SignalWait
       dependsOn: [approval-gate]
       with:
-        signalRef: jangar-primitives-signal
-        deliveryId: jangar-primitives-delivery
+        signalRef: agents-primitives-signal
+        deliveryId: agents-primitives-delivery
     - name: checkpoint
       kind: Checkpoint
       dependsOn: [signal-wait]
-      memoryRef: jangar-primitives
+      memoryRef: agents-primitives
       with:
         checkpointId: cp-001
         payload: '{"checkpoint":"cp-001"}'
@@ -50,6 +50,6 @@ spec:
       kind: SubOrchestration
       dependsOn: [checkpoint]
       orchestrationRef:
-        name: jangar-primitives-sub
+        name: agents-primitives-sub
       with:
         parameters: '{"message":"hello"}'

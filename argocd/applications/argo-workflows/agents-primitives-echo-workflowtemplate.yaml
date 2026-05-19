@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
-  name: jangar-primitives-echo
+  name: agents-primitives-echo
   namespace: argo-workflows
 spec:
   serviceAccountName: codex-workflow
@@ -11,7 +11,7 @@ spec:
       inputs:
         parameters:
           - name: message
-            default: hello from jangar primitives
+            default: hello from agents primitives
       container:
         image: alpine:3.20
         command:

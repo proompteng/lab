@@ -1,10 +1,10 @@
 apiVersion: artifacts.proompteng.ai/v1alpha1
 kind: Artifact
 metadata:
-  name: jangar-primitives-artifact
-  namespace: jangar
+  name: agents-primitives-artifact
+  namespace: agents
 spec:
   storageRef:
-    name: jangar-artifacts
+    name: agents-artifacts
   lifecycle:
     ttlDays: 7

@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
-  name: jangar-signal-wait
+  name: agents-signal-wait
   namespace: argo-workflows
 spec:
   serviceAccountName: codex-workflow

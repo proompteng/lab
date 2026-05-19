@@ -1,14 +1,14 @@
 apiVersion: orchestration.proompteng.ai/v1alpha1
 kind: Orchestration
 metadata:
-  name: jangar-primitives-sub
-  namespace: jangar
+  name: agents-primitives-sub
+  namespace: agents
 spec:
   entrypoint: main
   steps:
     - name: echo
       kind: ToolRun
       toolRef:
-        name: jangar-primitives-tool
+        name: agents-primitives-tool
       with:
         action: sub-orchestration

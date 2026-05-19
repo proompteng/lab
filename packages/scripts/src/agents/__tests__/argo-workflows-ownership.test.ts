@@ -2,12 +2,17 @@ import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
+const workflowScriptTemplatePaths = [
+  'argocd/applications/argo-workflows/agents-approval-gate-workflowtemplate.yaml',
+  'argocd/applications/argo-workflows/agents-checkpoint-workflowtemplate.yaml',
+  'argocd/applications/argo-workflows/agents-memory-op-workflowtemplate.yaml',
+  'argocd/applications/argo-workflows/agents-signal-wait-workflowtemplate.yaml',
+  'argocd/applications/argo-workflows/agents-sub-orchestration-workflowtemplate.yaml',
+]
+
 const workflowTemplatePaths = [
-  'argocd/applications/argo-workflows/jangar-approval-gate-workflowtemplate.yaml',
-  'argocd/applications/argo-workflows/jangar-checkpoint-workflowtemplate.yaml',
-  'argocd/applications/argo-workflows/jangar-memory-op-workflowtemplate.yaml',
-  'argocd/applications/argo-workflows/jangar-signal-wait-workflowtemplate.yaml',
-  'argocd/applications/argo-workflows/jangar-sub-orchestration-workflowtemplate.yaml',
+  ...workflowScriptTemplatePaths,
+  'argocd/applications/argo-workflows/agents-primitives-echo-workflowtemplate.yaml',
 ]
 
 const readRepoFile = (path: string) => readFileSync(resolve(process.cwd(), path), 'utf8')
@@ -19,11 +24,18 @@ describe('Argo workflow primitive ownership', () => {
     expect(kustomization).toContain('name: registry.ide-newton.ts.net/lab/agents-controller')
     expect(kustomization).not.toContain('name: registry.ide-newton.ts.net/lab/jangar')
 
-    for (const path of workflowTemplatePaths) {
+    for (const path of workflowScriptTemplatePaths) {
       const manifest = readRepoFile(path)
       expect(manifest).toContain('image: registry.ide-newton.ts.net/lab/agents-controller')
       expect(manifest).not.toContain('image: registry.ide-newton.ts.net/lab/jangar')
       expect(manifest).not.toContain('/tmp/jangar-')
+    }
+
+    for (const path of workflowTemplatePaths) {
+      const manifest = readRepoFile(path)
+      expect(manifest).not.toContain('[jangar]')
+      expect(manifest).not.toContain('jangar-embeddings-config')
+      expect(manifest).not.toContain('hello from jangar primitives')
     }
   })
 
@@ -32,6 +44,8 @@ describe('Argo workflow primitive ownership', () => {
 
     expect(combinedManifests).not.toContain(' jq ')
     expect(combinedManifests).not.toContain('\njq ')
+    expect(combinedManifests).toContain('agents-embeddings-config')
+    expect(combinedManifests).toContain('hello from agents primitives')
     expect(combinedManifests).toContain('/tmp/agents-checkpoint.mjs')
     expect(combinedManifests).toContain('/tmp/agents-memory-op.mjs')
   })

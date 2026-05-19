@@ -18,6 +18,23 @@ resources:
   - sample-approvalpolicy.yaml
   - sample-budget.yaml
   - sample-signal.yaml
+  - agents-primitives-agentprovider.yaml
+  - agents-primitives-agent.yaml
+  - agents-primitives-memory.yaml
+  - agents-primitives-tool.yaml
+  - agents-primitives-toolrun.yaml
+  - agents-primitives-approvalpolicy.yaml
+  - agents-primitives-signal.yaml
+  - agents-primitives-signal-delivery.yaml
+  - agents-primitives-artifact.yaml
+  - agents-primitives-budget.yaml
+  - agents-primitives-secretbinding.yaml
+  - agents-primitives-workspace.yaml
+  - agents-primitives-schedule.yaml
+  - agents-primitives-orchestration.yaml
+  - agents-primitives-sub-orchestration.yaml
+  - agents-primitives-orchestrationrun.yaml
+  - agents-primitives-agentrun.yaml
   - tailscale-service.yaml
   - tailscale-networkpolicy.yaml
   - alloy-rbac.yaml

@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
-  name: jangar-approval-gate
+  name: agents-approval-gate
   namespace: argo-workflows
 spec:
   serviceAccountName: codex-workflow

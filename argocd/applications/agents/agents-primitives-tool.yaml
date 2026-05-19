@@ -1,8 +1,8 @@
 apiVersion: tools.proompteng.ai/v1alpha1
 kind: Tool
 metadata:
-  name: jangar-primitives-tool
-  namespace: jangar
+  name: agents-primitives-tool
+  namespace: agents
 spec:
   image: alpine:3.20
   command:

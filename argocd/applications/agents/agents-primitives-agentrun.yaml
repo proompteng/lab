@@ -1,15 +1,15 @@
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: jangar-primitives-agentrun
-  namespace: jangar
+  name: agents-primitives-agentrun
+  namespace: agents
 spec:
   agentRef:
-    name: jangar-primitives-agent
+    name: agents-primitives-agent
   implementation:
     inline:
-      summary: "Run the jangar primitives smoke implementation"
-      text: "Execute the sample implementation for the jangar primitives workflow."
+      summary: "Run the agents primitives smoke implementation"
+      text: "Execute the sample implementation for the agents primitives workflow."
   runtime:
     type: workflow
     config:

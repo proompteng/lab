@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
-  name: jangar-sub-orchestration
+  name: agents-sub-orchestration
   namespace: argo-workflows
 spec:
   serviceAccountName: codex-workflow

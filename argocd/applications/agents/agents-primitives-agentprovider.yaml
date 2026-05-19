@@ -1,8 +1,8 @@
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentProvider
 metadata:
-  name: jangar-primitives-codex
-  namespace: jangar
+  name: agents-primitives-codex
+  namespace: agents
 spec:
   binary: /bin/sh
   argsTemplate:
@@ -10,7 +10,7 @@ spec:
     - >-
         mkdir -p /workspace/lab &&
         echo "agent run repo={{parameters.repository}} base={{parameters.base}} head={{parameters.head}} stage={{parameters.stage}}" |
-        tee /workspace/lab/.codex-implementation.log
+        tee /workspace/lab/.agents-runner.log
   envTemplate:
     WORKFLOW_STAGE: "{{parameters.stage}}"
   inputFiles:
@@ -18,4 +18,4 @@ spec:
       content: "{{agent.config.payloads.promptJson}}"
   outputArtifacts:
     - name: implementation-log
-      path: /workspace/lab/.codex-implementation.log
+      path: /workspace/lab/.agents-runner.log
