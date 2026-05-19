@@ -135,6 +135,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             top_k=4,
             exploration_slots=2,
             feedback_block_reaudit_slots=0,
+            selection_only=False,
             portfolio_size_min=2,
             portfolio_size_max=4,
             replay_mode="synthetic",
@@ -2576,6 +2577,118 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 )
             )
 
+    def test_selection_only_writes_pre_replay_artifacts_without_replay_or_persistence(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            args = self._source_jsonl_args(output_dir)
+            args.epoch_id = "whitepaper-autoresearch-selection-only"
+            args.replay_mode = "real"
+            args.persist_results = True
+            args.selection_only = True
+            args.max_candidates = 4
+            args.top_k = 2
+
+            with (
+                patch.object(
+                    runner,
+                    "_run_replay_with_optional_timeout",
+                    side_effect=AssertionError("selection-only must not run replay"),
+                ) as replay_mock,
+                patch.object(
+                    runner,
+                    "_persist_vnext_specs",
+                    side_effect=AssertionError("selection-only must not persist specs"),
+                ) as persist_mock,
+                patch.object(
+                    runner,
+                    "_persist_epoch_ledgers",
+                    side_effect=AssertionError(
+                        "selection-only must not persist epoch ledgers"
+                    ),
+                ) as ledger_mock,
+                patch.object(
+                    runner,
+                    "optimize_portfolio_candidate",
+                    side_effect=AssertionError(
+                        "selection-only must not optimize a portfolio"
+                    ),
+                ) as optimizer_mock,
+                patch.object(
+                    runner,
+                    "_runtime_closure_payload",
+                    side_effect=AssertionError(
+                        "selection-only must not build runtime closure"
+                    ),
+                ) as runtime_mock,
+            ):
+                payload = runner.run_whitepaper_autoresearch_profit_target(args)
+
+            summary = json.loads(
+                (output_dir / "summary.json").read_text(encoding="utf-8")
+            )
+
+            self.assertTrue((output_dir / "epoch-manifest.json").exists())
+            self.assertTrue((output_dir / "whitepaper-sources.jsonl").exists())
+            self.assertTrue((output_dir / "hypothesis-cards.jsonl").exists())
+            self.assertTrue((output_dir / "candidate-specs.jsonl").exists())
+            self.assertTrue((output_dir / "candidate-compiler-report.json").exists())
+            self.assertTrue(
+                (output_dir / "feedback-evidence-source-manifest.json").exists()
+            )
+            self.assertTrue((output_dir / "pre-replay-mlx-ranker-model.json").exists())
+            self.assertTrue(
+                (output_dir / "pre-replay-mlx-proposal-scores.jsonl").exists()
+            )
+            self.assertTrue((output_dir / "candidate-selection-manifest.json").exists())
+            self.assertTrue(
+                (output_dir / "whitepaper-autoresearch-diagnostics.ipynb").exists()
+            )
+            self.assertFalse((output_dir / "strategy-factory").exists())
+            self.assertFalse((output_dir / "synthetic-replays").exists())
+            self.assertFalse((output_dir / "candidate-evidence-bundles.jsonl").exists())
+            self.assertFalse((output_dir / "mlx-ranker-model.json").exists())
+            self.assertFalse((output_dir / "mlx-proposal-scores.jsonl").exists())
+            self.assertFalse((output_dir / "portfolio-candidates.jsonl").exists())
+            self.assertFalse((output_dir / "portfolio-optimizer-report.json").exists())
+            self.assertFalse((output_dir / "candidate-board.json").exists())
+            self.assertFalse((output_dir / "profitability-search-goal.json").exists())
+            self.assertFalse((output_dir / "runtime-closure" / "summary.json").exists())
+
+        self.assertEqual(payload["status"], "selection_only")
+        self.assertEqual(payload["status_reason"], "pre_replay_selection_only")
+        self.assertEqual(payload["epoch_id"], "whitepaper-autoresearch-selection-only")
+        self.assertEqual(summary["status"], "selection_only")
+        self.assertFalse(payload["oracle_candidate_found"])
+        self.assertFalse(payload["promotion_readiness"]["promotable"])
+        self.assertIn(
+            "real_replay_not_run",
+            payload["promotion_readiness"]["blockers"],
+        )
+        self.assertGreater(payload["candidate_spec_count"], 0)
+        self.assertGreater(payload["pre_replay_proposal_score_count"], 0)
+        self.assertGreater(payload["replay_candidate_spec_count"], 0)
+        replay_mock.assert_not_called()
+        persist_mock.assert_not_called()
+        ledger_mock.assert_not_called()
+        optimizer_mock.assert_not_called()
+        runtime_mock.assert_not_called()
+
+    def test_main_treats_selection_only_as_success(self) -> None:
+        with (
+            patch.object(runner, "_parse_args", return_value=Namespace()),
+            patch.object(
+                runner,
+                "run_whitepaper_autoresearch_profit_target",
+                return_value={"status": "selection_only"},
+            ),
+            patch("builtins.print"),
+        ):
+            exit_code = runner.main()
+
+        self.assertEqual(exit_code, 0)
+
     def test_candidate_universe_symbols_filter_to_live_chip_coverage(self) -> None:
         symbols = runner._candidate_universe_symbols_from_args(
             Namespace(symbols="NVDA,AAPL,MSFT,AMAT,TSM,nvda")
@@ -4832,6 +4945,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     "TORGHUT_CLICKHOUSE_PASSWORD",
                     "--max-total-frontier-candidates",
                     "7",
+                    "--selection-only",
                     "--no-persist-results",
                 ],
             ):
@@ -4852,6 +4966,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(parsed.real_replay_shard_size, 0)
         self.assertEqual(parsed.real_replay_shard_timeout_seconds, 0)
         self.assertEqual(parsed.real_replay_shard_workers, 1)
+        self.assertTrue(parsed.selection_only)
         self.assertEqual(parsed.max_worst_day_loss, "999999999")
         self.assertEqual(parsed.max_drawdown, "999999999")
         self.assertEqual(parsed.min_profit_factor, "1.50")

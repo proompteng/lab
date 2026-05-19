@@ -200,6 +200,15 @@ def _parse_args() -> argparse.Namespace:
             "promotion/oracle gates still apply."
         ),
     )
+    parser.add_argument(
+        "--selection-only",
+        action="store_true",
+        help=(
+            "Stop after source, hypothesis, candidate-spec, feedback, MLX "
+            "pre-replay ranking, and candidate-selection artifacts are written. "
+            "No replay, portfolio optimization, persistence, or promotion proof is run."
+        ),
+    )
     parser.add_argument("--portfolio-size-min", type=int, default=2)
     parser.add_argument("--portfolio-size-max", type=int, default=8)
     parser.add_argument("--replay-mode", choices=("synthetic", "real"), default="real")
@@ -6008,6 +6017,7 @@ def run_whitepaper_autoresearch_profit_target(
     )
     target = _decimal(args.target_net_pnl_per_day, default=_DEFAULT_DAILY_PROFIT_TARGET)
     oracle_policy = _oracle_policy_from_args(args)
+    selection_only = bool(getattr(args, "selection_only", False))
     explicit_source_inputs = bool(
         args.seed_recent_whitepapers
         or getattr(args, "source_jsonl", [])
@@ -6049,7 +6059,7 @@ def run_whitepaper_autoresearch_profit_target(
     blocker_by_spec: dict[str, list[CandidateCompilationBlocker]] = {}
     for blocker in compilation.blockers:
         blocker_by_spec.setdefault(blocker.candidate_spec_id, []).append(blocker)
-    if args.persist_results and args.replay_mode == "real":
+    if args.persist_results and args.replay_mode == "real" and not selection_only:
         for source in sources:
             source_specs = [
                 spec
@@ -6097,7 +6107,8 @@ def run_whitepaper_autoresearch_profit_target(
             feedback_evidence_source_manifest,
         ) = _load_autoresearch_feedback_evidence_bundles(
             cast(Sequence[Path], getattr(args, "feedback_evidence_jsonl", ()) or ()),
-            include_persisted=bool(getattr(args, "persist_results", False)),
+            include_persisted=bool(getattr(args, "persist_results", False))
+            and not selection_only,
         )
     except ValueError as exc:
         return _write_failure_summary(
@@ -6145,6 +6156,85 @@ def run_whitepaper_autoresearch_profit_target(
         ),
     }
     _write_json(output_dir / "candidate-selection-manifest.json", candidate_selection)
+    if selection_only:
+        selected_candidate_spec_ids = [
+            spec.candidate_spec_id for spec in replay_candidate_specs
+        ]
+        summary = {
+            "status": "selection_only",
+            "status_reason": "pre_replay_selection_only",
+            "epoch_id": epoch_id,
+            "run_root": str(output_dir),
+            "started_at": started_at.isoformat(),
+            "completed_at": datetime.now(UTC).isoformat(),
+            "target_net_pnl_per_day": str(target),
+            "profit_target_oracle_policy": oracle_policy.to_payload(),
+            "source_count": len(sources),
+            "hypothesis_count": len(hypothesis_cards),
+            "candidate_spec_count": len(candidate_specs),
+            "candidate_compiler_blocker_count": len(compilation.blockers),
+            "feedback_evidence_bundle_count": len(feedback_evidence_bundles),
+            "pre_replay_proposal_score_count": len(pre_replay_proposal_rows),
+            "replay_candidate_spec_count": len(replay_candidate_specs),
+            "selected_candidate_spec_ids": selected_candidate_spec_ids,
+            "claim_count": sum(len(source.claims) for source in sources),
+            "oracle_candidate_found": False,
+            "profit_target_oracle": {
+                "status": "not_run",
+                "reason": "selection_only",
+                "target_met": False,
+                "blockers": [
+                    "real_replay_not_run",
+                    "portfolio_optimizer_not_run",
+                    "runtime_ledger_proof_missing",
+                ],
+            },
+            "promotion_readiness": {
+                "status": "selection_only_not_promotion_proof",
+                "promotable": False,
+                "blockers": [
+                    "real_replay_not_run",
+                    "portfolio_optimizer_not_run",
+                    "runtime_ledger_proof_missing",
+                    "live_paper_parity_missing",
+                ],
+            },
+            "runtime_closure": {
+                "status": "not_run",
+                "reason": "selection_only",
+            },
+            "artifacts": {
+                "epoch_manifest": str(output_dir / "epoch-manifest.json"),
+                "hypothesis_cards": str(output_dir / "hypothesis-cards.jsonl"),
+                "whitepaper_sources": str(output_dir / "whitepaper-sources.jsonl"),
+                "candidate_specs": str(output_dir / "candidate-specs.jsonl"),
+                "candidate_selection_manifest": str(
+                    output_dir / "candidate-selection-manifest.json"
+                ),
+                "pre_replay_proposal_scores": str(
+                    output_dir / "pre-replay-mlx-proposal-scores.jsonl"
+                ),
+                "pre_replay_proposal_model": str(
+                    output_dir / "pre-replay-mlx-ranker-model.json"
+                ),
+                "feedback_evidence_source_manifest": str(
+                    output_dir / "feedback-evidence-source-manifest.json"
+                ),
+                "candidate_compiler_report": str(
+                    output_dir / "candidate-compiler-report.json"
+                ),
+                "summary": str(output_dir / "summary.json"),
+                "diagnostics_notebook": str(
+                    output_dir / "whitepaper-autoresearch-diagnostics.ipynb"
+                ),
+            },
+        }
+        _write_json(output_dir / "summary.json", summary)
+        write_whitepaper_autoresearch_diagnostics_notebook(
+            output_dir / "whitepaper-autoresearch-diagnostics.ipynb",
+            summary=summary,
+        )
+        return summary
     selection_by_spec = {
         str(row.get("candidate_spec_id")): row
         for row in _list_of_mappings(candidate_selection.get("rows"))
@@ -6665,7 +6755,7 @@ def main() -> int:
     payload = run_whitepaper_autoresearch_profit_target(args)
     print(json.dumps(payload, indent=2, sort_keys=True))
     status = str(payload.get("status") or "")
-    if status == "ok":
+    if status in {"ok", "selection_only"}:
         return 0
     if status == "persistence_failed":
         return 1
