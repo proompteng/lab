@@ -100,6 +100,11 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/memory-provider.ts"
 
 fail_if_matches \
+  "Jangar material-reentry requirement publisher must submit Signals through the Agents service boundary" \
+  'kube\.apply|createKubernetesClient|RESOURCE_MAP\.Signal' \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-material-reentry-requirements.ts"
+
+fail_if_matches \
   "Agents GitOps must not ship the old sample Argo WorkflowTemplate schedule bridge" \
   'agents-primitives-echo|kind: WorkflowTemplate|codex-workflow' \
   "${ROOT_DIR}/argocd/applications/agents"

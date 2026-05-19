@@ -124,6 +124,11 @@ export type AgentsControlPlaneResourceResult = {
   resource?: Record<string, unknown> | null
 }
 
+export type AgentsControlPlaneResourceSubmitInput = {
+  deliveryId: string
+  resource: Record<string, unknown>
+}
+
 export type AgentsAgentRunAnnotationsPatchInput = {
   name: string
   namespace: string
@@ -327,6 +332,49 @@ export const fetchControlPlaneResourceFromAgentsService = async (
   if (namespace) params.set('namespace', namespace)
 
   return fetchAgentsServiceJson<AgentsControlPlaneResourceResult>(`/api/agents/control-plane/resource?${params}`, env)
+}
+
+export const submitControlPlaneResourceToAgentsService = async (
+  input: AgentsControlPlaneResourceSubmitInput,
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<AgentsControlPlaneResourceResult>> => {
+  const baseUrl = resolveAgentsServiceBaseUrl(env)
+  const targetUrl = new URL('/api/agents/control-plane/resource', `${baseUrl}/`)
+
+  try {
+    const upstream = await fetch(targetUrl, {
+      body: JSON.stringify(input.resource),
+      headers: {
+        accept: 'application/json',
+        'content-type': 'application/json',
+        'idempotency-key': input.deliveryId,
+        'x-agents-client': 'jangar',
+      },
+      method: 'POST',
+    })
+    const body = (await readJsonBody(upstream)) as AgentsControlPlaneResourceResult | null
+    if (upstream.ok && body !== null) {
+      return {
+        ok: true,
+        status: upstream.status,
+        body,
+      }
+    }
+
+    return {
+      ok: false,
+      status: upstream.status,
+      body,
+      error: getBodyError(body) ?? upstream.statusText ?? `Agents service returned HTTP ${upstream.status}`,
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      status: 0,
+      body: null,
+      error: getErrorMessage(error),
+    }
+  }
 }
 
 export const patchAgentRunAnnotationsViaAgentsService = async (

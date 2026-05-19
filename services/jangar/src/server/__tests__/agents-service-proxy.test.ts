@@ -13,6 +13,7 @@ import {
   submitAgentRunToAgentsService,
   submitAgentMessagesToAgentsService,
   submitCodexCallbackToAgentsService,
+  submitControlPlaneResourceToAgentsService,
   submitOrchestrationRunToAgentsService,
 } from '~/server/agents-service-proxy'
 
@@ -405,6 +406,62 @@ describe('agents-service-proxy', () => {
         kind: 'OrchestrationRun',
         namespace: 'agents',
         resource: { kind: 'OrchestrationRun', metadata: { name: 'swarm-plan' } },
+      },
+    })
+  })
+
+  it('submits raw control-plane resources through the Agents service boundary', async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          kind: 'Signal',
+          namespace: 'agents',
+          resource: { kind: 'Signal', metadata: { name: 'material-reentry-signal' } },
+        }),
+        {
+          headers: { 'content-type': 'application/json' },
+          status: 201,
+        },
+      )
+    })
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+
+    const result = await submitControlPlaneResourceToAgentsService(
+      {
+        deliveryId: 'signal-delivery',
+        resource: {
+          apiVersion: 'signals.proompteng.ai/v1alpha1',
+          kind: 'Signal',
+          metadata: { name: 'material-reentry-signal', namespace: 'agents' },
+          spec: { channel: 'workflow.general.requirement' },
+        },
+      },
+      { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
+    )
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
+    expect(url.toString()).toBe('http://agents.test/api/agents/control-plane/resource')
+    expect(init.method).toBe('POST')
+    expect(init.headers).toMatchObject({
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'idempotency-key': 'signal-delivery',
+      'x-agents-client': 'jangar',
+    })
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      kind: 'Signal',
+      metadata: { name: 'material-reentry-signal', namespace: 'agents' },
+    })
+    expect(result).toEqual({
+      ok: true,
+      status: 201,
+      body: {
+        ok: true,
+        kind: 'Signal',
+        namespace: 'agents',
+        resource: { kind: 'Signal', metadata: { name: 'material-reentry-signal' } },
       },
     })
   })

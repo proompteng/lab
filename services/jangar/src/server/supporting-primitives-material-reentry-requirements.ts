@@ -1,3 +1,7 @@
+import {
+  submitControlPlaneResourceToAgentsService,
+  type AgentsControlPlaneResourceSubmitInput,
+} from '~/server/agents-service-proxy'
 import { asRecord, asString } from '~/server/primitives-http'
 import { hashNameSuffix, makeHashedName } from '~/server/supporting-primitives-naming'
 import {
@@ -21,12 +25,12 @@ export type MaterialReentryRequirementSignal = {
 }
 
 type MaterialReentryRequirementSignalPublisherInput = {
-  kube: { apply: (resource: Record<string, unknown>) => Promise<unknown> }
   materialReentryRequirementSignals: MaterialReentryRequirementSignal[]
   namespace: string
   swarmName: string
   existingSignalNames: Set<string>
   existingDedupeKeys?: Set<string>
+  submitResource?: (input: AgentsControlPlaneResourceSubmitInput) => Promise<unknown>
 }
 
 const asArray = (value: unknown) => (Array.isArray(value) ? value : [])
@@ -131,6 +135,7 @@ export const publishMaterialReentryRequirementSignals = async (
   const publishedSignals: Record<string, unknown>[] = []
   let publishErrors = 0
   const dedupeKeys = new Set(input.existingDedupeKeys ?? [])
+  const submitResource = input.submitResource ?? submitControlPlaneResourceToAgentsService
   for (const dispatch of input.materialReentryRequirementSignals) {
     if (dispatch.targetSwarm !== input.swarmName || dispatch.targetStage !== 'implement') continue
     const signalName = materialReentrySignalName(dispatch)
@@ -138,7 +143,7 @@ export const publishMaterialReentryRequirementSignals = async (
     if (dedupeKeys.has(dispatch.dedupeKey)) continue
     const signal = materialReentrySignalResource(dispatch, input.namespace)
     try {
-      await input.kube.apply(signal)
+      await submitResource({ deliveryId: dispatch.dedupeKey, resource: signal })
       publishedSignals.push(signal)
       input.existingSignalNames.add(signalName)
       dedupeKeys.add(dispatch.dedupeKey)
