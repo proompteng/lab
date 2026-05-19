@@ -75,7 +75,7 @@ describe('agents controller run-utils module', () => {
     expect(resolveRunParam(run, ['head', 'head_ref'])).toBe('feature/one')
   })
 
-  it('resolves typed AgentRun goals before legacy objective parameters', () => {
+  it('resolves goals only from typed AgentRun spec.goal', () => {
     expect(
       resolveRunGoal({
         spec: {
@@ -88,10 +88,10 @@ describe('agents controller run-utils module', () => {
     expect(
       resolveRunGoal({
         spec: {
-          parameters: { objective: 'legacy goal', goalTokenBudget: '1200' },
+          parameters: { goalObjective: 'legacy goal', goalTokenBudget: '1200' },
         },
       }),
-    ).toEqual({ objective: 'legacy goal', tokenBudget: 1200 })
+    ).toBeNull()
 
     expect(resolveRunGoal({ spec: { parameters: {} } })).toBeNull()
   })

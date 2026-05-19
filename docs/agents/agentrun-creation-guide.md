@@ -143,8 +143,8 @@ Rules:
 - `spec.goal.objective` is required when `spec.goal` is present. It must be a non-empty string.
 - `spec.goal.tokenBudget` is optional. If set, it must be a positive integer.
 - Do not put the goal in `spec.parameters.prompt`; that field is rejected and would also override the task prompt model.
-- Do not use legacy parameter fallbacks such as `goalObjective` for new YAML. They exist only for compatibility with
-  older callers.
+- Do not put persistent Codex goal fields in `spec.parameters`; the controller only reads goal data from
+  top-level `spec.goal`.
 - Runs that need Alpaca tools should add the allowed `alpaca-mcp` Secret to `spec.secrets`. That secret must contain
   `ALPACA_API_KEY` and `ALPACA_SECRET_KEY`; Codex provider images already include the `alpaca-mcp-server` binary and
   provider config.

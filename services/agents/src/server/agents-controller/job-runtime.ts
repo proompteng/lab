@@ -205,7 +205,7 @@ export const buildRunSpec = (
 ) => {
   const context = buildRunSpecContext(agentRun, agent, implementation, parameters, memory, vcs ?? null)
   const eventPayload = buildEventPayload(implementation, parameters)
-  const goal = resolveRunGoal(agentRun, parameters)
+  const goal = resolveRunGoal(agentRun)
   return {
     provider: providerName ?? asString(readNested(agent, ['spec', 'providerRef', 'name'])) ?? '',
     agentRun: context.agentRun,

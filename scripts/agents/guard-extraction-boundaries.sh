@@ -177,6 +177,13 @@ fail_if_matches \
   "${ROOT_DIR}/argocd/applications/agents"
 
 fail_if_matches \
+  "Agents controller must not derive runner goals from deprecated AgentRun parameter aliases" \
+  'goalObjective|goalTokenBudget' \
+  "${ROOT_DIR}/services/agents/src/server/agents-controller" \
+  "${ROOT_DIR}/services/agents/src/server/v1" \
+  "${ROOT_DIR}/docs/agents/agentrun-creation-guide.md"
+
+fail_if_matches \
   "Agents build and CI entrypoints must not call the Jangar Dockerfile or Jangar image builder" \
   'services/jangar/Dockerfile|\.\./jangar/build-image' \
   "${ROOT_DIR}/.github/workflows/agents-build-push.yml" \
