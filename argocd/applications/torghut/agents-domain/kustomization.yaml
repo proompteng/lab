@@ -9,6 +9,9 @@ resources:
   - codex-whitepaper-agent.yaml
   - codex-spark-whitepaper-agentprovider.yaml
   - codex-whitepaper-agent-system-prompt-configmap.yaml
+  - codex-research-secretbinding.yaml
+  - codex-research-agent.yaml
+  - codex-research-agent-system-prompt-configmap.yaml
   - torghut-market-context-agentprovider.yaml
   - torghut-fundamentals-agent.yaml
   - torghut-news-agent.yaml

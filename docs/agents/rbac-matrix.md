@@ -12,11 +12,11 @@ See also:
 
 ## Components
 
-- Jangar controller (namespaced)
+- Agents controller (namespaced)
 - agentctl (user client)
 - Runtime adapters (Workflow/Temporal/Custom)
 
-## Jangar Controller (namespaced Role)
+## Agents Controller (namespaced Role)
 
 Required verbs (namespaced):
 
@@ -38,22 +38,22 @@ Optional (if enabled):
 
 - `events` for publishing Kubernetes events
 
-## Jangar Controller (cluster-scoped ClusterRole)
+## Agents Controller (cluster-scoped ClusterRole)
 
 Use when `controller.namespaces` spans multiple namespaces or `"*"`.
 Required verbs mirror the namespaced Role, but with cluster scope and a ClusterRoleBinding
-to the Jangar service account.
+to the Agents service account.
 Additional verbs for namespace discovery when using `"*"`:
 
 - `get`, `list`, `watch` on `namespaces`
 
 ## agentctl (user)
 
-Uses Kubernetes API by default (kubeconfig + context). Optional gRPC mode uses Jangar endpoints.
+Uses Kubernetes API by default (kubeconfig + context). Optional gRPC mode uses Agents endpoints.
 
 ## Runtime Adapter Service Accounts
 
-If adapters run outside Jangar:
+If adapters run outside Agents:
 
 - Minimal rights to create their runtime resources.
 - No access to CRDs beyond their scope.

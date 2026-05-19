@@ -768,11 +768,12 @@ class TestLiveConfigManifestContract(TestCase):
             args,
         )
         self.assertIn(
-            "--runtime-window-target hypothesis_id=H-PAIRS-01,"
-            "candidate_id=spec-d74b07b2aaab8d0cfa8a4c38,"
-            "strategy_family=microbar_cross_sectional_pairs,"
-            "strategy_name=microbar-cross-sectional-pairs-v1,"
-            "source_manifest_ref=config/trading/hypotheses/h-pairs-01.json",
+            "--runtime-window-target hypothesis_id=H-MICRO-01,"
+            "candidate_id=chip-paper-microbar-composite@execution-proof,"
+            "strategy_family=microstructure_breakout,"
+            "strategy_name=microbar-volume-continuation-long-top2-chip-v1,"
+            "source_manifest_ref=config/trading/hypotheses/h-micro-01.json,"
+            "dataset_snapshot_ref=torghut-chip-full-day-20260505-4c330ce9-r1",
             args,
         )
         self.assertIn("--runtime-window-account-label TORGHUT_SIM", args)

@@ -222,8 +222,8 @@ flowchart LR
 - If `spec.runtime.type == "job"`, Agents submits a Kubernetes Job in the target namespace.
 - Image resolution priority:
   1. `AgentRun.spec.workload.image`
-  2. `JANGAR_AGENT_RUNNER_IMAGE`
-  3. `JANGAR_AGENT_IMAGE`
+  2. `AGENTS_AGENT_RUNNER_IMAGE`
+  3. `AGENTS_AGENT_IMAGE`
 - Job inputs must include a JSON spec (e.g., `run.json`) and optional provider input files.
 - Job should be labeled with `agents.proompteng.ai/agent-run` for tracking.
 
@@ -296,7 +296,7 @@ sequenceDiagram
 - Orchestration and OrchestrationRun execute in-cluster by default with no external workflow engine.
 - Native controller currently supports `AgentRun`, `ToolRun`, `SubOrchestration`, and `ApprovalGate` steps; other step kinds require adapters or future extensions.
 - Codex reruns/system-improvements should point at native OrchestrationRuns via `workflowRuntime.native.*`
-  values (or the equivalent `JANGAR_CODEX_RERUN_ORCHESTRATION` and `JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION` env vars).
+  values (or the equivalent `AGENTS_CODEX_RERUN_ORCHESTRATION` and `AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION` env vars).
 
 ### RBAC alignment
 

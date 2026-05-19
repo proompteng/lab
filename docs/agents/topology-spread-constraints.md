@@ -6,7 +6,7 @@ Docs index: [README](README.md)
 
 ## Context
 
-AgentRun workloads execute as Kubernetes Jobs created by Jangar. Those job pods already support scheduling controls such as node selectors, tolerations, and affinity. We want first-class topology spread constraints so operators can distribute AgentRun pods across zones, nodes, or other topology domains without changing controller code or hand-editing workloads.
+AgentRun workloads execute as Kubernetes Jobs created by the Agents controller. Those job pods already support scheduling controls such as node selectors, tolerations, and affinity. We want first-class topology spread constraints so operators can distribute AgentRun pods across zones, nodes, or other topology domains without changing controller code or hand-editing workloads.
 
 This doc specifies the Helm chart values, template wiring, and runtime behavior for topology spread constraints applied to AgentRun pods in `charts/agents`.
 
@@ -19,7 +19,7 @@ This doc specifies the Helm chart values, template wiring, and runtime behavior 
 
 ## Non-goals
 
-- Adding topology spread constraints to the Jangar controller Deployment pod.
+- Adding topology spread constraints to the Agents controller Deployment pod.
 - Changing the AgentRun CRD schema.
 - Enforcing or validating constraint schemas beyond Helm value shape checks.
 - Altering runtime scheduling logic outside of existing default/override behavior.
@@ -54,14 +54,14 @@ controller:
 
 ## Template Wiring
 
-The chart passes default workload settings to Jangar via environment variables in `charts/agents/templates/deployment.yaml`:
+The chart passes default workload settings to Agents via environment variables in `charts/agents/templates/deployment.yaml`:
 
-- `controller.defaultWorkload.topologySpreadConstraints` -> `JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS`
-- `controller.defaultWorkload.nodeSelector` -> `JANGAR_AGENT_RUNNER_NODE_SELECTOR`
-- `controller.defaultWorkload.tolerations` -> `JANGAR_AGENT_RUNNER_TOLERATIONS`
-- `controller.defaultWorkload.affinity` -> `JANGAR_AGENT_RUNNER_AFFINITY`
+- `controller.defaultWorkload.topologySpreadConstraints` -> `AGENTS_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS`
+- `controller.defaultWorkload.nodeSelector` -> `AGENTS_AGENT_RUNNER_NODE_SELECTOR`
+- `controller.defaultWorkload.tolerations` -> `AGENTS_AGENT_RUNNER_TOLERATIONS`
+- `controller.defaultWorkload.affinity` -> `AGENTS_AGENT_RUNNER_AFFINITY`
 
-Jangar reads those environment variables, then applies them to the Job pod spec unless overridden by `AgentRun.spec.runtime.config.*` fields. Topology spread constraints are only written to the pod spec when the array is non-empty.
+Agents reads those environment variables, then applies them to the Job pod spec unless overridden by `AgentRun.spec.runtime.config.*` fields. Topology spread constraints are only written to the pod spec when the array is non-empty.
 
 ## Interactions With Node Selector, Affinity, and Tolerations
 
@@ -74,7 +74,7 @@ Topology spread constraints are evaluated by the scheduler after the node select
   - `DoNotSchedule` enforces strict spread and will leave pods Pending if constraints cannot be met.
   - `ScheduleAnyway` prefers spread but allows co-location when the cluster cannot satisfy the constraint.
 
-Label selectors should target labels that exist on AgentRun pods. Jangar applies standard labels such as:
+Label selectors should target labels that exist on AgentRun pods. Agents applies standard labels such as:
 
 - `agents.proompteng.ai/agent-run`
 - `agents.proompteng.ai/agent`

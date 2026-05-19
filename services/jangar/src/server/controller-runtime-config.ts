@@ -1,4 +1,4 @@
-import { isAgentsRuntimeService } from '@proompteng/agents/server/runtime-identity'
+import { isAgentsRuntimeService } from './runtime-identity'
 
 type EnvSource = Record<string, string | undefined>
 

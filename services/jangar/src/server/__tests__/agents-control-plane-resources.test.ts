@@ -36,18 +36,18 @@ describe('agents control-plane resources route', () => {
   afterEach(() => {
     vi.clearAllMocks()
     vi.useRealTimers()
-    delete process.env.JANGAR_CONTROL_PLANE_CACHE_ENABLED
-    delete process.env.JANGAR_CONTROL_PLANE_CACHE_STALE_SECONDS
-    delete process.env.JANGAR_CONTROL_PLANE_CACHE_ALLOW_STALE
+    delete process.env.AGENTS_CONTROL_PLANE_CACHE_ENABLED
+    delete process.env.AGENTS_CONTROL_PLANE_CACHE_STALE_SECONDS
+    delete process.env.AGENTS_CONTROL_PLANE_CACHE_ALLOW_STALE
   })
 
   it('returns cached list with freshness metadata when cache is fresh', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-20T00:00:40Z'))
 
-    process.env.JANGAR_CONTROL_PLANE_CACHE_ENABLED = 'on'
-    process.env.JANGAR_CONTROL_PLANE_CACHE_STALE_SECONDS = '60'
-    process.env.JANGAR_CONTROL_PLANE_CACHE_ALLOW_STALE = '1'
+    process.env.AGENTS_CONTROL_PLANE_CACHE_ENABLED = 'on'
+    process.env.AGENTS_CONTROL_PLANE_CACHE_STALE_SECONDS = '60'
+    process.env.AGENTS_CONTROL_PLANE_CACHE_ALLOW_STALE = '1'
 
     const cachedStore = {
       ready: Promise.resolve(),
@@ -87,9 +87,9 @@ describe('agents control-plane resources route', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-20T00:00:10Z'))
 
-    process.env.JANGAR_CONTROL_PLANE_CACHE_ENABLED = 'on'
-    process.env.JANGAR_CONTROL_PLANE_CACHE_STALE_SECONDS = '5'
-    process.env.JANGAR_CONTROL_PLANE_CACHE_ALLOW_STALE = '1'
+    process.env.AGENTS_CONTROL_PLANE_CACHE_ENABLED = 'on'
+    process.env.AGENTS_CONTROL_PLANE_CACHE_STALE_SECONDS = '5'
+    process.env.AGENTS_CONTROL_PLANE_CACHE_ALLOW_STALE = '1'
 
     const cachedStore = {
       ready: Promise.resolve(),
@@ -133,9 +133,9 @@ describe('agents control-plane resources route', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-20T00:03:00Z'))
 
-    process.env.JANGAR_CONTROL_PLANE_CACHE_ENABLED = 'on'
-    process.env.JANGAR_CONTROL_PLANE_CACHE_STALE_SECONDS = '60'
-    process.env.JANGAR_CONTROL_PLANE_CACHE_ALLOW_STALE = 'false'
+    process.env.AGENTS_CONTROL_PLANE_CACHE_ENABLED = 'on'
+    process.env.AGENTS_CONTROL_PLANE_CACHE_STALE_SECONDS = '60'
+    process.env.AGENTS_CONTROL_PLANE_CACHE_ALLOW_STALE = 'false'
 
     const cachedStore = {
       ready: Promise.resolve(),
