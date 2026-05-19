@@ -295,15 +295,17 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(limits, 'ephemeral-storage')).toBe('16Gi')
   })
 
-  it('keeps material reentry status reads bounded while requirement signal floods are disabled', () => {
+  it('keeps material reentry status reads bounded while swarm primitive dispatch is disabled by default', () => {
     const values = readYamlObjects('argocd/applications/agents/values.yaml')[0]
     const controllers = objectAt(values, 'controllers')
     const env = objectAt(objectAt(controllers, 'env'), 'vars')
     const timeoutMs = Number(objectAt(env, 'AGENTS_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS'))
+    const swarm = objectAt(values, 'swarm')
 
     expect(objectAt(env, 'AGENTS_MATERIAL_REENTRY_REQUIREMENT_SIGNALS')).toBe('false')
-    expect(objectAt(env, 'AGENTS_SWARM_REQUIREMENT_MAX_DISPATCH_PER_RECONCILE')).toBe('1')
-    expect(objectAt(env, 'AGENTS_SWARM_REQUIREMENT_MAX_ACTIVE_PER_SWARM')).toBe('2')
+    expect(objectAt(swarm, 'enabled')).toBe(false)
+    expect(objectAt(env, 'AGENTS_SWARM_REQUIREMENT_MAX_DISPATCH_PER_RECONCILE')).toBeUndefined()
+    expect(objectAt(env, 'AGENTS_SWARM_REQUIREMENT_MAX_ACTIVE_PER_SWARM')).toBeUndefined()
     expect(timeoutMs).toBeGreaterThanOrEqual(10_000)
   })
 

@@ -353,6 +353,16 @@
       },
       "additionalProperties": false
     },
+    "swarm": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable Swarm domain primitive watches, status reconciliation, summary/stream exposure, and controller RBAC. The Swarm CRD remains installed when this is false."
+        }
+      },
+      "additionalProperties": false
+    },
     "validation": {
       "type": "object",
       "properties": {

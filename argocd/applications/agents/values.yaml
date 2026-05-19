@@ -94,8 +94,8 @@ controllers:
       AGENTS_MATERIAL_REENTRY_REQUIREMENT_SIGNALS: "false"
       AGENTS_SCHEDULE_RUNNER_ADMISSION_STATUS_URL: http://agents.agents.svc.cluster.local/api/agents/control-plane/status?view=schedule-runner
       AGENTS_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS: "30000"
-      AGENTS_SWARM_REQUIREMENT_MAX_DISPATCH_PER_RECONCILE: "1"
-      AGENTS_SWARM_REQUIREMENT_MAX_ACTIVE_PER_SWARM: "2"
+swarm:
+  enabled: false
 resources:
   requests:
     cpu: 200m

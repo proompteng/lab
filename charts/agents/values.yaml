@@ -111,6 +111,9 @@ grpc:
   servicePort: 50051
   serviceType: ClusterIP
 
+swarm:
+  enabled: false
+
 validation:
   reservedEnvKeysEnforced: true
 

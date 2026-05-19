@@ -9,6 +9,7 @@ import {
   listPrimitiveKinds,
   resolvePrimitiveKind,
 } from '../../../../server/control-plane-primitive-kinds'
+import { isSwarmPrimitiveEnabled } from '../../../../server/controller-runtime-config'
 import { createKubernetesClient, type KubernetesClient, RESOURCE_MAP } from '../../../../server/kube-types'
 import { startResourceWatch } from '../../../../server/kube-watch'
 import { recordSseConnection, recordSseError } from '../../../../server/metrics'
@@ -132,7 +133,7 @@ const startNamespaceWatchers = (
   watchSwarm: boolean,
   kindsToWatch?: ReadonlySet<AgentPrimitiveKind>,
 ): void => {
-  const kinds = listPrimitiveKinds()
+  const kinds = listPrimitiveKinds({ includeSwarm: watchSwarm })
   for (const kind of kinds) {
     const resolved = resolvePrimitiveKind(kind)
     if (!resolved) continue
@@ -250,7 +251,7 @@ export const streamControlPlaneEvents = async (request: Request) => {
   const url = new URL(request.url)
   const namespace = normalizeNamespace(url.searchParams.get('namespace'), 'agents')
   const kube = createKubernetesClient()
-  const watchSwarm = await isSwarmWatchSupported(namespace, kube)
+  const watchSwarm = isSwarmPrimitiveEnabled() && (await isSwarmWatchSupported(namespace, kube))
   const encoder = new TextEncoder()
 
   let heartbeat: ReturnType<typeof setInterval> | null = null

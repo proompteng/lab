@@ -296,6 +296,10 @@ spec:
               value: {{ .Values.rbac.clusterScoped | default false | quote }}
             - name: AGENTS_PRIMITIVES_NAMESPACES
               value: {{ include "agents.controllerNamespaces" . | quote }}
+            {{- if not (hasKey $envVars "AGENTS_SWARM_PRIMITIVE_ENABLED") }}
+            - name: AGENTS_SWARM_PRIMITIVE_ENABLED
+              value: {{ .Values.swarm.enabled | default false | quote }}
+            {{- end }}
             {{- if and .Values.controllers.enabled (not (hasKey $envVars "AGENTS_PRIMITIVES_RECONCILER")) }}
             - name: AGENTS_PRIMITIVES_RECONCILER
               value: "0"
