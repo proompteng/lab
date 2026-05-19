@@ -64,8 +64,9 @@ const getKubeClient = (deps: Pick<RunReadApiDependencies, 'kubeClient' | 'kubeCl
 export const getAgentRunHandler = async (id: string, request: Request, deps: RunReadApiDependencies) => {
   const url = new URL(request.url)
   const namespace = normalizeNamespace(url.searchParams.get('namespace'), deps.defaultNamespace)
-  const store = deps.storeFactory()
+  let store: RunReadApiStore | null = null
   try {
+    store = deps.storeFactory()
     await store.ready
     const record = await store.getAgentRunById(id)
     if (!record) return errorResponse('AgentRun not found', 404)
@@ -93,15 +94,16 @@ export const getAgentRunHandler = async (id: string, request: Request, deps: Run
     const message = error instanceof Error ? error.message : String(error)
     return errorResponse(message, responseStatusForError(message))
   } finally {
-    await store.close()
+    await store?.close()
   }
 }
 
 export const getRunHandler = async (id: string, request: Request, deps: RunReadApiDependencies) => {
   const url = new URL(request.url)
   const namespace = normalizeNamespace(url.searchParams.get('namespace'), deps.defaultNamespace)
-  const store = deps.storeFactory()
+  let store: RunReadApiStore | null = null
   try {
+    store = deps.storeFactory()
     await store.ready
     const run = await store.getRunById(id)
     if (!run) return errorResponse('Run not found', 404)
@@ -141,6 +143,6 @@ export const getRunHandler = async (id: string, request: Request, deps: RunReadA
     const message = error instanceof Error ? error.message : String(error)
     return errorResponse(message, responseStatusForError(message))
   } finally {
-    await store.close()
+    await store?.close()
   }
 }

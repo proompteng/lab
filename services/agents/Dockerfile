@@ -2,9 +2,9 @@
 # Agents control-plane image.
 #
 # This is intentionally separate from services/jangar/Dockerfile so the Agents
-# release can own its build graph. The transitional control-plane bundle still
-# comes from the Jangar server output until the remaining REST/gRPC routes are
-# moved; do not ship Jangar client assets in this image.
+# release can own its build graph. The control-plane target runs the
+# @proompteng/agents server. The controller target remains transitional until
+# orchestration/supporting controllers finish moving out of Jangar.
 ARG BUN_VERSION=1.3.13
 ARG BUN_BASE_IMAGE=mirror.gcr.io/oven/bun
 ARG NODE24_VERSION=24.11.1
@@ -100,6 +100,18 @@ ENV NODE_ENV=development
 COPY json/ .
 RUN --mount=type=cache,id=bun-install-cache-agents-workspace-deps,target=/root/.bun/install/cache \
   bun install --no-save --ignore-scripts --linker=hoisted \
+    --filter @proompteng/agents \
+    --filter @proompteng/codex \
+    --filter @proompteng/otel \
+    --filter @proompteng/temporal-bun-sdk \
+    --filter @proompteng/cx-tools
+
+FROM agents-tools AS jangar-workspace-deps
+WORKDIR /app
+ENV NODE_ENV=development
+COPY json/ .
+RUN --mount=type=cache,id=bun-install-cache-jangar-workspace-deps,target=/root/.bun/install/cache \
+  bun install --no-save --ignore-scripts --linker=hoisted \
     --filter @proompteng/codex \
     --filter @proompteng/otel \
     --filter @proompteng/temporal-bun-sdk \
@@ -128,7 +140,7 @@ WORKDIR /app
 COPY full/packages/cx-tools ./packages/cx-tools
 RUN bun --cwd=packages/cx-tools run build
 
-FROM agents-workspace-deps AS agents-node-pty
+FROM jangar-workspace-deps AS jangar-node-pty
 ARG TARGETARCH
 WORKDIR /app
 RUN --mount=type=cache,id=bun-install-cache-agents-node-pty-build,target=/root/.bun/install/cache \
@@ -151,6 +163,20 @@ RUN --mount=type=cache,id=bun-install-cache-agents-node-pty-build,target=/root/.
   cp -R "$NODE_PTY_DIR/build" /tmp/node-pty/build
 
 FROM agents-workspace-deps AS agents-build
+WORKDIR /app
+RUN rm -rf /app/packages /app/services
+COPY full/ .
+COPY --from=codex-build /app/packages/codex/dist /app/packages/codex/dist
+COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
+COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/dist /app/packages/temporal-bun-sdk/dist
+WORKDIR /app/services/agents
+ARG AGENTS_BUILD_NODE_OPTIONS="--max-old-space-size=2048"
+ARG AGENTS_BUILD_CI=false
+ENV NODE_OPTIONS=${AGENTS_BUILD_NODE_OPTIONS}
+ENV CI=${AGENTS_BUILD_CI}
+RUN bun run tsc
+
+FROM jangar-workspace-deps AS jangar-build
 WORKDIR /app
 RUN rm -rf /app/packages /app/services
 COPY full/ .
@@ -182,6 +208,14 @@ WORKDIR /app
 ENV NODE_ENV=production
 COPY json/ .
 RUN --mount=type=cache,id=bun-install-cache-agents-deps-prod,target=/root/.bun/install/cache \
+  bun install --no-save --ignore-scripts --linker=hoisted --filter @proompteng/agents \
+  && rm -rf /app/node_modules/node-pty/prebuilds
+
+FROM agents-tools AS jangar-deps-prod
+WORKDIR /app
+ENV NODE_ENV=production
+COPY json/ .
+RUN --mount=type=cache,id=bun-install-cache-jangar-deps-prod,target=/root/.bun/install/cache \
   bun install --no-save --ignore-scripts --linker=hoisted --filter @proompteng/jangar \
   && rm -rf /app/node_modules/node-pty/prebuilds
 
@@ -209,29 +243,10 @@ RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-r
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-signal.js /usr/local/bin/cx-workflow-signal
 
 COPY --from=agents-deps-prod /app/node_modules ./node_modules
-COPY --from=agents-node-pty /tmp/node-pty/build /app/node_modules/node-pty/build
-
-WORKDIR /app/services/jangar
-COPY --from=agents-build /app/services/jangar/.output/server ./.output/server
-COPY --from=agents-build /app/services/jangar/package.json ./package.json
-COPY --from=agents-build /app/services/jangar/src/worker.ts ./src/worker.ts
-COPY --from=agents-build /app/services/jangar/src/server/runtime-entry-config.ts ./src/server/runtime-entry-config.ts
-COPY --from=agents-node-pty /tmp/node-pty/build /app/services/jangar/.output/server/node_modules/node-pty/build
-WORKDIR /app
-COPY --from=agents-build /app/services/bumba ./services/bumba
-RUN rm -rf /app/services/bumba/node_modules \
-  && ln -s /app/node_modules /app/services/bumba/node_modules
-WORKDIR /app/services/jangar
-RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-run \
-  && ln -sf /app/packages/cx-tools/dist/cx-workflow-start.js /usr/local/bin/cx-workflow-start \
-  && ln -sf /app/packages/cx-tools/dist/cx-workflow-query.js /usr/local/bin/cx-workflow-query \
-  && ln -sf /app/packages/cx-tools/dist/cx-workflow-signal.js /usr/local/bin/cx-workflow-signal \
-  && ln -sf /app/packages/cx-tools/dist/cx-workflow-cancel.js /usr/local/bin/cx-workflow-cancel \
-  && chmod +x /usr/local/bin/cx-codex-run /usr/local/bin/cx-workflow-start /usr/local/bin/cx-workflow-query /usr/local/bin/cx-workflow-signal /usr/local/bin/cx-workflow-cancel
-
-COPY --from=agents-build /app/services/jangar/scripts/codex-nats-publish.ts /usr/local/bin/codex-nats-publish
-COPY --from=agents-build /app/services/jangar/scripts/codex-nats-soak.ts /usr/local/bin/codex-nats-soak
-RUN chmod +x /usr/local/bin/codex-nats-publish /usr/local/bin/codex-nats-soak
+WORKDIR /app/services/agents
+COPY --from=agents-build /app/services/agents/package.json ./package.json
+COPY --from=agents-build /app/services/agents/src ./src
+COPY --from=agents-build /app/services/agents/scripts ./scripts
 
 ENV AGENTS_AGENTS_CONTROLLER_ENABLED=0 \
   AGENTS_ORCHESTRATION_CONTROLLER_ENABLED=0 \
@@ -243,11 +258,61 @@ ENV AGENTS_AGENTS_CONTROLLER_ENABLED=0 \
 ENV AGENTS_VERSION=${AGENTS_VERSION} \
   AGENTS_COMMIT=${AGENTS_COMMIT}
 
-CMD ["bun", "run", ".output/server/index.mjs"]
+CMD ["bun", "run", "src/server/index.ts"]
 
-FROM control-plane AS controller
+FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS controller
+ARG AGENTS_VERSION=""
+ARG AGENTS_COMMIT=""
+
+COPY --from=agents-tools /usr/local/bin/kubectl /usr/local/bin/kubectl
+COPY --from=agents-tools /usr/local/bin/k /usr/local/bin/k
+COPY --from=agents-tools /usr/local/bin/nats /usr/local/bin/nats
+
+WORKDIR /app
+COPY --from=codex-build /app/packages/codex/package.json /app/packages/codex/package.json
+COPY --from=codex-build /app/packages/codex/dist /app/packages/codex/dist
+COPY --from=otel-build /app/packages/otel/package.json /app/packages/otel/package.json
+COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
+COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/package.json /app/packages/temporal-bun-sdk/package.json
+COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/dist /app/packages/temporal-bun-sdk/dist
+COPY --from=cx-tools-build /app/packages/cx-tools/package.json /app/packages/cx-tools/package.json
+COPY --from=cx-tools-build /app/packages/cx-tools/dist /app/packages/cx-tools/dist
+RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-run \
+  && ln -sf /app/packages/cx-tools/dist/cx-workflow-start.js /usr/local/bin/cx-workflow-start \
+  && ln -sf /app/packages/cx-tools/dist/cx-workflow-cancel.js /usr/local/bin/cx-workflow-cancel \
+  && ln -sf /app/packages/cx-tools/dist/cx-workflow-query.js /usr/local/bin/cx-workflow-query \
+  && ln -sf /app/packages/cx-tools/dist/cx-workflow-signal.js /usr/local/bin/cx-workflow-signal
+
+COPY --from=jangar-deps-prod /app/node_modules ./node_modules
+COPY --from=jangar-node-pty /tmp/node-pty/build /app/node_modules/node-pty/build
+
+WORKDIR /app/services/jangar
+COPY --from=jangar-build /app/services/jangar/.output/server ./.output/server
+COPY --from=jangar-build /app/services/jangar/package.json ./package.json
+COPY --from=jangar-build /app/services/jangar/src/worker.ts ./src/worker.ts
+COPY --from=jangar-build /app/services/jangar/src/server/runtime-entry-config.ts ./src/server/runtime-entry-config.ts
+COPY --from=jangar-node-pty /tmp/node-pty/build /app/services/jangar/.output/server/node_modules/node-pty/build
+WORKDIR /app
+COPY --from=jangar-build /app/services/bumba ./services/bumba
+RUN rm -rf /app/services/bumba/node_modules \
+  && ln -s /app/node_modules /app/services/bumba/node_modules
+WORKDIR /app/services/jangar
+RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-run \
+  && ln -sf /app/packages/cx-tools/dist/cx-workflow-start.js /usr/local/bin/cx-workflow-start \
+  && ln -sf /app/packages/cx-tools/dist/cx-workflow-query.js /usr/local/bin/cx-workflow-query \
+  && ln -sf /app/packages/cx-tools/dist/cx-workflow-signal.js /usr/local/bin/cx-workflow-signal \
+  && ln -sf /app/packages/cx-tools/dist/cx-workflow-cancel.js /usr/local/bin/cx-workflow-cancel \
+  && chmod +x /usr/local/bin/cx-codex-run /usr/local/bin/cx-workflow-start /usr/local/bin/cx-workflow-query /usr/local/bin/cx-workflow-signal /usr/local/bin/cx-workflow-cancel
+
+COPY --from=jangar-build /app/services/jangar/scripts/codex-nats-publish.ts /usr/local/bin/codex-nats-publish
+COPY --from=jangar-build /app/services/jangar/scripts/codex-nats-soak.ts /usr/local/bin/codex-nats-soak
+RUN chmod +x /usr/local/bin/codex-nats-publish /usr/local/bin/codex-nats-soak
 
 ENV AGENTS_SERVER_PROFILE=agents-controllers \
   AGENTS_CONTROL_PLANE_CACHE_ENABLED=0 \
   AGENTS_GRPC_ENABLED=0 \
   AGENTS_RUNTIME_SERVICE=agents
+ENV AGENTS_VERSION=${AGENTS_VERSION} \
+  AGENTS_COMMIT=${AGENTS_COMMIT}
+
+CMD ["bun", "run", ".output/server/index.mjs"]

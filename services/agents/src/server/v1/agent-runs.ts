@@ -543,8 +543,9 @@ export const getAgentRunsHandler = async (request: Request, deps: Pick<AgentRuns
   const agentName = asString(url.searchParams.get('agentId')) ?? asString(url.searchParams.get('agentName'))
   if (!agentName) return errorResponse('agentId is required', 400)
 
-  const store = deps.storeFactory()
+  let store: AgentRunsApiStore | null = null
   try {
+    store = deps.storeFactory()
     await store.ready
     const runs = await store.getAgentRunsByAgent(agentName)
     return okResponse({ ok: true, runs })
@@ -552,7 +553,7 @@ export const getAgentRunsHandler = async (request: Request, deps: Pick<AgentRuns
     const message = error instanceof Error ? error.message : String(error)
     return errorResponse(message, message.includes('DATABASE_URL') ? 503 : 500)
   } finally {
-    await store.close()
+    await store?.close()
   }
 }
 
@@ -560,8 +561,9 @@ export const postAgentRunsHandler = async (request: Request, deps: AgentRunsApiD
   const leaderResponse = deps.requireLeaderForMutation?.() ?? null
   if (leaderResponse) return leaderResponse
 
-  const store = deps.storeFactory()
+  let store: AgentRunsApiStore | null = null
   try {
+    store = deps.storeFactory()
     const deliveryId = requireIdempotencyKey(request)
     const payload = await parseJsonBody(request)
     const parsed = parseAgentRunPayload(payload)
@@ -921,6 +923,6 @@ export const postAgentRunsHandler = async (request: Request, deps: AgentRunsApiD
     const message = error instanceof Error ? error.message : String(error)
     return errorResponse(message, message.includes('DATABASE_URL') ? 503 : 400)
   } finally {
-    await store.close()
+    await store?.close()
   }
 }

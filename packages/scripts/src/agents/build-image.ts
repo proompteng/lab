@@ -49,12 +49,18 @@ const parsePlatforms = (value: string | undefined): string[] | undefined => {
   return platforms.length > 0 ? platforms : undefined
 }
 
-const parsePruneScopes = (value: string | undefined): string[] => {
-  const scopes = (value ?? '@proompteng/jangar')
+const defaultPruneScopesForTarget = (target: string | undefined): string[] =>
+  target === 'controller'
+    ? ['@proompteng/jangar']
+    : ['@proompteng/agents', '@proompteng/otel', '@proompteng/temporal-bun-sdk']
+
+const parsePruneScopes = (value: string | undefined, target?: string): string[] => {
+  const fallback = defaultPruneScopesForTarget(target)
+  const scopes = (value ?? fallback.join(','))
     .split(/[\s,]+/)
     .map((scope) => scope.trim())
     .filter(Boolean)
-  return scopes.length > 0 ? scopes : ['@proompteng/jangar']
+  return scopes.length > 0 ? scopes : fallback
 }
 
 const parseCacheMode = (value: string | undefined): DockerCacheMode | undefined => {
@@ -73,14 +79,15 @@ const copyPrebuiltServerOutput = (source: string, destination: string) => {
   rmSync(resolve(destination, 'public'), { recursive: true, force: true })
 }
 
-const createPrunedContext = async (): Promise<{ dir: string; cleanup: () => void }> => {
+const createPrunedContext = async (target?: string): Promise<{ dir: string; cleanup: () => void }> => {
   ensureCli('bunx')
 
   const dir = mkdtempSync(resolve(tmpdir(), 'agents-prune-'))
   const cleanup = () => rmSync(dir, { recursive: true, force: true })
 
   try {
-    const scopes = parsePruneScopes(process.env.AGENTS_BUILD_PRUNE_SCOPE)
+    const scopes = parsePruneScopes(process.env.AGENTS_BUILD_PRUNE_SCOPE, target)
+    const includesJangar = scopes.includes('@proompteng/jangar')
     await run(
       'bunx',
       ['turbo', 'prune', ...scopes.flatMap((scope) => ['--scope', scope]), '--docker', `--out-dir=${dir}`],
@@ -99,7 +106,7 @@ const createPrunedContext = async (): Promise<{ dir: string; cleanup: () => void
 
     // Transitional until agentctl is fully owned by services/agents.
     const agentctlSource = resolve(repoRoot, 'services/jangar/agentctl')
-    if (existsSync(agentctlSource)) {
+    if (includesJangar && existsSync(agentctlSource)) {
       cpSync(agentctlSource, resolve(dir, 'full/services/jangar/agentctl'), { recursive: true })
       cpSync(agentctlSource, resolve(dir, 'json/services/jangar/agentctl'), { recursive: true })
     }
@@ -113,7 +120,10 @@ const createPrunedContext = async (): Promise<{ dir: string; cleanup: () => void
     // By default we do NOT copy a locally-built `.output` into the Docker build context.
     // Copying `.output` can silently ship stale server bundles if the local build was done on a different commit.
     // If you really need the faster transitional path, opt in explicitly.
-    if (readAgentsEnv('AGENTS_USE_PREBUILT_OUTPUT', 'JANGAR_USE_PREBUILT_OUTPUT')?.toLowerCase() === 'true') {
+    if (
+      includesJangar &&
+      readAgentsEnv('AGENTS_USE_PREBUILT_OUTPUT', 'JANGAR_USE_PREBUILT_OUTPUT')?.toLowerCase() === 'true'
+    ) {
       const outputSource = resolve(repoRoot, 'services/jangar/.output')
       const outputEntry = resolve(outputSource, 'server/index.mjs')
       const outputProto = resolve(outputSource, 'server/proto/proompteng/jangar/v1/agentctl.proto')
@@ -206,7 +216,7 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
 
   try {
     if (config.usePrune) {
-      const pruned = await createPrunedContext()
+      const pruned = await createPrunedContext(config.target)
       context = pruned.dir
       pruneCleanup = pruned.cleanup
     } else {

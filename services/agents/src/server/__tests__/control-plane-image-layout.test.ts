@@ -4,24 +4,43 @@ import { describe, expect, it } from 'vitest'
 
 const dockerfile = () => readFileSync(new URL('../../../Dockerfile', import.meta.url), 'utf8')
 
-describe('Agents control-plane image layout', () => {
-  it('builds only the transitional server bundle while REST and gRPC routes finish moving', () => {
-    const content = dockerfile()
+const dockerfileTarget = (target: string) => {
+  const content = dockerfile()
+  const start = content.indexOf(` AS ${target}`)
+  expect(start).toBeGreaterThanOrEqual(0)
+  const fromStart = content.lastIndexOf('\nFROM ', start)
+  const next = content.indexOf('\nFROM ', start + target.length)
+  return content.slice(fromStart >= 0 ? fromStart + 1 : 0, next >= 0 ? next : undefined)
+}
 
-    expect(content).toContain('bun run build:server')
-    expect(content).toContain('bun run copy:grpc-proto')
+describe('Agents control-plane image layout', () => {
+  it('builds the Agents service for the control-plane target', () => {
+    const content = dockerfileTarget('control-plane')
+
+    expect(content).toContain('WORKDIR /app/services/agents')
+    expect(content).toContain('COPY --from=agents-build /app/services/agents/src ./src')
+    expect(content).toContain('CMD ["bun", "run", "src/server/index.ts"]')
+    expect(content).not.toContain('services/jangar')
+    expect(content).not.toContain('.output/server/index.mjs')
+  })
+
+  it('keeps the transitional Jangar server bundle isolated to the controller target', () => {
+    const content = dockerfileTarget('controller')
+
+    expect(content).toContain('COPY --from=jangar-build /app/services/jangar/.output/server ./.output/server')
+    expect(content).toContain('CMD ["bun", "run", ".output/server/index.mjs"]')
     expect(content).not.toContain('bun run build;')
   })
 
-  it('does not copy Jangar client assets into the Agents control-plane image', () => {
-    const content = dockerfile()
+  it('does not copy Jangar client assets into the transitional controller image', () => {
+    const content = dockerfileTarget('controller')
 
-    expect(content).toContain('rm -rf .output/public')
-    expect(content).toContain('COPY --from=agents-build /app/services/jangar/.output/server ./.output/server')
-    expect(content).not.toContain('COPY --from=agents-build /app/services/jangar/.output ./.output')
+    expect(dockerfile()).toContain('rm -rf .output/public')
+    expect(content).toContain('COPY --from=jangar-build /app/services/jangar/.output/server ./.output/server')
+    expect(content).not.toContain('COPY --from=jangar-build /app/services/jangar/.output ./.output')
   })
 
   it('starts the transitional server in the non-client Agents control-plane profile', () => {
-    expect(dockerfile()).toContain('AGENTS_SERVER_PROFILE=agents-control-plane')
+    expect(dockerfileTarget('control-plane')).toContain('AGENTS_SERVER_PROFILE=agents-control-plane')
   })
 })

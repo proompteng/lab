@@ -82,8 +82,21 @@ describe('agents build-image helpers', () => {
     })
   })
 
-  it('keeps the transitional prune scope explicit until the server output moves', () => {
-    expect(__private.parsePruneScopes(undefined)).toEqual(['@proompteng/jangar'])
+  it('uses the Agents workspace as the default control-plane prune scope', () => {
+    expect(__private.parsePruneScopes(undefined, 'control-plane')).toEqual([
+      '@proompteng/agents',
+      '@proompteng/otel',
+      '@proompteng/temporal-bun-sdk',
+    ])
+    expect(__private.parsePruneScopes(undefined, undefined)).toEqual([
+      '@proompteng/agents',
+      '@proompteng/otel',
+      '@proompteng/temporal-bun-sdk',
+    ])
+  })
+
+  it('keeps the transitional Jangar prune scope only for the controller target', () => {
+    expect(__private.parsePruneScopes(undefined, 'controller')).toEqual(['@proompteng/jangar'])
     expect(__private.parsePruneScopes('@proompteng/agents,@proompteng/jangar')).toEqual([
       '@proompteng/agents',
       '@proompteng/jangar',
