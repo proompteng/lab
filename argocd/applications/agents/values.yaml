@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/agents-controller
-  tag: 5bc1a257
-  digest: sha256:149e2ca521f18321c1208cf3f6259422a32ae001ab4046d6c8e975e495f77d8f
+  tag: f9cec68e
+  digest: sha256:fdc52618a930cb990ea4941bd9c5121f6fb96884a7cacbee286d7e093fb5083a
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
@@ -11,23 +11,23 @@ nodeSelector:
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-control-plane
-    tag: 5bc1a257
-    digest: sha256:df26b191fd483dd443f7d029c82495b5a2425d215416623ec06d2726f428d20d
+    tag: f9cec68e
+    digest: sha256:8b682f6f3aa373bada28601ec6d577fc38359be82e106740edad8c2075c6da89
   env:
     vars:
       AGENTS_CONTROL_PLANE_CACHE_ENABLED: "true"
-      AGENTS_SOURCE_HEAD_SHA: 5bc1a2572bd0b7eaf6562139de25e6723eff1c58
-      AGENTS_GITOPS_REVISION: 5bc1a2572bd0b7eaf6562139de25e6723eff1c58
-      AGENTS_SOURCE_CI_RUN_ID: "26067628823"
+      AGENTS_SOURCE_HEAD_SHA: f9cec68edfc15a16af4854dd7bd953e8e17ab407
+      AGENTS_GITOPS_REVISION: f9cec68edfc15a16af4854dd7bd953e8e17ab407
+      AGENTS_SOURCE_CI_RUN_ID: "26079648282"
       AGENTS_SOURCE_CI_CONCLUSION: success
-      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:df26b191fd483dd443f7d029c82495b5a2425d215416623ec06d2726f428d20d
-      AGENTS_SERVING_BUILD_COMMIT: 5bc1a2572bd0b7eaf6562139de25e6723eff1c58
-      AGENTS_SERVING_IMAGE_DIGEST: sha256:df26b191fd483dd443f7d029c82495b5a2425d215416623ec06d2726f428d20d
+      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:8b682f6f3aa373bada28601ec6d577fc38359be82e106740edad8c2075c6da89
+      AGENTS_SERVING_BUILD_COMMIT: f9cec68edfc15a16af4854dd7bd953e8e17ab407
+      AGENTS_SERVING_IMAGE_DIGEST: sha256:8b682f6f3aa373bada28601ec6d577fc38359be82e106740edad8c2075c6da89
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-codex-runner
-    tag: 5bc1a257
-    digest: sha256:fc557ddc77d0639d40c8048fae976b6d1484529784deb30c616328abd01ffad3
+    tag: f9cec68e
+    digest: sha256:1b91a53dd300e1f75da5e55f712e29da5a328b7a7c937e4fc060a5f712595f7e
 argocdHooks:
   enabled: true
   image:
@@ -82,8 +82,8 @@ controllers:
   replicaCount: 2
   image:
     repository: registry.ide-newton.ts.net/lab/agents-controller
-    tag: 5bc1a257
-    digest: sha256:149e2ca521f18321c1208cf3f6259422a32ae001ab4046d6c8e975e495f77d8f
+    tag: f9cec68e
+    digest: sha256:fdc52618a930cb990ea4941bd9c5121f6fb96884a7cacbee286d7e093fb5083a
   autoscaling:
     enabled: false
   env:
