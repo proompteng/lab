@@ -92,6 +92,22 @@ def _optional_int(value: object) -> int | None:
     return None
 
 
+def _optional_bool(value: object) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on", "pass", "passed", "ok", "ready"}:
+            return True
+        if normalized in {"0", "false", "no", "off", "fail", "failed", "blocked"}:
+            return False
+    return None
+
+
 def _parse_iso8601(value: object) -> datetime | None:
     if isinstance(value, datetime):
         parsed = value
@@ -118,6 +134,42 @@ def _decimal_to_string(value: Decimal) -> str:
     normalized = value.normalize()
     rendered = format(normalized, "f")
     return rendered.rstrip("0").rstrip(".") if "." in rendered else rendered
+
+
+_CAPITAL_STAGE_RANK = {
+    "shadow": 0,
+    "0.10x canary": 1,
+    "0.25x canary": 2,
+    "0.50x live": 3,
+    "1.00x live": 4,
+}
+_EVIDENCE_REFRESH_REASONS = {
+    "delay_adjusted_depth_stress_failed",
+    "delay_adjusted_depth_stress_missing",
+    "delay_adjusted_depth_stress_stale",
+    "drift_checks_missing",
+    "evidence_continuity_failed",
+    "evidence_continuity_missing",
+    "evidence_continuity_stale",
+    "feature_rows_missing",
+    "hypothesis_window_evidence_missing",
+    "hypothesis_window_evidence_stale",
+    "required_feature_set_unavailable",
+    "tca_evidence_stale",
+}
+_SAMPLE_REASONS = {"sample_count_below_canary_minimum", "route_universe_empty"}
+_EDGE_OR_COST_REASONS = {
+    "post_cost_expectancy_below_manifest_threshold",
+    "post_cost_expectancy_non_positive",
+    "slippage_budget_exceeded",
+}
+_DEPENDENCY_REASONS = {
+    "dependency_quorum_block",
+    "dependency_quorum_delay",
+    "jangar_dependency_block",
+    "jangar_dependency_delay",
+    "signal_continuity_alert_active",
+}
 
 
 def _normalize_dependency_capability(value: object) -> str | None:
@@ -154,6 +206,106 @@ def _resolve_required_dependency_capabilities(
 
 def _is_dependency_required(required: set[str], capability: str) -> bool:
     return capability in required
+
+
+def _candidate_blocker_class(reason_codes: Sequence[str]) -> str:
+    reasons = {reason for reason in reason_codes if reason}
+    if not reasons:
+        return "promotion_ready"
+    if reasons.intersection(_EVIDENCE_REFRESH_REASONS):
+        return "evidence_refresh"
+    if reasons.intersection(_SAMPLE_REASONS):
+        return "sample_count"
+    if reasons.intersection(_EDGE_OR_COST_REASONS):
+        return "edge_or_cost"
+    if reasons.intersection(_DEPENDENCY_REASONS):
+        return "dependency"
+    return "other"
+
+
+def _candidate_blocker_rank(blocker_class: str) -> int:
+    return {
+        "promotion_ready": 0,
+        "evidence_refresh": 1,
+        "sample_count": 2,
+        "edge_or_cost": 3,
+        "dependency": 4,
+        "other": 5,
+    }.get(blocker_class, 5)
+
+
+def _ranked_candidate_dossiers(
+    statuses: Sequence[Mapping[str, Any]],
+) -> list[dict[str, object]]:
+    dossiers: list[dict[str, object]] = []
+    for item in statuses:
+        observed_payload = item.get("observed")
+        observed: Mapping[str, Any] = (
+            cast(Mapping[str, Any], observed_payload)
+            if isinstance(observed_payload, Mapping)
+            else {}
+        )
+        reason_codes = sorted(
+            {
+                str(reason)
+                for reason in cast(Sequence[object], item.get("reasons") or [])
+                if str(reason).strip()
+            }
+        )
+        blocker_class = _candidate_blocker_class(reason_codes)
+        dossiers.append(
+            {
+                "hypothesis_id": str(item.get("hypothesis_id") or ""),
+                "candidate_id": item.get("candidate_id"),
+                "strategy_id": item.get("strategy_id"),
+                "lane_id": item.get("lane_id"),
+                "strategy_family": item.get("strategy_family"),
+                "state": item.get("state"),
+                "capital_stage": item.get("capital_stage"),
+                "capital_multiplier": item.get("capital_multiplier"),
+                "promotion_eligible": bool(item.get("promotion_eligible")),
+                "blocker_class": blocker_class,
+                "next_blocker": reason_codes[0] if reason_codes else None,
+                "reason_codes": reason_codes,
+                "observed": {
+                    "tca_order_count": observed.get("tca_order_count"),
+                    "avg_abs_slippage_bps": observed.get("avg_abs_slippage_bps"),
+                    "post_cost_expectancy_bps_proxy": observed.get(
+                        "post_cost_expectancy_bps_proxy"
+                    ),
+                    "feature_batch_rows_total": observed.get(
+                        "feature_batch_rows_total"
+                    ),
+                    "drift_detection_checks_total": observed.get(
+                        "drift_detection_checks_total"
+                    ),
+                    "delay_adjusted_depth_stress_checks_total": observed.get(
+                        "delay_adjusted_depth_stress_checks_total"
+                    ),
+                    "delay_adjusted_depth_stress_passed": observed.get(
+                        "delay_adjusted_depth_stress_passed"
+                    ),
+                },
+                "promotion_contract": item.get("promotion_contract"),
+            }
+        )
+
+    def sort_key(dossier: Mapping[str, object]) -> tuple[int, int, int, int, str]:
+        observed = cast(Mapping[str, object], dossier.get("observed") or {})
+        return (
+            _candidate_blocker_rank(str(dossier.get("blocker_class") or "other")),
+            -_CAPITAL_STAGE_RANK.get(str(dossier.get("capital_stage") or "shadow"), 0),
+            -(_optional_int(observed.get("tca_order_count")) or 0),
+            -int(
+                bool(dossier.get("candidate_id")) and bool(dossier.get("strategy_id"))
+            ),
+            str(dossier.get("hypothesis_id") or ""),
+        )
+
+    ranked = sorted(dossiers, key=sort_key)
+    for index, dossier in enumerate(ranked, start=1):
+        dossier["rank"] = index
+    return ranked
 
 
 def hypothesis_registry_requires_dependency_capability(
@@ -202,6 +354,9 @@ class HypothesisEntryRequirements(BaseModel):
     require_feature_rows: bool = True
     require_drift_checks: bool = True
     require_evidence_continuity: bool = True
+    require_delay_adjusted_depth_stress: bool = False
+    min_delay_adjusted_depth_stress_checks: int = 1
+    max_delay_adjusted_depth_stress_age_minutes: int | None = None
     required_dependency_quorum: Literal["allow", "allow_or_delay"] = "allow"
 
 
@@ -465,6 +620,14 @@ class _TcaReadinessInputs:
     route_missing_symbol_count: int
 
 
+@dataclass(frozen=True)
+class _DelayAdjustedDepthStressInputs:
+    check_count: int
+    passed: bool | None
+    checked_at: datetime | None
+    report_id: str | None
+
+
 def _weighted_decimal_average(
     rows: Sequence[Mapping[str, Any]],
     field_name: str,
@@ -492,6 +655,57 @@ def _latest_tca_timestamp(rows: Sequence[Mapping[str, Any]]) -> datetime | None:
         if parsed is not None and (latest is None or parsed > latest):
             latest = parsed
     return latest
+
+
+def _resolve_delay_adjusted_depth_stress_inputs(
+    *,
+    state: object,
+    readiness: Mapping[str, Any],
+) -> _DelayAdjustedDepthStressInputs:
+    metrics = getattr(state, "metrics", None)
+    report = _as_payload_dict(
+        readiness.get("delay_adjusted_depth_stress_report")
+        or readiness.get("delay_depth_stress_report")
+        or getattr(state, "last_delay_adjusted_depth_stress_report", None)
+        or getattr(state, "last_delay_depth_stress_report", None)
+    )
+    check_count = max(
+        0,
+        _optional_int(readiness.get("delay_adjusted_depth_stress_checks_total")) or 0,
+        _optional_int(readiness.get("delay_depth_stress_checks_total")) or 0,
+        _optional_int(getattr(metrics, "delay_adjusted_depth_stress_checks_total", 0))
+        or 0,
+        _optional_int(report.get("stress_case_count")) or 0,
+        _optional_int(report.get("case_count")) or 0,
+        _optional_int(report.get("trading_day_count")) or 0,
+    )
+    passed = _optional_bool(
+        readiness.get("delay_adjusted_depth_stress_passed")
+        or readiness.get("delay_depth_stress_passed")
+        or report.get("passed")
+        or report.get("ok")
+    )
+    checked_at = (
+        _parse_iso8601(readiness.get("delay_adjusted_depth_stress_checked_at"))
+        or _parse_iso8601(readiness.get("delay_depth_stress_checked_at"))
+        or _parse_iso8601(report.get("generated_at"))
+        or _parse_iso8601(report.get("checked_at"))
+    )
+    report_id = (
+        str(
+            report.get("report_id")
+            or report.get("artifact_ref")
+            or readiness.get("delay_adjusted_depth_stress_artifact_ref")
+            or ""
+        ).strip()
+        or None
+    )
+    return _DelayAdjustedDepthStressInputs(
+        check_count=check_count,
+        passed=passed,
+        checked_at=checked_at,
+        report_id=report_id,
+    )
 
 
 def _resolve_tca_readiness_inputs(
@@ -992,6 +1206,16 @@ def compile_hypothesis_runtime_statuses(
     market_context_freshness_seconds = _optional_int(
         market_context_status.get("last_freshness_seconds")
     )
+    delay_depth_stress = _resolve_delay_adjusted_depth_stress_inputs(
+        state=state,
+        readiness=readiness,
+    )
+    delay_depth_stress_age_minutes: int | None = None
+    if delay_depth_stress.checked_at is not None:
+        delay_depth_stress_age_minutes = max(
+            0,
+            int((now - delay_depth_stress.checked_at).total_seconds() / 60),
+        )
 
     statuses: list[dict[str, object]] = []
     for manifest in registry.items:
@@ -1049,6 +1273,21 @@ def compile_hypothesis_runtime_statuses(
                 and evidence_age_minutes > requirements.max_evidence_age_minutes
             ):
                 reasons.append("evidence_continuity_stale")
+        if requirements.require_delay_adjusted_depth_stress:
+            if (
+                delay_depth_stress.check_count
+                < requirements.min_delay_adjusted_depth_stress_checks
+            ):
+                reasons.append("delay_adjusted_depth_stress_missing")
+            elif delay_depth_stress.passed is False:
+                reasons.append("delay_adjusted_depth_stress_failed")
+            if (
+                requirements.max_delay_adjusted_depth_stress_age_minutes is not None
+                and delay_depth_stress_age_minutes is not None
+                and delay_depth_stress_age_minutes
+                > requirements.max_delay_adjusted_depth_stress_age_minutes
+            ):
+                reasons.append("delay_adjusted_depth_stress_stale")
         max_signal_lag_seconds = requirements.max_signal_lag_seconds
         if max_signal_lag_seconds is not None:
             signal_lag_unmeasured_without_features = (
@@ -1188,10 +1427,7 @@ def compile_hypothesis_runtime_statuses(
                         capital_stage = "0.10x canary"
                         capital_multiplier = Decimal("0.10")
 
-        if manifest.initial_state == "blocked" and (
-            "required_feature_set_unavailable" in reasons
-            or "feature_rows_missing" in reasons
-        ):
+        if manifest.initial_state == "blocked" and readiness_blockers:
             state_name: HypothesisState = "blocked"
             capital_stage = "shadow"
             capital_multiplier = Decimal("0")
@@ -1210,6 +1446,10 @@ def compile_hypothesis_runtime_statuses(
             "evidence_continuity_checks_total": evidence_continuity_checks_total,
             "evidence_continuity_ok": evidence_ok,
             "evidence_age_minutes": evidence_age_minutes,
+            "delay_adjusted_depth_stress_checks_total": delay_depth_stress.check_count,
+            "delay_adjusted_depth_stress_passed": delay_depth_stress.passed,
+            "delay_adjusted_depth_stress_age_minutes": delay_depth_stress_age_minutes,
+            "delay_adjusted_depth_stress_report_id": delay_depth_stress.report_id,
             "market_context_freshness_seconds": market_context_freshness_seconds,
             "tca_order_count": tca_inputs.order_count,
             "tca_last_computed_at": (
@@ -1267,6 +1507,15 @@ def compile_hypothesis_runtime_statuses(
                     "max_market_context_freshness_seconds": requirements.max_market_context_freshness_seconds,
                     "max_evidence_age_minutes": requirements.max_evidence_age_minutes,
                     "min_feature_batch_rows": requirements.min_feature_batch_rows,
+                    "require_delay_adjusted_depth_stress": (
+                        requirements.require_delay_adjusted_depth_stress
+                    ),
+                    "min_delay_adjusted_depth_stress_checks": (
+                        requirements.min_delay_adjusted_depth_stress_checks
+                    ),
+                    "max_delay_adjusted_depth_stress_age_minutes": (
+                        requirements.max_delay_adjusted_depth_stress_age_minutes
+                    ),
                 },
                 "promotion_contract": {
                     "min_sample_count_for_live_canary": manifest.min_sample_count_for_live_canary,
@@ -1329,11 +1578,15 @@ def summarize_hypothesis_runtime_statuses(
     rollback_required_total = sum(
         1 for item in statuses if bool(item.get("rollback_required"))
     )
+    ranked_candidates = _ranked_candidate_dossiers(statuses)
     return {
+        "candidate_dossier_version": "torghut.hypothesis-candidate-dossier.v1",
         "registry_loaded": registry.loaded,
         "registry_path": registry.path,
         "registry_errors": list(registry.errors),
         "hypotheses_total": len(statuses),
+        "ranked_candidates": ranked_candidates,
+        "selected_candidate": ranked_candidates[0] if ranked_candidates else None,
         "state_totals": dict(sorted(state_totals.items())),
         "reason_totals": dict(sorted(reason_totals.items())),
         "informational_reason_totals": dict(

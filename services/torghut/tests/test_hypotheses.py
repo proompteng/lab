@@ -17,6 +17,7 @@ from app.trading.hypotheses import (
     hypothesis_registry_requires_dependency_capability,
     load_hypothesis_registry,
     load_jangar_dependency_quorum,
+    _optional_bool,
     _optional_decimal,
     _sequence,
     _weighted_decimal_average,
@@ -145,6 +146,14 @@ class TestHypothesisReadiness(TestCase):
         self.assertEqual(_optional_decimal("2.50"), Decimal("2.50"))
         self.assertIsNone(_optional_decimal("not-a-decimal"))
         self.assertIsNone(_optional_decimal([]))
+        self.assertIsNone(_optional_bool(None))
+        self.assertTrue(_optional_bool(True))
+        self.assertFalse(_optional_bool(False))
+        self.assertTrue(_optional_bool(1))
+        self.assertFalse(_optional_bool(0))
+        self.assertTrue(_optional_bool("passed"))
+        self.assertFalse(_optional_bool("blocked"))
+        self.assertIsNone(_optional_bool("unknown"))
         self.assertEqual(_sequence("AAPL"), ())
         self.assertIsNone(
             _weighted_decimal_average(
@@ -318,6 +327,161 @@ class TestHypothesisReadiness(TestCase):
         self.assertTrue(cont["promotion_eligible"])
         self.assertEqual(rev["state"], "canary_live")
         self.assertEqual(cont["observed"]["tca_age_minutes"], 10)
+
+    def test_compile_hypothesis_runtime_statuses_blocks_h_micro_without_delay_depth_stress(
+        self,
+    ) -> None:
+        registry = load_hypothesis_registry()
+        state = _state(
+            feature_rows=5,
+            drift_checks=3,
+            evidence_checks=2,
+            signal_lag_seconds=15,
+            evidence_report={
+                "ok": True,
+                "checked_at": "2026-03-06T15:45:00+00:00",
+            },
+        )
+
+        statuses = compile_hypothesis_runtime_statuses(
+            registry=registry,
+            state=state,
+            tca_summary={
+                "order_count": 80,
+                "avg_abs_slippage_bps": 4,
+                "avg_realized_shortfall_bps": -12,
+                "last_computed_at": "2026-03-06T15:50:00+00:00",
+            },
+            market_context_status={"last_freshness_seconds": 60},
+            jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                decision="allow",
+                reasons=[],
+                message="ok",
+            ),
+            feature_readiness={"order_book_liquidity_rows": 5},
+            now=datetime(2026, 3, 6, 16, 0, tzinfo=timezone.utc),
+        )
+
+        micro = next(item for item in statuses if item["hypothesis_id"] == "H-MICRO-01")
+        self.assertFalse(micro["promotion_eligible"])
+        self.assertEqual(micro["state"], "blocked")
+        self.assertIn("delay_adjusted_depth_stress_missing", micro["reasons"])
+        self.assertEqual(
+            micro["observed"]["delay_adjusted_depth_stress_checks_total"],
+            0,
+        )
+        self.assertEqual(
+            micro["entry_contract"]["max_delay_adjusted_depth_stress_age_minutes"],
+            30,
+        )
+
+    def test_compile_hypothesis_runtime_statuses_promotes_h_micro_with_delay_depth_stress(
+        self,
+    ) -> None:
+        registry = load_hypothesis_registry()
+        state = _state(
+            feature_rows=5,
+            drift_checks=3,
+            evidence_checks=2,
+            signal_lag_seconds=15,
+            evidence_report={
+                "ok": True,
+                "checked_at": "2026-03-06T15:45:00+00:00",
+            },
+        )
+
+        statuses = compile_hypothesis_runtime_statuses(
+            registry=registry,
+            state=state,
+            tca_summary={
+                "order_count": 80,
+                "avg_abs_slippage_bps": 4,
+                "avg_realized_shortfall_bps": -12,
+                "last_computed_at": "2026-03-06T15:50:00+00:00",
+            },
+            market_context_status={"last_freshness_seconds": 60},
+            jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                decision="allow",
+                reasons=[],
+                message="ok",
+            ),
+            feature_readiness={
+                "order_book_liquidity_rows": 5,
+                "delay_adjusted_depth_stress_checks_total": 1,
+                "delay_adjusted_depth_stress_passed": True,
+                "delay_adjusted_depth_stress_checked_at": "2026-03-06T15:55:00+00:00",
+                "delay_adjusted_depth_stress_artifact_ref": "proof/h-micro-delay-depth.json",
+            },
+            now=datetime(2026, 3, 6, 16, 0, tzinfo=timezone.utc),
+        )
+
+        micro = next(item for item in statuses if item["hypothesis_id"] == "H-MICRO-01")
+        self.assertTrue(micro["promotion_eligible"])
+        self.assertEqual(micro["state"], "canary_live")
+        self.assertEqual(micro["capital_stage"], "0.25x canary")
+        self.assertEqual(micro["capital_multiplier"], "0.25")
+        self.assertNotIn("delay_adjusted_depth_stress_missing", micro["reasons"])
+        self.assertEqual(
+            micro["observed"]["delay_adjusted_depth_stress_age_minutes"],
+            5,
+        )
+        self.assertEqual(
+            micro["observed"]["delay_adjusted_depth_stress_report_id"],
+            "proof/h-micro-delay-depth.json",
+        )
+
+    def test_compile_hypothesis_runtime_statuses_blocks_h_micro_on_failed_or_stale_delay_depth_stress(
+        self,
+    ) -> None:
+        registry = load_hypothesis_registry()
+        state = _state(
+            feature_rows=5,
+            drift_checks=3,
+            evidence_checks=2,
+            signal_lag_seconds=15,
+            evidence_report={
+                "ok": True,
+                "checked_at": "2026-03-06T15:45:00+00:00",
+            },
+        )
+
+        statuses = compile_hypothesis_runtime_statuses(
+            registry=registry,
+            state=state,
+            tca_summary={
+                "order_count": 80,
+                "avg_abs_slippage_bps": 4,
+                "avg_realized_shortfall_bps": -12,
+                "last_computed_at": "2026-03-06T15:50:00+00:00",
+            },
+            market_context_status={"last_freshness_seconds": 60},
+            jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                decision="allow",
+                reasons=[],
+                message="ok",
+            ),
+            feature_readiness={
+                "order_book_liquidity_rows": 5,
+                "delay_adjusted_depth_stress_report": {
+                    "case_count": 1,
+                    "passed": "failed",
+                    "generated_at": "2026-03-06T15:00:00+00:00",
+                    "report_id": "proof/h-micro-delay-depth-failed.json",
+                },
+            },
+            now=datetime(2026, 3, 6, 16, 0, tzinfo=timezone.utc),
+        )
+
+        micro = next(item for item in statuses if item["hypothesis_id"] == "H-MICRO-01")
+        self.assertFalse(micro["promotion_eligible"])
+        self.assertEqual(micro["state"], "blocked")
+        self.assertIn("delay_adjusted_depth_stress_failed", micro["reasons"])
+        self.assertIn("delay_adjusted_depth_stress_stale", micro["reasons"])
+        self.assertEqual(micro["observed"]["delay_adjusted_depth_stress_passed"], False)
+        self.assertEqual(
+            micro["observed"]["delay_adjusted_depth_stress_report_id"],
+            "proof/h-micro-delay-depth-failed.json",
+        )
 
     def test_compile_hypothesis_runtime_statuses_uses_route_filtered_tca_when_enabled(
         self,
@@ -597,7 +761,7 @@ class TestHypothesisReadiness(TestCase):
                 message="ok",
             ),
         )
-        self.assertEqual(summary["reason_totals"]["slippage_budget_exceeded"], 5)
+        self.assertEqual(summary["reason_totals"]["slippage_budget_exceeded"], 4)
         self.assertEqual(
             summary["informational_reason_totals"]["closed_session_signal_hold"], 5
         )
@@ -781,6 +945,21 @@ class TestHypothesisReadiness(TestCase):
         )
 
         self.assertEqual(summary["hypotheses_total"], 5)
+        self.assertEqual(
+            summary["candidate_dossier_version"],
+            "torghut.hypothesis-candidate-dossier.v1",
+        )
+        self.assertEqual(len(summary["ranked_candidates"]), 5)
+        self.assertIsNotNone(summary["selected_candidate"])
+        self.assertEqual(summary["selected_candidate"]["hypothesis_id"], "H-MICRO-01")
+        self.assertEqual(
+            summary["selected_candidate"]["candidate_id"],
+            "chip-paper-microbar-composite@execution-proof",
+        )
+        self.assertEqual(
+            summary["selected_candidate"]["next_blocker"],
+            "delay_adjusted_depth_stress_missing",
+        )
         self.assertEqual(summary["state_totals"], {"blocked": 3, "shadow": 2})
         self.assertEqual(summary["capital_stage_totals"], {"shadow": 5})
         self.assertEqual(summary["promotion_eligible_total"], 0)
