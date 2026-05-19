@@ -1,6 +1,6 @@
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
-import { PROVIDER_CAPACITY_EXHAUSTED_REASON } from '@proompteng/agents/server/agents-controller/provider-capacity'
+import { PROVIDER_CAPACITY_EXHAUSTED_REASON } from '~/server/provider-capacity-reasons'
 import { hashNameSuffix, makeHashedName } from '~/server/supporting-primitives-naming'
 import {
   deriveStageStaggerMinute,

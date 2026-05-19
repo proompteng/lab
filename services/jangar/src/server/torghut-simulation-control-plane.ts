@@ -1,10 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { posix as pathPosix } from 'node:path'
 
-import { stableJsonStringifyForHash } from '@proompteng/agents/server/agents-controller/template-hash'
 import { getDb } from '~/server/db'
 import { ensureMigrations } from '~/server/kysely-migrations'
 import { createKubernetesClient } from '~/server/primitives-kube'
+import { stableJsonStringifyForHash } from '~/server/stable-json-hash'
 import { resolveTorghutSimulationStorageConfig } from './torghut-config'
 
 type JsonRecord = Record<string, unknown>
