@@ -139,7 +139,6 @@ import { Route as ApiTerminalsSessionIdInputRouteImport } from './routes/api/ter
 import { Route as ApiTerminalsSessionIdDeleteRouteImport } from './routes/api/terminals/$sessionId/delete'
 import { Route as ApiCodexRunsRecentRouteImport } from './routes/api/codex/runs/recent'
 import { Route as ApiCodexRunsListRouteImport } from './routes/api/codex/runs/list'
-import { Route as ApiAgentsControlPlaneSummaryRouteImport } from './routes/api/agents/control-plane/summary'
 import { Route as ApiAgentsControlPlaneStreamRouteImport } from './routes/api/agents/control-plane/stream'
 import { Route as ApiAgentsControlPlaneStatusRouteImport } from './routes/api/agents/control-plane/status'
 import { Route as ApiAgentsControlPlaneResourcesRouteImport } from './routes/api/agents/control-plane/resources'
@@ -884,12 +883,6 @@ const ApiCodexRunsListRoute = ApiCodexRunsListRouteImport.update({
   path: '/list',
   getParentRoute: () => ApiCodexRunsRoute,
 } as any)
-const ApiAgentsControlPlaneSummaryRoute =
-  ApiAgentsControlPlaneSummaryRouteImport.update({
-    id: '/api/agents/control-plane/summary',
-    path: '/api/agents/control-plane/summary',
-    getParentRoute: () => rootRouteImport,
-  } as any)
 const ApiAgentsControlPlaneStreamRoute =
   ApiAgentsControlPlaneStreamRouteImport.update({
     id: '/api/agents/control-plane/stream',
@@ -1219,7 +1212,6 @@ export interface FileRoutesByFullPath {
   '/api/agents/control-plane/resources': typeof ApiAgentsControlPlaneResourcesRoute
   '/api/agents/control-plane/status': typeof ApiAgentsControlPlaneStatusRoute
   '/api/agents/control-plane/stream': typeof ApiAgentsControlPlaneStreamRoute
-  '/api/agents/control-plane/summary': typeof ApiAgentsControlPlaneSummaryRoute
   '/api/codex/runs/list': typeof ApiCodexRunsListRoute
   '/api/codex/runs/recent': typeof ApiCodexRunsRecentRoute
   '/api/terminals/$sessionId/delete': typeof ApiTerminalsSessionIdDeleteRoute
@@ -1387,7 +1379,6 @@ export interface FileRoutesByTo {
   '/api/agents/control-plane/resources': typeof ApiAgentsControlPlaneResourcesRoute
   '/api/agents/control-plane/status': typeof ApiAgentsControlPlaneStatusRoute
   '/api/agents/control-plane/stream': typeof ApiAgentsControlPlaneStreamRoute
-  '/api/agents/control-plane/summary': typeof ApiAgentsControlPlaneSummaryRoute
   '/api/codex/runs/list': typeof ApiCodexRunsListRoute
   '/api/codex/runs/recent': typeof ApiCodexRunsRecentRoute
   '/api/terminals/$sessionId/delete': typeof ApiTerminalsSessionIdDeleteRoute
@@ -1558,7 +1549,6 @@ export interface FileRoutesById {
   '/api/agents/control-plane/resources': typeof ApiAgentsControlPlaneResourcesRoute
   '/api/agents/control-plane/status': typeof ApiAgentsControlPlaneStatusRoute
   '/api/agents/control-plane/stream': typeof ApiAgentsControlPlaneStreamRoute
-  '/api/agents/control-plane/summary': typeof ApiAgentsControlPlaneSummaryRoute
   '/api/codex/runs/list': typeof ApiCodexRunsListRoute
   '/api/codex/runs/recent': typeof ApiCodexRunsRecentRoute
   '/api/terminals/$sessionId/delete': typeof ApiTerminalsSessionIdDeleteRoute
@@ -1730,7 +1720,6 @@ export interface FileRouteTypes {
     | '/api/agents/control-plane/resources'
     | '/api/agents/control-plane/status'
     | '/api/agents/control-plane/stream'
-    | '/api/agents/control-plane/summary'
     | '/api/codex/runs/list'
     | '/api/codex/runs/recent'
     | '/api/terminals/$sessionId/delete'
@@ -1898,7 +1887,6 @@ export interface FileRouteTypes {
     | '/api/agents/control-plane/resources'
     | '/api/agents/control-plane/status'
     | '/api/agents/control-plane/stream'
-    | '/api/agents/control-plane/summary'
     | '/api/codex/runs/list'
     | '/api/codex/runs/recent'
     | '/api/terminals/$sessionId/delete'
@@ -2068,7 +2056,6 @@ export interface FileRouteTypes {
     | '/api/agents/control-plane/resources'
     | '/api/agents/control-plane/status'
     | '/api/agents/control-plane/stream'
-    | '/api/agents/control-plane/summary'
     | '/api/codex/runs/list'
     | '/api/codex/runs/recent'
     | '/api/terminals/$sessionId/delete'
@@ -2232,7 +2219,6 @@ export interface RootRouteChildren {
   ApiAgentsControlPlaneResourcesRoute: typeof ApiAgentsControlPlaneResourcesRoute
   ApiAgentsControlPlaneStatusRoute: typeof ApiAgentsControlPlaneStatusRoute
   ApiAgentsControlPlaneStreamRoute: typeof ApiAgentsControlPlaneStreamRoute
-  ApiAgentsControlPlaneSummaryRoute: typeof ApiAgentsControlPlaneSummaryRoute
   ApiTorghutDecisionEngineRunsRoute: typeof ApiTorghutDecisionEngineRunsRouteWithChildren
   ApiTorghutDecisionEngineStreamRoute: typeof ApiTorghutDecisionEngineStreamRoute
   ApiTorghutMarketContextHealthRoute: typeof ApiTorghutMarketContextHealthRoute
@@ -3184,13 +3170,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiCodexRunsListRouteImport
       parentRoute: typeof ApiCodexRunsRoute
     }
-    '/api/agents/control-plane/summary': {
-      id: '/api/agents/control-plane/summary'
-      path: '/api/agents/control-plane/summary'
-      fullPath: '/api/agents/control-plane/summary'
-      preLoaderRoute: typeof ApiAgentsControlPlaneSummaryRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/api/agents/control-plane/stream': {
       id: '/api/agents/control-plane/stream'
       path: '/api/agents/control-plane/stream'
@@ -3783,7 +3762,6 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAgentsControlPlaneResourcesRoute: ApiAgentsControlPlaneResourcesRoute,
   ApiAgentsControlPlaneStatusRoute: ApiAgentsControlPlaneStatusRoute,
   ApiAgentsControlPlaneStreamRoute: ApiAgentsControlPlaneStreamRoute,
-  ApiAgentsControlPlaneSummaryRoute: ApiAgentsControlPlaneSummaryRoute,
   ApiTorghutDecisionEngineRunsRoute:
     ApiTorghutDecisionEngineRunsRouteWithChildren,
   ApiTorghutDecisionEngineStreamRoute: ApiTorghutDecisionEngineStreamRoute,

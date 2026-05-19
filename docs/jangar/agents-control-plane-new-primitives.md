@@ -75,7 +75,7 @@ All routes live under `/agents-control-plane` and use the same namespace + label
 - `GET /api/agents/control-plane/resource?kind=<Kind>&name=<name>&namespace=<ns>`
 - `GET /api/agents/control-plane/events?kind=<Kind>&name=<name>&namespace=<ns>&uid=<uid>`
 - `GET /api/agents/control-plane/stream?namespace=<ns>` (SSE resource updates)
-- `GET /api/agents/control-plane/summary?namespace=<ns>`
+- `GET http://agents.agents.svc.cluster.local/api/agents/control-plane/summary?namespace=<ns>`
 
 These endpoints are sufficient for list/detail/event rendering as long as each primitive kind is registered in the
 control-plane kind resolver and resource map.
