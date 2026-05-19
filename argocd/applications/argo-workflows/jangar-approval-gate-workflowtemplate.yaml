@@ -32,7 +32,7 @@ spec:
           - name: policyRef
           - name: policyNamespace
       script:
-        image: registry.ide-newton.ts.net/lab/jangar:8e480ce4
+        image: registry.ide-newton.ts.net/lab/agents-controller:3b6c02e9
         env:
           - name: GITHUB_TOKEN
             valueFrom:

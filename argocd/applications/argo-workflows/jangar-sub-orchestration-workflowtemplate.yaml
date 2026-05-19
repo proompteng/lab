@@ -19,7 +19,7 @@ spec:
           - name: deliveryId
             default: ''
       script:
-        image: registry.ide-newton.ts.net/lab/jangar:8e480ce4
+        image: registry.ide-newton.ts.net/lab/agents-controller:3b6c02e9
         env:
           - name: GITHUB_TOKEN
             valueFrom:
@@ -44,23 +44,37 @@ spec:
             exit 1
           fi
 
-          params_json="$(printf '%s' "${parameters_raw}" | jq -R -c 'if length == 0 then {} else (try fromjson catch {}) end')"
-
-          jq -n \
-            --arg orchestration_ref "${orchestration_ref}" \
-            --arg namespace "${namespace}" \
-            --arg delivery_id "${delivery_id}" \
-            --argjson params "${params_json}" \
-            '{
-              apiVersion: "orchestration.proompteng.ai/v1alpha1",
-              kind: "OrchestrationRun",
-              metadata: {
-                generateName: ($orchestration_ref + "-run-"),
-                namespace: $namespace
-              },
-              spec: {
-                orchestrationRef: { name: $orchestration_ref },
-                parameters: $params
-              }
-            } | (if $delivery_id != "" then .spec.deliveryId = $delivery_id else . end)' \
-            | kubectl create -f -
+          PARAMETERS_RAW="${parameters_raw}" \
+          ORCHESTRATION_REF="${orchestration_ref}" \
+          ORCHESTRATION_NAMESPACE="${namespace}" \
+          DELIVERY_ID="${delivery_id}" \
+            bun <<'JS' | kubectl create -f -
+          const raw = process.env.PARAMETERS_RAW ?? ''
+          let parameters = {}
+          if (raw.trim()) {
+            try {
+              parameters = JSON.parse(raw)
+            } catch {
+              parameters = {}
+            }
+          }
+          const orchestrationRef = process.env.ORCHESTRATION_REF ?? ''
+          const namespace = process.env.ORCHESTRATION_NAMESPACE ?? ''
+          const deliveryId = process.env.DELIVERY_ID ?? ''
+          const manifest = {
+            apiVersion: 'orchestration.proompteng.ai/v1alpha1',
+            kind: 'OrchestrationRun',
+            metadata: {
+              generateName: `${orchestrationRef}-run-`,
+              namespace,
+            },
+            spec: {
+              orchestrationRef: { name: orchestrationRef },
+              parameters,
+            },
+          }
+          if (deliveryId) {
+            manifest.spec.deliveryId = deliveryId
+          }
+          console.log(JSON.stringify(manifest))
+          JS

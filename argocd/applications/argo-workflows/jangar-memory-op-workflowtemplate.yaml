@@ -19,7 +19,7 @@ spec:
           - name: namespace
             default: ''
       script:
-        image: registry.ide-newton.ts.net/lab/jangar:8e480ce4
+        image: registry.ide-newton.ts.net/lab/agents-controller:3b6c02e9
         env:
           - name: GITHUB_TOKEN
             valueFrom:
@@ -188,7 +188,7 @@ spec:
           export PAYLOAD_B64="${payload_b64}"
           export EMBEDDING_DIM="${embedding_dim:-1536}"
 
-          cat <<'NODE' > /tmp/jangar-memory-op.mjs
+          cat <<'NODE' > /tmp/agents-memory-op.mjs
           import { createHash } from 'node:crypto'
           import { Pool } from 'pg'
 
@@ -309,4 +309,4 @@ spec:
           await pool.end()
           NODE
 
-          bun /tmp/jangar-memory-op.mjs
+          bun /tmp/agents-memory-op.mjs
