@@ -4,9 +4,12 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
 import type { CodexAppServerOptions, CodexAppServerTurnOptions, StreamDelta, Turn } from '@proompteng/codex'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
+  CodexRunnerClientError,
+  CodexRunnerInputError,
+  CodexRunnerTurnError,
   DEFAULT_CODEX_BINARY_PATH,
   resolveCodexBinaryPath,
   runCodexAppServerAdapter,
@@ -211,5 +214,114 @@ describe('codex app-server runner adapter', () => {
       'git fetch --prune --depth=1 origin +refs/heads/codex/test:refs/remotes/origin/codex/test',
     )
     expect(commands).toContain('git checkout -B codex/test refs/remotes/origin/codex/test')
+  })
+
+  it('writes failed status and throws a typed input error when run payload JSON is invalid', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
+    const runPath = join(dir, 'run.json')
+    const statusPath = join(dir, 'status.json')
+    await writeFile(runPath, '{bad-json', 'utf8')
+
+    await expect(
+      runCodexAppServerAdapter(
+        {
+          provider: 'codex-runner',
+          payloads: { eventFilePath: runPath },
+          artifacts: { statusPath },
+        },
+        {},
+        {
+          createClient: () => {
+            throw new Error('client should not start')
+          },
+        },
+      ),
+    ).rejects.toBeInstanceOf(CodexRunnerInputError)
+
+    const status = JSON.parse(await readFile(statusPath, 'utf8')) as Record<string, unknown>
+    expect(status).toMatchObject({
+      provider: 'codex-runner',
+      adapter: 'codex-app-server',
+      exitCode: 1,
+      status: 'failed',
+    })
+    expect(String(status.error)).toContain('CodexRunnerInputError')
+    expect(String(status.error)).toContain(runPath)
+  })
+
+  it('categorizes client construction failures and writes failed status', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
+    const runPath = join(dir, 'run.json')
+    const statusPath = join(dir, 'status.json')
+    await writeFile(runPath, `${JSON.stringify({ implementation: { text: 'start client' } })}\n`, 'utf8')
+
+    await expect(
+      runCodexAppServerAdapter(
+        {
+          provider: 'codex-runner',
+          payloads: { eventFilePath: runPath },
+          artifacts: { statusPath },
+        },
+        {},
+        {
+          createClient: () => {
+            throw new Error('missing codex binary')
+          },
+        },
+      ),
+    ).rejects.toBeInstanceOf(CodexRunnerClientError)
+
+    const status = JSON.parse(await readFile(statusPath, 'utf8')) as Record<string, unknown>
+    expect(status).toMatchObject({
+      exitCode: 1,
+      status: 'failed',
+    })
+    expect(String(status.error)).toContain('CodexRunnerClientError')
+    expect(String(status.error)).toContain('missing codex binary')
+  })
+
+  it('categorizes stream failures and still stops the app-server client', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
+    const runPath = join(dir, 'run.json')
+    const statusPath = join(dir, 'status.json')
+    await writeFile(runPath, `${JSON.stringify({ implementation: { text: 'fail during stream' } })}\n`, 'utf8')
+
+    const stop = vi.fn()
+    const stream = async function* (): AsyncGenerator<StreamDelta, Turn | null, void> {
+      yield { type: 'message', delta: 'starting' }
+      throw new Error('stream disconnected')
+    }
+
+    await expect(
+      runCodexAppServerAdapter(
+        {
+          provider: 'codex-runner',
+          payloads: { eventFilePath: runPath },
+          artifacts: { statusPath },
+        },
+        {},
+        {
+          createClient: () => ({
+            runTurnStream: async () => ({
+              stream: stream(),
+              turnId: 'turn-stream',
+              threadId: 'thread-stream',
+            }),
+            stop,
+          }),
+        },
+      ),
+    ).rejects.toBeInstanceOf(CodexRunnerTurnError)
+
+    expect(stop).toHaveBeenCalledTimes(1)
+    const status = JSON.parse(await readFile(statusPath, 'utf8')) as Record<string, unknown>
+    expect(status).toMatchObject({
+      exitCode: 1,
+      status: 'failed',
+      threadId: 'thread-stream',
+      turnId: 'turn-stream',
+    })
+    expect(String(status.error)).toContain('CodexRunnerTurnError')
+    expect(String(status.error)).toContain('stream disconnected')
   })
 })

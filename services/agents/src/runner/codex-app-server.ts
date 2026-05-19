@@ -10,6 +10,7 @@ import {
   type StreamDelta,
   type Turn,
 } from '@proompteng/codex'
+import { Context, Data, Effect, Layer, ManagedRuntime } from 'effect'
 
 import { ensureFileDirectory } from '../../scripts/codex/lib/fs'
 
@@ -70,6 +71,63 @@ type CommandResult = {
 
 type CommandRunner = (command: string, args: string[], options?: { cwd?: string }) => Promise<CommandResult>
 
+export class CodexRunnerInputError extends Data.TaggedError('CodexRunnerInputError')<{
+  readonly operation: 'load-payload' | 'resolve-prompt'
+  readonly path?: string
+  readonly cause: unknown
+}> {}
+
+export class CodexRunnerWorkspaceError extends Data.TaggedError('CodexRunnerWorkspaceError')<{
+  readonly operation: 'prepare-cwd' | 'run-command'
+  readonly command?: string
+  readonly cwd?: string
+  readonly cause: unknown
+}> {}
+
+export class CodexRunnerClientError extends Data.TaggedError('CodexRunnerClientError')<{
+  readonly operation: 'create-client'
+  readonly cause: unknown
+}> {}
+
+export class CodexRunnerTurnError extends Data.TaggedError('CodexRunnerTurnError')<{
+  readonly operation: 'start-turn' | 'stream-turn'
+  readonly threadId?: string
+  readonly turnId?: string
+  readonly cause: unknown
+}> {}
+
+export class CodexRunnerStatusError extends Data.TaggedError('CodexRunnerStatusError')<{
+  readonly operation: 'write-status'
+  readonly path?: string
+  readonly cause: unknown
+}> {}
+
+export type CodexRunnerError =
+  | CodexRunnerInputError
+  | CodexRunnerWorkspaceError
+  | CodexRunnerClientError
+  | CodexRunnerTurnError
+  | CodexRunnerStatusError
+
+export type CodexAppServerClientFactoryService = {
+  create: (options: CodexAppServerOptions) => Effect.Effect<CodexAppServerRunnerClient, CodexRunnerClientError>
+}
+
+export class CodexAppServerClientFactory extends Context.Tag('CodexAppServerClientFactory')<
+  CodexAppServerClientFactory,
+  CodexAppServerClientFactoryService
+>() {}
+
+export type RunnerCommandService = {
+  run: (
+    command: string,
+    args: string[],
+    options?: { cwd?: string },
+  ) => Effect.Effect<CommandResult, CodexRunnerWorkspaceError>
+}
+
+export class RunnerCommand extends Context.Tag('RunnerCommand')<RunnerCommand, RunnerCommandService>() {}
+
 type VcsWorkspaceContext = {
   repository: string
   cloneBaseUrl: string
@@ -85,6 +143,30 @@ const timestampUtc = (now: () => Date): string =>
 
 const toErrorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
+const describeRunnerError = (error: unknown) => {
+  if (error instanceof CodexRunnerInputError) {
+    return `${error._tag}: ${error.operation}${error.path ? ` ${error.path}` : ''}: ${toErrorMessage(error.cause)}`
+  }
+  if (error instanceof CodexRunnerWorkspaceError) {
+    const command = error.command ? ` ${error.command}` : ''
+    const cwd = error.cwd ? ` in ${error.cwd}` : ''
+    return `${error._tag}: ${error.operation}${command}${cwd}: ${toErrorMessage(error.cause)}`
+  }
+  if (error instanceof CodexRunnerClientError) {
+    return `${error._tag}: ${error.operation}: ${toErrorMessage(error.cause)}`
+  }
+  if (error instanceof CodexRunnerTurnError) {
+    const ids = [error.threadId ? `thread=${error.threadId}` : null, error.turnId ? `turn=${error.turnId}` : null]
+      .filter(Boolean)
+      .join(' ')
+    return `${error._tag}: ${error.operation}${ids ? ` ${ids}` : ''}: ${toErrorMessage(error.cause)}`
+  }
+  if (error instanceof CodexRunnerStatusError) {
+    return `${error._tag}: ${error.operation}${error.path ? ` ${error.path}` : ''}: ${toErrorMessage(error.cause)}`
+  }
+  return toErrorMessage(error)
+}
+
 const readNested = (value: unknown, path: string[]): unknown => {
   let current = value
   for (const segment of path) {
@@ -95,12 +177,16 @@ const readNested = (value: unknown, path: string[]): unknown => {
 }
 
 const readJsonFile = async (path: string): Promise<AgentRunPayload> => {
-  const raw = await readFile(path, 'utf8')
-  const parsed = JSON.parse(raw) as unknown
-  if (!isRecord(parsed)) {
-    throw new Error(`Expected JSON object in ${path}`)
+  try {
+    const raw = await readFile(path, 'utf8')
+    const parsed = JSON.parse(raw) as unknown
+    if (!isRecord(parsed)) {
+      throw new Error(`Expected JSON object in ${path}`)
+    }
+    return parsed
+  } catch (error) {
+    throw new CodexRunnerInputError({ operation: 'load-payload', path, cause: error })
   }
-  return parsed
 }
 
 const loadRunPayload = async (spec: AgentRunnerSpec): Promise<AgentRunPayload> => {
@@ -134,7 +220,7 @@ const isDirectory = async (path: string): Promise<boolean> => {
   }
 }
 
-const runCommand: CommandRunner = (command, args, options = {}) =>
+const runProcessCommand: CommandRunner = (command, args, options = {}) =>
   new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
@@ -155,10 +241,58 @@ const runCommand: CommandRunner = (command, args, options = {}) =>
     })
   })
 
+export const RunnerCommandLive = Layer.succeed(RunnerCommand, {
+  run: (command, args, options) =>
+    Effect.tryPromise({
+      try: () => runProcessCommand(command, args, options),
+      catch: (cause) =>
+        new CodexRunnerWorkspaceError({
+          operation: 'run-command',
+          command: [command, ...args].join(' '),
+          cwd: options?.cwd,
+          cause,
+        }),
+    }),
+} satisfies RunnerCommandService)
+
+export const CodexAppServerClientFactoryLive = Layer.succeed(CodexAppServerClientFactory, {
+  create: (options) =>
+    Effect.try({
+      try: () => new CodexAppServerClient(options),
+      catch: (cause) => new CodexRunnerClientError({ operation: 'create-client', cause }),
+    }),
+} satisfies CodexAppServerClientFactoryService)
+
+const runnerRuntime = ManagedRuntime.make(Layer.merge(RunnerCommandLive, CodexAppServerClientFactoryLive))
+
+const runDefaultCommand: CommandRunner = (command, args, options) =>
+  runnerRuntime.runPromise(Effect.flatMap(RunnerCommand, (service) => service.run(command, args, options)))
+
+const createDefaultClient = (options: CodexAppServerOptions) =>
+  runnerRuntime.runPromise(Effect.flatMap(CodexAppServerClientFactory, (service) => service.create(options)))
+
+const createRunnerClient = async (
+  clientOptions: CodexAppServerOptions,
+  factory: RunCodexAppServerAdapterOptions['createClient'],
+): Promise<CodexAppServerRunnerClient> => {
+  if (!factory) {
+    return createDefaultClient(clientOptions)
+  }
+  try {
+    return factory(clientOptions)
+  } catch (cause) {
+    throw new CodexRunnerClientError({ operation: 'create-client', cause })
+  }
+}
+
 const assertCommandSuccess = (result: CommandResult, description: string) => {
   if (result.exitCode === 0) return
   const output = [result.stderr, result.stdout].filter(Boolean).join('\n').trim()
-  throw new Error(`${description} failed with exit ${result.exitCode}${output ? `: ${output}` : ''}`)
+  throw new CodexRunnerWorkspaceError({
+    operation: 'run-command',
+    command: description,
+    cause: `${description} failed with exit ${result.exitCode}${output ? `: ${output}` : ''}`,
+  })
 }
 
 const nonEmptyString = (value: unknown): string | null => {
@@ -267,11 +401,19 @@ const ensureVcsCheckout = async (cwd: string, vcs: VcsWorkspaceContext, runner: 
     await mkdir(dirname(cwd), { recursive: true })
     if (await pathExists(cwd)) {
       if (!(await isDirectory(cwd))) {
-        throw new Error(`Codex cwd ${cwd} exists but is not a directory`)
+        throw new CodexRunnerWorkspaceError({
+          operation: 'prepare-cwd',
+          cwd,
+          cause: `Codex cwd ${cwd} exists but is not a directory`,
+        })
       }
       const entries = await readdir(cwd)
       if (entries.length > 0) {
-        throw new Error(`Codex cwd ${cwd} exists but is not a git checkout`)
+        throw new CodexRunnerWorkspaceError({
+          operation: 'prepare-cwd',
+          cwd,
+          cause: `Codex cwd ${cwd} exists but is not a git checkout`,
+        })
       }
     }
     assertCommandSuccess(
@@ -402,8 +544,12 @@ const mergeGoals = (...goals: Array<AgentRunnerGoal | null | undefined>): AgentR
 
 const writeStatus = async (statusPath: string | undefined, status: CodexAppServerRunnerStatus) => {
   if (!statusPath) return
-  await ensureFileDirectory(statusPath)
-  await writeFile(statusPath, `${JSON.stringify(status, null, 2)}\n`, 'utf8')
+  try {
+    await ensureFileDirectory(statusPath)
+    await writeFile(statusPath, `${JSON.stringify(status, null, 2)}\n`, 'utf8')
+  } catch (error) {
+    throw new CodexRunnerStatusError({ operation: 'write-status', path: statusPath, cause: error })
+  }
 }
 
 const openLog = async (logPath: string | undefined) => {
@@ -439,12 +585,6 @@ export const runCodexAppServerAdapter = async (
 ): Promise<number> => {
   const now = options.now ?? (() => new Date())
   const startedAt = timestampUtc(now)
-  const runPayload = await loadRunPayload(spec)
-  const prompt = resolvePrompt(spec, adapter, runPayload)
-  const baseInstructions =
-    renderOptionalTemplate(adapter.baseInstructions, spec, runPayload) ?? nonEmptyString(runPayload.systemPrompt)
-  const developerInstructions = renderOptionalTemplate(adapter.developerInstructions, spec, runPayload)
-  const goal = mergeGoals(normalizeGoal(runPayload.goal), spec.goal, adapter.goal)
   const statusPath = spec.artifacts?.statusPath
   const logPath = spec.artifacts?.logPath
 
@@ -452,25 +592,35 @@ export const runCodexAppServerAdapter = async (
   let turnId: string | undefined
   let exitCode = 1
   let errorMessage: string | undefined
-
-  const clientOptions: CodexAppServerOptions = {
-    binaryPath: resolveCodexBinaryPath(adapter),
-    cliConfigOverrides: adapter.cliConfigOverrides,
-    cwd: adapter.cwd,
-    sandbox: adapter.sandbox,
-    approval: adapter.approval,
-    defaultModel: adapter.model,
-    defaultEffort: adapter.effort,
-    threadConfig: adapter.threadConfig as CodexAppServerOptions['threadConfig'],
-    experimentalRawEvents: adapter.experimentalRawEvents,
-    persistExtendedHistory: adapter.persistExtendedHistory,
-    bootstrapTimeoutMs: adapter.bootstrapTimeoutMs,
-  }
-  await prepareCodexCwd(adapter, runPayload, options.runCommand ?? runCommand)
-  const client = options.createClient?.(clientOptions) ?? new CodexAppServerClient(clientOptions)
-  const logStream = await openLog(logPath)
+  let caughtError: unknown
+  let client: CodexAppServerRunnerClient | null = null
+  let logStream: Awaited<ReturnType<typeof openLog>> = null
 
   try {
+    const runPayload = await loadRunPayload(spec)
+    const prompt = resolvePrompt(spec, adapter, runPayload)
+    const baseInstructions =
+      renderOptionalTemplate(adapter.baseInstructions, spec, runPayload) ?? nonEmptyString(runPayload.systemPrompt)
+    const developerInstructions = renderOptionalTemplate(adapter.developerInstructions, spec, runPayload)
+    const goal = mergeGoals(normalizeGoal(runPayload.goal), spec.goal, adapter.goal)
+
+    const clientOptions: CodexAppServerOptions = {
+      binaryPath: resolveCodexBinaryPath(adapter),
+      cliConfigOverrides: adapter.cliConfigOverrides,
+      cwd: adapter.cwd,
+      sandbox: adapter.sandbox,
+      approval: adapter.approval,
+      defaultModel: adapter.model,
+      defaultEffort: adapter.effort,
+      threadConfig: adapter.threadConfig as CodexAppServerOptions['threadConfig'],
+      experimentalRawEvents: adapter.experimentalRawEvents,
+      persistExtendedHistory: adapter.persistExtendedHistory,
+      bootstrapTimeoutMs: adapter.bootstrapTimeoutMs,
+    }
+    await prepareCodexCwd(adapter, runPayload, options.runCommand ?? runDefaultCommand)
+    client = await createRunnerClient(clientOptions, options.createClient)
+    logStream = await openLog(logPath)
+
     const turnOptions: CodexAppServerTurnOptions = {
       model: adapter.model,
       cwd: adapter.cwd,
@@ -480,19 +630,24 @@ export const runCodexAppServerAdapter = async (
       developerInstructions,
       goal,
     }
-    const response = await client.runTurnStream(prompt, turnOptions)
+    const response = await client.runTurnStream(prompt, turnOptions).catch((cause) => {
+      throw new CodexRunnerTurnError({ operation: 'start-turn', cause })
+    })
     threadId = response.threadId
     turnId = response.turnId
 
     const iterator = response.stream[Symbol.asyncIterator]()
     while (true) {
-      const { value, done } = await iterator.next()
+      const { value, done } = await iterator.next().catch((cause) => {
+        throw new CodexRunnerTurnError({ operation: 'stream-turn', threadId, turnId, cause })
+      })
       if (done) break
       writeDelta(value, logStream)
     }
     exitCode = 0
   } catch (error) {
-    errorMessage = toErrorMessage(error)
+    caughtError = error
+    errorMessage = describeRunnerError(error)
     exitCode = 1
   } finally {
     await new Promise<void>((resolve) => {
@@ -502,7 +657,7 @@ export const runCodexAppServerAdapter = async (
       }
       logStream.end(resolve)
     })
-    client.stop?.()
+    client?.stop?.()
 
     await writeStatus(statusPath, {
       provider: spec.provider,
@@ -524,8 +679,8 @@ export const runCodexAppServerAdapter = async (
     })
   }
 
-  if (errorMessage) {
-    throw new Error(errorMessage)
+  if (caughtError) {
+    throw caughtError
   }
 
   return exitCode
