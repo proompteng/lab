@@ -46,12 +46,11 @@ export type AgentRunRecord = {
 export type AgentRunsApiStore = {
   ready: Promise<unknown>
   close: () => Promise<unknown>
-  listAgentRuns?: (input?: {
+  listAgentRuns: (input?: {
     agentName?: string | null
     statuses?: string[] | null
     limit?: number | null
   }) => Promise<unknown[]>
-  getAgentRunsByAgent: (agentName: string) => Promise<unknown[]>
   getAgentRunByDeliveryId: (deliveryId: string) => Promise<AgentRunRecord | null>
   getAgentRunIdempotencyKey: (input: {
     namespace: string
@@ -774,16 +773,16 @@ export const getAgentRunsHandler = async (request: Request, deps: Pick<AgentRuns
   let store: AgentRunsApiStore | null = null
   try {
     store = deps.storeFactory()
+    const activeStore = store
     await store.ready
-    let runs: unknown[] | null = null
-    if (store.listAgentRuns) {
-      runs = await store.listAgentRuns({ agentName, statuses, limit })
-    } else if (agentName && statuses.length === 0) {
-      runs = await store.getAgentRunsByAgent(agentName)
-    }
-    if (!runs) return errorResponse('AgentRun list storage is not configured for status filters', 503)
+    const runs = await Effect.runPromise(
+      storeEffect('list-runs', () => activeStore.listAgentRuns({ agentName, statuses, limit })),
+    )
     return okResponse({ ok: true, runs })
   } catch (error) {
+    if (error instanceof AgentRunStorageError) {
+      return errorResponse(describeAgentRunSubmitError(error), agentRunSubmitStatus(error))
+    }
     const message = error instanceof Error ? error.message : String(error)
     return errorResponse(message, message.includes('DATABASE_URL') ? 503 : 500)
   } finally {

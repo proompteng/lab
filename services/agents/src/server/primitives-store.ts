@@ -139,7 +139,6 @@ export type PrimitivesStore = {
   getAgentRunById: (id: string) => Promise<AgentRunRecord | null>
   getAgentRunByDeliveryId: (deliveryId: string) => Promise<AgentRunRecord | null>
   getAgentRunByExternalRunId: (externalRunId: string) => Promise<AgentRunRecord | null>
-  getAgentRunsByAgent: (agentName: string, limit?: number) => Promise<AgentRunRecord[]>
   createOrchestrationRun: (input: CreateOrchestrationRunInput) => Promise<OrchestrationRunRecord>
   updateOrchestrationRunStatus: (
     id: string,
@@ -391,9 +390,6 @@ export const createPrimitivesStore = (options: PrimitivesStoreOptions = {}): Pri
     const rows = await query.orderBy('created_at', 'desc').limit(limit).execute()
     return rows.map(toAgentRunRecord)
   }
-
-  const getAgentRunsByAgent: PrimitivesStore['getAgentRunsByAgent'] = async (agentName, limit) =>
-    listAgentRuns({ agentName, limit })
 
   const createOrchestrationRun: PrimitivesStore['createOrchestrationRun'] = async (input) => {
     await ready
@@ -704,7 +700,6 @@ export const createPrimitivesStore = (options: PrimitivesStoreOptions = {}): Pri
     getAgentRunById,
     getAgentRunByDeliveryId,
     getAgentRunByExternalRunId,
-    getAgentRunsByAgent,
     createOrchestrationRun,
     updateOrchestrationRunStatus,
     updateOrchestrationRunDetails,

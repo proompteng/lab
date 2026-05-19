@@ -9,7 +9,6 @@ const createStoreMock = (): AgentRunsApiStore =>
     ready: Promise.resolve(),
     close: vi.fn(async () => {}),
     listAgentRuns: vi.fn(async () => []),
-    getAgentRunsByAgent: vi.fn(async () => []),
     getAgentRunByDeliveryId: vi.fn(async () => null),
     getAgentRunIdempotencyKey: vi.fn(async () => null),
     reserveAgentRunIdempotencyKey: vi.fn(async (input) => ({

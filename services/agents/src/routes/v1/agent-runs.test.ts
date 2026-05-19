@@ -10,7 +10,6 @@ const createStore = (runs: unknown[] = []): AgentRunsApiStore =>
     ready: Promise.resolve(),
     close: vi.fn(async () => {}),
     listAgentRuns: vi.fn(async () => runs),
-    getAgentRunsByAgent: vi.fn(async () => runs),
   }) as unknown as AgentRunsApiStore
 
 describe('Agents v1 AgentRun route ownership', () => {
@@ -58,7 +57,6 @@ describe('Agents v1 AgentRun route ownership', () => {
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual({ ok: true, runs: [{ id: 'run-1', status: 'Running' }] })
     expect(store.listAgentRuns).toHaveBeenCalledWith({ agentName: null, statuses: ['Running', 'Pending'], limit: 100 })
-    expect(store.getAgentRunsByAgent).not.toHaveBeenCalled()
   })
 
   it('lets tests and compatibility callers override configured route dependencies', async () => {
@@ -76,7 +74,7 @@ describe('Agents v1 AgentRun route ownership', () => {
 
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual({ ok: true, runs: [{ id: 'override-run' }] })
-    expect(configuredStore.getAgentRunsByAgent).not.toHaveBeenCalled()
+    expect(configuredStore.listAgentRuns).not.toHaveBeenCalled()
     expect(overrideStore.listAgentRuns).toHaveBeenCalledWith({ agentName: 'demo', statuses: [], limit: 50 })
   })
 })
