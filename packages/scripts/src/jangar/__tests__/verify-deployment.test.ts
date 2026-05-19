@@ -222,11 +222,11 @@ describe('verify-deployment', () => {
       '8',
       '--digest-interval-seconds',
       '4',
-      '--status-service-namespace',
-      'jangar',
-      '--status-service-name',
-      'jangar',
-      '--status-service-port',
+      '--control-plane-service-namespace',
+      'agents',
+      '--control-plane-service-name',
+      'agents',
+      '--control-plane-service-port',
       '80',
       '--control-plane-status-namespace',
       'agents',
@@ -246,9 +246,9 @@ describe('verify-deployment', () => {
     expect(parsed.healthIntervalSeconds).toBe(5)
     expect(parsed.digestAttempts).toBe(8)
     expect(parsed.digestIntervalSeconds).toBe(4)
-    expect(parsed.statusServiceNamespace).toBe('jangar')
-    expect(parsed.statusServiceName).toBe('jangar')
-    expect(parsed.statusServicePort).toBe('80')
+    expect(parsed.controlPlaneServiceNamespace).toBe('agents')
+    expect(parsed.controlPlaneServiceName).toBe('agents')
+    expect(parsed.controlPlaneServicePort).toBe('80')
     expect(parsed.controlPlaneStatusNamespace).toBe('agents')
     expect(parsed.admissionPassportConsumers).toEqual(['serving', 'swarm_plan'])
     expect(parsed.skipAdmissionPassportVerification).toBe(true)
@@ -259,12 +259,12 @@ describe('verify-deployment', () => {
   it('builds the control-plane status service proxy path', () => {
     expect(
       __private.buildControlPlaneStatusProxyPath({
-        statusServiceNamespace: 'jangar',
-        statusServiceName: 'jangar',
-        statusServicePort: '80',
+        controlPlaneServiceNamespace: 'agents',
+        controlPlaneServiceName: 'agents',
+        controlPlaneServicePort: '80',
         controlPlaneStatusNamespace: 'agents',
       }),
-    ).toBe('/api/v1/namespaces/jangar/services/jangar:80/proxy/api/agents/control-plane/status?namespace=agents')
+    ).toBe('/api/v1/namespaces/agents/services/agents:80/proxy/api/agents/control-plane/status?namespace=agents')
   })
 
   it('rejects unknown admission passport consumers', () => {

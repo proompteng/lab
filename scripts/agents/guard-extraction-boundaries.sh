@@ -122,6 +122,11 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/codex-judge-config.ts"
 
 fail_if_matches \
+  "Jangar deploy verifier must read Agents control-plane status through the Agents service, not svc/jangar proxy routes" \
+  "namespaces/jangar/services/jangar|defaultControlPlaneServiceName = 'jangar'|statusServiceName" \
+  "${ROOT_DIR}/packages/scripts/src/jangar/verify-deployment.ts"
+
+fail_if_matches \
   "Jangar market-context dispatch must submit AgentRuns through the Agents service boundary, not direct Kubernetes apply or raw CRD schemas" \
   "createKubernetesClient|RESOURCE_MAP\\.AgentRun|\\.apply\\(|agents\\.proompteng\\.ai/v1alpha1|kind: 'AgentRun'|kind: \"AgentRun\"" \
   "${ROOT_DIR}/services/jangar/src/server/torghut-market-context-dispatch.ts"

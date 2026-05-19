@@ -15,9 +15,9 @@ type CliOptions = {
   imageName?: string
   argoNamespace?: string
   argoApplication?: string
-  statusServiceNamespace?: string
-  statusServiceName?: string
-  statusServicePort?: string
+  controlPlaneServiceNamespace?: string
+  controlPlaneServiceName?: string
+  controlPlaneServicePort?: string
   controlPlaneStatusNamespace?: string
   admissionPassportConsumers?: AdmissionPassportConsumer[]
   rolloutTimeout?: string
@@ -48,9 +48,9 @@ type ResolvedOptions = {
   imageName: string
   argoNamespace: string
   argoApplication: string
-  statusServiceNamespace: string
-  statusServiceName: string
-  statusServicePort: string
+  controlPlaneServiceNamespace: string
+  controlPlaneServiceName: string
+  controlPlaneServicePort: string
   controlPlaneStatusNamespace: string
   admissionPassportConsumers: AdmissionPassportConsumer[]
   rolloutTimeout: string
@@ -73,8 +73,9 @@ const defaultNamespace = 'jangar'
 const defaultDeployments = ['jangar']
 const defaultArgoNamespace = 'argocd'
 const defaultArgoApplication = 'jangar'
-const defaultStatusServiceName = 'jangar'
-const defaultStatusServicePort = '80'
+const defaultControlPlaneServiceNamespace = 'agents'
+const defaultControlPlaneServiceName = 'agents'
+const defaultControlPlaneServicePort = '80'
 const defaultControlPlaneStatusNamespace = 'agents'
 const defaultRolloutTimeout = '10m'
 const defaultHealthAttempts = 60
@@ -434,9 +435,15 @@ Options:
   --image-name <registry/repository> Image name in kustomization
   --argo-namespace <name>            Argo CD namespace (default: argocd)
   --argo-application <name>          Argo CD Application name (default: jangar)
-  --status-service-namespace <name>  Namespace hosting the Jangar HTTP Service for status checks
-  --status-service-name <name>       Jangar HTTP Service name for status checks (default: jangar)
-  --status-service-port <port>       Jangar HTTP Service port for status checks (default: 80)
+  --control-plane-service-namespace <name>
+                                      Namespace hosting the Agents control-plane Service for status checks (default: agents)
+  --control-plane-service-name <name>
+                                      Agents control-plane Service name for status checks (default: agents)
+  --control-plane-service-port <port>
+                                      Agents control-plane Service port for status checks (default: 80)
+  --status-service-namespace <name>  Deprecated alias for --control-plane-service-namespace
+  --status-service-name <name>       Deprecated alias for --control-plane-service-name
+  --status-service-port <port>       Deprecated alias for --control-plane-service-port
   --control-plane-status-namespace <name>
                                       Namespace passed to /api/agents/control-plane/status (default: agents)
   --admission-passport-consumers <csv>
@@ -510,14 +517,17 @@ Options:
       case '--argo-application':
         options.argoApplication = value
         break
+      case '--control-plane-service-namespace':
       case '--status-service-namespace':
-        options.statusServiceNamespace = value
+        options.controlPlaneServiceNamespace = value
         break
+      case '--control-plane-service-name':
       case '--status-service-name':
-        options.statusServiceName = value
+        options.controlPlaneServiceName = value
         break
+      case '--control-plane-service-port':
       case '--status-service-port':
-        options.statusServicePort = value
+        options.controlPlaneServicePort = value
         break
       case '--control-plane-status-namespace':
         options.controlPlaneStatusNamespace = value
@@ -658,13 +668,13 @@ const verifyDeploymentDigests = async (
 }
 
 const buildControlPlaneStatusProxyPath = (options: {
-  statusServiceNamespace: string
-  statusServiceName: string
-  statusServicePort: string
+  controlPlaneServiceNamespace: string
+  controlPlaneServiceName: string
+  controlPlaneServicePort: string
   controlPlaneStatusNamespace: string
 }) =>
-  `/api/v1/namespaces/${options.statusServiceNamespace}/services/${options.statusServiceName}:${
-    options.statusServicePort
+  `/api/v1/namespaces/${options.controlPlaneServiceNamespace}/services/${options.controlPlaneServiceName}:${
+    options.controlPlaneServicePort
   }/proxy/api/agents/control-plane/status?namespace=${encodeURIComponent(options.controlPlaneStatusNamespace)}`
 
 const readControlPlaneStatus = async (options: ResolvedOptions): Promise<ControlPlaneStatusPayload> => {
@@ -672,9 +682,9 @@ const readControlPlaneStatus = async (options: ResolvedOptions): Promise<Control
     'get',
     '--raw',
     buildControlPlaneStatusProxyPath({
-      statusServiceNamespace: options.statusServiceNamespace,
-      statusServiceName: options.statusServiceName,
-      statusServicePort: options.statusServicePort,
+      controlPlaneServiceNamespace: options.controlPlaneServiceNamespace,
+      controlPlaneServiceName: options.controlPlaneServiceName,
+      controlPlaneServicePort: options.controlPlaneServicePort,
       controlPlaneStatusNamespace: options.controlPlaneStatusNamespace,
     }),
   ])
@@ -1172,14 +1182,24 @@ export const main = async (cliOptions?: CliOptions) => {
     imageName: parsed.imageName ?? defaultImageName,
     argoNamespace: parsed.argoNamespace ?? defaultArgoNamespace,
     argoApplication: parsed.argoApplication ?? defaultArgoApplication,
-    statusServiceNamespace:
-      parsed.statusServiceNamespace ?? process.env.JANGAR_VERIFY_STATUS_SERVICE_NAMESPACE ?? namespace,
-    statusServiceName:
-      parsed.statusServiceName ?? process.env.JANGAR_VERIFY_STATUS_SERVICE_NAME ?? defaultStatusServiceName,
-    statusServicePort:
-      parsed.statusServicePort ?? process.env.JANGAR_VERIFY_STATUS_SERVICE_PORT ?? defaultStatusServicePort,
+    controlPlaneServiceNamespace:
+      parsed.controlPlaneServiceNamespace ??
+      process.env.AGENTS_VERIFY_CONTROL_PLANE_SERVICE_NAMESPACE ??
+      process.env.JANGAR_VERIFY_STATUS_SERVICE_NAMESPACE ??
+      defaultControlPlaneServiceNamespace,
+    controlPlaneServiceName:
+      parsed.controlPlaneServiceName ??
+      process.env.AGENTS_VERIFY_CONTROL_PLANE_SERVICE_NAME ??
+      process.env.JANGAR_VERIFY_STATUS_SERVICE_NAME ??
+      defaultControlPlaneServiceName,
+    controlPlaneServicePort:
+      parsed.controlPlaneServicePort ??
+      process.env.AGENTS_VERIFY_CONTROL_PLANE_SERVICE_PORT ??
+      process.env.JANGAR_VERIFY_STATUS_SERVICE_PORT ??
+      defaultControlPlaneServicePort,
     controlPlaneStatusNamespace:
       parsed.controlPlaneStatusNamespace ??
+      process.env.AGENTS_VERIFY_CONTROL_PLANE_STATUS_NAMESPACE ??
       process.env.JANGAR_VERIFY_CONTROL_PLANE_STATUS_NAMESPACE ??
       defaultControlPlaneStatusNamespace,
     admissionPassportConsumers: parsed.admissionPassportConsumers ??
@@ -1222,8 +1242,8 @@ export const main = async (cliOptions?: CliOptions) => {
       `expectedRevision must be a full 40-character commit SHA, received ${resolvedOptions.expectedRevision}`,
     )
   }
-  if (!resolvedOptions.statusServicePort.trim()) {
-    throw new Error('statusServicePort must be non-empty')
+  if (!resolvedOptions.controlPlaneServicePort.trim()) {
+    throw new Error('controlPlaneServicePort must be non-empty')
   }
   if (!resolvedOptions.skipAdmissionPassportVerification && resolvedOptions.admissionPassportConsumers.length === 0) {
     throw new Error('admissionPassportConsumers must include at least one consumer')
