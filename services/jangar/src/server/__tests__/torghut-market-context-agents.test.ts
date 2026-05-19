@@ -218,6 +218,72 @@ describe('torghut market-context agent helpers', () => {
     expect(agentRun.spec.parameters).not.toHaveProperty('tradingStatusUrl')
   })
 
+  it('submits on-demand market-context AgentRuns through the Agents service boundary', async () => {
+    const { submitMarketContextAgentRun } = await import('../torghut-market-context-dispatch')
+    const submitAgentRun = vi.fn(async () => ({
+      ok: true as const,
+      status: 201,
+      body: {
+        ok: true,
+        resource: {
+          metadata: {
+            name: 'torghut-market-context-news-nvda-abcde',
+          },
+        },
+      },
+    }))
+
+    const runName = await submitMarketContextAgentRun({
+      symbol: 'NVDA',
+      domain: 'news',
+      snapshotState: 'missing',
+      provider: 'codex-spark',
+      requestId: 'market-context-news-nvda-request',
+      now: new Date('2026-05-07T20:00:00.000Z'),
+      settings: {
+        providerChain: ['codex-spark', 'codex'],
+        onDemandDispatchEnabled: true,
+        onDemandDispatchCooldownSeconds: 900,
+        onDemandDispatchActiveRunSeconds: 3600,
+        onDemandDispatchNamespace: 'agents',
+        onDemandDispatchServiceAccountName: 'agents-sa',
+        onDemandDispatchPriorityClassName: 'torghut-market-context-low',
+        onDemandDispatchCallbackUrl: 'http://jangar/api/torghut/market-context',
+        onDemandDispatchTtlSeconds: 7200,
+        batchTradingStatusUrl: 'http://torghut/trading/status',
+        onDemandDispatchRepository: 'proompteng/lab',
+        onDemandDispatchBaseBranch: 'main',
+        onDemandDispatchHeadBranch: 'main',
+        onDemandDispatchVcsRefName: 'github',
+      },
+      submitAgentRun,
+    })
+
+    expect(runName).toBe('torghut-market-context-news-nvda-abcde')
+    expect(submitAgentRun).toHaveBeenCalledWith({
+      deliveryId: 'market-context-news-nvda-request',
+      payload: expect.objectContaining({
+        namespace: 'agents',
+        metadata: {
+          generateName: 'torghut-market-context-news-nvda-',
+          labels: {
+            'torghut.proompteng.ai/purpose': 'market-context-on-demand',
+            'torghut.proompteng.ai/domain': 'news',
+            'torghut.proompteng.ai/symbol': 'nvda',
+          },
+        },
+        agentRef: { name: 'torghut-news-agent' },
+        implementationSpecRef: { name: 'torghut-market-context-news-v1' },
+        vcsPolicy: { required: true, mode: 'read-only' },
+        parameters: expect.objectContaining({
+          requestId: 'market-context-news-nvda-request',
+          repository: 'proompteng/lab',
+          reason: 'on_demand_missing_snapshot_refresh',
+        }),
+      }),
+    })
+  })
+
   it('suppresses on-demand dispatch when a provider run is already active', async () => {
     const { resolveMarketContextDispatchDecisionFromRows } = await import('../torghut-market-context-dispatch')
 

@@ -122,6 +122,52 @@ describe('AgentRun v1 API', () => {
     )
   })
 
+  it('preserves submitted AgentRun metadata while keeping Agents delivery labels authoritative', async () => {
+    const store = createStoreMock()
+    const kube = createKubeMock()
+
+    const response = await postAgentRunsHandler(
+      buildRequest({
+        agentRef: { name: 'demo-agent' },
+        namespace: 'agents',
+        metadata: {
+          generateName: 'domain-owned-run-',
+          labels: {
+            'domain.example/purpose': 'market-context',
+            'agents.proompteng.ai/delivery-id': 'caller-must-not-win',
+          },
+          annotations: {
+            'domain.example/request-id': 'request-1',
+          },
+        },
+        implementation: { text: 'Implement the requested change.' },
+        runtime: { type: 'job', config: {} },
+      }),
+      {
+        storeFactory: () => store,
+        kubeClient: kube,
+        validatePolicies: vi.fn(async () => {}),
+      },
+    )
+
+    expect(response.status).toBe(201)
+    expect(kube.apply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          generateName: 'domain-owned-run-',
+          namespace: 'agents',
+          labels: {
+            'domain.example/purpose': 'market-context',
+            'agents.proompteng.ai/delivery-id': 'agent-run-request-1',
+          },
+          annotations: {
+            'domain.example/request-id': 'request-1',
+          },
+        }),
+      }),
+    )
+  })
+
   it('rejects AgentRun prompt overrides in the extracted API package', async () => {
     const store = createStoreMock()
     const kube = createKubeMock()

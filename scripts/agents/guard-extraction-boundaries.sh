@@ -60,6 +60,11 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/codex-judge-config.ts"
 
 fail_if_matches \
+  "Jangar market-context dispatch must submit AgentRuns through the Agents service boundary, not direct Kubernetes apply" \
+  'createKubernetesClient|RESOURCE_MAP\.AgentRun|\.apply\(' \
+  "${ROOT_DIR}/services/jangar/src/server/torghut-market-context-dispatch.ts"
+
+fail_if_matches \
   "Facteur, Froussard, and shared Argo GitOps must not use the legacy codex-universal runtime" \
   'codex-universal|/usr/local/bin/codex-bootstrap|ghcr.io/openai/codex-universal' \
   "${ROOT_DIR}/argocd/applications/facteur" \

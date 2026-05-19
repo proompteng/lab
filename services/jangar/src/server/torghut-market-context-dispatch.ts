@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { sql } from 'kysely'
 
 import type { Db } from '~/server/db'
-import { createKubernetesClient } from '~/server/primitives-kube'
+import { submitAgentRunToAgentsService } from '~/server/agents-service-proxy'
 import type { MarketContextProviderDomain } from '~/server/torghut-market-context-agents'
 import { isProviderCapacityMessage, resolveFailureCategoryFromMetadata } from '~/server/torghut-market-context-failures'
 
@@ -61,6 +61,9 @@ type ProviderCapacityRunRow = {
   metadata: Record<string, unknown>
   updatedAt: Date
 }
+
+type AgentsServiceSubmitResult = Awaited<ReturnType<typeof submitAgentRunToAgentsService>>
+type MarketContextAgentRunSubmitter = typeof submitAgentRunToAgentsService
 
 const parseTimestamp = (value: unknown): Date | null => {
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value
@@ -474,6 +477,63 @@ export const buildMarketContextAgentRun = (params: {
   }
 }
 
+export const buildMarketContextAgentRunPayload = (params: Parameters<typeof buildMarketContextAgentRun>[0]) => {
+  const resource = buildMarketContextAgentRun(params)
+  const metadata = coercePayload(resource.metadata)
+  const spec = coercePayload(resource.spec)
+  return {
+    namespace: parseNonEmptyString(metadata.namespace) ?? params.settings.onDemandDispatchNamespace,
+    metadata: {
+      generateName: parseNonEmptyString(metadata.generateName) ?? undefined,
+      labels: coercePayload(metadata.labels),
+    },
+    agentRef: coercePayload(spec.agentRef),
+    implementationSpecRef: coercePayload(spec.implementationSpecRef),
+    runtime: coercePayload(spec.runtime),
+    ttlSecondsAfterFinished: spec.ttlSecondsAfterFinished,
+    vcsRef: coercePayload(spec.vcsRef),
+    vcsPolicy: coercePayload(spec.vcsPolicy),
+    workload: coercePayload(spec.workload),
+    parameters: coercePayload(spec.parameters),
+  }
+}
+
+export const resolveSubmittedMarketContextAgentRunName = (result: AgentsServiceSubmitResult): string | null => {
+  if (!result.ok || !result.body) return null
+  const resource = coercePayload(result.body.resource)
+  const resourceMetadata = coercePayload(resource.metadata)
+  const resourceName = parseNonEmptyString(resourceMetadata.name)
+  if (resourceName) return resourceName
+
+  const agentRun = coercePayload(result.body.agentRun)
+  const externalRunId = parseNonEmptyString(agentRun.externalRunId)
+  if (externalRunId) return externalRunId
+
+  return parseNonEmptyString(result.body.existingAgentRunName)
+}
+
+export const submitMarketContextAgentRun = async (params: {
+  symbol: string
+  domain: MarketContextProviderDomain
+  snapshotState: MarketContextSnapshotState
+  provider: string
+  requestId: string
+  now: Date
+  settings: MarketContextDispatchSettings
+  submitAgentRun?: MarketContextAgentRunSubmitter
+}) => {
+  const submitAgentRun = params.submitAgentRun ?? submitAgentRunToAgentsService
+  const result = await submitAgentRun({
+    deliveryId: params.requestId,
+    payload: buildMarketContextAgentRunPayload(params),
+  })
+  if (!result.ok) {
+    const status = result.status > 0 ? ` (${result.status})` : ''
+    throw new Error(result.error ?? `Agents service AgentRun submission failed${status}`)
+  }
+  return resolveSubmittedMarketContextAgentRunName(result) ?? params.requestId
+}
+
 export const dispatchMarketContextRefreshIfNeeded = async (params: {
   db: Db
   symbol: string
@@ -481,6 +541,7 @@ export const dispatchMarketContextRefreshIfNeeded = async (params: {
   snapshotState: MarketContextSnapshotState
   settings: MarketContextDispatchSettings
   now: Date
+  submitAgentRun?: MarketContextAgentRunSubmitter
 }): Promise<MarketContextDispatchResult> => {
   if (params.snapshotState === 'fresh') {
     return {
@@ -566,19 +627,16 @@ export const dispatchMarketContextRefreshIfNeeded = async (params: {
   }
 
   try {
-    const applied = await createKubernetesClient().apply(
-      buildMarketContextAgentRun({
-        symbol: params.symbol,
-        domain: params.domain,
-        snapshotState: params.snapshotState,
-        provider,
-        requestId,
-        now: params.now,
-        settings: params.settings,
-      }),
-    )
-    const metadata = coercePayload(applied.metadata)
-    const runName = parseNonEmptyString(metadata.name) ?? requestId
+    const runName = await submitMarketContextAgentRun({
+      symbol: params.symbol,
+      domain: params.domain,
+      snapshotState: params.snapshotState,
+      provider,
+      requestId,
+      now: params.now,
+      settings: params.settings,
+      submitAgentRun: params.submitAgentRun,
+    })
     await updateMarketContextDispatchState({
       db: params.db,
       symbol: params.symbol,

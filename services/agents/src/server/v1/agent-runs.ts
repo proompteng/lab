@@ -122,6 +122,34 @@ const normalizeParameterMap = (value: Record<string, unknown> | null): Record<st
   return output
 }
 
+const normalizeStringMap = (
+  value: Record<string, unknown> | null,
+  path: string,
+): Record<string, string> | undefined => {
+  if (!value) return undefined
+  const output: Record<string, string> = {}
+  for (const [key, raw] of Object.entries(value)) {
+    if (raw == null) continue
+    if (typeof raw !== 'string') {
+      throw new Error(`${path}.${key} must be a string`)
+    }
+    output[key] = raw
+  }
+  return Object.keys(output).length > 0 ? output : undefined
+}
+
+const normalizeMetadataGenerateName = (value: unknown): string | undefined => {
+  if (value == null) return undefined
+  const generateName = asString(value)
+  if (!generateName) {
+    throw new Error('metadata.generateName must be a non-empty string')
+  }
+  if (generateName.includes('/') || generateName.length > 253) {
+    throw new Error('metadata.generateName must be a valid Kubernetes generateName prefix')
+  }
+  return generateName
+}
+
 const normalizeVcsMode = (value?: string | null) => {
   const raw = value?.trim().toLowerCase()
   if (raw === 'read-only' || raw === 'read-write' || raw === 'none') return raw
@@ -317,6 +345,18 @@ const parseAgentRunPayload = (payload: Record<string, unknown>): AgentRunPayload
   const name = asString(agentRef?.name)
   if (!name) throw new Error('agentRef.name is required')
   const namespace = normalizeNamespace(asString(payload.namespace))
+  const metadataRaw = asRecord(payload.metadata)
+  if (payload.metadata != null && !metadataRaw) {
+    throw new Error('metadata must be an object')
+  }
+  const metadata =
+    metadataRaw != null
+      ? {
+          generateName: normalizeMetadataGenerateName(metadataRaw.generateName),
+          labels: normalizeStringMap(asRecord(metadataRaw.labels), 'metadata.labels'),
+          annotations: normalizeStringMap(asRecord(metadataRaw.annotations), 'metadata.annotations'),
+        }
+      : undefined
   const idempotencyKeyRaw = payload.idempotencyKey
   const idempotencyKey = asString(idempotencyKeyRaw) ?? undefined
   if (idempotencyKeyRaw != null && !idempotencyKey) {
@@ -382,6 +422,7 @@ const parseAgentRunPayload = (payload: Record<string, unknown>): AgentRunPayload
   return {
     agentRef: { name },
     namespace,
+    metadata,
     idempotencyKey,
     implementationSpecRef: implementationSpecName ? { name: implementationSpecName } : undefined,
     implementation: inline ?? undefined,
@@ -729,9 +770,13 @@ const createAgentRunResource = (
   apiVersion: 'agents.proompteng.ai/v1alpha1',
   kind: 'AgentRun',
   metadata: {
-    generateName: `${parsed.agentRef.name}-`,
+    generateName: parsed.metadata?.generateName ?? `${parsed.agentRef.name}-`,
     namespace: parsed.namespace,
-    labels: buildDeliveryIdLabels(deliveryId),
+    labels: {
+      ...(parsed.metadata?.labels ?? {}),
+      ...buildDeliveryIdLabels(deliveryId),
+    },
+    ...(parsed.metadata?.annotations ? { annotations: parsed.metadata.annotations } : {}),
   },
   spec: {
     agentRef: parsed.agentRef,
