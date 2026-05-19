@@ -5,14 +5,14 @@ import { type KubernetesClient } from '../kube-types'
 import { asString } from '../primitives'
 import type { PolicyChecks } from '../primitives-policy'
 
+import { submitAgentRunEffect, type AgentRunRuntimeConfigOptions } from './agent-run-submit'
+import { agentRunSubmitDetails, agentRunSubmitStatus, describeAgentRunSubmitError } from './agent-run-errors'
 import {
-  AgentRunStorageError,
-  agentRunSubmitDetails,
-  agentRunSubmitStatus,
-  describeAgentRunSubmitError,
-  submitAgentRunEffect,
-  type AgentRunRuntimeConfigOptions,
-} from './agent-run-submit'
+  listAgentRunsWithServicesEffect,
+  makeAgentRunStoreLayer,
+  type AgentRunListInput,
+  type AgentRunsApiStore,
+} from './agent-run-store'
 
 export {
   AgentRunAdmissionRejectedError,
@@ -22,97 +22,30 @@ export {
   AgentRunInvalidPayloadError,
   AgentRunKubeError,
   AgentRunKubernetesService,
+  AgentRunIdGeneratorService,
   AgentRunNotFoundError,
   AgentRunPolicyDeniedError,
   AgentRunPolicyService,
   AgentRunQueueDepthService,
   AgentRunRepositoryService,
   AgentRunRuntimeConfigService,
-  AgentRunStorageError,
-  AgentRunStoreService,
   createAgentRunResource,
-  describeAgentRunSubmitError,
   makeAgentRunRuntimeConfigService,
   makeAgentRunSubmitLayer,
   submitAgentRun,
   submitAgentRunEffect,
   submitAgentRunWithServicesEffect,
 } from './agent-run-submit'
+export { AgentRunStorageError, describeAgentRunSubmitError } from './agent-run-errors'
+export { AgentRunStoreService, makeAgentRunStoreLayer, makeAgentRunStoreService } from './agent-run-store'
 export type { AgentRunRuntimeConfigOptions, AgentRunSubmissionConfig, AgentRunSubmitError } from './agent-run-submit'
-
-export type AgentRunIdempotencyRecord = {
-  namespace: string
-  agentName: string
-  idempotencyKey: string
-  agentRunName: string | null
-  agentRunUid: string | null
-  createdAt: Date | string
-}
-
-export type AgentRunIdempotencyReservation = {
-  record: AgentRunIdempotencyRecord
-  created: boolean
-}
-
-export type AgentRunRecord = {
-  id: string
-  agentName: string
-  deliveryId: string
-  provider: string
-  status: string
-  externalRunId: string | null
-  payload: Record<string, unknown>
-  createdAt?: unknown
-  updatedAt?: unknown
-}
-
-export type AgentRunsApiStore = {
-  ready: Promise<unknown>
-  close: () => Promise<unknown>
-  listAgentRuns: (input?: {
-    agentName?: string | null
-    statuses?: string[] | null
-    limit?: number | null
-  }) => Promise<unknown[]>
-  getAgentRunByDeliveryId: (deliveryId: string) => Promise<AgentRunRecord | null>
-  getAgentRunIdempotencyKey: (input: {
-    namespace: string
-    agentName: string
-    idempotencyKey: string
-  }) => Promise<AgentRunIdempotencyRecord | null>
-  reserveAgentRunIdempotencyKey: (input: {
-    namespace: string
-    agentName: string
-    idempotencyKey: string
-  }) => Promise<AgentRunIdempotencyReservation>
-  deleteAgentRunIdempotencyKey: (input: {
-    namespace: string
-    agentName: string
-    idempotencyKey: string
-  }) => Promise<unknown>
-  assignAgentRunIdempotencyKey: (input: {
-    namespace: string
-    agentName: string
-    idempotencyKey: string
-    agentRunName: string
-    agentRunUid: string | null
-  }) => Promise<unknown>
-  createAgentRun: (input: {
-    agentName: string
-    deliveryId: string
-    provider: string
-    status: string
-    externalRunId: string | null
-    payload: Record<string, unknown>
-  }) => Promise<AgentRunRecord>
-  createAuditEvent: (input: {
-    entityType: string
-    entityId: string
-    eventType: string
-    context?: Record<string, unknown>
-    details?: Record<string, unknown>
-  }) => Promise<unknown>
-}
+export type {
+  AgentRunIdempotencyRecord,
+  AgentRunIdempotencyReservation,
+  AgentRunListInput,
+  AgentRunRecord,
+  AgentRunsApiStore,
+} from './agent-run-store'
 
 export type AgentRunsApiDependencies = {
   storeFactory: () => AgentRunsApiStore
@@ -130,6 +63,7 @@ export type AgentRunsApiDependencies = {
   ) => Record<string, unknown>
   resolveRepositoryFromParameters?: (params: Record<string, string> | undefined) => string | undefined
   validatePolicies?: (namespace: string, checks: PolicyChecks, kube: KubernetesClient) => Promise<void>
+  idGenerator?: () => string
 }
 
 const parseListLimit = (value: string | null) => {
@@ -147,46 +81,8 @@ const parseStatusFilter = (value: string | null) => {
     .filter((entry) => entry.length > 0)
 }
 
-type AgentRunListInput = {
-  agentName?: string | null
-  statuses?: string[] | null
-  limit?: number | null
-}
-
-const acquireAgentRunsStoreEffect = (deps: Pick<AgentRunsApiDependencies, 'storeFactory'>) =>
-  Effect.try({
-    try: () => deps.storeFactory(),
-    catch: (cause) => new AgentRunStorageError({ operation: 'open-store', cause }),
-  })
-
-const waitForAgentRunsStoreReadyEffect = (store: AgentRunsApiStore) =>
-  Effect.tryPromise({
-    try: () => store.ready,
-    catch: (cause) => new AgentRunStorageError({ operation: 'store-ready', cause }),
-  })
-
-const closeAgentRunsStoreEffect = (store: AgentRunsApiStore) =>
-  Effect.tryPromise({
-    try: () => store.close(),
-    catch: (cause) => new AgentRunStorageError({ operation: 'close-store', cause }),
-  }).pipe(Effect.catchAll(() => Effect.void))
-
-const listAgentRunsWithStoreEffect = (store: AgentRunsApiStore, input: AgentRunListInput) =>
-  waitForAgentRunsStoreReadyEffect(store).pipe(
-    Effect.zipRight(
-      Effect.tryPromise({
-        try: () => store.listAgentRuns(input),
-        catch: (cause) => new AgentRunStorageError({ operation: 'list-runs', cause }),
-      }),
-    ),
-  )
-
 const listAgentRunsEffect = (deps: Pick<AgentRunsApiDependencies, 'storeFactory'>, input: AgentRunListInput) =>
-  Effect.acquireUseRelease(
-    acquireAgentRunsStoreEffect(deps),
-    (store) => listAgentRunsWithStoreEffect(store, input),
-    closeAgentRunsStoreEffect,
-  )
+  listAgentRunsWithServicesEffect(input).pipe(Effect.provide(makeAgentRunStoreLayer(deps.storeFactory)))
 
 export const getAgentRunsHandler = async (request: Request, deps: Pick<AgentRunsApiDependencies, 'storeFactory'>) => {
   const url = new URL(request.url)

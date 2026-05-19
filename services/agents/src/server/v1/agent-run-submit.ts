@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import { Context, Data, Effect, Layer } from 'effect'
+import { Context, Effect, Layer } from 'effect'
 
 import { resolveAgentRunAdmissionConfig } from '../agents-controller/controller-config'
 import { parseJsonBody, requireIdempotencyKey } from '../http'
@@ -15,17 +15,50 @@ import {
 } from '../primitives-policy'
 import type { EnvSource } from '../runtime-env'
 
-import type { AgentRunsApiDependencies, AgentRunsApiStore } from './agent-runs'
+import type { AgentRunsApiDependencies } from './agent-runs'
+import {
+  AgentRunAdmissionRejectedError,
+  AgentRunConflictError,
+  AgentRunForbiddenError,
+  AgentRunInvalidPayloadError,
+  AgentRunKubeError,
+  type AgentRunKubeOperation,
+  AgentRunNotFoundError,
+  AgentRunPolicyDeniedError,
+  type AgentRunSubmitError,
+  type AgentRunSubmitSuccess,
+  describeAgentRunSubmitError,
+  toErrorMessage,
+} from './agent-run-errors'
+import {
+  AgentRunStoreService,
+  closeAgentRunsStoreEffect,
+  makeAgentRunStoreService,
+  storeEffect,
+} from './agent-run-store'
 import { type AgentRunPayload, type WorkflowStepPayload, parseGoal, parseOptionalNumber } from './agent-runs-payload'
 import { buildDeliveryIdLabels } from './delivery-labels'
+
+export {
+  AgentRunAdmissionRejectedError,
+  AgentRunConflictError,
+  AgentRunForbiddenError,
+  AgentRunInvalidPayloadError,
+  AgentRunKubeError,
+  AgentRunNotFoundError,
+  AgentRunPolicyDeniedError,
+  AgentRunStorageError,
+  agentRunSubmitDetails,
+  agentRunSubmitStatus,
+  describeAgentRunSubmitError,
+} from './agent-run-errors'
+export type { AgentRunSubmitError, AgentRunSubmitSuccess } from './agent-run-errors'
+export { AgentRunStoreService, makeAgentRunStoreLayer, makeAgentRunStoreService } from './agent-run-store'
+export type { AgentRunsApiStore } from './agent-run-store'
 
 type AgentRunQueueDepthRecorder = NonNullable<AgentRunsApiDependencies['recordAgentQueueDepth']>
 type AgentRunAuditContextResolver = NonNullable<AgentRunsApiDependencies['resolveAuditContextFromRequest']>
 type AgentRunRepositoryResolver = NonNullable<AgentRunsApiDependencies['resolveRepositoryFromParameters']>
-
-type AgentRunStoreServiceDefinition = {
-  readonly open: Effect.Effect<AgentRunsApiStore, AgentRunStorageError>
-}
 
 type AgentRunKubernetesServiceDefinition = {
   readonly client: (namespace: string) => Effect.Effect<KubernetesClient, AgentRunKubeError>
@@ -49,6 +82,10 @@ type AgentRunRepositoryServiceDefinition = {
 
 type AgentRunQueueDepthServiceDefinition = {
   readonly record: AgentRunQueueDepthRecorder
+}
+
+type AgentRunIdGeneratorServiceDefinition = {
+  readonly next: Effect.Effect<string>
 }
 
 export type AgentRunSubmissionConfig = {
@@ -90,11 +127,6 @@ type AgentRunRuntimeConfigServiceDefinition = {
   readonly now: () => Effect.Effect<number>
 }
 
-export class AgentRunStoreService extends Context.Tag('agents/AgentRunStoreService')<
-  AgentRunStoreService,
-  AgentRunStoreServiceDefinition
->() {}
-
 export class AgentRunKubernetesService extends Context.Tag('agents/AgentRunKubernetesService')<
   AgentRunKubernetesService,
   AgentRunKubernetesServiceDefinition
@@ -118,6 +150,11 @@ export class AgentRunRepositoryService extends Context.Tag('agents/AgentRunRepos
 export class AgentRunQueueDepthService extends Context.Tag('agents/AgentRunQueueDepthService')<
   AgentRunQueueDepthService,
   AgentRunQueueDepthServiceDefinition
+>() {}
+
+export class AgentRunIdGeneratorService extends Context.Tag('agents/AgentRunIdGeneratorService')<
+  AgentRunIdGeneratorService,
+  AgentRunIdGeneratorServiceDefinition
 >() {}
 
 export class AgentRunRuntimeConfigService extends Context.Tag('agents/AgentRunRuntimeConfigService')<
@@ -613,140 +650,6 @@ const evaluateAdmissionLimits = async (
   return { ok: true }
 }
 
-type AgentRunStorageOperation =
-  | 'open-store'
-  | 'store-ready'
-  | 'close-store'
-  | 'list-runs'
-  | 'read-delivery-id'
-  | 'read-idempotency-key'
-  | 'reserve-idempotency-key'
-  | 'delete-idempotency-key'
-  | 'assign-idempotency-key'
-  | 'create-agent-run'
-  | 'create-audit-event'
-
-type AgentRunKubeOperation =
-  | 'create-client'
-  | 'get-existing-run'
-  | 'get-idempotent-run'
-  | 'get-agent'
-  | 'get-implementation-spec'
-  | 'get-vcs-provider'
-  | 'evaluate-admission-limits'
-  | 'apply-agent-run'
-
-export class AgentRunInvalidPayloadError extends Data.TaggedError('AgentRunInvalidPayloadError')<{
-  readonly message: string
-  readonly cause?: unknown
-}> {}
-
-export class AgentRunStorageError extends Data.TaggedError('AgentRunStorageError')<{
-  readonly operation: AgentRunStorageOperation
-  readonly cause: unknown
-}> {}
-
-export class AgentRunKubeError extends Data.TaggedError('AgentRunKubeError')<{
-  readonly operation: AgentRunKubeOperation
-  readonly resource: string
-  readonly namespace: string
-  readonly cause: unknown
-}> {}
-
-export class AgentRunNotFoundError extends Data.TaggedError('AgentRunNotFoundError')<{
-  readonly resource: string
-  readonly name: string
-  readonly namespace: string
-}> {}
-
-export class AgentRunPolicyDeniedError extends Data.TaggedError('AgentRunPolicyDeniedError')<{
-  readonly subject: { kind: string; name: string; namespace?: string }
-  readonly cause: unknown
-}> {}
-
-export class AgentRunAdmissionRejectedError extends Data.TaggedError('AgentRunAdmissionRejectedError')<{
-  readonly message: string
-  readonly status: number
-  readonly details?: Record<string, unknown>
-}> {}
-
-export class AgentRunConflictError extends Data.TaggedError('AgentRunConflictError')<{
-  readonly message: string
-  readonly details?: Record<string, unknown>
-}> {}
-
-export class AgentRunForbiddenError extends Data.TaggedError('AgentRunForbiddenError')<{
-  readonly message: string
-}> {}
-
-export type AgentRunSubmitError =
-  | AgentRunInvalidPayloadError
-  | AgentRunStorageError
-  | AgentRunKubeError
-  | AgentRunNotFoundError
-  | AgentRunPolicyDeniedError
-  | AgentRunAdmissionRejectedError
-  | AgentRunConflictError
-  | AgentRunForbiddenError
-
-type AgentRunSubmitSuccess = {
-  status: number
-  body: Record<string, unknown>
-}
-
-const toErrorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
-
-export const describeAgentRunSubmitError = (error: unknown) => {
-  if (error instanceof AgentRunInvalidPayloadError) return error.message
-  if (error instanceof AgentRunNotFoundError) {
-    return `${error.resource} ${error.name} not found in namespace ${error.namespace}`
-  }
-  if (error instanceof AgentRunForbiddenError) return error.message
-  if (error instanceof AgentRunConflictError) return error.message
-  if (error instanceof AgentRunAdmissionRejectedError) return error.message
-  if (error instanceof AgentRunPolicyDeniedError) {
-    return `policy denied for ${error.subject.kind} ${error.subject.namespace}/${error.subject.name}: ${toErrorMessage(
-      error.cause,
-    )}`
-  }
-  if (error instanceof AgentRunStorageError) {
-    return `agent run storage ${error.operation} failed: ${toErrorMessage(error.cause)}`
-  }
-  if (error instanceof AgentRunKubeError) {
-    return `kubernetes ${error.operation} failed for ${error.resource} in namespace ${error.namespace}: ${toErrorMessage(
-      error.cause,
-    )}`
-  }
-  return toErrorMessage(error)
-}
-
-export const agentRunSubmitStatus = (error: unknown) => {
-  if (error instanceof AgentRunInvalidPayloadError) return 400
-  if (error instanceof AgentRunNotFoundError) return 404
-  if (error instanceof AgentRunPolicyDeniedError || error instanceof AgentRunForbiddenError) return 403
-  if (error instanceof AgentRunConflictError) return 409
-  if (error instanceof AgentRunAdmissionRejectedError) return error.status
-  if (error instanceof AgentRunKubeError) return 502
-  if (error instanceof AgentRunStorageError) return 503
-  return 500
-}
-
-export const agentRunSubmitDetails = (error: unknown) => {
-  if (error instanceof AgentRunConflictError || error instanceof AgentRunAdmissionRejectedError) {
-    return error.details
-  }
-  return undefined
-}
-
-const storeEffect = <A>(
-  operation: AgentRunStorageOperation,
-  run: () => Promise<A>,
-): Effect.Effect<A, AgentRunStorageError> =>
-  Effect.tryPromise({
-    try: run,
-    catch: (cause) => new AgentRunStorageError({ operation, cause }),
-  })
-
 const kubeEffect = <A>(
   operation: AgentRunKubeOperation,
   resource: string,
@@ -758,23 +661,9 @@ const kubeEffect = <A>(
     catch: (cause) => new AgentRunKubeError({ operation, resource, namespace, cause }),
   })
 
-const closeStoreEffect = (store: AgentRunsApiStore) =>
-  Effect.promise(() => store.close()).pipe(
-    Effect.catchAll((error) =>
-      Effect.sync(() => {
-        console.warn('[agents] failed to close AgentRun API store', error)
-      }),
-    ),
-  )
-
 export const makeAgentRunSubmitLayer = (deps: AgentRunsApiDependencies) =>
   Layer.mergeAll(
-    Layer.succeed(AgentRunStoreService, {
-      open: Effect.try({
-        try: () => deps.storeFactory(),
-        catch: (cause) => new AgentRunStorageError({ operation: 'open-store', cause }),
-      }),
-    }),
+    Layer.succeed(AgentRunStoreService, makeAgentRunStoreService(deps.storeFactory)),
     Layer.succeed(AgentRunKubernetesService, {
       client: (namespace) =>
         Effect.try({
@@ -807,6 +696,9 @@ export const makeAgentRunSubmitLayer = (deps: AgentRunsApiDependencies) =>
     }),
     Layer.succeed(AgentRunQueueDepthService, {
       record: deps.recordAgentQueueDepth ?? (() => undefined),
+    }),
+    Layer.succeed(AgentRunIdGeneratorService, {
+      next: Effect.sync(deps.idGenerator ?? randomUUID),
     }),
     Layer.succeed(AgentRunRuntimeConfigService, makeAgentRunRuntimeConfigService(deps.runtimeConfig)),
   )
@@ -881,6 +773,7 @@ type AgentRunSubmitServices =
   | AgentRunAuditContextService
   | AgentRunRepositoryService
   | AgentRunQueueDepthService
+  | AgentRunIdGeneratorService
   | AgentRunRuntimeConfigService
 
 export const submitAgentRunEffect = (
@@ -899,6 +792,7 @@ export const submitAgentRunWithServicesEffect = (
     const auditContexts = yield* AgentRunAuditContextService
     const repositories = yield* AgentRunRepositoryService
     const queueDepth = yield* AgentRunQueueDepthService
+    const ids = yield* AgentRunIdGeneratorService
     const runtimeConfig = yield* AgentRunRuntimeConfigService
     const deliveryId = yield* Effect.try({
       try: () => requireIdempotencyKey(request),
@@ -1120,10 +1014,11 @@ export const submitAgentRunWithServicesEffect = (
           const policyDecision = yield* policies.validate(parsed.namespace, policyChecks, kube).pipe(Effect.either)
 
           if (policyDecision._tag === 'Left') {
+            const auditEventId = yield* ids.next
             yield* storeEffect('create-audit-event', () =>
               activeStore.createAuditEvent({
                 entityType: 'PolicyDecision',
-                entityId: randomUUID(),
+                entityId: auditEventId,
                 eventType: 'policy.denied',
                 context: auditContext,
                 details: {
@@ -1136,10 +1031,11 @@ export const submitAgentRunWithServicesEffect = (
             return yield* Effect.fail(policyDecision.left)
           }
 
+          const auditEventId = yield* ids.next
           yield* storeEffect('create-audit-event', () =>
             activeStore.createAuditEvent({
               entityType: 'PolicyDecision',
-              entityId: randomUUID(),
+              entityId: auditEventId,
               eventType: 'policy.allowed',
               context: auditContext,
               details: { subject: policyChecks.subject, checks: policyChecks },
@@ -1322,6 +1218,6 @@ export const submitAgentRunWithServicesEffect = (
           )
           return { status: 201, body: { ok: true, agentRun: record, resource: applied } }
         }),
-      closeStoreEffect,
+      closeAgentRunsStoreEffect,
     )
   })

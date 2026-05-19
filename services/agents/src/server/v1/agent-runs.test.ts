@@ -82,6 +82,7 @@ describe('AgentRun v1 API', () => {
   it('creates an AgentRun through injected Agents service dependencies', async () => {
     const store = createStoreMock()
     const kube = createKubeMock()
+    const idGenerator = vi.fn(() => 'policy-audit-id-1')
 
     const response = await postAgentRunsHandler(
       buildRequest({
@@ -96,6 +97,7 @@ describe('AgentRun v1 API', () => {
         storeFactory: () => store,
         kubeClient: kube,
         validatePolicies: vi.fn(async () => {}),
+        idGenerator,
       },
     )
 
@@ -123,6 +125,14 @@ describe('AgentRun v1 API', () => {
     )
     expect(store.assignAgentRunIdempotencyKey).toHaveBeenCalledWith(
       expect.objectContaining({ agentRunName: 'demo-agent-run-1', agentRunUid: 'agent-run-uid-1' }),
+    )
+    expect(idGenerator).toHaveBeenCalledTimes(1)
+    expect(store.createAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityType: 'PolicyDecision',
+        entityId: 'policy-audit-id-1',
+        eventType: 'policy.allowed',
+      }),
     )
   })
 
