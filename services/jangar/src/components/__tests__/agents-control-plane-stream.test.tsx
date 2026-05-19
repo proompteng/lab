@@ -77,6 +77,7 @@ describe('useControlPlaneStream', () => {
     if (!source) {
       throw new Error('Expected EventSource instance to be created')
     }
+    expect(source.url).toBe('/api/agents/control-plane/stream?namespace=agents')
 
     act(() => {
       source.emitMessage(JSON.stringify(makeResourceEvent()))

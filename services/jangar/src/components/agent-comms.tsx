@@ -2,6 +2,7 @@ import { Link } from '@tanstack/react-router'
 import * as React from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 
+import { AGENTS_EVENTS_API_PATH } from '@/data/agents-api-paths'
 import { cn } from '@/lib/utils'
 
 export type AgentMessage = {
@@ -174,7 +175,7 @@ export const useAgentEventStream = ({ runId, channel, maxMessages }: AgentStream
     if (runId?.trim()) params.set('runId', runId.trim())
     if (channel?.trim()) params.set('channel', channel.trim())
     if (maxMessages) params.set('limit', String(maxMessages))
-    const url = `/api/control-plane/agent-events?${params.toString()}`
+    const url = `${AGENTS_EVENTS_API_PATH}?${params.toString()}`
     const source = new EventSource(url)
 
     source.onopen = () => {

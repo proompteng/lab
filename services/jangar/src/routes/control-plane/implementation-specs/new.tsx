@@ -2,6 +2,7 @@ import { Button, Input, Textarea } from '@proompteng/design/ui'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import * as React from 'react'
 import { DEFAULT_NAMESPACE, parseNamespaceSearch } from '@/components/agents-control-plane-search'
+import { AGENTS_CONTROL_PLANE_API_BASE } from '@/data/agents-api-paths'
 import { randomUuid } from '@/lib/uuid'
 
 export const Route = createFileRoute('/control-plane/implementation-specs/new')({
@@ -303,7 +304,7 @@ function ImplementationSpecCreatePage() {
       return
     }
     setSpecSaveStatus('saving')
-    const response = await fetch('/api/control-plane/resource', {
+    const response = await fetch(`${AGENTS_CONTROL_PLANE_API_BASE}/resource`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',

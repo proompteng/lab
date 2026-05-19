@@ -1,5 +1,6 @@
 import * as React from 'react'
 
+import { AGENTS_CONTROL_PLANE_API_BASE } from '@/data/agents-api-paths'
 import type { AgentPrimitiveKind, ControlPlaneStatus, PrimitiveResource } from '@/data/agents-control-plane'
 
 export type ControlPlaneStreamStatus = 'connecting' | 'open' | 'error' | 'closed'
@@ -94,7 +95,7 @@ export const useControlPlaneStream = (
     openedRef.current = false
 
     const params = new URLSearchParams({ namespace: trimmedNamespace })
-    const source = new EventSource(`/api/control-plane/stream?${params.toString()}`)
+    const source = new EventSource(`${AGENTS_CONTROL_PLANE_API_BASE}/stream?${params.toString()}`)
 
     source.onopen = () => {
       openedRef.current = true
