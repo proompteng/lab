@@ -6,7 +6,7 @@ Docs index: [README](../README.md)
 
 ## Overview
 
-The chart renders a separate controllers deployment that forces `JANGAR_GRPC_ENABLED=0` unless explicitly overridden. This is a good safety default (controllers do not need to expose gRPC externally), but it is undocumented and can be surprising when operators expect agentctl gRPC to be available everywhere.
+The chart renders a separate controllers deployment that forces `AGENTS_GRPC_ENABLED=0` unless explicitly overridden. This is a good safety default (controllers do not need to expose gRPC externally), but it is documented here because operators may expect agentctl gRPC to be available everywhere.
 
 This doc defines the intended behavior and introduces a controlled enablement path if needed.
 
@@ -22,10 +22,10 @@ This doc defines the intended behavior and introduces a controlled enablement pa
 ## Current State
 
 - Chart forces defaults in `charts/agents/templates/deployment-controllers.yaml`:
-  - Sets `JANGAR_GRPC_ENABLED` to `"0"` unless present in `controllers.env.vars`.
-- Control plane gRPC behavior is implemented in:
-  - `services/jangar/src/server/control-plane-grpc.ts`
-  - `services/jangar/src/server/agentctl-grpc.ts`
+  - Sets `AGENTS_GRPC_ENABLED` to `"0"` unless present in `controllers.env.vars`.
+- Agents-owned gRPC behavior is implemented in:
+  - `services/agents/src/server/control-plane-grpc.ts`
+  - `services/agents/src/server/agentctl-grpc.ts`
 - Cluster desired state sets gRPC enabled for control plane in `argocd/applications/agents/values.yaml`.
 
 ## Design
@@ -33,21 +33,21 @@ This doc defines the intended behavior and introduces a controlled enablement pa
 ### Contract
 
 - Controllers gRPC remains disabled by default.
-- If controller gRPC is needed (e.g., for internal debugging), enable it explicitly with:
-  - `controllers.env.vars.JANGAR_GRPC_ENABLED: "true"`
+- If controller gRPC is needed, enable it explicitly with:
+  - `controllers.env.vars.AGENTS_GRPC_ENABLED: "true"`
     and require `controllers.service.enabled=true` (see chart design) to avoid “listening but unreachable” states.
 
 ### Additional guardrails
 
 - Add a startup log line in controllers indicating whether gRPC server started.
-- Add chart validation: if `controllers.env.vars.JANGAR_GRPC_ENABLED=true`, require `controllers.service.enabled=true`.
+- Add chart validation: if `controllers.env.vars.AGENTS_GRPC_ENABLED=true`, require `controllers.service.enabled=true`.
 
 ## Config Mapping
 
-| Helm value                                 | Env var                 | Intended behavior                              |
-| ------------------------------------------ | ----------------------- | ---------------------------------------------- |
-| `controllers.env.vars.JANGAR_GRPC_ENABLED` | `JANGAR_GRPC_ENABLED`   | Explicit opt-in for controllers gRPC server.   |
-| (unset)                                    | `JANGAR_GRPC_ENABLED=0` | Default: controllers do not start gRPC server. |
+| Helm value                                | Env var                | Intended behavior                              |
+| ----------------------------------------- | ---------------------- | ---------------------------------------------- |
+| `controllers.env.vars.AGENTS_GRPC_ENABLED` | `AGENTS_GRPC_ENABLED`   | Explicit opt-in for controllers gRPC server.   |
+| (unset)                                   | `AGENTS_GRPC_ENABLED=0` | Default: controllers do not start gRPC server. |
 
 ## Rollout Plan
 
@@ -62,7 +62,7 @@ Rollback:
 ## Validation
 
 ```bash
-helm template agents charts/agents --set controllers.enabled=true | rg -n \"JANGAR_GRPC_ENABLED\"
+helm template agents charts/agents --set controllers.enabled=true | rg -n \"AGENTS_GRPC_ENABLED\"
 kubectl -n agents logs deploy/agents-controllers | rg -n \"gRPC|Agentctl\"
 ```
 
@@ -87,15 +87,15 @@ kubectl -n agents logs deploy/agents-controllers | rg -n \"gRPC|Agentctl\"
 - Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
 - GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
 - Product appset enablement: `argocd/applicationsets/product.yaml`
-- CRD Go types and codegen: `services/jangar/api/agents/v1alpha1/types.go`, `scripts/agents/validate-agents.sh`
+- CRD Go types and codegen: `services/agents/api/agents/v1alpha1/types.go`, `scripts/agents/validate-agents.sh`
 - Control plane + controllers code:
-  - Server entrypoints: `services/jangar/src/server/index.ts`, `services/jangar/src/server/app.ts`
-  - Agents/AgentRuns controller: `services/jangar/src/server/agents-controller.ts`
-  - Orchestrations: `services/jangar/src/server/orchestration-controller.ts`, `services/jangar/src/server/orchestration-submit.ts`
-  - Supporting primitives: `services/jangar/src/server/supporting-primitives-controller.ts`
-  - Policy checks (budgets/approval/etc): `services/jangar/src/server/primitives-policy.ts`
-- Codex runners (when applicable): `services/jangar/scripts/codex/codex-implement.ts`, `packages/codex/src/runner.ts`
-- Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
+  - Server entrypoints: `services/agents/src/server/index.ts`, `services/agents/src/server/app.ts`
+  - Agents/AgentRuns controller: `services/agents/src/server/agents-controller/`
+  - Orchestrations: `services/agents/src/server/orchestration-controller.ts`, `services/agents/src/server/v1/orchestration-submit.ts`
+  - Supporting primitives: `services/agents/src/server/supporting-primitives-controller.ts`
+  - Policy checks (budgets/approval/etc): `services/agents/src/server/primitives-policy.ts`
+- Codex runners (when applicable): `services/agents/scripts/codex/agent-runner.ts`, `services/agents/src/runner/`, `packages/codex/src/app-server-client.ts`
+- Domain-specific Argo WorkflowTemplates used by Jangar/Froussard remain outside the Agents chart in `argocd/applications/froussard/*.yaml`.
 
 ### Current cluster state (GitOps desired + live API server)
 
@@ -139,28 +139,28 @@ Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
 
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
-- Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
+- Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `AGENTS_MIGRATIONS`, `AGENTS_GRPC_ENABLED`, and `AGENTS_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
 
-- `controller.namespaces` → `JANGAR_AGENTS_CONTROLLER_NAMESPACES` (and also `JANGAR_PRIMITIVES_NAMESPACES`)
-- `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
-- `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
-- `controller.rate.*` → `JANGAR_AGENTS_CONTROLLER_RATE_{WINDOW_SECONDS,NAMESPACE,REPO,CLUSTER}`
-- `controller.agentRunRetentionSeconds` → `JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS`
-- `controller.admissionPolicy.*` → `JANGAR_AGENTS_CONTROLLER_{LABELS_REQUIRED,LABELS_ALLOWED,LABELS_DENIED,IMAGES_ALLOWED,IMAGES_DENIED,BLOCKED_SECRETS}`
-- `controller.vcsProviders.*` → `JANGAR_AGENTS_CONTROLLER_VCS_{PROVIDERS_ENABLED,DEPRECATED_TOKEN_TYPES,PR_RATE_LIMITS}`
-- `controller.authSecret.*` → `JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_{NAME,KEY,MOUNT_PATH}`
-- `orchestrationController.*` → `JANGAR_ORCHESTRATION_CONTROLLER_{ENABLED,NAMESPACES}`
-- `supportingController.*` → `JANGAR_SUPPORTING_CONTROLLER_{ENABLED,NAMESPACES}`
-- `grpc.*` → `JANGAR_GRPC_{ENABLED,HOST,PORT}` (unless overridden via `env.vars`)
-- `controller.jobTtlSecondsAfterFinished` → `JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS`
-- `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
+- `controller.namespaces` → `AGENTS_AGENTS_CONTROLLER_NAMESPACES` (and also `AGENTS_PRIMITIVES_NAMESPACES`)
+- `controller.concurrency.*` → `AGENTS_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
+- `controller.queue.*` → `AGENTS_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
+- `controller.rate.*` → `AGENTS_AGENTS_CONTROLLER_RATE_{WINDOW_SECONDS,NAMESPACE,REPO,CLUSTER}`
+- `controller.agentRunRetentionSeconds` → `AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS`
+- `controller.admissionPolicy.*` → `AGENTS_AGENTS_CONTROLLER_{LABELS_REQUIRED,LABELS_ALLOWED,LABELS_DENIED,IMAGES_ALLOWED,IMAGES_DENIED,BLOCKED_SECRETS}`
+- `controller.vcsProviders.*` → `AGENTS_AGENTS_CONTROLLER_VCS_{PROVIDERS_ENABLED,DEPRECATED_TOKEN_TYPES,PR_RATE_LIMITS}`
+- `controller.authSecret.*` → `AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_{NAME,KEY,MOUNT_PATH}`
+- `orchestrationController.*` → `AGENTS_ORCHESTRATION_CONTROLLER_{ENABLED,NAMESPACES}`
+- `supportingController.*` → `AGENTS_SUPPORTING_CONTROLLER_{ENABLED,NAMESPACES}`
+- `grpc.*` → `AGENTS_GRPC_{ENABLED,HOST,PORT}` (unless overridden via `env.vars`)
+- `controller.jobTtlSecondsAfterFinished` → `AGENTS_AGENT_RUNNER_JOB_TTL_SECONDS`
+- `runtime.*` → `AGENTS_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
 
 1. Update code + chart + CRDs in one PR when changing APIs:
-   - Go types (`services/jangar/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
+   - Go types (`services/agents/api/agents/v1alpha1/types.go`) → regenerate CRDs → `charts/agents/crds/`.
 2. Validate locally:
    - `scripts/agents/validate-agents.sh`
    - `scripts/argo-lint.sh`
