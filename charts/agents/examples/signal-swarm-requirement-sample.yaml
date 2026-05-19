@@ -1,0 +1,18 @@
+apiVersion: signals.proompteng.ai/v1alpha1
+kind: Signal
+metadata:
+  name: platform-reliability-requirement
+  namespace: agents
+  labels:
+    swarm.proompteng.ai/type: requirement
+    swarm.proompteng.ai/from: platform-swarm
+    swarm.proompteng.ai/to: platform-swarm
+spec:
+  channel: workflow.general.requirement
+  description: Raise the reliability bar for the next platform delivery cycle.
+  payload:
+    priority: high
+    objective: tighten rollout checks and add runtime guardrails
+    acceptance:
+      - control-plane rollout remains healthy
+      - required checks pass before merge
