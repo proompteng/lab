@@ -1,0 +1,261 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: jangar-swarm-discover-template
+  namespace: agents
+  annotations:
+    agents.proompteng.ai/template: "true"
+spec:
+  agentRef:
+    name: codex-spark-agent
+  implementationSpecRef:
+    name: jangar-swarm-intelligence-cycle-v1
+  runtime:
+    type: workflow
+    config:
+      serviceAccountName: agents-sa
+  ttlSecondsAfterFinished: 21600
+  workflow:
+    steps:
+      - name: discover
+        retries: 1
+        retryBackoffSeconds: 30
+        parameters:
+          stage: research
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/swarm-jangar-control-plane-discover
+    issueNumber: swarm-jangar-control-plane-discover
+    issueTitle: Jangar Engineering discover mission
+    swarmName: jangar-control-plane
+    swarmStage: discover
+    swarmAgentRole: architect
+    swarmAgentWorkerId: worker-jangar-discover
+    swarmAgentIdentity: victor-chen-jangar-architect
+    swarmHumanName: Victor Chen
+    swarmTeamName: Jangar Engineering
+    ownerChannel: swarm://owner/platform
+    natsChannel: general
+    natsSubjectPrefix: workflow
+    objective: assess cluster/source/database state and create/update+merge required design-document PRs that improve, maintain, and innovate the Jangar control plane
+    swarmMissionLedgerRef: /workspace/.agentrun/swarm/jangar-control-plane-mission-ledger.md
+    swarmBusinessMetric: reduce failed AgentRuns and shorten green PR-to-healthy GitOps rollout time for the Jangar control plane
+    swarmBusinessEvidenceUrl: http://agents.agents.svc.cluster.local/ready
+    swarmValidationContract: >-
+      ["cite the governing Jangar design or runtime requirement before changing code","produce production PRs with tests or report the exact blocker to code","merge only green PRs and prove Argo, workload readiness, and service health after rollout","name the control-plane metric improved or the smallest blocker preventing improvement"]
+    swarmValueGates: >-
+      ["failed_agentrun_rate","pr_to_rollout_latency","ready_status_truth","manual_intervention_count","handoff_evidence_quality"]
+    swarmHandoffRequiredFields: >-
+      ["objective","files_changed_or_inspected","commands_and_exit_codes","tests_passed_or_failed","unresolved_issues","risk_and_rollback","exact_next_action"]
+    swarmSourceDesign: docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-write
+  secrets:
+    - github-token
+    - codex-auth
+    - hf-router-token
+    - nats-agents-credentials
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: jangar-swarm-plan-template
+  namespace: agents
+  annotations:
+    agents.proompteng.ai/template: "true"
+spec:
+  agentRef:
+    name: codex-spark-agent
+  implementationSpecRef:
+    name: jangar-swarm-intelligence-cycle-v1
+  runtime:
+    type: workflow
+    config:
+      serviceAccountName: agents-sa
+  ttlSecondsAfterFinished: 21600
+  workflow:
+    steps:
+      - name: plan
+        retries: 1
+        retryBackoffSeconds: 30
+        parameters:
+          stage: planning
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/swarm-jangar-control-plane-plan
+    issueNumber: swarm-jangar-control-plane-plan
+    issueTitle: Jangar Engineering plan mission
+    swarmName: jangar-control-plane
+    swarmStage: plan
+    swarmAgentRole: architect
+    swarmAgentWorkerId: worker-jangar-plan
+    swarmAgentIdentity: victor-chen-jangar-architect
+    swarmHumanName: Victor Chen
+    swarmTeamName: Jangar Engineering
+    ownerChannel: swarm://owner/platform
+    natsChannel: general
+    natsSubjectPrefix: workflow
+    objective: assess cluster/source/database state and create/update+merge required design-document PRs that improve, maintain, and innovate the Jangar control plane
+    swarmMissionLedgerRef: /workspace/.agentrun/swarm/jangar-control-plane-mission-ledger.md
+    swarmBusinessMetric: reduce failed AgentRuns and shorten green PR-to-healthy GitOps rollout time for the Jangar control plane
+    swarmBusinessEvidenceUrl: http://agents.agents.svc.cluster.local/ready
+    swarmValidationContract: >-
+      ["cite the governing Jangar design or runtime requirement before changing code","produce production PRs with tests or report the exact blocker to code","merge only green PRs and prove Argo, workload readiness, and service health after rollout","name the control-plane metric improved or the smallest blocker preventing improvement"]
+    swarmValueGates: >-
+      ["failed_agentrun_rate","pr_to_rollout_latency","ready_status_truth","manual_intervention_count","handoff_evidence_quality"]
+    swarmHandoffRequiredFields: >-
+      ["objective","files_changed_or_inspected","commands_and_exit_codes","tests_passed_or_failed","unresolved_issues","risk_and_rollback","exact_next_action"]
+    swarmSourceDesign: docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-write
+  secrets:
+    - github-token
+    - codex-auth
+    - hf-router-token
+    - nats-agents-credentials
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: jangar-swarm-implement-template
+  namespace: agents
+  annotations:
+    agents.proompteng.ai/template: "true"
+spec:
+  agentRef:
+    name: codex-spark-agent
+  implementationSpecRef:
+    name: jangar-swarm-autonomous-implementation-v1
+  runtime:
+    type: workflow
+    config:
+      serviceAccountName: agents-sa
+  ttlSecondsAfterFinished: 21600
+  workflow:
+    steps:
+      - name: implement
+        retries: 1
+        retryBackoffSeconds: 30
+        timeoutSeconds: 7200
+        parameters:
+          stage: implementation
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/swarm-jangar-control-plane
+    issueNumber: swarm-jangar-control-plane
+    issueTitle: Jangar Engineering autonomous implementation mission
+    swarmName: jangar-control-plane
+    swarmStage: implement
+    swarmAgentRole: engineer
+    swarmAgentWorkerId: worker-jangar-implement
+    swarmAgentIdentity: elise-novak-jangar-engineer
+    swarmHumanName: Elise Novak
+    swarmTeamName: Jangar Engineering
+    objective: grab the system design document, implement high-quality engineering changes, update impacted documentation, and deliver a production-ready PR
+    ownerChannel: swarm://owner/platform
+    natsChannel: general
+    natsSubjectPrefix: workflow
+    swarmMissionLedgerRef: /workspace/.agentrun/swarm/jangar-control-plane-mission-ledger.md
+    swarmBusinessMetric: reduce failed AgentRuns and shorten green PR-to-healthy GitOps rollout time for the Jangar control plane
+    swarmBusinessEvidenceUrl: http://agents.agents.svc.cluster.local/ready
+    swarmValidationContract: >-
+      ["cite the governing Jangar design or runtime requirement before changing code","produce production PRs with tests or report the exact blocker to code","merge only green PRs and prove Argo, workload readiness, and service health after rollout","name the control-plane metric improved or the smallest blocker preventing improvement"]
+    swarmValueGates: >-
+      ["failed_agentrun_rate","pr_to_rollout_latency","ready_status_truth","manual_intervention_count","handoff_evidence_quality"]
+    swarmHandoffRequiredFields: >-
+      ["objective","files_changed_or_inspected","commands_and_exit_codes","tests_passed_or_failed","unresolved_issues","risk_and_rollback","exact_next_action"]
+    swarmSourceDesign: docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-write
+  secrets:
+    - github-token
+    - codex-auth
+    - hf-router-token
+    - nats-agents-credentials
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: jangar-swarm-verify-template
+  namespace: agents
+  annotations:
+    agents.proompteng.ai/template: "true"
+spec:
+  agentRef:
+    name: codex-spark-agent
+  implementationSpecRef:
+    name: jangar-swarm-deployer-v1
+  runtime:
+    type: workflow
+    config:
+      serviceAccountName: agents-sa
+  workload:
+    resources:
+      requests:
+        cpu: "1"
+        memory: 4Gi
+        ephemeral-storage: 8Gi
+      limits:
+        memory: 16Gi
+        ephemeral-storage: 16Gi
+  ttlSecondsAfterFinished: 21600
+  workflow:
+    steps:
+      - name: verify
+        retries: 0
+        retryBackoffSeconds: 30
+        timeoutSeconds: 7200
+        parameters:
+          stage: verify
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/swarm-jangar-control-plane-verify
+    issueNumber: swarm-jangar-control-plane-verify
+    issueTitle: Jangar Engineering verify mission
+    swarmName: jangar-control-plane
+    swarmStage: verify
+    swarmAgentRole: deployer
+    swarmAgentWorkerId: worker-jangar-verify
+    swarmAgentIdentity: marco-silva-jangar-deployer
+    swarmHumanName: Marco Silva
+    swarmTeamName: Jangar Engineering
+    ownerChannel: swarm://owner/platform
+    natsChannel: general
+    natsSubjectPrefix: workflow
+    targetApplications: agents,jangar
+    targetDeployments: agents/agents,agents/agents-controllers,jangar/jangar
+    readinessUrl: http://agents.agents.svc.cluster.local/ready
+    objective: as release engineer, make Jangar PRs production-ready by fixing blockers until all required checks are green, then squash-merge and verify in-cluster GitOps rollout health
+    swarmMissionLedgerRef: /workspace/.agentrun/swarm/jangar-control-plane-mission-ledger.md
+    swarmBusinessMetric: reduce failed AgentRuns and shorten green PR-to-healthy GitOps rollout time for the Jangar control plane
+    swarmBusinessEvidenceUrl: http://agents.agents.svc.cluster.local/ready
+    swarmValidationContract: >-
+      ["cite the governing Jangar design or runtime requirement before changing code","produce production PRs with tests or report the exact blocker to code","merge only green PRs and prove Argo, workload readiness, and service health after rollout","name the control-plane metric improved or the smallest blocker preventing improvement"]
+    swarmValueGates: >-
+      ["failed_agentrun_rate","pr_to_rollout_latency","ready_status_truth","manual_intervention_count","handoff_evidence_quality"]
+    swarmHandoffRequiredFields: >-
+      ["objective","files_changed_or_inspected","commands_and_exit_codes","tests_passed_or_failed","unresolved_issues","risk_and_rollback","exact_next_action"]
+    swarmSourceDesign: docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-write
+  secrets:
+    - github-token
+    - codex-auth
+    - hf-router-token
+    - nats-agents-credentials

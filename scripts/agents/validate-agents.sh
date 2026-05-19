@@ -252,24 +252,27 @@ from pathlib import Path
 import yaml
 
 root = Path(os.environ["ROOT_DIR"])
-agents_dir = root / "argocd" / "applications" / "agents"
+domain_manifests = (
+    ("jangar", root / "argocd" / "applications" / "jangar-agents-domain"),
+    ("torghut", root / "argocd" / "applications" / "torghut" / "agents-domain"),
+)
 
 
 def load_docs(path: Path):
     return [doc for doc in yaml.safe_load_all(path.read_text()) if isinstance(doc, dict)]
 
 
-templates = {
-    doc.get("metadata", {}).get("name"): doc
-    for doc in load_docs(agents_dir / "swarm-agentrun-templates.yaml")
-    if doc.get("kind") == "AgentRun"
-}
-implspecs = {
-    doc.get("metadata", {}).get("name"): doc
-    for doc in load_docs(agents_dir / "swarm-implspecs.yaml")
-    if doc.get("kind") == "ImplementationSpec"
-}
-swarms = [doc for doc in load_docs(agents_dir / "swarm-instances.yaml") if doc.get("kind") == "Swarm"]
+templates = {}
+implspecs = {}
+swarms = []
+for domain_name, domain_dir in domain_manifests:
+    for doc in load_docs(domain_dir / f"{domain_name}-swarm-agentrun-templates.yaml"):
+        if doc.get("kind") == "AgentRun":
+            templates[doc.get("metadata", {}).get("name")] = doc
+    for doc in load_docs(domain_dir / f"{domain_name}-swarm-implspecs.yaml"):
+        if doc.get("kind") == "ImplementationSpec":
+            implspecs[doc.get("metadata", {}).get("name")] = doc
+    swarms.extend(doc for doc in load_docs(domain_dir / f"{domain_name}-swarm-instances.yaml") if doc.get("kind") == "Swarm")
 
 stage_contract = {
     "discover": ("architect", "swarm-intelligence-cycle-v1", "read-write"),
@@ -284,25 +287,26 @@ required_coordination_parameters = (
     "swarmAgentIdentity",
     "swarmHumanName",
 )
-required_collaboration_terms = ("nats collaboration", "codex-nats-publish", "jangar is the visibility surface")
+required_collaboration_terms = ("nats collaboration", "codex-nats-publish")
 
 errors = []
 if not swarms:
-    errors.append("argocd/applications/agents/swarm-instances.yaml must define at least one Swarm.")
+    errors.append("domain swarm manifests must define at least one Swarm.")
 
-for required_implspec in {contract[1] for contract in stage_contract.values()}:
-    if required_implspec not in implspecs:
-        errors.append(f"missing required swarm ImplementationSpec {required_implspec}")
-        continue
-    implspec_text = str(implspecs[required_implspec].get("spec", {}).get("text", "")).lower()
+for implspec_name, implspec in implspecs.items():
+    implspec_text = str(implspec.get("spec", {}).get("text", "")).lower()
     for required_term in required_collaboration_terms:
         if required_term not in implspec_text:
-            errors.append(f"{required_implspec}: missing required collaboration term {required_term!r}")
+            errors.append(f"{implspec_name}: missing required collaboration term {required_term!r}")
+    if implspec_name.startswith("torghut-") and "jangar is the visibility surface" in implspec_text:
+        errors.append(f"{implspec_name}: Torghut swarm specs must not require Jangar as the visibility surface")
+    if implspec_name.startswith("jangar-") and "/trading/revenue-repair" in implspec_text:
+        errors.append(f"{implspec_name}: Jangar swarm specs must not carry Torghut revenue-repair rules")
 
 for swarm in swarms:
     swarm_name = swarm.get("metadata", {}).get("name")
     execution = swarm.get("spec", {}).get("execution", {})
-    for stage, (expected_role, expected_implspec, expected_vcs_mode) in stage_contract.items():
+    for stage, (expected_role, expected_implspec_suffix, expected_vcs_mode) in stage_contract.items():
         target_name = execution.get(stage, {}).get("targetRef", {}).get("name")
         if not target_name:
             errors.append(f"{swarm_name}: spec.execution.{stage}.targetRef.name is required")
@@ -320,8 +324,10 @@ for swarm in swarms:
         if role != expected_role:
             errors.append(f"{target_name}: expected swarmAgentRole {expected_role!r}, found {role!r}")
         implspec = template.get("spec", {}).get("implementationSpecRef", {}).get("name")
-        if implspec != expected_implspec:
-            errors.append(f"{target_name}: expected implementationSpecRef {expected_implspec!r}, found {implspec!r}")
+        if implspec not in implspecs:
+            errors.append(f"{target_name}: implementationSpecRef {implspec!r} not found in domain swarm specs")
+        elif not str(implspec).endswith(expected_implspec_suffix):
+            errors.append(f"{target_name}: expected implementationSpecRef suffix {expected_implspec_suffix!r}, found {implspec!r}")
         vcs_mode = template.get("spec", {}).get("vcsPolicy", {}).get("mode")
         if vcs_mode != expected_vcs_mode:
             errors.append(f"{target_name}: expected vcsPolicy.mode {expected_vcs_mode!r}, found {vcs_mode!r}")
