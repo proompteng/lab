@@ -10,7 +10,6 @@ import { readReleaseContract } from './release-contract'
 
 const defaultContractPath = '.artifacts/jangar/jangar-release-contract.json'
 const defaultImage = 'registry.ide-newton.ts.net/lab/jangar'
-const defaultControlPlaneImage = 'registry.ide-newton.ts.net/lab/jangar-control-plane'
 
 const buildTriggerPathRegex =
   /^(services\/jangar\/|packages\/scripts\/src\/jangar\/|packages\/scripts\/src\/shared\/|packages\/codex\/|packages\/otel\/|packages\/temporal-bun-sdk\/|skills\/|package\.json$|bun\.lock$|\.github\/workflows\/jangar-build-push\.yaml$)/
@@ -22,7 +21,6 @@ type CliOptions = {
   imageTagInput?: string
   contractPath?: string
   image?: string
-  controlPlaneImage?: string
   outputPath?: string
 }
 
@@ -45,7 +43,6 @@ type ResolveReleaseMetadataOptions = {
   imageTagInput?: string
   contractPath: string
   image: string
-  controlPlaneImage: string
 }
 
 export type ReleaseMetadata = {
@@ -54,19 +51,9 @@ export type ReleaseMetadata = {
   tag: string
   contractDigest: string
   image: string
-  controlPlaneImage: string
-  contractControlPlaneDigest: string
   promote: boolean
   reason: string
 }
-
-const resolveControlPlaneContractFields = (
-  contract: ReturnType<typeof readReleaseContract>,
-  fallbackImage: string,
-): Pick<ReleaseMetadata, 'controlPlaneImage' | 'contractControlPlaneDigest'> => ({
-  controlPlaneImage: contract.controlPlaneImage?.trim() || fallbackImage,
-  contractControlPlaneDigest: contract.controlPlaneDigest?.trim() ?? '',
-})
 
 const resolvePath = (path: string) => resolve(repoRoot, path)
 
@@ -149,16 +136,14 @@ Options:
   --image-tag-input <tag>
   --contract-path <path>
   --image <registry/repo>
-  --control-plane-image <registry/repo>
   --output <path>
 
 Defaults:
   contract-path: ${defaultContractPath}
   image: ${defaultImage}
-  control-plane-image: ${defaultControlPlaneImage}
 
 Output keys:
-  main_head, source_sha, tag, contract_digest, image, control_plane_image, contract_control_plane_digest, promote, promotion_reason`)
+  main_head, source_sha, tag, contract_digest, image, promote, promotion_reason`)
       process.exit(0)
     }
 
@@ -194,9 +179,6 @@ Output keys:
       case '--image':
         options.image = value
         break
-      case '--control-plane-image':
-        options.controlPlaneImage = value
-        break
       case '--output':
         options.outputPath = value
         break
@@ -215,8 +197,6 @@ const resolveReleaseMetadata = (options: ResolveReleaseMetadataOptions): Release
   let sourceSha = ''
   let tag = ''
   let contractDigest = ''
-  let controlPlaneImage = options.controlPlaneImage
-  let contractControlPlaneDigest = ''
   let promote = true
   let reason = 'eligible'
 
@@ -229,10 +209,6 @@ const resolveReleaseMetadata = (options: ResolveReleaseMetadataOptions): Release
     if (contract.image !== options.image) {
       throw new Error(`Release contract image mismatch: expected ${options.image}, got ${contract.image}`)
     }
-    ;({ controlPlaneImage, contractControlPlaneDigest } = resolveControlPlaneContractFields(
-      contract,
-      options.controlPlaneImage,
-    ))
 
     const workflowRunHeadSha = options.workflowRunHeadSha?.trim() ?? ''
     if (!workflowRunHeadSha) {
@@ -267,8 +243,6 @@ const resolveReleaseMetadata = (options: ResolveReleaseMetadataOptions): Release
     tag,
     contractDigest,
     image: options.image,
-    controlPlaneImage,
-    contractControlPlaneDigest,
     promote,
     reason,
   }
@@ -280,8 +254,6 @@ const toGitHubOutputLines = (metadata: ReleaseMetadata): string[] => [
   `tag=${metadata.tag}`,
   `contract_digest=${metadata.contractDigest}`,
   `image=${metadata.image}`,
-  `control_plane_image=${metadata.controlPlaneImage}`,
-  `contract_control_plane_digest=${metadata.contractControlPlaneDigest}`,
   `promote=${metadata.promote ? 'true' : 'false'}`,
   `promotion_reason=${metadata.reason}`,
 ]
@@ -309,7 +281,6 @@ export const main = (cliOptions?: CliOptions) => {
     imageTagInput: parsed.imageTagInput ?? process.env.IMAGE_TAG_INPUT,
     contractPath: parsed.contractPath ?? defaultContractPath,
     image: parsed.image ?? defaultImage,
-    controlPlaneImage: parsed.controlPlaneImage ?? defaultControlPlaneImage,
   })
 
   if (!metadata.promote) {
@@ -338,7 +309,6 @@ export const __private = {
   listChangedFilesBetween,
   normalizeEventName,
   parseArgs,
-  resolveControlPlaneContractFields,
   resolveReleaseMetadata,
   toGitHubOutputLines,
 }

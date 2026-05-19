@@ -1,9 +1,7 @@
 #!/usr/bin/env bun
 
-import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import process from 'node:process'
-import YAML from 'yaml'
 
 import { fatal, repoRoot } from '../shared/cli'
 import { inspectImageDigest } from '../shared/docker'
@@ -23,8 +21,6 @@ export type UpdateManifestsOptions = {
   imageName: string
   tag: string
   digest?: string
-  controlPlaneImageName?: string
-  controlPlaneDigest?: string
   sourceHeadSha?: string
   gitopsRevision?: string
   sourceCiRunId?: string
@@ -36,7 +32,6 @@ export type UpdateManifestsOptions = {
   kustomizationPath?: string
   serviceManifestPath?: string
   workerManifestPath?: string
-  agentsValuesPath?: string
 }
 
 type CliOptions = {
@@ -44,8 +39,6 @@ type CliOptions = {
   repository?: string
   tag?: string
   digest?: string
-  controlPlaneImageName?: string
-  controlPlaneDigest?: string
   sourceHeadSha?: string
   gitopsRevision?: string
   sourceCiRunId?: string
@@ -57,7 +50,6 @@ type CliOptions = {
   kustomizationPath?: string
   serviceManifestPath?: string
   workerManifestPath?: string
-  agentsValuesPath?: string
 }
 
 const resolvePath = (path: string) => resolve(repoRoot, path)
@@ -72,11 +64,6 @@ const normalizeDigest = (digest: string): string => {
 const normalizeOptional = (value: string | undefined): string | undefined => {
   const trimmed = value?.trim()
   return trimmed ? trimmed : undefined
-}
-
-const asRecord = (value: unknown): Record<string, unknown> | null => {
-  if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>
-  return null
 }
 
 type SourceServingProofEnv = {
@@ -115,91 +102,14 @@ const upsertDeploymentEnvValues = (manifestPath: string, containerName: string, 
   return changed
 }
 
-const upsertRecordValues = (record: Record<string, unknown>, values: Record<string, string>) => {
-  let changed = false
-  for (const [key, value] of Object.entries(values)) {
-    if (record[key] !== value) {
-      record[key] = value
-      changed = true
-    }
-  }
-  return changed
-}
-
-const updateAgentsValuesManifest = (
-  valuesPath: string,
-  imageName: string,
-  tag: string,
-  digest: string,
-  controlPlaneImageName?: string,
-  controlPlaneDigest?: string,
-  sourceServingProofEnv: Record<string, string> = {},
-): boolean => {
-  const source = readFileSync(valuesPath, 'utf8')
-  const parsed = YAML.parse(source)
-  const doc = asRecord(parsed) ?? {}
-
-  const image = asRecord(doc.image) ?? {}
-  image.repository = imageName
-  image.tag = tag
-  image.digest = digest
-  doc.image = image
-
-  const runner = asRecord(doc.runner) ?? {}
-  const runnerImage = asRecord(runner.image) ?? {}
-  runnerImage.repository = imageName
-  runnerImage.tag = tag
-  runnerImage.digest = digest
-  runner.image = runnerImage
-  doc.runner = runner
-
-  if (controlPlaneDigest) {
-    const controlPlane = asRecord(doc.controlPlane) ?? {}
-    const controlPlaneImage = asRecord(controlPlane.image) ?? {}
-    const fallbackControlPlaneRepository = imageName.endsWith('/jangar')
-      ? `${imageName.slice(0, -'/jangar'.length)}/jangar-control-plane`
-      : `${imageName}-control-plane`
-    const existingControlPlaneRepository =
-      typeof controlPlaneImage.repository === 'string' ? controlPlaneImage.repository.trim() : ''
-    controlPlaneImage.repository =
-      controlPlaneImageName ?? (existingControlPlaneRepository || fallbackControlPlaneRepository)
-    controlPlaneImage.tag = tag
-    controlPlaneImage.digest = normalizeDigest(controlPlaneDigest)
-    controlPlane.image = controlPlaneImage
-    doc.controlPlane = controlPlane
-  }
-
-  if (Object.keys(sourceServingProofEnv).length > 0) {
-    const controlPlane = asRecord(doc.controlPlane) ?? {}
-    const controlPlaneEnv = asRecord(controlPlane.env) ?? {}
-    const controlPlaneEnvVars = asRecord(controlPlaneEnv.vars) ?? {}
-    upsertRecordValues(controlPlaneEnvVars, sourceServingProofEnv)
-    controlPlaneEnv.vars = controlPlaneEnvVars
-    controlPlane.env = controlPlaneEnv
-    doc.controlPlane = controlPlane
-  }
-
-  const updated = YAML.stringify(doc, { lineWidth: 120 })
-  if (source === updated) {
-    console.warn('Warning: agents values were not updated; values already match requested image.')
-    return false
-  }
-
-  writeFileSync(valuesPath, updated)
-  console.log(`Updated ${valuesPath} with ${imageName}:${tag}@${digest}`)
-  return true
-}
-
 export const updateJangarManifests = (options: UpdateManifestsOptions) => {
   const kustomizationPath = resolvePath(options.kustomizationPath ?? defaultKustomizationPath)
   const serviceManifestPath = resolvePath(options.serviceManifestPath ?? defaultServiceManifestPath)
   const workerManifestPath = options.workerManifestPath ? resolvePath(options.workerManifestPath) : null
   const digest = normalizeDigest(options.digest ?? inspectImageDigest(`${options.imageName}:${options.tag}`))
-  const controlPlaneDigest = options.controlPlaneDigest ? normalizeDigest(options.controlPlaneDigest) : undefined
-  const agentsValuesPath = options.agentsValuesPath ? resolvePath(options.agentsValuesPath) : null
-  const manifestImageDigest = normalizeOptional(options.manifestImageDigest) ?? controlPlaneDigest
+  const manifestImageDigest = normalizeOptional(options.manifestImageDigest) ?? digest
   const servingBuildCommit = normalizeOptional(options.servingBuildCommit) ?? normalizeOptional(options.sourceHeadSha)
-  const servingImageDigest = normalizeOptional(options.servingImageDigest) ?? controlPlaneDigest
+  const servingImageDigest = normalizeOptional(options.servingImageDigest) ?? digest
 
   const kustomizationChanged = updateKustomizationImage(kustomizationPath, options.imageName, options.tag, digest)
   if (!kustomizationChanged) {
@@ -257,22 +167,9 @@ export const updateJangarManifests = (options: UpdateManifestsOptions) => {
       )
     }
   }
-  const agentsValuesChanged = agentsValuesPath
-    ? updateAgentsValuesManifest(
-        agentsValuesPath,
-        options.imageName,
-        options.tag,
-        digest,
-        options.controlPlaneImageName,
-        controlPlaneDigest,
-        sourceServingProofEnv,
-      )
-    : false
-
   return {
     tag: options.tag,
     digest,
-    controlPlaneDigest,
     rolloutTimestamp: options.rolloutTimestamp,
     changed: {
       kustomization: kustomizationChanged,
@@ -286,7 +183,6 @@ export const updateJangarManifests = (options: UpdateManifestsOptions) => {
       servingBuildCommitEnv: sourceServingProofEnvChanged.JANGAR_SERVING_BUILD_COMMIT ?? false,
       servingImageDigestEnv: sourceServingProofEnvChanged.JANGAR_SERVING_IMAGE_DIGEST ?? false,
       worker: workerChanged,
-      agentsValues: agentsValuesChanged,
     },
   }
 }
@@ -303,8 +199,6 @@ Options:
   --repository <value>
   --tag <value>
   --digest <value>
-  --control-plane-image-name <value>
-  --control-plane-digest <value>
   --source-head-sha <sha>
   --gitops-revision <sha>
   --source-ci-run-id <id>
@@ -315,8 +209,7 @@ Options:
   --rollout-timestamp <ISO8601>
   --kustomization-path <path>
   --service-manifest-path <path>
-  --worker-manifest-path <path>      Optional legacy worker manifest to update
-  --agents-values-path <path>`)
+  --worker-manifest-path <path>      Optional legacy worker manifest to update`)
       process.exit(0)
     }
 
@@ -345,12 +238,6 @@ Options:
         break
       case '--digest':
         options.digest = value
-        break
-      case '--control-plane-image-name':
-        options.controlPlaneImageName = value
-        break
-      case '--control-plane-digest':
-        options.controlPlaneDigest = value
         break
       case '--source-head-sha':
         options.sourceHeadSha = value
@@ -385,9 +272,6 @@ Options:
       case '--worker-manifest-path':
         options.workerManifestPath = value
         break
-      case '--agents-values-path':
-        options.agentsValuesPath = value
-        break
       default:
         throw new Error(`Unknown option: ${flag}`)
     }
@@ -409,8 +293,6 @@ export const main = (cliOptions?: CliOptions) => {
     imageName: `${registry}/${repository}`,
     tag,
     digest,
-    controlPlaneImageName: parsed.controlPlaneImageName ?? process.env.JANGAR_CONTROL_PLANE_IMAGE_NAME,
-    controlPlaneDigest: parsed.controlPlaneDigest ?? process.env.JANGAR_CONTROL_PLANE_IMAGE_DIGEST,
     sourceHeadSha: parsed.sourceHeadSha ?? process.env.JANGAR_SOURCE_HEAD_SHA ?? process.env.JANGAR_COMMIT,
     gitopsRevision:
       parsed.gitopsRevision ??
@@ -419,24 +301,17 @@ export const main = (cliOptions?: CliOptions) => {
       process.env.ARGOCD_REVISION,
     sourceCiRunId: parsed.sourceCiRunId ?? process.env.JANGAR_SOURCE_CI_RUN_ID ?? process.env.GITHUB_RUN_ID,
     sourceCiConclusion: parsed.sourceCiConclusion ?? process.env.JANGAR_SOURCE_CI_CONCLUSION,
-    manifestImageDigest:
-      parsed.manifestImageDigest ??
-      process.env.JANGAR_MANIFEST_IMAGE_DIGEST ??
-      process.env.JANGAR_CONTROL_PLANE_IMAGE_DIGEST,
+    manifestImageDigest: parsed.manifestImageDigest ?? process.env.JANGAR_MANIFEST_IMAGE_DIGEST,
     servingBuildCommit:
       parsed.servingBuildCommit ??
       process.env.JANGAR_SERVING_BUILD_COMMIT ??
       process.env.JANGAR_SOURCE_HEAD_SHA ??
       process.env.JANGAR_COMMIT,
-    servingImageDigest:
-      parsed.servingImageDigest ??
-      process.env.JANGAR_SERVING_IMAGE_DIGEST ??
-      process.env.JANGAR_CONTROL_PLANE_IMAGE_DIGEST,
+    servingImageDigest: parsed.servingImageDigest ?? process.env.JANGAR_SERVING_IMAGE_DIGEST,
     rolloutTimestamp,
     kustomizationPath: parsed.kustomizationPath ?? process.env.JANGAR_KUSTOMIZATION_PATH,
     serviceManifestPath: parsed.serviceManifestPath ?? process.env.JANGAR_SERVICE_MANIFEST,
     workerManifestPath: parsed.workerManifestPath ?? process.env.JANGAR_WORKER_MANIFEST,
-    agentsValuesPath: parsed.agentsValuesPath ?? process.env.JANGAR_AGENTS_VALUES_PATH,
   })
 
   console.log(
@@ -457,5 +332,4 @@ export const __private = {
   normalizeDigest,
   updateKustomizationImage,
   updateManifestAnnotation,
-  updateAgentsValuesManifest,
 }
