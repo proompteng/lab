@@ -50,7 +50,6 @@ agentctl --grpc --server 127.0.0.1:50051 status
 
 If you set a token here, the Agents server must be configured with the same
 `AGENTS_GRPC_TOKEN` value (for example via `env.vars.AGENTS_GRPC_TOKEN` in the chart values).
-`JANGAR_GRPC_TOKEN` is still accepted as a deprecated compatibility alias.
 
 Kube mode uses:
 
