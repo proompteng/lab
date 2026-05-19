@@ -190,9 +190,13 @@ const readJsonFile = async (path: string): Promise<AgentRunPayload> => {
 }
 
 const loadRunPayload = async (spec: AgentRunnerSpec): Promise<AgentRunPayload> => {
-  const payloadPath = asString(spec.payloads?.eventFilePath) ?? asString(spec.payloads?.eventBodyPath)
+  const payloadPath = asString(spec.payloads?.eventFilePath)
   if (!payloadPath) {
-    return {}
+    throw new CodexRunnerInputError({
+      operation: 'load-payload',
+      path: 'payloads.eventFilePath',
+      cause: new Error('agent-runner payloads.eventFilePath is required'),
+    })
   }
   return readJsonFile(payloadPath)
 }

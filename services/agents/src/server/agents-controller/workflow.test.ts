@@ -121,8 +121,8 @@ describe('agents controller workflow module', () => {
   })
 
   it('validates loop condition source policies', () => {
-    const previousLoopsEnabled = process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
-    process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
+    const previousLoopsEnabled = process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+    process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
     try {
       const steps = parseWorkflowSteps({
         spec: {
@@ -156,9 +156,9 @@ describe('agents controller workflow module', () => {
       })
     } finally {
       if (previousLoopsEnabled === undefined) {
-        delete process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+        delete process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
       } else {
-        process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
+        process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
       }
     }
   })
@@ -189,8 +189,8 @@ describe('agents controller workflow module', () => {
   })
 
   it('validates loop state volume requirements for persistence', () => {
-    const previousLoopsEnabled = process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
-    process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
+    const previousLoopsEnabled = process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+    process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
     try {
       const validSteps: WorkflowStepSpec[] = [
         {
@@ -262,9 +262,9 @@ describe('agents controller workflow module', () => {
       })
     } finally {
       if (previousLoopsEnabled === undefined) {
-        delete process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+        delete process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
       } else {
-        process.env.JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
+        process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
       }
     }
   })

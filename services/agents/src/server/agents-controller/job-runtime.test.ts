@@ -11,7 +11,7 @@ import {
 
 describe('agents controller job-runtime module', () => {
   afterEach(() => {
-    delete process.env.JANGAR_AGENT_RUNNER_SERVICE_ACCOUNT
+    delete process.env.AGENTS_AGENT_RUNNER_SERVICE_ACCOUNT
   })
 
   it('creates DNS-safe names and appends stable hash when needed', () => {
@@ -30,7 +30,7 @@ describe('agents controller job-runtime module', () => {
   })
 
   it('resolves runner service account from runtime config aliases or env default', () => {
-    process.env.JANGAR_AGENT_RUNNER_SERVICE_ACCOUNT = 'runner-default'
+    process.env.AGENTS_AGENT_RUNNER_SERVICE_ACCOUNT = 'runner-default'
     expect(resolveRunnerServiceAccount({ serviceAccount: 'runtime-sa' })).toBe('runtime-sa')
     expect(resolveRunnerServiceAccount({ serviceAccountName: 'runtime-sa-name' })).toBe('runtime-sa-name')
     expect(resolveRunnerServiceAccount({})).toBe('runner-default')
