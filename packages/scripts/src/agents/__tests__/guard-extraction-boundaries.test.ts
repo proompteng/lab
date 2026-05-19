@@ -23,6 +23,7 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('workflow_comms\\.agent_messages|legacy_workflow_comms')
     expect(content).toContain('goalObjective|goalTokenBudget')
     expect(content).toContain('argo\\.workflows\\.completions')
+    expect(content).toContain('Jangar must not expose legacy Codex notify/run-complete callback routes')
     expect(content).toContain('reflection-(allowed|auto)-namespaces')
     expect(content).toContain('jangar-db-ca')
     expect(content).toContain('legacy generic Agents /api/control-plane API compatibility aliases')

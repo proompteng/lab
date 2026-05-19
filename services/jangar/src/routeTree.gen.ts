@@ -97,9 +97,7 @@ import { Route as ApiMemoriesCountRouteImport } from './routes/api/memories/coun
 import { Route as ApiGithubPullsRouteImport } from './routes/api/github/pulls'
 import { Route as ApiGithubIssuesRouteImport } from './routes/api/github/issues'
 import { Route as ApiCodexRunsRouteImport } from './routes/api/codex/runs'
-import { Route as ApiCodexRunCompleteRouteImport } from './routes/api/codex/run-complete'
 import { Route as ApiCodexRerunRouteImport } from './routes/api/codex/rerun'
-import { Route as ApiCodexNotifyRouteImport } from './routes/api/codex/notify'
 import { Route as ApiCodexIssuesRouteImport } from './routes/api/codex/issues'
 import { Route as ApiCodexGithubEventsRouteImport } from './routes/api/codex/github-events'
 import { Route as ApiAtlasPathsRouteImport } from './routes/api/atlas/paths'
@@ -642,19 +640,9 @@ const ApiCodexRunsRoute = ApiCodexRunsRouteImport.update({
   path: '/api/codex/runs',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiCodexRunCompleteRoute = ApiCodexRunCompleteRouteImport.update({
-  id: '/api/codex/run-complete',
-  path: '/api/codex/run-complete',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ApiCodexRerunRoute = ApiCodexRerunRouteImport.update({
   id: '/api/codex/rerun',
   path: '/api/codex/rerun',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiCodexNotifyRoute = ApiCodexNotifyRouteImport.update({
-  id: '/api/codex/notify',
-  path: '/api/codex/notify',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiCodexIssuesRoute = ApiCodexIssuesRouteImport.update({
@@ -1082,9 +1070,7 @@ export interface FileRoutesByFullPath {
   '/api/atlas/paths': typeof ApiAtlasPathsRoute
   '/api/codex/github-events': typeof ApiCodexGithubEventsRoute
   '/api/codex/issues': typeof ApiCodexIssuesRoute
-  '/api/codex/notify': typeof ApiCodexNotifyRoute
   '/api/codex/rerun': typeof ApiCodexRerunRoute
-  '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
   '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
   '/api/github/issues': typeof ApiGithubIssuesRoute
   '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
@@ -1240,9 +1226,7 @@ export interface FileRoutesByTo {
   '/api/atlas/paths': typeof ApiAtlasPathsRoute
   '/api/codex/github-events': typeof ApiCodexGithubEventsRoute
   '/api/codex/issues': typeof ApiCodexIssuesRoute
-  '/api/codex/notify': typeof ApiCodexNotifyRoute
   '/api/codex/rerun': typeof ApiCodexRerunRoute
-  '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
   '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
   '/api/github/issues': typeof ApiGithubIssuesRoute
   '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
@@ -1401,9 +1385,7 @@ export interface FileRoutesById {
   '/api/atlas/paths': typeof ApiAtlasPathsRoute
   '/api/codex/github-events': typeof ApiCodexGithubEventsRoute
   '/api/codex/issues': typeof ApiCodexIssuesRoute
-  '/api/codex/notify': typeof ApiCodexNotifyRoute
   '/api/codex/rerun': typeof ApiCodexRerunRoute
-  '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
   '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
   '/api/github/issues': typeof ApiGithubIssuesRoute
   '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
@@ -1563,9 +1545,7 @@ export interface FileRouteTypes {
     | '/api/atlas/paths'
     | '/api/codex/github-events'
     | '/api/codex/issues'
-    | '/api/codex/notify'
     | '/api/codex/rerun'
-    | '/api/codex/run-complete'
     | '/api/codex/runs'
     | '/api/github/issues'
     | '/api/github/pulls'
@@ -1721,9 +1701,7 @@ export interface FileRouteTypes {
     | '/api/atlas/paths'
     | '/api/codex/github-events'
     | '/api/codex/issues'
-    | '/api/codex/notify'
     | '/api/codex/rerun'
-    | '/api/codex/run-complete'
     | '/api/codex/runs'
     | '/api/github/issues'
     | '/api/github/pulls'
@@ -1881,9 +1859,7 @@ export interface FileRouteTypes {
     | '/api/atlas/paths'
     | '/api/codex/github-events'
     | '/api/codex/issues'
-    | '/api/codex/notify'
     | '/api/codex/rerun'
-    | '/api/codex/run-complete'
     | '/api/codex/runs'
     | '/api/github/issues'
     | '/api/github/pulls'
@@ -2042,9 +2018,7 @@ export interface RootRouteChildren {
   ApiAtlasPathsRoute: typeof ApiAtlasPathsRoute
   ApiCodexGithubEventsRoute: typeof ApiCodexGithubEventsRoute
   ApiCodexIssuesRoute: typeof ApiCodexIssuesRoute
-  ApiCodexNotifyRoute: typeof ApiCodexNotifyRoute
   ApiCodexRerunRoute: typeof ApiCodexRerunRoute
-  ApiCodexRunCompleteRoute: typeof ApiCodexRunCompleteRoute
   ApiCodexRunsRoute: typeof ApiCodexRunsRouteWithChildren
   ApiGithubIssuesRoute: typeof ApiGithubIssuesRoute
   ApiGithubPullsRoute: typeof ApiGithubPullsRouteWithChildren
@@ -2751,25 +2725,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiCodexRunsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/codex/run-complete': {
-      id: '/api/codex/run-complete'
-      path: '/api/codex/run-complete'
-      fullPath: '/api/codex/run-complete'
-      preLoaderRoute: typeof ApiCodexRunCompleteRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/api/codex/rerun': {
       id: '/api/codex/rerun'
       path: '/api/codex/rerun'
       fullPath: '/api/codex/rerun'
       preLoaderRoute: typeof ApiCodexRerunRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/codex/notify': {
-      id: '/api/codex/notify'
-      path: '/api/codex/notify'
-      fullPath: '/api/codex/notify'
-      preLoaderRoute: typeof ApiCodexNotifyRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/codex/issues': {
@@ -3505,9 +3465,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAtlasPathsRoute: ApiAtlasPathsRoute,
   ApiCodexGithubEventsRoute: ApiCodexGithubEventsRoute,
   ApiCodexIssuesRoute: ApiCodexIssuesRoute,
-  ApiCodexNotifyRoute: ApiCodexNotifyRoute,
   ApiCodexRerunRoute: ApiCodexRerunRoute,
-  ApiCodexRunCompleteRoute: ApiCodexRunCompleteRoute,
   ApiCodexRunsRoute: ApiCodexRunsRouteWithChildren,
   ApiGithubIssuesRoute: ApiGithubIssuesRoute,
   ApiGithubPullsRoute: ApiGithubPullsRouteWithChildren,
