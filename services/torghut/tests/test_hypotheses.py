@@ -483,6 +483,56 @@ class TestHypothesisReadiness(TestCase):
             "proof/h-micro-delay-depth-failed.json",
         )
 
+    def test_compile_hypothesis_runtime_statuses_blocks_h_micro_on_untimed_delay_depth_stress(
+        self,
+    ) -> None:
+        registry = load_hypothesis_registry()
+        state = _state(
+            feature_rows=5,
+            drift_checks=3,
+            evidence_checks=2,
+            signal_lag_seconds=15,
+            evidence_report={
+                "ok": True,
+                "checked_at": "2026-03-06T15:45:00+00:00",
+            },
+        )
+
+        statuses = compile_hypothesis_runtime_statuses(
+            registry=registry,
+            state=state,
+            tca_summary={
+                "order_count": 80,
+                "avg_abs_slippage_bps": 4,
+                "avg_realized_shortfall_bps": -12,
+                "last_computed_at": "2026-03-06T15:50:00+00:00",
+            },
+            market_context_status={"last_freshness_seconds": 60},
+            jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                decision="allow",
+                reasons=[],
+                message="ok",
+            ),
+            feature_readiness={
+                "order_book_liquidity_rows": 5,
+                "delay_adjusted_depth_stress_report": {
+                    "case_count": 1,
+                    "passed": True,
+                    "report_id": "proof/h-micro-delay-depth-untimed.json",
+                },
+            },
+            now=datetime(2026, 3, 6, 16, 0, tzinfo=timezone.utc),
+        )
+
+        micro = next(item for item in statuses if item["hypothesis_id"] == "H-MICRO-01")
+        self.assertFalse(micro["promotion_eligible"])
+        self.assertEqual(micro["state"], "blocked")
+        self.assertIn("delay_adjusted_depth_stress_missing", micro["reasons"])
+        self.assertEqual(micro["observed"]["delay_adjusted_depth_stress_passed"], True)
+        self.assertEqual(
+            micro["observed"]["delay_adjusted_depth_stress_age_minutes"], None
+        )
+
     def test_compile_hypothesis_runtime_statuses_uses_route_filtered_tca_when_enabled(
         self,
     ) -> None:

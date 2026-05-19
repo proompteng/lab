@@ -553,7 +553,8 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                     f"strategy_family=microstructure_breakout,"
                     f"strategy_name=microbar-volume-continuation-long-top2-chip-v1,"
                     f"source_manifest_ref={micro_path},"
-                    f"dataset_snapshot_ref=torghut-chip-full-day-20260505-4c330ce9-r1"
+                    f"dataset_snapshot_ref=torghut-chip-full-day-20260505-4c330ce9-r1,"
+                    "delay_adjusted_depth_stress_report_ref=/proof/h-micro-delay-depth.json"
                 ),
             ],
             runtime_window_hypothesis_id="H-TSMOM-01",
@@ -600,6 +601,8 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertIn("chip-paper-microbar-composite@execution-proof", joined)
         self.assertIn("microbar-volume-continuation-long-top2-chip-v1", joined)
         self.assertIn("torghut-chip-full-day-20260505-4c330ce9-r1", joined)
+        self.assertIn("--delay-adjusted-depth-stress-report-ref", joined)
+        self.assertIn("/proof/h-micro-delay-depth.json", joined)
 
     def test_main_writes_manifest_and_runs_empirical_promotion_job(self) -> None:
         created_at = datetime(2026, 5, 18, 8, 13, tzinfo=timezone.utc)

@@ -92,6 +92,43 @@ def _text(value: Any) -> str | None:
     return text or None
 
 
+def _parse_observation_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return _utc(value)
+    text = _text(value)
+    if text is None:
+        return None
+    try:
+        return _utc(datetime.fromisoformat(text.replace("Z", "+00:00")))
+    except ValueError:
+        return None
+
+
+def _observation_bool(value: Any) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float, Decimal)):
+        return bool(value)
+    text = _text(value)
+    if text is None:
+        return None
+    normalized = text.lower()
+    if normalized in {"1", "true", "yes", "on", "pass", "passed", "ok", "ready"}:
+        return True
+    if normalized in {"0", "false", "no", "off", "fail", "failed", "blocked"}:
+        return False
+    return None
+
+
+def _observation_int(value: Any) -> int:
+    try:
+        return max(0, int(Decimal(str(value))))
+    except Exception:
+        return 0
+
+
 def _string_list(value: Any) -> list[str]:
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
         return []
@@ -100,6 +137,61 @@ def _string_list(value: Any) -> list[str]:
         for item in cast(Sequence[object], value)
         if (text := _text(item)) is not None
     ]
+
+
+def _delay_adjusted_depth_stress_blocking_reasons(
+    *,
+    manifest: HypothesisManifest,
+    runtime_payload: Mapping[str, Any],
+    now: datetime,
+) -> list[str]:
+    requirements = manifest.entry_requirements
+    if not requirements.require_delay_adjusted_depth_stress:
+        return []
+
+    raw_report = runtime_payload.get("delay_adjusted_depth_stress_report")
+    report: Mapping[str, Any]
+    if isinstance(raw_report, Mapping):
+        report = cast(Mapping[str, Any], raw_report)
+    else:
+        report = {}
+    check_count = max(
+        _observation_int(
+            runtime_payload.get("delay_adjusted_depth_stress_checks_total")
+        ),
+        _observation_int(runtime_payload.get("delay_depth_stress_checks_total")),
+        _observation_int(report.get("stress_case_count")),
+        _observation_int(report.get("case_count")),
+        _observation_int(report.get("trading_day_count")),
+    )
+    passed = _observation_bool(
+        runtime_payload.get("delay_adjusted_depth_stress_passed")
+        if runtime_payload.get("delay_adjusted_depth_stress_passed") is not None
+        else report.get("passed", report.get("ok"))
+    )
+    checked_at = (
+        _parse_observation_datetime(
+            runtime_payload.get("delay_adjusted_depth_stress_checked_at")
+        )
+        or _parse_observation_datetime(report.get("generated_at"))
+        or _parse_observation_datetime(report.get("checked_at"))
+    )
+
+    reasons: list[str] = []
+    if check_count < requirements.min_delay_adjusted_depth_stress_checks:
+        reasons.append("delay_adjusted_depth_stress_missing")
+    elif passed is not True:
+        reasons.append("delay_adjusted_depth_stress_failed")
+    if checked_at is None:
+        reasons.append("delay_adjusted_depth_stress_missing")
+    elif (
+        requirements.max_delay_adjusted_depth_stress_age_minutes is not None
+        and checked_at
+        < now
+        - timedelta(minutes=requirements.max_delay_adjusted_depth_stress_age_minutes)
+    ):
+        reasons.append("delay_adjusted_depth_stress_stale")
+    return list(dict.fromkeys(reasons))
 
 
 def _capital_stage_for_runtime_import(
@@ -484,6 +576,22 @@ def persist_observed_runtime_windows(
         latest_three_budget_ok=latest_three_budget_ok,
         manifest=manifest,
         budget=budget,
+    )
+    latest_observation_at = max(
+        (bucket.window_ended_at for bucket in sorted_buckets),
+        default=datetime.now(timezone.utc),
+    )
+    promotion_blocking_reasons = list(
+        dict.fromkeys(
+            [
+                *promotion_blocking_reasons,
+                *_delay_adjusted_depth_stress_blocking_reasons(
+                    manifest=manifest,
+                    runtime_payload=runtime_payload,
+                    now=latest_observation_at,
+                ),
+            ]
+        )
     )
     promotion_allowed = not promotion_blocking_reasons
     running_session_samples = 0

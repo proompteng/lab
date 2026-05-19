@@ -18,9 +18,14 @@ from app.models import (
     VNextDatasetSnapshot,
 )
 from app.trading.runtime_window_import import (
+    _delay_adjusted_depth_stress_blocking_reasons,
+    _observation_bool,
+    _observation_int,
+    _parse_observation_datetime,
     build_observed_runtime_buckets,
     build_regular_session_buckets,
     persist_observed_runtime_windows,
+    resolve_hypothesis_manifest,
 )
 
 
@@ -68,6 +73,54 @@ class TestRuntimeWindowImport(TestCase):
         self.assertEqual(len(buckets), 1)
         self.assertEqual(buckets[0].decision_alignment_ratio, Decimal("1"))
         self.assertEqual(buckets[0].avg_abs_slippage_bps, Decimal("0"))
+
+    def test_runtime_observation_parsers_handle_edge_inputs(self) -> None:
+        parsed = _parse_observation_datetime(
+            datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        )
+
+        self.assertEqual(parsed, datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc))
+        self.assertEqual(_parse_observation_datetime("not-a-date"), None)
+        self.assertEqual(_observation_bool(1), True)
+        self.assertEqual(_observation_bool(0), False)
+        self.assertEqual(_observation_bool("passed"), True)
+        self.assertEqual(_observation_bool("blocked"), False)
+        self.assertEqual(_observation_bool("unclear"), None)
+        self.assertEqual(_observation_int("-7"), 0)
+        self.assertEqual(_observation_int("bad"), 0)
+
+    def test_delay_adjusted_depth_stress_blockers_cover_failed_and_stale_proof(
+        self,
+    ) -> None:
+        _, manifest = resolve_hypothesis_manifest(
+            hypothesis_id="H-MICRO-01",
+            strategy_family="microstructure_breakout",
+        )
+        now = datetime(2026, 3, 6, 15, 30, tzinfo=timezone.utc)
+
+        failed_reasons = _delay_adjusted_depth_stress_blocking_reasons(
+            manifest=manifest,
+            runtime_payload={
+                "delay_adjusted_depth_stress_checks_total": 1,
+                "delay_adjusted_depth_stress_passed": "failed",
+                "delay_adjusted_depth_stress_checked_at": now.isoformat(),
+            },
+            now=now,
+        )
+        stale_reasons = _delay_adjusted_depth_stress_blocking_reasons(
+            manifest=manifest,
+            runtime_payload={
+                "delay_adjusted_depth_stress_report": {
+                    "case_count": "1",
+                    "passed": True,
+                    "checked_at": "2026-03-06T13:00:00Z",
+                }
+            },
+            now=now,
+        )
+
+        self.assertEqual(failed_reasons, ["delay_adjusted_depth_stress_failed"])
+        self.assertEqual(stale_reasons, ["delay_adjusted_depth_stress_stale"])
 
     def test_persist_observed_runtime_windows_creates_governance_rows(self) -> None:
         buckets = build_observed_runtime_buckets(
@@ -235,6 +288,135 @@ class TestRuntimeWindowImport(TestCase):
         self.assertEqual(
             decision.reason_summary, "runtime_evidence_thresholds_satisfied"
         )
+
+    def test_persist_observed_runtime_windows_blocks_h_micro_without_delay_depth_stress(
+        self,
+    ) -> None:
+        buckets = build_observed_runtime_buckets(
+            bucket_ranges=[
+                (
+                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    30,
+                ),
+                (
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 30, tzinfo=timezone.utc),
+                    30,
+                ),
+            ],
+            decision_times=[
+                datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                datetime(2026, 3, 6, 15, 5, tzinfo=timezone.utc),
+            ],
+            execution_times=[
+                datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                datetime(2026, 3, 6, 15, 6, tzinfo=timezone.utc),
+            ],
+            tca_rows=[
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("4"),
+                    "post_cost_expectancy_bps": Decimal("12"),
+                },
+                {
+                    "computed_at": datetime(2026, 3, 6, 15, 6, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("5"),
+                    "post_cost_expectancy_bps": Decimal("12"),
+                },
+            ],
+            continuity_ok=True,
+            drift_ok=True,
+            dependency_quorum_decision="allow",
+        )
+
+        with self.session_local() as session:
+            summary = persist_observed_runtime_windows(
+                session=session,
+                run_id="import-h-micro-no-depth",
+                candidate_id="chip-paper-microbar-composite@execution-proof",
+                hypothesis_id="H-MICRO-01",
+                observed_stage="paper",
+                strategy_family="microstructure_breakout",
+                source_manifest_ref="config/trading/hypotheses/h-micro-01.json",
+                buckets=buckets,
+            )
+            session.commit()
+            decision = session.execute(select(StrategyPromotionDecision)).scalar_one()
+
+        self.assertEqual(summary["promotion_allowed"], False)
+        self.assertIn(
+            "delay_adjusted_depth_stress_missing",
+            summary["promotion_blocking_reasons"],
+        )
+        self.assertEqual(decision.allowed, False)
+
+    def test_persist_observed_runtime_windows_allows_h_micro_with_fresh_delay_depth_stress(
+        self,
+    ) -> None:
+        buckets = build_observed_runtime_buckets(
+            bucket_ranges=[
+                (
+                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    30,
+                ),
+                (
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 30, tzinfo=timezone.utc),
+                    30,
+                ),
+            ],
+            decision_times=[
+                datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                datetime(2026, 3, 6, 15, 5, tzinfo=timezone.utc),
+            ],
+            execution_times=[
+                datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                datetime(2026, 3, 6, 15, 6, tzinfo=timezone.utc),
+            ],
+            tca_rows=[
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("4"),
+                    "post_cost_expectancy_bps": Decimal("12"),
+                },
+                {
+                    "computed_at": datetime(2026, 3, 6, 15, 6, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("5"),
+                    "post_cost_expectancy_bps": Decimal("12"),
+                },
+            ],
+            continuity_ok=True,
+            drift_ok=True,
+            dependency_quorum_decision="allow",
+        )
+
+        with self.session_local() as session:
+            summary = persist_observed_runtime_windows(
+                session=session,
+                run_id="import-h-micro-depth",
+                candidate_id="chip-paper-microbar-composite@execution-proof",
+                hypothesis_id="H-MICRO-01",
+                observed_stage="paper",
+                strategy_family="microstructure_breakout",
+                source_manifest_ref="config/trading/hypotheses/h-micro-01.json",
+                buckets=buckets,
+                runtime_observation_payload={
+                    "delay_adjusted_depth_stress_report": {
+                        "passed": True,
+                        "case_count": 1,
+                        "generated_at": "2026-03-06T15:20:00+00:00",
+                        "artifact_ref": "proof/h-micro-delay-depth.json",
+                    }
+                },
+            )
+            session.commit()
+            decision = session.execute(select(StrategyPromotionDecision)).scalar_one()
+
+        self.assertEqual(summary["promotion_allowed"], True)
+        self.assertEqual(summary["promotion_blocking_reasons"], [])
+        self.assertEqual(decision.allowed, True)
 
     def test_persist_observed_runtime_windows_blocks_zero_activity_evidence(
         self,

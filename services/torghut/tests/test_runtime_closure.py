@@ -1316,6 +1316,14 @@ data:
                 )
             )
             self.assertEqual(delay_depth_report["model"], "latency_depth_haircut")
+            self.assertGreater(delay_depth_report["case_count"], 0)
+            self.assertEqual(
+                delay_depth_report["stress_case_count"],
+                len(delay_depth_report["daily"]),
+            )
+            self.assertIn("generated_at", delay_depth_report)
+            self.assertIn("checked_at", delay_depth_report)
+            self.assertIn("report_id", delay_depth_report)
             self.assertGreater(Decimal(delay_depth_report["delay_depth_cost_bps"]), 0)
             stress_metrics = json.loads(
                 Path(summary.stress_metrics_path).read_text(encoding="utf-8")
