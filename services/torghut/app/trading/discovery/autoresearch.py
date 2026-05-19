@@ -120,14 +120,15 @@ class StrategyObjective:
     min_regime_slice_pass_rate: Decimal
     stop_when_objective_met: bool
     min_daily_net_pnl: Decimal = Decimal('0')
+    min_profit_factor: Decimal = Decimal('1.50')
     max_gross_exposure_pct_equity: Decimal = Decimal('999999999')
     min_cash: Decimal = Decimal('-999999999')
     default_start_equity: Decimal = Decimal('31590.02')
     max_worst_day_loss_pct_equity: Decimal = Decimal('0.05')
-    max_drawdown_pct_equity: Decimal = Decimal('0.10')
-    extended_max_worst_day_loss_pct_equity: Decimal = Decimal('0.10')
-    extended_max_drawdown_pct_equity: Decimal = Decimal('0.20')
-    min_total_net_pnl_to_drawdown_ratio: Decimal = Decimal('1.50')
+    max_drawdown_pct_equity: Decimal = Decimal('0.08')
+    extended_max_worst_day_loss_pct_equity: Decimal = Decimal('0.08')
+    extended_max_drawdown_pct_equity: Decimal = Decimal('0.12')
+    min_total_net_pnl_to_drawdown_ratio: Decimal = Decimal('3.00')
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -135,6 +136,7 @@ class StrategyObjective:
             'min_daily_net_pnl': str(self.min_daily_net_pnl),
             'min_active_day_ratio': str(self.min_active_day_ratio),
             'min_positive_day_ratio': str(self.min_positive_day_ratio),
+            'min_profit_factor': str(self.min_profit_factor),
             'min_daily_notional': str(self.min_daily_notional),
             'max_best_day_share': str(self.max_best_day_share),
             'max_worst_day_loss': str(self.max_worst_day_loss),
@@ -453,6 +455,10 @@ def load_strategy_autoresearch_program(
             objective_payload.get('min_positive_day_ratio'),
             default='0.55',
         ),
+        min_profit_factor=_coerce_decimal(
+            objective_payload.get('min_profit_factor'),
+            default='1.50',
+        ),
         min_daily_notional=_coerce_decimal(
             objective_payload.get('min_daily_notional'),
             default='250000',
@@ -493,19 +499,19 @@ def load_strategy_autoresearch_program(
         ),
         max_drawdown_pct_equity=_coerce_decimal(
             objective_payload.get('max_drawdown_pct_equity'),
-            default='0.10',
+            default='0.08',
         ),
         extended_max_worst_day_loss_pct_equity=_coerce_decimal(
             objective_payload.get('extended_max_worst_day_loss_pct_equity'),
-            default='0.10',
+            default='0.08',
         ),
         extended_max_drawdown_pct_equity=_coerce_decimal(
             objective_payload.get('extended_max_drawdown_pct_equity'),
-            default='0.20',
+            default='0.12',
         ),
         min_total_net_pnl_to_drawdown_ratio=_coerce_decimal(
             objective_payload.get('min_total_net_pnl_to_drawdown_ratio'),
-            default='1.50',
+            default='3.00',
         ),
     )
     snapshot_policy_payload = _mapping(payload.get('snapshot_policy'))

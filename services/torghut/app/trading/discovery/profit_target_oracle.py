@@ -14,6 +14,7 @@ PROFIT_TARGET_ORACLE_SCHEMA_VERSION = "torghut.profit-target-oracle.v1"
 class ProfitTargetOraclePolicy:
     min_active_day_ratio: Decimal = Decimal("0.90")
     min_positive_day_ratio: Decimal = Decimal("0.60")
+    min_profit_factor: Decimal = Decimal("1.50")
     min_daily_net_pnl: Decimal = Decimal("-999999999")
     max_best_day_share: Decimal = Decimal("0.25")
     max_cluster_contribution_share: Decimal = Decimal("0.40")
@@ -22,10 +23,10 @@ class ProfitTargetOraclePolicy:
     max_drawdown: Decimal = Decimal("999999999")
     default_start_equity: Decimal = Decimal("31590.02")
     max_worst_day_loss_pct_equity: Decimal = Decimal("0.05")
-    max_drawdown_pct_equity: Decimal = Decimal("0.10")
+    max_drawdown_pct_equity: Decimal = Decimal("0.08")
     extended_max_worst_day_loss_pct_equity: Decimal = Decimal("0.08")
-    extended_max_drawdown_pct_equity: Decimal = Decimal("0.15")
-    min_total_net_pnl_to_drawdown_ratio: Decimal = Decimal("2.00")
+    extended_max_drawdown_pct_equity: Decimal = Decimal("0.12")
+    min_total_net_pnl_to_drawdown_ratio: Decimal = Decimal("3.00")
     max_gross_exposure_pct_equity: Decimal = Decimal("1.0")
     min_cash: Decimal = Decimal("0")
     max_negative_cash_observation_count: int = 0
@@ -42,6 +43,7 @@ class ProfitTargetOraclePolicy:
         return {
             "min_active_day_ratio": str(self.min_active_day_ratio),
             "min_positive_day_ratio": str(self.min_positive_day_ratio),
+            "min_profit_factor": str(self.min_profit_factor),
             "min_daily_net_pnl": str(self.min_daily_net_pnl),
             "max_best_day_share": str(self.max_best_day_share),
             "max_cluster_contribution_share": str(self.max_cluster_contribution_share),
@@ -155,6 +157,33 @@ def _total_net_pnl(
     return net_pnl_per_day * Decimal(max(1, trading_day_count))
 
 
+def _profit_factor(
+    scorecard: Mapping[str, Any],
+    *,
+    daily_net: Mapping[str, Any] | None,
+    total_net_pnl: Decimal,
+    worst_day_loss: Decimal,
+) -> Decimal:
+    explicit = scorecard.get("profit_factor")
+    if explicit is not None:
+        return _decimal(explicit)
+    if daily_net:
+        positive_total = sum(
+            (_decimal(value) for value in daily_net.values() if _decimal(value) > 0),
+            Decimal("0"),
+        )
+        negative_total = sum(
+            (-_decimal(value) for value in daily_net.values() if _decimal(value) < 0),
+            Decimal("0"),
+        )
+        if negative_total > 0:
+            return positive_total / negative_total
+        return Decimal("999999999") if positive_total > 0 else Decimal("0")
+    if worst_day_loss <= 0 and total_net_pnl > 0:
+        return Decimal("999999999")
+    return Decimal("0")
+
+
 def _risk_adjusted_drawdown_check(
     *,
     metric: str,
@@ -236,6 +265,13 @@ def evaluate_profit_target_oracle(
         net_pnl_per_day=net_pnl,
         trading_day_count=trading_day_count,
     )
+    worst_day_loss = _decimal(scorecard.get("worst_day_loss"))
+    profit_factor = _profit_factor(
+        scorecard,
+        daily_net=daily_net,
+        total_net_pnl=total_net_pnl,
+        worst_day_loss=worst_day_loss,
+    )
     checks = [
         _numeric_check(
             metric="portfolio_post_cost_net_pnl_per_day",
@@ -254,6 +290,12 @@ def evaluate_profit_target_oracle(
             observed=_decimal(scorecard.get("positive_day_ratio")),
             operator="gte",
             threshold=policy.min_positive_day_ratio,
+        ),
+        _numeric_check(
+            metric="profit_factor",
+            observed=profit_factor,
+            operator="gte",
+            threshold=policy.min_profit_factor,
         ),
         _numeric_check(
             metric="min_daily_net_pnl",
@@ -308,7 +350,7 @@ def evaluate_profit_target_oracle(
         ),
         _risk_adjusted_drawdown_check(
             metric="worst_day_loss",
-            observed=_decimal(scorecard.get("worst_day_loss")),
+            observed=worst_day_loss,
             start_equity=start_equity,
             normal_pct=policy.max_worst_day_loss_pct_equity,
             extended_pct=policy.extended_max_worst_day_loss_pct_equity,

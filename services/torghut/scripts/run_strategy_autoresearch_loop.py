@@ -777,6 +777,7 @@ def _portfolio_oracle_policy(
     return ProfitTargetOraclePolicy(
         min_active_day_ratio=objective.min_active_day_ratio,
         min_positive_day_ratio=objective.min_positive_day_ratio,
+        min_profit_factor=objective.min_profit_factor,
         min_daily_net_pnl=objective.min_daily_net_pnl,
         max_best_day_share=objective.max_best_day_share,
         max_cluster_contribution_share=Decimal("0.40"),
