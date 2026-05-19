@@ -6,9 +6,13 @@ vi.mock('./audit-client', () => ({
 vi.mock('./feature-flags', () => ({
   resolveBooleanFeatureToggle: vi.fn(async () => true),
 }))
+vi.mock('./kube-watch', () => ({
+  startResourceWatch: vi.fn(() => ({ stop: vi.fn() })),
+}))
 
 import { emitAuditEventBestEffort } from './audit-client'
 import { resolveBooleanFeatureToggle } from './feature-flags'
+import { startResourceWatch } from './kube-watch'
 import { __test__ } from './orchestration-controller'
 import type { KubernetesClient } from './kube-types'
 
@@ -411,5 +415,18 @@ describe('orchestration controller', () => {
       checkedAt: '2026-01-20T00:00:00.000Z',
     })
     expect(listCustomResourceDefinitions).toHaveBeenCalledTimes(1)
+  })
+
+  it('watches tool jobs by canonical Agents labels only', () => {
+    const handles: Array<{ stop: () => void }> = []
+
+    __test__.startNamespaceWatches({} as KubernetesClient, 'agents', handles)
+
+    const jobWatches = vi
+      .mocked(startResourceWatch)
+      .mock.calls.map(([options]) => options)
+      .filter((options) => options.resource === 'job')
+    expect(jobWatches).toHaveLength(1)
+    expect(jobWatches[0]?.labelSelector).toBe('agents.proompteng.ai/tool-run')
   })
 })

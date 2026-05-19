@@ -2054,15 +2054,6 @@ const startNamespaceWatches = (
       onError: (error) => console.warn('[agents] tool job watch failed', error),
     }),
   )
-  handles.push(
-    startResourceWatch({
-      resource: 'job',
-      namespace,
-      labelSelector: AGENTS_RESOURCE_LABELS.toolRun.legacy,
-      onEvent: handleJob,
-      onError: (error) => console.warn('[agents] tool job watch failed', error),
-    }),
-  )
 }
 
 export const startOrchestrationController = async () => {
@@ -2139,4 +2130,5 @@ export const __test__ = {
   emitRunEvent,
   shouldStartWithFeatureFlag,
   checkCrds,
+  startNamespaceWatches,
 }
