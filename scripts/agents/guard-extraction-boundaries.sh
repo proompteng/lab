@@ -92,3 +92,13 @@ agents_runtime_forbidden='codex-universal|ghcr.io/openai/codex-universal'
 fail_if_matches "rendered Helm chart must use Agents-owned images, env, DB secret, and runner paths" "${rendered_forbidden}" "${rendered_chart}"
 fail_if_matches "rendered Agents GitOps app must use Agents-owned images, env, DB secret, and runner paths" "${rendered_forbidden}" "${rendered_argo}"
 fail_if_matches "rendered Agents GitOps app must use the chart-managed agents-codex-runner path" "${agents_runtime_forbidden}" "${rendered_argo}"
+
+if ! rg -U 'name: AGENTS_SWARM_PRIMITIVE_ENABLED\n\s+value: "true"' "${rendered_argo}" >/dev/null; then
+  echo "Agents extraction boundary violation: rendered Agents GitOps app must enable the Swarm primitive when it ships the supporting controller." >&2
+  exit 1
+fi
+
+if ! rg -U 'apiGroups:\n\s+- swarm\.proompteng\.ai\n\s+resources:\n\s+- swarms' "${rendered_argo}" >/dev/null; then
+  echo "Agents extraction boundary violation: rendered Agents GitOps app must grant Swarm RBAC when the Swarm primitive is enabled." >&2
+  exit 1
+fi

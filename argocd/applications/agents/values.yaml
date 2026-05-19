@@ -92,7 +92,7 @@ controllers:
       AGENTS_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY: username
       AGENTS_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY: password
 swarm:
-  enabled: false
+  enabled: true
 resources:
   requests:
     cpu: 200m
