@@ -4,6 +4,10 @@ import { RESOURCE_MAP, type KubernetesClient } from '../kube-types'
 
 import { postAgentRunsHandler, type AgentRunsApiStore } from './agent-runs'
 
+type MockResolvedValueOnce = {
+  mockResolvedValueOnce: (value: unknown) => MockResolvedValueOnce
+}
+
 const createStoreMock = (): AgentRunsApiStore =>
   ({
     ready: Promise.resolve(),
@@ -120,6 +124,93 @@ describe('AgentRun v1 API', () => {
     expect(store.assignAgentRunIdempotencyKey).toHaveBeenCalledWith(
       expect.objectContaining({ agentRunName: 'demo-agent-run-1', agentRunUid: 'agent-run-uid-1' }),
     )
+  })
+
+  it('injects runtime config for idempotency instead of reading global process env', async () => {
+    const store = createStoreMock()
+    const kube = createKubeMock()
+
+    const response = await postAgentRunsHandler(
+      buildRequest({
+        agentRef: { name: 'demo-agent' },
+        namespace: 'agents',
+        implementation: { text: 'Implement the requested change.' },
+        runtime: { type: 'job', config: {} },
+      }),
+      {
+        storeFactory: () => store,
+        kubeClient: kube,
+        validatePolicies: vi.fn(async () => {}),
+        runtimeConfig: {
+          env: {
+            AGENTS_AGENTRUN_IDEMPOTENCY_ENABLED: 'false',
+          },
+        },
+      },
+    )
+
+    expect(response.status).toBe(201)
+    expect(store.getAgentRunIdempotencyKey).not.toHaveBeenCalled()
+    expect(store.reserveAgentRunIdempotencyKey).not.toHaveBeenCalled()
+    expect(store.assignAgentRunIdempotencyKey).not.toHaveBeenCalled()
+    expect(kube.apply).toHaveBeenCalled()
+  })
+
+  it('reclaims stale idempotency reservations using injected runtime config and clock', async () => {
+    const store = createStoreMock()
+    const kube = createKubeMock()
+    ;(store.reserveAgentRunIdempotencyKey as unknown as MockResolvedValueOnce)
+      .mockResolvedValueOnce({
+        record: {
+          namespace: 'agents',
+          agentName: 'demo-agent',
+          idempotencyKey: 'agent-run-request-1',
+          agentRunName: null,
+          agentRunUid: null,
+          createdAt: '2026-01-20T00:00:00.000Z',
+        },
+        created: false,
+      })
+      .mockResolvedValueOnce({
+        record: {
+          namespace: 'agents',
+          agentName: 'demo-agent',
+          idempotencyKey: 'agent-run-request-1',
+          agentRunName: null,
+          agentRunUid: null,
+          createdAt: '2026-01-20T00:00:11.000Z',
+        },
+        created: true,
+      })
+
+    const response = await postAgentRunsHandler(
+      buildRequest({
+        agentRef: { name: 'demo-agent' },
+        namespace: 'agents',
+        implementation: { text: 'Implement the requested change.' },
+        runtime: { type: 'job', config: {} },
+      }),
+      {
+        storeFactory: () => store,
+        kubeClient: kube,
+        validatePolicies: vi.fn(async () => {}),
+        runtimeConfig: {
+          env: {
+            AGENTS_AGENTRUN_IDEMPOTENCY_RESERVATION_TTL_SECONDS: '10',
+          },
+          now: () => Date.parse('2026-01-20T00:00:11.000Z'),
+        },
+      },
+    )
+
+    expect(response.status).toBe(201)
+    expect(store.deleteAgentRunIdempotencyKey).toHaveBeenCalledWith({
+      namespace: 'agents',
+      agentName: 'demo-agent',
+      idempotencyKey: 'agent-run-request-1',
+    })
+    expect(store.reserveAgentRunIdempotencyKey).toHaveBeenCalledTimes(2)
+    expect(kube.apply).toHaveBeenCalled()
   })
 
   it('preserves submitted AgentRun metadata while keeping Agents delivery labels authoritative', async () => {

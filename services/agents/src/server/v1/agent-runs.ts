@@ -13,6 +13,7 @@ import {
   type PolicyChecks,
   validatePolicies,
 } from '../primitives-policy'
+import type { EnvSource } from '../runtime-env'
 
 import { type AgentRunPayload, type WorkflowStepPayload, parseGoal, parseOptionalNumber } from './agent-runs-payload'
 import { buildDeliveryIdLabels } from './delivery-labels'
@@ -95,6 +96,7 @@ export type AgentRunsApiDependencies = {
   storeFactory: () => AgentRunsApiStore
   kubeClient?: KubernetesClient
   kubeClientFactory?: () => KubernetesClient
+  runtimeConfig?: AgentRunRuntimeConfigOptions
   requireLeaderForMutation?: () => Response | null
   recordAgentQueueDepth?: (
     depth: number,
@@ -140,6 +142,25 @@ type AgentRunQueueDepthServiceDefinition = {
   readonly record: AgentRunQueueDepthRecorder
 }
 
+export type AgentRunSubmissionConfig = {
+  readonly idempotencyEnabled: boolean
+  readonly idempotencyReservationTtlSeconds: number
+  readonly vcsProvidersEnabled: boolean
+}
+
+export type AgentRunRuntimeConfigOptions = {
+  readonly env?: EnvSource
+  readonly now?: () => number
+}
+
+type AgentRunRuntimeConfigServiceDefinition = {
+  readonly resolveSubmissionConfig: (namespace: string) => Effect.Effect<AgentRunSubmissionConfig>
+  readonly isIdempotencyReservationStale: (
+    createdAt: unknown,
+    config: Pick<AgentRunSubmissionConfig, 'idempotencyReservationTtlSeconds'>,
+  ) => Effect.Effect<boolean>
+}
+
 export class AgentRunStoreService extends Context.Tag('agents/AgentRunStoreService')<
   AgentRunStoreService,
   AgentRunStoreServiceDefinition
@@ -168,6 +189,11 @@ export class AgentRunRepositoryService extends Context.Tag('agents/AgentRunRepos
 export class AgentRunQueueDepthService extends Context.Tag('agents/AgentRunQueueDepthService')<
   AgentRunQueueDepthService,
   AgentRunQueueDepthServiceDefinition
+>() {}
+
+export class AgentRunRuntimeConfigService extends Context.Tag('agents/AgentRunRuntimeConfigService')<
+  AgentRunRuntimeConfigService,
+  AgentRunRuntimeConfigServiceDefinition
 >() {}
 
 const normalizeParameterMap = (value: Record<string, unknown> | null): Record<string, string> | undefined => {
@@ -218,9 +244,6 @@ const normalizeVcsMode = (value?: string | null) => {
   return 'read-write'
 }
 
-const isVcsProvidersEnabled = () => resolveAgentRunAdmissionConfig('agents', process.env).vcsProvidersEnabled
-const isAgentRunIdempotencyEnabled = () => resolveAgentRunAdmissionConfig('agents', process.env).idempotencyEnabled
-
 const QUEUED_PHASES = new Set(['pending', 'queued', 'progressing', 'inprogress'])
 const RUNNING_PHASE = 'running'
 
@@ -244,12 +267,31 @@ const parseTimestampMs = (value: unknown): number | null => {
   return null
 }
 
-const isIdempotencyReservationStale = (createdAt: unknown) => {
-  const ttlSeconds = resolveAgentRunAdmissionConfig('agents', process.env).idempotencyReservationTtlSeconds
-  if (ttlSeconds <= 0) return false
-  const createdAtMs = parseTimestampMs(createdAt)
-  if (createdAtMs == null) return false
-  return Date.now() - createdAtMs >= ttlSeconds * 1000
+export const makeAgentRunRuntimeConfigService = (
+  options: AgentRunRuntimeConfigOptions = {},
+): AgentRunRuntimeConfigServiceDefinition => {
+  const env = options.env ?? process.env
+  const now = options.now ?? Date.now
+
+  return {
+    resolveSubmissionConfig: (namespace) =>
+      Effect.sync(() => {
+        const config = resolveAgentRunAdmissionConfig(namespace, env)
+        return {
+          idempotencyEnabled: config.idempotencyEnabled,
+          idempotencyReservationTtlSeconds: config.idempotencyReservationTtlSeconds,
+          vcsProvidersEnabled: config.vcsProvidersEnabled,
+        }
+      }),
+    isIdempotencyReservationStale: (createdAt, config) =>
+      Effect.sync(() => {
+        const ttlSeconds = config.idempotencyReservationTtlSeconds
+        if (ttlSeconds <= 0) return false
+        const createdAtMs = parseTimestampMs(createdAt)
+        if (createdAtMs == null) return false
+        return now() - createdAtMs >= ttlSeconds * 1000
+      }),
+  }
 }
 
 const parseAdmissionNamespaces = (namespace: string) =>
@@ -857,6 +899,7 @@ export const makeAgentRunSubmitLayer = (deps: AgentRunsApiDependencies) =>
     Layer.succeed(AgentRunQueueDepthService, {
       record: deps.recordAgentQueueDepth ?? (() => undefined),
     }),
+    Layer.succeed(AgentRunRuntimeConfigService, makeAgentRunRuntimeConfigService(deps.runtimeConfig)),
   )
 
 type IdempotencyReservationState = {
@@ -956,6 +999,7 @@ type AgentRunSubmitServices =
   | AgentRunAuditContextService
   | AgentRunRepositoryService
   | AgentRunQueueDepthService
+  | AgentRunRuntimeConfigService
 
 export const submitAgentRunEffect = (
   request: Request,
@@ -973,6 +1017,7 @@ export const submitAgentRunWithServicesEffect = (
     const auditContexts = yield* AgentRunAuditContextService
     const repositories = yield* AgentRunRepositoryService
     const queueDepth = yield* AgentRunQueueDepthService
+    const runtimeConfig = yield* AgentRunRuntimeConfigService
     const deliveryId = yield* Effect.try({
       try: () => requireIdempotencyKey(request),
       catch: (cause) =>
@@ -997,6 +1042,7 @@ export const submitAgentRunWithServicesEffect = (
           cause,
         }),
     })
+    const submissionConfig = yield* runtimeConfig.resolveSubmissionConfig(parsed.namespace)
 
     const store = yield* stores.open
 
@@ -1030,7 +1076,7 @@ export const submitAgentRunWithServicesEffect = (
             return { status: 200, body: { ok: true, agentRun: existing, resource, idempotent: true } }
           }
 
-          if (isAgentRunIdempotencyEnabled()) {
+          if (submissionConfig.idempotencyEnabled) {
             const scope = yield* storeEffect('read-idempotency-key', () =>
               activeStore.getAgentRunIdempotencyKey({
                 namespace: parsed.namespace,
@@ -1106,7 +1152,7 @@ export const submitAgentRunWithServicesEffect = (
           const requiredSecrets = parsed.secrets ?? extractRequiredSecrets(agentSpec)
           const vcsSecrets = new Set<string>()
           const desiredVcsMode = normalizeVcsMode(parsed.vcsPolicy?.mode ?? null)
-          const shouldResolveVcs = isVcsProvidersEnabled() && desiredVcsMode !== 'none'
+          const shouldResolveVcs = submissionConfig.vcsProvidersEnabled && desiredVcsMode !== 'none'
           const resolveVcsRefName = (): Effect.Effect<string | null, AgentRunKubeError> =>
             Effect.gen(function* () {
               if (parsed.vcsRef?.name) return parsed.vcsRef.name
@@ -1239,7 +1285,7 @@ export const submitAgentRunWithServicesEffect = (
 
           let idempotencyReservation: IdempotencyReservationState | null = null
 
-          if (isAgentRunIdempotencyEnabled()) {
+          if (submissionConfig.idempotencyEnabled) {
             let reservation = yield* storeEffect('reserve-idempotency-key', () =>
               activeStore.reserveAgentRunIdempotencyKey({
                 namespace: parsed.namespace,
@@ -1251,7 +1297,7 @@ export const submitAgentRunWithServicesEffect = (
             if (
               !reservation.created &&
               !reservation.record.agentRunName &&
-              isIdempotencyReservationStale(reservation.record.createdAt)
+              (yield* runtimeConfig.isIdempotencyReservationStale(reservation.record.createdAt, submissionConfig))
             ) {
               yield* storeEffect('delete-idempotency-key', () =>
                 activeStore.deleteAgentRunIdempotencyKey({
