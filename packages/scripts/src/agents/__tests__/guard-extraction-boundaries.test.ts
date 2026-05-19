@@ -16,6 +16,10 @@ describe('agents extraction boundary guard', () => {
   it('guards legacy completion topics and reflected Jangar database secrets out of Agents runtime', () => {
     const content = guardScript()
 
+    expect(content).toContain('ingressroute-agents-api\\.yaml')
+    expect(content).toContain('agents\\.k8s\\.proompteng\\.ai')
+    expect(content).toContain('proxyAgentsServiceRequest|buildAgentsServiceProxyUrl')
+    expect(content).toContain('agents\\.proompteng\\.ai/compatibility-route')
     expect(content).toContain('argo\\.workflows\\.completions')
     expect(content).toContain('reflection-(allowed|auto)-namespaces')
     expect(content).toContain('jangar-db-ca')

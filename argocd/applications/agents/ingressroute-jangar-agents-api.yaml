@@ -3,6 +3,9 @@ kind: IngressRoute
 metadata:
   name: jangar-agents-api
   namespace: agents
+  annotations:
+    agents.proompteng.ai/compatibility-route: "jangar-same-origin-api"
+    agents.proompteng.ai/canonical-host: "agents.k8s.proompteng.ai"
 spec:
   entryPoints:
     - websecure
