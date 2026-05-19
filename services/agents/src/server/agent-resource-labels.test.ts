@@ -24,12 +24,11 @@ describe('Agents resource labels', () => {
     })
   })
 
-  it('prefers canonical labels but still reads legacy labels', () => {
+  it('reads canonical labels only', () => {
     expect(
       readDeliveryIdLabel({
         metadata: {
           labels: {
-            [AGENTS_RESOURCE_LABELS.deliveryId.legacy]: 'legacy-delivery',
             [AGENTS_RESOURCE_LABELS.deliveryId.canonical]: 'canonical-delivery',
           },
         },
@@ -38,14 +37,14 @@ describe('Agents resource labels', () => {
 
     expect(
       readOrchestrationRunLabel({
-        metadata: { labels: { [AGENTS_RESOURCE_LABELS.orchestrationRun.legacy]: 'legacy-orch' } },
+        metadata: { labels: { 'jangar.proompteng.ai/orchestration-run': 'legacy-orch' } },
       }),
-    ).toBe('legacy-orch')
+    ).toBeUndefined()
 
     expect(
       readToolRunLabel({
-        metadata: { labels: { [AGENTS_RESOURCE_LABELS.toolRun.legacy]: 'legacy-toolrun' } },
+        metadata: { labels: { 'jangar.proompteng.ai/tool-run': 'legacy-toolrun' } },
       }),
-    ).toBe('legacy-toolrun')
+    ).toBeUndefined()
   })
 })

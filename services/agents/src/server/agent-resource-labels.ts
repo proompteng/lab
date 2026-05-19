@@ -3,19 +3,15 @@ import { asRecord, asString, readNested } from './primitives'
 export const AGENTS_RESOURCE_LABELS = {
   deliveryId: {
     canonical: 'agents.proompteng.ai/delivery-id',
-    legacy: 'jangar.proompteng.ai/delivery-id',
   },
   orchestrationRun: {
     canonical: 'agents.proompteng.ai/orchestration-run',
-    legacy: 'jangar.proompteng.ai/orchestration-run',
   },
   orchestrationStep: {
     canonical: 'agents.proompteng.ai/orchestration-step',
-    legacy: 'jangar.proompteng.ai/orchestration-step',
   },
   toolRun: {
     canonical: 'agents.proompteng.ai/tool-run',
-    legacy: 'jangar.proompteng.ai/tool-run',
   },
 } as const
 
@@ -45,7 +41,7 @@ export const readCompatibleLabel = (
 ): string | undefined => {
   const labels = asRecord(readNested(resource, ['metadata', 'labels']))
   const keys = AGENTS_RESOURCE_LABELS[label]
-  return asString(labels?.[keys.canonical]) ?? asString(labels?.[keys.legacy]) ?? undefined
+  return asString(labels?.[keys.canonical]) ?? undefined
 }
 
 export const readDeliveryIdLabel = (resource: Record<string, unknown>) => readCompatibleLabel(resource, 'deliveryId')

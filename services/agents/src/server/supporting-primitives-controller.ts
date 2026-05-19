@@ -552,8 +552,7 @@ const buildScheduleRunTemplate = (
       ([key, value]) =>
         typeof value === 'string' &&
         key !== 'schedules.proompteng.ai/schedule' &&
-        key !== AGENTS_RESOURCE_LABELS.deliveryId.canonical &&
-        key !== AGENTS_RESOURCE_LABELS.deliveryId.legacy,
+        key !== AGENTS_RESOURCE_LABELS.deliveryId.canonical,
     ),
   ) as Record<string, string>
   const labels = {
