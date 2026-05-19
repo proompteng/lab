@@ -1,12 +1,12 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { proxyAgentsServiceRequest } from '~/server/agents-service-proxy'
+
+const AGENTS_SERVICE_PATH = '/api/agents/control-plane/events'
 
 export const Route = createFileRoute('/api/agents/control-plane/events')({
   server: {
     handlers: {
-      GET: async ({ request }: JangarServerRouteArgs) => {
-        const { listPrimitiveEvents } = await import('@proompteng/agents/routes/api/agents/control-plane/events')
-        return listPrimitiveEvents(request)
-      },
+      GET: async ({ request }: JangarServerRouteArgs) => proxyAgentsServiceRequest(request, AGENTS_SERVICE_PATH),
     },
   },
 })

@@ -1,20 +1,14 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { proxyAgentsServiceRequest } from '~/server/agents-service-proxy'
+
+const AGENTS_SERVICE_PATH = '/api/agents/control-plane/resource'
 
 export const Route = createFileRoute('/api/agents/control-plane/resource')({
   server: {
     handlers: {
-      DELETE: async ({ request }: JangarServerRouteArgs) => {
-        const { deletePrimitiveResource } = await import('@proompteng/agents/routes/api/agents/control-plane/resource')
-        return deletePrimitiveResource(request)
-      },
-      GET: async ({ request }: JangarServerRouteArgs) => {
-        const { getPrimitiveResource } = await import('@proompteng/agents/routes/api/agents/control-plane/resource')
-        return getPrimitiveResource(request)
-      },
-      POST: async ({ request }: JangarServerRouteArgs) => {
-        const { postPrimitiveResource } = await import('@proompteng/agents/routes/api/agents/control-plane/resource')
-        return postPrimitiveResource(request)
-      },
+      DELETE: async ({ request }: JangarServerRouteArgs) => proxyAgentsServiceRequest(request, AGENTS_SERVICE_PATH),
+      GET: async ({ request }: JangarServerRouteArgs) => proxyAgentsServiceRequest(request, AGENTS_SERVICE_PATH),
+      POST: async ({ request }: JangarServerRouteArgs) => proxyAgentsServiceRequest(request, AGENTS_SERVICE_PATH),
     },
   },
 })
