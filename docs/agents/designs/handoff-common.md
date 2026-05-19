@@ -116,8 +116,8 @@ kubectl get crd | rg 'proompteng\\.ai'
 When changing behavior that affects runtime (CRDs, controllers, chart templates, or default values):
 
 1. Update code and chart together:
-   - Controllers/runtime: `services/jangar/src/server/**`
-   - CRD types: `services/jangar/api/agents/v1alpha1/**` → regenerate CRDs into `charts/agents/crds/`
+   - Controllers/runtime: `services/agents/src/server/**`
+   - CRD types: `services/agents/api/agents/v1alpha1/**` → regenerate CRDs into `charts/agents/crds/`
    - Chart templates/values: `charts/agents/templates/**`, `charts/agents/values*.yaml`, `charts/agents/values.schema.json`
 2. Validate locally:
    - `scripts/agents/validate-agents.sh`

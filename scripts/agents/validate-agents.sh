@@ -10,6 +10,11 @@ KUBE_VERSION_FOR_HELM="${KUBE_VERSION_FOR_HELM:-${HELM_KUBE_VERSION:-1.35.0}}"
 DUMMY_IMAGE_DIGEST="sha256:0000000000000000000000000000000000000000000000000000000000000000"
 TEST_IMAGE_DIGEST="sha256:c1fe1679c34d9784c1b0d1e5f62ac0a79fca01fb6377cdd33e90473c6f9f9a69"
 
+if [[ -d "${ROOT_DIR}/services/jangar/api/agents" ]]; then
+  echo "Agents CRD Go sources must live under services/agents/api/agents, not services/jangar/api/agents." >&2
+  exit 1
+fi
+
 curl_with_retry() {
   curl \
     --connect-timeout 20 \

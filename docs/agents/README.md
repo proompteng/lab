@@ -332,7 +332,7 @@ When documents disagree, use this precedence order:
 
 1. GitOps desired state: `argocd/applications/agents/` (what the cluster should converge to).
 2. Helm chart and CRDs: `charts/agents/` (`templates/`, `values.yaml`, `values.schema.json`, `crds/`).
-3. Controller/runtime code: `services/jangar/src/server/**` and API types in `services/jangar/api/**`.
+3. Controller/runtime code and API types: `services/agents/src/server/**` and `services/agents/api/**`.
 4. “Current” docs in `docs/agents/` (implementation-grade and current requirements).
 5. “Draft/Partial” docs in `docs/agents/designs/` (proposals; may describe current behavior but are not always enforced).
 
@@ -367,7 +367,7 @@ For env and gRPC source-of-truth changes in this branch:
 
 ### Changing CRDs
 
-- Update Go types (Agents primitives): `services/jangar/api/agents/v1alpha1/**`
+- Update Go types (Agents primitives): `services/agents/api/agents/v1alpha1/**`
 - Regenerate CRDs: `charts/agents/crds/`
 - Validate: `scripts/agents/validate-agents.sh`
 - Update examples if needed: `charts/agents/examples/**`
@@ -381,7 +381,7 @@ For env and gRPC source-of-truth changes in this branch:
 
 ### Changing Controller Behavior
 
-- Update: `services/jangar/src/server/**`
+- Update: `services/agents/src/server/**`
 - Verify env var/value mapping remains correct: `docs/agents/designs/chart-env-vars-merge-precedence.md`
 - Validate end-to-end with `scripts/agents/validate-agents.sh` and a smoke run
 

@@ -19,7 +19,7 @@ This document is implementation‑grade: it describes _what_ needs to exist in t
 
 ## Goals
 
-- Ship a single Helm chart that installs all Agents CRDs and deploys Jangar in a usable, production‑safe configuration.
+- Ship a single Helm chart that installs all Agents CRDs and deploys the Agents control plane in a usable, production-safe configuration.
 - Keep CRDs and controller in sync (schema and behavior).
 - Support the full primitive set: Agent, AgentRun, AgentProvider, ImplementationSpec, ImplementationSource, Memory, Orchestration, OrchestrationRun, ApprovalPolicy, Budget, SecretBinding, Signal, SignalDelivery, Tool, ToolRun, Schedule, Artifact, Workspace.
 - Allow AgentRun to execute as a Kubernetes Job with a provided or default image.
@@ -29,12 +29,12 @@ This document is implementation‑grade: it describes _what_ needs to exist in t
 ## Non‑Goals
 
 - Bundling an embedded database, backups, ingress, or migrations job in the chart.
-- Implementing a separate operator beyond Jangar.
+- Implementing a separate operator beyond the Agents controller.
 
 ## Current State Summary
 
 - CRDs live under `charts/agents/crds/` and are referenced in `charts/agents/Chart.yaml` annotations.
-- Jangar implements the native v1alpha1 types in `services/jangar/api/agents/v1alpha1` and a controller in `services/jangar/src/server/agents-controller.ts`.
+- Agents implements the native v1alpha1 types in `services/agents/api/agents/v1alpha1` and the controller in `services/agents/src/server/agents-controller/**`.
 - The chart is “minimal” but lacks a documented, end‑to‑end implementation plan for completeness and validation.
 
 ## Current Chart Topology (Observed 2026-02-07)
@@ -131,14 +131,14 @@ A fully functional chart must provide:
 - **Examples** for each CRD and implementation source.
 - **CI validation** to ensure CRDs and examples are valid and up‑to‑date.
 - **Crossplane unsupported**: ensure Crossplane is uninstalled so native CRDs are the only definitions.
-- **agentctl** packaged under `services/jangar/**`, shipped with the Jangar service, and backed by Kubernetes APIs (gRPC optional). Distributed as a Node-bundled CLI with optional Bun binaries for convenience.
+- **agentctl** packaged under the Agents service, backed by Kubernetes APIs (gRPC optional), and distributed as a Node-bundled CLI with optional Bun binaries for convenience.
 - **Supporting primitives controller** for schedules, artifacts, and workspaces with native Kubernetes resources.
 
 ## CRD Lifecycle
 
 ### Source of truth
 
-- Go types in `services/jangar/api/agents/v1alpha1/types.go` are the schema source **for Agents primitives**.
+- Go types in `services/agents/api/agents/v1alpha1/types.go` are the schema source **for Agents primitives**.
 - Agents CRDs are generated from these types via `controller-gen`, then committed to `charts/agents/crds/`.
 - Non-agent primitives (orchestration/tools/schedules/etc.) are currently maintained as static YAML in
   `charts/agents/crds/` until dedicated Go API packages are added.
@@ -411,7 +411,7 @@ A release is considered “fully functional” when:
 ## Implementation Plan (Next Iteration)
 
 1. **CRD and Schema Lock‑in**
-   - Regenerate CRDs from `services/jangar/api/agents/v1alpha1` and commit to `charts/agents/crds/`.
+   - Regenerate CRDs from `services/agents/api/agents/v1alpha1` and commit to `charts/agents/crds/`.
    - Validate schemas and CRD size limits.
 2. **RBAC Mode Update**
    - Add a cluster‑scoped RBAC toggle for multi‑namespace reconciliation.
@@ -434,5 +434,5 @@ A release is considered “fully functional” when:
 - `docs/agents/ci-validation-plan.md`
 - `docs/agents/crd-yaml-spec.md`
 - `docs/agents/rbac-matrix.md`
-- `services/jangar/api/agents/v1alpha1/types.go`
+- `services/agents/api/agents/v1alpha1/types.go`
 - `charts/agents/README.md`
