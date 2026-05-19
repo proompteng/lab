@@ -3162,6 +3162,99 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertTrue(allowed_readiness["promotable"])
         self.assertEqual(allowed_readiness["status"], "promotion_ready")
 
+    def test_candidate_board_separates_research_rank_from_executed_candidate(
+        self,
+    ) -> None:
+        research_spec = self._candidate_spec(
+            "spec-83161ae16d17828eabcc58cc",
+            family_template_id="intraday_tsmom_v2",
+        )
+        executed_spec = self._candidate_spec(
+            "spec-hmicro-proof",
+            family_template_id="microstructure_continuation_matched_filter_v1",
+        )
+        executed_evidence = runner.CandidateEvidenceBundle(
+            schema_version="torghut.candidate-evidence-bundle.v1",
+            evidence_bundle_id="ev-hmicro-proof",
+            candidate_id="chip-paper-microbar-composite@execution-proof",
+            candidate_spec_id=executed_spec.candidate_spec_id,
+            dataset_snapshot_id="snapshot-hmicro-runtime-proof",
+            feature_spec_hash="hash-hmicro-proof",
+            code_commit="commit-test",
+            replay_artifact_refs=("paper-window.json",),
+            objective_scorecard={
+                "net_pnl_per_day": "82.50",
+                "target_met": False,
+                "oracle_passed": False,
+                "trading_day_count": 3,
+                "trade_decision_count": 7,
+                "orders_submitted_count": 7,
+                "trade_count": 7,
+                "executable_replay_submitted_order_count": 7,
+                "profit_target_oracle": {
+                    "blockers": [
+                        "portfolio_post_cost_net_pnl_per_day_failed",
+                        "min_observed_trading_days_failed",
+                    ],
+                },
+            },
+            fold_metrics=(),
+            stress_metrics=(),
+            cost_calibration={"status": "provisional", "source": "paper_runtime"},
+            null_comparator={},
+            promotion_readiness={},
+        )
+
+        board = runner._candidate_board_payload(
+            epoch_id="epoch-candidate-board-split",
+            output_dir=Path("/tmp/epoch-candidate-board-split"),
+            target=Decimal("500"),
+            candidate_specs=(research_spec, executed_spec),
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": executed_spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                    }
+                ]
+            },
+            pre_replay_proposal_rows=(
+                {
+                    "candidate_spec_id": research_spec.candidate_spec_id,
+                    "rank": 1,
+                    "proposal_score": "2.52157822",
+                },
+                {
+                    "candidate_spec_id": executed_spec.candidate_spec_id,
+                    "rank": 2,
+                    "proposal_score": "1.4",
+                },
+            ),
+            proposal_rows=(),
+            evidence_bundles=(executed_evidence,),
+            portfolio=None,
+            promotion_readiness={"promotable": False, "blockers": ["not_ready"]},
+            runtime_closure={"status": "blocked"},
+        )
+
+        self.assertEqual(board["current_answer"], "no_promotion_ready_candidate")
+        self.assertEqual(
+            board["best_research_candidate"]["candidate_spec_id"],
+            research_spec.candidate_spec_id,
+        )
+        self.assertEqual(
+            board["best_executed_candidate"]["candidate_id"],
+            "chip-paper-microbar-composite@execution-proof",
+        )
+        self.assertEqual(
+            board["closest_promotion_candidate"]["candidate_id"],
+            "chip-paper-microbar-composite@execution-proof",
+        )
+        self.assertEqual(board["best_executed_candidate"]["decision_count"], 7)
+        self.assertEqual(board["best_executed_candidate"]["submitted_order_count"], 7)
+        self.assertEqual(board["best_executed_candidate"]["filled_order_count"], 7)
+        self.assertRegex(board["status_digest"], r"^[0-9a-f]{64}$")
+
     def test_candidate_universe_symbols_default_to_chip_coverage_when_empty(
         self,
     ) -> None:

@@ -5321,6 +5321,16 @@ def _candidate_board_int_field(scorecard: Mapping[str, Any], key: str) -> int:
         return 0
 
 
+def _candidate_board_first_int_field(
+    scorecard: Mapping[str, Any], keys: Sequence[str]
+) -> int:
+    for key in keys:
+        value = _candidate_board_int_field(scorecard, key)
+        if value > 0:
+            return value
+    return 0
+
+
 def _candidate_board_blockers(
     *,
     selected_for_replay: bool,
@@ -5363,6 +5373,94 @@ def _candidate_board_status(
     if selected_for_replay:
         return "selected_pending_replay_evidence"
     return "research_ranked_not_replayed"
+
+
+def _candidate_board_activity_count(row: Mapping[str, Any]) -> int:
+    return max(
+        _candidate_board_int_field(row, "decision_count"),
+        _candidate_board_int_field(row, "submitted_order_count"),
+        _candidate_board_int_field(row, "filled_order_count"),
+        _candidate_board_int_field(row, "executable_replay_order_count"),
+    )
+
+
+def _candidate_board_oracle_blocker_count(row: Mapping[str, Any]) -> int:
+    blockers = row.get("blockers")
+    if not isinstance(blockers, Sequence) or isinstance(blockers, str):
+        return 0
+    return sum(
+        1
+        for blocker in cast(Sequence[Any], blockers)
+        if _string(blocker).endswith("_failed")
+    )
+
+
+def _candidate_board_net_pnl(row: Mapping[str, Any]) -> Decimal:
+    return _decimal(row.get("net_pnl_per_day"))
+
+
+def _candidate_board_best_executed_candidate(
+    rows: Sequence[Mapping[str, Any]],
+) -> dict[str, Any] | None:
+    executed_rows = [
+        dict(row) for row in rows if _candidate_board_activity_count(row) > 0
+    ]
+    if not executed_rows:
+        return None
+    executed_rows.sort(
+        key=lambda row: (
+            bool(row.get("oracle_passed")),
+            bool(row.get("target_met")),
+            _candidate_board_activity_count(row),
+            _candidate_board_net_pnl(row),
+            -_rank_sort_value(row.get("rank")),
+            _string(row.get("candidate_spec_id")),
+        ),
+        reverse=True,
+    )
+    return executed_rows[0]
+
+
+def _candidate_board_closest_promotion_candidate(
+    rows: Sequence[Mapping[str, Any]],
+) -> dict[str, Any] | None:
+    replayed_rows = [dict(row) for row in rows if bool(row.get("has_replay_evidence"))]
+    if not replayed_rows:
+        return None
+    replayed_rows.sort(
+        key=lambda row: (
+            bool(row.get("oracle_passed")),
+            bool(row.get("target_met")),
+            -_candidate_board_oracle_blocker_count(row),
+            _candidate_board_activity_count(row),
+            _candidate_board_net_pnl(row),
+            -_rank_sort_value(row.get("rank")),
+            _string(row.get("candidate_spec_id")),
+        ),
+        reverse=True,
+    )
+    return replayed_rows[0]
+
+
+def _candidate_board_status_digest(rows: Sequence[Mapping[str, Any]]) -> str:
+    digest_rows = [
+        {
+            "candidate_spec_id": _string(row.get("candidate_spec_id")),
+            "candidate_id": _string(row.get("candidate_id")),
+            "rank": _rank_sort_value(row.get("rank")),
+            "status": _string(row.get("status")),
+            "target_met": bool(row.get("target_met")),
+            "oracle_passed": bool(row.get("oracle_passed")),
+            "activity_count": _candidate_board_activity_count(row),
+            "blockers": [
+                _string(blocker)
+                for blocker in cast(Sequence[Any], row.get("blockers") or ())
+            ],
+        }
+        for row in rows
+    ]
+    encoded = json.dumps(digest_rows, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def _candidate_board_payload(
@@ -5439,14 +5537,53 @@ def _candidate_board_payload(
                 or _candidate_board_decimal_field(
                     scorecard, "portfolio_post_cost_net_pnl_per_day"
                 ),
+                "market_impact_stress_net_pnl_per_day": _candidate_board_decimal_field(
+                    scorecard, "market_impact_stress_net_pnl_per_day"
+                ),
+                "delay_adjusted_depth_stress_net_pnl_per_day": _candidate_board_decimal_field(
+                    scorecard, "delay_adjusted_depth_stress_net_pnl_per_day"
+                ),
                 "trading_day_count": _candidate_board_int_field(
                     scorecard, "trading_day_count"
                 ),
-                "filled_order_count": _candidate_board_int_field(
-                    scorecard, "filled_count"
+                "decision_count": _candidate_board_first_int_field(
+                    scorecard,
+                    (
+                        "decision_count",
+                        "trade_decision_count",
+                        "paper_decision_count",
+                        "runtime_decision_count",
+                    ),
                 ),
-                "decision_count": _candidate_board_int_field(
-                    scorecard, "decision_count"
+                "submitted_order_count": _candidate_board_first_int_field(
+                    scorecard,
+                    (
+                        "submitted_order_count",
+                        "order_count",
+                        "orders_submitted_count",
+                        "paper_order_count",
+                        "runtime_order_count",
+                    ),
+                ),
+                "filled_order_count": _candidate_board_first_int_field(
+                    scorecard,
+                    (
+                        "filled_count",
+                        "filled_order_count",
+                        "executions_filled_count",
+                        "execution_filled_count",
+                        "paper_filled_order_count",
+                        "trade_count",
+                        "runtime_trade_count",
+                    ),
+                ),
+                "executable_replay_order_count": _candidate_board_first_int_field(
+                    scorecard,
+                    (
+                        "executable_replay_order_count",
+                        "executable_replay_submitted_order_count",
+                        "executable_replay_orders_submitted_total",
+                    ),
                 ),
                 "blockers": blockers,
                 "replay_artifact_refs": list(evidence.replay_artifact_refs)
@@ -5462,17 +5599,28 @@ def _candidate_board_payload(
         )
     )
     best_research_candidate = rows[0] if rows else None
+    best_executed_candidate = _candidate_board_best_executed_candidate(rows)
+    closest_promotion_candidate = _candidate_board_closest_promotion_candidate(rows)
     promotion_ready = _boolish(promotion_readiness.get("promotable"))
+    promotion_candidate_found = (
+        promotion_ready
+        and portfolio_oracle_passed
+        and closest_promotion_candidate is not None
+        and bool(closest_promotion_candidate.get("oracle_passed"))
+    )
     return {
         "schema_version": "torghut.profit-candidate-board.v1",
         "epoch_id": epoch_id,
         "run_root": str(output_dir),
         "target_net_pnl_per_day": str(target),
+        "status_digest": _candidate_board_status_digest(rows),
         "current_answer": "promotion_candidate_found"
-        if promotion_ready
+        if promotion_candidate_found
         else "no_promotion_ready_candidate",
         "promotion_readiness": dict(promotion_readiness),
         "best_research_candidate": best_research_candidate,
+        "best_executed_candidate": best_executed_candidate,
+        "closest_promotion_candidate": closest_promotion_candidate,
         "best_portfolio_candidate_id": _string(
             portfolio_payload.get("portfolio_candidate_id")
         ),
