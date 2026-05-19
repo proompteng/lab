@@ -130,3 +130,116 @@ class TestStrategyFactoryValidation(TestCase):
         self.assertEqual(
             evaluation.cost_calibration.scope_id, "washout_rebound_consistent"
         )
+
+    def test_strategy_factory_evaluation_reports_walk_forward_surface_correlation(
+        self,
+    ) -> None:
+        def candidate(
+            *,
+            lookback_days: int,
+            train_sharpe: float,
+            test_sharpe: float,
+            train_return: float,
+            test_return: float,
+        ) -> CandidateResult:
+            return CandidateResult(
+                config=CandidateConfig(
+                    lookback_days=lookback_days,
+                    vol_lookback_days=10,
+                    target_daily_vol=0.01,
+                    max_gross_leverage=1.0,
+                ),
+                train=PerformanceSummary(
+                    total_return=train_return,
+                    cagr=train_return,
+                    annualized_vol=0.10,
+                    sharpe=train_sharpe,
+                    max_drawdown=-0.02,
+                    days=60,
+                ),
+                test=PerformanceSummary(
+                    total_return=test_return,
+                    cagr=test_return,
+                    annualized_vol=0.10,
+                    sharpe=test_sharpe,
+                    max_drawdown=-0.02,
+                    days=60,
+                ),
+            )
+
+        index = pd.date_range("2026-04-01", periods=8, freq="B", tz="UTC")
+        debug_frame = pd.DataFrame(
+            {
+                "port_ret_net": [0.0015] * 8,
+                "port_ret_gross": [0.0017] * 8,
+                "turnover": [0.3] * 8,
+                "cost_ret": [0.0002] * 8,
+            },
+            index=index,
+        )
+        candidates = [
+            candidate(
+                lookback_days=20,
+                train_sharpe=2.0,
+                test_sharpe=1.8,
+                train_return=0.10,
+                test_return=0.09,
+            ),
+            candidate(
+                lookback_days=30,
+                train_sharpe=1.5,
+                test_sharpe=1.4,
+                train_return=0.08,
+                test_return=0.07,
+            ),
+            candidate(
+                lookback_days=40,
+                train_sharpe=1.0,
+                test_sharpe=0.9,
+                train_return=0.05,
+                test_return=0.04,
+            ),
+            candidate(
+                lookback_days=50,
+                train_sharpe=0.5,
+                test_sharpe=0.4,
+                train_return=0.02,
+                test_return=0.01,
+            ),
+        ]
+
+        evaluation = build_strategy_factory_evaluation(
+            run_id="run-wfc-1",
+            candidate_id="cand-wfc-1",
+            best_candidate=candidates[0],
+            all_candidates=candidates,
+            train_debug=debug_frame,
+            test_debug=debug_frame,
+            train_summary=candidates[0].train,
+            test_summary=candidates[0].test,
+            incumbent_summary=PerformanceSummary(
+                total_return=0.01,
+                cagr=0.02,
+                annualized_vol=0.09,
+                sharpe=0.2,
+                max_drawdown=-0.03,
+                days=60,
+            ),
+            cost_bps_per_turnover=0.1,
+            evaluated_at=datetime(2026, 5, 19, tzinfo=UTC),
+        )
+
+        surface_test = next(
+            item
+            for item in evaluation.validation_tests
+            if item.test_name == "walk_forward_surface_correlation"
+        )
+        self.assertEqual(surface_test.status, "pass")
+        self.assertEqual(
+            surface_test.metric_bundle["source"],
+            "walk_forward_correlation_ssrn_6324079_2026",
+        )
+        self.assertGreaterEqual(
+            surface_test.metric_bundle["surface_correlation"],
+            surface_test.metric_bundle["min_surface_correlation"],
+        )

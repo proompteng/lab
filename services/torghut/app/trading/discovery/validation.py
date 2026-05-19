@@ -8,7 +8,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import datetime
-from math import log, sqrt
+from math import isfinite, log, sqrt
 from statistics import NormalDist
 from typing import Any, Callable, Iterable, Sequence, cast
 
@@ -167,6 +167,57 @@ def _rank_lookup(
 
 def _candidate_status(*, passed: bool) -> str:
     return "pass" if passed else "fail"
+
+
+_SURFACE_CORRELATION_METRICS = ("sharpe", "cagr", "total_return")
+_MIN_WALK_FORWARD_SURFACE_CORRELATION = 0.20
+
+
+def _summary_metric(summary: PerformanceSummary, metric: str) -> float | None:
+    value = getattr(summary, metric)
+    if value is None:
+        return None
+    resolved = float(value)
+    return resolved if isfinite(resolved) else None
+
+
+def _metric_correlation(
+    candidates: Sequence[CandidateResult], *, metric: str
+) -> float | None:
+    train_values: list[float] = []
+    test_values: list[float] = []
+    for item in candidates:
+        train_value = _summary_metric(item.train, metric)
+        test_value = _summary_metric(item.test, metric)
+        if train_value is None or test_value is None:
+            continue
+        train_values.append(train_value)
+        test_values.append(test_value)
+    if len(train_values) < 3 or len(set(train_values)) < 2 or len(set(test_values)) < 2:
+        return None
+    correlation = pd.Series(train_values).corr(pd.Series(test_values))
+    resolved = float(correlation)
+    return resolved if isfinite(resolved) else None
+
+
+def _walk_forward_surface_correlation_bundle(
+    candidates: Sequence[CandidateResult],
+) -> dict[str, Any]:
+    correlations = {
+        metric: _metric_correlation(candidates, metric=metric)
+        for metric in _SURFACE_CORRELATION_METRICS
+    }
+    available = [value for value in correlations.values() if value is not None]
+    surface_correlation = min(available) if available else None
+    return {
+        "proxy_method": "train_test_parameter_surface_correlation",
+        "source": "walk_forward_correlation_ssrn_6324079_2026",
+        "candidate_count": len(candidates),
+        "min_required_candidate_count": 3,
+        "metric_correlations": correlations,
+        "surface_correlation": surface_correlation,
+        "min_surface_correlation": _MIN_WALK_FORWARD_SURFACE_CORRELATION,
+    }
 
 
 _DEFAULT_REGIME_SUPPORTS = (
@@ -415,6 +466,10 @@ def build_strategy_factory_evaluation(
     adjusted_edge_bps = None
     if net_edge_bps is not None:
         adjusted_edge_bps = float(net_edge_bps * (1.0 - selection_penalty))
+    surface_correlation_bundle = _walk_forward_surface_correlation_bundle(
+        all_candidates
+    )
+    surface_correlation = surface_correlation_bundle["surface_correlation"]
 
     validation_tests = [
         ValidationTestResult(
@@ -440,6 +495,15 @@ def build_strategy_factory_evaluation(
                 "pbo_proxy": pbo_proxy,
             },
             artifact_name="cscv-pbo-report-v1.json",
+        ),
+        ValidationTestResult(
+            test_name="walk_forward_surface_correlation",
+            status=_candidate_status(
+                passed=surface_correlation is not None
+                and surface_correlation >= _MIN_WALK_FORWARD_SURFACE_CORRELATION
+            ),
+            metric_bundle=surface_correlation_bundle,
+            artifact_name="walk-forward-surface-correlation-report-v1.json",
         ),
         ValidationTestResult(
             test_name="deflated_sharpe",

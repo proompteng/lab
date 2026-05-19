@@ -886,6 +886,62 @@ class TestPortfolioOptimizer(TestCase):
             scorecard["profit_target_oracle"]["blockers"],
         )
 
+    def test_portfolio_optimizer_does_not_synthesize_daily_net_proof_from_scalar_pnl(
+        self,
+    ) -> None:
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-scalar-pnl-only",
+            candidate={
+                "candidate_id": "cand-scalar-pnl-only",
+                "runtime_family": "microbar_cross_sectional_pairs",
+                "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                "family_template_id": "microbar_cross_sectional_pairs_v1",
+                "objective_scorecard": {
+                    "net_pnl_per_day": "900",
+                    "active_day_ratio": "1.0",
+                    "positive_day_ratio": "1.0",
+                    "worst_day_loss": "0",
+                    "max_drawdown": "0",
+                    "best_day_share": "0.25",
+                    "avg_filled_notional_per_day": "350000",
+                    "regime_slice_pass_rate": "0.55",
+                    "posterior_edge_lower": "0.01",
+                    "shadow_parity_status": "within_budget",
+                    "correlation_cluster": "scalar-pnl-only",
+                    "symbol_contribution_shares": {"AAPL": "1.0"},
+                    **_executable_scorecard_fields("scalar-pnl-only"),
+                },
+            },
+            dataset_snapshot_id="snapshot-scalar-pnl-only",
+            result_path="/tmp/scalar-pnl-only.json",
+        )
+
+        portfolio = optimize_portfolio_candidate(
+            evidence_bundles=[bundle],
+            target_net_pnl_per_day=Decimal("500"),
+            oracle_policy=ProfitTargetOraclePolicy(
+                max_best_day_share=Decimal("1.0"),
+                max_cluster_contribution_share=Decimal("1.0"),
+                max_single_symbol_contribution_share=Decimal("1.0"),
+            ),
+            portfolio_size_min=1,
+            portfolio_size_max=1,
+        )
+
+        self.assertEqual(portfolio_optimizer_module._daily_net(bundle), {})
+        self.assertIsNotNone(portfolio)
+        assert portfolio is not None
+        scorecard = portfolio.objective_scorecard
+        self.assertEqual(scorecard["daily_net"], {})
+        self.assertEqual(scorecard["trading_day_count"], 1)
+        self.assertEqual(scorecard["daily_net_observed_day_count"], 0)
+        self.assertEqual(scorecard["missing_daily_net_count"], 1)
+        self.assertFalse(scorecard["oracle_passed"])
+        self.assertIn(
+            "daily_net_observed_day_count_failed",
+            scorecard["profit_target_oracle"]["blockers"],
+        )
+
     def test_portfolio_optimizer_blocks_missing_sleeve_daily_net_coverage(
         self,
     ) -> None:

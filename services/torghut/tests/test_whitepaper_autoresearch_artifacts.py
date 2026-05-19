@@ -129,6 +129,16 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
                         "max_drawdown": "400",
                         "best_day_share": "0.18",
                     },
+                    "full_window": {
+                        "daily_net": {
+                            "2026-02-23": str(625 - (index * 25)),
+                            "2026-02-24": str(625 - (index * 25)),
+                        },
+                        "daily_filled_notional": {
+                            "2026-02-23": "350000",
+                            "2026-02-24": "350000",
+                        },
+                    },
                 },
                 dataset_snapshot_id="snap-1",
                 result_path=f"/tmp/result-{index}.json",

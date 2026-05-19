@@ -229,7 +229,7 @@ def _daily_net(bundle: CandidateEvidenceBundle) -> dict[str, Decimal]:
     if isinstance(raw_daily, Mapping):
         daily_mapping = cast(Mapping[Any, Any], raw_daily)
         return {str(day): _decimal(value) for day, value in daily_mapping.items()}
-    return {"synthetic": _net_per_day(bundle)}
+    return {}
 
 
 def _daily_filled_notional(bundle: CandidateEvidenceBundle) -> dict[str, Decimal]:
@@ -246,6 +246,12 @@ def _trading_day_count(bundle: CandidateEvidenceBundle) -> int:
         expected = int(_decimal(_scorecard(bundle).get("trading_day_count")))
     except Exception:
         expected = 0
+    if (
+        expected <= 0
+        and _scorecard(bundle).get("daily_net") is None
+        and _net_per_day(bundle) != 0
+    ):
+        expected = 1
     return max(expected, len(_daily_net(bundle)))
 
 
