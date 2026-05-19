@@ -236,6 +236,75 @@ class TestRuntimeWindowImport(TestCase):
             decision.reason_summary, "runtime_evidence_thresholds_satisfied"
         )
 
+    def test_persist_observed_runtime_windows_blocks_zero_activity_evidence(
+        self,
+    ) -> None:
+        buckets = build_observed_runtime_buckets(
+            bucket_ranges=[
+                (
+                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    40,
+                ),
+                (
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 30, tzinfo=timezone.utc),
+                    40,
+                ),
+            ],
+            decision_times=[],
+            execution_times=[],
+            tca_rows=[
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("4"),
+                    "post_cost_expectancy_bps": Decimal("8"),
+                },
+                {
+                    "computed_at": datetime(2026, 3, 6, 15, 6, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("5"),
+                    "post_cost_expectancy_bps": Decimal("8"),
+                },
+            ],
+            continuity_ok=True,
+            drift_ok=True,
+            dependency_quorum_decision="allow",
+        )
+
+        with self.session_local() as session:
+            summary = persist_observed_runtime_windows(
+                session=session,
+                run_id="import-live-zero-activity",
+                candidate_id="cand-zero-activity",
+                hypothesis_id="H-CONT-01",
+                observed_stage="live",
+                strategy_family="intraday_continuation",
+                source_manifest_ref="config/trading/hypotheses/h-cont-01.json",
+                buckets=buckets,
+            )
+            session.commit()
+            decision = session.execute(select(StrategyPromotionDecision)).scalar_one()
+
+        self.assertEqual(summary["market_session_samples"], 80)
+        self.assertEqual(summary["decision_count"], 0)
+        self.assertEqual(summary["trade_count"], 0)
+        self.assertEqual(summary["order_count"], 0)
+        self.assertEqual(summary["promotion_allowed"], False)
+        self.assertIn(
+            "runtime_decision_count_zero",
+            summary["promotion_blocking_reasons"],
+        )
+        self.assertIn(
+            "runtime_order_count_zero",
+            summary["promotion_blocking_reasons"],
+        )
+        self.assertIn(
+            "runtime_trade_count_zero",
+            summary["promotion_blocking_reasons"],
+        )
+        self.assertEqual(decision.allowed, False)
+        self.assertEqual(decision.payload_json["decision_count"], 0)
+
     def test_persist_observed_runtime_windows_rejects_weak_paper_receipt(
         self,
     ) -> None:

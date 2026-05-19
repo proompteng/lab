@@ -2745,6 +2745,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             approval_report_path = replay_dir / "scheduler-v3-approval-report.json"
             shadow_path = replay_dir / "shadow-validation-plan.json"
             replay_plan_path = replay_dir / "runtime-replay-plan.json"
+            market_impact_path = replay_dir / "market-impact-stress.json"
             gate_path = gates_dir / "gate-evaluation.json"
             proof_path = promotion_dir / "portfolio-proof-receipt.json"
             summary_path = runtime_root / "summary.json"
@@ -2788,6 +2789,18 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             )
             replay_plan_path.write_text(
                 json.dumps({"execution_context": {"start_equity": "31590.02"}}) + "\n",
+                encoding="utf-8",
+            )
+            market_impact_path.write_text(
+                json.dumps(
+                    {
+                        "objective_met": True,
+                        "model": "square_root",
+                        "impact_cost_bps": "5",
+                        "post_impact_net_pnl_per_day": "610",
+                    }
+                )
+                + "\n",
                 encoding="utf-8",
             )
             policy = runner.ProfitTargetOraclePolicy(min_observed_trading_days=2)
@@ -2856,6 +2869,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     "shadow_validation_path": str(shadow_path),
                     "portfolio_proof_receipt_path": str(proof_path),
                     "replay_plan_path": str(replay_plan_path),
+                    "market_impact_stress_report_path": str(market_impact_path),
                 },
                 target=Decimal("500"),
                 oracle_policy=policy,

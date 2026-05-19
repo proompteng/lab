@@ -4979,6 +4979,8 @@ def _runtime_closure_artifact_refs(
         "approval_report_path",
         "shadow_validation_path",
         "portfolio_proof_receipt_path",
+        "market_impact_stress_report_path",
+        "market_impact_stress_artifact_path",
         "profitability_stage_manifest_path",
         "promotion_prerequisites_path",
         "replay_plan_path",
@@ -5020,6 +5022,44 @@ def _portfolio_executable_max_notional(portfolio: PortfolioCandidateSpec) -> Dec
     return max_notional
 
 
+def _runtime_closure_market_impact_stress_update(
+    runtime_closure: Mapping[str, Any],
+) -> dict[str, Any]:
+    market_impact_report_path = _string(
+        runtime_closure.get("market_impact_stress_report_path")
+        or runtime_closure.get("market_impact_stress_artifact_path")
+    )
+    market_impact_report = _load_json_mapping_artifact(market_impact_report_path)
+    if not market_impact_report:
+        return {}
+    return {
+        "market_impact_stress_passed": _boolish(
+            market_impact_report.get("objective_met")
+            or market_impact_report.get("passed")
+        ),
+        "market_impact_stress_artifact_ref": market_impact_report_path,
+        "market_impact_stress_model": _string(
+            market_impact_report.get("model")
+            or market_impact_report.get("impact_model")
+            or market_impact_report.get("cost_model")
+        ),
+        "market_impact_stress_cost_bps": str(
+            _decimal(
+                market_impact_report.get("impact_cost_bps")
+                or market_impact_report.get("market_impact_cost_bps")
+                or market_impact_report.get("cost_shock_bps")
+            )
+        ),
+        "market_impact_stress_net_pnl_per_day": str(
+            _decimal(
+                market_impact_report.get("net_pnl_per_day")
+                or market_impact_report.get("post_impact_net_pnl_per_day")
+                or market_impact_report.get("stressed_net_pnl_per_day")
+            )
+        ),
+    }
+
+
 def _runtime_closure_scorecard_update(
     *,
     portfolio: PortfolioCandidateSpec,
@@ -5051,6 +5091,7 @@ def _runtime_closure_scorecard_update(
         executable_report, "decision_count"
     )
     shadow_status = _string(shadow_validation.get("status")) or "missing"
+    market_impact_update = _runtime_closure_market_impact_stress_update(runtime_closure)
     return {
         "runtime_closure_proof": {
             "status": _string(runtime_closure.get("status")) or "missing",
@@ -5059,6 +5100,9 @@ def _runtime_closure_scorecard_update(
             "shadow_status": shadow_status,
             "artifact_refs": list(artifact_refs),
             "executable_replay_artifact_refs": list(executable_artifact_refs),
+            "market_impact_stress_artifact_ref": market_impact_update.get(
+                "market_impact_stress_artifact_ref", ""
+            ),
         },
         "runtime_closure_artifact_refs": list(artifact_refs),
         "shadow_parity_status": "within_budget"
@@ -5079,6 +5123,7 @@ def _runtime_closure_scorecard_update(
         "executable_replay_max_notional_per_trade": str(
             _portfolio_executable_max_notional(portfolio)
         ),
+        **market_impact_update,
     }
 
 
