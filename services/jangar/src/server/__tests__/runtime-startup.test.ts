@@ -2,19 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   ensureAgentCommsRuntime: vi.fn(),
-  ensureControllerRuntimes: vi.fn(),
-  startAgentctlGrpcServer: vi.fn(() => null),
   startControlPlaneCache: vi.fn(async () => {}),
   startTorghutQuantRuntime: vi.fn(),
+  startWhitepaperFinalizeConsumer: vi.fn(),
 }))
 
 vi.mock('../agent-comms-runtime', () => ({
   ensureAgentCommsRuntime: mocks.ensureAgentCommsRuntime,
-  ensureControllerRuntimes: mocks.ensureControllerRuntimes,
-}))
-
-vi.mock('../agentctl-grpc', () => ({
-  startAgentctlGrpcServer: mocks.startAgentctlGrpcServer,
 }))
 
 vi.mock('../control-plane-cache', () => ({
@@ -23,6 +17,10 @@ vi.mock('../control-plane-cache', () => ({
 
 vi.mock('../torghut-quant-runtime', () => ({
   startTorghutQuantRuntime: mocks.startTorghutQuantRuntime,
+}))
+
+vi.mock('../whitepaper-finalize-consumer', () => ({
+  startWhitepaperFinalizeConsumer: mocks.startWhitepaperFinalizeConsumer,
 }))
 
 const resetRuntimeStartupState = () => {
@@ -46,13 +44,12 @@ describe('ensureRuntimeStartup', () => {
     ensureRuntimeStartup(JANGAR_RUNTIME_PROFILES.viteDevApi.startup)
 
     expect(mocks.ensureAgentCommsRuntime).toHaveBeenCalledTimes(1)
-    expect(mocks.ensureControllerRuntimes).toHaveBeenCalledTimes(1)
     expect(mocks.startControlPlaneCache).toHaveBeenCalledTimes(1)
     expect(mocks.startTorghutQuantRuntime).toHaveBeenCalledTimes(1)
-    expect(mocks.startAgentctlGrpcServer).toHaveBeenCalledTimes(1)
+    expect(mocks.startWhitepaperFinalizeConsumer).toHaveBeenCalledTimes(1)
   })
 
-  it('boots only the Agents controller runtime for the controllers profile', async () => {
+  it('boots only Jangar agent-comms support for the legacy controllers profile', async () => {
     const { JANGAR_RUNTIME_PROFILES } = await import('../runtime-profile')
     const { ensureRuntimeStartup } = await import('../runtime-startup')
 
@@ -60,13 +57,12 @@ describe('ensureRuntimeStartup', () => {
     ensureRuntimeStartup(JANGAR_RUNTIME_PROFILES.agentsControllers.startup)
 
     expect(mocks.ensureAgentCommsRuntime).toHaveBeenCalledTimes(1)
-    expect(mocks.ensureControllerRuntimes).toHaveBeenCalledTimes(1)
     expect(mocks.startControlPlaneCache).not.toHaveBeenCalled()
     expect(mocks.startTorghutQuantRuntime).not.toHaveBeenCalled()
-    expect(mocks.startAgentctlGrpcServer).not.toHaveBeenCalled()
+    expect(mocks.startWhitepaperFinalizeConsumer).not.toHaveBeenCalled()
   })
 
-  it('boots only Agents API support for the control-plane profile', async () => {
+  it('boots only Jangar cache support for the legacy control-plane profile', async () => {
     const { JANGAR_RUNTIME_PROFILES } = await import('../runtime-profile')
     const { ensureRuntimeStartup } = await import('../runtime-startup')
 
@@ -74,10 +70,9 @@ describe('ensureRuntimeStartup', () => {
     ensureRuntimeStartup(JANGAR_RUNTIME_PROFILES.agentsControlPlane.startup)
 
     expect(mocks.ensureAgentCommsRuntime).not.toHaveBeenCalled()
-    expect(mocks.ensureControllerRuntimes).toHaveBeenCalledTimes(1)
     expect(mocks.startControlPlaneCache).toHaveBeenCalledTimes(1)
     expect(mocks.startTorghutQuantRuntime).not.toHaveBeenCalled()
-    expect(mocks.startAgentctlGrpcServer).toHaveBeenCalledTimes(1)
+    expect(mocks.startWhitepaperFinalizeConsumer).not.toHaveBeenCalled()
   })
 
   it('skips all startup side effects for the test profile', async () => {
@@ -87,9 +82,8 @@ describe('ensureRuntimeStartup', () => {
     ensureRuntimeStartup(JANGAR_RUNTIME_PROFILES.test.startup)
 
     expect(mocks.ensureAgentCommsRuntime).not.toHaveBeenCalled()
-    expect(mocks.ensureControllerRuntimes).not.toHaveBeenCalled()
     expect(mocks.startControlPlaneCache).not.toHaveBeenCalled()
     expect(mocks.startTorghutQuantRuntime).not.toHaveBeenCalled()
-    expect(mocks.startAgentctlGrpcServer).not.toHaveBeenCalled()
+    expect(mocks.startWhitepaperFinalizeConsumer).not.toHaveBeenCalled()
   })
 })

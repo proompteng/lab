@@ -1,15 +1,18 @@
 import { readFile } from 'node:fs/promises'
 
-import type { AgentsControllerTerminalStatusHookInput } from '@proompteng/agents/server/agents-controller'
-
 import { createGitHubClient } from '~/server/github-client'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { resolveWhitepaperControlConfig, resolveWhitepaperGitHubConfig } from '~/server/whitepaper-config'
-import { logAgentsControllerInfo, logAgentsControllerWarn, toLogError } from './operational-logging'
-import { resolveParam, resolveParameters } from './run-utils'
 
 const WHITEPAPER_RUN_ID_PREFIX = 'wp-'
 const WHITEPAPER_FINALIZE_TIMEOUT_MS = 15_000
+
+export type WhitepaperFinalizeTerminalStatusInput = {
+  resource: Record<string, unknown>
+  nextStatus: Record<string, unknown>
+  previousPhase: string | null
+  nextPhase: string
+}
 
 type WhitepaperOutputBranchResult =
   | {
@@ -48,6 +51,37 @@ const resolveWhitepaperOutputFetchDelayMs = () => resolveWhitepaperControlConfig
 const resolveWhitepaperFinalizeBaseUrl = () => resolveWhitepaperControlConfig(process.env).baseUrl
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const logWhitepaperFinalizeInfo = (message: string, details?: Record<string, unknown>) => {
+  if (details) {
+    console.info('[jangar][whitepaper-finalize]', message, details)
+    return
+  }
+  console.info('[jangar][whitepaper-finalize]', message)
+}
+
+const logWhitepaperFinalizeWarn = (message: string, details?: Record<string, unknown>) => {
+  if (details) {
+    console.warn('[jangar][whitepaper-finalize]', message, details)
+    return
+  }
+  console.warn('[jangar][whitepaper-finalize]', message)
+}
+
+const toLogError = (error: unknown) => ({
+  error: error instanceof Error ? error.message : String(error),
+})
+
+const resolveParameters = (resource: Record<string, unknown>) =>
+  asRecord(readNested(resource, ['spec', 'parameters'])) ?? {}
+
+const resolveParam = (params: Record<string, unknown>, keys: string[]) => {
+  for (const key of keys) {
+    const value = asString(params[key])
+    if (value?.trim()) return value.trim()
+  }
+  return ''
+}
 
 const resolveWhitepaperFinalizeToken = async () => {
   const control = resolveWhitepaperControlConfig(process.env)
@@ -256,7 +290,7 @@ const fetchWhitepaperOutputs = async (input: {
             }
           }
         } catch (error) {
-          logAgentsControllerWarn('whitepaper finalize failed to resolve design PR', {
+          logWhitepaperFinalizeWarn('failed to resolve design PR', {
             repository: input.repository,
             runId: input.runId,
             branch,
@@ -293,7 +327,7 @@ const fetchWhitepaperOutputs = async (input: {
     }
 
     if (!sawRetryableFailure || attempt >= maxAttempts) break
-    logAgentsControllerInfo('whitepaper outputs not visible yet; retrying finalize fetch', {
+    logWhitepaperFinalizeInfo('outputs not visible yet; retrying finalize fetch', {
       repository: input.repository,
       runId: input.runId,
       attempt,
@@ -339,7 +373,7 @@ const postWhitepaperFinalize = async (runId: string, payload: Record<string, unk
   }
 }
 
-export const maybeFinalizeWhitepaperRun = async (input: AgentsControllerTerminalStatusHookInput) => {
+export const maybeFinalizeWhitepaperRun = async (input: WhitepaperFinalizeTerminalStatusInput) => {
   if (!whitepaperFinalizeEnabled()) return
   const { resource, nextStatus, nextPhase } = input
   const params = resolveParameters(resource)
@@ -365,7 +399,7 @@ export const maybeFinalizeWhitepaperRun = async (input: AgentsControllerTerminal
 
   const payload: Record<string, unknown> = {
     status: nextPhase === 'Succeeded' ? 'completed' : 'failed',
-    source: 'jangar-agents-controller',
+    source: 'jangar-whitepaper-finalize-consumer',
     agentrun_name: asString(readNested(resource, ['metadata', 'name'])) ?? null,
     artifacts: buildWhitepaperArtifactPayloads(readNested(nextStatus, ['artifacts'])),
   }

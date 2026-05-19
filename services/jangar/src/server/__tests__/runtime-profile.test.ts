@@ -20,10 +20,9 @@ describe('runtime profile resolution', () => {
     expect(profile.serveClient).toBe(false)
     expect(profile.startup).toEqual({
       agentComms: false,
-      controllerRuntimes: true,
       controlPlaneCache: true,
       torghutQuantRuntime: false,
-      agentctlGrpc: true,
+      whitepaperFinalizeConsumer: false,
     })
   })
 

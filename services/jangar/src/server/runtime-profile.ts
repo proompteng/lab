@@ -1,9 +1,8 @@
 export type JangarRuntimeStartup = {
   agentComms: boolean
-  controllerRuntimes: boolean
   controlPlaneCache: boolean
   torghutQuantRuntime: boolean
-  agentctlGrpc: boolean
+  whitepaperFinalizeConsumer: boolean
 }
 
 export type JangarRuntimeProfileName =
@@ -21,26 +20,23 @@ export type JangarRuntimeProfile = {
 
 const fullStartup: JangarRuntimeStartup = {
   agentComms: true,
-  controllerRuntimes: true,
   controlPlaneCache: true,
   torghutQuantRuntime: true,
-  agentctlGrpc: true,
+  whitepaperFinalizeConsumer: true,
 }
 
 const agentsControlPlaneStartup: JangarRuntimeStartup = {
   agentComms: false,
-  controllerRuntimes: true,
   controlPlaneCache: true,
   torghutQuantRuntime: false,
-  agentctlGrpc: true,
+  whitepaperFinalizeConsumer: false,
 }
 
 const controllersStartup: JangarRuntimeStartup = {
   agentComms: true,
-  controllerRuntimes: true,
   controlPlaneCache: false,
   torghutQuantRuntime: false,
-  agentctlGrpc: false,
+  whitepaperFinalizeConsumer: false,
 }
 
 export const JANGAR_RUNTIME_PROFILES = {
@@ -69,10 +65,9 @@ export const JANGAR_RUNTIME_PROFILES = {
     serveClient: false,
     startup: {
       agentComms: false,
-      controllerRuntimes: false,
       controlPlaneCache: false,
       torghutQuantRuntime: false,
-      agentctlGrpc: false,
+      whitepaperFinalizeConsumer: false,
     },
   },
 } as const satisfies Record<string, JangarRuntimeProfile>

@@ -6,7 +6,7 @@ const agentsControllerMocks = vi.hoisted(() => ({
   getAgentsControllerHealth: vi.fn(),
 }))
 
-vi.mock('~/server/agents-controller', () => agentsControllerMocks)
+vi.mock('@proompteng/agents/server/agents-controller', () => agentsControllerMocks)
 
 describe('health route', () => {
   beforeEach(() => {

@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { createAgentsHealthHandler } from '@proompteng/agents/server/health'
 import { resolveRuntimeServiceName } from '@proompteng/agents/server/runtime-identity'
-import { getAgentsControllerHealth } from '~/server/agents-controller'
+import { getAgentsControllerHealth } from '@proompteng/agents/server/agents-controller'
 
 export const getHealthHandler = createAgentsHealthHandler({
   getAgentsControllerHealth,

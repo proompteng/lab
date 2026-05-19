@@ -1,7 +1,7 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 
 import { createKubeGateway } from '~/server/kube-gateway'
-import { resolveImplementationSourceWebhookConfig } from '~/server/agents-controller/runtime-config'
+import { resolveImplementationSourceWebhookConfig } from '@proompteng/agents/server/agents-controller/runtime-config'
 import { assertClusterScopedForWildcard } from '~/server/namespace-scope'
 import { asRecord, asString, errorResponse, okResponse, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'

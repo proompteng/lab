@@ -1,4 +1,4 @@
-import { getAgentsControllerHealth } from '~/server/agents-controller'
+import { getAgentsControllerHealth } from '@proompteng/agents/server/agents-controller'
 import { buildReconciledActionClocks } from '~/server/control-plane-action-clock'
 import { buildAuthorityProvenanceSettlement } from '~/server/control-plane-authority-provenance-settlement'
 import {
@@ -112,7 +112,7 @@ import {
   type ControlPlaneWatchReliabilitySummary,
 } from '~/server/control-plane-watch-reliability'
 import { createKubeGateway, type KubeGateway } from '~/server/kube-gateway'
-import { getOrchestrationControllerHealth } from '~/server/orchestration-controller'
+import { getOrchestrationControllerHealth } from '@proompteng/agents/server/orchestration-controller'
 import { getSupportingControllerHealth } from '~/server/supporting-primitives-controller'
 import { getGithubReviewIngestPressureSummary } from '~/server/github-review-ingest'
 import { getMetricsSinkPressureSummary } from '~/server/metrics'

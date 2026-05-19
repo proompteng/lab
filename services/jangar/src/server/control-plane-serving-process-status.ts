@@ -1,4 +1,4 @@
-import { assessAgentRunIngestion, getAgentsControllerHealth } from '~/server/agents-controller'
+import { assessAgentRunIngestion, getAgentsControllerHealth } from '@proompteng/agents/server/agents-controller'
 import type { AgentRunIngestionStatus, ControllerStatus } from '~/server/control-plane-status-types'
 
 type ControllerHealth = ReturnType<typeof getAgentsControllerHealth>

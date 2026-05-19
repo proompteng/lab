@@ -1,4 +1,4 @@
-import { getAgentsControllerHealth } from '~/server/agents-controller'
+import { getAgentsControllerHealth } from '@proompteng/agents/server/agents-controller'
 import {
   createControlPlaneHeartbeatStore,
   resolveControlPlaneHeartbeatIntervalSeconds,
@@ -10,7 +10,7 @@ import {
 } from '~/server/control-plane-heartbeat-store'
 import { getLeaderElectionStatus, type LeaderElectionStatus } from '~/server/leader-election'
 import { parseNamespaceScopeEnv } from '~/server/namespace-scope'
-import { getOrchestrationControllerHealth } from '~/server/orchestration-controller'
+import { getOrchestrationControllerHealth } from '@proompteng/agents/server/orchestration-controller'
 import { getSupportingControllerHealth } from '~/server/supporting-primitives-controller'
 
 type ControllerHealthSnapshot = {

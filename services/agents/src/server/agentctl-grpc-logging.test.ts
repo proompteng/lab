@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { startAgentctlGrpcServer } from '../agentctl-grpc'
+import { startAgentctlGrpcServer } from './agentctl-grpc'
 
 const ORIGINAL_ENV = { ...process.env }
 
