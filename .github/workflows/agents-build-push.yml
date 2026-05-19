@@ -16,7 +16,6 @@ on:
       - 'packages/scripts/src/shared/**'
       - 'packages/temporal-bun-sdk/**'
       - 'services/agents/**'
-      - 'services/jangar/**'
       - 'skills/**'
       - 'package.json'
       - 'bun.lock'
@@ -25,7 +24,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: agents-build-${{ github.ref }}-${{ github.sha }}
+  group: agents-build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

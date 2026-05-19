@@ -10,7 +10,12 @@ fail_if_matches() {
   local pattern="$2"
   shift 2
 
-  if rg -n --glob '!**/__tests__/**' --glob '!guard-extraction-boundaries.sh' "${pattern}" "$@"; then
+  if rg -n \
+    --glob '!**/__tests__/**' \
+    --glob '!**/*.test.*' \
+    --glob '!guard-extraction-boundaries.sh' \
+    "${pattern}" \
+    "$@"; then
     echo "Agents extraction boundary violation: ${description}" >&2
     exit 1
   fi
