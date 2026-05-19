@@ -1,26 +1,32 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const originalEnv = { ...process.env }
+const originalFetch = globalThis.fetch
 
-const agentsControllerMocks = vi.hoisted(() => ({
-  getAgentsControllerHealth: vi.fn(),
-}))
-
-vi.mock('@proompteng/agents/server/agents-controller', () => agentsControllerMocks)
+const buildJsonResponse = (payload: unknown, status = 200) =>
+  new Response(JSON.stringify(payload), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  })
 
 describe('health route', () => {
   beforeEach(() => {
     process.env = { ...originalEnv }
+    globalThis.fetch = vi.fn(async () =>
+      buildJsonResponse({
+        status: 'ok',
+        service: 'agents',
+        agentsController: {
+          enabled: true,
+          crdsReady: true,
+        },
+      }),
+    ) as unknown as typeof globalThis.fetch
     vi.clearAllMocks()
-    agentsControllerMocks.getAgentsControllerHealth.mockReturnValue({
-      enabled: true,
-      started: true,
-      namespaces: ['agents'],
-      crdsReady: true,
-      missingCrds: [],
-      lastCheckedAt: '2026-03-08T21:00:00Z',
-      agentRunIngestion: [],
-    })
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
   })
 
   it('reports Agents service identity under Agents runtime env', async () => {
@@ -33,6 +39,9 @@ describe('health route', () => {
     await expect(response.json()).resolves.toMatchObject({
       status: 'ok',
       service: 'agents',
+      agentsService: {
+        service: 'agents',
+      },
     })
   })
 
@@ -44,6 +53,34 @@ describe('health route', () => {
     await expect(response.json()).resolves.toMatchObject({
       status: 'ok',
       service: 'jangar',
+      agentsController: {
+        enabled: true,
+        crdsReady: true,
+      },
+    })
+  })
+
+  it('degrades when the Agents service health endpoint is unreachable', async () => {
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error('connect ECONNREFUSED')
+    }) as unknown as typeof globalThis.fetch
+
+    const { Route } = await import('./health')
+    const response = await Route.options.server.handlers.GET()
+
+    expect(response.status).toBe(503)
+    await expect(response.json()).resolves.toMatchObject({
+      status: 'degraded',
+      service: 'jangar',
+      agentsService: {
+        status: 'unavailable',
+        error: 'connect ECONNREFUSED',
+        httpStatus: 0,
+      },
+      agentsController: {
+        enabled: true,
+        crdsReady: false,
+      },
     })
   })
 })

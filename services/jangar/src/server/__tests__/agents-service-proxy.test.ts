@@ -2,13 +2,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   buildAgentsServiceProxyUrl,
+  fetchAgentsServiceJson,
   proxyAgentsServiceRequest,
   resolveAgentsServiceBaseUrl,
 } from '~/server/agents-service-proxy'
 
+const originalFetch = globalThis.fetch
+
 describe('agents-service-proxy', () => {
   afterEach(() => {
-    vi.unstubAllGlobals()
+    globalThis.fetch = originalFetch
   })
 
   it('defaults to the in-cluster Agents service', () => {
@@ -43,7 +46,7 @@ describe('agents-service-proxy', () => {
         status: 202,
       })
     })
-    vi.stubGlobal('fetch', fetchMock)
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
 
     const response = await proxyAgentsServiceRequest(
       new Request('http://jangar.test/api/agents/control-plane/resource?kind=Agent', {
@@ -76,5 +79,31 @@ describe('agents-service-proxy', () => {
     expect(response.headers.get('x-agents-result')).toBe('ok')
     expect(response.headers.get('content-length')).toBeNull()
     await expect(response.json()).resolves.toEqual({ ok: true })
+  })
+
+  it('fetches Agents service JSON contracts without importing Agents runtime modules', async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(JSON.stringify({ status: 'ok' }), {
+        headers: { 'content-type': 'application/json' },
+        status: 200,
+      })
+    })
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+
+    const result = await fetchAgentsServiceJson<{ status: string }>('/health', {
+      AGENTS_SERVICE_BASE_URL: 'http://agents.test',
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
+    expect(url.toString()).toBe('http://agents.test/health')
+    expect(init.method).toBe('GET')
+    expect((init.headers as Headers).get('accept')).toBe('application/json')
+    expect((init.headers as Headers).get('x-jangar-agents-proxy')).toBe('true')
+    expect(result).toEqual({
+      ok: true,
+      status: 200,
+      body: { status: 'ok' },
+    })
   })
 })
