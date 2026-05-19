@@ -10,6 +10,20 @@ KUBE_VERSION_FOR_HELM="${KUBE_VERSION_FOR_HELM:-${HELM_KUBE_VERSION:-1.35.0}}"
 DUMMY_IMAGE_DIGEST="sha256:0000000000000000000000000000000000000000000000000000000000000000"
 TEST_IMAGE_DIGEST="sha256:c1fe1679c34d9784c1b0d1e5f62ac0a79fca01fb6377cdd33e90473c6f9f9a69"
 
+if command -v rg >/dev/null 2>&1; then
+  if rg -n "codex-universal|ghcr.io/openai/codex-universal" \
+    "${CHART_DIR}/examples" \
+    "${ROOT_DIR}/scripts/agents/native-workflow-e2e.sh"; then
+    echo "Agents examples must use the chart-managed agents-codex-runner image, not codex-universal." >&2
+    exit 1
+  fi
+elif grep -R -n -E "codex-universal|ghcr\.io/openai/codex-universal" \
+  "${CHART_DIR}/examples" \
+  "${ROOT_DIR}/scripts/agents/native-workflow-e2e.sh"; then
+  echo "Agents examples must use the chart-managed agents-codex-runner image, not codex-universal." >&2
+  exit 1
+fi
+
 curl_with_retry() {
   curl \
     --connect-timeout 20 \

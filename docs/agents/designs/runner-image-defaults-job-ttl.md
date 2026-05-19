@@ -11,34 +11,34 @@ cleanup.
 
 ## Current State
 
-- Runtime image selection in `services/jangar/src/server/agents-controller.ts`:
-  - Job runtime requires `spec.workload.image`, `JANGAR_AGENT_RUNNER_IMAGE`, or `JANGAR_AGENT_IMAGE`.
+- Runtime image selection in `services/agents/src/server/agents-controller/**`:
+  - Job runtime requires `spec.workload.image`, `AGENTS_AGENT_RUNNER_IMAGE`, or `AGENTS_AGENT_IMAGE`.
   - Workflow runtime requires the same image inputs.
 - Chart defaults:
-  - `runner.image.repository` defaults to `registry.ide-newton.ts.net/lab/codex-universal` in
+  - `runner.image.repository` defaults to the Agents-owned Codex runner image in
     `charts/agents/values.yaml`.
-  - The deployment template sets `JANGAR_AGENT_RUNNER_IMAGE` when `runner.image.repository` is present.
+  - The deployment template sets `AGENTS_AGENT_RUNNER_IMAGE` when `runner.image.repository` is present.
 - Job TTL:
-  - `JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS` defaults to 600 seconds.
+  - `AGENTS_AGENT_RUNNER_JOB_TTL_SECONDS` defaults to 600 seconds.
   - `spec.runtime.config.ttlSecondsAfterFinished` overrides the env value.
   - TTL is clamped to `[30s, 7d]`.
-- Cluster (GitOps desired state): `JANGAR_AGENT_RUNNER_IMAGE` resolves to
-  `registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl`
-  via `runner.image.*` in `argocd/applications/agents/values.yaml`. `JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS` is set
+- Cluster (GitOps desired state): `AGENTS_AGENT_RUNNER_IMAGE` resolves to
+  `registry.ide-newton.ts.net/lab/agents-codex-runner:<promoted tag>`
+  via `runner.image.*` in `argocd/applications/agents/values.yaml`. `AGENTS_AGENT_RUNNER_JOB_TTL_SECONDS` is set
   to 600, matching chart defaults.
 
 ## Design
 
-- Ensure `JANGAR_AGENT_RUNNER_IMAGE` is always set in chart values for production.
+- Ensure `AGENTS_AGENT_RUNNER_IMAGE` is always set in chart values for production.
 - Keep Job TTL defaults high enough to allow status reconciliation and artifact collection.
 - Allow per-run overrides via `spec.runtime.config.ttlSecondsAfterFinished`.
 
 ## Configuration
 
-- `runner.image.repository`, `runner.image.tag`, `runner.image.digest` map to `JANGAR_AGENT_RUNNER_IMAGE`.
-- `controller.jobTtlSecondsAfterFinished` maps to `JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS`.
+- `runner.image.repository`, `runner.image.tag`, `runner.image.digest` map to `AGENTS_AGENT_RUNNER_IMAGE`.
+- `controller.jobTtlSecondsAfterFinished` maps to `AGENTS_AGENT_RUNNER_JOB_TTL_SECONDS`.
 - AgentRun retention is controlled separately by `spec.ttlSecondsAfterFinished` and
-  `JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS`.
+  `AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS`.
 
 ## Validation
 
@@ -128,14 +128,14 @@ Common mappings:
 - `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
 - `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
 - `controller.rate.*` → `JANGAR_AGENTS_CONTROLLER_RATE_{WINDOW_SECONDS,NAMESPACE,REPO,CLUSTER}`
-- `controller.agentRunRetentionSeconds` → `JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS`
+- `controller.agentRunRetentionSeconds` → `AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS`
 - `controller.admissionPolicy.*` → `JANGAR_AGENTS_CONTROLLER_{LABELS_REQUIRED,LABELS_ALLOWED,LABELS_DENIED,IMAGES_ALLOWED,IMAGES_DENIED,BLOCKED_SECRETS}`
 - `controller.vcsProviders.*` → `JANGAR_AGENTS_CONTROLLER_VCS_{PROVIDERS_ENABLED,DEPRECATED_TOKEN_TYPES,PR_RATE_LIMITS}`
 - `controller.authSecret.*` → `JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_{NAME,KEY,MOUNT_PATH}`
 - `orchestrationController.*` → `JANGAR_ORCHESTRATION_CONTROLLER_{ENABLED,NAMESPACES}`
 - `supportingController.*` → `JANGAR_SUPPORTING_CONTROLLER_{ENABLED,NAMESPACES}`
 - `grpc.*` → `JANGAR_GRPC_{ENABLED,HOST,PORT}` (unless overridden via `env.vars`)
-- `controller.jobTtlSecondsAfterFinished` → `JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS`
+- `controller.jobTtlSecondsAfterFinished` → `AGENTS_AGENT_RUNNER_JOB_TTL_SECONDS`
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 
 ### Rollout plan (GitOps)
