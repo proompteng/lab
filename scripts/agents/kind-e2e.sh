@@ -49,86 +49,22 @@ HELM=(helm --kube-context "${KUBECTL_CONTEXT}")
 
 if [ "${BUILD_IMAGE}" = "1" ]; then
   echo "Building Agents image ${IMAGE_REPOSITORY}:${IMAGE_TAG}"
-  PRUNE_DIR="$(mktemp -d /tmp/jangar-prune-XXXXXX)"
+  PRUNE_DIR="$(mktemp -d /tmp/agents-prune-XXXXXX)"
   cleanup_prune() {
     rm -rf "${PRUNE_DIR}"
   }
   trap cleanup_prune EXIT
 
-  OUTPUT_ENTRY="${REPO_ROOT}/services/jangar/.output/server/index.mjs"
-  OUTPUT_PROTO="${REPO_ROOT}/services/jangar/.output/server/proto/proompteng/jangar/v1/agentctl.proto"
-
-  copy_output_directory() {
-    local source_dir="$1"
-    local destination_dir="$2"
-
-    if [ ! -d "${source_dir}" ]; then
-      return 0
-    fi
-
-    local source_real
-    local destination_real
-
-    source_real="$(python3 - "${source_dir}" <<'PY'
-import sys
-from pathlib import Path
-
-print(Path(sys.argv[1]).resolve(strict=False))
-PY
-)"
-    destination_real="$(python3 - "${destination_dir}" <<'PY'
-import sys
-from pathlib import Path
-
-print(Path(sys.argv[1]).resolve(strict=False))
-PY
-)"
-    if [ "${source_real}" = "${destination_real}" ] || [[ "${destination_real}" == "${source_real}/"* ]] || [[ "${source_real}" == "${destination_real}/"* ]]; then
-      echo "Skipping output copy to avoid recursive copy: ${source_real} -> ${destination_real}"
-      return 0
-    fi
-
-    mkdir -p "${destination_dir}"
-    cp -R "${source_dir}/." "${destination_dir}/"
-  }
-
-  BUILD_OUTPUT=0
-  if [ ! -f "${OUTPUT_ENTRY}" ] || [ ! -f "${OUTPUT_PROTO}" ]; then
-    BUILD_OUTPUT=1
-  fi
-
-  bunx turbo prune --scope=@proompteng/jangar --scope=@proompteng/cx-tools --docker --out-dir="${PRUNE_DIR}"
+  bunx turbo prune \
+    --scope=@proompteng/agents \
+    --scope=@proompteng/otel \
+    --scope=@proompteng/temporal-bun-sdk \
+    --scope=@proompteng/cx-tools \
+    --docker \
+    --out-dir="${PRUNE_DIR}"
   cp "${REPO_ROOT}/tsconfig.base.json" "${PRUNE_DIR}/tsconfig.base.json"
   if [ -d "${REPO_ROOT}/skills" ]; then
     cp -R "${REPO_ROOT}/skills" "${PRUNE_DIR}/skills"
-  fi
-
-  if [ -d "${REPO_ROOT}/services/jangar/agentctl" ]; then
-    mkdir -p "${PRUNE_DIR}/full/services/jangar" "${PRUNE_DIR}/json/services/jangar"
-    cp -R "${REPO_ROOT}/services/jangar/agentctl" "${PRUNE_DIR}/full/services/jangar/agentctl"
-    cp -R "${REPO_ROOT}/services/jangar/agentctl" "${PRUNE_DIR}/json/services/jangar/agentctl"
-  fi
-
-  OUTPUT_SOURCE="${REPO_ROOT}/services/jangar/.output"
-  if [ "${BUILD_OUTPUT}" = "1" ]; then
-    echo "Building services/jangar .output in pruned context"
-    BUILD_DIR="${PRUNE_DIR}/build"
-    mkdir -p "${BUILD_DIR}"
-    cp -R "${PRUNE_DIR}/json/." "${BUILD_DIR}/"
-    cp "${PRUNE_DIR}/tsconfig.base.json" "${BUILD_DIR}/tsconfig.base.json"
-    (cd "${BUILD_DIR}" && bun install --no-save --ignore-scripts)
-    cp -R "${PRUNE_DIR}/full/." "${BUILD_DIR}/"
-    (cd "${BUILD_DIR}" && bun run --filter @proompteng/otel build)
-    (cd "${BUILD_DIR}" && bun run --filter @proompteng/temporal-bun-sdk build)
-    (cd "${BUILD_DIR}/services/jangar" && bun run build:server && bun run copy:grpc-proto && rm -rf .output/public)
-    mkdir -p "${PRUNE_DIR}/full/services/jangar"
-    copy_output_directory "${BUILD_DIR}/services/jangar/.output" "${PRUNE_DIR}/full/services/jangar/.output"
-  elif [ -f "${OUTPUT_ENTRY}" ] && [ -f "${OUTPUT_PROTO}" ]; then
-    mkdir -p "${PRUNE_DIR}/full/services/jangar"
-    copy_output_directory "${OUTPUT_SOURCE}" "${PRUNE_DIR}/full/services/jangar/.output"
-    rm -rf "${PRUNE_DIR}/full/services/jangar/.output/public"
-  elif [ -d "${OUTPUT_SOURCE}" ]; then
-    echo "Skipping prebuilt .output: missing ${OUTPUT_ENTRY} or ${OUTPUT_PROTO}"
   fi
 
   CODEX_AUTH_PATH="${CODEX_AUTH_PATH:-${HOME}/.codex/auth.json}"
