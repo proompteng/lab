@@ -9,11 +9,11 @@ import {
 } from '~/server/agents-controller/policy'
 
 afterEach(() => {
-  delete process.env.JANGAR_AGENTS_CONTROLLER_LABELS_REQUIRED
-  delete process.env.JANGAR_AGENTS_CONTROLLER_LABELS_ALLOWED
-  delete process.env.JANGAR_AGENTS_CONTROLLER_LABELS_DENIED
-  delete process.env.JANGAR_AGENTS_CONTROLLER_IMAGES_ALLOWED
-  delete process.env.JANGAR_AGENTS_CONTROLLER_IMAGES_DENIED
+  delete process.env.AGENTS_AGENTS_CONTROLLER_LABELS_REQUIRED
+  delete process.env.AGENTS_AGENTS_CONTROLLER_LABELS_ALLOWED
+  delete process.env.AGENTS_AGENTS_CONTROLLER_LABELS_DENIED
+  delete process.env.AGENTS_AGENTS_CONTROLLER_IMAGES_ALLOWED
+  delete process.env.AGENTS_AGENTS_CONTROLLER_IMAGES_DENIED
 })
 
 describe('agents controller policy module', () => {
@@ -35,7 +35,7 @@ describe('agents controller policy module', () => {
   })
 
   it('validates required, denied, and allowed label policies', () => {
-    process.env.JANGAR_AGENTS_CONTROLLER_LABELS_REQUIRED = JSON.stringify(['team', 'service'])
+    process.env.AGENTS_AGENTS_CONTROLLER_LABELS_REQUIRED = JSON.stringify(['team', 'service'])
     const required = validateLabelPolicy({ team: 'platform' })
     expect(required).toEqual({
       ok: false,
@@ -43,8 +43,8 @@ describe('agents controller policy module', () => {
       message: 'missing required labels: service',
     })
 
-    process.env.JANGAR_AGENTS_CONTROLLER_LABELS_REQUIRED = ''
-    process.env.JANGAR_AGENTS_CONTROLLER_LABELS_DENIED = JSON.stringify(['internal/*'])
+    process.env.AGENTS_AGENTS_CONTROLLER_LABELS_REQUIRED = ''
+    process.env.AGENTS_AGENTS_CONTROLLER_LABELS_DENIED = JSON.stringify(['internal/*'])
     const denied = validateLabelPolicy({ 'internal/secret': '1' })
     expect(denied).toEqual({
       ok: false,
@@ -52,8 +52,8 @@ describe('agents controller policy module', () => {
       message: 'labels blocked by controller policy: internal/secret',
     })
 
-    process.env.JANGAR_AGENTS_CONTROLLER_LABELS_DENIED = ''
-    process.env.JANGAR_AGENTS_CONTROLLER_LABELS_ALLOWED = JSON.stringify(['team', 'app.kubernetes.io/*'])
+    process.env.AGENTS_AGENTS_CONTROLLER_LABELS_DENIED = ''
+    process.env.AGENTS_AGENTS_CONTROLLER_LABELS_ALLOWED = JSON.stringify(['team', 'app.kubernetes.io/*'])
     const allowed = validateLabelPolicy({ team: 'platform', forbidden: 'x' })
     expect(allowed).toEqual({
       ok: false,
@@ -63,7 +63,7 @@ describe('agents controller policy module', () => {
   })
 
   it('validates image allow/deny policy with contextual messages', () => {
-    process.env.JANGAR_AGENTS_CONTROLLER_IMAGES_DENIED = JSON.stringify(['registry.bad/*'])
+    process.env.AGENTS_AGENTS_CONTROLLER_IMAGES_DENIED = JSON.stringify(['registry.bad/*'])
     const blocked = validateImagePolicy([{ image: 'registry.bad/app:1', context: 'job runtime' }])
     expect(blocked).toEqual({
       ok: false,
@@ -71,8 +71,8 @@ describe('agents controller policy module', () => {
       message: 'image registry.bad/app:1 for job runtime is blocked by controller policy',
     })
 
-    process.env.JANGAR_AGENTS_CONTROLLER_IMAGES_DENIED = ''
-    process.env.JANGAR_AGENTS_CONTROLLER_IMAGES_ALLOWED = JSON.stringify(['registry.good/*'])
+    process.env.AGENTS_AGENTS_CONTROLLER_IMAGES_DENIED = ''
+    process.env.AGENTS_AGENTS_CONTROLLER_IMAGES_ALLOWED = JSON.stringify(['registry.good/*'])
     const notAllowed = validateImagePolicy([{ image: 'registry.other/app:2' }])
     expect(notAllowed).toEqual({
       ok: false,

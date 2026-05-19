@@ -121,6 +121,34 @@ describe('codex app-server runner adapter', () => {
     expect(await readFile(logPath, 'utf8')).toContain('"delta":"done"')
   })
 
+  it('requires the versioned payload eventFilePath contract', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
+    const statusPath = join(dir, 'status.json')
+
+    await expect(
+      runCodexAppServerAdapter(
+        {
+          provider: 'codex-runner',
+          payloads: {},
+          artifacts: { statusPath },
+        },
+        {},
+        {
+          createClient: () => {
+            throw new Error('client should not start')
+          },
+        },
+      ),
+    ).rejects.toBeInstanceOf(CodexRunnerInputError)
+
+    const status = JSON.parse(await readFile(statusPath, 'utf8')) as Record<string, unknown>
+    expect(status).toMatchObject({
+      exitCode: 1,
+      status: 'failed',
+    })
+    expect(String(status.error)).toContain('payloads.eventFilePath')
+  })
+
   it('creates a non-VCS cwd before starting Codex app-server', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
     const runPath = join(dir, 'run.json')
