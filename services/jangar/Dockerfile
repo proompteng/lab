@@ -669,16 +669,9 @@ RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-r
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-cancel.js /usr/local/bin/cx-workflow-cancel \
   && chmod +x /usr/local/bin/cx-codex-run /usr/local/bin/cx-workflow-start /usr/local/bin/cx-workflow-query /usr/local/bin/cx-workflow-signal /usr/local/bin/cx-workflow-cancel
 
-RUN mkdir -p /root/.codex
-COPY --from=jangar-build /app/services/jangar/scripts/codex-config-container.toml /root/.codex/config.toml
-COPY --from=jangar-build /app/services/jangar/scripts/agent-runner.ts /usr/local/bin/agent-runner
 COPY --from=jangar-build /app/services/jangar/scripts/codex-nats-publish.ts /usr/local/bin/codex-nats-publish
 COPY --from=jangar-build /app/services/jangar/scripts/codex-nats-soak.ts /usr/local/bin/codex-nats-soak
-COPY --from=jangar-build /app/services/jangar/scripts/codex ./scripts/codex
-COPY --from=jangar-build /app/services/jangar/scripts/agent-providers /etc/agent-providers
-COPY skills/ /root/.codex/skills/
-RUN ln -sf /app/services/jangar/scripts/codex/codex-implement.ts /usr/local/bin/codex-implement \
-  && chmod +x /usr/local/bin/agent-runner /usr/local/bin/codex-nats-publish /usr/local/bin/codex-nats-soak /app/services/jangar/scripts/codex/codex-implement.ts
+RUN chmod +x /usr/local/bin/codex-nats-publish /usr/local/bin/codex-nats-soak
 
 ENV JANGAR_VERSION=${JANGAR_VERSION} \
   JANGAR_COMMIT=${JANGAR_COMMIT}
