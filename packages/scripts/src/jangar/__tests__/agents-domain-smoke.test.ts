@@ -23,6 +23,39 @@ const swarmImplementationSpecPaths = [
   'argocd/applications/torghut/agents-domain/torghut-swarm-implspecs.yaml',
 ]
 
+const stageContract = {
+  discover: {
+    role: 'architect',
+    implementationSpecSuffix: 'swarm-intelligence-cycle-v1',
+    vcsMode: 'read-write',
+  },
+  plan: {
+    role: 'architect',
+    implementationSpecSuffix: 'swarm-intelligence-cycle-v1',
+    vcsMode: 'read-write',
+  },
+  implement: {
+    role: 'engineer',
+    implementationSpecSuffix: 'swarm-autonomous-implementation-v1',
+    vcsMode: 'read-write',
+  },
+  verify: {
+    role: 'deployer',
+    implementationSpecSuffix: 'swarm-deployer-v1',
+    vcsMode: 'read-write',
+  },
+} as const
+
+const requiredCoordinationParameters = [
+  'ownerChannel',
+  'natsChannel',
+  'natsSubjectPrefix',
+  'swarmAgentIdentity',
+  'swarmHumanName',
+] as const
+
+const requiredCollaborationTerms = ['nats collaboration', 'codex-nats-publish'] as const
+
 const objectAt = (value: unknown, key: string) =>
   value && typeof value === 'object' ? ((value as Record<string, unknown>)[key] as unknown) : undefined
 
@@ -30,6 +63,8 @@ const stringAt = (value: unknown, key: string) => {
   const item = objectAt(value, key)
   return typeof item === 'string' ? item : ''
 }
+
+const nameOf = (manifest: Record<string, unknown>) => stringAt(objectAt(manifest, 'metadata'), 'name')
 
 describe('Agents domain scheduled AgentRun templates', () => {
   it('keeps scheduled template retention aligned with the swarm brownout window', () => {
@@ -191,5 +226,100 @@ describe('Agents domain scheduled AgentRun templates', () => {
     expect(torghutText).toContain('do not enable live submission while `business_state=repair_only`')
     expect(jangarText).toContain('Read `${swarmBusinessEvidenceUrl}` when provided')
     expect(jangarText).not.toContain('top actionable `repair_queue` item')
+  })
+
+  it('keeps the Jangar and Torghut swarm three-role execution contract domain-owned', () => {
+    const templates = new Map(
+      swarmAgentRunTemplatePaths
+        .flatMap(readYamlObjects)
+        .filter((manifest) => manifest.kind === 'AgentRun')
+        .map((manifest) => [nameOf(manifest), manifest])
+        .filter((entry): entry is [string, Record<string, unknown>] => entry[0].length > 0),
+    )
+    const implementationSpecs = new Map(
+      swarmImplementationSpecPaths
+        .flatMap(readYamlObjects)
+        .filter((manifest) => manifest.kind === 'ImplementationSpec')
+        .map((manifest) => [nameOf(manifest), manifest])
+        .filter((entry): entry is [string, Record<string, unknown>] => entry[0].length > 0),
+    )
+    const swarms = swarmInstancePaths.flatMap(readYamlObjects).filter((manifest) => manifest.kind === 'Swarm')
+    const errors: string[] = []
+
+    if (swarms.length === 0) {
+      errors.push('domain swarm manifests must define at least one Swarm')
+    }
+
+    for (const [implementationSpecName, implementationSpec] of implementationSpecs) {
+      const implementationSpecText = stringAt(objectAt(implementationSpec, 'spec'), 'text').toLowerCase()
+      for (const requiredTerm of requiredCollaborationTerms) {
+        if (!implementationSpecText.includes(requiredTerm)) {
+          errors.push(`${implementationSpecName}: missing required collaboration term ${requiredTerm}`)
+        }
+      }
+      if (
+        implementationSpecName.startsWith('torghut-') &&
+        implementationSpecText.includes('jangar is the visibility surface')
+      ) {
+        errors.push(`${implementationSpecName}: Torghut swarm specs must not require Jangar as the visibility surface`)
+      }
+      if (implementationSpecName.startsWith('jangar-') && implementationSpecText.includes('/trading/revenue-repair')) {
+        errors.push(`${implementationSpecName}: Jangar swarm specs must not carry Torghut revenue-repair rules`)
+      }
+    }
+
+    for (const swarm of swarms) {
+      const swarmName = nameOf(swarm)
+      const execution = objectAt(objectAt(swarm, 'spec'), 'execution')
+      for (const [stage, expected] of Object.entries(stageContract)) {
+        const stageConfig = objectAt(execution, stage)
+        const targetName = stringAt(objectAt(stageConfig, 'targetRef'), 'name')
+        if (!targetName) {
+          errors.push(`${swarmName}: spec.execution.${stage}.targetRef.name is required`)
+          continue
+        }
+
+        const template = templates.get(targetName)
+        if (!template) {
+          errors.push(`${swarmName}: ${stage} target AgentRun template ${targetName} not found`)
+          continue
+        }
+
+        const templateSpec = objectAt(template, 'spec')
+        const parameters = objectAt(templateSpec, 'parameters')
+        for (const parameterName of requiredCoordinationParameters) {
+          const parameterValue = stringAt(parameters, parameterName)
+          if (!parameterValue.trim()) {
+            errors.push(`${targetName}: missing required coordination parameter ${parameterName}`)
+          }
+        }
+
+        const role = stringAt(parameters, 'swarmAgentRole')
+        if (role !== expected.role) {
+          errors.push(`${targetName}: expected swarmAgentRole ${expected.role}, found ${role}`)
+        }
+
+        const implementationSpecName = stringAt(objectAt(templateSpec, 'implementationSpecRef'), 'name')
+        if (!implementationSpecs.has(implementationSpecName)) {
+          errors.push(`${targetName}: implementationSpecRef ${implementationSpecName} not found`)
+        } else if (!implementationSpecName.endsWith(expected.implementationSpecSuffix)) {
+          errors.push(
+            `${targetName}: expected implementationSpecRef suffix ${expected.implementationSpecSuffix}, found ${implementationSpecName}`,
+          )
+        }
+
+        const vcsMode = stringAt(objectAt(templateSpec, 'vcsPolicy'), 'mode')
+        if (vcsMode !== expected.vcsMode) {
+          errors.push(`${targetName}: expected vcsPolicy.mode ${expected.vcsMode}, found ${vcsMode}`)
+        }
+
+        const objective = stringAt(parameters, 'objective').toLowerCase()
+        if (stage === 'verify' && !['release engineer', 'merge', 'rollout'].every((term) => objective.includes(term))) {
+          errors.push(`${targetName}: deployer objective must cover release engineering, merge, and rollout`)
+        }
+      }
+    }
+
+    expect(errors).toEqual([])
   })
 })
