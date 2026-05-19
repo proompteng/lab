@@ -167,6 +167,33 @@ export const getAgentsReadySnapshot = async (): Promise<AgentsReadySnapshot> => 
   })
 }
 
+export type AgentsControllerHealthSnapshotDeps = {
+  getAgentsReadySnapshot?: () => Promise<AgentsReadySnapshot>
+  getAgentsControllerHealth?: () => AgentsControllerHealthSnapshot
+  getSupportingControllerHealth?: () => AgentsControllerHealthSnapshot
+  getOrchestrationControllerHealth?: () => AgentsControllerHealthSnapshot
+}
+
+export const resolveAgentsControllerHealthSnapshots = async (deps: AgentsControllerHealthSnapshotDeps = {}) => {
+  let snapshot: AgentsReadySnapshot | null = null
+  const resolveSnapshot = async (): Promise<AgentsReadySnapshot> => {
+    snapshot ??= await (deps.getAgentsReadySnapshot ?? getAgentsReadySnapshot)()
+    return snapshot
+  }
+  const readySnapshot = await resolveSnapshot()
+
+  return {
+    reasonCodes: readySnapshot.reasonCodes,
+    agentsHealth: deps.getAgentsControllerHealth ? deps.getAgentsControllerHealth() : readySnapshot.agentsController,
+    supportingHealth: deps.getSupportingControllerHealth
+      ? deps.getSupportingControllerHealth()
+      : readySnapshot.supportingController,
+    orchestrationHealth: deps.getOrchestrationControllerHealth
+      ? deps.getOrchestrationControllerHealth()
+      : readySnapshot.orchestrationController,
+  }
+}
+
 export const buildAgentsRuntimeReadyResponse = (snapshot: AgentsReadySnapshot) => {
   const body = JSON.stringify(snapshot.raw)
   return new Response(body, {

@@ -1,5 +1,5 @@
 import {
-  getAgentsReadySnapshot,
+  resolveAgentsControllerHealthSnapshots,
   type AgentsControllerHealthSnapshot,
   type AgentsReadySnapshot,
 } from '~/server/agents-control-plane-client'
@@ -124,8 +124,6 @@ export type { ControlPlaneStatus, DatabaseStatus, GrpcStatus } from './control-p
 export { projectControlPlaneStatus, type ControlPlaneStatusView } from './control-plane-status-projection'
 export { buildExecutionTrust } from './control-plane-execution-trust'
 
-type ControllerHealth = AgentsControllerHealthSnapshot
-
 export type ControlPlaneStatusOptions = {
   namespace: string
   service?: string
@@ -135,9 +133,9 @@ export type ControlPlaneStatusOptions = {
 export type ControlPlaneStatusDeps = {
   now?: () => Date
   getAgentsReadySnapshot?: () => Promise<AgentsReadySnapshot>
-  getAgentsControllerHealth?: () => ControllerHealth
-  getSupportingControllerHealth?: () => ControllerHealth
-  getOrchestrationControllerHealth?: () => ControllerHealth
+  getAgentsControllerHealth?: () => AgentsControllerHealthSnapshot
+  getSupportingControllerHealth?: () => AgentsControllerHealthSnapshot
+  getOrchestrationControllerHealth?: () => AgentsControllerHealthSnapshot
   getHeartbeat?: (input: ControlPlaneHeartbeatStoreGetInput) => Promise<ControlPlaneHeartbeatRow | null>
   resolveTemporalAdapter?: () => Promise<RuntimeAdapterStatus>
   checkDatabase?: () => Promise<DatabaseStatus>
@@ -207,24 +205,12 @@ export const buildControlPlaneStatus = async (
   const now = (deps.now ?? (() => new Date()))()
   const kubeGateway = deps.kubeGateway ?? createKubeGateway()
   const heartbeatResolver = deps.getHeartbeat ?? defaultGetHeartbeat
-  let agentsReadySnapshot: AgentsReadySnapshot | null = null
-  let agentsReadyReasonCodes: string[] = []
-  const resolveAgentsReadySnapshot = async (): Promise<AgentsReadySnapshot> => {
-    if (!agentsReadySnapshot) {
-      agentsReadySnapshot = await (deps.getAgentsReadySnapshot ?? getAgentsReadySnapshot)()
-      agentsReadyReasonCodes = agentsReadySnapshot.reasonCodes
-    }
-    return agentsReadySnapshot
-  }
-  const agentsHealth = deps.getAgentsControllerHealth
-    ? deps.getAgentsControllerHealth()
-    : (await resolveAgentsReadySnapshot()).agentsController
-  const supportingHealth = deps.getSupportingControllerHealth
-    ? deps.getSupportingControllerHealth()
-    : (await resolveAgentsReadySnapshot()).supportingController
-  const orchestrationHealth = deps.getOrchestrationControllerHealth
-    ? deps.getOrchestrationControllerHealth()
-    : (await resolveAgentsReadySnapshot()).orchestrationController
+  const {
+    reasonCodes: agentsReadyReasonCodes,
+    agentsHealth,
+    supportingHealth,
+    orchestrationHealth,
+  } = await resolveAgentsControllerHealthSnapshots(deps)
   const [agentsHeartbeat, supportingHeartbeat, orchestrationHeartbeat, workflowRuntimeHeartbeat] = await Promise.all([
     heartbeatResolver({ namespace: options.namespace, component: 'agents-controller', workloadRole: 'controllers' }),
     heartbeatResolver({
