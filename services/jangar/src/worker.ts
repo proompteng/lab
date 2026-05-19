@@ -1,13 +1,13 @@
 import { createServer } from 'node:http'
-import { installAgentsEnvCompatibility } from '@proompteng/agents/server/env-compat'
 import activities from '@proompteng/bumba/src/activities/index'
 import workflows from '@proompteng/bumba/src/workflows/index'
 import { createTemporalClient, type TemporalConfig, temporalCallOptions } from '@proompteng/temporal-bun-sdk'
 import { createWorker } from '@proompteng/temporal-bun-sdk/worker'
 import type { WorkflowDefinitions } from '@proompteng/temporal-bun-sdk/workflow'
+import { installJangarEnvCompatibility } from './server/env-compat'
 import { resolveWorkerRuntimeConfig } from './server/runtime-entry-config'
 
-installAgentsEnvCompatibility()
+installJangarEnvCompatibility()
 
 type ActivityHandler = (...args: unknown[]) => unknown | Promise<unknown>
 
