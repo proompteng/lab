@@ -19,7 +19,7 @@ This document is implementation‑grade: it describes _what_ needs to exist in t
 
 ## Goals
 
-- Ship a single Helm chart that installs all Agents CRDs and deploys Agents in a usable, production‑safe configuration.
+- Ship a single Helm chart that installs all Agents CRDs and deploys the Agents control plane in a usable, production-safe configuration.
 - Keep CRDs and controller in sync (schema and behavior).
 - Support the full primitive set: Agent, AgentRun, AgentProvider, ImplementationSpec, ImplementationSource, Memory, Orchestration, OrchestrationRun, ApprovalPolicy, Budget, SecretBinding, Signal, SignalDelivery, Tool, ToolRun, Schedule, Artifact, Workspace.
 - Allow AgentRun to execute as a Kubernetes Job with a provided or default image.
@@ -34,7 +34,7 @@ This document is implementation‑grade: it describes _what_ needs to exist in t
 ## Current State Summary
 
 - CRDs live under `charts/agents/crds/` and are referenced in `charts/agents/Chart.yaml` annotations.
-- Agents implements the native v1alpha1 types in `services/agents/api/agents/v1alpha1` and a controller in `services/agents/src/server/agents-controller/`.
+- Agents implements the native v1alpha1 types in `services/agents/api/agents/v1alpha1` and the controller in `services/agents/src/server/agents-controller/**`.
 - The chart is “minimal” but lacks a documented, end‑to‑end implementation plan for completeness and validation.
 
 ## Current Chart Topology (Observed 2026-02-07)
