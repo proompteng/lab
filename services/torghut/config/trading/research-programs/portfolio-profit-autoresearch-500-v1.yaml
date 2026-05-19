@@ -50,6 +50,7 @@ objective:
   min_positive_day_ratio: '0.60'
   min_profit_factor: '1.50'
   min_daily_notional: '300000'
+  min_observed_trading_days: 20
   max_best_day_share: '0.25'
   max_worst_day_loss: '999999999'
   max_drawdown: '999999999'

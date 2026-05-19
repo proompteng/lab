@@ -245,6 +245,7 @@ class TestPortfolioOptimizer(TestCase):
             oracle_policy=ProfitTargetOraclePolicy(
                 max_cluster_contribution_share=Decimal("0.50"),
                 max_single_symbol_contribution_share=Decimal("0.50"),
+                min_observed_trading_days=5,
             ),
             portfolio_size_min=2,
             portfolio_size_max=2,
@@ -340,6 +341,7 @@ class TestPortfolioOptimizer(TestCase):
                 max_single_symbol_contribution_share=Decimal("0.50"),
                 max_gross_exposure_pct_equity=Decimal("0.75"),
                 min_avg_filled_notional_per_day=Decimal("300000"),
+                min_observed_trading_days=5,
             ),
             portfolio_size_min=2,
             portfolio_size_max=2,
@@ -440,6 +442,7 @@ class TestPortfolioOptimizer(TestCase):
             oracle_policy=ProfitTargetOraclePolicy(
                 max_cluster_contribution_share=Decimal("0.50"),
                 max_single_symbol_contribution_share=Decimal("0.50"),
+                min_observed_trading_days=5,
             ),
             portfolio_size_min=2,
             portfolio_size_max=2,
@@ -602,6 +605,7 @@ class TestPortfolioOptimizer(TestCase):
         portfolio = optimize_portfolio_candidate(
             evidence_bundles=bundles,
             target_net_pnl_per_day=Decimal("500"),
+            oracle_policy=ProfitTargetOraclePolicy(min_observed_trading_days=5),
             portfolio_size_min=2,
             portfolio_size_max=4,
         )
@@ -1216,7 +1220,10 @@ class TestPortfolioOptimizer(TestCase):
                 ),
             ],
             target_net_pnl_per_day=Decimal("500"),
-            oracle_policy=ProfitTargetOraclePolicy(max_best_day_share=Decimal("0.40")),
+            oracle_policy=ProfitTargetOraclePolicy(
+                max_best_day_share=Decimal("0.40"),
+                min_observed_trading_days=5,
+            ),
             portfolio_size_min=3,
             portfolio_size_max=3,
         )
@@ -1319,7 +1326,10 @@ class TestPortfolioOptimizer(TestCase):
                 ),
             ],
             target_net_pnl_per_day=Decimal("500"),
-            oracle_policy=ProfitTargetOraclePolicy(max_best_day_share=Decimal("0.40")),
+            oracle_policy=ProfitTargetOraclePolicy(
+                max_best_day_share=Decimal("0.40"),
+                min_observed_trading_days=3,
+            ),
             portfolio_size_min=3,
             portfolio_size_max=3,
         )
@@ -1480,6 +1490,7 @@ class TestPortfolioOptimizer(TestCase):
                 ),
             ],
             target_net_pnl_per_day=Decimal("500"),
+            oracle_policy=ProfitTargetOraclePolicy(min_observed_trading_days=5),
             portfolio_size_min=3,
             portfolio_size_max=3,
         )
@@ -1595,6 +1606,7 @@ class TestPortfolioOptimizer(TestCase):
                 ),
             ],
             target_net_pnl_per_day=Decimal("500"),
+            oracle_policy=ProfitTargetOraclePolicy(min_observed_trading_days=5),
             portfolio_size_min=3,
             portfolio_size_max=3,
         )
@@ -1724,6 +1736,7 @@ class TestPortfolioOptimizer(TestCase):
                 ),
             ],
             target_net_pnl_per_day=Decimal("500"),
+            oracle_policy=ProfitTargetOraclePolicy(min_observed_trading_days=5),
             portfolio_size_min=3,
             portfolio_size_max=3,
         )

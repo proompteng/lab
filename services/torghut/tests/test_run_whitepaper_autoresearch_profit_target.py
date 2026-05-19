@@ -2790,7 +2790,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 json.dumps({"execution_context": {"start_equity": "31590.02"}}) + "\n",
                 encoding="utf-8",
             )
-            policy = runner.ProfitTargetOraclePolicy()
+            policy = runner.ProfitTargetOraclePolicy(min_observed_trading_days=2)
             scorecard: dict[str, object] = {
                 "net_pnl_per_day": "620",
                 "portfolio_post_cost_net_pnl_per_day": "620",

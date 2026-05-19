@@ -333,6 +333,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--min-cash", default="0")
     parser.add_argument("--max-negative-cash-observation-count", type=int, default=0)
     parser.add_argument("--min-avg-filled-notional-per-day", default="300000")
+    parser.add_argument("--min-observed-trading-days", type=int, default=20)
     parser.add_argument("--min-regime-slice-pass-rate", default="0.45")
     parser.add_argument(
         "--require-no-flat-days",
@@ -1064,6 +1065,9 @@ def _oracle_policy_from_args(args: argparse.Namespace) -> ProfitTargetOraclePoli
             getattr(args, "min_avg_filled_notional_per_day", "300000"),
             default="300000",
         ),
+        min_observed_trading_days=max(
+            0, _int_arg(args, "min_observed_trading_days", 20)
+        ),
         min_regime_slice_pass_rate=_decimal(
             getattr(args, "min_regime_slice_pass_rate", "0.45"), default="0.45"
         ),
@@ -1111,6 +1115,9 @@ def _candidate_spec_with_oracle_policy(
         "required_min_active_day_ratio": str(oracle_policy.min_active_day_ratio),
         "required_min_daily_notional": str(
             oracle_policy.min_avg_filled_notional_per_day
+        ),
+        "required_min_observed_trading_days": str(
+            oracle_policy.min_observed_trading_days
         ),
         "required_max_best_day_share": str(oracle_policy.max_best_day_share),
         "required_min_profit_factor": str(oracle_policy.min_profit_factor),
