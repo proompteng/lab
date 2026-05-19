@@ -16,6 +16,7 @@ resources:
   - codex-spark-agentprovider.yaml
   - codex-agent-system-prompt-configmap.yaml
   - codex-versioncontrolprovider.yaml
+  - codex-orchestrations.yaml
   - sample-approvalpolicy.yaml
   - sample-budget.yaml
   - sample-signal.yaml

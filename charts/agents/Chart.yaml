@@ -162,7 +162,7 @@ annotations:
     - apiVersion: orchestration.proompteng.ai/v1alpha1
       kind: Orchestration
       metadata:
-        name: codex-autonomous
+        name: codex-orchestration
       spec:
         entrypoint: main
         steps:
@@ -175,10 +175,10 @@ annotations:
     - apiVersion: orchestration.proompteng.ai/v1alpha1
       kind: OrchestrationRun
       metadata:
-        name: codex-autonomous-run
+        name: codex-orchestration-run
       spec:
         orchestrationRef:
-          name: codex-autonomous
+          name: codex-orchestration
         parameters:
           repository: proompteng/lab
           issueNumber: "1234"
@@ -205,7 +205,7 @@ annotations:
         execution:
           discover: {targetRef: {kind: AgentRun, name: codex-run-sample}}
           plan: {targetRef: {kind: AgentRun, name: codex-run-sample}}
-          implement: {targetRef: {kind: OrchestrationRun, name: codex-autonomous-run}}
+          implement: {targetRef: {kind: OrchestrationRun, name: codex-orchestration-run}}
           verify: {targetRef: {kind: AgentRun, name: codex-run-sample}}
   artifacthub.io/changes: |
     - kind: changed

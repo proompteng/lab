@@ -7,7 +7,6 @@ export type CodexJudgeConfig = {
   reviewMaxWaitMs: number
   maxAttempts: number
   backoffScheduleMs: number[]
-  facteurBaseUrl: string
   workflowArtifactsBucket: string
   workflowNamespace: string | null
   discordBotToken: string | null
@@ -59,9 +58,6 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
     parseNumber(value, 0),
   )
   const resolvedBackoff = backoffScheduleMs.length > 0 ? backoffScheduleMs : [5 * 60_000, 15 * 60_000, 45 * 60_000]
-  const facteurBaseUrl = (
-    process.env.FACTEUR_INTERNAL_URL ?? 'http://facteur-internal.facteur.svc.cluster.local'
-  ).trim()
   const workflowArtifactsBucket =
     (process.env.JANGAR_CODEX_ARTIFACT_BUCKET ?? process.env.ARTIFACT_BUCKET ?? 'jangar-artifacts').trim() ||
     'jangar-artifacts'
@@ -97,7 +93,6 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
     reviewMaxWaitMs,
     maxAttempts,
     backoffScheduleMs: resolvedBackoff,
-    facteurBaseUrl,
     workflowArtifactsBucket,
     workflowNamespace,
     discordBotToken,

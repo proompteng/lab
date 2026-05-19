@@ -35,7 +35,6 @@ const globalState = globalThis as typeof globalThis & {
     reviewMaxWaitMs: number
     maxAttempts: number
     backoffScheduleMs: number[]
-    facteurBaseUrl: string
     workflowArtifactsBucket: string
     workflowNamespace: string | null
     discordBotToken: string | null
@@ -152,7 +151,6 @@ if (!globalState.__codexJudgeConfigMock) {
     reviewMaxWaitMs: 10_000,
     maxAttempts: 3,
     backoffScheduleMs: [0],
-    facteurBaseUrl: 'http://facteur.test',
     workflowArtifactsBucket: 'jangar-artifacts',
     workflowNamespace: null,
     discordBotToken: null,
@@ -450,7 +448,6 @@ const harness = (() => {
     reviewMaxWaitMs: 10_000,
     maxAttempts: 3,
     backoffScheduleMs: [0],
-    facteurBaseUrl: 'http://facteur.test',
     workflowArtifactsBucket: 'jangar-artifacts',
     workflowNamespace: null,
     discordBotToken: null,
@@ -641,7 +638,7 @@ describe('codex judge guardrails', () => {
 
   it('persists failed rerun state when native rerun orchestration submission fails', async () => {
     const staleTimestamp = new Date(Date.now() - 60_000).toISOString()
-    const submitMock = vi.fn(async () => {
+    const submitMock = vi.fn(async (_input: { parameters: Record<string, string> }) => {
       throw new Error('agents orchestration unavailable')
     })
     globalState.__codexJudgeOrchestrationSubmitMock = submitMock
@@ -688,6 +685,13 @@ describe('codex judge guardrails', () => {
         orchestrationRef: { name: 'codex-rerun' },
       }),
     )
+    const submitInput = submitMock.mock.calls[0]?.[0]
+    expect(submitInput).toBeDefined()
+    if (!submitInput) throw new Error('missing submit input')
+    expect(submitInput.parameters.prompt).toBeUndefined()
+    expect(submitInput.parameters.stage).toBe('implementation')
+    expect(submitInput.parameters.codexPrompt).toBe('Implement the change.')
+    expect(submitInput.parameters.codex_prompt).toBe('Implement the change.')
     expect(harness.store.updateRunStatus).toHaveBeenCalledWith('run-1', 'needs_human')
     expect(harness.store.updateRerunSubmission).toHaveBeenCalledWith(
       expect.objectContaining({

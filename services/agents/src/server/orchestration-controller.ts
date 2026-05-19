@@ -853,6 +853,52 @@ const depsSatisfied = (dependsOn: string[], statusIndex: Map<string, StepStatus>
   return dependsOn.every((dep) => statusIndex.get(dep)?.phase === 'Succeeded')
 }
 
+const parseJsonRecord = (value: unknown): Record<string, unknown> | null => {
+  const record = asRecord(value)
+  if (record) return record
+  const text = asString(value)?.trim()
+  if (!text) return null
+  try {
+    const parsed = JSON.parse(text) as unknown
+    return asRecord(parsed)
+  } catch {
+    return null
+  }
+}
+
+const parseStringArray = (value: unknown): string[] => {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+  }
+  const text = asString(value)?.trim()
+  if (!text) return []
+  if (text.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(text) as unknown
+      if (Array.isArray(parsed)) {
+        return parsed.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+      }
+    } catch {
+      return []
+    }
+  }
+  return text
+    .split(/[\s,]+/g)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+}
+
+const parseOptionalStepNumber = (value: unknown): number | undefined => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  const text = asString(value)?.trim()
+  if (!text) return undefined
+  const parsed = Number.parseFloat(text)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
+const readStepRecord = (step: Record<string, unknown>, key: string): Record<string, unknown> | null =>
+  parseJsonRecord(readNested(step, [key])) ?? parseJsonRecord(readNested(step, ['with', key]))
+
 const buildResourceRef = (resource: Record<string, unknown>) => {
   const metadata = asRecord(resource.metadata) ?? {}
   return {
@@ -894,21 +940,32 @@ const submitAgentRunStep = async (
     asString(readNested(step, ['implementationSpecRef', 'name'])) ??
     asString(step.implementationSpecRef) ??
     asString(readNested(step, ['with', 'implementationSpecRef']))
-  const implementation = asRecord(readNested(step, ['implementation'])) ?? null
+  const implementation = readStepRecord(step, 'implementation')
 
   if (!implRefName && !implementation) {
     throw new Error('implementationSpecRef or implementation is required for AgentRun step')
   }
 
-  const runtime = asRecord(readNested(step, ['runtime'])) ?? asRecord(readNested(step, ['with', 'runtime'])) ?? {}
+  const runtime = readStepRecord(step, 'runtime') ?? {}
   const runtimeType = asString(runtime.type) ?? 'job'
   const runtimeConfig = asRecord(runtime.config) ?? {}
-  const workload = asRecord(readNested(step, ['workload'])) ?? undefined
-  const workflow = asRecord(readNested(step, ['workflow'])) ?? asRecord(readNested(step, ['with', 'workflow'])) ?? null
-  const memoryRefName = asString(readNested(step, ['memoryRef', 'name'])) ?? asString(step.memoryRef)
-  const secrets = Array.isArray(step.secrets)
-    ? step.secrets.filter((val): val is string => typeof val === 'string')
-    : []
+  const workload = readStepRecord(step, 'workload') ?? undefined
+  const workflow = readStepRecord(step, 'workflow')
+  const memoryRefName =
+    asString(readNested(step, ['memoryRef', 'name'])) ??
+    asString(step.memoryRef) ??
+    asString(readNested(step, ['with', 'memoryRef']))
+  const secrets = parseStringArray(step.secrets ?? readNested(step, ['with', 'secrets']))
+  const policy = readStepRecord(step, 'policy') ?? undefined
+  const vcsRefName =
+    asString(readNested(step, ['vcsRef', 'name'])) ??
+    asString(step.vcsRef) ??
+    asString(readNested(step, ['with', 'vcsRef']))
+  const vcsPolicy = readStepRecord(step, 'vcsPolicy') ?? undefined
+  const goal = readStepRecord(step, 'goal') ?? undefined
+  const ttlSecondsAfterFinished = parseOptionalStepNumber(
+    step.ttlSecondsAfterFinished ?? readNested(step, ['with', 'ttlSecondsAfterFinished']),
+  )
 
   const metadata = asRecord(orchestrationRun.metadata) ?? {}
   const runName = asString(metadata.name) ?? 'orchestration'
@@ -928,6 +985,10 @@ const submitAgentRunStep = async (
       parameters,
       ...(memoryRefName ? { memoryRef: { name: memoryRefName } } : {}),
       ...(secrets.length > 0 ? { secrets } : {}),
+      ...(policy ? { policy } : {}),
+      ...(vcsRefName ? { vcsRef: { name: vcsRefName } } : {}),
+      ...(vcsPolicy ? { vcsPolicy } : {}),
+      ...(goal ? { goal } : {}),
       runtime: { type: runtimeType, ...(Object.keys(runtimeConfig).length > 0 ? { config: runtimeConfig } : {}) },
       ...(runtimeType === 'workflow'
         ? {
@@ -936,6 +997,7 @@ const submitAgentRunStep = async (
           }
         : {}),
       ...(workload ? { workload } : {}),
+      ...(ttlSecondsAfterFinished !== undefined ? { ttlSecondsAfterFinished } : {}),
     },
   }
 

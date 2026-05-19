@@ -43,6 +43,17 @@ fail_if_matches \
   "${ROOT_DIR}/argocd/applications/jangar"
 
 fail_if_matches \
+  "Jangar GitOps must not point Codex execution back at Facteur or legacy Codex orchestrations" \
+  'FACTEUR_INTERNAL_URL|codex-autonomous|github-codex-implementation' \
+  "${ROOT_DIR}/argocd/applications/jangar"
+
+fail_if_matches \
+  "Jangar Codex judge must not submit reruns through Facteur task ingress" \
+  'facteurBaseUrl|FACTEUR_INTERNAL_URL|/codex/tasks|CodexTaskSchema' \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge-config.ts"
+
+fail_if_matches \
   "Facteur, Froussard, and shared Argo GitOps must not use the legacy codex-universal runtime" \
   'codex-universal|/usr/local/bin/codex-bootstrap|ghcr.io/openai/codex-universal' \
   "${ROOT_DIR}/argocd/applications/facteur" \

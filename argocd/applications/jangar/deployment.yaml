@@ -176,8 +176,6 @@ spec:
               value: "3"
             - name: JANGAR_CODEX_BACKOFF_SCHEDULE_MS
               value: 300000,900000,2700000
-            - name: FACTEUR_INTERNAL_URL
-              value: http://facteur-internal.facteur.svc.cluster.local
             - name: MINIO_ENDPOINT
               value: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
             - name: MINIO_ACCESS_KEY
@@ -195,13 +193,13 @@ spec:
             - name: MINIO_SECURE
               value: "false"
             - name: JANGAR_CODEX_RERUN_ORCHESTRATION
-              value: codex-autonomous
+              value: codex-rerun
             - name: JANGAR_CODEX_RERUN_ORCHESTRATION_NAMESPACE
-              value: jangar
+              value: agents
             - name: JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION
-              value: codex-autonomous
+              value: codex-system-improvement
             - name: JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE
-              value: jangar
+              value: agents
             - name: DISCORD_BOT_TOKEN
               valueFrom:
                 secretKeyRef:

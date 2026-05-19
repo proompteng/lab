@@ -35,7 +35,6 @@ const globalState = globalThis as typeof globalThis & {
     reviewMaxWaitMs: number
     maxAttempts: number
     backoffScheduleMs: number[]
-    facteurBaseUrl: string
     workflowArtifactsBucket: string
     workflowNamespace: string | null
     discordBotToken: string | null
@@ -108,7 +107,6 @@ if (!globalState.__codexJudgeConfigMock) {
     reviewMaxWaitMs: 10_000,
     maxAttempts: 3,
     backoffScheduleMs: [1000],
-    facteurBaseUrl: 'http://facteur',
     workflowArtifactsBucket: 'jangar-artifacts',
     workflowNamespace: null,
     discordBotToken: null,
@@ -191,7 +189,6 @@ const config = {
   reviewMaxWaitMs: 10_000,
   maxAttempts: 3,
   backoffScheduleMs: [1000],
-  facteurBaseUrl: 'http://facteur',
   workflowArtifactsBucket: 'jangar-artifacts',
   workflowNamespace: null,
   discordBotToken: null,

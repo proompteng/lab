@@ -35,7 +35,8 @@ type SpecOption = SpecDraft & {
   updatedAt: string | null
 }
 
-const DEFAULT_RUN_IMAGE = 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl'
+const DEFAULT_RUN_IMAGE =
+  'registry.ide-newton.ts.net/lab/agents-codex-runner@sha256:954cb108ece9df370aa441117723144948141ba02fd52c2e3fa1ff91847dda7a'
 const DEFAULT_STEP_NAME = 'implement'
 const DEFAULT_BASE_BRANCH = 'main'
 const ISSUE_AUTOMATION_MARKER = '<!-- codex:skip-automation -->'
@@ -781,7 +782,7 @@ function ImplementationSpecRunPage() {
                   value={parametersInput}
                   onChange={(event) => setParametersInput(event.target.value)}
                   rows={4}
-                  placeholder='{"prompt":"Extra context"}'
+                  placeholder='{"notes":"Extra context"}'
                 />
                 {!parsedParameters.ok ? <div className="text-xs text-destructive">{parsedParameters.error}</div> : null}
                 {missingSecretBinding ? (

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
+import { fatal } from '../shared/cli'
 
 interface Params {
   repository: string
@@ -12,7 +12,8 @@ interface Params {
   issueUrl?: string
   issueBody?: string
   namespace: string
-  template: string
+  agentName: string
+  agentsBaseUrl: string
   dryRun: boolean
 }
 
@@ -21,8 +22,9 @@ const parseArgs = (): Params => {
   const params: Partial<Params> = {
     base: 'main',
     prompt: 'Docker smoke: run hello-world and sample build',
-    namespace: process.env.ARGO_NAMESPACE || 'argo-workflows',
-    template: 'github-codex-implementation',
+    namespace: process.env.AGENTS_NAMESPACE || 'agents',
+    agentName: process.env.AGENTS_CODEX_AGENT || 'codex-agent',
+    agentsBaseUrl: process.env.AGENTS_BASE_URL || 'http://agents.agents.svc.cluster.local',
     dryRun: false,
   }
 
@@ -45,7 +47,8 @@ const parseArgs = (): Params => {
     ['--issue-url', 'issueUrl'],
     ['--body', 'issueBody'],
     ['--namespace', 'namespace'],
-    ['--template', 'template'],
+    ['--agent', 'agentName'],
+    ['--agents-base-url', 'agentsBaseUrl'],
   ] as const
 
   for (const [flag, key] of flags) {
@@ -73,51 +76,83 @@ const parseArgs = (): Params => {
   return params as Params
 }
 
-const encodeBase64 = (value: string) => Buffer.from(value, 'utf8').toString('base64')
-
-const buildEventBody = (params: Params) => {
-  return {
-    stage: 'implementation',
-    prompt: params.prompt,
+const buildAgentRunPayload = (params: Params) => ({
+  namespace: params.namespace,
+  agentRef: { name: params.agentName },
+  implementation: {
+    summary: params.issueTitle ?? `Implement ${params.repository}#${params.issueNumber}`,
+    text: params.prompt,
+    source: {
+      provider: 'github',
+      externalId: `${params.repository}#${params.issueNumber}`,
+      ...(params.issueUrl ? { url: params.issueUrl } : {}),
+    },
+    contract: {
+      requiredKeys: ['repository', 'issueNumber', 'base', 'head', 'stage'],
+    },
+    metadata: {
+      stage: 'implementation',
+    },
+  },
+  goal: {
+    objective: params.prompt,
+    tokenBudget: 250000,
+  },
+  runtime: {
+    type: 'job',
+    config: {
+      serviceAccountName: 'agents-sa',
+    },
+  },
+  parameters: {
     repository: params.repository,
-    issueNumber: params.issueNumber,
+    issueNumber: String(params.issueNumber),
+    issue_number: String(params.issueNumber),
     base: params.base,
     head: params.head,
-    issueUrl: params.issueUrl,
-    issueTitle: params.issueTitle,
-    issueBody: params.issueBody,
-  }
-}
+    stage: 'implementation',
+    codexPrompt: params.prompt,
+    codex_prompt: params.prompt,
+    ...(params.issueTitle ? { issueTitle: params.issueTitle } : {}),
+    ...(params.issueUrl ? { issueUrl: params.issueUrl } : {}),
+    ...(params.issueBody ? { issueBody: params.issueBody } : {}),
+  },
+  secrets: ['github-token', 'codex-auth'],
+  policy: { secretBindingRef: 'codex-github-token' },
+  vcsRef: { name: 'github' },
+  vcsPolicy: { required: true, mode: 'read-write' },
+  ttlSecondsAfterFinished: 86400,
+})
+
+const buildIdempotencyKey = (params: Params) =>
+  `codex-implementation-${params.repository.replace(/[^a-zA-Z0-9]+/g, '-')}-${params.issueNumber}-${params.head.replace(/[^a-zA-Z0-9]+/g, '-')}`
 
 const main = async () => {
-  ensureCli('argo')
-
   const params = parseArgs()
-  const eventBody = buildEventBody(params)
-  const rawEvent = encodeBase64('{}')
-  const eventBodyB64 = encodeBase64(JSON.stringify(eventBody))
-
-  const args = [
-    'submit',
-    '--from',
-    `workflowtemplate/${params.template}`,
-    '-n',
-    params.namespace,
-    '-p',
-    `rawEvent=${rawEvent}`,
-    '-p',
-    `eventBody=${eventBodyB64}`,
-    '-p',
-    `head=${params.head}`,
-    '-p',
-    `base=${params.base}`,
-  ]
+  const payload = buildAgentRunPayload(params)
+  const idempotencyKey = buildIdempotencyKey(params)
+  const targetUrl = new URL('/v1/agent-runs', `${params.agentsBaseUrl.replace(/\/+$/, '')}/`)
 
   if (params.dryRun) {
-    args.push('--dry-run')
+    console.log(JSON.stringify({ url: targetUrl.toString(), idempotencyKey, payload }, null, 2))
+    return
   }
 
-  await run('argo', args, { cwd: repoRoot })
+  const response = await fetch(targetUrl, {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'idempotency-key': idempotencyKey,
+    },
+    body: JSON.stringify(payload),
+  })
+  const body = (await response.json().catch(() => null)) as Record<string, unknown> | null
+  if (!response.ok) {
+    const message = typeof body?.error === 'string' ? body.error : response.statusText
+    fatal(`Agents AgentRun submission failed (${response.status}): ${message}`)
+  }
+  console.log(JSON.stringify(body, null, 2))
 }
 
 await main()
