@@ -19,12 +19,8 @@ const envKeys = [
   'AGENTS_IMAGE_REPOSITORY',
   'AGENTS_IMAGE_TAG',
   'AGENTS_VERSION',
-  'JANGAR_BUILD_CACHE_MODE',
   'JANGAR_BUILD_CI',
-  'JANGAR_BUILD_LOG_LEVEL',
   'JANGAR_BUILD_MINIFY',
-  'JANGAR_BUILD_NODE_OPTIONS',
-  'JANGAR_BUILD_SOURCEMAP',
 ]
 
 afterEach(() => {
@@ -48,13 +44,11 @@ describe('agents build-image helpers', () => {
     })
   })
 
-  it('uses AGENTS build environment names before legacy Jangar aliases', () => {
+  it('uses canonical AGENTS build environment names', () => {
     process.env.AGENTS_BUILD_NODE_OPTIONS = '--max-old-space-size=4096'
     process.env.AGENTS_BUILD_SOURCEMAP = '0'
     process.env.AGENTS_BUILD_CI = 'true'
     process.env.AGENTS_BUILD_LOG_LEVEL = 'warn'
-    process.env.JANGAR_BUILD_NODE_OPTIONS = '--max-old-space-size=1024'
-    process.env.JANGAR_BUILD_SOURCEMAP = '1'
 
     expect(__private.buildArgsFromEnv('v1', 'commit1')).toEqual({
       AGENTS_VERSION: 'v1',
@@ -66,15 +60,13 @@ describe('agents build-image helpers', () => {
     })
   })
 
-  it('keeps legacy Jangar build env as read-only compatibility for one release', () => {
+  it('ignores legacy Jangar build env names', () => {
     process.env.JANGAR_BUILD_MINIFY = '0'
     process.env.JANGAR_BUILD_CI = 'true'
 
     expect(__private.buildArgsFromEnv('v1', 'commit1')).toEqual({
       AGENTS_VERSION: 'v1',
       AGENTS_COMMIT: 'commit1',
-      AGENTS_BUILD_MINIFY: '0',
-      AGENTS_BUILD_CI: 'true',
     })
   })
 
