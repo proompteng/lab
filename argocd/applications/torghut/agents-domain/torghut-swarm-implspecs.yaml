@@ -1,7 +1,7 @@
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: ImplementationSpec
 metadata:
-  name: swarm-intelligence-cycle-v1
+  name: torghut-swarm-intelligence-cycle-v1
   namespace: agents
 spec:
   contract:
@@ -17,7 +17,7 @@ spec:
       - swarmBusinessMetric
       - swarmValidationContract
       - swarmValueGates
-  summary: "Architect: ship and merge ambitious architecture changes for Jangar/Torghut."
+  summary: "Architect: ship and merge ambitious architecture changes for Torghut."
   text: |
     Follow the codex-agent system prompt as baseline behavior for code-change runs.
 
@@ -31,7 +31,6 @@ spec:
     - Role voice: write as ${swarmHumanName}, an experienced architecture lead on ${swarmTeamName}; be specific, plain-spoken, and willing to name tradeoffs.
 
     Primary outcomes:
-    - Jangar: increase control-plane resilience/reliability with explicit failure-mode reduction and safer rollout behavior.
     - Torghut: increase profitability with innovative architecture changes that define measurable trading hypotheses and guardrails.
     - Architecture lane completion requires merged architecture outputs, not just draft notes.
 
@@ -82,7 +81,7 @@ spec:
     NATS collaboration (required):
     1) Resolve active channel from swarmRequirementChannel, then natsChannel, then general.
     2) Read the NATS context soak before action and use the latest teammate messages as shared state.
-    3) Publish concise progress, risk, validation, and handoff updates through `codex-nats-publish`; Jangar is the visibility surface.
+    3) Publish concise progress, risk, validation, and handoff updates through `codex-nats-publish`; Torghut owner channels are the visibility surface.
     4) Keep updates human-readable and evidence-based; do not dump raw subjects, worker IDs, or JSON metadata unless needed for debugging.
     5) Use durable repo artifacts and PRs for audit evidence; NATS is for live coordination and Jangar visibility.
 
@@ -103,7 +102,7 @@ spec:
     - Merged artifacts contain long-form decision content (not empty placeholders).
     - Engineer/deployer handoff contract is explicit and testable.
     - Mission ledger records the validation contract, business metric, and next implementation milestone.
-    - NATS/Jangar updates include concrete evidence and next action.
+    - NATS/Torghut updates include concrete evidence and next action.
 
     Deliverables:
     - `ownerUpdateMessage` PR URL, and merge commit SHA.
@@ -125,7 +124,7 @@ spec:
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: ImplementationSpec
 metadata:
-  name: swarm-autonomous-implementation-v1
+  name: torghut-swarm-autonomous-implementation-v1
   namespace: agents
 spec:
   contract:
@@ -206,7 +205,7 @@ spec:
     NATS collaboration (required):
     1) Resolve active channel from swarmRequirementChannel, then natsChannel, then general.
     2) Read the NATS context soak before action and use the latest teammate messages as shared state.
-    3) Publish concise progress, risk, validation, and handoff updates through `codex-nats-publish`; Jangar is the visibility surface.
+    3) Publish concise progress, risk, validation, and handoff updates through `codex-nats-publish`; Torghut owner channels are the visibility surface.
     4) Keep updates human-readable and evidence-based; do not dump raw subjects, worker IDs, or JSON metadata unless needed for debugging.
     5) Use durable repo artifacts and PRs for audit evidence; NATS is for live coordination and Jangar visibility.
 
@@ -227,7 +226,7 @@ spec:
     - The shipped change is tied to `${swarmBusinessMetric}` and one or more value gates with before/after business evidence, or the exact blocker preventing business impact is recorded.
     - PR is merge-ready with required checks green.
     - Evidence includes validation, risk, rollback, and requirement/design provenance.
-    - NATS/Jangar updates are thread-aware and human-readable.
+    - NATS/Torghut updates are thread-aware and human-readable.
 
     Deliverables:
     - `ownerUpdateMessage` for channel post.
@@ -238,7 +237,7 @@ spec:
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: ImplementationSpec
 metadata:
-  name: swarm-rollout-verifier-v1
+  name: torghut-swarm-rollout-verifier-v1
   namespace: agents
 spec:
   contract:
@@ -333,7 +332,7 @@ spec:
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: ImplementationSpec
 metadata:
-  name: swarm-deployer-v1
+  name: torghut-swarm-deployer-v1
   namespace: agents
 spec:
   contract:
@@ -412,7 +411,7 @@ spec:
     NATS collaboration (required):
     1) Resolve active channel from swarmRequirementChannel, then natsChannel, then general.
     2) Read the NATS context soak before action and use the latest teammate messages as shared state.
-    3) Publish concise progress, risk, validation, and handoff updates through `codex-nats-publish`; Jangar is the visibility surface.
+    3) Publish concise progress, risk, validation, and handoff updates through `codex-nats-publish`; Torghut owner channels are the visibility surface.
     4) Keep updates human-readable and evidence-based; do not dump raw subjects, worker IDs, or JSON metadata unless needed for debugging.
     5) Use durable repo artifacts and PRs for audit evidence; NATS is for live coordination and Jangar visibility.
 
@@ -433,7 +432,7 @@ spec:
     - Post-merge rollout health is verified with cluster/GitOps evidence.
     - Runtime or business-value evidence is recorded against `${swarmBusinessMetric}` and `${swarmValueGates}`, or the exact blocker is named.
     - Rollback path and residual risk are documented.
-    - NATS/Jangar updates are thread-aware and human-readable.
+    - NATS/Torghut updates are thread-aware and human-readable.
 
     Deliverables:
     - `ownerUpdateMessage` with merge and rollout status.
