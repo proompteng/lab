@@ -547,6 +547,71 @@ class TestWhitepaperCandidateCompiler(TestCase):
             )
         )
 
+    def test_recent_execution_and_event_stream_claim_aliases_compile_to_runtime_families(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-recent-execution-event-stream",
+            claims=[
+                {
+                    "claim_id": "mixed-market-limit-execution-policy",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Dynamic allocation between market and limit orders can improve "
+                        "execution when fill probability and shortfall are modeled together."
+                    ),
+                    "data_requirements": [
+                        "market_limit_order_mix",
+                        "limit_fill_probability",
+                        "logistic_normal_execution_policy",
+                    ],
+                    "confidence": "0.74",
+                },
+                {
+                    "claim_id": "lobdiff-time-event-prediction",
+                    "claim_type": "feature_recipe",
+                    "claim_text": (
+                        "Diffusion modeling can forecast LOB event-time and event-type state "
+                        "with skip-step sampling for lower-latency inference."
+                    ),
+                    "data_requirements": [
+                        "lob_diffusion_event_stream",
+                        "time_event_joint_distribution",
+                        "skip_step_sampling",
+                    ],
+                    "confidence": "0.72",
+                },
+                {
+                    "claim_id": "neural-hawkes-fill-stress",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Neural-Hawkes LOB simulation and mixed-order execution need fill-model, "
+                        "route TCA, live-paper parity, and latency stress before capital routing."
+                    ),
+                    "data_requirements": [
+                        "neural_hawkes_event_stream",
+                        "synthetic_lob_fill_parity",
+                        "route_tca",
+                        "latency_stress",
+                        "live_paper_parity",
+                    ],
+                    "confidence": "0.73",
+                },
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        self.assertTrue(compilation.executable_specs)
+        self.assertFalse(
+            [
+                blocker
+                for blocker in compilation.blockers
+                if blocker.reason == "required_features_missing_from_family_template"
+            ]
+        )
+
     def test_missing_family_template_blocks_execution(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-run-2",

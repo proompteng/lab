@@ -344,6 +344,39 @@ research_sources:
       - claim_id: generative_market_making_benchmark
         summary: Generative market-making benchmarks are useful for stress design but require historical-data comparison.
         implication: Treat synthetic close-auction stress as validation input only; promotion still requires historical replay and live-paper proof.
+  - source_id: mixed_market_limit_execution_2026
+    title: 'Reinforcement Learning for Trade Execution with Market and Limit Orders'
+    url: https://arxiv.org/abs/2507.06345
+    published_at: '2026-01-26'
+    claims:
+      - claim_id: mixed_market_limit_order_policy
+        summary: Dynamic market-versus-limit order allocation can improve expected execution revenue over fixed order-type benchmarks.
+        implication: Sweep order-type mix, fill probability, route TCA, and shortfall jointly before promoting high-turnover sleeves.
+      - claim_id: logistic_normal_execution_allocation
+        summary: Logistic-normal allocation gives a trainable representation for mixed market/limit execution decisions.
+        implication: Treat market/limit mix as an execution-policy feature, not as alpha, and require latency/fill stress before capital.
+  - source_id: lobdiff_event_stream_prediction_2026
+    title: 'Limit Order Book Event Stream Prediction with Diffusion Model'
+    url: https://link.springer.com/article/10.1007/s41019-025-00328-4
+    published_at: '2026-02-04'
+    claims:
+      - claim_id: diffusion_time_event_lob_state
+        summary: Diffusion event-stream modeling can learn joint time-event distributions in limit order books beyond simple point-process assumptions.
+        implication: Add LOB event-stream state as a research feature only when inference latency and event-stream parity are measured.
+      - claim_id: skip_step_realtime_lob_sampling
+        summary: Skip-step sampling is presented as the practical path for faster LOB event inference.
+        implication: Penalize event-stream features that cannot meet real-time latency and walk-forward replay constraints.
+  - source_id: neural_hawkes_lob_simulation_2025
+    title: 'Event-Based Limit Order Book Simulation under a Neural Hawkes Process: Application in Market-Making'
+    url: https://arxiv.org/abs/2502.17417
+    published_at: '2025-02-24'
+    claims:
+      - claim_id: neural_hawkes_event_fill_model
+        summary: Neural Hawkes LOB simulation can model long- and short-term event interactions and produce fill distributions closer to real data.
+        implication: Use neural-Hawkes scenarios to stress add/cancel/trade interactions and fill uncertainty before paper widening.
+      - claim_id: simulation_not_promotion_proof
+        summary: Simulated market-making fills can align with real-data fill distributions but still remain simulation evidence.
+        implication: Keep simulation outputs validation-only until route TCA, historical replay, and live-paper parity agree.
   - source_id: algorithmic_retail_options_intraday_2026
     title: 'The Rise of Algorithmic Retail Option Traders'
     url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6480379

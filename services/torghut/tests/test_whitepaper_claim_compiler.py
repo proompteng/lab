@@ -25,6 +25,10 @@ class TestWhitepaperClaimCompiler(TestCase):
             {
                 "seed-arxiv-2602-00776",
                 "seed-arxiv-2601-23172",
+                "seed-arxiv-2601-17247",
+                "seed-arxiv-2507-06345",
+                "seed-springer-lobdif-2026",
+                "seed-arxiv-2502-17417",
                 "seed-ssrn-6440898",
                 "seed-ssrn-6754305",
                 "seed-ssrn-6703098",
