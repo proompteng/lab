@@ -4,6 +4,7 @@ import {
   resolveAgentRunnerDefaultsConfig,
   resolveAgentsControllerAuthSecretConfig,
   resolveAgentsControllerBehaviorConfig,
+  resolveImplementationSourceWebhookConfig,
 } from './runtime-config'
 
 describe('Agents controller runtime config', () => {
@@ -33,5 +34,37 @@ describe('Agents controller runtime config', () => {
     expect(resolveAgentRunnerDefaultsConfig(env).jobTtlSeconds).toBe(600)
     expect(resolveAgentsControllerBehaviorConfig(env).artifactsMaxEntries).toBe(50)
     expect(resolveAgentsControllerAuthSecretConfig(env)).toBeNull()
+  })
+
+  it('reads canonical ImplementationSource webhook env names only', () => {
+    expect(
+      resolveImplementationSourceWebhookConfig({
+        AGENTS_IMPLEMENTATION_SOURCE_WEBHOOK_NAMESPACES: 'agents,dev',
+        AGENTS_IMPLEMENTATION_SOURCE_WEBHOOK_QUEUE_SIZE: '25',
+        AGENTS_IMPLEMENTATION_SOURCE_WEBHOOK_RETRY_BASE_DELAY_SECONDS: '2',
+        AGENTS_IMPLEMENTATION_SOURCE_WEBHOOK_RETRY_MAX_DELAY_SECONDS: '30',
+        AGENTS_IMPLEMENTATION_SOURCE_WEBHOOK_RETRY_MAX_ATTEMPTS: '4',
+        JANGAR_IMPLEMENTATION_SOURCE_WEBHOOK_QUEUE_SIZE: '999',
+      }),
+    ).toEqual({
+      namespacesRaw: 'agents,dev',
+      queueSize: 25,
+      retryBaseDelaySeconds: 2,
+      retryMaxDelaySeconds: 30,
+      retryMaxAttempts: 4,
+    })
+
+    expect(
+      resolveImplementationSourceWebhookConfig({
+        JANGAR_IMPLEMENTATION_SOURCE_WEBHOOK_NAMESPACES: 'jangar',
+        JANGAR_IMPLEMENTATION_SOURCE_WEBHOOK_QUEUE_SIZE: '999',
+      }),
+    ).toEqual({
+      namespacesRaw: null,
+      queueSize: null,
+      retryBaseDelaySeconds: null,
+      retryMaxDelaySeconds: null,
+      retryMaxAttempts: null,
+    })
   })
 })
