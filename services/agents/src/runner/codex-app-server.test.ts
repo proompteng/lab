@@ -7,6 +7,7 @@ import type { CodexAppServerOptions, CodexAppServerTurnOptions, StreamDelta, Tur
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  CodexRunnerCancellationError,
   CodexRunnerClientError,
   CodexRunnerInputError,
   CodexRunnerTurnError,
@@ -19,6 +20,16 @@ import {
 const makeStream = async function* (): AsyncGenerator<StreamDelta, Turn | null, void> {
   yield { type: 'message', delta: 'done' }
   return null
+}
+
+const deferred = <T = void>() => {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((innerResolve, innerReject) => {
+    resolve = innerResolve
+    reject = innerReject
+  })
+  return { promise, resolve, reject }
 }
 
 describe('codex app-server runner adapter', () => {
@@ -351,5 +362,102 @@ describe('codex app-server runner adapter', () => {
     })
     expect(String(status.error)).toContain('CodexRunnerTurnError')
     expect(String(status.error)).toContain('stream disconnected')
+  })
+
+  it('interrupts the app-server turn and writes cancelled status when the runner is terminated', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
+    const runPath = join(dir, 'run.json')
+    const statusPath = join(dir, 'status.json')
+    await writeFile(runPath, `${JSON.stringify({ implementation: { text: 'cancel me' } })}\n`, 'utf8')
+
+    const abortController = new AbortController()
+    const streamEntered = deferred()
+    const interruptTurn = vi.fn().mockResolvedValue(undefined)
+    const stop = vi.fn()
+    const stream = async function* (): AsyncGenerator<StreamDelta, Turn | null, void> {
+      streamEntered.resolve()
+      await new Promise<never>(() => undefined)
+      return null
+    }
+
+    const run = runCodexAppServerAdapter(
+      {
+        provider: 'codex-runner',
+        payloads: { eventFilePath: runPath },
+        artifacts: { statusPath },
+      },
+      {},
+      {
+        abortSignal: abortController.signal,
+        createClient: () => ({
+          runTurnStream: async () => ({
+            stream: stream(),
+            turnId: 'turn-cancel',
+            threadId: 'thread-cancel',
+          }),
+          interruptTurn,
+          stop,
+        }),
+      },
+    )
+
+    await streamEntered.promise
+    abortController.abort({ signal: 'SIGTERM' })
+
+    await expect(run).rejects.toBeInstanceOf(CodexRunnerCancellationError)
+    expect(interruptTurn).toHaveBeenCalledWith('turn-cancel', 'thread-cancel')
+    expect(stop).toHaveBeenCalledTimes(1)
+    const status = JSON.parse(await readFile(statusPath, 'utf8')) as Record<string, unknown>
+    expect(status).toMatchObject({
+      exitCode: 130,
+      status: 'cancelled',
+      threadId: 'thread-cancel',
+      turnId: 'turn-cancel',
+    })
+    expect(String(status.error)).toContain('CodexRunnerCancellationError')
+    expect(String(status.error)).toContain('SIGTERM')
+  })
+
+  it('honors cancellation before starting the app-server client', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
+    const runPath = join(dir, 'run.json')
+    const statusPath = join(dir, 'status.json')
+    await writeFile(runPath, `${JSON.stringify({ implementation: { text: 'do not start' } })}\n`, 'utf8')
+
+    const abortController = new AbortController()
+    abortController.abort({ signal: 'SIGINT' })
+
+    const createClient = vi.fn(() => ({
+      runTurnStream: async () => ({
+        stream: makeStream(),
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+      }),
+    }))
+
+    await expect(
+      runCodexAppServerAdapter(
+        {
+          provider: 'codex-runner',
+          payloads: { eventFilePath: runPath },
+          artifacts: { statusPath },
+        },
+        {},
+        {
+          abortSignal: abortController.signal,
+          createClient,
+        },
+      ),
+    ).rejects.toBeInstanceOf(CodexRunnerCancellationError)
+
+    expect(createClient).not.toHaveBeenCalled()
+    const status = JSON.parse(await readFile(statusPath, 'utf8')) as Record<string, unknown>
+    expect(status).toMatchObject({
+      exitCode: 130,
+      status: 'cancelled',
+    })
+    expect(status).not.toHaveProperty('threadId')
+    expect(status).not.toHaveProperty('turnId')
+    expect(String(status.error)).toContain('SIGINT')
   })
 })

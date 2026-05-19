@@ -33,7 +33,7 @@ export type CodexAppServerRunnerStatus = {
   provider: string
   adapter: 'codex-app-server'
   exitCode: number
-  status: 'succeeded' | 'failed'
+  status: 'succeeded' | 'failed' | 'cancelled'
   startedAt: string
   finishedAt: string
   threadId?: string
@@ -61,6 +61,7 @@ export type RunCodexAppServerAdapterOptions = {
   createClient?: (options: CodexAppServerOptions) => CodexAppServerRunnerClient
   runCommand?: CommandRunner
   now?: () => Date
+  abortSignal?: AbortSignal
 }
 
 type CommandResult = {
@@ -96,6 +97,14 @@ export class CodexRunnerTurnError extends Data.TaggedError('CodexRunnerTurnError
   readonly cause: unknown
 }> {}
 
+export class CodexRunnerCancellationError extends Data.TaggedError('CodexRunnerCancellationError')<{
+  readonly operation: 'before-start' | 'cancel-turn'
+  readonly threadId?: string
+  readonly turnId?: string
+  readonly signal?: string
+  readonly cause: unknown
+}> {}
+
 export class CodexRunnerStatusError extends Data.TaggedError('CodexRunnerStatusError')<{
   readonly operation: 'write-status'
   readonly path?: string
@@ -107,6 +116,7 @@ export type CodexRunnerError =
   | CodexRunnerWorkspaceError
   | CodexRunnerClientError
   | CodexRunnerTurnError
+  | CodexRunnerCancellationError
   | CodexRunnerStatusError
 
 export type CodexAppServerClientFactoryService = {
@@ -161,10 +171,60 @@ const describeRunnerError = (error: unknown) => {
       .join(' ')
     return `${error._tag}: ${error.operation}${ids ? ` ${ids}` : ''}: ${toErrorMessage(error.cause)}`
   }
+  if (error instanceof CodexRunnerCancellationError) {
+    const ids = [error.threadId ? `thread=${error.threadId}` : null, error.turnId ? `turn=${error.turnId}` : null]
+      .filter(Boolean)
+      .join(' ')
+    const signal = error.signal ? ` signal=${error.signal}` : ''
+    return `${error._tag}: ${error.operation}${ids ? ` ${ids}` : ''}${signal}: ${toErrorMessage(error.cause)}`
+  }
   if (error instanceof CodexRunnerStatusError) {
     return `${error._tag}: ${error.operation}${error.path ? ` ${error.path}` : ''}: ${toErrorMessage(error.cause)}`
   }
   return toErrorMessage(error)
+}
+
+const describeAbortReason = (reason: unknown): string | undefined => {
+  if (typeof reason === 'string') return reason
+  if (reason instanceof Error) return reason.message
+  if (isRecord(reason) && typeof reason.signal === 'string') return reason.signal
+  return undefined
+}
+
+const cancellationErrorFor = (signal: AbortSignal, threadId?: string, turnId?: string): CodexRunnerCancellationError =>
+  new CodexRunnerCancellationError({
+    operation: threadId || turnId ? 'cancel-turn' : 'before-start',
+    threadId,
+    turnId,
+    signal: describeAbortReason(signal.reason),
+    cause: signal.reason ?? new Error('agent runner cancelled'),
+  })
+
+const throwIfCancelled = (signal: AbortSignal | undefined, threadId?: string, turnId?: string) => {
+  if (signal?.aborted) {
+    throw cancellationErrorFor(signal, threadId, turnId)
+  }
+}
+
+const createCancellationWaiter = (
+  signal: AbortSignal | undefined,
+  getThreadId: () => string | undefined,
+  getTurnId: () => string | undefined,
+): { promise: Promise<never>; cleanup: () => void } | null => {
+  if (!signal) return null
+
+  let cleanup: () => void = () => {}
+  const promise = new Promise<never>((_, reject) => {
+    const onAbort = () => reject(cancellationErrorFor(signal, getThreadId(), getTurnId()))
+    if (signal.aborted) {
+      onAbort()
+      return
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    cleanup = () => signal.removeEventListener('abort', onAbort)
+  })
+
+  return { promise, cleanup }
 }
 
 const readNested = (value: unknown, path: string[]): unknown => {
@@ -582,6 +642,26 @@ const writeDelta = (delta: StreamDelta, logStream: ReturnType<typeof createWrite
   }
 }
 
+const interruptAppServerTurn = async (
+  client: CodexAppServerRunnerClient | null,
+  cancellation: CodexRunnerCancellationError,
+  threadId?: string,
+  turnId?: string,
+) => {
+  if (!client?.interruptTurn || !threadId || !turnId) return
+  try {
+    await client.interruptTurn(turnId, threadId)
+  } catch (cause) {
+    throw new CodexRunnerCancellationError({
+      operation: 'cancel-turn',
+      threadId,
+      turnId,
+      signal: cancellation.signal,
+      cause,
+    })
+  }
+}
+
 export const runCodexAppServerAdapter = async (
   spec: AgentRunnerSpec,
   adapter: CodexAppServerAdapterConfig,
@@ -601,7 +681,9 @@ export const runCodexAppServerAdapter = async (
   let logStream: Awaited<ReturnType<typeof openLog>> = null
 
   try {
+    throwIfCancelled(options.abortSignal)
     const runPayload = await loadRunPayload(spec)
+    throwIfCancelled(options.abortSignal)
     const prompt = resolvePrompt(spec, adapter, runPayload)
     const baseInstructions =
       renderOptionalTemplate(adapter.baseInstructions, spec, runPayload) ?? nonEmptyString(runPayload.systemPrompt)
@@ -622,6 +704,7 @@ export const runCodexAppServerAdapter = async (
       bootstrapTimeoutMs: adapter.bootstrapTimeoutMs,
     }
     await prepareCodexCwd(adapter, runPayload, options.runCommand ?? runDefaultCommand)
+    throwIfCancelled(options.abortSignal)
     client = await createRunnerClient(clientOptions, options.createClient)
     logStream = await openLog(logPath)
 
@@ -634,6 +717,7 @@ export const runCodexAppServerAdapter = async (
       developerInstructions,
       goal,
     }
+    throwIfCancelled(options.abortSignal)
     const response = await client.runTurnStream(prompt, turnOptions).catch((cause) => {
       throw new CodexRunnerTurnError({ operation: 'start-turn', cause })
     })
@@ -641,18 +725,41 @@ export const runCodexAppServerAdapter = async (
     turnId = response.turnId
 
     const iterator = response.stream[Symbol.asyncIterator]()
-    while (true) {
-      const { value, done } = await iterator.next().catch((cause) => {
-        throw new CodexRunnerTurnError({ operation: 'stream-turn', threadId, turnId, cause })
-      })
-      if (done) break
-      writeDelta(value, logStream)
+    const cancellationWaiter = createCancellationWaiter(
+      options.abortSignal,
+      () => threadId,
+      () => turnId,
+    )
+    try {
+      while (true) {
+        throwIfCancelled(options.abortSignal, threadId, turnId)
+        const nextDelta = iterator.next().catch((cause) => {
+          throw new CodexRunnerTurnError({ operation: 'stream-turn', threadId, turnId, cause })
+        })
+        const { value, done } = cancellationWaiter
+          ? await Promise.race([nextDelta, cancellationWaiter.promise])
+          : await nextDelta
+        if (done) break
+        writeDelta(value, logStream)
+      }
+    } finally {
+      cancellationWaiter?.cleanup()
     }
     exitCode = 0
   } catch (error) {
-    caughtError = error
-    errorMessage = describeRunnerError(error)
-    exitCode = 1
+    let runnerError = error
+    if (error instanceof CodexRunnerCancellationError) {
+      try {
+        await interruptAppServerTurn(client, error, threadId, turnId)
+      } catch (interruptError) {
+        runnerError = interruptError
+      }
+      exitCode = 130
+    } else {
+      exitCode = 1
+    }
+    caughtError = runnerError
+    errorMessage = describeRunnerError(runnerError)
   } finally {
     await new Promise<void>((resolve) => {
       if (!logStream) {
@@ -663,11 +770,11 @@ export const runCodexAppServerAdapter = async (
     })
     client?.stop?.()
 
-    await writeStatus(statusPath, {
+    const runnerStatus: CodexAppServerRunnerStatus = {
       provider: spec.provider,
       adapter: 'codex-app-server',
       exitCode,
-      status: exitCode === 0 ? 'succeeded' : 'failed',
+      status: exitCode === 0 ? 'succeeded' : exitCode === 130 ? 'cancelled' : 'failed',
       startedAt,
       finishedAt: timestampUtc(now),
       ...(threadId ? { threadId } : {}),
@@ -680,7 +787,18 @@ export const runCodexAppServerAdapter = async (
         logPath,
       },
       ...(errorMessage ? { error: errorMessage } : {}),
-    })
+    }
+    try {
+      await writeStatus(statusPath, runnerStatus)
+    } catch (statusError) {
+      if (!caughtError) {
+        caughtError = statusError
+        errorMessage = describeRunnerError(statusError)
+        exitCode = 1
+      } else {
+        process.stderr.write(`failed to write Codex app-server runner status: ${describeRunnerError(statusError)}\n`)
+      }
+    }
   }
 
   if (caughtError) {

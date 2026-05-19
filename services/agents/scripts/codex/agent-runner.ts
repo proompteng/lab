@@ -243,7 +243,20 @@ export const runAgentRunner = async (rawSpec: AgentRunnerSpec): Promise<number> 
   const spec = normalizeRunnerSpec(rawSpec)
   const adapter = resolveAdapter(spec)
   if (adapter.type === 'codex-app-server') {
-    return runCodexAppServerAdapter(spec, adapter.codex)
+    const abortController = new AbortController()
+    const abort = (signal: NodeJS.Signals) => {
+      if (!abortController.signal.aborted) {
+        abortController.abort({ signal })
+      }
+    }
+    process.once('SIGTERM', abort)
+    process.once('SIGINT', abort)
+    try {
+      return await runCodexAppServerAdapter(spec, adapter.codex, { abortSignal: abortController.signal })
+    } finally {
+      process.off('SIGTERM', abort)
+      process.off('SIGINT', abort)
+    }
   }
   return runExecAdapter(spec, adapter.provider)
 }
