@@ -492,6 +492,17 @@ describe('orchestration controller', () => {
     expect(listCustomResourceDefinitions).toHaveBeenCalledTimes(1)
   })
 
+  it('formats missing CRDs as a startup failure reason', () => {
+    const error = __test__.buildMissingOrchestrationCrdsError([
+      'orchestrations.orchestration.proompteng.ai',
+      'orchestrationruns.orchestration.proompteng.ai',
+    ])
+
+    expect(error.message).toBe(
+      'missing orchestration CRDs: orchestrations.orchestration.proompteng.ai, orchestrationruns.orchestration.proompteng.ai',
+    )
+  })
+
   it('watches tool jobs by canonical Agents labels only', () => {
     const handles: Array<{ stop: () => void }> = []
 

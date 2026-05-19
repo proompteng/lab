@@ -177,6 +177,9 @@ const checkCrds = async (
   return state
 }
 
+const buildMissingOrchestrationCrdsError = (missingCrds: string[]) =>
+  new Error(`missing orchestration CRDs: ${missingCrds.join(', ')}`)
+
 export const getOrchestrationControllerHealth = () => ({
   enabled: shouldStart(),
   started: controllerState.started,
@@ -2140,7 +2143,10 @@ export const startOrchestrationController = async () => {
   }
   const handles: Array<{ stop: () => void }> = []
   try {
-    await checkCrds()
+    const crds = await checkCrds()
+    if (!crds.ok) {
+      throw buildMissingOrchestrationCrdsError(crds.missing)
+    }
     if (lifecycleToken !== token) return
     const kube = createKubernetesClient()
     const namespaces = parseNamespaces()
@@ -2157,6 +2163,7 @@ export const startOrchestrationController = async () => {
     controllerState.started = true
   } catch (error) {
     console.warn('[agents] orchestration controller failed to start', error)
+    throw error
   } finally {
     if (lifecycleToken !== token) {
       for (const handle of handles) {
@@ -2192,5 +2199,6 @@ export const __test__ = {
   emitRunEvent,
   shouldStartWithFeatureFlag,
   checkCrds,
+  buildMissingOrchestrationCrdsError,
   startNamespaceWatches,
 }
