@@ -75,7 +75,7 @@ Each watch should emit a common event payload with resource JSON and event metad
 
 ## Proto Additions
 
-Extend `proto/proompteng/jangar/v1/agentctl.proto` with shared option types and watch events to avoid per-resource
+Extend `proto/proompteng/agents/v1/agentctl.proto` with shared option types and watch events to avoid per-resource
 custom messages.
 
 ### Shared request options

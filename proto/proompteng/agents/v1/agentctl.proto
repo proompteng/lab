@@ -1,8 +1,8 @@
 syntax = "proto3";
 
-package proompteng.jangar.v1;
+package proompteng.agents.v1;
 
-option go_package = "github.com/proompteng/lab/services/jangar/internal/agentctlpb";
+option go_package = "github.com/proompteng/lab/services/agents/internal/agentctlpb";
 
 service AgentctlService {
   rpc GetServerInfo(GetServerInfoRequest) returns (GetServerInfoResponse);

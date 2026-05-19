@@ -89,14 +89,14 @@ const resolveProtoPath = () => {
   const moduleDir = resolve(fileURLToPath(import.meta.url), '..')
 
   const candidates = [
-    resolve(cwd, 'proto/proompteng/jangar/v1/agentctl.proto'),
-    resolve(cwd, '.output/server/proto/proompteng/jangar/v1/agentctl.proto'),
-    resolve(cwd, '../proto/proompteng/jangar/v1/agentctl.proto'),
-    resolve(cwd, '../../proto/proompteng/jangar/v1/agentctl.proto'),
+    resolve(cwd, 'proto/proompteng/agents/v1/agentctl.proto'),
+    resolve(cwd, '.output/server/proto/proompteng/agents/v1/agentctl.proto'),
+    resolve(cwd, '../proto/proompteng/agents/v1/agentctl.proto'),
+    resolve(cwd, '../../proto/proompteng/agents/v1/agentctl.proto'),
     resolve(cwd, 'proto/agentctl.proto'),
-    resolve(moduleDir, '../proto/proompteng/jangar/v1/agentctl.proto'),
-    resolve(moduleDir, '../../../proto/proompteng/jangar/v1/agentctl.proto'),
-    resolve(moduleDir, '../../../../proto/proompteng/jangar/v1/agentctl.proto'),
+    resolve(moduleDir, '../proto/proompteng/agents/v1/agentctl.proto'),
+    resolve(moduleDir, '../../../proto/proompteng/agents/v1/agentctl.proto'),
+    resolve(moduleDir, '../../../../proto/proompteng/agents/v1/agentctl.proto'),
   ]
 
   for (const candidate of candidates) {
@@ -121,10 +121,10 @@ const loadAgentctlPackage = (): AgentctlPackage => {
   })
 
   const loaded = grpc.loadPackageDefinition(packageDefinition) as {
-    proompteng?: { jangar?: { v1?: AgentctlPackage } }
+    proompteng?: { agents?: { v1?: AgentctlPackage } }
   }
 
-  const pkg = loaded.proompteng?.jangar?.v1
+  const pkg = loaded.proompteng?.agents?.v1
   if (!pkg?.AgentctlService) {
     throw new Error('agentctl proto missing AgentctlService definition')
   }
@@ -153,7 +153,7 @@ const parseEntryMap = (entries: RuntimeEntry[]) => {
 }
 
 const resolveAuthToken = (metadata: grpc.Metadata) => {
-  const values = [metadata.get('authorization'), metadata.get('x-jangar-token')].flat()
+  const values = [metadata.get('authorization'), metadata.get('x-agents-token'), metadata.get('x-jangar-token')].flat()
   const raw = values.find((value) => typeof value === 'string')
   if (!raw) return null
   if (raw.toLowerCase().startsWith('bearer ')) return raw.slice(7).trim()

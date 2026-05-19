@@ -4,8 +4,8 @@ import { fileURLToPath } from 'node:url'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const root = resolve(scriptDir, '../../../..')
-const source = resolve(root, 'proto/proompteng/jangar/v1/agentctl.proto')
-const destination = resolve(root, 'services/agents/agentctl/proto/proompteng/jangar/v1/agentctl.proto')
+const source = resolve(root, 'proto/proompteng/agents/v1/agentctl.proto')
+const destination = resolve(root, 'services/agents/agentctl/proto/proompteng/agents/v1/agentctl.proto')
 const embeddedOutput = resolve(root, 'services/agents/agentctl/src/embedded-proto.ts')
 
 await mkdir(dirname(destination), { recursive: true })

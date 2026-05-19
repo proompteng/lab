@@ -146,7 +146,7 @@ SSE semantics:
 
 ### gRPC streaming
 
-Add a new RPC in `proompteng.jangar.v1.AgentctlService`:
+Add a new RPC in `proompteng.agents.v1.AgentctlService`:
 
 ```
 rpc WatchControlPlaneStatus(WatchControlPlaneStatusRequest)

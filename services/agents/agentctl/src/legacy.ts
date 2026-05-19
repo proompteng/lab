@@ -979,9 +979,9 @@ const resolveProtoPath = () => {
   const packageRoot = resolve(moduleDir, '..')
 
   const candidates = [
-    resolve(packageRoot, 'proto/proompteng/jangar/v1/agentctl.proto'),
-    resolve(packageRoot, '../../proto/proompteng/jangar/v1/agentctl.proto'),
-    resolve(process.cwd(), 'proto/proompteng/jangar/v1/agentctl.proto'),
+    resolve(packageRoot, 'proto/proompteng/agents/v1/agentctl.proto'),
+    resolve(packageRoot, '../../proto/proompteng/agents/v1/agentctl.proto'),
+    resolve(process.cwd(), 'proto/proompteng/agents/v1/agentctl.proto'),
   ]
 
   for (const candidate of candidates) {
@@ -1006,10 +1006,10 @@ const loadAgentctlPackage = (): AgentctlPackage => {
   })
 
   const loaded = grpc.loadPackageDefinition(packageDefinition) as {
-    proompteng?: { jangar?: { v1?: AgentctlPackage } }
+    proompteng?: { agents?: { v1?: AgentctlPackage } }
   }
 
-  const pkg = loaded.proompteng?.jangar?.v1
+  const pkg = loaded.proompteng?.agents?.v1
   if (!pkg?.AgentctlService) {
     throw new Error('agentctl proto missing AgentctlService definition')
   }
