@@ -236,13 +236,32 @@ class ResearchClaim:
     claim_id: str
     summary: str
     implication: str
+    claim_text: str = ''
+    claim_type: str = ''
+    data_requirements: tuple[str, ...] = ()
+    asset_scope: str = ''
+    horizon_scope: str = ''
+    expected_direction: str = ''
 
-    def to_payload(self) -> dict[str, str]:
-        return {
+    def to_payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
             'claim_id': self.claim_id,
             'summary': self.summary,
             'implication': self.implication,
         }
+        if self.claim_text:
+            payload['claim_text'] = self.claim_text
+        if self.claim_type:
+            payload['claim_type'] = self.claim_type
+        if self.data_requirements:
+            payload['data_requirements'] = list(self.data_requirements)
+        if self.asset_scope:
+            payload['asset_scope'] = self.asset_scope
+        if self.horizon_scope:
+            payload['horizon_scope'] = self.horizon_scope
+        if self.expected_direction:
+            payload['expected_direction'] = self.expected_direction
+        return payload
 
 
 @dataclass(frozen=True)
@@ -583,6 +602,16 @@ def load_strategy_autoresearch_program(
                             claim_id=claim_id,
                             summary=_string(claim_payload.get('summary')),
                             implication=_string(claim_payload.get('implication')),
+                            claim_text=_string(claim_payload.get('claim_text')),
+                            claim_type=_string(claim_payload.get('claim_type')),
+                            data_requirements=_string_list(
+                                claim_payload.get('data_requirements')
+                            ),
+                            asset_scope=_string(claim_payload.get('asset_scope')),
+                            horizon_scope=_string(claim_payload.get('horizon_scope')),
+                            expected_direction=_string(
+                                claim_payload.get('expected_direction')
+                            ),
                         )
                     )
             source_id = _string(source_payload.get('source_id'))
