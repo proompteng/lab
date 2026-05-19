@@ -9,6 +9,7 @@ import http.client
 import json
 import logging
 import os
+import subprocess
 import time as time_mod
 import uuid
 from collections import defaultdict
@@ -17,7 +18,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Iterable
-from urllib import error, request
+from urllib import error, parse, request
 
 import yaml
 from unittest.mock import patch
@@ -259,6 +260,13 @@ def _http_query(
     password: str | None,
     query: str,
 ) -> str:
+    if url.startswith("kubectl://"):
+        return _kubectl_clickhouse_query(
+            url=url,
+            username=username,
+            password=password,
+            query=query,
+        )
     body = query.encode("utf-8")
     last_error: Exception | None = None
     for attempt in range(3):
@@ -282,6 +290,44 @@ def _http_query(
     if last_error is None:
         raise RuntimeError("clickhouse_http_query_failed")
     raise RuntimeError(f"clickhouse_http_query_failed: {last_error}") from last_error
+
+
+def _kubectl_clickhouse_query(
+    *,
+    url: str,
+    username: str | None,
+    password: str | None,
+    query: str,
+) -> str:
+    target = parse.urlparse(url)
+    context = parse.unquote(target.netloc).strip()
+    parts = [parse.unquote(part) for part in target.path.split("/") if part]
+    if len(parts) != 2 or not context:
+        raise RuntimeError(
+            "clickhouse_kubectl_url_invalid: expected kubectl://<context>/<namespace>/<pod>"
+        )
+    namespace, pod = parts
+    command = [
+        "kubectl",
+        "--context",
+        context,
+        "exec",
+        "-n",
+        namespace,
+        pod,
+        "--",
+        "clickhouse-client",
+    ]
+    if username:
+        command.extend(["--user", username])
+    if password:
+        command.extend(["--password", password])
+    command.extend(["--query", query])
+    result = subprocess.run(command, check=False, capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        raise RuntimeError(f"clickhouse_kubectl_query_failed: {detail[:400]}")
+    return result.stdout
 
 
 def _b64(raw: bytes) -> str:
@@ -695,6 +741,15 @@ def _extract_ask(signal: SignalEnvelope) -> Decimal | None:
     return Decimal(str(raw))
 
 
+def _extract_decimal_payload(signal: SignalEnvelope, key: str) -> Decimal | None:
+    raw = signal.payload.get(key)
+    if isinstance(raw, Decimal):
+        return raw
+    if raw is None:
+        return None
+    return Decimal(str(raw))
+
+
 def _extract_price(signal: SignalEnvelope) -> Decimal:
     raw = signal.payload.get("price")
     if isinstance(raw, Decimal):
@@ -834,6 +889,9 @@ def _init_day_stats() -> dict[str, Any]:
         "decision_count": 0,
         "filled_count": 0,
         "filled_notional": Decimal("0"),
+        "daily_adv_notional": Decimal("0"),
+        "depth_notional": None,
+        "liquidity_observation_count": 0,
         "gross_pnl": Decimal("0"),
         "net_pnl": Decimal("0"),
         "cost_total": Decimal("0"),
@@ -874,6 +932,9 @@ def _ensure_replay_stats_bucket(bucket: dict[str, Any]) -> dict[str, Any]:
     bucket.setdefault("decision_count", 0)
     bucket.setdefault("filled_count", 0)
     bucket.setdefault("filled_notional", Decimal("0"))
+    bucket.setdefault("daily_adv_notional", Decimal("0"))
+    bucket.setdefault("depth_notional", None)
+    bucket.setdefault("liquidity_observation_count", 0)
     bucket.setdefault("gross_pnl", Decimal("0"))
     bucket.setdefault("net_pnl", Decimal("0"))
     bucket.setdefault("cost_total", Decimal("0"))
@@ -889,6 +950,41 @@ def _ensure_replay_stats_bucket(bucket: dict[str, Any]) -> dict[str, Any]:
     bucket.setdefault("max_gross_exposure_pct_equity", Decimal("0"))
     bucket.setdefault("negative_cash_observation_count", 0)
     return bucket
+
+
+def _record_liquidity_observation(
+    *, bucket: dict[str, Any], signal: SignalEnvelope
+) -> None:
+    bucket = _ensure_replay_stats_bucket(bucket)
+    price = _extract_price(signal)
+    observed = False
+    microbar_volume = _extract_decimal_payload(signal, "microbar_volume")
+    if microbar_volume is not None and microbar_volume > 0 and price > 0:
+        bucket["daily_adv_notional"] += microbar_volume * price
+        observed = True
+
+    bid_px = _extract_bid(signal)
+    ask_px = _extract_ask(signal)
+    bid_sz = _extract_decimal_payload(signal, "imbalance_bid_sz")
+    ask_sz = _extract_decimal_payload(signal, "imbalance_ask_sz")
+    if (
+        bid_px is not None
+        and ask_px is not None
+        and bid_sz is not None
+        and ask_sz is not None
+        and bid_px > 0
+        and ask_px > 0
+        and bid_sz > 0
+        and ask_sz > 0
+    ):
+        depth_notional = (bid_px * bid_sz) + (ask_px * ask_sz)
+        current_depth = bucket.get("depth_notional")
+        if not isinstance(current_depth, Decimal) or depth_notional < current_depth:
+            bucket["depth_notional"] = depth_notional
+        observed = True
+
+    if observed:
+        bucket["liquidity_observation_count"] += 1
 
 
 def _record_capital_snapshot(
@@ -1625,6 +1721,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
             symbol_bucket["quote_valid_rows"] += 1
             last_prices[signal.symbol] = price
             last_signals[signal.symbol] = signal
+            _record_liquidity_observation(bucket=day_bucket, signal=signal)
             equity = _record_capital_snapshot(
                 bucket=day_bucket,
                 cash=cash,
@@ -2052,6 +2149,13 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                 "decision_count": value["decision_count"],
                 "filled_count": value["filled_count"],
                 "filled_notional": str(value["filled_notional"]),
+                "daily_adv_notional": str(value["daily_adv_notional"]),
+                "depth_notional": str(value["depth_notional"])
+                if isinstance(value.get("depth_notional"), Decimal)
+                else None,
+                "liquidity_observation_count": int(
+                    value.get("liquidity_observation_count") or 0
+                ),
                 "gross_pnl": str(value["gross_pnl"]),
                 "net_pnl": str(value["net_pnl"]),
                 "cost_total": str(value["cost_total"]),

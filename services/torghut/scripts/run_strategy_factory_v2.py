@@ -84,6 +84,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--progress-log-seconds", type=int, default=30)
     parser.add_argument("--train-days", type=int, default=6)
     parser.add_argument("--holdout-days", type=int, default=3)
+    parser.add_argument("--second-oos-days", type=int, default=0)
     parser.add_argument("--full-window-start-date", default="")
     parser.add_argument("--full-window-end-date", default="")
     parser.add_argument("--expected-last-trading-day", default="")
@@ -420,6 +421,7 @@ def _frontier_args(
         progress_log_seconds=int(args.progress_log_seconds),
         train_days=int(args.train_days),
         holdout_days=int(args.holdout_days),
+        second_oos_days=max(0, int(getattr(args, "second_oos_days", 0) or 0)),
         full_window_start_date=str(args.full_window_start_date),
         full_window_end_date=str(args.full_window_end_date),
         expected_last_trading_day=str(args.expected_last_trading_day),

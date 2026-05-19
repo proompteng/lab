@@ -35,7 +35,7 @@ from app.trading.discovery.objectives import (
 )
 from app.trading.discovery.portfolio_candidates import PortfolioCandidateSpec
 from app.trading.evidence_receipts import build_portfolio_proof_receipt
-from app.trading.costs import BPS_SCALE, CostModelConfig
+from app.trading.costs import BPS_SCALE, CostModelConfig, participation_power
 from app.trading.hypotheses import (
     hypothesis_registry_requires_dependency_capability,
     load_hypothesis_registry,
@@ -142,12 +142,6 @@ def _decimal_string(value: Decimal) -> str:
     if "." in rendered:
         rendered = rendered.rstrip("0").rstrip(".")
     return rendered or "0"
-
-
-def _decimal_sqrt(value: Decimal) -> Decimal:
-    if value <= 0:
-        return Decimal("0")
-    return value.sqrt()
 
 
 _MICROBAR_PORTFOLIO_SIGNAL_SETTINGS: dict[str, dict[str, str]] = {
@@ -376,6 +370,22 @@ def _daily_filled_notional(payload: Mapping[str, Any]) -> dict[str, Decimal]:
     for day, value in daily_payload.items():
         item = _mapping(value)
         resolved[day] = Decimal(str(item.get("filled_notional", "0")))
+    return resolved
+
+
+def _daily_liquidity_notional(payload: Mapping[str, Any]) -> dict[str, Decimal]:
+    daily_payload = _mapping(payload.get("daily"))
+    resolved: dict[str, Decimal] = {}
+    for day, value in daily_payload.items():
+        item = _mapping(value)
+        raw_value = (
+            item.get("adv_notional")
+            or item.get("daily_adv_notional")
+            or item.get("depth_notional")
+            or item.get("fillable_depth_notional")
+        )
+        if raw_value is not None:
+            resolved[day] = _decimal(raw_value)
     return resolved
 
 
@@ -1190,6 +1200,10 @@ def _replay_analysis(
                 day: str(value)
                 for day, value in _daily_filled_notional(replay_payload).items()
             },
+            "daily_liquidity_notional": {
+                day: str(value)
+                for day, value in _daily_liquidity_notional(replay_payload).items()
+            },
         },
         "decomposition": decomposition_payload,
         "decomposition_error": decomposition_error or None,
@@ -1757,6 +1771,10 @@ def _market_impact_stress_report(
         day: _decimal(value)
         for day, value in _mapping(summary.get("daily_filled_notional")).items()
     }
+    daily_liquidity = {
+        day: _decimal(value)
+        for day, value in _mapping(summary.get("daily_liquidity_notional")).items()
+    }
     trading_days = max(_int(summary.get("trading_day_count")), len(daily_net))
     total_filled_notional = sum(daily_notional.values(), Decimal("0"))
     avg_filled_notional = (
@@ -1778,15 +1796,28 @@ def _market_impact_stress_report(
     daily_rows: list[dict[str, str]] = []
     total_impact_cost = Decimal("0")
     weighted_impact_bps_notional = Decimal("0")
+    missing_liquidity_days: list[str] = []
+    recorded_liquidity_days = 0
     for day in sorted(daily_net):
         notional = daily_notional.get(day, Decimal("0"))
+        liquidity_notional = daily_liquidity.get(day, Decimal("0"))
+        if notional > 0 and liquidity_notional > 0:
+            recorded_liquidity_days += 1
+            participation_denominator = liquidity_notional
+            liquidity_evidence_source = "recorded_liquidity_notional"
+        else:
+            participation_denominator = reference_adv
+            liquidity_evidence_source = "synthetic_proxy"
+            if notional > 0:
+                missing_liquidity_days.append(day)
         participation = (
-            min(Decimal("1"), notional / reference_adv)
-            if reference_adv > 0 and notional > 0
+            min(Decimal("1"), notional / participation_denominator)
+            if participation_denominator > 0 and notional > 0
             else Decimal("0")
         )
-        impact_bps = config.impact_bps_at_full_participation * _decimal_sqrt(
-            participation
+        impact_bps = config.impact_bps_at_full_participation * participation_power(
+            participation,
+            config.impact_participation_exponent,
         )
         impact_cost = (notional * impact_bps) / BPS_SCALE
         post_impact_net = daily_net[day] - impact_cost
@@ -1797,6 +1828,8 @@ def _market_impact_stress_report(
                 "day": day,
                 "net_pnl": _decimal_string(daily_net[day]),
                 "filled_notional": _decimal_string(notional),
+                "liquidity_notional": _decimal_string(liquidity_notional),
+                "liquidity_evidence_source": liquidity_evidence_source,
                 "participation_rate_proxy": _decimal_string(participation),
                 "impact_cost_bps": _decimal_string(impact_bps),
                 "impact_cost": _decimal_string(impact_cost),
@@ -1820,6 +1853,8 @@ def _market_impact_stress_report(
         reasons.append("market_impact_stress_trading_days_missing")
     if total_filled_notional <= 0:
         reasons.append("market_impact_stress_filled_notional_missing")
+    if missing_liquidity_days:
+        reasons.append("market_impact_stress_liquidity_evidence_missing")
     if impact_cost_bps <= 0:
         reasons.append("market_impact_stress_cost_bps_zero")
     if post_impact_net_pnl_per_day < program.objective.target_net_pnl_per_day:
@@ -1856,11 +1891,21 @@ def _market_impact_stress_report(
         "impact_cost": _decimal_string(total_impact_cost),
         "impact_cost_bps": _decimal_string(impact_cost_bps),
         "market_impact_cost_bps": _decimal_string(impact_cost_bps),
+        "liquidity_evidence_present": not missing_liquidity_days
+        and total_filled_notional > 0,
+        "liquidity_input_source": "recorded_liquidity_notional"
+        if recorded_liquidity_days
+        else "synthetic_proxy",
+        "recorded_liquidity_day_count": recorded_liquidity_days,
+        "missing_liquidity_days": missing_liquidity_days,
         "reference_notional": _decimal_string(reference_notional),
         "reference_adv_proxy": _decimal_string(reference_adv),
         "max_participation_rate": _decimal_string(max_participation),
         "impact_bps_at_full_participation": _decimal_string(
             config.impact_bps_at_full_participation
+        ),
+        "impact_participation_exponent": _decimal_string(
+            config.impact_participation_exponent
         ),
         "trading_day_count": trading_days,
         "total_filled_notional": _decimal_string(total_filled_notional),
@@ -1927,7 +1972,10 @@ def _delay_adjusted_depth_stress_report(
         delay_depth_cost_bps = max(
             Decimal("1"),
             config.impact_bps_at_full_participation
-            * _decimal_sqrt(participation)
+            * participation_power(
+                participation,
+                config.impact_participation_exponent,
+            )
             * depth_haircut_rate,
         )
         delay_depth_cost = (notional * delay_depth_cost_bps) / BPS_SCALE
@@ -2022,11 +2070,202 @@ def _delay_adjusted_depth_stress_report(
         "reference_notional": _decimal_string(reference_notional),
         "reference_adv_proxy": _decimal_string(reference_adv),
         "max_participation_rate": _decimal_string(max_participation),
+        "impact_participation_exponent": _decimal_string(
+            config.impact_participation_exponent
+        ),
         "trading_day_count": trading_days,
         "total_filled_notional": _decimal_string(total_filled_notional),
         "avg_filled_notional_per_day": _decimal_string(avg_filled_notional),
         "fillable_notional_per_day": _decimal_string(fillable_notional_per_day),
         "daily": daily_rows,
+    }
+
+
+def _runtime_replay_net_pnl_per_day(report: Mapping[str, Any]) -> Decimal:
+    scorecard = _mapping(report.get("scorecard"))
+    summary = _mapping(report.get("summary"))
+    explicit = _decimal(
+        scorecard.get("portfolio_post_cost_net_pnl_per_day")
+        or scorecard.get("net_pnl_per_day")
+        or summary.get("net_per_day"),
+        default="-999999999",
+    )
+    if explicit != Decimal("-999999999"):
+        return explicit
+    trading_days = _int(summary.get("trading_day_count"))
+    if trading_days <= 0:
+        return Decimal("0")
+    return _decimal(summary.get("net_pnl")) / Decimal(trading_days)
+
+
+def _double_oos_window_row(
+    *,
+    window_id: str,
+    report: Mapping[str, Any] | None,
+    target_net_pnl_per_day: Decimal,
+) -> dict[str, Any]:
+    if report is None:
+        return {
+            "window_id": window_id,
+            "source": "double_oos_walkforward_arxiv_2602_10785_2026",
+            "validation_type": "double_oos_walkforward",
+            "passed": False,
+            "status": "missing",
+            "net_pnl_per_day": "0",
+            "post_cost_net_pnl_per_day": "0",
+            "trading_day_count": 0,
+            "reasons": [f"{window_id}_replay_missing"],
+        }
+    summary = _mapping(report.get("summary"))
+    net_pnl_per_day = _runtime_replay_net_pnl_per_day(report)
+    reasons: list[str] = []
+    if not bool(report.get("objective_met")):
+        reasons.append(f"{window_id}_objective_not_met")
+    if net_pnl_per_day < target_net_pnl_per_day:
+        reasons.append(f"{window_id}_net_pnl_below_target")
+    if _int(summary.get("trading_day_count")) <= 0:
+        reasons.append(f"{window_id}_trading_days_missing")
+    passed = not reasons
+    return {
+        "window_id": window_id,
+        "source": "double_oos_walkforward_arxiv_2602_10785_2026",
+        "validation_type": "double_oos_walkforward",
+        "passed": passed,
+        "status": "pass" if passed else "fail",
+        "net_pnl_per_day": _decimal_string(net_pnl_per_day),
+        "post_cost_net_pnl_per_day": _decimal_string(net_pnl_per_day),
+        "trading_day_count": _int(summary.get("trading_day_count")),
+        "start_date": _string(summary.get("start_date")),
+        "end_date": _string(summary.get("end_date")),
+        "decision_count": _int(summary.get("decision_count")),
+        "filled_count": _int(summary.get("filled_count")),
+        "reasons": reasons,
+    }
+
+
+def _double_oos_cost_shock_net_pnl_per_day(
+    *,
+    double_oos_net_pnl_per_day: Decimal,
+    market_impact_report: Mapping[str, Any] | None,
+    delay_depth_report: Mapping[str, Any] | None,
+) -> Decimal:
+    stressed = [double_oos_net_pnl_per_day]
+    if market_impact_report is not None:
+        stressed.append(
+            _decimal(
+                market_impact_report.get("post_impact_net_pnl_per_day")
+                or market_impact_report.get("stressed_net_pnl_per_day")
+            )
+        )
+    if delay_depth_report is not None:
+        stressed.append(
+            _decimal(
+                delay_depth_report.get("post_delay_depth_net_pnl_per_day")
+                or delay_depth_report.get("stressed_net_pnl_per_day")
+            )
+        )
+    return min(stressed, default=Decimal("0"))
+
+
+def _double_oos_walkforward_report(
+    *,
+    runner_run_id: str,
+    best_candidate: Mapping[str, Any],
+    parity_report: Mapping[str, Any] | None,
+    approval_report: Mapping[str, Any] | None,
+    market_impact_report: Mapping[str, Any] | None,
+    delay_depth_report: Mapping[str, Any] | None,
+    program: StrategyAutoresearchProgram,
+) -> dict[str, Any]:
+    target = program.objective.target_net_pnl_per_day
+    windows = [
+        _double_oos_window_row(
+            window_id="parity",
+            report=parity_report,
+            target_net_pnl_per_day=target,
+        ),
+        _double_oos_window_row(
+            window_id="approval",
+            report=approval_report,
+            target_net_pnl_per_day=target,
+        ),
+    ]
+    observed_windows = [
+        row
+        for row in windows
+        if _int(row.get("trading_day_count")) > 0 and row.get("status") != "missing"
+    ]
+    passed_windows = [row for row in observed_windows if bool(row.get("passed"))]
+    independent_window_count = len(observed_windows)
+    pass_rate = (
+        Decimal(len(passed_windows)) / Decimal(independent_window_count)
+        if independent_window_count > 0
+        else Decimal("0")
+    )
+    double_oos_net = min(
+        (_decimal(row.get("post_cost_net_pnl_per_day")) for row in observed_windows),
+        default=Decimal("0"),
+    )
+    cost_shock_net = _double_oos_cost_shock_net_pnl_per_day(
+        double_oos_net_pnl_per_day=double_oos_net,
+        market_impact_report=market_impact_report,
+        delay_depth_report=delay_depth_report,
+    )
+    reasons: list[str] = []
+    if independent_window_count < 2:
+        reasons.append("double_oos_independent_window_count_below_minimum")
+    if pass_rate < Decimal("1"):
+        reasons.append("double_oos_pass_rate_below_required")
+    if double_oos_net < target:
+        reasons.append("double_oos_net_pnl_below_target")
+    if market_impact_report is None:
+        reasons.append("market_impact_stress_missing")
+    elif not bool(market_impact_report.get("objective_met")):
+        reasons.append("market_impact_stress_failed")
+    if delay_depth_report is None:
+        reasons.append("delay_adjusted_depth_stress_missing")
+    elif not bool(delay_depth_report.get("objective_met")):
+        reasons.append("delay_adjusted_depth_stress_failed")
+    if cost_shock_net < target:
+        reasons.append("double_oos_cost_shock_net_pnl_below_target")
+    objective_met = not reasons
+    generated_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    return {
+        "schema_version": "torghut.double-oos-walkforward-report.v1",
+        "run_id": runner_run_id,
+        "candidate_id": _string(best_candidate.get("candidate_id")),
+        "report_id": f"{runner_run_id}:{_string(best_candidate.get('candidate_id'))}:double-oos",
+        "generated_at": generated_at,
+        "checked_at": generated_at,
+        "runtime_family": _runtime_family(best_candidate),
+        "runtime_strategy_name": _runtime_strategy_name(best_candidate),
+        "runtime_strategy_names": list(
+            _portfolio_runtime_strategy_names(best_candidate)
+        ),
+        "source_markers": [
+            "double_oos_walkforward_arxiv_2602_10785_2026",
+            "double_oos_cost_sensitivity_arxiv_2602_10785_2026",
+            "realistic_market_impact_arxiv_2603_29086_2026",
+        ],
+        "objective_met": objective_met,
+        "passed": objective_met,
+        "reasons": reasons,
+        "target_net_pnl_per_day": _decimal_string(target),
+        "independent_window_count": independent_window_count,
+        "window_count": independent_window_count,
+        "fold_count": independent_window_count,
+        "pass_rate": _decimal_string(pass_rate),
+        "net_pnl_per_day": _decimal_string(double_oos_net),
+        "post_double_oos_net_pnl_per_day": _decimal_string(double_oos_net),
+        "cost_shock_net_pnl_per_day": _decimal_string(cost_shock_net),
+        "post_cost_shock_net_pnl_per_day": _decimal_string(cost_shock_net),
+        "market_impact_stress_passed": bool(
+            _mapping(market_impact_report).get("objective_met")
+        ),
+        "delay_adjusted_depth_stress_passed": bool(
+            _mapping(delay_depth_report).get("objective_met")
+        ),
+        "fold_metrics": windows,
     }
 
 
@@ -2047,6 +2286,20 @@ def _stress_metrics_payload(
                     "artifact_ref": market_impact_ref,
                     "day": _string(row_mapping.get("day")),
                     "passed": bool(market_impact_report.get("passed")),
+                    "participation_rate": _string(
+                        row_mapping.get("participation_rate_proxy")
+                    ),
+                    "impact_cost_bps": _string(row_mapping.get("impact_cost_bps")),
+                    "impact_cost": _string(row_mapping.get("impact_cost")),
+                    "post_impact_net_pnl": _string(
+                        row_mapping.get("post_impact_net_pnl")
+                    ),
+                    "liquidity_evidence_source": _string(
+                        row_mapping.get("liquidity_evidence_source")
+                    ),
+                    "liquidity_notional": _string(
+                        row_mapping.get("liquidity_notional")
+                    ),
                 }
             )
     if delay_depth_report is not None and delay_depth_ref:
@@ -2083,6 +2336,7 @@ def _profitability_stage_manifest(
     portfolio_proof_receipt_path: Path | None,
     market_impact_stress_report_path: Path | None,
     delay_adjusted_depth_stress_report_path: Path | None,
+    double_oos_report_path: Path | None,
     stress_metrics_path: Path | None,
     parity_replay_path: Path | None,
     approval_replay_path: Path | None,
@@ -2155,6 +2409,10 @@ def _profitability_stage_manifest(
         artifact_hashes[
             str(delay_adjusted_depth_stress_report_path.relative_to(root))
         ] = _sha256_path(delay_adjusted_depth_stress_report_path)
+    if double_oos_report_path is not None and double_oos_report_path.exists():
+        artifact_hashes[str(double_oos_report_path.relative_to(root))] = _sha256_path(
+            double_oos_report_path
+        )
     if stress_metrics_path is not None and stress_metrics_path.exists():
         artifact_hashes[str(stress_metrics_path.relative_to(root))] = _sha256_path(
             stress_metrics_path
@@ -2251,7 +2509,14 @@ def _profitability_stage_manifest(
             },
             "validation": {
                 "status": "pass"
-                if approval_replay_path is not None and approval_pass
+                if approval_replay_path is not None
+                and approval_pass
+                and market_impact_stress_report_path is not None
+                and market_impact_stress_report_path.exists()
+                and delay_adjusted_depth_stress_report_path is not None
+                and delay_adjusted_depth_stress_report_path.exists()
+                and double_oos_report_path is not None
+                and double_oos_report_path.exists()
                 else "fail",
                 "checks": [
                     {"check": "evaluation_report_present", "status": "pass"},
@@ -2283,6 +2548,13 @@ def _profitability_stage_manifest(
                         "status": "pass"
                         if delay_adjusted_depth_stress_report_path is not None
                         and delay_adjusted_depth_stress_report_path.exists()
+                        else "fail",
+                    },
+                    {
+                        "check": "double_oos_walkforward_present",
+                        "status": "pass"
+                        if double_oos_report_path is not None
+                        and double_oos_report_path.exists()
                         else "fail",
                     },
                     {
@@ -2333,6 +2605,18 @@ def _profitability_stage_manifest(
                         }
                         if delay_adjusted_depth_stress_report_path is not None
                         and delay_adjusted_depth_stress_report_path.exists()
+                        else {}
+                    ),
+                    **(
+                        {
+                            "double_oos_walkforward": _artifact(
+                                double_oos_report_path,
+                                stage="validation",
+                                check="double_oos_walkforward_present",
+                            )
+                        }
+                        if double_oos_report_path is not None
+                        and double_oos_report_path.exists()
                         else {}
                     ),
                     **(
@@ -2488,6 +2772,7 @@ class RuntimeClosureBundleSummary:
     portfolio_proof_receipt_path: str
     market_impact_stress_report_path: str
     delay_adjusted_depth_stress_report_path: str
+    double_oos_report_path: str
     stress_metrics_path: str
     profitability_stage_manifest_path: str
     promotion_prerequisites_path: str
@@ -2518,6 +2803,7 @@ class RuntimeClosureBundleSummary:
             "portfolio_proof_receipt_path": self.portfolio_proof_receipt_path,
             "market_impact_stress_report_path": self.market_impact_stress_report_path,
             "delay_adjusted_depth_stress_report_path": self.delay_adjusted_depth_stress_report_path,
+            "double_oos_report_path": self.double_oos_report_path,
             "stress_metrics_path": self.stress_metrics_path,
             "profitability_stage_manifest_path": self.profitability_stage_manifest_path,
             "promotion_prerequisites_path": self.promotion_prerequisites_path,
@@ -2561,6 +2847,7 @@ def write_runtime_closure_bundle(
             portfolio_proof_receipt_path="",
             market_impact_stress_report_path="",
             delay_adjusted_depth_stress_report_path="",
+            double_oos_report_path="",
             stress_metrics_path="",
             profitability_stage_manifest_path="",
             promotion_prerequisites_path="",
@@ -2614,6 +2901,7 @@ def write_runtime_closure_bundle(
     delay_adjusted_depth_stress_report_path = (
         closure_root / "backtest" / "delay-adjusted-depth-stress.json"
     )
+    double_oos_report_path = closure_root / "backtest" / "double-oos-walkforward.json"
     stress_metrics_path = closure_root / "promotion" / "stress-metrics.json"
 
     candidate_spec = _candidate_spec(
@@ -2713,6 +3001,7 @@ def write_runtime_closure_bundle(
 
     market_impact_stress_report: dict[str, Any] | None = None
     delay_adjusted_depth_stress_report: dict[str, Any] | None = None
+    double_oos_report: dict[str, Any] | None = None
     stress_metrics: dict[str, Any] | None = None
     if approval_report is not None:
         market_impact_stress_report = _market_impact_stress_report(
@@ -2743,6 +3032,17 @@ def write_runtime_closure_bundle(
             ),
         )
         _write_json(stress_metrics_path, stress_metrics)
+    if parity_report is not None or approval_report is not None:
+        double_oos_report = _double_oos_walkforward_report(
+            runner_run_id=runner_run_id,
+            best_candidate=best_candidate,
+            parity_report=parity_report,
+            approval_report=approval_report,
+            market_impact_report=market_impact_stress_report,
+            delay_depth_report=delay_adjusted_depth_stress_report,
+            program=program,
+        )
+        _write_json(double_oos_report_path, double_oos_report)
 
     shadow_plan = _shadow_validation_artifact(
         best_candidate=best_candidate,
@@ -2773,6 +3073,11 @@ def write_runtime_closure_bundle(
                     ),
                 )
                 if delay_adjusted_depth_stress_report is not None
+                else ()
+            ),
+            *(
+                (str(double_oos_report_path.relative_to(closure_root)),)
+                if double_oos_report is not None
                 else ()
             ),
             *(
@@ -2861,6 +3166,9 @@ def write_runtime_closure_bundle(
         delay_adjusted_depth_stress_report_path=delay_adjusted_depth_stress_report_path
         if delay_adjusted_depth_stress_report_path.exists()
         else None,
+        double_oos_report_path=double_oos_report_path
+        if double_oos_report_path.exists()
+        else None,
         stress_metrics_path=stress_metrics_path
         if stress_metrics_path.exists()
         else None,
@@ -2936,6 +3244,9 @@ def write_runtime_closure_bundle(
             delay_adjusted_depth_stress_report_path
         )
         if delay_adjusted_depth_stress_report_path.exists()
+        else "",
+        double_oos_report_path=str(double_oos_report_path)
+        if double_oos_report_path.exists()
         else "",
         stress_metrics_path=str(stress_metrics_path)
         if stress_metrics_path.exists()

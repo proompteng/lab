@@ -802,6 +802,7 @@ def _cost_model_payload(config: CostModelConfig) -> dict[str, str]:
         "impact_bps_at_full_participation": str(
             config.impact_bps_at_full_participation
         ),
+        "impact_participation_exponent": str(config.impact_participation_exponent),
     }
 
 
@@ -842,6 +843,9 @@ def _collect_impact_assumptions(
             "commission_bps": str(cost_model_config.commission_bps),
             "impact_bps_at_full_participation": str(
                 cost_model_config.impact_bps_at_full_participation
+            ),
+            "impact_participation_exponent": str(
+                cost_model_config.impact_participation_exponent
             ),
             "max_participation_rate": str(cost_model_config.max_participation_rate),
             "recorded_inputs_count": str(decisions_with_recorded_inputs),
@@ -977,7 +981,9 @@ class ReplayProfitabilitySummary:
     daily_net: dict[str, Decimal]
 
 
-def summarize_replay_profitability(payload: Mapping[str, Any]) -> ReplayProfitabilitySummary:
+def summarize_replay_profitability(
+    payload: Mapping[str, Any],
+) -> ReplayProfitabilitySummary:
     daily_payload = cast(Mapping[str, Any], payload.get("daily") or {})
     daily_net: dict[str, Decimal] = {}
     for day, value in daily_payload.items():
@@ -994,8 +1000,12 @@ def summarize_replay_profitability(payload: Mapping[str, Any]) -> ReplayProfitab
         if isinstance(value, Mapping)
         and int(cast(Mapping[str, Any], value).get("filled_count", 0)) > 0
     )
-    positive_total = sum((value for value in daily_net.values() if value > 0), Decimal("0"))
-    negative_total = sum((-value for value in daily_net.values() if value < 0), Decimal("0"))
+    positive_total = sum(
+        (value for value in daily_net.values() if value > 0), Decimal("0")
+    )
+    negative_total = sum(
+        (-value for value in daily_net.values() if value < 0), Decimal("0")
+    )
     profit_factor = (
         (positive_total / negative_total)
         if negative_total > 0
@@ -1003,9 +1013,7 @@ def summarize_replay_profitability(payload: Mapping[str, Any]) -> ReplayProfitab
     )
     worst_day_net = min(daily_net.values()) if daily_net else Decimal("0")
     net_per_day = (
-        net_pnl / Decimal(trading_day_count)
-        if trading_day_count > 0
-        else Decimal("0")
+        net_pnl / Decimal(trading_day_count) if trading_day_count > 0 else Decimal("0")
     )
     return ReplayProfitabilitySummary(
         start_date=str(payload.get("start_date") or ""),
@@ -1038,7 +1046,9 @@ def score_replay_profitability_candidate(
 
     penalties = Decimal("0")
     if holdout.active_days < policy.min_active_holdout_days:
-        penalties += Decimal(policy.min_active_holdout_days - holdout.active_days) * Decimal("250")
+        penalties += Decimal(
+            policy.min_active_holdout_days - holdout.active_days
+        ) * Decimal("250")
     if holdout.worst_day_net < -policy.max_worst_holdout_day_loss:
         penalties += abs(holdout.worst_day_net + policy.max_worst_holdout_day_loss)
     if holdout.profit_factor is None:

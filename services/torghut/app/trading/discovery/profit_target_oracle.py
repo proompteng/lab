@@ -59,6 +59,7 @@ class ProfitTargetOraclePolicy:
     require_executable_replay_notional_within_buying_power: bool = True
     require_market_impact_stress: bool = True
     min_market_impact_stress_cost_bps: Decimal = Decimal("1")
+    require_market_impact_liquidity_evidence: bool = True
     require_delay_adjusted_depth_stress: bool = True
     min_delay_adjusted_depth_stress_ms: Decimal = Decimal("50")
     min_delay_adjusted_depth_fillable_notional_per_day: Decimal = Decimal("300000")
@@ -109,6 +110,7 @@ class ProfitTargetOraclePolicy:
             "min_market_impact_stress_cost_bps": str(
                 self.min_market_impact_stress_cost_bps
             ),
+            "require_market_impact_liquidity_evidence": self.require_market_impact_liquidity_evidence,
             "accepted_market_impact_stress_models": sorted(
                 _ACCEPTED_MARKET_IMPACT_STRESS_MODELS
             ),
@@ -615,6 +617,25 @@ def evaluate_profit_target_oracle(
             "source_marker": "realistic_market_impact_arxiv_2603_29086_2026",
             "passed": market_impact_artifact_present
             if policy.require_market_impact_stress
+            else True,
+        }
+    )
+    market_impact_liquidity_evidence_present = _boolish(
+        scorecard.get("market_impact_liquidity_evidence_present")
+        or scorecard.get("liquidity_evidence_present")
+    )
+    checks.append(
+        {
+            "metric": "market_impact_liquidity_evidence_present",
+            "observed": str(market_impact_liquidity_evidence_present).lower(),
+            "operator": "eq",
+            "threshold": "true",
+            "source_marker": "realistic_market_impact_arxiv_2603_29086_2026",
+            "passed": market_impact_liquidity_evidence_present
+            if (
+                policy.require_market_impact_stress
+                and policy.require_market_impact_liquidity_evidence
+            )
             else True,
         }
     )

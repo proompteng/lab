@@ -59,6 +59,8 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                     "0.25",
                     "--max-train-screen-worst-day-loss",
                     "125",
+                    "--second-oos-days",
+                    "2",
                     "--collect-train-gate-diagnostics",
                 ],
             ):
@@ -73,6 +75,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(args.min_train_screen_net_per_day, "-50")
         self.assertEqual(args.min_train_screen_active_ratio, "0.25")
         self.assertEqual(args.max_train_screen_worst_day_loss, "125")
+        self.assertEqual(args.second_oos_days, 2)
         self.assertTrue(args.collect_train_gate_diagnostics)
 
     def test_clickhouse_password_env_resolution_keeps_secret_out_of_argv(self) -> None:
@@ -161,6 +164,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         end_date: str,
         daily_net: dict[str, str],
         daily_filled_notional: dict[str, str] | None = None,
+        daily_liquidity_notional: dict[str, str] | None = None,
         decision_count: int,
         filled_count: int,
         wins: int,
@@ -184,6 +188,10 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                         and day in daily_filled_notional
                         else ("1000" if float(value) != 0 else "0")
                     ),
+                    "daily_adv_notional": daily_liquidity_notional[day]
+                    if daily_liquidity_notional is not None
+                    and day in daily_liquidity_notional
+                    else None,
                 }
                 for day, value in daily_net.items()
             },
@@ -378,6 +386,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             progress_log_seconds=30,
             train_days=3,
             holdout_days=3,
+            second_oos_days=0,
             full_window_start_date="",
             full_window_end_date="",
             expected_last_trading_day="",
@@ -398,6 +407,23 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             min_train_screen_active_ratio="0.50",
             max_train_screen_worst_day_loss="",
         )
+
+    def test_resolve_frontier_replay_windows_keeps_second_oos_independent(
+        self,
+    ) -> None:
+        days = tuple(date(2026, 3, 16) + timedelta(days=index) for index in range(8))
+
+        resolved = frontier._resolve_frontier_replay_windows(
+            days,
+            train_days=3,
+            holdout_days=3,
+            second_oos_days=2,
+        )
+
+        self.assertEqual(resolved.train_days, days[:3])
+        self.assertEqual(resolved.holdout_days, days[3:6])
+        self.assertEqual(resolved.second_oos_days, days[6:])
+        self.assertEqual(resolved.expected_days, days)
 
     def test_strategy_universe_symbols_reads_target_strategy_universe(self) -> None:
         configmap_payload = {
@@ -868,6 +894,11 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                     "2026-04-01": "50000",
                     "2026-04-02": "60000",
                 },
+                daily_liquidity_notional={
+                    "2026-03-31": "1000000",
+                    "2026-04-01": "1250000",
+                    "2026-04-02": "1500000",
+                },
                 decision_count=3,
                 filled_count=3,
                 wins=1,
@@ -896,6 +927,18 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             summary["best_day_share_of_total_pnl"], "1.104166666666666666666666667"
         )
         self.assertEqual(summary["avg_filled_notional_per_day"], "18750")
+        self.assertTrue(summary["market_impact_liquidity_evidence_present"])
+        self.assertEqual(summary["market_impact_liquidity_day_count"], 3)
+        self.assertEqual(summary["market_impact_liquidity_missing_day_count"], 5)
+        self.assertEqual(summary["avg_liquidity_notional_per_day"], "468750")
+        self.assertEqual(
+            summary["daily_liquidity_notional"],
+            {
+                "2026-03-31": "1000000",
+                "2026-04-01": "1250000",
+                "2026-04-02": "1500000",
+            },
+        )
 
     def test_consistency_penalty_reports_and_penalizes_capital_realism(self) -> None:
         payload = self._payload(
@@ -1112,6 +1155,233 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             )
             self.assertEqual(top["ranking"]["method"], "pareto_frontier_v2")
             self.assertEqual(top["family_template_id"], "intraday_tsmom_v2")
+
+    def test_run_frontier_vetoes_candidate_that_fails_second_oos(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            strategy_configmap = self._write_strategy_configmap(root)
+            sweep_config = self._write_sweep_config(root)
+            json_output = root / "frontier.json"
+            args = self._make_args(
+                strategy_configmap=strategy_configmap,
+                sweep_config=sweep_config,
+                json_output=json_output,
+            )
+            args.second_oos_days = 2
+            recent_days = tuple(
+                date(2026, 3, 18) + timedelta(days=index) for index in range(8)
+            )
+
+            def fake_run_replay(config: object) -> dict[str, object]:
+                configmap_path = Path(getattr(config, "strategy_configmap_path"))
+                payload = yaml.safe_load(configmap_path.read_text(encoding="utf-8"))
+                strategy = next(
+                    item
+                    for item in yaml.safe_load(payload["data"]["strategies.yaml"])[
+                        "strategies"
+                    ]
+                    if item["name"] == "intraday-tsmom-profit-v3"
+                )
+                stop = str(strategy["params"]["long_stop_loss_bps"])
+                start_date = str(getattr(config, "start_date"))
+                end_date = str(getattr(config, "end_date"))
+                if start_date == "2026-03-24" and end_date == "2026-03-25":
+                    if stop == "12":
+                        return self._payload(
+                            start_date=start_date,
+                            end_date=end_date,
+                            daily_net={"2026-03-24": "-250", "2026-03-25": "0"},
+                            daily_liquidity_notional={
+                                "2026-03-24": "1000000",
+                                "2026-03-25": "1000000",
+                            },
+                            decision_count=1,
+                            filled_count=1,
+                            wins=0,
+                            losses=1,
+                        )
+                    return self._payload(
+                        start_date=start_date,
+                        end_date=end_date,
+                        daily_net={"2026-03-24": "240", "2026-03-25": "230"},
+                        daily_liquidity_notional={
+                            "2026-03-24": "1000000",
+                            "2026-03-25": "1000000",
+                        },
+                        decision_count=2,
+                        filled_count=2,
+                        wins=2,
+                        losses=0,
+                    )
+                if start_date == "2026-03-21" and end_date == "2026-03-23":
+                    return self._payload(
+                        start_date=start_date,
+                        end_date=end_date,
+                        daily_net=(
+                            {
+                                "2026-03-21": "500",
+                                "2026-03-22": "510",
+                                "2026-03-23": "520",
+                            }
+                            if stop == "12"
+                            else {
+                                "2026-03-21": "220",
+                                "2026-03-22": "210",
+                                "2026-03-23": "205",
+                            }
+                        ),
+                        daily_liquidity_notional={
+                            "2026-03-21": "1000000",
+                            "2026-03-22": "1000000",
+                            "2026-03-23": "1000000",
+                        },
+                        decision_count=3,
+                        filled_count=3,
+                        wins=3,
+                        losses=0,
+                    )
+                if start_date == "2026-03-18" and end_date == "2026-03-20":
+                    return self._payload(
+                        start_date=start_date,
+                        end_date=end_date,
+                        daily_net={
+                            "2026-03-18": "90",
+                            "2026-03-19": "95",
+                            "2026-03-20": "100",
+                        },
+                        daily_liquidity_notional={
+                            "2026-03-18": "1000000",
+                            "2026-03-19": "1000000",
+                            "2026-03-20": "1000000",
+                        },
+                        decision_count=3,
+                        filled_count=3,
+                        wins=3,
+                        losses=0,
+                    )
+                return self._payload(
+                    start_date=start_date,
+                    end_date=end_date,
+                    daily_net=(
+                        {
+                            "2026-03-18": "90",
+                            "2026-03-19": "95",
+                            "2026-03-20": "100",
+                            "2026-03-21": "500",
+                            "2026-03-22": "510",
+                            "2026-03-23": "520",
+                            "2026-03-24": "-250",
+                            "2026-03-25": "0",
+                        }
+                        if stop == "12"
+                        else {
+                            "2026-03-18": "90",
+                            "2026-03-19": "95",
+                            "2026-03-20": "100",
+                            "2026-03-21": "220",
+                            "2026-03-22": "210",
+                            "2026-03-23": "205",
+                            "2026-03-24": "240",
+                            "2026-03-25": "230",
+                        }
+                    ),
+                    daily_liquidity_notional={
+                        "2026-03-18": "1000000",
+                        "2026-03-19": "1000000",
+                        "2026-03-20": "1000000",
+                        "2026-03-21": "1000000",
+                        "2026-03-22": "1000000",
+                        "2026-03-23": "1000000",
+                        "2026-03-24": "1000000",
+                        "2026-03-25": "1000000",
+                    },
+                    decision_count=8,
+                    filled_count=8,
+                    wins=7,
+                    losses=1 if stop == "12" else 0,
+                )
+
+            snapshot_receipt = SimpleNamespace(
+                snapshot_id="snap-second-oos",
+                is_fresh=True,
+                stale_override_used=False,
+                to_payload=lambda: {
+                    "snapshot_id": "snap-second-oos",
+                    "source": "ta",
+                    "window_size": "PT1S",
+                    "start_day": "2026-03-18",
+                    "end_day": "2026-03-25",
+                    "expected_last_trading_day": "2026-03-25",
+                    "is_fresh": True,
+                    "missing_days": [],
+                    "row_count": 123,
+                    "stale_override_used": False,
+                    "witnesses": [],
+                },
+            )
+            with (
+                patch(
+                    "scripts.search_consistent_profitability_frontier._resolve_recent_trading_days",
+                    return_value=recent_days,
+                ),
+                patch(
+                    "scripts.search_consistent_profitability_frontier.build_dataset_snapshot_receipt",
+                    return_value=snapshot_receipt,
+                ),
+                patch(
+                    "scripts.search_consistent_profitability_frontier.ensure_fresh_snapshot"
+                ),
+                patch(
+                    "scripts.search_consistent_profitability_frontier.run_replay",
+                    side_effect=fake_run_replay,
+                ),
+            ):
+                payload = frontier.run_consistent_profitability_frontier(args)
+
+            self.assertEqual(
+                payload["window"]["second_oos_days"], ["2026-03-24", "2026-03-25"]
+            )
+            self.assertEqual(
+                payload["constraints"]["second_oos"]["min_independent_window_count"],
+                2,
+            )
+            top_by_stop = {
+                str(row["replay_config"]["params"]["long_stop_loss_bps"]): row
+                for row in payload["top"]
+            }
+            self.assertTrue(top_by_stop["18"]["second_oos"]["passed"])
+            self.assertTrue(
+                top_by_stop["18"]["full_window"][
+                    "market_impact_liquidity_evidence_present"
+                ]
+            )
+            self.assertEqual(
+                top_by_stop["18"]["full_window"]["market_impact_liquidity_day_count"],
+                8,
+            )
+            self.assertEqual(
+                top_by_stop["18"]["second_oos"]["market_impact_liquidity_day_count"],
+                2,
+            )
+            self.assertTrue(
+                top_by_stop["18"]["objective_scorecard"][
+                    "market_impact_liquidity_evidence_present"
+                ]
+            )
+            self.assertTrue(
+                top_by_stop["18"]["objective_scorecard"]["double_oos_passed"]
+            )
+            self.assertFalse(top_by_stop["12"]["second_oos"]["passed"])
+            self.assertIn(
+                "second_oos_net_per_day_below_target",
+                top_by_stop["12"]["hard_vetoes"],
+            )
+            self.assertEqual(
+                top_by_stop["12"]["objective_scorecard"][
+                    "double_oos_independent_window_count"
+                ],
+                2,
+            )
 
     def test_run_frontier_writes_partial_json_output_between_candidates(self) -> None:
         with TemporaryDirectory() as tmpdir:

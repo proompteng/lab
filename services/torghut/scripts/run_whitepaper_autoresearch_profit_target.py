@@ -315,6 +315,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--train-days", type=int, default=6)
     parser.add_argument("--holdout-days", type=int, default=3)
+    parser.add_argument("--second-oos-days", type=int, default=2)
     parser.add_argument("--full-window-start-date", default="")
     parser.add_argument("--full-window-end-date", default="")
     parser.add_argument("--expected-last-trading-day", default="")
@@ -1906,6 +1907,22 @@ def _candidate_search_remediation(
         "executable_replay_account_buying_power_missing",
         "executable_replay_max_notional_missing",
         "executable_replay_notional_exceeds_buying_power",
+        "market_impact_stress_passed_failed",
+        "market_impact_stress_artifact_present_failed",
+        "market_impact_stress_model_present_failed",
+        "market_impact_stress_cost_bps_positive_failed",
+        "market_impact_stress_net_pnl_per_day_failed",
+        "delay_adjusted_depth_stress_passed_failed",
+        "delay_adjusted_depth_stress_artifact_present_failed",
+        "delay_adjusted_depth_stress_ms_positive_failed",
+        "delay_adjusted_depth_fillable_notional_per_day_failed",
+        "delay_adjusted_depth_stress_net_pnl_per_day_failed",
+        "double_oos_passed_failed",
+        "double_oos_artifact_present_failed",
+        "double_oos_independent_window_count_failed",
+        "double_oos_pass_rate_failed",
+        "double_oos_net_pnl_per_day_failed",
+        "double_oos_cost_shock_net_pnl_per_day_failed",
     )
     proof_failure_counts = {
         reason: count
@@ -1920,11 +1937,11 @@ def _candidate_search_remediation(
     if proof_failure_counts:
         proof_action: dict[str, Any] = {
             "priority": 3 if not non_proof_failure_counts else 7,
-            "action": "complete_executable_replay_and_shadow_parity_evidence",
+            "action": "complete_runtime_closure_double_oos_and_shadow_evidence",
             "reason": (
-                "replayed candidates are missing promotion-closure evidence required by the oracle"
+                "replayed candidates are missing runtime-closure double-OOS, cost-stressed, executable replay, or shadow evidence required by the oracle"
                 if not non_proof_failure_counts
-                else "promotion-closure evidence is required, but current candidates still fail profit or risk gates"
+                else "runtime-closure double-OOS and promotion evidence is required, but current candidates still fail profit or risk gates"
             ),
             "blocking_failure_counts": proof_failure_counts,
             "required_scorecard_fields": [
@@ -1939,6 +1956,15 @@ def _candidate_search_remediation(
                 "market_impact_stress_model",
                 "market_impact_stress_cost_bps",
                 "market_impact_stress_net_pnl_per_day",
+                "delay_adjusted_depth_stress_passed",
+                "delay_adjusted_depth_stress_artifact_ref",
+                "delay_adjusted_depth_stress_net_pnl_per_day",
+                "double_oos_passed",
+                "double_oos_artifact_ref",
+                "double_oos_independent_window_count",
+                "double_oos_pass_rate",
+                "double_oos_net_pnl_per_day",
+                "double_oos_cost_shock_net_pnl_per_day",
             ],
         }
         if non_proof_failure_counts:
@@ -4286,6 +4312,7 @@ def _run_real_replay(
         progress_log_seconds=args.progress_log_seconds,
         train_days=args.train_days,
         holdout_days=args.holdout_days,
+        second_oos_days=max(0, int(getattr(args, "second_oos_days", 0) or 0)),
         full_window_start_date=args.full_window_start_date,
         full_window_end_date=args.full_window_end_date,
         expected_last_trading_day=args.expected_last_trading_day,
@@ -5121,6 +5148,10 @@ def _runtime_closure_market_impact_stress_update(
                 or market_impact_report.get("cost_shock_bps")
             )
         ),
+        "market_impact_liquidity_evidence_present": _boolish(
+            market_impact_report.get("liquidity_evidence_present")
+            or market_impact_report.get("market_impact_liquidity_evidence_present")
+        ),
         "market_impact_stress_net_pnl_per_day": str(
             _decimal(
                 market_impact_report.get("net_pnl_per_day")
@@ -5533,6 +5564,40 @@ def _candidate_board_status_digest(rows: Sequence[Mapping[str, Any]]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def _candidate_board_double_oos_summary(
+    rows: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    replayed_rows = [row for row in rows if bool(row.get("has_replay_evidence"))]
+    artifact_rows = [
+        row
+        for row in replayed_rows
+        if bool(_string(row.get("double_oos_artifact_ref")))
+    ]
+    passed_rows = [row for row in replayed_rows if bool(row.get("double_oos_passed"))]
+    missing_artifact_rows = [
+        row
+        for row in replayed_rows
+        if not bool(_string(row.get("double_oos_artifact_ref")))
+    ]
+    independent_window_counts = [
+        _candidate_board_int_field(row, "double_oos_independent_window_count")
+        for row in replayed_rows
+    ]
+    blockers: list[str] = []
+    if replayed_rows and missing_artifact_rows:
+        blockers.append("double_oos_artifact_missing_for_replayed_candidates")
+    if replayed_rows and not passed_rows:
+        blockers.append("no_candidate_passed_double_oos")
+    return {
+        "replayed_candidate_count": len(replayed_rows),
+        "artifact_candidate_count": len(artifact_rows),
+        "passed_candidate_count": len(passed_rows),
+        "missing_artifact_candidate_count": len(missing_artifact_rows),
+        "max_independent_window_count": max(independent_window_counts, default=0),
+        "blockers": blockers,
+    }
+
+
 def _candidate_board_payload(
     *,
     epoch_id: str,
@@ -5714,6 +5779,7 @@ def _candidate_board_payload(
         "best_research_candidate": best_research_candidate,
         "best_executed_candidate": best_executed_candidate,
         "closest_promotion_candidate": closest_promotion_candidate,
+        "double_oos_summary": _candidate_board_double_oos_summary(rows),
         "best_portfolio_candidate_id": _string(
             portfolio_payload.get("portfolio_candidate_id")
         ),

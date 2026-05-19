@@ -2835,6 +2835,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                         "objective_met": True,
                         "model": "square_root",
                         "impact_cost_bps": "5",
+                        "liquidity_evidence_present": True,
                         "post_impact_net_pnl_per_day": "610",
                     }
                 )
@@ -3281,6 +3282,14 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(board["best_executed_candidate"]["decision_count"], 7)
         self.assertEqual(board["best_executed_candidate"]["submitted_order_count"], 7)
         self.assertEqual(board["best_executed_candidate"]["filled_order_count"], 7)
+        self.assertEqual(board["double_oos_summary"]["replayed_candidate_count"], 1)
+        self.assertEqual(
+            board["double_oos_summary"]["missing_artifact_candidate_count"], 1
+        )
+        self.assertIn(
+            "double_oos_artifact_missing_for_replayed_candidates",
+            board["double_oos_summary"]["blockers"],
+        )
         self.assertRegex(board["status_digest"], r"^[0-9a-f]{64}$")
 
     def test_candidate_universe_symbols_default_to_chip_coverage_when_empty(
@@ -3995,6 +4004,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                         "executable_replay_artifact_missing",
                         "executable_replay_account_buying_power_missing",
                         "executable_replay_max_notional_missing",
+                        "double_oos_artifact_present_failed",
+                        "double_oos_cost_shock_net_pnl_per_day_failed",
                     ],
                 },
             ),
@@ -4006,7 +4017,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         proof_action = remediation["next_actions"][0]
         self.assertEqual(
             proof_action["action"],
-            "complete_executable_replay_and_shadow_parity_evidence",
+            "complete_runtime_closure_double_oos_and_shadow_evidence",
         )
         self.assertEqual(
             proof_action["blocking_failure_counts"]["executable_replay_not_passed"],
@@ -4014,6 +4025,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertIn(
             "executable_replay_artifact_ref",
+            proof_action["required_scorecard_fields"],
+        )
+        self.assertIn(
+            "double_oos_cost_shock_net_pnl_per_day",
             proof_action["required_scorecard_fields"],
         )
 
@@ -4059,7 +4074,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             action
             for action in remediation["next_actions"]
             if action["action"]
-            == "complete_executable_replay_and_shadow_parity_evidence"
+            == "complete_runtime_closure_double_oos_and_shadow_evidence"
         )
         self.assertEqual(
             proof_action["deferred_until"],

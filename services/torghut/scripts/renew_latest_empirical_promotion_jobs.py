@@ -143,6 +143,56 @@ def _read_runtime_window_manifest(ref: str) -> dict[str, Any]:
     return _as_dict(payload)
 
 
+def _runtime_manifest_entry_requirements(
+    runtime_manifest: Mapping[str, Any],
+) -> dict[str, Any]:
+    return _as_dict(runtime_manifest.get("entry_requirements"))
+
+
+def _runtime_manifest_requires_delay_depth_stress(
+    runtime_manifest: Mapping[str, Any],
+) -> bool:
+    requirements = _runtime_manifest_entry_requirements(runtime_manifest)
+    return bool(requirements.get("require_delay_adjusted_depth_stress"))
+
+
+def _runtime_manifest_delay_depth_stress_report_ref(
+    *,
+    target: "RuntimeWindowImportTarget",
+    runtime_manifest: Mapping[str, Any],
+) -> str | None:
+    return (
+        _as_text(target.delay_adjusted_depth_stress_report_ref)
+        or _as_text(runtime_manifest.get("delay_adjusted_depth_stress_report_ref"))
+        or _as_text(runtime_manifest.get("delay_adjusted_depth_stress_report_path"))
+    )
+
+
+def _runtime_window_delay_depth_remediation(
+    *,
+    target: "RuntimeWindowImportTarget",
+    runtime_manifest: Mapping[str, Any],
+) -> dict[str, Any]:
+    requirements = _runtime_manifest_entry_requirements(runtime_manifest)
+    return {
+        "blocker": "delay_adjusted_depth_stress_report_ref_missing",
+        "hypothesis_id": target.hypothesis_id,
+        "strategy_name": target.strategy_name,
+        "source_manifest_ref": target.source_manifest_ref,
+        "required_by": "entry_requirements.require_delay_adjusted_depth_stress",
+        "min_checks": requirements.get("min_delay_adjusted_depth_stress_checks"),
+        "max_age_minutes": requirements.get(
+            "max_delay_adjusted_depth_stress_age_minutes"
+        ),
+        "remediation": (
+            "generate a fresh runtime-closure delay-adjusted-depth-stress.json "
+            "artifact for this candidate/window and pass it as "
+            "delay_adjusted_depth_stress_report_ref in the runtime-window target "
+            "or record it in the hypothesis manifest"
+        ),
+    }
+
+
 @dataclass(frozen=True)
 class RuntimeWindowImportTarget:
     hypothesis_id: str
@@ -412,8 +462,16 @@ def _run_runtime_window_import(
         )
     if len(imports) == 1:
         return imports[0]
+    proof_blockers = [
+        blocker
+        for item in imports
+        for blocker in item.get("proof_blockers", [])
+        if isinstance(blocker, Mapping)
+    ]
     return {
         "status": "ok",
+        "proof_status": "blocked" if proof_blockers else "ok",
+        "proof_blockers": proof_blockers,
         "target_count": len(imports),
         "imports": imports,
     }
@@ -430,6 +488,21 @@ def _run_runtime_window_import_target(
     window_end: datetime,
 ) -> dict[str, Any]:
     runtime_manifest = _read_runtime_window_manifest(target.source_manifest_ref)
+    delay_depth_report_ref = _runtime_manifest_delay_depth_stress_report_ref(
+        target=target,
+        runtime_manifest=runtime_manifest,
+    )
+    proof_blockers: list[dict[str, Any]] = []
+    if (
+        _runtime_manifest_requires_delay_depth_stress(runtime_manifest)
+        and delay_depth_report_ref is None
+    ):
+        proof_blockers.append(
+            _runtime_window_delay_depth_remediation(
+                target=target,
+                runtime_manifest=runtime_manifest,
+            )
+        )
     candidate_id = (
         _as_text(target.candidate_id)
         or _as_text(runtime_manifest.get("candidate_id"))
@@ -485,11 +558,6 @@ def _run_runtime_window_import_target(
     )
     if dataset_snapshot_ref is not None:
         command.extend(["--dataset-snapshot-ref", dataset_snapshot_ref])
-    delay_depth_report_ref = (
-        _as_text(target.delay_adjusted_depth_stress_report_ref)
-        or _as_text(runtime_manifest.get("delay_adjusted_depth_stress_report_ref"))
-        or _as_text(runtime_manifest.get("delay_adjusted_depth_stress_report_path"))
-    )
     if delay_depth_report_ref is not None:
         command.extend(
             ["--delay-adjusted-depth-stress-report-ref", delay_depth_report_ref]
@@ -504,6 +572,8 @@ def _run_runtime_window_import_target(
         "hypothesis_id": target.hypothesis_id,
         "strategy_name": target.strategy_name,
         "account_label": target.account_label,
+        "proof_status": "blocked" if proof_blockers else "ok",
+        "proof_blockers": proof_blockers,
         "summary": payload,
     }
 

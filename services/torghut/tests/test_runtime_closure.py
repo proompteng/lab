@@ -231,6 +231,20 @@ class TestRuntimeClosure(TestCase):
             Decimal("0"),
         )
         self.assertEqual(
+            runtime_closure._daily_liquidity_notional(
+                {
+                    "daily": {
+                        "2026-03-20": {"daily_adv_notional": "3200.00"},
+                        "2026-03-21": {"depth_notional": "329.950"},
+                    }
+                }
+            ),
+            {
+                "2026-03-20": Decimal("3200.00"),
+                "2026-03-21": Decimal("329.950"),
+            },
+        )
+        self.assertEqual(
             runtime_closure._candidate_symbols(
                 best_candidate={"candidate_strategy_overrides": {}},
                 execution_context=context,
@@ -1225,41 +1239,49 @@ data:
                         "net_pnl": "1000",
                         "filled_count": 1,
                         "filled_notional": "300000",
+                        "adv_notional": "3000000",
                     },
                     "2026-03-21": {
                         "net_pnl": "800",
                         "filled_count": 1,
                         "filled_notional": "300000",
+                        "adv_notional": "3000000",
                     },
                     "2026-03-24": {
                         "net_pnl": "700",
                         "filled_count": 1,
                         "filled_notional": "300000",
+                        "adv_notional": "3000000",
                     },
                     "2026-03-25": {
                         "net_pnl": "900",
                         "filled_count": 1,
                         "filled_notional": "300000",
+                        "adv_notional": "3000000",
                     },
                     "2026-03-26": {
                         "net_pnl": "1100",
                         "filled_count": 1,
                         "filled_notional": "300000",
+                        "adv_notional": "3000000",
                     },
                     "2026-03-27": {
                         "net_pnl": "600",
                         "filled_count": 1,
                         "filled_notional": "300000",
+                        "adv_notional": "3000000",
                     },
                     "2026-04-08": {
                         "net_pnl": "500",
                         "filled_count": 1,
                         "filled_notional": "300000",
+                        "adv_notional": "3000000",
                     },
                     "2026-04-09": {
                         "net_pnl": "400",
                         "filled_count": 1,
                         "filled_notional": "300000",
+                        "adv_notional": "3000000",
                     },
                 },
             }
@@ -1330,6 +1352,19 @@ data:
             )
             self.assertEqual(stress_metrics["schema_version"], "stress-metrics-v1")
             self.assertGreaterEqual(stress_metrics["count"], 4)
+            double_oos = json.loads(
+                Path(summary.double_oos_report_path).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                double_oos["schema_version"],
+                "torghut.double-oos-walkforward-report.v1",
+            )
+            self.assertEqual(double_oos["independent_window_count"], 2)
+            self.assertEqual(len(double_oos["fold_metrics"]), 2)
+            self.assertEqual(
+                double_oos["source_markers"][0],
+                "double_oos_walkforward_arxiv_2602_10785_2026",
+            )
 
             stage_manifest = json.loads(
                 Path(summary.profitability_stage_manifest_path).read_text(
@@ -1348,8 +1383,56 @@ data:
                 "stress_metrics",
                 stage_manifest["stages"]["validation"]["artifacts"],
             )
+            self.assertIn(
+                "double_oos_walkforward",
+                stage_manifest["stages"]["validation"]["artifacts"],
+            )
 
     def test_market_impact_stress_report_passes_only_after_square_root_cost(
+        self,
+    ) -> None:
+        report = runtime_closure._market_impact_stress_report(
+            runner_run_id="run-impact",
+            best_candidate={
+                "candidate_id": "cand-impact",
+                "runtime_family": "breakout_continuation_consistent",
+                "runtime_strategy_name": "breakout-continuation-long-v1",
+            },
+            approval_report={
+                "objective_met": True,
+                "summary": {
+                    "trading_day_count": 2,
+                    "net_pnl": "2400",
+                    "daily_net": {
+                        "2026-05-18": "1200",
+                        "2026-05-19": "1200",
+                    },
+                    "daily_filled_notional": {
+                        "2026-05-18": "300000",
+                        "2026-05-19": "300000",
+                    },
+                    "daily_liquidity_notional": {
+                        "2026-05-18": "3000000",
+                        "2026-05-19": "3000000",
+                    },
+                },
+                "scorecard": {"net_pnl_per_day": "1200"},
+            },
+            program=_program(),
+        )
+
+        self.assertTrue(report["objective_met"])
+        self.assertEqual(report["model"], "square_root")
+        self.assertTrue(report["liquidity_evidence_present"])
+        self.assertEqual(
+            report["liquidity_input_source"], "recorded_liquidity_notional"
+        )
+        self.assertGreater(Decimal(report["impact_cost_bps"]), Decimal("1"))
+        self.assertGreaterEqual(
+            Decimal(report["post_impact_net_pnl_per_day"]), Decimal("500")
+        )
+
+    def test_market_impact_stress_report_fails_without_real_liquidity_evidence(
         self,
     ) -> None:
         report = runtime_closure._market_impact_stress_report(
@@ -1378,11 +1461,11 @@ data:
             program=_program(),
         )
 
-        self.assertTrue(report["objective_met"])
-        self.assertEqual(report["model"], "square_root")
-        self.assertGreater(Decimal(report["impact_cost_bps"]), Decimal("1"))
-        self.assertGreaterEqual(
-            Decimal(report["post_impact_net_pnl_per_day"]), Decimal("500")
+        self.assertFalse(report["objective_met"])
+        self.assertFalse(report["liquidity_evidence_present"])
+        self.assertEqual(report["liquidity_input_source"], "synthetic_proxy")
+        self.assertIn(
+            "market_impact_stress_liquidity_evidence_missing", report["reasons"]
         )
 
     def test_delay_adjusted_depth_stress_report_blocks_no_delay_fill_assumption(
@@ -1421,6 +1504,71 @@ data:
             "delay_adjusted_depth_fillable_notional_below_minimum",
             report["reasons"],
         )
+
+    def test_double_oos_walkforward_report_fails_closed_on_missing_or_weak_windows(
+        self,
+    ) -> None:
+        self.assertEqual(
+            runtime_closure._runtime_replay_net_pnl_per_day(
+                {"summary": {"net_pnl": "1000", "trading_day_count": 2}}
+            ),
+            Decimal("500"),
+        )
+        self.assertEqual(
+            runtime_closure._runtime_replay_net_pnl_per_day(
+                {"summary": {"net_pnl": "1000", "trading_day_count": 0}}
+            ),
+            Decimal("0"),
+        )
+        weak_window = runtime_closure._double_oos_window_row(
+            window_id="approval",
+            report={
+                "objective_met": False,
+                "summary": {
+                    "net_pnl": "100",
+                    "trading_day_count": 0,
+                    "decision_count": 1,
+                    "filled_count": 1,
+                },
+            },
+            target_net_pnl_per_day=Decimal("500"),
+        )
+        self.assertFalse(weak_window["passed"])
+        self.assertEqual(
+            weak_window["reasons"],
+            [
+                "approval_objective_not_met",
+                "approval_net_pnl_below_target",
+                "approval_trading_days_missing",
+            ],
+        )
+
+        report = runtime_closure._double_oos_walkforward_report(
+            runner_run_id="run-double-oos",
+            best_candidate={
+                "candidate_id": "cand-double-oos",
+                "runtime_family": "breakout_continuation_consistent",
+                "runtime_strategy_name": "breakout-continuation-long-v1",
+            },
+            parity_report={
+                "objective_met": False,
+                "summary": {"net_pnl": "400", "trading_day_count": 2},
+            },
+            approval_report=None,
+            market_impact_report=None,
+            delay_depth_report=None,
+            program=_program(),
+        )
+
+        self.assertFalse(report["objective_met"])
+        self.assertEqual(report["independent_window_count"], 1)
+        self.assertIn(
+            "double_oos_independent_window_count_below_minimum", report["reasons"]
+        )
+        self.assertIn("double_oos_pass_rate_below_required", report["reasons"])
+        self.assertIn("double_oos_net_pnl_below_target", report["reasons"])
+        self.assertIn("market_impact_stress_missing", report["reasons"])
+        self.assertIn("delay_adjusted_depth_stress_missing", report["reasons"])
 
     def test_write_runtime_closure_bundle_keeps_pending_parity_when_execution_skipped(
         self,

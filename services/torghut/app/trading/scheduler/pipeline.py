@@ -479,6 +479,8 @@ class TradingPipeline:
                     quality_report.duplicate_ratio,
                     failure_payload["sample_rows"],
                 )
+        else:
+            self.state.metrics.feature_batch_rows_total += len(quality_signals)
 
         self.state.metrics.no_signal_reason_streak = {}
         self.state.metrics.no_signal_streak = 0

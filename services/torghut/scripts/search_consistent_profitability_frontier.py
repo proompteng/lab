@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Callable, Iterable, Iterator, Mapping, cast
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, cast
 from unittest.mock import patch
 
 import yaml
@@ -54,10 +54,10 @@ from scripts.search_profitability_frontier import (
     _load_sweep_config,
     _resolve_recent_trading_days,
     apply_candidate_to_configmap,
-    resolve_sweep_window,
 )
 
 _LOCAL_ONLY_OVERRIDE_KEYS = frozenset({"normalization_regime"})
+_SECOND_OOS_WINDOW_ID = "second_oos"
 
 
 @dataclass(frozen=True)
@@ -108,6 +108,41 @@ class FullWindowConsistencyPolicy:
             "max_gross_exposure_pct_equity": str(self.max_gross_exposure_pct_equity),
             "min_cash": str(self.min_cash),
         }
+
+
+@dataclass(frozen=True)
+class FrontierReplayWindows:
+    train_days: tuple[date, ...]
+    holdout_days: tuple[date, ...]
+    second_oos_days: tuple[date, ...] = ()
+
+    @property
+    def train_start(self) -> date:
+        return self.train_days[0]
+
+    @property
+    def train_end(self) -> date:
+        return self.train_days[-1]
+
+    @property
+    def holdout_start(self) -> date:
+        return self.holdout_days[0]
+
+    @property
+    def holdout_end(self) -> date:
+        return self.holdout_days[-1]
+
+    @property
+    def second_oos_start(self) -> date | None:
+        return self.second_oos_days[0] if self.second_oos_days else None
+
+    @property
+    def second_oos_end(self) -> date | None:
+        return self.second_oos_days[-1] if self.second_oos_days else None
+
+    @property
+    def expected_days(self) -> tuple[date, ...]:
+        return self.train_days + self.holdout_days + self.second_oos_days
 
 
 def _optional_int(value: Any, *, default: int) -> int:
@@ -167,6 +202,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--progress-log-seconds", type=int, default=30)
     parser.add_argument("--train-days", type=int, default=6)
     parser.add_argument("--holdout-days", type=int, default=3)
+    parser.add_argument(
+        "--second-oos-days",
+        type=int,
+        default=0,
+        help=(
+            "Optional independent forward OOS replay days after holdout. "
+            "When set, candidates must pass this separate window before they can be ranked as clean."
+        ),
+    )
     parser.add_argument("--full-window-start-date", default="")
     parser.add_argument("--full-window-end-date", default="")
     parser.add_argument(
@@ -249,6 +293,31 @@ def _parse_args() -> argparse.Namespace:
         help="Capture aggregate train-window gate failure diagnostics in frontier candidates.",
     )
     return parser.parse_args()
+
+
+def _resolve_frontier_replay_windows(
+    recent_days: Iterable[date],
+    *,
+    train_days: int,
+    holdout_days: int,
+    second_oos_days: int,
+) -> FrontierReplayWindows:
+    ordered = sorted(dict.fromkeys(recent_days))
+    train_count = max(1, int(train_days))
+    holdout_count = max(1, int(holdout_days))
+    second_count = max(0, int(second_oos_days))
+    required = train_count + holdout_count + second_count
+    if len(ordered) < required:
+        raise ValueError(f"insufficient_recent_trading_days:{len(ordered)}<{required}")
+    selected = ordered[-required:]
+    train_slice = tuple(selected[:train_count])
+    holdout_slice = tuple(selected[train_count : train_count + holdout_count])
+    second_slice = tuple(selected[train_count + holdout_count :])
+    return FrontierReplayWindows(
+        train_days=train_slice,
+        holdout_days=holdout_slice,
+        second_oos_days=second_slice,
+    )
 
 
 def _rolling_lower_bound(daily_net: Mapping[str, Decimal], *, window: int) -> Decimal:
@@ -760,6 +829,25 @@ def _daily_filled_notional(payload: Mapping[str, Any]) -> dict[str, Decimal]:
     return filled_notional
 
 
+def _daily_liquidity_notional(payload: Mapping[str, Any]) -> dict[str, Decimal]:
+    daily_payload = cast(Mapping[str, Any], payload.get("daily") or {})
+    liquidity_notional: dict[str, Decimal] = {}
+    for day, value in daily_payload.items():
+        if not isinstance(value, Mapping):
+            continue
+        value_mapping = cast(Mapping[str, Any], value)
+        raw_value = (
+            value_mapping.get("adv_notional")
+            or value_mapping.get("daily_adv_notional")
+            or value_mapping.get("depth_notional")
+            or value_mapping.get("fillable_depth_notional")
+        )
+        if raw_value is None:
+            continue
+        liquidity_notional[str(day)] = Decimal(str(raw_value))
+    return liquidity_notional
+
+
 def _daily_decimal_metric(payload: Mapping[str, Any], key: str) -> dict[str, Decimal]:
     daily_payload = cast(Mapping[str, Any], payload.get("daily") or {})
     values: dict[str, Decimal] = {}
@@ -820,6 +908,7 @@ def _consistency_penalty(
 ) -> tuple[Decimal, dict[str, Any]]:
     summary = summarize_replay_profitability(full_window_payload)
     daily_filled_notional = _daily_filled_notional(full_window_payload)
+    daily_liquidity_notional = _daily_liquidity_notional(full_window_payload)
     daily_gross_exposure_pct_equity = _daily_decimal_metric(
         full_window_payload,
         "max_gross_exposure_pct_equity",
@@ -838,8 +927,17 @@ def _consistency_penalty(
         else Decimal("0")
     )
     total_filled_notional = sum(daily_filled_notional.values(), Decimal("0"))
+    total_liquidity_notional = sum(
+        daily_liquidity_notional.values(),
+        Decimal("0"),
+    )
     avg_filled_notional_per_day = (
         total_filled_notional / Decimal(summary.trading_day_count)
+        if summary.trading_day_count > 0
+        else Decimal("0")
+    )
+    avg_liquidity_notional_per_day = (
+        total_liquidity_notional / Decimal(summary.trading_day_count)
         if summary.trading_day_count > 0
         else Decimal("0")
     )
@@ -964,6 +1062,14 @@ def _consistency_penalty(
             "avg_filled_notional_per_active_day": str(
                 avg_filled_notional_per_active_day
             ),
+            "market_impact_liquidity_evidence_present": bool(daily_liquidity_notional),
+            "market_impact_liquidity_day_count": len(daily_liquidity_notional),
+            "market_impact_liquidity_missing_day_count": max(
+                0,
+                summary.trading_day_count - len(daily_liquidity_notional),
+            ),
+            "total_liquidity_notional": str(total_liquidity_notional),
+            "avg_liquidity_notional_per_day": str(avg_liquidity_notional_per_day),
             "best_day_share_of_total_pnl": str(best_day_share_of_total_pnl),
             "max_gross_exposure_pct_equity": str(max_gross_exposure_pct_equity),
             "max_gross_exposure_pct_equity_required": str(
@@ -976,6 +1082,9 @@ def _consistency_penalty(
             "daily_filled_notional": {
                 day: str(value) for day, value in daily_filled_notional.items()
             },
+            "daily_liquidity_notional": {
+                day: str(value) for day, value in daily_liquidity_notional.items()
+            },
             "daily_max_gross_exposure_pct_equity": {
                 day: str(value)
                 for day, value in daily_gross_exposure_pct_equity.items()
@@ -986,6 +1095,131 @@ def _consistency_penalty(
             "daily_negative_cash_observation_count": daily_negative_cash_observations,
         },
     )
+
+
+def _second_oos_summary(
+    *,
+    second_oos_payload: Mapping[str, Any],
+    policy: FullWindowConsistencyPolicy,
+) -> tuple[Decimal, dict[str, Any]]:
+    summary = summarize_replay_profitability(second_oos_payload)
+    daily_filled_notional = _daily_filled_notional(second_oos_payload)
+    daily_liquidity_notional = _daily_liquidity_notional(second_oos_payload)
+    active_ratio = (
+        Decimal(summary.active_days) / Decimal(summary.trading_day_count)
+        if summary.trading_day_count > 0
+        else Decimal("0")
+    )
+    positive_days = sum(1 for value in summary.daily_net.values() if value > 0)
+    positive_ratio = (
+        Decimal(positive_days) / Decimal(summary.trading_day_count)
+        if summary.trading_day_count > 0
+        else Decimal("0")
+    )
+    drawdown = _max_drawdown_from_daily_net(summary.daily_net)
+    total_filled_notional = sum(daily_filled_notional.values(), Decimal("0"))
+    total_liquidity_notional = sum(
+        daily_liquidity_notional.values(),
+        Decimal("0"),
+    )
+    avg_filled_notional_per_day = (
+        total_filled_notional / Decimal(summary.trading_day_count)
+        if summary.trading_day_count > 0
+        else Decimal("0")
+    )
+    avg_liquidity_notional_per_day = (
+        total_liquidity_notional / Decimal(summary.trading_day_count)
+        if summary.trading_day_count > 0
+        else Decimal("0")
+    )
+    reasons: list[str] = []
+    penalty = Decimal("0")
+    if summary.trading_day_count <= 0:
+        reasons.append(f"{_SECOND_OOS_WINDOW_ID}_trading_days_missing")
+    if summary.decision_count <= 0:
+        reasons.append(f"{_SECOND_OOS_WINDOW_ID}_no_decisions")
+    if summary.filled_count <= 0:
+        reasons.append(f"{_SECOND_OOS_WINDOW_ID}_no_fills")
+    if summary.net_per_day < policy.target_net_per_day:
+        reasons.append(f"{_SECOND_OOS_WINDOW_ID}_net_per_day_below_target")
+        penalty += policy.target_net_per_day - summary.net_per_day
+    if active_ratio < policy.min_active_ratio:
+        reasons.append(f"{_SECOND_OOS_WINDOW_ID}_active_ratio_below_min")
+        penalty += (policy.min_active_ratio - active_ratio) * Decimal("2000")
+    if drawdown > policy.max_drawdown:
+        reasons.append(f"{_SECOND_OOS_WINDOW_ID}_max_drawdown_above_max")
+        penalty += drawdown - policy.max_drawdown
+    if summary.worst_day_net < -policy.max_worst_day_loss:
+        reasons.append(f"{_SECOND_OOS_WINDOW_ID}_worst_day_loss_above_max")
+        penalty += abs(summary.worst_day_net + policy.max_worst_day_loss)
+    if avg_filled_notional_per_day < policy.min_avg_filled_notional_per_day:
+        reasons.append(f"{_SECOND_OOS_WINDOW_ID}_filled_notional_below_min")
+        penalty += (
+            policy.min_avg_filled_notional_per_day - avg_filled_notional_per_day
+        ) / Decimal("1000")
+
+    return (
+        penalty,
+        {
+            "schema_version": "torghut.frontier-second-oos-window.v1",
+            "window_id": _SECOND_OOS_WINDOW_ID,
+            "start_date": summary.start_date,
+            "end_date": summary.end_date,
+            "trading_day_count": summary.trading_day_count,
+            "net_pnl": str(summary.net_pnl),
+            "net_per_day": str(summary.net_per_day),
+            "target_net_per_day": str(policy.target_net_per_day),
+            "active_days": summary.active_days,
+            "active_ratio": str(active_ratio),
+            "positive_days": positive_days,
+            "positive_ratio": str(positive_ratio),
+            "decision_count": summary.decision_count,
+            "filled_count": summary.filled_count,
+            "worst_day_net": str(summary.worst_day_net),
+            "max_drawdown": str(drawdown),
+            "total_filled_notional": str(total_filled_notional),
+            "avg_filled_notional_per_day": str(avg_filled_notional_per_day),
+            "market_impact_liquidity_evidence_present": bool(daily_liquidity_notional),
+            "market_impact_liquidity_day_count": len(daily_liquidity_notional),
+            "market_impact_liquidity_missing_day_count": max(
+                0,
+                summary.trading_day_count - len(daily_liquidity_notional),
+            ),
+            "total_liquidity_notional": str(total_liquidity_notional),
+            "avg_liquidity_notional_per_day": str(avg_liquidity_notional_per_day),
+            "daily_net": {day: str(value) for day, value in summary.daily_net.items()},
+            "daily_filled_notional": {
+                day: str(value) for day, value in daily_filled_notional.items()
+            },
+            "daily_liquidity_notional": {
+                day: str(value) for day, value in daily_liquidity_notional.items()
+            },
+            "passed": not reasons,
+            "reasons": reasons,
+        },
+    )
+
+
+def _holdout_oos_passed(
+    *,
+    holdout_payload: Mapping[str, Any],
+    policy: ProfitabilityConstraintPolicy,
+) -> bool:
+    summary = summarize_replay_profitability(holdout_payload)
+    if policy.require_holdout_decisions and summary.decision_count <= 0:
+        return False
+    if summary.active_days < policy.min_active_holdout_days:
+        return False
+    if summary.net_per_day < policy.holdout_target_net_per_day:
+        return False
+    if summary.worst_day_net < -policy.max_worst_holdout_day_loss:
+        return False
+    if (
+        summary.profit_factor is None
+        or summary.profit_factor < policy.min_profit_factor
+    ):
+        return False
+    return True
 
 
 def _empty_replay_payload(*, start_date: date, end_date: date) -> dict[str, Any]:
@@ -1334,7 +1568,8 @@ def _rank_scored_candidates(scored: list[dict[str, Any]]) -> list[dict[str, Any]
     ranked_items = [dict(item) for item in scored]
     for item in ranked_items:
         ranked = ranked_lookup[str(item["candidate_id"])]
-        item["objective_scorecard"] = ranked.to_payload()
+        original_scorecard = dict(cast(Mapping[str, Any], item["objective_scorecard"]))
+        item["objective_scorecard"] = {**original_scorecard, **ranked.to_payload()}
         item["ranking"] = {
             "method": "pareto_frontier_v2",
             "pareto_tier": ranked.pareto_tier,
@@ -1380,6 +1615,7 @@ def _build_frontier_payload(
         "window": {
             "train_days": [item.isoformat() for item in window.train_days],
             "holdout_days": [item.isoformat() for item in window.holdout_days],
+            "second_oos_days": [item.isoformat() for item in window.second_oos_days],
             "full_window_start_date": full_window_start.isoformat(),
             "full_window_end_date": full_window_end.isoformat(),
         },
@@ -1395,6 +1631,12 @@ def _build_frontier_payload(
                 "min_profit_factor": str(holdout_policy.min_profit_factor),
                 "require_training_decisions": holdout_policy.require_training_decisions,
                 "require_holdout_decisions": holdout_policy.require_holdout_decisions,
+            },
+            "second_oos": {
+                "enabled": bool(window.second_oos_days),
+                "window_id": _SECOND_OOS_WINDOW_ID,
+                "min_independent_window_count": 2 if window.second_oos_days else 1,
+                "target_net_per_day": str(consistency_policy.target_net_per_day),
             },
             "consistency": consistency_policy.to_payload(),
             "hard_vetoes": objective_veto_policy.to_payload(),
@@ -1438,22 +1680,30 @@ def _resolved_clickhouse_password(args: argparse.Namespace) -> str | None:
 def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str, Any]:
     clickhouse_password = _resolved_clickhouse_password(args)
     sweep_config = _load_sweep_config(args.sweep_config.resolve())
+    second_oos_day_count = max(0, int(getattr(args, "second_oos_days", 0) or 0))
     recent_days = _resolve_recent_trading_days(
         clickhouse_http_url=str(args.clickhouse_http_url),
         clickhouse_username=(str(args.clickhouse_username).strip() or None),
         clickhouse_password=clickhouse_password,
-        limit=max(1, int(args.train_days)) + max(1, int(args.holdout_days)),
+        limit=(
+            max(1, int(args.train_days))
+            + max(1, int(args.holdout_days))
+            + second_oos_day_count
+        ),
     )
-    window = resolve_sweep_window(
+    window = _resolve_frontier_replay_windows(
         recent_days,
         train_days=max(1, int(args.train_days)),
         holdout_days=max(1, int(args.holdout_days)),
+        second_oos_days=second_oos_day_count,
     )
     full_window_start, full_window_end = _resolve_full_window(
         args=args,
         train_days=window.train_days,
         holdout_days=window.holdout_days,
     )
+    if window.second_oos_days and not str(args.full_window_end_date or "").strip():
+        full_window_end = window.second_oos_end or full_window_end
 
     base_configmap = yaml.safe_load(
         args.strategy_configmap.resolve().read_text(encoding="utf-8")
@@ -1595,7 +1845,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
         start_day=full_window_start,
         end_day=full_window_end,
         expected_last_trading_day=expected_last_trading_day,
-        expected_trading_days=window.train_days + window.holdout_days,
+        expected_trading_days=window.expected_days,
         allow_stale_tape=bool(args.allow_stale_tape),
     )
     ensure_fresh_snapshot(
@@ -1743,9 +1993,19 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                 holdout_replay_skipped = bool(train_screen_failures)
                 full_window_replay_skipped = bool(train_screen_failures)
                 if train_screen_failures:
+                    second_oos_start = window.second_oos_start
+                    second_oos_end = window.second_oos_end
                     holdout_payload = _empty_replay_payload(
                         start_date=window.holdout_start,
                         end_date=window.holdout_end,
+                    )
+                    second_oos_payload = (
+                        _empty_replay_payload(
+                            start_date=second_oos_start,
+                            end_date=second_oos_end,
+                        )
+                        if second_oos_start is not None and second_oos_end is not None
+                        else None
                     )
                     full_window_payload = train_payload
                 else:
@@ -1767,6 +2027,30 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                             ),
                         )
                     )
+                    second_oos_payload = None
+                    if window.second_oos_days:
+                        second_oos_start = window.second_oos_start
+                        second_oos_end = window.second_oos_end
+                        if second_oos_start is None or second_oos_end is None:
+                            raise ValueError("second_oos_window_missing")
+                        second_oos_payload = run_replay(
+                            _build_replay_config(
+                                strategy_configmap_path=candidate_configmap_path,
+                                clickhouse_http_url=str(args.clickhouse_http_url),
+                                clickhouse_username=(
+                                    str(args.clickhouse_username).strip() or None
+                                ),
+                                clickhouse_password=clickhouse_password,
+                                start_date=second_oos_start,
+                                end_date=second_oos_end,
+                                start_equity=Decimal(str(args.start_equity)),
+                                chunk_minutes=max(1, int(args.chunk_minutes)),
+                                symbols=candidate_symbols,
+                                progress_log_interval_seconds=max(
+                                    1, int(args.progress_log_seconds)
+                                ),
+                            )
+                        )
                     full_window_payload = run_replay(
                         _build_replay_config(
                             strategy_configmap_path=candidate_configmap_path,
@@ -1808,14 +2092,26 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     full_window_payload=full_window_payload,
                     policy=consistency_policy,
                 )
+                second_oos_penalty = Decimal("0")
+                second_oos_summary: dict[str, Any] | None = None
+                if second_oos_payload is not None:
+                    second_oos_penalty, second_oos_summary = _second_oos_summary(
+                        second_oos_payload=second_oos_payload,
+                        policy=consistency_policy,
+                    )
                 adjusted_score = (
                     base_result.score
                     + Decimal(full_window_summary["net_per_day"])
                     - consistency_penalty
+                    - second_oos_penalty
                 )
                 candidate_payload = base_result.to_payload()
                 candidate_payload["full_window"] = full_window_summary
+                if second_oos_summary is not None:
+                    candidate_payload["second_oos"] = second_oos_summary
                 candidate_payload["consistency_penalty"] = str(consistency_penalty)
+                if second_oos_summary is not None:
+                    candidate_payload["second_oos_penalty"] = str(second_oos_penalty)
                 candidate_payload["adjusted_score"] = str(adjusted_score)
                 candidate_payload["search_iteration"] = prune_iteration
                 candidate_payload["family_template_id"] = family_template.family_id
@@ -1833,6 +2129,9 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     "max_train_worst_day_loss": str(max_train_screen_worst_day_loss),
                     "holdout_replay_skipped": holdout_replay_skipped,
                     "full_window_replay_skipped": full_window_replay_skipped,
+                    "second_oos_replay_skipped": bool(
+                        train_screen_failures and window.second_oos_days
+                    ),
                 }
                 if pruned_symbol is not None:
                     candidate_payload["pruned_symbol"] = pruned_symbol
@@ -1924,6 +2223,13 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     )
                 )
                 hard_vetoes.extend(train_screen_failures)
+                if second_oos_summary is not None:
+                    hard_vetoes.extend(
+                        str(reason)
+                        for reason in cast(
+                            Sequence[Any], second_oos_summary.get("reasons") or ()
+                        )
+                    )
                 if (
                     consistency_policy.min_daily_net_pnl > 0
                     and int(full_window_summary.get("daily_net_below_min_count") or 0)
@@ -1942,9 +2248,62 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     hard_vetoes.append("entry_family_contribution_above_max")
                 candidate_payload["decomposition"] = decomposition.to_payload()
                 candidate_payload["normalization_regime"] = normalization_regime
-                candidate_payload["objective_scorecard"] = (
-                    objective_scorecard.to_payload()
+                objective_scorecard_payload = objective_scorecard.to_payload()
+                objective_scorecard_payload.update(
+                    {
+                        "market_impact_liquidity_evidence_present": bool(
+                            full_window_summary.get(
+                                "market_impact_liquidity_evidence_present"
+                            )
+                        ),
+                        "market_impact_liquidity_day_count": int(
+                            full_window_summary.get("market_impact_liquidity_day_count")
+                            or 0
+                        ),
+                        "market_impact_liquidity_missing_day_count": int(
+                            full_window_summary.get(
+                                "market_impact_liquidity_missing_day_count"
+                            )
+                            or 0
+                        ),
+                    }
                 )
+                if second_oos_summary is not None:
+                    holdout_oos_passed = _holdout_oos_passed(
+                        holdout_payload=holdout_payload,
+                        policy=holdout_policy,
+                    )
+                    second_oos_passed = bool(second_oos_summary.get("passed"))
+                    oos_pass_count = int(holdout_oos_passed) + int(second_oos_passed)
+                    objective_scorecard_payload.update(
+                        {
+                            "double_oos_passed": oos_pass_count == 2,
+                            "double_oos_independent_window_count": 2,
+                            "double_oos_pass_rate": str(
+                                Decimal(oos_pass_count) / Decimal("2")
+                            ),
+                            "double_oos_net_pnl_per_day": str(
+                                second_oos_summary.get("net_per_day", "0")
+                            ),
+                            "holdout_oos_passed": holdout_oos_passed,
+                            "second_oos_net_pnl_per_day": str(
+                                second_oos_summary.get("net_per_day", "0")
+                            ),
+                            "second_oos_decision_count": int(
+                                second_oos_summary.get("decision_count") or 0
+                            ),
+                            "second_oos_filled_count": int(
+                                second_oos_summary.get("filled_count") or 0
+                            ),
+                            "second_oos_reasons": list(
+                                cast(
+                                    Sequence[Any],
+                                    second_oos_summary.get("reasons") or (),
+                                )
+                            ),
+                        }
+                    )
+                candidate_payload["objective_scorecard"] = objective_scorecard_payload
                 candidate_payload["hard_vetoes"] = sorted(dict.fromkeys(hard_vetoes))
                 if collect_train_gate_diagnostics:
                     candidate_payload["train_gate_diagnostics"] = (

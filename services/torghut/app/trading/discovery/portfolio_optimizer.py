@@ -391,6 +391,16 @@ def _market_impact_stress_cost_bps(bundle: CandidateEvidenceBundle) -> Decimal:
     )
 
 
+def _market_impact_liquidity_evidence_present(
+    bundle: CandidateEvidenceBundle,
+) -> bool:
+    scorecard = _scorecard(bundle)
+    return _boolish(
+        scorecard.get("market_impact_liquidity_evidence_present")
+        or scorecard.get("liquidity_evidence_present")
+    )
+
+
 def _delay_adjusted_depth_stress_passed(bundle: CandidateEvidenceBundle) -> bool:
     scorecard = _scorecard(bundle)
     return _boolish(
@@ -1003,6 +1013,10 @@ def _portfolio_scorecard(
                 (_market_impact_stress_cost_bps(bundle) for bundle in selected),
                 default=Decimal("0"),
             )
+        ),
+        "market_impact_liquidity_evidence_present": bool(selected)
+        and all(
+            _market_impact_liquidity_evidence_present(bundle) for bundle in selected
         ),
         "market_impact_stress_net_pnl_per_day": str(
             market_impact_stress_net_pnl_per_day

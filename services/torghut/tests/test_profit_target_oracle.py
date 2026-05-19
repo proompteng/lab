@@ -20,6 +20,7 @@ def _executable_scorecard_fields() -> dict[str, object]:
         "market_impact_stress_artifact_ref": "/tmp/market-impact-stress.json",
         "market_impact_stress_model": "square_root",
         "market_impact_stress_cost_bps": "6",
+        "market_impact_liquidity_evidence_present": True,
         "market_impact_stress_net_pnl_per_day": "535",
         "delay_adjusted_depth_stress_passed": True,
         "delay_adjusted_depth_stress_artifact_ref": "/tmp/delay-adjusted-depth-stress.json",
@@ -72,7 +73,7 @@ class TestProfitTargetOracle(TestCase):
     ) -> None:
         scorecard = _passing_scorecard()
         for key in tuple(scorecard):
-            if key.startswith("market_impact_stress"):
+            if key.startswith("market_impact"):
                 del scorecard[key]
 
         result = evaluate_profit_target_oracle(
@@ -88,6 +89,9 @@ class TestProfitTargetOracle(TestCase):
         self.assertIn("market_impact_stress_model_failed", result["blockers"])
         self.assertIn("market_impact_stress_cost_bps_failed", result["blockers"])
         self.assertIn("market_impact_stress_net_pnl_per_day_failed", result["blockers"])
+        self.assertIn(
+            "market_impact_liquidity_evidence_present_failed", result["blockers"]
+        )
 
     def test_profit_target_oracle_rejects_failed_market_impact_stress(
         self,
@@ -110,6 +114,24 @@ class TestProfitTargetOracle(TestCase):
         self.assertIn("market_impact_stress_model_failed", result["blockers"])
         self.assertIn("market_impact_stress_cost_bps_failed", result["blockers"])
         self.assertIn("market_impact_stress_net_pnl_per_day_failed", result["blockers"])
+
+    def test_profit_target_oracle_rejects_market_impact_proxy_liquidity(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "market_impact_liquidity_evidence_present": False,
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn(
+            "market_impact_liquidity_evidence_present_failed", result["blockers"]
+        )
 
     def test_profit_target_oracle_rejects_missing_delay_adjusted_depth_stress(
         self,

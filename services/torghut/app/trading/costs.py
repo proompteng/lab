@@ -46,6 +46,7 @@ class CostModelConfig:
     min_commission: Decimal = Decimal("0")
     max_participation_rate: Decimal = Decimal("0.1")
     impact_bps_at_full_participation: Decimal = Decimal("50")
+    impact_participation_exponent: Decimal = Decimal("0.5")
 
 
 def _string_list() -> list[str]:
@@ -73,7 +74,9 @@ class TransactionCostModel:
     def __init__(self, config: Optional[CostModelConfig] = None) -> None:
         self.config = config or CostModelConfig()
 
-    def estimate_costs(self, order: OrderIntent, market: CostModelInputs) -> CostEstimate:
+    def estimate_costs(
+        self, order: OrderIntent, market: CostModelInputs
+    ) -> CostEstimate:
         warnings: list[str] = []
         price = _ensure_decimal(market.price)
         qty = _ensure_decimal(order.qty)
@@ -87,8 +90,14 @@ class TransactionCostModel:
             spread_cost_bps = (market.spread / price) * BPS_SCALE / Decimal("2")
 
         volatility_cost_bps = Decimal("0")
-        if market.volatility is not None and market.volatility > 0 and market.execution_seconds > 0:
-            execution_minutes = Decimal(str(market.execution_seconds)) / SECONDS_PER_MINUTE
+        if (
+            market.volatility is not None
+            and market.volatility > 0
+            and market.execution_seconds > 0
+        ):
+            execution_minutes = (
+                Decimal(str(market.execution_seconds)) / SECONDS_PER_MINUTE
+            )
             volatility_cost_bps = market.volatility * execution_minutes * BPS_SCALE
 
         participation_rate: Optional[Decimal] = None
@@ -96,7 +105,13 @@ class TransactionCostModel:
         capacity_ok = True
         if market.adv is not None and market.adv > 0:
             participation_rate = notional / market.adv
-            impact_cost_bps = self.config.impact_bps_at_full_participation * participation_rate
+            impact_cost_bps = (
+                self.config.impact_bps_at_full_participation
+                * participation_power(
+                    participation_rate,
+                    self.config.impact_participation_exponent,
+                )
+            )
             if participation_rate > self.config.max_participation_rate:
                 capacity_ok = False
                 warnings.append("participation_exceeds_max")
@@ -106,8 +121,18 @@ class TransactionCostModel:
         commission_cost = self._commission_cost(notional=notional, qty=qty)
         commission_cost_bps = _bps_from_cost(commission_cost, notional)
 
-        total_cost_bps = spread_cost_bps + volatility_cost_bps + impact_cost_bps + commission_cost_bps
-        total_cost = _cost_from_bps(notional, spread_cost_bps + volatility_cost_bps + impact_cost_bps) + commission_cost
+        total_cost_bps = (
+            spread_cost_bps
+            + volatility_cost_bps
+            + impact_cost_bps
+            + commission_cost_bps
+        )
+        total_cost = (
+            _cost_from_bps(
+                notional, spread_cost_bps + volatility_cost_bps + impact_cost_bps
+            )
+            + commission_cost
+        )
 
         return CostEstimate(
             notional=notional,
@@ -144,6 +169,18 @@ def _bps_from_cost(cost: Decimal, notional: Decimal) -> Decimal:
     return (cost / notional) * BPS_SCALE
 
 
+def participation_power(participation_rate: Decimal, exponent: Decimal) -> Decimal:
+    if participation_rate <= 0:
+        return Decimal("0")
+    if exponent == Decimal("1"):
+        return participation_rate
+    if exponent == Decimal("0.5"):
+        return participation_rate.sqrt()
+    if exponent <= 0:
+        return Decimal("1")
+    return Decimal(str(float(participation_rate) ** float(exponent)))
+
+
 def _ensure_decimal(value: Optional[Decimal | str | float]) -> Optional[Decimal]:
     if value is None:
         return None
@@ -177,4 +214,5 @@ __all__ = [
     "CostModelConfig",
     "CostEstimate",
     "TransactionCostModel",
+    "participation_power",
 ]
