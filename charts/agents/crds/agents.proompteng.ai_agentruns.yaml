@@ -600,6 +600,13 @@ spec:
                 type: string
               reason:
                 type: string
+              runner:
+                additionalProperties:
+                  x-kubernetes-preserve-unknown-fields: true
+                description: Runner carries the normalized terminal status emitted
+                  by the runner harness.
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
               runtimeRef:
                 additionalProperties:
                   x-kubernetes-preserve-unknown-fields: true

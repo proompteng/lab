@@ -793,6 +793,8 @@ export const submitJobRun = async (
         envFrom: envFrom.length > 0 ? envFrom : undefined,
         resources: buildJobResources(workload),
         volumeMounts: [...volumeMounts, ...configVolumeMounts],
+        terminationMessagePath: '/workspace/.agent/status.json',
+        terminationMessagePolicy: 'File',
       },
     ],
     volumes: volumes.map((volume) => ({ name: volume.name, ...volume.spec })),

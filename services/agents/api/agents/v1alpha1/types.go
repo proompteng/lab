@@ -205,6 +205,9 @@ type AgentRunStatus struct {
 	Message string `json:"message,omitempty"`
 	// +kubebuilder:pruning:PreserveUnknownFields
 	RuntimeRef map[string]apiextensionsv1.JSON `json:"runtimeRef,omitempty"`
+	// Runner carries the normalized terminal status emitted by the runner harness.
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Runner     map[string]apiextensionsv1.JSON `json:"runner,omitempty"`
 	Workflow   *WorkflowStatus                 `json:"workflow,omitempty"`
 	StartedAt  *metav1.Time                    `json:"startedAt,omitempty"`
 	FinishedAt *metav1.Time                    `json:"finishedAt,omitempty"`

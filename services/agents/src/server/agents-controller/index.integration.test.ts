@@ -4210,6 +4210,131 @@ describe('agents controller reconcileAgentRun', () => {
     expect(status.message).toBe('job exceeded active deadline')
   })
 
+  it('propagates runner terminal status and output artifacts from direct job pods', async () => {
+    const runnerMessage = JSON.stringify({
+      status: 'succeeded',
+      adapter: 'codex-app-server',
+      provider: 'codex',
+      exitCode: 0,
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      artifacts: {
+        outputArtifacts: [{ name: 'summary', key: 'runs/run-1/summary.json' }],
+      },
+    })
+    const kube = buildKube({
+      get: vi.fn(async (resource: string, name: string) => {
+        if (resource === 'job' && name === 'job-1') {
+          return {
+            metadata: { name: 'job-1', namespace: 'agents' },
+            status: { succeeded: 1, startTime: '2026-05-19T12:00:00Z', completionTime: '2026-05-19T12:01:00Z' },
+          }
+        }
+        return null
+      }),
+      list: vi.fn(async (resource: string, _namespace: string, labelSelector?: string) => {
+        if (resource === 'pods' && labelSelector?.startsWith('job-name=')) {
+          return {
+            items: [
+              {
+                metadata: { name: 'job-1-pod' },
+                status: {
+                  startTime: '2026-05-19T12:00:00Z',
+                  containerStatuses: [{ name: 'agent-runner', state: { terminated: { message: runnerMessage } } }],
+                },
+              },
+            ],
+          }
+        }
+        return { items: [] }
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      status: {
+        phase: 'Running',
+        runtimeRef: { type: 'job', name: 'job-1', namespace: 'agents' },
+        artifacts: [{ name: 'existing', path: '/workspace/existing.json' }],
+      },
+    })
+
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+    const status = getLastStatus(kube)
+    expect(status.phase).toBe('Succeeded')
+    expect(status.runner).toMatchObject({
+      status: 'succeeded',
+      adapter: 'codex-app-server',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+    })
+    expect(status.artifacts).toEqual([
+      { name: 'existing', path: '/workspace/existing.json' },
+      { name: 'summary', key: 'runs/run-1/summary.json' },
+    ])
+  })
+
+  it('marks direct jobs cancelled when the runner terminal status is cancelled', async () => {
+    const runnerMessage = JSON.stringify({
+      status: 'cancelled',
+      adapter: 'codex-app-server',
+      exitCode: 130,
+      error: 'received SIGTERM',
+    })
+    const kube = buildKube({
+      get: vi.fn(async (resource: string, name: string) => {
+        if (resource === 'job' && name === 'job-1') {
+          return {
+            metadata: { name: 'job-1', namespace: 'agents' },
+            status: {
+              failed: 1,
+              conditions: [
+                {
+                  type: 'Failed',
+                  status: 'True',
+                  reason: 'BackoffLimitExceeded',
+                  message: 'Job has reached the specified backoff limit',
+                },
+              ],
+            },
+          }
+        }
+        return null
+      }),
+      list: vi.fn(async (resource: string, _namespace: string, labelSelector?: string) => {
+        if (resource === 'pods' && labelSelector?.startsWith('job-name=')) {
+          return {
+            items: [
+              {
+                metadata: { name: 'job-1-pod' },
+                status: {
+                  containerStatuses: [{ name: 'agent-runner', state: { terminated: { message: runnerMessage } } }],
+                },
+              },
+            ],
+          }
+        }
+        return { items: [] }
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      status: {
+        phase: 'Running',
+        runtimeRef: { type: 'job', name: 'job-1', namespace: 'agents' },
+      },
+    })
+
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+    const status = getLastStatus(kube)
+    expect(status.phase).toBe('Cancelled')
+    expect(status.reason).toBe('RunnerCancelled')
+    expect(status.message).toBe('received SIGTERM')
+    expect(findCondition(status, 'Cancelled')?.reason).toBe('RunnerCancelled')
+    expect(status.runner).toMatchObject({ status: 'cancelled', adapter: 'codex-app-server', exitCode: 130 })
+  })
+
   it('classifies direct job pod usage-limit logs as provider capacity exhaustion', async () => {
     const kube = buildKube({
       get: vi.fn(async (resource: string, name: string) => {

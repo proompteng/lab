@@ -411,6 +411,13 @@ func (in *AgentRunStatus) DeepCopyInto(out *AgentRunStatus) {
 			(*out)[key] = *val.DeepCopy()
 		}
 	}
+	if in.Runner != nil {
+		in, out := &in.Runner, &out.Runner
+		*out = make(map[string]v1.JSON, len(*in))
+		for key, val := range *in {
+			(*out)[key] = *val.DeepCopy()
+		}
+	}
 	if in.Workflow != nil {
 		in, out := &in.Workflow, &out.Workflow
 		*out = new(WorkflowStatus)

@@ -489,6 +489,12 @@ const setStatus = async (
       nextStatusBase = { ...nextStatusBase, artifacts: existingArtifacts }
     }
   }
+  if (kind === 'AgentRun' && status.runner === undefined) {
+    const existingRunner = readNested(resource, ['status', 'runner'])
+    if (existingRunner) {
+      nextStatusBase = { ...nextStatusBase, runner: existingRunner }
+    }
+  }
 
   let baseConditions = normalizeConditions(nextStatusBase.conditions)
   if (kind === 'AgentRun') {

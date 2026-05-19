@@ -131,6 +131,7 @@ describe('agents controller job-runtime module', () => {
     )?.containers
     const agentRunnerEnv = (((env as Record<string, unknown>[] | undefined)?.[0] as Record<string, unknown>)?.env ??
       []) as Record<string, unknown>[]
+    const agentRunnerContainer = (env as Record<string, unknown>[] | undefined)?.[0] as Record<string, unknown>
 
     expect(runnerSpec).toMatchObject({
       schemaVersion: 'agents.proompteng.ai/runner/v1',
@@ -164,6 +165,8 @@ describe('agents controller job-runtime module', () => {
         },
       },
     })
+    expect(agentRunnerContainer.terminationMessagePath).toBe('/workspace/.agent/status.json')
+    expect(agentRunnerContainer.terminationMessagePolicy).toBe('File')
   })
 
   it('returns an existing deterministic job for the same AgentRun', async () => {
