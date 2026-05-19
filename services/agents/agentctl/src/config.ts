@@ -97,7 +97,6 @@ const resolveExplicitAddress = (flags: GlobalFlags, config: Config) =>
   process.env.AGENTCTL_SERVER ||
   process.env.AGENTCTL_ADDRESS ||
   process.env.AGENTS_GRPC_ADDRESS ||
-  process.env.JANGAR_GRPC_ADDRESS ||
   config.address ||
   ''
 
@@ -106,12 +105,7 @@ export const resolveConfig = (flags: GlobalFlags, config: Config): ResolvedConfi
   const mode = resolveMode(flags, config)
   const explicitAddress = resolveExplicitAddress(flags, config)
   const address = explicitAddress || DEFAULT_ADDRESS
-  const token =
-    flags.token ||
-    process.env.AGENTCTL_TOKEN ||
-    process.env.AGENTS_GRPC_TOKEN ||
-    process.env.JANGAR_GRPC_TOKEN ||
-    config.token
+  const token = flags.token || process.env.AGENTCTL_TOKEN || process.env.AGENTS_GRPC_TOKEN || config.token
   const tls = flags.tls !== undefined ? flags.tls : (parseBoolean(process.env.AGENTCTL_TLS) ?? config.tls ?? false)
   const kubeconfig = flags.kubeconfig || process.env.AGENTCTL_KUBECONFIG || config.kubeconfig
   const context = flags.context || process.env.AGENTCTL_CONTEXT || config.context
