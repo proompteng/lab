@@ -5,11 +5,12 @@ import { configureAgentsV1Runtime, resetAgentsV1RuntimeForTests } from '../../se
 
 import { getAgentRunsHandler } from './agent-runs'
 
-const createStore = (runs: unknown[] = []): AgentRunsApiStore =>
+const createStore = (runs: unknown[] = [], overrides: Partial<AgentRunsApiStore> = {}): AgentRunsApiStore =>
   ({
     ready: Promise.resolve(),
     close: vi.fn(async () => {}),
     listAgentRuns: vi.fn(async () => runs),
+    ...overrides,
   }) as unknown as AgentRunsApiStore
 
 describe('Agents v1 AgentRun route ownership', () => {
@@ -57,6 +58,45 @@ describe('Agents v1 AgentRun route ownership', () => {
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual({ ok: true, runs: [{ id: 'run-1', status: 'Running' }] })
     expect(store.listAgentRuns).toHaveBeenCalledWith({ agentName: null, statuses: ['Running', 'Pending'], limit: 100 })
+  })
+
+  it('does not let store close failures mask successful AgentRun listing', async () => {
+    const store = createStore([{ id: 'run-1' }], {
+      close: vi.fn(async () => {
+        throw new Error('close failed after response')
+      }),
+    })
+    configureAgentsV1Runtime({
+      agentRuns: {
+        storeFactory: () => store,
+      },
+    })
+
+    const response = await getAgentRunsHandler(new Request('http://agents.local/v1/agent-runs?agentId=demo'))
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({ ok: true, runs: [{ id: 'run-1' }] })
+    expect(store.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes the store when readiness fails during AgentRun listing', async () => {
+    const store = createStore([], {
+      ready: Promise.reject(new Error('database boot failed')),
+    })
+    configureAgentsV1Runtime({
+      agentRuns: {
+        storeFactory: () => store,
+      },
+    })
+
+    const response = await getAgentRunsHandler(new Request('http://agents.local/v1/agent-runs?agentId=demo'))
+
+    expect(response.status).toBe(503)
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining('storage store-ready failed'),
+    })
+    expect(store.listAgentRuns).not.toHaveBeenCalled()
+    expect(store.close).toHaveBeenCalledTimes(1)
   })
 
   it('lets tests and compatibility callers override configured route dependencies', async () => {

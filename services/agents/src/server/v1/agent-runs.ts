@@ -147,7 +147,46 @@ const parseStatusFilter = (value: string | null) => {
     .filter((entry) => entry.length > 0)
 }
 
-const toErrorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
+type AgentRunListInput = {
+  agentName?: string | null
+  statuses?: string[] | null
+  limit?: number | null
+}
+
+const acquireAgentRunsStoreEffect = (deps: Pick<AgentRunsApiDependencies, 'storeFactory'>) =>
+  Effect.try({
+    try: () => deps.storeFactory(),
+    catch: (cause) => new AgentRunStorageError({ operation: 'open-store', cause }),
+  })
+
+const waitForAgentRunsStoreReadyEffect = (store: AgentRunsApiStore) =>
+  Effect.tryPromise({
+    try: () => store.ready,
+    catch: (cause) => new AgentRunStorageError({ operation: 'store-ready', cause }),
+  })
+
+const closeAgentRunsStoreEffect = (store: AgentRunsApiStore) =>
+  Effect.tryPromise({
+    try: () => store.close(),
+    catch: (cause) => new AgentRunStorageError({ operation: 'close-store', cause }),
+  }).pipe(Effect.catchAll(() => Effect.void))
+
+const listAgentRunsWithStoreEffect = (store: AgentRunsApiStore, input: AgentRunListInput) =>
+  waitForAgentRunsStoreReadyEffect(store).pipe(
+    Effect.zipRight(
+      Effect.tryPromise({
+        try: () => store.listAgentRuns(input),
+        catch: (cause) => new AgentRunStorageError({ operation: 'list-runs', cause }),
+      }),
+    ),
+  )
+
+const listAgentRunsEffect = (deps: Pick<AgentRunsApiDependencies, 'storeFactory'>, input: AgentRunListInput) =>
+  Effect.acquireUseRelease(
+    acquireAgentRunsStoreEffect(deps),
+    (store) => listAgentRunsWithStoreEffect(store, input),
+    closeAgentRunsStoreEffect,
+  )
 
 export const getAgentRunsHandler = async (request: Request, deps: Pick<AgentRunsApiDependencies, 'storeFactory'>) => {
   const url = new URL(request.url)
@@ -156,27 +195,9 @@ export const getAgentRunsHandler = async (request: Request, deps: Pick<AgentRuns
   const limit = parseListLimit(url.searchParams.get('limit'))
   if (!agentName && statuses.length === 0) return errorResponse('agentId or status is required', 400)
 
-  let store: AgentRunsApiStore | null = null
-  try {
-    store = deps.storeFactory()
-    const activeStore = store
-    await store.ready
-    const runs = await Effect.runPromise(
-      Effect.tryPromise({
-        try: () => activeStore.listAgentRuns({ agentName, statuses, limit }),
-        catch: (cause) => new AgentRunStorageError({ operation: 'list-runs', cause }),
-      }),
-    )
-    return okResponse({ ok: true, runs })
-  } catch (error) {
-    if (error instanceof AgentRunStorageError) {
-      return errorResponse(describeAgentRunSubmitError(error), agentRunSubmitStatus(error))
-    }
-    const message = toErrorMessage(error)
-    return errorResponse(message, message.includes('DATABASE_URL') ? 503 : 500)
-  } finally {
-    await store?.close()
-  }
+  const result = await Effect.runPromise(listAgentRunsEffect(deps, { agentName, statuses, limit }).pipe(Effect.either))
+  if (result._tag === 'Right') return okResponse({ ok: true, runs: result.right })
+  return errorResponse(describeAgentRunSubmitError(result.left), agentRunSubmitStatus(result.left))
 }
 
 export const postAgentRunsHandler = async (request: Request, deps: AgentRunsApiDependencies) => {

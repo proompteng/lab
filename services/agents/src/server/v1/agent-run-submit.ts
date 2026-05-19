@@ -602,6 +602,7 @@ const evaluateAdmissionLimits = async (
 type AgentRunStorageOperation =
   | 'open-store'
   | 'store-ready'
+  | 'close-store'
   | 'list-runs'
   | 'read-delivery-id'
   | 'read-idempotency-key'
