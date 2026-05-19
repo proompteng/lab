@@ -164,7 +164,7 @@ describe('control plane summary route', () => {
 
     const response = await getControlPlaneSummary(
       new Request('http://localhost/api/agents/control-plane/summary?namespace=agents'),
-      { kubeClient: kube },
+      { kubeClient: kube, cacheStoreFactory: () => cachedStore as never },
     )
 
     expect(response.status).toBe(200)

@@ -70,7 +70,7 @@ describe('agents control-plane resources route', () => {
 
     const response = await listPrimitiveResources(
       new Request('http://localhost/api/agents/control-plane/resources?kind=Agent&namespace=agents'),
-      { kubeClient: kube as never },
+      { kubeClient: kube as never, cacheStoreFactory: () => cachedStore as never },
     )
 
     expect(response.status).toBe(200)
@@ -112,7 +112,7 @@ describe('agents control-plane resources route', () => {
 
     const response = await listPrimitiveResources(
       new Request('http://localhost/api/agents/control-plane/resources?kind=Agent&namespace=agents'),
-      { kubeClient: kube as never },
+      { kubeClient: kube as never, cacheStoreFactory: () => cachedStore as never },
     )
 
     expect(response.status).toBe(200)
@@ -160,7 +160,7 @@ describe('agents control-plane resources route', () => {
 
     const response = await listPrimitiveResources(
       new Request('http://localhost/api/agents/control-plane/resources?kind=Agent&namespace=agents'),
-      { kubeClient: kube as never },
+      { kubeClient: kube as never, cacheStoreFactory: () => cachedStore as never },
     )
 
     expect(response.status).toBe(200)

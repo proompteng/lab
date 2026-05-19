@@ -70,12 +70,43 @@ type AuditEvents = {
   created_at: Generated<Timestamp>
 }
 
+type AgentsControlPlaneResourcesCurrent = {
+  id: Generated<string>
+  cluster: Generated<string>
+  kind: string
+  namespace: string
+  name: string
+  uid: string | null
+  api_version: string | null
+  resource_version: string | null
+  generation: number | null
+  labels: JsonValue
+  annotations: JsonValue
+  resource: JsonValue
+  fingerprint: string
+  resource_created_at: Timestamp | null
+  resource_updated_at: Timestamp | null
+  status_phase: string | null
+  spec_runtime_type: string | null
+  spec_agent_ref_name: string | null
+  spec_implementation_spec_ref_name: string | null
+  spec_source_provider: string | null
+  spec_source_external_id: string | null
+  spec_summary: string | null
+  spec_labels: string[]
+  last_seen_at: Generated<Timestamp>
+  deleted_at: Timestamp | null
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+}
+
 export type AgentsDatabase = {
   agent_runs: AgentRuns
   agent_run_idempotency_keys: AgentRunIdempotencyKeys
   memory_resources: MemoryResources
   orchestration_runs: OrchestrationRuns
   audit_events: AuditEvents
+  'agents_control_plane.resources_current': AgentsControlPlaneResourcesCurrent
 }
 
 let db: Db | null | undefined

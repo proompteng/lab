@@ -1,0 +1,319 @@
+import { EventEmitter } from 'node:events'
+
+import { createFileRoute, type AgentsServerRouteArgs } from '../../../../server/server-route'
+
+import { buildAgentsControlPlaneStatus, type AgentsControlPlaneStatus } from '../../../../server/control-plane-status'
+import { resolveGrpcStatus } from '../../../../server/control-plane-grpc'
+import {
+  type AgentPrimitiveKind,
+  listPrimitiveKinds,
+  resolvePrimitiveKind,
+} from '../../../../server/control-plane-primitive-kinds'
+import { createKubernetesClient, type KubernetesClient, RESOURCE_MAP } from '../../../../server/kube-types'
+import { startResourceWatch } from '../../../../server/kube-watch'
+import { recordSseConnection, recordSseError } from '../../../../server/metrics'
+import { asRecord, asString, normalizeNamespace } from '../../../../server/primitives'
+import { buildResourceFingerprint } from '../../../../server/status-utils'
+
+export const Route = createFileRoute('/api/agents/control-plane/stream')({
+  server: {
+    handlers: {
+      GET: async ({ request }: AgentsServerRouteArgs) => streamControlPlaneEvents(request),
+    },
+  },
+})
+
+type ControlPlaneResourceEvent = {
+  type: 'resource'
+  kind: AgentPrimitiveKind
+  namespace: string
+  action: string | null
+  name: string | null
+  resource: Record<string, unknown>
+}
+
+type ControlPlaneStatusEvent = {
+  type: 'status'
+  namespace: string
+  status: AgentsControlPlaneStatus
+}
+
+type ControlPlaneErrorEvent = {
+  type: 'error'
+  namespace: string
+  message: string
+}
+
+type ControlPlaneStreamEvent = ControlPlaneResourceEvent | ControlPlaneStatusEvent | ControlPlaneErrorEvent
+
+type NamespaceStream = {
+  emitter: EventEmitter
+  refCount: number
+  watchers: Array<{ stop: () => void }>
+  watchSwarm: boolean
+  statusTimeout: NodeJS.Timeout | null
+  lastStatus: AgentsControlPlaneStatus | null
+  resourceFingerprints: Map<string, string>
+}
+
+const HEARTBEAT_INTERVAL_MS = 15_000
+const STATUS_DEBOUNCE_MS = 500
+const SWARM_WATCH_RESOURCE = RESOURCE_MAP.Swarm
+
+const namespaceStreams = new Map<string, NamespaceStream>()
+
+const safeJsonStringify = (value: unknown) => {
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+const isMissingResourceTypeError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error)
+  return /(doesn't have a resource type|does not have a resource type)/i.test(message)
+}
+
+const isSwarmWatchSupported = async (namespace: string, kube: Pick<KubernetesClient, 'list'>) => {
+  try {
+    await kube.list(SWARM_WATCH_RESOURCE, namespace)
+    return true
+  } catch (error) {
+    return !isMissingResourceTypeError(error)
+  }
+}
+
+export const __test__ = {
+  isSwarmWatchSupported,
+}
+
+const toSummary = (resource: Record<string, unknown>) => ({
+  apiVersion: asString(resource.apiVersion) ?? null,
+  kind: asString(resource.kind) ?? null,
+  metadata: asRecord(resource.metadata) ?? {},
+  spec: asRecord(resource.spec) ?? {},
+  status: asRecord(resource.status) ?? {},
+})
+
+const buildStatus = async (namespace: string) =>
+  buildAgentsControlPlaneStatus({
+    namespace,
+    service: 'agents',
+    grpc: await resolveGrpcStatus(),
+  })
+
+const emitStatus = async (stream: NamespaceStream, namespace: string) => {
+  if (stream.statusTimeout) {
+    clearTimeout(stream.statusTimeout)
+    stream.statusTimeout = null
+  }
+  try {
+    const status = await buildStatus(namespace)
+    stream.lastStatus = status
+    stream.emitter.emit('event', { type: 'status', namespace, status } satisfies ControlPlaneStatusEvent)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    recordSseError('control-plane', 'status')
+    stream.emitter.emit('event', { type: 'error', namespace, message } satisfies ControlPlaneErrorEvent)
+  }
+}
+
+const scheduleStatusRefresh = (stream: NamespaceStream, namespace: string) => {
+  if (stream.statusTimeout) return
+  stream.statusTimeout = setTimeout(() => {
+    void emitStatus(stream, namespace)
+  }, STATUS_DEBOUNCE_MS)
+}
+
+const startNamespaceWatchers = (
+  stream: NamespaceStream,
+  namespace: string,
+  watchSwarm: boolean,
+  kindsToWatch?: ReadonlySet<AgentPrimitiveKind>,
+): void => {
+  const kinds = listPrimitiveKinds()
+  for (const kind of kinds) {
+    const resolved = resolvePrimitiveKind(kind)
+    if (!resolved) continue
+    if (kindsToWatch && !kindsToWatch.has(kind)) continue
+    if (resolved.kind === 'Swarm' && !watchSwarm) continue
+
+    stream.watchers.push(
+      startResourceWatch({
+        resource: resolved.resource,
+        namespace,
+        logPrefix: '[agents][control-plane-stream]',
+        onEvent: (event) => {
+          const payload = asRecord(event.object) ?? {}
+          const summary = toSummary(payload)
+          const metadata = asRecord(summary.metadata) ?? {}
+          const resourceNamespace = asString(metadata.namespace) ?? namespace
+          const name = asString(metadata.name) ?? null
+          const action = event.type ?? null
+          const key = name ? `${resolved.kind}:${resourceNamespace}:${name}` : null
+          if (key) {
+            if (action === 'DELETED') {
+              stream.resourceFingerprints.delete(key)
+            } else {
+              const fingerprint = buildResourceFingerprint(summary)
+              const previous = stream.resourceFingerprints.get(key)
+              if (previous === fingerprint) {
+                return
+              }
+              stream.resourceFingerprints.set(key, fingerprint)
+            }
+          }
+          stream.emitter.emit('event', {
+            type: 'resource',
+            kind: resolved.kind,
+            namespace: resourceNamespace,
+            action,
+            name,
+            resource: summary,
+          } satisfies ControlPlaneResourceEvent)
+          scheduleStatusRefresh(stream, namespace)
+        },
+        onError: (error) => {
+          const message = error instanceof Error ? error.message : String(error)
+          recordSseError('control-plane', 'watch')
+          stream.emitter.emit('event', { type: 'error', namespace, message } satisfies ControlPlaneErrorEvent)
+        },
+      }),
+    )
+  }
+}
+
+const ensureNamespaceStream = (namespace: string, watchSwarm: boolean): NamespaceStream => {
+  const existing = namespaceStreams.get(namespace)
+  if (existing) {
+    existing.refCount += 1
+    if (watchSwarm && !existing.watchSwarm) {
+      startNamespaceWatchers(existing, namespace, watchSwarm, new Set(['Swarm']))
+      existing.watchSwarm = true
+    }
+    return existing
+  }
+
+  const emitter = new EventEmitter()
+  emitter.setMaxListeners(0)
+
+  const stream: NamespaceStream = {
+    emitter,
+    refCount: 1,
+    watchers: [],
+    statusTimeout: null,
+    lastStatus: null,
+    resourceFingerprints: new Map(),
+    watchSwarm,
+  }
+  startNamespaceWatchers(stream, namespace, watchSwarm)
+
+  namespaceStreams.set(namespace, stream)
+  void emitStatus(stream, namespace)
+  return stream
+}
+
+const releaseNamespaceStream = (namespace: string) => {
+  const stream = namespaceStreams.get(namespace)
+  if (!stream) return
+  stream.refCount -= 1
+  if (stream.refCount > 0) return
+
+  for (const watcher of stream.watchers) {
+    watcher.stop()
+  }
+  stream.watchers = []
+  if (stream.statusTimeout) {
+    clearTimeout(stream.statusTimeout)
+    stream.statusTimeout = null
+  }
+
+  namespaceStreams.delete(namespace)
+}
+
+const subscribeNamespaceEvents = (
+  namespace: string,
+  watchSwarm: boolean,
+  onEvent: (event: ControlPlaneStreamEvent) => void,
+) => {
+  const stream = ensureNamespaceStream(namespace, watchSwarm)
+  const listener = (event: ControlPlaneStreamEvent) => onEvent(event)
+  stream.emitter.on('event', listener)
+  return () => {
+    stream.emitter.off('event', listener)
+    releaseNamespaceStream(namespace)
+  }
+}
+
+export const streamControlPlaneEvents = async (request: Request) => {
+  const url = new URL(request.url)
+  const namespace = normalizeNamespace(url.searchParams.get('namespace'), 'agents')
+  const kube = createKubernetesClient()
+  const watchSwarm = await isSwarmWatchSupported(namespace, kube)
+  const encoder = new TextEncoder()
+
+  let heartbeat: ReturnType<typeof setInterval> | null = null
+  let unsubscribe: (() => void) | null = null
+  let closed = false
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      recordSseConnection('control-plane', 'opened')
+
+      const safeEnqueue = (value: string) => {
+        if (closed) return
+        try {
+          controller.enqueue(encoder.encode(value))
+        } catch {
+          recordSseError('control-plane', 'enqueue')
+          if (!closed) {
+            closed = true
+            try {
+              controller.close()
+            } catch {
+              // ignore
+            }
+          }
+        }
+      }
+
+      const push = (payload: unknown) => {
+        safeEnqueue(`data: ${safeJsonStringify(payload)}\n\n`)
+      }
+
+      safeEnqueue('retry: 1000\n\n')
+      safeEnqueue(': connected\n\n')
+
+      unsubscribe = subscribeNamespaceEvents(namespace, watchSwarm, (event) => {
+        push(event)
+      })
+
+      const streamState = namespaceStreams.get(namespace)
+      if (streamState?.lastStatus) {
+        push({ type: 'status', namespace, status: streamState.lastStatus })
+      }
+
+      heartbeat = setInterval(() => {
+        safeEnqueue(': keep-alive\n\n')
+      }, HEARTBEAT_INTERVAL_MS)
+    },
+    cancel() {
+      closed = true
+      recordSseConnection('control-plane', 'closed')
+      if (heartbeat) clearInterval(heartbeat)
+      heartbeat = null
+      if (unsubscribe) unsubscribe()
+      unsubscribe = null
+    },
+  })
+
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache, no-transform',
+      connection: 'keep-alive',
+    },
+  })
+}

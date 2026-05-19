@@ -24,9 +24,15 @@ import {
   startSupportingPrimitivesController,
   stopSupportingPrimitivesController,
 } from './supporting-primitives-controller'
+import { startControlPlaneCache, stopControlPlaneCache } from './control-plane-cache'
 
 export class AgentsControllerRuntimeError extends Data.TaggedError('AgentsControllerRuntimeError')<{
-  readonly component: 'agents-controller' | 'leader-election' | 'primitives-reconciler' | 'supporting-controller'
+  readonly component:
+    | 'agents-controller'
+    | 'control-plane-cache'
+    | 'leader-election'
+    | 'primitives-reconciler'
+    | 'supporting-controller'
   readonly operation: 'start' | 'stop'
   readonly cause: unknown
 }> {}
@@ -78,6 +84,7 @@ const startControllerRuntimes = () => {
   orchestrationControllerStartup.start()
   primitivesReconcilerStartup.start()
   supportingControllerStartup.start()
+  void startControlPlaneCache()
 }
 
 const stopControllerRuntimes = () => {
@@ -89,6 +96,7 @@ const stopControllerRuntimes = () => {
   stopOrchestrationController()
   stopPrimitivesReconciler()
   stopSupportingPrimitivesController()
+  stopControlPlaneCache()
 }
 
 const startRuntime = (leaderElection: LeaderElectionService) =>

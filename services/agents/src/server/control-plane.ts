@@ -92,6 +92,41 @@ const routeSources: RouteSourceSpec[] = [
     sourceUrl: new URL('../routes/v1/runs/$id.ts', import.meta.url),
     load: () => import('../routes/v1/runs/$id'),
   },
+  {
+    file: 'src/routes/api/agents/control-plane/events.ts',
+    sourceUrl: new URL('../routes/api/agents/control-plane/events.ts', import.meta.url),
+    load: () => import('../routes/api/agents/control-plane/events'),
+  },
+  {
+    file: 'src/routes/api/agents/control-plane/logs.ts',
+    sourceUrl: new URL('../routes/api/agents/control-plane/logs.ts', import.meta.url),
+    load: () => import('../routes/api/agents/control-plane/logs'),
+  },
+  {
+    file: 'src/routes/api/agents/control-plane/resource.ts',
+    sourceUrl: new URL('../routes/api/agents/control-plane/resource.ts', import.meta.url),
+    load: () => import('../routes/api/agents/control-plane/resource'),
+  },
+  {
+    file: 'src/routes/api/agents/control-plane/resources.ts',
+    sourceUrl: new URL('../routes/api/agents/control-plane/resources.ts', import.meta.url),
+    load: () => import('../routes/api/agents/control-plane/resources'),
+  },
+  {
+    file: 'src/routes/api/agents/control-plane/status.ts',
+    sourceUrl: new URL('../routes/api/agents/control-plane/status.ts', import.meta.url),
+    load: () => import('../routes/api/agents/control-plane/status'),
+  },
+  {
+    file: 'src/routes/api/agents/control-plane/stream.ts',
+    sourceUrl: new URL('../routes/api/agents/control-plane/stream.ts', import.meta.url),
+    load: () => import('../routes/api/agents/control-plane/stream'),
+  },
+  {
+    file: 'src/routes/api/agents/control-plane/summary.ts',
+    sourceUrl: new URL('../routes/api/agents/control-plane/summary.ts', import.meta.url),
+    load: () => import('../routes/api/agents/control-plane/summary'),
+  },
 ]
 
 const assessAgentRunIngestion = (
