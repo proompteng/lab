@@ -4,8 +4,48 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 
 const guardScript = () => readFileSync(resolve(process.cwd(), 'scripts/agents/guard-extraction-boundaries.sh'), 'utf8')
+const agentsCiWorkflow = () => readFileSync(resolve(process.cwd(), '.github/workflows/agents-ci.yml'), 'utf8')
+
+const protectedBoundaryTriggerPaths = [
+  'apps/froussard/src/**',
+  'argocd/applications/agents/**',
+  'argocd/applications/argo-workflows/**',
+  'argocd/applications/facteur/**',
+  'argocd/applications/froussard/**',
+  'argocd/applications/jangar/**',
+  'argocd/applications/traefik/values.yaml',
+  'charts/agents/**',
+  'docs/agents/**',
+  'docs/jangar/application-architecture.md',
+  'packages/scripts/src/agents/**',
+  'packages/scripts/src/jangar/verify-deployment.ts',
+  'proto/proompteng/facteur/v1/contract.proto',
+  'services/agents/**',
+  'services/facteur/README.md',
+  'services/facteur/cmd/**',
+  'services/facteur/config/**',
+  'services/facteur/internal/**',
+  'services/graf/src/main/kotlin/**',
+  'services/graf/src/test/kotlin/**',
+  'services/jangar/**',
+  'scripts/agents/**',
+]
+
+const workflowTriggerPathCount = (workflow: string, path: string) => {
+  const escapedPath = path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return workflow.match(new RegExp(`^\\s+- '${escapedPath}'$`, 'gm'))?.length ?? 0
+}
 
 describe('agents extraction boundary guard', () => {
+  it('runs from Agents CI when protected extraction boundary paths change', () => {
+    const workflow = agentsCiWorkflow()
+
+    expect(workflow).toContain('run: scripts/agents/guard-extraction-boundaries.sh')
+    for (const path of protectedBoundaryTriggerPaths) {
+      expect(workflowTriggerPathCount(workflow, path)).toBe(2)
+    }
+  })
+
   it('does not fail on colocated tests that assert forbidden runtime strings are absent', () => {
     const content = guardScript()
 
