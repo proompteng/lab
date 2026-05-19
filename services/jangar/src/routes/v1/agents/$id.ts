@@ -1,9 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import {
-  getAgentHandler as getAgentServiceHandler,
-  type ResourceReadDependencies,
-} from '@proompteng/agents/routes/v1/agents/$id'
-import '~/server/agents-v1-runtime'
+import { proxyAgentsServiceRequest } from '~/server/agents-service-proxy'
 
 export const Route = createFileRoute('/v1/agents/$id')({
   server: {
@@ -13,7 +9,5 @@ export const Route = createFileRoute('/v1/agents/$id')({
   },
 })
 
-type JangarResourceReadDependencies = Partial<ResourceReadDependencies>
-
-export const getAgentHandler = async (id: string, request: Request, deps: JangarResourceReadDependencies = {}) =>
-  getAgentServiceHandler(id, request, deps)
+export const getAgentHandler = async (id: string, request: Request, _deps: unknown = {}) =>
+  proxyAgentsServiceRequest(request, `/v1/agents/${encodeURIComponent(id)}`)

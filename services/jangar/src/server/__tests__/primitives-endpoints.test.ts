@@ -1,820 +1,90 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { postAgentRunsHandler } from '~/routes/v1/agent-runs'
+import { getAgentRunHandler } from '~/routes/v1/agent-runs/$id'
 import { postOrchestrationsHandler } from '~/routes/v1/orchestrations'
-import type { KubernetesClient } from '~/server/primitives-kube'
-import type { AgentRunIdempotencyRecord, PrimitivesStore } from '~/server/primitives-store'
 
-const setLeaderElectionFollower = () => {
-  ;(globalThis as unknown as { __jangarLeaderElection?: unknown }).__jangarLeaderElection = {
-    status: {
-      enabled: true,
-      required: true,
-      isLeader: false,
-      leaseName: 'lease',
-      leaseNamespace: 'jangar',
-      identity: 'pod_123',
-      lastTransitionAt: null,
-      lastAttemptAt: null,
-      lastSuccessAt: null,
-      lastError: null,
-    },
-  }
-}
-
-const clearLeaderElection = () => {
-  delete (globalThis as unknown as { __jangarLeaderElection?: unknown }).__jangarLeaderElection
-}
-
-const createStoreMock = (): PrimitivesStore =>
-  ({
-    ready: Promise.resolve(),
-    close: vi.fn(async () => {}),
-    createAgentRun: vi.fn(async (input) => ({
-      id: 'agent-run-id',
-      agentName: input.agentName,
-      deliveryId: input.deliveryId,
-      provider: input.provider,
-      status: input.status,
-      externalRunId: input.externalRunId ?? null,
-      payload: input.payload,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    })),
-    updateAgentRunStatus: vi.fn(async () => null),
-    updateAgentRunDetails: vi.fn(async () => null),
-    getAgentRunById: vi.fn(async () => null),
-    getAgentRunByDeliveryId: vi.fn(async () => null),
-    getAgentRunByExternalRunId: vi.fn(async () => null),
-    getAgentRunsByAgent: vi.fn(async () => []),
-    createOrchestrationRun: vi.fn(async () => {
-      throw new Error('not used')
-    }),
-    updateOrchestrationRunStatus: vi.fn(async () => null),
-    updateOrchestrationRunDetails: vi.fn(async () => null),
-    getOrchestrationRunById: vi.fn(async () => null),
-    getOrchestrationRunByDeliveryId: vi.fn(async () => null),
-    getOrchestrationRunByExternalRunId: vi.fn(async () => null),
-    getOrchestrationRunsByName: vi.fn(async () => []),
-    upsertMemoryResource: vi.fn(async () => {
-      throw new Error('not used')
-    }),
-    getMemoryResourceById: vi.fn(async () => null),
-    getMemoryResourceByName: vi.fn(async () => null),
-    createAuditEvent: vi.fn(async (input) => ({
-      id: 'audit-id',
-      entityType: input.entityType,
-      entityId: input.entityId,
-      eventType: input.eventType,
-      payload: { context: input.context ?? null, details: input.details ?? null },
-      createdAt: new Date(),
-    })),
-    getAgentRunIdempotencyKey: vi.fn(async () => null),
-    reserveAgentRunIdempotencyKey: vi.fn(async (input) => ({
-      record: {
-        id: 'idempotency-id',
-        namespace: input.namespace,
-        agentName: input.agentName,
-        idempotencyKey: input.idempotencyKey,
-        agentRunName: null,
-        agentRunUid: null,
-        terminalPhase: null,
-        terminalAt: null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      },
-      created: true,
-    })),
-    assignAgentRunIdempotencyKey: vi.fn(async () => null),
-    markAgentRunIdempotencyKeyTerminal: vi.fn(async () => null),
-    deleteAgentRunIdempotencyKey: vi.fn(async () => true),
-    pruneAgentRunIdempotencyKeys: vi.fn(async () => 0),
-    getRunById: vi.fn(async () => null),
-  }) as PrimitivesStore
-
-const createKubeMock = (
-  resources: Record<string, Record<string, unknown> | null>,
-  lists: Record<string, Record<string, unknown>[]> = {},
-): KubernetesClient => ({
-  apply: vi.fn(async (resource) => resource),
-  applyManifest: vi.fn(async () => ({})),
-  applyStatus: vi.fn(async (resource) => resource),
-  createManifest: vi.fn(async () => ({})),
-  delete: vi.fn(async () => ({})),
-  patch: vi.fn(async (_resource, _name, _namespace, patch) => patch as Record<string, unknown>),
-  get: vi.fn(async (resource, name, namespace) => resources[`${resource}:${namespace}:${name}`] ?? null),
-  list: vi.fn(async (resource, namespace) => ({ items: lists[`${resource}:${namespace}`] ?? [] })),
-  logs: vi.fn(async () => ''),
-  listEvents: vi.fn(async () => ({ items: [] })),
-})
-
-const setEnv = (values: Record<string, string | undefined>) => {
-  const previous: Record<string, string | undefined> = {}
-  for (const [key, value] of Object.entries(values)) {
-    previous[key] = process.env[key]
-    if (value === undefined) {
-      delete process.env[key]
+const withAgentsServiceBaseUrl = async (run: () => Promise<void>) => {
+  const previous = process.env.AGENTS_SERVICE_BASE_URL
+  process.env.AGENTS_SERVICE_BASE_URL = 'http://agents.test'
+  try {
+    await run()
+  } finally {
+    if (previous === undefined) {
+      delete process.env.AGENTS_SERVICE_BASE_URL
     } else {
-      process.env[key] = value
-    }
-  }
-  return () => {
-    for (const [key, value] of Object.entries(previous)) {
-      if (value === undefined) {
-        delete process.env[key]
-      } else {
-        process.env[key] = value
-      }
+      process.env.AGENTS_SERVICE_BASE_URL = previous
     }
   }
 }
 
-const buildRequest = (url: string, payload: Record<string, unknown>, headers?: Record<string, string>) =>
-  new Request(url, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      ...headers,
-    },
-    body: JSON.stringify(payload),
+const stubAgentsServiceFetch = () => {
+  const fetchMock = vi.fn(async () => {
+    return new Response(JSON.stringify({ ok: true }), {
+      headers: { 'content-type': 'application/json' },
+      status: 201,
+    })
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  return fetchMock
+}
+
+describe('Jangar primitives endpoints', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
   })
 
-describe('primitives endpoints', () => {
-  it('rejects mutations when not leader', async () => {
-    setLeaderElectionFollower()
-    try {
-      const store = createStoreMock()
-      const kube = createKubeMock({
-        'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
-      })
-
-      const request = buildRequest(
-        'http://localhost/v1/agent-runs',
-        {
-          agentRef: { name: 'demo-agent' },
-          namespace: 'jangar',
-          implementationSpecRef: { name: 'impl-1' },
-          runtime: { type: 'job', config: {} },
-        },
-        { 'Idempotency-Key': 'demo-agent-run-not-leader-1' },
+  it('proxies AgentRun creation to the Agents service', async () => {
+    await withAgentsServiceBaseUrl(async () => {
+      const fetchMock = stubAgentsServiceFetch()
+      const response = await postAgentRunsHandler(
+        new Request('http://jangar.test/v1/agent-runs?dryRun=true', {
+          body: JSON.stringify({ agentRef: { name: 'demo-agent' } }),
+          headers: { 'content-type': 'application/json' },
+          method: 'POST',
+        }),
       )
-
-      const response = await postAgentRunsHandler(request, { storeFactory: () => store, kubeClient: kube })
-
-      expect(response.status).toBe(503)
-      expect(kube.apply).toHaveBeenCalledTimes(0)
-      const body = (await response.json()) as { error?: string }
-      expect(body.error).toContain('Not leader')
-    } finally {
-      clearLeaderElection()
-    }
-  })
-
-  it('enforces AgentRun idempotency scope across retries', async () => {
-    const scope = new Map<string, AgentRunIdempotencyRecord>()
-    const kubeResources: Record<string, Record<string, unknown> | null> = {
-      'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
-    }
-    const store = createStoreMock()
-    store.getAgentRunIdempotencyKey = vi.fn<PrimitivesStore['getAgentRunIdempotencyKey']>(
-      async (input) => scope.get(`${input.namespace}:${input.agentName}:${input.idempotencyKey}`) ?? null,
-    )
-    store.reserveAgentRunIdempotencyKey = vi.fn<PrimitivesStore['reserveAgentRunIdempotencyKey']>(async (input) => {
-      const key = `${input.namespace}:${input.agentName}:${input.idempotencyKey}`
-      const existing = scope.get(key)
-      if (existing) return { record: existing, created: false }
-      const record: AgentRunIdempotencyRecord = {
-        id: `idem-${key}`,
-        namespace: input.namespace,
-        agentName: input.agentName,
-        idempotencyKey: input.idempotencyKey,
-        agentRunName: null,
-        agentRunUid: null,
-        terminalPhase: null,
-        terminalAt: null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }
-      scope.set(key, record)
-      return { record, created: true }
-    })
-    store.assignAgentRunIdempotencyKey = vi.fn<PrimitivesStore['assignAgentRunIdempotencyKey']>(async (input) => {
-      const key = `${input.namespace}:${input.agentName}:${input.idempotencyKey}`
-      const existing = scope.get(key)
-      if (!existing) return null
-      const next = {
-        ...existing,
-        agentRunName: existing.agentRunName ?? input.agentRunName,
-        agentRunUid: input.agentRunUid ?? null,
-      }
-      scope.set(key, next)
-      return next
-    })
-
-    const kube: KubernetesClient = {
-      ...createKubeMock(kubeResources),
-      apply: vi.fn(async (resource) => {
-        const applied = {
-          ...resource,
-          metadata: { ...(resource.metadata as Record<string, unknown>), name: 'demo-agent-run-1', uid: 'uid-1' },
-          status: { phase: 'Running' },
-        } as Record<string, unknown>
-        kubeResources['agentruns.agents.proompteng.ai:jangar:demo-agent-run-1'] = applied
-        return applied
-      }),
-    }
-
-    const first = buildRequest(
-      'http://localhost/v1/agent-runs',
-      {
-        agentRef: { name: 'demo-agent' },
-        namespace: 'jangar',
-        idempotencyKey: 'client-key-1',
-        implementationSpecRef: { name: 'impl-1' },
-        runtime: { type: 'job', config: {} },
-      },
-      { 'Idempotency-Key': 'delivery-1' },
-    )
-    const firstResponse = await postAgentRunsHandler(first, { storeFactory: () => store, kubeClient: kube })
-    expect(firstResponse.status).toBe(201)
-
-    const second = buildRequest(
-      'http://localhost/v1/agent-runs',
-      {
-        agentRef: { name: 'demo-agent' },
-        namespace: 'jangar',
-        idempotencyKey: 'client-key-1',
-        implementationSpecRef: { name: 'impl-1' },
-        runtime: { type: 'job', config: {} },
-      },
-      { 'Idempotency-Key': 'delivery-2' },
-    )
-    const secondResponse = await postAgentRunsHandler(second, { storeFactory: () => store, kubeClient: kube })
-    expect(secondResponse.status).toBe(409)
-    expect(kube.apply).toHaveBeenCalledTimes(1)
-    const body = (await secondResponse.json()) as { error?: string; details?: Record<string, unknown> }
-    expect(body.error).toContain('already exists')
-    expect(body.details?.existingAgentRunName).toBe('demo-agent-run-1')
-  })
-
-  it('rejects AgentRun-level system prompt overrides at API boundary', async () => {
-    const store = createStoreMock()
-    const kube = createKubeMock({
-      'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
-    })
-
-    const request = buildRequest(
-      'http://localhost/v1/agent-runs',
-      {
-        agentRef: { name: 'demo-agent' },
-        namespace: 'jangar',
-        implementationSpecRef: { name: 'impl-1' },
-        runtime: { type: 'job', config: {} },
-        systemPrompt: 'forbidden',
-      },
-      { 'Idempotency-Key': 'demo-agent-run-system-prompt-override-1' },
-    )
-
-    const response = await postAgentRunsHandler(request, { storeFactory: () => store, kubeClient: kube })
-    expect(response.status).toBe(400)
-    expect(kube.apply).not.toHaveBeenCalled()
-    const body = (await response.json()) as { error?: string }
-    expect(body.error).toContain('systemPrompt/systemPromptRef overrides are not allowed')
-  })
-
-  it('rejects parameters.prompt overrides at API boundary', async () => {
-    const store = createStoreMock()
-    const kube = createKubeMock({
-      'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
-    })
-
-    const request = buildRequest(
-      'http://localhost/v1/agent-runs',
-      {
-        agentRef: { name: 'demo-agent' },
-        namespace: 'jangar',
-        implementationSpecRef: { name: 'impl-1' },
-        runtime: { type: 'job', config: {} },
-        parameters: {
-          prompt: 'forbidden',
-        },
-      },
-      { 'Idempotency-Key': 'demo-agent-run-prompt-param-override-1' },
-    )
-
-    const response = await postAgentRunsHandler(request, { storeFactory: () => store, kubeClient: kube })
-    expect(response.status).toBe(400)
-    expect(kube.apply).not.toHaveBeenCalled()
-    const body = (await response.json()) as { error?: string }
-    expect(body.error).toContain('parameters.prompt is not allowed')
-  })
-
-  it('rejects workflow step parameters.prompt overrides at API boundary', async () => {
-    const store = createStoreMock()
-    const kube = createKubeMock({
-      'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
-    })
-
-    const request = buildRequest(
-      'http://localhost/v1/agent-runs',
-      {
-        agentRef: { name: 'demo-agent' },
-        namespace: 'jangar',
-        implementationSpecRef: { name: 'impl-1' },
-        runtime: { type: 'workflow', config: {} },
-        workflow: {
-          steps: [
-            {
-              name: 'step-one',
-              parameters: {
-                prompt: 'forbidden',
-              },
-            },
-          ],
-        },
-      },
-      { 'Idempotency-Key': 'demo-agent-run-workflow-step-prompt-override-1' },
-    )
-
-    const response = await postAgentRunsHandler(request, { storeFactory: () => store, kubeClient: kube })
-    expect(response.status).toBe(400)
-    expect(kube.apply).not.toHaveBeenCalled()
-    const body = (await response.json()) as { error?: string }
-    expect(body.error).toContain('workflow.steps[0].parameters.prompt is not allowed')
-  })
-
-  it('reclaims stale AgentRun idempotency reservations', async () => {
-    const scope = new Map<string, AgentRunIdempotencyRecord>()
-    const kubeResources: Record<string, Record<string, unknown> | null> = {
-      'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
-    }
-    const store = createStoreMock()
-    const key = 'jangar:demo-agent:stale-idem'
-    scope.set(key, {
-      id: `idem-${key}`,
-      namespace: 'jangar',
-      agentName: 'demo-agent',
-      idempotencyKey: 'stale-idem',
-      agentRunName: null,
-      agentRunUid: null,
-      terminalPhase: null,
-      terminalAt: null,
-      createdAt: new Date(Date.now() - 60 * 60 * 1000),
-      updatedAt: new Date(Date.now() - 60 * 60 * 1000),
-    })
-
-    store.getAgentRunIdempotencyKey = vi.fn<PrimitivesStore['getAgentRunIdempotencyKey']>(async () => null)
-    store.reserveAgentRunIdempotencyKey = vi.fn<PrimitivesStore['reserveAgentRunIdempotencyKey']>(async (input) => {
-      const mapKey = `${input.namespace}:${input.agentName}:${input.idempotencyKey}`
-      const existing = scope.get(mapKey)
-      if (existing) return { record: existing, created: false }
-      const record: AgentRunIdempotencyRecord = {
-        id: `idem-${mapKey}`,
-        namespace: input.namespace,
-        agentName: input.agentName,
-        idempotencyKey: input.idempotencyKey,
-        agentRunName: null,
-        agentRunUid: null,
-        terminalPhase: null,
-        terminalAt: null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }
-      scope.set(mapKey, record)
-      return { record, created: true }
-    })
-    store.deleteAgentRunIdempotencyKey = vi.fn<PrimitivesStore['deleteAgentRunIdempotencyKey']>(async (input) => {
-      scope.delete(`${input.namespace}:${input.agentName}:${input.idempotencyKey}`)
-      return true
-    })
-    store.assignAgentRunIdempotencyKey = vi.fn<PrimitivesStore['assignAgentRunIdempotencyKey']>(async (input) => {
-      const mapKey = `${input.namespace}:${input.agentName}:${input.idempotencyKey}`
-      const existing = scope.get(mapKey)
-      if (!existing) return null
-      const next = {
-        ...existing,
-        agentRunName: existing.agentRunName ?? input.agentRunName,
-        agentRunUid: input.agentRunUid ?? null,
-      }
-      scope.set(mapKey, next)
-      return next
-    })
-
-    const kube: KubernetesClient = {
-      ...createKubeMock(kubeResources),
-      apply: vi.fn(async (resource) => ({
-        ...resource,
-        metadata: { ...(resource.metadata as Record<string, unknown>), name: 'demo-agent-run-stale', uid: 'uid-stale' },
-        status: { phase: 'Running' },
-      })),
-    }
-
-    const resetEnv = setEnv({
-      JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED: 'true',
-      JANGAR_AGENTRUN_IDEMPOTENCY_RESERVATION_TTL_SECONDS: '60',
-    })
-    try {
-      const request = buildRequest(
-        'http://localhost/v1/agent-runs',
-        {
-          agentRef: { name: 'demo-agent' },
-          namespace: 'jangar',
-          runtime: { type: 'job', config: {} },
-          implementationSpecRef: { name: 'impl-1' },
-          idempotencyKey: 'stale-idem',
-        },
-        { 'Idempotency-Key': 'delivery-stale-1' },
-      )
-
-      const response = await postAgentRunsHandler(request, { storeFactory: () => store, kubeClient: kube })
 
       expect(response.status).toBe(201)
-      expect(store.deleteAgentRunIdempotencyKey).toHaveBeenCalledTimes(1)
-      expect(store.reserveAgentRunIdempotencyKey).toHaveBeenCalledTimes(2)
-    } finally {
-      resetEnv()
-    }
-  })
-
-  it('returns the existing AgentRun when idempotency key points to a terminal run', async () => {
-    const scope = new Map<string, AgentRunIdempotencyRecord>()
-    const kubeResources: Record<string, Record<string, unknown> | null> = {
-      'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
-    }
-    const store = createStoreMock()
-    store.getAgentRunIdempotencyKey = vi.fn<PrimitivesStore['getAgentRunIdempotencyKey']>(
-      async (input) => scope.get(`${input.namespace}:${input.agentName}:${input.idempotencyKey}`) ?? null,
-    )
-    store.reserveAgentRunIdempotencyKey = vi.fn<PrimitivesStore['reserveAgentRunIdempotencyKey']>(async (input) => {
-      const key = `${input.namespace}:${input.agentName}:${input.idempotencyKey}`
-      const existing = scope.get(key)
-      if (existing) return { record: existing, created: false }
-      const record: AgentRunIdempotencyRecord = {
-        id: `idem-${key}`,
-        namespace: input.namespace,
-        agentName: input.agentName,
-        idempotencyKey: input.idempotencyKey,
-        agentRunName: null,
-        agentRunUid: null,
-        terminalPhase: null,
-        terminalAt: null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }
-      scope.set(key, record)
-      return { record, created: true }
-    })
-    store.assignAgentRunIdempotencyKey = vi.fn<PrimitivesStore['assignAgentRunIdempotencyKey']>(async (input) => {
-      const key = `${input.namespace}:${input.agentName}:${input.idempotencyKey}`
-      const existing = scope.get(key)
-      if (!existing) return null
-      const next = { ...existing, agentRunName: existing.agentRunName ?? input.agentRunName }
-      scope.set(key, next)
-      return next
-    })
-
-    const kube: KubernetesClient = {
-      ...createKubeMock(kubeResources),
-      apply: vi.fn(async (resource) => {
-        const applied = {
-          ...resource,
-          metadata: { ...(resource.metadata as Record<string, unknown>), name: 'demo-agent-run-2' },
-          status: { phase: 'Succeeded' },
-        } as Record<string, unknown>
-        kubeResources['agentruns.agents.proompteng.ai:jangar:demo-agent-run-2'] = applied
-        return applied
-      }),
-    }
-
-    const first = buildRequest(
-      'http://localhost/v1/agent-runs',
-      {
-        agentRef: { name: 'demo-agent' },
-        namespace: 'jangar',
-        idempotencyKey: 'client-key-2',
-        implementationSpecRef: { name: 'impl-1' },
-        runtime: { type: 'job', config: {} },
-      },
-      { 'Idempotency-Key': 'delivery-3' },
-    )
-    const firstResponse = await postAgentRunsHandler(first, { storeFactory: () => store, kubeClient: kube })
-    expect(firstResponse.status).toBe(201)
-
-    const second = buildRequest(
-      'http://localhost/v1/agent-runs',
-      {
-        agentRef: { name: 'demo-agent' },
-        namespace: 'jangar',
-        idempotencyKey: 'client-key-2',
-        implementationSpecRef: { name: 'impl-1' },
-        runtime: { type: 'job', config: {} },
-      },
-      { 'Idempotency-Key': 'delivery-4' },
-    )
-    const secondResponse = await postAgentRunsHandler(second, { storeFactory: () => store, kubeClient: kube })
-    expect(secondResponse.status).toBe(200)
-    expect(kube.apply).toHaveBeenCalledTimes(1)
-    const body = (await secondResponse.json()) as { existingAgentRunName?: string }
-    expect(body.existingAgentRunName).toBe('demo-agent-run-2')
-  })
-
-  it('passes workflow steps through when submitting workflow agent runs', async () => {
-    const store = createStoreMock()
-    const kube = createKubeMock({
-      'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
-    })
-
-    const request = buildRequest(
-      'http://localhost/v1/agent-runs',
-      {
-        agentRef: { name: 'demo-agent' },
-        namespace: 'jangar',
-        implementationSpecRef: { name: 'impl-1' },
-        runtime: { type: 'workflow' },
-        workload: { image: 'registry.example.com/demo:latest' },
-        workflow: {
-          steps: [{ name: 'plan', parameters: { stage: 'plan' } }],
-        },
-      },
-      { 'Idempotency-Key': 'demo-agent-run-workflow-1' },
-    )
-
-    const response = await postAgentRunsHandler(request, { storeFactory: () => store, kubeClient: kube })
-
-    expect(response.status).toBe(201)
-    expect(kube.apply).toHaveBeenCalledTimes(1)
-    const resource = (kube.apply as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as Record<string, unknown>
-    const spec = resource.spec as Record<string, unknown>
-    const workflow = spec.workflow as Record<string, unknown>
-    expect(Array.isArray(workflow.steps)).toBe(true)
-    expect((workflow.steps as Record<string, unknown>[])[0]?.name).toBe('plan')
-  })
-
-  it('rejects workflow agent runs without workflow steps', async () => {
-    const store = createStoreMock()
-    const kube = createKubeMock({
-      'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
-    })
-
-    const request = buildRequest(
-      'http://localhost/v1/agent-runs',
-      {
-        agentRef: { name: 'demo-agent' },
-        namespace: 'jangar',
-        implementationSpecRef: { name: 'impl-1' },
-        runtime: { type: 'workflow' },
-        workload: { image: 'registry.example.com/demo:latest' },
-      },
-      { 'Idempotency-Key': 'demo-agent-run-workflow-2' },
-    )
-
-    const response = await postAgentRunsHandler(request, { storeFactory: () => store, kubeClient: kube })
-
-    expect(response.status).toBe(400)
-    const body = (await response.json()) as { error?: string }
-    expect(body.error).toContain('workflow.steps is required')
-  })
-
-  it('accepts DSPy-style AgentRun contracts with explicit idempotency, policy, and ttl', async () => {
-    const store = createStoreMock()
-    const kube = createKubeMock({
-      'agents.agents.proompteng.ai:agents:codex-agent': { spec: {} },
-      'versioncontrolproviders.agents.proompteng.ai:agents:github': { spec: { auth: {} } },
-      'secretbindings.security.proompteng.ai:agents:codex-whitepaper-github-token': {
-        spec: {
-          subjects: [{ kind: 'Agent', name: 'codex-agent', namespace: 'agents' }],
-          allowedSecrets: [],
-        },
-      },
-    })
-
-    const request = buildRequest(
-      'http://localhost/v1/agent-runs',
-      {
-        namespace: 'agents',
-        idempotencyKey: 'torghut-dspy-compile-abc123',
-        agentRef: { name: 'codex-agent' },
-        implementationSpecRef: { name: 'torghut-dspy-compile-mipro-v1' },
-        goal: {
-          objective: 'Compile the DSPy artifact and publish validation evidence',
-          tokenBudget: 32000,
-        },
-        runtime: { type: 'job' },
-        vcsRef: { name: 'github' },
-        vcsPolicy: { required: true, mode: 'read-write' },
-        parameters: {
-          repository: 'proompteng/lab',
-          base: 'main',
-          head: 'codex/torghut-dspy-compile-2026-02-25',
-          datasetRef: 's3://bucket/dataset.json',
-          metricPolicyRef: 'config/trading/llm/dspy-metrics.yaml',
-          artifactPath: 'artifacts/dspy/run-1',
-        },
-        policy: { secretBindingRef: 'codex-whitepaper-github-token' },
-        ttlSecondsAfterFinished: 14400,
-      },
-      { 'Idempotency-Key': 'delivery-dspy-1' },
-    )
-
-    const response = await postAgentRunsHandler(request, { storeFactory: () => store, kubeClient: kube })
-
-    expect(response.status).toBe(201)
-    expect(kube.apply).toHaveBeenCalledTimes(1)
-    const resource = (kube.apply as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as Record<string, unknown>
-    const spec = resource.spec as Record<string, unknown>
-    expect((spec.idempotencyKey as string) ?? '').toBe('torghut-dspy-compile-abc123')
-    expect((spec.ttlSecondsAfterFinished as number) ?? 0).toBe(14400)
-    expect((spec.implementationSpecRef as Record<string, unknown>)?.name).toBe('torghut-dspy-compile-mipro-v1')
-    expect(spec.goal).toEqual({
-      objective: 'Compile the DSPy artifact and publish validation evidence',
-      tokenBudget: 32000,
+      const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
+      expect(url.toString()).toBe('http://agents.test/v1/agent-runs?dryRun=true')
+      expect(init.method).toBe('POST')
+      expect(new TextDecoder().decode(init.body as ArrayBuffer)).toBe('{"agentRef":{"name":"demo-agent"}}')
     })
   })
 
-  it('rejects non-string idempotencyKey in payload', async () => {
-    const store = createStoreMock()
-    const kube = createKubeMock({
-      'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
-    })
-
-    const request = buildRequest(
-      'http://localhost/v1/agent-runs',
-      {
-        agentRef: { name: 'demo-agent' },
-        namespace: 'jangar',
-        idempotencyKey: 42,
-        implementationSpecRef: { name: 'impl-1' },
-        runtime: { type: 'job', config: {} },
-      },
-      { 'Idempotency-Key': 'demo-agent-run-idem-type-1' },
-    )
-
-    const response = await postAgentRunsHandler(request, { storeFactory: () => store, kubeClient: kube })
-
-    expect(response.status).toBe(400)
-    const body = (await response.json()) as { error?: string }
-    expect(body.error).toContain('idempotencyKey must be a string')
-  })
-
-  it('rejects agent runs that request secrets without a secret binding', async () => {
-    const store = createStoreMock()
-    const kube = createKubeMock({
-      'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
-    })
-
-    const request = buildRequest(
-      'http://localhost/v1/agent-runs',
-      {
-        agentRef: { name: 'demo-agent' },
-        namespace: 'jangar',
-        implementationSpecRef: { name: 'impl-1' },
-        runtime: { type: 'job', config: {} },
-        secrets: ['api-key'],
-      },
-      { 'Idempotency-Key': 'demo-agent-run-1' },
-    )
-
-    const response = await postAgentRunsHandler(request, { storeFactory: () => store, kubeClient: kube })
-
-    expect(response.status).toBe(403)
-    const body = (await response.json()) as { error?: string }
-    expect(body.error).toContain('secretBindingRef is required')
-  })
-
-  it('rejects agent runs when namespace queue limit is exceeded', async () => {
-    const restoreEnv = setEnv({
-      JANGAR_AGENTS_CONTROLLER_QUEUE_NAMESPACE: '1',
-      JANGAR_AGENTS_CONTROLLER_QUEUE_CLUSTER: '0',
-      JANGAR_AGENTS_CONTROLLER_QUEUE_REPO: '0',
-      JANGAR_AGENTS_CONTROLLER_RATE_NAMESPACE: '0',
-      JANGAR_AGENTS_CONTROLLER_RATE_CLUSTER: '0',
-      JANGAR_AGENTS_CONTROLLER_RATE_REPO: '0',
-    })
-    try {
-      const store = createStoreMock()
-      const kube = createKubeMock(
-        {
-          'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
-        },
-        {
-          'agentruns.agents.proompteng.ai:jangar': [{ status: { phase: 'Pending' }, spec: { parameters: {} } }],
-        },
+  it('proxies AgentRun reads to the Agents service with encoded names', async () => {
+    await withAgentsServiceBaseUrl(async () => {
+      const fetchMock = stubAgentsServiceFetch()
+      const response = await getAgentRunHandler(
+        'run/name with spaces',
+        new Request('http://jangar.test/v1/agent-runs/run%2Fname%20with%20spaces?namespace=agents'),
       )
 
-      const request = buildRequest(
-        'http://localhost/v1/agent-runs',
-        {
-          agentRef: { name: 'demo-agent' },
-          namespace: 'jangar',
-          implementationSpecRef: { name: 'impl-1' },
-          runtime: { type: 'job', config: {} },
-        },
-        { 'Idempotency-Key': 'demo-agent-run-queue-1' },
-      )
-
-      const response = await postAgentRunsHandler(request, { storeFactory: () => store, kubeClient: kube })
-
-      expect(response.status).toBe(429)
-      const body = (await response.json()) as { error?: string }
-      expect(body.error).toContain('queue limit')
-    } finally {
-      restoreEnv()
-    }
+      expect(response.status).toBe(201)
+      const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
+      expect(url.toString()).toBe('http://agents.test/v1/agent-runs/run%2Fname%20with%20spaces?namespace=agents')
+      expect(init.method).toBe('GET')
+      expect(init.body).toBeUndefined()
+    })
   })
 
-  it('rejects agent runs when repository queue limit is exceeded', async () => {
-    const restoreEnv = setEnv({
-      JANGAR_AGENTS_CONTROLLER_QUEUE_NAMESPACE: '10',
-      JANGAR_AGENTS_CONTROLLER_QUEUE_CLUSTER: '0',
-      JANGAR_AGENTS_CONTROLLER_QUEUE_REPO: '1',
-      JANGAR_AGENTS_CONTROLLER_RATE_NAMESPACE: '0',
-      JANGAR_AGENTS_CONTROLLER_RATE_CLUSTER: '0',
-      JANGAR_AGENTS_CONTROLLER_RATE_REPO: '0',
-    })
-    try {
-      const store = createStoreMock()
-      const kube = createKubeMock(
-        {
-          'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
-        },
-        {
-          'agentruns.agents.proompteng.ai:jangar': [
-            { status: { phase: 'Pending' }, spec: { parameters: { repository: 'acme/demo' } } },
-          ],
-        },
+  it('proxies orchestration creation to the Agents service', async () => {
+    await withAgentsServiceBaseUrl(async () => {
+      const fetchMock = stubAgentsServiceFetch()
+      const response = await postOrchestrationsHandler(
+        new Request('http://jangar.test/v1/orchestrations', {
+          body: JSON.stringify({ name: 'demo-orchestration' }),
+          headers: { 'content-type': 'application/json' },
+          method: 'POST',
+        }),
       )
 
-      const request = buildRequest(
-        'http://localhost/v1/agent-runs',
-        {
-          agentRef: { name: 'demo-agent' },
-          namespace: 'jangar',
-          implementationSpecRef: { name: 'impl-1' },
-          runtime: { type: 'job', config: {} },
-          parameters: { repository: 'acme/demo' },
-        },
-        { 'Idempotency-Key': 'demo-agent-run-queue-2' },
-      )
-
-      const response = await postAgentRunsHandler(request, { storeFactory: () => store, kubeClient: kube })
-
-      expect(response.status).toBe(429)
-      const body = (await response.json()) as { error?: string }
-      expect(body.error).toContain('Repository acme/demo')
-    } finally {
-      restoreEnv()
-    }
-  })
-
-  it('rejects orchestration creation when approval policy is denied', async () => {
-    const store = createStoreMock()
-    const kube = createKubeMock({
-      'approvalpolicies.approvals.proompteng.ai:jangar:policy-1': { status: { phase: 'Denied' } },
+      expect(response.status).toBe(201)
+      const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
+      expect(url.toString()).toBe('http://agents.test/v1/orchestrations')
+      expect(init.method).toBe('POST')
+      expect(new TextDecoder().decode(init.body as ArrayBuffer)).toBe('{"name":"demo-orchestration"}')
     })
-
-    const request = buildRequest(
-      'http://localhost/v1/orchestrations',
-      {
-        name: 'demo-orchestration',
-        namespace: 'jangar',
-        spec: {
-          entrypoint: 'gate',
-          steps: [{ name: 'gate', kind: 'ApprovalGate', policyRef: 'policy-1' }],
-        },
-      },
-      { 'Idempotency-Key': 'demo-orchestration-1' },
-    )
-
-    const response = await postOrchestrationsHandler(request, { storeFactory: () => store, kubeClient: kube })
-
-    expect(response.status).toBe(403)
-    const body = (await response.json()) as { error?: string }
-    expect(body.error).toContain('approval policy')
-  })
-
-  it('accepts orchestration creation when approval policy is approved', async () => {
-    const store = createStoreMock()
-    const kube = createKubeMock({
-      'approvalpolicies.approvals.proompteng.ai:jangar:policy-2': { status: { phase: 'Approved' } },
-    })
-
-    const request = buildRequest(
-      'http://localhost/v1/orchestrations',
-      {
-        name: 'demo-orchestration',
-        namespace: 'jangar',
-        spec: {
-          entrypoint: 'gate',
-          steps: [{ name: 'gate', kind: 'ApprovalGate', policyRef: 'policy-2' }],
-        },
-      },
-      { 'Idempotency-Key': 'demo-orchestration-2' },
-    )
-
-    const response = await postOrchestrationsHandler(request, { storeFactory: () => store, kubeClient: kube })
-
-    expect(response.status).toBe(201)
-    const body = (await response.json()) as { ok?: boolean }
-    expect(body.ok).toBe(true)
   })
 })
