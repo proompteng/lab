@@ -1,11 +1,11 @@
 import { createFileRoute } from '@tanstack/react-router'
 import {
-  buildAgentsRuntimeReadyResponse,
-  isAgentRunIngestionReady,
+  type AgentsControllerHealthSnapshot,
   isControllerHealthReady,
-  isStandbyLeaderElectionReady,
+  buildAgentsRuntimeReadyResponse,
+  getAgentsReadySnapshot,
   uniqueStrings,
-} from '@proompteng/agents/server/ready'
+} from '~/server/agents-control-plane-client'
 
 import type {
   ControlPlaneControllerWitnessQuorum,
@@ -14,7 +14,6 @@ import type {
   TorghutRevenueRepairQueueItem,
 } from '~/data/agents-control-plane'
 import { isAgentsRuntimeService, resolveRuntimeServiceName } from '~/server/runtime-identity'
-import { assessAgentRunIngestion, getAgentsControllerHealth } from '@proompteng/agents/server/agents-controller'
 import { buildControllerIngestionSettlement } from '~/server/control-plane-controller-ingestion-settlement'
 import { buildRuntimeAdmissionSnapshot, findAdmissionPassport } from '~/server/control-plane-runtime-admission'
 import {
@@ -24,11 +23,8 @@ import {
 } from '~/server/control-plane-evidence-pressure-ledger'
 import { buildRepairBidAdmissionState } from '~/server/control-plane-repair-bid-admission'
 import { getGithubReviewIngestPressureSummary } from '~/server/github-review-ingest'
-import { getLeaderElectionStatus } from '~/server/leader-election'
 import { getMemoryProviderHealth } from '~/server/memory-provider-health'
 import { getMetricsSinkPressureSummary } from '~/server/metrics'
-import { getOrchestrationControllerHealth } from '@proompteng/agents/server/orchestration-controller'
-import { getSupportingControllerHealth } from '~/server/supporting-primitives-controller'
 import { buildExecutionTrust } from '~/server/control-plane-status'
 import {
   resolveTorghutConsumerEvidence,
@@ -53,7 +49,7 @@ import { getWatchReliabilitySummary } from '~/server/control-plane-watch-reliabi
 
 const buildReadyControllerReadiness = (
   name: string,
-  health: ReturnType<typeof getAgentsControllerHealth>,
+  health: AgentsControllerHealthSnapshot,
 ): EvidencePressureControllerReadiness => ({
   name,
   enabled: health.enabled,
@@ -244,7 +240,7 @@ const readyPathWitnessId = (namespace: string, surface: string) => `witness:${su
 const buildReadyPathControllerWitness = (input: {
   now: Date
   namespace: string
-  agentsController: ReturnType<typeof getAgentsControllerHealth>
+  agentsController: AgentsControllerHealthSnapshot
   agentRunIngestion: AgentRunIngestionStatus
   watchReliability: ReturnType<typeof getWatchReliabilitySummary>
 }): ControlPlaneControllerWitnessQuorum => {
@@ -401,20 +397,15 @@ export const Route = createFileRoute('/ready')({
 
 export const getReadyHandler = async () => {
   const now = new Date()
-  const leaderElection = getLeaderElectionStatus()
-  const agentsController = getAgentsControllerHealth()
-  const orchestrationController = getOrchestrationControllerHealth()
-  const supportingController = getSupportingControllerHealth()
+  const agentsReady = await getAgentsReadySnapshot()
+  const leaderElection = agentsReady.leaderElection
+  const agentsController = agentsReady.agentsController
+  const orchestrationController = agentsReady.orchestrationController
+  const supportingController = agentsReady.supportingController
   if (isAgentsRuntimeService()) {
-    return buildAgentsRuntimeReadyResponse({
-      leaderElection,
-      agentsController,
-      orchestrationController,
-      supportingController,
-      assessAgentRunIngestion,
-    })
+    return buildAgentsRuntimeReadyResponse(agentsReady)
   }
-  const namespaces = agentsController.namespaces?.length ? agentsController.namespaces : ['agents']
+  const namespaces = agentsReady.namespaces.length ? agentsReady.namespaces : ['agents']
   const trust = await executionTrustStatus(namespaces)
   const torghutConsumerEvidence = await resolveTorghutConsumerEvidence(now)
   const repairBidAdmission = buildRepairBidAdmissionState({
@@ -470,20 +461,20 @@ export const getReadyHandler = async () => {
     isControllerHealthReady(agentsController) &&
     isControllerHealthReady(orchestrationController) &&
     isControllerHealthReady(supportingController)
-  const leaderRequired = leaderElection.required
-  const activeControllerReplica = !leaderRequired || leaderElection.isLeader
-  const leaderElectionReady = activeControllerReplica || isStandbyLeaderElectionReady(leaderElection)
-  const agentsControllerHealthy = activeControllerReplica
-    ? isAgentRunIngestionReady(agentsController, assessAgentRunIngestion)
-    : leaderElectionReady
+  const agentsControllerHealthy = !agentsReady.reasonCodes.includes('agentrun_ingestion_not_ready')
   const servingPassportReady =
     servingPassport !== undefined && servingPassport.decision !== 'block' && servingPassport.decision !== 'hold'
   const memoryProviderReady = memoryProvider.status !== 'blocked'
-  const ready = controllersOk && leaderElectionReady && memoryProviderReady
-  const status = ready && agentsControllerHealthy && servingPassportReady ? 'ok' : 'degraded'
+  const ready = controllersOk && agentsReady.httpReady && memoryProviderReady
+  const status =
+    ready && agentsReady.status === 'ok' && agentsControllerHealthy && servingPassportReady ? 'ok' : 'degraded'
   const readyPathRolloutHealth = buildReadyPathRolloutHealth(ready)
   const readyPathSourceServingExchange = buildReadyPathSourceServingExchange(now, namespaces[0] ?? 'agents')
-  const readyPathAgentRunIngestion = buildAgentRunIngestionStatus(namespaces[0] ?? 'agents', agentsController)
+  const readyPathAgentRunIngestion = buildAgentRunIngestionStatus(
+    namespaces[0] ?? 'agents',
+    agentsController,
+    agentsReady.reasonCodes,
+  )
   const readyPathControllerWitness = buildReadyPathControllerWitness({
     now,
     namespace: namespaces[0] ?? 'agents',

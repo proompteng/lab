@@ -11,21 +11,8 @@ const buildJsonResponse = (payload: unknown, status = 200) =>
     headers: { 'content-type': 'application/json' },
   })
 
-const agentsControllerMocks = vi.hoisted(() => ({
-  getAgentsControllerHealth: vi.fn(),
-  assessAgentRunIngestion: vi.fn(),
-}))
-
-const leaderElectionMocks = vi.hoisted(() => ({
-  getLeaderElectionStatus: vi.fn(),
-}))
-
-const orchestrationControllerMocks = vi.hoisted(() => ({
-  getOrchestrationControllerHealth: vi.fn(),
-}))
-
-const supportingControllerMocks = vi.hoisted(() => ({
-  getSupportingControllerHealth: vi.fn(),
+const agentsControlPlaneClientMocks = vi.hoisted(() => ({
+  getAgentsReadySnapshot: vi.fn(),
 }))
 
 const controlPlaneStatusMocks = vi.hoisted(() => ({
@@ -53,10 +40,15 @@ const githubReviewIngestMocks = vi.hoisted(() => ({
   getGithubReviewIngestPressureSummary: vi.fn(),
 }))
 
-vi.mock('@proompteng/agents/server/agents-controller', () => agentsControllerMocks)
-vi.mock('~/server/leader-election', () => leaderElectionMocks)
-vi.mock('@proompteng/agents/server/orchestration-controller', () => orchestrationControllerMocks)
-vi.mock('~/server/supporting-primitives-controller', () => supportingControllerMocks)
+vi.mock('~/server/agents-control-plane-client', async () => {
+  const actual = await vi.importActual<typeof import('~/server/agents-control-plane-client')>(
+    '~/server/agents-control-plane-client',
+  )
+  return {
+    ...actual,
+    getAgentsReadySnapshot: agentsControlPlaneClientMocks.getAgentsReadySnapshot,
+  }
+})
 vi.mock('~/server/memory-provider-health', () => memoryProviderHealthMocks)
 vi.mock('~/server/control-plane-watch-reliability', () => watchReliabilityMocks)
 vi.mock('~/server/metrics', () => metricsMocks)
@@ -216,6 +208,72 @@ const buildRuntimeAdmissionSnapshot = (
   ],
 })
 
+const buildAgentsControllerHealth = (overrides: Record<string, unknown> = {}) => ({
+  enabled: true,
+  started: true,
+  namespaces: ['agents'],
+  crdsReady: true,
+  missingCrds: [],
+  lastCheckedAt: '2026-03-08T21:00:00Z',
+  agentRunIngestion: [],
+  ...overrides,
+})
+
+const buildLeaderElection = (overrides: Record<string, unknown> = {}) => ({
+  enabled: true,
+  required: true,
+  isLeader: true,
+  leaseName: 'agents-controller-leader',
+  leaseNamespace: 'agents',
+  identity: 'agents-controllers-1',
+  lastTransitionAt: '2026-03-08T21:00:00Z',
+  lastAttemptAt: '2026-03-08T21:00:00Z',
+  lastSuccessAt: '2026-03-08T21:00:00Z',
+  lastError: null,
+  ...overrides,
+})
+
+const buildAgentsReadySnapshot = (overrides: Record<string, unknown> = {}) => {
+  const agentsController =
+    (overrides.agentsController as Record<string, unknown> | undefined) ?? buildAgentsControllerHealth()
+  const orchestrationController =
+    (overrides.orchestrationController as Record<string, unknown> | undefined) ?? buildAgentsControllerHealth()
+  const supportingController =
+    (overrides.supportingController as Record<string, unknown> | undefined) ?? buildAgentsControllerHealth()
+  const namespaces = (overrides.namespaces as string[] | undefined) ?? ['agents']
+  const status = (overrides.status as 'ok' | 'degraded' | undefined) ?? 'ok'
+  const httpReady = (overrides.httpReady as boolean | undefined) ?? true
+  const reasonCodes = (overrides.reasonCodes as string[] | undefined) ?? []
+  const leaderElection = (overrides.leaderElection as Record<string, unknown> | undefined) ?? buildLeaderElection()
+
+  return {
+    available: true,
+    httpStatus: httpReady ? 200 : 503,
+    status,
+    httpReady,
+    reasonCodes,
+    namespaces,
+    leaderElection,
+    agentsController,
+    orchestrationController,
+    supportingController,
+    raw: {
+      schemaVersion: 'agents.proompteng.ai/ready/v1',
+      status,
+      service: 'agents',
+      httpReady,
+      reason_codes: reasonCodes,
+      namespaces,
+      leaderElection,
+      agentsController,
+      orchestrationController,
+      supportingController,
+    },
+    error: null,
+    ...overrides,
+  }
+}
+
 describe('getReadyHandler', () => {
   beforeEach(() => {
     process.env = { ...originalEnv }
@@ -285,53 +343,7 @@ describe('getReadyHandler', () => {
       evidence_refs: [],
     })
 
-    agentsControllerMocks.getAgentsControllerHealth.mockReturnValue({
-      enabled: true,
-      started: true,
-      namespaces: ['agents'],
-      crdsReady: true,
-      missingCrds: [],
-      lastCheckedAt: '2026-03-08T21:00:00Z',
-      agentRunIngestion: [],
-    })
-    agentsControllerMocks.assessAgentRunIngestion.mockReturnValue({
-      namespace: 'agents',
-      status: 'healthy',
-      message: 'AgentRun ingestion healthy',
-      dispatchPaused: false,
-      lastWatchEventAt: '2026-03-08T21:00:00Z',
-      lastResyncAt: '2026-03-08T21:00:00Z',
-      untouchedRunCount: 0,
-      oldestUntouchedAgeSeconds: null,
-    })
-    leaderElectionMocks.getLeaderElectionStatus.mockReturnValue({
-      enabled: true,
-      required: true,
-      isLeader: true,
-      leaseName: 'jangar-controller-leader',
-      leaseNamespace: 'agents',
-      identity: 'agents-controllers-1',
-      lastTransitionAt: '2026-03-08T21:00:00Z',
-      lastAttemptAt: '2026-03-08T21:00:00Z',
-      lastSuccessAt: '2026-03-08T21:00:00Z',
-      lastError: null,
-    })
-    orchestrationControllerMocks.getOrchestrationControllerHealth.mockReturnValue({
-      enabled: true,
-      started: true,
-      namespaces: ['agents'],
-      crdsReady: true,
-      missingCrds: [],
-      lastCheckedAt: '2026-03-08T21:00:00Z',
-    })
-    supportingControllerMocks.getSupportingControllerHealth.mockReturnValue({
-      enabled: true,
-      started: true,
-      namespaces: ['agents'],
-      crdsReady: true,
-      missingCrds: [],
-      lastCheckedAt: '2026-03-08T21:00:00Z',
-    })
+    agentsControlPlaneClientMocks.getAgentsReadySnapshot.mockResolvedValue(buildAgentsReadySnapshot())
   })
 
   it('returns 200 when leader is ready and AgentRun ingestion is healthy', async () => {
@@ -407,16 +419,12 @@ describe('getReadyHandler', () => {
 
   it('keeps Agents runtime readiness HTTP-ready while backlog adoption is still degraded', async () => {
     process.env.AGENTS_IMAGE = 'registry.example/lab/agents-controller:abc123'
-    agentsControllerMocks.assessAgentRunIngestion.mockReturnValue({
-      namespace: 'agents',
-      status: 'degraded',
-      message: 'untouched AgentRuns detected for 180s',
-      dispatchPaused: true,
-      lastWatchEventAt: null,
-      lastResyncAt: '2026-03-08T21:00:00Z',
-      untouchedRunCount: 3,
-      oldestUntouchedAgeSeconds: 180,
-    })
+    agentsControlPlaneClientMocks.getAgentsReadySnapshot.mockResolvedValue(
+      buildAgentsReadySnapshot({
+        status: 'degraded',
+        reasonCodes: ['agentrun_ingestion_not_ready'],
+      }),
+    )
 
     const { getReadyHandler } = await import('./ready')
 
@@ -822,16 +830,12 @@ describe('getReadyHandler', () => {
   })
 
   it('returns 200 with degraded status when AgentRun ingestion is degraded', async () => {
-    agentsControllerMocks.assessAgentRunIngestion.mockReturnValue({
-      namespace: 'agents',
-      status: 'degraded',
-      message: 'untouched AgentRuns detected for 180s',
-      dispatchPaused: true,
-      lastWatchEventAt: null,
-      lastResyncAt: '2026-03-08T21:00:00Z',
-      untouchedRunCount: 3,
-      oldestUntouchedAgeSeconds: 180,
-    })
+    agentsControlPlaneClientMocks.getAgentsReadySnapshot.mockResolvedValue(
+      buildAgentsReadySnapshot({
+        status: 'degraded',
+        reasonCodes: ['agentrun_ingestion_not_ready'],
+      }),
+    )
 
     const { getReadyHandler } = await import('./ready')
 
@@ -843,33 +847,23 @@ describe('getReadyHandler', () => {
   })
 
   it('returns 200 with degraded status when the active controller is still adopting backlog', async () => {
-    agentsControllerMocks.getAgentsControllerHealth.mockReturnValue({
-      enabled: true,
-      started: false,
-      namespaces: ['agents'],
-      crdsReady: true,
-      missingCrds: [],
-      lastCheckedAt: '2026-03-08T21:00:00Z',
-      agentRunIngestion: [
-        {
-          namespace: 'agents',
-          lastWatchEventAt: '2026-03-08T21:01:00Z',
-          lastResyncAt: '2026-03-08T21:00:00Z',
-          untouchedRunCount: 12,
-          oldestUntouchedAgeSeconds: 4_769_263,
-        },
-      ],
-    })
-    agentsControllerMocks.assessAgentRunIngestion.mockReturnValue({
-      namespace: 'agents',
-      status: 'unknown',
-      message: 'agents controller not started',
-      dispatchPaused: false,
-      lastWatchEventAt: '2026-03-08T21:01:00Z',
-      lastResyncAt: '2026-03-08T21:00:00Z',
-      untouchedRunCount: 12,
-      oldestUntouchedAgeSeconds: 4_769_263,
-    })
+    agentsControlPlaneClientMocks.getAgentsReadySnapshot.mockResolvedValue(
+      buildAgentsReadySnapshot({
+        status: 'degraded',
+        agentsController: buildAgentsControllerHealth({
+          started: false,
+          agentRunIngestion: [
+            {
+              namespace: 'agents',
+              lastWatchEventAt: '2026-03-08T21:01:00Z',
+              lastResyncAt: '2026-03-08T21:00:00Z',
+              untouchedRunCount: 12,
+              oldestUntouchedAgeSeconds: 4_769_263,
+            },
+          ],
+        }),
+      }),
+    )
 
     const { getReadyHandler } = await import('./ready')
 
@@ -885,18 +879,14 @@ describe('getReadyHandler', () => {
   })
 
   it('returns 200 when leader election is required but this instance is a healthy standby', async () => {
-    leaderElectionMocks.getLeaderElectionStatus.mockReturnValue({
-      enabled: true,
-      required: true,
-      isLeader: false,
-      leaseName: 'jangar-controller-leader',
-      leaseNamespace: 'agents',
-      identity: 'agents-controllers-2',
-      lastTransitionAt: '2026-03-08T21:00:00Z',
-      lastAttemptAt: '2026-03-08T21:00:00Z',
-      lastSuccessAt: '2026-03-08T21:00:00Z',
-      lastError: null,
-    })
+    agentsControlPlaneClientMocks.getAgentsReadySnapshot.mockResolvedValue(
+      buildAgentsReadySnapshot({
+        leaderElection: buildLeaderElection({
+          isLeader: false,
+          identity: 'agents-controllers-2',
+        }),
+      }),
+    )
 
     const { getReadyHandler } = await import('./ready')
 
@@ -908,18 +898,20 @@ describe('getReadyHandler', () => {
   })
 
   it('returns 503 when leader election is required but standby has not observed a healthy lease attempt', async () => {
-    leaderElectionMocks.getLeaderElectionStatus.mockReturnValue({
-      enabled: true,
-      required: true,
-      isLeader: false,
-      leaseName: 'jangar-controller-leader',
-      leaseNamespace: 'agents',
-      identity: 'agents-controllers-2',
-      lastTransitionAt: null,
-      lastAttemptAt: null,
-      lastSuccessAt: null,
-      lastError: 'lease watch failed',
-    })
+    agentsControlPlaneClientMocks.getAgentsReadySnapshot.mockResolvedValue(
+      buildAgentsReadySnapshot({
+        status: 'degraded',
+        httpReady: false,
+        leaderElection: buildLeaderElection({
+          isLeader: false,
+          identity: 'agents-controllers-2',
+          lastTransitionAt: null,
+          lastAttemptAt: null,
+          lastSuccessAt: null,
+          lastError: 'lease watch failed',
+        }),
+      }),
+    )
 
     const { getReadyHandler } = await import('./ready')
 
@@ -1070,15 +1062,14 @@ describe('getReadyHandler', () => {
         servingPassportId: 'passport:serving:blocked',
       }),
     )
-    agentsControllerMocks.getAgentsControllerHealth.mockReturnValue({
-      enabled: true,
-      started: true,
-      namespaces: ['agents', 'staging'],
-      crdsReady: true,
-      missingCrds: [],
-      lastCheckedAt: '2026-03-08T21:00:00Z',
-      agentRunIngestion: [],
-    })
+    agentsControlPlaneClientMocks.getAgentsReadySnapshot.mockResolvedValue(
+      buildAgentsReadySnapshot({
+        namespaces: ['agents', 'staging'],
+        agentsController: buildAgentsControllerHealth({
+          namespaces: ['agents', 'staging'],
+        }),
+      }),
+    )
     controlPlaneStatusMocks.buildExecutionTrust
       .mockResolvedValueOnce({
         executionTrust: {

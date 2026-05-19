@@ -1,19 +1,38 @@
-import { assessAgentRunIngestion, getAgentsControllerHealth } from '@proompteng/agents/server/agents-controller'
 import type { AgentRunIngestionStatus, ControllerStatus } from '~/server/control-plane-status-types'
+import type { AgentsControllerHealthSnapshot } from '~/server/agents-control-plane-client'
 
-type ControllerHealth = ReturnType<typeof getAgentsControllerHealth>
+type ControllerHealth = AgentsControllerHealthSnapshot
 
-export const buildAgentRunIngestionStatus = (namespace: string, health: ControllerHealth): AgentRunIngestionStatus => {
-  const assessment = assessAgentRunIngestion(namespace, health)
+const buildDefaultIngestion = (namespace: string) => ({
+  namespace,
+  lastWatchEventAt: null,
+  lastResyncAt: null,
+  untouchedRunCount: 0,
+  oldestUntouchedAgeSeconds: null,
+})
+
+export const buildAgentRunIngestionStatus = (
+  namespace: string,
+  health: ControllerHealth,
+  reasonCodes: string[] = [],
+): AgentRunIngestionStatus => {
+  const entry =
+    health.agentRunIngestion?.find((item) => item.namespace === namespace) ?? buildDefaultIngestion(namespace)
+  const degraded = reasonCodes.includes('agentrun_ingestion_not_ready')
+  const status = degraded ? 'degraded' : health.started ? 'healthy' : 'unknown'
 
   return {
     namespace,
-    status: assessment.status,
-    message: assessment.message,
-    last_watch_event_at: assessment.lastWatchEventAt,
-    last_resync_at: assessment.lastResyncAt,
-    untouched_run_count: assessment.untouchedRunCount,
-    oldest_untouched_age_seconds: assessment.oldestUntouchedAgeSeconds,
+    status,
+    message: degraded
+      ? 'AgentRun ingestion not ready according to Agents service'
+      : health.started
+        ? 'AgentRun ingestion healthy'
+        : 'agents controller not started',
+    last_watch_event_at: entry.lastWatchEventAt,
+    last_resync_at: entry.lastResyncAt,
+    untouched_run_count: entry.untouchedRunCount,
+    oldest_untouched_age_seconds: entry.oldestUntouchedAgeSeconds,
   }
 }
 
