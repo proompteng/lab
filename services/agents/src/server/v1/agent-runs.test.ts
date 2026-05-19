@@ -148,4 +148,36 @@ describe('AgentRun v1 API', () => {
     expect(kube.apply).not.toHaveBeenCalled()
     expect(store.createAgentRun).not.toHaveBeenCalled()
   })
+
+  it('categorizes Kubernetes apply failures and closes the store', async () => {
+    const store = createStoreMock()
+    const kube = createKubeMock()
+    vi.mocked(kube.apply).mockRejectedValueOnce(new Error('api server refused AgentRun apply'))
+
+    const response = await postAgentRunsHandler(
+      buildRequest({
+        agentRef: { name: 'demo-agent' },
+        namespace: 'agents',
+        implementation: { text: 'Implement the requested change.' },
+        runtime: { type: 'job', config: { image: 'registry.example.test/lab/agents-codex-runner:test' } },
+      }),
+      {
+        storeFactory: () => store,
+        kubeClient: kube,
+        validatePolicies: vi.fn(async () => {}),
+      },
+    )
+
+    expect(response.status).toBe(502)
+    const body = (await response.json()) as { error?: string }
+    expect(body.error).toContain('kubernetes apply-agent-run failed')
+    expect(body.error).toContain('api server refused AgentRun apply')
+    expect(store.deleteAgentRunIdempotencyKey).toHaveBeenCalledWith({
+      namespace: 'agents',
+      agentName: 'demo-agent',
+      idempotencyKey: 'agent-run-request-1',
+    })
+    expect(store.createAgentRun).not.toHaveBeenCalled()
+    expect(store.close).toHaveBeenCalledTimes(1)
+  })
 })

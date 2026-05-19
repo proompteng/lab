@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
+import { Data, Effect } from 'effect'
+
 import { resolveAgentRunAdmissionConfig } from '../agents-controller/controller-config'
 import { errorResponse, okResponse, parseJsonBody, requireIdempotencyKey } from '../http'
 import { createKubernetesClient, type KubernetesClient, RESOURCE_MAP } from '../kube-types'
@@ -559,6 +561,209 @@ const evaluateAdmissionLimits = async (
   return { ok: true }
 }
 
+type AgentRunStorageOperation =
+  | 'open-store'
+  | 'store-ready'
+  | 'list-runs'
+  | 'read-delivery-id'
+  | 'read-idempotency-key'
+  | 'reserve-idempotency-key'
+  | 'delete-idempotency-key'
+  | 'assign-idempotency-key'
+  | 'create-agent-run'
+  | 'create-audit-event'
+
+type AgentRunKubeOperation =
+  | 'create-client'
+  | 'get-existing-run'
+  | 'get-idempotent-run'
+  | 'get-agent'
+  | 'get-implementation-spec'
+  | 'get-vcs-provider'
+  | 'evaluate-admission-limits'
+  | 'apply-agent-run'
+
+export class AgentRunInvalidPayloadError extends Data.TaggedError('AgentRunInvalidPayloadError')<{
+  readonly message: string
+  readonly cause?: unknown
+}> {}
+
+export class AgentRunStorageError extends Data.TaggedError('AgentRunStorageError')<{
+  readonly operation: AgentRunStorageOperation
+  readonly cause: unknown
+}> {}
+
+export class AgentRunKubeError extends Data.TaggedError('AgentRunKubeError')<{
+  readonly operation: AgentRunKubeOperation
+  readonly resource: string
+  readonly namespace: string
+  readonly cause: unknown
+}> {}
+
+export class AgentRunNotFoundError extends Data.TaggedError('AgentRunNotFoundError')<{
+  readonly resource: string
+  readonly name: string
+  readonly namespace: string
+}> {}
+
+export class AgentRunPolicyDeniedError extends Data.TaggedError('AgentRunPolicyDeniedError')<{
+  readonly subject: { kind: string; name: string; namespace?: string }
+  readonly cause: unknown
+}> {}
+
+export class AgentRunAdmissionRejectedError extends Data.TaggedError('AgentRunAdmissionRejectedError')<{
+  readonly message: string
+  readonly status: number
+  readonly details?: Record<string, unknown>
+}> {}
+
+export class AgentRunConflictError extends Data.TaggedError('AgentRunConflictError')<{
+  readonly message: string
+  readonly details?: Record<string, unknown>
+}> {}
+
+export class AgentRunForbiddenError extends Data.TaggedError('AgentRunForbiddenError')<{
+  readonly message: string
+}> {}
+
+export type AgentRunSubmitError =
+  | AgentRunInvalidPayloadError
+  | AgentRunStorageError
+  | AgentRunKubeError
+  | AgentRunNotFoundError
+  | AgentRunPolicyDeniedError
+  | AgentRunAdmissionRejectedError
+  | AgentRunConflictError
+  | AgentRunForbiddenError
+
+type AgentRunSubmitSuccess = {
+  status: number
+  body: Record<string, unknown>
+}
+
+const toErrorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
+export const describeAgentRunSubmitError = (error: unknown) => {
+  if (error instanceof AgentRunInvalidPayloadError) return error.message
+  if (error instanceof AgentRunNotFoundError) {
+    return `${error.resource} ${error.name} not found in namespace ${error.namespace}`
+  }
+  if (error instanceof AgentRunForbiddenError) return error.message
+  if (error instanceof AgentRunConflictError) return error.message
+  if (error instanceof AgentRunAdmissionRejectedError) return error.message
+  if (error instanceof AgentRunPolicyDeniedError) {
+    return `policy denied for ${error.subject.kind} ${error.subject.namespace}/${error.subject.name}: ${toErrorMessage(
+      error.cause,
+    )}`
+  }
+  if (error instanceof AgentRunStorageError) {
+    return `agent run storage ${error.operation} failed: ${toErrorMessage(error.cause)}`
+  }
+  if (error instanceof AgentRunKubeError) {
+    return `kubernetes ${error.operation} failed for ${error.resource} in namespace ${error.namespace}: ${toErrorMessage(
+      error.cause,
+    )}`
+  }
+  return toErrorMessage(error)
+}
+
+const agentRunSubmitStatus = (error: unknown) => {
+  if (error instanceof AgentRunInvalidPayloadError) return 400
+  if (error instanceof AgentRunNotFoundError) return 404
+  if (error instanceof AgentRunPolicyDeniedError || error instanceof AgentRunForbiddenError) return 403
+  if (error instanceof AgentRunConflictError) return 409
+  if (error instanceof AgentRunAdmissionRejectedError) return error.status
+  if (error instanceof AgentRunKubeError) return 502
+  if (error instanceof AgentRunStorageError) return 503
+  return 500
+}
+
+const agentRunSubmitDetails = (error: unknown) => {
+  if (error instanceof AgentRunConflictError || error instanceof AgentRunAdmissionRejectedError) {
+    return error.details
+  }
+  return undefined
+}
+
+const storeEffect = <A>(
+  operation: AgentRunStorageOperation,
+  run: () => Promise<A>,
+): Effect.Effect<A, AgentRunStorageError> =>
+  Effect.tryPromise({
+    try: run,
+    catch: (cause) => new AgentRunStorageError({ operation, cause }),
+  })
+
+const kubeEffect = <A>(
+  operation: AgentRunKubeOperation,
+  resource: string,
+  namespace: string,
+  run: () => Promise<A>,
+): Effect.Effect<A, AgentRunKubeError> =>
+  Effect.tryPromise({
+    try: run,
+    catch: (cause) => new AgentRunKubeError({ operation, resource, namespace, cause }),
+  })
+
+const closeStoreEffect = (store: AgentRunsApiStore) =>
+  Effect.promise(() => store.close()).pipe(
+    Effect.catchAll((error) =>
+      Effect.sync(() => {
+        console.warn('[agents] failed to close AgentRun API store', error)
+      }),
+    ),
+  )
+
+type IdempotencyReservationState = {
+  created: boolean
+  agentRunName: string | null
+  idempotencyKey: string
+  agentName: string
+  namespace: string
+}
+
+const createAgentRunResource = (
+  parsed: AgentRunPayload,
+  deliveryId: string,
+  runIdempotencyKey: string,
+): Record<string, unknown> => ({
+  apiVersion: 'agents.proompteng.ai/v1alpha1',
+  kind: 'AgentRun',
+  metadata: {
+    generateName: `${parsed.agentRef.name}-`,
+    namespace: parsed.namespace,
+    labels: buildDeliveryIdLabels(deliveryId),
+  },
+  spec: {
+    agentRef: parsed.agentRef,
+    implementationSpecRef: parsed.implementationSpecRef ?? undefined,
+    implementation: parsed.implementation ? { inline: parsed.implementation } : undefined,
+    goal: parsed.goal ?? undefined,
+    runtime: parsed.runtime,
+    workflow: parsed.workflow
+      ? {
+          steps: parsed.workflow.steps.map((step) => ({
+            name: step.name,
+            implementationSpecRef: step.implementationSpecRef ?? undefined,
+            implementation: step.implementation ? { inline: step.implementation } : undefined,
+            parameters: step.parameters ?? undefined,
+            workload: step.workload ?? undefined,
+            retries: step.retries ?? undefined,
+            retryBackoffSeconds: step.retryBackoffSeconds ?? undefined,
+          })),
+        }
+      : undefined,
+    workload: parsed.workload ?? undefined,
+    parameters: parsed.parameters ?? {},
+    secrets: parsed.secrets ?? undefined,
+    memoryRef: parsed.memoryRef ?? undefined,
+    vcsRef: parsed.vcsRef ?? undefined,
+    vcsPolicy: parsed.vcsPolicy ?? undefined,
+    idempotencyKey: runIdempotencyKey,
+    ttlSecondsAfterFinished: parsed.ttlSecondsAfterFinished ?? undefined,
+  },
+})
+
 export const getAgentRunsHandler = async (request: Request, deps: Pick<AgentRunsApiDependencies, 'storeFactory'>) => {
   const url = new URL(request.url)
   const agentName = asString(url.searchParams.get('agentId')) ?? asString(url.searchParams.get('agentName'))
@@ -586,370 +791,472 @@ export const getAgentRunsHandler = async (request: Request, deps: Pick<AgentRuns
   }
 }
 
+export const submitAgentRun = async (
+  request: Request,
+  deps: AgentRunsApiDependencies,
+): Promise<AgentRunSubmitSuccess> => {
+  const result = await Effect.runPromise(submitAgentRunEffect(request, deps).pipe(Effect.either))
+  if (result._tag === 'Left') throw result.left
+  return result.right
+}
+
+export const submitAgentRunEffect = (
+  request: Request,
+  deps: AgentRunsApiDependencies,
+): Effect.Effect<AgentRunSubmitSuccess, AgentRunSubmitError> =>
+  Effect.gen(function* () {
+    const deliveryId = yield* Effect.try({
+      try: () => requireIdempotencyKey(request),
+      catch: (cause) =>
+        new AgentRunInvalidPayloadError({
+          message: toErrorMessage(cause),
+          cause,
+        }),
+    })
+    const payload = yield* Effect.tryPromise({
+      try: () => parseJsonBody(request),
+      catch: (cause) =>
+        new AgentRunInvalidPayloadError({
+          message: toErrorMessage(cause),
+          cause,
+        }),
+    })
+    const parsed = yield* Effect.try({
+      try: () => parseAgentRunPayload(payload),
+      catch: (cause) =>
+        new AgentRunInvalidPayloadError({
+          message: toErrorMessage(cause),
+          cause,
+        }),
+    })
+
+    const store = yield* Effect.try({
+      try: () => deps.storeFactory(),
+      catch: (cause) => new AgentRunStorageError({ operation: 'open-store', cause }),
+    })
+
+    return yield* Effect.acquireUseRelease(
+      Effect.succeed(store),
+      (activeStore) =>
+        Effect.gen(function* () {
+          const runIdempotencyKey = parsed.idempotencyKey ?? deliveryId
+          const repository = (deps.resolveRepositoryFromParameters ?? defaultResolveRepositoryFromParameters)(
+            parsed.parameters,
+          )
+          const auditContext = (deps.resolveAuditContextFromRequest ?? defaultResolveAuditContextFromRequest)(request, {
+            deliveryId,
+            namespace: parsed.namespace,
+            repository,
+            source: 'v1.agent-runs',
+          })
+
+          yield* storeEffect('store-ready', () => Promise.resolve(activeStore.ready).then(() => undefined))
+          const existing = yield* storeEffect('read-delivery-id', () => activeStore.getAgentRunByDeliveryId(deliveryId))
+          const kube = yield* Effect.try({
+            try: () => getKubeClient(deps),
+            catch: (cause) =>
+              new AgentRunKubeError({
+                operation: 'create-client',
+                resource: 'kubernetes-client',
+                namespace: parsed.namespace,
+                cause,
+              }),
+          })
+
+          if (existing) {
+            const resourceNamespace =
+              asString(readNested(existing.payload, ['resource', 'metadata', 'namespace'])) ??
+              asString(readNested(existing.payload, ['request', 'namespace'])) ??
+              parsed.namespace
+            const resource = existing.externalRunId
+              ? yield* kubeEffect('get-existing-run', RESOURCE_MAP.AgentRun, resourceNamespace, () =>
+                  kube.get(RESOURCE_MAP.AgentRun, existing.externalRunId!, resourceNamespace),
+                )
+              : null
+            return { status: 200, body: { ok: true, agentRun: existing, resource, idempotent: true } }
+          }
+
+          if (isAgentRunIdempotencyEnabled()) {
+            const scope = yield* storeEffect('read-idempotency-key', () =>
+              activeStore.getAgentRunIdempotencyKey({
+                namespace: parsed.namespace,
+                agentName: parsed.agentRef.name,
+                idempotencyKey: runIdempotencyKey,
+              }),
+            )
+
+            if (scope?.agentRunName) {
+              const resource = yield* kubeEffect('get-idempotent-run', RESOURCE_MAP.AgentRun, parsed.namespace, () =>
+                kube.get(RESOURCE_MAP.AgentRun, scope.agentRunName!, parsed.namespace),
+              )
+              const phase = asString(readNested(resource, ['status', 'phase'])) ?? 'Pending'
+
+              if (resource && !isTerminalPhase(phase)) {
+                return yield* Effect.fail(
+                  new AgentRunConflictError({
+                    message: 'AgentRun already exists for idempotency key',
+                    details: {
+                      namespace: parsed.namespace,
+                      agentName: parsed.agentRef.name,
+                      idempotencyKey: runIdempotencyKey,
+                      existingAgentRunName: scope.agentRunName,
+                      phase,
+                    },
+                  }),
+                )
+              }
+
+              return {
+                status: 200,
+                body: {
+                  ok: true,
+                  idempotent: true,
+                  namespace: parsed.namespace,
+                  agentName: parsed.agentRef.name,
+                  idempotencyKey: runIdempotencyKey,
+                  existingAgentRunName: scope.agentRunName,
+                  resource,
+                },
+              }
+            }
+          }
+
+          const agent = yield* kubeEffect('get-agent', RESOURCE_MAP.Agent, parsed.namespace, () =>
+            kube.get(RESOURCE_MAP.Agent, parsed.agentRef.name, parsed.namespace),
+          )
+          if (!agent) {
+            return yield* Effect.fail(
+              new AgentRunNotFoundError({
+                resource: 'agent',
+                name: parsed.agentRef.name,
+                namespace: parsed.namespace,
+              }),
+            )
+          }
+
+          const agentSpec = (agent.spec ?? {}) as Record<string, unknown>
+          const allowedServiceAccounts = extractAllowedServiceAccounts(agentSpec)
+          const runtimeServiceAccount = extractRuntimeServiceAccount({ runtime: parsed.runtime })
+          const effectiveServiceAccount = runtimeServiceAccount
+
+          if (
+            effectiveServiceAccount &&
+            allowedServiceAccounts.length > 0 &&
+            !allowedServiceAccounts.includes(effectiveServiceAccount)
+          ) {
+            return yield* Effect.fail(
+              new AgentRunForbiddenError({ message: `service account ${effectiveServiceAccount} is not allowed` }),
+            )
+          }
+
+          const requiredSecrets = parsed.secrets ?? extractRequiredSecrets(agentSpec)
+          const vcsSecrets = new Set<string>()
+          const desiredVcsMode = normalizeVcsMode(parsed.vcsPolicy?.mode ?? null)
+          const shouldResolveVcs = isVcsProvidersEnabled() && desiredVcsMode !== 'none'
+          const resolveVcsRefName = (): Effect.Effect<string | null, AgentRunKubeError> =>
+            Effect.gen(function* () {
+              if (parsed.vcsRef?.name) return parsed.vcsRef.name
+              if (parsed.implementation) {
+                const inline = asRecord(parsed.implementation)
+                const inlineVcsRef = asRecord(inline?.vcsRef)
+                const inlineVcsName = asString(inlineVcsRef?.name)
+                if (inlineVcsName) return inlineVcsName
+              }
+              if (parsed.implementationSpecRef?.name) {
+                const impl = yield* kubeEffect(
+                  'get-implementation-spec',
+                  RESOURCE_MAP.ImplementationSpec,
+                  parsed.namespace,
+                  () => kube.get(RESOURCE_MAP.ImplementationSpec, parsed.implementationSpecRef!.name, parsed.namespace),
+                )
+                const implRef = asRecord(impl?.spec)
+                const implVcsRef = asRecord(implRef?.vcsRef)
+                const implVcsName = asString(implVcsRef?.name)
+                if (implVcsName) return implVcsName
+              }
+              const agentVcsRef = asRecord(agentSpec.vcsRef)
+              const agentVcsName = asString(agentVcsRef?.name)
+              if (agentVcsName) return agentVcsName
+              return null
+            })
+
+          if (shouldResolveVcs) {
+            const vcsRefName = yield* resolveVcsRefName()
+            if (!vcsRefName && parsed.vcsPolicy?.required) {
+              return yield* Effect.fail(
+                new AgentRunInvalidPayloadError({ message: 'vcsRef is required when vcsPolicy.required is true' }),
+              )
+            }
+            if (vcsRefName) {
+              const vcsProvider = yield* kubeEffect(
+                'get-vcs-provider',
+                RESOURCE_MAP.VersionControlProvider,
+                parsed.namespace,
+                () => kube.get(RESOURCE_MAP.VersionControlProvider, vcsRefName, parsed.namespace),
+              )
+              if (!vcsProvider) {
+                if (parsed.vcsPolicy?.required) {
+                  return yield* Effect.fail(
+                    new AgentRunNotFoundError({
+                      resource: 'version control provider',
+                      name: vcsRefName,
+                      namespace: parsed.namespace,
+                    }),
+                  )
+                }
+              } else {
+                const auth = asRecord(readNested(vcsProvider, ['spec', 'auth'])) ?? {}
+                const tokenSecret = asRecord(readNested(auth, ['token', 'secretRef']))
+                const appSecret = asRecord(readNested(auth, ['app', 'privateKeySecretRef']))
+                const sshSecret = asRecord(readNested(auth, ['ssh', 'privateKeySecretRef']))
+                const tokenName = asString(tokenSecret?.name)
+                const appName = asString(appSecret?.name)
+                const sshName = asString(sshSecret?.name)
+                if (tokenName) vcsSecrets.add(tokenName)
+                if (appName) vcsSecrets.add(appName)
+                if (sshName) vcsSecrets.add(sshName)
+              }
+            }
+          }
+
+          const requiredSecretSet = new Set(requiredSecrets)
+          for (const name of vcsSecrets) {
+            requiredSecretSet.add(name)
+          }
+          const policy = parsed.policy ?? {}
+          const policyChecks = {
+            budgetRef: asString(policy.budgetRef) ?? undefined,
+            secretBindingRef: asString(policy.secretBindingRef) ?? undefined,
+            requiredSecrets: Array.from(requiredSecretSet),
+            subject: { kind: 'Agent', name: parsed.agentRef.name, namespace: parsed.namespace },
+          }
+
+          if (requiredSecretSet.size > 0 && !policyChecks.secretBindingRef) {
+            return yield* Effect.fail(
+              new AgentRunForbiddenError({ message: 'secretBindingRef is required when secrets are requested' }),
+            )
+          }
+
+          const policyDecision = yield* Effect.tryPromise({
+            try: () => (deps.validatePolicies ?? validatePolicies)(parsed.namespace, policyChecks, kube),
+            catch: (cause) => new AgentRunPolicyDeniedError({ subject: policyChecks.subject, cause }),
+          }).pipe(Effect.either)
+
+          if (policyDecision._tag === 'Left') {
+            yield* storeEffect('create-audit-event', () =>
+              activeStore.createAuditEvent({
+                entityType: 'PolicyDecision',
+                entityId: randomUUID(),
+                eventType: 'policy.denied',
+                context: auditContext,
+                details: {
+                  subject: policyChecks.subject,
+                  checks: policyChecks,
+                  reason: describeAgentRunSubmitError(policyDecision.left),
+                },
+              }),
+            ).pipe(Effect.catchAll(() => Effect.void))
+            return yield* Effect.fail(policyDecision.left)
+          }
+
+          yield* storeEffect('create-audit-event', () =>
+            activeStore.createAuditEvent({
+              entityType: 'PolicyDecision',
+              entityId: randomUUID(),
+              eventType: 'policy.allowed',
+              context: auditContext,
+              details: { subject: policyChecks.subject, checks: policyChecks },
+            }),
+          )
+
+          const admissionRepository = resolveRepositoryFromParams(parsed.parameters) || null
+          const admission = yield* kubeEffect(
+            'evaluate-admission-limits',
+            RESOURCE_MAP.AgentRun,
+            parsed.namespace,
+            () =>
+              evaluateAdmissionLimits(
+                kube,
+                parsed.namespace,
+                admissionRepository,
+                deps.recordAgentQueueDepth ?? (() => undefined),
+              ),
+          )
+          if (!admission.ok) {
+            return yield* Effect.fail(
+              new AgentRunAdmissionRejectedError({
+                message: admission.message,
+                status: admission.status,
+                details: admission.details,
+              }),
+            )
+          }
+
+          let idempotencyReservation: IdempotencyReservationState | null = null
+
+          if (isAgentRunIdempotencyEnabled()) {
+            let reservation = yield* storeEffect('reserve-idempotency-key', () =>
+              activeStore.reserveAgentRunIdempotencyKey({
+                namespace: parsed.namespace,
+                agentName: parsed.agentRef.name,
+                idempotencyKey: runIdempotencyKey,
+              }),
+            )
+
+            if (
+              !reservation.created &&
+              !reservation.record.agentRunName &&
+              isIdempotencyReservationStale(reservation.record.createdAt)
+            ) {
+              yield* storeEffect('delete-idempotency-key', () =>
+                activeStore.deleteAgentRunIdempotencyKey({
+                  namespace: parsed.namespace,
+                  agentName: parsed.agentRef.name,
+                  idempotencyKey: runIdempotencyKey,
+                }),
+              ).pipe(Effect.catchAll(() => Effect.void))
+              reservation = yield* storeEffect('reserve-idempotency-key', () =>
+                activeStore.reserveAgentRunIdempotencyKey({
+                  namespace: parsed.namespace,
+                  agentName: parsed.agentRef.name,
+                  idempotencyKey: runIdempotencyKey,
+                }),
+              )
+            }
+
+            if (!reservation.created) {
+              const scope = reservation.record
+              if (scope.agentRunName) {
+                const resource = yield* kubeEffect('get-idempotent-run', RESOURCE_MAP.AgentRun, parsed.namespace, () =>
+                  kube.get(RESOURCE_MAP.AgentRun, scope.agentRunName!, parsed.namespace),
+                )
+                const phase = asString(readNested(resource, ['status', 'phase'])) ?? 'Pending'
+                if (resource && !isTerminalPhase(phase)) {
+                  return yield* Effect.fail(
+                    new AgentRunConflictError({
+                      message: 'AgentRun already exists for idempotency key',
+                      details: {
+                        namespace: parsed.namespace,
+                        agentName: parsed.agentRef.name,
+                        idempotencyKey: runIdempotencyKey,
+                        existingAgentRunName: scope.agentRunName,
+                        phase,
+                      },
+                    }),
+                  )
+                }
+                return {
+                  status: 200,
+                  body: {
+                    ok: true,
+                    idempotent: true,
+                    namespace: parsed.namespace,
+                    agentName: parsed.agentRef.name,
+                    idempotencyKey: runIdempotencyKey,
+                    existingAgentRunName: scope.agentRunName,
+                    resource,
+                  },
+                }
+              }
+
+              return yield* Effect.fail(
+                new AgentRunConflictError({
+                  message: 'AgentRun creation already in progress for idempotency key',
+                  details: {
+                    namespace: parsed.namespace,
+                    agentName: parsed.agentRef.name,
+                    idempotencyKey: runIdempotencyKey,
+                  },
+                }),
+              )
+            }
+
+            idempotencyReservation = {
+              created: reservation.created,
+              agentRunName: reservation.record.agentRunName,
+              idempotencyKey: runIdempotencyKey,
+              agentName: parsed.agentRef.name,
+              namespace: parsed.namespace,
+            }
+          }
+
+          const resource = createAgentRunResource(parsed, deliveryId, runIdempotencyKey)
+          const appliedResult = yield* kubeEffect('apply-agent-run', RESOURCE_MAP.AgentRun, parsed.namespace, () =>
+            kube.apply(resource),
+          ).pipe(Effect.either)
+          if (appliedResult._tag === 'Left') {
+            if (idempotencyReservation) {
+              yield* storeEffect('delete-idempotency-key', () =>
+                activeStore.deleteAgentRunIdempotencyKey({
+                  namespace: idempotencyReservation.namespace,
+                  agentName: idempotencyReservation.agentName,
+                  idempotencyKey: idempotencyReservation.idempotencyKey,
+                }),
+              ).pipe(Effect.catchAll(() => Effect.void))
+            }
+            return yield* Effect.fail(appliedResult.left)
+          }
+
+          const applied = appliedResult.right
+          const metadata = (applied.metadata ?? {}) as Record<string, unknown>
+          const externalRunId = asString(metadata.name)
+          const provider = asString(readNested(applied, ['spec', 'runtime', 'type'])) ?? 'unknown'
+
+          if (idempotencyReservation && externalRunId) {
+            yield* storeEffect('assign-idempotency-key', () =>
+              activeStore.assignAgentRunIdempotencyKey({
+                namespace: idempotencyReservation.namespace,
+                agentName: idempotencyReservation.agentName,
+                idempotencyKey: idempotencyReservation.idempotencyKey,
+                agentRunName: externalRunId,
+                agentRunUid: asString(metadata.uid) ?? null,
+              }),
+            )
+          }
+
+          const statusPhase = asString(asRecord(applied.status)?.phase) ?? 'Pending'
+          const record = yield* storeEffect('create-agent-run', () =>
+            activeStore.createAgentRun({
+              agentName: parsed.agentRef.name,
+              deliveryId,
+              provider,
+              status: statusPhase,
+              externalRunId,
+              payload: { request: payload, resource: applied, status: asRecord(applied.status) ?? {} },
+            }),
+          )
+          yield* storeEffect('create-audit-event', () =>
+            activeStore.createAuditEvent({
+              entityType: 'AgentRun',
+              entityId: record.id,
+              eventType: 'agent_run.created',
+              context: auditContext,
+              details: {
+                agent: parsed.agentRef.name,
+                agentRunId: record.id,
+                agentRunName: externalRunId,
+                agentRunUid: asString(asRecord(applied.metadata)?.uid),
+                provider,
+              },
+            }),
+          )
+          return { status: 201, body: { ok: true, agentRun: record, resource: applied } }
+        }),
+      closeStoreEffect,
+    )
+  })
+
 export const postAgentRunsHandler = async (request: Request, deps: AgentRunsApiDependencies) => {
   const leaderResponse = deps.requireLeaderForMutation?.() ?? null
   if (leaderResponse) return leaderResponse
 
-  let store: AgentRunsApiStore | null = null
-  try {
-    store = deps.storeFactory()
-    const deliveryId = requireIdempotencyKey(request)
-    const payload = await parseJsonBody(request)
-    const parsed = parseAgentRunPayload(payload)
-    const runIdempotencyKey = parsed.idempotencyKey ?? deliveryId
-    const repository = (deps.resolveRepositoryFromParameters ?? defaultResolveRepositoryFromParameters)(
-      parsed.parameters,
-    )
-    const auditContext = (deps.resolveAuditContextFromRequest ?? defaultResolveAuditContextFromRequest)(request, {
-      deliveryId,
-      namespace: parsed.namespace,
-      repository,
-      source: 'v1.agent-runs',
-    })
-
-    await store.ready
-    const existing = await store.getAgentRunByDeliveryId(deliveryId)
-    if (existing) {
-      const resourceNamespace =
-        asString(readNested(existing.payload, ['resource', 'metadata', 'namespace'])) ??
-        asString(readNested(existing.payload, ['request', 'namespace'])) ??
-        parsed.namespace
-      const kube = getKubeClient(deps)
-      const resource = existing.externalRunId
-        ? await kube.get(RESOURCE_MAP.AgentRun, existing.externalRunId, resourceNamespace)
-        : null
-      return okResponse({ ok: true, agentRun: existing, resource, idempotent: true })
-    }
-
-    if (isAgentRunIdempotencyEnabled()) {
-      const scope = await store.getAgentRunIdempotencyKey({
-        namespace: parsed.namespace,
-        agentName: parsed.agentRef.name,
-        idempotencyKey: runIdempotencyKey,
-      })
-
-      if (scope?.agentRunName) {
-        const kube = getKubeClient(deps)
-        const resource = await kube.get(RESOURCE_MAP.AgentRun, scope.agentRunName, parsed.namespace)
-        const phase = asString(readNested(resource, ['status', 'phase'])) ?? 'Pending'
-
-        if (resource && !isTerminalPhase(phase)) {
-          return errorResponse('AgentRun already exists for idempotency key', 409, {
-            namespace: parsed.namespace,
-            agentName: parsed.agentRef.name,
-            idempotencyKey: runIdempotencyKey,
-            existingAgentRunName: scope.agentRunName,
-            phase,
-          })
-        }
-
-        return okResponse({
-          ok: true,
-          idempotent: true,
-          namespace: parsed.namespace,
-          agentName: parsed.agentRef.name,
-          idempotencyKey: runIdempotencyKey,
-          existingAgentRunName: scope.agentRunName,
-          resource,
-        })
-      }
-    }
-
-    const kube = getKubeClient(deps)
-    const agent = await kube.get(RESOURCE_MAP.Agent, parsed.agentRef.name, parsed.namespace)
-    if (!agent) {
-      return errorResponse(`agent ${parsed.agentRef.name} not found`, 404)
-    }
-
-    const agentSpec = (agent.spec ?? {}) as Record<string, unknown>
-    const allowedServiceAccounts = extractAllowedServiceAccounts(agentSpec)
-    const runtimeServiceAccount = extractRuntimeServiceAccount({ runtime: parsed.runtime })
-    const effectiveServiceAccount = runtimeServiceAccount
-
-    if (
-      effectiveServiceAccount &&
-      allowedServiceAccounts.length > 0 &&
-      !allowedServiceAccounts.includes(effectiveServiceAccount)
-    ) {
-      return errorResponse(`service account ${effectiveServiceAccount} is not allowed`, 403)
-    }
-
-    const requiredSecrets = parsed.secrets ?? extractRequiredSecrets(agentSpec)
-    const vcsSecrets = new Set<string>()
-    const desiredVcsMode = normalizeVcsMode(parsed.vcsPolicy?.mode ?? null)
-    const shouldResolveVcs = isVcsProvidersEnabled() && desiredVcsMode !== 'none'
-    const resolveVcsRefName = async () => {
-      if (parsed.vcsRef?.name) return parsed.vcsRef.name
-      if (parsed.implementation) {
-        const inline = asRecord(parsed.implementation)
-        const inlineVcsRef = asRecord(inline?.vcsRef)
-        const inlineVcsName = asString(inlineVcsRef?.name)
-        if (inlineVcsName) return inlineVcsName
-      }
-      if (parsed.implementationSpecRef?.name) {
-        const impl = await kube.get(
-          RESOURCE_MAP.ImplementationSpec,
-          parsed.implementationSpecRef.name,
-          parsed.namespace,
-        )
-        const implRef = asRecord(impl?.spec)
-        const implVcsRef = asRecord(implRef?.vcsRef)
-        const implVcsName = asString(implVcsRef?.name)
-        if (implVcsName) return implVcsName
-      }
-      const agentVcsRef = asRecord(agentSpec.vcsRef)
-      const agentVcsName = asString(agentVcsRef?.name)
-      if (agentVcsName) return agentVcsName
-      return null
-    }
-
-    if (shouldResolveVcs) {
-      const vcsRefName = await resolveVcsRefName()
-      if (!vcsRefName && parsed.vcsPolicy?.required) {
-        return errorResponse('vcsRef is required when vcsPolicy.required is true', 400)
-      }
-      if (vcsRefName) {
-        const vcsProvider = await kube.get(RESOURCE_MAP.VersionControlProvider, vcsRefName, parsed.namespace)
-        if (!vcsProvider) {
-          if (parsed.vcsPolicy?.required) {
-            return errorResponse(`version control provider ${vcsRefName} not found`, 404)
-          }
-        } else {
-          const auth = asRecord(readNested(vcsProvider, ['spec', 'auth'])) ?? {}
-          const tokenSecret = asRecord(readNested(auth, ['token', 'secretRef']))
-          const appSecret = asRecord(readNested(auth, ['app', 'privateKeySecretRef']))
-          const sshSecret = asRecord(readNested(auth, ['ssh', 'privateKeySecretRef']))
-          const tokenName = asString(tokenSecret?.name)
-          const appName = asString(appSecret?.name)
-          const sshName = asString(sshSecret?.name)
-          if (tokenName) vcsSecrets.add(tokenName)
-          if (appName) vcsSecrets.add(appName)
-          if (sshName) vcsSecrets.add(sshName)
-        }
-      }
-    }
-
-    const requiredSecretSet = new Set(requiredSecrets)
-    for (const name of vcsSecrets) {
-      requiredSecretSet.add(name)
-    }
-    const policy = parsed.policy ?? {}
-    const policyChecks = {
-      budgetRef: asString(policy.budgetRef) ?? undefined,
-      secretBindingRef: asString(policy.secretBindingRef) ?? undefined,
-      requiredSecrets: Array.from(requiredSecretSet),
-      subject: { kind: 'Agent', name: parsed.agentRef.name, namespace: parsed.namespace },
-    }
-
-    if (requiredSecretSet.size > 0 && !policyChecks.secretBindingRef) {
-      return errorResponse('secretBindingRef is required when secrets are requested', 403)
-    }
-
-    try {
-      await (deps.validatePolicies ?? validatePolicies)(parsed.namespace, policyChecks, kube)
-      await store.createAuditEvent({
-        entityType: 'PolicyDecision',
-        entityId: randomUUID(),
-        eventType: 'policy.allowed',
-        context: auditContext,
-        details: { subject: policyChecks.subject, checks: policyChecks },
-      })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      try {
-        await store.createAuditEvent({
-          entityType: 'PolicyDecision',
-          entityId: randomUUID(),
-          eventType: 'policy.denied',
-          context: auditContext,
-          details: { subject: policyChecks.subject, checks: policyChecks, reason: message },
-        })
-      } catch {
-        // ignore audit failures
-      }
-      return errorResponse(message, message.includes('DATABASE_URL') ? 503 : 403)
-    }
-
-    const admissionRepository = resolveRepositoryFromParams(parsed.parameters) || null
-    const admission = await evaluateAdmissionLimits(
-      kube,
-      parsed.namespace,
-      admissionRepository,
-      deps.recordAgentQueueDepth ?? (() => undefined),
-    )
-    if (!admission.ok) {
-      return errorResponse(admission.message, admission.status, admission.details)
-    }
-
-    let idempotencyReservation: {
-      created: boolean
-      agentRunName: string | null
-      idempotencyKey: string
-      agentName: string
-      namespace: string
-    } | null = null
-
-    if (isAgentRunIdempotencyEnabled()) {
-      let reservation = await store.reserveAgentRunIdempotencyKey({
-        namespace: parsed.namespace,
-        agentName: parsed.agentRef.name,
-        idempotencyKey: runIdempotencyKey,
-      })
-
-      if (
-        !reservation.created &&
-        !reservation.record.agentRunName &&
-        isIdempotencyReservationStale(reservation.record.createdAt)
-      ) {
-        try {
-          await store.deleteAgentRunIdempotencyKey({
-            namespace: parsed.namespace,
-            agentName: parsed.agentRef.name,
-            idempotencyKey: runIdempotencyKey,
-          })
-        } catch {
-          // ignore: if we fail to reclaim, treat as in-progress.
-        }
-        reservation = await store.reserveAgentRunIdempotencyKey({
-          namespace: parsed.namespace,
-          agentName: parsed.agentRef.name,
-          idempotencyKey: runIdempotencyKey,
-        })
-      }
-
-      if (!reservation.created) {
-        const scope = reservation.record
-        if (scope.agentRunName) {
-          const resource = await kube.get(RESOURCE_MAP.AgentRun, scope.agentRunName, parsed.namespace)
-          const phase = asString(readNested(resource, ['status', 'phase'])) ?? 'Pending'
-          if (resource && !isTerminalPhase(phase)) {
-            return errorResponse('AgentRun already exists for idempotency key', 409, {
-              namespace: parsed.namespace,
-              agentName: parsed.agentRef.name,
-              idempotencyKey: runIdempotencyKey,
-              existingAgentRunName: scope.agentRunName,
-              phase,
-            })
-          }
-          return okResponse({
-            ok: true,
-            idempotent: true,
-            namespace: parsed.namespace,
-            agentName: parsed.agentRef.name,
-            idempotencyKey: runIdempotencyKey,
-            existingAgentRunName: scope.agentRunName,
-            resource,
-          })
-        }
-
-        return errorResponse('AgentRun creation already in progress for idempotency key', 409, {
-          namespace: parsed.namespace,
-          agentName: parsed.agentRef.name,
-          idempotencyKey: runIdempotencyKey,
-        })
-      }
-
-      idempotencyReservation = {
-        created: reservation.created,
-        agentRunName: reservation.record.agentRunName,
-        idempotencyKey: runIdempotencyKey,
-        agentName: parsed.agentRef.name,
-        namespace: parsed.namespace,
-      }
-    }
-
-    const resource: Record<string, unknown> = {
-      apiVersion: 'agents.proompteng.ai/v1alpha1',
-      kind: 'AgentRun',
-      metadata: {
-        generateName: `${parsed.agentRef.name}-`,
-        namespace: parsed.namespace,
-        labels: buildDeliveryIdLabels(deliveryId),
-      },
-      spec: {
-        agentRef: parsed.agentRef,
-        implementationSpecRef: parsed.implementationSpecRef ?? undefined,
-        implementation: parsed.implementation ? { inline: parsed.implementation } : undefined,
-        goal: parsed.goal ?? undefined,
-        runtime: parsed.runtime,
-        workflow: parsed.workflow
-          ? {
-              steps: parsed.workflow.steps.map((step) => ({
-                name: step.name,
-                implementationSpecRef: step.implementationSpecRef ?? undefined,
-                implementation: step.implementation ? { inline: step.implementation } : undefined,
-                parameters: step.parameters ?? undefined,
-                workload: step.workload ?? undefined,
-                retries: step.retries ?? undefined,
-                retryBackoffSeconds: step.retryBackoffSeconds ?? undefined,
-              })),
-            }
-          : undefined,
-        workload: parsed.workload ?? undefined,
-        parameters: parsed.parameters ?? {},
-        secrets: parsed.secrets ?? undefined,
-        memoryRef: parsed.memoryRef ?? undefined,
-        vcsRef: parsed.vcsRef ?? undefined,
-        vcsPolicy: parsed.vcsPolicy ?? undefined,
-        idempotencyKey: runIdempotencyKey,
-        ttlSecondsAfterFinished: parsed.ttlSecondsAfterFinished ?? undefined,
-      },
-    }
-
-    let applied: Record<string, unknown>
-    try {
-      applied = await kube.apply(resource)
-    } catch (error) {
-      if (idempotencyReservation) {
-        await store.deleteAgentRunIdempotencyKey({
-          namespace: idempotencyReservation.namespace,
-          agentName: idempotencyReservation.agentName,
-          idempotencyKey: idempotencyReservation.idempotencyKey,
-        })
-      }
-      throw error
-    }
-    const metadata = (applied.metadata ?? {}) as Record<string, unknown>
-    const externalRunId = asString(metadata.name)
-    const provider = asString(readNested(applied, ['spec', 'runtime', 'type'])) ?? 'unknown'
-
-    if (idempotencyReservation && externalRunId) {
-      await store.assignAgentRunIdempotencyKey({
-        namespace: idempotencyReservation.namespace,
-        agentName: idempotencyReservation.agentName,
-        idempotencyKey: idempotencyReservation.idempotencyKey,
-        agentRunName: externalRunId,
-        agentRunUid: asString(metadata.uid) ?? null,
-      })
-    }
-
-    const statusPhase = asString(asRecord(applied.status)?.phase) ?? 'Pending'
-    const record = await store.createAgentRun({
-      agentName: parsed.agentRef.name,
-      deliveryId,
-      provider,
-      status: statusPhase,
-      externalRunId,
-      payload: { request: payload, resource: applied, status: asRecord(applied.status) ?? {} },
-    })
-    await store.createAuditEvent({
-      entityType: 'AgentRun',
-      entityId: record.id,
-      eventType: 'agent_run.created',
-      context: auditContext,
-      details: {
-        agent: parsed.agentRef.name,
-        agentRunId: record.id,
-        agentRunName: externalRunId,
-        agentRunUid: asString(asRecord(applied.metadata)?.uid),
-        provider,
-      },
-    })
-    return okResponse({ ok: true, agentRun: record, resource: applied }, 201)
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return errorResponse(message, message.includes('DATABASE_URL') ? 503 : 400)
-  } finally {
-    await store?.close()
+  const result = await Effect.runPromise(submitAgentRunEffect(request, deps).pipe(Effect.either))
+  if (result._tag === 'Right') {
+    return okResponse(result.right.body, result.right.status)
   }
+  return errorResponse(
+    describeAgentRunSubmitError(result.left),
+    agentRunSubmitStatus(result.left),
+    agentRunSubmitDetails(result.left),
+  )
 }
