@@ -10,6 +10,14 @@ import { startResourceWatch } from './kube-watch'
 import { asRecord, asString, readNested } from './primitives'
 import { createKubernetesClient, RESOURCE_MAP } from './kube-types'
 import { shouldApplyStatus } from './status-utils'
+import {
+  AGENTS_RESOURCE_LABELS,
+  buildOrchestrationChildLabels,
+  buildToolRunJobLabels,
+  readDeliveryIdLabel,
+  readOrchestrationRunLabel,
+  readToolRunLabel,
+} from './agent-resource-labels'
 
 const DEFAULT_ORCHESTRATION_CONTROLLER_ENABLED_FLAG_KEY = 'agents.orchestration_controller.enabled'
 
@@ -628,9 +636,7 @@ const submitToolRunJob = async (
   const runUid = asString(metadata.uid) ?? undefined
   const jobName = makeName(runName, 'job')
 
-  const labels = {
-    'jangar.proompteng.ai/tool-run': runName,
-  }
+  const labels = buildToolRunJobLabels(runName)
 
   const configName = makeName(runName, 'spec')
   const configMap = await createRunSpecConfigMap(
@@ -913,10 +919,7 @@ const submitAgentRunStep = async (
     metadata: {
       generateName: `${makeName(runName, asString(step.name) ?? 'step')}-`,
       namespace,
-      labels: {
-        'jangar.proompteng.ai/orchestration-run': runName,
-        'jangar.proompteng.ai/orchestration-step': asString(step.name) ?? '',
-      },
+      labels: buildOrchestrationChildLabels(runName, asString(step.name) ?? ''),
     },
     spec: {
       agentRef: { name: agentRefName },
@@ -939,7 +942,7 @@ const submitAgentRunStep = async (
   const applied = await kube.apply(resource)
   const repo = resolveRepositoryFromParameters(parameters)
   const orchestrationMetadata = asRecord(orchestrationRun.metadata) ?? {}
-  const deliveryId = asString(readNested(orchestrationMetadata, ['labels', 'jangar.proompteng.ai/delivery-id']))
+  const deliveryId = readDeliveryIdLabel(orchestrationRun)
   void emitAuditEventBestEffort({
     entityType: 'OrchestrationRun',
     entityId: randomUUID(),
@@ -987,10 +990,7 @@ const submitToolRunStep = async (
     metadata: {
       generateName: `${makeName(runName, asString(step.name) ?? 'tool')}-`,
       namespace,
-      labels: {
-        'jangar.proompteng.ai/orchestration-run': runName,
-        'jangar.proompteng.ai/orchestration-step': asString(step.name) ?? '',
-      },
+      labels: buildOrchestrationChildLabels(runName, asString(step.name) ?? ''),
     },
     spec: {
       toolRef: { name: toolRefName },
@@ -1001,7 +1001,7 @@ const submitToolRunStep = async (
   const applied = await kube.apply(resource)
   const repo = resolveRepositoryFromParameters(parameters)
   const orchestrationMetadata = asRecord(orchestrationRun.metadata) ?? {}
-  const deliveryId = asString(readNested(orchestrationMetadata, ['labels', 'jangar.proompteng.ai/delivery-id']))
+  const deliveryId = readDeliveryIdLabel(orchestrationRun)
   void emitAuditEventBestEffort({
     entityType: 'OrchestrationRun',
     entityId: randomUUID(),
@@ -1049,10 +1049,7 @@ const submitSubOrchestrationStep = async (
     metadata: {
       generateName: `${makeName(runName, asString(step.name) ?? 'sub')}-`,
       namespace,
-      labels: {
-        'jangar.proompteng.ai/orchestration-run': runName,
-        'jangar.proompteng.ai/orchestration-step': asString(step.name) ?? '',
-      },
+      labels: buildOrchestrationChildLabels(runName, asString(step.name) ?? ''),
     },
     spec: {
       orchestrationRef: { name: orchestrationName },
@@ -1063,7 +1060,7 @@ const submitSubOrchestrationStep = async (
   const applied = await kube.apply(resource)
   const repo = resolveRepositoryFromParameters(parameters)
   const orchestrationMetadata = asRecord(orchestrationRun.metadata) ?? {}
-  const deliveryId = asString(readNested(orchestrationMetadata, ['labels', 'jangar.proompteng.ai/delivery-id']))
+  const deliveryId = readDeliveryIdLabel(orchestrationRun)
   void emitAuditEventBestEffort({
     entityType: 'OrchestrationRun',
     entityId: randomUUID(),
@@ -1918,8 +1915,7 @@ const reconcileAll = async (kube: ReturnType<typeof createKubernetesClient>, nam
   }
 }
 
-const resolveParentRunLabel = (resource: Record<string, unknown>) =>
-  asString(readNested(resource, ['metadata', 'labels', 'jangar.proompteng.ai/orchestration-run']))
+const resolveParentRunLabel = (resource: Record<string, unknown>) => readOrchestrationRunLabel(resource)
 
 const reconcileOrchestrationRunByName = async (
   kube: ReturnType<typeof createKubernetesClient>,
@@ -1975,7 +1971,7 @@ const startNamespaceWatches = (
   const handleJob = (event: { type?: string; object?: Record<string, unknown> }) => {
     const resource = asRecord(event.object)
     if (!resource) return
-    const toolRunName = asString(readNested(resource, ['metadata', 'labels', 'jangar.proompteng.ai/tool-run']))
+    const toolRunName = readToolRunLabel(resource)
     if (!toolRunName) return
     enqueueNamespaceTask(namespace, async () => {
       const toolRun = await kube.get(RESOURCE_MAP.ToolRun, toolRunName, namespace)
@@ -2053,7 +2049,16 @@ const startNamespaceWatches = (
     startResourceWatch({
       resource: 'job',
       namespace,
-      labelSelector: 'jangar.proompteng.ai/tool-run',
+      labelSelector: AGENTS_RESOURCE_LABELS.toolRun.canonical,
+      onEvent: handleJob,
+      onError: (error) => console.warn('[agents] tool job watch failed', error),
+    }),
+  )
+  handles.push(
+    startResourceWatch({
+      resource: 'job',
+      namespace,
+      labelSelector: AGENTS_RESOURCE_LABELS.toolRun.legacy,
       onEvent: handleJob,
       onError: (error) => console.warn('[agents] tool job watch failed', error),
     }),

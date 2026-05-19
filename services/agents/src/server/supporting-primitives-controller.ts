@@ -1,4 +1,5 @@
 import { isRuntimeTestEnv } from './agents-controller/runtime-config'
+import { AGENTS_RESOURCE_LABELS } from './agent-resource-labels'
 import { resolveSupportingControllerConfig } from './controller-runtime-config'
 import { resolveBooleanFeatureToggle } from './feature-flags'
 import { createKubeGateway, type KubeGateway } from './kube-gateway'
@@ -554,8 +555,8 @@ const buildScheduleRunTemplate = (
       ([key, value]) =>
         typeof value === 'string' &&
         key !== 'schedules.proompteng.ai/schedule' &&
-        key !== 'agents.proompteng.ai/delivery-id' &&
-        key !== 'jangar.proompteng.ai/delivery-id',
+        key !== AGENTS_RESOURCE_LABELS.deliveryId.canonical &&
+        key !== AGENTS_RESOURCE_LABELS.deliveryId.legacy,
     ),
   ) as Record<string, string>
   const labels = {

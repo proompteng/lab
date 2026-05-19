@@ -1,5 +1,6 @@
 import { createFileRoute, type AgentsServerRouteArgs } from '../../../../server/server-route'
 
+import { buildDeliveryIdLabels } from '../../../../server/agent-resource-labels'
 import { resolveAuditContextFromRequest } from '../../../../server/audit-logging'
 import {
   buildCacheFreshnessState,
@@ -300,10 +301,7 @@ export const postPrimitiveResource = async (
       metadata: {
         name: parsed.name,
         namespace: parsed.namespace,
-        labels: {
-          'agents.proompteng.ai/delivery-id': deliveryId,
-          'jangar.proompteng.ai/delivery-id': deliveryId,
-        },
+        labels: buildDeliveryIdLabels(deliveryId),
       },
       spec: parsed.spec,
     }

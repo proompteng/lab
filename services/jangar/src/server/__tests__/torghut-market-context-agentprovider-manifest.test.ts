@@ -7,6 +7,8 @@ import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 
 const execFileAsync = promisify(execFile)
+const torghutAgentsDomainManifestPath = (fileName: string) =>
+  resolve(process.cwd(), '..', '..', 'argocd/applications/torghut/agents-domain', fileName)
 
 const extractInputFileContent = (manifest: string, path: string): string => {
   const lines = manifest.split('\n')
@@ -36,20 +38,14 @@ const extractInputFileContent = (manifest: string, path: string): string => {
 
 describe('torghut market-context AgentProvider manifest', () => {
   it('retries fundamentals batches during the regular market session', async () => {
-    const manifest = await readFile(
-      resolve(process.cwd(), '..', '..', 'argocd/applications/agents/torghut-market-context-batch.yaml'),
-      'utf8',
-    )
+    const manifest = await readFile(torghutAgentsDomainManifestPath('torghut-market-context-batch.yaml'), 'utf8')
 
     expect(manifest).toContain('name: torghut-market-context-fundamentals-batch')
     expect(manifest).toContain('cron: "35 9-15/2 * * 1-5"')
   })
 
   it('marks preopen probes as no-VCS batch tasks', async () => {
-    const manifest = await readFile(
-      resolve(process.cwd(), '..', '..', 'argocd/applications/agents/torghut-market-context-batch.yaml'),
-      'utf8',
-    )
+    const manifest = await readFile(torghutAgentsDomainManifestPath('torghut-market-context-batch.yaml'), 'utf8')
 
     for (const templateName of [
       'torghut-market-context-fundamentals-preopen-probe-template',
@@ -66,7 +62,7 @@ describe('torghut market-context AgentProvider manifest', () => {
 
   it('uses a bearer token for lifecycle start/progress requests', async () => {
     const manifest = await readFile(
-      resolve(process.cwd(), '..', '..', 'argocd/applications/agents/torghut-market-context-agentprovider.yaml'),
+      torghutAgentsDomainManifestPath('torghut-market-context-agentprovider.yaml'),
       'utf8',
     )
 
@@ -77,7 +73,7 @@ describe('torghut market-context AgentProvider manifest', () => {
 
   it('mounts the market-context lifecycle helper scripts at the instructed skill path', async () => {
     const manifest = await readFile(
-      resolve(process.cwd(), '..', '..', 'argocd/applications/agents/torghut-market-context-agentprovider.yaml'),
+      torghutAgentsDomainManifestPath('torghut-market-context-agentprovider.yaml'),
       'utf8',
     )
     const runApi = extractInputFileContent(
@@ -120,7 +116,7 @@ describe('torghut market-context AgentProvider manifest', () => {
 
   it('uses the Codex app-server adapter instead of the legacy market-context runner wrapper', async () => {
     const manifest = await readFile(
-      resolve(process.cwd(), '..', '..', 'argocd/applications/agents/torghut-market-context-agentprovider.yaml'),
+      torghutAgentsDomainManifestPath('torghut-market-context-agentprovider.yaml'),
       'utf8',
     )
 
@@ -137,7 +133,7 @@ describe('torghut market-context AgentProvider manifest', () => {
 
   it('hydrates market-context issue numbers before Codex app-server execution', async () => {
     const manifest = await readFile(
-      resolve(process.cwd(), '..', '..', 'argocd/applications/agents/torghut-market-context-agentprovider.yaml'),
+      torghutAgentsDomainManifestPath('torghut-market-context-agentprovider.yaml'),
       'utf8',
     )
     const helper = extractInputFileContent(manifest, '/root/.codex/ensure-market-context-issue-number.py')

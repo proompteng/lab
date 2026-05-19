@@ -17,7 +17,7 @@ vi.mock('~/server/primitives-kube', async () => {
   }
 })
 
-import { listPrimitiveResources } from '~/routes/api/agents/control-plane/resources'
+import { listPrimitiveResources } from '@proompteng/agents/routes/api/agents/control-plane/resources'
 
 const cacheResource = (name: string, lastSeenAt: string) => ({
   resource: {

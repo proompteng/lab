@@ -1,4 +1,5 @@
 import { isRuntimeTestEnv } from './agents-controller/runtime-config'
+import { readDeliveryIdLabel } from './agent-resource-labels'
 import { resolvePrimitivesReconcilerConfig } from './controller-runtime-config'
 import { resolveBooleanFeatureToggle } from './feature-flags'
 import { createKubeGateway } from './kube-gateway'
@@ -126,10 +127,8 @@ const extractOrchestrationRunStatus = (resource: Record<string, unknown>): Orche
 }
 
 const resolveDeliveryId = (resource: Record<string, unknown>) => {
-  const labels = asRecord(readNested(resource, ['metadata', 'labels']))
   return (
-    asString(labels?.['agents.proompteng.ai/delivery-id']) ??
-    asString(labels?.['jangar.proompteng.ai/delivery-id']) ??
+    readDeliveryIdLabel(resource) ??
     asString(readNested(resource, ['spec', 'deliveryId'])) ??
     asString(readNested(resource, ['spec', 'idempotencyKey'])) ??
     null
