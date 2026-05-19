@@ -30,10 +30,10 @@ type ControllerProxyEvidence = {
   healthStatus: number | null
   healthBody: string | null
   metricsFetched: boolean
-  agentrunWatchMetrics: {
+  agentrunIngestionMetrics: {
     lines: string[]
-    totalEvents: number | null
-    hasAgentRunSeries: boolean
+    sampleTotal: number | null
+    hasIngestionSeries: boolean
   }
   controlPlaneStatus: Record<string, unknown> | null
 }
@@ -133,7 +133,7 @@ const parseArgs = (argv: string[]): CliOptions => {
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]
     if (arg === '--help' || arg === '-h') {
-      console.log(`Usage: bun run packages/scripts/src/jangar/agentrun-ingestion-mitigation.ts [options]
+      console.log(`Usage: bun run packages/scripts/src/agents/agentrun-ingestion-mitigation.ts [options]
 
 Options:
   --namespace <name>               Namespace to inspect (default: agents)
@@ -192,7 +192,7 @@ Options:
 const resolveOutputPath = (provided: string | undefined, capturedAt: string) => {
   if (provided) return resolve(repoRoot, provided)
   const stamp = capturedAt.replaceAll(':', '').replaceAll('.', '').replaceAll('-', '')
-  return resolve(repoRoot, 'artifacts', 'jangar', 'agentrun-ingestion', `${stamp}.json`)
+  return resolve(repoRoot, 'artifacts', 'agents', 'agentrun-ingestion', `${stamp}.json`)
 }
 
 const runCapture = async (command: string, args: string[], allowFailure = false): Promise<CommandResult> => {
@@ -261,7 +261,7 @@ const getUntouchedReasons = (manifest: AgentRunRecord): string[] => {
 }
 
 const sanitizeForRecreate = (manifest: AgentRunRecord): AgentRunRecord => {
-  const metadata = { ...(asRecord(manifest.metadata) ?? {}) }
+  const metadata = { ...asRecord(manifest.metadata) }
   delete metadata.uid
   delete metadata.resourceVersion
   delete metadata.managedFields
@@ -407,7 +407,7 @@ const resolveLeaseNameFromDeployment = (deployment: Record<string, unknown>) => 
   const env = asArray(container?.env)
   const leaseEnv = env
     .map((entry) => asRecord(entry))
-    .find((entry) => asString(entry?.name) === 'JANGAR_LEADER_ELECTION_LEASE_NAME')
+    .find((entry) => asString(entry?.name) === 'AGENTS_LEADER_ELECTION_LEASE_NAME')
   return asString(leaseEnv?.value)
 }
 
@@ -420,7 +420,7 @@ const resolveControllerLease = async (
   namespace: string,
   deployment: Record<string, unknown>,
   preferredLease: string | undefined,
-) => {
+): Promise<string> => {
   if (preferredLease) return preferredLease
   const fromDeployment = resolveLeaseNameFromDeployment(deployment)
   if (fromDeployment) return fromDeployment
@@ -430,7 +430,8 @@ const resolveControllerLease = async (
     .map((entry) => asRecord(entry))
     .filter((entry): entry is Record<string, unknown> => Boolean(entry))
   if (items.length === 1) {
-    return asString(readNested(items[0], ['metadata', 'name']))
+    const leaseName = asString(readNested(items[0], ['metadata', 'name']))
+    if (leaseName) return leaseName
   }
   throw new Error('unable to resolve controller lease name automatically; pass --controller-lease')
 }
@@ -440,7 +441,10 @@ const readMetricLines = (metricsText: string) =>
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(
-      (line) => line.startsWith('jangar_kube_watch_events_total') && line.includes('agentruns.agents.proompteng.ai'),
+      (line) =>
+        line.startsWith('agents_agentrun_resync_adoptions_total') ||
+        line.startsWith('agents_agentrun_untouched_backlog') ||
+        line.startsWith('agents_agentrun_untouched_oldest_age_seconds'),
     )
 
 const sumMetricValues = (lines: string[]) => {
@@ -505,10 +509,10 @@ const collectControllerEvidence = async (
     healthStatus: null,
     healthBody: null,
     metricsFetched: false,
-    agentrunWatchMetrics: {
+    agentrunIngestionMetrics: {
       lines: [],
-      totalEvents: null,
-      hasAgentRunSeries: false,
+      sampleTotal: null,
+      hasIngestionSeries: false,
     },
     controlPlaneStatus: null,
   }
@@ -526,10 +530,10 @@ const collectControllerEvidence = async (
     if (metrics.status === 200 && metrics.body) {
       const metricLines = readMetricLines(metrics.body)
       proxy.metricsFetched = true
-      proxy.agentrunWatchMetrics = {
+      proxy.agentrunIngestionMetrics = {
         lines: metricLines,
-        totalEvents: sumMetricValues(metricLines),
-        hasAgentRunSeries: metricLines.length > 0,
+        sampleTotal: sumMetricValues(metricLines),
+        hasIngestionSeries: metricLines.length > 0,
       }
     }
 
@@ -552,11 +556,15 @@ const collectControllerEvidence = async (
   }
 }
 
-const collectSnapshot = async (
-  options: Required<
-    Pick<CliOptions, 'namespace' | 'controllerDeployment' | 'controllerLease' | 'controllerPort' | 'minAgeSeconds'>
-  >,
-) => {
+type SnapshotOptions = {
+  namespace: string
+  controllerDeployment: string
+  controllerLease?: string
+  controllerPort?: number
+  minAgeSeconds: number
+}
+
+const collectSnapshot = async (options: SnapshotOptions) => {
   const capturedAt = new Date().toISOString()
   const agentRunsPayload = await kubectlJson<Record<string, unknown>>([
     '-n',
@@ -683,8 +691,8 @@ const printSummary = (report: SnapshotReport, actions: BackfillAction[]) => {
           leaderPodName: report.controller.leaderPodName,
           readyStatus: report.controller.proxy.readyStatus,
           metricsFetched: report.controller.proxy.metricsFetched,
-          agentrunWatchSeriesPresent: report.controller.proxy.agentrunWatchMetrics.hasAgentRunSeries,
-          agentrunWatchEventTotal: report.controller.proxy.agentrunWatchMetrics.totalEvents,
+          agentrunIngestionMetricsPresent: report.controller.proxy.agentrunIngestionMetrics.hasIngestionSeries,
+          agentrunIngestionMetricSampleTotal: report.controller.proxy.agentrunIngestionMetrics.sampleTotal,
           controlPlaneAgentRunIngestion: readNested(report.controller.proxy.controlPlaneStatus, ['agentrun_ingestion']),
         },
         plannedActions: actions.map((action) => ({
@@ -736,6 +744,7 @@ export const __private = {
   getUntouchedReasons,
   classifyAgentRuns,
   buildBackfillPlan,
+  readMetricLines,
   sanitizeForRecreate,
   normalizeLeaderPodName,
 }

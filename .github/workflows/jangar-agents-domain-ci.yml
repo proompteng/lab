@@ -8,7 +8,7 @@ on:
     paths:
       - 'argocd/applications/jangar-agents-domain/**'
       - 'argocd/applications/torghut/agents-domain/**'
-      - 'packages/scripts/src/jangar/**'
+      - 'packages/scripts/src/jangar/__tests__/agents-domain-smoke.test.ts'
       - 'scripts/jangar/validate-agents-domain.sh'
       - '.github/workflows/jangar-agents-domain-ci.yml'
   push:
@@ -17,7 +17,7 @@ on:
     paths:
       - 'argocd/applications/jangar-agents-domain/**'
       - 'argocd/applications/torghut/agents-domain/**'
-      - 'packages/scripts/src/jangar/**'
+      - 'packages/scripts/src/jangar/__tests__/agents-domain-smoke.test.ts'
       - 'scripts/jangar/validate-agents-domain.sh'
       - '.github/workflows/jangar-agents-domain-ci.yml'
 

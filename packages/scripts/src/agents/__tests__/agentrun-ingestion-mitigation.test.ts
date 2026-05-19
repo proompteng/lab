@@ -126,4 +126,17 @@ describe('agentrun-ingestion-mitigation', () => {
       __private.normalizeLeaderPodName('agents-controllers-6bb744f44f-4t6sr_436b0c45-3791-4bfc-822f-c70e6ff1d6f2'),
     ).toBe('agents-controllers-6bb744f44f-4t6sr')
   })
+
+  it('reads Agents-owned AgentRun ingestion metrics', () => {
+    expect(
+      __private.readMetricLines(`
+agents_agentrun_resync_adoptions_total{namespace="agents"} 4
+agents_agentrun_untouched_backlog_bucket{namespace="agents",le="+Inf"} 1
+legacy_kube_watch_events_total{resource="agentruns.agents.proompteng.ai"} 99
+`),
+    ).toEqual([
+      'agents_agentrun_resync_adoptions_total{namespace="agents"} 4',
+      'agents_agentrun_untouched_backlog_bucket{namespace="agents",le="+Inf"} 1',
+    ])
+  })
 })
