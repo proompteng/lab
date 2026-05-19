@@ -156,6 +156,12 @@ fail_if_matches \
   "${ROOT_DIR}/argocd/applications/agents"
 
 fail_if_matches \
+  "Jangar must not create or type the retired workflow_comms agent-message store after Agents owns agent-message storage" \
+  'workflow_comms\.agent_messages|WorkflowCommsAgentMessage|workflow_agent_messages_' \
+  "${ROOT_DIR}/services/jangar/src/server/db.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20251229_workflow_comms_agent_messages.ts"
+
+fail_if_matches \
   "Agents controller must not derive runner goals from deprecated AgentRun parameter aliases" \
   'goalObjective|goalTokenBudget' \
   "${ROOT_DIR}/services/agents/src/server/agents-controller" \

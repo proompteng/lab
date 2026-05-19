@@ -461,25 +461,6 @@ type CodexJudgeRerunSubmissions = {
   submitted_at: Timestamp | null
 }
 
-type WorkflowCommsAgentMessage = {
-  id: Generated<string>
-  workflow_uid: string | null
-  workflow_name: string | null
-  workflow_namespace: string | null
-  run_id: string | null
-  step_id: string | null
-  agent_id: string | null
-  role: string
-  kind: string
-  timestamp: Timestamp
-  channel: string | null
-  stage: string | null
-  content: string
-  attrs: JsonValue
-  dedupe_key: string | null
-  created_at: Generated<Timestamp>
-}
-
 type TorghutQuantMetricsLatest = {
   id: Generated<string>
   strategy_id: string
@@ -772,7 +753,6 @@ export type Database = {
   'codex_judge.artifacts': CodexJudgeArtifacts
   'codex_judge.evaluations': CodexJudgeEvaluations
   'codex_judge.rerun_submissions': CodexJudgeRerunSubmissions
-  'workflow_comms.agent_messages': WorkflowCommsAgentMessage
 }
 
 let db: Db | null | undefined

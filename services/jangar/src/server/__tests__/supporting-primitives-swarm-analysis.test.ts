@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { resolveStageTargetResource } from '~/server/supporting-primitives-swarm-analysis'
+import { isNatsChannel, resolveStageTargetResource } from '~/server/supporting-primitives-swarm-analysis'
 
 describe('supporting primitives swarm analysis', () => {
   it('resolves AgentRun target refs through the Agents service boundary', async () => {
@@ -40,5 +40,10 @@ describe('supporting primitives swarm analysis', () => {
         { fetchResource },
       ),
     ).resolves.toBeNull()
+  })
+
+  it('does not treat retired workflow_comms agent-message subjects as runtime channels', () => {
+    expect(isNatsChannel('agents.agent_messages.general.status')).toBe(true)
+    expect(isNatsChannel('workflow_comms.agent_messages.general.status')).toBe(false)
   })
 })
