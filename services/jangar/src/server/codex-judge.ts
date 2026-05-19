@@ -26,7 +26,7 @@ import { resolveBooleanFeatureToggle } from '~/server/feature-flags'
 import { createGitHubClient, GitHubRateLimitError, type PullRequest } from '~/server/github-client'
 import { ingestGithubReviewEvent } from '~/server/github-review-ingest'
 import { createPostgresMemoriesStore } from '~/server/memories-store'
-import { submitOrchestrationRun } from '~/server/orchestration-submit'
+import { submitOrchestrationRunToAgentsService } from '~/server/agents-service-proxy'
 
 type MemoryStoreFactory = () => ReturnType<typeof createPostgresMemoriesStore>
 
@@ -36,7 +36,7 @@ const globalOverrides = globalThis as typeof globalThis & {
   __codexJudgeGithubMock?: ReturnType<typeof createGitHubClient>
   __codexJudgeMemoryStoreMock?: ReturnType<typeof createPostgresMemoriesStore>
   __codexJudgeMemoryStoreFactory?: MemoryStoreFactory
-  __codexJudgeOrchestrationSubmitMock?: typeof submitOrchestrationRun
+  __codexJudgeOrchestrationSubmitMock?: typeof submitOrchestrationRunToAgentsService
 }
 
 let cachedStore: ReturnType<typeof createCodexJudgeStore> | null = null
@@ -52,9 +52,7 @@ const store = new Proxy({} as ReturnType<typeof createCodexJudgeStore>, {
 })
 const getStore = () => resolveStore()
 const storeReady = () => resolveStore().ready ?? Promise.resolve()
-const ensureStoreReady = async () => {
-  await storeReady()
-}
+const ensureStoreReady = () => storeReady()
 const defaultConfig = loadCodexJudgeConfig()
 const resolveConfig = () => globalOverrides.__codexJudgeConfigMock ?? defaultConfig
 const config = new Proxy({} as ReturnType<typeof loadCodexJudgeConfig>, {
@@ -74,7 +72,8 @@ const resolveGithub = () => {
   return cachedGithub
 }
 const getGithub = () => resolveGithub()
-const resolveOrchestrationSubmit = () => globalOverrides.__codexJudgeOrchestrationSubmitMock ?? submitOrchestrationRun
+const resolveOrchestrationSubmit = () =>
+  globalOverrides.__codexJudgeOrchestrationSubmitMock ?? submitOrchestrationRunToAgentsService
 const getMemoryStoreFactory = () => globalOverrides.__codexJudgeMemoryStoreFactory ?? createPostgresMemoriesStore
 
 const scheduledRuns = new Map<string, NodeJS.Timeout>()
