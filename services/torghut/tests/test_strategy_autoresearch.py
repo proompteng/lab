@@ -522,6 +522,14 @@ class TestStrategyAutoresearch(TestCase):
                 "intraday_price_asymmetry_sp500_2026",
             }.issubset(source_ids)
         )
+        impact_source = next(
+            source
+            for source in program.research_sources
+            if source.source_id == "realistic_market_impact_rl_envs_2026"
+        )
+        self.assertEqual(impact_source.claims[0].claim_type, "feature_recipe")
+        self.assertIn("route_tca", impact_source.claims[0].data_requirements)
+        self.assertEqual(impact_source.claims[0].horizon_scope, "intraday_execution")
 
         microbar_seed_names = {
             plan.seed_sweep_config.name

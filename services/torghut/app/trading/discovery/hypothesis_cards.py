@@ -284,6 +284,21 @@ def build_hypothesis_cards(
         return []
     first_claim = normalized_claims[0]
     claim_relation_blockers = _claim_relation_blockers(source_claim_ids, relations)
+    source_claims: list[dict[str, Any]] = []
+    for index, claim in enumerate(normalized_claims, start=1):
+        source_claims.append(
+            {
+                "claim_id": _claim_id(claim, index=index),
+                "claim_type": _claim_type(claim),
+                "claim_text": _claim_text(claim),
+                "data_requirements": list(
+                    _metadata_terms(claim, kind="required_features")
+                ),
+                "asset_scope": _string(claim.get("asset_scope")),
+                "horizon_scope": _string(claim.get("horizon_scope")),
+                "expected_direction": _string(claim.get("expected_direction")),
+            }
+        )
     base_payload = {
         "source_run_id": source_run_id,
         "source_claim_ids": list(source_claim_ids),
@@ -296,6 +311,7 @@ def build_hypothesis_cards(
         "requires_runtime_family": True,
         "requires_scheduler_v3_replay": True,
         "requires_shadow_validation": True,
+        "source_claims": source_claims,
     }
     if claim_relation_blockers:
         implementation_constraints["claim_relation_blockers"] = [

@@ -2603,8 +2603,13 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         impact_claim_types = {
             str(claim["claim_type"]) for claim in impact_source.claims
         }
-        self.assertIn("validation_requirement", impact_claim_types)
-        self.assertFalse(runner.compile_sources_to_hypothesis_cards([impact_source]))
+        self.assertIn("feature_recipe", impact_claim_types)
+        self.assertIn("risk_constraint", impact_claim_types)
+        self.assertIn("route_tca", impact_source.claims[0]["data_requirements"])
+        self.assertEqual(
+            impact_source.claims[0]["horizon_scope"], "intraday_execution"
+        )
+        self.assertTrue(runner.compile_sources_to_hypothesis_cards([impact_source]))
 
         latent_regime_source = next(
             source

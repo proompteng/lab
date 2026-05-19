@@ -694,6 +694,9 @@ def _load_autoresearch_feedback_evidence_bundles(
 
 
 def _program_claim_type(claim: ResearchClaim) -> str:
+    explicit_claim_type = str(claim.claim_type or "").strip().lower()
+    if explicit_claim_type:
+        return explicit_claim_type
     text = f"{claim.summary} {claim.implication}".lower()
     if any(
         token in text
@@ -748,7 +751,7 @@ def _program_research_source_to_whitepaper_source(
     claims: list[dict[str, Any]] = []
     for claim in source.claims:
         claim_id = str(claim.claim_id or "").strip()
-        claim_text = ". ".join(
+        claim_text = str(claim.claim_text or "").strip() or ". ".join(
             part
             for part in (
                 str(claim.summary or "").strip(),
@@ -759,20 +762,32 @@ def _program_research_source_to_whitepaper_source(
         if not claim_id or not claim_text:
             continue
         claim_type = _program_claim_type(claim)
+        data_requirements = [
+            item for item in claim.data_requirements if str(item or "").strip()
+        ]
+        expected_direction = str(claim.expected_direction or "").strip()
+        if not expected_direction:
+            expected_direction = (
+                "neutral"
+                if claim_type in {"risk_constraint", "validation_requirement"}
+                else "positive"
+            )
         claims.append(
             {
                 "claim_id": claim_id,
                 "claim_type": claim_type,
                 "claim_text": claim_text,
-                "asset_scope": "us_equities_intraday",
-                "horizon_scope": "intraday_microstructure",
-                "expected_direction": "neutral"
-                if claim_type in {"risk_constraint", "validation_requirement"}
-                else "positive",
+                "asset_scope": str(claim.asset_scope or "").strip()
+                or "us_equities_intraday",
+                "horizon_scope": str(claim.horizon_scope or "").strip()
+                or "intraday_microstructure",
+                "expected_direction": expected_direction,
+                "data_requirements": data_requirements,
                 "confidence": _PROGRAM_SOURCE_DEFAULT_CONFIDENCE,
                 "metadata": {
                     "program_source_id": run_id,
                     "program_implication": str(claim.implication or "").strip(),
+                    "data_requirements": data_requirements,
                 },
             }
         )

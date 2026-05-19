@@ -2847,6 +2847,166 @@ def _requires_synthetic_validation_only_policy(card: HypothesisCard) -> bool:
     )
 
 
+def _paper_mechanism_haystack(card: HypothesisCard) -> str:
+    validation_requirements = _list_of_mappings(
+        card.implementation_constraints.get("validation_requirements")
+    )
+    validation_text = " ".join(
+        " ".join(
+            (
+                str(item.get("claim_id") or ""),
+                str(item.get("claim_type") or ""),
+                str(item.get("claim_text") or ""),
+                " ".join(_string_sequence(item.get("data_requirements"))),
+            )
+        )
+        for item in validation_requirements
+    )
+    return f"{_hypothesis_haystack(card)} {validation_text}".lower()
+
+
+def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
+    haystack = _paper_mechanism_haystack(card)
+    overlay_ids: list[str] = []
+    overlay_contracts: list[dict[str, Any]] = []
+    hard_vetoes: dict[str, Any] = {}
+    promotion_contract: dict[str, Any] = {}
+
+    def has_any(tokens: Sequence[str]) -> bool:
+        return any(token in haystack for token in tokens)
+
+    if has_any(
+        (
+            "clusterlob",
+            "clustered order",
+            "clustered_order",
+            "order arrival clustering",
+            "arrival clustering",
+            "event stream",
+            "event-stream",
+            "lob event",
+            "hawkes",
+            "order_arrival_intensity",
+            "state_dependent_hawkes_intensity",
+        )
+    ):
+        overlay_ids.append("cluster_lob_event_clustering")
+        overlay_contracts.append(
+            {
+                "overlay_id": "cluster_lob_event_clustering",
+                "required_evidence": [
+                    "clustered_order_events",
+                    "event_cluster_stability",
+                    "quote_quality_parity",
+                ],
+                "evidence_policy": "event_stream_required_not_ohlcv_only",
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_min_event_cluster_stability_score": "0.60",
+                "required_max_event_stream_latency_ms": "250",
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_lob_event_stream_parity": True,
+                "requires_event_cluster_stability": True,
+                "rejects_ohlcv_only_evidence": True,
+            }
+        )
+
+    if has_any(
+        (
+            "nonlinear impact",
+            "nonlinear_impact",
+            "square-root",
+            "square root",
+            "power-law market impact",
+            "power law market impact",
+            "almgren",
+            "route/tca",
+            "route_tca",
+            "market impact stress",
+            "impact stress",
+        )
+    ):
+        overlay_ids.append("nonlinear_market_impact_tca")
+        overlay_contracts.append(
+            {
+                "overlay_id": "nonlinear_market_impact_tca",
+                "required_evidence": [
+                    "route_tca",
+                    "nonlinear_impact_curve",
+                    "realized_slippage_bps",
+                    "turnover",
+                ],
+                "rank_metric": "post_cost_net_pnl_after_nonlinear_impact",
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_min_route_tca_sample_count": "60",
+                "required_max_realized_slippage_bps": "8",
+                "required_impact_stress_model": "square_root_or_power_law",
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_route_tca": True,
+                "requires_nonlinear_impact_curve": True,
+                "requires_impact_stress_replay": True,
+                "ranking_cost_model": "post_cost_nonlinear_impact",
+            }
+        )
+
+    if has_any(
+        (
+            "ohlcv-only",
+            "ohlcv only",
+            "ohlcv_derived",
+            "ohlcv-derived",
+            "bar-only",
+            "bar only",
+            "systematic falsification",
+        )
+    ):
+        overlay_ids.append("ohlcv_only_falsification")
+        overlay_contracts.append(
+            {
+                "overlay_id": "ohlcv_only_falsification",
+                "required_evidence": [
+                    "walk_forward_replay",
+                    "executable_quote_evidence",
+                    "route_tca",
+                    "live_paper_parity",
+                ],
+                "evidence_policy": "ohlcv_only_is_falsification_not_promotion_proof",
+            }
+        )
+        promotion_contract.update(
+            {
+                "rejects_ohlcv_only_promotion_evidence": True,
+                "requires_walk_forward_replay": True,
+                "requires_executable_quote_evidence": True,
+                "requires_route_tca": True,
+            }
+        )
+
+    if not overlay_ids:
+        return {}
+    return {
+        "feature_contract": {
+            "mechanism_overlays": overlay_contracts,
+        },
+        "parameter_space": {
+            "mechanism_overlay_ids": overlay_ids,
+        },
+        "hard_vetoes": hard_vetoes,
+        "promotion_contract": promotion_contract,
+    }
+
+
 def _family_scores_for_hypothesis(
     card: HypothesisCard,
 ) -> list[tuple[str, int, tuple[str, ...]]]:
@@ -2924,6 +3084,21 @@ def _family_scores_for_hypothesis(
             "clustered_arrival_regime",
         )
         bump("microbar_cross_sectional_pairs_v1", 2, "clustered_arrival_regime")
+    impact_ranking_only = has_any(
+        (
+            "nonlinear impact",
+            "nonlinear_impact",
+            "square-root",
+            "square root",
+            "power-law market impact",
+            "power law market impact",
+            "almgren",
+            "route/tca",
+            "route_tca",
+            "market impact stress",
+            "impact stress",
+        )
+    )
     if has_any(
         (
             "liquidity",
@@ -2944,18 +3119,39 @@ def _family_scores_for_hypothesis(
             "maker taker",
         )
     ):
-        bump("mean_reversion_rebound_v1", 4, "liquidity_response_or_execution_stress")
-        bump("washout_rebound_v2", 3, "liquidity_response_or_execution_stress")
-        bump(
-            "mean_reversion_exhaustion_short_v1",
-            2,
-            "liquidity_response_or_execution_stress",
-        )
-        bump(
-            "microstructure_continuation_matched_filter_v1",
-            3,
-            "liquidity_response_or_execution_stress",
-        )
+        if impact_ranking_only:
+            bump(
+                "microstructure_continuation_matched_filter_v1",
+                6,
+                "nonlinear_impact_route_tca_constraint",
+            )
+            bump(
+                "microbar_cross_sectional_pairs_v1",
+                3,
+                "nonlinear_impact_route_tca_constraint",
+            )
+            bump(
+                "intraday_tsmom_v2",
+                2,
+                "nonlinear_impact_route_tca_constraint",
+            )
+        else:
+            bump(
+                "mean_reversion_rebound_v1",
+                4,
+                "liquidity_response_or_execution_stress",
+            )
+            bump("washout_rebound_v2", 3, "liquidity_response_or_execution_stress")
+            bump(
+                "mean_reversion_exhaustion_short_v1",
+                2,
+                "liquidity_response_or_execution_stress",
+            )
+            bump(
+                "microstructure_continuation_matched_filter_v1",
+                3,
+                "liquidity_response_or_execution_stress",
+            )
     if has_any(
         (
             "volatility",
@@ -3444,6 +3640,9 @@ def compile_candidate_specs(
                     "source_run_id": card.source_run_id,
                     "source_claim_ids": list(card.source_claim_ids),
                     "mechanism": card.mechanism,
+                    "asset_scope": card.asset_scope,
+                    "horizon_scope": card.horizon_scope,
+                    "expected_direction": card.expected_direction,
                     "required_features": list(card.required_features),
                     "entry_motifs": list(card.entry_motifs),
                     "exit_motifs": list(card.exit_motifs),
@@ -3474,6 +3673,13 @@ def compile_candidate_specs(
                 if validation_requirements:
                     feature_contract["validation_requirements"] = [
                         dict(item) for item in validation_requirements
+                    ]
+                source_claims = _list_of_mappings(
+                    card.implementation_constraints.get("source_claims")
+                )
+                if source_claims:
+                    feature_contract["source_claims"] = [
+                        dict(item) for item in source_claims
                     ]
                 objective = {
                     "target_net_pnl_per_day": str(target_net_pnl_per_day),
@@ -3522,6 +3728,17 @@ def compile_candidate_specs(
                             ),
                         }
                     )
+                mechanism_overlays = _mechanism_overlays_for_card(card)
+                feature_contract.update(
+                    _mapping(mechanism_overlays.get("feature_contract"))
+                )
+                parameter_space.update(
+                    _mapping(mechanism_overlays.get("parameter_space"))
+                )
+                hard_vetoes.update(_mapping(mechanism_overlays.get("hard_vetoes")))
+                promotion_contract.update(
+                    _mapping(mechanism_overlays.get("promotion_contract"))
+                )
                 base_payload = {
                     "hypothesis_id": card.hypothesis_id,
                     "family_template_id": family_template_id,
