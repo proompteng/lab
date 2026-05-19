@@ -176,17 +176,6 @@ export type AgentsAgentMessagesSubmitResult = {
   skipped: boolean
 }
 
-export type AgentsCodexCallbackKind = 'notify' | 'run-complete'
-
-export type AgentsCodexCallbackSubmitInput = {
-  kind: AgentsCodexCallbackKind
-  payload: Record<string, unknown>
-}
-
-export type AgentsCodexCallbackSubmitter = (
-  input: AgentsCodexCallbackSubmitInput,
-) => Promise<AgentsServiceJsonResult<Record<string, unknown>>>
-
 const getErrorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 const readJsonBody = async (response: Response): Promise<Record<string, unknown> | null> =>
@@ -495,48 +484,6 @@ export const submitAgentMessagesToAgentsService = async (
       return !!message && typeof message === 'object' && !Array.isArray(message)
     }),
     skipped: body?.skipped === true,
-  }
-}
-
-export const submitCodexCallbackToAgentsService = async (
-  input: AgentsCodexCallbackSubmitInput,
-  env: EnvSource = process.env,
-): Promise<AgentsServiceJsonResult<Record<string, unknown>>> => {
-  const baseUrl = resolveAgentsServiceBaseUrl(env)
-  const targetUrl = new URL(`/api/agents/codex/${input.kind}`, `${baseUrl}/`)
-  try {
-    const upstream = await fetch(targetUrl, {
-      body: JSON.stringify(input.payload),
-      headers: {
-        accept: 'application/json',
-        'content-type': 'application/json',
-        'x-agents-client': 'jangar',
-      },
-      method: 'POST',
-    })
-
-    const body = await readJsonBody(upstream)
-    if (upstream.ok && body !== null) {
-      return {
-        ok: true,
-        status: upstream.status,
-        body,
-      }
-    }
-
-    return {
-      ok: false,
-      status: upstream.status,
-      body,
-      error: getBodyError(body) ?? upstream.statusText ?? `Agents service returned HTTP ${upstream.status}`,
-    }
-  } catch (error) {
-    return {
-      ok: false,
-      status: 0,
-      body: null,
-      error: getErrorMessage(error),
-    }
   }
 }
 

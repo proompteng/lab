@@ -122,6 +122,13 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/codex-judge-config.ts"
 
 fail_if_matches \
+  "Jangar must not proxy Codex notify/run-complete callbacks after Agents owns Codex callback ingestion" \
+  'submitCodexCallbackToAgentsService|AgentsCodexCallbackSubmitter|handleNotify|handleRunComplete' \
+  "${ROOT_DIR}/services/jangar/src/routes/api/codex/notify.tsx" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/codex/run-complete.tsx" \
+  "${ROOT_DIR}/services/jangar/src/server/agents-service-proxy.ts"
+
+fail_if_matches \
   "Jangar deploy verifier must read Agents control-plane status through the Agents service, not svc/jangar proxy routes" \
   "namespaces/jangar/services/jangar|defaultControlPlaneServiceName = 'jangar'|statusServiceName" \
   "${ROOT_DIR}/packages/scripts/src/jangar/verify-deployment.ts"

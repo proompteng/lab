@@ -12,7 +12,6 @@ import {
   resolveAgentsServiceBaseUrl,
   submitAgentRunToAgentsService,
   submitAgentMessagesToAgentsService,
-  submitCodexCallbackToAgentsService,
   submitControlPlaneResourceToAgentsService,
   submitOrchestrationRunToAgentsService,
 } from '~/server/agents-service-proxy'
@@ -570,43 +569,6 @@ describe('agents-service-proxy', () => {
       messages: [{ runId: 'run-1', content: 'hello' }],
     })
     expect(result).toEqual({ inserted: 1, messages: [{ id: 'msg-1' }], skipped: false })
-  })
-
-  it('submits Codex callbacks through the Agents service callback boundary', async () => {
-    const fetchMock = vi.fn(async () => {
-      return new Response(JSON.stringify({ ok: true, callback: { kind: 'run-complete' }, inserted: [] }), {
-        headers: { 'content-type': 'application/json' },
-        status: 202,
-      })
-    })
-    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
-
-    const result = await submitCodexCallbackToAgentsService(
-      {
-        kind: 'run-complete',
-        payload: { workflowName: 'workflow-1', status: { phase: 'Succeeded' } },
-      },
-      { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
-    )
-
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-    const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
-    expect(url.toString()).toBe('http://agents.test/api/agents/codex/run-complete')
-    expect(init.method).toBe('POST')
-    expect(init.headers).toMatchObject({
-      accept: 'application/json',
-      'content-type': 'application/json',
-      'x-agents-client': 'jangar',
-    })
-    expect(JSON.parse(init.body as string)).toEqual({
-      workflowName: 'workflow-1',
-      status: { phase: 'Succeeded' },
-    })
-    expect(result).toEqual({
-      ok: true,
-      status: 202,
-      body: { ok: true, callback: { kind: 'run-complete' }, inserted: [] },
-    })
   })
 
   it('preserves idempotent orchestration submit responses from Agents', async () => {
