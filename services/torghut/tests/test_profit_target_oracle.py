@@ -36,6 +36,8 @@ class TestProfitTargetOracle(TestCase):
                 "regime_slice_pass_rate": "0.55",
                 "posterior_edge_lower": "0.01",
                 "shadow_parity_status": "within_budget",
+                "trading_day_count": 20,
+                "daily_net": {f"2026-04-{day:02d}": "535" for day in range(1, 21)},
                 **_executable_scorecard_fields(),
             },
             target_net_pnl_per_day=Decimal("500"),
@@ -70,6 +72,7 @@ class TestProfitTargetOracle(TestCase):
                 **_executable_scorecard_fields(),
             },
             target_net_pnl_per_day=Decimal("500"),
+            policy=ProfitTargetOraclePolicy(min_observed_trading_days=4),
         )
 
         self.assertTrue(result["passed"])
@@ -103,6 +106,7 @@ class TestProfitTargetOracle(TestCase):
                 **_executable_scorecard_fields(),
             },
             target_net_pnl_per_day=Decimal("500"),
+            policy=ProfitTargetOraclePolicy(min_observed_trading_days=3),
         )
 
         self.assertTrue(result["passed"])
@@ -110,6 +114,43 @@ class TestProfitTargetOracle(TestCase):
             item for item in result["checks"] if item["metric"] == "worst_day_loss"
         )
         self.assertEqual(worst_day_check["mode"], "return_adjusted")
+
+    def test_profit_target_oracle_rejects_tiny_complete_window(self) -> None:
+        result = evaluate_profit_target_oracle(
+            {
+                "net_pnl_per_day": "900",
+                "active_day_ratio": "1",
+                "positive_day_ratio": "1",
+                "daily_net": {
+                    "2026-04-01": "900",
+                    "2026-04-02": "900",
+                    "2026-04-03": "900",
+                    "2026-04-06": "900",
+                },
+                "trading_day_count": 4,
+                "best_day_share": "0.24",
+                "max_single_day_contribution_share": "0.24",
+                "max_cluster_contribution_share": "0.34",
+                "max_single_symbol_contribution_share": "0.25",
+                "worst_day_loss": "0",
+                "max_drawdown": "0",
+                "avg_filled_notional_per_day": "700000",
+                "regime_slice_pass_rate": "0.55",
+                "posterior_edge_lower": "0.01",
+                "shadow_parity_status": "within_budget",
+                **_executable_scorecard_fields(),
+            },
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn("min_observed_trading_days_failed", result["blockers"])
+        sample_check = next(
+            item
+            for item in result["checks"]
+            if item["metric"] == "min_observed_trading_days"
+        )
+        self.assertEqual(sample_check["threshold"], "20")
 
     def test_profit_target_oracle_rejects_drawdown_above_extended_percent_cap(
         self,

@@ -172,6 +172,7 @@ def _candidate_status(*, passed: bool) -> str:
 _SURFACE_CORRELATION_METRICS = ("sharpe", "cagr", "total_return")
 _MIN_WALK_FORWARD_SURFACE_CORRELATION = 0.20
 _TRANSACTION_COST_STRESS_MULTIPLIERS = (1.5, 2.0)
+_MIN_TEMPORAL_EMBARGO_DAYS = 1.0
 
 
 def _summary_metric(summary: PerformanceSummary, metric: str) -> float | None:
@@ -249,6 +250,60 @@ def _transaction_cost_stress_bundle(
         "stress_cases": stressed_cases,
         "worst_projected_net_return_mean": worst_projected_net,
         "required_min_projected_net_return_mean": 0.0,
+    }
+
+
+def _temporal_embargo_bundle(
+    *,
+    train_debug: pd.DataFrame,
+    test_debug: pd.DataFrame,
+) -> dict[str, Any]:
+    train_start = _datetime_index_bound(train_debug.index, which="min")
+    train_end = _datetime_index_bound(train_debug.index, which="max")
+    test_start = _datetime_index_bound(test_debug.index, which="min")
+    test_end = _datetime_index_bound(test_debug.index, which="max")
+    gap_days: float | None = None
+    if train_end is not None and test_start is not None:
+        gap_days = float((test_start - train_end).total_seconds() / 86400.0)
+    overlapping_timestamps = 0
+    if isinstance(train_debug.index, pd.DatetimeIndex) and isinstance(
+        test_debug.index, pd.DatetimeIndex
+    ):
+        overlapping_timestamps = int(
+            train_debug.index.intersection(test_debug.index).shape[0]
+        )
+    passed = (
+        train_start is not None
+        and train_end is not None
+        and test_start is not None
+        and test_end is not None
+        and overlapping_timestamps == 0
+        and gap_days is not None
+        and gap_days >= _MIN_TEMPORAL_EMBARGO_DAYS
+    )
+    reason_codes: list[str] = []
+    if train_start is None or train_end is None:
+        reason_codes.append("train_window_missing")
+    if test_start is None or test_end is None:
+        reason_codes.append("test_window_missing")
+    if overlapping_timestamps > 0:
+        reason_codes.append("train_test_timestamp_overlap")
+    if gap_days is None:
+        reason_codes.append("temporal_gap_unmeasured")
+    elif gap_days < _MIN_TEMPORAL_EMBARGO_DAYS:
+        reason_codes.append("temporal_embargo_gap_too_small")
+    return {
+        "source": "double_oos_walkforward_arxiv_2602_10785_2026",
+        "proxy_method": "train_test_index_embargo_gap",
+        "train_window_start": train_start.isoformat() if train_start else None,
+        "train_window_end": train_end.isoformat() if train_end else None,
+        "test_window_start": test_start.isoformat() if test_start else None,
+        "test_window_end": test_end.isoformat() if test_end else None,
+        "temporal_gap_days": gap_days,
+        "min_temporal_embargo_days": _MIN_TEMPORAL_EMBARGO_DAYS,
+        "overlapping_timestamp_count": overlapping_timestamps,
+        "reason_codes": reason_codes,
+        "passed": passed,
     }
 
 
@@ -502,6 +557,10 @@ def build_strategy_factory_evaluation(
         all_candidates
     )
     surface_correlation = surface_correlation_bundle["surface_correlation"]
+    temporal_embargo_bundle = _temporal_embargo_bundle(
+        train_debug=train_debug,
+        test_debug=test_debug,
+    )
     cost_stress_bundle = _transaction_cost_stress_bundle(
         gross_edge_mean=gross_edge_mean,
         cost_drag_mean=cost_drag_mean,
@@ -541,6 +600,12 @@ def build_strategy_factory_evaluation(
             ),
             metric_bundle=surface_correlation_bundle,
             artifact_name="walk-forward-surface-correlation-report-v1.json",
+        ),
+        ValidationTestResult(
+            test_name="temporal_embargo_gap",
+            status=_candidate_status(passed=bool(temporal_embargo_bundle["passed"])),
+            metric_bundle=temporal_embargo_bundle,
+            artifact_name="temporal-embargo-gap-report-v1.json",
         ),
         ValidationTestResult(
             test_name="deflated_sharpe",

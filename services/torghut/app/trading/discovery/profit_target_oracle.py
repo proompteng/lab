@@ -31,6 +31,7 @@ class ProfitTargetOraclePolicy:
     min_cash: Decimal = Decimal("0")
     max_negative_cash_observation_count: int = 0
     min_avg_filled_notional_per_day: Decimal = Decimal("300000")
+    min_observed_trading_days: int = 20
     min_regime_slice_pass_rate: Decimal = Decimal("0.45")
     min_posterior_edge_lower: Decimal = Decimal("0")
     require_shadow_parity_within_budget: bool = True
@@ -70,6 +71,7 @@ class ProfitTargetOraclePolicy:
             "min_avg_filled_notional_per_day": str(
                 self.min_avg_filled_notional_per_day
             ),
+            "min_observed_trading_days": self.min_observed_trading_days,
             "min_regime_slice_pass_rate": str(self.min_regime_slice_pass_rate),
             "min_posterior_edge_lower": str(self.min_posterior_edge_lower),
             "require_shadow_parity_within_budget": self.require_shadow_parity_within_budget,
@@ -308,6 +310,12 @@ def evaluate_profit_target_oracle(
             observed=Decimal(daily_net_observed_day_count),
             operator="gte",
             threshold=Decimal(trading_day_count),
+        ),
+        _numeric_check(
+            metric="min_observed_trading_days",
+            observed=Decimal(daily_net_observed_day_count),
+            operator="gte",
+            threshold=Decimal(max(0, policy.min_observed_trading_days)),
         ),
         _numeric_check(
             metric="missing_sleeve_daily_net_count",
