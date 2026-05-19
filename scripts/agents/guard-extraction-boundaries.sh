@@ -48,6 +48,11 @@ fail_if_matches \
   "${ROOT_DIR}/argocd/applications/jangar"
 
 fail_if_matches \
+  "Jangar GitOps must not ship legacy Codex workflow service accounts or RBAC" \
+  'codex-workflow-rbac|name: codex-workflow|serviceAccountName: codex-workflow' \
+  "${ROOT_DIR}/argocd/applications/jangar"
+
+fail_if_matches \
   "Jangar Codex judge must not submit reruns through Facteur task ingress" \
   'facteurBaseUrl|FACTEUR_INTERNAL_URL|/codex/tasks|CodexTaskSchema' \
   "${ROOT_DIR}/services/jangar/src/server/codex-judge.ts" \
