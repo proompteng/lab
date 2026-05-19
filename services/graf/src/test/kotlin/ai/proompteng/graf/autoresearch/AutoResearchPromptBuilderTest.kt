@@ -36,6 +36,7 @@ class AutoResearchPromptBuilderTest {
 
     assertEquals("custom-stage", metadata["codex.stage"])
     assertEquals("stream", metadata["streamId"])
+    assertEquals("workflow-123", metadata["autoResearch.agentRun"])
     assertEquals("workflow-123", metadata["autoResearch.argoWorkflow"])
     assertEquals("2025-11-12T12:34:56Z", metadata["autoResearch.generatedAt"])
   }

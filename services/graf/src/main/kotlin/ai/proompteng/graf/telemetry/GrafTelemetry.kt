@@ -143,7 +143,7 @@ object GrafTelemetry {
   private val workflowCounter: LongCounter =
     meter
       .counterBuilder("graf_codex_workflows_started")
-      .setDescription("Codex workflow launches")
+      .setDescription("Codex research launches")
       .setUnit("1")
       .build()
 

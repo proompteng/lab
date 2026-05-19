@@ -24,7 +24,7 @@ class CodexResearchActivitiesImplTest {
   private val artifactFetcher = mockk<MinioArtifactFetcher>()
   private val activities =
     CodexResearchActivitiesImpl(
-      argoClient = mockk(relaxed = true),
+      agentRunClient = mockk(relaxed = true),
       graphPersistence = graphPersistence,
       artifactFetcher = artifactFetcher,
       json = Json { ignoreUnknownKeys = true },

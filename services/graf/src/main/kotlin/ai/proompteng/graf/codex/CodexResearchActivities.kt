@@ -12,6 +12,13 @@ interface CodexResearchActivities {
     timeoutSeconds: Long,
   ): CompletedArgoWorkflow
 
+  fun submitAgentRun(request: SubmitAgentRunRequest): SubmitAgentRunResult
+
+  fun waitForAgentRun(
+    runNameOrRecordId: String,
+    timeoutSeconds: Long,
+  ): CompletedAgentRun
+
   fun downloadArtifact(reference: ArtifactReference): String
 
   fun persistCodexArtifact(

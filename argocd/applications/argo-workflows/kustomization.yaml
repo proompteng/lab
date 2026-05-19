@@ -13,8 +13,6 @@ resources:
   - alloy-rbac.yaml
   - alloy-configmap.yaml
   - alloy-deployment.yaml
-  - codex-research-workflow.yaml
-  - codex-research-rbac.yaml
   - codex-cluster-admin.yaml
   - agents-embeddings-config.yaml
   - agents-primitives-echo-workflowtemplate.yaml

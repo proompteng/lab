@@ -117,11 +117,11 @@ class GraphResource(
   @Path("/codex-research")
   @GrafRouteTemplate("POST /v1/codex-research")
   suspend fun startCodexResearch(payload: CodexResearchRequest): Response {
-    val argoWorkflowName = "codex-research-${UUID.randomUUID()}"
-    val artifactKey = "codex-research/$argoWorkflowName/codex-artifact.json"
+    val agentRunName = "codex-research-${UUID.randomUUID()}"
+    val artifactKey = "codex-research/$agentRunName/codex-artifact.json"
     val launch =
       withContext(Dispatchers.IO) {
-        codexResearchService.startResearch(payload, argoWorkflowName, artifactKey)
+        codexResearchService.startResearch(payload, agentRunName, artifactKey)
       }
     val artifactReference =
       ArtifactReference(
@@ -134,7 +134,7 @@ class GraphResource(
       CodexResearchResponse(
         workflowId = launch.workflowId,
         runId = launch.runId,
-        argoWorkflowName = argoWorkflowName,
+        agentRunName = agentRunName,
         artifactReferences = listOf(artifactReference),
         startedAt = launch.startedAt,
       )
@@ -146,11 +146,11 @@ class GraphResource(
   @GrafRouteTemplate("POST /v1/autoresearch")
   suspend fun startAutoResearch(payload: AutoResearchRequest): Response {
     val workflowPrefix = autoResearchConfig.workflowNamePrefix
-    val argoWorkflowName = "$workflowPrefix-${UUID.randomUUID()}"
-    val artifactKey = "codex-research/$argoWorkflowName/codex-artifact.json"
+    val agentRunName = "$workflowPrefix-${UUID.randomUUID()}"
+    val artifactKey = "codex-research/$agentRunName/codex-artifact.json"
     val launch =
       withContext(Dispatchers.IO) {
-        autoResearchLauncher.startResearch(payload, argoWorkflowName, artifactKey)
+        autoResearchLauncher.startResearch(payload, agentRunName, artifactKey)
       }
     val artifactReference =
       ArtifactReference(
@@ -163,7 +163,7 @@ class GraphResource(
       AutoResearchLaunchResponse(
         workflowId = launch.workflowId,
         runId = launch.runId,
-        argoWorkflowName = argoWorkflowName,
+        agentRunName = agentRunName,
         artifactReferences = listOf(artifactReference),
         startedAt = launch.startedAt,
       )

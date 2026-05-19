@@ -151,7 +151,9 @@ describe('AgentRun v1 API', () => {
   it('categorizes Kubernetes apply failures and closes the store', async () => {
     const store = createStoreMock()
     const kube = createKubeMock()
-    vi.mocked(kube.apply).mockRejectedValueOnce(new Error('api server refused AgentRun apply'))
+    ;(kube.apply as unknown as { mockRejectedValueOnce: (error: unknown) => void }).mockRejectedValueOnce(
+      new Error('api server refused AgentRun apply'),
+    )
 
     const response = await postAgentRunsHandler(
       buildRequest({

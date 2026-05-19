@@ -14,3 +14,6 @@ spec:
     allowedSecrets:
       - codex-auth
       - github-token
+      - graf-api
+      - observability-minio-creds
+      - nats-agents-credentials

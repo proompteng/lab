@@ -59,12 +59,13 @@ class GraphResourceTest {
     val body = response.entity as AutoResearchLaunchResponse
     assertEquals("wf-123", body.workflowId)
     assertEquals("run-123", body.runId)
-    assertTrue(body.argoWorkflowName.startsWith("${autoResearchConfig.workflowNamePrefix}-"))
+    assertTrue(body.agentRunName.startsWith("${autoResearchConfig.workflowNamePrefix}-"))
+    assertEquals(body.agentRunName, body.argoWorkflowName)
     assertEquals("bucket", body.artifactReferences.first().bucket)
-    assertEquals("codex-research/${body.argoWorkflowName}/codex-artifact.json", body.artifactReferences.first().key)
+    assertEquals("codex-research/${body.agentRunName}/codex-artifact.json", body.artifactReferences.first().key)
     assertEquals("Map new HBM supply", requestSlot.captured.userPrompt)
-    assertEquals(body.argoWorkflowName, workflowSlot.captured)
-    assertEquals("codex-research/${body.argoWorkflowName}/codex-artifact.json", artifactSlot.captured)
+    assertEquals(body.agentRunName, workflowSlot.captured)
+    assertEquals("codex-research/${body.agentRunName}/codex-artifact.json", artifactSlot.captured)
   }
 
   @Test
@@ -81,7 +82,8 @@ class GraphResourceTest {
     assertEquals(Response.Status.ACCEPTED.statusCode, response.status)
     val body = response.entity as AutoResearchLaunchResponse
     assertEquals("wf-999", body.workflowId)
-    assertTrue(body.argoWorkflowName.startsWith("${autoResearchConfig.workflowNamePrefix}-"))
+    assertTrue(body.agentRunName.startsWith("${autoResearchConfig.workflowNamePrefix}-"))
+    assertEquals(body.agentRunName, body.argoWorkflowName)
     assertTrue(requestSlot.captured.userPrompt.isNullOrBlank())
   }
 }

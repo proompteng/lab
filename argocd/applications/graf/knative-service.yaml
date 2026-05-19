@@ -72,6 +72,20 @@ spec:
                   key: secretkey
             - name: MINIO_SECURE
               value: "false"
+            - name: AGENTS_BASE_URL
+              value: http://agents.agents.svc.cluster.local
+            - name: AGENTS_NAMESPACE
+              value: agents
+            - name: AGENTS_GRAF_AGENT_NAME
+              value: graf-codex-agent
+            - name: AGENTS_SERVICE_ACCOUNT_NAME
+              value: agents-sa
+            - name: AGENTS_SECRET_BINDING_REF
+              value: codex-github-token
+            - name: AGENTS_RUN_SECRETS
+              value: github-token,codex-auth,graf-api,observability-minio-creds,nats-agents-credentials
+            - name: AGENTS_RUN_POLL_TIMEOUT_SECONDS
+              value: "7200"
             - name: OTEL_SERVICE_NAME
               value: graf
             - name: OTEL_SERVICE_NAMESPACE

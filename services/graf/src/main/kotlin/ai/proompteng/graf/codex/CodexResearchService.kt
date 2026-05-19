@@ -18,7 +18,7 @@ class CodexResearchService(
   private val workflowClient: WorkflowClient,
   private val workflowServiceStubs: WorkflowServiceStubs,
   private val taskQueue: String,
-  private val argoPollTimeoutSeconds: Long,
+  private val agentRunPollTimeoutSeconds: Long,
   private val workflowStarter: (CodexResearchWorkflow, CodexResearchWorkflowInput) -> WorkflowStartResult = { workflow, input ->
     val execution = WorkflowClient.start(workflow::run, input)
     WorkflowStartResult(workflowId = execution.workflowId, runId = execution.runId)
@@ -38,13 +38,13 @@ class CodexResearchService(
 
   override fun startResearch(
     request: CodexResearchRequest,
-    argoWorkflowName: String,
+    agentRunName: String,
     artifactKey: String,
   ): CodexResearchLaunchResult {
     val attributes =
       Attributes
         .builder()
-        .put(AttributeKey.stringKey("graf.codex.argo_workflow"), argoWorkflowName)
+        .put(AttributeKey.stringKey("graf.codex.agent_run"), agentRunName)
         .put(AttributeKey.stringKey("graf.codex.artifact_key"), artifactKey)
         .apply {
           request.metadata["codex.workflow"]?.let {
@@ -73,14 +73,14 @@ class CodexResearchService(
         CodexResearchWorkflowInput(
           prompt = request.prompt,
           metadata = request.metadata,
-          argoWorkflowName = argoWorkflowName,
+          argoWorkflowName = agentRunName,
           artifactKey = artifactKey,
-          argoPollTimeoutSeconds = argoPollTimeoutSeconds,
+          argoPollTimeoutSeconds = agentRunPollTimeoutSeconds,
         )
       val execution =
         try {
           workflowStarter(workflow, input).also {
-            GrafTelemetry.recordWorkflowLaunch(artifactKey, argoWorkflowName, request.metadata)
+            GrafTelemetry.recordWorkflowLaunch(artifactKey, agentRunName, request.metadata)
           }
         } catch (ex: WorkflowExecutionAlreadyStarted) {
           WorkflowStartResult(workflowId = workflowId, runId = ex.execution.runId)
@@ -104,7 +104,7 @@ class CodexResearchService(
 interface CodexResearchLauncher {
   fun startResearch(
     request: CodexResearchRequest,
-    argoWorkflowName: String,
+    agentRunName: String,
     artifactKey: String,
   ): CodexResearchLaunchResult
 }

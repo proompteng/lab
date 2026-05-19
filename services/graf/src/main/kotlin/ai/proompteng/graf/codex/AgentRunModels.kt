@@ -4,20 +4,23 @@ import ai.proompteng.graf.model.ArtifactReference
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class SubmitArgoWorkflowRequest(
-  val workflowName: String,
+data class SubmitAgentRunRequest(
+  val runName: String,
   val prompt: String,
   val metadata: Map<String, String> = emptyMap(),
   val artifactKey: String,
 )
 
 @Serializable
-data class SubmitArgoWorkflowResult(
-  val workflowName: String,
+data class SubmitAgentRunResult(
+  val runName: String,
+  val recordId: String,
+  val resourceName: String,
+  val artifactKey: String,
 )
 
 @Serializable
-data class CompletedArgoWorkflow(
+data class CompletedAgentRun(
   val phase: String,
   val finishedAt: String? = null,
   val artifactReferences: List<ArtifactReference> = emptyList(),

@@ -16,7 +16,7 @@
 
 ## Security, RBAC, and Telemetry
 
-- Bearer-token verification lives under `security/` and is wired into Quarkus filters exactly as before; no RBAC scope changes were required. The `graf` ServiceAccount plus `graf-workflows-clusterrolebinding` continue granting `create/get/list/watch/patch` on Argo `workflows` and `workflowtemplates`.
+- Bearer-token verification lives under `security/` and is wired into Quarkus filters exactly as before. Graf Codex research now submits AgentRuns through the Agents control plane, so the former Graf Argo workflow submit binding is no longer part of the runtime.
 - `TelemetryFilters` and `GrafTelemetry` still apply OTEL spans/metrics for every route. The Knative deployment mounts `graf-otel-config` so Quarkus exporters can reach the same OTLP endpoints. Feature parity with the Ktor OTEL counters has been confirmed by exercising `/` and `/v1/entities` locally with the bearer token.
 
 ## Build, Config, and Deployment Notes

@@ -4,13 +4,13 @@ import ai.proompteng.graf.autoresearch.AutoResearchConfig
 import ai.proompteng.graf.autoresearch.AutoResearchLauncher
 import ai.proompteng.graf.autoresearch.AutoResearchPromptBuilder
 import ai.proompteng.graf.autoresearch.AutoResearchService
-import ai.proompteng.graf.codex.ArgoWorkflowClient
+import ai.proompteng.graf.codex.AgentRunClient
 import ai.proompteng.graf.codex.CodexResearchActivities
 import ai.proompteng.graf.codex.CodexResearchActivitiesImpl
 import ai.proompteng.graf.codex.CodexResearchService
 import ai.proompteng.graf.codex.MinioArtifactFetcher
 import ai.proompteng.graf.codex.MinioArtifactFetcherImpl
-import ai.proompteng.graf.config.ArgoConfig
+import ai.proompteng.graf.config.AgentsConfig
 import ai.proompteng.graf.config.MinioConfig
 import ai.proompteng.graf.config.MinioEndpointTarget
 import ai.proompteng.graf.config.Neo4jConfig
@@ -39,19 +39,14 @@ import org.neo4j.driver.AuthTokens
 import org.neo4j.driver.GraphDatabase
 import java.io.FileInputStream
 import java.net.http.HttpClient
-import java.security.KeyStore
-import java.security.cert.CertificateFactory
-import javax.net.ssl.SSLContext
-import javax.net.ssl.TrustManager
-import javax.net.ssl.TrustManagerFactory
 
 private const val REQUEST_SCOPE = "graf.request"
 private const val QUALIFIER_JSON = "graf.json"
-private const val QUALIFIER_ARGO_TOKEN = "graf.argo.token"
+private const val QUALIFIER_AGENTS_TOKEN = "graf.agents.token"
 
 object GrafQualifiers {
   val Json = named(QUALIFIER_JSON)
-  val ArgoToken = named(QUALIFIER_ARGO_TOKEN)
+  val AgentsToken = named(QUALIFIER_AGENTS_TOKEN)
 }
 
 object GrafScopes {
@@ -67,7 +62,7 @@ fun grafConfigModule() =
   module {
     single { Neo4jConfig.fromEnvironment() }
     single { TemporalConfig.fromEnvironment() }
-    single { ArgoConfig.fromEnvironment() }
+    single { AgentsConfig.fromEnvironment() }
     single { MinioConfig.fromEnvironment() }
     single { AutoResearchConfig.fromEnvironment() }
     single(qualifier = GrafQualifiers.Json) { grafJson() }
@@ -100,8 +95,8 @@ fun grafClientModule() =
       )
     }
     single { WorkerFactory.newInstance(get()) }
-    single(qualifier = GrafQualifiers.ArgoToken) { loadServiceAccountToken(get<ArgoConfig>().tokenPath) }
-    single { buildKubernetesHttpClient(get()) }
+    single(qualifier = GrafQualifiers.AgentsToken) { loadOptionalServiceAccountToken(get<AgentsConfig>().tokenPath) }
+    single { HttpClient.newHttpClient() }
   }
 
 fun grafServiceModule() =
@@ -109,17 +104,17 @@ fun grafServiceModule() =
     single { GraphService(get()) } bind GraphPersistence::class
     single<MinioArtifactFetcher> { MinioArtifactFetcherImpl(get()) }
     single {
-      ArgoWorkflowClient(
+      AgentRunClient(
         config = get(),
         httpClient = get(),
         minioConfig = get(),
         json = get(GrafQualifiers.Json),
-        serviceAccountToken = get(GrafQualifiers.ArgoToken),
+        serviceAccountToken = get(GrafQualifiers.AgentsToken),
       )
     }
     single<CodexResearchActivities> {
       CodexResearchActivitiesImpl(
-        argoClient = get(),
+        agentRunClient = get(),
         graphPersistence = get(),
         artifactFetcher = get(),
         json = get(GrafQualifiers.Json),
@@ -130,7 +125,7 @@ fun grafServiceModule() =
         workflowClient = get(),
         workflowServiceStubs = get(),
         taskQueue = get<TemporalConfig>().taskQueue,
-        argoPollTimeoutSeconds = get<ArgoConfig>().pollTimeoutSeconds,
+        agentRunPollTimeoutSeconds = get<AgentsConfig>().pollTimeoutSeconds,
       )
     }
     single { AutoResearchPromptBuilder(get()) }
@@ -218,35 +213,11 @@ private fun provideWorkflowClient(
   return WorkflowClient.newInstance(stubs, options)
 }
 
-private fun loadServiceAccountToken(path: String): String =
-  FileInputStream(path).use { stream ->
-    stream.bufferedReader().readText().trim()
-  }
-
-private fun buildKubernetesHttpClient(config: ArgoConfig): HttpClient {
-  val trustManager = loadTrustManager(config.caCertPath)
-  val sslContext =
-    SSLContext.getInstance("TLS").apply {
-      init(null, arrayOf(trustManager), null)
-    }
-  return HttpClient
-    .newBuilder()
-    .sslContext(sslContext)
-    .build()
-}
-
-private fun loadTrustManager(caPath: String): TrustManager =
-  FileInputStream(caPath).use { caStream ->
-    val certificateFactory = CertificateFactory.getInstance("X.509")
-    val certificate = certificateFactory.generateCertificate(caStream)
-    val keyStore =
-      KeyStore.getInstance(KeyStore.getDefaultType()).apply {
-        load(null, null)
-        setCertificateEntry("k8s-ca", certificate)
+private fun loadOptionalServiceAccountToken(path: String?): String? =
+  path?.let {
+    runCatching {
+      FileInputStream(it).use { stream ->
+        stream.bufferedReader().readText().trim()
       }
-    val factory =
-      TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply {
-        init(keyStore)
-      }
-    factory.trustManagers.firstOrNull() ?: throw IllegalStateException("No trust manager available")
+    }.getOrNull()
   }

@@ -22,13 +22,24 @@ import kotlin.io.readBytes
 import kotlin.text.Charsets
 
 class CodexResearchActivitiesImpl(
-  private val argoClient: ArgoWorkflowClient,
+  private val agentRunClient: AgentRunClient,
   private val graphPersistence: GraphPersistence,
   private val artifactFetcher: MinioArtifactFetcher,
   private val json: Json,
 ) : CodexResearchActivities {
   override fun submitArgoWorkflow(request: SubmitArgoWorkflowRequest): SubmitArgoWorkflowResult =
-    runBlocking { argoClient.submitWorkflow(request) }
+    runBlocking {
+      val result =
+        agentRunClient.submitRun(
+          SubmitAgentRunRequest(
+            runName = request.workflowName,
+            prompt = request.prompt,
+            metadata = request.metadata,
+            artifactKey = request.artifactKey,
+          ),
+        )
+      SubmitArgoWorkflowResult(result.runName)
+    }
 
   override fun waitForArgoWorkflow(
     workflowName: String,
@@ -36,8 +47,27 @@ class CodexResearchActivitiesImpl(
   ): CompletedArgoWorkflow =
     runBlocking {
       val context = Activity.getExecutionContext()
-      argoClient.waitForCompletion(workflowName, timeoutSeconds) {
-        context.heartbeat("waiting for argo workflow $workflowName")
+      val result =
+        agentRunClient.waitForCompletion(workflowName, timeoutSeconds) {
+          context.heartbeat("waiting for AgentRun $workflowName")
+        }
+      CompletedArgoWorkflow(
+        phase = result.phase,
+        finishedAt = result.finishedAt,
+        artifactReferences = result.artifactReferences,
+      )
+    }
+
+  override fun submitAgentRun(request: SubmitAgentRunRequest): SubmitAgentRunResult = runBlocking { agentRunClient.submitRun(request) }
+
+  override fun waitForAgentRun(
+    runNameOrRecordId: String,
+    timeoutSeconds: Long,
+  ): CompletedAgentRun =
+    runBlocking {
+      val context = Activity.getExecutionContext()
+      agentRunClient.waitForCompletion(runNameOrRecordId, timeoutSeconds) {
+        context.heartbeat("waiting for AgentRun $runNameOrRecordId")
       }
     }
 
