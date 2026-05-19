@@ -85,6 +85,11 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-schedule-runner.ts"
 
 fail_if_matches \
+  "Jangar material-reentry Swarm reconciler must consume Swarms through the Agents service boundary" \
+  'RESOURCE_MAP\.Swarm|startResourceWatch|createKubernetesClient|kube\.list' \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-material-reentry-swarm-reconciler.ts"
+
+fail_if_matches \
   "Agents GitOps must not ship the old sample Argo WorkflowTemplate schedule bridge" \
   'agents-primitives-echo|kind: WorkflowTemplate|codex-workflow' \
   "${ROOT_DIR}/argocd/applications/agents"
