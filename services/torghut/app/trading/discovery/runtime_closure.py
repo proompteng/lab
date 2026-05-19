@@ -35,6 +35,7 @@ from app.trading.discovery.objectives import (
 )
 from app.trading.discovery.portfolio_candidates import PortfolioCandidateSpec
 from app.trading.evidence_receipts import build_portfolio_proof_receipt
+from app.trading.costs import BPS_SCALE, CostModelConfig
 from app.trading.hypotheses import (
     hypothesis_registry_requires_dependency_capability,
     load_hypothesis_registry,
@@ -141,6 +142,12 @@ def _decimal_string(value: Decimal) -> str:
     if "." in rendered:
         rendered = rendered.rstrip("0").rstrip(".")
     return rendered or "0"
+
+
+def _decimal_sqrt(value: Decimal) -> Decimal:
+    if value <= 0:
+        return Decimal("0")
+    return value.sqrt()
 
 
 _MICROBAR_PORTFOLIO_SIGNAL_SETTINGS: dict[str, dict[str, str]] = {
@@ -1716,6 +1723,138 @@ def _backtest_summary(
     return walkforward, evaluation
 
 
+def _market_impact_stress_report(
+    *,
+    runner_run_id: str,
+    best_candidate: Mapping[str, Any],
+    approval_report: Mapping[str, Any],
+    program: StrategyAutoresearchProgram,
+    cost_model_config: CostModelConfig | None = None,
+) -> dict[str, Any]:
+    config = cost_model_config or CostModelConfig()
+    report = _mapping(approval_report)
+    summary = _mapping(report.get("summary"))
+    scorecard = _mapping(report.get("scorecard"))
+    daily_net = {
+        day: _decimal(value)
+        for day, value in _mapping(summary.get("daily_net")).items()
+    }
+    daily_notional = {
+        day: _decimal(value)
+        for day, value in _mapping(summary.get("daily_filled_notional")).items()
+    }
+    trading_days = max(_int(summary.get("trading_day_count")), len(daily_net))
+    total_filled_notional = sum(daily_notional.values(), Decimal("0"))
+    avg_filled_notional = (
+        total_filled_notional / Decimal(trading_days)
+        if trading_days > 0
+        else Decimal("0")
+    )
+    reference_notional = max(
+        program.objective.min_daily_notional,
+        avg_filled_notional,
+        Decimal("1"),
+    )
+    max_participation = (
+        config.max_participation_rate
+        if config.max_participation_rate > 0
+        else Decimal("0.1")
+    )
+    reference_adv = reference_notional / max_participation
+    daily_rows: list[dict[str, str]] = []
+    total_impact_cost = Decimal("0")
+    weighted_impact_bps_notional = Decimal("0")
+    for day in sorted(daily_net):
+        notional = daily_notional.get(day, Decimal("0"))
+        participation = (
+            min(Decimal("1"), notional / reference_adv)
+            if reference_adv > 0 and notional > 0
+            else Decimal("0")
+        )
+        impact_bps = config.impact_bps_at_full_participation * _decimal_sqrt(
+            participation
+        )
+        impact_cost = (notional * impact_bps) / BPS_SCALE
+        post_impact_net = daily_net[day] - impact_cost
+        total_impact_cost += impact_cost
+        weighted_impact_bps_notional += impact_bps * notional
+        daily_rows.append(
+            {
+                "day": day,
+                "net_pnl": _decimal_string(daily_net[day]),
+                "filled_notional": _decimal_string(notional),
+                "participation_rate_proxy": _decimal_string(participation),
+                "impact_cost_bps": _decimal_string(impact_bps),
+                "impact_cost": _decimal_string(impact_cost),
+                "post_impact_net_pnl": _decimal_string(post_impact_net),
+            }
+        )
+    impact_cost_bps = (
+        weighted_impact_bps_notional / total_filled_notional
+        if total_filled_notional > 0
+        else Decimal("0")
+    )
+    net_pnl = _decimal(summary.get("net_pnl"))
+    post_impact_net_pnl = net_pnl - total_impact_cost
+    post_impact_net_pnl_per_day = (
+        post_impact_net_pnl / Decimal(trading_days)
+        if trading_days > 0
+        else Decimal("0")
+    )
+    reasons: list[str] = []
+    if trading_days <= 0:
+        reasons.append("market_impact_stress_trading_days_missing")
+    if total_filled_notional <= 0:
+        reasons.append("market_impact_stress_filled_notional_missing")
+    if impact_cost_bps <= 0:
+        reasons.append("market_impact_stress_cost_bps_zero")
+    if post_impact_net_pnl_per_day < program.objective.target_net_pnl_per_day:
+        reasons.append("market_impact_stress_net_pnl_below_target")
+    if not bool(report.get("objective_met")):
+        reasons.append("approval_replay_objective_not_met")
+    objective_met = not reasons
+    return {
+        "schema_version": "torghut.market-impact-stress-report.v1",
+        "run_id": runner_run_id,
+        "candidate_id": _string(best_candidate.get("candidate_id")),
+        "runtime_family": _runtime_family(best_candidate),
+        "runtime_strategy_name": _runtime_strategy_name(best_candidate),
+        "runtime_strategy_names": list(
+            _portfolio_runtime_strategy_names(best_candidate)
+        ),
+        "model": "square_root",
+        "impact_model": "square_root",
+        "source_markers": [
+            "order_flow_market_impact_arxiv_2601_23172_2026",
+            "realistic_market_impact_arxiv_2603_29086_2026",
+        ],
+        "objective_met": objective_met,
+        "passed": objective_met,
+        "reasons": reasons,
+        "target_net_pnl_per_day": _decimal_string(
+            program.objective.target_net_pnl_per_day
+        ),
+        "net_pnl_per_day": _decimal_string(_decimal(scorecard.get("net_pnl_per_day"))),
+        "post_impact_net_pnl_per_day": _decimal_string(post_impact_net_pnl_per_day),
+        "stressed_net_pnl_per_day": _decimal_string(post_impact_net_pnl_per_day),
+        "net_pnl": _decimal_string(net_pnl),
+        "post_impact_net_pnl": _decimal_string(post_impact_net_pnl),
+        "impact_cost": _decimal_string(total_impact_cost),
+        "impact_cost_bps": _decimal_string(impact_cost_bps),
+        "market_impact_cost_bps": _decimal_string(impact_cost_bps),
+        "reference_notional": _decimal_string(reference_notional),
+        "reference_adv_proxy": _decimal_string(reference_adv),
+        "max_participation_rate": _decimal_string(max_participation),
+        "impact_bps_at_full_participation": _decimal_string(
+            config.impact_bps_at_full_participation
+        ),
+        "trading_day_count": trading_days,
+        "total_filled_notional": _decimal_string(total_filled_notional),
+        "avg_filled_notional_per_day": _decimal_string(avg_filled_notional),
+        "daily": daily_rows,
+    }
+
+
 def _profitability_stage_manifest(
     *,
     root: Path,
@@ -1729,6 +1868,7 @@ def _profitability_stage_manifest(
     rollback_readiness_path: Path,
     portfolio_optimizer_evidence_path: Path | None,
     portfolio_proof_receipt_path: Path | None,
+    market_impact_stress_report_path: Path | None,
     parity_replay_path: Path | None,
     approval_replay_path: Path | None,
     shadow_validation_path: Path | None,
@@ -1785,6 +1925,13 @@ def _profitability_stage_manifest(
     ):
         artifact_hashes[str(portfolio_proof_receipt_path.relative_to(root))] = (
             _sha256_path(portfolio_proof_receipt_path)
+        )
+    if (
+        market_impact_stress_report_path is not None
+        and market_impact_stress_report_path.exists()
+    ):
+        artifact_hashes[str(market_impact_stress_report_path.relative_to(root))] = (
+            _sha256_path(market_impact_stress_report_path)
         )
     payload = {
         "schema_version": "profitability-stage-manifest-v1",
@@ -1898,6 +2045,13 @@ def _profitability_stage_manifest(
                         "check": "profitability_validation_present",
                         "status": "pass" if approval_pass else "fail",
                     },
+                    {
+                        "check": "market_impact_stress_present",
+                        "status": "pass"
+                        if market_impact_stress_report_path is not None
+                        and market_impact_stress_report_path.exists()
+                        else "fail",
+                    },
                 ],
                 "artifacts": {
                     "evaluation_report": _artifact(
@@ -1915,6 +2069,18 @@ def _profitability_stage_manifest(
                         }
                         if approval_replay_path is not None
                         and approval_replay_path.exists()
+                        else {}
+                    ),
+                    **(
+                        {
+                            "market_impact_stress": _artifact(
+                                market_impact_stress_report_path,
+                                stage="validation",
+                                check="market_impact_stress_present",
+                            )
+                        }
+                        if market_impact_stress_report_path is not None
+                        and market_impact_stress_report_path.exists()
                         else {}
                     ),
                 },
@@ -2056,6 +2222,7 @@ class RuntimeClosureBundleSummary:
     policy_path: str
     portfolio_optimizer_evidence_path: str
     portfolio_proof_receipt_path: str
+    market_impact_stress_report_path: str
     profitability_stage_manifest_path: str
     promotion_prerequisites_path: str
     replay_plan_path: str
@@ -2083,6 +2250,7 @@ class RuntimeClosureBundleSummary:
             "policy_path": self.policy_path,
             "portfolio_optimizer_evidence_path": self.portfolio_optimizer_evidence_path,
             "portfolio_proof_receipt_path": self.portfolio_proof_receipt_path,
+            "market_impact_stress_report_path": self.market_impact_stress_report_path,
             "profitability_stage_manifest_path": self.profitability_stage_manifest_path,
             "promotion_prerequisites_path": self.promotion_prerequisites_path,
             "replay_plan_path": self.replay_plan_path,
@@ -2123,6 +2291,7 @@ def write_runtime_closure_bundle(
             policy_path="",
             portfolio_optimizer_evidence_path="",
             portfolio_proof_receipt_path="",
+            market_impact_stress_report_path="",
             profitability_stage_manifest_path="",
             promotion_prerequisites_path="",
             replay_plan_path="",
@@ -2169,6 +2338,9 @@ def write_runtime_closure_bundle(
     replay_plan_path = closure_root / "replay" / "runtime-replay-plan.json"
     walkforward_results_path = closure_root / "backtest" / "walkforward-results.json"
     evaluation_report_path = closure_root / "backtest" / "evaluation-report.json"
+    market_impact_stress_report_path = (
+        closure_root / "backtest" / "market-impact-stress.json"
+    )
 
     candidate_spec = _candidate_spec(
         runner_run_id=runner_run_id,
@@ -2265,6 +2437,16 @@ def write_runtime_closure_bundle(
             )
             _write_json(approval_report_path, approval_report)
 
+    market_impact_stress_report: dict[str, Any] | None = None
+    if approval_report is not None:
+        market_impact_stress_report = _market_impact_stress_report(
+            runner_run_id=runner_run_id,
+            best_candidate=best_candidate,
+            approval_report=approval_report,
+            program=program,
+        )
+        _write_json(market_impact_stress_report_path, market_impact_stress_report)
+
     shadow_plan = _shadow_validation_artifact(
         best_candidate=best_candidate,
         program=program,
@@ -2280,6 +2462,11 @@ def write_runtime_closure_bundle(
             str(candidate_generation_manifest_path.relative_to(closure_root)),
             str(replay_plan_path.relative_to(closure_root)),
             str(shadow_validation_path.relative_to(closure_root)),
+            *(
+                (str(market_impact_stress_report_path.relative_to(closure_root)),)
+                if market_impact_stress_report is not None
+                else ()
+            ),
         ),
     )
     _write_json(portfolio_proof_receipt_path, portfolio_proof_receipt)
@@ -2347,6 +2534,9 @@ def write_runtime_closure_bundle(
         portfolio_proof_receipt_path=portfolio_proof_receipt_path
         if portfolio_proof_receipt_path.exists()
         else None,
+        market_impact_stress_report_path=market_impact_stress_report_path
+        if market_impact_stress_report_path.exists()
+        else None,
         parity_replay_path=parity_replay_path if parity_replay_path.exists() else None,
         approval_replay_path=approval_replay_path
         if approval_replay_path.exists()
@@ -2412,6 +2602,9 @@ def write_runtime_closure_bundle(
         if portfolio_optimizer_evidence_path.exists()
         else "",
         portfolio_proof_receipt_path=str(portfolio_proof_receipt_path),
+        market_impact_stress_report_path=str(market_impact_stress_report_path)
+        if market_impact_stress_report_path.exists()
+        else "",
         profitability_stage_manifest_path=str(profitability_stage_manifest_path),
         promotion_prerequisites_path=str(promotion_prerequisites_path),
         replay_plan_path=str(replay_plan_path),
