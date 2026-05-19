@@ -92,6 +92,11 @@ const routeSources: RouteSourceSpec[] = [
     load: () => import('../routes/v1/runs/$id'),
   },
   {
+    file: 'src/routes/api/agents/events.ts',
+    sourceUrl: new URL('../routes/api/agents/events.ts', import.meta.url),
+    load: () => import('../routes/api/agents/events'),
+  },
+  {
     file: 'src/routes/api/agents/control-plane/events.ts',
     sourceUrl: new URL('../routes/api/agents/control-plane/events.ts', import.meta.url),
     load: () => import('../routes/api/agents/control-plane/events'),
