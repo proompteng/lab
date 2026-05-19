@@ -58,11 +58,6 @@ const parseStringList = (value: string | undefined) =>
 
 const uniqueStrings = (values: string[]) => [...new Set(values)]
 
-const isControllerWorkloadFlagEnabled = (value: string | undefined, defaultValue: boolean) => {
-  const normalized = (value ?? (defaultValue ? '1' : '0')).trim().toLowerCase()
-  return normalized !== '0' && normalized !== 'false'
-}
-
 const normalizeUrl = (value: string | undefined) => {
   const normalized = normalizeNonEmpty(value)
   return normalized ? normalized.replace(/\/+$/, '') : null
@@ -181,12 +176,7 @@ export const resolveLeaderElectionSettings = (env: EnvSource = process.env): Lea
 
   return {
     enabled: parseBoolean(env.JANGAR_LEADER_ELECTION_ENABLED, DEFAULT_LEADER_ELECTION_ENABLED),
-    required:
-      !isRuntimeTestEnv(env) &&
-      (isControllerWorkloadFlagEnabled(env.JANGAR_AGENTS_CONTROLLER_ENABLED, true) ||
-        isControllerWorkloadFlagEnabled(env.JANGAR_ORCHESTRATION_CONTROLLER_ENABLED, true) ||
-        isControllerWorkloadFlagEnabled(env.JANGAR_SUPPORTING_CONTROLLER_ENABLED, true) ||
-        isControllerWorkloadFlagEnabled(env.JANGAR_PRIMITIVES_RECONCILER, true)),
+    required: !isRuntimeTestEnv(env) && parseBoolean(env.JANGAR_LEADER_ELECTION_REQUIRED, false),
     leaseName: normalizeNonEmpty(env.JANGAR_LEADER_ELECTION_LEASE_NAME) ?? DEFAULT_LEADER_ELECTION_LEASE_NAME,
     leaseNamespace: normalizeNonEmpty(env.JANGAR_LEADER_ELECTION_LEASE_NAMESPACE) ?? '',
     leaseDurationSeconds,

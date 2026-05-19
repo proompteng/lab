@@ -124,6 +124,19 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src"
 
 fail_if_matches \
+  "Jangar runtime must not expose removed Agents controller profiles" \
+  'AGENTS_SERVER_PROFILE|agents-control-plane|agents-controllers' \
+  "${ROOT_DIR}/services/jangar/src/server/runtime-profile.ts"
+
+fail_if_matches \
+  "Jangar runtime must not expose removed Agents controller enablement flags" \
+  'JANGAR_AGENTS_CONTROLLER_ENABLED|JANGAR_ORCHESTRATION_CONTROLLER_ENABLED|JANGAR_SUPPORTING_CONTROLLER_ENABLED|JANGAR_PRIMITIVES_RECONCILER' \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-config.ts" \
+  "${ROOT_DIR}/services/jangar/Dockerfile" \
+  "${ROOT_DIR}/services/jangar/playwright.config.ts" \
+  "${ROOT_DIR}/services/jangar/scripts/openwebui-e2e.sh"
+
+fail_if_matches \
   "Jangar kube helper must not carry Agents CRD aliases after the control-plane extraction" \
   'agents\.proompteng\.ai|tools\.proompteng\.ai|orchestration\.proompteng\.ai|approvals\.proompteng\.ai|budgets\.proompteng\.ai|security\.proompteng\.ai|signals\.proompteng\.ai|schedules\.proompteng\.ai|swarm\.proompteng\.ai|artifacts\.proompteng\.ai|workspaces\.proompteng\.ai' \
   "${ROOT_DIR}/services/jangar/src/server/primitives-kube.ts"

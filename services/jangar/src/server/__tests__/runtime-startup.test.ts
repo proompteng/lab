@@ -37,28 +37,6 @@ describe('ensureRuntimeStartup', () => {
     expect(mocks.startWhitepaperFinalizeConsumer).toHaveBeenCalledTimes(1)
   })
 
-  it('does not boot Agents-owned support for the legacy controllers profile', async () => {
-    const { JANGAR_RUNTIME_PROFILES } = await import('../runtime-profile')
-    const { ensureRuntimeStartup } = await import('../runtime-startup')
-
-    ensureRuntimeStartup(JANGAR_RUNTIME_PROFILES.agentsControllers.startup)
-    ensureRuntimeStartup(JANGAR_RUNTIME_PROFILES.agentsControllers.startup)
-
-    expect(mocks.startTorghutQuantRuntime).not.toHaveBeenCalled()
-    expect(mocks.startWhitepaperFinalizeConsumer).not.toHaveBeenCalled()
-  })
-
-  it('does not boot Jangar-owned support for the legacy control-plane profile', async () => {
-    const { JANGAR_RUNTIME_PROFILES } = await import('../runtime-profile')
-    const { ensureRuntimeStartup } = await import('../runtime-startup')
-
-    ensureRuntimeStartup(JANGAR_RUNTIME_PROFILES.agentsControlPlane.startup)
-    ensureRuntimeStartup(JANGAR_RUNTIME_PROFILES.agentsControlPlane.startup)
-
-    expect(mocks.startTorghutQuantRuntime).not.toHaveBeenCalled()
-    expect(mocks.startWhitepaperFinalizeConsumer).not.toHaveBeenCalled()
-  })
-
   it('skips all startup side effects for the test profile', async () => {
     const { JANGAR_RUNTIME_PROFILES } = await import('../runtime-profile')
     const { ensureRuntimeStartup } = await import('../runtime-startup')

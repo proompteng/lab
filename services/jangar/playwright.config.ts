@@ -19,10 +19,6 @@ const webServerEnv = {
         ...(process.env.JANGAR_DEFAULT_MODEL ? {} : { JANGAR_DEFAULT_MODEL: 'gpt-5.5' }),
       }
     : {}),
-  JANGAR_AGENTS_CONTROLLER_ENABLED: '0',
-  JANGAR_ORCHESTRATION_CONTROLLER_ENABLED: '0',
-  JANGAR_SUPPORTING_CONTROLLER_ENABLED: '0',
-  JANGAR_PRIMITIVES_RECONCILER: '0',
   JANGAR_LEADER_ELECTION_ENABLED: '0',
   ...(process.env.DATABASE_URL ? {} : { DATABASE_URL: 'postgres://localhost:5432/jangar' }),
 }

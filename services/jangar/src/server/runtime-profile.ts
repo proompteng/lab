@@ -3,12 +3,7 @@ export type JangarRuntimeStartup = {
   whitepaperFinalizeConsumer: boolean
 }
 
-export type JangarRuntimeProfileName =
-  | 'http-server'
-  | 'agents-control-plane'
-  | 'agents-controllers'
-  | 'vite-dev-api'
-  | 'test'
+export type JangarRuntimeProfileName = 'http-server' | 'vite-dev-api' | 'test'
 
 export type JangarRuntimeProfile = {
   name: JangarRuntimeProfileName
@@ -21,31 +16,11 @@ const fullStartup: JangarRuntimeStartup = {
   whitepaperFinalizeConsumer: true,
 }
 
-const agentsControlPlaneStartup: JangarRuntimeStartup = {
-  torghutQuantRuntime: false,
-  whitepaperFinalizeConsumer: false,
-}
-
-const controllersStartup: JangarRuntimeStartup = {
-  torghutQuantRuntime: false,
-  whitepaperFinalizeConsumer: false,
-}
-
 export const JANGAR_RUNTIME_PROFILES = {
   httpServer: {
     name: 'http-server',
     serveClient: true,
     startup: fullStartup,
-  },
-  agentsControlPlane: {
-    name: 'agents-control-plane',
-    serveClient: false,
-    startup: agentsControlPlaneStartup,
-  },
-  agentsControllers: {
-    name: 'agents-controllers',
-    serveClient: false,
-    startup: controllersStartup,
   },
   viteDevApi: {
     name: 'vite-dev-api',
@@ -70,15 +45,9 @@ const normalizeProfileName = (value: string | undefined | null) => {
 export const resolveJangarRuntimeProfile = (
   env: Record<string, string | undefined> = process.env,
 ): JangarRuntimeProfile => {
-  const requested = normalizeProfileName(env.AGENTS_SERVER_PROFILE) ?? normalizeProfileName(env.JANGAR_SERVER_PROFILE)
-
-  if (requested === 'agents-control-plane' || requested === 'control-plane' || requested === 'api') {
-    return JANGAR_RUNTIME_PROFILES.agentsControlPlane
-  }
-
-  if (requested === 'agents-controllers' || requested === 'controller' || requested === 'controllers') {
-    return JANGAR_RUNTIME_PROFILES.agentsControllers
-  }
+  const requested = normalizeProfileName(env.JANGAR_SERVER_PROFILE)
+  if (requested === 'vite-dev-api') return JANGAR_RUNTIME_PROFILES.viteDevApi
+  if (requested === 'test') return JANGAR_RUNTIME_PROFILES.test
 
   return JANGAR_RUNTIME_PROFILES.httpServer
 }

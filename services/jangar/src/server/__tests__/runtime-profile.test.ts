@@ -7,35 +7,22 @@ describe('runtime profile resolution', () => {
     expect(resolveJangarRuntimeProfile({})).toBe(JANGAR_RUNTIME_PROFILES.httpServer)
   })
 
-  it('selects the Agents controllers profile from canonical Agents env', () => {
+  it('ignores Agents-owned runtime profiles after controller extraction', () => {
     expect(resolveJangarRuntimeProfile({ AGENTS_SERVER_PROFILE: 'agents-controllers' })).toBe(
-      JANGAR_RUNTIME_PROFILES.agentsControllers,
+      JANGAR_RUNTIME_PROFILES.httpServer,
     )
-  })
-
-  it('selects the Agents control-plane profile without serving Jangar client assets', () => {
-    const profile = resolveJangarRuntimeProfile({ AGENTS_SERVER_PROFILE: 'agents-control-plane' })
-
-    expect(profile).toBe(JANGAR_RUNTIME_PROFILES.agentsControlPlane)
-    expect(profile.serveClient).toBe(false)
-    expect(profile.startup).toEqual({
-      torghutQuantRuntime: false,
-      whitepaperFinalizeConsumer: false,
-    })
-  })
-
-  it('accepts concise control-plane aliases for the transitional Agents image', () => {
-    expect(resolveJangarRuntimeProfile({ AGENTS_SERVER_PROFILE: 'control-plane' })).toBe(
-      JANGAR_RUNTIME_PROFILES.agentsControlPlane,
+    expect(resolveJangarRuntimeProfile({ AGENTS_SERVER_PROFILE: 'agents-control-plane' })).toBe(
+      JANGAR_RUNTIME_PROFILES.httpServer,
     )
-    expect(resolveJangarRuntimeProfile({ AGENTS_SERVER_PROFILE: 'api' })).toBe(
-      JANGAR_RUNTIME_PROFILES.agentsControlPlane,
-    )
-  })
-
-  it('keeps legacy Jangar profile env as a compatibility alias', () => {
     expect(resolveJangarRuntimeProfile({ JANGAR_SERVER_PROFILE: 'controller' })).toBe(
-      JANGAR_RUNTIME_PROFILES.agentsControllers,
+      JANGAR_RUNTIME_PROFILES.httpServer,
     )
+  })
+
+  it('keeps Jangar-local utility profiles only', () => {
+    expect(resolveJangarRuntimeProfile({ JANGAR_SERVER_PROFILE: 'vite-dev-api' })).toBe(
+      JANGAR_RUNTIME_PROFILES.viteDevApi,
+    )
+    expect(resolveJangarRuntimeProfile({ JANGAR_SERVER_PROFILE: 'test' })).toBe(JANGAR_RUNTIME_PROFILES.test)
   })
 })
