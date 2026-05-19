@@ -5127,6 +5127,196 @@ def _runtime_closure_scorecard_update(
     }
 
 
+def _candidate_board_score_rows(
+    rows: Sequence[Mapping[str, Any]],
+) -> dict[str, Mapping[str, Any]]:
+    return {
+        _string(row.get("candidate_spec_id")): row
+        for row in rows
+        if _string(row.get("candidate_spec_id"))
+    }
+
+
+def _candidate_board_decimal_field(scorecard: Mapping[str, Any], key: str) -> str:
+    value = scorecard.get(key)
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _candidate_board_int_field(scorecard: Mapping[str, Any], key: str) -> int:
+    try:
+        return max(0, int(Decimal(str(scorecard.get(key, 0) or 0))))
+    except Exception:
+        return 0
+
+
+def _candidate_board_blockers(
+    *,
+    selected_for_replay: bool,
+    evidence: CandidateEvidenceBundle | None,
+    scorecard: Mapping[str, Any],
+) -> list[str]:
+    blockers = list(_oracle_blockers(scorecard))
+    if not selected_for_replay:
+        blockers.append("not_selected_for_replay")
+    elif evidence is None:
+        blockers.append("replay_evidence_missing")
+    if evidence is not None and not _boolish(scorecard.get("target_met")):
+        blockers.append("target_net_pnl_per_day_not_met")
+    if (
+        evidence is not None
+        and _boolish(scorecard.get("target_met"))
+        and not _boolish(scorecard.get("oracle_passed"))
+        and not blockers
+    ):
+        blockers.append("profit_target_oracle_failed")
+    return list(dict.fromkeys(blockers))
+
+
+def _candidate_board_status(
+    *,
+    selected_for_replay: bool,
+    evidence: CandidateEvidenceBundle | None,
+    scorecard: Mapping[str, Any],
+    in_best_portfolio: bool,
+    portfolio_oracle_passed: bool,
+) -> str:
+    if in_best_portfolio and portfolio_oracle_passed:
+        return "portfolio_component_passed_oracle"
+    if evidence is not None and _boolish(scorecard.get("oracle_passed")):
+        return "candidate_oracle_passed"
+    if evidence is not None and _boolish(scorecard.get("target_met")):
+        return "blocked_by_oracle"
+    if evidence is not None:
+        return "replayed_below_target"
+    if selected_for_replay:
+        return "selected_pending_replay_evidence"
+    return "research_ranked_not_replayed"
+
+
+def _candidate_board_payload(
+    *,
+    epoch_id: str,
+    output_dir: Path,
+    target: Decimal,
+    candidate_specs: Sequence[CandidateSpec],
+    candidate_selection: Mapping[str, Any],
+    pre_replay_proposal_rows: Sequence[Mapping[str, Any]],
+    proposal_rows: Sequence[Mapping[str, Any]],
+    evidence_bundles: Sequence[CandidateEvidenceBundle],
+    portfolio: PortfolioCandidateSpec | None,
+    promotion_status: str,
+    promotion_blockers: Sequence[str],
+    runtime_closure: Mapping[str, Any],
+) -> dict[str, Any]:
+    pre_replay_by_spec = _candidate_board_score_rows(pre_replay_proposal_rows)
+    proposal_by_spec = _candidate_board_score_rows(proposal_rows)
+    selection_by_spec = _candidate_board_score_rows(
+        _list_of_mappings(candidate_selection.get("rows"))
+    )
+    evidence_by_spec = {bundle.candidate_spec_id: bundle for bundle in evidence_bundles}
+    portfolio_payload = portfolio.to_payload() if portfolio is not None else {}
+    portfolio_scorecard = _mapping(portfolio_payload.get("objective_scorecard"))
+    portfolio_oracle_passed = _boolish(portfolio_scorecard.get("oracle_passed"))
+    portfolio_sleeve_spec_ids = {
+        _string(sleeve.get("candidate_spec_id"))
+        for sleeve in _list_of_mappings(portfolio_payload.get("sleeves"))
+        if _string(sleeve.get("candidate_spec_id"))
+    }
+    rows: list[dict[str, Any]] = []
+    for spec in candidate_specs:
+        selection = selection_by_spec.get(spec.candidate_spec_id, {})
+        pre_replay = pre_replay_by_spec.get(spec.candidate_spec_id, {})
+        proposal = proposal_by_spec.get(spec.candidate_spec_id, pre_replay)
+        evidence = evidence_by_spec.get(spec.candidate_spec_id)
+        scorecard = dict(evidence.objective_scorecard) if evidence is not None else {}
+        selected_for_replay = bool(selection.get("selected_for_replay"))
+        in_best_portfolio = spec.candidate_spec_id in portfolio_sleeve_spec_ids
+        blockers = _candidate_board_blockers(
+            selected_for_replay=selected_for_replay,
+            evidence=evidence,
+            scorecard=scorecard,
+        )
+        rows.append(
+            {
+                "candidate_spec_id": spec.candidate_spec_id,
+                "candidate_id": evidence.candidate_id if evidence is not None else "",
+                "hypothesis_id": spec.hypothesis_id,
+                "family_template_id": spec.family_template_id,
+                "runtime_family": spec.runtime_family,
+                "runtime_strategy_name": spec.runtime_strategy_name,
+                "pre_replay_rank": _rank_sort_value(pre_replay.get("rank")),
+                "pre_replay_proposal_score": str(
+                    pre_replay.get("proposal_score") or ""
+                ),
+                "rank": _rank_sort_value(proposal.get("rank")),
+                "proposal_score": str(proposal.get("proposal_score") or ""),
+                "selected_for_replay": selected_for_replay,
+                "has_replay_evidence": evidence is not None,
+                "in_best_portfolio": in_best_portfolio,
+                "status": _candidate_board_status(
+                    selected_for_replay=selected_for_replay,
+                    evidence=evidence,
+                    scorecard=scorecard,
+                    in_best_portfolio=in_best_portfolio,
+                    portfolio_oracle_passed=portfolio_oracle_passed,
+                ),
+                "target_met": _boolish(scorecard.get("target_met")),
+                "oracle_passed": _boolish(scorecard.get("oracle_passed")),
+                "net_pnl_per_day": _candidate_board_decimal_field(
+                    scorecard, "net_pnl_per_day"
+                )
+                or _candidate_board_decimal_field(
+                    scorecard, "portfolio_post_cost_net_pnl_per_day"
+                ),
+                "trading_day_count": _candidate_board_int_field(
+                    scorecard, "trading_day_count"
+                ),
+                "filled_order_count": _candidate_board_int_field(
+                    scorecard, "filled_count"
+                ),
+                "decision_count": _candidate_board_int_field(
+                    scorecard, "decision_count"
+                ),
+                "blockers": blockers,
+                "replay_artifact_refs": list(evidence.replay_artifact_refs)
+                if evidence is not None
+                else [],
+            }
+        )
+    rows.sort(
+        key=lambda row: (
+            _rank_sort_value(row.get("rank")),
+            -_proposal_sort_value(row.get("proposal_score")),
+            _string(row.get("candidate_spec_id")),
+        )
+    )
+    best_research_candidate = rows[0] if rows else None
+    return {
+        "schema_version": "torghut.profit-candidate-board.v1",
+        "epoch_id": epoch_id,
+        "run_root": str(output_dir),
+        "target_net_pnl_per_day": str(target),
+        "current_answer": "promotion_candidate_found"
+        if portfolio_oracle_passed
+        else "no_promotion_ready_candidate",
+        "promotion_readiness": {
+            "status": promotion_status,
+            "promotable": False,
+            "blockers": list(promotion_blockers),
+        },
+        "best_research_candidate": best_research_candidate,
+        "best_portfolio_candidate_id": _string(
+            portfolio_payload.get("portfolio_candidate_id")
+        ),
+        "best_portfolio_oracle_passed": portfolio_oracle_passed,
+        "runtime_closure_status": _string(runtime_closure.get("status")),
+        "row_count": len(rows),
+        "rows": rows,
+    }
+
+
 def _portfolio_with_runtime_closure_proof(
     *,
     portfolio: PortfolioCandidateSpec,
@@ -5780,6 +5970,22 @@ def run_whitepaper_autoresearch_profit_target(
             ),
         )
         _write_json(remediation_path, candidate_search_remediation)
+    candidate_board = _candidate_board_payload(
+        epoch_id=epoch_id,
+        output_dir=output_dir,
+        target=target,
+        candidate_specs=candidate_specs,
+        candidate_selection=candidate_selection,
+        pre_replay_proposal_rows=pre_replay_proposal_rows,
+        proposal_rows=proposal_rows,
+        evidence_bundles=replay_result.evidence_bundles,
+        portfolio=portfolio,
+        promotion_status=promotion_status,
+        promotion_blockers=promotion_blockers,
+        runtime_closure=runtime_closure,
+    )
+    candidate_board_path = output_dir / "candidate-board.json"
+    _write_json(candidate_board_path, candidate_board)
     profitability_goal = _profitability_search_goal(
         args=args,
         output_dir=output_dir,
@@ -5835,6 +6041,7 @@ def run_whitepaper_autoresearch_profit_target(
         "mlx_rank_bucket_lift": proposal_model.get("rank_bucket_lift", {}),
         "false_positive_table": false_positive_table,
         "best_false_negative_table": best_false_negative_table,
+        "candidate_board": candidate_board,
         "candidate_search_remediation": candidate_search_remediation,
         "profitability_search_goal": profitability_goal,
         "best_portfolio_candidate": portfolio.to_payload()
@@ -5878,6 +6085,7 @@ def run_whitepaper_autoresearch_profit_target(
             "portfolio_optimizer_report": str(
                 output_dir / "portfolio-optimizer-report.json"
             ),
+            "candidate_board": str(candidate_board_path),
             "candidate_search_remediation": str(remediation_path)
             if candidate_search_remediation is not None
             else None,
