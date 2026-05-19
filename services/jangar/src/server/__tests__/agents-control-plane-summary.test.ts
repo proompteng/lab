@@ -41,9 +41,9 @@ describe('control plane summary route', () => {
   afterEach(() => {
     vi.clearAllMocks()
     vi.useRealTimers()
-    delete process.env.JANGAR_CONTROL_PLANE_CACHE_ENABLED
-    delete process.env.JANGAR_CONTROL_PLANE_CACHE_STALE_SECONDS
-    delete process.env.JANGAR_CONTROL_PLANE_CACHE_ALLOW_STALE
+    delete process.env.AGENTS_CONTROL_PLANE_CACHE_ENABLED
+    delete process.env.AGENTS_CONTROL_PLANE_CACHE_STALE_SECONDS
+    delete process.env.AGENTS_CONTROL_PLANE_CACHE_ALLOW_STALE
   })
 
   it('aggregates totals and run phases without cache when cache is disabled', async () => {
@@ -111,9 +111,9 @@ describe('control plane summary route', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-20T00:00:40Z'))
 
-    process.env.JANGAR_CONTROL_PLANE_CACHE_ENABLED = 'on'
-    process.env.JANGAR_CONTROL_PLANE_CACHE_STALE_SECONDS = '60'
-    process.env.JANGAR_CONTROL_PLANE_CACHE_ALLOW_STALE = '1'
+    process.env.AGENTS_CONTROL_PLANE_CACHE_ENABLED = 'on'
+    process.env.AGENTS_CONTROL_PLANE_CACHE_STALE_SECONDS = '60'
+    process.env.AGENTS_CONTROL_PLANE_CACHE_ALLOW_STALE = '1'
 
     const cachedStore = {
       ready: Promise.resolve(),
@@ -194,9 +194,9 @@ describe('control plane summary route', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-20T00:05:00Z'))
 
-    process.env.JANGAR_CONTROL_PLANE_CACHE_ENABLED = '1'
-    process.env.JANGAR_CONTROL_PLANE_CACHE_STALE_SECONDS = '30'
-    process.env.JANGAR_CONTROL_PLANE_CACHE_ALLOW_STALE = 'false'
+    process.env.AGENTS_CONTROL_PLANE_CACHE_ENABLED = '1'
+    process.env.AGENTS_CONTROL_PLANE_CACHE_STALE_SECONDS = '30'
+    process.env.AGENTS_CONTROL_PLANE_CACHE_ALLOW_STALE = 'false'
 
     const cachedStore = {
       ready: Promise.resolve(),
