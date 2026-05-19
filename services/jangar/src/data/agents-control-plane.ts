@@ -3144,7 +3144,7 @@ export const fetchPrimitiveList = async (params: {
     searchParams.set('limit', params.limit.toString())
   }
 
-  const response = await fetch(`/api/agents/control-plane/resources?${searchParams.toString()}`, {
+  const response = await fetch(`/api/control-plane/resources?${searchParams.toString()}`, {
     signal: params.signal,
   })
 
@@ -3179,7 +3179,7 @@ export const fetchPrimitiveDetail = async (params: {
     name: params.name,
     namespace: params.namespace,
   })
-  const response = await fetch(`/api/agents/control-plane/resource?${searchParams.toString()}`, {
+  const response = await fetch(`/api/control-plane/resource?${searchParams.toString()}`, {
     signal: params.signal,
   })
   const payload = await parseResponse(response)
@@ -3236,7 +3236,7 @@ export const deletePrimitiveResource = async (params: {
     name: params.name,
     namespace: params.namespace,
   })
-  const response = await fetch(`/api/agents/control-plane/resource?${searchParams.toString()}`, {
+  const response = await fetch(`/api/control-plane/resource?${searchParams.toString()}`, {
     method: 'DELETE',
   })
   const payload = await parseResponse(response)
@@ -3277,7 +3277,7 @@ export const fetchPrimitiveEvents = async (params: {
     searchParams.set('limit', params.limit.toString())
   }
 
-  const response = await fetch(`/api/agents/control-plane/events?${searchParams.toString()}`, {
+  const response = await fetch(`/api/control-plane/events?${searchParams.toString()}`, {
     signal: params.signal,
   })
   const payload = await parseResponse(response)
@@ -3321,7 +3321,7 @@ export const fetchAgentRunLogs = async (params: {
     searchParams.set('tailLines', Math.max(1, Math.floor(params.tailLines)).toString())
   }
 
-  const response = await fetch(`/api/agents/control-plane/logs?${searchParams.toString()}`, {
+  const response = await fetch(`/api/control-plane/logs?${searchParams.toString()}`, {
     signal: params.signal,
   })
   const payload = await parseResponse(response)
@@ -3360,7 +3360,7 @@ export const fetchControlPlaneStatus = async (params: {
   signal?: AbortSignal
 }): Promise<ControlPlaneStatusResult> => {
   const searchParams = new URLSearchParams({ namespace: params.namespace })
-  const response = await fetch(`/api/agents/control-plane/status?${searchParams.toString()}`, {
+  const response = await fetch(`/api/control-plane/status?${searchParams.toString()}`, {
     signal: params.signal,
   })
 

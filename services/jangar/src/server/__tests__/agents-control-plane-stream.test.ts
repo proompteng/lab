@@ -6,7 +6,7 @@ const agentsProxyMocks = vi.hoisted(() => ({
 
 vi.mock('~/server/agents-service-proxy', () => agentsProxyMocks)
 
-import { streamControlPlaneEvents } from '~/routes/api/agents/control-plane/stream'
+import { streamControlPlaneEvents } from '~/routes/api/control-plane/stream'
 
 describe('control plane stream', () => {
   afterEach(() => {
@@ -14,7 +14,7 @@ describe('control plane stream', () => {
   })
 
   it('proxies the stream to the Agents service boundary', async () => {
-    const request = new Request('http://localhost/api/agents/control-plane/stream?namespace=agents')
+    const request = new Request('http://localhost/api/control-plane/stream?namespace=agents')
     const response = await streamControlPlaneEvents(request)
 
     expect(response.status).toBe(200)

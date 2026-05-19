@@ -14,7 +14,7 @@ describe('control-plane status route', () => {
   })
 
   it('proxies status requests to the Agents service boundary', async () => {
-    const request = new Request('http://jangar.test/api/agents/control-plane/status?namespace=agents&view=runner')
+    const request = new Request('http://jangar.test/api/control-plane/status?namespace=agents&view=runner')
     const response = await getControlPlaneStatus(request)
 
     expect(response.status).toBe(200)

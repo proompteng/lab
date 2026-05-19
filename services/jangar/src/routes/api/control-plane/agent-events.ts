@@ -4,7 +4,7 @@ import { proxyAgentsServiceRequest } from '~/server/agents-service-proxy'
 
 const AGENTS_SERVICE_PATH = '/api/agents/events'
 
-export const Route = createFileRoute('/api/agents/events')({
+export const Route = createFileRoute('/api/control-plane/agent-events')({
   server: {
     handlers: {
       GET: async ({ request }: JangarServerRouteArgs) => getAgentEvents(request),

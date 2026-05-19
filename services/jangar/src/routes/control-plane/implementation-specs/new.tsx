@@ -303,7 +303,7 @@ function ImplementationSpecCreatePage() {
       return
     }
     setSpecSaveStatus('saving')
-    const response = await fetch('/api/agents/control-plane/resource', {
+    const response = await fetch('/api/control-plane/resource', {
       method: 'POST',
       headers: {
         'content-type': 'application/json',

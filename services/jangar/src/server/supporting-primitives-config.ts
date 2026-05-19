@@ -97,7 +97,7 @@ export const resolveSupportingPrimitivesConfig = (env: EnvSource = process.env):
   scheduleRunnerAdmissionCheck: parseBoolean(env.JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK, true),
   scheduleRunnerAdmissionStatusUrl:
     normalizeNonEmpty(env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL) ??
-    'http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status?view=schedule-runner',
+    'http://agents.agents.svc.cluster.local/api/agents/control-plane/status?view=schedule-runner',
   scheduleRunnerAdmissionStatusTimeoutMs: parsePositiveInt(
     env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS,
     15_000,

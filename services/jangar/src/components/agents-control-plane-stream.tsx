@@ -94,7 +94,7 @@ export const useControlPlaneStream = (
     openedRef.current = false
 
     const params = new URLSearchParams({ namespace: trimmedNamespace })
-    const source = new EventSource(`/api/agents/control-plane/stream?${params.toString()}`)
+    const source = new EventSource(`/api/control-plane/stream?${params.toString()}`)
 
     source.onopen = () => {
       openedRef.current = true

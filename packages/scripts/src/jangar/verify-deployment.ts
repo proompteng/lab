@@ -438,7 +438,7 @@ Options:
   --status-service-name <name>       Jangar HTTP Service name for status checks (default: jangar)
   --status-service-port <port>       Jangar HTTP Service port for status checks (default: 80)
   --control-plane-status-namespace <name>
-                                      Namespace passed to /api/agents/control-plane/status (default: agents)
+                                      Namespace passed to /api/control-plane/status (default: agents)
   --admission-passport-consumers <csv>
                                       Required passport consumers (default: ${defaultAdmissionPassportConsumers.join(',')})
   --skip-admission-passport-verification
@@ -665,7 +665,7 @@ const buildControlPlaneStatusProxyPath = (options: {
 }) =>
   `/api/v1/namespaces/${options.statusServiceNamespace}/services/${options.statusServiceName}:${
     options.statusServicePort
-  }/proxy/api/agents/control-plane/status?namespace=${encodeURIComponent(options.controlPlaneStatusNamespace)}`
+  }/proxy/api/control-plane/status?namespace=${encodeURIComponent(options.controlPlaneStatusNamespace)}`
 
 const readControlPlaneStatus = async (options: ResolvedOptions): Promise<ControlPlaneStatusPayload> => {
   const status = await runCommand('kubectl', [

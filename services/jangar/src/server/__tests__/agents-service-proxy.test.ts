@@ -27,7 +27,7 @@ describe('agents-service-proxy', () => {
 
   it('preserves request query parameters when building the upstream URL', () => {
     const target = buildAgentsServiceProxyUrl(
-      new Request('http://jangar.test/api/agents/control-plane/resources?kind=AgentRun&namespace=agents'),
+      new Request('http://jangar.test/api/control-plane/resources?kind=AgentRun&namespace=agents'),
       '/api/agents/control-plane/resources',
       { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
     )
@@ -52,7 +52,7 @@ describe('agents-service-proxy', () => {
     globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
 
     const response = await proxyAgentsServiceRequest(
-      new Request('http://jangar.test/api/agents/control-plane/resource?kind=Agent', {
+      new Request('http://jangar.test/api/control-plane/resource?kind=Agent', {
         body: JSON.stringify({ metadata: { name: 'agent-a' } }),
         headers: {
           connection: 'close',

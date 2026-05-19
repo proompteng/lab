@@ -174,7 +174,7 @@ export const useAgentEventStream = ({ runId, channel, maxMessages }: AgentStream
     if (runId?.trim()) params.set('runId', runId.trim())
     if (channel?.trim()) params.set('channel', channel.trim())
     if (maxMessages) params.set('limit', String(maxMessages))
-    const url = `/api/agents/events?${params.toString()}`
+    const url = `/api/control-plane/agent-events?${params.toString()}`
     const source = new EventSource(url)
 
     source.onopen = () => {

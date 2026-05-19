@@ -3,7 +3,7 @@ import { proxyAgentsServiceRequest } from '~/server/agents-service-proxy'
 
 const AGENTS_SERVICE_PATH = '/api/agents/control-plane/resource'
 
-export const Route = createFileRoute('/api/agents/control-plane/resource')({
+export const Route = createFileRoute('/api/control-plane/resource')({
   server: {
     handlers: {
       DELETE: async ({ request }: JangarServerRouteArgs) => proxyAgentsServiceRequest(request, AGENTS_SERVICE_PATH),
