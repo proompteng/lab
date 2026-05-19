@@ -22,6 +22,19 @@ fail_if_matches() {
   fi
 }
 
+fail_if_path_exists() {
+  local description="$1"
+  shift
+
+  local path
+  for path in "$@"; do
+    if [[ -e "${path}" ]]; then
+      echo "Agents extraction boundary violation: ${description}: ${path}" >&2
+      exit 1
+    fi
+  done
+}
+
 fail_if_matches \
   "services/agents must not import or package Jangar-local runner paths" \
   'services/jangar|/app/services/jangar|codex-implement' \
@@ -103,6 +116,16 @@ fail_if_matches \
   "Jangar material-reentry requirement publisher must submit Signals through the Agents service boundary" \
   'kube\.apply|createKubernetesClient|RESOURCE_MAP\.Signal' \
   "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-material-reentry-requirements.ts"
+
+fail_if_matches \
+  "Jangar kube helper must not carry Agents CRD aliases after the control-plane extraction" \
+  'agents\.proompteng\.ai|tools\.proompteng\.ai|orchestration\.proompteng\.ai|approvals\.proompteng\.ai|budgets\.proompteng\.ai|security\.proompteng\.ai|signals\.proompteng\.ai|schedules\.proompteng\.ai|swarm\.proompteng\.ai|artifacts\.proompteng\.ai|workspaces\.proompteng\.ai' \
+  "${ROOT_DIR}/services/jangar/src/server/primitives-kube.ts"
+
+fail_if_path_exists \
+  "Jangar must not retain copied Agents kube watch helpers" \
+  "${ROOT_DIR}/services/jangar/src/server/kube-watch.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/primitives-watch.ts"
 
 fail_if_matches \
   "Agents GitOps must not ship the old sample Argo WorkflowTemplate schedule bridge" \
