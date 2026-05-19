@@ -1,7 +1,3 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-
 import { afterEach, describe, expect, it } from 'bun:test'
 
 import { __private } from '../build-image'
@@ -95,32 +91,17 @@ describe('agents build-image helpers', () => {
     ])
   })
 
-  it('keeps the transitional Jangar prune scope only for the controller target', () => {
-    expect(__private.parsePruneScopes(undefined, 'controller')).toEqual(['@proompteng/jangar'])
-    expect(__private.parsePruneScopes('@proompteng/agents,@proompteng/jangar')).toEqual([
+  it('uses the Agents workspace as the default controller prune scope', () => {
+    expect(__private.parsePruneScopes(undefined, 'controller')).toEqual([
       '@proompteng/agents',
-      '@proompteng/jangar',
+      '@proompteng/otel',
+      '@proompteng/temporal-bun-sdk',
     ])
   })
 
-  it('copies only server output when prebuilt transitional Jangar output is used', () => {
-    const root = mkdtempSync(join(tmpdir(), 'agents-build-image-test-'))
-    try {
-      const source = join(root, 'source')
-      const destination = join(root, 'destination')
-      mkdirSync(join(source, 'server/proto/proompteng/jangar/v1'), { recursive: true })
-      mkdirSync(join(source, 'public/assets'), { recursive: true })
-      writeFileSync(join(source, 'server/index.mjs'), 'export {}')
-      writeFileSync(join(source, 'server/proto/proompteng/jangar/v1/agentctl.proto'), 'syntax = "proto3";')
-      writeFileSync(join(source, 'public/assets/app.js'), 'console.log("client")')
-
-      __private.copyPrebuiltServerOutput(source, destination)
-
-      expect(existsSync(join(destination, 'server/index.mjs'))).toBeTrue()
-      expect(existsSync(join(destination, 'server/proto/proompteng/jangar/v1/agentctl.proto'))).toBeTrue()
-      expect(existsSync(join(destination, 'public'))).toBeFalse()
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
+  it('rejects Jangar prune scopes for Agents images', () => {
+    expect(() => __private.parsePruneScopes('@proompteng/agents,@proompteng/jangar')).toThrow(
+      'Agents images must not prune or package @proompteng/jangar',
+    )
   })
 })

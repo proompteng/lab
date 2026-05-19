@@ -17,7 +17,7 @@ vi.mock('~/server/primitives-kube', async () => {
   }
 })
 
-import { getControlPlaneSummary } from '~/routes/api/agents/control-plane/summary'
+import { getControlPlaneSummary } from '@proompteng/agents/routes/api/agents/control-plane/summary'
 import { RESOURCE_MAP } from '~/server/primitives-kube'
 
 const buildList = (items: Record<string, unknown>[] = []) => ({ items })
@@ -164,7 +164,7 @@ describe('control plane summary route', () => {
 
     const response = await getControlPlaneSummary(
       new Request('http://localhost/api/agents/control-plane/summary?namespace=agents'),
-      { kubeClient: kube },
+      { kubeClient: kube, cacheStoreFactory: () => cachedStore as never },
     )
 
     expect(response.status).toBe(200)

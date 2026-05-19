@@ -1,18 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { resolveAuditContextFromRequest } from '~/server/audit-logging'
-import { requireLeaderForMutationHttp } from '~/server/leader-election'
 import {
-  asRecord,
-  asString,
-  errorResponse,
-  normalizeNamespace,
-  okResponse,
-  parseJsonBody,
-  requireIdempotencyKey,
-} from '~/server/primitives-http'
-import { createKubernetesClient } from '~/server/primitives-kube'
-import { hydrateMemoryRecord } from '~/server/primitives-memory'
-import { createPrimitivesStore } from '~/server/primitives-store'
+  postMemoriesHandler as postMemoriesServiceHandler,
+  type MemoriesApiDependencies,
+} from '@proompteng/agents/routes/v1/memories'
+import '~/server/agents-v1-runtime'
 
 export const Route = createFileRoute('/v1/memories')({
   server: {
@@ -22,79 +13,7 @@ export const Route = createFileRoute('/v1/memories')({
   },
 })
 
-type MemoryPayload = {
-  name: string
-  namespace: string
-  spec: Record<string, unknown>
-}
+type JangarMemoriesApiDependencies = Partial<MemoriesApiDependencies>
 
-const parseMemoryPayload = (payload: Record<string, unknown>): MemoryPayload => {
-  const name = asString(payload.name)
-  if (!name) throw new Error('name is required')
-  const namespace = normalizeNamespace(asString(payload.namespace))
-  const spec = asRecord(payload.spec)
-  if (!spec) throw new Error('spec is required')
-  return { name, namespace, spec }
-}
-
-export const postMemoriesHandler = async (
-  request: Request,
-  deps: {
-    storeFactory?: typeof createPrimitivesStore
-    kubeClient?: ReturnType<typeof createKubernetesClient>
-  } = {},
-) => {
-  const leaderResponse = requireLeaderForMutationHttp()
-  if (leaderResponse) return leaderResponse
-
-  try {
-    const deliveryId = requireIdempotencyKey(request)
-    const payload = await parseJsonBody(request)
-    const parsed = parseMemoryPayload(payload)
-
-    const kube = deps.kubeClient ?? createKubernetesClient()
-    const resource = {
-      apiVersion: 'agents.proompteng.ai/v1alpha1',
-      kind: 'Memory',
-      metadata: {
-        name: parsed.name,
-        namespace: parsed.namespace,
-        labels: {
-          'jangar.proompteng.ai/delivery-id': deliveryId,
-        },
-      },
-      spec: parsed.spec,
-    }
-
-    const applied = await kube.apply(resource)
-    const metadata = (applied.metadata ?? {}) as Record<string, unknown>
-    const uid = asString(metadata.uid)
-    const auditContext = resolveAuditContextFromRequest(request, {
-      deliveryId,
-      namespace: parsed.namespace,
-      repository: null,
-      source: 'v1.memories',
-    })
-
-    const store = (deps.storeFactory ?? createPrimitivesStore)()
-    try {
-      await store.ready
-      const record = await hydrateMemoryRecord(applied, parsed.namespace, kube, store)
-      if (uid) {
-        await store.createAuditEvent({
-          entityType: 'Memory',
-          entityId: uid,
-          eventType: 'memory.created',
-          context: auditContext,
-          details: { name: parsed.name, memoryUid: uid },
-        })
-      }
-      return okResponse({ ok: true, memory: applied, record }, 201)
-    } finally {
-      await store.close()
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return errorResponse(message, message.includes('DATABASE_URL') ? 503 : 400)
-  }
-}
+export const postMemoriesHandler = async (request: Request, deps: JangarMemoriesApiDependencies = {}) =>
+  postMemoriesServiceHandler(request, deps)

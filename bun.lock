@@ -536,6 +536,7 @@
         "@bufbuild/cel": "^0.4.0",
         "@kubernetes/client-node": "^1.4.0",
         "@proompteng/codex": "workspace:*",
+        "@proompteng/otel": "workspace:*",
         "@proompteng/temporal-bun-sdk": "workspace:*",
         "crossws": "^0.4.5",
         "effect": "3.21.2",

@@ -24,23 +24,30 @@ describe('Agents control-plane image layout', () => {
     expect(content).not.toContain('.output/server/index.mjs')
   })
 
-  it('keeps the transitional Jangar server bundle isolated to the controller target', () => {
+  it('builds the Agents service for the controller target', () => {
     const content = dockerfileTarget('controller')
 
-    expect(content).toContain('COPY --from=jangar-build /app/services/jangar/.output/server ./.output/server')
-    expect(content).toContain('CMD ["bun", "run", ".output/server/index.mjs"]')
-    expect(content).not.toContain('bun run build;')
+    expect(content).toContain('WORKDIR /app/services/agents')
+    expect(content).toContain('COPY --from=agents-build /app/services/agents/src ./src')
+    expect(content).toContain('AGENTS_SERVER_PROFILE=agents-controllers')
+    expect(content).toContain('CMD ["bun", "run", "src/server/controller-entrypoint.ts"]')
+    expect(content).not.toContain('services/jangar')
+    expect(content).not.toContain('.output/server/index.mjs')
   })
 
-  it('does not copy Jangar client assets into the transitional controller image', () => {
-    const content = dockerfileTarget('controller')
-
-    expect(dockerfile()).toContain('rm -rf .output/public')
-    expect(content).toContain('COPY --from=jangar-build /app/services/jangar/.output/server ./.output/server')
-    expect(content).not.toContain('COPY --from=jangar-build /app/services/jangar/.output ./.output')
+  it('keeps Jangar out of the Agents Dockerfile build graph', () => {
+    expect(dockerfile()).not.toContain('services/jangar')
+    expect(dockerfile()).not.toContain('@proompteng/jangar')
+    expect(dockerfile()).not.toContain('codex-implement')
   })
 
-  it('starts the transitional server in the non-client Agents control-plane profile', () => {
+  it('starts each target in its split Agents profile', () => {
     expect(dockerfileTarget('control-plane')).toContain('AGENTS_SERVER_PROFILE=agents-control-plane')
+    expect(dockerfileTarget('controller')).toContain('AGENTS_SERVER_PROFILE=agents-controllers')
+  })
+
+  it('keeps primitives reconciliation disabled only on the control-plane target', () => {
+    expect(dockerfileTarget('control-plane')).toContain('AGENTS_PRIMITIVES_RECONCILER=0')
+    expect(dockerfileTarget('controller')).not.toContain('AGENTS_PRIMITIVES_RECONCILER=0')
   })
 })

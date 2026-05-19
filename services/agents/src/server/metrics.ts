@@ -9,6 +9,8 @@ export type AgentsMetricsSink = {
   recordAgentRunUntouchedBacklog?: (count: number, attributes?: MetricsAttributes) => void
   recordAgentRunUntouchedOldestAgeSeconds?: (ageSeconds: number, attributes?: MetricsAttributes) => void
   recordReconcileDurationMs?: (durationMs: number, attributes?: MetricsAttributes) => void
+  recordSseConnection?: (stream: string, state: string, attributes?: MetricsAttributes) => void
+  recordSseError?: (stream: string, phase: string, attributes?: MetricsAttributes) => void
 }
 
 const metricsSink: AgentsMetricsSink = {}
@@ -47,4 +49,12 @@ export const recordAgentRunUntouchedOldestAgeSeconds = (ageSeconds: number, attr
 
 export const recordReconcileDurationMs = (durationMs: number, attributes?: MetricsAttributes) => {
   metricsSink.recordReconcileDurationMs?.(durationMs, attributes)
+}
+
+export const recordSseConnection = (stream: string, state: string, attributes?: MetricsAttributes) => {
+  metricsSink.recordSseConnection?.(stream, state, attributes)
+}
+
+export const recordSseError = (stream: string, phase: string, attributes?: MetricsAttributes) => {
+  metricsSink.recordSseError?.(stream, phase, attributes)
 }

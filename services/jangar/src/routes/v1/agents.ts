@@ -1,19 +1,9 @@
-import { randomUUID } from 'node:crypto'
 import { createFileRoute } from '@tanstack/react-router'
-import { resolveAuditContextFromRequest } from '~/server/audit-logging'
-import { requireLeaderForMutationHttp } from '~/server/leader-election'
 import {
-  asRecord,
-  asString,
-  errorResponse,
-  normalizeNamespace,
-  okResponse,
-  parseJsonBody,
-  requireIdempotencyKey,
-} from '~/server/primitives-http'
-import { createKubernetesClient } from '~/server/primitives-kube'
-import { extractRequiredSecrets, validatePolicies } from '~/server/primitives-policy'
-import { createPrimitivesStore } from '~/server/primitives-store'
+  postAgentsHandler as postAgentsServiceHandler,
+  type AgentsApiDependencies,
+} from '@proompteng/agents/routes/v1/agents'
+import '~/server/agents-v1-runtime'
 
 export const Route = createFileRoute('/v1/agents')({
   server: {
@@ -23,114 +13,7 @@ export const Route = createFileRoute('/v1/agents')({
   },
 })
 
-type AgentPayload = {
-  name: string
-  namespace: string
-  spec: Record<string, unknown>
-  policy?: Record<string, unknown>
-}
+type JangarAgentsApiDependencies = Partial<AgentsApiDependencies>
 
-const parseAgentPayload = (payload: Record<string, unknown>): AgentPayload => {
-  const name = asString(payload.name)
-  if (!name) throw new Error('name is required')
-  const namespace = normalizeNamespace(asString(payload.namespace))
-  const spec = asRecord(payload.spec)
-  if (!spec) throw new Error('spec is required')
-  const policy = asRecord(payload.policy) ?? undefined
-  return { name, namespace, spec, policy }
-}
-
-export const postAgentsHandler = async (
-  request: Request,
-  deps: { storeFactory?: typeof createPrimitivesStore; kubeClient?: ReturnType<typeof createKubernetesClient> } = {},
-) => {
-  const leaderResponse = requireLeaderForMutationHttp()
-  if (leaderResponse) return leaderResponse
-
-  const store = (deps.storeFactory ?? createPrimitivesStore)()
-  try {
-    const deliveryId = requireIdempotencyKey(request)
-    const payload = await parseJsonBody(request)
-    const parsed = parseAgentPayload(payload)
-    const auditContext = resolveAuditContextFromRequest(request, {
-      deliveryId,
-      namespace: parsed.namespace,
-      repository: null,
-      source: 'v1.agents',
-    })
-
-    const requiredSecrets = extractRequiredSecrets(parsed.spec)
-    const policy = parsed.policy ?? {}
-    const policyChecks = {
-      budgetRef: asString(policy.budgetRef) ?? undefined,
-      secretBindingRef: asString(policy.secretBindingRef) ?? undefined,
-      requiredSecrets,
-      subject: { kind: 'Agent', name: parsed.name, namespace: parsed.namespace },
-    }
-
-    if (requiredSecrets.length > 0 && !policyChecks.secretBindingRef) {
-      return errorResponse('secretBindingRef is required when allowedSecrets are set', 403)
-    }
-
-    const kube = deps.kubeClient ?? createKubernetesClient()
-    try {
-      await store.ready
-      await validatePolicies(parsed.namespace, policyChecks, kube)
-      await store.createAuditEvent({
-        entityType: 'PolicyDecision',
-        entityId: randomUUID(),
-        eventType: 'policy.allowed',
-        context: auditContext,
-        details: { subject: policyChecks.subject, checks: policyChecks },
-      })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      try {
-        await store.createAuditEvent({
-          entityType: 'PolicyDecision',
-          entityId: randomUUID(),
-          eventType: 'policy.denied',
-          context: auditContext,
-          details: { subject: policyChecks.subject, checks: policyChecks, reason: message },
-        })
-      } catch {
-        // ignore audit failures
-      }
-      return errorResponse(message, message.includes('DATABASE_URL') ? 503 : 403)
-    }
-
-    const resource = {
-      apiVersion: 'agents.proompteng.ai/v1alpha1',
-      kind: 'Agent',
-      metadata: {
-        name: parsed.name,
-        namespace: parsed.namespace,
-        labels: {
-          'jangar.proompteng.ai/delivery-id': deliveryId,
-        },
-      },
-      spec: parsed.spec,
-    }
-
-    const applied = await kube.apply(resource)
-    const metadata = (applied.metadata ?? {}) as Record<string, unknown>
-    const uid = asString(metadata.uid)
-
-    if (uid) {
-      await store.createAuditEvent({
-        entityType: 'Agent',
-        entityId: uid,
-        eventType: 'agent.created',
-        context: auditContext,
-        details: { name: parsed.name, agentUid: uid },
-      })
-    }
-
-    return okResponse({ ok: true, agent: applied }, 201)
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return errorResponse(message, message.includes('DATABASE_URL') ? 503 : 400)
-  } finally {
-    await store.close()
-  }
-}
+export const postAgentsHandler = async (request: Request, deps: JangarAgentsApiDependencies = {}) =>
+  postAgentsServiceHandler(request, deps)

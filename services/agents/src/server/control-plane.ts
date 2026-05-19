@@ -5,19 +5,17 @@ import { resolveBooleanFeatureToggle } from './feature-flags'
 import { createAgentsHealthHandler } from './health'
 import { createAgentsHttpRuntime, type AgentsHttpRuntime } from './http-runtime'
 import { createKubernetesClient } from './kube-types'
+import { getLeaderElectionStatus, requireLeaderForMutationHttp } from './leader-election'
 import { recordAgentQueueDepth } from './metrics'
 import { createPrimitivesStore } from './primitives-store'
 import { validatePolicies } from './primitives-policy'
 import { createAgentsReadyHandler, type AgentRunIngestionAssessment, type AgentsControllerHealthState } from './ready'
 import { resolveRuntimeServiceName } from './runtime-identity'
 import { resolveAuditContextFromRequest, resolveRepositoryFromParameters } from './audit-logging'
-import {
-  configureAgentsControllerRuntime,
-  getAgentsControllerHealth,
-  startAgentsController,
-  stopAgentsController,
-} from './agents-controller'
-import { createControllerStartupRetry } from './controller-startup-retry'
+import { configureAgentsControllerRuntime, getAgentsControllerHealth } from './agents-controller'
+import { startAgentsControllerRuntime, stopAgentsControllerRuntime } from './controller-runtime'
+import { getOrchestrationControllerHealth } from './orchestration-controller'
+import { getSupportingControllerHealth } from './supporting-primitives-controller'
 import { configureAgentsV1Runtime } from './v1/runtime'
 import { resolveAgentsHttpServerListenConfig } from './runtime-entry-config'
 
@@ -35,9 +33,54 @@ type ControlPlaneRuntimeOptions = {
 
 const routeSources: RouteSourceSpec[] = [
   {
+    file: 'src/routes/v1/agents.ts',
+    sourceUrl: new URL('../routes/v1/agents.ts', import.meta.url),
+    load: () => import('../routes/v1/agents'),
+  },
+  {
+    file: 'src/routes/v1/agents/$id.ts',
+    sourceUrl: new URL('../routes/v1/agents/$id.ts', import.meta.url),
+    load: () => import('../routes/v1/agents/$id'),
+  },
+  {
     file: 'src/routes/v1/agent-runs.ts',
     sourceUrl: new URL('../routes/v1/agent-runs.ts', import.meta.url),
     load: () => import('../routes/v1/agent-runs'),
+  },
+  {
+    file: 'src/routes/v1/memories.ts',
+    sourceUrl: new URL('../routes/v1/memories.ts', import.meta.url),
+    load: () => import('../routes/v1/memories'),
+  },
+  {
+    file: 'src/routes/v1/memories/$id.ts',
+    sourceUrl: new URL('../routes/v1/memories/$id.ts', import.meta.url),
+    load: () => import('../routes/v1/memories/$id'),
+  },
+  {
+    file: 'src/routes/v1/memory-queries.ts',
+    sourceUrl: new URL('../routes/v1/memory-queries.ts', import.meta.url),
+    load: () => import('../routes/v1/memory-queries'),
+  },
+  {
+    file: 'src/routes/v1/orchestrations.ts',
+    sourceUrl: new URL('../routes/v1/orchestrations.ts', import.meta.url),
+    load: () => import('../routes/v1/orchestrations'),
+  },
+  {
+    file: 'src/routes/v1/orchestrations/$id.ts',
+    sourceUrl: new URL('../routes/v1/orchestrations/$id.ts', import.meta.url),
+    load: () => import('../routes/v1/orchestrations/$id'),
+  },
+  {
+    file: 'src/routes/v1/orchestration-runs.ts',
+    sourceUrl: new URL('../routes/v1/orchestration-runs.ts', import.meta.url),
+    load: () => import('../routes/v1/orchestration-runs'),
+  },
+  {
+    file: 'src/routes/v1/orchestration-runs/$id.ts',
+    sourceUrl: new URL('../routes/v1/orchestration-runs/$id.ts', import.meta.url),
+    load: () => import('../routes/v1/orchestration-runs/$id'),
   },
   {
     file: 'src/routes/v1/agent-runs/$id.ts',
@@ -49,23 +92,42 @@ const routeSources: RouteSourceSpec[] = [
     sourceUrl: new URL('../routes/v1/runs/$id.ts', import.meta.url),
     load: () => import('../routes/v1/runs/$id'),
   },
+  {
+    file: 'src/routes/api/agents/control-plane/events.ts',
+    sourceUrl: new URL('../routes/api/agents/control-plane/events.ts', import.meta.url),
+    load: () => import('../routes/api/agents/control-plane/events'),
+  },
+  {
+    file: 'src/routes/api/agents/control-plane/logs.ts',
+    sourceUrl: new URL('../routes/api/agents/control-plane/logs.ts', import.meta.url),
+    load: () => import('../routes/api/agents/control-plane/logs'),
+  },
+  {
+    file: 'src/routes/api/agents/control-plane/resource.ts',
+    sourceUrl: new URL('../routes/api/agents/control-plane/resource.ts', import.meta.url),
+    load: () => import('../routes/api/agents/control-plane/resource'),
+  },
+  {
+    file: 'src/routes/api/agents/control-plane/resources.ts',
+    sourceUrl: new URL('../routes/api/agents/control-plane/resources.ts', import.meta.url),
+    load: () => import('../routes/api/agents/control-plane/resources'),
+  },
+  {
+    file: 'src/routes/api/agents/control-plane/status.ts',
+    sourceUrl: new URL('../routes/api/agents/control-plane/status.ts', import.meta.url),
+    load: () => import('../routes/api/agents/control-plane/status'),
+  },
+  {
+    file: 'src/routes/api/agents/control-plane/stream.ts',
+    sourceUrl: new URL('../routes/api/agents/control-plane/stream.ts', import.meta.url),
+    load: () => import('../routes/api/agents/control-plane/stream'),
+  },
+  {
+    file: 'src/routes/api/agents/control-plane/summary.ts',
+    sourceUrl: new URL('../routes/api/agents/control-plane/summary.ts', import.meta.url),
+    load: () => import('../routes/api/agents/control-plane/summary'),
+  },
 ]
-
-const disabledControllerHealth = (): AgentsControllerHealthState => ({
-  enabled: false,
-  started: false,
-  namespaces: null,
-  crdsReady: null,
-  missingCrds: [],
-  lastCheckedAt: null,
-})
-
-const getLeaderElectionStatus = () => ({
-  required: false,
-  isLeader: true,
-  lastAttemptAt: new Date().toISOString(),
-  lastError: null,
-})
 
 const assessAgentRunIngestion = (
   namespace: string,
@@ -111,13 +173,55 @@ const configureRuntimeDependencies = () => {
   })
 
   configureAgentsV1Runtime({
+    agents: {
+      storeFactory: createPrimitivesStore,
+      kubeClientFactory: createKubernetesClient,
+      requireLeaderForMutation: requireLeaderForMutationHttp,
+      resolveAuditContextFromRequest,
+      validatePolicies,
+    },
     agentRuns: {
       storeFactory: createPrimitivesStore,
       kubeClientFactory: createKubernetesClient,
+      requireLeaderForMutation: requireLeaderForMutationHttp,
       recordAgentQueueDepth,
       resolveAuditContextFromRequest,
       resolveRepositoryFromParameters: (params) => resolveRepositoryFromParameters(params) ?? undefined,
       validatePolicies,
+    },
+    memories: {
+      storeFactory: createPrimitivesStore,
+      kubeClientFactory: createKubernetesClient,
+      requireLeaderForMutation: requireLeaderForMutationHttp,
+      resolveAuditContextFromRequest,
+    },
+    memoryQueries: {
+      kubeClientFactory: createKubernetesClient,
+    },
+    orchestrations: {
+      storeFactory: createPrimitivesStore,
+      kubeClientFactory: createKubernetesClient,
+      requireLeaderForMutation: requireLeaderForMutationHttp,
+      resolveAuditContextFromRequest,
+      validatePolicies,
+    },
+    orchestrationRuns: {
+      storeFactory: createPrimitivesStore,
+      kubeClientFactory: createKubernetesClient,
+      requireLeaderForMutation: requireLeaderForMutationHttp,
+      resolveRepositoryFromParameters,
+      validatePolicies,
+    },
+    resourceRead: {
+      kubeClientFactory: createKubernetesClient,
+    },
+    orchestrationRunRead: {
+      storeFactory: createPrimitivesStore,
+      kubeClientFactory: createKubernetesClient,
+    },
+    memoryRead: {
+      storeFactory: createPrimitivesStore,
+      kubeClientFactory: createKubernetesClient,
     },
     runRead: {
       storeFactory: createPrimitivesStore,
@@ -139,8 +243,8 @@ export const createAgentsControlPlaneRuntime = async (
   const readyHandler = createAgentsReadyHandler({
     getLeaderElectionStatus,
     getAgentsControllerHealth,
-    getOrchestrationControllerHealth: disabledControllerHealth,
-    getSupportingControllerHealth: disabledControllerHealth,
+    getOrchestrationControllerHealth,
+    getSupportingControllerHealth,
     assessAgentRunIngestion,
   })
 
@@ -167,28 +271,23 @@ export const createAgentsControlPlaneRuntime = async (
   }
 }
 
-const agentsControllerStartup = createControllerStartupRetry({
-  name: 'agents-controller',
-  start: startAgentsController,
-  isStarted: () => getAgentsControllerHealth().started,
-  isEnabled: () => getAgentsControllerHealth().enabled,
-  shouldRetry: (error) => !(error instanceof Error && error.name === 'NamespaceScopeConfigError'),
-})
-
 const startControllerIfEnabled = () => {
-  agentsControllerStartup.start()
+  void startAgentsControllerRuntime().catch((error) => {
+    console.error('[agents] controller runtime failed to start', error)
+  })
 }
 
 const installShutdownHandlers = () => {
   const shutdown = () => {
-    agentsControllerStartup.cancel()
-    stopAgentsController()
+    stopAgentsControllerRuntime()
   }
   process.on('SIGTERM', shutdown)
   process.on('SIGINT', shutdown)
 }
 
-export const startAgentsControlPlane = async () => {
+type AgentsRuntimeServerKind = 'control-plane' | 'controllers'
+
+const startAgentsRuntimeServer = async (kind: AgentsRuntimeServerKind) => {
   const { port, hostname, idleTimeoutSeconds } = resolveAgentsHttpServerListenConfig()
   const runtime = await createAgentsControlPlaneRuntime()
   startControllerIfEnabled()
@@ -212,6 +311,10 @@ export const startAgentsControlPlane = async () => {
     },
   })
 
-  console.log(`[${resolveRuntimeServiceName()}] control-plane listening on http://${server.hostname}:${server.port}`)
+  console.log(`[${resolveRuntimeServiceName()}] ${kind} listening on http://${server.hostname}:${server.port}`)
   return server
 }
+
+export const startAgentsControlPlane = async () => startAgentsRuntimeServer('control-plane')
+
+export const startAgentsControllerServer = async () => startAgentsRuntimeServer('controllers')

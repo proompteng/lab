@@ -21,6 +21,7 @@ fail_if_matches \
   'services/jangar|/app/services/jangar|codex-implement' \
   "${ROOT_DIR}/services/agents/src" \
   "${ROOT_DIR}/services/agents/package.json" \
+  "${ROOT_DIR}/services/agents/Dockerfile" \
   "${ROOT_DIR}/services/agents/Dockerfile.codex-runner"
 
 fail_if_matches \

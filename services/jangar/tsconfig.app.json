@@ -14,6 +14,8 @@
       "@proompteng/codex/*": ["../../packages/codex/src/*"],
       "@proompteng/design": ["../../packages/design/src/index.ts"],
       "@proompteng/design/*": ["../../packages/design/src/*"],
+      "@proompteng/otel": ["../../packages/otel/src/index.ts"],
+      "@proompteng/otel/*": ["../../packages/otel/src/*.ts"],
       "@proompteng/temporal-bun-sdk": ["../../packages/temporal-bun-sdk/src/index.ts"],
       "@proompteng/temporal-bun-sdk/worker": ["../../packages/temporal-bun-sdk/src/worker/index.ts"],
       "@proompteng/temporal-bun-sdk/workflow": ["../../packages/temporal-bun-sdk/src/workflow/index.ts"],

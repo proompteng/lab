@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { getAgentRunLogs } from '~/routes/api/agents/control-plane/logs'
+import { getAgentRunLogs } from '@proompteng/agents/routes/api/agents/control-plane/logs'
 import type { KubernetesClient } from '~/server/primitives-kube'
 
 const buildPod = (name: string, phase: string, containers: string[], initContainers: string[] = []) => ({

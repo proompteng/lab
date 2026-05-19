@@ -5,6 +5,7 @@ import { resolveAgentsMigrationsConfig } from './migrations-config'
 import * as agentsPrimitivesMigration from './migrations/20260111_agents_primitives'
 import * as agentsPrimitivesIndexesMigration from './migrations/20260111_agents_primitives_indexes'
 import * as agentsAgentRunIdempotencyMigration from './migrations/20260208_agents_agentrun_idempotency'
+import * as agentsControlPlaneCacheMigration from './migrations/20260205_agents_control_plane_cache'
 
 type MigrationMap = Record<string, Migration>
 
@@ -19,6 +20,7 @@ class StaticMigrationProvider implements MigrationProvider {
 const migrations: MigrationMap = {
   '20260111_agents_primitives': agentsPrimitivesMigration,
   '20260111_agents_primitives_indexes': agentsPrimitivesIndexesMigration,
+  '20260205_agents_control_plane_cache': agentsControlPlaneCacheMigration,
   '20260208_agents_agentrun_idempotency': agentsAgentRunIdempotencyMigration,
 }
 
