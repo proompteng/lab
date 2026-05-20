@@ -2,11 +2,7 @@ import { Buffer } from 'node:buffer'
 
 import { describe, expect, it } from 'vitest'
 
-import {
-  parseAgentRunNotifyPayload,
-  parseAgentRunRunCompletePayload,
-  removeLegacyWorkflowIdentityFields,
-} from './agent-run-callbacks'
+import { parseAgentRunNotifyPayload, parseAgentRunRunCompletePayload } from './agent-run-callbacks'
 
 const encodeJson = (value: unknown) => Buffer.from(JSON.stringify(value), 'utf8').toString('base64')
 
@@ -29,30 +25,6 @@ describe('agent-run-callbacks', () => {
     expect(parsed.agentRunNamespace).toBe('agents')
     expect(parsed.agentRunUid).toBe('uid-123')
     expect(parsed.phase).toBe('Succeeded')
-  })
-
-  it('ignores legacy workflow identity when AgentRun run-complete identity is present', () => {
-    const parsed = parseAgentRunRunCompletePayload({
-      apiVersion: 'agents.proompteng.ai/v1alpha1',
-      kind: 'AgentRun',
-      metadata: {
-        name: 'agentrun-current',
-        namespace: 'agents',
-        uid: 'uid-current',
-      },
-      agent_run_id: 'run-current',
-      agent_run_name: 'agentrun-current',
-      agent_run_namespace: 'agents',
-      agent_run_uid: 'uid-current',
-      workflowName: 'legacy-workflow',
-      workflowNamespace: 'legacy',
-      workflowUid: 'legacy-uid',
-      status: { phase: 'Succeeded' },
-    })
-
-    expect(parsed.agentRunName).toBe('agentrun-current')
-    expect(parsed.agentRunNamespace).toBe('agents')
-    expect(parsed.agentRunUid).toBe('uid-current')
   })
 
   it('resolves GitHub metadata from encoded run-complete parameters', () => {
@@ -119,36 +91,5 @@ describe('agent-run-callbacks', () => {
         agent_run_name: 'agentrun-456',
       }),
     )
-  })
-
-  it('ignores legacy workflow identity when AgentRun notify identity is present', () => {
-    const parsed = parseAgentRunNotifyPayload({
-      agent_run_id: 'run-789',
-      agent_run_name: 'agentrun-789',
-      agent_run_namespace: 'agents',
-      workflow_name: 'legacy-workflow',
-      workflow_namespace: 'legacy',
-      last_assistant_message: 'opened PR',
-    })
-
-    expect(parsed.agentRunName).toBe('agentrun-789')
-    expect(parsed.agentRunNamespace).toBe('agents')
-  })
-
-  it('strips workflow-shaped identity from artifact fallback notify payloads', () => {
-    const payload = removeLegacyWorkflowIdentityFields({
-      workflow_name: 'legacy-workflow',
-      workflow_namespace: 'legacy',
-      workflow_uid: 'legacy-uid',
-      workflow_stage: 'legacy-stage',
-      workflow_step: 'legacy-step',
-      agent_run_name: 'agentrun-current',
-      repository: 'proompteng/lab',
-    })
-
-    expect(payload).toEqual({
-      agent_run_name: 'agentrun-current',
-      repository: 'proompteng/lab',
-    })
   })
 })

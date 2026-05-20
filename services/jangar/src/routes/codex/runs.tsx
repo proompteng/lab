@@ -400,9 +400,9 @@ function CodexRunsPage() {
                         </td>
                         <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.decision ?? '—'}</td>
                         <td className="px-3 py-2 whitespace-nowrap">
-                          <div className="text-foreground">{run.workflowName}</div>
-                          {run.workflowNamespace ? (
-                            <div className="text-muted-foreground">{run.workflowNamespace}</div>
+                          <div className="text-foreground">{run.agentRunName}</div>
+                          {run.agentRunNamespace ? (
+                            <div className="text-muted-foreground">{run.agentRunNamespace}</div>
                           ) : null}
                         </td>
                         <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.branch}</td>

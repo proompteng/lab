@@ -6,7 +6,7 @@ Docs index: [README](../README.md)
 
 ## Overview
 
-Database migrations are potentially disruptive and should not be run by the controllers deployment. The chart enforces this by defaulting `JANGAR_MIGRATIONS=skip` in the controllers Deployment unless explicitly overridden. This behavior should be documented and protected by validation.
+Database migrations are potentially disruptive and should not be run by the controllers deployment. The chart enforces this by defaulting `AGENTS_MIGRATIONS=skip` in the controllers Deployment unless explicitly overridden. This behavior should be documented and protected by validation.
 
 ## Goals
 
@@ -20,10 +20,10 @@ Database migrations are potentially disruptive and should not be run by the cont
 ## Current State
 
 - Chart sets default in `charts/agents/templates/deployment-controllers.yaml`:
-  - If `JANGAR_MIGRATIONS` is not present in `controllers.env.vars`, set it to `"skip"`.
+  - If `AGENTS_MIGRATIONS` is not present in `controllers.env.vars`, set it to `"skip"`.
 - Migration behavior is implemented in `services/jangar/src/server/kysely-migrations.ts`:
   - `resolveMigrationsMode()` treats missing/unknown as `auto`, explicit “skip/disabled/false/0/off” as `skip`.
-- Control plane default in `charts/agents/values.yaml` is `env.vars.JANGAR_MIGRATIONS: auto`.
+- Control plane default in `charts/agents/values.yaml` is `env.vars.AGENTS_MIGRATIONS: auto`.
 
 ## Design
 
@@ -35,16 +35,16 @@ Database migrations are potentially disruptive and should not be run by the cont
 ### Validation
 
 - Chart validation:
-  - Fail render if `controllers.env.vars.JANGAR_MIGRATIONS` is set to any non-skip value.
+  - Fail render if `controllers.env.vars.AGENTS_MIGRATIONS` is set to any non-skip value.
 - Controller startup validation:
-  - If `JANGAR_MIGRATIONS` resolves to `auto`, exit non-zero with an actionable error.
+  - If `AGENTS_MIGRATIONS` resolves to `auto`, exit non-zero with an actionable error.
 
 ## Config Mapping
 
 | Helm value                                    | Env var             | Intended behavior                   |
 | --------------------------------------------- | ------------------- | ----------------------------------- |
-| `env.vars.JANGAR_MIGRATIONS=auto`             | `JANGAR_MIGRATIONS` | Control plane may apply migrations. |
-| `controllers.env.vars.JANGAR_MIGRATIONS=skip` | `JANGAR_MIGRATIONS` | Controllers never run migrations.   |
+| `env.vars.AGENTS_MIGRATIONS=auto`             | `AGENTS_MIGRATIONS` | Control plane may apply migrations. |
+| `controllers.env.vars.AGENTS_MIGRATIONS=skip` | `AGENTS_MIGRATIONS` | Controllers never run migrations.   |
 
 ## Rollout Plan
 
@@ -59,14 +59,14 @@ Rollback:
 ## Validation
 
 ```bash
-helm template agents charts/agents --set controllers.enabled=true | rg -n \"JANGAR_MIGRATIONS\"
+helm template agents charts/agents --set controllers.enabled=true | rg -n \"AGENTS_MIGRATIONS\"
 kubectl -n agents logs deploy/agents-controllers | rg -n \"migration|migrations\"
 ```
 
 ## Failure Modes and Mitigations
 
 - Controllers run migrations during rollout: mitigate by chart defaults + strict validation.
-- Control plane migration failures block startup: mitigate by allowing operators to set `JANGAR_MIGRATIONS=skip` on control plane as an emergency fallback.
+- Control plane migration failures block startup: mitigate by allowing operators to set `AGENTS_MIGRATIONS=skip` on control plane as an emergency fallback.
 
 ## Acceptance Criteria
 
@@ -136,7 +136,7 @@ Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
 
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
-- Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
+- Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `AGENTS_MIGRATIONS`, `AGENTS_GRPC_ENABLED`, and `AGENTS_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
 
@@ -147,10 +147,10 @@ Common mappings:
 - `controller.agentRunRetentionSeconds` → `JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS`
 - `controller.admissionPolicy.*` → `JANGAR_AGENTS_CONTROLLER_{LABELS_REQUIRED,LABELS_ALLOWED,LABELS_DENIED,IMAGES_ALLOWED,IMAGES_DENIED,BLOCKED_SECRETS}`
 - `controller.vcsProviders.*` → `JANGAR_AGENTS_CONTROLLER_VCS_{PROVIDERS_ENABLED,DEPRECATED_TOKEN_TYPES,PR_RATE_LIMITS}`
-- `controller.authSecret.*` → `JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_{NAME,KEY,MOUNT_PATH}`
+- `controller.authSecret.*` → `AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_{NAME,KEY,MOUNT_PATH}`
 - `orchestrationController.*` → `JANGAR_ORCHESTRATION_CONTROLLER_{ENABLED,NAMESPACES}`
 - `supportingController.*` → `JANGAR_SUPPORTING_CONTROLLER_{ENABLED,NAMESPACES}`
-- `grpc.*` → `JANGAR_GRPC_{ENABLED,HOST,PORT}` (unless overridden via `env.vars`)
+- `grpc.*` → `AGENTS_GRPC_{ENABLED,HOST,PORT}` (unless overridden via `env.vars`)
 - `controller.jobTtlSecondsAfterFinished` → `JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS`
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 

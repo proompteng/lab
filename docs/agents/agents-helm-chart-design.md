@@ -95,7 +95,7 @@ Local cluster usage (minikube/kind):
 
 - Agents is packaged as the main deployment in this chart.
 - Database migrations run inside Agents (or an Agents-owned init path) using SQL shipped in the image.
-- Chart only passes database connection configuration and migration toggles (e.g., `JANGAR_MIGRATIONS=auto`).
+- Chart only passes database connection configuration and migration toggles (e.g., `AGENTS_MIGRATIONS=auto`).
 
 ### Agents as Controller + Control Plane
 

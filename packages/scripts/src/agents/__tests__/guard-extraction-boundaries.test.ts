@@ -78,6 +78,8 @@ describe('agents extraction boundary guard', () => {
       'natsSubjectPrefix:\\s*workflow|subjectPrefix:\\s*workflow|workflow\\.general\\.requirement',
     )
     expect(content).toContain('WorkflowCommsAgentMessage|workflow_agent_messages_')
+    expect(content).toContain('AgentRun callback contracts must not export legacy workflow-shaped identity cleanup')
+    expect(content).toContain('removeLegacyWorkflowIdentityFields')
     expect(content).toContain('goalObjective|goalTokenBudget')
     expect(content).toContain('argo\\.workflows\\.completions')
     expect(content).toContain('Jangar must not expose legacy Codex notify/run-complete callback routes')
@@ -89,6 +91,10 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('JANGAR_CODEX_RERUN_ORCHESTRATION|JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION')
     expect(content).toContain('legacy generic runner image aliases')
     expect(content).toContain('AGENTS_AGENT_IMAGE|JANGAR_AGENT_RUNNER_IMAGE|JANGAR_AGENT_IMAGE')
+    expect(content).toContain('Agents chart design docs must not advertise retired Jangar-managed chart env names')
+    expect(content).toContain(
+      'JANGAR_MIGRATIONS|JANGAR_GRPC_|JANGAR_CONTROL_PLANE_CACHE_ENABLED|JANGAR_AGENTS_CONTROLLER_AUTH_SECRET',
+    )
     expect(content).toContain('legacy generic Agents /api/control-plane API compatibility aliases')
     expect(content).toContain('generic Agents browser control-plane route ownership')
     expect(content).toContain('generic Agents browser control-plane components')

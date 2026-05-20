@@ -4,9 +4,9 @@ export type CodexRunRecord = {
   issueNumber: number
   branch: string
   attempt: number
-  workflowName: string
-  workflowUid: string | null
-  workflowNamespace: string | null
+  agentRunName: string
+  agentRunUid: string | null
+  agentRunNamespace: string | null
   turnId: string | null
   threadId: string | null
   stage: string | null
@@ -39,8 +39,8 @@ export type CodexRunSummaryRecord = {
   issueNumber: number
   branch: string
   attempt: number
-  workflowName: string
-  workflowNamespace: string | null
+  agentRunName: string
+  agentRunNamespace: string | null
   stage: string | null
   status: string
   phase: string | null

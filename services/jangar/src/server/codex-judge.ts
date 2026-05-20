@@ -5,7 +5,6 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import {
   parseAgentRunNotifyPayload,
   parseAgentRunRunCompletePayload,
-  removeLegacyWorkflowIdentityFields,
 } from '@proompteng/agent-contracts/agent-run-callbacks'
 import {
   buildBackfillDedupeKey,
@@ -123,7 +122,15 @@ const normalizeOptionalString = (value: unknown) => {
 
 const parseRunCompletePayload = parseAgentRunRunCompletePayload
 const parseNotifyPayload = parseAgentRunNotifyPayload
-const removeWorkflowIdentityFields = removeLegacyWorkflowIdentityFields
+const removeWorkflowIdentityFields = (payload: Record<string, unknown>) => {
+  const next = { ...payload }
+  delete next.workflow_name
+  delete next.workflow_namespace
+  delete next.workflow_uid
+  delete next.workflow_stage
+  delete next.workflow_step
+  return next
+}
 
 const parseRepositoryParts = (repository: string) => {
   const [owner, repo] = repository.split('/')

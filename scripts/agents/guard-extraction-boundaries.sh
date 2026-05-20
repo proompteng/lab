@@ -183,6 +183,11 @@ fail_if_matches \
   'workflowUid|workflow_uid|workflowName|workflow_name|workflowNamespace|workflow_namespace|workflowStep|workflow_step|workflowStage|workflow_stage' \
   "${ROOT_DIR}/packages/agent-contracts/src/agents-service-client.ts"
 
+fail_if_matches \
+  "AgentRun callback contracts must not export legacy workflow-shaped identity cleanup or parsing" \
+  'removeLegacyWorkflowIdentityFields|workflowUid|workflow_uid|workflowName|workflow_name|workflowNamespace|workflow_namespace|workflowStep|workflow_step|workflowStage|workflow_stage' \
+  "${ROOT_DIR}/packages/agent-contracts/src/agent-run-callbacks.ts"
+
 fail_if_path_exists \
   "Jangar must not own generic Codex artifact-to-AgentMessage parsing after agent-contracts owns the contract" \
   "${ROOT_DIR}/services/jangar/src/server/codex-judge-agent-messages.ts" \
@@ -652,6 +657,12 @@ fail_if_matches \
   "${ROOT_DIR}/docs/agents/agent-run-retention-design.md" \
   "${ROOT_DIR}/docs/agents/agentrun-creation-guide.md" \
   "${ROOT_DIR}/docs/agents/runbooks.md"
+
+fail_if_matches \
+  "Agents chart design docs must not advertise retired Jangar-managed chart env names" \
+  'JANGAR_MIGRATIONS|JANGAR_GRPC_|JANGAR_CONTROL_PLANE_CACHE_ENABLED|JANGAR_AGENTS_CONTROLLER_AUTH_SECRET' \
+  "${ROOT_DIR}/docs/agents/agents-helm-chart-design.md" \
+  "${ROOT_DIR}/docs/agents/designs"
 
 fail_if_matches \
   "Jangar runtime must not own generic Agents runner image selection" \

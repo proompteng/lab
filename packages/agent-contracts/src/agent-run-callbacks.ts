@@ -510,13 +510,3 @@ export const parseAgentRunNotifyPayload = (payload: Record<string, unknown>): Pa
     notifyPayload: data,
   }
 }
-
-export const removeLegacyWorkflowIdentityFields = (payload: Record<string, unknown>) => {
-  const next = { ...payload }
-  delete next.workflow_name
-  delete next.workflow_namespace
-  delete next.workflow_uid
-  delete next.workflow_stage
-  delete next.workflow_step
-  return next
-}
