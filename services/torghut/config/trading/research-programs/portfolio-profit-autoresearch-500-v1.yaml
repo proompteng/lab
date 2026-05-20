@@ -98,11 +98,29 @@ research_sources:
     published_at: '2025-10-08'
     claims:
       - claim_id: one_second_price_flow_decay
+        claim_type: signal_mechanism
         summary: One-second price-flow shocks dissipate quickly and vary by interval.
         implication: Prefer bounded intraday windows and reject candidates that depend on one broad aggregate effect.
+        data_requirements:
+          - order_flow_imbalance
+          - price_flow_impact
+          - flow_impact_decay
+          - forecast_horizon
+        asset_scope: us_equities_intraday
+        horizon_scope: subminute_microstructure
+        expected_direction: positive
       - claim_id: news_liquidity_regime
+        claim_type: market_regime
         summary: Macroeconomic announcements reshape price impact, order flow impact, and volatility.
         implication: Require held-out replay and live shadow evidence before promotion.
+        data_requirements:
+          - macro_announcement_window
+          - realized_volatility
+          - spread_bps
+          - route_tca
+        asset_scope: us_equities_intraday
+        horizon_scope: macro_event_intraday
+        expected_direction: neutral
   - source_id: intraday_order_transition_2025
     title: 'Intraday order transition dynamics in high, medium, and low market cap stocks: A Markov chain approach'
     url: https://arxiv.org/abs/2502.07625
@@ -120,11 +138,29 @@ research_sources:
     published_at: '2025-12-08'
     claims:
       - claim_id: executed_trade_obi
+        claim_type: feature_recipe
         summary: OBI built from executed-trade parent orders has stronger directional association than broad unfiltered order flow.
         implication: Prefer recent executed-flow and quote-quality confirmation over raw aggregate imbalance.
+        data_requirements:
+          - parent_order_trade_linkage
+          - filtered_orderbook_imbalance
+          - order_lifetime_filter
+          - order_modification_count
+        asset_scope: limit_order_book_intraday
+        horizon_scope: short_horizon_returns
+        expected_direction: positive
       - claim_id: causal_filtration_ladder
+        claim_type: validation_requirement
         summary: Filtration can improve correlation without improving causal coherence.
         implication: Keep regime-sliced replay, excitation-like stress windows, and shadow validation as gates.
+        data_requirements:
+          - event_time_excitation
+          - route_tca
+          - walk_forward_replay
+          - live_paper_parity
+        asset_scope: limit_order_book_intraday
+        horizon_scope: short_horizon_returns
+        expected_direction: neutral
   - source_id: volume_imbalance_secret_2026
     title: 'Understanding the worst-kept secret of high-frequency trading'
     url: https://link.springer.com/article/10.1007/s00780-026-00585-9

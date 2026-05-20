@@ -3965,6 +3965,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         source_ids = {source.run_id for source in sources}
         self.assertIn("weighted_microprice_momentum_2026", source_ids)
         self.assertIn("macro_announcement_intraday_momentum_2025", source_ids)
+        self.assertIn("intraday_ofi_news_dynamics_2025", source_ids)
+        self.assertIn("order_flow_filtration_2025", source_ids)
         self.assertIn("realistic_market_impact_rl_envs_2026", source_ids)
         self.assertIn("vwap_regime_classification_intraday_2026", source_ids)
         self.assertIn("structural_limits_ohlcv_intraday_2026", source_ids)
@@ -4040,6 +4042,68 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertIn(
             "execution_delay", depth_delay_source.claims[0]["data_requirements"]
         )
+
+        ofi_news_source = next(
+            source
+            for source in sources
+            if source.run_id == "intraday_ofi_news_dynamics_2025"
+        )
+        self.assertTrue(runner.compile_sources_to_hypothesis_cards([ofi_news_source]))
+        self.assertIn(
+            "price_flow_impact", ofi_news_source.claims[0]["data_requirements"]
+        )
+        self.assertEqual(ofi_news_source.claims[0]["claim_type"], "signal_mechanism")
+        self.assertEqual(ofi_news_source.claims[1]["claim_type"], "market_regime")
+
+        filtration_source = next(
+            source
+            for source in sources
+            if source.run_id == "order_flow_filtration_2025"
+        )
+        self.assertTrue(runner.compile_sources_to_hypothesis_cards([filtration_source]))
+        self.assertIn(
+            "filtered_orderbook_imbalance",
+            filtration_source.claims[0]["data_requirements"],
+        )
+        self.assertEqual(filtration_source.claims[0]["claim_type"], "feature_recipe")
+        self.assertEqual(
+            filtration_source.claims[1]["claim_type"], "validation_requirement"
+        )
+
+    def test_compiled_program_research_sources_have_no_missing_feature_aliases(
+        self,
+    ) -> None:
+        args = self._args(Path("/tmp/torghut-program-source-alias-check"))
+        args.program = Path(
+            "config/trading/research-programs/portfolio-profit-autoresearch-500-v1.yaml"
+        )
+        program = runner._load_epoch_program(args)
+        sources = runner._program_whitepaper_sources(program)
+        failures: dict[str, list[dict[str, object]]] = {}
+        compiled_source_count = 0
+
+        for source in sources:
+            cards = runner.compile_sources_to_hypothesis_cards([source])
+            if not cards:
+                continue
+            compiled_source_count += 1
+            compilation = runner.compile_whitepaper_candidate_specs(
+                hypothesis_cards=cards,
+                target_net_pnl_per_day=Decimal("500"),
+                family_template_dir=Path("config/trading/families"),
+                seed_sweep_dir=Path("config/trading"),
+                universe_symbols=runner.LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE,
+            )
+            missing_feature_blockers = [
+                blocker.to_payload()
+                for blocker in compilation.blockers
+                if blocker.reason == "required_features_missing_from_family_template"
+            ]
+            if missing_feature_blockers:
+                failures[source.run_id] = missing_feature_blockers
+
+        self.assertGreaterEqual(compiled_source_count, 10)
+        self.assertEqual(failures, {})
 
     def test_runtime_closure_replay_is_disabled_when_candidate_already_failed_oracle(
         self,

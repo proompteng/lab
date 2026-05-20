@@ -423,6 +423,127 @@ RECENT_WHITEPAPER_SEEDS: tuple[WhitepaperResearchSource, ...] = (
         ),
     ),
     WhitepaperResearchSource(
+        run_id="seed-arxiv-2508-06788",
+        title="Returns and Order Flow Imbalances: Intraday Dynamics and Macroeconomic News Effects",
+        source_url="https://arxiv.org/abs/2508.06788",
+        published_at="2025-10-08",
+        claims=(
+            {
+                "claim_id": "one-second-price-flow-impact-decay",
+                "claim_type": "signal_mechanism",
+                "claim_text": (
+                    "One-second returns and order-flow imbalance interact through horizon-specific "
+                    "price-flow impact that decays quickly and changes across intraday intervals."
+                ),
+                "asset_scope": "us_equities_intraday",
+                "horizon_scope": "subminute_microstructure",
+                "expected_direction": "positive",
+                "data_requirements": [
+                    "order_flow_imbalance",
+                    "price_flow_impact",
+                    "flow_impact_decay",
+                    "forecast_horizon",
+                ],
+                "confidence": "0.74",
+            },
+            {
+                "claim_id": "macro-news-price-flow-regime",
+                "claim_type": "market_regime",
+                "claim_text": (
+                    "Macroeconomic news changes intraday price impact, order-flow impact, volatility, "
+                    "and liquidity enough that flow sleeves need explicit event-window validation."
+                ),
+                "asset_scope": "us_equities_intraday",
+                "horizon_scope": "macro_event_intraday",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "macro_announcement_window",
+                    "realized_volatility",
+                    "spread_bps",
+                    "route_tca",
+                ],
+                "confidence": "0.73",
+            },
+            {
+                "claim_id": "macro-news-heldout-replay-required",
+                "claim_type": "validation_requirement",
+                "claim_text": (
+                    "Subminute price-flow effects should be evaluated separately on macro-news and "
+                    "non-news windows before any candidate can affect promotion ranking."
+                ),
+                "asset_scope": "us_equities_intraday",
+                "horizon_scope": "macro_event_intraday",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "walk_forward_replay",
+                    "live_paper_parity",
+                    "transaction_cost_stress",
+                ],
+                "confidence": "0.73",
+            },
+        ),
+        claim_relations=(
+            {
+                "relation_id": "macro-news-regime-validates-price-flow-decay",
+                "relation_type": "requires_regime",
+                "source_claim_id": "macro-news-price-flow-regime",
+                "target_claim_id": "one-second-price-flow-impact-decay",
+            },
+        ),
+    ),
+    WhitepaperResearchSource(
+        run_id="seed-arxiv-2507-22712",
+        title="Order-Flow Filtration and Directional Association with Short-Horizon Returns",
+        source_url="https://arxiv.org/abs/2507.22712",
+        published_at="2025-12-08",
+        claims=(
+            {
+                "claim_id": "parent-trade-filtered-obi",
+                "claim_type": "feature_recipe",
+                "claim_text": (
+                    "Filtering order-book imbalance to parent orders that actually produce trades can "
+                    "strengthen short-horizon directional association versus raw transient order flow."
+                ),
+                "asset_scope": "limit_order_book_intraday",
+                "horizon_scope": "short_horizon_returns",
+                "expected_direction": "positive",
+                "data_requirements": [
+                    "parent_order_trade_linkage",
+                    "filtered_orderbook_imbalance",
+                    "order_lifetime_filter",
+                    "order_modification_count",
+                ],
+                "confidence": "0.75",
+            },
+            {
+                "claim_id": "filtration-causal-coherence-gate",
+                "claim_type": "validation_requirement",
+                "claim_text": (
+                    "Filtration that improves directional correlation must still pass causality, "
+                    "event-time excitation, route TCA, and walk-forward replay before promotion."
+                ),
+                "asset_scope": "limit_order_book_intraday",
+                "horizon_scope": "short_horizon_returns",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "event_time_excitation",
+                    "route_tca",
+                    "walk_forward_replay",
+                    "live_paper_parity",
+                ],
+                "confidence": "0.74",
+            },
+        ),
+        claim_relations=(
+            {
+                "relation_id": "filtered-obi-requires-causal-execution-proof",
+                "relation_type": "requires_validation",
+                "source_claim_id": "filtration-causal-coherence-gate",
+                "target_claim_id": "parent-trade-filtered-obi",
+            },
+        ),
+    ),
+    WhitepaperResearchSource(
         run_id="seed-arxiv-2602-23784",
         title="TradeFM: A Generative Foundation Model for Trade-flow and Market Microstructure",
         source_url="https://arxiv.org/abs/2602.23784",

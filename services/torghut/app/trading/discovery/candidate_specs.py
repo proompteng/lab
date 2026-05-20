@@ -3455,6 +3455,60 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
 
     if has_any(
         (
+            "order-flow filtration",
+            "order flow filtration",
+            "structural filters",
+            "structural filter",
+            "parent orders",
+            "parent order",
+            "parent_order",
+            "order lifetime",
+            "order_lifetime",
+            "modification count",
+            "modification timing",
+            "filtered obi",
+            "filtered orderbook imbalance",
+            "filtered_orderbook_imbalance",
+            "transient orders",
+        )
+    ):
+        overlay_ids.append("order_flow_filtration_parent_trade_obi")
+        overlay_contracts.append(
+            {
+                "overlay_id": "order_flow_filtration_parent_trade_obi",
+                "required_evidence": [
+                    "parent_order_trade_linkage",
+                    "order_lifetime_filter",
+                    "order_modification_count",
+                    "filtered_orderbook_imbalance",
+                    "route_tca",
+                    "walk_forward_replay",
+                ],
+                "rank_metric": "post_cost_net_pnl_after_filtered_parent_order_obi",
+                "evidence_policy": (
+                    "parent_trade_obi_requires_structural_order_filter_evidence"
+                ),
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_parent_order_trade_linkage": True,
+                "required_min_filtered_obi_sample_count": "120",
+                "required_min_filtered_obi_stable_split_pass_rate": "0.60",
+                "required_max_filtered_obi_best_split_share": "0.35",
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_parent_order_trade_linkage": True,
+                "requires_structural_order_flow_filters": True,
+                "requires_filtered_orderbook_imbalance_replay": True,
+                "rejects_unfiltered_obi_only_promotion": True,
+            }
+        )
+
+    if has_any(
+        (
             "rejected trading event",
             "rejected event",
             "rejected-event",
@@ -3705,6 +3759,10 @@ def _family_scores_for_hypothesis(
             "signed_order_flow",
             "core flow",
             "core_flow",
+            "filtered orderbook imbalance",
+            "filtered_orderbook_imbalance",
+            "parent order",
+            "parent_order",
         )
     ):
         bump("microbar_cross_sectional_pairs_v1", 5, "order_flow_or_lob_signal")
@@ -3863,6 +3921,13 @@ def _family_scores_for_hypothesis(
             "ofi_memory",
             "response-ratio",
             "response ratio",
+            "macro news",
+            "macro-news",
+            "macroeconomic news",
+            "price-flow dynamics",
+            "price flow dynamics",
+            "flow impact",
+            "flow_impact",
         )
     ):
         bump("intraday_tsmom_v2", 6, "volatility_or_regime_state")

@@ -580,6 +580,152 @@ class TestWhitepaperCandidateCompiler(TestCase):
             )
         )
 
+    def test_order_flow_filtration_claims_require_parent_trade_obi_overlay(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-arxiv-2507-22712",
+            claims=[
+                {
+                    "claim_id": "parent-trade-filtered-obi",
+                    "claim_type": "feature_recipe",
+                    "claim_text": (
+                        "Order-flow filtration links parent orders, order lifetime, "
+                        "modification count, and filtered orderbook imbalance to "
+                        "short-horizon returns."
+                    ),
+                    "data_requirements": [
+                        "parent_order_trade_linkage",
+                        "filtered_orderbook_imbalance",
+                        "order_lifetime_filter",
+                        "order_modification_count",
+                    ],
+                    "confidence": "0.75",
+                },
+                {
+                    "claim_id": "filtered-obi-causal-validation",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Filtered OBI candidates require event-time excitation, route TCA, "
+                        "walk-forward replay, and live-paper parity before promotion."
+                    ),
+                    "data_requirements": [
+                        "event_time_excitation",
+                        "route_tca",
+                        "walk_forward_replay",
+                        "live_paper_parity",
+                    ],
+                    "confidence": "0.74",
+                },
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        self.assertTrue(compilation.executable_specs)
+        self.assertFalse(
+            [
+                blocker
+                for blocker in compilation.blockers
+                if blocker.reason == "required_features_missing_from_family_template"
+            ]
+        )
+        self.assertTrue(
+            any(
+                "order_flow_filtration_parent_trade_obi"
+                in spec.parameter_space.get("mechanism_overlay_ids", [])
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            any(
+                spec.hard_vetoes.get("required_parent_order_trade_linkage") is True
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract.get("rejects_unfiltered_obi_only_promotion")
+                for spec in compilation.executable_specs
+            )
+        )
+
+    def test_intraday_price_flow_macro_news_claims_compile_with_strict_replay_gates(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-arxiv-2508-06788",
+            claims=[
+                {
+                    "claim_id": "one-second-price-flow-impact-decay",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "One-second price-flow dynamics and order flow imbalance "
+                        "decay quickly and are horizon dependent."
+                    ),
+                    "data_requirements": [
+                        "order_flow_imbalance",
+                        "price_flow_impact",
+                        "flow_impact_decay",
+                        "forecast_horizon",
+                    ],
+                    "confidence": "0.74",
+                },
+                {
+                    "claim_id": "macro-news-price-flow-regime",
+                    "claim_type": "market_regime",
+                    "claim_text": (
+                        "Macroeconomic news changes price impact, flow impact, "
+                        "volatility, and liquidity regimes."
+                    ),
+                    "data_requirements": [
+                        "macro_announcement_window",
+                        "realized_volatility",
+                        "spread_bps",
+                        "route_tca",
+                    ],
+                    "confidence": "0.73",
+                },
+                {
+                    "claim_id": "macro-news-heldout-replay-required",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Macro-news and non-news windows require separate walk-forward "
+                        "replay, live-paper parity, and transaction-cost stress."
+                    ),
+                    "data_requirements": [
+                        "walk_forward_replay",
+                        "live_paper_parity",
+                        "transaction_cost_stress",
+                    ],
+                    "confidence": "0.73",
+                },
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        family_ids = {spec.family_template_id for spec in compilation.executable_specs}
+
+        self.assertTrue(compilation.executable_specs)
+        self.assertIn("intraday_tsmom_v2", family_ids)
+        self.assertIn("microstructure_continuation_matched_filter_v1", family_ids)
+        self.assertFalse(
+            [
+                blocker
+                for blocker in compilation.blockers
+                if blocker.reason == "required_features_missing_from_family_template"
+            ]
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract.get("requires_live_paper_parity")
+                for spec in compilation.executable_specs
+            )
+        )
+
     def test_red2400_rejected_outcome_claim_compiles_to_counterfactual_calibration_overlay(
         self,
     ) -> None:
