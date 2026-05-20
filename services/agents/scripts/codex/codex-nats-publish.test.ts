@@ -54,4 +54,12 @@ describe('codex-nats-publish', () => {
     expect(__test__.normalizeNatsSubjectPrefix('agents.agent_messages')).toBe('agentrun')
     expect(__test__.normalizeNatsSubjectPrefix('workflow')).toBe('agentrun')
   })
+
+  it('resolves run correlation from Agents and generic env names only', () => {
+    expect(__test__.resolveRunId({ AGENTS_RUN_ID: 'agents-run', JANGAR_RUN_ID: 'jangar-run' })).toBe('agents-run')
+    expect(__test__.resolveRunId({ AGENT_RUN_ID: 'agent-run' })).toBe('agent-run')
+    expect(__test__.resolveRunId({ RUN_ID: 'run', CODEX_RUN_ID: 'codex-run' })).toBe('run')
+    expect(__test__.resolveRunId({ CODEX_RUN_ID: 'codex-run' })).toBe('codex-run')
+    expect(__test__.resolveRunId({ JANGAR_RUN_ID: 'jangar-run' })).toBeNull()
+  })
 })

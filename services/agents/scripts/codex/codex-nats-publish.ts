@@ -43,7 +43,9 @@ Environment:
   AGENT_RUN_STEP        Optional AgentRun step (e.g. pod name).
   AGENT_ID              Agent identifier.
   AGENT_ROLE            Optional agent role (defaults to assistant).
-  RUN_ID                Optional Codex run id for Jangar correlation.
+  AGENTS_RUN_ID         Optional Agents run id for cross-system correlation.
+  AGENT_RUN_ID          Optional AgentRun id for cross-system correlation.
+  RUN_ID                Optional generic run id for cross-system correlation.
   CODEX_REPOSITORY      Optional repository slug for context.
   CODEX_ISSUE_NUMBER    Optional issue number for context.
   CODEX_BRANCH          Optional branch name for context.
@@ -69,6 +71,12 @@ const safeParseJson = (value: string | undefined) => {
     return null
   }
 }
+
+const resolveRunId = (env: Record<string, string | undefined>) =>
+  coerceNonEmpty(env.AGENTS_RUN_ID) ??
+  coerceNonEmpty(env.AGENT_RUN_ID) ??
+  coerceNonEmpty(env.RUN_ID) ??
+  coerceNonEmpty(env.CODEX_RUN_ID)
 
 const parseArgs = (argv: string[]): Options | null => {
   const options: Options = {
@@ -272,11 +280,7 @@ const main = async () => {
   const agentRunStep = coerceNonEmpty(process.env.AGENT_RUN_STEP ?? process.env.STEP_ID)
   const agentId = process.env.AGENT_ID?.trim() || 'unknown'
   const agentRole = coerceNonEmpty(process.env.AGENT_ROLE) ?? 'assistant'
-  const runId =
-    coerceNonEmpty(process.env.AGENT_RUN_ID) ??
-    coerceNonEmpty(process.env.RUN_ID) ??
-    coerceNonEmpty(process.env.CODEX_RUN_ID) ??
-    coerceNonEmpty(process.env.JANGAR_RUN_ID)
+  const runId = resolveRunId(process.env)
   const repository = coerceNonEmpty(process.env.CODEX_REPOSITORY) ?? coerceNonEmpty(process.env.CODEX_REPO_SLUG)
   const issueNumberRaw = coerceNonEmpty(process.env.CODEX_ISSUE_NUMBER) ?? coerceNonEmpty(process.env.ISSUE_NUMBER)
   const issueNumber = issueNumberRaw ? Number.parseInt(issueNumberRaw, 10) : null
@@ -349,6 +353,7 @@ const main = async () => {
 export const __test__ = {
   buildPayload,
   normalizeNatsSubjectPrefix,
+  resolveRunId,
 }
 
 if (import.meta.main) {
