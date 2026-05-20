@@ -53,6 +53,11 @@ const aliasConfigs: Record<string, AliasConfig> = {
     title: 'Implementation sources',
     description: 'Webhook-backed or scheduled sources that generate implementation work.',
   },
+  'implementation-specs': {
+    kind: 'ImplementationSpec',
+    title: 'Implementation specs',
+    description: 'Implementation specifications owned by the Agents control plane.',
+  },
   memories: {
     kind: 'Memory',
     title: 'Memories',
@@ -67,6 +72,11 @@ const aliasConfigs: Record<string, AliasConfig> = {
     kind: 'Orchestration',
     title: 'Orchestrations',
     description: 'Orchestration templates and their workflow definitions.',
+  },
+  runs: {
+    kind: 'AgentRun',
+    title: 'Runs',
+    description: 'Individual agent execution records and their current runtime state.',
   },
   schedules: {
     kind: 'Schedule',
@@ -114,7 +124,6 @@ const canonicalSections = [
   {
     title: 'Primary pages',
     links: [
-      { to: '/control-plane/implementation-specs', label: 'Implementation specs' },
       { to: '/control-plane/runs', label: 'Runs' },
       { to: '/control-plane/agent-runs', label: 'Agent runs' },
     ],
