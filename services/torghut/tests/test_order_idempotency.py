@@ -746,6 +746,87 @@ class TestOrderIdempotency(TestCase):
             self.assertEqual(tca.slippage_bps, Decimal("0"))
             self.assertEqual(tca.shortfall_notional, Decimal("0"))
 
+    def test_simulation_submit_order_persists_queue_partial_fill_and_tca(self) -> None:
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo-simulation-queue",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["NVDA"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="NVDA",
+                event_ts=datetime(2026, 5, 5, 17, 25, 6, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("10"),
+                order_type="limit",
+                time_in_force="day",
+                limit_price=Decimal("100"),
+                params={
+                    "price": Decimal("100"),
+                    "simulation_context": {
+                        "simulation_run_id": "sim-2026-05-05-queue",
+                        "dataset_id": "dataset-queue",
+                        "signal_event_ts": "2026-05-05T17:25:06+00:00",
+                        "depth_at_limit": "8",
+                        "queue_ahead_qty": "3",
+                        "queue_fill_probability": "0.75",
+                    },
+                },
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+            adapter = SimulationExecutionAdapter(
+                bootstrap_servers=None,
+                security_protocol=None,
+                sasl_mechanism=None,
+                sasl_username=None,
+                sasl_password=None,
+                topic="torghut.sim.trade-updates.v1",
+                account_label="paper",
+                simulation_run_id="sim-2026-05-05-queue",
+                dataset_id="dataset-queue",
+            )
+
+            execution = executor.submit_order(
+                session,
+                adapter,
+                decision,
+                decision_row,
+                "paper",
+            )
+            assert execution is not None
+
+            self.assertEqual(execution.status, "partially_filled")
+            self.assertEqual(execution.submitted_qty, Decimal("10"))
+            self.assertEqual(execution.filled_qty, Decimal("5"))
+            self.assertEqual(execution.avg_fill_price, Decimal("100"))
+            raw_order = execution.raw_order
+            assert isinstance(raw_order, dict)
+            simulation_context = raw_order.get("simulation_context")
+            assert isinstance(simulation_context, dict)
+            self.assertEqual(simulation_context.get("depth_at_limit"), "8")
+            self.assertEqual(simulation_context.get("queue_ahead_qty"), "3")
+
+            tca = session.execute(
+                select(ExecutionTCAMetric).where(
+                    ExecutionTCAMetric.execution_id == execution.id
+                )
+            ).scalar_one()
+            self.assertEqual(tca.arrival_price, Decimal("100"))
+            self.assertEqual(tca.avg_fill_price, Decimal("100"))
+            self.assertEqual(tca.filled_qty, Decimal("5"))
+            self.assertEqual(tca.slippage_bps, Decimal("0"))
+            self.assertEqual(tca.shortfall_notional, Decimal("0"))
+
     def test_simulation_submit_order_uses_price_snapshot_without_context(self) -> None:
         with self.session_local() as session:
             strategy = Strategy(
