@@ -445,6 +445,19 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             ),
             encoding="utf-8",
         )
+        (hypothesis_dir / "h-cont-01.json").write_text(
+            json.dumps(
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "strategy_family": "intraday_continuation",
+                    "strategy_name": "microbar-volume-continuation-long-top2-chip-v1",
+                    "strategy_id": "intraday_tsmom_v1@paper",
+                    "candidate_id": "chip-paper-microbar-composite@execution-proof",
+                    "dataset_snapshot_ref": "torghut-chip-full-day-20260505-4c330ce9-r1",
+                }
+            ),
+            encoding="utf-8",
+        )
         args = SimpleNamespace(
             runtime_window_targets_from_registry=True,
             runtime_window_hypothesis_dir=str(hypothesis_dir),
@@ -466,9 +479,13 @@ class TestRunEmpiricalPromotionJobs(TestCase):
 
         self.assertEqual(
             [target.hypothesis_id for target in targets],
-            ["H-MICRO-01", "H-TSMOM-01"],
+            ["H-CONT-01", "H-MICRO-01", "H-TSMOM-01"],
         )
         by_id = {target.hypothesis_id: target for target in targets}
+        self.assertEqual(
+            by_id["H-CONT-01"].strategy_name,
+            "microbar-volume-continuation-long-top2-chip-v1",
+        )
         self.assertEqual(
             by_id["H-TSMOM-01"].strategy_name,
             "intraday-tsmom-profit-v3",

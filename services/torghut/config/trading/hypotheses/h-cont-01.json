@@ -3,6 +3,7 @@
   "hypothesis_id": "H-CONT-01",
   "lane_id": "continuation",
   "strategy_family": "intraday_continuation",
+  "strategy_name": "microbar-volume-continuation-long-top2-chip-v1",
   "candidate_id": "chip-paper-microbar-composite@execution-proof",
   "strategy_id": "intraday_tsmom_v1@paper",
   "dataset_snapshot_ref": "torghut-chip-full-day-20260505-4c330ce9-r1",
