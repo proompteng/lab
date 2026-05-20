@@ -15,452 +15,498 @@ spec:
     singular: swarm
   scope: Namespaced
   versions:
-    - additionalPrinterColumns:
-        - jsonPath: .status.phase
-          name: Phase
-          type: string
-        - jsonPath: .spec.mode
-          name: Mode
-          type: string
-        - jsonPath: .status.conditions[?(@.type=="Ready")].status
-          name: Ready
-          type: string
-      name: v1alpha1
-      served: true
-      storage: true
-      schema:
-        openAPIV3Schema:
-          type: object
-          properties:
-            apiVersion:
-              description: |-
-                APIVersion defines the versioned schema of this representation of an object.
-                Servers should convert recognized schemas to the latest internal value, and
-                may reject unrecognized values.
-                More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
-              type: string
-            kind:
-              description: |-
-                Kind is a string value representing the REST resource this object represents.
-                Servers may infer this from the endpoint the client submits requests to.
-                Cannot be updated.
-                In CamelCase.
-                More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
-              type: string
-            metadata:
-              type: object
-            spec:
-              type: object
-              properties:
-                owner:
-                  type: object
-                  properties:
-                    id:
-                      type: string
-                    channel:
-                      type: string
-                  required:
-                    - id
-                    - channel
-                integrations:
-                  type: object
-                  properties:
-                    nats:
-                      type: object
-                      properties:
-                        url:
-                          type: string
-                        subjectPrefix:
-                          type: string
-                        channel:
-                          type: string
-                        personas:
-                          type: object
-                          properties:
-                            architect:
-                              type: object
-                              properties:
-                                humanName:
-                                  type: string
-                                workerIdentity:
-                                  type: string
-                              required:
-                                - humanName
-                                - workerIdentity
-                            engineer:
-                              type: object
-                              properties:
-                                humanName:
-                                  type: string
-                                workerIdentity:
-                                  type: string
-                              required:
-                                - humanName
-                                - workerIdentity
-                            deployer:
-                              type: object
-                              properties:
-                                humanName:
-                                  type: string
-                                workerIdentity:
-                                  type: string
-                              required:
-                                - humanName
-                                - workerIdentity
-                          required:
-                            - architect
-                            - engineer
-                            - deployer
-                      required:
-                        - personas
-                domains:
-                  type: array
-                  minItems: 1
-                  items:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.mode
+      name: Mode
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              cadence:
+                properties:
+                  discoverEvery:
                     type: string
-                objectives:
-                  type: array
-                  minItems: 1
-                  items:
+                  implementEvery:
                     type: string
-                mode:
-                  type: string
-                  enum:
-                    - assisted
-                    - lights-out
-                timezone:
-                  type: string
-                cadence:
-                  type: object
-                  properties:
-                    discoverEvery:
+                  planEvery:
+                    type: string
+                  verifyEvery:
+                    type: string
+                type: object
+              delivery:
+                properties:
+                  deploymentTargets:
+                    items:
                       type: string
-                    planEvery:
+                    type: array
+                  mergePolicy:
+                    enum:
+                    - auto-merge
+                    - merge-queue
+                    type: string
+                  repoAllowlist:
+                    items:
                       type: string
-                    implementEvery:
+                    type: array
+                  requiredChecks:
+                    items:
                       type: string
-                    verifyEvery:
-                      type: string
-                discovery:
-                  type: object
-                  properties:
-                    minCitations:
-                      type: integer
-                      minimum: 1
-                    minConfidence:
-                      type: number
-                      minimum: 0
-                      maximum: 1
-                    sources:
-                      type: array
-                      minItems: 1
-                      items:
-                        type: object
-                        properties:
-                          name:
-                            type: string
-                          kind:
-                            type: string
-                          url:
-                            type: string
-                        required:
-                          - name
-                  required:
-                    - sources
-                delivery:
-                  type: object
-                  properties:
-                    repoAllowlist:
-                      type: array
-                      items:
-                        type: string
-                    requiredChecks:
-                      type: array
-                      items:
-                        type: string
-                    mergePolicy:
-                      type: string
-                      enum:
-                        - auto-merge
-                        - merge-queue
-                    deploymentTargets:
-                      type: array
-                      items:
-                        type: string
-                    rollout:
-                      type: object
-                      properties:
-                        strategy:
-                          type: string
-                          enum:
-                            - canary
-                        steps:
-                          type: array
-                          items:
-                            type: object
-                            properties:
-                              setWeight:
-                                type: integer
-                                minimum: 1
-                                maximum: 100
-                              pause:
-                                type: string
-                            required:
-                              - setWeight
-                              - pause
-                        analysisTemplateRef:
-                          type: string
-                      required:
-                        - strategy
-                  required:
-                    - deploymentTargets
-                risk:
-                  type: object
-                  properties:
-                    budgetRef:
-                      type: string
-                    approvalPolicyRef:
-                      type: string
-                    freezeAfterFailures:
-                      type: integer
-                      minimum: 1
-                    freezeDuration:
-                      type: string
-                mission:
-                  type: object
-                  properties:
-                    ledgerRef:
-                      type: string
-                    sourceDesign:
-                      type: string
-                    businessMetric:
-                      type: string
-                    validationContract:
-                      type: array
-                      items:
-                        type: string
-                    valueGates:
-                      type: array
-                      items:
-                        type: string
-                    handoffRequiredFields:
-                      type: array
-                      items:
-                        type: string
-                execution:
-                  type: object
-                  properties:
-                    discover:
-                      type: object
-                      properties:
-                        enabled:
-                          type: boolean
-                        every:
-                          type: string
-                        targetRef:
-                          type: object
-                          properties:
-                            kind:
-                              type: string
-                              enum:
-                                - AgentRun
-                                - OrchestrationRun
-                            name:
-                              type: string
-                            namespace:
-                              type: string
-                          required:
-                            - kind
-                            - name
-                    plan:
-                      type: object
-                      properties:
-                        enabled:
-                          type: boolean
-                        every:
-                          type: string
-                        targetRef:
-                          type: object
-                          properties:
-                            kind:
-                              type: string
-                              enum:
-                                - AgentRun
-                                - OrchestrationRun
-                            name:
-                              type: string
-                            namespace:
-                              type: string
-                          required:
-                            - kind
-                            - name
-                    implement:
-                      type: object
-                      properties:
-                        enabled:
-                          type: boolean
-                        every:
-                          type: string
-                        targetRef:
-                          type: object
-                          properties:
-                            kind:
-                              type: string
-                              enum:
-                                - AgentRun
-                                - OrchestrationRun
-                            name:
-                              type: string
-                            namespace:
-                              type: string
-                          required:
-                            - kind
-                            - name
-                    verify:
-                      type: object
-                      properties:
-                        enabled:
-                          type: boolean
-                        every:
-                          type: string
-                        targetRef:
-                          type: object
-                          properties:
-                            kind:
-                              type: string
-                              enum:
-                                - AgentRun
-                                - OrchestrationRun
-                            name:
-                              type: string
-                            namespace:
-                              type: string
-                          required:
-                            - kind
-                            - name
-                  required:
-                    - discover
-                    - plan
-                    - implement
-                    - verify
-              required:
-                - owner
-                - domains
-                - objectives
-                - mode
-                - discovery
-                - delivery
-                - execution
-            status:
-              type: object
-              properties:
-                phase:
-                  type: string
-                observedGeneration:
-                  format: int64
-                  type: integer
-                updatedAt:
-                  format: date-time
-                  type: string
-                lastDiscoverAt:
-                  format: date-time
-                  type: string
-                lastPlanAt:
-                  format: date-time
-                  type: string
-                lastImplementAt:
-                  format: date-time
-                  type: string
-                lastVerifyAt:
-                  format: date-time
-                  type: string
-                activeMissions:
-                  type: integer
-                queuedNeeds:
-                  type: integer
-                requirements:
-                  type: object
-                  properties:
-                    pending:
-                      type: integer
-                    dispatched:
-                      type: integer
-                    blocked:
-                      type: integer
-                    admissionBlocked:
-                      type: integer
-                    stageClearanceBlocked:
-                      type: integer
-                    completed:
-                      type: integer
-                    invalidChannel:
-                      type: integer
-                    rejected:
-                      type: integer
-                    duplicates:
-                      type: integer
-                    paused:
-                      type: boolean
-                    admission:
-                      type: object
-                      x-kubernetes-preserve-unknown-fields: true
-                    stageClearance:
-                      type: object
-                      x-kubernetes-preserve-unknown-fields: true
-                    pauseReason:
-                      type: string
-                    pauseMessage:
-                      type: string
-                    error:
-                      type: string
-                discoveries24h:
-                  type: integer
-                missions24h:
-                  type: integer
-                autonomousSuccessRate24h:
-                  type: number
-                lastProductionChangeRef:
-                  type: string
-                freeze:
-                  type: object
-                  properties:
-                    reason:
-                      type: string
-                    until:
-                      format: date-time
-                      type: string
-                    consecutiveFailures:
-                      type: integer
-                    threshold:
-                      type: integer
-                    enteredAt:
-                      format: date-time
-                      type: string
-                    durationMs:
-                      type: integer
-                    evidence:
-                      type: object
-                      x-kubernetes-preserve-unknown-fields: true
-                stageStates:
-                  type: object
-                  x-kubernetes-preserve-unknown-fields: true
-                conditions:
-                  type: array
-                  items:
-                    type: object
+                    type: array
+                  rollout:
                     properties:
-                      type:
+                      analysisTemplateRef:
                         type: string
-                      status:
-                        type: string
-                      reason:
-                        type: string
-                      message:
-                        type: string
-                      lastTransitionTime:
+                      steps:
+                        items:
+                          properties:
+                            pause:
+                              type: string
+                            setWeight:
+                              maximum: 100
+                              minimum: 1
+                              type: integer
+                          required:
+                          - pause
+                          - setWeight
+                          type: object
+                        type: array
+                      strategy:
+                        enum:
+                        - canary
                         type: string
                     required:
-                      - type
-                      - status
-      subresources:
-        status: {}
+                    - strategy
+                    type: object
+                required:
+                - deploymentTargets
+                type: object
+              discovery:
+                properties:
+                  minCitations:
+                    minimum: 1
+                    type: integer
+                  minConfidence:
+                    maximum: 1
+                    minimum: 0
+                    type: number
+                  sources:
+                    items:
+                      properties:
+                        kind:
+                          type: string
+                        name:
+                          type: string
+                        url:
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    minItems: 1
+                    type: array
+                required:
+                - sources
+                type: object
+              domains:
+                items:
+                  type: string
+                minItems: 1
+                type: array
+              execution:
+                properties:
+                  discover:
+                    properties:
+                      enabled:
+                        type: boolean
+                      every:
+                        type: string
+                      targetRef:
+                        properties:
+                          kind:
+                            enum:
+                            - AgentRun
+                            - OrchestrationRun
+                            type: string
+                          name:
+                            type: string
+                          namespace:
+                            type: string
+                        required:
+                        - kind
+                        - name
+                        type: object
+                    type: object
+                  implement:
+                    properties:
+                      enabled:
+                        type: boolean
+                      every:
+                        type: string
+                      targetRef:
+                        properties:
+                          kind:
+                            enum:
+                            - AgentRun
+                            - OrchestrationRun
+                            type: string
+                          name:
+                            type: string
+                          namespace:
+                            type: string
+                        required:
+                        - kind
+                        - name
+                        type: object
+                    type: object
+                  plan:
+                    properties:
+                      enabled:
+                        type: boolean
+                      every:
+                        type: string
+                      targetRef:
+                        properties:
+                          kind:
+                            enum:
+                            - AgentRun
+                            - OrchestrationRun
+                            type: string
+                          name:
+                            type: string
+                          namespace:
+                            type: string
+                        required:
+                        - kind
+                        - name
+                        type: object
+                    type: object
+                  verify:
+                    properties:
+                      enabled:
+                        type: boolean
+                      every:
+                        type: string
+                      targetRef:
+                        properties:
+                          kind:
+                            enum:
+                            - AgentRun
+                            - OrchestrationRun
+                            type: string
+                          name:
+                            type: string
+                          namespace:
+                            type: string
+                        required:
+                        - kind
+                        - name
+                        type: object
+                    type: object
+                required:
+                - discover
+                - implement
+                - plan
+                - verify
+                type: object
+              integrations:
+                properties:
+                  nats:
+                    properties:
+                      channel:
+                        type: string
+                      personas:
+                        properties:
+                          architect:
+                            properties:
+                              humanName:
+                                type: string
+                              workerIdentity:
+                                type: string
+                            required:
+                            - humanName
+                            - workerIdentity
+                            type: object
+                          deployer:
+                            properties:
+                              humanName:
+                                type: string
+                              workerIdentity:
+                                type: string
+                            required:
+                            - humanName
+                            - workerIdentity
+                            type: object
+                          engineer:
+                            properties:
+                              humanName:
+                                type: string
+                              workerIdentity:
+                                type: string
+                            required:
+                            - humanName
+                            - workerIdentity
+                            type: object
+                        required:
+                        - architect
+                        - deployer
+                        - engineer
+                        type: object
+                      subjectPrefix:
+                        type: string
+                      url:
+                        type: string
+                    required:
+                    - personas
+                    type: object
+                type: object
+              mission:
+                properties:
+                  businessMetric:
+                    type: string
+                  handoffRequiredFields:
+                    items:
+                      type: string
+                    type: array
+                  ledgerRef:
+                    type: string
+                  sourceDesign:
+                    type: string
+                  validationContract:
+                    items:
+                      type: string
+                    type: array
+                  valueGates:
+                    items:
+                      type: string
+                    type: array
+                type: object
+              mode:
+                enum:
+                - assisted
+                - lights-out
+                type: string
+              objectives:
+                items:
+                  type: string
+                minItems: 1
+                type: array
+              owner:
+                properties:
+                  channel:
+                    type: string
+                  id:
+                    type: string
+                required:
+                - channel
+                - id
+                type: object
+              risk:
+                properties:
+                  approvalPolicyRef:
+                    type: string
+                  budgetRef:
+                    type: string
+                  freezeAfterFailures:
+                    minimum: 1
+                    type: integer
+                  freezeDuration:
+                    type: string
+                type: object
+              timezone:
+                type: string
+            required:
+            - delivery
+            - discovery
+            - domains
+            - execution
+            - mode
+            - objectives
+            - owner
+            type: object
+          status:
+            properties:
+              activeMissions:
+                type: integer
+              autonomousSuccessRate24h:
+                type: number
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              discoveries24h:
+                type: integer
+              freeze:
+                properties:
+                  consecutiveFailures:
+                    type: integer
+                  durationMs:
+                    type: integer
+                  enteredAt:
+                    format: date-time
+                    type: string
+                  evidence:
+                    additionalProperties:
+                      x-kubernetes-preserve-unknown-fields: true
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  reason:
+                    type: string
+                  threshold:
+                    type: integer
+                  until:
+                    format: date-time
+                    type: string
+                type: object
+              lastDiscoverAt:
+                format: date-time
+                type: string
+              lastImplementAt:
+                format: date-time
+                type: string
+              lastPlanAt:
+                format: date-time
+                type: string
+              lastProductionChangeRef:
+                type: string
+              lastVerifyAt:
+                format: date-time
+                type: string
+              missions24h:
+                type: integer
+              observedGeneration:
+                format: int64
+                type: integer
+              phase:
+                type: string
+              queuedNeeds:
+                type: integer
+              requirements:
+                properties:
+                  admission:
+                    additionalProperties:
+                      x-kubernetes-preserve-unknown-fields: true
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  admissionBlocked:
+                    type: integer
+                  blocked:
+                    type: integer
+                  completed:
+                    type: integer
+                  dispatched:
+                    type: integer
+                  duplicates:
+                    type: integer
+                  error:
+                    type: string
+                  invalidChannel:
+                    type: integer
+                  pauseMessage:
+                    type: string
+                  pauseReason:
+                    type: string
+                  paused:
+                    type: boolean
+                  pending:
+                    type: integer
+                  rejected:
+                    type: integer
+                  stageClearance:
+                    additionalProperties:
+                      x-kubernetes-preserve-unknown-fields: true
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  stageClearanceBlocked:
+                    type: integer
+                type: object
+              stageStates:
+                additionalProperties:
+                  x-kubernetes-preserve-unknown-fields: true
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              updatedAt:
+                format: date-time
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

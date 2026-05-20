@@ -7,18 +7,18 @@ spec:
   adapter:
     type: codex-app-server
     codex:
-      model: gpt-5.5
-      effort: xhigh
+      binaryPath: /usr/local/bin/agents-fake-codex-app-server
+      model: agents-fake-codex-app-server
+      effort: low
       sandbox: danger-full-access
       approval: never
-      cwd: /workspace/lab
       prompt: |-
         Execute a read-only Codex app-server runner smoke validation.
 
         Requirements:
         - Do not modify repository state, branches, commits, pull requests, issues, or cluster resources.
-        - Use the mounted Codex config/auth exactly as provided.
-        - Verify the configured provider, model, auth secret, app-server runner, and runner image can start successfully.
+        - Verify the app-server protocol, stream handling, runner status writer, artifact declaration path, and runner image.
+        - Do not call external model providers.
         - Write `/workspace/.agentrun/smoke/result.md` with:
           - startup status
           - resolved repository/base/head
@@ -34,28 +34,29 @@ spec:
         - stage: {{ inputs.stage }}
         - objective: {{ inputs.objective }}
       goal:
-        objective: Validate the Codex app-server Agents runner can start, run one read-only turn, and write the smoke artifact.
+        objective: Validate the Codex app-server Agents runner protocol can start, run one deterministic turn, and write the smoke artifact.
       threadConfig:
         mcp_servers: {}
-        web_search: live
+        web_search: off
   argsTemplate: []
   envTemplate:
+    AGENTS_FAKE_CODEX_APP_SERVER_ARTIFACT: /workspace/.agentrun/smoke/result.md
     CODEX_LOG_LEVEL: info
     HOME: /root
     CODEX_CONFIG: /root/.codex/config.toml
     CODEX_DISABLE_RESUME: "1"
     CODEX_MAX_SESSION_ATTEMPTS: "1"
-    CODEX_MODEL: gpt-5.5
+    CODEX_MODEL: agents-fake-codex-app-server
   inputFiles:
     - path: /root/.codex/config.toml
       content: |-
-        model = "gpt-5.5"
+        model = "agents-fake-codex-app-server"
         model_reasoning_summary = "none"
-        model_reasoning_effort = "xhigh"
+        model_reasoning_effort = "low"
         model_verbosity = "medium"
         approval_policy = "never"
         sandbox_mode = "danger-full-access"
-        web_search = "live"
+        web_search = "off"
         suppress_unstable_features_warning = true
 
         [features]

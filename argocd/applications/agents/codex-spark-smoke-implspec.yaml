@@ -10,16 +10,17 @@ spec:
       - base
       - head
       - objective
-  summary: 'Read-only Codex runtime smoke check.'
+  summary: 'Deterministic Codex app-server runtime smoke check.'
   text: |
-    Run a read-only Codex startup smoke for ${repository} on ${head} from ${base}.
+    Run a deterministic Codex app-server protocol smoke for ${repository} on ${head} from ${base}.
 
     Goal:
-    - verify the configured provider, model, auth secret, and runner image can execute one no-op task successfully.
+    - verify the Agents controller, app-server runner image, runner spec, stream handling, status writer, and artifact declaration path.
 
     Constraints:
     - Do not change files.
     - Do not commit, push, open a PR, or post external updates.
+    - Do not call external model providers.
     - Keep the run short and deterministic.
 
     Deliverables:

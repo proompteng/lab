@@ -1,4 +1,4 @@
-import { asRecord, asString } from '~/server/primitives-http'
+import { asRecord, asString } from '@proompteng/agent-contracts/json'
 
 type ConditionForCompare = {
   type: string | null

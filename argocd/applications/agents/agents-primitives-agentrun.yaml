@@ -14,6 +14,12 @@ spec:
     type: workflow
     config:
       ttlSecondsAfterFinished: 600
+  workflow:
+    steps:
+      - name: implementation
+        timeoutSeconds: 600
+        parameters:
+          stage: implementation
   parameters:
     repository: proompteng/lab
     base: main

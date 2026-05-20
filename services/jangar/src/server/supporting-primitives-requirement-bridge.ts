@@ -1,7 +1,7 @@
 import { MATERIAL_REENTRY_DISPATCH_ANNOTATION } from '@proompteng/agent-contracts/swarm-material-reentry'
 import { SWARM_REQUIREMENT_LABEL_ID } from '@proompteng/agent-contracts/swarm-contracts'
 
-import { asString, readNested } from '~/server/primitives-http'
+import { asString, readNested } from '@proompteng/agent-contracts/json'
 import {
   ACTIVE_PHASES,
   isIdempotencyDuplicateRun,

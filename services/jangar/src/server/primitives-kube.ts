@@ -11,7 +11,7 @@ import { PromiseMiddlewareWrapper } from '@kubernetes/client-node/dist/gen/middl
 import type { RequestContext } from '@kubernetes/client-node/dist/gen/http/http.js'
 
 import { makeApiClientWithTransport, shouldUseBunKubernetesTransport } from '~/server/kubernetes-bun-transport'
-import { asRecord, asString } from '~/server/primitives-http'
+import { asRecord, asString } from '@proompteng/agent-contracts/json'
 
 export type KubernetesClient = {
   apply: (resource: Record<string, unknown>) => Promise<Record<string, unknown>>

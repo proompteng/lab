@@ -9,6 +9,16 @@ export type * from './agent-message-artifacts'
 export type * from './agent-run-callbacks'
 export type * from './codex-orchestration-parameters'
 export type * from './control-plane-status'
+export {
+  canonicalizeForJsonHash,
+  errorResponse,
+  normalizeNamespace,
+  okResponse,
+  parseJsonBody,
+  requireIdempotencyKey,
+  stableJsonStringifyForHash,
+  type JsonRecord,
+} from './json'
 export * from './controller-witness'
 export type * from './execution-trust'
 export type * from './execution-trust-client'

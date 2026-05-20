@@ -1,4 +1,4 @@
-import { readAgentsEnv, type EnvSource } from './runtime-env'
+import { parsePositiveIntEnv, readAgentsEnv, type EnvSource } from './runtime-env'
 
 type ControllerToggleConfig = {
   enabled: boolean
@@ -10,6 +10,8 @@ export type ControlPlaneCacheConfig = {
   enabled: boolean
   namespaces: string[]
   clusterId: string
+  resyncSeconds: number
+  maxPendingWrites: number
 }
 
 export type OrchestrationControllerConfig = ControllerToggleConfig
@@ -68,6 +70,12 @@ export const resolveControlPlaneCacheConfig = (env: EnvSource = process.env): Co
     isControllerClusterScoped(env),
   ),
   clusterId: readAgentsEnv(env, 'AGENTS_CONTROL_PLANE_CACHE_CLUSTER') || 'default',
+  resyncSeconds: parsePositiveIntEnv(readAgentsEnv(env, 'AGENTS_CONTROL_PLANE_CACHE_RESYNC_SECONDS'), 60, {
+    minimum: 5,
+  }),
+  maxPendingWrites: parsePositiveIntEnv(readAgentsEnv(env, 'AGENTS_CONTROL_PLANE_CACHE_MAX_PENDING_WRITES'), 5000, {
+    minimum: 100,
+  }),
 })
 
 export const resolveOrchestrationControllerConfig = (env: EnvSource = process.env): OrchestrationControllerConfig => ({

@@ -1,7 +1,7 @@
 # Supporting Primitives for Long-Horizon Agents
 
 This document enumerates the additional primitives required to run long-horizon agent workflows safely
-and portably. These are platform-level contracts managed by Jangar.
+and portably. These are platform-level contracts managed by the Agents service.
 
 ## 1) Artifact
 
@@ -50,7 +50,7 @@ Used for:
 **Purpose:** cost and resource ceilings for long-horizon workloads.
 
 - `Budget` defines CPU, GPU, token, and dollar limits
-- Jangar enforces policy and halts runs when exceeded
+- Agents enforces policy and halts runs when exceeded
 
 ## 6) Tool
 
@@ -65,7 +65,7 @@ Used for:
 **Purpose:** centralized access control for secrets and external credentials.
 
 - Bindings explicitly list allowed secret names for each Agent/Orchestration
-- Prevents direct access by runtimes without Jangar approval
+- Prevents direct access by runtimes without Agents policy approval
 
 ## 8) Workspace
 
@@ -77,6 +77,6 @@ Used for:
 
 ## Common design rules
 
-- Each primitive is provider-agnostic and resolved by Jangar via provider refs.
+- Each primitive is provider-agnostic and resolved by Agents via provider refs.
 - Status fields must be consistent across providers.
 - Every primitive emits audit events for traceability.

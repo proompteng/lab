@@ -872,7 +872,7 @@ fail_if_path_exists \
 
 fail_if_matches_including_tests \
   "Jangar source must import domain control-plane status types from the server boundary, not the retired src/data Agents path" \
-  '~/data/agents-control-plane|\.\/agents-control-plane' \
+  '[~]/data/agents-control-plane|\.\/agents-control-plane' \
   "${ROOT_DIR}/services/jangar/src"
 
 fail_if_matches \
@@ -1072,10 +1072,17 @@ fail_if_matches \
 
 fail_if_matches \
   "Generic Agents primitive docs must point at services/agents ownership, not Jangar controllers" \
-  'Jangar is the control plane for all `(Agent|Memory)`|services/jangar/src/server/(agents-controller|orchestration-controller)|services/jangar/scripts/agent-runner|namespace: jangar|WORKFLOW_STAGE' \
+  'Jangar is the control plane for all .*Agent|Jangar is the control plane for all .*Memory|services/jangar/src/server/(agents-controller|orchestration-controller)|services/jangar/scripts/agent-runner|namespace: jangar|WORKFLOW_STAGE' \
+  "${ROOT_DIR}/docs/agents/primitives/agent.md" \
+  "${ROOT_DIR}/docs/agents/primitives/memory.md" \
+  "${ROOT_DIR}/docs/agents/primitives/orchestration.md"
+
+fail_if_path_exists \
+  "Generic Agents primitive docs must live under docs/agents/primitives, not docs/jangar/primitives" \
   "${ROOT_DIR}/docs/jangar/primitives/agent.md" \
   "${ROOT_DIR}/docs/jangar/primitives/memory.md" \
-  "${ROOT_DIR}/docs/jangar/primitives/orchestration.md"
+  "${ROOT_DIR}/docs/jangar/primitives/orchestration.md" \
+  "${ROOT_DIR}/docs/jangar/primitives/supporting-primitives.md"
 
 fail_if_matches \
   "Jangar must consume typed Agents client helpers instead of raw kind-string control-plane resource helpers" \

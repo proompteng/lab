@@ -5,7 +5,7 @@ import {
   type SwarmStageName,
 } from '@proompteng/agent-contracts/swarm-contracts'
 
-import { asString, readNested } from '~/server/primitives-http'
+import { asString, readNested } from '@proompteng/agent-contracts/json'
 
 type StageName = SwarmStageName
 

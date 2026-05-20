@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { fileURLToPath } from 'node:url'
 
 import type { CodexAppServerOptions, CodexAppServerTurnOptions, StreamDelta, Turn } from '@proompteng/codex'
 import { describe, expect, it, vi } from 'vitest'
@@ -32,6 +33,8 @@ const makeTurn = (status: Turn['status'], error: Turn['error'] = null): Turn => 
   completedAt: 2,
   durationMs: 1000,
 })
+
+const fakeAppServerPath = fileURLToPath(new URL('../../scripts/codex/fake-app-server.ts', import.meta.url))
 
 const deferred = <T = void>() => {
   let resolve!: (value: T | PromiseLike<T>) => void
@@ -169,6 +172,61 @@ describe('codex app-server runner adapter', () => {
       ],
     })
     expect(await readFile(logPath, 'utf8')).toContain('"delta":"done"')
+  })
+
+  it('runs the deterministic fake app-server binary through the real Codex client protocol', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
+    const runPath = join(dir, 'run.json')
+    const statusPath = join(dir, 'status.json')
+    const logPath = join(dir, 'runner.log')
+    const artifactPath = join(dir, 'smoke', 'result.md')
+    await writeFile(
+      runPath,
+      `${JSON.stringify({
+        implementation: { text: 'run deterministic smoke' },
+        parameters: { stage: 'smoke' },
+        goal: { objective: 'verify fake app-server smoke', tokenBudget: 100 },
+      })}\n`,
+      'utf8',
+    )
+
+    const exitCode = await runCodexAppServerAdapter(
+      {
+        provider: 'codex-spark-smoke',
+        payloads: { eventFilePath: runPath },
+        artifacts: { statusPath, logPath },
+        providerSpec: {
+          outputArtifacts: [{ name: 'smoke-result', path: artifactPath }],
+        },
+      },
+      {
+        binaryPath: fakeAppServerPath,
+        model: 'agents-fake-codex-app-server',
+        effort: 'low',
+        sandbox: 'danger-full-access',
+        approval: 'never',
+        prompt: `Write \`${artifactPath}\` and respond OK.`,
+        goal: { objective: 'verify fake app-server smoke', tokenBudget: 100 },
+        threadConfig: { mcp_servers: {}, web_search: 'off' },
+      },
+    )
+
+    expect(exitCode).toBe(0)
+    expect(await readFile(artifactPath, 'utf8')).toContain('startup status: ok')
+    expect(await readFile(logPath, 'utf8')).toContain('"delta":"OK\\n"')
+    const status = JSON.parse(await readFile(statusPath, 'utf8')) as Record<string, unknown>
+    expect(status).toMatchObject({
+      provider: 'codex-spark-smoke',
+      adapter: 'codex-app-server',
+      exitCode: 0,
+      status: 'succeeded',
+      turnStatus: 'completed',
+      model: 'agents-fake-codex-app-server',
+      effort: 'low',
+    })
+    expect(status.artifacts).toMatchObject({
+      outputArtifacts: [{ name: 'smoke-result', path: artifactPath }],
+    })
   })
 
   it('requires the versioned payload eventFilePath contract', async () => {

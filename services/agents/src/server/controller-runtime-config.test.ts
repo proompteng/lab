@@ -23,6 +23,8 @@ describe('Agents controller runtime config', () => {
       enabled: true,
       namespaces: ['agents', 'agents-system'],
       clusterId: 'prod-agents',
+      resyncSeconds: 60,
+      maxPendingWrites: 5000,
     })
   })
 
@@ -37,6 +39,30 @@ describe('Agents controller runtime config', () => {
       enabled: false,
       namespaces: ['agents'],
       clusterId: 'default',
+      resyncSeconds: 60,
+      maxPendingWrites: 5000,
+    })
+  })
+
+  it('bounds control-plane cache resync and write queue settings', () => {
+    expect(
+      resolveControlPlaneCacheConfig({
+        AGENTS_CONTROL_PLANE_CACHE_RESYNC_SECONDS: '30',
+        AGENTS_CONTROL_PLANE_CACHE_MAX_PENDING_WRITES: '750',
+      }),
+    ).toMatchObject({
+      resyncSeconds: 30,
+      maxPendingWrites: 750,
+    })
+
+    expect(
+      resolveControlPlaneCacheConfig({
+        AGENTS_CONTROL_PLANE_CACHE_RESYNC_SECONDS: '1',
+        AGENTS_CONTROL_PLANE_CACHE_MAX_PENDING_WRITES: '12',
+      }),
+    ).toMatchObject({
+      resyncSeconds: 60,
+      maxPendingWrites: 5000,
     })
   })
 

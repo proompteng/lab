@@ -4,6 +4,8 @@ metadata:
   name: torghut-market-context
 spec:
   binary: /usr/local/bin/agent-runner
+  health:
+    capacityFailurePolicy: block
   adapter:
     type: codex-app-server
     codex:

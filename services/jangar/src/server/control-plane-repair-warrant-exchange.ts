@@ -22,7 +22,7 @@ import type {
   SourceRolloutTruthExchange,
 } from '~/server/control-plane-status-types'
 import type { ControlPlaneRolloutHealth, ControlPlaneWatchReliability } from '~/server/control-plane-status-types'
-import { asRecord, asString } from '~/server/primitives-http'
+import { asRecord, asString } from '@proompteng/agent-contracts/json'
 import {
   SCHEDULE_DEBT_ANNOTATION_IMAGE_REF,
   SCHEDULE_DEBT_ANNOTATION_LANE,

@@ -113,7 +113,8 @@ is stored on the Memory resource; the backend implementation must honor it.
 
 ## Observability
 
-Jangar should emit memory lifecycle events and link them to agent/orchestration runs via run IDs.
+Agents should emit generic memory lifecycle events and link them to AgentRun or OrchestrationRun IDs. Jangar may
+consume those events for domain-specific surfaces.
 
 ## Schema precedence
 

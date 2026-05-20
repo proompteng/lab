@@ -94,6 +94,13 @@ const hasProviderCapacityFailure = (run: Record<string, unknown>) => {
 
 const phaseOf = (run: Record<string, unknown>) => asString(readNested(run, ['status', 'phase']))?.toLowerCase()
 
+const providerCapacityFailurePolicy = (provider: Record<string, unknown>): 'degrade' | 'block' => {
+  const raw = asString(readNested(provider, ['spec', 'health', 'capacityFailurePolicy']))
+    ?.trim()
+    .toLowerCase()
+  return raw === 'block' ? 'block' : 'degrade'
+}
+
 const resolveRecentProviderFailure = (
   provider: Record<string, unknown>,
   agents: Record<string, unknown>[],
@@ -313,6 +320,7 @@ export const createResourceReconcilers = (deps: {
           })
         } else if (recentCapacityFailure) {
           const message = `${recentCapacityFailure.message}; latest failed AgentRun ${recentCapacityFailure.name}`
+          const capacityPolicy = providerCapacityFailurePolicy(provider)
           updated = upsertCondition(updated, { type: 'Unreachable', status: 'False', reason: 'Reachable', message: '' })
           updated = upsertCondition(updated, {
             type: 'Degraded',
@@ -322,9 +330,9 @@ export const createResourceReconcilers = (deps: {
           })
           updated = upsertCondition(updated, {
             type: 'Ready',
-            status: 'False',
-            reason: PROVIDER_CAPACITY_EXHAUSTED_REASON,
-            message,
+            status: capacityPolicy === 'block' ? 'False' : 'True',
+            reason: capacityPolicy === 'block' ? PROVIDER_CAPACITY_EXHAUSTED_REASON : 'ValidSpec',
+            message: capacityPolicy === 'block' ? message : '',
           })
         } else {
           updated = upsertCondition(updated, { type: 'Unreachable', status: 'False', reason: 'Reachable', message: '' })

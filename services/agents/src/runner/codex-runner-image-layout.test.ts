@@ -67,8 +67,10 @@ describe('Agents Codex runner image layout', () => {
     const content = finalStage()
 
     expect(content).toContain('/usr/local/bin/agent-runner /tmp/agent-runner-smoke.json')
+    expect(content).toContain('/usr/local/bin/agents-fake-codex-app-server')
     expect(content).toContain('"provider":"image-smoke"')
-    expect(content).toContain('"binary":"/bin/true"')
+    expect(content).toContain('"type":"codex-app-server"')
+    expect(content).toContain('"binaryPath":"/usr/local/bin/agents-fake-codex-app-server"')
   })
 
   it('bundles the runner without runtime-resolving Effect or source TS modules', async () => {

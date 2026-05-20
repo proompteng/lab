@@ -54,6 +54,10 @@
       "types": "./dist/control-plane-status.d.ts",
       "default": "./dist/control-plane-status.js"
     },
+    "./json": {
+      "types": "./dist/json.d.ts",
+      "default": "./dist/json.js"
+    },
     "./controller-witness": {
       "types": "./dist/controller-witness.d.ts",
       "default": "./dist/controller-witness.js"
@@ -109,7 +113,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "bunx vitest run ./src/agents-clients.test.ts ./src/agents-ready.test.ts ./src/agent-message-artifacts.test.ts ./src/agent-run-callbacks.test.ts ./src/agent-run-projection-authority-client.test.ts ./src/agent-run-terminal-events-client.test.ts ./src/codex-orchestration-parameters.test.ts ./src/controller-witness.test.ts ./src/execution-trust.test.ts ./src/policy-validation.test.ts ./src/runtime-admission.test.ts ./src/signals-client.test.ts ./src/swarm-analysis.test.ts ./src/swarm-material-reentry.test.ts",
+    "test": "bunx vitest run ./src/agents-clients.test.ts ./src/agents-ready.test.ts ./src/agent-message-artifacts.test.ts ./src/agent-run-callbacks.test.ts ./src/agent-run-projection-authority-client.test.ts ./src/agent-run-terminal-events-client.test.ts ./src/codex-orchestration-parameters.test.ts ./src/controller-witness.test.ts ./src/execution-trust.test.ts ./src/json.test.ts ./src/policy-validation.test.ts ./src/runtime-admission.test.ts ./src/signals-client.test.ts ./src/swarm-analysis.test.ts ./src/swarm-material-reentry.test.ts",
     "tsc": "tsc --noEmit -p tsconfig.json",
     "lint": "bunx oxfmt --check src",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",

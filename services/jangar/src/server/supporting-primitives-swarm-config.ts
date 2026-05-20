@@ -40,7 +40,7 @@ import {
 } from '@proompteng/agent-contracts/swarm-contracts'
 
 import type { AdmissionPassportStatus, RecoveryWarrantStatus } from '~/server/control-plane-status-types'
-import { asRecord, asString } from '~/server/primitives-http'
+import { asRecord, asString } from '@proompteng/agent-contracts/json'
 import { resolveSupportingPrimitivesConfig } from '~/server/supporting-primitives-config'
 import { hashNameSuffix } from '~/server/supporting-primitives-naming'
 

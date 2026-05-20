@@ -10,6 +10,7 @@ const jsdomEnvSetup = fileURLToPath(new URL('./src/test-utils/vitest-jsdom-env.t
 const agentContractsControlPlaneStatusSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/control-plane-status.ts', import.meta.url),
 )
+const agentContractsJsonSource = fileURLToPath(new URL('../../packages/agent-contracts/src/json.ts', import.meta.url))
 const agentContractsExecutionTrustSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/execution-trust.ts', import.meta.url),
 )
@@ -95,6 +96,7 @@ export default defineConfig({
       '@proompteng/agent-contracts/agent-jobs-client': agentContractsAgentJobsClientSource,
       '@proompteng/agent-contracts/codex-orchestration-parameters': agentContractsCodexOrchestrationParametersSource,
       '@proompteng/agent-contracts/control-plane-status': agentContractsControlPlaneStatusSource,
+      '@proompteng/agent-contracts/json': agentContractsJsonSource,
       '@proompteng/agent-contracts/execution-trust': agentContractsExecutionTrustSource,
       '@proompteng/agent-contracts/execution-trust-client': agentContractsExecutionTrustClientSource,
       '@proompteng/agent-contracts/memory-client': agentContractsMemoryClientSource,
@@ -136,6 +138,7 @@ export default defineConfig({
       '@proompteng/agent-contracts/agent-jobs-client': agentContractsAgentJobsClientSource,
       '@proompteng/agent-contracts/codex-orchestration-parameters': agentContractsCodexOrchestrationParametersSource,
       '@proompteng/agent-contracts/control-plane-status': agentContractsControlPlaneStatusSource,
+      '@proompteng/agent-contracts/json': agentContractsJsonSource,
       '@proompteng/agent-contracts/execution-trust': agentContractsExecutionTrustSource,
       '@proompteng/agent-contracts/execution-trust-client': agentContractsExecutionTrustClientSource,
       '@proompteng/agent-contracts/memory-client': agentContractsMemoryClientSource,

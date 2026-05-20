@@ -2,7 +2,7 @@ import { sql } from 'kysely'
 
 import { getDb } from '~/server/db'
 import { getRegisteredMigrationNames } from '~/server/kysely-migrations'
-import { asString } from '~/server/primitives-http'
+import { asString } from '@proompteng/agent-contracts/json'
 import type { DatabaseMigrationConsistency } from '~/server/control-plane-status-types'
 import type { DatabaseStatus } from './control-plane-status-types'
 

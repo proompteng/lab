@@ -6,7 +6,7 @@ import {
   stringValues,
   uniqueStrings,
 } from '~/server/control-plane-torghut-evidence-normalizers'
-import { asRecord } from '~/server/primitives-http'
+import { asRecord } from '@proompteng/agent-contracts/json'
 
 export const REPAIR_OUTCOME_DIVIDEND_LEDGER_SCHEMA_VERSION = 'torghut.repair-outcome-dividend-ledger.v1'
 

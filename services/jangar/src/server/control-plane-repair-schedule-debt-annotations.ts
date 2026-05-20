@@ -3,7 +3,7 @@ import {
   SWARM_ADMISSION_ANNOTATION_RUNTIME_DIGEST,
 } from '@proompteng/agent-contracts/swarm-contracts'
 
-import { asRecord, asString, readNested } from '~/server/primitives-http'
+import { asRecord, asString, readNested } from '@proompteng/agent-contracts/json'
 
 export const SCHEDULE_DEBT_ANNOTATION_LANE = 'jangar.proompteng.ai/schedule-debt-lane'
 export const SCHEDULE_DEBT_ANNOTATION_SOURCE_REF = 'jangar.proompteng.ai/schedule-debt-source-ref'
