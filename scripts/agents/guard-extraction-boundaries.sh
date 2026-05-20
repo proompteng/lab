@@ -304,6 +304,11 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/migrations/20251229_workflow_comms_agent_messages.ts"
 
 fail_if_matches \
+  "Jangar Codex NATS publisher must emit AgentRun-native identity only, without workflow-shaped compatibility fields" \
+  'workflow_uid|workflow_name|workflow_namespace|workflowUid|workflowName|workflowNamespace|workflow_stage|workflow_step|workflowStage|workflowStep|WORKFLOW_UID|WORKFLOW_NAME|WORKFLOW_NAMESPACE|WORKFLOW_STAGE|WORKFLOW_STEP' \
+  "${ROOT_DIR}/services/jangar/scripts/codex-nats-publish.ts"
+
+fail_if_matches \
   "Agents controller must not derive runner goals from deprecated AgentRun parameter aliases" \
   'goalObjective|goalTokenBudget' \
   "${ROOT_DIR}/services/agents/src/server/agents-controller" \

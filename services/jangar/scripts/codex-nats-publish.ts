@@ -156,12 +156,6 @@ const buildPayload = (
     agentRunUid: context.agentRunUid,
     agentRunName: context.agentRunName,
     agentRunNamespace: context.agentRunNamespace,
-    workflow_uid: context.agentRunUid,
-    workflow_name: context.agentRunName,
-    workflow_namespace: context.agentRunNamespace,
-    workflowUid: context.agentRunUid,
-    workflowName: context.agentRunName,
-    workflowNamespace: context.agentRunNamespace,
     agent_id: context.agentId,
     role: context.agentRole,
     channel,
@@ -176,13 +170,9 @@ const buildPayload = (
   if (context.agentRunStage) payload.stage = context.agentRunStage
   if (context.agentRunStage) payload.agent_run_stage = context.agentRunStage
   if (context.agentRunStep) payload.agent_run_step = context.agentRunStep
-  if (context.agentRunStage) payload.workflow_stage = context.agentRunStage
-  if (context.agentRunStep) payload.workflow_step = context.agentRunStep
   if (context.runId) payload.runId = context.runId
   if (context.agentRunStep) payload.agentRunStep = context.agentRunStep
   if (context.agentRunStage) payload.agentRunStage = context.agentRunStage
-  if (context.agentRunStep) payload.workflowStep = context.agentRunStep
-  if (context.agentRunStage) payload.workflowStage = context.agentRunStage
   if (options.status) payload.status = options.status
   if (options.exitCode) {
     const parsed = Number(options.exitCode)
@@ -269,13 +259,11 @@ const main = async () => {
     return
   }
 
-  const agentRunNamespace =
-    coerceNonEmpty(process.env.AGENT_RUN_NAMESPACE) ?? coerceNonEmpty(process.env.WORKFLOW_NAMESPACE) ?? 'agents'
-  const agentRunName =
-    coerceNonEmpty(process.env.AGENT_RUN_NAME) ?? coerceNonEmpty(process.env.WORKFLOW_NAME) ?? 'unknown'
-  const agentRunUid = coerceNonEmpty(process.env.AGENT_RUN_UID) ?? coerceNonEmpty(process.env.WORKFLOW_UID) ?? 'unknown'
-  const agentRunStage = coerceNonEmpty(process.env.AGENT_RUN_STAGE ?? process.env.WORKFLOW_STAGE)
-  const agentRunStep = coerceNonEmpty(process.env.AGENT_RUN_STEP ?? process.env.WORKFLOW_STEP ?? process.env.STEP_ID)
+  const agentRunNamespace = coerceNonEmpty(process.env.AGENT_RUN_NAMESPACE) ?? 'agents'
+  const agentRunName = coerceNonEmpty(process.env.AGENT_RUN_NAME) ?? 'unknown'
+  const agentRunUid = coerceNonEmpty(process.env.AGENT_RUN_UID) ?? 'unknown'
+  const agentRunStage = coerceNonEmpty(process.env.AGENT_RUN_STAGE)
+  const agentRunStep = coerceNonEmpty(process.env.AGENT_RUN_STEP ?? process.env.STEP_ID)
   const agentId = process.env.AGENT_ID?.trim() || 'unknown'
   const agentRole = coerceNonEmpty(process.env.AGENT_ROLE) ?? 'assistant'
   const runId =
@@ -352,7 +340,13 @@ const main = async () => {
   }
 }
 
-main().catch((error) => {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
-  process.exit(1)
-})
+export const __test__ = {
+  buildPayload,
+}
+
+if (import.meta.main) {
+  main().catch((error) => {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
+    process.exit(1)
+  })
+}
