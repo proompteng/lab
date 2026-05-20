@@ -81,11 +81,15 @@
     "./swarm-analysis": {
       "types": "./dist/swarm-analysis.d.ts",
       "default": "./dist/swarm-analysis.js"
+    },
+    "./swarm-material-reentry": {
+      "types": "./dist/swarm-material-reentry.d.ts",
+      "default": "./dist/swarm-material-reentry.js"
     }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "bunx vitest run ./src/agents-clients.test.ts ./src/agents-ready.test.ts ./src/agent-message-artifacts.test.ts ./src/agent-run-callbacks.test.ts ./src/codex-orchestration-parameters.test.ts ./src/execution-trust.test.ts ./src/policy-validation.test.ts ./src/signals-client.test.ts ./src/swarm-analysis.test.ts",
+    "test": "bunx vitest run ./src/agents-clients.test.ts ./src/agents-ready.test.ts ./src/agent-message-artifacts.test.ts ./src/agent-run-callbacks.test.ts ./src/codex-orchestration-parameters.test.ts ./src/execution-trust.test.ts ./src/policy-validation.test.ts ./src/signals-client.test.ts ./src/swarm-analysis.test.ts ./src/swarm-material-reentry.test.ts",
     "tsc": "tsc --noEmit -p tsconfig.json",
     "lint": "bunx oxfmt --check src",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",

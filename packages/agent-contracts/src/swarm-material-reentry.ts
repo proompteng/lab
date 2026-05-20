@@ -1,9 +1,5 @@
-import {
-  submitSwarmRequirementSignalToAgentsService,
-  type AgentsSwarmRequirementSignalSubmitInput,
-} from '@proompteng/agent-contracts/signals-client'
-import { asRecord, asString } from '~/server/primitives-http'
-import { hashNameSuffix, makeHashedName } from '~/server/supporting-primitives-naming'
+import { type AgentsSwarmRequirementSignalSubmitInput, buildSwarmRequirementSignalResource } from './signals-client'
+import { asRecord, asString, hashNameSuffix, makeHashedName } from './swarm-analysis'
 
 export type MaterialReentryRequirementSignal = {
   signalName: string
@@ -17,17 +13,19 @@ export type MaterialReentryRequirementSignal = {
   payload: Record<string, unknown>
 }
 
-type MaterialReentryRequirementSignalPublisherInput = {
+export type MaterialReentryRequirementSignalPlanInput = {
   materialReentryRequirementSignals: MaterialReentryRequirementSignal[]
   namespace: string
   swarmName: string
-  existingSignalNames: Set<string>
+  existingSignals?: Record<string, unknown>[]
+  existingSignalNames?: Set<string>
   existingDedupeKeys?: Set<string>
-  submitSignal?: (input: AgentsSwarmRequirementSignalSubmitInput) => Promise<unknown>
 }
 
-const asArray = (value: unknown) => (Array.isArray(value) ? value : [])
 export const MATERIAL_REENTRY_DISPATCH_ANNOTATION = 'swarm.proompteng.ai/material-reentry-dispatch'
+export const MATERIAL_REENTRY_SOURCE_SIGNAL_ANNOTATION = 'swarm.proompteng.ai/material-reentry-source-signal'
+
+const asArray = (value: unknown) => (Array.isArray(value) ? value : [])
 
 const readMaterialReentryRequirementSignal = (value: unknown): MaterialReentryRequirementSignal | null => {
   const record = asRecord(value)
@@ -79,10 +77,10 @@ export const readMaterialReentryRequirementSignals = (status: Record<string, unk
   return [...byDedupeKey.values()]
 }
 
-const materialReentrySignalName = (dispatch: MaterialReentryRequirementSignal) =>
+export const materialReentrySignalName = (dispatch: MaterialReentryRequirementSignal) =>
   makeHashedName(`material-reentry-${dispatch.targetSwarm}`, hashNameSuffix(dispatch.dedupeKey))
 
-const materialReentrySignalInput = (
+export const materialReentrySignalInput = (
   dispatch: MaterialReentryRequirementSignal,
   namespace: string,
 ): AgentsSwarmRequirementSignalSubmitInput => {
@@ -98,7 +96,7 @@ const materialReentrySignalInput = (
     priority: dispatch.priority,
     annotations: {
       [MATERIAL_REENTRY_DISPATCH_ANNOTATION]: dispatch.dedupeKey,
-      'swarm.proompteng.ai/material-reentry-source-signal': dispatch.signalName,
+      [MATERIAL_REENTRY_SOURCE_SIGNAL_ANNOTATION]: dispatch.signalName,
     },
     payload: {
       ...dispatch.payload,
@@ -107,38 +105,39 @@ const materialReentrySignalInput = (
   }
 }
 
-const summarizePublishError = (error: unknown) => {
-  if (error instanceof Error && error.message.trim().length > 0) return error.message
-  return String(error)
-}
+const metadataRecord = (resource: Record<string, unknown>) => asRecord(resource.metadata) ?? {}
 
-export const publishMaterialReentryRequirementSignals = async (
-  input: MaterialReentryRequirementSignalPublisherInput,
-) => {
-  const publishedSignals: AgentsSwarmRequirementSignalSubmitInput[] = []
-  let publishErrors = 0
+const signalName = (resource: Record<string, unknown>) => asString(metadataRecord(resource).name)
+
+const signalDedupeKey = (resource: Record<string, unknown>) =>
+  asString(asRecord(metadataRecord(resource).annotations)?.[MATERIAL_REENTRY_DISPATCH_ANNOTATION])
+
+export const planMaterialReentryRequirementSignalInputs = (
+  input: MaterialReentryRequirementSignalPlanInput,
+): AgentsSwarmRequirementSignalSubmitInput[] => {
+  const plannedSignals: AgentsSwarmRequirementSignalSubmitInput[] = []
+  const signalNames = new Set(input.existingSignalNames ?? [])
   const dedupeKeys = new Set(input.existingDedupeKeys ?? [])
-  const submitSignal = input.submitSignal ?? submitSwarmRequirementSignalToAgentsService
+  for (const existingSignal of input.existingSignals ?? []) {
+    const name = signalName(existingSignal)
+    if (name) signalNames.add(name)
+    const dedupeKey = signalDedupeKey(existingSignal)
+    if (dedupeKey) dedupeKeys.add(dedupeKey)
+  }
+
   for (const dispatch of input.materialReentryRequirementSignals) {
     if (dispatch.targetSwarm !== input.swarmName || dispatch.targetStage !== 'implement') continue
-    const signalName = materialReentrySignalName(dispatch)
-    if (input.existingSignalNames.has(signalName)) continue
+    const name = materialReentrySignalName(dispatch)
+    if (signalNames.has(name)) continue
     if (dedupeKeys.has(dispatch.dedupeKey)) continue
     const signal = materialReentrySignalInput(dispatch, input.namespace)
-    try {
-      await submitSignal(signal)
-      publishedSignals.push(signal)
-      input.existingSignalNames.add(signalName)
-      dedupeKeys.add(dispatch.dedupeKey)
-    } catch (error) {
-      publishErrors += 1
-      console.warn('[jangar] failed to publish material reentry requirement signal', {
-        swarm: input.swarmName,
-        namespace: input.namespace,
-        signal: signalName,
-        error: summarizePublishError(error),
-      })
-    }
+    plannedSignals.push(signal)
+    signalNames.add(name)
+    dedupeKeys.add(dispatch.dedupeKey)
   }
-  return { publishedSignals, publishErrors }
+
+  return plannedSignals
 }
+
+export const buildMaterialReentryRequirementSignalResources = (input: MaterialReentryRequirementSignalPlanInput) =>
+  planMaterialReentryRequirementSignalInputs(input).map(buildSwarmRequirementSignalResource)

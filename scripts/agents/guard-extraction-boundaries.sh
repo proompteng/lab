@@ -652,10 +652,24 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src" \
   "${ROOT_DIR}/services/jangar/README.md"
 
-fail_if_matches \
-  "Jangar material-reentry Swarm reconciler must consume Swarms through the Agents service boundary" \
-  'RESOURCE_MAP\.Swarm|startResourceWatch|createKubernetesClient|kube\.list' \
+fail_if_path_exists \
+  "Jangar must not retain the material-reentry Swarm reconciler after Agents owns Swarm reconciliation" \
   "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-material-reentry-swarm-reconciler.ts"
+
+fail_if_path_exists \
+  "Jangar must not retain the material-reentry requirement publisher after Agents owns Signal dispatch" \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-material-reentry-requirements.ts"
+
+fail_if_matches \
+  "Jangar must not poll Swarms or publish material-reentry Signals after Agents owns that controller behavior" \
+  'fetchSwarmResourcesFromAgentsService|submitSwarmRequirementSignalToAgentsService|startSwarmWatchers|startMaterialReentrySwarmReconcileLoop|publishMaterialReentryRequirementSignals' \
+  "${ROOT_DIR}/services/jangar/src/server"
+
+require_matches \
+  "Agents supporting controller must own material-reentry Signal dispatch from Swarm status" \
+  'reconcileMaterialReentryRequirementSignals' \
+  "${ROOT_DIR}/services/agents/src/server/supporting-primitives-controller.ts" \
+  "${ROOT_DIR}/services/agents/src/server/swarm-material-reentry.ts"
 
 fail_if_matches \
   "Jangar primitive policy validation must read ApprovalPolicy, Budget, and SecretBinding through the Agents service boundary" \
@@ -671,11 +685,6 @@ fail_if_matches \
   "Jangar memory provider must use Agents memory operation APIs instead of Agents-owned Secrets or DB tables" \
   "from 'pg'|kube\\.get\\('secret'|memory_(events|kv|embeddings)|connectionString" \
   "${ROOT_DIR}/services/jangar/src/server/memory-provider.ts"
-
-fail_if_matches \
-  "Jangar material-reentry requirement publisher must submit Signals through the Agents service boundary" \
-  'kube\.apply|createKubernetesClient|RESOURCE_MAP\.Signal' \
-  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-material-reentry-requirements.ts"
 
 fail_if_matches \
   "Jangar must call the Agents service boundary instead of importing Agents package internals" \

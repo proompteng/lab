@@ -1,3 +1,8 @@
+import {
+  readMaterialReentryRequirementSignals,
+  type MaterialReentryRequirementSignal,
+} from '@proompteng/agent-contracts/swarm-material-reentry'
+
 import type {
   ActionSloBudgetActionClass,
   ClearanceMarketDecision,
@@ -6,10 +11,6 @@ import type {
   StageClearancePacket,
 } from '~/server/control-plane-status-types'
 import { asRecord, asString } from '~/server/primitives-http'
-import {
-  readMaterialReentryRequirementSignals,
-  type MaterialReentryRequirementSignal,
-} from '~/server/supporting-primitives-material-reentry-requirements'
 import {
   applyMaterialEvidenceTrace,
   readMaterialEvidenceSettlementTrace,

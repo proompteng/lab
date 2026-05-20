@@ -7,6 +7,7 @@ import { startResourceWatch } from './kube-watch'
 import { asRecord, asString, readNested } from './primitives'
 import { createKubernetesClient, RESOURCE_MAP } from './kube-types'
 import { shouldApplyStatus } from './status-utils'
+import { reconcileMaterialReentryRequirementSignals } from './swarm-material-reentry'
 
 const DEFAULT_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY = 'agents.supporting_controller.enabled'
 const SCHEDULE_DELIVERY_PLACEHOLDER = '__AGENTS_DELIVERY_ID__'
@@ -872,9 +873,18 @@ const reconcileArtifact = async (
 
 const reconcileSwarm = async (kube: ReturnType<typeof createKubernetesClient>, swarm: Record<string, unknown>) => {
   const status = asRecord(swarm.status) ?? {}
+  const namespace = resolveNamespace(swarm)
+  const materialReentry = await reconcileMaterialReentryRequirementSignals(kube, swarm, namespace)
+  const materialReentryOk = materialReentry.applyErrors === 0
   const conditions = upsertCondition(
     normalizeConditions(status.conditions),
-    buildReadyCondition(true, 'Observed', 'swarm observed by Agents supporting controller'),
+    buildReadyCondition(
+      materialReentryOk,
+      materialReentryOk ? 'Observed' : 'MaterialReentryDispatchFailed',
+      materialReentryOk
+        ? `swarm observed by Agents supporting controller; material reentry signals applied: ${materialReentry.appliedSignals.length}`
+        : `failed to apply ${materialReentry.applyErrors} material reentry requirement signal(s)`,
+    ),
   )
   await setStatus(kube, swarm, {
     observedGeneration: asRecord(swarm.metadata)?.generation ?? 0,
