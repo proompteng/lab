@@ -7,7 +7,6 @@ import { type AppConfig, AppConfigService } from '@/effect/config'
 import type { AppRuntime } from '@/effect/runtime'
 import { AppLogger } from '@/logger'
 import { CommandEventSchema as FacteurCommandEventSchema } from '@/proto/proompteng/facteur/v1/contract_pb'
-import { CodexTaskSchema, CodexTaskStage } from '@/proto/proompteng/froussard/v1/codex_task_pb'
 import { createWebhookHandler, type WebhookConfig } from '@/routes/webhooks'
 import { GithubService } from '@/services/github/service'
 import type { GithubServiceDefinition } from '@/services/github/service.types'
@@ -104,6 +103,51 @@ const toBuffer = (value: KafkaMessage['value']): Buffer => {
   return Buffer.from(value)
 }
 
+const AGENTS_AGENT_RUNS_URL = 'http://agents.test/v1/agent-runs'
+
+const findAgentRunSubmission = (fetchMock: ReturnType<typeof vi.fn>) =>
+  fetchMock.mock.calls.find(([target]) => String(target) === AGENTS_AGENT_RUNS_URL) as [URL, RequestInit] | undefined
+
+const expectAgentRunSubmission = (
+  fetchMock: ReturnType<typeof vi.fn>,
+  options: { deliveryId: string; issueNumber: number },
+) => {
+  const call = findAgentRunSubmission(fetchMock)
+  expect(call).toBeTruthy()
+  const [, init] = call as [URL, RequestInit]
+  expect(init.method).toBe('POST')
+  expect(init.headers).toMatchObject({
+    accept: 'application/json',
+    'content-type': 'application/json',
+    'idempotency-key': options.deliveryId,
+    'x-agents-client': 'froussard',
+  })
+
+  const payload = JSON.parse(String(init.body)) as Record<string, unknown>
+  expect(payload).toMatchObject({
+    namespace: 'agents',
+    agentRef: { name: 'codex-agent' },
+    implementation: {
+      text: 'PROMPT',
+      source: { provider: 'github', externalId: `owner/repo#${options.issueNumber}` },
+    },
+    goal: { objective: 'PROMPT', tokenBudget: 250000 },
+    runtime: { type: 'job', config: { serviceAccountName: 'agents-sa' } },
+    parameters: {
+      repository: 'owner/repo',
+      issueNumber: String(options.issueNumber),
+      head: 'codex/issue-1-test',
+      stage: 'implementation',
+      deliveryId: options.deliveryId,
+    },
+    secrets: ['github-token', 'codex-auth'],
+    policy: { secretBindingRef: 'codex-github-token' },
+    vcsRef: { name: 'github' },
+    vcsPolicy: { required: true, mode: 'read-write' },
+    ttlSecondsAfterFinished: 86400,
+  })
+}
+
 describe('createWebhookHandler', () => {
   let runtime: AppRuntime
   let publishedMessages: KafkaMessage[]
@@ -123,6 +167,18 @@ describe('createWebhookHandler', () => {
       baseUrl: 'http://jangar',
       apiKey: null,
     },
+    agents: {
+      serviceBaseUrl: 'http://agents.test',
+      serviceClientName: 'froussard',
+      namespace: 'agents',
+      agentName: 'codex-agent',
+      vcsProviderName: 'github',
+      serviceAccountName: 'agents-sa',
+      secrets: ['github-token', 'codex-auth'],
+      secretBindingRef: 'codex-github-token',
+      ttlSecondsAfterFinished: 86400,
+      goalTokenBudget: 250000,
+    },
     codebase: {
       baseBranch: 'main',
       branchPrefix: 'codex/issue-',
@@ -138,7 +194,6 @@ describe('createWebhookHandler', () => {
     codexImplementationTriggerPhrase: 'implement issue',
     topics: {
       raw: 'raw-topic',
-      codexStructured: 'github.issues.codex.tasks',
       codexJudge: 'github.webhook.codex.judge',
       discordCommands: 'discord-topic',
     },
@@ -162,6 +217,7 @@ describe('createWebhookHandler', () => {
         baseUrl: baseConfig.atlas.baseUrl,
         apiKey: baseConfig.atlas.apiKey,
       },
+      agents: baseConfig.agents,
       kafka: {
         brokers: ['localhost:9092'],
         username: 'user',
@@ -169,7 +225,6 @@ describe('createWebhookHandler', () => {
         clientId: 'froussard-webhook-producer',
         topics: {
           raw: baseConfig.topics.raw,
-          codexStructured: baseConfig.topics.codexStructured,
           codexJudge: baseConfig.topics.codexJudge,
           discordCommands: baseConfig.topics.discordCommands,
         },
@@ -342,11 +397,9 @@ describe('createWebhookHandler', () => {
       },
       assert: (body) => {
         expect(body).toMatchObject({ codexStageTriggered: 'implementation' })
-        expect(publishedMessages).toHaveLength(2)
-        const implementationStructuredMessage = publishedMessages.find(
-          (message) => message.topic === 'github.issues.codex.tasks',
-        )
-        expect(implementationStructuredMessage).toBeTruthy()
+        expect(publishedMessages).toHaveLength(1)
+        expect(publishedMessages.some((message) => message.topic === 'github.issues.codex.tasks')).toBe(false)
+        expectAgentRunSubmission(fetchMock, { deliveryId: 'delivery-issues-opened', issueNumber: 42 })
         expect(githubServiceMock.postIssueReaction).toHaveBeenCalledWith(
           expect.objectContaining({
             repositoryFullName: 'owner/repo',
@@ -384,7 +437,8 @@ describe('createWebhookHandler', () => {
       },
       assert: (body) => {
         expect(body).toMatchObject({ codexStageTriggered: 'implementation' })
-        expect(publishedMessages.filter((message) => message.topic === 'github.issues.codex.tasks')).toHaveLength(1)
+        expect(publishedMessages.some((message) => message.topic === 'github.issues.codex.tasks')).toBe(false)
+        expectAgentRunSubmission(fetchMock, { deliveryId: 'delivery-issue_comment-created', issueNumber: 99 })
         expect(githubServiceMock.postIssueCommentReaction).toHaveBeenCalledWith(
           expect.objectContaining({
             repositoryFullName: 'owner/repo',
@@ -532,6 +586,7 @@ describe('createWebhookHandler', () => {
       ...(configOverride ?? {}),
       idempotency: { ...baseConfig.idempotency, ...(configOverride?.idempotency ?? {}) },
       atlas: { ...baseConfig.atlas, ...(configOverride?.atlas ?? {}) },
+      agents: { ...baseConfig.agents, ...(configOverride?.agents ?? {}) },
       codebase: { ...baseConfig.codebase, ...(configOverride?.codebase ?? {}) },
       github: { ...baseConfig.github, ...(configOverride?.github ?? {}) },
       topics: { ...baseConfig.topics, ...(configOverride?.topics ?? {}) },
@@ -559,7 +614,9 @@ describe('createWebhookHandler', () => {
         }),
       )
     } else {
-      expect(fetchMock).not.toHaveBeenCalled()
+      expect(fetchMock.mock.calls.some(([target]) => String(target) === `${config.atlas.baseUrl}/api/enrich`)).toBe(
+        false,
+      )
     }
   })
 
@@ -613,9 +670,9 @@ describe('createWebhookHandler', () => {
     const duplicateBody = await second.json()
     expect(duplicateBody).toMatchObject({ status: 'duplicate', deliveryId: 'delivery-dup-123' })
 
-    expect(publishedMessages).toHaveLength(2)
+    expect(publishedMessages).toHaveLength(1)
     expect(githubServiceMock.postIssueReaction).toHaveBeenCalledTimes(1)
-    expect(fetchMock).not.toHaveBeenCalled()
+    expect(fetchMock.mock.calls.filter(([target]) => String(target) === AGENTS_AGENT_RUNS_URL)).toHaveLength(1)
   })
 
   it('publishes implementation message on issue opened', async () => {
@@ -644,24 +701,9 @@ describe('createWebhookHandler', () => {
     )
 
     expect(response.status).toBe(202)
-    expect(publishedMessages).toHaveLength(2)
-    const [implementationStructuredMessage, rawJsonMessage] = publishedMessages
-    if (!implementationStructuredMessage) {
-      throw new Error('missing structured message')
-    }
-
-    expect(implementationStructuredMessage).toMatchObject({
-      topic: 'github.issues.codex.tasks',
-      key: 'issue-1-implementation',
-    })
-    expect(implementationStructuredMessage.headers?.['content-type']).toBe('application/x-protobuf')
-
-    const implementationProto = fromBinary(CodexTaskSchema, toBuffer(implementationStructuredMessage.value))
-    expect(implementationProto.stage).toBe(CodexTaskStage.IMPLEMENTATION)
-    expect(implementationProto.repository).toBe('owner/repo')
-    expect(implementationProto.issueNumber).toBe(BigInt(1))
-    expect(implementationProto.deliveryId).toBe('delivery-123')
-
+    expect(publishedMessages).toHaveLength(1)
+    const [rawJsonMessage] = publishedMessages
+    expectAgentRunSubmission(fetchMock, { deliveryId: 'delivery-123', issueNumber: 1 })
     expect(rawJsonMessage).toMatchObject({ topic: 'raw-topic', key: 'delivery-123' })
     expect(githubServiceMock.postIssueReaction).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -670,7 +712,7 @@ describe('createWebhookHandler', () => {
         reactionContent: '+1',
       }),
     )
-    expect(fetchMock).not.toHaveBeenCalled()
+    expect(findAgentRunSubmission(fetchMock)).toBeTruthy()
   })
 
   it('ignores duplicate github deliveries before publishing', async () => {
@@ -697,7 +739,8 @@ describe('createWebhookHandler', () => {
 
     const response = await handler(buildRequest(payload, headers), 'github')
     expect(response.status).toBe(202)
-    expect(publishedMessages).toHaveLength(2)
+    expect(publishedMessages).toHaveLength(1)
+    expectAgentRunSubmission(fetchMock, { deliveryId: 'delivery-dup', issueNumber: 1 })
     expect(githubServiceMock.postIssueReaction).toHaveBeenCalledTimes(1)
 
     const duplicateResponse = await handler(buildRequest(payload, headers), 'github')
@@ -706,7 +749,8 @@ describe('createWebhookHandler', () => {
       status: 'duplicate',
       deliveryId: 'delivery-dup',
     })
-    expect(publishedMessages).toHaveLength(2)
+    expect(publishedMessages).toHaveLength(1)
+    expect(fetchMock.mock.calls.filter(([target]) => String(target) === AGENTS_AGENT_RUNS_URL)).toHaveLength(1)
     expect(githubServiceMock.postIssueReaction).toHaveBeenCalledTimes(1)
   })
 
@@ -735,22 +779,9 @@ describe('createWebhookHandler', () => {
       'github',
     )
 
-    expect(publishedMessages).toHaveLength(2)
-    const [implementationStructuredMessage, rawJsonMessage] = publishedMessages
-    if (!implementationStructuredMessage) {
-      throw new Error('missing structured message')
-    }
-
-    expect(implementationStructuredMessage).toMatchObject({
-      topic: 'github.issues.codex.tasks',
-      key: 'issue-2-implementation',
-    })
-    expect(implementationStructuredMessage.headers?.['content-type']).toBe('application/x-protobuf')
-
-    const implementationProto = fromBinary(CodexTaskSchema, toBuffer(implementationStructuredMessage.value))
-    expect(implementationProto.stage).toBe(CodexTaskStage.IMPLEMENTATION)
-    expect(implementationProto.deliveryId).toBe('delivery-999')
-
+    expect(publishedMessages).toHaveLength(1)
+    const [rawJsonMessage] = publishedMessages
+    expectAgentRunSubmission(fetchMock, { deliveryId: 'delivery-999', issueNumber: 2 })
     expect(rawJsonMessage).toMatchObject({ topic: 'raw-topic', key: 'delivery-999' })
     expect(githubServiceMock.postIssueReaction).toHaveBeenCalledWith(
       expect.objectContaining({

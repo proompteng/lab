@@ -92,10 +92,7 @@ The response preserves the old `workflowName` JSON field as a compatibility alia
 
 ## Codex Task Ingestion
 
-Structured Codex tasks arrive through `argocd/applications/facteur/overlays/cluster/facteur-codex-kafkasource.yaml`, which forwards protobuf payloads to `/agent-runs/github-issues`.
-
-- **Endpoint**: `POST /agent-runs/github-issues`
-- **Input**: `proompteng.froussard.v1.CodexTask` protobuf payload.
+GitHub issue implementation runs no longer transit Facteur. Froussard submits those AgentRuns directly to the Agents service; Facteur remains responsible for Discord/domain command events on `/events`.
 - **Storage**: Facteur writes `codex_kb.ideas`, `codex_kb.tasks`, and `codex_kb.task_runs`.
 - **Runtime**: Facteur submits an Agents `AgentRun` and stores the returned AgentRun identity.
 - **Idempotency**: repeated `delivery_id` values return the existing result.

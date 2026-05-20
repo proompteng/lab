@@ -20,7 +20,7 @@ jobs:
   test:
     uses: ./.github/workflows/common-monorepo.yml
     with:
-      install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter froussard --filter @proompteng/codex --filter @proompteng/discord --filter @proompteng/otel && bun run --filter @proompteng/otel build && bun run --filter @proompteng/codex build && bun run --filter @proompteng/discord build
+      install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/agent-contracts --filter froussard --filter @proompteng/codex --filter @proompteng/discord --filter @proompteng/otel && bun run --filter @proompteng/agent-contracts build && bun run --filter @proompteng/otel build && bun run --filter @proompteng/codex build && bun run --filter @proompteng/discord build
       lint-command: bunx oxfmt --check apps/froussard
       oxlint-command: bun run --cwd apps/froussard lint:oxlint
       oxlint-type-command: bun run --cwd apps/froussard lint:oxlint:type

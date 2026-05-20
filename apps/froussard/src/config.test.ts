@@ -8,7 +8,6 @@ const baseEnv = {
   KAFKA_USERNAME: 'user',
   KAFKA_PASSWORD: 'pass',
   KAFKA_TOPIC: 'raw-topic',
-  KAFKA_CODEX_TOPIC_STRUCTURED: 'github.issues.codex.tasks',
   KAFKA_CODEX_JUDGE_TOPIC: 'github.webhook.codex.judge',
   KAFKA_DISCORD_COMMAND_TOPIC: 'discord.commands.incoming',
   ATLAS_BASE_URL: 'http://jangar',
@@ -22,8 +21,17 @@ describe('loadConfig', () => {
     expect(config.idempotency.ttlMs).toBe(10 * 60 * 1000)
     expect(config.idempotency.maxEntries).toBe(10_000)
     expect(config.kafka.brokers).toEqual(['broker1:9092', 'broker2:9093'])
-    expect(config.kafka.topics.codexStructured).toBe('github.issues.codex.tasks')
     expect(config.kafka.topics.codexJudge).toBe('github.webhook.codex.judge')
+    expect(config.agents.serviceBaseUrl).toBe('http://agents.agents.svc.cluster.local')
+    expect(config.agents.serviceClientName).toBe('froussard')
+    expect(config.agents.namespace).toBe('agents')
+    expect(config.agents.agentName).toBe('codex-agent')
+    expect(config.agents.vcsProviderName).toBe('github')
+    expect(config.agents.serviceAccountName).toBe('agents-sa')
+    expect(config.agents.secrets).toEqual(['github-token', 'codex-auth'])
+    expect(config.agents.secretBindingRef).toBe('codex-github-token')
+    expect(config.agents.ttlSecondsAfterFinished).toBe(86_400)
+    expect(config.agents.goalTokenBudget).toBe(250_000)
     expect(config.codebase.baseBranch).toBe('main')
     expect(config.codebase.branchPrefix).toBe('codex/issue-')
     expect(config.codex.triggerLogins).toEqual(['gregkonush', 'tuslagch'])
@@ -45,6 +53,16 @@ describe('loadConfig', () => {
       DISCORD_DEFAULT_EPHEMERAL: 'false',
       FROUSSARD_WEBHOOK_IDEMPOTENCY_TTL_MS: '30000',
       FROUSSARD_WEBHOOK_IDEMPOTENCY_MAX_ENTRIES: '250',
+      AGENTS_SERVICE_BASE_URL: 'http://agents.override/',
+      AGENTS_SERVICE_CLIENT_NAME: 'froussard-tests',
+      AGENTS_NAMESPACE: 'agents-dev',
+      AGENTS_CODEX_AGENT_NAME: 'codex-spark-agent',
+      AGENTS_VCS_PROVIDER_NAME: 'github-dev',
+      AGENTS_SERVICE_ACCOUNT_NAME: 'custom-sa',
+      AGENTS_CODEX_SECRETS: 'codex-openai-key, codex-github-token',
+      AGENTS_CODEX_SECRET_BINDING_REF: 'codex-github-token-dev',
+      AGENTS_CODEX_TTL_SECONDS_AFTER_FINISHED: '600',
+      AGENTS_CODEX_GOAL_TOKEN_BUDGET: '12345',
     }
 
     const config = loadConfig(env)
@@ -57,6 +75,16 @@ describe('loadConfig', () => {
     expect(config.codex.implementationTriggerPhrase).toBe('run it')
     expect(config.github.ackReaction).toBe('eyes')
     expect(config.discord.defaultResponse.ephemeral).toBe(false)
+    expect(config.agents.serviceBaseUrl).toBe('http://agents.override')
+    expect(config.agents.serviceClientName).toBe('froussard-tests')
+    expect(config.agents.namespace).toBe('agents-dev')
+    expect(config.agents.agentName).toBe('codex-spark-agent')
+    expect(config.agents.vcsProviderName).toBe('github-dev')
+    expect(config.agents.serviceAccountName).toBe('custom-sa')
+    expect(config.agents.secrets).toEqual(['codex-openai-key', 'codex-github-token'])
+    expect(config.agents.secretBindingRef).toBe('codex-github-token-dev')
+    expect(config.agents.ttlSecondsAfterFinished).toBe(600)
+    expect(config.agents.goalTokenBudget).toBe(12345)
   })
 
   it('supports idempotency TTL seconds env', () => {
@@ -95,7 +123,6 @@ describe('loadConfig', () => {
   it('throws when required env is missing', () => {
     expect(() => loadConfig({ ...baseEnv, KAFKA_BROKERS: '' })).toThrow()
     expect(() => loadConfig({ ...baseEnv, GITHUB_WEBHOOK_SECRET: undefined })).toThrow()
-    expect(() => loadConfig({ ...baseEnv, KAFKA_CODEX_TOPIC_STRUCTURED: undefined })).toThrow()
     expect(() => loadConfig({ ...baseEnv, KAFKA_CODEX_JUDGE_TOPIC: undefined })).toThrow()
     expect(() => loadConfig({ ...baseEnv, KAFKA_DISCORD_COMMAND_TOPIC: undefined })).toThrow()
     expect(() => loadConfig({ ...baseEnv, DISCORD_PUBLIC_KEY: undefined })).toThrow()

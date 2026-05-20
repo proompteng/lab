@@ -5,6 +5,18 @@ export interface WebhookConfig {
     baseUrl: string
     apiKey: string | null
   }
+  agents: {
+    serviceBaseUrl: string
+    serviceClientName: string
+    namespace: string
+    agentName: string
+    vcsProviderName: string
+    serviceAccountName: string
+    secrets: string[]
+    secretBindingRef: string
+    ttlSecondsAfterFinished: number
+    goalTokenBudget: number
+  }
   codebase: {
     baseBranch: string
     branchPrefix: string
@@ -20,7 +32,6 @@ export interface WebhookConfig {
   codexImplementationTriggerPhrase: string
   topics: {
     raw: string
-    codexStructured: string
     codexJudge: string
     discordCommands: string
   }

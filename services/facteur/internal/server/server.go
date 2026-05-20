@@ -13,18 +13,12 @@ import (
 
 	"github.com/gofiber/contrib/otelfiber"
 	"github.com/gofiber/fiber/v2"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/proompteng/lab/services/facteur/internal/bridge"
 	"github.com/proompteng/lab/services/facteur/internal/consumer"
 	"github.com/proompteng/lab/services/facteur/internal/facteurpb"
-	"github.com/proompteng/lab/services/facteur/internal/froussardpb"
-	"github.com/proompteng/lab/services/facteur/internal/orchestrator"
 	"github.com/proompteng/lab/services/facteur/internal/session"
-	"github.com/proompteng/lab/services/facteur/internal/telemetry"
 )
 
 var (
@@ -48,23 +42,11 @@ const (
 
 // Options configures the HTTP server lifecycle.
 type Options struct {
-	ListenAddress    string
-	Prefork          bool
-	Dispatcher       bridge.Dispatcher
-	Store            session.Store
-	SessionTTL       time.Duration
-	CodexImplementer CodexImplementerOptions
-}
-
-// CodexImplementer defines the implementation orchestration surface required for Codex tasks.
-type CodexImplementer interface {
-	Implement(ctx context.Context, task *froussardpb.CodexTask) (orchestrator.Result, error)
-}
-
-// CodexImplementerOptions wires the implementation orchestrator into the HTTP layer.
-type CodexImplementerOptions struct {
-	Enabled     bool
-	Implementer CodexImplementer
+	ListenAddress string
+	Prefork       bool
+	Dispatcher    bridge.Dispatcher
+	Store         session.Store
+	SessionTTL    time.Duration
 }
 
 // Server wraps a Fiber application with lifecycle helpers.
@@ -229,97 +211,6 @@ func registerRoutes(app *fiber.App, opts Options) {
 		})
 	})
 
-	app.Post("/agent-runs/github-issues", func(c *fiber.Ctx) error {
-		body := c.Body()
-		if len(body) == 0 {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "empty payload"})
-		}
-
-		var task froussardpb.CodexTask
-		if err := proto.Unmarshal(body, &task); err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid payload", "details": err.Error()})
-		}
-
-		log.Printf(
-			"GitHub issue AgentRun received: stage=%s repo=%s issue=%d head=%s delivery=%s",
-			task.GetStage().String(),
-			task.GetRepository(),
-			task.GetIssueNumber(),
-			task.GetHead(),
-			task.GetDeliveryId(),
-		)
-
-		ctx := c.UserContext()
-		if ctx == nil {
-			ctx = context.Background()
-		}
-
-		ctx, span := telemetry.Tracer().Start(
-			ctx,
-			"facteur.server.github_issue_agent_runs",
-			trace.WithSpanKind(trace.SpanKindServer),
-		)
-		defer span.End()
-
-		span.SetAttributes(
-			attribute.String("codex.stage", strings.ToLower(strings.TrimPrefix(task.GetStage().String(), "CODEX_TASK_STAGE_"))),
-			attribute.String("codex.repository", task.GetRepository()),
-			attribute.Int64("codex.issue_number", task.GetIssueNumber()),
-			attribute.String("codex.delivery_id", task.GetDeliveryId()),
-		)
-
-		if task.GetStage() != froussardpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION {
-			span.SetStatus(codes.Error, "unsupported codex stage")
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "unsupported codex stage"})
-		}
-
-		if !opts.CodexImplementer.Enabled || opts.CodexImplementer.Implementer == nil {
-			span.SetStatus(codes.Error, "implementation orchestrator disabled")
-			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "implementation orchestrator disabled"})
-		}
-
-		result, err := opts.CodexImplementer.Implementer.Implement(ctx, &task)
-		if err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, "implementation orchestrator failed")
-			log.Printf(
-				"codex implementation orchestrator failed: repo=%s issue=%d delivery=%s err=%v",
-				task.GetRepository(),
-				task.GetIssueNumber(),
-				task.GetDeliveryId(),
-				err,
-			)
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error":   "implementation orchestrator failed",
-				"details": err.Error(),
-			})
-		}
-
-		span.SetAttributes(
-			attribute.String("facteur.codex.namespace", result.Namespace),
-			attribute.String("facteur.codex.agentrun", result.AgentRunName),
-			attribute.Bool("facteur.codex.duplicate", result.Duplicate),
-		)
-		span.SetStatus(codes.Ok, "implementation orchestrator dispatched")
-
-		log.Printf(
-			"codex implementation orchestrated: repo=%s issue=%d delivery=%s agentrun=%s namespace=%s duplicate=%t",
-			task.GetRepository(),
-			task.GetIssueNumber(),
-			task.GetDeliveryId(),
-			result.AgentRunName,
-			result.Namespace,
-			result.Duplicate,
-		)
-
-		return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
-			"stage":        "implementation",
-			"namespace":    result.Namespace,
-			"agentRunName": result.AgentRunName,
-			"submittedAt":  result.SubmittedAt.UTC().Format(time.RFC3339),
-			"duplicate":    result.Duplicate,
-		})
-	})
 }
 
 // RunWithLogger is a helper that logs fatal errors from Run.

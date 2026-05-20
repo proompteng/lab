@@ -14,7 +14,6 @@ type Config struct {
 	Redis       RedisConfig         `mapstructure:"redis"`
 	RoleMap     map[string][]string `mapstructure:"role_map"`
 	Server      ServerConfig        `mapstructure:"server"`
-	Codex       CodexListenerConfig `mapstructure:"codex_listener"`
 	Implementer ImplementerConfig   `mapstructure:"codex_implementation_orchestrator"`
 	Postgres    DatabaseConfig      `mapstructure:"postgres"`
 }
@@ -53,16 +52,6 @@ type ImplementerConfig struct {
 // ServerConfig contains HTTP server runtime options.
 type ServerConfig struct {
 	ListenAddress string `mapstructure:"listen_address"`
-}
-
-// CodexListenerConfig captures Kafka settings for the structured Codex task stream.
-type CodexListenerConfig struct {
-	Enabled bool            `mapstructure:"enabled"`
-	Brokers []string        `mapstructure:"brokers"`
-	Topic   string          `mapstructure:"topic"`
-	GroupID string          `mapstructure:"group_id"`
-	TLS     KafkaTLSConfig  `mapstructure:"tls"`
-	SASL    KafkaSASLConfig `mapstructure:"sasl"`
 }
 
 // KafkaTLSConfig toggles TLS behaviour for Kafka clients.
@@ -117,16 +106,6 @@ func LoadWithOptions(opts Options) (*Config, error) {
 		{key: "postgres.dsn"},
 		{key: "role_map"},
 		{key: "server.listen_address"},
-		{key: "codex_listener.enabled"},
-		{key: "codex_listener.brokers"},
-		{key: "codex_listener.topic"},
-		{key: "codex_listener.group_id"},
-		{key: "codex_listener.tls.enabled"},
-		{key: "codex_listener.tls.insecure_skip_verify"},
-		{key: "codex_listener.sasl.enabled"},
-		{key: "codex_listener.sasl.mechanism"},
-		{key: "codex_listener.sasl.username"},
-		{key: "codex_listener.sasl.password"},
 		{
 			key:  "codex_implementation_orchestrator.enabled",
 			envs: []string{"FACTEUR_CODEX_ENABLE_IMPLEMENTATION_ORCHESTRATION"},
@@ -210,9 +189,6 @@ func normaliseConfig(cfg *Config) {
 	if cfg.Server.ListenAddress == "" {
 		cfg.Server.ListenAddress = ":8080"
 	}
-	if cfg.Codex.GroupID == "" {
-		cfg.Codex.GroupID = "facteur-codex-listener"
-	}
 }
 
 func validate(cfg Config) error {
@@ -231,18 +207,6 @@ func validate(cfg Config) error {
 	if cfg.Postgres.DSN == "" {
 		errs = append(errs, "postgres.dsn is required")
 	}
-	if cfg.Codex.Enabled {
-		if len(cfg.Codex.Brokers) == 0 {
-			errs = append(errs, "codex_listener.brokers is required when enabled")
-		}
-		if cfg.Codex.Topic == "" {
-			errs = append(errs, "codex_listener.topic is required when enabled")
-		}
-		if cfg.Codex.GroupID == "" {
-			errs = append(errs, "codex_listener.group_id is required when enabled")
-		}
-	}
-
 	if len(errs) > 0 {
 		return errors.New(strings.Join(errs, "; "))
 	}

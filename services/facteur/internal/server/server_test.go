@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"log"
 	"net/http/httptest"
 	"testing"
@@ -15,8 +14,6 @@ import (
 
 	"github.com/proompteng/lab/services/facteur/internal/bridge"
 	"github.com/proompteng/lab/services/facteur/internal/facteurpb"
-	"github.com/proompteng/lab/services/facteur/internal/froussardpb"
-	"github.com/proompteng/lab/services/facteur/internal/orchestrator"
 	"github.com/proompteng/lab/services/facteur/internal/server"
 	"github.com/proompteng/lab/services/facteur/internal/session"
 )
@@ -105,157 +102,18 @@ func TestEventsEndpointRejectsEmptyPayload(t *testing.T) {
 	require.Equal(t, 400, resp.StatusCode)
 }
 
-func TestGithubIssueAgentRunsImplementationDispatches(t *testing.T) {
-	implementer := &stubImplementer{result: orchestrator.Result{
-		Namespace:    "agents",
-		AgentRunName: "codex-agent-abc123",
-		SubmittedAt:  time.Unix(1735600400, 0).UTC(),
-	}}
-	srv, err := server.New(server.Options{
-		Dispatcher: &stubDispatcher{},
-		Store:      &stubStore{},
-		CodexImplementer: server.CodexImplementerOptions{
-			Enabled:     true,
-			Implementer: implementer,
-		},
-	})
-	require.NoError(t, err)
-
-	payload, err := proto.Marshal(&froussardpb.CodexTask{
-		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION,
-		Repository:  "proompteng/lab",
-		IssueNumber: 1636,
-		DeliveryId:  "delivery-impl",
-	})
-	require.NoError(t, err)
-
-	req := httptest.NewRequest("POST", "/agent-runs/github-issues", bytes.NewReader(payload))
-	req.Header.Set("Content-Type", "application/x-protobuf")
-
-	resp, err := srv.App().Test(req)
-	require.NoError(t, err)
-	require.Equal(t, 202, resp.StatusCode)
-
-	var data map[string]any
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&data))
-	_ = resp.Body.Close()
-	require.Equal(t, "implementation", data["stage"])
-	require.Equal(t, "agents", data["namespace"])
-	require.Equal(t, "codex-agent-abc123", data["agentRunName"])
-	require.Equal(t, implementer.result.SubmittedAt.Format(time.RFC3339), data["submittedAt"])
-	require.False(t, data["duplicate"].(bool))
-	require.Equal(t, 1, implementer.calls)
-}
-
-func TestGithubIssueAgentRunsImplementationImplementerError(t *testing.T) {
-	implementer := &stubImplementer{err: errors.New("implementer boom")}
-	srv, err := server.New(server.Options{
-		Dispatcher: &stubDispatcher{},
-		Store:      &stubStore{},
-		CodexImplementer: server.CodexImplementerOptions{
-			Enabled:     true,
-			Implementer: implementer,
-		},
-	})
-	require.NoError(t, err)
-
-	payload, err := proto.Marshal(&froussardpb.CodexTask{
-		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION,
-		Repository:  "proompteng/lab",
-		IssueNumber: 1636,
-		DeliveryId:  "delivery-error",
-	})
-	require.NoError(t, err)
-
-	req := httptest.NewRequest("POST", "/agent-runs/github-issues", bytes.NewReader(payload))
-	req.Header.Set("Content-Type", "application/x-protobuf")
-
-	resp, err := srv.App().Test(req)
-	require.NoError(t, err)
-	require.Equal(t, 500, resp.StatusCode)
-	require.Equal(t, 1, implementer.calls)
-}
-
-func TestGithubIssueAgentRunsImplementationDisabled(t *testing.T) {
-	srv, err := server.New(server.Options{
-		Dispatcher: &stubDispatcher{},
-		Store:      &stubStore{},
-	})
-	require.NoError(t, err)
-
-	payload, err := proto.Marshal(&froussardpb.CodexTask{
-		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION,
-		Repository:  "proompteng/lab",
-		IssueNumber: 99,
-		DeliveryId:  "delivery-disabled",
-	})
-	require.NoError(t, err)
-
-	req := httptest.NewRequest("POST", "/agent-runs/github-issues", bytes.NewReader(payload))
-	req.Header.Set("Content-Type", "application/x-protobuf")
-
-	resp, err := srv.App().Test(req)
-	require.NoError(t, err)
-	require.Equal(t, 503, resp.StatusCode)
-}
-
-func TestGithubIssueAgentRunsRejectsEmptyPayload(t *testing.T) {
-	srv, err := server.New(server.Options{})
-	require.NoError(t, err)
-
-	req := httptest.NewRequest("POST", "/agent-runs/github-issues", bytes.NewReader(nil))
-	req.Header.Set("Content-Type", "application/x-protobuf")
-
-	resp, err := srv.App().Test(req)
-	require.NoError(t, err)
-	require.Equal(t, 400, resp.StatusCode)
-}
-
-func TestGithubIssueAgentRunsRejectsInvalidPayload(t *testing.T) {
-	srv, err := server.New(server.Options{})
-	require.NoError(t, err)
-
-	req := httptest.NewRequest("POST", "/agent-runs/github-issues", bytes.NewReader([]byte("not-proto")))
-	req.Header.Set("Content-Type", "application/x-protobuf")
-
-	resp, err := srv.App().Test(req)
-	require.NoError(t, err)
-	require.Equal(t, 400, resp.StatusCode)
-}
-
-func TestGithubIssueAgentRunsUnsupportedStage(t *testing.T) {
-	srv, err := server.New(server.Options{
-		Dispatcher: &stubDispatcher{},
-		Store:      &stubStore{},
-	})
-	require.NoError(t, err)
-
-	payload, err := proto.Marshal(&froussardpb.CodexTask{
-		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_REVIEW,
-		Repository:  "proompteng/lab",
-		IssueNumber: 99,
-		DeliveryId:  "delivery-unsupported",
-	})
-	require.NoError(t, err)
-
-	req := httptest.NewRequest("POST", "/agent-runs/github-issues", bytes.NewReader(payload))
-	req.Header.Set("Content-Type", "application/x-protobuf")
-
-	resp, err := srv.App().Test(req)
-	require.NoError(t, err)
-	require.Equal(t, 400, resp.StatusCode)
-}
-
 func TestLegacyCodexTaskIngressIsNotRegistered(t *testing.T) {
 	srv, err := server.New(server.Options{})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest("POST", "/codex"+"/tasks", bytes.NewReader([]byte("legacy")))
-	req.Header.Set("Content-Type", "application/x-protobuf")
+	for _, path := range []string{"/codex/tasks", "/agent-runs/github-issues"} {
+		req := httptest.NewRequest("POST", path, bytes.NewReader([]byte("legacy")))
+		req.Header.Set("Content-Type", "application/x-protobuf")
 
-	resp, err := srv.App().Test(req)
-	require.NoError(t, err)
-	require.Equal(t, 404, resp.StatusCode)
+		resp, err := srv.App().Test(req)
+		require.NoError(t, err)
+		require.Equal(t, 404, resp.StatusCode)
+	}
 }
 
 type stubDispatcher struct {
@@ -294,17 +152,3 @@ func (s *stubStore) Set(_ context.Context, key string, _ []byte, _ time.Duration
 func (s *stubStore) Get(context.Context, string) ([]byte, error) { return nil, session.ErrNotFound }
 
 func (s *stubStore) Delete(context.Context, string) error { return nil }
-
-type stubImplementer struct {
-	result orchestrator.Result
-	err    error
-	calls  int
-}
-
-func (s *stubImplementer) Implement(_ context.Context, _ *froussardpb.CodexTask) (orchestrator.Result, error) {
-	s.calls++
-	if s.err != nil {
-		return orchestrator.Result{}, s.err
-	}
-	return s.result, nil
-}

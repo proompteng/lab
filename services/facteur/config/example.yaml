@@ -10,31 +10,6 @@ redis:
   url: redis://facteur-redis:6379/0
 postgres:
   dsn: postgres://facteur:facteur@facteur-db:5432/facteur_kb?sslmode=disable
-consumer:
-  enabled: true
-  brokers:
-    - localhost:9092
-  topic: discord.commands.incoming
-  group_id: facteur
-  dlq:
-    enabled: false
-    topic: discord.commands.incoming.dlq
-  tls:
-    enabled: false
-    insecure_skip_verify: false
-  sasl:
-    enabled: false
-codex_listener:
-  enabled: true
-  brokers:
-    - localhost:9092
-  topic: github.issues.codex.tasks
-  group_id: facteur-codex-listener
-  tls:
-    enabled: false
-    insecure_skip_verify: false
-  sasl:
-    enabled: false
 codex_implementation_orchestrator:
   enabled: false
   agents_base_url: http://agents.agents.svc.cluster.local

@@ -10,9 +10,7 @@ import (
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/proompteng/lab/services/facteur/internal/froussardpb"
 	"github.com/proompteng/lab/services/facteur/internal/knowledge"
 )
 
@@ -155,75 +153,6 @@ func TestRecordTaskLifecycleDuplicateDelivery(t *testing.T) {
 	assert.Equal(t, taskRec1.ID, taskRec2.ID)
 	assert.Equal(t, runRec1.ID, runRec2.ID)
 	require.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestIngestCodexTask(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		mock.ExpectClose()
-		require.NoError(t, db.Close())
-	})
-
-	store := knowledge.NewStore(db)
-	ctx := context.Background()
-
-	issuedAt := time.Date(2025, 10, 30, 21, 2, 0, 0, time.UTC)
-	created := issuedAt.Add(time.Second)
-
-	mock.ExpectQuery(`INSERT INTO codex_kb\.ideas`).
-		WithArgs(
-			"github.issue",
-			"proompteng/lab#1635",
-			0,
-			"open",
-			sqlmock.AnyArg(),
-			jsonContains(`"repository":"proompteng/lab"`),
-		).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("idea-ingest"))
-
-	expectTaskLifecycle(mock, "idea-ingest", "implementation", "task-ingest", "run-ingest", issuedAt, "delivery-xyz", created)
-
-	ideaID, taskID, runID, err := store.IngestCodexTask(ctx, &froussardpb.CodexTask{
-		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION,
-		Prompt:      "Implement ingestion",
-		Repository:  "proompteng/lab",
-		Base:        "main",
-		Head:        "feature",
-		IssueNumber: 1635,
-		IssueUrl:    "https://github.com/proompteng/lab/issues/1635",
-		IssueTitle:  "Codex ingestion",
-		IssueBody:   "Persist codex tasks",
-		Sender:      "codex-bot",
-		IssuedAt:    timestamppb.New(issuedAt),
-		DeliveryId:  "delivery-xyz",
-	})
-	require.NoError(t, err)
-
-	assert.Equal(t, "idea-ingest", ideaID)
-	assert.Equal(t, "task-ingest", taskID)
-	assert.Equal(t, "run-ingest", runID)
-	require.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestIngestCodexTaskRejectsNilPayload(t *testing.T) {
-	store := knowledge.NewStore(nil)
-
-	_, _, _, err := store.IngestCodexTask(context.Background(), nil)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "payload is required")
-}
-
-func TestIngestCodexTaskRejectsMissingDeliveryID(t *testing.T) {
-	store := knowledge.NewStore(nil)
-
-	_, _, _, err := store.IngestCodexTask(context.Background(), &froussardpb.CodexTask{
-		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION,
-		Repository:  "proompteng/lab",
-		IssueNumber: 1635,
-	})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "missing delivery_id")
 }
 
 func expectTaskLifecycle(mock sqlmock.Sqlmock, ideaID, stage, taskID, runID string, queuedAt time.Time, deliveryID string, created time.Time) {

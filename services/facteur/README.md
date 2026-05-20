@@ -1,11 +1,11 @@
 # facteur
 
-`facteur` is a Go service that mediates Discord bot commands and structured Codex deliveries into Agents `AgentRun` submissions. It follows the [Discord interaction lifecycle](https://discord.com/developers/docs/interactions/receiving-and-responding), keeps domain intake state in its own Postgres schema, and delegates runtime execution to the Agents service.
+`facteur` is a Go service that mediates Discord bot commands into Agents `AgentRun` submissions. It follows the [Discord interaction lifecycle](https://discord.com/developers/docs/interactions/receiving-and-responding), keeps domain intake state in its own Postgres schema, and delegates runtime execution to the Agents service.
 
 ## Layout
 
 - `cmd/facteur`: Cobra-based CLI entrypoints.
-- `internal`: Internal packages for configuration, Discord routing, Agents dispatch, Codex intake, and session storage.
+- `internal`: Internal packages for configuration, Discord routing, Agents dispatch, and session storage.
 - `config`: Example configuration files and schema references (role map schema lives at `schemas/facteur-discord-role-map.schema.json`).
 - `Dockerfile`: Multi-stage build for containerizing the service.
 
@@ -53,42 +53,6 @@ docker compose -f services/facteur/docker-compose.yml up -d --build
 docker compose -f services/facteur/docker-compose.yml down --volumes --remove-orphans
 ```
 
-Run the end-to-end Codex ingestion check (spins the stack, posts a sample task, and asserts persistence) with:
-
-```bash
-export FACTEUR_E2E_BASE_URL="http://127.0.0.1:18080"
-export FACTEUR_E2E_POSTGRES_DSN="postgres://facteur:facteur@127.0.0.1:15432/facteur_kb?sslmode=disable"
-go test -tags e2e ./services/facteur/test/e2e
-```
-
-### Codex knowledge base ingestion
-
-Facteur persists Codex deliveries under `/agent-runs/github-issues` by normalising the `proompteng.froussard.v1.CodexTask` payload into `codex_kb.ideas`, `codex_kb.tasks`, and `codex_kb.task_runs`. The handler requires `FACTEUR_POSTGRES_DSN` and `redis.url`; each delivery must include a unique `delivery_id` so retries remain idempotent.
-
-1. Ensure the service is running with Postgres and Redis reachable (see above).
-2. Encode the sample payload provided in `docs/examples/codex-task.json`:
-   ```bash
-   buf beta protoc \
-    --proto_path=proto \
-    --encode proompteng.froussard.v1.CodexTask \
-    proto/proompteng/froussard/v1/codex_task.proto \
-     < docs/examples/codex-task.json \
-     > /tmp/codex-task.bin
-   ```
-3. Send the request to the local server:
-   ```bash
-   curl -v \
-     -H 'Content-Type: application/x-protobuf' \
-     --data-binary @/tmp/codex-task.bin \
-     http://127.0.0.1:8080/agent-runs/github-issues
-   ```
-4. Inspect persisted rows:
-   ```bash
-   psql "$FACTEUR_POSTGRES_DSN" -c "SELECT tasks.id, tasks.stage, task_runs.delivery_id FROM codex_kb.tasks JOIN codex_kb.task_runs ON task_runs.task_id = tasks.id;"
-   ```
-
-Replaying the same `delivery_id` results in a `202 Accepted` response with unchanged `task_run` IDs, confirming idempotent intake.
-
 ## Observability
 
 Facteur boots with OpenTelemetry telemetry enabled. Traces and metrics are exported via OTLP/HTTP, targeting the in-cluster observability deployment by default. The Knative manifest supplies the following environment variables:
@@ -104,9 +68,9 @@ When running locally, point these values at your observability environment to ke
 
 Cluster deployments rely on a namespace-scoped Grafana Alloy deployment (`argocd/applications/facteur/overlays/cluster/alloy-*.yaml`) to forward Knative pod logs to the observability Loki gateway (`observability-loki-loki-distributed-gateway`), since the Knative stack does not configure log shipping on its own.
 
-### Codex implementation orchestration
+### AgentRun dispatch
 
-Implementation runs through the implementation orchestrator (`codex_implementation_orchestrator.enabled=true`, or the env alias `FACTEUR_CODEX_ENABLE_IMPLEMENTATION_ORCHESTRATION`) and submits an `AgentRun` to the Agents service at `codex_implementation_orchestrator.agents_base_url`. The default production target is the `codex-agent` Agent in the `agents` namespace using the Agents-owned `agents-codex-runner` runtime.
+Discord command dispatch submits an `AgentRun` to the Agents service at `codex_implementation_orchestrator.agents_base_url`. The default production target is the `codex-agent` Agent in the `agents` namespace using the Agents-owned runtime.
 
 ## Container image
 

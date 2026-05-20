@@ -1,31 +1,13 @@
-import type { MessageShape } from '@bufbuild/protobuf'
-import { toBinary } from '@bufbuild/protobuf'
 import type { Effect as EffectType } from 'effect/Effect'
 import type { WorkflowCommand } from '@/codex/workflow-machine'
 import type { AppConfigService } from '@/effect/config'
 import type { AppRuntime } from '@/effect/runtime'
 import { type AppLogger, logger } from '@/logger'
-import { CodexTaskSchema } from '@/proto/proompteng/froussard/v1/codex_task_pb'
+import type { AgentRunSubmission, AgentRunSubmitter } from '@/services/agents'
 import type { GithubService } from '@/services/github/service'
 import type { GithubServiceDefinition } from '@/services/github/service.types'
 import type { KafkaProducer } from '@/services/kafka'
-import { publishKafkaMessage } from '@/webhooks/utils'
-import {
-  CODEX_READY_COMMENT_MARKER,
-  PROTO_CODEX_TASK_FULL_NAME,
-  PROTO_CODEX_TASK_SCHEMA,
-  PROTO_CONTENT_TYPE,
-} from './constants'
-
-const toHeaderRecord = (value: unknown): Record<string, string> => {
-  if (!value || typeof value !== 'object') {
-    return {}
-  }
-
-  return Object.fromEntries(
-    Object.entries(value).flatMap(([key, entry]) => (typeof entry === 'string' ? [[key, entry]] : [])),
-  )
-}
+import { CODEX_READY_COMMENT_MARKER } from './constants'
 
 export type WorkflowStage = 'implementation'
 
@@ -41,12 +23,10 @@ export interface WorkflowExecutionContext {
       apiBaseUrl: string
       userAgent: string
     }
-    topics: {
-      codexStructured: string
-    }
   }
   deliveryId: string
   agentRunIdentifier?: string | null
+  submitAgentRun: AgentRunSubmitter
 }
 
 export const executeWorkflowCommands = async (
@@ -57,28 +37,17 @@ export const executeWorkflowCommands = async (
 
   for (const command of commands) {
     switch (command.type) {
-      case 'publishImplementation': {
+      case 'submitImplementation': {
         stage = 'implementation'
         logger.info(
           { key: command.data.key, deliveryId: context.deliveryId },
-          'publishing codex implementation message',
+          'submitting codex implementation AgentRun',
         )
-        const structuredHeaders = toHeaderRecord(command.data.structuredHeaders)
-        const structuredMessage = command.data.structuredMessage as MessageShape<typeof CodexTaskSchema>
-        await context.runtime.runPromise(
-          publishKafkaMessage({
-            topic: command.data.topics.codexStructured,
-            key: command.data.key,
-            value: toBinary(CodexTaskSchema, structuredMessage),
-            headers: {
-              ...structuredHeaders,
-              'x-codex-task-stage': 'implementation',
-              'content-type': PROTO_CONTENT_TYPE,
-              'x-protobuf-message': PROTO_CODEX_TASK_FULL_NAME,
-              'x-protobuf-schema': PROTO_CODEX_TASK_SCHEMA,
-            },
-          }),
-        )
+        const submission = command.data.agentRun as AgentRunSubmission
+        const result = await context.submitAgentRun(submission)
+        if (!result.ok) {
+          throw new Error(result.error ?? `Agents service rejected AgentRun submission with HTTP ${result.status}`)
+        }
         break
       }
       case 'postReadyComment': {

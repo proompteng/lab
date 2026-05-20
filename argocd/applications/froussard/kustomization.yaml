@@ -5,7 +5,6 @@ resources:
   - discord-secrets.yaml
   - github-webhook-topic.yaml
   - github-webhook-codex-judge-topic.yaml
-  - github-issues-codex-tasks-topic.yaml
   - coder-workspace-access.yaml
   - knative-service.yaml
   - knative-host-middleware.yaml

@@ -2,7 +2,6 @@ package facteur
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"net/url"
 	"os"
@@ -13,19 +12,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
-
-	"github.com/proompteng/lab/services/facteur/internal/agents"
 	"github.com/proompteng/lab/services/facteur/internal/config"
-	"github.com/proompteng/lab/services/facteur/internal/knowledge"
-	"github.com/proompteng/lab/services/facteur/internal/orchestrator"
 	"github.com/proompteng/lab/services/facteur/internal/server"
 	"github.com/proompteng/lab/services/facteur/internal/session"
 	"github.com/proompteng/lab/services/facteur/internal/telemetry"
 )
 
 var (
-	postgresOpener   = openPostgres
 	migrationsRunner = applyMigrations
 )
 
@@ -57,8 +50,7 @@ func NewServeCommand() *cobra.Command {
 			cfg.Postgres.DSN = dsn
 
 			cmd.Printf(
-				"config: dispatch_target=agents implementer_enabled=%t agents_url=%s implementer_ns=%s implementer_agent=%s redis=%s postgres=%s listen=%s\n",
-				cfg.Implementer.Enabled,
+				"config: dispatch_target=agents agents_url=%s agent_namespace=%s agent=%s redis=%s postgres=%s listen=%s\n",
 				cfg.Implementer.AgentsBaseURL,
 				cfg.Implementer.Namespace,
 				cfg.Implementer.AgentName,
@@ -94,72 +86,16 @@ func NewServeCommand() *cobra.Command {
 				return fmt.Errorf("init redis store: %w", err)
 			}
 
-			db, err := postgresOpener(cmd.Context(), cfg.Postgres.DSN)
-			if err != nil {
-				return err
-			}
-			defer func() {
-				if closeErr := db.Close(); closeErr != nil {
-					cmd.PrintErrf("close postgres: %v\n", closeErr)
-				}
-			}()
-
 			dispatcher, _, err := buildDispatcher(cfg)
 			if err != nil {
 				return err
 			}
 
-			knowledgeStore := knowledge.NewStore(db)
-
-			implementerOpts := server.CodexImplementerOptions{}
-			if cfg.Implementer.Enabled {
-				agentsSubmitter, err := agents.NewHTTPSubmitter(cfg.Implementer.AgentsBaseURL, nil)
-				if err != nil {
-					return fmt.Errorf("init agents submitter: %w", err)
-				}
-				implementerCfg := orchestrator.Config{
-					Namespace:               cfg.Implementer.Namespace,
-					AgentName:               cfg.Implementer.AgentName,
-					RuntimeType:             cfg.Implementer.RuntimeType,
-					RuntimeConfig:           cfg.Implementer.RuntimeConfig,
-					Parameters:              map[string]string{},
-					Secrets:                 cfg.Implementer.Secrets,
-					SecretBindingRef:        cfg.Implementer.SecretBindingRef,
-					VCSProvider:             cfg.Implementer.VCSProvider,
-					VCSPolicyMode:           cfg.Implementer.VCSPolicyMode,
-					VCSRequired:             cfg.Implementer.VCSRequired,
-					GoalTokenBudget:         cfg.Implementer.GoalTokenBudget,
-					TTLSecondsAfterFinished: cfg.Implementer.TTLSecondsAfterFinished,
-				}
-
-				for k, v := range cfg.Implementer.Parameters {
-					implementerCfg.Parameters[k] = v
-				}
-
-				implementer, err := orchestrator.NewImplementer(knowledgeStore, agentsSubmitter, implementerCfg)
-				if err != nil {
-					return fmt.Errorf("init codex implementer: %w", err)
-				}
-
-				implementerOpts = server.CodexImplementerOptions{
-					Enabled:     true,
-					Implementer: implementer,
-				}
-				cmd.Printf(
-					"codex implementation orchestration enabled (agents_url=%s namespace=%s agent=%s runtime=%s)\n",
-					cfg.Implementer.AgentsBaseURL,
-					implementerCfg.Namespace,
-					implementerCfg.AgentName,
-					implementerCfg.RuntimeType,
-				)
-			}
-
 			srv, err := server.New(server.Options{
-				ListenAddress:    cfg.Server.ListenAddress,
-				Prefork:          prefork,
-				Dispatcher:       dispatcher,
-				Store:            sessionStore,
-				CodexImplementer: implementerOpts,
+				ListenAddress: cfg.Server.ListenAddress,
+				Prefork:       prefork,
+				Dispatcher:    dispatcher,
+				Store:         sessionStore,
 			})
 			if err != nil {
 				return fmt.Errorf("init server: %w", err)
@@ -183,31 +119,6 @@ func NewServeCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&prefork, "prefork", false, "Enable Fiber prefork mode for maximised throughput")
 
 	return cmd
-}
-
-func openPostgres(ctx context.Context, dsn string) (*sql.DB, error) {
-	db, err := sql.Open("pgx", dsn)
-	if err != nil {
-		return nil, fmt.Errorf("open postgres: %w", err)
-	}
-
-	db.SetMaxOpenConns(20)
-	db.SetMaxIdleConns(10)
-	db.SetConnMaxIdleTime(5 * time.Minute)
-	db.SetConnMaxLifetime(60 * time.Minute)
-
-	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	if err := db.PingContext(pingCtx); err != nil {
-		closeErr := db.Close()
-		if closeErr != nil {
-			return nil, fmt.Errorf("ping postgres: %v (close error: %w)", err, closeErr)
-		}
-		return nil, fmt.Errorf("ping postgres: %w", err)
-	}
-
-	return db, nil
 }
 
 func cloneStringMap(input map[string]string) map[string]string {

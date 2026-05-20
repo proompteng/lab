@@ -28,7 +28,7 @@ This section cross-references the design/implementation plan against current cod
 Workflow metadata correlation:
 
 - Facteur now attaches `codex.repository`, `codex.issue_number`, `codex.head`, and `codex.base` annotations/labels when
-  submitting workflows (`services/facteur/internal/orchestrator/implementation.go`).
+  submitting workflows through the retired Facteur bridge.
 
 Remaining gaps for a fully functional judge system (as of 2026-01-01):
 
@@ -39,7 +39,7 @@ Current production context (see `docs/codex-workflow.md`):
 - Workflow template: `argocd/applications/froussard/github-codex-implementation-workflow-template.yaml`
 - Workflow outputs: `.codex-implementation-changes.tar.gz`, `.codex-implementation.patch`, `.codex-implementation-status.txt`
 - Argo Events -> Kafka completions: `argocd/applications/froussard/workflow-completions-*.yaml`
-- Kafka topics: `github.issues.codex.tasks`, `argo.workflows.completions`
+- Kafka topics: the retired design used workflow completion topics.
 
 ## Workstreams (Parallel)
 
@@ -471,12 +471,10 @@ Ensure the Codex review is complete and all Codex review threads are resolved be
 
 ### Detailed tasks
 
-- Construct a `CodexTask` protobuf payload with the same repo/issue/head/base and updated prompt.
-- Use schema from `proto/proompteng/froussard/v1/codex_task.proto`.
+- Use the Agents `AgentRun` submit contract for current implementation runs.
 - Use `delivery_id` derived from issue + attempt for idempotency.
-- POST to `facteur-internal` (`argocd/applications/facteur/overlays/cluster/facteur-internal-service.yaml`)
-  with `Content-Type: application/x-protobuf`.
-- Implement Facteur API client and retries.
+- POST to the Agents service.
+- Implement Agents API client and retries.
 - Prevent duplicate reruns (idempotency key).
 - Record link between run and rerun parent.
 

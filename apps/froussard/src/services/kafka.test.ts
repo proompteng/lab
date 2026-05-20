@@ -40,6 +40,18 @@ describe('KafkaProducerLayer', () => {
       baseUrl: 'http://jangar',
       apiKey: null,
     },
+    agents: {
+      serviceBaseUrl: 'http://agents.agents.svc.cluster.local',
+      serviceClientName: 'froussard',
+      namespace: 'agents',
+      agentName: 'codex-agent',
+      vcsProviderName: 'github',
+      serviceAccountName: 'agents-sa',
+      secrets: ['github-token', 'codex-auth'],
+      secretBindingRef: 'codex-github-token',
+      ttlSecondsAfterFinished: 86_400,
+      goalTokenBudget: 250_000,
+    },
     kafka: {
       brokers: ['broker:9092'],
       username: 'user',
@@ -47,7 +59,6 @@ describe('KafkaProducerLayer', () => {
       clientId: 'test-client',
       topics: {
         raw: 'raw-topic',
-        codexStructured: 'github.issues.codex.tasks',
         codexJudge: 'github.webhook.codex.judge',
         discordCommands: 'discord-topic',
       },

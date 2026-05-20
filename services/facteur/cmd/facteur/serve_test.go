@@ -2,14 +2,12 @@ package facteur
 
 import (
 	"context"
-	"database/sql"
 	"io"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pressly/goose/v3"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
@@ -54,24 +52,8 @@ postgres:
   dsn: postgres://user:pass@localhost:5432/db
 server:
   listen_address: 127.0.0.1:0
-codex_listener:
-  enabled: false
 `)
 	require.NoError(t, os.WriteFile(configPath, data, 0o600))
-
-	origOpener := postgresOpener
-	t.Cleanup(func() { postgresOpener = origOpener })
-
-	postgresOpener = func(ctx context.Context, dsn string) (*sql.DB, error) {
-		db, mock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
-		if err != nil {
-			return nil, err
-		}
-		mock.ExpectPing()
-		mock.ExpectClose()
-		require.NoError(t, db.PingContext(ctx))
-		return db, nil
-	}
 
 	origMigrations := migrationsRunner
 	t.Cleanup(func() { migrationsRunner = origMigrations })
@@ -112,10 +94,4 @@ codex_listener:
 		}
 	}
 	require.True(t, migrationsCalled, "expected migrations to run")
-}
-
-func TestOpenPostgresRejectsInvalidDSN(t *testing.T) {
-	_, err := openPostgres(context.Background(), "not-a-dsn")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "postgres")
 }

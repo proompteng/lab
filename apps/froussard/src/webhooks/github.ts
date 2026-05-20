@@ -11,6 +11,7 @@ import * as TSemaphore from 'effect/TSemaphore'
 import type { AppConfigService } from '@/effect/config'
 import type { AppRuntime } from '@/effect/runtime'
 import { type AppLogger, logger } from '@/logger'
+import { makeAgentsServiceSubmitter } from '@/services/agents'
 import { GithubService } from '@/services/github/service'
 import type { KafkaProducer } from '@/services/kafka'
 
@@ -432,12 +433,10 @@ export const createGithubWebhookHandler = ({
           apiBaseUrl: config.github.apiBaseUrl,
           userAgent: config.github.userAgent,
         },
-        topics: {
-          codexStructured: config.topics.codexStructured,
-        },
       },
       deliveryId,
       agentRunIdentifier,
+      submitAgentRun: makeAgentsServiceSubmitter(config.agents),
     }
 
     let codexStageTriggered: WorkflowStage | null = null

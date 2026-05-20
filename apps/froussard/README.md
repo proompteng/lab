@@ -13,15 +13,14 @@ flowchart LR
   Discord[Discord interaction] --> Froussard
   subgraph Kafka Topics
     Raw[github.webhook.events]
-    Structured[github.issues.codex.tasks]
     CodexJudge[github.webhook.codex.judge]
     DiscordTopic[discord.commands.incoming]
   end
   Froussard -->|raw body| Raw
   Froussard -->|codex judge filter| CodexJudge
-  Froussard -->|codex task structured| Structured
+  Froussard -->|GitHub issue implementation AgentRun| Agents
   Froussard -->|slash command| DiscordTopic
-  Structured --> Facteur[Facteur orchestrator]
+  DiscordTopic --> Facteur[Facteur Discord bridge]
   Facteur --> Agents[Agents AgentRun API]
   Agents --> Runner[agents-codex-runner]
 ```
@@ -32,7 +31,7 @@ The Argo CD application also provisions the `discord.commands.incoming` Kafka to
 
 - Validate GitHub `x-hub-signature-256` headers using `@octokit/webhooks`.
 - Validate Discord `x-signature-ed25519`/`x-signature-timestamp` headers using `discord-interactions` before parsing the payload.
-- Emit the original JSON event (`github.webhook.events`), publish Codex task payloads in structured (`github.issues.codex.tasks`) form, and publish the filtered Codex judge stream (`github.webhook.codex.judge`).
+- Emit the original JSON event (`github.webhook.events`), submit GitHub issue implementation runs directly to the Agents `/v1/agent-runs` API, and publish the filtered Codex judge stream (`github.webhook.codex.judge`).
 - Normalize Discord slash command payloads (command name, options, interaction token, user metadata) and publish them into `discord.commands.incoming`.
 - Provision and maintain the `discord.commands.incoming` Kafka topic for Facteur ingestion.
 - Surface health checks on `/health/liveness` and `/health/readiness`.
@@ -62,10 +61,9 @@ The local runtime exposes:
   the `sasl.jaas.config` field, so we persist a lightweight static secret to expose it
   under the `username` key that `userSecret.key` consumers expect while leaving Strimzi
   in charge of password rotation.
-- Facteur consumes `github.issues.codex.tasks` and submits Agents-owned `AgentRun` resources.
+- GitHub issue implementation runs are submitted directly to the Agents service configured by `AGENTS_SERVICE_BASE_URL`.
 - Discord slash command signature verification requires `DISCORD_PUBLIC_KEY`. Set
   `KAFKA_DISCORD_COMMAND_TOPIC` to control the output topic for normalized command events.
-- The structured stream is configured via `KAFKA_CODEX_TOPIC_STRUCTURED` (defaulting to `github.issues.codex.tasks`).
 - The Codex judge stream is configured via `KAFKA_CODEX_JUDGE_TOPIC` (defaulting to `github.webhook.codex.judge`).
 - Webhook idempotency defaults to a 10 minute TTL with 10,000 entries. Override via
   `FROUSSARD_WEBHOOK_IDEMPOTENCY_TTL_MS` and `FROUSSARD_WEBHOOK_IDEMPOTENCY_MAX_ENTRIES`.
@@ -82,8 +80,8 @@ The local runtime exposes:
 ## Verification Checklist
 
 1. Create a GitHub issue in `proompteng/lab` as the Codex trigger user using the **Codex Task** issue template so summary, scope, and validation fields are present.
-2. Ensure Facteur accepts the Kafka task and the Agents service creates an `AgentRun` in the `agents` namespace.
-3. Inspect the AgentRun job logs and artifacts to confirm the payload mirrors the Kafka message and the implementation prompt.
+2. Ensure the Agents service creates an `AgentRun` in the `agents` namespace.
+3. Inspect the AgentRun job logs and artifacts to confirm the payload contains the implementation prompt.
 
 ## Codex Runtime
 

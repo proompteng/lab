@@ -10,7 +10,6 @@ resources:
   - facteur-tailscale-service.yaml
   - facteur-internal-service.yaml
   - facteur-redis.yaml
-  - facteur-codex-kafkasource.yaml
   - facteur-commands-kafkasource.yaml
   - facteur-vector-cluster.yaml
   - alloy-rbac.yaml

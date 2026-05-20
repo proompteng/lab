@@ -3,11 +3,7 @@ import { Schema } from 'effect'
 export const ImplementationCommandSchema = Schema.Struct({
   stage: Schema.Literal('implementation'),
   key: Schema.String,
-  structuredMessage: Schema.Unknown,
-  topics: Schema.Struct({
-    codexStructured: Schema.String,
-  }),
-  structuredHeaders: Schema.Unknown,
+  agentRun: Schema.Unknown,
 })
 
 export type ImplementationCommand = Schema.Schema.Type<typeof ImplementationCommandSchema>
@@ -24,7 +20,7 @@ export type ReadyCommentCommand = Schema.Schema.Type<typeof ReadyCommentCommandS
 
 export const WorkflowCommandSchema = Schema.Union(
   Schema.Struct({
-    type: Schema.Literal('publishImplementation'),
+    type: Schema.Literal('submitImplementation'),
     data: ImplementationCommandSchema,
   }),
   Schema.Struct({

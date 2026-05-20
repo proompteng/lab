@@ -1,13 +1,13 @@
 # Autonomous Codex Delivery System
 
-> Note: The production Codex pipeline is now implementation-only. Planning/review references below are historical design notes and should be treated as aspirational until reintroduced.
+> Note: The production Codex pipeline is now Agents-owned and implementation-only. Planning/review references below are historical design notes and should be treated as aspirational until reintroduced.
 
 ## 1. Background
 
 The current Codex automation stack is split across two services:
 
-- **Froussard** (`apps/froussard`) ingests GitHub/Discord events, derives Codex prompts, and publishes structured protobuf messages (`github.issues.codex.tasks`) to Kafka. Planning/implementation/review stages are gated inside `apps/froussard/src/webhooks/github/events/*.ts`.
-- **Facteur** (`services/facteur`) handles Discord workflows and consumes Codex tasks delivered by the Knative KafkaSource (`argocd/applications/facteur/overlays/cluster/facteur-codex-kafkasource.yaml`) on `/codex/tasks`, orchestrating Argo workflows when enabled.
+- **Froussard** (`apps/froussard`) ingests GitHub/Discord events, derives Codex prompts, and submits GitHub issue implementation runs directly to Agents.
+- **Facteur** (`services/facteur`) handles Discord/domain workflows and submits AgentRuns through the Agents service.
 
 Limitations:
 
@@ -76,7 +76,7 @@ Key components evolve from the current codebase:
    - For Discord: add command in `apps/froussard/src/webhooks/discord.ts` to capture free-form ideas, summarise with LLM, and publish same payload.
 
 2. **Plan Generation Triggers**
-   - Publish structured task payloads to `github.issues.codex.tasks` for planning/implementation/review, including `ideaId`, dependency hints, and risk labels.
+   - Submit implementation AgentRuns through the Agents API and keep future planning/review expansion behind new Agents-owned contracts.
    - Provide plan markers the orchestrator can map back to the idea graph.
 
 ### 6.2 Facteur Orchestrator (New Responsibilities)
@@ -134,14 +134,14 @@ Key components evolve from the current codebase:
      - `events`: append-only log of orchestration decisions.
 
 4. **Schedulers & Executors**
-   - Listen to Kafka topics (`codex.intent`, existing `github.issues.codex.tasks`, new status topics).
+   - Listen to future Agents-owned status or intent topics when those contracts exist.
    - Use `services/facteur/internal/argo` runner to submit workflows with stage-specific templates.
    - Implement concurrency controller to limit simultaneous heavy workflows; queue tasks based on priority from Idea Spec.
    - Provide REST/gRPC API for status queries and manual overrides (pause, resume, cancel).
 
 5. **Event Handling Enhancements**
    - Update `/codex/tasks` handler (`services/facteur/internal/server/server.go`) to:
-     - Deserialize `CodexTask` proto.
+     - Consume typed Agents event payloads.
      - Route to stage-specific executor.
      - Record delivery idempotently (deliveryId persisted in `runs`).
      - Emit internal events (`codex.execution`) via Kafka for monitoring/analytics.
@@ -179,7 +179,6 @@ Key components evolve from the current codebase:
 | Topic                       | Producer                | Consumer               | Payload                 |
 | --------------------------- | ----------------------- | ---------------------- | ----------------------- |
 | `codex.intent`              | Froussard               | Facteur                | Normalised Idea Spec    |
-| `github.issues.codex.tasks` | Froussard               | Facteur executor       | Protobuf CodexTask      |
 | `codex.plan`                | Planning workflow       | Facteur                | Plan artifacts metadata |
 | `codex.execution`           | Implementation workflow | Facteur, Observability | Progress, logs          |
 | `codex.review`              | Review workflow         | Facteur                | QA outcomes             |

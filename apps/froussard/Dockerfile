@@ -21,9 +21,10 @@ COPY scripts ./scripts
 COPY apps ./apps
 COPY packages ./packages
 COPY services ./services
-RUN bun install --filter @proompteng/discord --filter froussard --frozen-lockfile --ignore-scripts
+RUN bun install --filter @proompteng/agent-contracts --filter @proompteng/discord --filter froussard --frozen-lockfile --ignore-scripts
 
 FROM deps AS build
+RUN bun run --filter @proompteng/agent-contracts build
 RUN bun run --filter @proompteng/otel build
 RUN bun run --filter @proompteng/discord build
 RUN bun run --filter froussard build
@@ -35,6 +36,7 @@ FROM ${BUN_BASE_IMAGE}:${BUN_VERSION}-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /workspace
 COPY --from=prod-deps /workspace /workspace
+COPY --from=build /workspace/packages/agent-contracts/dist /workspace/packages/agent-contracts/dist
 COPY --from=build /workspace/packages/otel/dist /workspace/packages/otel/dist
 COPY --from=build /workspace/apps/froussard/dist /workspace/apps/froussard/dist
 WORKDIR /workspace/apps/froussard

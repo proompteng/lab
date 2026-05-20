@@ -37,8 +37,6 @@ spec:
               value: kafka-kafka-bootstrap.kafka:9092
             - name: KAFKA_TOPIC
               value: github.webhook.events
-            - name: KAFKA_CODEX_TOPIC_STRUCTURED
-              value: github.issues.codex.tasks
             - name: KAFKA_CODEX_JUDGE_TOPIC
               value: github.webhook.codex.judge
             - name: KAFKA_DISCORD_COMMAND_TOPIC
@@ -64,8 +62,10 @@ spec:
                   name: discord-bot
             - name: ATLAS_BASE_URL
               value: http://jangar.jangar.svc.cluster.local
-            - name: CODEX_CALLBACK_BASE_URL
+            - name: AGENTS_SERVICE_BASE_URL
               value: http://agents.agents.svc.cluster.local
+            - name: AGENTS_SERVICE_CLIENT_NAME
+              value: froussard
             - name: OTEL_SERVICE_NAME
               value: froussard
             - name: OTEL_SERVICE_NAMESPACE

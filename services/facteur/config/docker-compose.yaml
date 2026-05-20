@@ -19,5 +19,3 @@ role_map:
   plan: ['role']
   implement: ['role']
   review: ['role']
-codex_listener:
-  enabled: false

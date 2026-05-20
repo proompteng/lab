@@ -511,6 +511,36 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/codex-judge-config.ts"
 
 fail_if_path_exists \
+  "Froussard/Facteur must not recreate the retired GitHub issue Codex Kafka bridge" \
+  "${ROOT_DIR}/argocd/applications/froussard/github-issues-codex-tasks-topic.yaml" \
+  "${ROOT_DIR}/argocd/applications/facteur/overlays/cluster/facteur-codex-kafkasource.yaml" \
+  "${ROOT_DIR}/proto/proompteng/froussard/v1/codex_task.proto" \
+  "${ROOT_DIR}/apps/froussard/src/webhooks/github/payloads.ts" \
+  "${ROOT_DIR}/services/facteur/cmd/facteur/codex_echo.go" \
+  "${ROOT_DIR}/services/facteur/internal/codex/listener.go" \
+  "${ROOT_DIR}/services/facteur/internal/froussardpb/codex_task.pb.go" \
+  "${ROOT_DIR}/services/facteur/internal/orchestrator/implementation.go" \
+  "${ROOT_DIR}/services/facteur/test/e2e/codex_ingestion_test.go"
+
+fail_if_matches \
+  "Froussard runtime must submit implementation runs directly to Agents instead of publishing the retired Codex task topic" \
+  'github\.issues\.codex\.tasks|KAFKA_CODEX_TOPIC_STRUCTURED|CodexTaskSchema|toCodexTaskProto' \
+  "${ROOT_DIR}/apps/froussard/src/codex" \
+  "${ROOT_DIR}/apps/froussard/src/config.ts" \
+  "${ROOT_DIR}/apps/froussard/src/index.ts" \
+  "${ROOT_DIR}/apps/froussard/src/routes" \
+  "${ROOT_DIR}/apps/froussard/src/services" \
+  "${ROOT_DIR}/apps/froussard/src/webhooks" \
+  "${ROOT_DIR}/apps/froussard/README.md" \
+  "${ROOT_DIR}/argocd/applications/froussard"
+
+fail_if_matches \
+  "Facteur runtime must not expose or consume the retired GitHub issue Codex task bridge" \
+  'github\.issues\.codex\.tasks|/agent-runs/github-issues|codex_listener|codex-listen|froussardpb|CodexTask|facteur-codex-kafkasource' \
+  "${ROOT_DIR}/services/facteur" \
+  "${ROOT_DIR}/argocd/applications/facteur"
+
+fail_if_path_exists \
   "Jangar must not expose legacy Codex notify/run-complete callback routes after Agents owns callback ingestion" \
   "${ROOT_DIR}/services/jangar/src/routes/api/codex/notify.tsx" \
   "${ROOT_DIR}/services/jangar/src/routes/api/codex/run-complete.tsx" \

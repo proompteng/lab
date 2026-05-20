@@ -50,12 +50,6 @@ role_map:
     - operator
   status:
     - moderator
-codex_listener:
-  enabled: true
-  brokers:
-    - kafka:9092
-  topic: github.issues.codex.tasks
-  group_id: facteur-codex
 `)
 		require.NoError(t, os.WriteFile(path, data, 0o600))
 
@@ -87,10 +81,6 @@ codex_listener:
 			"plan":   []string{"admin", "operator"},
 			"status": []string{"moderator"},
 		}, cfg.RoleMap)
-		require.True(t, cfg.Codex.Enabled)
-		require.Equal(t, []string{"kafka:9092"}, cfg.Codex.Brokers)
-		require.Equal(t, "github.issues.codex.tasks", cfg.Codex.Topic)
-		require.Equal(t, "facteur-codex", cfg.Codex.GroupID)
 	})
 
 	t.Run("env overrides file", func(t *testing.T) {
@@ -116,7 +106,6 @@ postgres:
 		require.Equal(t, "env-token", cfg.Discord.BotToken)
 		require.Equal(t, "postgres://override", cfg.Postgres.DSN)
 		require.Equal(t, ":8080", cfg.Server.ListenAddress)
-		require.False(t, cfg.Codex.Enabled)
 		require.True(t, cfg.Implementer.Enabled)
 		require.Equal(t, "env-codex-agent", cfg.Implementer.AgentName)
 	})
@@ -151,7 +140,6 @@ redis:
 		require.Equal(t, ":8080", cfg.Server.ListenAddress)
 		require.NotNil(t, cfg.RoleMap)
 		require.Empty(t, cfg.RoleMap)
-		require.False(t, cfg.Codex.Enabled)
 		require.False(t, cfg.Implementer.Enabled)
 		require.NotNil(t, cfg.Implementer.Parameters)
 		require.Empty(t, cfg.Implementer.Parameters)
@@ -161,27 +149,6 @@ redis:
 		require.Equal(t, "agents", cfg.Implementer.Namespace)
 		require.Equal(t, "codex-agent", cfg.Implementer.AgentName)
 		require.Equal(t, "job", cfg.Implementer.RuntimeType)
-	})
-
-	t.Run("validates codex listener when enabled", func(t *testing.T) {
-		dir := t.TempDir()
-		path := filepath.Join(dir, "facteur.yaml")
-		data := []byte(`discord:
-  bot_token: token
-  application_id: app
-redis:
-  url: redis://localhost:6379/0
-postgres:
-  dsn: postgres://facteur:facteur@localhost:5432/facteur?sslmode=disable
-codex_listener:
-  enabled: true
-`)
-		require.NoError(t, os.WriteFile(path, data, 0o600))
-
-		_, err := config.LoadWithOptions(config.Options{Path: path, EnvPrefix: "FACTEUR"})
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "codex_listener.brokers is required when enabled")
-		require.Contains(t, err.Error(), "codex_listener.topic is required when enabled")
 	})
 }
 
