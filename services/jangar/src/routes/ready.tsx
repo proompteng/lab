@@ -5,7 +5,7 @@ import {
   isControllerHealthReady,
   getAgentsReadySnapshot,
   uniqueStrings,
-} from '~/server/agents-control-plane-client'
+} from '@proompteng/agent-contracts/agents-ready'
 
 import type {
   ControlPlaneControllerWitnessQuorum,

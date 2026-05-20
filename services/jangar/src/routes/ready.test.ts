@@ -37,9 +37,9 @@ const githubReviewIngestMocks = vi.hoisted(() => ({
   getGithubReviewIngestPressureSummary: vi.fn(),
 }))
 
-vi.mock('~/server/agents-control-plane-client', async () => {
-  const actual = await vi.importActual<typeof import('~/server/agents-control-plane-client')>(
-    '~/server/agents-control-plane-client',
+vi.mock('@proompteng/agent-contracts/agents-ready', async () => {
+  const actual = await vi.importActual<typeof import('@proompteng/agent-contracts/agents-ready')>(
+    '@proompteng/agent-contracts/agents-ready',
   )
   return {
     ...actual,

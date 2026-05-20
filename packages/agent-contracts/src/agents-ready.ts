@@ -1,8 +1,5 @@
-import type {
-  AgentRunIngestionStatus,
-  AgentsControlPlaneStatus,
-} from '@proompteng/agent-contracts/control-plane-status'
-import { fetchAgentsServiceJson } from '@proompteng/agent-contracts/agents-service-client'
+import type { AgentRunIngestionStatus, AgentsControlPlaneStatus } from './control-plane-status'
+import { fetchAgentsServiceJson } from './agents-service-client'
 
 export type AgentsControllerHealthSnapshot = {
   enabled: boolean

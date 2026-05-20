@@ -13,6 +13,9 @@ const agentContractsControlPlaneStatusSource = fileURLToPath(
 const agentContractsServiceClientSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/agents-service-client.ts', import.meta.url),
 )
+const agentContractsReadySource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/agents-ready.ts', import.meta.url),
+)
 const discordSource = fileURLToPath(new URL('../../packages/discord/src/index.ts', import.meta.url))
 
 export default defineConfig({
@@ -20,6 +23,7 @@ export default defineConfig({
     alias: {
       '~': root,
       '@': root,
+      '@proompteng/agent-contracts/agents-ready': agentContractsReadySource,
       '@proompteng/agent-contracts/agents-service-client': agentContractsServiceClientSource,
       '@proompteng/agent-contracts/control-plane-status': agentContractsControlPlaneStatusSource,
       '@proompteng/codex': codexStub,
@@ -39,6 +43,7 @@ export default defineConfig({
     alias: {
       '~': root,
       '@': root,
+      '@proompteng/agent-contracts/agents-ready': agentContractsReadySource,
       '@proompteng/agent-contracts/agents-service-client': agentContractsServiceClientSource,
       '@proompteng/agent-contracts/control-plane-status': agentContractsControlPlaneStatusSource,
       '@proompteng/codex': codexStub,

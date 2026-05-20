@@ -1,14 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import {
-  buildAgentsReadySnapshot,
-  getAgentsControlPlaneStatusSnapshot,
-  getAgentsReadySnapshot,
-} from '../agents-control-plane-client'
+import { buildAgentsReadySnapshot, getAgentsControlPlaneStatusSnapshot, getAgentsReadySnapshot } from './agents-ready'
 
 const originalFetch = globalThis.fetch
 
-describe('agents-control-plane-client', () => {
+describe('agents-ready', () => {
   afterEach(() => {
     globalThis.fetch = originalFetch
   })

@@ -120,6 +120,15 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src"
 
 fail_if_path_exists \
+  "Jangar must not own generic Agents readiness/status verdict normalization after agent-contracts owns it" \
+  "${ROOT_DIR}/services/jangar/src/server/agents-control-plane-client.ts"
+
+fail_if_matches \
+  "Jangar must consume Agents readiness/status verdicts from @proompteng/agent-contracts, not a local status client" \
+  "~\\/server\\/agents-control-plane-client|from ['\"]\\.\\/agents-control-plane-client|from ['\"]\\.\\.\\/agents-control-plane-client" \
+  "${ROOT_DIR}/services/jangar/src"
+
+fail_if_path_exists \
   "Jangar domain behavior must not be split into a separate jangar-agents-domain Argo app in the agents namespace" \
   "${ROOT_DIR}/argocd/applications/jangar-agents-domain"
 
