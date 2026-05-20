@@ -201,6 +201,8 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('/agent-runs/github-issues|codex_listener|codex-listen|froussardpb|CodexTask')
     expect(content).toContain('Jangar Codex judge current schema and queries must use AgentRun-native physical columns')
     expect(content).toContain('workflow_name|workflow_uid|workflow_namespace|codex_judge_runs_workflow')
+    expect(content).toContain('Jangar migrations must not create or mutate the retired Codex judge schema')
+    expect(content).toContain("sql\\\\.ref\\\\('codex_judge\\\\.")
     expect(content).toContain('workflow-shaped agent-message identity fields')
     expect(content).toContain('Agents implementation contracts must not normalize workflow-shaped stage aliases')
     expect(content).toContain('Torghut AgentRun producers must use Agents naming and service defaults')

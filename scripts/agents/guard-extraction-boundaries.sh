@@ -540,6 +540,11 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/codex-judge-run-rows.ts" \
   "${ROOT_DIR}/services/jangar/src/server/migrations/20251228_init.ts"
 
+fail_if_matches \
+  "Jangar migrations must not create or mutate the retired Codex judge schema after Agents owns Codex projections" \
+  "CREATE SCHEMA IF NOT EXISTS codex_judge|sql\\.ref\\('codex_judge\\.|REFERENCES codex_judge\\.|ALTER TABLE codex_judge\\.|DROP TABLE IF EXISTS .*codex_judge\\.|CREATE (UNIQUE )?INDEX IF NOT EXISTS codex_judge" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations"
+
 fail_if_path_exists \
   "Jangar must not own the generic runtime proof-surface reducer after agent-contracts owns runtime admission contracts" \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-runtime-proof-surface.ts"

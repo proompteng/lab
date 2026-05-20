@@ -17,12 +17,20 @@ describe('migration registration', () => {
 
   it('keeps Agents-owned historical migrations as no-op tombstones', () => {
     const tombstoneMigrationFiles = [
+      '20251229_codex_judge_run_metadata',
+      '20251229_codex_judge_timeouts',
+      '20251229_codex_rerun_submissions',
       '20251229_workflow_comms_agent_messages',
+      '20251230_codex_judge_webhook_indexes',
+      '20260105_codex_judge_iterations',
       '20260111_jangar_primitives',
       '20260111_jangar_primitives_indexes',
       '20260205_agents_control_plane_cache',
       '20260208_jangar_agentrun_idempotency',
+      '20260220_remove_prompt_tuning',
       '20260308_agents_control_plane_component_heartbeats',
+      '20260520_codex_judge_agentrun_columns',
+      '20260520_drop_codex_rerun_submissions',
     ]
     const ddlPatterns = [
       /\bsql`/i,
@@ -42,6 +50,15 @@ describe('migration registration', () => {
         expect(content).not.toMatch(pattern)
       }
     }
+  })
+
+  it('does not create the retired Codex judge schema from Jangar bootstrap migrations', () => {
+    const migrationPath = new URL('../migrations/20251228_init.ts', import.meta.url)
+    const normalized = readFileSync(fileURLToPath(migrationPath), 'utf8').toLowerCase()
+
+    expect(normalized).not.toContain('create schema if not exists codex_judge')
+    expect(normalized).not.toContain("sql.ref('codex_judge.")
+    expect(normalized).not.toContain('references codex_judge.')
   })
 
   it('keeps the Torghut quant pipeline health account/window index registered', () => {
@@ -92,15 +109,14 @@ describe('migration registration', () => {
     expect(normalized).toContain('on torghut_control_plane.quant_metrics_latest(account, "window")')
   })
 
-  it('keeps the Codex judge AgentRun column rename migration registered', () => {
+  it('keeps the Codex judge AgentRun column migration registered as an Agents backfill handoff', () => {
     const migrationPath = new URL('../migrations/20260520_codex_judge_agentrun_columns.ts', import.meta.url)
     const normalized = readFileSync(fileURLToPath(migrationPath), 'utf8').toLowerCase().replace(/\s+/g, ' ')
 
-    expect(normalized).toContain('rename column workflow_name to agent_run_name')
-    expect(normalized).toContain('rename column workflow_uid to agent_run_uid')
-    expect(normalized).toContain('rename column workflow_namespace to agent_run_namespace')
-    expect(normalized).toContain('create unique index if not exists codex_judge_runs_agent_run_uid_idx')
-    expect(normalized).toContain('create unique index if not exists codex_judge_runs_agent_run_name_idx')
+    expect(__test__.getRegisteredMigrations()).toContain('20260520_codex_judge_agentrun_columns')
+    expect(normalized).toContain('projection backfill')
+    expect(normalized).not.toContain('rename column')
+    expect(normalized).not.toContain('create unique index')
   })
 })
 

@@ -12,6 +12,7 @@ import * as agentsCommsAgentRunIdentityMigration from './migrations/20260520_age
 import * as agentsCommsAgentRunNameLookupMigration from './migrations/20260520_agents_comms_agent_run_name_lookup'
 import * as agentsAgentRunRerunSubmissionsMigration from './migrations/20260520_agents_agentrun_rerun_submissions'
 import * as agentsCodexRunProjectionMigration from './migrations/20260520_agents_codex_run_projection'
+import * as agentsCodexLegacyBackfillMigration from './migrations/20260521_agents_codex_legacy_backfill'
 
 type MigrationMap = Record<string, Migration>
 
@@ -32,6 +33,7 @@ const migrations: MigrationMap = {
   '20260519_agents_comms_agent_messages': agentsCommsAgentMessagesMigration,
   '20260520_agents_agentrun_rerun_submissions': agentsAgentRunRerunSubmissionsMigration,
   '20260520_agents_codex_run_projection': agentsCodexRunProjectionMigration,
+  '20260521_agents_codex_legacy_backfill': agentsCodexLegacyBackfillMigration,
   '20260520_agents_comms_agent_run_identity': agentsCommsAgentRunIdentityMigration,
   '20260520_agents_comms_agent_run_name_lookup': agentsCommsAgentRunNameLookupMigration,
 }
