@@ -1,4 +1,4 @@
-import { AGENT_RUN_SPEC, RESOURCE_SPECS, RPC_RESOURCE_MAP } from '../legacy'
+import { AGENT_RUN_SPEC, RESOURCE_SPECS, RPC_RESOURCE_MAP } from '../runtime'
 
 export type ResourceSpec = {
   kind: string

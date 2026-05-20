@@ -10,7 +10,7 @@ import {
   RESOURCE_SPECS,
   RPC_RESOURCE_MAP,
   readTextInput,
-} from '../../legacy'
+} from '../../runtime'
 import { TransportService } from '../../transport'
 import { AgentctlContext } from '../context'
 import { asAgentctlError } from '../errors'

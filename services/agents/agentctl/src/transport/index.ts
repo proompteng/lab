@@ -5,7 +5,7 @@ import * as Layer from 'effect/Layer'
 import { AgentctlContext } from '../cli/context'
 import { asAgentctlError } from '../cli/errors'
 import { createKubectlBackend, type KubeBackend } from '../kube/backend'
-import { createClient, createMetadata } from '../legacy'
+import { createClient, createMetadata } from '../runtime'
 
 export type KubeTransport = {
   mode: 'kube'

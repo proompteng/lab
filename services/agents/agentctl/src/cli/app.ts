@@ -1,6 +1,6 @@
 import { Command } from '@effect/cli'
 import * as Effect from 'effect/Effect'
-import { getVersion } from '../legacy'
+import { getVersion } from '../runtime'
 import { makeAuthCommand } from './commands/auth'
 import {
   makeCompletionCommand,

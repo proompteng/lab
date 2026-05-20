@@ -16,7 +16,7 @@ import {
   toKeyValueMap,
   waitForRunCompletion,
   waitForRunCompletionKube,
-} from '../../legacy'
+} from '../../runtime'
 import { buildAgentRunYaml } from '../../templates/agent-run'
 import { buildImplementationSpecYaml } from '../../templates/implementation-spec'
 import { TransportService } from '../../transport'
