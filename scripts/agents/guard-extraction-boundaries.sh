@@ -169,20 +169,30 @@ fail_if_matches \
   '@proompteng/agent-contracts/agents-service-client' \
   "${ROOT_DIR}/services/jangar/src"
 
-fail_if_matches \
-  "Jangar Codex run history APIs must forward to Agents-owned Codex projection clients instead of opening Jangar storage" \
-  "createCodexJudgeStore|from ['\"]~\\/server\\/codex-judge-store|from ['\"]\\.\\.\\/codex-judge-store" \
+fail_if_path_exists \
+  "Jangar must not expose generic Codex projection compatibility routes after Agents owns Codex projections" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/codex/github-events.tsx" \
   "${ROOT_DIR}/services/jangar/src/routes/api/codex/runs.tsx" \
   "${ROOT_DIR}/services/jangar/src/routes/api/codex/runs/list.tsx" \
   "${ROOT_DIR}/services/jangar/src/routes/api/codex/runs/recent.tsx" \
-  "${ROOT_DIR}/services/jangar/src/routes/api/codex/issues.tsx"
+  "${ROOT_DIR}/services/jangar/src/routes/api/codex/issues.tsx" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/codex/rerun.tsx" \
+  "${ROOT_DIR}/services/jangar/src/routes/codex/runs.tsx" \
+  "${ROOT_DIR}/services/jangar/src/routes/codex/search.tsx" \
+  "${ROOT_DIR}/services/jangar/src/data/codex.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/codex-rerun-forwarding.ts"
 
 fail_if_matches \
-  "Jangar Codex compatibility routes must use Agents Codex projection clients instead of Jangar judge storage or handlers" \
+  "Jangar app shell must not advertise generic Codex projection pages after Agents owns them" \
+  '/codex/(runs|search)|/api/codex/(github-events|issues|rerun|runs)' \
+  "${ROOT_DIR}/services/jangar/src/routeTree.gen.ts" \
+  "${ROOT_DIR}/services/jangar/src/components/app-sidebar.tsx" \
+  "${ROOT_DIR}/services/jangar/src/components/app-shell.tsx"
+
+fail_if_matches \
+  "Jangar GitHub PR domain route must use Agents Codex projection clients instead of Jangar judge storage or handlers" \
   "createCodexJudgeStore|handleGithubWebhookEvent|from ['\"]~\\/server\\/codex-judge-store|from ['\"]\\.\\.\\/\\.\\.\\/\\.\\.\\/server\\/codex-judge-store|from ['\"]\\.\\/codex-judge-store" \
-  "${ROOT_DIR}/services/jangar/src/routes/api/codex/github-events.tsx" \
-  "${ROOT_DIR}/services/jangar/src/routes/api/github/pulls/\$owner/\$repo/\$number/judge-runs.tsx" \
-  "${ROOT_DIR}/services/jangar/src/server/codex-rerun-forwarding.ts"
+  "${ROOT_DIR}/services/jangar/src/routes/api/github/pulls/\$owner/\$repo/\$number/judge-runs.tsx"
 
 require_matches \
   "Agents service must own canonical Codex run projection v1 route registration" \
@@ -662,8 +672,7 @@ fail_if_matches \
   'processRerunQueue|handleRerunRequest|claimRerunSubmission|enqueueRerunSubmission|listRerunSubmissions|updateRerunSubmission|AGENTS_CODEX_RERUN_ORCHESTRATION|rerunOrchestrationName|rerunOrchestrationNamespace' \
   "${ROOT_DIR}/services/jangar/src/server/codex-judge.ts" \
   "${ROOT_DIR}/services/jangar/src/server/codex-judge-config.ts" \
-  "${ROOT_DIR}/services/jangar/src/server/codex-judge-store.ts" \
-  "${ROOT_DIR}/services/jangar/src/routes/api/codex/rerun.tsx"
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge-store.ts"
 
 require_matches \
   "Agents service must own AgentRun rerun and callback v1 route registration" \

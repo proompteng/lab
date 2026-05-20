@@ -1,8 +1,8 @@
 import { Button, Input, Tabs, TabsContent, TabsList, TabsTrigger } from '@proompteng/design/ui'
+import type { CodexRunRecord } from '@proompteng/agent-contracts/codex-runs-client'
 import { createFileRoute } from '@tanstack/react-router'
 import * as React from 'react'
 import { type FileTreeNode, FileTreeView } from '@/components/file-tree'
-import type { CodexRunRecord } from '@/data/codex'
 import {
   fetchGithubPullChecks,
   fetchGithubPullDeploymentEvidenceSummary,

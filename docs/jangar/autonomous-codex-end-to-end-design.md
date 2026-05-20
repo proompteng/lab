@@ -236,9 +236,12 @@ The workflow must emit the following artifacts on every run, regardless of succe
 
 If any artifact is missing, Jangar must fall back to available artifacts and still persist the run.
 
-## 9) Payload Contracts (Notify + Run-Complete)
+## 9) Historical Payload Contracts (Notify + Run-Complete)
 
-### 9.1 Notify Payload (POST /api/codex/notify)
+The Jangar callback endpoints described in this section were part of the retired Argo workflow bridge. The current
+runtime emits status, logs, artifacts, callbacks, and Codex projection state through Agents-owned AgentRun APIs.
+
+### 9.1 Notify Payload (retired Jangar callback)
 
 Minimum fields required to attach enrichment:
 
@@ -275,7 +278,7 @@ When a run is launched from a Huly-backed cross-swarm requirement, `hulyArtifact
 `hulyArtifacts.releaseNote` carry the reusable handoff text that release and owner flows can repost without scraping
 chat or mission documents.
 
-### 9.2 Run-Complete Payload (POST /api/codex/run-complete)
+### 9.2 Run-Complete Payload (retired Jangar callback)
 
 Minimum fields required to create the run:
 
@@ -435,8 +438,8 @@ These items are **required** and must be pinned in workflow parameters or config
 - **Parameter schema**: repository, issue number, base, head, prompt, commit SHA, workflow namespace, workflow UID.
 - **Pre-merge test commands**: exact commands and working directories.
 - **Post-deploy test commands**: exact integration + end-to-end commands and working directories.
-- **Notify payload schema**: exact JSON contract for `/api/codex/notify`.
-- **Run-complete payload schema**: exact JSON contract for `/api/codex/run-complete`.
+- **Notify payload schema**: exact JSON contract for the retired Jangar notify callback.
+- **Run-complete payload schema**: exact JSON contract for the retired Jangar run-complete callback.
 - **Rollback policy**: what is rolled back, how, and the decision signals.
 - **Rerun policy**: maximum attempts and when to escalate to `needs_human`.
 
@@ -449,7 +452,7 @@ Before starting implementation, the workflow must validate:
 - `base` and `head` refs resolve locally or can be fetched.
 - Required environment variables are present (GitHub token, DB URL, MinIO, Argo).
 - Artifacts can be uploaded to the configured bucket.
-- Jangar endpoints `/api/codex/notify` and `/api/codex/run-complete` are reachable.
+- Agents-owned AgentRun callback, status, log, and artifact APIs are reachable.
 
 ## 17) Success Criteria
 

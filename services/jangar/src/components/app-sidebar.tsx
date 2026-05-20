@@ -52,15 +52,6 @@ const appNav: AppNavItem[] = [
   { to: '/', label: 'Home', icon: IconHome },
   { to: '/memories', label: 'Memories', icon: IconBrain },
   { to: '/github/pulls', label: 'PR reviews', icon: IconGitPullRequest },
-  {
-    to: '/codex/runs',
-    label: 'Codex runs',
-    icon: IconList,
-    children: [
-      { to: '/codex/search', label: 'Search' },
-      { to: '/codex/runs', label: 'All runs' },
-    ],
-  },
   { to: '/terminals', label: 'Terminals', icon: IconTerminal2 },
   {
     to: '/atlas',
@@ -157,11 +148,7 @@ export function AppSidebar() {
                 const hasActiveChild = children?.some(
                   (child) => pathname === child.to || pathname.startsWith(`${child.to}/`),
                 )
-                const isActive = hasActiveChild
-                  ? false
-                  : item.to === '/codex/runs'
-                    ? pathname.startsWith('/codex')
-                    : pathname === item.to || pathname.startsWith(`${item.to}/`)
+                const isActive = hasActiveChild ? false : pathname === item.to || pathname.startsWith(`${item.to}/`)
                 return (
                   <SidebarMenuItem key={item.to}>
                     <SidebarNavButton

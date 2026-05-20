@@ -11,8 +11,8 @@ Enable GitHub pull request review and merge workflows directly inside the Jangar
 This design builds on existing Jangar capabilities:
 
 - GitHub integration in `services/jangar/src/server/github-client.ts` (PR lookup, review summaries, diffs).
-- Codex judge run history UI in `services/jangar/src/routes/codex/runs.tsx` (shows PR link + review status).
-- Codex judge review gating logic in `services/jangar/src/server/codex-judge.ts`.
+- Agents-owned Codex projection APIs, surfaced only inside the Jangar PR detail domain route.
+- Agents-owned Codex review projection and AgentRun status, exposed through typed `@proompteng/agent-contracts` clients.
 - Jangar server-side routes pattern (`/routes/api/*`) with JSON handlers.
 
 ## Goals
@@ -20,7 +20,7 @@ This design builds on existing Jangar capabilities:
 - Review completion from within Jangar (submit review + resolve threads).
 - Merge PRs from within Jangar (squash / merge / rebase), with safety checks.
 - Surface PR context: checks, review summary, unresolved threads, files + diff, commit history.
-- Keep Codex judge state in sync when the PR is associated with a run.
+- Keep the PR detail view in sync with Agents-owned Codex/AgentRun projection state.
 - Avoid polling GitHub; rely on Froussard-propagated webhook events for state changes.
 
 ## Non-goals
@@ -34,16 +34,13 @@ This design builds on existing Jangar capabilities:
 - `services/jangar/src/server/github-client.ts` supports:
   - `getPullRequest`, `getPullRequestByHead`, `getCheckRuns`, `getPullRequestDiff`, `getReviewSummary`.
   - Basic content/branch update + PR creation.
-- `services/jangar/src/server/codex-judge.ts`:
-  - Fetches PR data + review summary and gates completion.
-  - Stores review status + summary in `codex_judge.runs`.
-- `/codex/runs` UI already shows `reviewStatus`, `reviewSummary`, and PR links but does not allow interaction.
 - Froussard owns GitHub webhook intake and publishes the raw event stream to Kafka:
   - Raw: `github.webhook.events` (see `apps/froussard/README.md`).
 - Agents ingests that raw stream via a KafkaSource to `/v1/codex/github-events`:
   - `argocd/applications/agents/codex-github-events-kafkasource.yaml`
   - Handler: `services/agents/src/server/v1/codex-github-events.ts`
-- Jangar uses Agents Codex projection APIs for compatibility UI/API reads instead of owning the ingestion store.
+- Jangar PR detail routes read linked Codex runs through Agents Codex projection APIs.
+- The former standalone Jangar Codex run/search pages and same-origin compatibility APIs were removed; generic run search belongs to Agents.
 
 ## UX Overview
 
@@ -72,7 +69,7 @@ Add a new sidebar entry:
   - Review composer (approve / request changes / comment).
   - Resolve thread action.
   - Merge controls (method + title/message + delete branch).
-  - Quick links (open on GitHub, open CI run, open Codex runs for linked issue).
+  - Quick links (open on GitHub, open CI run, open linked AgentRun/Codex projection when available).
 
 ### Review Composer
 
@@ -244,5 +241,6 @@ Current Jangar surfaces are unauthenticated and rely on network guardrails. Revi
 
 - GitHub client: `services/jangar/src/server/github-client.ts`
 - Codex judge review gate: `services/jangar/src/server/codex-judge.ts`
-- Run history UI: `services/jangar/src/routes/codex/runs.tsx`
+- Linked run data: `services/jangar/src/routes/api/github/pulls/$owner/$repo/$number/judge-runs.tsx`
+- Agents Codex projection contract: `packages/agent-contracts/src/codex-runs-client.ts`
 - API route style: `services/jangar/src/routes/api/terminals.ts`

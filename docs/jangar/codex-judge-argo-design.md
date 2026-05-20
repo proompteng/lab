@@ -123,10 +123,9 @@ sequenceDiagram
   GH->>FR: Issue event
   FR->>A: submit AgentRun through Agents
   A->>C: run Codex exec
-  C-->>W: notify(JSON)
-  W->>J: POST /api/codex/notify (enrichment)
+  C-->>A: runner status/log/artifact events
   A->>KC: completion event
-  KC->>J: run-complete
+  KC->>A: callback/projection update
   J->>CI: wait for status
   CI-->>J: success/failure
   J->>PR: wait for Codex review + resolved threads

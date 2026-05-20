@@ -160,11 +160,19 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('broad control-plane-resources-client module')
     expect(content).toContain('broad control-plane-resources-client package subpath')
     expect(content).toContain('agents-service-client')
-    expect(content).toContain('Jangar Codex run history APIs must forward to Agents-owned Codex projection clients')
     expect(content).toContain(
-      'Jangar Codex compatibility routes must use Agents Codex projection clients instead of Jangar judge storage or handlers',
+      'Jangar must not expose generic Codex projection compatibility routes after Agents owns Codex projections',
     )
-    expect(content).toContain('createCodexJudgeStore|from')
+    expect(content).toContain(
+      'Jangar app shell must not advertise generic Codex projection pages after Agents owns them',
+    )
+    expect(content).toContain(
+      'Jangar GitHub PR domain route must use Agents Codex projection clients instead of Jangar judge storage or handlers',
+    )
+    expect(content).toContain('services/jangar/src/data/codex.ts')
+    expect(content).toContain('services/jangar/src/server/codex-rerun-forwarding.ts')
+    expect(content).toContain('/codex/(runs|search)|/api/codex/(github-events|issues|rerun|runs)')
+    expect(content).toContain('createCodexJudgeStore|handleGithubWebhookEvent')
     expect(content).toContain('handleGithubWebhookEvent')
     expect(content).toContain('codex-judge-store')
     expect(content).toContain('canonical Codex run projection v1 route registration')
