@@ -146,6 +146,8 @@ from .state import (
 )
 
 logger = logging.getLogger(__name__)
+_REJECTED_SIGNAL_OUTCOME_FOLLOWUP_HORIZON = timedelta(minutes=5)
+_REJECTED_SIGNAL_OUTCOME_LABEL_LIMIT = 25
 _AUTONOMY_PHASE_ORDER: tuple[str, ...] = AUTONOMY_PHASE_ORDER
 _RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIER = Decimal("0.50")
 _RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE = Decimal("0.05")
@@ -214,6 +216,7 @@ class TradingPipeline:
         self._session_context_warmup_day: date | None = None
 
     def run_once(self) -> None:
+        self._label_mature_rejected_signal_outcome_events()
         with self.session_factory() as session:
             self.state.metrics.planned_decision_age_seconds = 0
             strategies = self._prepare_run_once(session)
@@ -840,6 +843,7 @@ class TradingPipeline:
             ),
             "outcome_label_status": "pending",
             "counterfactual_required": True,
+            "signal_payload": dict(signal.payload),
             "required_outcome_fields": [
                 "counterfactual_return",
                 "route_tca",
@@ -950,6 +954,153 @@ class TradingPipeline:
                 event_id,
                 event_payload.get("symbol"),
             )
+
+    def _label_mature_rejected_signal_outcome_events(
+        self,
+        *,
+        now: datetime | None = None,
+        limit: int = _REJECTED_SIGNAL_OUTCOME_LABEL_LIMIT,
+        followup_horizon: timedelta = _REJECTED_SIGNAL_OUTCOME_FOLLOWUP_HORIZON,
+    ) -> None:
+        resolved_now = now or datetime.now(timezone.utc)
+        mature_before = resolved_now - followup_horizon
+        try:
+            with self.session_factory() as session:
+                rows = (
+                    session.execute(
+                        select(RejectedSignalOutcomeEvent)
+                        .where(
+                            RejectedSignalOutcomeEvent.outcome_label_status == "pending"
+                        )
+                        .where(RejectedSignalOutcomeEvent.event_ts <= mature_before)
+                        .order_by(RejectedSignalOutcomeEvent.event_ts.asc())
+                        .limit(max(0, limit))
+                    )
+                    .scalars()
+                    .all()
+                )
+                for row in rows:
+                    try:
+                        outcome = self._build_rejected_signal_outcome_payload(
+                            row=row,
+                            followup_horizon=followup_horizon,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Failed to build rejected signal outcome label event_id=%s",
+                            row.event_id,
+                        )
+                        continue
+                    if outcome is None:
+                        continue
+                    row.outcome_label_status = "labeled"
+                    row.outcome_payload_json = outcome
+                    row.updated_at = resolved_now
+                if rows:
+                    session.commit()
+        except (SQLAlchemyError, ValueError):
+            logger.exception("Failed to label mature rejected signal outcome events")
+
+    def _build_rejected_signal_outcome_payload(
+        self,
+        *,
+        row: RejectedSignalOutcomeEvent,
+        followup_horizon: timedelta,
+    ) -> dict[str, Any] | None:
+        event_payload: dict[str, Any] = {}
+        raw_event_payload = row.event_payload_json
+        if isinstance(raw_event_payload, Mapping):
+            event_payload = {
+                str(key): value
+                for key, value in cast(Mapping[object, Any], raw_event_payload).items()
+            }
+        signal_payload = event_payload.get("signal_payload")
+        if not isinstance(signal_payload, Mapping):
+            signal_payload = {}
+        signal_payload_mapping = cast(Mapping[str, Any], signal_payload)
+        event_ts = row.event_ts
+        if event_ts.tzinfo is None:
+            event_ts = event_ts.replace(tzinfo=timezone.utc)
+        try:
+            seq = int(row.seq) if row.seq is not None else None
+        except ValueError:
+            seq = None
+        entry_signal = SignalEnvelope(
+            event_ts=event_ts,
+            symbol=row.symbol,
+            payload=dict(signal_payload_mapping),
+            timeframe=row.timeframe,
+            seq=seq,
+        )
+        followup_signal = entry_signal.model_copy(
+            update={"event_ts": event_ts + followup_horizon}
+        )
+        entry_snapshot = self.price_fetcher.fetch_market_snapshot(entry_signal)
+        followup_snapshot = self.price_fetcher.fetch_market_snapshot(followup_signal)
+        if (
+            entry_snapshot is None
+            or followup_snapshot is None
+            or entry_snapshot.price is None
+            or followup_snapshot.price is None
+            or entry_snapshot.price <= 0
+            or entry_snapshot.bid is None
+            or entry_snapshot.ask is None
+        ):
+            return None
+        counterfactual_return = (
+            followup_snapshot.price - entry_snapshot.price
+        ) / entry_snapshot.price
+        entry_spread = (
+            entry_snapshot.spread
+            if entry_snapshot.spread is not None
+            else entry_snapshot.ask - entry_snapshot.bid
+        )
+        half_spread_cost = abs(entry_spread) / Decimal("2")
+        post_cost_net_pnl = (
+            followup_snapshot.price - entry_snapshot.price - half_spread_cost
+        )
+        route_tca = {
+            "entry_price": str(entry_snapshot.price),
+            "followup_price": str(followup_snapshot.price),
+            "entry_bid": str(entry_snapshot.bid),
+            "entry_ask": str(entry_snapshot.ask),
+            "entry_spread": str(entry_spread),
+            "half_spread_cost": str(half_spread_cost),
+            "horizon_seconds": str(int(followup_horizon.total_seconds())),
+        }
+        return {
+            "schema_version": "torghut.rejected-signal-outcome.v1",
+            "label_status": "labeled",
+            "event_id": row.event_id,
+            "candidate_spec_id": event_payload.get("candidate_spec_id"),
+            "family_template_id": event_payload.get("family_template_id"),
+            "runtime_family": event_payload.get("runtime_family"),
+            "runtime_strategy_name": event_payload.get("runtime_strategy_name"),
+            "execution_signature": event_payload.get("execution_signature"),
+            "feedback_shape_key": event_payload.get("feedback_shape_key"),
+            "feedback_risk_profile_key": event_payload.get("feedback_risk_profile_key"),
+            "counterfactual_return": str(counterfactual_return),
+            "route_tca": route_tca,
+            "post_cost_net_pnl": str(post_cost_net_pnl),
+            "executable_quote": {
+                "bid": str(entry_snapshot.bid),
+                "ask": str(entry_snapshot.ask),
+                "spread": str(entry_spread),
+                "source": entry_snapshot.source,
+                "as_of": entry_snapshot.as_of.isoformat(),
+            },
+            "objective_scorecard": {
+                "net_pnl_per_day": str(post_cost_net_pnl),
+                "counterfactual_return": str(counterfactual_return),
+                "post_cost_net_pnl": str(post_cost_net_pnl),
+                "active_day_ratio": "1",
+                "positive_day_ratio": "1" if post_cost_net_pnl > 0 else "0",
+                "negative_day_count": 0 if post_cost_net_pnl >= 0 else 1,
+                "rejected_signal_event_id": row.event_id,
+                "rejected_signal_symbol": row.symbol,
+                "rejected_signal_reason": row.reject_reason,
+            },
+        }
 
     def _ensure_signal_executable_price(self, signal: SignalEnvelope) -> SignalEnvelope:
         price = extract_executable_price(signal.payload)

@@ -1957,30 +1957,66 @@ class TestTradingApi(TestCase):
         self,
     ) -> None:
         with self.session_local() as session:
-            session.add(
-                RejectedSignalOutcomeEvent(
-                    event_id="reject-event-1",
-                    source="quote_quality_gate",
-                    paper_source="paper-arxiv-2605.12151",
-                    paper_claim_id="rejection-event-outcome-labels",
-                    account_label="paper",
-                    symbol="AAPL",
-                    event_ts=datetime(2026, 5, 18, 14, 31, tzinfo=timezone.utc),
-                    timeframe="1Min",
-                    seq="42",
-                    reject_reason="missing_executable_quote",
-                    spread_bps=Decimal("55.5"),
-                    jump_bps=None,
-                    outcome_label_status="pending",
-                    counterfactual_required=True,
-                    required_outcome_fields_json=[
-                        "counterfactual_return",
-                        "route_tca",
-                        "post_cost_net_pnl",
-                        "executable_quote",
-                    ],
-                    event_payload_json={"event_id": "reject-event-1"},
-                )
+            required_fields = [
+                "counterfactual_return",
+                "route_tca",
+                "post_cost_net_pnl",
+                "executable_quote",
+            ]
+            session.add_all(
+                [
+                    RejectedSignalOutcomeEvent(
+                        event_id="reject-event-1",
+                        source="quote_quality_gate",
+                        paper_source="paper-arxiv-2605.12151",
+                        paper_claim_id="rejection-event-outcome-labels",
+                        account_label="paper",
+                        symbol="AAPL",
+                        event_ts=datetime(2026, 5, 18, 14, 31, tzinfo=timezone.utc),
+                        timeframe="1Min",
+                        seq="42",
+                        reject_reason="missing_executable_quote",
+                        spread_bps=Decimal("55.5"),
+                        jump_bps=None,
+                        outcome_label_status="pending",
+                        counterfactual_required=True,
+                        required_outcome_fields_json=required_fields,
+                        event_payload_json={"event_id": "reject-event-1"},
+                    ),
+                    RejectedSignalOutcomeEvent(
+                        event_id="reject-event-2",
+                        source="quote_quality_gate",
+                        paper_source="paper-arxiv-2605.12151",
+                        paper_claim_id="rejection-event-outcome-labels",
+                        account_label="paper",
+                        symbol="MSFT",
+                        event_ts=datetime(2026, 5, 18, 14, 32, tzinfo=timezone.utc),
+                        timeframe="1Min",
+                        seq="43",
+                        reject_reason="wide_spread",
+                        outcome_label_status="labeled",
+                        counterfactual_required=True,
+                        required_outcome_fields_json=required_fields,
+                        event_payload_json={"event_id": "reject-event-2"},
+                        outcome_payload_json={"post_cost_net_pnl": "1.25"},
+                    ),
+                    RejectedSignalOutcomeEvent(
+                        event_id="reject-event-3",
+                        source="quote_quality_gate",
+                        paper_source="paper-arxiv-2605.12151",
+                        paper_claim_id="rejection-event-outcome-labels",
+                        account_label="paper",
+                        symbol="NVDA",
+                        event_ts=datetime(2026, 5, 18, 14, 33, tzinfo=timezone.utc),
+                        timeframe="1Min",
+                        seq="44",
+                        reject_reason="missing_executable_quote",
+                        outcome_label_status="incomplete",
+                        counterfactual_required=True,
+                        required_outcome_fields_json=required_fields,
+                        event_payload_json={"event_id": "reject-event-3"},
+                    ),
+                ]
             )
             session.commit()
 
@@ -1994,13 +2030,19 @@ class TestTradingApi(TestCase):
             app.state.trading_scheduler = None
 
         self.assertEqual(outcome_learning["persistence_state"], "ok")
-        self.assertEqual(outcome_learning["events_total"], 1)
+        self.assertEqual(outcome_learning["events_total"], 3)
         self.assertEqual(outcome_learning["outcome_label_pending_total"], 1)
+        self.assertEqual(outcome_learning["labeled_count"], 1)
+        self.assertEqual(outcome_learning["incomplete_count"], 1)
+        self.assertEqual(
+            outcome_learning["outcome_label_status_total"],
+            {"incomplete": 1, "labeled": 1, "pending": 1},
+        )
         self.assertEqual(
             outcome_learning["reason_total"],
-            {"missing_executable_quote": 1},
+            {"missing_executable_quote": 2, "wide_spread": 1},
         )
-        self.assertEqual(outcome_learning["latest_event"]["event_id"], "reject-event-1")
+        self.assertEqual(outcome_learning["latest_event"]["event_id"], "reject-event-3")
         self.assertEqual(
             outcome_learning["blocking_reasons"],
             ["counterfactual_outcome_labels_pending"],

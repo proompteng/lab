@@ -6418,6 +6418,9 @@ def _build_rejected_signal_outcome_learning_payload(
             str(key): value
             for key, value in cast(Mapping[object, object], latest_event).items()
         }
+    labeled_count = 0
+    incomplete_count = 0
+    outcome_label_status_total: dict[str, int] = {}
     persistence_state = "not_configured"
     if persisted_summary is not None:
         persistence_state = str(persisted_summary.get("persistence_state") or "ok")
@@ -6430,6 +6433,20 @@ def _build_rejected_signal_outcome_learning_payload(
             pending,
             int(persisted_pending or 0),
         )
+        persisted_labeled = cast(Any, persisted_summary.get("labeled_count"))
+        labeled_count = max(0, int(persisted_labeled or 0))
+        persisted_incomplete = cast(Any, persisted_summary.get("incomplete_count"))
+        incomplete_count = max(
+            0, int(persisted_incomplete or 0)
+        )
+        persisted_status_total = persisted_summary.get("outcome_label_status_total")
+        if isinstance(persisted_status_total, Mapping):
+            outcome_label_status_total = {
+                str(key): max(0, int(value))
+                for key, value in cast(
+                    Mapping[object, Any], persisted_status_total
+                ).items()
+            }
         persisted_reasons = persisted_summary.get("reason_total")
         if isinstance(persisted_reasons, Mapping):
             for key, value in cast(Mapping[object, Any], persisted_reasons).items():
@@ -6441,14 +6458,20 @@ def _build_rejected_signal_outcome_learning_payload(
                 for key, value in cast(Mapping[object, object], persisted_latest).items()
             }
     blockers = ["counterfactual_outcome_labels_pending"] if pending > 0 else []
+    state_label = "pending_outcome_labels"
+    if pending <= 0:
+        state_label = "labeled_outcomes_available" if labeled_count > 0 else "empty"
     return {
         "schema_version": "torghut.rejected-signal-outcome-learning.v1",
         "source": "runtime_quote_quality_gate",
         "paper_source": "paper-arxiv-2605.12151",
         "paper_claim_id": "rejection-event-outcome-labels",
-        "state": "pending_outcome_labels" if pending > 0 else "empty",
+        "state": state_label,
         "events_total": total,
         "outcome_label_pending_total": pending,
+        "labeled_count": labeled_count,
+        "incomplete_count": incomplete_count,
+        "outcome_label_status_total": outcome_label_status_total,
         "reason_total": reasons,
         "latest_event": latest_payload,
         "persistence_state": persistence_state,
@@ -6481,6 +6504,16 @@ def _load_rejected_signal_outcome_learning_summary(
             ).scalar_one()
             or 0
         )
+        status_rows = session.execute(
+            select(
+                RejectedSignalOutcomeEvent.outcome_label_status,
+                func.count(RejectedSignalOutcomeEvent.id),
+            ).group_by(RejectedSignalOutcomeEvent.outcome_label_status)
+        ).all()
+        outcome_label_status_total = {
+            str(status or "unknown"): int(count or 0)
+            for status, count in status_rows
+        }
         reason_rows = session.execute(
             select(
                 RejectedSignalOutcomeEvent.reject_reason,
@@ -6525,6 +6558,9 @@ def _load_rejected_signal_outcome_learning_summary(
             "persistence_state": "ok",
             "events_total": total,
             "outcome_label_pending_total": pending,
+            "labeled_count": outcome_label_status_total.get("labeled", 0),
+            "incomplete_count": outcome_label_status_total.get("incomplete", 0),
+            "outcome_label_status_total": outcome_label_status_total,
             "reason_total": reason_total,
             "latest_event": latest_payload,
         }
