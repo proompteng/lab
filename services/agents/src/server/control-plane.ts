@@ -52,6 +52,16 @@ const routeSources: RouteSourceSpec[] = [
     load: () => import('../routes/v1/agent-runs/resources'),
   },
   {
+    file: 'src/routes/v1/agent-runs/terminal-events.ts',
+    sourceUrl: new URL('../routes/v1/agent-runs/terminal-events.ts', import.meta.url),
+    load: () => import('../routes/v1/agent-runs/terminal-events'),
+  },
+  {
+    file: 'src/routes/v1/agent-runs/terminal-events-ack.ts',
+    sourceUrl: new URL('../routes/v1/agent-runs/terminal-events-ack.ts', import.meta.url),
+    load: () => import('../routes/v1/agent-runs/terminal-events-ack'),
+  },
+  {
     file: 'src/routes/v1/agent-messages.ts',
     sourceUrl: new URL('../routes/v1/agent-messages.ts', import.meta.url),
     load: () => import('../routes/v1/agent-messages'),

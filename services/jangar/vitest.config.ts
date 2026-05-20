@@ -22,6 +22,9 @@ const agentContractsHealthClientSource = fileURLToPath(
 const agentContractsAgentRunsClientSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/agent-runs-client.ts', import.meta.url),
 )
+const agentContractsAgentRunTerminalEventsClientSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/agent-run-terminal-events-client.ts', import.meta.url),
+)
 const agentContractsAgentMessagesClientSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/agent-messages-client.ts', import.meta.url),
 )
@@ -76,6 +79,7 @@ export default defineConfig({
       '@proompteng/agent-contracts/agent-run-callbacks': agentContractsRunCallbacksSource,
       '@proompteng/agent-contracts/agents-health-client': agentContractsHealthClientSource,
       '@proompteng/agent-contracts/agent-runs-client': agentContractsAgentRunsClientSource,
+      '@proompteng/agent-contracts/agent-run-terminal-events-client': agentContractsAgentRunTerminalEventsClientSource,
       '@proompteng/agent-contracts/agent-messages-client': agentContractsAgentMessagesClientSource,
       '@proompteng/agent-contracts/agent-jobs-client': agentContractsAgentJobsClientSource,
       '@proompteng/agent-contracts/codex-orchestration-parameters': agentContractsCodexOrchestrationParametersSource,
@@ -112,6 +116,7 @@ export default defineConfig({
       '@proompteng/agent-contracts/agent-run-callbacks': agentContractsRunCallbacksSource,
       '@proompteng/agent-contracts/agents-health-client': agentContractsHealthClientSource,
       '@proompteng/agent-contracts/agent-runs-client': agentContractsAgentRunsClientSource,
+      '@proompteng/agent-contracts/agent-run-terminal-events-client': agentContractsAgentRunTerminalEventsClientSource,
       '@proompteng/agent-contracts/agent-messages-client': agentContractsAgentMessagesClientSource,
       '@proompteng/agent-contracts/agent-jobs-client': agentContractsAgentJobsClientSource,
       '@proompteng/agent-contracts/codex-orchestration-parameters': agentContractsCodexOrchestrationParametersSource,

@@ -610,6 +610,22 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/whitepaper-finalize-consumer.ts"
 
 fail_if_matches \
+  "Jangar whitepaper finalizer must consume Agents-owned terminal events instead of listing and annotating raw AgentRun resources" \
+  'fetchAgentRunResourcesFromAgentsService|patchAgentRunAnnotationsViaAgentsService|AgentsAgentRunAnnotationsPatchInput|isTerminalPhase|buildProcessKey|FINALIZED_PHASE_ANNOTATION|FINALIZED_RUN_ID_ANNOTATION|FINALIZED_AT_ANNOTATION' \
+  "${ROOT_DIR}/services/jangar/src/server/whitepaper-finalize-consumer.ts"
+
+require_matches \
+  "Agents service must own terminal AgentRun event listing and acknowledgement routes" \
+  '/v1/agent-runs/terminal-events' \
+  "${ROOT_DIR}/services/agents/src/server/control-plane.ts" \
+  "${ROOT_DIR}/packages/agent-contracts/src/agent-run-terminal-events-client.ts"
+
+require_matches \
+  "Jangar whitepaper finalizer must consume the typed Agents terminal-events client" \
+  'agent-run-terminal-events-client' \
+  "${ROOT_DIR}/services/jangar/src/server/whitepaper-finalize-consumer.ts"
+
+fail_if_matches \
   "Jangar KubeGateway must list Agents CRDs through the Agents service boundary, not direct Kubernetes CRD access" \
   'RESOURCE_MAP|agentruns\.agents\.proompteng\.ai|swarms\.swarm\.proompteng\.ai' \
   "${ROOT_DIR}/services/jangar/src/server/kube-gateway.ts"
