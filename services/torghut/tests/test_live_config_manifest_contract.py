@@ -664,6 +664,34 @@ class TestLiveConfigManifestContract(TestCase):
                 f"{template.get('name')} pins ClickHouse to one architecture",
             )
 
+    def test_options_ta_uses_primary_clickhouse_auth_secret(self) -> None:
+        manifest = _load_yaml_mapping(
+            "argocd/applications/torghut-options/ta/flinkdeployment.yaml"
+        )
+        pod_template = cast(Mapping[str, object], manifest.get("spec", {})).get(
+            "podTemplate"
+        )
+        self.assertIsInstance(pod_template, Mapping)
+        pod_spec = cast(Mapping[str, object], pod_template).get("spec")
+        self.assertIsInstance(pod_spec, Mapping)
+        containers = cast(Mapping[str, object], pod_spec).get("containers")
+        self.assertIsInstance(containers, list)
+        self.assertTrue(containers)
+
+        env = {
+            item.get("name"): item
+            for item in cast(
+                list[Mapping[str, object]],
+                cast(Mapping[str, object], containers[0]).get("env", []),
+            )
+        }
+        clickhouse_password = cast(Mapping[str, object], env["TA_CLICKHOUSE_PASSWORD"])
+        value_from = cast(Mapping[str, object], clickhouse_password.get("valueFrom", {}))
+        self.assertEqual(
+            value_from.get("secretKeyRef"),
+            {"name": "torghut-clickhouse-auth", "key": "torghut_password"},
+        )
+
     def test_whitepaper_semantic_backfill_runs_on_arm_nodes(self) -> None:
         manifest = _load_yaml_mapping(
             "argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml"
