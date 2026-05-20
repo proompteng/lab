@@ -87,6 +87,16 @@ const routeSources: RouteSourceSpec[] = [
     load: () => import('../routes/v1/codex/runs/list'),
   },
   {
+    file: 'src/routes/v1/codex/runs/by-id.ts',
+    sourceUrl: new URL('../routes/v1/codex/runs/by-id.ts', import.meta.url),
+    load: () => import('../routes/v1/codex/runs/by-id'),
+  },
+  {
+    file: 'src/routes/v1/codex/runs/by-pr.ts',
+    sourceUrl: new URL('../routes/v1/codex/runs/by-pr.ts', import.meta.url),
+    load: () => import('../routes/v1/codex/runs/by-pr'),
+  },
+  {
     file: 'src/routes/v1/codex/runs/recent.ts',
     sourceUrl: new URL('../routes/v1/codex/runs/recent.ts', import.meta.url),
     load: () => import('../routes/v1/codex/runs/recent'),

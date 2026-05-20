@@ -4,7 +4,9 @@ import {
   type CodexRunsApiDependencies,
   getCodexIssuesHandler,
   getCodexRecentRunsHandler,
+  getCodexRunByIdHandler,
   getCodexRunHistoryHandler,
+  getCodexRunsByPrHandler,
   getCodexRunsPageHandler,
 } from './codex-runs'
 
@@ -23,9 +25,11 @@ const createStore = (overrides: Record<string, unknown> = {}) =>
   ({
     ready: Promise.resolve(),
     close: vi.fn(async () => {}),
+    getRunById: vi.fn(async () => null),
     getRunHistory: vi.fn(async () => ({ runs: [], stats: emptyStats })),
     listIssueSummaries: vi.fn(async () => []),
     listRecentRuns: vi.fn(async () => []),
+    listRunsByPrNumber: vi.fn(async () => []),
     listRunsPage: vi.fn(async () => ({ runs: [], total: 0 })),
     ...overrides,
   }) as CodexRunsTestStore
@@ -91,5 +95,29 @@ describe('Codex runs v1 API', () => {
     expect(listResponse.status).toBe(200)
     expect(recentResponse.status).toBe(200)
     expect(issuesResponse.status).toBe(200)
+  })
+
+  it('serves run lookup APIs used by Jangar compatibility routes', async () => {
+    const run = { id: 'run-1', repository: 'owner/repo' }
+    const store = createStore({
+      getRunById: vi.fn(async () => run),
+      listRunsByPrNumber: vi.fn(async () => [run]),
+    })
+
+    const byIdResponse = await getCodexRunByIdHandler(
+      new Request('http://agents.test/v1/codex/runs/by-id?runId=run-1'),
+      { storeFactory: () => store },
+    )
+    const byPrResponse = await getCodexRunsByPrHandler(
+      new Request('http://agents.test/v1/codex/runs/by-pr?repository=owner/repo&prNumber=42'),
+      { storeFactory: () => store },
+    )
+
+    expect(store.getRunById).toHaveBeenCalledWith('run-1')
+    expect(store.listRunsByPrNumber).toHaveBeenCalledWith('owner/repo', 42)
+    expect(byIdResponse.status).toBe(200)
+    expect(byPrResponse.status).toBe(200)
+    await expect(byIdResponse.json()).resolves.toEqual({ ok: true, run })
+    await expect(byPrResponse.json()).resolves.toEqual({ ok: true, runs: [run] })
   })
 })

@@ -388,65 +388,6 @@ type JangarGithubWriteActions = {
   error: string | null
 }
 
-type CodexJudgeRuns = {
-  id: Generated<string>
-  repository: string
-  issue_number: number
-  branch: string
-  attempt: number
-  agent_run_name: string
-  agent_run_uid: string | null
-  agent_run_namespace: string | null
-  turn_id: string | null
-  thread_id: string | null
-  stage: string | null
-  status: string
-  phase: string | null
-  iteration: number | null
-  iteration_cycle: number | null
-  prompt: string | null
-  next_prompt: string | null
-  commit_sha: string | null
-  pr_number: number | null
-  pr_url: string | null
-  ci_status: string | null
-  ci_url: string | null
-  ci_status_updated_at: Timestamp | null
-  review_status: string | null
-  review_summary: JsonValue
-  review_status_updated_at: Timestamp | null
-  notify_payload: JsonValue | null
-  run_complete_payload: JsonValue | null
-  created_at: Generated<Timestamp>
-  updated_at: Generated<Timestamp>
-  started_at: Timestamp | null
-  finished_at: Timestamp | null
-}
-
-type CodexJudgeArtifacts = {
-  id: Generated<string>
-  run_id: string
-  name: string
-  key: string
-  bucket: string | null
-  url: string | null
-  metadata: JsonValue
-  created_at: Generated<Timestamp>
-}
-
-type CodexJudgeEvaluations = {
-  id: Generated<string>
-  run_id: string
-  decision: string
-  confidence: number | null
-  reasons: JsonValue
-  missing_items: JsonValue
-  suggested_fixes: JsonValue
-  next_prompt: string | null
-  system_suggestions: JsonValue
-  created_at: Generated<Timestamp>
-}
-
 type TorghutQuantMetricsLatest = {
   id: Generated<string>
   strategy_id: string
@@ -735,9 +676,6 @@ export type Database = {
   torghut_market_context_runs: TorghutMarketContextRuns
   torghut_market_context_run_events: TorghutMarketContextRunEvents
   torghut_market_context_evidence: TorghutMarketContextEvidence
-  'codex_judge.runs': CodexJudgeRuns
-  'codex_judge.artifacts': CodexJudgeArtifacts
-  'codex_judge.evaluations': CodexJudgeEvaluations
 }
 
 let db: Db | null | undefined

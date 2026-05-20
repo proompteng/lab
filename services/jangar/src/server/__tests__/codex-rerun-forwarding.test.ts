@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { CodexRunRecord } from '../codex-judge-store'
+import type { CodexRunRecord } from '@proompteng/agent-contracts/codex-runs-client'
 import { resolveAgentRunRerunForwardingPayload } from '../codex-rerun-forwarding'
 
 const run: CodexRunRecord = {
@@ -53,7 +53,7 @@ describe('resolveAgentRunRerunForwardingPayload', () => {
       runId: 'explicit-run',
       agentRunName: 'explicit-run',
       deliveryId: 'explicit-run:2',
-      legacyCodexJudgeRunId: null,
+      legacyCodexRunId: null,
     })
   })
 
@@ -72,7 +72,7 @@ describe('resolveAgentRunRerunForwardingPayload', () => {
       agentRunName: 'codex-example-agent-run',
       agentRunNamespace: 'agents',
       agentRunUid: 'uid-1',
-      legacyCodexJudgeRunId: 'judge-run-1',
+      legacyCodexRunId: 'judge-run-1',
     })
   })
 

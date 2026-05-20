@@ -5,7 +5,14 @@ import { createCodexRunProjectionStore, type CodexRunProjectionStore } from '../
 
 type CodexRunsStore = Pick<
   CodexRunProjectionStore,
-  'ready' | 'close' | 'getRunHistory' | 'listIssueSummaries' | 'listRecentRuns' | 'listRunsPage'
+  | 'ready'
+  | 'close'
+  | 'getRunById'
+  | 'getRunHistory'
+  | 'listIssueSummaries'
+  | 'listRecentRuns'
+  | 'listRunsByPrNumber'
+  | 'listRunsPage'
 >
 
 export type CodexRunsApiDependencies = {
@@ -60,6 +67,14 @@ const requireRepository = (url: URL) => {
   return Effect.succeed(repository)
 }
 
+const requireRunId = (url: URL) => {
+  const runId = url.searchParams.get('runId')?.trim() ?? url.searchParams.get('run_id')?.trim() ?? ''
+  if (!runId) {
+    return Effect.fail(new CodexRunsRequestError({ message: 'runId is required', status: 400 }))
+  }
+  return Effect.succeed(runId)
+}
+
 const requireIssueNumber = (url: URL) => {
   const issueNumber =
     parsePositiveInt(url.searchParams.get('issueNumber'), Number.MAX_SAFE_INTEGER) ??
@@ -69,6 +84,36 @@ const requireIssueNumber = (url: URL) => {
   }
   return Effect.succeed(issueNumber)
 }
+
+const requirePrNumber = (url: URL) => {
+  const prNumber =
+    parsePositiveInt(url.searchParams.get('prNumber'), Number.MAX_SAFE_INTEGER) ??
+    parsePositiveInt(url.searchParams.get('pr_number'), Number.MAX_SAFE_INTEGER)
+  if (!prNumber) {
+    return Effect.fail(new CodexRunsRequestError({ message: 'prNumber is required', status: 400 }))
+  }
+  return Effect.succeed(prNumber)
+}
+
+export const getCodexRunByIdEffect = (request: Request, deps: CodexRunsApiDependencies = {}) =>
+  Effect.gen(function* () {
+    const url = new URL(request.url)
+    const runId = yield* requireRunId(url)
+
+    return yield* Effect.acquireUseRelease(
+      openStore(deps),
+      (store) =>
+        Effect.gen(function* () {
+          yield* readyStore(store)
+          const run = yield* Effect.tryPromise({
+            try: () => store.getRunById(runId),
+            catch: (cause) => new CodexRunsStorageError({ operation: 'get-codex-run-by-id', cause }),
+          })
+          return { ok: true, run }
+        }),
+      closeStore,
+    )
+  })
 
 export const getCodexRunHistoryEffect = (request: Request, deps: CodexRunsApiDependencies = {}) =>
   Effect.gen(function* () {
@@ -88,6 +133,27 @@ export const getCodexRunHistoryEffect = (request: Request, deps: CodexRunsApiDep
             catch: (cause) => new CodexRunsStorageError({ operation: 'get-codex-run-history', cause }),
           })
           return { ok: true, ...history }
+        }),
+      closeStore,
+    )
+  })
+
+export const getCodexRunsByPrEffect = (request: Request, deps: CodexRunsApiDependencies = {}) =>
+  Effect.gen(function* () {
+    const url = new URL(request.url)
+    const repository = yield* requireRepository(url)
+    const prNumber = yield* requirePrNumber(url)
+
+    return yield* Effect.acquireUseRelease(
+      openStore(deps),
+      (store) =>
+        Effect.gen(function* () {
+          yield* readyStore(store)
+          const runs = yield* Effect.tryPromise({
+            try: () => store.listRunsByPrNumber(repository, prNumber),
+            catch: (cause) => new CodexRunsStorageError({ operation: 'list-codex-runs-by-pr', cause }),
+          })
+          return { ok: true, runs }
         }),
       closeStore,
     )
@@ -175,6 +241,12 @@ const runHandler = async (effect: Effect.Effect<Record<string, unknown>, CodexRu
 
 export const getCodexRunHistoryHandler = (request: Request, deps: CodexRunsApiDependencies = {}) =>
   runHandler(getCodexRunHistoryEffect(request, deps))
+
+export const getCodexRunByIdHandler = (request: Request, deps: CodexRunsApiDependencies = {}) =>
+  runHandler(getCodexRunByIdEffect(request, deps))
+
+export const getCodexRunsByPrHandler = (request: Request, deps: CodexRunsApiDependencies = {}) =>
+  runHandler(getCodexRunsByPrEffect(request, deps))
 
 export const getCodexRecentRunsHandler = (request: Request, deps: CodexRunsApiDependencies = {}) =>
   runHandler(getCodexRecentRunsEffect(request, deps))

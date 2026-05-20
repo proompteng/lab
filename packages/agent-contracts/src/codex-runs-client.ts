@@ -1,6 +1,7 @@
 import {
   buildAgentsServiceUrl,
   fetchAgentsJsonEffect,
+  postAgentsJsonEffect,
   runAgentsJsonPromise,
   servicePath,
   type AgentsServiceJsonResult,
@@ -135,6 +136,29 @@ export type CodexIssuesResult = {
   issues: CodexIssueSummaryRecord[]
 }
 
+export type CodexRunByIdResult = {
+  ok: boolean
+  run: CodexRunRecord | null
+}
+
+export type CodexRunsByPrResult = {
+  ok: boolean
+  runs: CodexRunRecord[]
+}
+
+export type CodexGithubEventIngestResult = {
+  ok: boolean
+  event?: string
+  action?: string | null
+  updatedRunIds?: string[]
+  status?: string | null
+  result?: unknown
+}
+
+export type CodexRunByIdInput = {
+  runId: string
+}
+
 export type CodexRunHistoryInput = {
   repository: string
   issueNumber: number
@@ -156,6 +180,11 @@ export type CodexRecentRunsInput = {
 export type CodexIssuesInput = {
   repository: string
   limit?: number | null
+}
+
+export type CodexRunsByPrInput = {
+  repository: string
+  prNumber: number
 }
 
 const appendOptionalNumber = (params: URLSearchParams, key: string, value?: number | null) => {
@@ -181,6 +210,19 @@ export const fetchCodexRunHistoryFromAgentsServiceEffect = (
   if (input.branch?.trim()) params.set('branch', input.branch.trim())
   appendOptionalNumber(params, 'limit', input.limit)
   return fetchAgentsJsonEffect<CodexRunHistoryResult>(buildCodexPath('/v1/codex/runs', params, env), env)
+}
+
+export const fetchCodexRunByIdFromAgentsServiceEffect = (input: CodexRunByIdInput, env: EnvSource = process.env) => {
+  const params = new URLSearchParams({ runId: input.runId })
+  return fetchAgentsJsonEffect<CodexRunByIdResult>(buildCodexPath('/v1/codex/runs/by-id', params, env), env)
+}
+
+export const fetchCodexRunsByPrFromAgentsServiceEffect = (input: CodexRunsByPrInput, env: EnvSource = process.env) => {
+  const params = new URLSearchParams({
+    repository: input.repository,
+    prNumber: String(input.prNumber),
+  })
+  return fetchAgentsJsonEffect<CodexRunsByPrResult>(buildCodexPath('/v1/codex/runs/by-pr', params, env), env)
 }
 
 export const fetchCodexRunsPageFromAgentsServiceEffect = (
@@ -210,11 +252,28 @@ export const fetchCodexIssuesFromAgentsServiceEffect = (input: CodexIssuesInput,
   return fetchAgentsJsonEffect<CodexIssuesResult>(buildCodexPath('/v1/codex/issues', params, env), env)
 }
 
+export const postCodexGithubEventToAgentsServiceEffect = (
+  payload: Record<string, unknown>,
+  env: EnvSource = process.env,
+) => postAgentsJsonEffect<CodexGithubEventIngestResult>('/v1/codex/github-events', payload, { env })
+
 export const fetchCodexRunHistoryFromAgentsService = (
   input: CodexRunHistoryInput,
   env: EnvSource = process.env,
 ): Promise<AgentsServiceJsonResult<CodexRunHistoryResult>> =>
   runAgentsJsonPromise(fetchCodexRunHistoryFromAgentsServiceEffect(input, env))
+
+export const fetchCodexRunByIdFromAgentsService = (
+  input: CodexRunByIdInput,
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<CodexRunByIdResult>> =>
+  runAgentsJsonPromise(fetchCodexRunByIdFromAgentsServiceEffect(input, env))
+
+export const fetchCodexRunsByPrFromAgentsService = (
+  input: CodexRunsByPrInput,
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<CodexRunsByPrResult>> =>
+  runAgentsJsonPromise(fetchCodexRunsByPrFromAgentsServiceEffect(input, env))
 
 export const fetchCodexRunsPageFromAgentsService = (
   input: CodexRunsPageInput = {},
@@ -233,3 +292,9 @@ export const fetchCodexIssuesFromAgentsService = (
   env: EnvSource = process.env,
 ): Promise<AgentsServiceJsonResult<CodexIssuesResult>> =>
   runAgentsJsonPromise(fetchCodexIssuesFromAgentsServiceEffect(input, env))
+
+export const postCodexGithubEventToAgentsService = (
+  payload: Record<string, unknown>,
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<CodexGithubEventIngestResult>> =>
+  runAgentsJsonPromise(postCodexGithubEventToAgentsServiceEffect(payload, env))

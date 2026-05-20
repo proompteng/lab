@@ -1,4 +1,4 @@
-import { createCodexJudgeStore, type CodexRunRecord } from './codex-judge-store'
+import { fetchCodexRunByIdFromAgentsService, type CodexRunRecord } from '@proompteng/agent-contracts/codex-runs-client'
 
 export type AgentRunRerunForwardingPayload = {
   agentRunId: string
@@ -18,13 +18,11 @@ const readString = (payload: Record<string, unknown>, keys: string[]) => {
 }
 
 const defaultLookupCodexRunById: CodexRerunParentLookup = async (runId) => {
-  const store = createCodexJudgeStore()
-  try {
-    await store.ready
-    return await store.getRunById(runId)
-  } finally {
-    await store.close()
+  const result = await fetchCodexRunByIdFromAgentsService({ runId })
+  if (!result.ok) {
+    throw new Error(result.error ?? `Agents Codex run lookup failed with HTTP ${result.status}`)
   }
+  return result.body.run
 }
 
 export const resolveAgentRunRerunForwardingPayload = async (
@@ -57,7 +55,7 @@ export const resolveAgentRunRerunForwardingPayload = async (
       ...(agentRunNamespace ? { agentRunNamespace } : {}),
       ...(agentRunUid ? { agentRunUid } : {}),
       deliveryId,
-      legacyCodexJudgeRunId: parentRun?.id ?? legacyRunId ?? null,
+      legacyCodexRunId: parentRun?.id ?? legacyRunId ?? null,
     },
   }
 }

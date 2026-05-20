@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { fetchCodexRunsByPrFromAgentsService } from '@proompteng/agent-contracts/codex-runs-client'
 
-import { createCodexJudgeStore } from '~/server/codex-judge-store'
 import { isGithubRepoAllowed, loadGithubReviewConfig } from '~/server/github-review-config'
 
 const jsonResponse = (payload: unknown, status = 200) => {
@@ -23,30 +23,33 @@ const parseNumberParam = (value: string | undefined) => {
 export const Route = createFileRoute('/api/github/pulls/$owner/$repo/$number/judge-runs')({
   server: {
     handlers: {
-      GET: async ({ params }: JangarServerRouteArgsWith<JangarGithubPullRouteParams>) => {
-        const prNumber = parseNumberParam(params.number)
-        if (!prNumber) {
-          return jsonResponse({ ok: false, error: 'Invalid pull request number' }, 400)
-        }
-
-        const repository = `${params.owner}/${params.repo}`
-        const config = loadGithubReviewConfig()
-        if (!isGithubRepoAllowed(config, repository)) {
-          return jsonResponse({ ok: false, error: 'Repository not allowed' }, 403)
-        }
-
-        const store = createCodexJudgeStore()
-        try {
-          const runs = await store.listRunsByPrNumber(repository, prNumber)
-          return jsonResponse({ ok: true, runs })
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'Unable to load judge runs'
-          return jsonResponse({ ok: false, error: message }, 500)
-        } finally {
-          await store.close()
-        }
-      },
+      GET: async ({ params }: JangarServerRouteArgsWith<JangarGithubPullRouteParams>) =>
+        getGithubPullJudgeRunsHandler(params),
       POST: async () => new Response('Method Not Allowed', { status: 405 }),
     },
   },
 })
+
+type GithubPullJudgeRunsClient = typeof fetchCodexRunsByPrFromAgentsService
+
+export const getGithubPullJudgeRunsHandler = async (
+  params: JangarGithubPullRouteParams,
+  client: GithubPullJudgeRunsClient = fetchCodexRunsByPrFromAgentsService,
+) => {
+  const prNumber = parseNumberParam(params.number)
+  if (!prNumber) {
+    return jsonResponse({ ok: false, error: 'Invalid pull request number' }, 400)
+  }
+
+  const repository = `${params.owner}/${params.repo}`
+  const config = loadGithubReviewConfig()
+  if (!isGithubRepoAllowed(config, repository)) {
+    return jsonResponse({ ok: false, error: 'Repository not allowed' }, 403)
+  }
+
+  const result = await client({ repository, prNumber })
+  if (!result.ok) {
+    return jsonResponse({ ok: false, error: result.error ?? 'Unable to load judge runs' }, result.status || 502)
+  }
+  return jsonResponse(result.body)
+}

@@ -177,11 +177,27 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/routes/api/codex/runs/recent.tsx" \
   "${ROOT_DIR}/services/jangar/src/routes/api/codex/issues.tsx"
 
+fail_if_matches \
+  "Jangar Codex compatibility routes must use Agents Codex projection clients instead of Jangar judge storage or handlers" \
+  "createCodexJudgeStore|handleGithubWebhookEvent|from ['\"]~\\/server\\/codex-judge-store|from ['\"]\\.\\.\\/\\.\\.\\/\\.\\.\\/server\\/codex-judge-store|from ['\"]\\.\\/codex-judge-store" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/codex/github-events.tsx" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/github/pulls/\$owner/\$repo/\$number/judge-runs.tsx" \
+  "${ROOT_DIR}/services/jangar/src/server/codex-rerun-forwarding.ts"
+
 require_matches \
   "Agents service must own canonical Codex run projection v1 route registration" \
-  '/v1/codex/(runs|issues|github-events)|src/routes/v1/codex/(runs|issues|github-events)' \
+  '/v1/codex/(runs|issues|github-events)|src/routes/v1/codex/(runs|issues|github-events)|codex/runs/(by-id|by-pr)' \
   "${ROOT_DIR}/services/agents/src/server/control-plane.ts" \
   "${ROOT_DIR}/services/agents/package.json"
+
+fail_if_path_exists \
+  "Jangar must not own the generic Codex judge evaluator/store after Agents owns Codex projections" \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge-store.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge-run-rows.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge-artifacts.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge-gates.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge-config.ts"
 
 fail_if_path_exists \
   "Jangar GitOps must not own generic Codex GitHub event projection ingestion after Agents owns Codex projections" \
