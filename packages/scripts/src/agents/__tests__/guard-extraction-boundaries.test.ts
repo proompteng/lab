@@ -16,7 +16,13 @@ const protectedBoundaryTriggerPaths = [
   'argocd/applications/traefik/values.yaml',
   'charts/agents/**',
   'docs/agents/**',
+  'docs/autonomous-codex-design.md',
   'docs/graf-codex-research.md',
+  'docs/jangar/codex-judge-argo-design.md',
+  'docs/jangar/codex-judge-argo-implementation.md',
+  'docs/jangar/jangar-application-dependency-tree.md',
+  'docs/runbooks/codex-docker.md',
+  'docs/runbooks/kafka-broker-storage-recovery.md',
   'packages/scripts/src/agents/**',
   'proto/proompteng/facteur/v1/contract.proto',
   'services/agents/**',
@@ -83,6 +89,13 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain(
       'Jangar memory provider must use Agents memory operation APIs instead of Agents-owned Secrets or DB tables',
     )
+    expect(content).toContain(
+      'Shared Argo Workflows GitOps must not retain generic Agents WorkflowTemplate or Argo completion ingestion manifests',
+    )
+    expect(content).toContain('Shared Argo Workflows GitOps must not retain the retired Codex Docker privileged policy')
+    expect(content).toContain('Froussard must not retain the legacy Argo workflow run-complete Kafka replay helper')
+    expect(content).toContain('Observability must not track retired Argo workflow completion Kafka topics')
+    expect(content).toContain('Active Jangar docs must not describe the retired Argo workflow completion bridge')
     expect(content).toContain('ALPACA_|mcp_servers\\.alpaca|alpaca-mcp')
     expect(content).toContain('Domain AgentRun swarm producers must use AgentRun-native NATS subject prefixes')
     expect(content).toContain(

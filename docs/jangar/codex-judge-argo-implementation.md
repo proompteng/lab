@@ -1,7 +1,8 @@
 # Implementation Details: Codex Judge + Resumable Argo
 
 This document splits the work into parallel tracks and provides concrete interfaces, schemas, and workflow steps.
-The judge pipeline is triggered by the Argo run-complete event (success or failure); notify is enrichment only.
+Historical status: this describes the retired Argo run-complete path. Current implementation runs are submitted
+to the Agents service, and Agents-owned status/log/artifact APIs are the current runtime boundary.
 
 ## Project Progress Inventory (as of 2026-01-01)
 
@@ -27,18 +28,16 @@ This section cross-references the design/implementation plan against current cod
 
 Workflow metadata correlation:
 
-- Facteur now attaches `codex.repository`, `codex.issue_number`, `codex.head`, and `codex.base` annotations/labels when
-  submitting workflows through the retired Facteur bridge.
+- Facteur attached `codex.repository`, `codex.issue_number`, `codex.head`, and `codex.base` annotations/labels
+  when submitting workflows through the retired Facteur bridge.
 
 Remaining gaps for a fully functional judge system (as of 2026-01-01):
 
 - No functional gaps currently tracked; follow ongoing ops items as needed.
 
-Current production context (see `docs/codex-workflow.md`):
+Historical production context:
 
-- Workflow template: `argocd/applications/froussard/github-codex-implementation-workflow-template.yaml`
 - Workflow outputs: `.codex-implementation-changes.tar.gz`, `.codex-implementation.patch`, `.codex-implementation-status.txt`
-- Argo Events -> Kafka completions: `argocd/applications/froussard/workflow-completions-*.yaml`
 - Kafka topics: the retired design used workflow completion topics.
 
 ## Workstreams (Parallel)
@@ -212,7 +211,7 @@ Run-complete is the primary trigger for judging; notify only enriches the run co
 "issued_at": "2025-12-28T00:00:00Z"
 }
 
-### run-complete payload (draft, from `argo.workflows.completions` sensor)
+### run-complete payload (retired sensor draft)
 
 {
 "metadata": {
@@ -263,8 +262,7 @@ Use the existing Postgres wiring in `services/jangar/src/server/db.ts` (jangar-d
 - Ingestion endpoint with validation.
 - DB migrations for new tables.
 - Run state machine implementation.
-- Knative KafkaSource to deliver `argo.workflows.completions` to Jangar
-  (new manifest under `argocd/applications/jangar`).
+- The retired design delivered completion events to Jangar with a Knative KafkaSource.
 
 ### Detailed tasks
 

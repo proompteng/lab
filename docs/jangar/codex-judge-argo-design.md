@@ -1,12 +1,13 @@
-# Codex Exec Notifications -> Jangar Judge -> Resumable Argo Iteration
+# Retired Codex Exec Notifications -> Jangar Judge -> Resumable Argo Iteration
 
-Status: Complete (ready for implementation)
+Status: Retired historical design
 Owner: Jangar + Froussard + Facteur
-Scope: Codex exec runs in Argo, judge consumes completion notifications, decides pass/fail, triggers reruns, and posts success to Discord.
+Scope: Historical Codex exec runs in Argo, judge completion notifications, reruns, and Discord success reporting.
 
 ## Summary
 
-Historical note: this document describes the retired Argo workflow path. Current GitHub issue implementation runs are submitted by Froussard directly to the Agents service.
+Historical note: this document describes the retired Argo workflow path. Current GitHub issue implementation
+runs are submitted by Froussard directly to the Agents service.
 
 Codex originally ran inside Argo workflows triggered by Facteur from GitHub issue events. Argo Events published workflow completions to Kafka (success or failure), and Codex could emit a notify event on successful turn completion. Jangar ingested run-complete events from the Kafka completions topic as the source of truth, used notify as enrichment, waited for GitHub Actions CI results and Codex PR review completion, evaluated whether work was complete, and either:
 
@@ -41,14 +42,14 @@ Components:
 
 - Froussard: receives GitHub webhooks and now submits implementation AgentRuns to Agents.
 - Facteur: no longer handles GitHub issue implementation tasks; it remains the Discord/domain command bridge.
-- Argo Workflows: executes Codex in exec mode.
+- Argo Workflows: executed Codex in exec mode in the retired design.
 - Codex exec: runs agent; emits notify on completion (optional enrichment).
 - Notify wrapper: enriches notify payload and POSTs to Jangar.
 - Jangar: persists run state, waits for CI, judges completion, and orchestrates reruns (triggered by run-complete).
 - Jangar Memories: stores semantic memories (pgvector) for judge snapshots.
 - MinIO: stores artifacts for each run.
-- Argo Events: publishes workflow completion events to Kafka.
-- Kafka: carried workflow completion topics in the retired design.
+- Argo Events: published workflow completion events to Kafka in the retired design.
+- Kafka: carried the retired workflow completion stream.
 - GitHub Actions: CI signal for the attempt commit SHA.
 - Discord: success notification to general channel; escalation only on hard failure.
 
@@ -79,9 +80,9 @@ flowchart LR
 ## Data Flow
 
 1. GitHub issue -> Froussard -> Agents `AgentRun` API
-2. Argo runs Codex exec (`github-codex-implementation`).
-3. Argo Events emits workflow completion -> Kafka (`argo.workflows.completions`).
-4. Jangar ingests run-complete from Kafka (primary attempt record).
+2. The retired path ran Codex exec inside Argo.
+3. The retired path emitted Argo completion events into Kafka.
+4. Jangar ingested run-complete events from that retired stream as the primary attempt record.
 5. Codex notify fires on successful turn completion (optional enrichment).
 6. Notify wrapper enriches payload and POSTs to Jangar.
 7. Jangar waits for GitHub Actions CI result for the attempt commit SHA.
@@ -93,15 +94,11 @@ flowchart LR
 12. If fail: generate next prompt, request Facteur to trigger new Argo run on same branch.
 13. Jangar writes 10 memory snapshots from logs/output into the memories store.
 
-## Current Production Wiring (Argo CD Sources of Truth)
+## Historical Wiring
 
-- Workflow template: `argocd/applications/froussard/github-codex-implementation-workflow-template.yaml`
-- Argo artifact repository: `argocd/applications/argo-workflows/kustomization.yaml`
-  (bucket `argo-workflows` on `observability-minio.minio.svc.cluster.local:9000`)
-- Workflow completions -> Kafka: `argocd/applications/froussard/workflow-completions-eventsource.yaml`
-  and `argocd/applications/froussard/workflow-completions-sensor.yaml`
-- Kafka topic: `argo.workflows.completions` (`argocd/applications/froussard/argo-workflows-completions-topic.yaml`)
-- Facteur GitHub issue KafkaSource: removed with the Agents extraction.
+- GitHub issue implementation now enters the Agents service directly from Froussard.
+- The former Argo completion bridge, eventing manifests, and completion topic are retired.
+- Facteur GitHub issue dispatch is removed from the implementation path.
 - Facteur internal service: `argocd/applications/facteur/overlays/cluster/facteur-internal-service.yaml`
 - Jangar service/deployment/DB/Redis: `argocd/applications/jangar/service.yaml`,
   `argocd/applications/jangar/deployment.yaml`
@@ -192,16 +189,15 @@ Artifact access:
 ## Failed-Run Ingestion (No Notify)
 
 - Codex notify only fires on successful turn completion.
-- Argo Events publishes workflow completions to Kafka (`argo.workflows.completions`) for both success
-  and failure, so Jangar can track failed attempts even when notify never fires.
-- Deliver completions to Jangar via a Knative KafkaSource in the `jangar` namespace
-  targeting `/api/codex/run-complete`.
-- Jangar must treat run-complete as the source of truth for attempt existence and judge triggering.
+- The retired design published Argo completions to Kafka for both success and failure so Jangar could track
+  failed attempts even when notify never fired.
+- The completion KafkaSource and run-complete endpoint are not part of the current Agents-owned runtime.
+- In the current runtime, Agents-owned status, logs, and artifact APIs are the source of truth.
 - Notify (if present) is enrichment only (assistant message + input context).
 
 ## Jangar Responsibilities
 
-- Ingest run-complete events from Kafka (`argo.workflows.completions`) as the primary record.
+- Historically ingested run-complete events from Kafka as the primary record.
 - Ingest notify events as enrichment only.
 - Correlate runs by issue_id, workflow_name, workflow_uid, turn_id, attempt.
 - Decode workflow arguments (base64 `eventBody`) to recover repository/issue metadata.

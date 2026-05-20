@@ -176,14 +176,14 @@ Key components evolve from the current codebase:
 
 ## 7. Data Flow & Topics
 
-| Topic                       | Producer                | Consumer               | Payload                 |
-| --------------------------- | ----------------------- | ---------------------- | ----------------------- |
-| `codex.intent`              | Froussard               | Facteur                | Normalised Idea Spec    |
-| `codex.plan`                | Planning workflow       | Facteur                | Plan artifacts metadata |
-| `codex.execution`           | Implementation workflow | Facteur, Observability | Progress, logs          |
-| `codex.review`              | Review workflow         | Facteur                | QA outcomes             |
-| `codex.deploy`              | Deploy workflow         | Facteur                | Deployment status       |
-| `codex.telemetry`           | All workflows           | Observability          | Metrics/traces          |
+| Topic             | Producer                | Consumer               | Payload                 |
+| ----------------- | ----------------------- | ---------------------- | ----------------------- |
+| `codex.intent`    | Froussard               | Facteur                | Normalised Idea Spec    |
+| `codex.plan`      | Planning workflow       | Facteur                | Plan artifacts metadata |
+| `codex.execution` | Implementation workflow | Facteur, Observability | Progress, logs          |
+| `codex.review`    | Review workflow         | Facteur                | QA outcomes             |
+| `codex.deploy`    | Deploy workflow         | Facteur                | Deployment status       |
+| `codex.telemetry` | All workflows           | Observability          | Metrics/traces          |
 
 ## 8. Knowledge Base Integration
 
@@ -275,10 +275,10 @@ For each phase:
 
 This design builds directly on the current codebase, evolving Froussard and Facteur into a cohesive autonomous platform while maintaining incremental rollout safety.
 
-## 16. Docker-Enabled Codex Workflows
+## 16. Retired Docker-Enabled Codex Workflows
 
-- **Image tooling:** `services/jangar/Dockerfile.codex` now bakes Docker CLI, Buildx, and Compose with default `DOCKER_HOST=tcp://localhost:2375`. `DOCKER_TLS_VERIFY` should be unset for the in-pod daemon (bootstrap treats `0`/`false` as unset). `DOCKER_ENABLED` defaults to `0` in the image and is set to `1` only on WorkflowTemplates that attach the Docker sidecar so non-docker workflows stay untouched.
-- **Rootless sidecar:** Every GitHub Codex WorkflowTemplate attaches a `docker:25.0-dind-rootless` sidecar listening on 2375, backed by an `emptyDir` at `/var/lib/docker` that is mounted read-only into the main Codex container to make image layers visible across steps without exposing write access.
-- **Bootstrap changes:** `codex-bootstrap` skips redundant `bun install` when `DOCKER_ENABLED=1` and cached modules exist, and it waits for `docker info` only when `DOCKER_ENABLED=1` so docker-ready workflows fail fast while other workflows proceed without delay.
-- **Policy guardrails:** A dedicated RBAC binding (`codex-docker-privileged` role in `argocd/applications/argo-workflows/codex-docker-policy.yaml`) scopes privileged pod usage to the Codex workflow service account; review namespace pod-security posture before promotion.
-- **Runbooks:** `docs/runbooks/codex-docker.md` documents validation (`docker info`, `docker run hello-world`, sample `docker build`), sidecar restart, and log collection. Roll staging first, monitor node pressure, then promote after Argo sync.
+- This section is historical. The generic Agents runner path no longer uses shared Argo Codex WorkflowTemplates
+  or the old Docker sidecar policy from `argocd/applications/argo-workflows`.
+- Current Agents runner images must carry their own declared runtime dependencies and must not rely on the retired
+  shared Argo workflow Docker sidecar.
+- `docs/runbooks/codex-docker.md` remains only as archived troubleshooting context for old workflow pods.

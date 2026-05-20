@@ -2,13 +2,8 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - rbac.yaml
-  - event-bus.yaml
-  - workflow-completions-eventsource.yaml
-  - workflow-completions-sensor.yaml
-  - argo-workflows-completions-topic.yaml
   - codex-workflow-serviceaccount.yaml
   - codex-workflow-rbac.yaml
-  - codex-docker-policy.yaml
   - codex-implementation-semaphore.yaml
   - ingressroute.yaml
   - middleware-workflows-canonical-host.yaml
@@ -18,16 +13,6 @@ resources:
   - alloy-configmap.yaml
   - alloy-deployment.yaml
   - codex-cluster-admin.yaml
-  - agents-embeddings-config.yaml
-  - agents-approval-gate-workflowtemplate.yaml
-  - agents-memory-op-workflowtemplate.yaml
-  - agents-signal-wait-workflowtemplate.yaml
-  - agents-checkpoint-workflowtemplate.yaml
-  - agents-sub-orchestration-workflowtemplate.yaml
-images:
-  - name: registry.ide-newton.ts.net/lab/agents-controller
-    newTag: "3b6c02e9"
-    digest: sha256:a065a1e35846afea7445bbaf79accacf66c37a7da3301139eb241b1f73163a9f
 helmCharts:
   - name: argo-workflows
     repo: https://argoproj.github.io/argo-helm
@@ -85,18 +70,3 @@ helmCharts:
             name: argo-workflows
             key: AWS_SECRET_ACCESS_KEY
           useSDKCreds: false
-  - name: argo-events
-    repo: https://argoproj.github.io/argo-helm
-    version: 2.4.21
-    releaseName: argo-events
-    namespace: argo-workflows
-    valuesInline:
-      singleNamespace: true
-      controller:
-        metricsConfigMap: ""
-      eventsource:
-        serviceAccount:
-          create: true
-      sensor:
-        serviceAccount:
-          create: false

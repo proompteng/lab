@@ -1057,6 +1057,51 @@ fail_if_matches \
   'event-bus\.yaml|kind: EventBus|workflow-completions|argo-workflows-completions-topic|argo\.workflows\.completions' \
   "${ROOT_DIR}/argocd/applications/froussard"
 
+fail_if_path_exists \
+  "Froussard must not retain the legacy Argo workflow run-complete Kafka replay helper" \
+  "${ROOT_DIR}/apps/froussard/scripts/codex-run-complete-kafka.ts"
+
+fail_if_path_exists \
+  "Shared Argo Workflows GitOps must not retain generic Agents WorkflowTemplate or Argo completion ingestion manifests" \
+  "${ROOT_DIR}/argocd/applications/argo-workflows/agents-approval-gate-workflowtemplate.yaml" \
+  "${ROOT_DIR}/argocd/applications/argo-workflows/agents-checkpoint-workflowtemplate.yaml" \
+  "${ROOT_DIR}/argocd/applications/argo-workflows/agents-memory-op-workflowtemplate.yaml" \
+  "${ROOT_DIR}/argocd/applications/argo-workflows/agents-signal-wait-workflowtemplate.yaml" \
+  "${ROOT_DIR}/argocd/applications/argo-workflows/agents-sub-orchestration-workflowtemplate.yaml" \
+  "${ROOT_DIR}/argocd/applications/argo-workflows/agents-embeddings-config.yaml" \
+  "${ROOT_DIR}/argocd/applications/argo-workflows/event-bus.yaml" \
+  "${ROOT_DIR}/argocd/applications/argo-workflows/workflow-completions-eventsource.yaml" \
+  "${ROOT_DIR}/argocd/applications/argo-workflows/workflow-completions-sensor.yaml" \
+  "${ROOT_DIR}/argocd/applications/argo-workflows/argo-workflows-completions-topic.yaml"
+
+fail_if_path_exists \
+  "Shared Argo Workflows GitOps must not retain the retired Codex Docker privileged policy" \
+  "${ROOT_DIR}/argocd/applications/argo-workflows/codex-docker-policy.yaml"
+
+fail_if_matches \
+  "Shared Argo Workflows GitOps must not render generic Agents runtime images or Argo completion ingestion" \
+  'registry\.ide-newton\.ts\.net/lab/agents-controller|kind: EventBus|kind: EventSource|kind: Sensor|workflow-completions|argo-workflows-completions-topic|argo\.workflows\.completions|agents-(approval-gate|checkpoint|memory-op|signal-wait|sub-orchestration)|agents-embeddings-config|name: argo-events' \
+  "${ROOT_DIR}/argocd/applications/argo-workflows"
+
+fail_if_matches \
+  "Observability must not track retired Argo workflow completion Kafka topics" \
+  'argo\.workflows\.completions|jangar-codex-completions|kafka-exporter|kafka-alloy|CodexKafkaCompletions|CodexEventBus' \
+  "${ROOT_DIR}/argocd/applications/observability/graf-mimir-rules.yaml" \
+  "${ROOT_DIR}/argocd/applications/observability/codex-pipeline-dashboard-configmap.yaml" \
+  "${ROOT_DIR}/argocd/applications/kafka/kustomization.yaml" \
+  "${ROOT_DIR}/docs/runbooks/codex-pipeline-observability.md" \
+  "${ROOT_DIR}/docs/kafka-topics.md"
+
+fail_if_matches \
+  "Active Jangar docs must not describe the retired Argo workflow completion bridge as current runtime" \
+  'argo\.workflows\.completions|jangar-codex-completions|workflow-completions|codex-docker-privileged|codex-docker-policy' \
+  "${ROOT_DIR}/docs/runbooks/kafka-broker-storage-recovery.md" \
+  "${ROOT_DIR}/docs/runbooks/codex-docker.md" \
+  "${ROOT_DIR}/docs/autonomous-codex-design.md" \
+  "${ROOT_DIR}/docs/jangar/jangar-application-dependency-tree.md" \
+  "${ROOT_DIR}/docs/jangar/codex-judge-argo-design.md" \
+  "${ROOT_DIR}/docs/jangar/codex-judge-argo-implementation.md"
+
 fail_if_matches \
   "Froussard webhook/runtime identity must be AgentRun-native, not Argo workflow-native" \
   'ARGO_WORKFLOW_|workflowIdentifier|_Workflow:' \
