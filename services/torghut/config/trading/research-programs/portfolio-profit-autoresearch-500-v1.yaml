@@ -745,6 +745,20 @@ research_sources:
       - claim_id: conclusion_stability_capital_gate
         summary: A result is capital-gate quality only when the implementation-uncertainty lower bound and conclusion-stability check survive replay differences.
         implication: Reject single-engine backtest proof and require lower-bound net PnL above the target across replay implementations.
+  - source_id: finrl_x_deployment_consistency_2026
+    title: 'FinRL-X: An AI-Native Modular Infrastructure for Quantitative Trading'
+    url: https://arxiv.org/abs/2603.21330
+    published_at: '2026-03-22'
+    claims:
+      - claim_id: weight_centric_unified_execution_protocol
+        summary: Data processing, strategy construction, backtesting, and broker execution should share one deployment-consistent protocol.
+        implication: Compile candidates with explicit signal-payload, order-sizing, and broker-execution semantic parity requirements.
+      - claim_id: replay_paper_live_semantic_parity_required
+        summary: Backtest-to-paper and paper-to-live gaps come from semantics that differ across the research and broker paths.
+        implication: Reject promotion when replay, paper, and live paths do not emit identical signal payloads, sizing decisions, and route constraints.
+      - claim_id: broker_execution_risk_overlay_parity
+        summary: Portfolio risk overlays and broker execution semantics must remain invariant across adapters.
+        implication: Adapter-only behavior drift blocks capital gates even if offline post-cost PnL is positive.
 families:
   - family_template_id: microstructure_continuation_matched_filter_v1
     seed_sweep_config: ../profitability-frontier-strict-daily-microstructure.yaml

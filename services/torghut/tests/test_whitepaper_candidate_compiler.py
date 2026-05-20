@@ -1546,3 +1546,103 @@ class TestWhitepaperCandidateCompiler(TestCase):
                 for spec in compilation.executable_specs
             )
         )
+
+    def test_deployment_consistency_claims_compile_to_semantic_parity_overlay(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-arxiv-2603.21330",
+            claims=[
+                {
+                    "claim_id": "weight-centric-unified-execution-protocol",
+                    "claim_type": "feature_recipe",
+                    "claim_text": (
+                        "A deployment-consistent trading architecture keeps data "
+                        "processing, strategy construction, backtesting, and broker "
+                        "execution behind one weight-centric protocol."
+                    ),
+                    "asset_scope": "us_equities_portfolio",
+                    "horizon_scope": "research_to_live_deployment",
+                    "expected_direction": "neutral",
+                    "data_requirements": [
+                        "portfolio_weight_trace",
+                        "signal_payload_parity",
+                        "order_sizing_parity",
+                        "broker_execution_semantics",
+                    ],
+                    "confidence": "0.76",
+                },
+                {
+                    "claim_id": "replay-paper-live-semantic-parity-required",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Replay, paper, and live broker paths must use the same "
+                        "signal payloads, order sizing, route constraints, and "
+                        "execution semantics before post-cost PnL is promotion evidence."
+                    ),
+                    "asset_scope": "us_equities_portfolio",
+                    "horizon_scope": "research_to_live_deployment",
+                    "expected_direction": "neutral",
+                    "data_requirements": [
+                        "replay_paper_live_semantic_parity",
+                        "signal_payload_parity",
+                        "order_sizing_parity",
+                        "route_constraint_parity",
+                        "live_paper_parity",
+                    ],
+                    "confidence": "0.78",
+                },
+                {
+                    "claim_id": "broker-execution-risk-overlay-parity",
+                    "claim_type": "risk_constraint",
+                    "claim_text": (
+                        "Portfolio-level risk overlays and broker execution semantics "
+                        "must remain invariant between backtest, paper, and live adapters."
+                    ),
+                    "asset_scope": "us_equities_portfolio",
+                    "horizon_scope": "research_to_live_deployment",
+                    "expected_direction": "neutral",
+                    "data_requirements": [
+                        "portfolio_risk_overlay_parity",
+                        "broker_execution_semantics",
+                        "route_constraint_parity",
+                        "replay_harness_implementation_trace",
+                    ],
+                    "confidence": "0.78",
+                },
+            ],
+            relations=[
+                {
+                    "relation_id": (
+                        "deployment-consistency-requires-semantic-parity-proof"
+                    ),
+                    "relation_type": "requires_validation",
+                    "source_claim_id": "replay-paper-live-semantic-parity-required",
+                    "target_claim_id": "weight-centric-unified-execution-protocol",
+                }
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        self.assertTrue(compilation.executable_specs)
+        self.assertTrue(
+            all(
+                "replay_paper_live_semantic_parity"
+                in spec.parameter_space.get("mechanism_overlay_ids", [])
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.hard_vetoes.get("required_order_sizing_parity")
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract.get("rejects_adapter_only_execution_behavior")
+                for spec in compilation.executable_specs
+            )
+        )

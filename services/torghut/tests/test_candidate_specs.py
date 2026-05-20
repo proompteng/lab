@@ -356,6 +356,72 @@ class TestCandidateSpecs(TestCase):
             ]
         )
 
+    def test_deployment_consistency_claim_adds_semantic_parity_overlay(
+        self,
+    ) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-finrl-x-deployment-consistency",
+            claims=[
+                {
+                    "claim_id": "weight-centric-unified-execution-protocol",
+                    "claim_type": "feature_recipe",
+                    "claim_text": (
+                        "FinRL-X uses a deployment-consistent weight-centric "
+                        "protocol so data processing, strategy construction, "
+                        "backtesting, and broker execution keep downstream "
+                        "execution semantics unchanged."
+                    ),
+                    "data_requirements": [
+                        "portfolio_weight_trace",
+                        "signal_payload_parity",
+                        "order_sizing_parity",
+                        "broker_execution_semantics",
+                    ],
+                    "confidence": "0.78",
+                },
+                {
+                    "claim_id": "replay-paper-live-semantic-parity-required",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Replay paper live semantic parity requires identical "
+                        "signal payloads, order sizing, route constraints, and "
+                        "portfolio risk overlays before promotion."
+                    ),
+                    "data_requirements": [
+                        "replay_paper_live_semantic_parity",
+                        "signal_payload_parity",
+                        "order_sizing_parity",
+                        "route_constraint_parity",
+                        "portfolio_risk_overlay_parity",
+                        "live_paper_parity",
+                    ],
+                    "confidence": "0.78",
+                },
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+
+        self.assertIn(
+            "replay_paper_live_semantic_parity",
+            specs[0].parameter_space["mechanism_overlay_ids"],
+        )
+        self.assertTrue(
+            specs[0].hard_vetoes["required_replay_paper_live_semantic_parity"]
+        )
+        self.assertTrue(specs[0].hard_vetoes["required_signal_payload_parity"])
+        self.assertEqual(
+            specs[0].hard_vetoes["required_adapter_behavior_drift_count"], "0"
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["rejects_adapter_only_execution_behavior"]
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["requires_broker_execution_semantics"]
+        )
+
     def test_market_limit_execution_claim_adds_candidate_local_policy(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-market-limit-execution",

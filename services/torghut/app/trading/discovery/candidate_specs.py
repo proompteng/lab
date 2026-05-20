@@ -3501,6 +3501,80 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
 
     if has_any(
         (
+            "finrl-x",
+            "finrl x",
+            "deployment-consistent",
+            "deployment consistent",
+            "deployment consistency",
+            "weight-centric",
+            "weight centric",
+            "broker execution",
+            "broker-integrated execution",
+            "backtesting and broker execution",
+            "data processing, strategy construction, backtesting",
+            "unified protocol",
+            "downstream execution semantics",
+            "replay paper live",
+            "replay-paper-live",
+            "signal payload parity",
+            "signal_payload_parity",
+            "order sizing parity",
+            "order_sizing_parity",
+            "route constraint parity",
+            "route_constraint_parity",
+            "broker_execution_semantics",
+            "portfolio risk overlay parity",
+            "portfolio_risk_overlay_parity",
+        )
+    ):
+        overlay_ids.append("replay_paper_live_semantic_parity")
+        overlay_contracts.append(
+            {
+                "overlay_id": "replay_paper_live_semantic_parity",
+                "required_evidence": [
+                    "signal_payload_parity",
+                    "order_sizing_parity",
+                    "route_constraint_parity",
+                    "broker_execution_semantics",
+                    "portfolio_weight_trace",
+                    "portfolio_risk_overlay_parity",
+                    "live_paper_parity",
+                    "replay_harness_implementation_trace",
+                ],
+                "rank_metric": "post_cost_net_pnl_after_semantic_parity",
+                "evidence_policy": (
+                    "promotion_requires_same_replay_paper_live_execution_semantics"
+                ),
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_replay_paper_live_semantic_parity": True,
+                "required_signal_payload_parity": True,
+                "required_order_sizing_parity": True,
+                "required_route_constraint_parity": True,
+                "required_broker_execution_semantics_trace": True,
+                "required_portfolio_risk_overlay_parity": True,
+                "required_replay_harness_implementation_trace": True,
+                "required_adapter_behavior_drift_count": "0",
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_replay_paper_live_semantic_parity": True,
+                "requires_signal_payload_parity": True,
+                "requires_order_sizing_parity": True,
+                "requires_route_constraint_parity": True,
+                "requires_broker_execution_semantics": True,
+                "requires_portfolio_risk_overlay_parity": True,
+                "requires_live_paper_parity": True,
+                "rejects_adapter_only_execution_behavior": True,
+                "rejects_backtest_only_strategy_protocol": True,
+            }
+        )
+
+    if has_any(
+        (
             "intraday volume",
             "volume forecasting",
             "volume forecast",
