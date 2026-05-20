@@ -559,9 +559,7 @@ jobs:
             run_step_failure "Failed to build local image ${RUNNER_IMAGE}" "$?"
           fi
 
-          RUNNER_SMOKE_SPEC="$(mktemp /tmp/agents-runner-smoke-XXXXXX.json)"
-          RUNNER_SMOKE_RUN="$(mktemp /tmp/agents-runner-run-XXXXXX.json)"
-          cat > "${RUNNER_SMOKE_SPEC}" <<'JSON'
+          RUNNER_SMOKE_SPEC_JSON="$(cat <<'JSON'
           {
             "schemaVersion": "agents.proompteng.ai/runner/v1",
             "provider": "runner-image-smoke",
@@ -569,20 +567,16 @@ jobs:
               "binary": "/bin/sh",
               "argsTemplate": ["-c", "echo agents-runner-image-smoke"]
             },
-            "payloads": {
-              "eventFilePath": "/tmp/run.json"
-            },
             "adapter": {
               "type": "exec"
             }
           }
           JSON
-          printf '{}\n' > "${RUNNER_SMOKE_RUN}"
+          )"
           docker run --rm \
-            -v "${RUNNER_SMOKE_SPEC}:/tmp/agent-runner.json:ro" \
-            -v "${RUNNER_SMOKE_RUN}:/tmp/run.json:ro" \
+            -e AGENT_RUNNER_SPEC="${RUNNER_SMOKE_SPEC_JSON}" \
             "${RUNNER_IMAGE}" \
-            agent-runner /tmp/agent-runner.json
+            agent-runner
 
           IMAGE="${CONTROL_PLANE_IMAGE}"
           if ! run_kind_load_with_fallback; then
