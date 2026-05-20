@@ -179,9 +179,19 @@ fail_if_matches \
 
 require_matches \
   "Agents service must own canonical Codex run projection v1 route registration" \
-  '/v1/codex/(runs|issues)|src/routes/v1/codex/(runs|issues)' \
+  '/v1/codex/(runs|issues|github-events)|src/routes/v1/codex/(runs|issues|github-events)' \
   "${ROOT_DIR}/services/agents/src/server/control-plane.ts" \
   "${ROOT_DIR}/services/agents/package.json"
+
+fail_if_path_exists \
+  "Jangar GitOps must not own generic Codex GitHub event projection ingestion after Agents owns Codex projections" \
+  "${ROOT_DIR}/argocd/applications/jangar/codex-github-events-kafkasource.yaml"
+
+require_matches \
+  "Agents GitOps must own Codex GitHub event projection ingestion through the Agents service" \
+  '/v1/codex/github-events|name: agents-codex-github-events|namespace: agents' \
+  "${ROOT_DIR}/argocd/applications/agents/codex-github-events-kafkasource.yaml" \
+  "${ROOT_DIR}/argocd/applications/agents/kustomization.yaml"
 
 fail_if_path_exists \
   "Jangar must not own generic Agents readiness/status verdict normalization after agent-contracts owns it" \

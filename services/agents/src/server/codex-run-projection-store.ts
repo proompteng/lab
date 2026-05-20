@@ -232,6 +232,8 @@ export type CodexRunProjectionStore = {
     prNumber: number,
     prUrl: string,
     commitSha?: string | null,
+    prState?: string | null,
+    prMerged?: boolean | null,
   ) => Promise<CodexRunRecord | null>
   upsertArtifacts: (input: UpsertArtifactsInput) => Promise<CodexArtifactRecord[]>
   listArtifactsForRun: (runId: string) => Promise<CodexArtifactRecord[]>
@@ -1002,13 +1004,22 @@ export const createCodexRunProjectionStore = (
     return updated ? rowToRun(updated as Record<string, unknown>) : null
   }
 
-  const updateRunPrInfo = async (runId: string, prNumber: number, prUrl: string, commitSha?: string | null) => {
+  const updateRunPrInfo = async (
+    runId: string,
+    prNumber: number,
+    prUrl: string,
+    commitSha?: string | null,
+    prState?: string | null,
+    prMerged?: boolean | null,
+  ) => {
     const updated = await db
       .updateTable('agents_codex.runs')
       .set({
         pr_number: prNumber,
         pr_url: prUrl,
         commit_sha: commitSha ?? sql`coalesce(commit_sha, commit_sha)`,
+        pr_state: prState ?? sql`coalesce(pr_state, pr_state)`,
+        pr_merged: prMerged ?? sql`coalesce(pr_merged, pr_merged)`,
         updated_at: sql`now()`,
       })
       .where('id', '=', runId)

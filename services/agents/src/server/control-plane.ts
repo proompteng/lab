@@ -97,6 +97,11 @@ const routeSources: RouteSourceSpec[] = [
     load: () => import('../routes/v1/codex/issues'),
   },
   {
+    file: 'src/routes/v1/codex/github-events.ts',
+    sourceUrl: new URL('../routes/v1/codex/github-events.ts', import.meta.url),
+    load: () => import('../routes/v1/codex/github-events'),
+  },
+  {
     file: 'src/routes/v1/implementation-sources/webhooks/$provider.ts',
     sourceUrl: new URL('../routes/v1/implementation-sources/webhooks/$provider.ts', import.meta.url),
     load: () => import('../routes/v1/implementation-sources/webhooks/$provider'),

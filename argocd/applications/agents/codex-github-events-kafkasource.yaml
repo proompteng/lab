@@ -1,14 +1,14 @@
 apiVersion: sources.knative.dev/v1
 kind: KafkaSource
 metadata:
-  name: jangar-codex-github-events
-  namespace: jangar
+  name: agents-codex-github-events
+  namespace: agents
 spec:
   bootstrapServers:
     - kafka-kafka-bootstrap.kafka:9092
   topics:
     - github.webhook.codex.judge
-  consumerGroup: jangar-codex-github-events
+  consumerGroup: agents-codex-github-events
   initialOffset: earliest
   net:
     sasl:
@@ -29,6 +29,6 @@ spec:
     ref:
       apiVersion: v1
       kind: Service
-      name: jangar
-      namespace: jangar
-    uri: /api/codex/github-events
+      name: agents
+      namespace: agents
+    uri: /v1/codex/github-events
