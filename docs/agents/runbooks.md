@@ -392,7 +392,7 @@ Troubleshooting:
 
 ## Codex reruns/system improvements (native)
 
-- Configure `JANGAR_CODEX_RERUN_ORCHESTRATION` and/or `JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION` (plus the matching
+- Configure `AGENTS_CODEX_RERUN_ORCHESTRATION` and/or `AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION` (plus the matching
   `*_NAMESPACE` variables if needed).
 - Ensure the referenced Orchestration exists and watch OrchestrationRun status for progress.
 

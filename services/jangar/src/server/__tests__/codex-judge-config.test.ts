@@ -31,15 +31,11 @@ afterEach(() => {
 })
 
 describe('codex-judge-config', () => {
-  it('prefers Agents-owned orchestration env names and keeps Jangar aliases transitional', () => {
+  it('uses only Agents-owned orchestration env names for rerun and system-improvement dispatch', () => {
     process.env.AGENTS_CODEX_RERUN_ORCHESTRATION = 'agents-rerun'
     process.env.AGENTS_CODEX_RERUN_ORCHESTRATION_NAMESPACE = 'agents'
     process.env.AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION = 'agents-system'
     process.env.AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE = 'agents'
-    process.env.JANGAR_CODEX_RERUN_ORCHESTRATION = 'jangar-rerun'
-    process.env.JANGAR_CODEX_RERUN_ORCHESTRATION_NAMESPACE = 'jangar'
-    process.env.JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION = 'jangar-system'
-    process.env.JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE = 'jangar'
 
     expect(loadCodexJudgeConfig()).toMatchObject({
       rerunOrchestrationName: 'agents-rerun',
@@ -49,7 +45,7 @@ describe('codex-judge-config', () => {
     })
   })
 
-  it('keeps old Jangar orchestration env aliases working for one compatibility release', () => {
+  it('ignores removed Jangar orchestration env aliases', () => {
     delete process.env.AGENTS_CODEX_RERUN_ORCHESTRATION
     delete process.env.AGENTS_CODEX_RERUN_ORCHESTRATION_NAMESPACE
     delete process.env.AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION
@@ -60,10 +56,10 @@ describe('codex-judge-config', () => {
     process.env.JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE = 'agents'
 
     expect(loadCodexJudgeConfig()).toMatchObject({
-      rerunOrchestrationName: 'legacy-rerun',
-      rerunOrchestrationNamespace: 'agents',
-      systemImprovementOrchestrationName: 'legacy-system',
-      systemImprovementOrchestrationNamespace: 'agents',
+      rerunOrchestrationName: null,
+      rerunOrchestrationNamespace: 'jangar',
+      systemImprovementOrchestrationName: null,
+      systemImprovementOrchestrationNamespace: 'jangar',
     })
   })
 })

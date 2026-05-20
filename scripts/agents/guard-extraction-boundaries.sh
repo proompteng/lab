@@ -274,6 +274,13 @@ fail_if_matches \
   "${ROOT_DIR}/argocd/applications/jangar/deployment.yaml"
 
 fail_if_matches \
+  "Jangar source and runbooks must not accept Agents-owned orchestration settings under legacy JANGAR_* env aliases" \
+  'JANGAR_CODEX_RERUN_ORCHESTRATION|JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION' \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge-config.ts" \
+  "${ROOT_DIR}/docs/agents/runbooks.md" \
+  "${ROOT_DIR}/docs/jangar/autonomous-codex-end-to-end-design.md"
+
+fail_if_matches \
   "Jangar GitOps must not ship legacy Codex workflow service accounts or RBAC" \
   'codex-workflow-rbac|name: codex-workflow|serviceAccountName: codex-workflow' \
   "${ROOT_DIR}/argocd/applications/jangar"
