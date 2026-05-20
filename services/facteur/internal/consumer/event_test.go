@@ -14,7 +14,7 @@ import (
 )
 
 func TestProcessEventPersistsSession(t *testing.T) {
-	dispatcher := &stubDispatcher{result: bridge.DispatchResult{Namespace: "argo", WorkflowName: "wf-123"}}
+	dispatcher := &stubDispatcher{result: bridge.DispatchResult{Namespace: "agents", AgentRunName: "codex-agent-123"}}
 	store := &stubStore{}
 
 	result, err := consumer.ProcessEvent(context.Background(), &facteurpb.CommandEvent{
@@ -24,7 +24,7 @@ func TestProcessEventPersistsSession(t *testing.T) {
 		CorrelationId: "corr-1",
 	}, dispatcher, store, time.Minute)
 	require.NoError(t, err)
-	require.Equal(t, "wf-123", result.WorkflowName)
+	require.Equal(t, "codex-agent-123", result.AgentRunName)
 	require.True(t, store.setCalled)
 	require.Equal(t, session.DispatchKey("user-1"), store.lastKey)
 	require.Equal(t, time.Minute, store.lastTTL)
@@ -32,7 +32,7 @@ func TestProcessEventPersistsSession(t *testing.T) {
 }
 
 func TestProcessEventDefaultsCorrelation(t *testing.T) {
-	dispatcher := &stubDispatcher{result: bridge.DispatchResult{Namespace: "argo", WorkflowName: "wf-123"}}
+	dispatcher := &stubDispatcher{result: bridge.DispatchResult{Namespace: "agents", AgentRunName: "codex-agent-123"}}
 	store := &stubStore{}
 
 	result, err := consumer.ProcessEvent(context.Background(), &facteurpb.CommandEvent{

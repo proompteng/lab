@@ -22,22 +22,21 @@ import kotlin.io.readBytes
 import kotlin.text.Charsets
 
 class CodexResearchActivitiesImpl(
-  private val argoClient: ArgoWorkflowClient,
+  private val agentRunClient: AgentRunClient,
   private val graphPersistence: GraphPersistence,
   private val artifactFetcher: MinioArtifactFetcher,
   private val json: Json,
 ) : CodexResearchActivities {
-  override fun submitArgoWorkflow(request: SubmitArgoWorkflowRequest): SubmitArgoWorkflowResult =
-    runBlocking { argoClient.submitWorkflow(request) }
+  override fun submitAgentRun(request: SubmitAgentRunRequest): SubmitAgentRunResult = runBlocking { agentRunClient.submitRun(request) }
 
-  override fun waitForArgoWorkflow(
-    workflowName: String,
+  override fun waitForAgentRun(
+    runNameOrRecordId: String,
     timeoutSeconds: Long,
-  ): CompletedArgoWorkflow =
+  ): CompletedAgentRun =
     runBlocking {
       val context = Activity.getExecutionContext()
-      argoClient.waitForCompletion(workflowName, timeoutSeconds) {
-        context.heartbeat("waiting for argo workflow $workflowName")
+      agentRunClient.waitForCompletion(runNameOrRecordId, timeoutSeconds) {
+        context.heartbeat("waiting for AgentRun $runNameOrRecordId")
       }
     }
 

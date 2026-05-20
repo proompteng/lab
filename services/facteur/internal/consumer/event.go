@@ -103,8 +103,8 @@ func ProcessEvent(ctx context.Context, event *facteurpb.CommandEvent, dispatcher
 	}
 
 	span.SetAttributes(
-		attribute.String("facteur.workflow_name", result.WorkflowName),
-		attribute.String("facteur.workflow_namespace", result.Namespace),
+		attribute.String("facteur.agentrun_name", result.AgentRunName),
+		attribute.String("facteur.agentrun_namespace", result.Namespace),
 	)
 	if result.CorrelationID != "" {
 		span.SetAttributes(attribute.String("facteur.correlation_id", result.CorrelationID))

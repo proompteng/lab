@@ -9,20 +9,6 @@
     {
       "file": "proompteng/facteur/v1/contract.proto",
       "subjects": [{ "name": "discord.commands.incoming-value" }, { "name": "discord.commands.incoming.dlq-value" }]
-    },
-    {
-      "file": "proompteng/froussard/v1/codex_task.proto",
-      "subjects": [
-        {
-          "name": "github.issues.codex.tasks-value",
-          "references": [
-            {
-              "name": "google/protobuf/timestamp.proto",
-              "subject": "google.protobuf.Timestamp"
-            }
-          ]
-        }
-      ]
     }
   ]
 }

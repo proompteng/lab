@@ -13,7 +13,7 @@ import type {
   EvidencePressureSourceClass,
   EvidencePressureWatchBackoffState,
   TorghutConsumerEvidenceStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import type {
   ControlPlaneRolloutHealth,
   ControlPlaneWatchReliability,

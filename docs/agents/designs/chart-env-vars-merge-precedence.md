@@ -26,26 +26,26 @@ For controllers:
 1. `controllers.env.vars` has explicit precedence.
 2. `env.vars` contributes non-reserved keys and can provide defaults for non-managed values.
 3. Chart-managed controller defaults are applied only when the key is not explicitly set in `controllers.env.vars`:
-   - `JANGAR_MIGRATIONS=skip`
-   - `JANGAR_GRPC_ENABLED=0`
-   - `JANGAR_GRPC_HOST=0.0.0.0`
-   - `JANGAR_GRPC_PORT=<grpc.port>`
-   - `JANGAR_CONTROL_PLANE_CACHE_ENABLED=0`
+   - `AGENTS_MIGRATIONS=skip`
+   - `AGENTS_GRPC_ENABLED=0`
+   - `AGENTS_GRPC_HOST=0.0.0.0`
+   - `AGENTS_GRPC_PORT=<grpc.port>`
+   - `AGENTS_CONTROL_PLANE_CACHE_ENABLED=0`
    - `JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED=true`
    - `JANGAR_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS=30`
    - `JANGAR_AGENTRUN_ARTIFACTS_MAX=<controller.agentRunArtifacts.max>`
    - `JANGAR_AGENTRUN_ARTIFACTS_STRICT=<controller.agentRunArtifacts.strict>`
-4. `env.vars`, `controlPlane.env.vars`, and `controllers.env.vars` are validated in managed mode for managed `JANGAR_GRPC_*` keys.
+4. `env.vars`, `controlPlane.env.vars`, and `controllers.env.vars` are validated in managed mode for managed `AGENTS_GRPC_*` keys.
 5. Runtime defaults apply after render.
 
 ## Deterministic gRPC source-of-truth
 
 - `grpc.manageEnvVar=true` (default) forces control-plane values:
-  - `JANGAR_GRPC_ENABLED` from `grpc.enabled`
-  - `JANGAR_GRPC_HOST` from chart default (`0.0.0.0`)
-  - `JANGAR_GRPC_PORT` from `grpc.port`
+  - `AGENTS_GRPC_ENABLED` from `grpc.enabled`
+  - `AGENTS_GRPC_HOST` from chart default (`0.0.0.0`)
+  - `AGENTS_GRPC_PORT` from `grpc.port`
 - Contradictory explicit values in control-plane env maps fail validation.
-- If both `env.vars` and a component map set managed `JANGAR_GRPC_*` values, they must match exactly.
+- If both `env.vars` and a component map set managed `AGENTS_GRPC_*` values, they must match exactly.
 - Set `grpc.manageEnvVar=false` to opt back into manual control-plane ownership for the three keys.
 - Controllers keep managed gRPC defaults unless overridden explicitly in `controllers.env.vars`.
 
@@ -56,12 +56,12 @@ For controllers:
 - `validation.reservedEnvKeysEnforced=true` (default) blocks rendering when a reserved key from `envFrom` does not follow component ownership rules:
   - control plane: `controlPlane.env.vars` or `env.vars`
   - controllers: `controllers.env.vars` (and fallback to chart-managed defaults when enabled)
-- For managed `JANGAR_GRPC_*` keys, values must align when envFrom declares them. If a managed key appears in structured `envFrom`, each relevant component map (plus chart-managed defaults for controllers) must resolve to expected managed values.
+- For managed `AGENTS_GRPC_*` keys, values must align when envFrom declares them. If a managed key appears in structured `envFrom`, each relevant component map (plus chart-managed defaults for controllers) must resolve to expected managed values.
 - A reserved key may only appear in one structured `envFrom` source; duplicates are rejected to keep precedence deterministic.
 - `envFrom` cannot be used as an undocumented source for managed chart keys.
 
 ## Notes
 
-- Controllers retain safe defaults (`JANGAR_MIGRATIONS=skip`, `JANGAR_GRPC_ENABLED=0`, `JANGAR_CONTROL_PLANE_CACHE_ENABLED=0`) when they do not set explicit component values in `controllers.env.vars`.
+- Controllers retain safe defaults (`AGENTS_MIGRATIONS=skip`, `AGENTS_GRPC_ENABLED=0`, `AGENTS_CONTROL_PLANE_CACHE_ENABLED=0`) when they do not set explicit component values in `controllers.env.vars`.
 - `env.vars` is no longer authoritative for controller reserved keys; set them in `controllers.env.vars` when intentional deviation is needed.
 - Use explicit chart values for security-sensitive toggles; avoid relying on runtime import order.

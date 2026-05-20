@@ -14,7 +14,7 @@ Jangar now uses explicit runtime profiles instead of implicit global startup.
 
 - `http-server`
   - serves the Vite client bundle and HTTP/API surface
-  - starts `agentComms`, `controlPlaneCache`, `torghutQuantRuntime`, and `agentctlGrpc`
+  - starts the Jangar-owned domain integrations, including `torghutQuantRuntime` and the whitepaper finalize consumer
 - `vite-dev-api`
   - serves only the Bun API surface for local Vite development
   - starts the same background integrations as the production API profile
@@ -33,12 +33,10 @@ The cleanup program moved the highest-risk application boundaries behind explici
 
 - Config
   - `services/jangar/src/server/chat-config.ts`
-  - `services/jangar/src/server/controller-runtime-config.ts`
   - `services/jangar/src/server/control-plane-config.ts`
   - `services/jangar/src/server/integrations-config.ts`
   - `services/jangar/src/server/memory-config.ts`
   - `services/jangar/src/server/torghut-config.ts`
-  - `services/jangar/src/server/agentctl-grpc-config.ts`
   - `services/jangar/src/server/terminals-config.ts`
   - `services/jangar/src/server/github-review-config.ts`
   - `services/jangar/src/server/metrics-config.ts`
@@ -50,7 +48,6 @@ The cleanup program moved the highest-risk application boundaries behind explici
   - `services/jangar/src/server/terminal-worktrees.ts`
   - `services/jangar/src/server/terminal-command-runner.ts`
 - Kubernetes
-  - `services/jangar/src/server/kube-gateway.ts`
   - `services/jangar/src/server/primitives-kube.ts`
   - `services/jangar/src/server/primitives-watch.ts`
   - `services/jangar/src/server/kube-watch.ts`
@@ -67,10 +64,12 @@ The control-plane status surface is now composed from collector modules instead 
 
 - `services/jangar/src/server/control-plane-status.ts`
 - `services/jangar/src/server/control-plane-execution-trust.ts`
-- `services/jangar/src/server/control-plane-workflows.ts`
-- `services/jangar/src/server/control-plane-rollout-health.ts`
 - `services/jangar/src/server/control-plane-db-status.ts`
 - `services/jangar/src/server/control-plane-empirical-services.ts`
+
+Generic Agents workflow reliability and rollout-health evidence is owned by `services/agents` and consumed through the
+Agents `/v1` status and typed resource APIs. Jangar keeps only domain interpretation modules for Torghut/Jangar readiness
+and repair evidence.
 
 Module size is also guarded in CI:
 
@@ -155,17 +154,18 @@ These ownership lanes are the operational review boundaries for Jangar changes.
   - `services/jangar/src/server/*config.ts`
   - `services/jangar/src/server/kube-*.ts`
   - `services/jangar/src/server/primitives-*.ts`
-- Controllers and background control-plane logic
-  - `services/jangar/src/server/agents-controller/**`
-  - `services/jangar/src/server/orchestration-controller.ts`
-  - `services/jangar/src/server/supporting-primitives-controller.ts`
-  - `services/jangar/src/server/leader-election.ts`
+- Domain readiness and typed Agents service consumers
+  - `@proompteng/agent-contracts/*-client` imports in `services/jangar/src/server/**`
+  - `services/jangar/src/server/torghut-simulation-mutation-gate.ts`
   - `services/jangar/src/server/control-plane-*.ts`
-- Control-plane UI and operator routes
-  - `services/jangar/src/routes/control-plane/**`
-  - `services/jangar/src/routes/api/agents/control-plane/**`
-  - `services/jangar/src/components/agents-control-plane*`
-  - `services/jangar/src/data/agents-control-plane.ts`
+- Agents-owned platform surfaces
+  - `services/agents/**`
+  - `charts/agents/**`
+  - `docs/agents/**`
+  - Jangar consumes Agents status through the service boundary instead of owning generic Agents routes,
+    controllers, CRDs, or browser control-plane resource pages.
+- Jangar domain status projection
+  - `services/jangar/src/server/control-plane-status-types.ts`
 - GitHub review surface
   - `services/jangar/src/routes/github/**`
   - `services/jangar/src/server/github-*.ts`

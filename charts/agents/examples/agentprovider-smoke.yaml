@@ -3,7 +3,13 @@ kind: AgentProvider
 metadata:
   name: smoke-runner
 spec:
-  binary: /bin/sh
-  argsTemplate:
-    - -c
-    - echo "stage={{inputs.stage}}" && exit 0
+  binary: /usr/local/bin/agent-runner
+  adapter:
+    type: codex-app-server
+    codex:
+      effort: low
+      sandbox: danger-full-access
+      approval: never
+      prompt: |-
+        This is a Helm chart smoke AgentProvider. Confirm the stage value is `{{ inputs.stage }}` and respond with `OK`.
+  argsTemplate: []

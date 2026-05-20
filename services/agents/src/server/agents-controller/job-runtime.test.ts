@@ -3,10 +3,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   buildRunSpecContext,
   buildRunSpec,
+  getMountedConfigMapNames,
   makeName,
   normalizeLabelValue,
   resolveRunnerServiceAccount,
   submitJobRun,
+  verifyJobConfigMaps,
 } from '~/server/agents-controller/job-runtime'
 
 describe('agents controller job-runtime module', () => {
@@ -75,7 +77,107 @@ describe('agents controller job-runtime module', () => {
     expect(context.inputs).toEqual({ stage: 'plan', task: 'validation' })
   })
 
+  it('emits provider output artifact declarations into codex app-server runner specs', async () => {
+    const applied: Record<string, unknown>[] = []
+    const kube = {
+      get: vi.fn(async () => null),
+      apply: vi.fn(async (resource: Record<string, unknown>) => {
+        applied.push(resource)
+        return resource
+      }),
+    }
+
+    await submitJobRun(
+      kube as never,
+      { metadata: { name: 'run-1', uid: 'run-uid-1', namespace: 'agents' }, spec: {} },
+      { metadata: { name: 'agent-a' }, spec: {} },
+      {
+        metadata: { name: 'codex' },
+        spec: {
+          adapter: {
+            type: 'codex-app-server',
+            codex: {
+              secretEnv: [
+                {
+                  name: 'CODEX_GRAF_BEARER_TOKEN',
+                  secretName: 'graf-api',
+                  key: 'bearer-tokens',
+                  optional: true,
+                },
+              ],
+            },
+          },
+          outputArtifacts: [
+            {
+              name: 'codex-artifact',
+              path: '/workspace/{{ inputs.stage }}/artifact.json',
+              key: 'codex-research/{{ agentRun.name }}/codex-artifact.json',
+            },
+          ],
+        },
+      },
+      { metadata: { name: 'impl-a' }, source: { provider: 'github' }, summary: 'Run summary' },
+      null,
+      'agents',
+      'registry.example/agents-codex-runner:tag',
+      'job',
+      { parameters: { stage: 'research' } },
+    )
+
+    const specConfigMap = applied.find(
+      (resource) =>
+        resource.kind === 'ConfigMap' &&
+        typeof (resource.data as Record<string, unknown> | undefined)?.['agent-runner.json'] === 'string',
+    )
+    const data = specConfigMap?.data as Record<string, string> | undefined
+    const runSpec = JSON.parse(data?.['run.json'] ?? '{}') as Record<string, unknown>
+    const runnerSpec = JSON.parse(data?.['agent-runner.json'] ?? '{}') as Record<string, unknown>
+    const job = applied.find((resource) => resource.kind === 'Job')
+    const env = (
+      ((job?.spec as Record<string, unknown>)?.template as Record<string, unknown>)?.spec as Record<string, unknown>
+    )?.containers
+    const agentRunnerEnv = (((env as Record<string, unknown>[] | undefined)?.[0] as Record<string, unknown>)?.env ??
+      []) as Record<string, unknown>[]
+    const agentRunnerContainer = (env as Record<string, unknown>[] | undefined)?.[0] as Record<string, unknown>
+
+    expect(runnerSpec).toMatchObject({
+      schemaVersion: 'agents.proompteng.ai/runner/v1',
+      provider: 'codex',
+      inputs: { stage: 'research' },
+      adapter: { type: 'codex-app-server', codex: {} },
+      providerSpec: {
+        outputArtifacts: [
+          {
+            name: 'codex-artifact',
+            path: '/workspace/{{ inputs.stage }}/artifact.json',
+            key: 'codex-research/{{ agentRun.name }}/codex-artifact.json',
+          },
+        ],
+      },
+    })
+    expect(runSpec.artifacts).toEqual([
+      {
+        name: 'codex-artifact',
+        path: '/workspace/research/artifact.json',
+        key: 'codex-research/run-1/codex-artifact.json',
+      },
+    ])
+    expect(agentRunnerEnv).toContainEqual({
+      name: 'CODEX_GRAF_BEARER_TOKEN',
+      valueFrom: {
+        secretKeyRef: {
+          name: 'graf-api',
+          key: 'bearer-tokens',
+          optional: true,
+        },
+      },
+    })
+    expect(agentRunnerContainer.terminationMessagePath).toBe('/workspace/.agent/status.json')
+    expect(agentRunnerContainer.terminationMessagePolicy).toBe('File')
+  })
+
   it('returns an existing deterministic job for the same AgentRun', async () => {
+    const applied: Record<string, unknown>[] = []
     const existingJob = {
       metadata: {
         name: 'run-1-step-1-attempt-1',
@@ -86,18 +188,26 @@ describe('agents controller job-runtime module', () => {
     }
     const kube = {
       get: vi.fn(async (resource: string) => (resource === 'job' ? existingJob : null)),
-      apply: vi.fn(),
+      apply: vi.fn(async (resource: Record<string, unknown>) => {
+        applied.push(resource)
+        return resource
+      }),
     }
 
     const runtimeRef = await submitJobRun(
       kube as never,
       { metadata: { name: 'run-1', uid: 'run-uid-1', namespace: 'agents' }, spec: {} },
       { metadata: { name: 'agent-a' }, spec: {} },
-      { metadata: { name: 'provider-a' }, spec: {} },
+      {
+        metadata: { name: 'provider-a' },
+        spec: {
+          inputFiles: [{ path: '/workspace/input.txt', content: 'restored input' }],
+        },
+      },
       { metadata: { name: 'impl-a' }, source: { provider: 'github' }, summary: 'Run summary' },
       null,
       'agents',
-      'registry.example/jangar:tag',
+      'registry.example/agents-runner:tag',
       'workflow',
       { nameSuffix: 'step-1-attempt-1' },
     )
@@ -108,7 +218,15 @@ describe('agents controller job-runtime module', () => {
       namespace: 'agents',
       uid: 'job-uid-1',
     })
-    expect(kube.apply).not.toHaveBeenCalled()
+    expect(applied.filter((resource) => resource.kind === 'ConfigMap')).toHaveLength(2)
+    expect(
+      applied.find(
+        (resource) =>
+          resource.kind === 'ConfigMap' &&
+          Boolean((resource.data as Record<string, unknown> | undefined)?.['agent-runner.json']),
+      ),
+    ).toBeTruthy()
+    expect(applied).not.toContainEqual(expect.objectContaining({ kind: 'Job' }))
   })
 
   it('adopts an existing deterministic job after a stale apply replay hits immutable fields', async () => {
@@ -143,7 +261,7 @@ describe('agents controller job-runtime module', () => {
       { metadata: { name: 'impl-a' }, source: { provider: 'github' }, summary: 'Run summary' },
       null,
       'agents',
-      'registry.example/jangar:tag',
+      'registry.example/agents-runner:tag',
       'workflow',
       { nameSuffix: 'step-1-attempt-1' },
     )
@@ -156,5 +274,31 @@ describe('agents controller job-runtime module', () => {
     })
     expect(kube.apply).toHaveBeenCalledWith(expect.objectContaining({ kind: 'ConfigMap' }))
     expect(kube.apply).toHaveBeenCalledWith(expect.objectContaining({ kind: 'Job' }))
+  })
+
+  it('detects missing ConfigMaps mounted by an existing job', async () => {
+    const job = {
+      spec: {
+        template: {
+          spec: {
+            volumes: [
+              { name: 'run-spec', configMap: { name: 'run-1-spec' } },
+              { name: 'run-inputs', configMap: { name: 'run-1-inputs' } },
+              { name: 'workspace', emptyDir: {} },
+            ],
+          },
+        },
+      },
+    }
+    const kube = {
+      get: vi.fn(async (_resource: string, name: string) => (name === 'run-1-spec' ? { metadata: { name } } : null)),
+    }
+
+    expect(getMountedConfigMapNames(job)).toEqual(['run-1-inputs', 'run-1-spec'])
+    await expect(verifyJobConfigMaps(kube as never, job, 'agents')).resolves.toEqual({
+      ok: false,
+      names: ['run-1-inputs', 'run-1-spec'],
+      missing: ['run-1-inputs'],
+    })
   })
 })

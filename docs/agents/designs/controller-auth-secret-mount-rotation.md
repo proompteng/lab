@@ -6,7 +6,7 @@ Docs index: [README](../README.md)
 
 ## Overview
 
-The controllers deployment supports an “auth secret” for agentctl gRPC authentication via `JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_*`. The chart can mount the Secret and set env vars, but the operational contract for rotation is not documented.
+The controllers deployment supports an “auth secret” for agentctl gRPC authentication via `AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_*`. The chart can mount the Secret and set env vars, but the operational contract for rotation is not documented.
 
 ## Goals
 
@@ -22,9 +22,9 @@ The controllers deployment supports an “auth secret” for agentctl gRPC authe
 - Chart values: `charts/agents/values.yaml` → `controller.authSecret.{name,key,mountPath}`.
 - Template wiring (controllers):
   - `charts/agents/templates/deployment-controllers.yaml` sets:
-    - `JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME`
-    - `JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_KEY`
-    - `JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH`
+    - `AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_NAME`
+    - `AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_KEY`
+    - `AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH`
   - It also mounts the secret volume (see the same template for volume/volumeMounts).
 - Runtime resolves config and path in `services/jangar/src/server/agents-controller.ts`:
   - `resolveAuthSecretConfig()`, `buildAuthSecretPath()`.
@@ -46,9 +46,9 @@ The controllers deployment supports an “auth secret” for agentctl gRPC authe
 
 | Helm value                        | Env var                                           | Intended behavior                           |
 | --------------------------------- | ------------------------------------------------- | ------------------------------------------- |
-| `controller.authSecret.name`      | `JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME`       | Enables auth secret loading when non-empty. |
-| `controller.authSecret.key`       | `JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_KEY`        | Secret data key to read.                    |
-| `controller.authSecret.mountPath` | `JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH` | Directory path for mounted secret file.     |
+| `controller.authSecret.name`      | `AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_NAME`       | Enables auth secret loading when non-empty. |
+| `controller.authSecret.key`       | `AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_KEY`        | Secret data key to read.                    |
+| `controller.authSecret.mountPath` | `AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH` | Directory path for mounted secret file.     |
 
 ## Rollout Plan
 
@@ -140,7 +140,7 @@ Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
 
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
-- Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
+- Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `AGENTS_MIGRATIONS`, `AGENTS_GRPC_ENABLED`, and `AGENTS_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
 
@@ -151,10 +151,10 @@ Common mappings:
 - `controller.agentRunRetentionSeconds` → `JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS`
 - `controller.admissionPolicy.*` → `JANGAR_AGENTS_CONTROLLER_{LABELS_REQUIRED,LABELS_ALLOWED,LABELS_DENIED,IMAGES_ALLOWED,IMAGES_DENIED,BLOCKED_SECRETS}`
 - `controller.vcsProviders.*` → `JANGAR_AGENTS_CONTROLLER_VCS_{PROVIDERS_ENABLED,DEPRECATED_TOKEN_TYPES,PR_RATE_LIMITS}`
-- `controller.authSecret.*` → `JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_{NAME,KEY,MOUNT_PATH}`
+- `controller.authSecret.*` → `AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_{NAME,KEY,MOUNT_PATH}`
 - `orchestrationController.*` → `JANGAR_ORCHESTRATION_CONTROLLER_{ENABLED,NAMESPACES}`
 - `supportingController.*` → `JANGAR_SUPPORTING_CONTROLLER_{ENABLED,NAMESPACES}`
-- `grpc.*` → `JANGAR_GRPC_{ENABLED,HOST,PORT}` (unless overridden via `env.vars`)
+- `grpc.*` → `AGENTS_GRPC_{ENABLED,HOST,PORT}` (unless overridden via `env.vars`)
 - `controller.jobTtlSecondsAfterFinished` → `JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS`
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 

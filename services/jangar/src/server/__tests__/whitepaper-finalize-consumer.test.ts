@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { RESOURCE_MAP, type KubernetesClient } from '~/server/primitives-kube'
+import type { AgentsAgentRunTerminalEvent } from '@proompteng/agent-contracts/agent-run-terminal-events-client'
+
 import {
   getWhitepaperFinalizeConsumerHealth,
   startWhitepaperFinalizeConsumer,
@@ -30,11 +31,24 @@ const buildAgentRun = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 })
 
-const buildKube = (items: Record<string, unknown>[] = []) =>
-  ({
-    list: vi.fn(async () => ({ items })),
-    patch: vi.fn(async (_resource, _name, _namespace, patch) => patch as Record<string, unknown>),
-  }) as unknown as KubernetesClient
+const buildTerminalEvent = (overrides: Partial<AgentsAgentRunTerminalEvent> = {}): AgentsAgentRunTerminalEvent => {
+  const resource = buildAgentRun(overrides.resource ?? {})
+  return {
+    eventId: 'agents/whitepaper-run/uid-1/Succeeded',
+    name: 'whitepaper-run',
+    namespace: 'agents',
+    uid: 'uid-1',
+    phase: 'Succeeded',
+    runId: 'wp-consumer',
+    observedAt: '2026-05-20T00:00:00.000Z',
+    acked: false,
+    ackedAt: null,
+    ackOutcome: null,
+    resource,
+    status: resource.status as Record<string, unknown>,
+    ...overrides,
+  }
+}
 
 describe('whitepaper finalize consumer', () => {
   afterEach(() => {
@@ -43,73 +57,85 @@ describe('whitepaper finalize consumer', () => {
     vi.restoreAllMocks()
   })
 
-  it('scans terminal whitepaper AgentRuns and annotates completed finalization', async () => {
+  it('scans terminal whitepaper AgentRun events and acks completed finalization', async () => {
     process.env.JANGAR_WHITEPAPER_FINALIZE_ENABLED = 'true'
     process.env.JANGAR_WHITEPAPER_FINALIZE_CONSUMER_ENABLED = 'true'
     process.env.JANGAR_WHITEPAPER_FINALIZE_NAMESPACES = 'agents'
+    process.env.JANGAR_WHITEPAPER_FINALIZE_SCAN_INTERVAL_MS = '300000'
 
-    const kube = buildKube([buildAgentRun()])
+    const listTerminalEvents = vi.fn(async (_namespace: string) => [buildTerminalEvent()])
+    const ackTerminalEvent = vi.fn(async () => {})
     const finalize = vi.fn(async (_input: WhitepaperFinalizeTerminalStatusInput) => {})
-    const watchStop = vi.fn()
-    const startWatch = vi.fn(() => ({ stop: watchStop }))
 
-    startWhitepaperFinalizeConsumer({ kube, finalize, startWatch })
+    startWhitepaperFinalizeConsumer({ listTerminalEvents, ackTerminalEvent, finalize })
 
     await vi.waitFor(() => expect(finalize).toHaveBeenCalledTimes(1))
-    expect(kube.list).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'agents')
-    expect(kube.patch).toHaveBeenCalledWith(
-      RESOURCE_MAP.AgentRun,
-      'whitepaper-run',
-      'agents',
+    expect(listTerminalEvents).toHaveBeenCalledWith('agents')
+    expect(finalize).toHaveBeenCalledWith(
       expect.objectContaining({
-        metadata: {
-          annotations: expect.objectContaining({
-            'jangar.proompteng.ai/whitepaper-finalized-phase': 'Succeeded',
-            'jangar.proompteng.ai/whitepaper-finalized-run-id': 'wp-consumer',
-          }),
-        },
+        resource: expect.objectContaining({ kind: 'AgentRun' }),
+        nextStatus: expect.objectContaining({ phase: 'Succeeded' }),
+        previousPhase: null,
+        nextPhase: 'Succeeded',
       }),
     )
+    expect(ackTerminalEvent).toHaveBeenCalledWith({
+      eventId: 'agents/whitepaper-run/uid-1/Succeeded',
+      consumer: 'whitepaper-finalize',
+      outcome: 'finalized',
+      message: 'Finalized whitepaper run wp-consumer',
+    })
     expect(getWhitepaperFinalizeConsumerHealth()).toMatchObject({
       enabled: true,
+      mode: 'agents-terminal-events',
       started: true,
       namespaces: ['agents'],
+      scanIntervalMs: 300000,
     })
 
     stopWhitepaperFinalizeConsumer()
-    expect(watchStop).toHaveBeenCalledTimes(1)
+    expect(getWhitepaperFinalizeConsumerHealth()).toMatchObject({
+      started: false,
+      scanIntervalMs: null,
+    })
   })
 
-  it('ignores already-finalized watch events', async () => {
+  it('ignores already-acked terminal AgentRun events from the Agents service', async () => {
     process.env.JANGAR_WHITEPAPER_FINALIZE_ENABLED = 'true'
     process.env.JANGAR_WHITEPAPER_FINALIZE_CONSUMER_ENABLED = 'true'
+    process.env.JANGAR_WHITEPAPER_FINALIZE_SCAN_INTERVAL_MS = '300000'
 
-    const finalizedRun = buildAgentRun({
-      metadata: {
-        name: 'whitepaper-run',
-        namespace: 'agents',
-        uid: 'uid-1',
-        annotations: {
-          'jangar.proompteng.ai/whitepaper-finalized-phase': 'Succeeded',
-          'jangar.proompteng.ai/whitepaper-finalized-run-id': 'wp-consumer',
-        },
-      },
-    })
-    const kube = buildKube([])
+    const listTerminalEvents = vi.fn(async (_namespace: string) => [
+      buildTerminalEvent({
+        acked: true,
+        ackedAt: '2026-05-20T00:01:00.000Z',
+        ackOutcome: 'finalized',
+      }),
+    ])
+    const ackTerminalEvent = vi.fn(async () => {})
     const finalize = vi.fn(async (_input: WhitepaperFinalizeTerminalStatusInput) => {})
-    const watchHandlers: Array<(event: { type?: string; object?: Record<string, unknown> }) => void | Promise<void>> =
-      []
-    const startWatch = vi.fn((options) => {
-      watchHandlers.push(options.onEvent)
-      return { stop: vi.fn() }
-    })
 
-    startWhitepaperFinalizeConsumer({ kube, finalize, startWatch })
-    expect(watchHandlers[0]).toBeDefined()
-    await watchHandlers[0]?.({ type: 'MODIFIED', object: finalizedRun })
+    startWhitepaperFinalizeConsumer({ listTerminalEvents, ackTerminalEvent, finalize })
 
-    await new Promise((resolve) => setTimeout(resolve, 0))
+    await vi.waitFor(() => expect(listTerminalEvents).toHaveBeenCalledTimes(1))
     expect(finalize).not.toHaveBeenCalled()
-    expect(kube.patch).not.toHaveBeenCalled()
+    expect(ackTerminalEvent).not.toHaveBeenCalled()
+  })
+
+  it('ignores Agents namespace aliases when resolving Jangar finalization namespaces', async () => {
+    process.env.JANGAR_WHITEPAPER_FINALIZE_ENABLED = 'true'
+    process.env.JANGAR_WHITEPAPER_FINALIZE_CONSUMER_ENABLED = 'true'
+    process.env.AGENTS_NAMESPACE = 'wrong-agents-namespace'
+    process.env.JANGAR_WHITEPAPER_FINALIZE_SCAN_INTERVAL_MS = '300000'
+
+    const listTerminalEvents = vi.fn(async (_namespace: string) => [])
+    const ackTerminalEvent = vi.fn(async () => {})
+    const finalize = vi.fn(async (_input: WhitepaperFinalizeTerminalStatusInput) => {})
+
+    startWhitepaperFinalizeConsumer({ listTerminalEvents, ackTerminalEvent, finalize })
+
+    await vi.waitFor(() => expect(listTerminalEvents).toHaveBeenCalledTimes(1))
+    expect(listTerminalEvents).toHaveBeenCalledWith('agents')
+    expect(listTerminalEvents).not.toHaveBeenCalledWith('wrong-agents-namespace')
   })
 })

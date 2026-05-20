@@ -7,10 +7,26 @@ permissions:
 on:
   pull_request:
     paths:
+      - 'apps/froussard/src/**'
       - 'bun.lock'
       - 'package.json'
+      - 'argocd/applications/argo-workflows/**'
+      - 'argocd/applications/agents/**'
+      - 'argocd/applications/facteur/**'
+      - 'argocd/applications/froussard/**'
+      - 'argocd/applications/graf/**'
+      - 'argocd/applications/traefik/values.yaml'
+      - 'argocd/applications/torghut/**'
       - 'charts/agents/**'
+      - 'docs/agents/**'
+      - 'docs/autonomous-codex-design.md'
+      - 'docs/graf-codex-research.md'
+      - 'docs/runbooks/codex-docker.md'
+      - 'docs/runbooks/kafka-broker-storage-recovery.md'
+      - 'docs/torghut/whitepaper-research-workflow.md'
+      - 'docs/torghut/design-system/v5/12-dspy-framework-adoption-for-quant-llm-autonomous-trading-2026-02-25.md'
       - 'packages/bumba/**'
+      - 'packages/agent-contracts/**'
       - 'packages/codex/**'
       - 'packages/cx-tools/**'
       - 'packages/design/**'
@@ -19,8 +35,27 @@ on:
       - 'packages/scripts/src/agents/**'
       - 'packages/scripts/src/shared/**'
       - 'packages/temporal-bun-sdk/**'
+      - 'proto/proompteng/facteur/v1/contract.proto'
       - 'services/agents/**'
       - 'services/bumba/**'
+      - 'services/facteur/README.md'
+      - 'services/facteur/cmd/**'
+      - 'services/facteur/config/**'
+      - 'services/facteur/internal/**'
+      - 'services/graf/src/main/kotlin/**'
+      - 'services/graf/src/test/kotlin/**'
+      - 'services/graf/README.md'
+      - 'services/graf/build.gradle.kts'
+      - 'services/torghut/app/main.py'
+      - 'services/torghut/app/config.py'
+      - 'services/torghut/app/trading/llm/**'
+      - 'services/torghut/app/whitepapers/**'
+      - 'services/torghut/scripts/run_dspy_workflow.py'
+      - 'services/torghut/tests/test_live_config_manifest_contract.py'
+      - 'services/torghut/tests/test_llm_dspy_workflow.py'
+      - 'services/torghut/tests/test_run_dspy_workflow.py'
+      - 'services/torghut/tests/test_whitepaper_api.py'
+      - 'services/torghut/tests/test_whitepaper_workflow.py'
       - 'scripts/agents/**'
       - 'scripts/download_crd_schema.py'
       - '.github/workflows/agents-build-push.yml'
@@ -31,10 +66,26 @@ on:
     branches:
       - main
     paths:
+      - 'apps/froussard/src/**'
       - 'bun.lock'
       - 'package.json'
+      - 'argocd/applications/argo-workflows/**'
+      - 'argocd/applications/agents/**'
+      - 'argocd/applications/facteur/**'
+      - 'argocd/applications/froussard/**'
+      - 'argocd/applications/graf/**'
+      - 'argocd/applications/traefik/values.yaml'
+      - 'argocd/applications/torghut/**'
       - 'charts/agents/**'
+      - 'docs/agents/**'
+      - 'docs/autonomous-codex-design.md'
+      - 'docs/graf-codex-research.md'
+      - 'docs/runbooks/codex-docker.md'
+      - 'docs/runbooks/kafka-broker-storage-recovery.md'
+      - 'docs/torghut/whitepaper-research-workflow.md'
+      - 'docs/torghut/design-system/v5/12-dspy-framework-adoption-for-quant-llm-autonomous-trading-2026-02-25.md'
       - 'packages/bumba/**'
+      - 'packages/agent-contracts/**'
       - 'packages/codex/**'
       - 'packages/cx-tools/**'
       - 'packages/design/**'
@@ -43,8 +94,27 @@ on:
       - 'packages/scripts/src/agents/**'
       - 'packages/scripts/src/shared/**'
       - 'packages/temporal-bun-sdk/**'
+      - 'proto/proompteng/facteur/v1/contract.proto'
       - 'services/agents/**'
       - 'services/bumba/**'
+      - 'services/facteur/README.md'
+      - 'services/facteur/cmd/**'
+      - 'services/facteur/config/**'
+      - 'services/facteur/internal/**'
+      - 'services/graf/src/main/kotlin/**'
+      - 'services/graf/src/test/kotlin/**'
+      - 'services/graf/README.md'
+      - 'services/graf/build.gradle.kts'
+      - 'services/torghut/app/main.py'
+      - 'services/torghut/app/config.py'
+      - 'services/torghut/app/trading/llm/**'
+      - 'services/torghut/app/whitepapers/**'
+      - 'services/torghut/scripts/run_dspy_workflow.py'
+      - 'services/torghut/tests/test_live_config_manifest_contract.py'
+      - 'services/torghut/tests/test_llm_dspy_workflow.py'
+      - 'services/torghut/tests/test_run_dspy_workflow.py'
+      - 'services/torghut/tests/test_whitepaper_api.py'
+      - 'services/torghut/tests/test_whitepaper_workflow.py'
       - 'scripts/agents/**'
       - 'scripts/download_crd_schema.py'
       - '.github/workflows/agents-build-push.yml'
@@ -185,6 +255,7 @@ jobs:
             packages/scripts/src/agents/__tests__/build-image.test.ts \
             packages/scripts/src/agents/__tests__/resolve-agents-image-mode.test.ts \
             packages/scripts/src/agents/__tests__/resolve-published-agents-images.test.ts \
+            packages/scripts/src/agents/__tests__/agentrun-ingestion-mitigation.test.ts \
             packages/scripts/src/agents/__tests__/guard-extraction-boundaries.test.ts \
             packages/scripts/src/agents/__tests__/smoke-agents.test.ts \
             packages/scripts/src/agents/__tests__/deploy-service.test.ts \
@@ -261,15 +332,19 @@ jobs:
           CONTROLLER_IMAGE_REPOSITORY="${{ steps.published_agents_images.outputs.controller_image_repository }}"
           CONTROLLER_IMAGE_TAG="${{ steps.published_agents_images.outputs.controller_image_tag }}"
           CONTROLLER_IMAGE_DIGEST="${{ steps.published_agents_images.outputs.controller_image_digest }}"
+          RUNNER_IMAGE_REPOSITORY="${{ steps.published_agents_images.outputs.runner_image_repository }}"
+          RUNNER_IMAGE_TAG="${{ steps.published_agents_images.outputs.runner_image_tag }}"
+          RUNNER_IMAGE_DIGEST="${{ steps.published_agents_images.outputs.runner_image_digest }}"
           IMAGE_SOURCE_SHA="${{ steps.published_agents_images.outputs.source_sha }}"
 
-          if [ -z "${CONTROL_PLANE_IMAGE_DIGEST}" ] || [ -z "${CONTROLLER_IMAGE_DIGEST}" ]; then
+          if [ -z "${CONTROL_PLANE_IMAGE_DIGEST}" ] || [ -z "${CONTROLLER_IMAGE_DIGEST}" ] || [ -z "${RUNNER_IMAGE_DIGEST}" ]; then
             echo "Published Agents image digest is empty."
             exit 1
           fi
 
           echo "Using published Agents control-plane image ${CONTROL_PLANE_IMAGE_REPOSITORY}:${CONTROL_PLANE_IMAGE_TAG}@${CONTROL_PLANE_IMAGE_DIGEST}"
           echo "Using published Agents controller image ${CONTROLLER_IMAGE_REPOSITORY}:${CONTROLLER_IMAGE_TAG}@${CONTROLLER_IMAGE_DIGEST}"
+          echo "Using published Agents runner image ${RUNNER_IMAGE_REPOSITORY}:${RUNNER_IMAGE_TAG}@${RUNNER_IMAGE_DIGEST}"
           {
             echo "BUILT_AGENTS_CONTROL_PLANE_IMAGE_REPOSITORY=${CONTROL_PLANE_IMAGE_REPOSITORY}"
             echo "BUILT_AGENTS_CONTROL_PLANE_IMAGE_TAG=${CONTROL_PLANE_IMAGE_TAG}"
@@ -277,10 +352,13 @@ jobs:
             echo "BUILT_AGENTS_CONTROLLER_IMAGE_REPOSITORY=${CONTROLLER_IMAGE_REPOSITORY}"
             echo "BUILT_AGENTS_CONTROLLER_IMAGE_TAG=${CONTROLLER_IMAGE_TAG}"
             echo "BUILT_AGENTS_CONTROLLER_IMAGE_DIGEST=${CONTROLLER_IMAGE_DIGEST}"
+            echo "BUILT_AGENTS_RUNNER_IMAGE_REPOSITORY=${RUNNER_IMAGE_REPOSITORY}"
+            echo "BUILT_AGENTS_RUNNER_IMAGE_TAG=${RUNNER_IMAGE_TAG}"
+            echo "BUILT_AGENTS_RUNNER_IMAGE_DIGEST=${RUNNER_IMAGE_DIGEST}"
             echo "BUILT_AGENTS_IMAGE_SOURCE_SHA=${IMAGE_SOURCE_SHA}"
           } >> "${GITHUB_ENV}"
 
-      - name: Build and preload local Agents control-plane image into kind
+      - name: Build and preload local Agents images into kind
         if: steps.agents_image_mode.outputs.NEEDS_LOCAL_AGENTS_IMAGE == 'true'
         run: |
           set -euxo pipefail
@@ -288,6 +366,7 @@ jobs:
           WORKSPACE="${GITHUB_WORKSPACE}"
           CONTROL_PLANE_IMAGE_REPOSITORY="${AGENTS_CONTROL_PLANE_IMAGE_REPOSITORY:-${AGENTS_IMAGE_REPOSITORY:-agents-control-plane-local}}"
           CONTROLLER_IMAGE_REPOSITORY="${AGENTS_CONTROLLER_IMAGE_REPOSITORY:-agents-controller-local}"
+          RUNNER_IMAGE_REPOSITORY="${AGENTS_RUNNER_IMAGE_REPOSITORY:-agents-codex-runner-local}"
           DEFAULT_IMAGE_TAG_SUFFIX="${GITHUB_SHA:-unknown}"
           IMAGE_TAG="${AGENTS_IMAGE_TAG:-ci-$DEFAULT_IMAGE_TAG_SUFFIX}"
           PRUNE_DIR="$(mktemp -d /tmp/agents-prune-XXXXXX)"
@@ -401,11 +480,19 @@ jobs:
           echo "Pruning Agents image build context to ${PRUNE_DIR}"
           run_step "Prune turbo context" timeout "${PREP_TIMEOUT_MINUTES}m" bunx turbo prune \
             --scope=@proompteng/agents \
+            --scope=@proompteng/agent-contracts \
+            --scope=@proompteng/codex \
             --scope=@proompteng/otel \
             --scope=@proompteng/temporal-bun-sdk \
             --docker \
             --out-dir="${PRUNE_DIR}"
           cp "${WORKSPACE}/tsconfig.base.json" "${PRUNE_DIR}/tsconfig.base.json"
+          # The runner Dockerfile is intentionally usable from the full repo root for release builds.
+          # The kind integration job builds it from the pruned context, so materialize the same root
+          # paths from Turbo's full workspace output.
+          mkdir -p "${PRUNE_DIR}/services" "${PRUNE_DIR}/packages"
+          cp -R "${PRUNE_DIR}/full/services/agents" "${PRUNE_DIR}/services/agents"
+          cp -R "${PRUNE_DIR}/full/packages/codex" "${PRUNE_DIR}/packages/codex"
           if [ -d "${WORKSPACE}/skills" ]; then
             mkdir -p "${PRUNE_DIR}/skills"
             cp -R "${WORKSPACE}/skills/." "${PRUNE_DIR}/skills/"
@@ -446,6 +533,7 @@ jobs:
           AGENTS_COMMIT="$(git -C "${WORKSPACE}" rev-parse HEAD)"
           CONTROL_PLANE_IMAGE="${CONTROL_PLANE_IMAGE_REPOSITORY}:${IMAGE_TAG}"
           CONTROLLER_IMAGE="${CONTROLLER_IMAGE_REPOSITORY}:${IMAGE_TAG}"
+          RUNNER_IMAGE="${RUNNER_IMAGE_REPOSITORY}:${IMAGE_TAG}"
 
           # Use the mirror.gcr.io Bun mirror in CI to avoid Docker Hub anonymous pull limits.
           # Local image rebuilds fail with explicit diagnostics on timeout.
@@ -493,6 +581,38 @@ jobs:
             run_step_failure "Failed to build local image ${CONTROLLER_IMAGE}" "$?"
           fi
 
+          IMAGE="${RUNNER_IMAGE}"
+          if run_with_progress "Runner Docker build" "${BUILD_TIMEOUT_MINUTES}" env DOCKER_BUILDKIT=1 docker build \
+            -f "${WORKSPACE}/services/agents/Dockerfile.codex-runner" \
+            --network=host \
+            -t "${RUNNER_IMAGE}" \
+            --build-arg "BUN_BASE_IMAGE=mirror.gcr.io/oven/bun" \
+            --progress=plain \
+            "${PRUNE_DIR}"; then
+            echo "Built local runner image ${RUNNER_IMAGE}."
+          else
+            run_step_failure "Failed to build local image ${RUNNER_IMAGE}" "$?"
+          fi
+
+          RUNNER_SMOKE_SPEC_JSON="$(cat <<'JSON'
+          {
+            "schemaVersion": "agents.proompteng.ai/runner/v1",
+            "provider": "runner-image-smoke",
+            "providerSpec": {
+              "binary": "/bin/sh",
+              "argsTemplate": ["-c", "echo agents-runner-image-smoke"]
+            },
+            "adapter": {
+              "type": "exec"
+            }
+          }
+          JSON
+          )"
+          docker run --rm \
+            -e AGENT_RUNNER_SPEC="${RUNNER_SMOKE_SPEC_JSON}" \
+            "${RUNNER_IMAGE}" \
+            agent-runner
+
           IMAGE="${CONTROL_PLANE_IMAGE}"
           if ! run_kind_load_with_fallback; then
             run_step_failure "Failed to preload local image ${CONTROL_PLANE_IMAGE} into kind cluster ${KIND_CLUSTER_NAME}" "$?"
@@ -501,6 +621,11 @@ jobs:
           IMAGE="${CONTROLLER_IMAGE}"
           if ! run_kind_load_with_fallback; then
             run_step_failure "Failed to preload local image ${CONTROLLER_IMAGE} into kind cluster ${KIND_CLUSTER_NAME}" "$?"
+          fi
+
+          IMAGE="${RUNNER_IMAGE}"
+          if ! run_kind_load_with_fallback; then
+            run_step_failure "Failed to preload local image ${RUNNER_IMAGE} into kind cluster ${KIND_CLUSTER_NAME}" "$?"
           fi
 
           {
@@ -513,6 +638,9 @@ jobs:
             echo "BUILT_AGENTS_CONTROLLER_IMAGE_REPOSITORY=${CONTROLLER_IMAGE_REPOSITORY}"
             echo "BUILT_AGENTS_CONTROLLER_IMAGE_TAG=${IMAGE_TAG}"
             echo "BUILT_AGENTS_CONTROLLER_IMAGE_DIGEST="
+            echo "BUILT_AGENTS_RUNNER_IMAGE_REPOSITORY=${RUNNER_IMAGE_REPOSITORY}"
+            echo "BUILT_AGENTS_RUNNER_IMAGE_TAG=${IMAGE_TAG}"
+            echo "BUILT_AGENTS_RUNNER_IMAGE_DIGEST="
             echo "BUILT_AGENTS_IMAGE_SOURCE_SHA=${GITHUB_SHA}"
           } >> "${GITHUB_ENV}"
 
@@ -534,6 +662,9 @@ jobs:
           AGENTS_CONTROLLER_IMAGE_REPOSITORY: ${{ env.BUILT_AGENTS_CONTROLLER_IMAGE_REPOSITORY }}
           AGENTS_CONTROLLER_IMAGE_TAG: ${{ env.BUILT_AGENTS_CONTROLLER_IMAGE_TAG }}
           AGENTS_CONTROLLER_IMAGE_DIGEST: ${{ env.BUILT_AGENTS_CONTROLLER_IMAGE_DIGEST }}
+          AGENTS_RUNNER_IMAGE_REPOSITORY: ${{ env.BUILT_AGENTS_RUNNER_IMAGE_REPOSITORY }}
+          AGENTS_RUNNER_IMAGE_TAG: ${{ env.BUILT_AGENTS_RUNNER_IMAGE_TAG }}
+          AGENTS_RUNNER_IMAGE_DIGEST: ${{ env.BUILT_AGENTS_RUNNER_IMAGE_DIGEST }}
           AGENTCTL_BIN: services/agents/agentctl/dist/agentctl
         run: bun run packages/scripts/src/agents/smoke-agents.ts
 

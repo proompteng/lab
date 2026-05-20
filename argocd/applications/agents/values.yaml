@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/agents-controller
-  tag: 3b6c02e9
-  digest: sha256:a065a1e35846afea7445bbaf79accacf66c37a7da3301139eb241b1f73163a9f
+  tag: 49e31e5a
+  digest: sha256:8a7a77bbac2692d1a38986f0821ae3ab7eea4e2a41b7114e068e008dcee46aaa
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
@@ -11,23 +11,23 @@ nodeSelector:
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-control-plane
-    tag: 3b6c02e9
-    digest: sha256:34db622508187e9f252487ead6d97a963f897be96ae16a67119eec4f4e2c60f8
+    tag: 49e31e5a
+    digest: sha256:868937a1a5e7d20b69e48a42e02805d32fad81d7c533a85ef95886590975f2a7
   env:
     vars:
       AGENTS_CONTROL_PLANE_CACHE_ENABLED: "true"
-      AGENTS_SOURCE_HEAD_SHA: 3b6c02e948ab3c992129958744e41fd9437431d7
-      AGENTS_GITOPS_REVISION: 3b6c02e948ab3c992129958744e41fd9437431d7
-      AGENTS_SOURCE_CI_RUN_ID: "26086635102"
+      AGENTS_SOURCE_HEAD_SHA: 49e31e5a2e21e52bcdaba188eea1e564907a147d
+      AGENTS_GITOPS_REVISION: 49e31e5a2e21e52bcdaba188eea1e564907a147d
+      AGENTS_SOURCE_CI_RUN_ID: local-49e31e5a
       AGENTS_SOURCE_CI_CONCLUSION: success
-      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:34db622508187e9f252487ead6d97a963f897be96ae16a67119eec4f4e2c60f8
-      AGENTS_SERVING_BUILD_COMMIT: 3b6c02e948ab3c992129958744e41fd9437431d7
-      AGENTS_SERVING_IMAGE_DIGEST: sha256:34db622508187e9f252487ead6d97a963f897be96ae16a67119eec4f4e2c60f8
+      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:868937a1a5e7d20b69e48a42e02805d32fad81d7c533a85ef95886590975f2a7
+      AGENTS_SERVING_BUILD_COMMIT: 49e31e5a2e21e52bcdaba188eea1e564907a147d
+      AGENTS_SERVING_IMAGE_DIGEST: sha256:868937a1a5e7d20b69e48a42e02805d32fad81d7c533a85ef95886590975f2a7
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-codex-runner
-    tag: 3b6c02e9
-    digest: sha256:954cb108ece9df370aa441117723144948141ba02fd52c2e3fa1ff91847dda7a
+    tag: 49e31e5a
+    digest: sha256:eb21d378f21b8952b8f15f6dfaa71415e8ba96fb044207b076a6bebcda7f02ca
 argocdHooks:
   enabled: true
   image:
@@ -82,20 +82,12 @@ controllers:
   replicaCount: 2
   image:
     repository: registry.ide-newton.ts.net/lab/agents-controller
-    tag: 3b6c02e9
-    digest: sha256:a065a1e35846afea7445bbaf79accacf66c37a7da3301139eb241b1f73163a9f
+    tag: 49e31e5a
+    digest: sha256:8a7a77bbac2692d1a38986f0821ae3ab7eea4e2a41b7114e068e008dcee46aaa
   autoscaling:
     enabled: false
-  env:
-    vars:
-      AGENTS_AGENT_RUNNER_NATS_AUTH_SECRET_NAME: nats-agents-credentials
-      AGENTS_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY: username
-      AGENTS_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY: password
-      AGENTS_MATERIAL_REENTRY_REQUIREMENT_SIGNALS: "false"
-      AGENTS_SCHEDULE_RUNNER_ADMISSION_STATUS_URL: http://agents.agents.svc.cluster.local/api/agents/control-plane/status?view=schedule-runner
-      AGENTS_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS: "30000"
 swarm:
-  enabled: false
+  enabled: true
 resources:
   requests:
     cpu: 200m
@@ -165,17 +157,9 @@ rbac:
         - get
         - list
         - watch
-    - apiGroups:
-        - argoproj.io
-      resources:
-        - applications
-      verbs:
-        - get
-        - list
-        - watch
 database:
   secretRef:
-    name: agents-db-app
+    name: agents-db-next-app
     key: uri
 agentComms:
   enabled: true

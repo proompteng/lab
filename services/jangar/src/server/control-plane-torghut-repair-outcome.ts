@@ -1,4 +1,4 @@
-import type { TorghutRepairOutcomeEscrow } from '~/data/agents-control-plane'
+import type { TorghutRepairOutcomeEscrow } from '~/server/control-plane-status-types'
 import {
   normalizeNonEmpty,
   normalizeReason,

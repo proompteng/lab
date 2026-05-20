@@ -24,7 +24,7 @@ class CodexResearchActivitiesImplTest {
   private val artifactFetcher = mockk<MinioArtifactFetcher>()
   private val activities =
     CodexResearchActivitiesImpl(
-      argoClient = mockk(relaxed = true),
+      agentRunClient = mockk(relaxed = true),
       graphPersistence = graphPersistence,
       artifactFetcher = artifactFetcher,
       json = Json { ignoreUnknownKeys = true },
@@ -121,9 +121,9 @@ class CodexResearchActivitiesImplTest {
         CodexResearchWorkflowInput(
           prompt = "prompt",
           metadata = emptyMap(),
-          argoWorkflowName = "name",
+          agentRunName = "name",
           artifactKey = "key",
-          argoPollTimeoutSeconds = 7200,
+          agentRunPollTimeoutSeconds = 7200,
         ),
       )
 
@@ -159,9 +159,9 @@ class CodexResearchActivitiesImplTest {
         CodexResearchWorkflowInput(
           prompt = "prompt",
           metadata = emptyMap(),
-          argoWorkflowName = "name",
+          agentRunName = "name",
           artifactKey = "key",
-          argoPollTimeoutSeconds = 7200,
+          agentRunPollTimeoutSeconds = 7200,
         ),
       )
 
@@ -183,9 +183,9 @@ class CodexResearchActivitiesImplTest {
         CodexResearchWorkflowInput(
           prompt = "prompt",
           metadata = emptyMap(),
-          argoWorkflowName = "name",
+          agentRunName = "name",
           artifactKey = "key",
-          argoPollTimeoutSeconds = 7200,
+          agentRunPollTimeoutSeconds = 7200,
         ),
       )
 

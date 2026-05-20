@@ -117,10 +117,10 @@ test.describe('live deps (Tilt / remote cluster)', () => {
     await page.goto('/agents/general')
     await expect(page.getByRole('heading', { name: 'General channel', level: 1 })).toBeVisible()
 
-    const response = await page.waitForResponse((candidate) => candidate.url().includes('/api/agents/events'))
+    const response = await page.waitForResponse((candidate) => candidate.url().includes('/v1/agent-events'))
     const status = response.status()
     const contentType = response.headers()['content-type'] ?? ''
-    expect(response.ok(), `Expected /api/agents/events to succeed; got ${status} (${contentType}).`).toBe(true)
+    expect(response.ok(), `Expected /v1/agent-events to succeed; got ${status} (${contentType}).`).toBe(true)
     expect(contentType).toContain('text/event-stream')
 
     await expect(page.getByText('Stream disconnected. Refresh to retry.')).toHaveCount(0)

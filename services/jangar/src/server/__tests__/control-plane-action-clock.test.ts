@@ -16,7 +16,7 @@ import type {
   FailureDomainLeaseSet,
   RuntimeKitStatus,
   WorkflowsReliabilityStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 
 const now = new Date('2026-05-06T13:00:00.000Z')
 

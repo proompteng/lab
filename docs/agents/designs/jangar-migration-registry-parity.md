@@ -73,4 +73,4 @@ Adopt Option 3 now for reliability and maintainability with minimum behavioral r
 ### Deployment & validation notes
 
 - This change is scoped to source and CI; no charts/infrastructure changes are required.
-- Post-merge, deployment behavior remains dependent on `JANGAR_MIGRATIONS` and existing chart defaults.
+- Post-merge, deployment behavior remains dependent on `AGENTS_MIGRATIONS` and existing chart defaults.

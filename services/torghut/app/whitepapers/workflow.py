@@ -53,8 +53,8 @@ from ..trading.discovery.whitepaper_candidate_compiler import (
 
 logger = logging.getLogger(__name__)
 
-_WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR = '/etc/torghut/whitepapers-config'
-_WHITEPAPER_CEPH_DEFAULT_SECRET_DIR = '/etc/torghut/whitepapers-secret'
+_WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR = "/etc/torghut/whitepapers-config"
+_WHITEPAPER_CEPH_DEFAULT_SECRET_DIR = "/etc/torghut/whitepapers-secret"
 
 
 def _read_text_file(path: str | None) -> str | None:
@@ -64,7 +64,7 @@ def _read_text_file(path: str | None) -> str | None:
     if not normalized:
         return None
     try:
-        with open(normalized, encoding='utf-8') as handle:
+        with open(normalized, encoding="utf-8") as handle:
             payload = handle.read().strip()
     except OSError:
         return None
@@ -98,14 +98,15 @@ def _mounted_or_env_value(
 def _whitepaper_ceph_bucket_name() -> str:
     return (
         _mounted_or_env_value(
-            env_name='WHITEPAPER_CEPH_BUCKET',
-            mounted_key='BUCKET_NAME',
-            dir_env_name='WHITEPAPER_CEPH_CONFIG_DIR',
+            env_name="WHITEPAPER_CEPH_BUCKET",
+            mounted_key="BUCKET_NAME",
+            dir_env_name="WHITEPAPER_CEPH_CONFIG_DIR",
             default_dir=_WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR,
-            fallback_env_names=('BUCKET_NAME',),
+            fallback_env_names=("BUCKET_NAME",),
         )
-        or 'torghut-whitepapers'
+        or "torghut-whitepapers"
     )
+
 
 def _http_request_bytes(
     url: str,
@@ -128,18 +129,22 @@ def _http_request_bytes(
     for redirect_index in range(max_allowed_redirects + 1):
         parsed = urlparse(current_url)
         scheme = parsed.scheme.lower()
-        if scheme not in {'http', 'https'}:
-            raise RuntimeError(f'unsupported_url_scheme:{scheme or "missing"}')
+        if scheme not in {"http", "https"}:
+            raise RuntimeError(f"unsupported_url_scheme:{scheme or 'missing'}")
         if not parsed.hostname:
-            raise RuntimeError('invalid_url_host')
+            raise RuntimeError("invalid_url_host")
 
-        path = parsed.path or '/'
+        path = parsed.path or "/"
         if parsed.query:
-            path = f'{path}?{parsed.query}'
-        connection_class = HTTPSConnection if scheme == 'https' else HTTPConnection
-        connection = connection_class(parsed.hostname, parsed.port, timeout=max(timeout_seconds, 1))
+            path = f"{path}?{parsed.query}"
+        connection_class = HTTPSConnection if scheme == "https" else HTTPConnection
+        connection = connection_class(
+            parsed.hostname, parsed.port, timeout=max(timeout_seconds, 1)
+        )
         try:
-            connection.request(current_method, path, body=current_body, headers=request_headers)
+            connection.request(
+                current_method, path, body=current_body, headers=request_headers
+            )
             response = connection.getresponse()
             read_limit = None
             if max_response_bytes is not None:
@@ -153,11 +158,11 @@ def _http_request_bytes(
         if not follow_redirects or status_code not in redirect_statuses:
             return status_code, response_headers, payload
 
-        location = response_headers.get('Location') or response_headers.get('location')
+        location = response_headers.get("Location") or response_headers.get("location")
         if not location:
             return status_code, response_headers, payload
         if redirect_index >= max_allowed_redirects:
-            raise RuntimeError('http_redirect_limit_exceeded')
+            raise RuntimeError("http_redirect_limit_exceeded")
 
         next_url = urljoin(current_url, location)
         next_parsed = urlparse(next_url)
@@ -170,23 +175,32 @@ def _http_request_bytes(
             next_parsed.hostname,
             next_parsed.port,
         ):
-            request_headers.pop('Authorization', None)
-            request_headers.pop('authorization', None)
-            request_headers.pop('Cookie', None)
-            request_headers.pop('cookie', None)
+            request_headers.pop("Authorization", None)
+            request_headers.pop("authorization", None)
+            request_headers.pop("Cookie", None)
+            request_headers.pop("cookie", None)
 
-        if status_code == 303 or (status_code in {301, 302} and current_method.upper() not in {'GET', 'HEAD'}):
-            current_method = 'GET'
+        if status_code == 303 or (
+            status_code in {301, 302} and current_method.upper() not in {"GET", "HEAD"}
+        ):
+            current_method = "GET"
             current_body = None
 
         current_url = next_url
 
-    raise RuntimeError('http_redirect_processing_failed')
+    raise RuntimeError("http_redirect_processing_failed")
 
 
 _GITHUB_ISSUE_ACTIONS = {"opened", "edited", "reopened", "labeled"}
 _GITHUB_ISSUE_COMMENT_ACTIONS = {"created", "edited"}
-_RETRYABLE_AGENTRUN_STATUSES = {"failed", "error", "cancelled", "canceled", "timeout", "timed_out"}
+_RETRYABLE_AGENTRUN_STATUSES = {
+    "failed",
+    "error",
+    "cancelled",
+    "canceled",
+    "timeout",
+    "timed_out",
+}
 _ELIGIBLE_AUTO_VERDICTS = {"implement", "conditional_implement"}
 _REJECT_VERDICTS = {"reject", "not_viable", "not-viable"}
 _PASS_GATE_STATUSES = {"pass", "passed", "ok", "true", "green"}
@@ -308,15 +322,23 @@ def whitepaper_semantic_required() -> bool:
 
 
 def whitepaper_requeue_comment_keyword() -> str:
-    return _str_env("WHITEPAPER_REQUEUE_COMMENT_KEYWORD", "research whitepaper") or "research whitepaper"
+    return (
+        _str_env("WHITEPAPER_REQUEUE_COMMENT_KEYWORD", "research whitepaper")
+        or "research whitepaper"
+    )
 
 
 def marker_start() -> str:
-    return _str_env("WHITEPAPER_ISSUE_MARKER_START", "<!-- TORGHUT_WHITEPAPER:START -->") or ""
+    return (
+        _str_env("WHITEPAPER_ISSUE_MARKER_START", "<!-- TORGHUT_WHITEPAPER:START -->")
+        or ""
+    )
 
 
 def marker_end() -> str:
-    return _str_env("WHITEPAPER_ISSUE_MARKER_END", "<!-- TORGHUT_WHITEPAPER:END -->") or ""
+    return (
+        _str_env("WHITEPAPER_ISSUE_MARKER_END", "<!-- TORGHUT_WHITEPAPER:END -->") or ""
+    )
 
 
 def parse_marker_block(issue_body: str) -> dict[str, str] | None:
@@ -436,23 +458,31 @@ def extract_pdf_urls(text: str) -> list[str]:
     return urls
 
 
-def _extract_github_event_metadata(envelope: Mapping[str, Any]) -> tuple[str | None, str | None]:
+def _extract_github_event_metadata(
+    envelope: Mapping[str, Any],
+) -> tuple[str | None, str | None]:
     headers_raw = envelope.get("headers")
     if not isinstance(headers_raw, Mapping):
         return None, None
     headers = cast(dict[str, Any], headers_raw)
-    event_name = str(
-        headers.get("x-github-event")
-        or headers.get("X-GitHub-Event")
-        or headers.get("github_event")
-        or ""
-    ).strip() or None
-    delivery_id = str(
-        headers.get("x-github-delivery")
-        or headers.get("X-GitHub-Delivery")
-        or headers.get("github_delivery")
-        or ""
-    ).strip() or None
+    event_name = (
+        str(
+            headers.get("x-github-event")
+            or headers.get("X-GitHub-Event")
+            or headers.get("github_event")
+            or ""
+        ).strip()
+        or None
+    )
+    delivery_id = (
+        str(
+            headers.get("x-github-delivery")
+            or headers.get("X-GitHub-Delivery")
+            or headers.get("github_delivery")
+            or ""
+        ).strip()
+        or None
+    )
     return event_name, delivery_id
 
 
@@ -479,11 +509,18 @@ def normalize_github_issue_event(payload: Mapping[str, Any]) -> GithubIssueEvent
     envelope = cast(dict[str, Any], payload)
     event_name, delivery_id = _extract_github_event_metadata(envelope)
     if not event_name:
-        event_name = str(envelope.get("event") or envelope.get("event_name") or "").strip() or None
+        event_name = (
+            str(envelope.get("event") or envelope.get("event_name") or "").strip()
+            or None
+        )
 
     github_payload = _extract_github_issue_payload(envelope)
     if not event_name:
-        if "comment" in github_payload and "issue" in github_payload and "repository" in github_payload:
+        if (
+            "comment" in github_payload
+            and "issue" in github_payload
+            and "repository" in github_payload
+        ):
             event_name = "issue_comment"
         elif "issue" in github_payload and "repository" in github_payload:
             event_name = "issues"
@@ -513,7 +550,9 @@ def normalize_github_issue_event(payload: Mapping[str, Any]) -> GithubIssueEvent
 
     issue_title = str(issue_payload.get("title") or "").strip()
     issue_body = str(issue_payload.get("body") or "")
-    issue_url = str(issue_payload.get("html_url") or issue_payload.get("url") or "").strip()
+    issue_url = str(
+        issue_payload.get("html_url") or issue_payload.get("url") or ""
+    ).strip()
     comment_body: str | None = None
     if event_name == "issue_comment":
         comment = github_payload.get("comment")
@@ -559,43 +598,45 @@ class CephS3Client:
 
     @classmethod
     def from_env(cls) -> CephS3Client | None:
-        endpoint = _str_env('WHITEPAPER_CEPH_ENDPOINT')
+        endpoint = _str_env("WHITEPAPER_CEPH_ENDPOINT")
         access_key = _mounted_or_env_value(
-            env_name='WHITEPAPER_CEPH_ACCESS_KEY',
-            mounted_key='AWS_ACCESS_KEY_ID',
-            dir_env_name='WHITEPAPER_CEPH_SECRET_DIR',
+            env_name="WHITEPAPER_CEPH_ACCESS_KEY",
+            mounted_key="AWS_ACCESS_KEY_ID",
+            dir_env_name="WHITEPAPER_CEPH_SECRET_DIR",
             default_dir=_WHITEPAPER_CEPH_DEFAULT_SECRET_DIR,
-            fallback_env_names=('AWS_ACCESS_KEY_ID',),
+            fallback_env_names=("AWS_ACCESS_KEY_ID",),
         )
         secret_key = _mounted_or_env_value(
-            env_name='WHITEPAPER_CEPH_SECRET_KEY',
-            mounted_key='AWS_SECRET_ACCESS_KEY',
-            dir_env_name='WHITEPAPER_CEPH_SECRET_DIR',
+            env_name="WHITEPAPER_CEPH_SECRET_KEY",
+            mounted_key="AWS_SECRET_ACCESS_KEY",
+            dir_env_name="WHITEPAPER_CEPH_SECRET_DIR",
             default_dir=_WHITEPAPER_CEPH_DEFAULT_SECRET_DIR,
-            fallback_env_names=('AWS_SECRET_ACCESS_KEY',),
+            fallback_env_names=("AWS_SECRET_ACCESS_KEY",),
         )
-        region = _str_env('WHITEPAPER_CEPH_REGION', 'us-east-1') or 'us-east-1'
+        region = _str_env("WHITEPAPER_CEPH_REGION", "us-east-1") or "us-east-1"
 
         if endpoint is None:
             bucket_host = _mounted_or_env_value(
-                env_name='WHITEPAPER_CEPH_BUCKET_HOST',
-                mounted_key='BUCKET_HOST',
-                dir_env_name='WHITEPAPER_CEPH_CONFIG_DIR',
+                env_name="WHITEPAPER_CEPH_BUCKET_HOST",
+                mounted_key="BUCKET_HOST",
+                dir_env_name="WHITEPAPER_CEPH_CONFIG_DIR",
                 default_dir=_WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR,
-                fallback_env_names=('BUCKET_HOST',),
+                fallback_env_names=("BUCKET_HOST",),
             )
             bucket_port = _mounted_or_env_value(
-                env_name='WHITEPAPER_CEPH_BUCKET_PORT',
-                mounted_key='BUCKET_PORT',
-                dir_env_name='WHITEPAPER_CEPH_CONFIG_DIR',
+                env_name="WHITEPAPER_CEPH_BUCKET_PORT",
+                mounted_key="BUCKET_PORT",
+                dir_env_name="WHITEPAPER_CEPH_CONFIG_DIR",
                 default_dir=_WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR,
-                fallback_env_names=('BUCKET_PORT',),
+                fallback_env_names=("BUCKET_PORT",),
             )
             if bucket_host:
-                scheme = 'https' if _bool_env('WHITEPAPER_CEPH_USE_TLS', False) else 'http'
-                endpoint = f'{scheme}://{bucket_host}'
+                scheme = (
+                    "https" if _bool_env("WHITEPAPER_CEPH_USE_TLS", False) else "http"
+                )
+                endpoint = f"{scheme}://{bucket_host}"
                 if bucket_port:
-                    endpoint = f'{endpoint}:{bucket_port}'
+                    endpoint = f"{endpoint}:{bucket_port}"
 
         if not endpoint or not access_key or not secret_key:
             return None
@@ -629,9 +670,7 @@ class CephS3Client:
         host = parsed.netloc
 
         canonical_headers = (
-            f"host:{host}\n"
-            f"x-amz-content-sha256:{payload_hash}\n"
-            f"x-amz-date:{amz_date}\n"
+            f"host:{host}\nx-amz-content-sha256:{payload_hash}\nx-amz-date:{amz_date}\n"
         )
         signed_headers = "host;x-amz-content-sha256;x-amz-date"
         canonical_request = "\n".join(
@@ -657,7 +696,9 @@ class CephS3Client:
         )
 
         signing_key = self._signing_key(datestamp)
-        signature = hmac.new(signing_key, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+        signature = hmac.new(
+            signing_key, string_to_sign.encode("utf-8"), hashlib.sha256
+        ).hexdigest()
         authorization = (
             f"{algorithm} "
             f"Credential={self.access_key}/{credential_scope}, "
@@ -668,20 +709,20 @@ class CephS3Client:
         url = f"{self.endpoint}{canonical_uri}"
         status, response_headers, _ = _http_request_bytes(
             url,
-            method='PUT',
+            method="PUT",
             headers={
-                'Host': host,
-                'Content-Type': content_type,
-                'Authorization': authorization,
-                'x-amz-date': amz_date,
-                'x-amz-content-sha256': payload_hash,
+                "Host": host,
+                "Content-Type": content_type,
+                "Authorization": authorization,
+                "x-amz-date": amz_date,
+                "x-amz-content-sha256": payload_hash,
             },
             body=body,
             timeout_seconds=self.timeout_seconds,
         )
         if status < 200 or status >= 300:
-            raise RuntimeError(f'ceph_upload_http_{status}')
-        etag = str(response_headers.get('ETag') or '').strip().strip('"') or None
+            raise RuntimeError(f"ceph_upload_http_{status}")
+        etag = str(response_headers.get("ETag") or "").strip().strip('"') or None
 
         return {
             "bucket": bucket,
@@ -711,9 +752,7 @@ class CephS3Client:
         host = parsed.netloc
 
         canonical_headers = (
-            f"host:{host}\n"
-            f"x-amz-content-sha256:{payload_hash}\n"
-            f"x-amz-date:{amz_date}\n"
+            f"host:{host}\nx-amz-content-sha256:{payload_hash}\nx-amz-date:{amz_date}\n"
         )
         signed_headers = "host;x-amz-content-sha256;x-amz-date"
         canonical_request = "\n".join(
@@ -739,7 +778,9 @@ class CephS3Client:
         )
 
         signing_key = self._signing_key(datestamp)
-        signature = hmac.new(signing_key, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+        signature = hmac.new(
+            signing_key, string_to_sign.encode("utf-8"), hashlib.sha256
+        ).hexdigest()
         authorization = (
             f"{algorithm} "
             f"Credential={self.access_key}/{credential_scope}, "
@@ -750,22 +791,28 @@ class CephS3Client:
         url = f"{self.endpoint}{canonical_uri}"
         status, _response_headers, payload = _http_request_bytes(
             url,
-            method='GET',
+            method="GET",
             headers={
-                'Host': host,
-                'Authorization': authorization,
-                'x-amz-date': amz_date,
-                'x-amz-content-sha256': payload_hash,
+                "Host": host,
+                "Authorization": authorization,
+                "x-amz-date": amz_date,
+                "x-amz-content-sha256": payload_hash,
             },
             timeout_seconds=self.timeout_seconds,
         )
         if status < 200 or status >= 300:
-            raise RuntimeError(f'ceph_download_http_{status}')
+            raise RuntimeError(f"ceph_download_http_{status}")
         return payload
 
     def _signing_key(self, datestamp: str) -> bytes:
-        date_key = hmac.new(("AWS4" + self.secret_key).encode("utf-8"), datestamp.encode("utf-8"), hashlib.sha256)
-        region_key = hmac.new(date_key.digest(), self.region.encode("utf-8"), hashlib.sha256)
+        date_key = hmac.new(
+            ("AWS4" + self.secret_key).encode("utf-8"),
+            datestamp.encode("utf-8"),
+            hashlib.sha256,
+        )
+        region_key = hmac.new(
+            date_key.digest(), self.region.encode("utf-8"), hashlib.sha256
+        )
         service_key = hmac.new(region_key.digest(), b"s3", hashlib.sha256)
         signing_key = hmac.new(service_key.digest(), b"aws4_request", hashlib.sha256)
         return signing_key.digest()
@@ -809,7 +856,9 @@ class WhitepaperWorkflowService:
         self.inngest_client = client
 
     def _resolve_ceph_client(self) -> CephS3Client | Any | None:
-        if self.ceph_client is not None and not isinstance(self.ceph_client, CephS3Client):
+        if self.ceph_client is not None and not isinstance(
+            self.ceph_client, CephS3Client
+        ):
             return self.ceph_client
         self.ceph_client = CephS3Client.from_env()
         return self.ceph_client
@@ -828,12 +877,21 @@ class WhitepaperWorkflowService:
         if issue_event is None:
             return IssueKickoffResult(accepted=False, reason="ignored_event")
 
-        marker_rejection, marker, attachment_url = self._resolve_marker_and_attachment(issue_event.issue_body)
+        marker_rejection, marker, attachment_url = self._resolve_marker_and_attachment(
+            issue_event.issue_body
+        )
         if marker_rejection is not None or marker is None:
-            return marker_rejection or IssueKickoffResult(accepted=False, reason="marker_missing")
+            return marker_rejection or IssueKickoffResult(
+                accepted=False, reason="marker_missing"
+            )
 
-        if issue_event.event_name == "issue_comment" and not issue_event.requeue_requested:
-            return IssueKickoffResult(accepted=False, reason="comment_without_requeue_keyword")
+        if (
+            issue_event.event_name == "issue_comment"
+            and not issue_event.requeue_requested
+        ):
+            return IssueKickoffResult(
+                accepted=False, reason="comment_without_requeue_keyword"
+            )
 
         source_identifier = f"{issue_event.repository}#{issue_event.issue_number}"
         run_id_seed = build_whitepaper_run_id(
@@ -848,7 +906,9 @@ class WhitepaperWorkflowService:
         )
 
         existing_run = session.execute(
-            select(WhitepaperAnalysisRun).where(WhitepaperAnalysisRun.run_id == run_id_seed)
+            select(WhitepaperAnalysisRun).where(
+                WhitepaperAnalysisRun.run_id == run_id_seed
+            )
         ).scalar_one_or_none()
         if existing_run is not None:
             if issue_event.requeue_requested:
@@ -948,14 +1008,24 @@ class WhitepaperWorkflowService:
 
         workflow_name = str(marker.get("workflow") or "").strip().lower()
         if workflow_name and workflow_name != "whitepaper-analysis-v1":
-            return IssueKickoffResult(accepted=False, reason="unsupported_workflow_marker"), None, ""
+            return (
+                IssueKickoffResult(
+                    accepted=False, reason="unsupported_workflow_marker"
+                ),
+                None,
+                "",
+            )
 
         attachments = extract_pdf_urls(issue_body)
         attachment_url = normalize_attachment_url(
             str(marker.get("attachment_url") or (attachments[0] if attachments else ""))
         )
         if not attachment_url:
-            return IssueKickoffResult(accepted=False, reason="pdf_attachment_missing"), None, ""
+            return (
+                IssueKickoffResult(accepted=False, reason="pdf_attachment_missing"),
+                None,
+                "",
+            )
 
         return None, marker, attachment_url
 
@@ -989,7 +1059,8 @@ class WhitepaperWorkflowService:
                 select(WhitepaperAnalysisRun)
                 .join(
                     WhitepaperDocumentVersion,
-                    WhitepaperDocumentVersion.id == WhitepaperAnalysisRun.document_version_id,
+                    WhitepaperDocumentVersion.id
+                    == WhitepaperAnalysisRun.document_version_id,
                 )
                 .where(WhitepaperDocumentVersion.checksum_sha256 == checksum)
                 .order_by(status_rank.asc(), WhitepaperAnalysisRun.created_at.desc())
@@ -1013,7 +1084,9 @@ class WhitepaperWorkflowService:
             "issue_number": issue_event.issue_number,
             "issue_url": issue_event.issue_url,
             "subject": subject,
-            "analysis_mode": normalize_analysis_mode(self._optional_text(marker.get("analysis_mode"))),
+            "analysis_mode": normalize_analysis_mode(
+                self._optional_text(marker.get("analysis_mode"))
+            ),
         }
         document = session.execute(
             select(WhitepaperDocument).where(
@@ -1039,7 +1112,10 @@ class WhitepaperWorkflowService:
         merged_tags: list[str] = []
         if isinstance(document.tags_json, list):
             merged_tags.extend(
-                [self._optional_text(item) or "" for item in cast(list[Any], document.tags_json)]
+                [
+                    self._optional_text(item) or ""
+                    for item in cast(list[Any], document.tags_json)
+                ]
             )
         merged_tags.extend(marker_tags)
         normalized_tags = _sorted_unique(
@@ -1168,13 +1244,17 @@ class WhitepaperWorkflowService:
         run_status = "queued" if storage.parse_status == "stored" else "failed"
         subject = self._optional_text(marker.get("subject"))
         tags = parse_marker_tags(self._optional_text(marker.get("tags")))
-        analysis_mode = normalize_analysis_mode(self._optional_text(marker.get("analysis_mode")))
+        analysis_mode = normalize_analysis_mode(
+            self._optional_text(marker.get("analysis_mode"))
+        )
         run_row = WhitepaperAnalysisRun(
             run_id=run_identity.run_id,
             document_id=document.id,
             document_version_id=version_row.id,
             status=run_status,
-            trigger_source="github_issue_kafka" if source == "kafka" else "github_issue_api",
+            trigger_source="github_issue_kafka"
+            if source == "kafka"
+            else "github_issue_api",
             trigger_actor=issue_event.actor,
             retry_of_run_id=run_identity.retry_of_run_id,
             inngest_event_id=issue_event.delivery_id,
@@ -1236,14 +1316,18 @@ class WhitepaperWorkflowService:
         session: Session,
         run_row: WhitepaperAnalysisRun,
     ) -> str | None:
-        if run_row.status != "queued" or not _bool_env("WHITEPAPER_AGENTRUN_AUTO_DISPATCH", True):
+        if run_row.status != "queued" or not _bool_env(
+            "WHITEPAPER_AGENTRUN_AUTO_DISPATCH", True
+        ):
             return None
 
         try:
             dispatched = self.dispatch_codex_agentrun(session, run_row.run_id)
         except Exception as exc:
             run_row.status = "failed"
-            run_row.failure_reason = f"agentrun_dispatch_failed:{type(exc).__name__}:{exc}"
+            run_row.failure_reason = (
+                f"agentrun_dispatch_failed:{type(exc).__name__}:{exc}"
+            )
             session.add(run_row)
             return None
         return cast(str | None, dispatched.get("agentrun_name"))
@@ -1263,11 +1347,17 @@ class WhitepaperWorkflowService:
             return False
 
         event_name = (
-            _str_env("WHITEPAPER_INNGEST_EVENT_NAME", "torghut/whitepaper.analysis.requested")
+            _str_env(
+                "WHITEPAPER_INNGEST_EVENT_NAME", "torghut/whitepaper.analysis.requested"
+            )
             or "torghut/whitepaper.analysis.requested"
         )
-        context = dict(cast(Mapping[str, Any], run_row.orchestration_context_json or {}))
-        enqueue_attempt = (self._optional_int(context.get("inngest_enqueue_attempt")) or 0) + 1
+        context = dict(
+            cast(Mapping[str, Any], run_row.orchestration_context_json or {})
+        )
+        enqueue_attempt = (
+            self._optional_int(context.get("inngest_enqueue_attempt")) or 0
+        ) + 1
         enqueue_key = f"{run_row.run_id}:{enqueue_attempt}"
         try:
             event_ids = self.inngest_client.send_sync(
@@ -1281,12 +1371,16 @@ class WhitepaperWorkflowService:
                 )
             )
         except Exception as exc:
-            run_row.failure_reason = f"inngest_enqueue_failed:{type(exc).__name__}:{exc}"
+            run_row.failure_reason = (
+                f"inngest_enqueue_failed:{type(exc).__name__}:{exc}"
+            )
             run_row.status = "failed"
             session.add(run_row)
             return False
 
-        run_row.inngest_event_id = event_ids[0] if event_ids else run_row.inngest_event_id
+        run_row.inngest_event_id = (
+            event_ids[0] if event_ids else run_row.inngest_event_id
+        )
         context["inngest_enqueue_attempt"] = enqueue_attempt
         context["inngest_enqueue_key"] = enqueue_key
         run_row.orchestration_context_json = coerce_json_payload(context)
@@ -1301,12 +1395,18 @@ class WhitepaperWorkflowService:
         *,
         run: WhitepaperAnalysisRun,
     ) -> bool:
-        if not whitepaper_inngest_enabled() or not whitepaper_semantic_indexing_enabled():
+        if (
+            not whitepaper_inngest_enabled()
+            or not whitepaper_semantic_indexing_enabled()
+        ):
             return False
         if self.inngest_client is None:
             return False
         event_name = (
-            _str_env("WHITEPAPER_INNGEST_FINALIZED_EVENT_NAME", "torghut/whitepaper.analysis.finalized")
+            _str_env(
+                "WHITEPAPER_INNGEST_FINALIZED_EVENT_NAME",
+                "torghut/whitepaper.analysis.finalized",
+            )
             or "torghut/whitepaper.analysis.finalized"
         )
         try:
@@ -1379,12 +1479,18 @@ class WhitepaperWorkflowService:
                 document_key=document_key,
             )
 
-        latest_agentrun = session.execute(
-            select(WhitepaperCodexAgentRun)
-            .where(WhitepaperCodexAgentRun.analysis_run_id == run.id)
-            .order_by(WhitepaperCodexAgentRun.created_at.desc())
-        ).scalars().first()
-        if latest_agentrun and not self._is_retryable_agentrun_status(latest_agentrun.status):
+        latest_agentrun = (
+            session.execute(
+                select(WhitepaperCodexAgentRun)
+                .where(WhitepaperCodexAgentRun.analysis_run_id == run.id)
+                .order_by(WhitepaperCodexAgentRun.created_at.desc())
+            )
+            .scalars()
+            .first()
+        )
+        if latest_agentrun and not self._is_retryable_agentrun_status(
+            latest_agentrun.status
+        ):
             return IssueKickoffResult(
                 accepted=True,
                 reason="already_dispatched",
@@ -1405,7 +1511,11 @@ class WhitepaperWorkflowService:
             }
         )
         run.orchestration_context_json = coerce_json_payload(context)
-        run.trigger_source = "github_issue_comment_kafka" if source == "kafka" else "github_issue_comment_api"
+        run.trigger_source = (
+            "github_issue_comment_kafka"
+            if source == "kafka"
+            else "github_issue_comment_api"
+        )
         run.trigger_actor = issue_event.actor
         run.failure_reason = None
         run.started_at = datetime.now(timezone.utc)
@@ -1464,7 +1574,9 @@ class WhitepaperWorkflowService:
             )
 
         try:
-            dispatch_result = self.dispatch_codex_agentrun(session, run.run_id, allow_retry=True)
+            dispatch_result = self.dispatch_codex_agentrun(
+                session, run.run_id, allow_retry=True
+            )
             return IssueKickoffResult(
                 accepted=True,
                 reason="requeued",
@@ -1483,20 +1595,28 @@ class WhitepaperWorkflowService:
                 document_key=document_key,
             )
 
-    def dispatch_codex_agentrun(self, session: Session, run_id: str, *, allow_retry: bool = False) -> dict[str, Any]:
+    def dispatch_codex_agentrun(
+        self, session: Session, run_id: str, *, allow_retry: bool = False
+    ) -> dict[str, Any]:
         run = session.execute(
             select(WhitepaperAnalysisRun).where(WhitepaperAnalysisRun.run_id == run_id)
         ).scalar_one_or_none()
         if run is None:
             raise ValueError("whitepaper_run_not_found")
 
-        existing = session.execute(
-            select(WhitepaperCodexAgentRun)
-            .where(WhitepaperCodexAgentRun.analysis_run_id == run.id)
-            .order_by(WhitepaperCodexAgentRun.created_at.desc())
-        ).scalars().first()
+        existing = (
+            session.execute(
+                select(WhitepaperCodexAgentRun)
+                .where(WhitepaperCodexAgentRun.analysis_run_id == run.id)
+                .order_by(WhitepaperCodexAgentRun.created_at.desc())
+            )
+            .scalars()
+            .first()
+        )
         if existing is not None:
-            if not allow_retry or not self._is_retryable_agentrun_status(existing.status):
+            if not allow_retry or not self._is_retryable_agentrun_status(
+                existing.status
+            ):
                 return {
                     "idempotent": True,
                     "agentrun_name": existing.agentrun_name,
@@ -1511,21 +1631,37 @@ class WhitepaperWorkflowService:
         dispatch_attempt = int(dispatch_count or 0) + 1
 
         context = cast(dict[str, Any], run.orchestration_context_json or {})
-        repository = str(context.get("repository") or _str_env("WHITEPAPER_DEFAULT_REPOSITORY", "proompteng/lab"))
+        repository = str(
+            context.get("repository")
+            or _str_env("WHITEPAPER_DEFAULT_REPOSITORY", "proompteng/lab")
+        )
         issue_url = str(context.get("issue_url") or "")
         issue_number = str(context.get("issue_number") or "0")
-        github_issue_number = str(github_issue_number_from_url(issue_url, repository) or issue_number)
-        issue_title = str((run.document.title if run.document else "") or "Whitepaper analysis")
+        github_issue_number = str(
+            github_issue_number_from_url(issue_url, repository) or issue_number
+        )
+        issue_title = str(
+            (run.document.title if run.document else "") or "Whitepaper analysis"
+        )
         attachment_url = str(context.get("attachment_url") or "")
         marker = cast(dict[str, Any], context.get("marker") or {})
         analysis_profile = cast(dict[str, Any], run.analysis_profile_json or {})
-        subject = self._optional_text(analysis_profile.get("subject")) or self._optional_text(context.get("subject"))
-        tags = self._coerce_tag_list(analysis_profile.get("tags") or context.get("tags"))
+        subject = self._optional_text(
+            analysis_profile.get("subject")
+        ) or self._optional_text(context.get("subject"))
+        tags = self._coerce_tag_list(
+            analysis_profile.get("tags") or context.get("tags")
+        )
         analysis_mode = normalize_analysis_mode(
-            self._optional_text(analysis_profile.get("analysis_mode") or context.get("analysis_mode"))
+            self._optional_text(
+                analysis_profile.get("analysis_mode") or context.get("analysis_mode")
+            )
         )
 
-        base_branch = str(marker.get("base_branch") or _str_env("WHITEPAPER_DEFAULT_BASE_BRANCH", "main"))
+        base_branch = str(
+            marker.get("base_branch")
+            or _str_env("WHITEPAPER_DEFAULT_BASE_BRANCH", "main")
+        )
         default_head_branch = f"codex/whitepaper-{run.run_id[-16:]}"
         if dispatch_attempt > 1 and "head_branch" not in marker:
             default_head_branch = f"{default_head_branch}-retry-{dispatch_attempt}"
@@ -1563,15 +1699,20 @@ class WhitepaperWorkflowService:
 
         payload: dict[str, Any] = {
             "namespace": _str_env("WHITEPAPER_AGENTRUN_NAMESPACE", "agents"),
-            "idempotencyKey": run.run_id if dispatch_attempt == 1 else f"{run.run_id}-retry-{dispatch_attempt}",
-            "agentRef": {"name": _str_env("WHITEPAPER_AGENT_NAME", "codex-whitepaper-agent")},
+            "idempotencyKey": run.run_id
+            if dispatch_attempt == 1
+            else f"{run.run_id}-retry-{dispatch_attempt}",
+            "agentRef": {
+                "name": _str_env("WHITEPAPER_AGENT_NAME", "codex-whitepaper-agent")
+            },
             "runtime": {"type": "job"},
             "implementation": {
                 "summary": f"Whitepaper analysis {run.run_id}",
                 "text": prompt,
                 "source": {
                     "provider": "github",
-                    "url": issue_url or f"https://github.com/{repository}/issues/{github_issue_number}",
+                    "url": issue_url
+                    or f"https://github.com/{repository}/issues/{github_issue_number}",
                 },
                 "vcsRef": {"name": _str_env("WHITEPAPER_AGENTRUN_VCS_REF", "github")},
                 "labels": labels,
@@ -1595,14 +1736,19 @@ class WhitepaperWorkflowService:
             },
             "policy": {
                 "secretBindingRef": _str_env(
-                    "WHITEPAPER_AGENTRUN_SECRET_BINDING", "codex-whitepaper-github-token"
+                    "WHITEPAPER_AGENTRUN_SECRET_BINDING",
+                    "codex-whitepaper-github-token",
                 )
             },
-            "ttlSecondsAfterFinished": _int_env("WHITEPAPER_AGENTRUN_TTL_SECONDS", 7200),
+            "ttlSecondsAfterFinished": _int_env(
+                "WHITEPAPER_AGENTRUN_TTL_SECONDS", 7200
+            ),
         }
 
         idempotency_key = cast(str, payload["idempotencyKey"])
-        response_payload = self._submit_jangar_agentrun(payload, idempotency_key=idempotency_key)
+        response_payload = self._submit_agents_agentrun(
+            payload, idempotency_key=idempotency_key
+        )
         resource = cast(dict[str, Any], response_payload.get("resource") or {})
         metadata = cast(dict[str, Any], resource.get("metadata") or {})
         status = cast(dict[str, Any], resource.get("status") or {})
@@ -1681,7 +1827,9 @@ class WhitepaperWorkflowService:
         self._upsert_synthesis(session, run, payload.get("synthesis"))
         self._upsert_verdict(session, run, payload.get("verdict"))
         self._sync_structured_research_outputs(session, run, payload)
-        self._upsert_design_pull_requests(session, run, payload.get("design_pull_request"))
+        self._upsert_design_pull_requests(
+            session, run, payload.get("design_pull_request")
+        )
         self._ingest_artifacts(session, run, payload.get("artifacts"))
         self._upsert_steps(session, run, payload.get("steps"))
         self._complete_run(session, run, payload)
@@ -1693,7 +1841,9 @@ class WhitepaperWorkflowService:
         if run.status == "completed" and whitepaper_semantic_indexing_enabled():
             queued_for_async_indexing = False
             if whitepaper_inngest_enabled():
-                queued_for_async_indexing = self._enqueue_finalized_inngest_event(session, run=run)
+                queued_for_async_indexing = self._enqueue_finalized_inngest_event(
+                    session, run=run
+                )
 
             if not queued_for_async_indexing:
                 self.index_synthesis_semantic_content(
@@ -1843,12 +1993,16 @@ class WhitepaperWorkflowService:
             session.add(extraction_step)
             if whitepaper_semantic_required():
                 run.status = "failed"
-                run.failure_reason = f"semantic_extract_failed:{type(exc).__name__}:{exc}"
+                run.failure_reason = (
+                    f"semantic_extract_failed:{type(exc).__name__}:{exc}"
+                )
                 session.add(run)
                 raise
 
         if whitepaper_semantic_indexing_enabled() and full_text.strip():
-            self.index_full_text_semantic_content(session, run_id=run.run_id, full_text=full_text)
+            self.index_full_text_semantic_content(
+                session, run_id=run.run_id, full_text=full_text
+            )
 
         if _bool_env("WHITEPAPER_AGENTRUN_AUTO_DISPATCH", True):
             self.dispatch_codex_agentrun(session, run.run_id)
@@ -1880,7 +2034,11 @@ class WhitepaperWorkflowService:
         run = self._get_run_or_raise(session, run_id)
         synthesis = run.synthesis
         if synthesis is None:
-            return {"run_id": run.run_id, "indexed_chunks": 0, "source_scope": "synthesis"}
+            return {
+                "run_id": run.run_id,
+                "indexed_chunks": 0,
+                "source_scope": "synthesis",
+            }
 
         sections: list[tuple[str, str]] = []
         section_candidates = [
@@ -1931,7 +2089,9 @@ class WhitepaperWorkflowService:
 
         semantic_limit = min(max(limit * 4, limit), 250)
         lexical_limit = min(max(limit * 4, limit), 250)
-        embedding_model, embedding_dimension, query_embedding = self._embed_texts([clean_query])
+        embedding_model, embedding_dimension, query_embedding = self._embed_texts(
+            [clean_query]
+        )
         vector_text = self._vector_to_text(query_embedding[0])
 
         scope_filter = None if scope == "all" else scope
@@ -1939,9 +2099,10 @@ class WhitepaperWorkflowService:
         subject_filter = subject.strip() if subject else None
         lexical_query = clean_query
 
-        semantic_rows = session.execute(
-            text(
-                """
+        semantic_rows = (
+            session.execute(
+                text(
+                    """
                 SELECT
                   sc.id::text AS chunk_id,
                   r.run_id AS run_id,
@@ -1968,21 +2129,25 @@ class WhitepaperWorkflowService:
                 ORDER BY se.embedding <=> CAST(:query_vector AS vector) ASC
                 LIMIT :semantic_limit
                 """
-            ),
-            {
-                "query_vector": vector_text,
-                "embedding_model": embedding_model,
-                "embedding_dimension": embedding_dimension,
-                "status_filter": status_filter,
-                "scope_filter": scope_filter,
-                "subject_filter": subject_filter,
-                "semantic_limit": semantic_limit,
-            },
-        ).mappings().all()
+                ),
+                {
+                    "query_vector": vector_text,
+                    "embedding_model": embedding_model,
+                    "embedding_dimension": embedding_dimension,
+                    "status_filter": status_filter,
+                    "scope_filter": scope_filter,
+                    "subject_filter": subject_filter,
+                    "semantic_limit": semantic_limit,
+                },
+            )
+            .mappings()
+            .all()
+        )
 
-        lexical_rows = session.execute(
-            text(
-                """
+        lexical_rows = (
+            session.execute(
+                text(
+                    """
                 SELECT
                   sc.id::text AS chunk_id,
                   r.run_id AS run_id,
@@ -2010,15 +2175,18 @@ class WhitepaperWorkflowService:
                 ORDER BY lexical_score DESC
                 LIMIT :lexical_limit
                 """
-            ),
-            {
-                "lexical_query": lexical_query,
-                "status_filter": status_filter,
-                "scope_filter": scope_filter,
-                "subject_filter": subject_filter,
-                "lexical_limit": lexical_limit,
-            },
-        ).mappings().all()
+                ),
+                {
+                    "lexical_query": lexical_query,
+                    "status_filter": status_filter,
+                    "scope_filter": scope_filter,
+                    "subject_filter": subject_filter,
+                    "lexical_limit": lexical_limit,
+                },
+            )
+            .mappings()
+            .all()
+        )
 
         semantic_rank: dict[str, int] = {}
         lexical_rank: dict[str, int] = {}
@@ -2029,7 +2197,9 @@ class WhitepaperWorkflowService:
             semantic_rank[chunk_id] = idx
             merged[chunk_id] = {
                 **dict(row),
-                "semantic_distance": float(row["semantic_distance"]) if row["semantic_distance"] is not None else None,
+                "semantic_distance": float(row["semantic_distance"])
+                if row["semantic_distance"] is not None
+                else None,
                 "lexical_score": None,
             }
 
@@ -2037,7 +2207,11 @@ class WhitepaperWorkflowService:
             chunk_id = str(row["chunk_id"])
             lexical_rank[chunk_id] = idx
             entry = merged.get(chunk_id)
-            lexical_score = float(row["lexical_score"]) if row["lexical_score"] is not None else None
+            lexical_score = (
+                float(row["lexical_score"])
+                if row["lexical_score"] is not None
+                else None
+            )
             if entry is None:
                 merged[chunk_id] = {
                     **dict(row),
@@ -2048,7 +2222,14 @@ class WhitepaperWorkflowService:
                 entry["lexical_score"] = lexical_score
 
         best_semantic_distance = min(
-            [d for d in [cast(float | None, row.get("semantic_distance")) for row in merged.values()] if d is not None],
+            [
+                d
+                for d in [
+                    cast(float | None, row.get("semantic_distance"))
+                    for row in merged.values()
+                ]
+                if d is not None
+            ],
             default=None,
         )
         semantic_ceiling = None
@@ -2099,7 +2280,9 @@ class WhitepaperWorkflowService:
                     "source_scope": item["source_scope"],
                     "section_key": item["section_key"],
                     "chunk_index": int(item["chunk_index"]),
-                    "snippet": self._build_search_snippet(str(item["content"]), clean_query),
+                    "snippet": self._build_search_snippet(
+                        str(item["content"]), clean_query
+                    ),
                 },
                 "semantic_distance": item.get("semantic_distance"),
                 "lexical_score": item.get("lexical_score"),
@@ -2175,7 +2358,9 @@ class WhitepaperWorkflowService:
 
         raise RuntimeError("pdf_text_extract_unavailable")
 
-    def _extract_pdf_text_with_pdftotext(self, pdf_bytes: bytes) -> dict[str, Any] | None:
+    def _extract_pdf_text_with_pdftotext(
+        self, pdf_bytes: bytes
+    ) -> dict[str, Any] | None:
         with tempfile.TemporaryDirectory(prefix="torghut-wp-") as temp_dir:
             pdf_path = os.path.join(temp_dir, "input.pdf")
             txt_path = os.path.join(temp_dir, "output.txt")
@@ -2192,7 +2377,9 @@ class WhitepaperWorkflowService:
             except FileNotFoundError:
                 return None
             except CalledProcessError as exc:
-                raise RuntimeError(f"pdftotext_failed:{exc.stderr.strip()[:200]}") from exc
+                raise RuntimeError(
+                    f"pdftotext_failed:{exc.stderr.strip()[:200]}"
+                ) from exc
 
             full_text = ""
             if os.path.exists(txt_path):
@@ -2239,7 +2426,9 @@ class WhitepaperWorkflowService:
                 page_text = page.extract_text() or ""
                 pages.append(page_text)
         except Exception as exc:  # pragma: no cover - parser internals vary by input
-            raise RuntimeError(f"pypdf_extract_failed:{type(exc).__name__}:{exc}") from exc
+            raise RuntimeError(
+                f"pypdf_extract_failed:{type(exc).__name__}:{exc}"
+            ) from exc
 
         return {
             "full_text": "\n\n".join(pages),
@@ -2267,7 +2456,9 @@ class WhitepaperWorkflowService:
         page_count = self._optional_int((extraction_meta or {}).get("page_count"))
 
         content = session.execute(
-            select(WhitepaperContent).where(WhitepaperContent.document_version_id == version.id)
+            select(WhitepaperContent).where(
+                WhitepaperContent.document_version_id == version.id
+            )
         ).scalar_one_or_none()
         if content is None:
             content = WhitepaperContent(
@@ -2292,10 +2483,14 @@ class WhitepaperWorkflowService:
         version.char_count = len(normalized_text)
         version.token_count = token_count
         version.processed_at = datetime.now(timezone.utc)
-        version.extraction_metadata_json = coerce_json_payload(cast(dict[str, Any], extraction_meta or {}))
+        version.extraction_metadata_json = coerce_json_payload(
+            cast(dict[str, Any], extraction_meta or {})
+        )
         session.add(version)
 
-    def _build_chunks(self, text_content: str, *, source_scope: str) -> list[dict[str, Any]]:
+    def _build_chunks(
+        self, text_content: str, *, source_scope: str
+    ) -> list[dict[str, Any]]:
         normalized = text_content.strip()
         if not normalized:
             return []
@@ -2390,9 +2585,10 @@ class WhitepaperWorkflowService:
             content_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
             vector_text = self._vector_to_text(embedding)
 
-            chunk_row = session.execute(
-                text(
-                    """
+            chunk_row = (
+                session.execute(
+                    text(
+                        """
                     INSERT INTO whitepaper_semantic_chunks (
                       id,
                       analysis_run_id,
@@ -2434,20 +2630,23 @@ class WhitepaperWorkflowService:
                       updated_at = now()
                     RETURNING id::text
                     """
-                ),
-                {
-                    "id": str(uuid.uuid4()),
-                    "analysis_run_id": run.id,
-                    "document_version_id": run.document_version_id,
-                    "source_scope": normalized_scope,
-                    "section_key": section_key,
-                    "chunk_index": chunk_index,
-                    "content": content,
-                    "content_sha256": content_sha256,
-                    "token_count": token_count,
-                    "metadata_json": json.dumps(metadata_json or {}),
-                },
-            ).mappings().first()
+                    ),
+                    {
+                        "id": str(uuid.uuid4()),
+                        "analysis_run_id": run.id,
+                        "document_version_id": run.document_version_id,
+                        "source_scope": normalized_scope,
+                        "section_key": section_key,
+                        "chunk_index": chunk_index,
+                        "content": content,
+                        "content_sha256": content_sha256,
+                        "token_count": token_count,
+                        "metadata_json": json.dumps(metadata_json or {}),
+                    },
+                )
+                .mappings()
+                .first()
+            )
             if chunk_row is None:
                 continue
 
@@ -2552,7 +2751,9 @@ class WhitepaperWorkflowService:
             or "text-embedding-3-large"
         )
         configured_dimension = _int_env("WHITEPAPER_EMBEDDING_DIMENSION", 4096)
-        timeout_seconds = max(1, _int_env("WHITEPAPER_EMBEDDING_TIMEOUT_MS", 20_000) // 1000)
+        timeout_seconds = max(
+            1, _int_env("WHITEPAPER_EMBEDDING_TIMEOUT_MS", 20_000) // 1000
+        )
         batch_size = max(1, _int_env("WHITEPAPER_EMBEDDING_BATCH_SIZE", 32))
         is_ollama_embed = base_url.endswith("/api")
         endpoint = f"{base_url}/{'embed' if is_ollama_embed else 'embeddings'}"
@@ -2575,7 +2776,12 @@ class WhitepaperWorkflowService:
                     "input": batch,
                 }
                 if embedding_truncate is not None:
-                    payload["truncate"] = embedding_truncate.lower() in {"1", "true", "yes", "on"}
+                    payload["truncate"] = embedding_truncate.lower() in {
+                        "1",
+                        "true",
+                        "yes",
+                        "on",
+                    }
                 if embedding_keep_alive is not None:
                     payload["keep_alive"] = embedding_keep_alive
             else:
@@ -2634,7 +2840,9 @@ class WhitepaperWorkflowService:
                         continue
                     index_raw = row.get("index")
                     embedding_raw = row.get("embedding")
-                    if not isinstance(index_raw, int) or not isinstance(embedding_raw, list):
+                    if not isinstance(index_raw, int) or not isinstance(
+                        embedding_raw, list
+                    ):
                         continue
                     embedding_values = [float(value) for value in embedding_raw]
                     if observed_dimension is None:
@@ -2678,11 +2886,15 @@ class WhitepaperWorkflowService:
                 break
 
         if focus_term is None:
-            return normalized_content[:220] + ("…" if len(normalized_content) > 220 else "")
+            return normalized_content[:220] + (
+                "…" if len(normalized_content) > 220 else ""
+            )
 
         match = re.search(focus_term, normalized_content, re.IGNORECASE)
         if match is None:
-            return normalized_content[:220] + ("…" if len(normalized_content) > 220 else "")
+            return normalized_content[:220] + (
+                "…" if len(normalized_content) > 220 else ""
+            )
 
         start = max(0, match.start() - 120)
         end = min(len(normalized_content), match.end() + 120)
@@ -2699,14 +2911,17 @@ class WhitepaperWorkflowService:
         manual_approval: ManualApprovalPayload | None,
     ) -> dict[str, Any]:
         verdict = run.viability_verdict
-        decision = self._compute_engineering_grade_decision(run, verdict, manual_approval=manual_approval)
+        decision = self._compute_engineering_grade_decision(
+            run, verdict, manual_approval=manual_approval
+        )
         existing_trigger = session.execute(
             select(WhitepaperEngineeringTrigger).where(
                 WhitepaperEngineeringTrigger.analysis_run_id == run.id
             )
         ).scalar_one_or_none()
         already_dispatched = bool(
-            existing_trigger is not None and self._optional_text(existing_trigger.dispatched_agentrun_name)
+            existing_trigger is not None
+            and self._optional_text(existing_trigger.dispatched_agentrun_name)
         )
         trigger = self._upsert_engineering_trigger(
             session,
@@ -2759,7 +2974,10 @@ class WhitepaperWorkflowService:
         manual_approval: ManualApprovalPayload | None,
     ) -> EngineeringGradeDecision:
         policy_ref = (
-            _str_env("WHITEPAPER_ENGINEERING_TRIGGER_POLICY_REF", "torghut-v5-high-confidence-trigger-v1")
+            _str_env(
+                "WHITEPAPER_ENGINEERING_TRIGGER_POLICY_REF",
+                "torghut-v5-high-confidence-trigger-v1",
+            )
             or "torghut-v5-high-confidence-trigger-v1"
         )
         rollout_profile = self._normalize_rollout_profile(
@@ -2777,26 +2995,50 @@ class WhitepaperWorkflowService:
             "WHITEPAPER_ENGINEERING_PRIORITY_MIN_CONFIDENCE",
             max(min_confidence, 0.90),
         )
-        priority_score = _float_env("WHITEPAPER_ENGINEERING_PRIORITY_MIN_SCORE", max(min_score, 0.90))
-        auto_dispatch_enabled = _bool_env("WHITEPAPER_ENGINEERING_AUTO_DISPATCH_ENABLED", default=True)
+        priority_score = _float_env(
+            "WHITEPAPER_ENGINEERING_PRIORITY_MIN_SCORE", max(min_score, 0.90)
+        )
+        auto_dispatch_enabled = _bool_env(
+            "WHITEPAPER_ENGINEERING_AUTO_DISPATCH_ENABLED", default=True
+        )
 
-        gate_snapshot = self._as_json_record(verdict.gating_json if verdict is not None else None)
-        gate_snapshot_hash = self._compute_json_hash(gate_snapshot) if gate_snapshot is not None else None
+        gate_snapshot = self._as_json_record(
+            verdict.gating_json if verdict is not None else None
+        )
+        gate_snapshot_hash = (
+            self._compute_json_hash(gate_snapshot)
+            if gate_snapshot is not None
+            else None
+        )
         gate_statuses = self._extract_gate_statuses(gate_snapshot)
         gate_missing_codes = self._missing_gate_reason_codes(
             gate_statuses,
             required=("g1", "g2", "g3", "g4", "g5"),
         )
-        blocking_reason_codes = self._gating_blocking_reason_codes(gate_snapshot, gate_statuses)
+        blocking_reason_codes = self._gating_blocking_reason_codes(
+            gate_snapshot, gate_statuses
+        )
         reason_codes.extend(gate_missing_codes)
         reason_codes.extend(blocking_reason_codes)
 
         verdict_text = (
-            self._optional_text(verdict.verdict).lower() if verdict is not None and verdict.verdict else "missing"
+            self._optional_text(verdict.verdict).lower()
+            if verdict is not None and verdict.verdict
+            else "missing"
         )
-        score_value = float(verdict.score) if verdict is not None and verdict.score is not None else None
-        confidence_value = float(verdict.confidence) if verdict is not None and verdict.confidence is not None else None
-        requires_followup = bool(verdict.requires_followup) if verdict is not None else True
+        score_value = (
+            float(verdict.score)
+            if verdict is not None and verdict.score is not None
+            else None
+        )
+        confidence_value = (
+            float(verdict.confidence)
+            if verdict is not None and verdict.confidence is not None
+            else None
+        )
+        requires_followup = (
+            bool(verdict.requires_followup) if verdict is not None else True
+        )
         hypothesis_id = self._derive_hypothesis_id(run)
 
         if run.status != "completed":
@@ -2809,7 +3051,9 @@ class WhitepaperWorkflowService:
             dispatch_decision = "suppressed"
         else:
             if verdict_text not in _ELIGIBLE_AUTO_VERDICTS:
-                reason_codes.append(f"verdict_not_auto_eligible_{_normalize_identifier(verdict_text)}")
+                reason_codes.append(
+                    f"verdict_not_auto_eligible_{_normalize_identifier(verdict_text)}"
+                )
             if confidence_value is None:
                 reason_codes.append("confidence_missing")
             elif confidence_value < min_confidence:
@@ -2826,7 +3070,12 @@ class WhitepaperWorkflowService:
             ):
                 implementation_grade = "reject"
                 dispatch_decision = "suppressed"
-            elif requires_followup or gate_snapshot is None or bool(gate_missing_codes) or bool(blocking_reason_codes):
+            elif (
+                requires_followup
+                or gate_snapshot is None
+                or bool(gate_missing_codes)
+                or bool(blocking_reason_codes)
+            ):
                 if gate_snapshot is None:
                     reason_codes.append("gating_json_missing")
                 implementation_grade = "research_only"
@@ -2838,7 +3087,10 @@ class WhitepaperWorkflowService:
                 and score_value is not None
                 and score_value >= min_score
             ):
-                if confidence_value >= priority_confidence and score_value >= priority_score:
+                if (
+                    confidence_value >= priority_confidence
+                    and score_value >= priority_score
+                ):
                     implementation_grade = "engineering_priority"
                 else:
                     implementation_grade = "engineering_candidate"
@@ -2871,9 +3123,12 @@ class WhitepaperWorkflowService:
             "gate_snapshot_hash": gate_snapshot_hash,
             "manual_override": bool(manual_approval is not None),
         }
-        approval_token = "wpat-" + hashlib.sha256(
-            json.dumps(approval_seed, sort_keys=True).encode("utf-8")
-        ).hexdigest()[:24]
+        approval_token = (
+            "wpat-"
+            + hashlib.sha256(
+                json.dumps(approval_seed, sort_keys=True).encode("utf-8")
+            ).hexdigest()[:24]
+        )
 
         return EngineeringGradeDecision(
             implementation_grade=implementation_grade,
@@ -2951,14 +3206,19 @@ class WhitepaperWorkflowService:
         *,
         trigger: WhitepaperEngineeringTrigger,
     ) -> list[WhitepaperRolloutTransition]:
-        existing_with_hash = session.execute(
-            select(WhitepaperRolloutTransition)
-            .where(
-                WhitepaperRolloutTransition.trigger_id == trigger.id,
-                WhitepaperRolloutTransition.evidence_hash == trigger.gate_snapshot_hash,
+        existing_with_hash = (
+            session.execute(
+                select(WhitepaperRolloutTransition)
+                .where(
+                    WhitepaperRolloutTransition.trigger_id == trigger.id,
+                    WhitepaperRolloutTransition.evidence_hash
+                    == trigger.gate_snapshot_hash,
+                )
+                .order_by(WhitepaperRolloutTransition.created_at.asc())
             )
-            .order_by(WhitepaperRolloutTransition.created_at.asc())
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         if existing_with_hash:
             return list(existing_with_hash)
 
@@ -2974,7 +3234,9 @@ class WhitepaperWorkflowService:
         )
 
         for target_stage, required_gates in stage_requirements:
-            gate_failures = self._required_gate_failures(gate_statuses, required=required_gates)
+            gate_failures = self._required_gate_failures(
+                gate_statuses, required=required_gates
+            )
             if not gate_failures:
                 transitions.append(
                     self._append_rollout_transition(
@@ -2985,7 +3247,10 @@ class WhitepaperWorkflowService:
                         transition_type="advance",
                         status="passed",
                         reason_codes=["all_required_gates_pass"],
-                        gate_results={"required_gates": list(required_gates), "gate_statuses": gate_statuses},
+                        gate_results={
+                            "required_gates": list(required_gates),
+                            "gate_statuses": gate_statuses,
+                        },
                         blocking_gate=None,
                     )
                 )
@@ -3004,7 +3269,10 @@ class WhitepaperWorkflowService:
                         transition_type="rollback",
                         status="rolled_back",
                         reason_codes=gate_failures,
-                        gate_results={"required_gates": list(required_gates), "gate_statuses": gate_statuses},
+                        gate_results={
+                            "required_gates": list(required_gates),
+                            "gate_statuses": gate_statuses,
+                        },
                         blocking_gate=blocking_gate,
                     )
                 )
@@ -3019,7 +3287,10 @@ class WhitepaperWorkflowService:
                     transition_type="halt",
                     status="halted",
                     reason_codes=gate_failures,
-                    gate_results={"required_gates": list(required_gates), "gate_statuses": gate_statuses},
+                    gate_results={
+                        "required_gates": list(required_gates),
+                        "gate_statuses": gate_statuses,
+                    },
                     blocking_gate=blocking_gate,
                 )
             )
@@ -3096,18 +3367,18 @@ class WhitepaperWorkflowService:
             or _str_env("WHITEPAPER_DEFAULT_BASE_BRANCH", "main")
             or "main"
         )
-        head_branch = (
-            self._optional_text(
-                manual_approval.head if manual_approval is not None else None
-            )
-            or self._default_engineering_head_branch(
-                run.run_id,
-                suffix="manual" if manual_approval is not None else "auto",
-            )
+        head_branch = self._optional_text(
+            manual_approval.head if manual_approval is not None else None
+        ) or self._default_engineering_head_branch(
+            run.run_id,
+            suffix="manual" if manual_approval is not None else "auto",
         )
         artifact_path = f"docs/whitepapers/{run.run_id}"
         issue_url = self._optional_text(context.get("issue_url")) or ""
-        issue_title = self._optional_text((run.document.title if run.document else None)) or "Whitepaper analysis"
+        issue_title = (
+            self._optional_text((run.document.title if run.document else None))
+            or "Whitepaper analysis"
+        )
         prompt = self._build_engineering_trigger_prompt(
             run_id=run.run_id,
             repository=repository,
@@ -3116,7 +3387,9 @@ class WhitepaperWorkflowService:
             implementation_grade=trigger.implementation_grade,
             rollout_profile=trigger.rollout_profile,
             artifact_path=artifact_path,
-            approval_reason=manual_approval.approval_reason if manual_approval is not None else None,
+            approval_reason=manual_approval.approval_reason
+            if manual_approval is not None
+            else None,
         )
         idempotency_key = (
             f"{run.run_id}-engineering-"
@@ -3124,9 +3397,15 @@ class WhitepaperWorkflowService:
         )
         policy_ref = trigger.policy_ref or "torghut-v5-high-confidence-trigger-v1"
         payload: dict[str, Any] = {
-            "namespace": _str_env("WHITEPAPER_ENGINEERING_AGENTRUN_NAMESPACE", "agents"),
+            "namespace": _str_env(
+                "WHITEPAPER_ENGINEERING_AGENTRUN_NAMESPACE", "agents"
+            ),
             "idempotencyKey": idempotency_key,
-            "agentRef": {"name": _str_env("WHITEPAPER_ENGINEERING_AGENT_NAME", "codex-whitepaper-agent")},
+            "agentRef": {
+                "name": _str_env(
+                    "WHITEPAPER_ENGINEERING_AGENT_NAME", "codex-whitepaper-agent"
+                )
+            },
             "runtime": {"type": "job"},
             "implementation": {
                 "summary": f"Whitepaper engineering candidate {run.run_id}",
@@ -3135,10 +3414,16 @@ class WhitepaperWorkflowService:
                     "provider": "github",
                     "url": issue_url or f"https://github.com/{repository}",
                 },
-                "vcsRef": {"name": _str_env("WHITEPAPER_ENGINEERING_AGENTRUN_VCS_REF", "github")},
+                "vcsRef": {
+                    "name": _str_env(
+                        "WHITEPAPER_ENGINEERING_AGENTRUN_VCS_REF", "github"
+                    )
+                },
                 "labels": ["whitepaper", "engineering-candidate", "torghut", "b1"],
             },
-            "vcsRef": {"name": _str_env("WHITEPAPER_ENGINEERING_AGENTRUN_VCS_REF", "github")},
+            "vcsRef": {
+                "name": _str_env("WHITEPAPER_ENGINEERING_AGENTRUN_VCS_REF", "github")
+            },
             "vcsPolicy": {"required": True, "mode": "read-write"},
             "parameters": {
                 "runId": run.run_id,
@@ -3159,14 +3444,18 @@ class WhitepaperWorkflowService:
                     "codex-whitepaper-github-token",
                 )
             },
-            "ttlSecondsAfterFinished": _int_env("WHITEPAPER_ENGINEERING_AGENTRUN_TTL_SECONDS", 7200),
+            "ttlSecondsAfterFinished": _int_env(
+                "WHITEPAPER_ENGINEERING_AGENTRUN_TTL_SECONDS", 7200
+            ),
         }
         if manual_approval is not None:
             payload["parameters"]["approvedBy"] = manual_approval.approved_by
             payload["parameters"]["approvalReason"] = manual_approval.approval_reason
             payload["parameters"]["targetScope"] = manual_approval.target_scope or ""
 
-        response_payload = self._submit_jangar_agentrun(payload, idempotency_key=idempotency_key)
+        response_payload = self._submit_agents_agentrun(
+            payload, idempotency_key=idempotency_key
+        )
         resource = cast(dict[str, Any], response_payload.get("resource") or {})
         metadata = cast(dict[str, Any], resource.get("metadata") or {})
         status = cast(dict[str, Any], resource.get("status") or {})
@@ -3200,11 +3489,15 @@ class WhitepaperWorkflowService:
             analysis_run_id=run.id,
             analysis_step_id=step.id,
             agentrun_name=agentrun_name,
-            agentrun_namespace=_str_env("WHITEPAPER_ENGINEERING_AGENTRUN_NAMESPACE", "agents"),
+            agentrun_namespace=_str_env(
+                "WHITEPAPER_ENGINEERING_AGENTRUN_NAMESPACE", "agents"
+            ),
             agentrun_uid=agentrun_uid,
             status=phase,
             execution_mode="engineering_candidate",
-            requested_by=manual_approval.approved_by if manual_approval is not None else "policy_auto",
+            requested_by=manual_approval.approved_by
+            if manual_approval is not None
+            else "policy_auto",
             vcs_provider="github",
             vcs_repository=repository,
             vcs_base_branch=base_branch,
@@ -3261,7 +3554,9 @@ class WhitepaperWorkflowService:
             "rollout_profile": trigger.rollout_profile,
             "approval_source": trigger.approval_source,
             "approved_by": trigger.approved_by,
-            "approved_at": trigger.approved_at.isoformat() if trigger.approved_at else None,
+            "approved_at": trigger.approved_at.isoformat()
+            if trigger.approved_at
+            else None,
             "approval_reason": trigger.approval_reason,
             "policy_ref": trigger.policy_ref,
             "gate_snapshot_hash": trigger.gate_snapshot_hash,
@@ -3308,16 +3603,22 @@ class WhitepaperWorkflowService:
     def _compute_json_hash(payload: dict[str, Any] | None) -> str | None:
         if payload is None:
             return None
-        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
         return hashlib.sha256(encoded).hexdigest()
 
     @staticmethod
     def _as_json_record(value: Any) -> dict[str, Any] | None:
         if not isinstance(value, Mapping):
             return None
-        return cast(dict[str, Any], coerce_json_payload(dict(cast(Mapping[str, Any], value))))
+        return cast(
+            dict[str, Any], coerce_json_payload(dict(cast(Mapping[str, Any], value)))
+        )
 
-    def _extract_gate_statuses(self, gate_snapshot: dict[str, Any] | None) -> dict[str, str]:
+    def _extract_gate_statuses(
+        self, gate_snapshot: dict[str, Any] | None
+    ) -> dict[str, str]:
         if gate_snapshot is None:
             return {}
         statuses: dict[str, str] = {}
@@ -3330,7 +3631,9 @@ class WhitepaperWorkflowService:
                     gate_id = gate_id.replace("gate", "g", 1)
                 status_value = None
                 if isinstance(gate_payload, Mapping):
-                    status_value = self._optional_text(cast(Mapping[str, Any], gate_payload).get("status"))
+                    status_value = self._optional_text(
+                        cast(Mapping[str, Any], gate_payload).get("status")
+                    )
                 else:
                     status_value = self._optional_text(gate_payload)
                 if status_value:
@@ -3344,7 +3647,9 @@ class WhitepaperWorkflowService:
                     or self._optional_text(cast(Mapping[str, Any], entry).get("id"))
                     or self._optional_text(cast(Mapping[str, Any], entry).get("name"))
                 )
-                status_value = self._optional_text(cast(Mapping[str, Any], entry).get("status"))
+                status_value = self._optional_text(
+                    cast(Mapping[str, Any], entry).get("status")
+                )
                 if not gate_id_raw or not status_value:
                     continue
                 gate_id = _normalize_identifier(gate_id_raw)
@@ -3381,7 +3686,9 @@ class WhitepaperWorkflowService:
             return []
         reasons: list[str] = []
 
-        blocked_flag = bool(gate_snapshot.get("blocked") or gate_snapshot.get("blocking"))
+        blocked_flag = bool(
+            gate_snapshot.get("blocked") or gate_snapshot.get("blocking")
+        )
         if blocked_flag:
             reasons.append("gating_blocked_flag_true")
 
@@ -3435,10 +3742,15 @@ class WhitepaperWorkflowService:
         return "paper"
 
     def _manual_approval_allowed(self, rollout_profile: str) -> bool:
-        if not _bool_env("WHITEPAPER_ENGINEERING_MANUAL_OVERRIDE_ENABLED", default=True):
+        if not _bool_env(
+            "WHITEPAPER_ENGINEERING_MANUAL_OVERRIDE_ENABLED", default=True
+        ):
             return False
         allowed_profiles_raw = (
-            _str_env("WHITEPAPER_ENGINEERING_MANUAL_ALLOWED_PROFILES", "manual,assisted,automatic")
+            _str_env(
+                "WHITEPAPER_ENGINEERING_MANUAL_ALLOWED_PROFILES",
+                "manual,assisted,automatic",
+            )
             or "manual,assisted,automatic"
         )
         allowed_profiles = {
@@ -3456,9 +3768,13 @@ class WhitepaperWorkflowService:
         return normalized
 
     def _derive_hypothesis_id(self, run: WhitepaperAnalysisRun) -> str | None:
-        synthesis_payload = run.synthesis.synthesis_json if run.synthesis is not None else None
+        synthesis_payload = (
+            run.synthesis.synthesis_json if run.synthesis is not None else None
+        )
         if isinstance(synthesis_payload, Mapping):
-            explicit = self._optional_text(cast(Mapping[str, Any], synthesis_payload).get("hypothesis_id"))
+            explicit = self._optional_text(
+                cast(Mapping[str, Any], synthesis_payload).get("hypothesis_id")
+            )
             if explicit:
                 return explicit
         return f"hyp-{run.run_id}"
@@ -3474,27 +3790,47 @@ class WhitepaperWorkflowService:
         synthesis_payload = dict(cast(Mapping[str, Any], synthesis_payload_raw))
         self._populate_missing_implementation_plan_md(run.run_id, synthesis_payload)
         synthesis = session.execute(
-            select(WhitepaperSynthesis).where(WhitepaperSynthesis.analysis_run_id == run.id)
+            select(WhitepaperSynthesis).where(
+                WhitepaperSynthesis.analysis_run_id == run.id
+            )
         ).scalar_one_or_none()
-        executive_summary = str(synthesis_payload.get("executive_summary") or "").strip()
+        executive_summary = str(
+            synthesis_payload.get("executive_summary") or ""
+        ).strip()
         if not executive_summary:
             executive_summary = json.dumps(synthesis_payload, sort_keys=True)
 
         if synthesis is None:
             synthesis = WhitepaperSynthesis(
                 analysis_run_id=run.id,
-                synthesis_version=str(synthesis_payload.get("synthesis_version") or "v1"),
+                synthesis_version=str(
+                    synthesis_payload.get("synthesis_version") or "v1"
+                ),
                 generated_by=str(synthesis_payload.get("generated_by") or "codex"),
                 model_name=self._optional_text(synthesis_payload.get("model_name")),
-                prompt_version=self._optional_text(synthesis_payload.get("prompt_version")),
+                prompt_version=self._optional_text(
+                    synthesis_payload.get("prompt_version")
+                ),
                 executive_summary=executive_summary,
-                problem_statement=self._optional_text(synthesis_payload.get("problem_statement")),
-                methodology_summary=self._optional_text(synthesis_payload.get("methodology_summary")),
-                key_findings_json=self._optional_json(synthesis_payload.get("key_findings")),
-                novelty_claims_json=self._optional_json(synthesis_payload.get("novelty_claims")),
-                risk_assessment_json=self._optional_json(synthesis_payload.get("risk_assessment")),
+                problem_statement=self._optional_text(
+                    synthesis_payload.get("problem_statement")
+                ),
+                methodology_summary=self._optional_text(
+                    synthesis_payload.get("methodology_summary")
+                ),
+                key_findings_json=self._optional_json(
+                    synthesis_payload.get("key_findings")
+                ),
+                novelty_claims_json=self._optional_json(
+                    synthesis_payload.get("novelty_claims")
+                ),
+                risk_assessment_json=self._optional_json(
+                    synthesis_payload.get("risk_assessment")
+                ),
                 citations_json=self._optional_json(synthesis_payload.get("citations")),
-                implementation_plan_md=self._optional_text(synthesis_payload.get("implementation_plan_md")),
+                implementation_plan_md=self._optional_text(
+                    synthesis_payload.get("implementation_plan_md")
+                ),
                 confidence=self._optional_decimal(synthesis_payload.get("confidence")),
                 synthesis_json=coerce_json_payload(synthesis_payload),
             )
@@ -3502,21 +3838,41 @@ class WhitepaperWorkflowService:
             return
 
         synthesis.executive_summary = executive_summary
-        synthesis.problem_statement = self._optional_text(synthesis_payload.get("problem_statement"))
-        synthesis.methodology_summary = self._optional_text(synthesis_payload.get("methodology_summary"))
-        synthesis.key_findings_json = self._optional_json(synthesis_payload.get("key_findings"))
-        synthesis.novelty_claims_json = self._optional_json(synthesis_payload.get("novelty_claims"))
-        synthesis.risk_assessment_json = self._optional_json(synthesis_payload.get("risk_assessment"))
-        synthesis.citations_json = self._optional_json(synthesis_payload.get("citations"))
-        synthesis.implementation_plan_md = self._optional_text(synthesis_payload.get("implementation_plan_md"))
-        synthesis.confidence = self._optional_decimal(synthesis_payload.get("confidence"))
+        synthesis.problem_statement = self._optional_text(
+            synthesis_payload.get("problem_statement")
+        )
+        synthesis.methodology_summary = self._optional_text(
+            synthesis_payload.get("methodology_summary")
+        )
+        synthesis.key_findings_json = self._optional_json(
+            synthesis_payload.get("key_findings")
+        )
+        synthesis.novelty_claims_json = self._optional_json(
+            synthesis_payload.get("novelty_claims")
+        )
+        synthesis.risk_assessment_json = self._optional_json(
+            synthesis_payload.get("risk_assessment")
+        )
+        synthesis.citations_json = self._optional_json(
+            synthesis_payload.get("citations")
+        )
+        synthesis.implementation_plan_md = self._optional_text(
+            synthesis_payload.get("implementation_plan_md")
+        )
+        synthesis.confidence = self._optional_decimal(
+            synthesis_payload.get("confidence")
+        )
         synthesis.synthesis_json = coerce_json_payload(synthesis_payload)
         session.add(synthesis)
 
-    def _populate_missing_implementation_plan_md(self, run_id: str, synthesis_payload: dict[str, Any]) -> None:
+    def _populate_missing_implementation_plan_md(
+        self, run_id: str, synthesis_payload: dict[str, Any]
+    ) -> None:
         if self._optional_text(synthesis_payload.get("implementation_plan_md")):
             return
-        derived_value = self._derive_implementation_plan_md(synthesis_payload.get("implementation_implications"))
+        derived_value = self._derive_implementation_plan_md(
+            synthesis_payload.get("implementation_implications")
+        )
         if not derived_value:
             return
         synthesis_payload["implementation_plan_md"] = derived_value
@@ -3550,9 +3906,13 @@ class WhitepaperWorkflowService:
             return
         verdict_payload = cast(dict[str, Any], verdict_payload_raw)
         verdict = session.execute(
-            select(WhitepaperViabilityVerdict).where(WhitepaperViabilityVerdict.analysis_run_id == run.id)
+            select(WhitepaperViabilityVerdict).where(
+                WhitepaperViabilityVerdict.analysis_run_id == run.id
+            )
         ).scalar_one_or_none()
-        verdict_text = self._optional_text(verdict_payload.get("verdict")) or "needs_review"
+        verdict_text = (
+            self._optional_text(verdict_payload.get("verdict")) or "needs_review"
+        )
         approved_by = self._optional_text(verdict_payload.get("approved_by"))
         gating_payload = self._build_verdict_gating_payload(verdict_payload)
 
@@ -3562,11 +3922,17 @@ class WhitepaperWorkflowService:
                 verdict=verdict_text,
                 score=self._optional_decimal(verdict_payload.get("score")),
                 confidence=self._optional_decimal(verdict_payload.get("confidence")),
-                decision_policy=self._optional_text(verdict_payload.get("decision_policy")),
+                decision_policy=self._optional_text(
+                    verdict_payload.get("decision_policy")
+                ),
                 gating_json=self._optional_json(gating_payload),
                 rationale=self._optional_text(verdict_payload.get("rationale")),
-                rejection_reasons_json=self._optional_json(verdict_payload.get("rejection_reasons")),
-                recommendations_json=self._optional_json(verdict_payload.get("recommendations")),
+                rejection_reasons_json=self._optional_json(
+                    verdict_payload.get("rejection_reasons")
+                ),
+                recommendations_json=self._optional_json(
+                    verdict_payload.get("recommendations")
+                ),
                 requires_followup=bool(verdict_payload.get("requires_followup")),
                 approved_by=approved_by,
                 approved_at=datetime.now(timezone.utc) if approved_by else None,
@@ -3577,14 +3943,22 @@ class WhitepaperWorkflowService:
         verdict.verdict = verdict_text
         verdict.score = self._optional_decimal(verdict_payload.get("score"))
         verdict.confidence = self._optional_decimal(verdict_payload.get("confidence"))
-        verdict.decision_policy = self._optional_text(verdict_payload.get("decision_policy"))
+        verdict.decision_policy = self._optional_text(
+            verdict_payload.get("decision_policy")
+        )
         verdict.gating_json = self._optional_json(gating_payload)
         verdict.rationale = self._optional_text(verdict_payload.get("rationale"))
-        verdict.rejection_reasons_json = self._optional_json(verdict_payload.get("rejection_reasons"))
-        verdict.recommendations_json = self._optional_json(verdict_payload.get("recommendations"))
+        verdict.rejection_reasons_json = self._optional_json(
+            verdict_payload.get("rejection_reasons")
+        )
+        verdict.recommendations_json = self._optional_json(
+            verdict_payload.get("recommendations")
+        )
         verdict.requires_followup = bool(verdict_payload.get("requires_followup"))
         verdict.approved_by = approved_by
-        verdict.approved_at = datetime.now(timezone.utc) if approved_by else verdict.approved_at
+        verdict.approved_at = (
+            datetime.now(timezone.utc) if approved_by else verdict.approved_at
+        )
         session.add(verdict)
 
     @staticmethod
@@ -3609,15 +3983,25 @@ class WhitepaperWorkflowService:
             "dspy_eval_report": dspy_payload,
         }
 
-    def _structured_output_list(self, payload: Mapping[str, Any], *, key: str) -> list[dict[str, Any]]:
+    def _structured_output_list(
+        self, payload: Mapping[str, Any], *, key: str
+    ) -> list[dict[str, Any]]:
         direct = payload.get(key)
         if isinstance(direct, list):
-            return [cast(dict[str, Any], item) for item in direct if isinstance(item, Mapping)]
-        synthesis_payload = payload.get('synthesis')
+            return [
+                cast(dict[str, Any], item)
+                for item in direct
+                if isinstance(item, Mapping)
+            ]
+        synthesis_payload = payload.get("synthesis")
         if isinstance(synthesis_payload, Mapping):
             nested = synthesis_payload.get(key)
             if isinstance(nested, list):
-                return [cast(dict[str, Any], item) for item in nested if isinstance(item, Mapping)]
+                return [
+                    cast(dict[str, Any], item)
+                    for item in nested
+                    if isinstance(item, Mapping)
+                ]
         return []
 
     def _compiled_experiment_specs_from_templates(
@@ -3649,45 +4033,48 @@ class WhitepaperWorkflowService:
                 family_template_dir=family_template_dir,
                 seed_sweep_dir=seed_sweep_dir,
             )
-            return [
-                dict(item) for item in compilation.whitepaper_experiment_payloads
-            ]
+            return [dict(item) for item in compilation.whitepaper_experiment_payloads]
         if not templates:
             return []
         linked_claim_ids = [
-            str(item.get('claim_id') or '').strip()
+            str(item.get("claim_id") or "").strip()
             for item in claims
-            if str(item.get('claim_id') or '').strip()
+            if str(item.get("claim_id") or "").strip()
         ]
         results: list[dict[str, Any]] = []
         for index, template in enumerate(templates, start=1):
-            template_id = self._optional_text(template.get('template_id')) or f'template-{index}'
-            family_template_id = self._optional_text(template.get('family_template_id')) or 'unspecified_family'
+            template_id = (
+                self._optional_text(template.get("template_id")) or f"template-{index}"
+            )
+            family_template_id = (
+                self._optional_text(template.get("family_template_id"))
+                or "unspecified_family"
+            )
             hypothesis = (
-                self._optional_text(template.get('hypothesis'))
-                or self._optional_text(template.get('economic_mechanism'))
-                or f'Experiment for {family_template_id}'
+                self._optional_text(template.get("hypothesis"))
+                or self._optional_text(template.get("economic_mechanism"))
+                or f"Experiment for {family_template_id}"
             )
             results.append(
                 {
-                    'experiment_id': f'{run_id}-{template_id}-exp',
-                    'family_template_id': family_template_id,
-                    'template_id': template_id,
-                    'hypothesis': hypothesis,
-                    'paper_claim_links': linked_claim_ids,
-                    'dataset_snapshot_policy': {
-                        'source': 'historical_market_replay',
-                        'window_size': 'PT1S',
+                    "experiment_id": f"{run_id}-{template_id}-exp",
+                    "family_template_id": family_template_id,
+                    "template_id": template_id,
+                    "hypothesis": hypothesis,
+                    "paper_claim_links": linked_claim_ids,
+                    "dataset_snapshot_policy": {
+                        "source": "historical_market_replay",
+                        "window_size": "PT1S",
                     },
-                    'template_overrides': {},
-                    'feature_variants': template.get('allowed_normalizations') or [],
-                    'veto_controller_variants': template.get('day_veto_rules') or [],
-                    'selection_objectives': template.get('selection_objectives') or {},
-                    'hard_vetoes': template.get('hard_vetoes') or {},
-                    'expected_failure_modes': [],
-                    'promotion_contract': {
-                        'requires_claim_review': True,
-                        'source': 'whitepaper_research_factory',
+                    "template_overrides": {},
+                    "feature_variants": template.get("allowed_normalizations") or [],
+                    "veto_controller_variants": template.get("day_veto_rules") or [],
+                    "selection_objectives": template.get("selection_objectives") or {},
+                    "hard_vetoes": template.get("hard_vetoes") or {},
+                    "expected_failure_modes": [],
+                    "promotion_contract": {
+                        "requires_claim_review": True,
+                        "source": "whitepaper_research_factory",
                     },
                 }
             )
@@ -3699,23 +4086,34 @@ class WhitepaperWorkflowService:
     ) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
         for relation in relations:
-            relation_type = _normalize_identifier(self._optional_text(relation.get('relation_type')) or '')
-            if relation_type not in {'contradicts', 'contradicting', 'conflicts_with', 'conflict'}:
+            relation_type = _normalize_identifier(
+                self._optional_text(relation.get("relation_type")) or ""
+            )
+            if relation_type not in {
+                "contradicts",
+                "contradicting",
+                "conflicts_with",
+                "conflict",
+            }:
                 continue
-            relation_id = self._optional_text(relation.get('relation_id')) or str(uuid.uuid4())
-            source_claim_id = self._optional_text(relation.get('source_claim_id'))
+            relation_id = self._optional_text(relation.get("relation_id")) or str(
+                uuid.uuid4()
+            )
+            source_claim_id = self._optional_text(relation.get("source_claim_id"))
             if not source_claim_id:
                 continue
             events.append(
                 {
-                    'event_id': f'contradiction-{relation_id}',
-                    'source_claim_id': source_claim_id,
-                    'target_claim_id': self._optional_text(relation.get('target_claim_id')),
-                    'target_run_id': self._optional_text(relation.get('target_run_id')),
-                    'status': 'open',
-                    'required_action': 'revalidate_linked_family',
-                    'rationale': self._optional_text(relation.get('rationale')),
-                    'metadata': {'derived_from_relation_id': relation_id},
+                    "event_id": f"contradiction-{relation_id}",
+                    "source_claim_id": source_claim_id,
+                    "target_claim_id": self._optional_text(
+                        relation.get("target_claim_id")
+                    ),
+                    "target_run_id": self._optional_text(relation.get("target_run_id")),
+                    "status": "open",
+                    "required_action": "revalidate_linked_family",
+                    "rationale": self._optional_text(relation.get("rationale")),
+                    "metadata": {"derived_from_relation_id": relation_id},
                 }
             )
         return events
@@ -3726,11 +4124,13 @@ class WhitepaperWorkflowService:
         run: WhitepaperAnalysisRun,
         payload: Mapping[str, Any],
     ) -> None:
-        claims = self._structured_output_list(payload, key='claims')
-        relations = self._structured_output_list(payload, key='claim_relations')
-        templates = self._structured_output_list(payload, key='strategy_templates')
-        experiment_specs = self._structured_output_list(payload, key='experiment_specs')
-        contradiction_events = self._structured_output_list(payload, key='contradiction_events')
+        claims = self._structured_output_list(payload, key="claims")
+        relations = self._structured_output_list(payload, key="claim_relations")
+        templates = self._structured_output_list(payload, key="strategy_templates")
+        experiment_specs = self._structured_output_list(payload, key="experiment_specs")
+        contradiction_events = self._structured_output_list(
+            payload, key="contradiction_events"
+        )
         if not experiment_specs:
             experiment_specs = self._compiled_experiment_specs_from_templates(
                 run_id=run.run_id,
@@ -3743,11 +4143,29 @@ class WhitepaperWorkflowService:
             *self._inferred_contradiction_events(relations),
         ]
 
-        session.execute(delete(WhitepaperClaimRelation).where(WhitepaperClaimRelation.analysis_run_id == run.id))
-        session.execute(delete(WhitepaperClaim).where(WhitepaperClaim.analysis_run_id == run.id))
-        session.execute(delete(WhitepaperStrategyTemplate).where(WhitepaperStrategyTemplate.analysis_run_id == run.id))
-        session.execute(delete(WhitepaperExperimentSpec).where(WhitepaperExperimentSpec.analysis_run_id == run.id))
-        session.execute(delete(WhitepaperContradictionEvent).where(WhitepaperContradictionEvent.analysis_run_id == run.id))
+        session.execute(
+            delete(WhitepaperClaimRelation).where(
+                WhitepaperClaimRelation.analysis_run_id == run.id
+            )
+        )
+        session.execute(
+            delete(WhitepaperClaim).where(WhitepaperClaim.analysis_run_id == run.id)
+        )
+        session.execute(
+            delete(WhitepaperStrategyTemplate).where(
+                WhitepaperStrategyTemplate.analysis_run_id == run.id
+            )
+        )
+        session.execute(
+            delete(WhitepaperExperimentSpec).where(
+                WhitepaperExperimentSpec.analysis_run_id == run.id
+            )
+        )
+        session.execute(
+            delete(WhitepaperContradictionEvent).where(
+                WhitepaperContradictionEvent.analysis_run_id == run.id
+            )
+        )
         session.execute(
             delete(VNextExperimentSpec).where(
                 VNextExperimentSpec.run_id == run.run_id,
@@ -3756,52 +4174,64 @@ class WhitepaperWorkflowService:
         )
 
         for claim in claims:
-            claim_id = self._optional_text(claim.get('claim_id'))
-            claim_text = self._optional_text(claim.get('claim_text')) or self._optional_text(claim.get('claim'))
+            claim_id = self._optional_text(claim.get("claim_id"))
+            claim_text = self._optional_text(
+                claim.get("claim_text")
+            ) or self._optional_text(claim.get("claim"))
             if not claim_id or not claim_text:
                 continue
             session.add(
                 WhitepaperClaim(
                     analysis_run_id=run.id,
                     claim_id=claim_id,
-                    claim_type=self._optional_text(claim.get('claim_type')) or 'signal_mechanism',
+                    claim_type=self._optional_text(claim.get("claim_type"))
+                    or "signal_mechanism",
                     claim_text=claim_text,
-                    asset_scope=self._optional_text(claim.get('asset_scope')),
-                    horizon_scope=self._optional_text(claim.get('horizon_scope')),
-                    data_requirements_json=self._optional_json(claim.get('data_requirements')),
-                    expected_direction=self._optional_text(claim.get('expected_direction')),
-                    required_activity_conditions_json=self._optional_json(claim.get('required_activity_conditions')),
-                    liquidity_constraints_json=self._optional_json(claim.get('liquidity_constraints')),
-                    validation_notes=self._optional_text(claim.get('validation_notes')),
-                    confidence=self._optional_decimal(claim.get('confidence')),
-                    metadata_json=self._optional_json(claim.get('metadata')),
+                    asset_scope=self._optional_text(claim.get("asset_scope")),
+                    horizon_scope=self._optional_text(claim.get("horizon_scope")),
+                    data_requirements_json=self._optional_json(
+                        claim.get("data_requirements")
+                    ),
+                    expected_direction=self._optional_text(
+                        claim.get("expected_direction")
+                    ),
+                    required_activity_conditions_json=self._optional_json(
+                        claim.get("required_activity_conditions")
+                    ),
+                    liquidity_constraints_json=self._optional_json(
+                        claim.get("liquidity_constraints")
+                    ),
+                    validation_notes=self._optional_text(claim.get("validation_notes")),
+                    confidence=self._optional_decimal(claim.get("confidence")),
+                    metadata_json=self._optional_json(claim.get("metadata")),
                 )
             )
 
         for relation in relations:
-            relation_id = self._optional_text(relation.get('relation_id'))
-            source_claim_id = self._optional_text(relation.get('source_claim_id'))
-            target_claim_id = self._optional_text(relation.get('target_claim_id'))
+            relation_id = self._optional_text(relation.get("relation_id"))
+            source_claim_id = self._optional_text(relation.get("source_claim_id"))
+            target_claim_id = self._optional_text(relation.get("target_claim_id"))
             if not relation_id or not source_claim_id or not target_claim_id:
                 continue
             session.add(
                 WhitepaperClaimRelation(
                     analysis_run_id=run.id,
                     relation_id=relation_id,
-                    relation_type=self._optional_text(relation.get('relation_type')) or 'supports',
+                    relation_type=self._optional_text(relation.get("relation_type"))
+                    or "supports",
                     source_claim_id=source_claim_id,
                     target_claim_id=target_claim_id,
-                    target_run_id=self._optional_text(relation.get('target_run_id')),
-                    rationale=self._optional_text(relation.get('rationale')),
-                    confidence=self._optional_decimal(relation.get('confidence')),
-                    metadata_json=self._optional_json(relation.get('metadata')),
+                    target_run_id=self._optional_text(relation.get("target_run_id")),
+                    rationale=self._optional_text(relation.get("rationale")),
+                    confidence=self._optional_decimal(relation.get("confidence")),
+                    metadata_json=self._optional_json(relation.get("metadata")),
                 )
             )
 
         for template in templates:
-            template_id = self._optional_text(template.get('template_id'))
-            family_template_id = self._optional_text(template.get('family_template_id'))
-            economic_mechanism = self._optional_text(template.get('economic_mechanism'))
+            template_id = self._optional_text(template.get("template_id"))
+            family_template_id = self._optional_text(template.get("family_template_id"))
+            economic_mechanism = self._optional_text(template.get("economic_mechanism"))
             if not template_id or not family_template_id or not economic_mechanism:
                 continue
             session.add(
@@ -3810,24 +4240,42 @@ class WhitepaperWorkflowService:
                     template_id=template_id,
                     family_template_id=family_template_id,
                     economic_mechanism=economic_mechanism,
-                    hypothesis=self._optional_text(template.get('hypothesis')),
-                    supported_markets_json=self._optional_json(template.get('supported_markets')),
-                    required_features_json=self._optional_json(template.get('required_features')),
-                    allowed_normalizations_json=self._optional_json(template.get('allowed_normalizations')),
-                    entry_motifs_json=self._optional_json(template.get('entry_motifs')),
-                    exit_motifs_json=self._optional_json(template.get('exit_motifs')),
-                    risk_controls_json=self._optional_json(template.get('risk_controls')),
-                    activity_model_json=self._optional_json(template.get('activity_model')),
-                    liquidity_assumptions_json=self._optional_json(template.get('liquidity_assumptions')),
-                    regime_activation_rules_json=self._optional_json(template.get('regime_activation_rules')),
-                    day_veto_rules_json=self._optional_json(template.get('day_veto_rules')),
-                    metadata_json=self._optional_json(template.get('metadata')),
+                    hypothesis=self._optional_text(template.get("hypothesis")),
+                    supported_markets_json=self._optional_json(
+                        template.get("supported_markets")
+                    ),
+                    required_features_json=self._optional_json(
+                        template.get("required_features")
+                    ),
+                    allowed_normalizations_json=self._optional_json(
+                        template.get("allowed_normalizations")
+                    ),
+                    entry_motifs_json=self._optional_json(template.get("entry_motifs")),
+                    exit_motifs_json=self._optional_json(template.get("exit_motifs")),
+                    risk_controls_json=self._optional_json(
+                        template.get("risk_controls")
+                    ),
+                    activity_model_json=self._optional_json(
+                        template.get("activity_model")
+                    ),
+                    liquidity_assumptions_json=self._optional_json(
+                        template.get("liquidity_assumptions")
+                    ),
+                    regime_activation_rules_json=self._optional_json(
+                        template.get("regime_activation_rules")
+                    ),
+                    day_veto_rules_json=self._optional_json(
+                        template.get("day_veto_rules")
+                    ),
+                    metadata_json=self._optional_json(template.get("metadata")),
                 )
             )
 
         for experiment in experiment_specs:
-            experiment_id = self._optional_text(experiment.get('experiment_id'))
-            family_template_id = self._optional_text(experiment.get('family_template_id'))
+            experiment_id = self._optional_text(experiment.get("experiment_id"))
+            family_template_id = self._optional_text(
+                experiment.get("family_template_id")
+            )
             if not experiment_id or not family_template_id:
                 continue
             payload_json = coerce_json_payload(dict(experiment))
@@ -3836,17 +4284,33 @@ class WhitepaperWorkflowService:
                     analysis_run_id=run.id,
                     experiment_id=experiment_id,
                     family_template_id=family_template_id,
-                    template_id=self._optional_text(experiment.get('template_id')),
-                    hypothesis=self._optional_text(experiment.get('hypothesis')),
-                    paper_claim_links_json=self._optional_json(experiment.get('paper_claim_links')),
-                    dataset_snapshot_policy_json=self._optional_json(experiment.get('dataset_snapshot_policy')),
-                    template_overrides_json=self._optional_json(experiment.get('template_overrides')),
-                    feature_variants_json=self._optional_json(experiment.get('feature_variants')),
-                    veto_controller_variants_json=self._optional_json(experiment.get('veto_controller_variants')),
-                    selection_objectives_json=self._optional_json(experiment.get('selection_objectives')),
-                    hard_vetoes_json=self._optional_json(experiment.get('hard_vetoes')),
-                    expected_failure_modes_json=self._optional_json(experiment.get('expected_failure_modes')),
-                    promotion_contract_json=self._optional_json(experiment.get('promotion_contract')),
+                    template_id=self._optional_text(experiment.get("template_id")),
+                    hypothesis=self._optional_text(experiment.get("hypothesis")),
+                    paper_claim_links_json=self._optional_json(
+                        experiment.get("paper_claim_links")
+                    ),
+                    dataset_snapshot_policy_json=self._optional_json(
+                        experiment.get("dataset_snapshot_policy")
+                    ),
+                    template_overrides_json=self._optional_json(
+                        experiment.get("template_overrides")
+                    ),
+                    feature_variants_json=self._optional_json(
+                        experiment.get("feature_variants")
+                    ),
+                    veto_controller_variants_json=self._optional_json(
+                        experiment.get("veto_controller_variants")
+                    ),
+                    selection_objectives_json=self._optional_json(
+                        experiment.get("selection_objectives")
+                    ),
+                    hard_vetoes_json=self._optional_json(experiment.get("hard_vetoes")),
+                    expected_failure_modes_json=self._optional_json(
+                        experiment.get("expected_failure_modes")
+                    ),
+                    promotion_contract_json=self._optional_json(
+                        experiment.get("promotion_contract")
+                    ),
                     payload_json=payload_json,
                 )
             )
@@ -3861,8 +4325,8 @@ class WhitepaperWorkflowService:
 
         seen_event_ids: set[str] = set()
         for event in contradiction_events:
-            event_id = self._optional_text(event.get('event_id'))
-            source_claim_id = self._optional_text(event.get('source_claim_id'))
+            event_id = self._optional_text(event.get("event_id"))
+            source_claim_id = self._optional_text(event.get("source_claim_id"))
             if not event_id or not source_claim_id or event_id in seen_event_ids:
                 continue
             seen_event_ids.add(event_id)
@@ -3871,12 +4335,12 @@ class WhitepaperWorkflowService:
                     analysis_run_id=run.id,
                     event_id=event_id,
                     source_claim_id=source_claim_id,
-                    target_claim_id=self._optional_text(event.get('target_claim_id')),
-                    target_run_id=self._optional_text(event.get('target_run_id')),
-                    status=self._optional_text(event.get('status')) or 'open',
-                    required_action=self._optional_text(event.get('required_action')),
-                    rationale=self._optional_text(event.get('rationale')),
-                    metadata_json=self._optional_json(event.get('metadata')),
+                    target_claim_id=self._optional_text(event.get("target_claim_id")),
+                    target_run_id=self._optional_text(event.get("target_run_id")),
+                    status=self._optional_text(event.get("status")) or "open",
+                    required_action=self._optional_text(event.get("required_action")),
+                    rationale=self._optional_text(event.get("rationale")),
+                    metadata_json=self._optional_json(event.get("metadata")),
                 )
             )
 
@@ -3885,7 +4349,11 @@ class WhitepaperWorkflowService:
         if isinstance(pr_payload_raw, Mapping):
             return [cast(dict[str, Any], pr_payload_raw)]
         if isinstance(pr_payload_raw, list):
-            return [cast(dict[str, Any], item) for item in pr_payload_raw if isinstance(item, Mapping)]
+            return [
+                cast(dict[str, Any], item)
+                for item in pr_payload_raw
+                if isinstance(item, Mapping)
+            ]
         return []
 
     def _upsert_design_pull_requests(
@@ -3894,7 +4362,9 @@ class WhitepaperWorkflowService:
         run: WhitepaperAnalysisRun,
         pr_payload_raw: Any,
     ) -> None:
-        for index, pr_payload in enumerate(self._coerce_pr_payloads(pr_payload_raw), start=1):
+        for index, pr_payload in enumerate(
+            self._coerce_pr_payloads(pr_payload_raw), start=1
+        ):
             self._upsert_design_pull_request(session, run, pr_payload, index)
 
     def _upsert_design_pull_request(
@@ -3915,7 +4385,11 @@ class WhitepaperWorkflowService:
         if pr_row is None:
             repository = (
                 self._optional_text(pr_payload.get("repository"))
-                or self._optional_text(cast(dict[str, Any], run.orchestration_context_json or {}).get("repository"))
+                or self._optional_text(
+                    cast(dict[str, Any], run.orchestration_context_json or {}).get(
+                        "repository"
+                    )
+                )
                 or "proompteng/lab"
             )
             pr_row = WhitepaperDesignPullRequest(
@@ -3923,32 +4397,49 @@ class WhitepaperWorkflowService:
                 attempt=attempt,
                 status=self._optional_text(pr_payload.get("status")) or "opened",
                 repository=repository,
-                base_branch=self._optional_text(pr_payload.get("base_branch")) or "main",
-                head_branch=self._optional_text(pr_payload.get("head_branch")) or "codex/whitepaper",
+                base_branch=self._optional_text(pr_payload.get("base_branch"))
+                or "main",
+                head_branch=self._optional_text(pr_payload.get("head_branch"))
+                or "codex/whitepaper",
                 pr_number=self._optional_int(pr_payload.get("pr_number")),
                 pr_url=self._optional_text(pr_payload.get("pr_url")),
                 title=self._optional_text(pr_payload.get("title")),
                 body=self._optional_text(pr_payload.get("body")),
                 commit_sha=self._optional_text(pr_payload.get("commit_sha")),
-                merge_commit_sha=self._optional_text(pr_payload.get("merge_commit_sha")),
+                merge_commit_sha=self._optional_text(
+                    pr_payload.get("merge_commit_sha")
+                ),
                 checks_url=self._optional_text(pr_payload.get("checks_url")),
                 ci_status=self._optional_text(pr_payload.get("ci_status")),
                 is_merged=bool(pr_payload.get("is_merged")),
-                merged_at=datetime.now(timezone.utc) if pr_payload.get("is_merged") else None,
+                merged_at=datetime.now(timezone.utc)
+                if pr_payload.get("is_merged")
+                else None,
                 metadata_json=coerce_json_payload(pr_payload),
             )
             session.add(pr_row)
             return
 
         pr_row.status = self._optional_text(pr_payload.get("status")) or pr_row.status
-        pr_row.pr_number = self._optional_int(pr_payload.get("pr_number")) or pr_row.pr_number
+        pr_row.pr_number = (
+            self._optional_int(pr_payload.get("pr_number")) or pr_row.pr_number
+        )
         pr_row.pr_url = self._optional_text(pr_payload.get("pr_url")) or pr_row.pr_url
         pr_row.title = self._optional_text(pr_payload.get("title")) or pr_row.title
         pr_row.body = self._optional_text(pr_payload.get("body")) or pr_row.body
-        pr_row.commit_sha = self._optional_text(pr_payload.get("commit_sha")) or pr_row.commit_sha
-        pr_row.merge_commit_sha = self._optional_text(pr_payload.get("merge_commit_sha")) or pr_row.merge_commit_sha
-        pr_row.checks_url = self._optional_text(pr_payload.get("checks_url")) or pr_row.checks_url
-        pr_row.ci_status = self._optional_text(pr_payload.get("ci_status")) or pr_row.ci_status
+        pr_row.commit_sha = (
+            self._optional_text(pr_payload.get("commit_sha")) or pr_row.commit_sha
+        )
+        pr_row.merge_commit_sha = (
+            self._optional_text(pr_payload.get("merge_commit_sha"))
+            or pr_row.merge_commit_sha
+        )
+        pr_row.checks_url = (
+            self._optional_text(pr_payload.get("checks_url")) or pr_row.checks_url
+        )
+        pr_row.ci_status = (
+            self._optional_text(pr_payload.get("ci_status")) or pr_row.ci_status
+        )
         pr_row.is_merged = bool(pr_payload.get("is_merged"))
         if pr_row.is_merged and pr_row.merged_at is None:
             pr_row.merged_at = datetime.now(timezone.utc)
@@ -3984,13 +4475,17 @@ class WhitepaperWorkflowService:
                     document_id=run.document_id,
                     document_version_id=run.document_version_id,
                     analysis_run_id=run.id,
-                    artifact_scope=self._optional_text(artifact.get("artifact_scope")) or "run",
-                    artifact_type=self._optional_text(artifact.get("artifact_type")) or "generic",
+                    artifact_scope=self._optional_text(artifact.get("artifact_scope"))
+                    or "run",
+                    artifact_type=self._optional_text(artifact.get("artifact_type"))
+                    or "generic",
                     artifact_role=self._optional_text(artifact.get("artifact_role")),
                     ceph_bucket=bucket,
                     ceph_object_key=key,
                     artifact_uri=self._optional_text(artifact.get("artifact_uri")),
-                    checksum_sha256=self._optional_text(artifact.get("checksum_sha256")),
+                    checksum_sha256=self._optional_text(
+                        artifact.get("checksum_sha256")
+                    ),
                     size_bytes=self._optional_int(artifact.get("size_bytes")),
                     content_type=self._optional_text(artifact.get("content_type")),
                     metadata_json=coerce_json_payload(artifact),
@@ -4009,7 +4504,9 @@ class WhitepaperWorkflowService:
         for index, step_raw in enumerate(steps_raw, start=1):
             if not isinstance(step_raw, Mapping):
                 continue
-            self._upsert_single_step(session, run, cast(dict[str, Any], step_raw), index)
+            self._upsert_single_step(
+                session, run, cast(dict[str, Any], step_raw), index
+            )
 
     def _upsert_single_step(
         self,
@@ -4018,7 +4515,9 @@ class WhitepaperWorkflowService:
         step_payload: dict[str, Any],
         index: int,
     ) -> None:
-        step_name = self._optional_text(step_payload.get("step_name")) or f"step_{index}"
+        step_name = (
+            self._optional_text(step_payload.get("step_name")) or f"step_{index}"
+        )
         attempt = int(step_payload.get("attempt") or 1)
         step = session.execute(
             select(WhitepaperAnalysisStep).where(
@@ -4035,7 +4534,9 @@ class WhitepaperWorkflowService:
                 attempt=attempt,
                 status=self._optional_text(step_payload.get("status")) or "completed",
                 executor=self._optional_text(step_payload.get("executor")),
-                idempotency_key=self._optional_text(step_payload.get("idempotency_key")),
+                idempotency_key=self._optional_text(
+                    step_payload.get("idempotency_key")
+                ),
                 trace_id=self._optional_text(step_payload.get("trace_id")),
                 started_at=datetime.now(timezone.utc),
                 completed_at=datetime.now(timezone.utc),
@@ -4048,10 +4549,18 @@ class WhitepaperWorkflowService:
             return
 
         step.status = self._optional_text(step_payload.get("status")) or step.status
-        step.duration_ms = self._optional_int(step_payload.get("duration_ms")) or step.duration_ms
-        step.input_json = self._optional_json(step_payload.get("input_json")) or step.input_json
-        step.output_json = self._optional_json(step_payload.get("output_json")) or step.output_json
-        step.error_json = self._optional_json(step_payload.get("error_json")) or step.error_json
+        step.duration_ms = (
+            self._optional_int(step_payload.get("duration_ms")) or step.duration_ms
+        )
+        step.input_json = (
+            self._optional_json(step_payload.get("input_json")) or step.input_json
+        )
+        step.output_json = (
+            self._optional_json(step_payload.get("output_json")) or step.output_json
+        )
+        step.error_json = (
+            self._optional_json(step_payload.get("error_json")) or step.error_json
+        )
         step.completed_at = datetime.now(timezone.utc)
         session.add(step)
 
@@ -4065,7 +4574,11 @@ class WhitepaperWorkflowService:
         run.status = target_status
         run.result_payload_json = coerce_json_payload(cast(dict[str, Any], payload))
         run.completed_at = datetime.now(timezone.utc)
-        run.failure_reason = None if target_status == "completed" else self._optional_text(payload.get("failure_reason"))
+        run.failure_reason = (
+            None
+            if target_status == "completed"
+            else self._optional_text(payload.get("failure_reason"))
+        )
         session.add(run)
 
         if run.document is None:
@@ -4112,7 +4625,7 @@ class WhitepaperWorkflowService:
         timeout = _int_env("WHITEPAPER_DOWNLOAD_TIMEOUT_SECONDS", 30)
         status, _, payload = _http_request_bytes(
             url,
-            method='GET',
+            method="GET",
             headers={
                 "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
                 **({"Authorization": f"Bearer {token}"} if token else {}),
@@ -4122,38 +4635,46 @@ class WhitepaperWorkflowService:
             follow_redirects=True,
         )
         if status < 200 or status >= 300:
-            raise RuntimeError(f'pdf_download_http_{status}')
+            raise RuntimeError(f"pdf_download_http_{status}")
         if len(payload) > max_bytes:
             raise RuntimeError("pdf_too_large")
         return payload
 
-    def _submit_jangar_agentrun(self, payload: Mapping[str, Any], *, idempotency_key: str) -> dict[str, Any]:
+    def _submit_agents_agentrun(
+        self, payload: Mapping[str, Any], *, idempotency_key: str
+    ) -> dict[str, Any]:
         submit_url = _str_env("WHITEPAPER_AGENTRUN_SUBMIT_URL")
         if not submit_url:
-            jangar_base_url = _str_env("JANGAR_BASE_URL", "http://agents.agents.svc.cluster.local")
-            if not jangar_base_url:
-                raise RuntimeError("jangar_endpoint_not_configured")
-            submit_url = f"{jangar_base_url.rstrip('/')}/v1/agent-runs"
+            agents_base_url = _str_env("AGENTS_BASE_URL") or _str_env(
+                "JANGAR_BASE_URL", "http://agents.agents.svc.cluster.local"
+            )
+            if not agents_base_url:
+                raise RuntimeError("agents_endpoint_not_configured")
+            submit_url = f"{agents_base_url.rstrip('/')}/v1/agent-runs"
 
-        auth_token = _str_env("JANGAR_API_KEY")
+        auth_token = (
+            _str_env("WHITEPAPER_AGENTRUN_API_TOKEN")
+            or _str_env("AGENTS_API_KEY")
+            or _str_env("JANGAR_API_KEY")
+        )
         timeout = _int_env("WHITEPAPER_AGENTRUN_TIMEOUT_SECONDS", 20)
         status, _, raw_bytes = _http_request_bytes(
             submit_url,
-            method='POST',
+            method="POST",
             headers={
                 "Content-Type": "application/json",
                 "Idempotency-Key": idempotency_key,
                 **({"Authorization": f"Bearer {auth_token}"} if auth_token else {}),
             },
-            body=json.dumps(payload).encode('utf-8'),
+            body=json.dumps(payload).encode("utf-8"),
             timeout_seconds=timeout,
         )
-        raw = raw_bytes.decode('utf-8', errors='replace')
+        raw = raw_bytes.decode("utf-8", errors="replace")
         if status < 200 or status >= 300:
-            raise RuntimeError(f'jangar_submit_http_{status}:{raw[:200]}')
+            raise RuntimeError(f"agents_submit_http_{status}:{raw[:200]}")
         parsed = json.loads(raw)
         if not isinstance(parsed, dict):
-            raise RuntimeError("invalid_jangar_response")
+            raise RuntimeError("invalid_agents_response")
         return cast(dict[str, Any], parsed)
 
     @staticmethod
@@ -4215,7 +4736,9 @@ class WhitepaperWorkflowService:
 class WhitepaperKafkaIssueIngestor:
     """Kafka consumer for GitHub issue webhook events relayed by Froussard."""
 
-    def __init__(self, *, workflow_service: WhitepaperWorkflowService | None = None) -> None:
+    def __init__(
+        self, *, workflow_service: WhitepaperWorkflowService | None = None
+    ) -> None:
         self.workflow_service = workflow_service or WhitepaperWorkflowService()
         self._consumer: Any | None = None
 
@@ -4328,7 +4851,10 @@ class WhitepaperKafkaIssueIngestor:
         if not bootstrap:
             raise RuntimeError("whitepaper_kafka_bootstrap_missing")
 
-        topic = _str_env("WHITEPAPER_KAFKA_TOPIC", "github.webhook.events") or "github.webhook.events"
+        topic = (
+            _str_env("WHITEPAPER_KAFKA_TOPIC", "github.webhook.events")
+            or "github.webhook.events"
+        )
         security_protocol = _str_env("WHITEPAPER_KAFKA_SECURITY_PROTOCOL")
         sasl_mechanism = _str_env("WHITEPAPER_KAFKA_SASL_MECHANISM")
         sasl_username = _str_env("WHITEPAPER_KAFKA_SASL_USERNAME")
@@ -4344,7 +4870,9 @@ class WhitepaperKafkaIssueIngestor:
             kwargs["sasl_plain_password"] = sasl_password
         return KafkaConsumer(
             topic,
-            bootstrap_servers=[item.strip() for item in bootstrap.split(",") if item.strip()],
+            bootstrap_servers=[
+                item.strip() for item in bootstrap.split(",") if item.strip()
+            ],
             group_id=_str_env("WHITEPAPER_KAFKA_GROUP_ID", "torghut-whitepaper-v1"),
             client_id=_str_env("WHITEPAPER_KAFKA_CLIENT_ID", "torghut-whitepaper"),
             enable_auto_commit=False,
@@ -4436,14 +4964,16 @@ class WhitepaperKafkaWorker:
         try:
             await self._task
         except asyncio.CancelledError:
-            logger.debug('whitepaper kafka worker cancelled')
+            logger.debug("whitepaper kafka worker cancelled")
         finally:
             self._task = None
             self._ingestor.close()
             logger.info("Whitepaper Kafka worker stopped")
 
     async def _run(self) -> None:
-        interval = max(0.25, float(_int_env("WHITEPAPER_KAFKA_LOOP_INTERVAL_MS", 1000)) / 1000.0)
+        interval = max(
+            0.25, float(_int_env("WHITEPAPER_KAFKA_LOOP_INTERVAL_MS", 1000)) / 1000.0
+        )
         while True:
             try:
                 await asyncio.to_thread(self._ingest_once)

@@ -1,10 +1,7 @@
-import { installJangarEnvCompatibility } from './env-compat'
 import { bootRuntimeProfile } from './runtime-boot'
 import { resolveRuntimeServiceName } from './runtime-identity'
 import { resolveJangarRuntimeProfile } from './runtime-profile'
 import { resolveHttpServerListenConfig } from './runtime-entry-config'
-
-installJangarEnvCompatibility()
 
 const { port, hostname, idleTimeoutSeconds } = resolveHttpServerListenConfig()
 const runtimeProfile = resolveJangarRuntimeProfile()

@@ -124,7 +124,7 @@ AgentRuns, GitOps resources, broker state, market data, or trading flags.
 
 ### Source And Test Surface
 
-- Jangar's high-risk shared type surface is `services/jangar/src/data/agents-control-plane.ts`.
+- Jangar's high-risk shared type surface is `services/jangar/src/server/control-plane-status-types.ts`.
 - The verify board reducer lives in `services/jangar/src/server/control-plane-verify-trust-foreclosure.ts`.
 - The repair-slot reducer lives in `services/jangar/src/server/control-plane-repair-slot-escrow.ts`.
 - `/ready` and `/api/agents/control-plane/status` already emit the verify board and repair-slot escrow, but not a

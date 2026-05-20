@@ -50,7 +50,7 @@ rollback target.
 
 ## Validation
 
-- `bunx oxfmt --check services/jangar/src/server/control-plane-repair-slot-escrow.ts services/jangar/src/server/__tests__/control-plane-repair-slot-escrow.test.ts services/jangar/src/data/agents-control-plane.ts services/jangar/src/routes/ready.tsx services/jangar/src/routes/ready.test.ts services/jangar/src/server/control-plane-status.ts services/jangar/src/server/control-plane-status-types.ts`
+- `bunx oxfmt --check services/jangar/src/server/control-plane-repair-slot-escrow.ts services/jangar/src/server/__tests__/control-plane-repair-slot-escrow.test.ts services/jangar/src/server/control-plane-status-types.ts services/jangar/src/routes/ready.tsx services/jangar/src/routes/ready.test.ts services/jangar/src/server/control-plane-status.ts services/jangar/src/server/control-plane-status-types.ts`
 - `bun run --cwd services/jangar test -- src/server/__tests__/control-plane-repair-slot-escrow.test.ts`
 - `bun run --cwd services/jangar test -- src/routes/ready.test.ts`
 - `bun run --cwd services/jangar check:module-sizes`

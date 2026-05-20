@@ -120,6 +120,32 @@ describe('buildHelmArgs', () => {
     )
   })
 
+  it('allows a separate runner image pin for AgentRun jobs', () => {
+    const valuesFile = resolve(process.cwd(), 'scripts/agents/values-ci.yaml')
+    const args = buildHelmArgs({
+      releaseName: 'agents',
+      namespace: 'agents-ci',
+      valuesFile,
+      createNamespace: false,
+      imageRepository: 'registry.example/agents-control-plane',
+      controlPlaneImageRepository: 'registry.example/agents-control-plane',
+      controllersImageRepository: 'registry.example/agents-controller',
+      runnerImageRepository: 'registry.example/agents-codex-runner',
+      imageTag: 'ci',
+      runnerImageTag: 'runner-ci',
+      imageDigestSet: false,
+      imageDigest: '',
+      runnerImageDigestSet: true,
+      runnerImageDigest: 'sha256:3333333333333333333333333333333333333333333333333333333333333333',
+    })
+
+    expect(args).toContain('runner.image.repository=registry.example/agents-codex-runner')
+    expect(args).toContain('runner.image.tag=runner-ci')
+    expect(args).toContain(
+      'runner.image.digest=sha256:3333333333333333333333333333333333333333333333333333333333333333',
+    )
+  })
+
   it('omits image digest when the env key is unset', () => {
     const valuesFile = resolve(process.cwd(), 'charts/agents/values-local.yaml')
     const args = buildHelmArgs({
@@ -263,11 +289,12 @@ describe('smoke fixtures', () => {
     expect(fixture).toContain('systemPrompt:')
   })
 
-  it('keeps workflow smoke workload pulls off Docker Hub', () => {
+  it('keeps workflow smoke on the chart-managed runner image', () => {
     const fixture = readFileSync(resolve(process.cwd(), 'charts/agents/examples/agentrun-workflow-smoke.yaml'), 'utf8')
 
-    expect(fixture).toContain('image: mirror.gcr.io/library/busybox:1.36')
-    expect(fixture).not.toContain('image: busybox:')
+    expect(fixture).toContain('workload:')
+    expect(fixture).toContain('resources:')
+    expect(fixture).not.toMatch(/image:\s*(busybox|mirror\.gcr\.io\/library\/busybox)/)
   })
 })
 
@@ -280,6 +307,28 @@ const objectAt = (value: unknown, key: string) =>
   value && typeof value === 'object' ? ((value as Record<string, unknown>)[key] as unknown) : undefined
 
 describe('scheduled AgentRun templates', () => {
+  it('requires every checked-in AgentProvider fixture to declare a normalized adapter', () => {
+    const agentProviderFiles = [
+      'argocd/applications/agents/agents-primitives-agentprovider.yaml',
+      'argocd/applications/agents/codex-agentprovider.yaml',
+      'argocd/applications/agents/codex-spark-agentprovider.yaml',
+      'argocd/applications/agents/codex-spark-smoke-agentprovider.yaml',
+      'argocd/applications/agents/graf-codex-agentprovider.yaml',
+      'charts/agents/examples/agentprovider-native-workflow.yaml',
+      'charts/agents/examples/agentprovider-sample.yaml',
+      'charts/agents/examples/agentprovider-smoke.yaml',
+    ]
+
+    for (const path of agentProviderFiles) {
+      const provider = readYamlObjects(path).find((manifest) => objectAt(manifest, 'kind') === 'AgentProvider')
+      const spec = objectAt(provider, 'spec')
+      const adapter = objectAt(spec, 'adapter')
+
+      expect(adapter, `${path} must declare spec.adapter`).toBeTruthy()
+      expect(objectAt(adapter, 'type'), `${path} must declare spec.adapter.type`).toEqual(expect.any(String))
+    }
+  })
+
   it('configures default runner resource requests for swarm jobs', () => {
     const values = readYamlObjects('argocd/applications/agents/values.yaml')[0]
     const controller = objectAt(values, 'controller')
@@ -295,18 +344,41 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(limits, 'ephemeral-storage')).toBe('16Gi')
   })
 
-  it('keeps material reentry status reads bounded while swarm primitive dispatch is disabled by default', () => {
+  it('enables Swarm primitive RBAC for the live controllers while keeping domain admission env out of Agents', () => {
     const values = readYamlObjects('argocd/applications/agents/values.yaml')[0]
     const controllers = objectAt(values, 'controllers')
     const env = objectAt(objectAt(controllers, 'env'), 'vars')
-    const timeoutMs = Number(objectAt(env, 'AGENTS_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS'))
     const swarm = objectAt(values, 'swarm')
 
-    expect(objectAt(env, 'AGENTS_MATERIAL_REENTRY_REQUIREMENT_SIGNALS')).toBe('false')
-    expect(objectAt(swarm, 'enabled')).toBe(false)
+    expect(objectAt(swarm, 'enabled')).toBe(true)
+    expect(objectAt(env, 'AGENTS_MATERIAL_REENTRY_REQUIREMENT_SIGNALS')).toBeUndefined()
+    expect(objectAt(env, 'AGENTS_SCHEDULE_RUNNER_ADMISSION_STATUS_URL')).toBeUndefined()
+    expect(objectAt(env, 'AGENTS_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS')).toBeUndefined()
     expect(objectAt(env, 'AGENTS_SWARM_REQUIREMENT_MAX_DISPATCH_PER_RECONCILE')).toBeUndefined()
     expect(objectAt(env, 'AGENTS_SWARM_REQUIREMENT_MAX_ACTIVE_PER_SWARM')).toBeUndefined()
-    expect(timeoutMs).toBeGreaterThanOrEqual(10_000)
+  })
+
+  it('keeps Facteur Codex dispatch behind the Agents AgentRun API boundary', () => {
+    const kustomization = readFileSync(
+      resolve(process.cwd(), 'argocd/applications/facteur/overlays/cluster/kustomization.yaml'),
+      'utf8',
+    )
+    const service = readFileSync(
+      resolve(process.cwd(), 'argocd/applications/facteur/overlays/cluster/facteur-service.yaml'),
+      'utf8',
+    )
+    const config = readFileSync(
+      resolve(process.cwd(), 'argocd/applications/facteur/overlays/cluster/facteur-config.yaml'),
+      'utf8',
+    )
+
+    expect(kustomization).not.toContain('facteur-workflowtemplate.yaml')
+    expect(kustomization).not.toContain('facteur-workflow-serviceaccount.yaml')
+    expect(kustomization).not.toContain('facteur-workflows-clusterrolebinding.yaml')
+    expect(service).not.toContain('FACTEUR_ARGO_')
+    expect(config).not.toContain('workflow_template')
+    expect(`${kustomization}\n${service}\n${config}`).not.toContain('agents-codex-runner')
+    expect(config).toContain('agents_base_url: http://agents.agents.svc.cluster.local')
   })
 
   it('renders Codex app-server adapter metadata instead of legacy provider wrapper scripts', () => {

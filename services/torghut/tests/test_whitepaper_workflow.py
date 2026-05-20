@@ -351,7 +351,7 @@ https://example.com/paper.pdf
                 },
             }
 
-        service._submit_jangar_agentrun = _fake_submit  # type: ignore[method-assign]
+        service._submit_agents_agentrun = _fake_submit  # type: ignore[method-assign]
         replay_payload = self._issue_payload(issue_number=900000004)
         replay_issue = cast(dict[str, Any], replay_payload["issue"])
         replay_issue["html_url"] = "https://github.com/proompteng/lab/issues/3592"
@@ -385,7 +385,7 @@ https://example.com/paper.pdf
         service = WhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
         service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
-        service._submit_jangar_agentrun = (  # type: ignore[method-assign]
+        service._submit_agents_agentrun = (  # type: ignore[method-assign]
             lambda _payload, *, idempotency_key: {
                 "ok": True,
                 "resource": {
@@ -478,7 +478,7 @@ https://example.com/paper.pdf
         service = WhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
         service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
-        service._submit_jangar_agentrun = (  # type: ignore[method-assign]
+        service._submit_agents_agentrun = (  # type: ignore[method-assign]
             lambda _payload, *, idempotency_key: {
                 "ok": True,
                 "resource": {
@@ -587,7 +587,7 @@ https://example.com/paper.pdf
         service = WhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
         service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
-        service._submit_jangar_agentrun = (  # type: ignore[method-assign]
+        service._submit_agents_agentrun = (  # type: ignore[method-assign]
             lambda _payload, *, idempotency_key: {
                 "ok": True,
                 "resource": {
@@ -1005,7 +1005,7 @@ https://example.com/paper.pdf
         service = WhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
         service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
-        service._submit_jangar_agentrun = (  # type: ignore[method-assign]
+        service._submit_agents_agentrun = (  # type: ignore[method-assign]
             lambda _payload, *, idempotency_key: {
                 "ok": True,
                 "resource": {
@@ -1065,7 +1065,7 @@ https://example.com/paper.pdf
         os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
         os.environ["WHITEPAPER_ENGINEERING_AUTO_DISPATCH_ENABLED"] = "true"
         os.environ["WHITEPAPER_ENGINEERING_ROLLOUT_PROFILE"] = "automatic"
-        service._submit_jangar_agentrun = (  # type: ignore[method-assign]
+        service._submit_agents_agentrun = (  # type: ignore[method-assign]
             lambda _payload, *, idempotency_key: {
                 "resource": {
                     "metadata": {
@@ -1257,7 +1257,7 @@ https://example.com/paper.pdf
                 }
             }
 
-        service._submit_jangar_agentrun = _fake_submit  # type: ignore[method-assign]
+        service._submit_agents_agentrun = _fake_submit  # type: ignore[method-assign]
 
         with Session(self.engine) as session:
             kickoff = service.ingest_github_issue_event(
@@ -1332,7 +1332,7 @@ https://example.com/paper.pdf
         service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
         os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
         os.environ["WHITEPAPER_ENGINEERING_AUTO_DISPATCH_ENABLED"] = "true"
-        service._submit_jangar_agentrun = (  # type: ignore[method-assign]
+        service._submit_agents_agentrun = (  # type: ignore[method-assign]
             lambda _payload, *, idempotency_key: {
                 "resource": {
                     "metadata": {
@@ -1427,7 +1427,7 @@ https://example.com/paper.pdf
         service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
         os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
         os.environ["WHITEPAPER_ENGINEERING_AUTO_DISPATCH_ENABLED"] = "true"
-        service._submit_jangar_agentrun = (  # type: ignore[method-assign]
+        service._submit_agents_agentrun = (  # type: ignore[method-assign]
             lambda _payload, *, idempotency_key: {
                 "resource": {
                     "metadata": {
@@ -1512,7 +1512,7 @@ https://example.com/paper.pdf
         service = WhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
         service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
-        service._submit_jangar_agentrun = (  # type: ignore[method-assign]
+        service._submit_agents_agentrun = (  # type: ignore[method-assign]
             lambda _payload, *, idempotency_key: {
                 "ok": True,
                 "resource": {
@@ -1582,7 +1582,7 @@ https://example.com/paper.pdf
         service = WhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
         service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
-        service._submit_jangar_agentrun = (  # type: ignore[method-assign]
+        service._submit_agents_agentrun = (  # type: ignore[method-assign]
             lambda _payload, *, idempotency_key: {
                 "ok": True,
                 "resource": {
@@ -1671,7 +1671,7 @@ https://example.com/paper.pdf
                 },
             }
 
-        service._submit_jangar_agentrun = _fake_submit  # type: ignore[method-assign]
+        service._submit_agents_agentrun = _fake_submit  # type: ignore[method-assign]
 
         with Session(self.engine) as session:
             first = service.ingest_github_issue_event(
@@ -1807,7 +1807,7 @@ https://example.com/paper.pdf
                 }
             }
 
-        service._submit_jangar_agentrun = _fake_submit  # type: ignore[method-assign]
+        service._submit_agents_agentrun = _fake_submit  # type: ignore[method-assign]
 
         with Session(self.engine) as session:
             kickoff = service.ingest_github_issue_event(

@@ -7,7 +7,7 @@ import type {
   StageCreditLedger,
   TorghutConsumerEvidenceStatus,
   TorghutExecutableAlphaRepairReceipt,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import {
   buildRepairSlotEscrow,
   REPAIR_SLOT_ESCROW_DESIGN_ARTIFACT,

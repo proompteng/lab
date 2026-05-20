@@ -1,7 +1,7 @@
 import type {
   TorghutExecutableAlphaRepairReceipt,
   TorghutExecutableAlphaRepairReceiptSet,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import {
   normalizeNonEmpty,
   normalizeNumber,

@@ -232,7 +232,8 @@ export const checkCrds = async (options: {
     }
     return {
       ok: false,
-      missing: [...missing, ...forbidden],
+      missing,
+      forbidden,
       checkedAt: options.nowIso(),
     }
   }
@@ -254,6 +255,7 @@ export const checkCrds = async (options: {
         return {
           ok: false,
           missing: [...missing, `service:${serviceReference.name}@${serviceReference.namespace}`],
+          forbidden,
           checkedAt: options.nowIso(),
         }
       }
@@ -262,7 +264,8 @@ export const checkCrds = async (options: {
 
   return {
     ok: missing.length === 0 && forbidden.length === 0,
-    missing: [...missing, ...forbidden],
+    missing,
+    forbidden,
     checkedAt: options.nowIso(),
   }
 }

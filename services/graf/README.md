@@ -22,14 +22,14 @@ This Quarkus/Kotlin microservice implements the persistence layer described in [
 | `QUARKUS_HTTP_PORT` / `PORT`      | HTTP port (defaults to `8080`; Quarkus reads both).                                                                  |
 | `QUARKUS_HTTP_CORS_*`             | CORS toggles injected via `graf-quarkus-config`.                                                                     |
 | `GRAF_API_BEARER_TOKENS`          | Comma/space-delimited bearer tokens for `/v1/**`.                                                                    |
-| `TEMPORAL_*`, `ARGO_*`, `MINIO_*` | See [docs/graf-codex-research.md](../../docs/graf-codex-research.md) for workflow + artifact requirements.           |
+| `TEMPORAL_*`, `AGENTS_*`, `AGENTS_ARTIFACTS_*` | See [docs/graf-codex-research.md](../../docs/graf-codex-research.md) for AgentRun + artifact requirements. |
 
 ## AutoResearch configuration
 
 The AutoResearch prompt builder now sources every prompt label and metadata tag from environment variables. The baked-in defaults are vendor-agnostic (`Graf AutoResearch Knowledge Base` and `auto-research` for the stage/stream), so you can ship a neutral experience even before overriding the env vars.
 
 - `AUTO_RESEARCH_KB_NAME` – Knowledge-base name shown in the prompt header and ROLE description (default `Graf AutoResearch Knowledge Base`).
-- `AUTO_RESEARCH_STAGE` – Used for the `codex.stage` label and (after DNS-1123 sanitization) as the prefix on AutoResearch Argo workflows and metadata (defaults to `auto-research`).
+- `AUTO_RESEARCH_STAGE` – Used for the `codex.stage` label and (after DNS-1123 sanitization) as the prefix on AutoResearch AgentRuns and metadata (defaults to `auto-research`).
 - `AUTO_RESEARCH_STREAM_ID` – Stream value injected into the prompt text and every `codex-graf` payload (defaults to `auto-research`).
 - `AUTO_RESEARCH_OPERATOR_GUIDANCE` – Fallback guidance added when the caller leaves `user_prompt` blank.
 - `AUTO_RESEARCH_DEFAULT_GOALS` – Newline-separated numbered goals that replace the GOALS block inside the prompt.
@@ -59,7 +59,7 @@ Custom metrics exported by Graf include:
 | `graf_http_server_requests_count`      | Request rate with labels for method, status, and route. |
 | `graf_http_server_request_duration_ms` | Request latency histogram.                              |
 | `graf_neo4j_write_duration_ms`         | Neo4j write latency.                                    |
-| `graf_codex_workflows_started`         | Codex workflow launches.                                |
+| `graf_codex_workflows_started`         | Codex research launches.                                |
 | `graf_artifact_fetch_duration_ms`      | MinIO artifact fetch latency.                           |
 
 Logs are written in JSON via `net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder` with `trace_id`, `span_id`, and `request_id` MDC fields emitted by the `CallId` + OpenTelemetry wiring, so Loki queries can correlate traces and logs. Grafana Alloy (deployed in the `graf` namespace) is responsible for shipping these JSON logs to Loki.
@@ -110,9 +110,9 @@ Run `./gradlew ktlintCheck` (the same plugin also supports `./gradlew ktlintForm
 
 - `GrafConfiguration` observes Quarkus' `StartupEvent` and pings Temporal, Neo4j, and MinIO during boot, eliminating the first-request cold start before readiness probes mark the pod healthy.
 
-## AutoResearch Codex workflow
+## AutoResearch Codex AgentRun
 
-- `POST /v1/autoresearch` launches the same Temporal/Argo Codex workflow that powers `/v1/codex-research`, but it injects a curated prompt that tells Codex to keep expanding the Graf knowledge graph and to persist findings directly via the bundled `/usr/local/bin/codex-graf` CLI.
+- `POST /v1/autoresearch` launches the same Temporal/Agents Codex flow that powers `/v1/codex-research`, but it injects a curated prompt that tells Codex to keep expanding the Graf knowledge graph and to persist findings directly via the bundled `/usr/local/bin/codex-graf` CLI.
 - The request body accepts a single optional field, `user_prompt`, which is appended to the base instructions. Example:
   ```json
   {
@@ -125,17 +125,17 @@ Run `./gradlew ktlintCheck` (the same plugin also supports `./gradlew ktlintForm
   {
     "workflowId": "wf-123",
     "runId": "run-123",
-    "argoWorkflowName": "auto-research-123",
+    "agentRunName": "auto-research-123",
     "artifactReferences": [
       {
-        "bucket": "argo-workflows",
+        "bucket": "agents-artifacts",
         "key": "codex-research/auto-research-123/codex-artifact.json",
         "endpoint": "http://observability-minio.minio.svc.cluster.local:9000"
       }
     ],
     "startedAt": "2025-11-10T05:00:00Z",
-    "message": "AutoResearch Codex workflow started"
+    "message": "AutoResearch Codex AgentRun started"
   }
   ```
 
-  - The injected prompt (see `AutoResearchPromptBuilder`) now reads branding from `AUTO_RESEARCH_KB_NAME`, uses `AUTO_RESEARCH_STAGE` for the `codex.stage` label and Argo workflow prefix, embeds whatever `AUTO_RESEARCH_STREAM_ID` you configure, and falls back to `AUTO_RESEARCH_OPERATOR_GUIDANCE` plus `AUTO_RESEARCH_DEFAULT_GOALS` when the caller omits `user_prompt`. It still asks Codex to log every POST with `artifactId`, `researchSource`, and the configured stream metadata, then summarize the persisted entities in `codex-artifact.json`. See `docs/nvidia-company-research.md` (the updated home for the previous docs/nvidia-supply-chain-graph-design.md narrative) for the broader knowledge-base story and the NVIDIA appendix.
+  - The injected prompt (see `AutoResearchPromptBuilder`) now reads branding from `AUTO_RESEARCH_KB_NAME`, uses `AUTO_RESEARCH_STAGE` for the `codex.stage` label and AgentRun prefix, embeds whatever `AUTO_RESEARCH_STREAM_ID` you configure, and falls back to `AUTO_RESEARCH_OPERATOR_GUIDANCE` plus `AUTO_RESEARCH_DEFAULT_GOALS` when the caller omits `user_prompt`. It still asks Codex to log every POST with `artifactId`, `researchSource`, and the configured stream metadata, then summarize the persisted entities in `codex-artifact.json`. See `docs/nvidia-company-research.md` (the updated home for the previous docs/nvidia-supply-chain-graph-design.md narrative) for the broader knowledge-base story and the NVIDIA appendix.

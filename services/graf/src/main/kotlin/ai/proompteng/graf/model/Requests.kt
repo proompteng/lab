@@ -117,7 +117,7 @@ data class ArtifactReference(
 data class CodexResearchResponse(
   val workflowId: String,
   val runId: String,
-  val argoWorkflowName: String,
+  val agentRunName: String,
   val artifactReferences: List<ArtifactReference>,
   val startedAt: String? = null,
 )
@@ -132,8 +132,8 @@ data class AutoResearchRequest(
 data class AutoResearchLaunchResponse(
   val workflowId: String,
   val runId: String,
-  val argoWorkflowName: String,
+  val agentRunName: String,
   val artifactReferences: List<ArtifactReference> = emptyList(),
   val startedAt: String,
-  val message: String = "AutoResearch Codex workflow started",
+  val message: String = "AutoResearch Codex AgentRun started",
 )

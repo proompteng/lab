@@ -1,10 +1,18 @@
-# Jangar control-plane pages for new primitives (design)
+# Jangar control-plane pages for new primitives (historical design)
+
+## Extraction status
+
+The generic Agents primitive browser surface described here moved out of Jangar with the Agents platform extraction.
+Jangar no longer owns the generic `/control-plane` route tree, Agents `/v1` resource APIs, or reusable
+Agents primitive browser components. Keep this document as historical design context only; production ownership now
+lives in `services/agents` and `charts/agents`, while Jangar consumes Agents state through the Agents service boundary
+for domain readiness and Torghut-specific views.
 
 ## Summary
 
-This document defines the routing, API contracts, UI components, and rollout plan to add control-plane UI pages for
+This document defined the routing, API contracts, UI components, and rollout plan to add control-plane UI pages for
 new primitives: Tool, ToolRun, Signal, SignalDelivery, ApprovalPolicy, Budget, SecretBinding, Schedule, Artifact, and
-Workspace. The goal is to make these primitives first-class in the Jangar control-plane UI with consistent list/detail
+Workspace. The goal was to make these primitives first-class in the Jangar control-plane UI with consistent list/detail
 views, relationship navigation, and status insight.
 
 ## Goals
@@ -24,10 +32,10 @@ views, relationship navigation, and status insight.
 
 ## Background / current state
 
-- The control-plane UI already supports a generic list/detail shell via `PrimitiveListPage` and `PrimitiveDetailPage`.
-- The control-plane API exposes read-only access to resources, events, and streaming updates under
-  `/api/agents/control-plane/*`.
-- Existing primitives (Agent, AgentRun, Orchestration, etc.) use consistent list/detail route structure.
+- The generic control-plane UI/list/detail shell is no longer hosted by Jangar.
+- Generic Agents resource APIs are owned by the Agents service.
+- Existing primitives (Agent, AgentRun, Orchestration, etc.) keep their CRD names and API group, but their generic
+  operator surface belongs to Agents rather than the Jangar browser app.
 
 The new primitives should follow the same contract and page layout, then layer in primitive-specific summary panels and
 relationship navigation.
@@ -70,15 +78,15 @@ All routes live under `/agents-control-plane` and use the same namespace + label
 
 ### Existing endpoints (reuse)
 
-- `GET /api/agents/control-plane/resources?kind=<Kind>&namespace=<ns>`
+- `GET /v1/<resource>/resources?namespace=<ns>`
   - Optional: `labelSelector`, `phase`, `runtime`, `limit`.
-- `GET /api/agents/control-plane/resource?kind=<Kind>&name=<name>&namespace=<ns>`
-- `GET /api/agents/control-plane/events?kind=<Kind>&name=<name>&namespace=<ns>&uid=<uid>`
-- `GET /api/agents/control-plane/stream?namespace=<ns>` (SSE resource updates)
-- `GET /api/agents/control-plane/summary?namespace=<ns>`
+- `GET /v1/<resource>/resources?name=<name>&namespace=<ns>`
+- `GET /v1/control-plane/events?kind=<Kind>&name=<name>&namespace=<ns>&uid=<uid>`
+- `GET /v1/control-plane/stream?namespace=<ns>` (SSE resource updates)
+- `GET http://agents.agents.svc.cluster.local/v1/control-plane/summary?namespace=<ns>`
 
 These endpoints are sufficient for list/detail/event rendering as long as each primitive kind is registered in the
-control-plane kind resolver and resource map.
+Agents typed resource map.
 
 ### Additions for new primitives
 
@@ -210,10 +218,14 @@ Relationship panels should cap results (ex: 10) and include a “View all” lin
 - Do schedules emit a stable “run label” for correlation with runs and deliveries?
 - Are any of these primitives cluster-scoped and should the UI offer a cluster-scope toggle?
 
-## Appendix: related files
+## Appendix: previous Jangar files removed by extraction
 
-- `services/jangar/src/components/agents-control-plane-primitives.tsx`
-- `services/jangar/src/components/agents-control-plane-overview.tsx`
-- `services/jangar/src/data/agents-control-plane.ts`
-- `services/jangar/src/routes/agents-control-plane/*`
-- `services/jangar/src/routes/api/agents/control-plane/*`
+The extracted files were the old Jangar generic Agents control-plane components, browser routes, and resource API
+routes.
+
+Current ownership:
+
+- `services/agents/**`
+- `charts/agents/**`
+- typed `@proompteng/agent-contracts/*-client` imports for Jangar domain-client reads
+- `services/jangar/src/server/control-plane-status-types.ts` for domain status payload normalization only

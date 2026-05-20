@@ -20,7 +20,6 @@ graph TD
   PLATFORM --> KNATIVE[knative + knative-eventing]
   PLATFORM --> KAFKA[kafka]
   PLATFORM --> NATS[nats]
-  PLATFORM --> ARGO[argo-workflows]
   PLATFORM --> OBS[observability]
 
   JANGAR -. optional integration .-> TORGHUT[torghut]
@@ -36,7 +35,6 @@ graph TD
   JDEPLOY --> NATSSEC[Secret: nats-jangar-credentials]
   JDEPLOY --> NATSSVC[nats.nats.svc.cluster.local:4222]
   JDEPLOY --> KAFKASEC[Secrets: kafka-codex-username / kafka-codex-credentials]
-  JDEPLOY --> ARGOSVC[argo-workflows-server.argo-workflows.svc.cluster.local]
   JDEPLOY --> MINIOSEC[Secret: observability-minio-creds]
   JDEPLOY --> CHSEC[Secret: jangar-clickhouse-auth]
   JDEPLOY --> CHSVC[torghut-clickhouse.torghut.svc]
@@ -48,8 +46,6 @@ graph TD
 
   KSRC1[KafkaSource: jangar-codex-github-events] --> KAFKASVC[kafka-kafka-bootstrap.kafka:9092]
   KSRC1 --> KAFKASEC
-  KSRC2[KafkaSource: jangar-codex-completions] --> KAFKASVC
-  KSRC2 --> KAFKASEC
 ```
 
 ## 3. Hard vs optional dependencies
@@ -62,7 +58,6 @@ Hard dependencies:
 1. `redis-operator` (for `Redis` custom resource).
 1. `knative` + `knative-eventing` + `kafka` (for `KafkaSource` resources).
 1. `nats` (NATS credentials + broker endpoint).
-1. `argo-workflows` (run-complete and workflow API integration).
 1. `observability` (MinIO creds/endpoint currently referenced by `jangar` and CNPG backup config).
 1. `tailscale-operator` (for `LoadBalancer` services using `loadBalancerClass: tailscale`).
 
@@ -74,14 +69,14 @@ Optional or feature-gated integrations:
 ## 4. Recommended enable order
 
 1. `sealed-secrets`, `rook-ceph`, `tailscale-operator` (bootstrap layer).
-1. `cloudnative-pg`, `redis-operator`, `knative`, `knative-eventing`, `kafka`, `nats`, `argo-workflows`, `observability` (platform layer).
+1. `cloudnative-pg`, `redis-operator`, `knative`, `knative-eventing`, `kafka`, `nats`, `observability` (platform layer).
 1. `jangar` (product layer).
 1. Optional product integrations: `torghut`, `facteur`.
 
 ## 5. Quick validation
 
 ```bash
-kubectl get applications -n argocd | rg 'sealed-secrets|rook-ceph|tailscale|cloudnative-pg|redis-operator|knative|kafka|nats|argo-workflows|observability|jangar'
+kubectl get applications -n argocd | rg 'sealed-secrets|rook-ceph|tailscale|cloudnative-pg|redis-operator|knative|kafka|nats|observability|jangar'
 kubectl -n jangar get secret jangar-db-app github-token jangar-clickhouse-auth
 kubectl -n jangar get kafkasources.sources.knative.dev
 kubectl -n jangar get redis.redis.opstreelabs.in

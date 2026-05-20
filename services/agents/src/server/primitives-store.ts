@@ -129,12 +129,16 @@ export type PrimitivesStore = {
   ready: Promise<void>
   close: () => Promise<void>
   createAgentRun: (input: CreateAgentRunInput) => Promise<AgentRunRecord>
+  listAgentRuns: (input?: {
+    agentName?: string | null
+    statuses?: string[] | null
+    limit?: number | null
+  }) => Promise<AgentRunRecord[]>
   updateAgentRunStatus: (id: string, status: string, externalRunId?: string | null) => Promise<AgentRunRecord | null>
   updateAgentRunDetails: (input: UpdateRunDetailsInput) => Promise<AgentRunRecord | null>
   getAgentRunById: (id: string) => Promise<AgentRunRecord | null>
   getAgentRunByDeliveryId: (deliveryId: string) => Promise<AgentRunRecord | null>
   getAgentRunByExternalRunId: (externalRunId: string) => Promise<AgentRunRecord | null>
-  getAgentRunsByAgent: (agentName: string, limit?: number) => Promise<AgentRunRecord[]>
   createOrchestrationRun: (input: CreateOrchestrationRunInput) => Promise<OrchestrationRunRecord>
   updateOrchestrationRunStatus: (
     id: string,
@@ -371,15 +375,19 @@ export const createPrimitivesStore = (options: PrimitivesStoreOptions = {}): Pri
     return row ? toAgentRunRecord(row) : null
   }
 
-  const getAgentRunsByAgent: PrimitivesStore['getAgentRunsByAgent'] = async (agentName, limit) => {
+  const listAgentRuns: PrimitivesStore['listAgentRuns'] = async (input = {}) => {
     await ready
-    const rows = await db
-      .selectFrom('agent_runs')
-      .selectAll()
-      .where('agent_name', '=', agentName)
-      .orderBy('created_at', 'desc')
-      .limit(limit ?? 50)
-      .execute()
+    let query = db.selectFrom('agent_runs').selectAll()
+    const agentName = input.agentName?.trim()
+    if (agentName) {
+      query = query.where('agent_name', '=', agentName)
+    }
+    const statuses = (input.statuses ?? []).map((status) => status.trim()).filter((status) => status.length > 0)
+    if (statuses.length > 0) {
+      query = query.where('status', 'in', statuses)
+    }
+    const limit = input.limit && input.limit > 0 ? Math.min(Math.trunc(input.limit), 500) : 50
+    const rows = await query.orderBy('created_at', 'desc').limit(limit).execute()
     return rows.map(toAgentRunRecord)
   }
 
@@ -686,12 +694,12 @@ export const createPrimitivesStore = (options: PrimitivesStoreOptions = {}): Pri
     ready,
     close,
     createAgentRun,
+    listAgentRuns,
     updateAgentRunStatus,
     updateAgentRunDetails,
     getAgentRunById,
     getAgentRunByDeliveryId,
     getAgentRunByExternalRunId,
-    getAgentRunsByAgent,
     createOrchestrationRun,
     updateOrchestrationRunStatus,
     updateOrchestrationRunDetails,

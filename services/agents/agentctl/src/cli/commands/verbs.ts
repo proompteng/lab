@@ -21,7 +21,7 @@ import {
   RESOURCE_SPECS,
   RPC_RESOURCE_MAP,
   readFileContent,
-} from '../../legacy'
+} from '../../runtime'
 import { TransportService } from '../../transport'
 import { AgentctlContext } from '../context'
 import { asAgentctlError } from '../errors'

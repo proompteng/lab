@@ -277,7 +277,7 @@ Required source scope:
 - `services/jangar/src/server/control-plane-negative-evidence-router.ts`
 - `services/jangar/src/server/control-plane-controller-witness.ts`
 - `services/jangar/src/server/control-plane-action-clock.ts`
-- `services/jangar/src/data/agents-control-plane.ts`
+- `services/jangar/src/server/control-plane-status-types.ts`
 - `services/jangar/src/components/agents-control-plane-status.tsx`
 - tests under `services/jangar/src/server/__tests__/` and `services/jangar/src/components/__tests__/`
 

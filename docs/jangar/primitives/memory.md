@@ -6,11 +6,13 @@ The `Memory` primitive provides a provider-agnostic contract for durable, querya
 associated with agents and workflows. It supports vector embeddings, retention policies, and access control
 without coupling to a specific backend implementation.
 
-Jangar is the control plane for all `Memory` resources.
+The Agents service is the control plane for generic `Memory` resources. Jangar may consume Memory resources through the
+Agents `/v1/memories` and `/v1/memory-operations` APIs for domain workflows, but it does not own the generic Memory CRD
+or controller lifecycle.
 
 ## Grounding in the current platform
 
-- Existing CNPG clusters (live): `facteur/facteur-vector-cluster`, `jangar/jangar-db`
+- Existing CNPG clusters (live): `facteur/facteur-vector-cluster`, `agents/agents-db`
 - Current agent event storage direction: `docs/nats-agent-communications.md`
 
 ## CRDs
@@ -24,7 +26,7 @@ apiVersion: memory.proompteng.ai/v1alpha1
 kind: Memory
 metadata:
   name: codex-agent-memory
-  namespace: jangar
+  namespace: agents
 spec:
   providerRef:
     name: postgres-default
@@ -67,7 +69,7 @@ apiVersion: memory.proompteng.ai/v1alpha1
 kind: MemoryProvider
 metadata:
   name: postgres-default
-  namespace: jangar
+  namespace: agents
 spec:
   type: postgres
   postgres:

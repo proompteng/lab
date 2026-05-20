@@ -44,6 +44,17 @@
       },
       "additionalProperties": false
     },
+    "cors": {
+      "type": "object",
+      "properties": {
+        "allowedOrigins": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Explicit browser origins allowed to call Agents API/SSE routes. Empty by default; domain clients must opt in through chart values or AGENTS_CORS_ALLOWED_ORIGINS."
+        }
+      },
+      "additionalProperties": false
+    },
     "controlPlane": {
       "type": "object",
       "properties": {
@@ -667,7 +678,7 @@
       },
       "additionalProperties": false
     },
-    "workflowRuntime": {
+    "agentRuntime": {
       "type": "object",
       "properties": {
         "native": {
@@ -680,16 +691,6 @@
           },
           "additionalProperties": false
         }
-      },
-      "additionalProperties": false
-    },
-    "runtime": {
-      "type": "object",
-      "properties": {
-        "agentRunnerImage": { "type": "string" },
-        "agentImage": { "type": "string" },
-        "scheduleRunnerImage": { "type": "string" },
-        "scheduleServiceAccount": { "type": "string" }
       },
       "additionalProperties": false
     },

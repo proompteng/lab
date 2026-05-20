@@ -658,6 +658,9 @@ export const RESOURCE_MAP = {
   Swarm: 'swarms.swarm.proompteng.ai',
   Artifact: 'artifacts.artifacts.proompteng.ai',
   Workspace: 'workspaces.workspaces.proompteng.ai',
+  Deployment: 'deployments',
+  Job: 'jobs.batch',
+  Pod: 'pods',
   PersistentVolumeClaim: 'persistentvolumeclaims',
 } as const
 

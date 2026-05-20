@@ -4,6 +4,7 @@ import { type createKubernetesClient, RESOURCE_MAP } from '../kube-types'
 import { type Condition, upsertCondition } from './conditions'
 import { parseStringList } from './env-config'
 import { hashAgentRunImmutableSpec } from './immutable-spec'
+import { buildRunSpecContext, renderProviderOutputArtifacts, verifyJobConfigMaps } from './job-runtime'
 import type { AgentsPrimitivesStoreRef } from './mutable-state'
 import { resolveMemory } from './namespace-state'
 import { isAgentRunTemplate, reconcileAgentRunDeletion, reconcileAgentRunTemplate } from './agent-run-template'
@@ -28,6 +29,13 @@ import {
   resolveParameters,
   resolveRunRepository,
 } from './run-utils'
+import {
+  extractRunnerStatusFromJobPods,
+  mergeAgentRunArtifacts,
+  runnerStatusForAgentRunStatus,
+  runnerStatusOutputArtifacts,
+  runnerStatusToTerminalOutcome,
+} from './runner-status'
 import { cancelRuntime, parseRuntimeRef, type RuntimeRef } from './runtime-resources'
 import { resolveSystemPrompt } from './system-prompt'
 import { collectBlockedSecrets, resolveAuthSecretConfig, resolveVcsContext } from './vcs-context'
@@ -128,6 +136,7 @@ type AgentRunReconcilerDependencies = {
     namespace: string,
     runtimeConfig: Record<string, unknown>,
   ) => Promise<void>
+  verifyJobConfigMaps: typeof verifyJobConfigMaps
   isJobComplete: (job: Record<string, unknown>) => boolean
   isJobFailed: (job: Record<string, unknown>) => boolean
   recordAgentQueueDepth?: (
@@ -178,6 +187,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
     buildContractStatus,
     resolveRunnerServiceAccount,
     applyJobTtlAfterStatus,
+    verifyJobConfigMaps,
     isJobComplete,
     isJobFailed,
     recordAgentQueueDepth = () => {},
@@ -319,7 +329,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         durationMs: Date.now() - reconcileStartedAt,
       })
     }
-    const logTerminalOutcome = (outcome: 'Succeeded' | 'Failed', reason: string, message: string) => {
+    const logTerminalOutcome = (outcome: 'Succeeded' | 'Failed' | 'Cancelled', reason: string, message: string) => {
       logAgentsControllerInfo('reconcile_terminal', {
         ...logContext,
         decision: 'terminal',
@@ -665,8 +675,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       if (runtimeType === 'job') {
         workloadImage = resolveJobImage(workload)
         if (!workloadImage) {
-          const message =
-            'spec.workload.image, AGENTS_AGENT_RUNNER_IMAGE, or AGENTS_AGENT_IMAGE is required for job runtime'
+          const message = 'spec.workload.image or AGENTS_AGENT_RUNNER_IMAGE is required for job runtime'
           const updated = upsertCondition(conditions, {
             type: 'InvalidSpec',
             status: 'True',
@@ -1055,6 +1064,10 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       const vcsContext = vcsResolution.context ?? null
       const vcsStatus = vcsResolution.status ?? undefined
       const resolvedParameters = applyVcsMetadataToParameters(parameters, vcsContext)
+      const declaredArtifacts = renderProviderOutputArtifacts(
+        asRecord(provider.spec) ?? {},
+        buildRunSpecContext(agentRun, agent, implResource, resolvedParameters, memory, vcsContext),
+      )
 
       let newRuntimeRef: RuntimeRef | null = null
       try {
@@ -1112,6 +1125,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
           startedAt: nowIso(),
           conditions: upsertCondition(updated, { type: 'InProgress', status: 'True', reason: 'Running' }),
           vcs: vcsStatus ?? undefined,
+          ...(declaredArtifacts.length > 0 ? { artifacts: declaredArtifacts } : {}),
           contract: contractStatus,
           specHash: hashAgentRunImmutableSpec(agentRun),
           ...(systemPromptResolution.systemPromptHash
@@ -1149,12 +1163,14 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
     if (!runtimeRef) return
 
     if (runtimeRef.type === 'job') {
-      const job = await kube.get('job', asString(runtimeRef.name) ?? '', asString(runtimeRef.namespace) ?? namespace)
+      const jobName = asString(runtimeRef.name) ?? ''
+      const jobNamespace = asString(runtimeRef.namespace) ?? namespace
+      const job = await kube.get('job', jobName, jobNamespace)
       const runtimeRefRecord = asRecord(status.runtimeRef) ?? {}
       const jobObservedAt = asString(runtimeRefRecord.jobObservedAt)
       if (!job) {
         if (jobObservedAt) {
-          const message = `job ${asString(runtimeRef.name) ?? 'unknown'} not found`
+          const message = `job ${jobName || 'unknown'} not found`
           const updated = upsertCondition(conditions, {
             type: 'Warning',
             status: 'True',
@@ -1183,59 +1199,126 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       const succeeded = Number(jobStatus.succeeded ?? 0)
       const failed = Number(jobStatus.failed ?? 0)
       if (succeeded > 0 || isJobComplete(job)) {
-        const updated = upsertCondition(conditions, { type: 'Succeeded', status: 'True', reason: 'Completed' })
-        logTerminalOutcome('Succeeded', 'Completed', `job ${asString(runtimeRef.name) ?? 'unknown'} completed`)
+        const jobName = asString(runtimeRef.name) ?? ''
+        const jobNamespace = asString(runtimeRef.namespace) ?? namespace
+        const runnerStatus = jobName
+          ? await extractRunnerStatusFromJobPods(kube, jobNamespace, jobName, ['succeeded', 'failed', 'cancelled'])
+          : null
+        const runnerOutcome = runnerStatus ? runnerStatusToTerminalOutcome(runnerStatus) : null
+        const terminalPhase = runnerOutcome?.phase ?? 'Succeeded'
+        const terminalReason = runnerOutcome?.reason ?? 'Completed'
+        const terminalMessage = runnerOutcome?.message
+        const updated = upsertCondition(conditions, {
+          type: runnerOutcome?.conditionType ?? 'Succeeded',
+          status: 'True',
+          reason: terminalReason,
+          message: terminalMessage,
+        })
+        logTerminalOutcome(
+          terminalPhase,
+          terminalReason,
+          terminalMessage ?? `job ${asString(runtimeRef.name) ?? 'unknown'} completed`,
+        )
+        const runnerArtifacts = runnerStatus ? runnerStatusOutputArtifacts(runnerStatus) : []
         await setStatus(kube, agentRun, {
           observedGeneration,
-          phase: 'Succeeded',
-          reason: undefined,
-          message: undefined,
+          phase: terminalPhase,
+          reason: terminalPhase === 'Succeeded' ? undefined : terminalReason,
+          message: terminalPhase === 'Succeeded' ? undefined : terminalMessage,
           startedAt: asString(jobStatus.startTime) ?? asString(status.startedAt) ?? undefined,
           finishedAt: asString(jobStatus.completionTime) ?? nowIso(),
           runtimeRef,
           conditions: updated,
           vcs: asRecord(status.vcs) ?? undefined,
+          ...(runnerStatus ? { runner: runnerStatusForAgentRunStatus(runnerStatus) } : {}),
+          ...(runnerArtifacts.length > 0
+            ? { artifacts: mergeAgentRunArtifacts(status.artifacts, runnerArtifacts) }
+            : {}),
         })
         await applyJobTtlAfterStatus(kube, job, asString(runtimeRef.namespace) ?? namespace, runtimeConfig)
       } else if (failed > 0 && isJobFailed(job)) {
         const jobName = asString(runtimeRef.name) ?? ''
         const jobNamespace = asString(runtimeRef.namespace) ?? namespace
-        const failureDetail = await extractProviderAwareJobFailure(kube, jobNamespace, jobName, job, {
-          reason: 'JobFailed',
-          message: `job ${asString(runtimeRef.name) ?? 'unknown'} failed`,
-        })
+        const runnerStatus = jobName
+          ? await extractRunnerStatusFromJobPods(kube, jobNamespace, jobName, ['failed', 'cancelled'])
+          : null
+        const runnerOutcome =
+          runnerStatus && runnerStatus.status !== 'succeeded' ? runnerStatusToTerminalOutcome(runnerStatus) : null
+        const failureDetail =
+          runnerOutcome ??
+          (await extractProviderAwareJobFailure(kube, jobNamespace, jobName, job, {
+            reason: 'JobFailed',
+            message: `job ${asString(runtimeRef.name) ?? 'unknown'} failed`,
+          }))
+        const terminalMessage = failureDetail.message ?? `job ${asString(runtimeRef.name) ?? 'unknown'} failed`
         const updated = upsertCondition(conditions, {
-          type: 'Failed',
+          type: runnerOutcome?.conditionType ?? 'Failed',
           status: 'True',
           reason: failureDetail.reason,
-          message: failureDetail.message,
+          message: terminalMessage,
         })
-        logTerminalOutcome('Failed', failureDetail.reason, failureDetail.message)
+        const terminalPhase = runnerOutcome?.phase ?? 'Failed'
+        const runnerArtifacts = runnerStatus ? runnerStatusOutputArtifacts(runnerStatus) : []
+        logTerminalOutcome(terminalPhase, failureDetail.reason, terminalMessage)
         await setStatus(kube, agentRun, {
           observedGeneration,
-          phase: 'Failed',
+          phase: terminalPhase,
           reason: failureDetail.reason,
-          message: failureDetail.message,
+          message: terminalMessage,
           finishedAt: nowIso(),
           runtimeRef,
           conditions: updated,
           vcs: asRecord(status.vcs) ?? undefined,
+          ...(runnerStatus ? { runner: runnerStatusForAgentRunStatus(runnerStatus) } : {}),
+          ...(runnerArtifacts.length > 0
+            ? { artifacts: mergeAgentRunArtifacts(status.artifacts, runnerArtifacts) }
+            : {}),
         })
         await applyJobTtlAfterStatus(kube, job, asString(runtimeRef.namespace) ?? namespace, runtimeConfig)
-      } else if (!jobObservedAt) {
-        await setStatus(kube, agentRun, {
-          observedGeneration,
-          phase: 'Running',
-          reason: undefined,
-          message: undefined,
-          startedAt: asString(status.startedAt) ?? nowIso(),
-          runtimeRef: {
-            ...runtimeRef,
-            jobObservedAt: nowIso(),
-          },
-          conditions,
-          vcs: asRecord(status.vcs) ?? undefined,
-        })
+      } else {
+        const configMapVerification = await verifyJobConfigMaps(kube, job, jobNamespace)
+        if (!configMapVerification.ok) {
+          const message = `job ${jobName || 'unknown'} is missing mounted ConfigMaps: ${configMapVerification.missing.join(', ')}`
+          const updated = upsertCondition(conditions, {
+            type: 'Warning',
+            status: 'True',
+            reason: 'RuntimeConfigMapMissing',
+            message,
+          })
+          logAgentsControllerWarn('reconcile_runtime_config_missing', {
+            ...logContext,
+            decision: 'runtime_config_missing',
+            reason: 'RuntimeConfigMapMissing',
+            job: jobName,
+            missingConfigMaps: configMapVerification.missing,
+            message,
+            durationMs: Date.now() - reconcileStartedAt,
+          })
+          await setStatus(kube, agentRun, {
+            observedGeneration,
+            phase: 'Running',
+            startedAt: asString(status.startedAt) ?? nowIso(),
+            runtimeRef,
+            conditions: updated,
+            vcs: asRecord(status.vcs) ?? undefined,
+          })
+          return
+        }
+        if (!jobObservedAt) {
+          await setStatus(kube, agentRun, {
+            observedGeneration,
+            phase: 'Running',
+            reason: undefined,
+            message: undefined,
+            startedAt: asString(status.startedAt) ?? nowIso(),
+            runtimeRef: {
+              ...runtimeRef,
+              jobObservedAt: nowIso(),
+            },
+            conditions,
+            vcs: asRecord(status.vcs) ?? undefined,
+          })
+        }
       }
     }
 

@@ -100,6 +100,25 @@ type AgentsControlPlaneResourcesCurrent = {
   updated_at: Generated<Timestamp>
 }
 
+type AgentsCommsAgentMessage = {
+  id: Generated<string>
+  agent_run_uid: string | null
+  agent_run_name: string | null
+  agent_run_namespace: string | null
+  run_id: string | null
+  step_id: string | null
+  agent_id: string | null
+  role: string
+  kind: string
+  timestamp: Timestamp
+  channel: string | null
+  stage: string | null
+  content: string
+  attrs: JsonValue
+  dedupe_key: string | null
+  created_at: Generated<Timestamp>
+}
+
 export type AgentsDatabase = {
   agent_runs: AgentRuns
   agent_run_idempotency_keys: AgentRunIdempotencyKeys
@@ -107,6 +126,7 @@ export type AgentsDatabase = {
   orchestration_runs: OrchestrationRuns
   audit_events: AuditEvents
   'agents_control_plane.resources_current': AgentsControlPlaneResourcesCurrent
+  'agents_comms.agent_messages': AgentsCommsAgentMessage
 }
 
 let db: Db | null | undefined

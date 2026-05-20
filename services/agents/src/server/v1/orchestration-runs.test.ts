@@ -1,10 +1,22 @@
+import { Effect } from 'effect'
 import { describe, expect, it, vi } from 'vitest'
 
 import { RESOURCE_MAP, type KubernetesClient } from '../kube-types'
 import type { OrchestrationRunRecord } from '../primitives-store'
 
-import { postOrchestrationRunsHandler, type OrchestrationRunsApiStore } from './orchestration-runs'
-import { OrchestrationSubmitNotFoundError, submitOrchestrationRun } from './orchestration-submit'
+import {
+  getOrchestrationRunsHandler,
+  listOrchestrationRunsWithServicesEffect,
+  makeOrchestrationRunListStoreLayer,
+  postOrchestrationRunsHandler,
+  type OrchestrationRunsApiStore,
+} from './orchestration-runs'
+import {
+  makeOrchestrationSubmitLayer,
+  OrchestrationSubmitNotFoundError,
+  submitOrchestrationRun,
+  submitOrchestrationRunWithServicesEffect,
+} from './orchestration-submit'
 
 const now = new Date('2026-05-19T12:00:00.000Z')
 
@@ -83,13 +95,70 @@ const request = (body: Record<string, unknown>, headers: Record<string, string> 
   })
 
 describe('orchestration runs v1 API', () => {
+  it('lists orchestration runs through the Effect store boundary', async () => {
+    const run = makeRecord({ id: 'orchestration-run-record-2' })
+    const store = createStore({ getOrchestrationRunsByName: vi.fn(async () => [run]) })
+
+    const result = await Effect.runPromise(
+      listOrchestrationRunsWithServicesEffect('demo-orchestration').pipe(
+        Effect.provide(makeOrchestrationRunListStoreLayer(() => store)),
+      ),
+    )
+
+    expect(result).toEqual([run])
+    expect(store.getOrchestrationRunsByName).toHaveBeenCalledWith('demo-orchestration')
+    expect(store.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not let store close failures mask successful orchestration run listing', async () => {
+    const run = makeRecord({ id: 'orchestration-run-record-2' })
+    const store = createStore({
+      getOrchestrationRunsByName: vi.fn(async () => [run]),
+      close: vi.fn(async () => {
+        throw new Error('close failed after response')
+      }),
+    })
+
+    const response = await getOrchestrationRunsHandler(
+      new Request('http://agents.local/v1/orchestration-runs?orchestrationId=demo-orchestration'),
+      { storeFactory: () => store },
+    )
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({
+      ok: true,
+      runs: [{ ...run, createdAt: now.toISOString(), updatedAt: now.toISOString() }],
+    })
+    expect(store.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes the store when readiness fails during orchestration run listing', async () => {
+    const store = createStore({
+      ready: Promise.reject(new Error('database boot failed')),
+      getOrchestrationRunsByName: vi.fn(async () => []),
+    })
+
+    const response = await getOrchestrationRunsHandler(
+      new Request('http://agents.local/v1/orchestration-runs?orchestrationId=demo-orchestration'),
+      { storeFactory: () => store },
+    )
+
+    expect(response.status).toBe(503)
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'orchestration run storage store-ready failed: database boot failed',
+    })
+    expect(store.getOrchestrationRunsByName).not.toHaveBeenCalled()
+    expect(store.close).toHaveBeenCalledTimes(1)
+  })
+
   it('submits an orchestration run through the Effect boundary', async () => {
     const store = createStore()
     const kube = createKube()
+    const idGenerator = vi.fn(() => 'policy-allowed-id')
 
     const response = await postOrchestrationRunsHandler(
       request({ orchestrationRef: { name: 'demo-orchestration' }, namespace: 'agents' }),
-      { storeFactory: () => store, kubeClient: kube },
+      { storeFactory: () => store, kubeClient: kube, idGenerator },
     )
 
     expect(response.status).toBe(201)
@@ -104,6 +173,86 @@ describe('orchestration runs v1 API', () => {
       expect.objectContaining({
         kind: 'OrchestrationRun',
         spec: expect.objectContaining({ deliveryId: 'delivery-1' }),
+      }),
+    )
+    expect(store.createAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityType: 'PolicyDecision',
+        entityId: 'policy-allowed-id',
+        eventType: 'policy.allowed',
+      }),
+    )
+    expect(store.close).toHaveBeenCalled()
+  })
+
+  it('rejects orchestration submissions without an idempotency key before opening storage', async () => {
+    const store = createStore()
+    const response = await postOrchestrationRunsHandler(
+      request(
+        {
+          orchestrationRef: { name: 'demo-orchestration' },
+          namespace: 'agents',
+        },
+        { 'idempotency-key': '' },
+      ),
+      { storeFactory: () => store, kubeClient: createKube() },
+    )
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({ ok: false, error: 'Idempotency-Key header is required' })
+    expect(store.createOrchestrationRun).not.toHaveBeenCalled()
+    expect(store.close).not.toHaveBeenCalled()
+  })
+
+  it('rejects malformed JSON before opening storage', async () => {
+    const store = createStore()
+    const response = await postOrchestrationRunsHandler(
+      new Request('http://agents.local/v1/orchestration-runs', {
+        body: '{',
+        headers: { 'content-type': 'application/json', 'idempotency-key': 'delivery-1' },
+        method: 'POST',
+      }),
+      { storeFactory: () => store, kubeClient: createKube() },
+    )
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({ ok: false })
+    expect(store.createOrchestrationRun).not.toHaveBeenCalled()
+    expect(store.close).not.toHaveBeenCalled()
+  })
+
+  it('provides submit dependencies through an Effect service layer', async () => {
+    const store = createStore()
+    const kube = createKube()
+    const idGenerator = vi.fn(() => 'policy-decision-1')
+    const resolveRepositoryFromParameters = vi.fn(() => 'proompteng/lab')
+
+    const result = await Effect.runPromise(
+      submitOrchestrationRunWithServicesEffect({
+        deliveryId: 'delivery-1',
+        orchestrationRef: { name: 'demo-orchestration' },
+        namespace: 'agents',
+        parameters: { repo: 'ignored' },
+      }).pipe(
+        Effect.provide(
+          makeOrchestrationSubmitLayer({
+            storeFactory: () => store,
+            kubeClient: kube,
+            idGenerator,
+            resolveRepositoryFromParameters,
+          }),
+        ),
+      ),
+    )
+
+    expect(result.idempotent).toBe(false)
+    expect(resolveRepositoryFromParameters).toHaveBeenCalledWith({ repo: 'ignored' })
+    expect(idGenerator).toHaveBeenCalledTimes(1)
+    expect(store.createAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityType: 'PolicyDecision',
+        entityId: 'policy-decision-1',
+        context: expect.objectContaining({ repository: 'proompteng/lab' }),
       }),
     )
     expect(store.close).toHaveBeenCalled()
@@ -138,6 +287,7 @@ describe('orchestration runs v1 API', () => {
   it('returns 403 for typed policy denial and still records the denied audit event', async () => {
     const store = createStore()
     const kube = createKube()
+    const idGenerator = vi.fn(() => 'policy-denied-id')
 
     const response = await postOrchestrationRunsHandler(
       request({
@@ -148,6 +298,7 @@ describe('orchestration runs v1 API', () => {
       {
         storeFactory: () => store,
         kubeClient: kube,
+        idGenerator,
         validatePolicies: vi.fn(async () => {
           throw new Error('budget daily-budget exceeded')
         }),
@@ -160,10 +311,42 @@ describe('orchestration runs v1 API', () => {
     expect(body.error).toContain('budget daily-budget exceeded')
     expect(store.createAuditEvent).toHaveBeenCalledWith(
       expect.objectContaining({
+        entityId: 'policy-denied-id',
         eventType: 'policy.denied',
         details: expect.objectContaining({
           reason: expect.stringContaining('budget daily-budget exceeded'),
         }),
+      }),
+    )
+    expect(kube.apply).not.toHaveBeenCalled()
+  })
+
+  it('keeps allowed-audit storage failures as storage failures instead of policy denials', async () => {
+    const store = createStore({
+      createAuditEvent: vi.fn(async (input) => {
+        if (input.eventType === 'policy.allowed') {
+          throw new Error('audit table unavailable')
+        }
+        return {}
+      }),
+    })
+    const kube = createKube()
+    const idGenerator = vi.fn(() => 'policy-allowed-id')
+
+    const response = await postOrchestrationRunsHandler(
+      request({ orchestrationRef: { name: 'demo-orchestration' }, namespace: 'agents' }),
+      { storeFactory: () => store, kubeClient: kube, idGenerator },
+    )
+
+    expect(response.status).toBe(503)
+    const body = (await response.json()) as { error?: string }
+    expect(body.error).toBe('orchestration run storage create-audit-event failed: audit table unavailable')
+    expect(body.error).not.toContain('policy denied')
+    expect(store.createAuditEvent).toHaveBeenCalledTimes(1)
+    expect(store.createAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityId: 'policy-allowed-id',
+        eventType: 'policy.allowed',
       }),
     )
     expect(kube.apply).not.toHaveBeenCalled()

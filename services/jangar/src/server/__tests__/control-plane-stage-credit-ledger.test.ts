@@ -12,7 +12,7 @@ import type {
   StageClearanceStage,
   TorghutConsumerEvidenceStatus,
   WorkflowsReliabilityStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import { buildStageCreditLedger, STAGE_CREDIT_LEDGER_DESIGN_ARTIFACT } from '~/server/control-plane-stage-credit-ledger'
 import type { AgentRunIngestionStatus } from '~/server/control-plane-status-types'
 

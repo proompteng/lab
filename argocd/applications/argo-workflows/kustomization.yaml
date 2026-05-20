@@ -4,8 +4,6 @@ resources:
   - rbac.yaml
   - codex-workflow-serviceaccount.yaml
   - codex-workflow-rbac.yaml
-  - codex-docker-policy.yaml
-  - codex-implementation-semaphore.yaml
   - ingressroute.yaml
   - middleware-workflows-canonical-host.yaml
   - ingressroute-private.yaml
@@ -13,20 +11,6 @@ resources:
   - alloy-rbac.yaml
   - alloy-configmap.yaml
   - alloy-deployment.yaml
-  - codex-research-workflow.yaml
-  - codex-research-rbac.yaml
-  - codex-cluster-admin.yaml
-  - jangar-embeddings-config.yaml
-  - jangar-primitives-echo-workflowtemplate.yaml
-  - jangar-approval-gate-workflowtemplate.yaml
-  - jangar-memory-op-workflowtemplate.yaml
-  - jangar-signal-wait-workflowtemplate.yaml
-  - jangar-checkpoint-workflowtemplate.yaml
-  - jangar-sub-orchestration-workflowtemplate.yaml
-images:
-  - name: registry.ide-newton.ts.net/lab/jangar
-    newTag: "e8f2e312"
-    digest: sha256:ad06328743c995dfe74a950bcb967ef86010af7c9c3522624efd8fed765da1bf
 helmCharts:
   - name: argo-workflows
     repo: https://argoproj.github.io/argo-helm
@@ -37,6 +21,7 @@ helmCharts:
       controller:
         workflowNamespaces:
           - argo-workflows
+          - agents
           - jangar
         workflowDefaults:
           spec:
@@ -83,18 +68,3 @@ helmCharts:
             name: argo-workflows
             key: AWS_SECRET_ACCESS_KEY
           useSDKCreds: false
-  - name: argo-events
-    repo: https://argoproj.github.io/argo-helm
-    version: 2.4.21
-    releaseName: argo-events
-    namespace: argo-workflows
-    valuesInline:
-      singleNamespace: true
-      controller:
-        metricsConfigMap: ""
-      eventsource:
-        serviceAccount:
-          create: true
-      sensor:
-        serviceAccount:
-          create: false

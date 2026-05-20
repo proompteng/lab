@@ -1,19 +1,20 @@
 import { createFileRoute } from '@tanstack/react-router'
 import {
   type AgentsControllerHealthSnapshot,
+  buildAgentsDependencySummary,
+  getAgentsControlPlaneStatusSnapshot,
   isControllerHealthReady,
-  buildAgentsRuntimeReadyResponse,
   getAgentsReadySnapshot,
   uniqueStrings,
-} from '~/server/agents-control-plane-client'
+} from '@proompteng/agent-contracts/agents-ready'
 
 import type {
   ControlPlaneControllerWitnessQuorum,
   ExecutionTrustStatus,
   SourceServingContractVerdictExchange,
   TorghutRevenueRepairQueueItem,
-} from '~/data/agents-control-plane'
-import { isAgentsRuntimeService, resolveRuntimeServiceName } from '~/server/runtime-identity'
+} from '~/server/control-plane-status-types'
+import { resolveRuntimeServiceName } from '~/server/runtime-identity'
 import { buildControllerIngestionSettlement } from '~/server/control-plane-controller-ingestion-settlement'
 import { buildRuntimeAdmissionSnapshot, findAdmissionPassport } from '~/server/control-plane-runtime-admission'
 import {
@@ -25,7 +26,7 @@ import { buildRepairBidAdmissionState } from '~/server/control-plane-repair-bid-
 import { getGithubReviewIngestPressureSummary } from '~/server/github-review-ingest'
 import { getMemoryProviderHealth } from '~/server/memory-provider-health'
 import { getMetricsSinkPressureSummary } from '~/server/metrics'
-import { buildExecutionTrust } from '~/server/control-plane-status'
+import { buildExecutionTrust } from '~/server/control-plane-execution-trust'
 import {
   resolveTorghutConsumerEvidence,
   type TorghutConsumerEvidenceStatus,
@@ -37,15 +38,8 @@ import {
   resolveRepairSlotEscrowMode,
 } from '~/server/control-plane-repair-slot-escrow'
 import { buildRevenueRepairSettlementCustody } from '~/server/control-plane-revenue-repair-settlement-custody'
-import { buildAgentRunIngestionStatus } from '~/server/control-plane-serving-process-status'
 import { buildVerifyTrustForeclosureBoard } from '~/server/control-plane-verify-trust-foreclosure'
 import { buildMaterialEvidenceSettlementSpine } from '~/server/control-plane-material-evidence-settlement'
-import type {
-  AgentRunIngestionStatus,
-  ControlPlaneRolloutHealth,
-  DatabaseStatus,
-} from '~/server/control-plane-status-types'
-import { getWatchReliabilitySummary } from '~/server/control-plane-watch-reliability'
 
 const buildReadyControllerReadiness = (
   name: string,
@@ -178,16 +172,6 @@ const buildBusinessEvidence = (
 
 const readyPathFreshUntil = (now: Date) => new Date(now.getTime() + 60_000).toISOString()
 
-const buildReadyPathRolloutHealth = (ready: boolean): ControlPlaneRolloutHealth => ({
-  status: ready ? 'unknown' : 'degraded',
-  observed_deployments: 0,
-  degraded_deployments: ready ? 0 : 1,
-  deployments: [],
-  message: ready
-    ? 'rollout proof unavailable on /ready hot path; use control-plane status for full proof'
-    : 'serving readiness degraded on /ready hot path',
-})
-
 const buildReadyPathSourceServingExchange = (now: Date, namespace: string): SourceServingContractVerdictExchange => ({
   mode: 'observe',
   design_artifact:
@@ -211,149 +195,8 @@ const buildReadyPathSourceServingExchange = (now: Date, namespace: string): Sour
   blocked_action_classes: [],
   reason_codes: ['source_serving_contract_unavailable_on_ready_hot_path'],
   verdicts: [],
-  rollback_target: 'use /api/agents/control-plane/status for full source-serving rollout proof',
+  rollback_target: 'use /v1/control-plane/status for full source-serving rollout proof',
 })
-
-const buildReadyPathDatabaseStatus = (): DatabaseStatus => ({
-  configured: false,
-  connected: false,
-  status: 'disabled',
-  message: 'database proof unavailable on /ready hot path; use control-plane status for full proof',
-  latency_ms: 0,
-  migration_consistency: {
-    status: 'unknown',
-    migration_table: null,
-    registered_count: 0,
-    applied_count: 0,
-    unapplied_count: 0,
-    unexpected_count: 0,
-    latest_registered: null,
-    latest_applied: null,
-    missing_migrations: [],
-    unexpected_migrations: [],
-    message: 'database migration proof unavailable on /ready hot path',
-  },
-})
-
-const readyPathWitnessId = (namespace: string, surface: string) => `witness:${surface}:${namespace}:ready-hot-path`
-
-const buildReadyPathControllerWitness = (input: {
-  now: Date
-  namespace: string
-  agentsController: AgentsControllerHealthSnapshot
-  agentRunIngestion: AgentRunIngestionStatus
-  watchReliability: ReturnType<typeof getWatchReliabilitySummary>
-}): ControlPlaneControllerWitnessQuorum => {
-  const expiresAt = readyPathFreshUntil(input.now)
-  const deploymentAvailable = input.agentsController.enabled && input.agentsController.started
-  const watchEpochCurrent = input.watchReliability.status === 'healthy'
-  const controllerSelfReportCurrent = deploymentAvailable && input.agentRunIngestion.status === 'healthy'
-  const decision =
-    input.agentRunIngestion.status === 'degraded'
-      ? 'hold_material'
-      : controllerSelfReportCurrent
-        ? 'allow'
-        : deploymentAvailable && watchEpochCurrent
-          ? 'repair_only'
-          : 'hold_material'
-  const reasonCodes = uniqueStrings([
-    ...(deploymentAvailable ? [] : ['controller_deployment_unavailable_on_ready_hot_path']),
-    ...(watchEpochCurrent ? [] : ['watch_epoch_not_current_on_ready_hot_path']),
-    ...(controllerSelfReportCurrent ? [] : ['controller_self_report_unavailable_on_ready_hot_path']),
-    ...(input.agentRunIngestion.status === 'healthy' ? [] : [`agentrun_ingestion_${input.agentRunIngestion.status}`]),
-  ])
-  const witnessRefs = [
-    readyPathWitnessId(input.namespace, 'serving_process'),
-    readyPathWitnessId(input.namespace, 'watch_epoch'),
-    readyPathWitnessId(input.namespace, 'agentrun_ingestion'),
-  ]
-
-  return {
-    mode: 'shadow',
-    design_artifact:
-      'docs/agents/designs/116-jangar-controller-witness-quorum-and-capital-activation-receipts-2026-05-06.md',
-    quorum_id: `controller-witness:${input.namespace}:ready-hot-path`,
-    generated_at: input.now.toISOString(),
-    expires_at: expiresAt,
-    namespace: input.namespace,
-    decision,
-    reason_codes: reasonCodes,
-    message: controllerSelfReportCurrent
-      ? 'ready hot path sees controller ingestion as current'
-      : 'ready hot path cannot prove full controller ingestion; use control-plane status for full proof',
-    witness_refs: witnessRefs,
-    deployment_available: deploymentAvailable,
-    watch_epoch_current: watchEpochCurrent,
-    controller_self_report_current: controllerSelfReportCurrent,
-    witnesses: [
-      {
-        witness_id: witnessRefs[0],
-        generated_at: input.now.toISOString(),
-        expires_at: expiresAt,
-        namespace: input.namespace,
-        controller_surface: 'serving_process',
-        deployment_ref: null,
-        pod_uid: null,
-        image_ref: null,
-        leader_identity: null,
-        controller_started: input.agentsController.started,
-        deployment_available: deploymentAvailable,
-        watch_epoch_id: null,
-        ingestion_epoch_id: null,
-        last_watch_event_at: null,
-        last_resync_at: null,
-        observed_run_count: null,
-        untouched_run_count: null,
-        decision: deploymentAvailable ? 'allow' : 'repair_only',
-        reason_codes: deploymentAvailable ? [] : ['controller_deployment_unavailable_on_ready_hot_path'],
-      },
-      {
-        witness_id: witnessRefs[1],
-        generated_at: input.now.toISOString(),
-        expires_at: expiresAt,
-        namespace: input.namespace,
-        controller_surface: 'watch_epoch',
-        deployment_ref: null,
-        pod_uid: null,
-        image_ref: null,
-        leader_identity: null,
-        controller_started: null,
-        deployment_available: null,
-        watch_epoch_id: `watch:${input.namespace}:ready-hot-path`,
-        ingestion_epoch_id: null,
-        last_watch_event_at: input.watchReliability.streams[0]?.last_seen_at ?? null,
-        last_resync_at: null,
-        observed_run_count: input.watchReliability.total_events,
-        untouched_run_count: null,
-        decision: watchEpochCurrent ? 'allow' : 'hold_material',
-        reason_codes: watchEpochCurrent ? [] : ['watch_epoch_not_current_on_ready_hot_path'],
-      },
-      {
-        witness_id: witnessRefs[2],
-        generated_at: input.now.toISOString(),
-        expires_at: expiresAt,
-        namespace: input.namespace,
-        controller_surface: 'agentrun_ingestion',
-        deployment_ref: null,
-        pod_uid: null,
-        image_ref: null,
-        leader_identity: null,
-        controller_started: null,
-        deployment_available: null,
-        watch_epoch_id: null,
-        ingestion_epoch_id: `ingestion:${input.namespace}:ready-hot-path`,
-        last_watch_event_at: input.agentRunIngestion.last_watch_event_at,
-        last_resync_at: input.agentRunIngestion.last_resync_at,
-        observed_run_count: null,
-        untouched_run_count: input.agentRunIngestion.untouched_run_count,
-        decision: input.agentRunIngestion.status === 'healthy' ? 'allow' : 'hold_material',
-        reason_codes:
-          input.agentRunIngestion.status === 'healthy' ? [] : [`agentrun_ingestion_${input.agentRunIngestion.status}`],
-      },
-    ],
-    rollback_target: 'use /api/agents/control-plane/status for full controller witness proof',
-  }
-}
 
 const executionTrustStatus = async (namespaces: string[]) => {
   const now = new Date()
@@ -402,15 +245,15 @@ export const getReadyHandler = async () => {
   const agentsController = agentsReady.agentsController
   const orchestrationController = agentsReady.orchestrationController
   const supportingController = agentsReady.supportingController
-  if (isAgentsRuntimeService()) {
-    return buildAgentsRuntimeReadyResponse(agentsReady)
-  }
   const namespaces = agentsReady.namespaces.length ? agentsReady.namespaces : ['agents']
+  const primaryNamespace = namespaces[0] ?? 'agents'
+  const agentsControlPlaneStatus = await getAgentsControlPlaneStatusSnapshot(primaryNamespace)
+  const agentsStatus = agentsControlPlaneStatus.status
   const trust = await executionTrustStatus(namespaces)
   const torghutConsumerEvidence = await resolveTorghutConsumerEvidence(now)
   const repairBidAdmission = buildRepairBidAdmissionState({
     now,
-    namespace: namespaces[0] ?? 'agents',
+    namespace: primaryNamespace,
     repository: process.env.CODEX_REPOSITORY ?? process.env.CODEX_REPO_SLUG,
     branch: process.env.CODEX_BRANCH,
     swarmName: process.env.SWARM_NAME,
@@ -426,19 +269,21 @@ export const getReadyHandler = async () => {
   const evidencePressureLedger = isEvidencePressureLedgerEnabled()
     ? buildEvidencePressureLedger({
         now,
-        namespace: namespaces[0] ?? 'agents',
-        watchReliability: getWatchReliabilitySummary(),
+        namespace: primaryNamespace,
+        watchReliability: agentsStatus.watch_reliability,
+        controllerWitness: agentsStatus.control_plane_controller_witness as ControlPlaneControllerWitnessQuorum,
         controllerReadiness: [
           buildReadyControllerReadiness('agents-controller', agentsController),
           buildReadyControllerReadiness('orchestration-controller', orchestrationController),
           buildReadyControllerReadiness('supporting-controller', supportingController),
         ],
+        rolloutHealth: agentsStatus.rollout_health,
+        database: agentsStatus.database,
         metricsSink: getMetricsSinkPressureSummary(),
         githubIngest: getGithubReviewIngestPressureSummary(),
         torghutConsumerEvidence: torghutConsumerEvidence.status,
       })
     : null
-  const watchReliability = getWatchReliabilitySummary()
   const servingPassport = findAdmissionPassport({
     admissionPassports: runtimeAdmission.admissionPassports,
     consumerClass: 'serving',
@@ -461,32 +306,28 @@ export const getReadyHandler = async () => {
     isControllerHealthReady(agentsController) &&
     isControllerHealthReady(orchestrationController) &&
     isControllerHealthReady(supportingController)
-  const agentsControllerHealthy = !agentsReady.reasonCodes.includes('agentrun_ingestion_not_ready')
+  const agentsControllerHealthy = agentsReady.agentRunIngestion.every((status) => status.status !== 'degraded')
   const servingPassportReady =
     servingPassport !== undefined && servingPassport.decision !== 'block' && servingPassport.decision !== 'hold'
   const memoryProviderReady = memoryProvider.status !== 'blocked'
-  const ready = controllersOk && agentsReady.httpReady && memoryProviderReady
-  const status =
-    ready && agentsReady.status === 'ok' && agentsControllerHealthy && servingPassportReady ? 'ok' : 'degraded'
-  const readyPathRolloutHealth = buildReadyPathRolloutHealth(ready)
-  const readyPathSourceServingExchange = buildReadyPathSourceServingExchange(now, namespaces[0] ?? 'agents')
-  const readyPathAgentRunIngestion = buildAgentRunIngestionStatus(
-    namespaces[0] ?? 'agents',
-    agentsController,
-    agentsReady.reasonCodes,
-  )
-  const readyPathControllerWitness = buildReadyPathControllerWitness({
-    now,
-    namespace: namespaces[0] ?? 'agents',
-    agentsController,
-    agentRunIngestion: readyPathAgentRunIngestion,
-    watchReliability,
+  const agentsDependency = buildAgentsDependencySummary({
+    agentsReady,
+    agentsControlPlaneStatus,
+    controllersOk,
+    agentsControllerHealthy,
   })
-  const readyPathDatabase = buildReadyPathDatabaseStatus()
+  const ready = memoryProviderReady
+  const status = ready && servingPassportReady && agentsDependency.status === 'healthy' ? 'ok' : 'degraded'
+  const readyPathRolloutHealth = agentsStatus.rollout_health
+  const readyPathSourceServingExchange = buildReadyPathSourceServingExchange(now, primaryNamespace)
+  const readyPathAgentRunIngestion = agentsStatus.agentrun_ingestion
+  const readyPathControllerWitness =
+    agentsStatus.control_plane_controller_witness as ControlPlaneControllerWitnessQuorum
+  const readyPathDatabase = agentsStatus.database
   const revenueRepairSettlementCustody = buildRevenueRepairSettlementCustody(
     {
       now,
-      namespace: namespaces[0] ?? 'agents',
+      namespace: primaryNamespace,
       rolloutHealth: readyPathRolloutHealth,
       sourceServingContractVerdictExchange: readyPathSourceServingExchange,
       stageCreditLedger: null,
@@ -497,19 +338,21 @@ export const getReadyHandler = async () => {
   const verifyTrustForeclosureBoard = buildVerifyTrustForeclosureBoard(
     {
       now,
-      namespace: namespaces[0] ?? 'agents',
+      namespace: primaryNamespace,
       executionTrust: trust,
       sourceServingContractVerdictExchange: readyPathSourceServingExchange,
       torghutConsumerEvidence: torghutConsumerEvidence.status,
       revenueRepairSettlementCustody,
       rolloutHealth: readyPathRolloutHealth,
+      controllerWitness: readyPathControllerWitness,
+      database: readyPathDatabase,
       serviceHealth: ready ? status : 'down',
     },
     'observe',
   )
   const materialGateDigest = buildMaterialGateDigest({
     now,
-    namespace: namespaces[0] ?? 'agents',
+    namespace: primaryNamespace,
     servingReadiness: ready ? status : 'down',
     businessState: businessEvidence.business_state,
     revenueReady: businessEvidence.revenue_ready,
@@ -523,7 +366,7 @@ export const getReadyHandler = async () => {
   const repairSlotEscrow = isRepairSlotEscrowEnabled()
     ? buildRepairSlotEscrow({
         now,
-        namespace: namespaces[0] ?? 'agents',
+        namespace: primaryNamespace,
         torghutConsumerEvidence: torghutConsumerEvidence.status,
         materialReentryClearinghouse: null,
         stageCreditLedger: null,
@@ -533,7 +376,7 @@ export const getReadyHandler = async () => {
     : null
   const controllerIngestionSettlement = buildControllerIngestionSettlement({
     now,
-    namespace: namespaces[0] ?? 'agents',
+    namespace: primaryNamespace,
     servingReadiness: ready ? status : 'down',
     controllerWitness: readyPathControllerWitness,
     agentRunIngestion: readyPathAgentRunIngestion,
@@ -547,7 +390,7 @@ export const getReadyHandler = async () => {
   })
   const materialEvidenceSettlementSpine = buildMaterialEvidenceSettlementSpine({
     now,
-    namespace: namespaces[0] ?? 'agents',
+    namespace: primaryNamespace,
     servingReadiness: ready ? status : 'down',
     executionTrust: trust,
     projectionWatermarks,
@@ -572,6 +415,17 @@ export const getReadyHandler = async () => {
     agentsController,
     orchestrationController,
     supportingController,
+    agents_control_plane_status: {
+      available: agentsControlPlaneStatus.available,
+      http_status: agentsControlPlaneStatus.httpStatus,
+      error: agentsControlPlaneStatus.error,
+    },
+    agents_dependency: agentsDependency,
+    watch_reliability: agentsStatus.watch_reliability,
+    agentrun_ingestion: readyPathAgentRunIngestion,
+    control_plane_controller_witness: readyPathControllerWitness,
+    database: readyPathDatabase,
+    rollout_health: readyPathRolloutHealth,
     execution_trust: trust,
     ...businessEvidence,
     torghut_consumer_evidence: torghutConsumerEvidence.status,

@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto'
 
+import { SWARM_STAGE_LABEL } from '@proompteng/agent-contracts/swarm-contracts'
+
 import type {
   ActionSloBudgetActionClass,
   ControlPlaneControllerWitnessQuorum,
@@ -17,10 +19,10 @@ import type {
   StageLaunchTicket,
   StageLaunchTicketDecision,
   WorkflowsReliabilityStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import type { FailureDomainKubernetesEvidence } from '~/server/control-plane-failure-domain-leases'
+import type { FailureDomainEvent } from '~/server/control-plane-failure-domain-leases'
 import type { ControlPlaneRolloutHealth, RuntimeAdapterStatus } from '~/server/control-plane-status-types'
-import type { KubeGatewayEvent } from '~/server/kube-gateway'
 
 export const ROLLOUT_PROOF_PASSPORT_DESIGN_ARTIFACT =
   'docs/agents/designs/191-jangar-rollout-proof-passports-and-runner-capacity-futures-2026-05-13.md'
@@ -123,27 +125,27 @@ const workflowTimeoutReasons = (workflows: WorkflowsReliabilityStatus) =>
     .map((entry) => normalizeReason(entry.reason))
     .filter((reason) => reason.includes('timeout') || reason.includes('workflowsteptimedout'))
 
-const eventTimestampMs = (event: KubeGatewayEvent) =>
+const eventTimestampMs = (event: FailureDomainEvent) =>
   timestampMs(event.eventTime) ?? timestampMs(event.lastTimestamp) ?? timestampMs(event.firstTimestamp)
 
-const eventEvidenceRef = (event: KubeGatewayEvent) =>
+const eventEvidenceRef = (event: FailureDomainEvent) =>
   `event:${event.metadata.namespace ?? event.involvedObject.namespace ?? 'unknown'}:${event.metadata.name}`
 
-const eventText = (event: KubeGatewayEvent) =>
+const eventText = (event: FailureDomainEvent) =>
   normalizeReason(
     [event.reason, event.message, event.involvedObject.kind, event.involvedObject.name, event.metadata.name]
       .filter(Boolean)
       .join(' '),
   )
 
-const eventMatchesStage = (event: KubeGatewayEvent, stage: StageClearanceStage) => {
+const eventMatchesStage = (event: FailureDomainEvent, stage: StageClearanceStage) => {
   if (stage === 'serve' || stage === 'repair' || stage === 'deployer' || stage === 'torghut') return false
   const raw = [
     event.reason,
     event.message,
     event.involvedObject.name,
     event.metadata.name,
-    event.metadata.labels?.['swarm.proompteng.ai/stage'],
+    event.metadata.labels?.[SWARM_STAGE_LABEL],
   ]
     .filter(Boolean)
     .join(' ')
@@ -158,7 +160,7 @@ const recentStageEvents = (input: RunnerCapacityFutureInput, stage: StageClearan
     return eventMatchesStage(event, stage)
   })
 
-const schedulingReasonCodes = (events: KubeGatewayEvent[]) => {
+const schedulingReasonCodes = (events: FailureDomainEvent[]) => {
   const reasons: string[] = []
   for (const event of events) {
     const text = eventText(event)

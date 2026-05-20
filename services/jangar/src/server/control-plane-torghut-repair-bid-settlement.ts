@@ -1,4 +1,4 @@
-import type { TorghutRepairBidSettlementLot } from '~/data/agents-control-plane'
+import type { TorghutRepairBidSettlementLot } from '~/server/control-plane-status-types'
 import {
   normalizeBoolean,
   normalizeNonEmpty,

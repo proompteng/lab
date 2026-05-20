@@ -21,7 +21,7 @@ See also:
 - Conversion strategy when moving beyond v1alpha1 (webhook design + deprecation policy).
 - Runtime adapter contract: submit/status/cancel inputs and error codes.
 - Agent-runner spec contract: required fields, workspace layout, artifact paths.
-- Control-plane status endpoint (gRPC + `/api/agents/control-plane/status`) for controller/runtime/database health.
+- Control-plane status endpoint (gRPC + `/v1/control-plane/status`) for controller/runtime/database health.
 - gRPC is optional in production (agentctl works via Kubernetes API; gRPC is additive).
 
 ## Reliability & Scaling

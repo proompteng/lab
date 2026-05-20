@@ -76,7 +76,7 @@ Notes:
 - API responses include the normalized `status.phase` to support client filtering and display.
 - When multiple phases are provided (comma-separated), matching is OR (any listed phase).
 
-### 2) Control-plane UI API (`/api/agents/control-plane/resources`)
+### 2) Control-plane UI API (`/v1/<resource>/resources`)
 
 Standardize the query parameters for the UI-facing resources endpoint:
 
@@ -88,8 +88,7 @@ Standardize the query parameters for the UI-facing resources endpoint:
 - `limit` (optional)
 - `stream` (optional; watch)
 
-Behavior matches the `/v1/*` contract. The endpoint should accept both `labelSelector` and the legacy
-`label_selector` to keep existing clients working.
+Behavior matches the Agents `/v1/*` contract. The endpoint should accept `labelSelector`.
 
 ### 3) Validation and error handling
 
@@ -172,7 +171,7 @@ Behavior:
 ## Rollout plan
 
 1. Add label/phase handling to `/v1/*` list endpoints and document them.
-2. Standardize and validate query params on `/api/agents/control-plane/resources`.
+2. Standardize and validate query params on `/v1/<resource>/resources`.
 3. Update agentctl flags and CLI help text.
 4. Update control-plane UI filter components and URL handling.
 5. Run a one-time reconciliation to backfill `metadata.labels` where needed.

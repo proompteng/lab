@@ -3,6 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
+    argocd.argoproj.io/sync-wave: "-10"
     controller-gen.kubebuilder.io/version: v0.20.0
   name: agentproviders.agents.proompteng.ai
 spec:
@@ -85,6 +86,23 @@ spec:
                       type: string
                   required:
                   - name
+                  type: object
+                type: array
+              secretEnv:
+                items:
+                  properties:
+                    key:
+                      type: string
+                    name:
+                      type: string
+                    optional:
+                      type: boolean
+                    secretName:
+                      type: string
+                  required:
+                  - key
+                  - name
+                  - secretName
                   type: object
                 type: array
             required:

@@ -14,9 +14,11 @@ from app.trading.llm.dspy_compile import orchestrate_dspy_agentrun_workflow
 
 
 def _default_base_url() -> str:
+    if settings.agents_base_url:
+        return settings.agents_base_url.rstrip("/")
     if settings.jangar_base_url:
         return settings.jangar_base_url.rstrip("/")
-    return "http://jangar.jangar.svc.cluster.local"
+    return "http://agents.agents.svc.cluster.local"
 
 
 def _default_universe_ref() -> str:
@@ -164,18 +166,18 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "--base-url", default=_default_base_url(), help="Jangar base URL"
+        "--base-url", default=_default_base_url(), help="Agents base URL"
     )
     parser.add_argument(
         "--workflow-mode",
         choices=["local", "agentrun"],
         default="local",
-        help="Execute DSPy lanes locally or via Jangar AgentRuns.",
+        help="Execute DSPy lanes locally or via Agents AgentRuns.",
     )
     parser.add_argument(
         "--auth-token",
-        default=settings.jangar_api_key or "",
-        help="Optional bearer token for Jangar /v1/agent-runs",
+        default=settings.agents_api_key or settings.jangar_api_key or "",
+        help="Optional bearer token for Agents /v1/agent-runs",
     )
     parser.add_argument(
         "--timeout-seconds",

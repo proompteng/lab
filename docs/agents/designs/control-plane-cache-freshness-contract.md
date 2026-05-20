@@ -6,7 +6,7 @@ Docs index: [README](../README.md)
 
 ## Current State
 
-- `/api/agents/control-plane/resource` and `/api/agents/control-plane/resources` read from `agents_control_plane.resources_current` when `JANGAR_CONTROL_PLANE_CACHE_ENABLED` is on.
+- `/api/agents/control-plane/resource` and `/api/agents/control-plane/resources` read from `agents_control_plane.resources_current` when `AGENTS_CONTROL_PLANE_CACHE_ENABLED` is on.
 - Cache responses now return metadata via `cacheStateToResponse()` when cache is used.
 - If the database cache lags, clients now receive freshness flags (`fresh`/`stale`) and age data.
 - Stale behavior is explicit and policy-driven:

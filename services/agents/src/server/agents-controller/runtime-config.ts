@@ -69,9 +69,6 @@ export type AgentRunnerDefaultsConfig = {
   serviceAccount: string | null
   jobTtlSeconds: number
   logRetentionSeconds: number
-  natsAuthSecretName: string | null
-  natsAuthUsernameKey: string
-  natsAuthPasswordKey: string
   backoffLimit: number | null
   priorityClassName: string | null
   schedulerName: string | null
@@ -167,11 +164,6 @@ export const resolveAgentRunnerDefaultsConfig = (env: EnvSource = process.env): 
       readAgentsEnv(env, 'AGENTS_AGENT_RUNNER_LOG_RETENTION_SECONDS'),
       DEFAULT_RUNNER_LOG_RETENTION_SECONDS,
     ),
-    natsAuthSecretName: normalizeNonEmpty(readAgentsEnv(env, 'AGENTS_AGENT_RUNNER_NATS_AUTH_SECRET_NAME')),
-    natsAuthUsernameKey:
-      normalizeNonEmpty(readAgentsEnv(env, 'AGENTS_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY')) ?? 'username',
-    natsAuthPasswordKey:
-      normalizeNonEmpty(readAgentsEnv(env, 'AGENTS_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY')) ?? 'password',
     backoffLimit: normalizeNonEmpty(readAgentsEnv(env, 'AGENTS_AGENT_RUNNER_BACKOFF_LIMIT'))
       ? parsePositiveInt(readAgentsEnv(env, 'AGENTS_AGENT_RUNNER_BACKOFF_LIMIT'), 0)
       : null,
@@ -184,10 +176,7 @@ export const resolveAgentRunnerDefaultsConfig = (env: EnvSource = process.env): 
     podSecurityContext,
     imagePullSecrets: Array.isArray(imagePullSecrets) ? imagePullSecrets : null,
     resources,
-    defaultRunnerImage:
-      normalizeNonEmpty(readAgentsEnv(env, 'AGENTS_AGENT_RUNNER_IMAGE')) ??
-      normalizeNonEmpty(readAgentsEnv(env, 'AGENTS_AGENT_IMAGE')) ??
-      null,
+    defaultRunnerImage: normalizeNonEmpty(readAgentsEnv(env, 'AGENTS_AGENT_RUNNER_IMAGE')) ?? null,
   }
 }
 

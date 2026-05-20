@@ -21,11 +21,11 @@ ImplementationSource webhooks are an ingress boundary. Signature verification is
 ## Current State
 
 - Signature verification code:
-  - GitHub: `verifyGitHubSignature(...)` in `services/jangar/src/server/implementation-source-webhooks.ts`
+  - GitHub: `verifyGitHubSignature(...)` in `services/agents/src/server/implementation-source-webhooks.ts`
   - Linear: `verifyLinearSignature(...)` in the same file
   - Verification selects candidate ImplementationSources and checks secrets: `selectVerifiedSources(...)`
 - Secret lookup:
-  - Reads secret data via Kubernetes client (kubectl): `getSecretData(...)` in `implementation-source-webhooks.ts` and `services/jangar/src/server/primitives-kube.ts`.
+  - Reads secret data via Kubernetes client (kubectl): `getSecretData(...)` in `implementation-source-webhooks.ts` and `services/agents/src/server/primitives-kube.ts`.
 - On invalid signature, responds 401: `implementation-source-webhooks.ts` (e.g. “Invalid webhook signature”).
 - Chart does not provide first-class values for webhook signing secrets (they are referenced in CRDs).
 
@@ -154,7 +154,7 @@ Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
 
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
-- Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
+- Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `AGENTS_MIGRATIONS`, `AGENTS_GRPC_ENABLED`, and `AGENTS_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
 
@@ -165,10 +165,10 @@ Common mappings:
 - `controller.agentRunRetentionSeconds` → `JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS`
 - `controller.admissionPolicy.*` → `JANGAR_AGENTS_CONTROLLER_{LABELS_REQUIRED,LABELS_ALLOWED,LABELS_DENIED,IMAGES_ALLOWED,IMAGES_DENIED,BLOCKED_SECRETS}`
 - `controller.vcsProviders.*` → `JANGAR_AGENTS_CONTROLLER_VCS_{PROVIDERS_ENABLED,DEPRECATED_TOKEN_TYPES,PR_RATE_LIMITS}`
-- `controller.authSecret.*` → `JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_{NAME,KEY,MOUNT_PATH}`
+- `controller.authSecret.*` → `AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_{NAME,KEY,MOUNT_PATH}`
 - `orchestrationController.*` → `JANGAR_ORCHESTRATION_CONTROLLER_{ENABLED,NAMESPACES}`
 - `supportingController.*` → `JANGAR_SUPPORTING_CONTROLLER_{ENABLED,NAMESPACES}`
-- `grpc.*` → `JANGAR_GRPC_{ENABLED,HOST,PORT}` (unless overridden via `env.vars`)
+- `grpc.*` → `AGENTS_GRPC_{ENABLED,HOST,PORT}` (unless overridden via `env.vars`)
 - `controller.jobTtlSecondsAfterFinished` → `JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS`
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 

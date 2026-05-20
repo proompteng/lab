@@ -1,0 +1,29 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentProvider
+metadata:
+  name: agents-primitives-codex
+  namespace: agents
+spec:
+  binary: /usr/local/bin/agent-runner
+  adapter:
+    type: codex-app-server
+    codex:
+      model: gpt-5.5
+      effort: low
+      sandbox: danger-full-access
+      approval: never
+      cwd: /workspace/lab
+      prompt: |-
+        Write `/workspace/lab/.agents-runner.log` with exactly this single line, then respond with `OK`:
+        agent run repo={{ inputs.repository }} base={{ inputs.base }} head={{ inputs.head }} stage={{ inputs.stage }}
+      threadConfig:
+        mcp_servers: {}
+  argsTemplate: []
+  envTemplate:
+    AGENT_RUN_STAGE: "{{parameters.stage}}"
+  inputFiles:
+    - path: /workspace/agent/prompt.json
+      content: "{{agent.config.payloads.promptJson}}"
+  outputArtifacts:
+    - name: implementation-log
+      path: /workspace/lab/.agents-runner.log

@@ -3,15 +3,16 @@ import { describe, expect, it } from 'vitest'
 import {
   buildFailureDomainLeaseSet,
   emptyFailureDomainKubernetesEvidence,
+  type FailureDomainEvent,
+  type FailureDomainPod,
   type FailureDomainRouteProbe,
 } from '~/server/control-plane-failure-domain-leases'
 import type { ControlPlaneRolloutHealth, DatabaseStatus } from '~/server/control-plane-status-types'
-import type { KubeGatewayEvent, KubeGatewayPod } from '~/server/kube-gateway'
 import type {
   DatabaseMigrationConsistency,
   RuntimeKitStatus,
   WorkflowsReliabilityStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 
 const now = new Date('2026-05-05T12:00:00.000Z')
 
@@ -101,7 +102,7 @@ const runtimeKit = (overrides: Partial<RuntimeKitStatus> = {}): RuntimeKitStatus
   ...overrides,
 })
 
-const pod = (overrides: Partial<KubeGatewayPod> = {}): KubeGatewayPod => ({
+const pod = (overrides: Partial<FailureDomainPod> = {}): FailureDomainPod => ({
   metadata: {
     name: 'agents-0',
     namespace: 'agents',
@@ -117,7 +118,7 @@ const pod = (overrides: Partial<KubeGatewayPod> = {}): KubeGatewayPod => ({
   ...overrides,
 })
 
-const event = (overrides: Partial<KubeGatewayEvent> = {}): KubeGatewayEvent => ({
+const event = (overrides: Partial<FailureDomainEvent> = {}): FailureDomainEvent => ({
   metadata: {
     name: 'event-1',
     namespace: 'agents',

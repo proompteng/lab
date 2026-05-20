@@ -133,7 +133,7 @@ state, trading flags, AgentRuns, or empirical artifacts.
 
 ### Source Evidence
 
-- `services/jangar/src/data/agents-control-plane.ts` already models material-action verdicts, controller witness
+- `services/jangar/src/server/control-plane-status-types.ts` already models material-action verdicts, controller witness
   decisions, action SLO budgets, and runtime-kit projections.
 - `services/jangar/src/routes/api/agents/control-plane/status.ts` is the route boundary that should read the settled
   proof truth window.

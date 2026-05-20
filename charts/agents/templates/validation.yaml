@@ -93,12 +93,31 @@
   "AGENTS_AGENTRUN_ARTIFACTS_MAX" (toString (.Values.controller.agentRunArtifacts.max | default 50))
   "AGENTS_AGENTRUN_ARTIFACTS_STRICT" (toString (.Values.controller.agentRunArtifacts.strict | default false))
 }}
+{{- $removedRunnerImageEnvKeys := list "AGENTS_AGENT_IMAGE" -}}
+{{- $runtimeEnvScopes := list
+  (dict "label" "env.vars" "vars" $globalEnvVars)
+  (dict "label" "controlPlane.env.vars" "vars" $controlPlaneExplicitEnvVars)
+  (dict "label" "controllers.env.vars" "vars" $controllersExplicitEnvVars)
+}}
+{{- range $runtimeEnvScope := $runtimeEnvScopes }}
+{{- $runtimeEnvScopeLabel := index $runtimeEnvScope "label" -}}
+{{- $runtimeEnvScopeVars := index $runtimeEnvScope "vars" -}}
+{{- range $runtimeEnvKey := $removedRunnerImageEnvKeys }}
+{{- if hasKey $runtimeEnvScopeVars $runtimeEnvKey }}
+{{- $errors = append $errors (printf "%s.%s is not supported; set runner.image.repository/tag/digest or %s.AGENTS_AGENT_RUNNER_IMAGE instead." $runtimeEnvScopeLabel $runtimeEnvKey $runtimeEnvScopeLabel) -}}
+{{- end -}}
+{{- end -}}
+{{- range $runtimeEnvKey, $_ := $runtimeEnvScopeVars }}
+{{- if regexMatch "^JANGAR_" $runtimeEnvKey }}
+{{- $errors = append $errors (printf "%s.%s is not supported in the Agents chart; use AGENTS_* env names or chart values instead." $runtimeEnvScopeLabel $runtimeEnvKey) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 
 {{- if $imagePolicy.requireDigest -}}
 {{- $controlPlaneImage := .Values.controlPlane.image | default dict -}}
 {{- $controlPlaneDigest := $controlPlaneImage.digest | default .Values.image.digest | default "" -}}
 {{- $runnerImage := .Values.runner.image | default dict -}}
-{{- $runtime := .Values.runtime | default dict -}}
 {{- $controlPlaneRunnerOverride := index $controlPlaneEnvVars "AGENTS_AGENT_RUNNER_IMAGE" | default "" -}}
 {{- $controllersRunnerOverride := index $controllersEnvVars "AGENTS_AGENT_RUNNER_IMAGE" | default "" -}}
 {{- if not (regexMatch $sha256DigestPattern (toString $controlPlaneDigest)) -}}
@@ -112,16 +131,6 @@
 {{- if not (regexMatch $sha256DigestPattern (toString ($runnerImage.digest | default ""))) -}}
 {{- $errors = append $errors "imagePolicy.requireDigest=true requires runner.image.digest to be a sha256 digest when runner.image.repository is used for Deployment/agents." -}}
 {{- end -}}
-{{- else if $runtime.agentRunnerImage -}}
-{{- if not (regexMatch $sha256ImageReferencePattern (toString $runtime.agentRunnerImage)) -}}
-{{- $errors = append $errors "imagePolicy.requireDigest=true requires runtime.agentRunnerImage to end with an @sha256 digest when runner.image.repository is not set." -}}
-{{- end -}}
-{{- end -}}
-{{- if and $runtime.agentImage (not (regexMatch $sha256ImageReferencePattern (toString $runtime.agentImage))) -}}
-{{- $errors = append $errors "imagePolicy.requireDigest=true requires runtime.agentImage to end with an @sha256 digest." -}}
-{{- end -}}
-{{- if and $runtime.scheduleRunnerImage (not (regexMatch $sha256ImageReferencePattern (toString $runtime.scheduleRunnerImage))) -}}
-{{- $errors = append $errors "imagePolicy.requireDigest=true requires runtime.scheduleRunnerImage to end with an @sha256 digest." -}}
 {{- end -}}
 {{- if $controllersEnabled -}}
 {{- $controllersImage := .Values.controllers.image | default dict -}}
@@ -136,10 +145,6 @@
 {{- else if $runnerImage.repository -}}
 {{- if not (regexMatch $sha256DigestPattern (toString ($runnerImage.digest | default ""))) -}}
 {{- $errors = append $errors "imagePolicy.requireDigest=true requires runner.image.digest to be a sha256 digest when runner.image.repository is used for Deployment/agents-controllers." -}}
-{{- end -}}
-{{- else if $runtime.agentRunnerImage -}}
-{{- if not (regexMatch $sha256ImageReferencePattern (toString $runtime.agentRunnerImage)) -}}
-{{- $errors = append $errors "imagePolicy.requireDigest=true requires runtime.agentRunnerImage to end with an @sha256 digest when controllers.enabled=true and runner.image.repository is not set." -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

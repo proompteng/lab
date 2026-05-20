@@ -242,29 +242,16 @@ quarantined implement warrants reject the matching requirement Signal once with 
 rollback for the proof layer only is `JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT=false`; the passport admission gate remains
 active.
 
-Schedule-runner pods also verify the stamped passport and sealed warrant against the current
-`/api/agents/control-plane/status?namespace=<schedule namespace>` response immediately before creating the AgentRun or
-OrchestrationRun. A launch-capable swarm runner manifest missing its admission passport stamp, a current non-`allow`
-passport, stale freshness window, unhealthy cited runtime kit, non-sealed or passport-mismatched recovery warrant, or
-stale/unhealthy required proof cell fails the runner before work is launched. If the stamped passport id or runtime-kit
-digest drifted but the current status payload is still admitted, the runner refreshes the outgoing run annotations and
-parameters to the current passport, warrant, and proof-cell ids before launch. Emergency rollback for this fire-time
-check only is
-`JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK=false`; setting
-`JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=false` also disables generated runner admission and proof checks so advisory
-rollback schedules do not fail because they intentionally lack passport stamps. Generated runner pods also carry the
-top-level runtime-admission enforcement flag, and the fire-time runner command treats that flag as the primary rollback
-switch before it performs passport or proof lookups.
-The fire-time status timeout defaults to `15000` ms via `JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS`. If the
-full status projection is too slow for the runtime-admission check, the runner retries against the same service's
-`/ready` authority projection, which carries the admission passports, recovery warrants, runtime kits, and proof cells
-needed for the passport/proof gate. Stage-clearance hold mode still requires the full status projection because `/ready`
-does not carry clearance packets. Generated runner CronJobs use `backoffLimit: 1` to avoid turning one slow projection
-into a burst of repeated failed runner pods.
+Agents-owned schedule reconciliation verifies the stamped passport and sealed warrant against the current
+`/v1/control-plane/status?namespace=<schedule namespace>` response before creating the AgentRun or
+OrchestrationRun. Jangar consumes that status projection for domain stage-clearance decisions through
+`JANGAR_RUNTIME_ADMISSION_STATUS_URL`; the timeout defaults to `15000` ms via
+`JANGAR_RUNTIME_ADMISSION_STATUS_TIMEOUT_MS`. Stage-clearance hold mode requires the full status projection because
+`/ready` does not carry clearance packets.
 
-Binary runtime-kit components must be executable, not just present on disk. The source Codex NATS helpers and the
-installed `/usr/local/bin/codex-nats-*` wrappers both satisfy that command-path contract; a non-executable helper keeps
-the collaboration kit blocked with `runtime_kit_component_missing:*` evidence.
+Binary runtime-kit components must be executable, not just present on disk. Shared Codex NATS helpers are resolved from
+`packages/cx-tools`, `$PATH`, or the installed `/usr/local/bin/codex-nats-*` wrappers; a non-executable helper keeps the
+collaboration kit blocked with `runtime_kit_component_missing:*` evidence.
 
 Degraded authority or degraded runtime-kit evidence keeps the serving passport non-blocking (`degrade`) but moves
 launch-capable swarm passports to `hold`. Missing required runtime-kit evidence still moves launch-capable passports to
@@ -286,7 +273,7 @@ Admitted schedules and requirement runs carry these trace fields in annotations 
 - `swarmRequiredProofCells`
 
 The runtime-admission compiler also emits Phase 0 recovery-warrant evidence from the same passport snapshot.
-`/ready` and `/api/agents/control-plane/status` include shadow `recovery_warrants`, `runtime_proof_cells`, and
+`/ready` and `/v1/control-plane/status` include shadow `recovery_warrants`, `runtime_proof_cells`, and
 `projection_watermarks`. A missing required helper or config value becomes a broken warrant with a missing proof cell,
 and the launcher gate now consumes that sealed warrant truth before creating work. Warrant, epoch, proof-cell, and
 deploy-verification watermark ids stay stable across ordinary freshness refreshes; they change only when the underlying
@@ -294,7 +281,7 @@ passport, runtime-kit digest, proof content, or decision changes. Rollback for l
 `JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT=false` while keeping `runtime_kits`, `admission_passports`, and proof-surface
 projection intact.
 
-`/api/agents/control-plane/status` also emits observe-mode rollout proof from
+`/v1/control-plane/status` also emits observe-mode rollout proof from
 `docs/agents/designs/191-jangar-rollout-proof-passports-and-runner-capacity-futures-2026-05-13.md`. The
 `rollout_proof_passport` joins source rollout truth, source-serving verdicts, database status, controller witness,
 rollout health, and ready truth into one source-to-serving status. Missing source CI, manifest digest, or registry
@@ -306,7 +293,7 @@ not change scheduler behavior; rollback is to ignore these status fields or keep
 
 Deploy verification also consumes the runtime-admission projection. After Argo, rollout, and image digest checks pass,
 `packages/scripts/src/jangar/verify-deployment.ts` reads
-`/api/agents/control-plane/status?namespace=agents` through the Kubernetes service proxy and requires the configured
+`/v1/control-plane/status?namespace=agents` through the Kubernetes service proxy and requires the configured
 passport consumers (`serving`, `swarm_plan`, `swarm_implement`, and `swarm_verify` by default) to be `allow`, fresh,
 backed by present runtime kits, and running on the same image digest as the promoted deployment. The deployment manifest
 sets `JANGAR_RUNTIME_IMAGE` to the promoted tag and digest so runtime-kit `image_ref` can be compared directly. Emergency
@@ -600,8 +587,8 @@ controller self-report is missing or Torghut evidence is repair-only with `max_n
 Validation:
 
 ```bash
-curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.ready_action_exchange'
-curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.action_custody_receipts[] | {action_class,decision,blocking_debt_classes,receipt_id}'
+curl -fsS http://agents.agents.svc.cluster.local/v1/control-plane/status?namespace=agents | jq '.ready_action_exchange'
+curl -fsS http://agents.agents.svc.cluster.local/v1/control-plane/status?namespace=agents | jq '.action_custody_receipts[] | {action_class,decision,blocking_debt_classes,receipt_id}'
 ```
 
 Rollback: ignore `ready_action_exchange` and `action_custody_receipts` consumers, or remove the projection. Existing
@@ -610,7 +597,7 @@ proof-floor/notional gates remain the fallback safety boundary.
 
 ## Material gate digest
 
-`/ready` and `/api/agents/control-plane/status` emit the observe-mode `material_gate_digest` from
+`/ready` and `/v1/control-plane/status` emit the observe-mode `material_gate_digest` from
 `docs/agents/designs/198-jangar-material-gate-digest-and-alpha-closure-carry-2026-05-14.md`. The digest is the bounded
 material-readiness proof for launchers and deployers: serving readiness can remain `ok`, while material actions carry
 their own `allow`, `hold`, `deny`, or `block` decision.
@@ -626,7 +613,7 @@ Validation:
 
 ```bash
 curl -fsS http://localhost:8080/ready | jq '.material_gate_digest'
-curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.material_gate_digest'
+curl -fsS http://agents.agents.svc.cluster.local/v1/control-plane/status?namespace=agents | jq '.material_gate_digest'
 curl -fsS http://torghut.torghut.svc.cluster.local/trading/consumer-evidence | jq '.alpha_repair_closure_board'
 ```
 
@@ -636,7 +623,7 @@ repair-only or the repair queue is non-empty.
 
 ## Verify trust foreclosure board
 
-`/ready` and `/api/agents/control-plane/status` emit the observe-mode `verify_trust_foreclosure_board` from
+`/ready` and `/v1/control-plane/status` emit the observe-mode `verify_trust_foreclosure_board` from
 `docs/agents/designs/201-jangar-verify-trust-foreclosure-and-alpha-repair-reentry-2026-05-14.md`. The board keeps
 serving readiness separate from material authority: serving can be `ok` while plan, verify, source rollout, or Torghut
 no-delta debt holds or denies material actions.
@@ -658,7 +645,7 @@ Validation:
 
 ```bash
 curl -fsS http://localhost:8080/ready | jq '.verify_trust_foreclosure_board'
-curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.verify_trust_foreclosure_board.alpha_repair_reentry_admission'
+curl -fsS http://agents.agents.svc.cluster.local/v1/control-plane/status?namespace=agents | jq '.verify_trust_foreclosure_board.alpha_repair_reentry_admission'
 curl -fsS http://torghut.torghut.svc.cluster.local/trading/consumer-evidence | jq '.no_delta_repair_reentry_auction'
 curl -fsS http://torghut.torghut.svc.cluster.local/trading/consumer-evidence | jq '.alpha_repair_closure_board'
 ```
@@ -669,7 +656,7 @@ safety authorities.
 
 ## Controller-ingestion settlement
 
-`/api/agents/control-plane/status` emits the observe-mode `controller_ingestion_settlement` from
+`/v1/control-plane/status` emits the observe-mode `controller_ingestion_settlement` from
 `docs/agents/designs/205-jangar-controller-ingestion-settlement-and-verification-carry-cutover-2026-05-14.md`. The
 settlement joins controller witness quorum, AgentRun ingestion, database and rollout health, execution trust,
 source-serving verdicts, verify-trust foreclosure, repair-slot escrow, and Torghut no-delta carry evidence into one
@@ -684,7 +671,7 @@ nonzero notional stays `block`.
 Validation:
 
 ```bash
-curl -fsS 'http://localhost:8080/api/agents/control-plane/status?namespace=agents' | jq '.controller_ingestion_settlement'
+curl -fsS 'http://agents.agents.svc.cluster.local/v1/control-plane/status?namespace=agents' | jq '.controller_ingestion_settlement'
 curl -fsS http://torghut.torghut.svc.cluster.local/trading/revenue-repair | jq '.no_delta_repair_reentry_auction'
 ```
 
@@ -694,7 +681,7 @@ boundary. No database migration or scheduler enforcement is introduced by this p
 
 ## Material evidence settlement spine
 
-`/ready` and `/api/agents/control-plane/status` should next emit the observe-mode
+`/ready` and `/v1/control-plane/status` should next emit the observe-mode
 `material_evidence_settlement_spine` from
 `docs/agents/designs/206-jangar-material-evidence-settlement-spine-and-repair-dispatch-budget-2026-05-14.md`. The
 spine is the compact settlement layer over serving readiness, material readiness, Torghut revenue-repair topline
@@ -706,7 +693,7 @@ Validation:
 
 ```bash
 curl -fsS http://localhost:8080/ready | jq '.material_evidence_settlement_spine'
-curl -fsS 'http://localhost:8080/api/agents/control-plane/status?namespace=agents' | jq '.material_evidence_settlement_spine'
+curl -fsS 'http://agents.agents.svc.cluster.local/v1/control-plane/status?namespace=agents' | jq '.material_evidence_settlement_spine'
 curl -fsS http://torghut.torghut.svc.cluster.local/trading/revenue-repair | jq '{business_state,top_repair_queue_item,repair_queue}'
 ```
 
@@ -721,7 +708,7 @@ requires Jangar to expose typed Torghut custody evidence from the non-recursive 
 Jangar requests `/trading/consumer-evidence?view=summary` when the configured Torghut status URL points at the
 consumer-evidence route, so readiness gets the compact status, receipt, route-profit, and canary fields without
 pulling the full operator ledger payload through the control-plane hot path.
-When Torghut imports Jangar carry for that route, it calls `/api/agents/control-plane/status` with
+When Torghut imports Jangar carry for that route, it calls `/v1/control-plane/status` with
 `x-torghut-consumer-evidence-mode: omit`; Jangar then computes the local control-plane status without fetching Torghut
 consumer evidence, which prevents a Torghut -> Jangar -> Torghut status loop.
 When Torghut reports an evidence-clock arbiter but does not publish a `required_jangar_custody_ref`, control-plane
@@ -765,51 +752,11 @@ manifest contract in `packages/scripts/src/jangar/manifest-contract.ts`.
 - Usage totals are emitted only when the request includes `stream_options: { include_usage: true }`. The final SSE chunk (empty `choices` array) carries the normalized OpenAI-style `usage`, even when a turn ends with an upstream error or client abort.
 - Server-side Effect services follow `Context.Tag + Layer` patterns; see `src/server/effect-services.md`.
 
-## agentctl gRPC
+## agentctl
 
-`agentctl` talks to Jangar over gRPC (`AgentctlService`). The gRPC server is disabled by default.
-
-Enable locally:
-
-```bash
-export JANGAR_GRPC_ENABLED=1
-export JANGAR_GRPC_HOST=127.0.0.1
-export JANGAR_GRPC_PORT=50051
-```
-
-Port-forward a deployed Jangar instance (gRPC service is cluster-only):
-
-```bash
-kubectl -n <namespace> port-forward svc/<release-name>-grpc 50051:50051
-```
-
-Optional auth (shared token):
-
-```bash
-export JANGAR_GRPC_TOKEN=... # server-side
-export AGENTCTL_TOKEN=...    # client-side
-```
-
-Control-plane status:
-
-```bash
-agentctl status
-agentctl status --output json
-```
-
-Environment variables:
-
-- `JANGAR_GRPC_ENABLED` (default: off)
-- `JANGAR_GRPC_HOST` (default: `127.0.0.1`)
-- `JANGAR_GRPC_PORT` (default: `50051`)
-- `JANGAR_GRPC_ADDRESS` (optional override for `host:port`)
-- `JANGAR_GRPC_TOKEN` (optional shared token)
-
-Control-plane status endpoint behavior (`/api/control-plane/status`) is deliberate:
-
-- `JANGAR_GRPC_ENABLED` uses a strict boolean parser (`true/false`, `1/0`, `yes/no`, `on/off`, case-insensitive, no whitespace).
-- invalid `JANGAR_GRPC_ENABLED`, `JANGAR_GRPC_PORT`, or malformed `JANGAR_GRPC_ADDRESS` values return `grpc.status = degraded` with explanatory messages.
-- an empty/unset `JANGAR_GRPC_ENABLED` disables gRPC (`disabled` status) and does not perform socket checks.
+`agentctl` is owned by the Agents service and targets the Agents API. Jangar no longer starts the CLI transport server
+or embeds the Agents protobuf bundle in its application build. Use `docs/agents/agentctl.md` for operator commands and
+Agents service connection settings.
 
 ## Terminal backend
 
@@ -864,25 +811,11 @@ Control-plane cache freshness (API read path):
 - `JANGAR_CONTROL_PLANE_CACHE_ALLOW_STALE` (optional; default: `true`)
   - Set to `false`/`0` to force live Kubernetes reads when cache rows exceed the freshness window.
 
-Agents controller AgentRun ingestion:
+AgentRun ingestion and controller reconciliation are owned by `services/agents`.
+Jangar reads the Agents service status surface and does not configure controller
+resync, adoption, or debug loops directly.
 
-- `JANGAR_AGENTS_CONTROLLER_RESYNC_INTERVAL_SECONDS` (optional; default: `60`)
-  - Periodic relist interval used to adopt new or drifted `AgentRun` resources even if a live watch event is missed.
-- `JANGAR_AGENTS_CONTROLLER_UNTOUCHED_WARN_AFTER_SECONDS` (optional; default: `120`)
-  - Age threshold for marking `agentrun_ingestion` degraded when untouched runs are accumulating.
-- `JANGAR_AGENTS_CONTROLLER_DEBUG_LOGS` (optional; default: `false`)
-  - Enables queue/watch/adoption debug logs in the agents controller; default logging remains decision-focused.
-
-Control-plane status now includes an additive `agentrun_ingestion` block in
-`/api/agents/control-plane/status?namespace=<ns>` with:
-
-- `status` / `message`
-- `last_watch_event_at`
-- `last_resync_at`
-- `untouched_run_count`
-- `oldest_untouched_age_seconds`
-
-Execution trust is now a mandatory part of `/api/agents/control-plane/status` and `/ready`.
+Execution trust is now a mandatory part of `/v1/control-plane/status` and `/ready`.
 Tracked swarm selection and response fan-out remain configurable via:
 
 - `JANGAR_CONTROL_PLANE_EXECUTION_TRUST_SWARMS` (optional comma list; default: `jangar-control-plane,torghut-quant`)
@@ -897,10 +830,10 @@ Rollout safety now also uses gate thresholds for watch stability and empirical j
 - `JANGAR_CONTROL_PLANE_WATCH_RELIABILITY_BLOCK_RESTARTS` (optional; default: `3`)
   - Blocks dependency quorum when any observed watch stream restarts cross this threshold in the latest reliability window.
 - `empirical_jobs` hard gate:
-  - `status` is now a hard block when `/api/agents/control-plane/status` reports `empirical_services.jobs.status === degraded`.
+  - `status` is now a hard block when `/v1/control-plane/status` reports `empirical_services.jobs.status === degraded`.
   - Forecast and LEAN degradation remain observable but do not block rollout.
 
-Failure-domain lease shadow synthesis is exposed on `/api/agents/control-plane/status` as
+Failure-domain lease shadow synthesis is exposed on `/v1/control-plane/status` as
 `failure_domain_leases`:
 
 - `mode` is `shadow`; the lease set is advisory and does not block AgentRun admission by itself.
@@ -928,7 +861,8 @@ degraded execution trust remains visible in the response body while the pod stay
 
 ## Control-plane cache freshness behavior
 
-When cache reads are enabled for `/api/agents/control-plane/resource` and `/api/agents/control-plane/resources`, responses may include a `cache` object:
+When cache reads are enabled for typed Agents `/v1/<resource>/resources` endpoints, responses may include a `cache`
+object:
 
 - `source: "control-plane-cache"`
 - `stale`: `true` when row age is above `JANGAR_CONTROL_PLANE_CACHE_STALE_SECONDS`

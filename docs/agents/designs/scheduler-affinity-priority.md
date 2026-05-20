@@ -19,14 +19,14 @@ Provide consistent scheduling defaults for AgentRun Jobs while allowing per-run 
 
 ## Default Fields
 
-- `controller.defaultWorkload.nodeSelector` → `JANGAR_AGENT_RUNNER_NODE_SELECTOR`
-- `controller.defaultWorkload.tolerations` → `JANGAR_AGENT_RUNNER_TOLERATIONS`
-- `controller.defaultWorkload.topologySpreadConstraints` → `JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS`
-- `controller.defaultWorkload.affinity` → `JANGAR_AGENT_RUNNER_AFFINITY`
-- `controller.defaultWorkload.podSecurityContext` → `JANGAR_AGENT_RUNNER_POD_SECURITY_CONTEXT`
-- `controller.defaultWorkload.imagePullSecrets` → `JANGAR_AGENT_RUNNER_IMAGE_PULL_SECRETS`
-- `controller.defaultWorkload.priorityClassName` → `JANGAR_AGENT_RUNNER_PRIORITY_CLASS`
-- `controller.defaultWorkload.schedulerName` → `JANGAR_AGENT_RUNNER_SCHEDULER_NAME`
+- `controller.defaultWorkload.nodeSelector` → `AGENTS_AGENT_RUNNER_NODE_SELECTOR`
+- `controller.defaultWorkload.tolerations` → `AGENTS_AGENT_RUNNER_TOLERATIONS`
+- `controller.defaultWorkload.topologySpreadConstraints` → `AGENTS_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS`
+- `controller.defaultWorkload.affinity` → `AGENTS_AGENT_RUNNER_AFFINITY`
+- `controller.defaultWorkload.podSecurityContext` → `AGENTS_AGENT_RUNNER_POD_SECURITY_CONTEXT`
+- `controller.defaultWorkload.imagePullSecrets` → `AGENTS_AGENT_RUNNER_IMAGE_PULL_SECRETS`
+- `controller.defaultWorkload.priorityClassName` → `AGENTS_AGENT_RUNNER_PRIORITY_CLASS`
+- `controller.defaultWorkload.schedulerName` → `AGENTS_AGENT_RUNNER_SCHEDULER_NAME`
 
 ## Override Rules
 
@@ -112,7 +112,7 @@ Rendered primarily by `charts/agents/templates/deployment.yaml` (control plane) 
 Env var merge/precedence (see also `docs/agents/designs/chart-env-vars-merge-precedence.md`):
 
 - Control plane: `.Values.env.vars` merged with `.Values.controlPlane.env.vars` (control-plane keys win).
-- Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `JANGAR_MIGRATIONS`, `JANGAR_GRPC_ENABLED`, and `JANGAR_CONTROL_PLANE_CACHE_ENABLED` when unset.
+- Controllers: `.Values.env.vars` merged with `.Values.controllers.env.vars` (controllers keys win), plus template defaults for `AGENTS_MIGRATIONS`, `AGENTS_GRPC_ENABLED`, and `AGENTS_CONTROL_PLANE_CACHE_ENABLED` when unset.
 
 Common mappings:
 
@@ -123,10 +123,10 @@ Common mappings:
 - `controller.agentRunRetentionSeconds` → `JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS`
 - `controller.admissionPolicy.*` → `JANGAR_AGENTS_CONTROLLER_{LABELS_REQUIRED,LABELS_ALLOWED,LABELS_DENIED,IMAGES_ALLOWED,IMAGES_DENIED,BLOCKED_SECRETS}`
 - `controller.vcsProviders.*` → `JANGAR_AGENTS_CONTROLLER_VCS_{PROVIDERS_ENABLED,DEPRECATED_TOKEN_TYPES,PR_RATE_LIMITS}`
-- `controller.authSecret.*` → `JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_{NAME,KEY,MOUNT_PATH}`
+- `controller.authSecret.*` → `AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_{NAME,KEY,MOUNT_PATH}`
 - `orchestrationController.*` → `JANGAR_ORCHESTRATION_CONTROLLER_{ENABLED,NAMESPACES}`
 - `supportingController.*` → `JANGAR_SUPPORTING_CONTROLLER_{ENABLED,NAMESPACES}`
-- `grpc.*` → `JANGAR_GRPC_{ENABLED,HOST,PORT}` (unless overridden via `env.vars`)
+- `grpc.*` → `AGENTS_GRPC_{ENABLED,HOST,PORT}` (unless overridden via `env.vars`)
 - `controller.jobTtlSecondsAfterFinished` → `JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS`
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
 

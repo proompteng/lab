@@ -1,0 +1,14 @@
+apiVersion: orchestration.proompteng.ai/v1alpha1
+kind: Orchestration
+metadata:
+  name: agents-primitives-sub
+  namespace: agents
+spec:
+  entrypoint: main
+  steps:
+    - name: echo
+      kind: ToolRun
+      toolRef:
+        name: agents-primitives-tool
+      with:
+        action: sub-orchestration

@@ -28,7 +28,7 @@ import {
   toKeyValueMap,
   waitForRunCompletion,
   waitForRunCompletionKube,
-} from '../../legacy'
+} from '../../runtime'
 import { TransportService } from '../../transport'
 import { AgentctlContext } from '../context'
 import { asAgentctlError } from '../errors'

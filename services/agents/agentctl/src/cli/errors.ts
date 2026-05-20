@@ -1,5 +1,5 @@
 import * as grpc from '@grpc/grpc-js'
-import { EXIT_RUNTIME, EXIT_UNKNOWN, EXIT_VALIDATION } from '../legacy'
+import { EXIT_RUNTIME, EXIT_UNKNOWN, EXIT_VALIDATION } from '../runtime'
 
 export const EXIT_KUBE = 3
 

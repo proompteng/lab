@@ -1,11 +1,11 @@
 # facteur
 
-`facteur` is a Go service that mediates Discord bot commands into Argo Workflow executions. It follows the [Discord interaction lifecycle](https://discord.com/developers/docs/interactions/receiving-and-responding) and the [Argo Workflows submission model](https://argo-workflows.readthedocs.io/en/stable/) to translate slash commands into WorkflowTemplate runs. See `docs/facteur-discord-argo.md` for the end-to-end architecture and configuration contract.
+`facteur` is a Go service that mediates Discord bot commands into Agents `AgentRun` submissions. It follows the [Discord interaction lifecycle](https://discord.com/developers/docs/interactions/receiving-and-responding), keeps domain intake state in its own Postgres schema, and delegates runtime execution to the Agents service.
 
 ## Layout
 
 - `cmd/facteur`: Cobra-based CLI entrypoints.
-- `internal`: Internal packages that will house configuration, Discord routing, Argo bridge logic, and session storage.
+- `internal`: Internal packages for configuration, Discord routing, Agents dispatch, and session storage.
 - `config`: Example configuration files and schema references (role map schema lives at `schemas/facteur-discord-role-map.schema.json`).
 - `Dockerfile`: Multi-stage build for containerizing the service.
 
@@ -20,7 +20,7 @@ go run . serve --config config/example.yaml
 
 The `--config` flag is optional if you provide the required `FACTEUR_*` environment variables. Press `Ctrl+C` to stop the server; it will shut down gracefully.
 
-Set `FACTEUR_POSTGRES_DSN` to point at a Postgres instance before starting locally. The server applies embedded migrations on boot so the schema stays in sync. When you do not have a Kubernetes cluster handy, export `FACTEUR_DISABLE_DISPATCHER=true` so the Argo dispatcher is stubbed out and the service boots without a kubeconfig. A simple local setup uses Postgres on `127.0.0.1:6543/postgres` with the `facteur` role:
+Set `FACTEUR_POSTGRES_DSN` to point at a Postgres instance before starting locally. The server applies embedded migrations on boot so the schema stays in sync. When you do not want local commands to submit AgentRuns, export `FACTEUR_DISABLE_DISPATCHER=true`. A simple local setup uses Postgres on `127.0.0.1:6543/postgres` with the `facteur` role:
 
 ```bash
 # Terminal 1 – Postgres
@@ -45,49 +45,13 @@ go run ./cmd/facteur migrate --config config/example.yaml
 
 ### Docker Compose sandbox
 
-A convenience Compose stack lives at `services/facteur/docker-compose.yml`; it starts Postgres 18 with pgvector, Redis 8, and the Facteur server with the correct environment wiring (including `FACTEUR_DISABLE_DISPATCHER=true` to skip Argo during local runs). From the repository root run:
+A convenience Compose stack lives at `services/facteur/docker-compose.yml`; it starts Postgres 18 with pgvector, Redis 8, and the Facteur server with the correct environment wiring (including `FACTEUR_DISABLE_DISPATCHER=true` to skip AgentRun submission during local runs). From the repository root run:
 
 ```bash
 docker compose -f services/facteur/docker-compose.yml up -d --build
 # ...
 docker compose -f services/facteur/docker-compose.yml down --volumes --remove-orphans
 ```
-
-Run the end-to-end Codex ingestion check (spins the stack, posts a sample task, and asserts persistence) with:
-
-```bash
-export FACTEUR_E2E_BASE_URL="http://127.0.0.1:18080"
-export FACTEUR_E2E_POSTGRES_DSN="postgres://facteur:facteur@127.0.0.1:15432/facteur_kb?sslmode=disable"
-go test -tags e2e ./services/facteur/test/e2e
-```
-
-### Codex knowledge base ingestion
-
-Facteur persists Codex deliveries under `/codex/tasks` by normalising the `proompteng.froussard.v1.CodexTask` payload into `codex_kb.ideas`, `codex_kb.tasks`, and `codex_kb.task_runs`. The handler requires `FACTEUR_POSTGRES_DSN` and `redis.url`; each delivery must include a unique `delivery_id` so retries remain idempotent.
-
-1. Ensure the service is running with Postgres and Redis reachable (see above).
-2. Encode the sample payload provided in `docs/examples/codex-task.json`:
-   ```bash
-   buf beta protoc \
-    --proto_path=proto \
-    --encode proompteng.froussard.v1.CodexTask \
-    proto/proompteng/froussard/v1/codex_task.proto \
-     < docs/examples/codex-task.json \
-     > /tmp/codex-task.bin
-   ```
-3. Send the request to the local server:
-   ```bash
-   curl -v \
-     -H 'Content-Type: application/x-protobuf' \
-     --data-binary @/tmp/codex-task.bin \
-     http://127.0.0.1:8080/codex/tasks
-   ```
-4. Inspect persisted rows:
-   ```bash
-   psql "$FACTEUR_POSTGRES_DSN" -c "SELECT tasks.id, tasks.stage, task_runs.delivery_id FROM codex_kb.tasks JOIN codex_kb.task_runs ON task_runs.task_id = tasks.id;"
-   ```
-
-Replaying the same `delivery_id` results in a `202 Accepted` response with unchanged `task_run` IDs, confirming idempotent intake.
 
 ## Observability
 
@@ -104,9 +68,9 @@ When running locally, point these values at your observability environment to ke
 
 Cluster deployments rely on a namespace-scoped Grafana Alloy deployment (`argocd/applications/facteur/overlays/cluster/alloy-*.yaml`) to forward Knative pod logs to the observability Loki gateway (`observability-loki-loki-distributed-gateway`), since the Knative stack does not configure log shipping on its own.
 
-### Codex implementation orchestration
+### AgentRun dispatch
 
-Implementation runs through the implementation orchestrator (`codex_implementation_orchestrator.enabled=true`, or the env alias `FACTEUR_CODEX_ENABLE_IMPLEMENTATION_ORCHESTRATION`) and submits the `codex-autonomous` workflow template (configurable via `codex_implementation_orchestrator.autonomous_workflow_template`, defaulting to `codex-autonomous` in the `jangar` namespace).
+Discord command dispatch submits an `AgentRun` to the Agents service at `codex_implementation_orchestrator.agents_base_url`. The default production target is the `codex-agent` Agent in the `agents` namespace using the Agents-owned runtime.
 
 ## Container image
 

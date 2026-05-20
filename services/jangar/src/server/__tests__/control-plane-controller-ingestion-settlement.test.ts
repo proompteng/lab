@@ -6,7 +6,7 @@ import type {
   SourceServingContractVerdictExchange,
   TorghutConsumerEvidenceStatus,
   VerifyTrustForeclosureBoard,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import {
   CONTROLLER_INGESTION_SETTLEMENT_DESIGN_ARTIFACT,
   buildControllerIngestionSettlement,

@@ -11,7 +11,7 @@ import java.time.Instant
 interface AutoResearchLauncher {
   fun startResearch(
     request: AutoResearchRequest,
-    argoWorkflowName: String,
+    agentRunName: String,
     artifactKey: String,
   ): CodexResearchLaunchResult
 }
@@ -24,21 +24,21 @@ class AutoResearchService(
 
   override fun startResearch(
     request: AutoResearchRequest,
-    argoWorkflowName: String,
+    agentRunName: String,
     artifactKey: String,
   ): CodexResearchLaunchResult {
     val userPrompt = request.userPrompt
     val finalPrompt = promptBuilder.buildPrompt(userPrompt)
-    val metadata = promptBuilder.buildMetadata(userPrompt, argoWorkflowName)
+    val metadata = promptBuilder.buildMetadata(userPrompt, agentRunName)
     val launch =
       codexResearchService.startResearch(
         CodexResearchRequest(prompt = finalPrompt, metadata = metadata),
-        argoWorkflowName,
+        agentRunName,
         artifactKey,
       )
     logger.info {
-      "AutoResearch Codex workflow launched workflowId=${launch.workflowId} " +
-        "argoWorkflow=$argoWorkflowName userPromptProvided=${!userPrompt.isNullOrBlank()}"
+      "AutoResearch Codex AgentRun launched workflowId=${launch.workflowId} " +
+        "agentRun=$agentRunName userPromptProvided=${!userPrompt.isNullOrBlank()}"
     }
     return launch
   }
@@ -109,7 +109,7 @@ class AutoResearchPromptBuilder(
 
   fun buildMetadata(
     userPrompt: String?,
-    argoWorkflowName: String,
+    agentRunName: String,
   ): Map<String, String> {
     val timestamp = Instant.now(clock).toString()
     val trimmed = userPrompt?.trim()?.takeIf { it.isNotEmpty() }
@@ -118,7 +118,7 @@ class AutoResearchPromptBuilder(
       put("streamId", config.streamId)
       put("autoResearch.promptVersion", PROMPT_VERSION)
       put("autoResearch.generatedAt", timestamp)
-      put("autoResearch.argoWorkflow", argoWorkflowName)
+      put("autoResearch.agentRun", agentRunName)
       trimmed?.let { put("autoResearch.userPrompt", it.take(MAX_METADATA_LENGTH)) }
     }
   }

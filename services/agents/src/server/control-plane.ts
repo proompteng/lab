@@ -47,9 +47,59 @@ const routeSources: RouteSourceSpec[] = [
     load: () => import('../routes/v1/agent-runs'),
   },
   {
+    file: 'src/routes/v1/agent-runs/resources.ts',
+    sourceUrl: new URL('../routes/v1/agent-runs/resources.ts', import.meta.url),
+    load: () => import('../routes/v1/agent-runs/resources'),
+  },
+  {
+    file: 'src/routes/v1/agent-runs/projection-authority.ts',
+    sourceUrl: new URL('../routes/v1/agent-runs/projection-authority.ts', import.meta.url),
+    load: () => import('../routes/v1/agent-runs/projection-authority'),
+  },
+  {
+    file: 'src/routes/v1/agent-runs/terminal-events.ts',
+    sourceUrl: new URL('../routes/v1/agent-runs/terminal-events.ts', import.meta.url),
+    load: () => import('../routes/v1/agent-runs/terminal-events'),
+  },
+  {
+    file: 'src/routes/v1/agent-runs/terminal-events-ack.ts',
+    sourceUrl: new URL('../routes/v1/agent-runs/terminal-events-ack.ts', import.meta.url),
+    load: () => import('../routes/v1/agent-runs/terminal-events-ack'),
+  },
+  {
+    file: 'src/routes/v1/agent-messages.ts',
+    sourceUrl: new URL('../routes/v1/agent-messages.ts', import.meta.url),
+    load: () => import('../routes/v1/agent-messages'),
+  },
+  {
+    file: 'src/routes/v1/agent-events.ts',
+    sourceUrl: new URL('../routes/v1/agent-events.ts', import.meta.url),
+    load: () => import('../routes/v1/agent-events'),
+  },
+  {
+    file: 'src/routes/v1/implementation-sources/webhooks/$provider.ts',
+    sourceUrl: new URL('../routes/v1/implementation-sources/webhooks/$provider.ts', import.meta.url),
+    load: () => import('../routes/v1/implementation-sources/webhooks/$provider'),
+  },
+  {
+    file: 'src/routes/v1/approval-policies/resources.ts',
+    sourceUrl: new URL('../routes/v1/approval-policies/resources.ts', import.meta.url),
+    load: () => import('../routes/v1/approval-policies/resources'),
+  },
+  {
+    file: 'src/routes/v1/budgets/resources.ts',
+    sourceUrl: new URL('../routes/v1/budgets/resources.ts', import.meta.url),
+    load: () => import('../routes/v1/budgets/resources'),
+  },
+  {
     file: 'src/routes/v1/memories.ts',
     sourceUrl: new URL('../routes/v1/memories.ts', import.meta.url),
     load: () => import('../routes/v1/memories'),
+  },
+  {
+    file: 'src/routes/v1/memories/resources.ts',
+    sourceUrl: new URL('../routes/v1/memories/resources.ts', import.meta.url),
+    load: () => import('../routes/v1/memories/resources'),
   },
   {
     file: 'src/routes/v1/memories/$id.ts',
@@ -60,6 +110,11 @@ const routeSources: RouteSourceSpec[] = [
     file: 'src/routes/v1/memory-queries.ts',
     sourceUrl: new URL('../routes/v1/memory-queries.ts', import.meta.url),
     load: () => import('../routes/v1/memory-queries'),
+  },
+  {
+    file: 'src/routes/v1/memory-operations.ts',
+    sourceUrl: new URL('../routes/v1/memory-operations.ts', import.meta.url),
+    load: () => import('../routes/v1/memory-operations'),
   },
   {
     file: 'src/routes/v1/orchestrations.ts',
@@ -82,6 +137,61 @@ const routeSources: RouteSourceSpec[] = [
     load: () => import('../routes/v1/orchestration-runs/$id'),
   },
   {
+    file: 'src/routes/v1/orchestration-runs/resources.ts',
+    sourceUrl: new URL('../routes/v1/orchestration-runs/resources.ts', import.meta.url),
+    load: () => import('../routes/v1/orchestration-runs/resources'),
+  },
+  {
+    file: 'src/routes/v1/jobs/resources.ts',
+    sourceUrl: new URL('../routes/v1/jobs/resources.ts', import.meta.url),
+    load: () => import('../routes/v1/jobs/resources'),
+  },
+  {
+    file: 'src/routes/v1/control-plane/status.ts',
+    sourceUrl: new URL('../routes/v1/control-plane/status.ts', import.meta.url),
+    load: () => import('../routes/v1/control-plane/status'),
+  },
+  {
+    file: 'src/routes/v1/control-plane/execution-trust.ts',
+    sourceUrl: new URL('../routes/v1/control-plane/execution-trust.ts', import.meta.url),
+    load: () => import('../routes/v1/control-plane/execution-trust'),
+  },
+  {
+    file: 'src/routes/v1/control-plane/events.ts',
+    sourceUrl: new URL('../routes/v1/control-plane/events.ts', import.meta.url),
+    load: () => import('../routes/v1/control-plane/events'),
+  },
+  {
+    file: 'src/routes/v1/control-plane/logs.ts',
+    sourceUrl: new URL('../routes/v1/control-plane/logs.ts', import.meta.url),
+    load: () => import('../routes/v1/control-plane/logs'),
+  },
+  {
+    file: 'src/routes/v1/control-plane/stream.ts',
+    sourceUrl: new URL('../routes/v1/control-plane/stream.ts', import.meta.url),
+    load: () => import('../routes/v1/control-plane/stream'),
+  },
+  {
+    file: 'src/routes/v1/control-plane/summary.ts',
+    sourceUrl: new URL('../routes/v1/control-plane/summary.ts', import.meta.url),
+    load: () => import('../routes/v1/control-plane/summary'),
+  },
+  {
+    file: 'src/routes/v1/secret-bindings/resources.ts',
+    sourceUrl: new URL('../routes/v1/secret-bindings/resources.ts', import.meta.url),
+    load: () => import('../routes/v1/secret-bindings/resources'),
+  },
+  {
+    file: 'src/routes/v1/signals/resources.ts',
+    sourceUrl: new URL('../routes/v1/signals/resources.ts', import.meta.url),
+    load: () => import('../routes/v1/signals/resources'),
+  },
+  {
+    file: 'src/routes/v1/swarms/resources.ts',
+    sourceUrl: new URL('../routes/v1/swarms/resources.ts', import.meta.url),
+    load: () => import('../routes/v1/swarms/resources'),
+  },
+  {
     file: 'src/routes/v1/agent-runs/$id.ts',
     sourceUrl: new URL('../routes/v1/agent-runs/$id.ts', import.meta.url),
     load: () => import('../routes/v1/agent-runs/$id'),
@@ -90,41 +200,6 @@ const routeSources: RouteSourceSpec[] = [
     file: 'src/routes/v1/runs/$id.ts',
     sourceUrl: new URL('../routes/v1/runs/$id.ts', import.meta.url),
     load: () => import('../routes/v1/runs/$id'),
-  },
-  {
-    file: 'src/routes/api/agents/control-plane/events.ts',
-    sourceUrl: new URL('../routes/api/agents/control-plane/events.ts', import.meta.url),
-    load: () => import('../routes/api/agents/control-plane/events'),
-  },
-  {
-    file: 'src/routes/api/agents/control-plane/logs.ts',
-    sourceUrl: new URL('../routes/api/agents/control-plane/logs.ts', import.meta.url),
-    load: () => import('../routes/api/agents/control-plane/logs'),
-  },
-  {
-    file: 'src/routes/api/agents/control-plane/resource.ts',
-    sourceUrl: new URL('../routes/api/agents/control-plane/resource.ts', import.meta.url),
-    load: () => import('../routes/api/agents/control-plane/resource'),
-  },
-  {
-    file: 'src/routes/api/agents/control-plane/resources.ts',
-    sourceUrl: new URL('../routes/api/agents/control-plane/resources.ts', import.meta.url),
-    load: () => import('../routes/api/agents/control-plane/resources'),
-  },
-  {
-    file: 'src/routes/api/agents/control-plane/status.ts',
-    sourceUrl: new URL('../routes/api/agents/control-plane/status.ts', import.meta.url),
-    load: () => import('../routes/api/agents/control-plane/status'),
-  },
-  {
-    file: 'src/routes/api/agents/control-plane/stream.ts',
-    sourceUrl: new URL('../routes/api/agents/control-plane/stream.ts', import.meta.url),
-    load: () => import('../routes/api/agents/control-plane/stream'),
-  },
-  {
-    file: 'src/routes/api/agents/control-plane/summary.ts',
-    sourceUrl: new URL('../routes/api/agents/control-plane/summary.ts', import.meta.url),
-    load: () => import('../routes/api/agents/control-plane/summary'),
   },
 ]
 
@@ -195,6 +270,10 @@ const configureRuntimeDependencies = () => {
     },
     memoryQueries: {
       kubeClientFactory: createKubernetesClient,
+    },
+    memoryOperations: {
+      kubeClientFactory: createKubernetesClient,
+      requireLeaderForMutation: requireLeaderForMutationHttp,
     },
     orchestrations: {
       storeFactory: createPrimitivesStore,

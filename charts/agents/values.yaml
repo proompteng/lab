@@ -151,6 +151,9 @@ metrics:
     labels:
       grafana_dashboard: '1'
 
+cors:
+  allowedOrigins: []
+
 resources:
   requests:
     cpu: 100m
@@ -263,18 +266,12 @@ env:
     PORT: '8080'
     AGENTS_MIGRATIONS: 'auto'
 
-workflowRuntime:
+agentRuntime:
   native:
     rerunOrchestration: ''
     rerunOrchestrationNamespace: ''
     systemImprovementOrchestration: ''
     systemImprovementOrchestrationNamespace: ''
-
-runtime:
-  agentRunnerImage: ''
-  agentImage: ''
-  scheduleRunnerImage: ''
-  scheduleServiceAccount: ''
 
 envFromSecretRefs: []
 envFromConfigMapRefs: []

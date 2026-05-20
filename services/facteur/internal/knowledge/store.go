@@ -8,10 +8,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"google.golang.org/protobuf/encoding/protojson"
-
-	"github.com/proompteng/lab/services/facteur/internal/froussardpb"
 )
 
 // Store coordinates writes into the codex_kb schema.
@@ -45,7 +41,7 @@ type TaskRecord struct {
 	UpdatedAt   time.Time
 }
 
-// TaskRunRecord captures workflow execution telemetry.
+// TaskRunRecord captures AgentRun execution telemetry.
 type TaskRunRecord struct {
 	ID            string
 	TaskID        string
@@ -62,10 +58,6 @@ type TaskRunRecord struct {
 	DeliveryID    string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
-}
-
-var protojsonMarshaler = protojson.MarshalOptions{
-	EmitUnpopulated: true,
 }
 
 // NewStore constructs a Store around the shared DB handle.
@@ -324,156 +316,11 @@ RETURNING id, task_id, external_run_id, status, queued_at, started_at, completed
 	return persistedTask, persistedRun, nil
 }
 
-// IngestCodexTask normalises and persists a structured Codex task delivery.
-func (s *Store) IngestCodexTask(ctx context.Context, task *froussardpb.CodexTask) (ideaID, taskID, runID string, err error) {
-	if task == nil {
-		return "", "", "", errors.New("codex task payload is required")
-	}
-	if strings.TrimSpace(task.GetDeliveryId()) == "" {
-		return "", "", "", errors.New("codex task missing delivery_id")
-	}
-
-	payload, err := protojsonMarshaler.Marshal(task)
-	if err != nil {
-		return "", "", "", fmt.Errorf("marshal codex task payload: %w", err)
-	}
-
-	ideaSourceRef := buildIdeaSourceRef(task.GetRepository(), task.GetIssueNumber())
-	ideaID, err = s.UpsertIdea(ctx, IdeaRecord{
-		SourceType: "github.issue",
-		SourceRef:  ideaSourceRef,
-		Priority:   0,
-		Status:     "open",
-		RiskFlags:  []byte("{}"),
-		Payload:    payload,
-	})
-	if err != nil {
-		return "", "", "", err
-	}
-
-	stage := normaliseStage(task.GetStage())
-	taskMetadata, err := buildTaskMetadata(task)
-	if err != nil {
-		return "", "", "", err
-	}
-	runMetadata, err := buildRunMetadata(task)
-	if err != nil {
-		return "", "", "", err
-	}
-
-	issuedAt := time.Now().UTC()
-	if ts := task.GetIssuedAt(); ts != nil && ts.AsTime().Unix() > 0 {
-		issuedAt = ts.AsTime().UTC()
-	}
-
-	taskRecord, runRecord, err := s.RecordTaskLifecycle(ctx, TaskRecord{
-		IdeaID:   ideaID,
-		Stage:    stage,
-		State:    "pending",
-		Assignee: nullString(task.GetSender()),
-		Metadata: taskMetadata,
-	}, TaskRunRecord{
-		Status:        "delivered",
-		QueuedAt:      issuedAt,
-		InputRef:      nullString(task.GetIssueUrl()),
-		OutputRef:     sql.NullString{},
-		RetryCount:    0,
-		ErrorCode:     sql.NullString{},
-		Metadata:      runMetadata,
-		DeliveryID:    task.GetDeliveryId(),
-		ExternalRunID: sql.NullString{},
-	})
-	if err != nil {
-		return "", "", "", err
-	}
-
-	return ideaID, taskRecord.ID, runRecord.ID, nil
-}
-
 func ensureJSON(data []byte) []byte {
 	if len(data) == 0 {
 		return []byte("{}")
 	}
 	return data
-}
-
-func buildIdeaSourceRef(repo string, issueNum int64) string {
-	repo = strings.TrimSpace(repo)
-	if repo == "" {
-		return fmt.Sprintf("issue#%d", issueNum)
-	}
-	return fmt.Sprintf("%s#%d", repo, issueNum)
-}
-
-func normaliseStage(stage froussardpb.CodexTaskStage) string {
-	name := stage.String()
-	name = strings.TrimPrefix(name, "CODEX_TASK_STAGE_")
-	name = strings.TrimSuffix(name, "_")
-	name = strings.ToLower(name)
-	if name == "" || name == "unspecified" {
-		return "unspecified"
-	}
-	return name
-}
-
-func buildTaskMetadata(task *froussardpb.CodexTask) ([]byte, error) {
-	var issuedAt time.Time
-	if ts := task.GetIssuedAt(); ts != nil {
-		issuedAt = ts.AsTime().UTC()
-	}
-
-	meta := map[string]any{
-		"prompt":        task.GetPrompt(),
-		"repository":    task.GetRepository(),
-		"base":          task.GetBase(),
-		"head":          task.GetHead(),
-		"issue_url":     task.GetIssueUrl(),
-		"issue_title":   task.GetIssueTitle(),
-		"issue_body":    task.GetIssueBody(),
-		"sender":        task.GetSender(),
-		"stage":         normaliseStage(task.GetStage()),
-		"plan_comment":  task.GetPlanCommentId(),
-		"plan_url":      task.GetPlanCommentUrl(),
-		"plan_body":     task.GetPlanCommentBody(),
-		"delivery_id":   task.GetDeliveryId(),
-		"issue_number":  task.GetIssueNumber(),
-		"review_exists": task.GetReviewContext() != nil,
-	}
-
-	if !issuedAt.IsZero() {
-		meta["issued_at"] = issuedAt
-	}
-
-	if rc := task.GetReviewContext(); rc != nil {
-		if data, err := protojsonMarshaler.Marshal(rc); err == nil {
-			meta["review_context"] = json.RawMessage(data)
-		} else {
-			return nil, fmt.Errorf("marshal review_context: %w", err)
-		}
-	}
-
-	return json.Marshal(meta)
-}
-
-func buildRunMetadata(task *froussardpb.CodexTask) ([]byte, error) {
-	meta := map[string]any{
-		"stage":        normaliseStage(task.GetStage()),
-		"repository":   task.GetRepository(),
-		"head":         task.GetHead(),
-		"delivery_id":  task.GetDeliveryId(),
-		"plan_comment": task.GetPlanCommentId(),
-		"sender":       task.GetSender(),
-	}
-
-	if rc := task.GetReviewContext(); rc != nil {
-		if data, err := protojsonMarshaler.Marshal(rc); err == nil {
-			meta["review_context"] = json.RawMessage(data)
-		} else {
-			return nil, fmt.Errorf("marshal review_context: %w", err)
-		}
-	}
-
-	return json.Marshal(meta)
 }
 
 func nullString(value string) sql.NullString {

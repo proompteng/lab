@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import pkg from '../../package.json'
-import { getVersion } from '../legacy'
+import { getVersion } from '../runtime'
 
 type PackageJson = {
   version?: string

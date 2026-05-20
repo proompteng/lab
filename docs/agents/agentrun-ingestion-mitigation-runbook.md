@@ -13,9 +13,9 @@ Use this runbook when `agents-controllers` is healthy enough to serve traffic bu
 Capture the current state before any backfill action:
 
 ```bash
-bun packages/scripts/src/jangar/agentrun-ingestion-mitigation.ts \
+bun packages/scripts/src/agents/agentrun-ingestion-mitigation.ts \
   --namespace agents \
-  --output artifacts/jangar/agentrun-ingestion/live-snapshot.json
+  --output artifacts/agents/agentrun-ingestion/live-snapshot.json
 ```
 
 The JSON report includes:
@@ -26,17 +26,17 @@ The JSON report includes:
 - controller deployment image
 - leader identity / leader pod
 - `/ready` probe result
-- `jangar_kube_watch_events_total` evidence for `agentruns.agents.proompteng.ai`
+- Agents controller ingestion status from `/v1/control-plane/status`
 
 ## Backfill
 
 Only apply backfill after the controller is healthy enough to accept new work again.
 
 ```bash
-bun packages/scripts/src/jangar/agentrun-ingestion-mitigation.ts \
+bun packages/scripts/src/agents/agentrun-ingestion-mitigation.ts \
   --namespace agents \
   --apply-backfill \
-  --output artifacts/jangar/agentrun-ingestion/live-backfill.json
+  --output artifacts/agents/agentrun-ingestion/live-backfill.json
 ```
 
 Backfill rules:
@@ -50,7 +50,7 @@ Confirm the controller is reporting healthy ingestion and watch activity:
 
 ```bash
 kubectl get --raw \
-  '/api/v1/namespaces/agents/pods/<leader-pod>:8080/proxy/api/agents/control-plane/status?namespace=agents'
+  '/api/v1/namespaces/agents/pods/<leader-pod>:8080/proxy/v1/control-plane/status?namespace=agents'
 ```
 
 Expected:
@@ -59,12 +59,12 @@ Expected:
 - `untouched_run_count` is `0`
 - `last_watch_event_at` and `last_resync_at` are populated after new work arrives
 
-Confirm watch metrics still include `AgentRun` events:
+Confirm controller metrics still include AgentRun ingestion signals:
 
 ```bash
 kubectl get --raw \
   '/api/v1/namespaces/agents/pods/<leader-pod>:8080/proxy/metrics' \
-  | rg 'jangar_kube_watch_events_total.*agentruns.agents.proompteng.ai'
+  | rg 'agents_agentrun_(untouched|resync)'
 ```
 
 ## Notes

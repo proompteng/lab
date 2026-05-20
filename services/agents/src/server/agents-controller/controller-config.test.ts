@@ -67,6 +67,7 @@ describe('checkCrds', () => {
     expect(result).toEqual({
       ok: true,
       missing: [],
+      forbidden: [],
       checkedAt,
     })
     expect(kubeGateway.listCustomResourceDefinitions).toHaveBeenCalledTimes(1)
@@ -88,6 +89,7 @@ describe('checkCrds', () => {
     expect(result).toEqual({
       ok: true,
       missing: [],
+      forbidden: [],
       checkedAt,
     })
     expect(kubeGateway.serviceExists).toHaveBeenCalledTimes(1)
@@ -109,6 +111,7 @@ describe('checkCrds', () => {
     expect(result).toEqual({
       ok: true,
       missing: [],
+      forbidden: [],
       checkedAt,
     })
     expect(kubeGateway.serviceExists).not.toHaveBeenCalled()
@@ -131,6 +134,7 @@ describe('checkCrds', () => {
     expect(result).toEqual({
       ok: false,
       missing: ['service:nats@nats'],
+      forbidden: [],
       checkedAt,
     })
   })

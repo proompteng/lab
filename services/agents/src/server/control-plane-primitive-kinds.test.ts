@@ -8,4 +8,12 @@ describe('control-plane primitive kinds', () => {
     expect(listPrimitiveKinds({ includeSwarm: true })).toContain('Swarm')
     expect(resolvePrimitiveKind('Swarm')).toMatchObject({ kind: 'Swarm' })
   })
+
+  it('resolves runtime-owned Kubernetes resources without adding them to primitive watch lists', () => {
+    expect(resolvePrimitiveKind('Job')).toMatchObject({ kind: 'Job', resource: 'jobs.batch' })
+    expect(resolvePrimitiveKind('Pod')).toMatchObject({ kind: 'Pod', resource: 'pods' })
+    expect(resolvePrimitiveKind('Deployment')).toMatchObject({ kind: 'Deployment', resource: 'deployments' })
+    expect(listPrimitiveKinds()).not.toContain('Job' as never)
+    expect(listPrimitiveKinds({ includeSwarm: true })).not.toContain('Pod' as never)
+  })
 })

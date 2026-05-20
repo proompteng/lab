@@ -8,18 +8,18 @@ This document captures the current architecture of the Graf Neo4j persistence se
   - RESTEasy Reactive resources serve `/v1` routes behind the `GrafBearerTokenFilter`.
   - CRUD operations for entities/relationships plus complement/clean map 1:1 with the original Ktor handlers.
   - Automation entry points:
-    - `POST /v1/codex-research` launches Argo-driven Codex workflows.
+    - `POST /v1/codex-research` launches Agents-driven Codex AgentRuns.
     - `POST /v1/autoresearch` injects the AutoResearch prompt (optional `user_prompt`) before dispatching the same workflow.
 - **Temporal / Codex runtime**
   - Shared Temporal connection (`WorkflowClient`) with task queue `graf-codex-research`.
-  - `CodexResearchWorkflowImpl` submits the `codex-research-workflow` template, polls Argo until completion, downloads the MinIO artifact, and asks `GraphService` to persist the resulting entities/relationships.
+  - `CodexResearchWorkflowImpl` submits an AgentRun through the Agents control plane, polls it until completion, downloads the MinIO artifact, and asks `GraphService` to persist the resulting entities/relationships.
   - AutoResearch now reuses this exact workflow; the Kotlin service simply injects additional instructions before the run starts.
 - **Neo4j client**
   - `Neo4jClient` encapsulates write/read transactions for every REST mutation.
   - `/v1/entities` and `/v1/relationships` now build label/type-specific `UNWIND` statements so every batch runs inside one Bolt transaction instead of routing each record through its own `MERGE`.
   - Span attributes such as `graf.batch.duration_ms`/`graf.batch.record.count` and new metrics (`graf_graph_batch_duration_ms`, `graf_graph_batch_records_total`) surface the full-batch latency and record counts so AutoResearch bursts can prove the lower overhead.
-- **MinIO + Argo tooling**
-  - `ArgoWorkflowClient` submits workflow templates and tracks completion.
+- **MinIO + Agents tooling**
+  - `AgentRunClient` submits AgentRuns and tracks completion.
   - `MinioArtifactFetcher` streams artifacts to Temporal activities.
 
 ## Deployment & Configuration Snapshot
@@ -48,7 +48,7 @@ flowchart LR
         CodexWF["CodexResearchWorkflow"]
     end
     subgraph External["External Systems"]
-        Argo["Argo Workflows"]
+        Agents["Agents Control Plane"]
         Minio["MinIO Artifact Store"]
     end
 
@@ -58,8 +58,8 @@ flowchart LR
     Routes -->|/autoresearch| AutoPrompt
     AutoPrompt --> CodexWF
 
-    CodexWF --> Argo
-    Argo --> Minio
+    CodexWF --> Agents
+    Agents --> Minio
     CodexWF -->|persist via codex-graf| Neo4jDB
 ```
 
@@ -74,7 +74,7 @@ sequenceDiagram
     participant Prompt as AutoResearchService
     participant Temporal as Temporal Worker
     participant Codex as CodexWorkflow
-    participant Argo
+    participant Agents
     participant Runner as Codex Container
     participant GrafAPI as Graf HTTP
 
@@ -82,12 +82,12 @@ sequenceDiagram
     Graf->>Prompt: buildPrompt(user_prompt)
     Prompt-->>Graf: Codex prompt + metadata
     Graf->>Temporal: Start CodexResearchWorkflow (task queue)
-    Temporal->>Argo: Submit codex-research-workflow
-    Argo->>Runner: Run codex exec with injected prompt
+    Temporal->>Agents: POST /v1/agent-runs
+    Agents->>Runner: Run Codex app-server harness
     Runner->>GrafAPI: codex-graf --endpoint /v1/entities
     Runner->>GrafAPI: codex-graf --endpoint /v1/relationships
-    Runner-->>Argo: Emit codex-artifact.json
-    Argo-->>Temporal: Artifact reference + status
+    Runner-->>Agents: Upload codex-artifact.json
+    Agents-->>Temporal: Artifact reference + status
     Temporal->>Graf: Download artifact + persist summary
     Graf-->>Client: 202 Accepted (workflow metadata)
 ```
@@ -95,9 +95,9 @@ sequenceDiagram
 ### Execution notes
 
 1. **Prompt synthesis** – `AutoResearchService` stamps the prompt version (`v2025-11-10`), UTC timestamp, and optional operator guidance while sourcing the knowledge base name from `AUTO_RESEARCH_KB_NAME`, the stage from `AUTO_RESEARCH_STAGE`, and the stream from `AUTO_RESEARCH_STREAM_ID`. It falls back to `AUTO_RESEARCH_OPERATOR_GUIDANCE`/`AUTO_RESEARCH_DEFAULT_GOALS` when the caller omits a `user_prompt` and still reminds Codex to post JSON via `/usr/local/bin/codex-graf`, capturing `artifactId`, `researchSource`, and the configured stream metadata on every payload.
-2. **Temporal launch** – `/v1/autoresearch` generates a unique Argo workflow name prefixed with the stage (e.g., `auto-research-<uuid>` when `AUTO_RESEARCH_STAGE=auto-research`), computes the MinIO artifact key, and calls `CodexResearchService.startResearch`. The HTTP caller still receives `202 Accepted` immediately with the Temporal + Argo identifiers.
-3. **Argo execution** – the workflow template mounts the Graf bearer token as `CODEX_GRAF_BEARER_TOKEN` and runs `codex exec` with the synthesized instructions. Because the prompt explicitly calls for `codex-graf`, findings are streamed back to Graf while the research is in flight instead of waiting for a post-processing step.
-4. **Artifact + persistence** – once Argo finishes, Graf downloads the JSON artifact (still `codex-artifact.json`) and replays any entity/relationship batches it contains. This keeps the run auditable even though the Codex CLI already POSTed individual mutations during the investigation.
+2. **Temporal launch** – `/v1/autoresearch` generates a unique AgentRun name prefixed with the stage (e.g., `auto-research-<uuid>` when `AUTO_RESEARCH_STAGE=auto-research`), computes the MinIO artifact key, and calls `CodexResearchService.startResearch`. The HTTP caller still receives `202 Accepted` immediately with the Temporal + AgentRun identifiers.
+3. **Agents execution** – the `graf-codex-agent` provider injects the Graf bearer token as `CODEX_GRAF_BEARER_TOKEN` and runs the Codex app-server harness with the synthesized instructions. Because the prompt explicitly calls for `codex-graf`, findings are streamed back to Graf while the research is in flight instead of waiting for a post-processing step.
+4. **Artifact + persistence** – once the AgentRun finishes, Graf downloads the JSON artifact (still `codex-artifact.json`) and replays any entity/relationship batches it contains. This keeps the run auditable even though the Codex CLI already POSTed individual mutations during the investigation.
 
 ## Operational Notes
 

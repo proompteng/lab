@@ -20,7 +20,7 @@ import type {
   TerminalDebtCompactionLedger,
   TorghutConsumerEvidenceStatus,
   WorkflowsReliabilityStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import type { ControlPlaneRolloutHealth } from '~/server/control-plane-status-types'
 
 export const MATERIAL_EVIDENCE_SETTLEMENT_DESIGN_ARTIFACT =
@@ -360,7 +360,7 @@ export const buildMaterialEvidenceSettlementSpine = (
   const selectedRepair = selectRepairBudget(input)
   const decision = settlementDecision(input, reasonCodes, selectedRepair)
   const validationCommands = uniqueStrings([
-    `curl -fsS 'http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status?namespace=${input.namespace}' | jq '.material_evidence_settlement_spine'`,
+    `curl -fsS 'http://agents.agents.svc.cluster.local/v1/control-plane/status?namespace=${input.namespace}' | jq '.material_evidence_settlement_spine'`,
     `curl -fsS ${input.torghutConsumerEvidence.endpoint || 'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence'} | jq '{business_state,revenue_repair_queue,route_proven_profit_receipt}'`,
     ...input.materialGateDigest.action_class_decisions.flatMap((action) => action.validation_refs),
     ...(selectedRepair?.validationCommands ?? []),

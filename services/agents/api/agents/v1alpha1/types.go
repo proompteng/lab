@@ -205,6 +205,9 @@ type AgentRunStatus struct {
 	Message string `json:"message,omitempty"`
 	// +kubebuilder:pruning:PreserveUnknownFields
 	RuntimeRef map[string]apiextensionsv1.JSON `json:"runtimeRef,omitempty"`
+	// Runner carries the normalized terminal status emitted by the runner harness.
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Runner     map[string]apiextensionsv1.JSON `json:"runner,omitempty"`
 	Workflow   *WorkflowStatus                 `json:"workflow,omitempty"`
 	StartedAt  *metav1.Time                    `json:"startedAt,omitempty"`
 	FinishedAt *metav1.Time                    `json:"finishedAt,omitempty"`
@@ -311,6 +314,7 @@ type AgentProviderSpec struct {
 	Binary          string            `json:"binary"`
 	ArgsTemplate    []string          `json:"argsTemplate,omitempty"`
 	EnvTemplate     map[string]string `json:"envTemplate,omitempty"`
+	SecretEnv       []SecretEnvVar    `json:"secretEnv,omitempty"`
 	InputFiles      []InputFile       `json:"inputFiles,omitempty"`
 	OutputArtifacts []Artifact        `json:"outputArtifacts,omitempty"`
 	// Adapter is the normalized runner contract consumed by agents-codex-runner.
@@ -322,6 +326,13 @@ type AgentProviderSpec struct {
 type InputFile struct {
 	Path    string `json:"path"`
 	Content string `json:"content"`
+}
+
+type SecretEnvVar struct {
+	Name       string `json:"name"`
+	SecretName string `json:"secretName"`
+	Key        string `json:"key"`
+	Optional   bool   `json:"optional,omitempty"`
 }
 
 type Artifact struct {

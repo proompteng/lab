@@ -363,6 +363,8 @@ spec:
               value: codex-whitepaper-github-token
             - name: WHITEPAPER_AGENTRUN_SUBMIT_URL
               value: http://agents.agents.svc.cluster.local/v1/agent-runs
+            - name: AGENTS_BASE_URL
+              value: http://agents.agents.svc.cluster.local
             - name: INNGEST_APP_ID
               value: torghut-sim
             - name: INNGEST_BASE_URL

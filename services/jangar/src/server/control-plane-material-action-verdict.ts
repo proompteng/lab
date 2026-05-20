@@ -17,7 +17,7 @@ import type {
   ReconciledActionClockDecision,
   RepairWarrantExchange,
   SourceRolloutTruthExchange,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import { REPAIR_WARRANT_EXCHANGE_DESIGN_ARTIFACT } from '~/server/control-plane-repair-warrant-exchange'
 import {
   SOURCE_ROLLOUT_TRUTH_EXCHANGE_DESIGN_ARTIFACT,

@@ -9,7 +9,7 @@ import type {
   MaterialGateDigestReadiness,
   RepairBidAdmissionState,
   WorkflowsReliabilityStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import type { TorghutConsumerEvidenceStatus } from '~/server/control-plane-torghut-consumer-evidence'
 
 export const MATERIAL_GATE_DIGEST_DESIGN_ARTIFACT =

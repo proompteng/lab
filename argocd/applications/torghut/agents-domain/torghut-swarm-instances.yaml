@@ -47,7 +47,7 @@ spec:
   integrations:
     nats:
       url: nats://nats.nats.svc.cluster.local:4222
-      subjectPrefix: workflow
+      subjectPrefix: agentrun
       channel: general
       personas:
         architect:

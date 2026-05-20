@@ -10,7 +10,7 @@
     "dev:worker": "bun --hot src/worker.ts",
     "build:client": "bun --bun vite build --config vite.config.ts",
     "build:server": "bun --bun vite build --config vite.server.config.ts",
-    "build": "rm -rf .output && bun run build:client && bun run build:server && bun run copy:grpc-proto",
+    "build": "rm -rf .output && bun run build:client && bun run build:server",
     "pretest": "bun run --filter @proompteng/otel build && bun run --filter @proompteng/temporal-bun-sdk build",
     "start:worker": "bun src/worker.ts",
     "start:build": "bun run build",
@@ -29,8 +29,7 @@
     "tsc": "bunx tsc --noEmit -p tsconfig.app.json",
     "lint": "bunx oxfmt --check src",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
-    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.oxlint.json .",
-    "copy:grpc-proto": "bun run scripts/copy-agentctl-proto.ts"
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.oxlint.json ."
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1042.0",
@@ -43,7 +42,7 @@
     "@grpc/proto-loader": "^0.8.0",
     "@kubernetes/client-node": "^1.4.0",
     "@opentelemetry/exporter-prometheus": "0.216.0",
-    "@proompteng/agents": "workspace:*",
+    "@proompteng/agent-contracts": "workspace:*",
     "@proompteng/bumba": "workspace:*",
     "@proompteng/codex": "workspace:*",
     "@proompteng/design": "workspace:*",

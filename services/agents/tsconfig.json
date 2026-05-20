@@ -8,6 +8,8 @@
     "paths": {
       "@/*": ["./src/*"],
       "~/*": ["./src/*"],
+      "@proompteng/agent-contracts": ["../../packages/agent-contracts/src/index.ts"],
+      "@proompteng/agent-contracts/*": ["../../packages/agent-contracts/src/*.ts"],
       "@proompteng/codex": ["../../packages/codex/src/index.ts"],
       "@proompteng/codex/*": ["../../packages/codex/src/*"],
       "@proompteng/otel": ["../../packages/otel/src/index.ts"],

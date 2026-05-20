@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto'
 
 import { sql } from 'kysely'
+import {
+  submitTorghutMarketContextAgentRun,
+  type TorghutMarketContextAgentRunSubmitter as MarketContextAgentRunSubmitter,
+} from '~/server/torghut-market-context-agentrun'
 
 import type { Db } from '~/server/db'
-import { createKubernetesClient } from '~/server/primitives-kube'
 import type { MarketContextProviderDomain } from '~/server/torghut-market-context-agents'
 import { isProviderCapacityMessage, resolveFailureCategoryFromMetadata } from '~/server/torghut-market-context-failures'
 
@@ -84,8 +87,6 @@ const coercePayload = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
   return value as Record<string, unknown>
 }
-
-const toIso = (value: Date) => value.toISOString()
 
 const asStringArray = (value: unknown): string[] => {
   if (typeof value === 'string') return [value]
@@ -393,87 +394,6 @@ const updateMarketContextDispatchState = async (params: {
   `.execute(params.db)
 }
 
-const resolveAgentRunReferences = (domain: MarketContextProviderDomain) =>
-  domain === 'fundamentals'
-    ? {
-        agentName: 'torghut-fundamentals-agent',
-        implementationSpecName: 'torghut-market-context-fundamentals-v1',
-      }
-    : {
-        agentName: 'torghut-news-agent',
-        implementationSpecName: 'torghut-market-context-news-v1',
-      }
-
-export const buildMarketContextAgentRun = (params: {
-  symbol: string
-  domain: MarketContextProviderDomain
-  snapshotState: MarketContextSnapshotState
-  provider: string
-  requestId: string
-  now: Date
-  settings: MarketContextDispatchSettings
-}) => {
-  const refs = resolveAgentRunReferences(params.domain)
-  const symbolName = params.symbol.toLowerCase().replace(/[^a-z0-9-]+/g, '-')
-  return {
-    apiVersion: 'agents.proompteng.ai/v1alpha1',
-    kind: 'AgentRun',
-    metadata: {
-      generateName: `torghut-market-context-${params.domain}-${symbolName}-`,
-      namespace: params.settings.onDemandDispatchNamespace,
-      labels: {
-        'torghut.proompteng.ai/purpose': 'market-context-on-demand',
-        'torghut.proompteng.ai/domain': params.domain,
-        'torghut.proompteng.ai/symbol': symbolName,
-      },
-    },
-    spec: {
-      agentRef: { name: refs.agentName },
-      implementationSpecRef: { name: refs.implementationSpecName },
-      runtime: {
-        type: 'job',
-        config: {
-          serviceAccountName: params.settings.onDemandDispatchServiceAccountName,
-          priorityClassName: params.settings.onDemandDispatchPriorityClassName,
-        },
-      },
-      ttlSecondsAfterFinished: params.settings.onDemandDispatchTtlSeconds,
-      vcsRef: {
-        name: params.settings.onDemandDispatchVcsRefName,
-      },
-      vcsPolicy: {
-        required: true,
-        mode: 'read-only',
-      },
-      workload: {
-        resources: {
-          requests: {
-            cpu: '100m',
-            memory: '256Mi',
-          },
-          limits: {
-            cpu: '750m',
-            memory: '1Gi',
-          },
-        },
-      },
-      parameters: {
-        executionMode: 'batch_task',
-        symbol: params.symbol,
-        domain: params.domain,
-        asOfUtc: toIso(params.now),
-        reason: `on_demand_${params.snapshotState}_snapshot_refresh`,
-        provider: params.provider,
-        callbackUrl: params.settings.onDemandDispatchCallbackUrl,
-        requestId: params.requestId,
-        repository: params.settings.onDemandDispatchRepository,
-        base: params.settings.onDemandDispatchBaseBranch,
-        head: params.settings.onDemandDispatchHeadBranch,
-      },
-    },
-  }
-}
-
 export const dispatchMarketContextRefreshIfNeeded = async (params: {
   db: Db
   symbol: string
@@ -481,6 +401,7 @@ export const dispatchMarketContextRefreshIfNeeded = async (params: {
   snapshotState: MarketContextSnapshotState
   settings: MarketContextDispatchSettings
   now: Date
+  submitAgentRun?: MarketContextAgentRunSubmitter
 }): Promise<MarketContextDispatchResult> => {
   if (params.snapshotState === 'fresh') {
     return {
@@ -566,19 +487,16 @@ export const dispatchMarketContextRefreshIfNeeded = async (params: {
   }
 
   try {
-    const applied = await createKubernetesClient().apply(
-      buildMarketContextAgentRun({
-        symbol: params.symbol,
-        domain: params.domain,
-        snapshotState: params.snapshotState,
-        provider,
-        requestId,
-        now: params.now,
-        settings: params.settings,
-      }),
-    )
-    const metadata = coercePayload(applied.metadata)
-    const runName = parseNonEmptyString(metadata.name) ?? requestId
+    const runName = await submitTorghutMarketContextAgentRun({
+      symbol: params.symbol,
+      domain: params.domain,
+      snapshotState: params.snapshotState,
+      provider,
+      requestId,
+      now: params.now,
+      settings: params.settings,
+      submitAgentRun: params.submitAgentRun,
+    })
     await updateMarketContextDispatchState({
       db: params.db,
       symbol: params.symbol,

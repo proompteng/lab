@@ -85,6 +85,7 @@ type TurnStream = {
   push: (delta: StreamDelta) => void
   complete: (turn: Turn | null) => void
   fail: (error: unknown) => void
+  isClosed: () => boolean
   iterator: AsyncGenerator<StreamDelta, Turn | null, void>
   lastReasoningDelta: string | null
   lastMessageDelta: string | null
@@ -301,6 +302,7 @@ const createTurnStream = (): TurnStream => {
     push,
     complete,
     fail,
+    isClosed: () => closed,
     iterator,
     lastReasoningDelta: null,
     lastMessageDelta: null,
@@ -409,6 +411,7 @@ export class CodexAppServerClient {
   // Active turn streams keyed by Codex turn_id. Notifications without turn_id are only inferred when exactly
   // one active stream exists to preserve the per-conversation “one live turn at a time” invariant enforced upstream.
   private turnStreams = new Map<string, TurnStream>()
+  private pendingTurnStreams = new Map<string, TurnStream>()
   private turnItems = new Map<string, Set<string>>()
   private itemTurnMap = new Map<string, string>()
   private lastActiveTurnId: string | null = null
@@ -643,13 +646,33 @@ export class CodexAppServerClient {
       collaborationMode: null,
     }
 
-    const turnResp = (await this.request<TurnStartResponse>('turn/start', turnParams)) as TurnStartResponse
-    const turnId = turnResp.turn.id
-
     const stream = createTurnStream()
-    this.turnStreams.set(turnId, stream)
-    this.turnItems.set(turnId, new Set())
-    this.lastActiveTurnId = turnId
+    this.pendingTurnStreams.set(activeThreadId, stream)
+
+    let turnResp: TurnStartResponse
+    try {
+      turnResp = (await this.request<TurnStartResponse>('turn/start', turnParams)) as TurnStartResponse
+    } catch (error) {
+      if (this.pendingTurnStreams.get(activeThreadId) === stream) {
+        this.pendingTurnStreams.delete(activeThreadId)
+      }
+      stream.fail(error)
+      throw error
+    }
+
+    const turnId = this.findTurnIdForStream(stream) ?? turnResp.turn.id
+    if (this.pendingTurnStreams.get(activeThreadId) === stream) {
+      this.pendingTurnStreams.delete(activeThreadId)
+    }
+    if (!stream.isClosed() && !this.turnStreams.has(turnId)) {
+      this.turnStreams.set(turnId, stream)
+    }
+    if (!stream.isClosed() && !this.turnItems.has(turnId)) {
+      this.turnItems.set(turnId, new Set())
+    }
+    if (!stream.isClosed()) {
+      this.lastActiveTurnId = turnId
+    }
     return { stream: stream.iterator, turnId, threadId: activeThreadId }
   }
 
@@ -1204,15 +1227,15 @@ export class CodexAppServerClient {
         const params = notification.params as TurnCompletedNotification
         const turnId = this.findTurnId(params) ?? params.turn.id
         this.reconcileActiveTurnId(turnId)
-        const stream = this.turnStreams.get(turnId)
-        if (stream) {
+        const resolved = this.resolveTurnStream(params) ?? { stream: this.turnStreams.get(turnId), turnId }
+        if (resolved.stream) {
           if (params.turn.status === 'failed') {
-            stream.fail(streamErrorToError(params.turn.error ?? params.turn))
+            resolved.stream.fail(streamErrorToError(params.turn.error ?? params.turn))
           } else {
-            stream.complete(params.turn)
+            resolved.stream.complete(params.turn)
           }
         }
-        this.clearTurn(turnId)
+        this.clearTurn(resolved.turnId)
         this.log(params.turn.status === 'failed' ? 'error' : 'info', 'turn completed', {
           turnId,
           status: params.turn.status,
@@ -1384,6 +1407,36 @@ export class CodexAppServerClient {
     return null
   }
 
+  private findThreadId(params: unknown): string | null {
+    if (!params || typeof params !== 'object') return null
+    const obj = params as { [key: string]: unknown }
+
+    if (typeof obj.threadId === 'string') return obj.threadId
+    if (typeof obj.thread_id === 'string') return obj.thread_id
+    if (obj.thread && typeof (obj.thread as { id?: unknown }).id === 'string') return (obj.thread as { id: string }).id
+
+    if (obj.params && typeof obj.params === 'object') {
+      const nested = obj.params as { threadId?: unknown; thread_id?: unknown }
+      if (typeof nested.threadId === 'string') return nested.threadId
+      if (typeof nested.thread_id === 'string') return nested.thread_id
+    }
+
+    if (obj.msg && typeof obj.msg === 'object') {
+      const msg = obj.msg as { [key: string]: unknown }
+      if (typeof msg.threadId === 'string') return msg.threadId
+      if (typeof msg.thread_id === 'string') return msg.thread_id
+    }
+
+    return null
+  }
+
+  private findTurnIdForStream(stream: TurnStream): string | null {
+    for (const [turnId, candidate] of this.turnStreams) {
+      if (candidate === stream) return turnId
+    }
+    return null
+  }
+
   private findItemId(params: unknown): string | null {
     if (!params || typeof params !== 'object') return null
     const obj = params as { [key: string]: unknown }
@@ -1410,6 +1463,29 @@ export class CodexAppServerClient {
     const turnIdFromParams = this.findTurnId(params)
     const itemIdFromParams = this.findItemId(params)
     let turnId = turnIdFromParams ?? (itemIdFromParams ? (this.itemTurnMap.get(itemIdFromParams) ?? null) : null)
+    const threadId = this.findThreadId(params)
+
+    if (turnId) {
+      const stream = this.turnStreams.get(turnId)
+      if (stream) return { stream, turnId }
+    }
+
+    if (threadId) {
+      const pendingStream = this.pendingTurnStreams.get(threadId)
+      if (pendingStream && turnId) {
+        this.pendingTurnStreams.delete(threadId)
+        this.turnStreams.set(turnId, pendingStream)
+        if (!this.turnItems.has(turnId)) {
+          this.turnItems.set(turnId, new Set())
+        }
+        this.lastActiveTurnId = turnId
+        return { stream: pendingStream, turnId }
+      }
+      if (pendingStream) {
+        return { stream: pendingStream, turnId: `pending:${threadId}` }
+      }
+    }
+
     if (!turnId) {
       const activeTurnIds = Array.from(this.turnStreams.keys())
       if (activeTurnIds.length !== 1) {
@@ -1524,6 +1600,10 @@ export class CodexAppServerClient {
     for (const turnId of turnIds) {
       this.failTurnStream(turnId, error)
     }
+    for (const [, stream] of this.pendingTurnStreams) {
+      stream.fail(error)
+    }
+    this.pendingTurnStreams.clear()
   }
 
   private request<T = unknown>(method: JsonRpcRequestMethod, params: unknown): Promise<T> {

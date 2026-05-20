@@ -6,9 +6,8 @@ import type { ImplementationCommand } from '@/codex/workflow-machine'
 import { selectReactionRepository } from '@/codex-workflow'
 import { deriveRepositoryFullName, isGithubIssueCommentEvent, isGithubIssueEvent } from '@/github-payload'
 import { logger } from '@/logger'
+import { buildGithubIssueAgentRunPayload } from '@/services/agents'
 import type { WebhookConfig } from '../../types'
-import { PROTO_CODEX_TASK_FULL_NAME, PROTO_CODEX_TASK_SCHEMA, PROTO_CONTENT_TYPE } from '../constants'
-import { toCodexTaskProto } from '../payloads'
 import type { WorkflowExecutionContext, WorkflowStage } from '../workflow'
 import { executeWorkflowCommands } from '../workflow'
 
@@ -205,26 +204,17 @@ export const handleIssueOpened = async (params: BaseIssueParams): Promise<Workfl
     iterations: metadata.iterations,
   }
 
-  const codexStructuredMessage = toCodexTaskProto(codexMessage, deliveryId)
-
   const implementationCommand: ImplementationCommand = {
     stage: 'implementation',
     key: `issue-${issueNumber}-implementation`,
-    structuredMessage: codexStructuredMessage,
-    topics: {
-      codexStructured: config.topics.codexStructured,
-    },
-    structuredHeaders: {
-      ...headers,
-      'x-codex-task-stage': 'implementation',
-      'content-type': PROTO_CONTENT_TYPE,
-      'x-protobuf-message': PROTO_CODEX_TASK_FULL_NAME,
-      'x-protobuf-schema': PROTO_CODEX_TASK_SCHEMA,
+    agentRun: {
+      deliveryId,
+      payload: buildGithubIssueAgentRunPayload(config.agents, codexMessage, deliveryId),
     },
   } as ImplementationCommand
 
   const { stage } = await executeWorkflowCommands(
-    [{ type: 'publishImplementation', data: implementationCommand }],
+    [{ type: 'submitImplementation', data: implementationCommand }],
     executionContext,
   )
   return stage ?? null
@@ -352,26 +342,17 @@ export const handleIssueCommentCreated = async (params: BaseIssueParams): Promis
     iterations: metadata.iterations,
   }
 
-  const codexStructuredMessage = toCodexTaskProto(codexMessage, deliveryId)
-
   const implementationCommand: ImplementationCommand = {
     stage: 'implementation',
     key: `issue-${issueNumber}-implementation`,
-    structuredMessage: codexStructuredMessage,
-    topics: {
-      codexStructured: config.topics.codexStructured,
-    },
-    structuredHeaders: {
-      ...headers,
-      'x-codex-task-stage': 'implementation',
-      'content-type': PROTO_CONTENT_TYPE,
-      'x-protobuf-message': PROTO_CODEX_TASK_FULL_NAME,
-      'x-protobuf-schema': PROTO_CODEX_TASK_SCHEMA,
+    agentRun: {
+      deliveryId,
+      payload: buildGithubIssueAgentRunPayload(config.agents, codexMessage, deliveryId),
     },
   } as ImplementationCommand
 
   const { stage } = await executeWorkflowCommands(
-    [{ type: 'publishImplementation', data: implementationCommand }],
+    [{ type: 'submitImplementation', data: implementationCommand }],
     executionContext,
   )
   return stage ?? null

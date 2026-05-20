@@ -8,6 +8,8 @@ export type AgentsMetricsSink = {
   recordAgentRunResyncAdoptions?: (count: number, attributes?: MetricsAttributes) => void
   recordAgentRunUntouchedBacklog?: (count: number, attributes?: MetricsAttributes) => void
   recordAgentRunUntouchedOldestAgeSeconds?: (ageSeconds: number, attributes?: MetricsAttributes) => void
+  recordAgentCommsBatch?: (count: number, durationMs: number, attributes?: MetricsAttributes) => void
+  recordAgentCommsError?: (stage: string, attributes?: MetricsAttributes) => void
   recordReconcileDurationMs?: (durationMs: number, attributes?: MetricsAttributes) => void
   recordSseConnection?: (stream: string, state: string, attributes?: MetricsAttributes) => void
   recordSseError?: (stream: string, phase: string, attributes?: MetricsAttributes) => void
@@ -62,6 +64,22 @@ const METRICS = {
   agentRunUntouchedOldestAgeSeconds: {
     name: 'agents_agentrun_untouched_oldest_age_seconds',
     help: 'Observed age in seconds of the oldest untouched AgentRun.',
+  },
+  agentCommsInserted: {
+    name: 'agents_agent_comms_inserted_total',
+    help: 'Count of agent communication messages inserted.',
+  },
+  agentCommsIngestErrors: {
+    name: 'agents_agent_comms_ingest_errors_total',
+    help: 'Count of agent communication ingest errors.',
+  },
+  agentCommsInsertDurationMs: {
+    name: 'agents_agent_comms_insert_duration_ms',
+    help: 'Time spent inserting agent communication message batches.',
+  },
+  agentCommsBatchSize: {
+    name: 'agents_agent_comms_batch_size',
+    help: 'Observed agent communication ingest batch sizes.',
   },
   reconcileDurationMs: {
     name: 'agents_reconcile_duration_ms',
@@ -176,6 +194,18 @@ export const recordAgentRunUntouchedBacklog = (count: number, attributes?: Metri
 export const recordAgentRunUntouchedOldestAgeSeconds = (ageSeconds: number, attributes?: MetricsAttributes) => {
   recordHistogram(METRICS.agentRunUntouchedOldestAgeSeconds, ageSeconds, attributes)
   externalMetricsSink.recordAgentRunUntouchedOldestAgeSeconds?.(ageSeconds, attributes)
+}
+
+export const recordAgentCommsBatch = (count: number, durationMs: number, attributes?: MetricsAttributes) => {
+  recordCounter(METRICS.agentCommsInserted, count, attributes)
+  recordHistogram(METRICS.agentCommsBatchSize, count, attributes)
+  recordHistogram(METRICS.agentCommsInsertDurationMs, durationMs, attributes)
+  externalMetricsSink.recordAgentCommsBatch?.(count, durationMs, attributes)
+}
+
+export const recordAgentCommsError = (stage: string, attributes?: MetricsAttributes) => {
+  recordCounter(METRICS.agentCommsIngestErrors, 1, { stage, ...attributes })
+  externalMetricsSink.recordAgentCommsError?.(stage, attributes)
 }
 
 export const recordReconcileDurationMs = (durationMs: number, attributes?: MetricsAttributes) => {

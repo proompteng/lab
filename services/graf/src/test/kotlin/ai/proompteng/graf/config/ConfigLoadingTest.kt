@@ -6,45 +6,56 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 
-class ArgoConfigTest {
+class AgentsConfigTest {
   @Test
   fun `fromEnvironment uses defaults when unset`() {
-    val config = ArgoConfig.fromEnvironment(emptyMap())
+    val config = AgentsConfig.fromEnvironment(emptyMap())
 
-    assertEquals("https://kubernetes.default.svc", config.apiServer)
-    assertEquals("argo-workflows", config.namespace)
-    assertEquals("codex-research-workflow", config.workflowTemplateName)
-    assertEquals("graf", config.serviceAccountName)
-    assertEquals("/var/run/secrets/kubernetes.io/serviceaccount/token", config.tokenPath)
-    assertEquals("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt", config.caCertPath)
+    assertEquals("http://agents.agents.svc.cluster.local", config.baseUrl)
+    assertEquals("agents", config.namespace)
+    assertEquals("graf-codex-agent", config.agentName)
+    assertEquals("agents-sa", config.serviceAccountName)
+    assertNull(config.tokenPath)
     assertEquals(10L, config.pollIntervalSeconds)
-    assertEquals(ArgoConfig.DEFAULT_POLL_TIMEOUT_SECONDS, config.pollTimeoutSeconds)
+    assertEquals(AgentsConfig.DEFAULT_POLL_TIMEOUT_SECONDS, config.pollTimeoutSeconds)
+    assertEquals(AgentsConfig.DEFAULT_TTL_SECONDS_AFTER_FINISHED, config.ttlSecondsAfterFinished)
+    assertEquals("codex-github-token", config.secretBindingRef)
+    assertEquals(
+      listOf("github-token", "codex-auth", "graf-api", "observability-minio-creds", "nats-agents-credentials"),
+      config.secrets,
+    )
   }
 
   @Test
   fun `fromEnvironment parses overrides`() {
     val env =
       mapOf(
-        "ARGO_API_SERVER" to "https://argo.internal",
-        "ARGO_NAMESPACE" to "research",
-        "ARGO_WORKFLOW_TEMPLATE_NAME" to "custom-template",
-        "ARGO_WORKFLOW_SERVICE_ACCOUNT" to "graf-service-account",
-        "ARGO_SERVICE_ACCOUNT_TOKEN_PATH" to "/tmp/token",
-        "ARGO_CA_CERT_PATH" to "/tmp/ca.crt",
-        "ARGO_WORKFLOW_POLL_INTERVAL_SECONDS" to "22",
-        "ARGO_WORKFLOW_POLL_TIMEOUT_SECONDS" to "33",
+        "AGENTS_BASE_URL" to "https://agents.internal/",
+        "AGENTS_NAMESPACE" to "research",
+        "AGENTS_GRAF_AGENT_NAME" to "custom-agent",
+        "AGENTS_SERVICE_ACCOUNT_NAME" to "graf-service-account",
+        "AGENTS_SERVICE_ACCOUNT_TOKEN_PATH" to "/tmp/token",
+        "AGENTS_BEARER_TOKEN" to "Bearer explicit",
+        "AGENTS_RUN_POLL_INTERVAL_SECONDS" to "22",
+        "AGENTS_RUN_POLL_TIMEOUT_SECONDS" to "33",
+        "AGENTS_RUN_TTL_SECONDS_AFTER_FINISHED" to "44",
+        "AGENTS_SECRET_BINDING_REF" to "binding",
+        "AGENTS_RUN_SECRETS" to "one,two",
       )
 
-    val config = ArgoConfig.fromEnvironment(env)
+    val config = AgentsConfig.fromEnvironment(env)
 
-    assertEquals("https://argo.internal", config.apiServer)
+    assertEquals("https://agents.internal", config.baseUrl)
     assertEquals("research", config.namespace)
-    assertEquals("custom-template", config.workflowTemplateName)
+    assertEquals("custom-agent", config.agentName)
     assertEquals("graf-service-account", config.serviceAccountName)
     assertEquals("/tmp/token", config.tokenPath)
-    assertEquals("/tmp/ca.crt", config.caCertPath)
+    assertEquals("Bearer explicit", config.bearerToken)
     assertEquals(22L, config.pollIntervalSeconds)
     assertEquals(33L, config.pollTimeoutSeconds)
+    assertEquals(44L, config.ttlSecondsAfterFinished)
+    assertEquals("binding", config.secretBindingRef)
+    assertEquals(listOf("one", "two"), config.secrets)
   }
 }
 
@@ -176,21 +187,58 @@ class MinioConfigTest {
   }
 
   @Test
-  fun `fromEnvironment parses booleans and region`() {
+  fun `fromEnvironment prefers canonical Agents artifact config`() {
     val env =
       mapOf(
-        "MINIO_ENDPOINT" to "minio-gateway:9000",
-        "MINIO_BUCKET" to "graf-bucket",
-        "MINIO_ACCESS_KEY" to "key",
-        "MINIO_SECRET_KEY" to "secret",
-        "MINIO_SECURE" to "false",
-        "MINIO_REGION" to "us-west-2",
+        "AGENTS_ARTIFACTS_ENDPOINT" to "agents-storage:9000",
+        "AGENTS_ARTIFACTS_BUCKET" to "agents-artifacts",
+        "AGENTS_ARTIFACTS_ACCESS_KEY_ID" to "agents-key",
+        "AGENTS_ARTIFACTS_SECRET_ACCESS_KEY" to "agents-secret",
+        "AGENTS_ARTIFACTS_SECURE" to "false",
+        "AGENTS_ARTIFACTS_REGION" to "us-west-2",
+      )
+
+    val config = MinioConfig.fromEnvironment(env)
+
+    assertEquals("agents-storage:9000", config.endpoint)
+    assertEquals("agents-artifacts", config.bucket)
+    assertEquals("agents-key", config.accessKey)
+    assertEquals("agents-secret", config.secretKey)
+    assertFalse(config.secure)
+    assertEquals("us-west-2", config.region)
+    assertEquals("agents-storage:9000", config.artifactEndpoint)
+  }
+
+  @Test
+  fun `fromEnvironment parses canonical booleans and region`() {
+    val env =
+      mapOf(
+        "AGENTS_ARTIFACTS_ENDPOINT" to "agents-storage:9000",
+        "AGENTS_ARTIFACTS_BUCKET" to "graf-bucket",
+        "AGENTS_ARTIFACTS_ACCESS_KEY_ID" to "key",
+        "AGENTS_ARTIFACTS_SECRET_ACCESS_KEY" to "secret",
+        "AGENTS_ARTIFACTS_SECURE" to "false",
+        "AGENTS_ARTIFACTS_REGION" to "us-west-2",
       )
 
     val config = MinioConfig.fromEnvironment(env)
 
     assertFalse(config.secure)
     assertEquals("us-west-2", config.region)
-    assertEquals("minio-gateway:9000", config.artifactEndpoint)
+    assertEquals("agents-storage:9000", config.artifactEndpoint)
+  }
+
+  @Test
+  fun `fromEnvironment defaults bucket to Agents artifacts`() {
+    val config =
+      MinioConfig.fromEnvironment(
+        mapOf(
+          "AGENTS_ARTIFACTS_ENDPOINT" to "agents-storage:9000",
+          "AGENTS_ARTIFACTS_ACCESS_KEY_ID" to "agents-key",
+          "AGENTS_ARTIFACTS_SECRET_ACCESS_KEY" to "agents-secret",
+        ),
+      )
+
+    assertEquals("agents-artifacts", config.bucket)
   }
 }

@@ -1,4 +1,4 @@
-import type { TorghutAlphaReadinessSettlementConveyorRef } from '~/data/agents-control-plane'
+import type { TorghutAlphaReadinessSettlementConveyorRef } from '~/server/control-plane-status-types'
 import {
   normalizeNonEmpty,
   normalizeNumber,

@@ -13,7 +13,7 @@ import type {
   RouteStabilityMaterialActionContract,
   SourceRolloutTruthExchange,
   WorkflowsReliabilityStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import type { TorghutConsumerEvidenceStatus } from '~/server/control-plane-torghut-consumer-evidence'
 
 export const ACTION_CUSTODY_DESIGN_ARTIFACT =
@@ -350,7 +350,7 @@ const forbiddenShortcuts = (actionClass: ActionSloBudgetActionClass) =>
 
 const validationCommands = (actionClass: ActionSloBudgetActionClass) =>
   uniqueStrings([
-    'curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq .ready_action_exchange',
+    'curl -fsS http://agents.agents.svc.cluster.local/v1/control-plane/status?namespace=agents | jq .ready_action_exchange',
     ...(actionClass === 'deploy_widen' || actionClass === 'merge_ready'
       ? [
           'bun run packages/scripts/src/jangar/verify-deployment.ts --require-synced --expected-revision <sha> --expected-revision-mode ancestor',

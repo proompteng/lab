@@ -46,16 +46,9 @@ const parseStringList = (value: string | undefined) =>
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0)
 
-const parseJsonRecord = (value: string | undefined) => {
-  const normalized = normalizeNonEmpty(value)
-  if (!normalized) return null
-  try {
-    const parsed = JSON.parse(normalized) as unknown
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
-    return parsed as Record<string, unknown>
-  } catch {
-    return null
-  }
+const normalizeNatsSubjectPrefix = (value: string | undefined | null) => {
+  const normalized = normalizeNonEmpty(value)?.replace(/^\.+/, '').replace(/\.+$/, '')
+  return normalized === 'agentrun' ? normalized : 'agentrun'
 }
 
 export type SupportingPrimitivesConfig = {
@@ -69,18 +62,12 @@ export type SupportingPrimitivesConfig = {
   stageClearanceEnforcement: 'disabled' | 'shadow' | 'hold'
   stageClearanceHoldStages: string[]
   evidencePressureLedgerMode: 'observe' | 'shadow' | 'hold' | 'enforce'
-  scheduleRunnerAdmissionCheck: boolean
-  scheduleRunnerAdmissionStatusUrl: string
-  scheduleRunnerAdmissionStatusTimeoutMs: number
+  runtimeAdmissionStatusUrl: string
+  runtimeAdmissionStatusTimeoutMs: number
   swarmDefaultNatsUrl: string
   swarmDefaultNatsSubjectPrefix: string
   swarmDefaultNatsChannel: string
-  defaultWorkloadImage: string | null
-  scheduleRunnerImage: string
-  scheduleRunnerNodeSelector: Record<string, unknown> | null
   podNamespace: string | null
-  scheduleServiceAccount: string | null
-  serviceAccountName: string | null
 }
 
 export const resolveSupportingPrimitivesConfig = (env: EnvSource = process.env): SupportingPrimitivesConfig => ({
@@ -94,31 +81,17 @@ export const resolveSupportingPrimitivesConfig = (env: EnvSource = process.env):
   stageClearanceEnforcement: parseStageClearanceEnforcement(env.JANGAR_STAGE_CLEARANCE_ENFORCEMENT),
   stageClearanceHoldStages: parseStringList(env.JANGAR_STAGE_CLEARANCE_HOLD_STAGES),
   evidencePressureLedgerMode: parseEvidencePressureLedgerMode(env.JANGAR_EVIDENCE_PRESSURE_LEDGER_MODE),
-  scheduleRunnerAdmissionCheck: parseBoolean(env.JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK, true),
-  scheduleRunnerAdmissionStatusUrl:
-    normalizeNonEmpty(env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_URL) ??
-    'http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status?view=schedule-runner',
-  scheduleRunnerAdmissionStatusTimeoutMs: parsePositiveInt(
-    env.JANGAR_SCHEDULE_RUNNER_ADMISSION_STATUS_TIMEOUT_MS,
-    15_000,
-  ),
+  runtimeAdmissionStatusUrl:
+    normalizeNonEmpty(env.JANGAR_RUNTIME_ADMISSION_STATUS_URL) ??
+    'http://agents.agents.svc.cluster.local/v1/control-plane/status',
+  runtimeAdmissionStatusTimeoutMs: parsePositiveInt(env.JANGAR_RUNTIME_ADMISSION_STATUS_TIMEOUT_MS, 15_000),
   swarmDefaultNatsUrl:
     normalizeNonEmpty(env.JANGAR_SWARM_NATS_URL) ??
     normalizeNonEmpty(env.NATS_URL) ??
     'nats://nats.nats.svc.cluster.local:4222',
-  swarmDefaultNatsSubjectPrefix: normalizeNonEmpty(env.JANGAR_SWARM_NATS_SUBJECT_PREFIX) ?? 'workflow',
+  swarmDefaultNatsSubjectPrefix: normalizeNatsSubjectPrefix(env.JANGAR_SWARM_NATS_SUBJECT_PREFIX),
   swarmDefaultNatsChannel: normalizeNonEmpty(env.JANGAR_SWARM_NATS_CHANNEL) ?? 'general',
-  defaultWorkloadImage:
-    normalizeNonEmpty(env.JANGAR_AGENT_RUNNER_IMAGE) ?? normalizeNonEmpty(env.JANGAR_AGENT_IMAGE) ?? null,
-  scheduleRunnerImage:
-    normalizeNonEmpty(env.JANGAR_SCHEDULE_RUNNER_IMAGE) ??
-    normalizeNonEmpty(env.JANGAR_IMAGE) ??
-    'ghcr.io/proompteng/jangar:latest',
-  scheduleRunnerNodeSelector:
-    parseJsonRecord(env.JANGAR_SCHEDULE_RUNNER_NODE_SELECTOR) ?? parseJsonRecord(env.JANGAR_AGENT_RUNNER_NODE_SELECTOR),
   podNamespace: normalizeNonEmpty(env.JANGAR_POD_NAMESPACE),
-  scheduleServiceAccount: normalizeNonEmpty(env.JANGAR_SCHEDULE_SERVICE_ACCOUNT),
-  serviceAccountName: normalizeNonEmpty(env.JANGAR_SERVICE_ACCOUNT_NAME),
 })
 
 export const validateSupportingPrimitivesConfig = (env: EnvSource = process.env) => {

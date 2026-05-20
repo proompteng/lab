@@ -53,7 +53,7 @@ As of 2026-02-07 (repo `main`), the repo declares:
     See `argocd/applications/agents/values.yaml`.
 - gRPC is enabled and explicitly managed via both chart values and env vars:
   - `grpc.enabled: true`
-  - `env.vars.JANGAR_GRPC_ENABLED: "true"`
+  - `env.vars.AGENTS_GRPC_ENABLED: "true"`
     See `argocd/applications/agents/values.yaml`.
 - GitHub VersionControlProvider is declared in GitOps as `VersionControlProvider/github`. See
   `argocd/applications/agents/codex-versioncontrolprovider.yaml`.

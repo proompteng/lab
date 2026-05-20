@@ -1,4 +1,4 @@
-import type { NegativeEvidenceKind } from '~/data/agents-control-plane'
+import type { NegativeEvidenceKind } from '~/server/control-plane-status-types'
 
 export type TorghutNegativeEvidenceInput = {
   readiness_status?: 'healthy' | 'degraded' | 'unknown'

@@ -162,6 +162,81 @@ describe('orchestration controller', () => {
     expect((spec.workflow as Record<string, unknown> | undefined)?.steps).toEqual([{ name: 'main' }])
   })
 
+  it('submits AgentRun options from CRD-safe with fields', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn(async (resource: Record<string, unknown>) => {
+      const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+      const generateName = typeof metadata.generateName === 'string' ? metadata.generateName : ''
+      const name = typeof metadata.name === 'string' ? metadata.name : generateName ? `${generateName}unit` : 'unit'
+      return { ...resource, metadata: { ...metadata, name } }
+    })
+    const get = vi.fn(async (resource: string) => {
+      if (resource === 'orchestrations.orchestration.proompteng.ai') {
+        return {
+          apiVersion: 'orchestration.proompteng.ai/v1alpha1',
+          kind: 'Orchestration',
+          metadata: { name: 'codex-rerun', namespace: 'agents' },
+          spec: {
+            steps: [
+              {
+                name: 'implement',
+                kind: 'AgentRun',
+                agentRef: { name: 'codex-agent' },
+                with: {
+                  implementation: JSON.stringify({
+                    summary: 'Codex rerun',
+                    text: '{{prompt}}',
+                    source: { provider: 'github', externalId: '{{repository}}#{{issueNumber}}' },
+                  }),
+                  runtime: JSON.stringify({ type: 'job', config: { serviceAccountName: 'agents-sa' } }),
+                  workload: JSON.stringify({ image: 'registry.ide-newton.ts.net/lab/agents-codex-runner:sha' }),
+                  secrets: 'github-token,codex-auth',
+                  policy: JSON.stringify({ secretBindingRef: 'codex-github-token' }),
+                  vcsRef: 'github',
+                  vcsPolicy: JSON.stringify({ required: true, mode: 'read-write' }),
+                  goal: JSON.stringify({ objective: '{{prompt}}', tokenBudget: 250000 }),
+                  ttlSecondsAfterFinished: '86400',
+                },
+              },
+            ],
+          },
+        }
+      }
+      return null
+    })
+    const kube = { applyStatus, apply, get } as unknown as KubernetesClient
+
+    const orchestrationRun = {
+      apiVersion: 'orchestration.proompteng.ai/v1alpha1',
+      kind: 'OrchestrationRun',
+      metadata: { name: 'codex-rerun-run', namespace: 'agents', generation: 1 },
+      spec: {
+        orchestrationRef: { name: 'codex-rerun' },
+        parameters: { repository: 'proompteng/lab', issueNumber: '7152', prompt: 'fix it' },
+      },
+    }
+
+    await __test__.reconcileOrchestrationRun(kube, orchestrationRun, 'agents')
+
+    expect(apply).toHaveBeenCalledTimes(1)
+    const submitted = apply.mock.calls[0]?.[0] as { spec?: Record<string, unknown> }
+    const spec = submitted.spec ?? {}
+    expect(spec.agentRef).toEqual({ name: 'codex-agent' })
+    expect(spec.implementation).toEqual({
+      summary: 'Codex rerun',
+      text: '{{prompt}}',
+      source: { provider: 'github', externalId: '{{repository}}#{{issueNumber}}' },
+    })
+    expect(spec.runtime).toEqual({ type: 'job', config: { serviceAccountName: 'agents-sa' } })
+    expect(spec.workload).toEqual({ image: 'registry.ide-newton.ts.net/lab/agents-codex-runner:sha' })
+    expect(spec.secrets).toEqual(['github-token', 'codex-auth'])
+    expect(spec.policy).toEqual({ secretBindingRef: 'codex-github-token' })
+    expect(spec.vcsRef).toEqual({ name: 'github' })
+    expect(spec.vcsPolicy).toEqual({ required: true, mode: 'read-write' })
+    expect(spec.goal).toEqual({ objective: '{{prompt}}', tokenBudget: 250000 })
+    expect(spec.ttlSecondsAfterFinished).toBe(86400)
+  })
+
   it('sets retry metadata when a step fails with retries remaining', async () => {
     const applyStatus = vi.fn().mockResolvedValue({})
     const apply = vi.fn().mockResolvedValue({})
@@ -415,6 +490,17 @@ describe('orchestration controller', () => {
       checkedAt: '2026-01-20T00:00:00.000Z',
     })
     expect(listCustomResourceDefinitions).toHaveBeenCalledTimes(1)
+  })
+
+  it('formats missing CRDs as a startup failure reason', () => {
+    const error = __test__.buildMissingOrchestrationCrdsError([
+      'orchestrations.orchestration.proompteng.ai',
+      'orchestrationruns.orchestration.proompteng.ai',
+    ])
+
+    expect(error.message).toBe(
+      'orchestration CRD check failed: missing: orchestrations.orchestration.proompteng.ai, orchestrationruns.orchestration.proompteng.ai',
+    )
   })
 
   it('watches tool jobs by canonical Agents labels only', () => {

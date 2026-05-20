@@ -1,9 +1,0 @@
-apiVersion: signals.proompteng.ai/v1alpha1
-kind: Signal
-metadata:
-  name: jangar-primitives-signal
-  namespace: jangar
-spec:
-  description: Signal for primitives validation
-  payloadSchema: '{"type":"object"}'
-  retentionSeconds: 86400

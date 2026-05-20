@@ -32,11 +32,11 @@ class AutoResearchPromptBuilderTest {
   @Test
   fun `buildMetadata falls back to defaults`() {
     val builder = AutoResearchPromptBuilder(config, fixedClock)
-    val metadata = builder.buildMetadata(null, "workflow-123")
+    val metadata = builder.buildMetadata(null, "agent-run-123")
 
     assertEquals("custom-stage", metadata["codex.stage"])
     assertEquals("stream", metadata["streamId"])
-    assertEquals("workflow-123", metadata["autoResearch.argoWorkflow"])
+    assertEquals("agent-run-123", metadata["autoResearch.agentRun"])
     assertEquals("2025-11-12T12:34:56Z", metadata["autoResearch.generatedAt"])
   }
 }

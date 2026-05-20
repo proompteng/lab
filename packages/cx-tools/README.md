@@ -2,6 +2,8 @@
 
 Operational wrappers for control-plane agents:
 
+- `codex-nats-publish` — emits AgentRun-native NATS status/log events.
+- `codex-nats-soak` — reads AgentRun-native NATS context for runtime admission.
 - `cx-codex-run` — thin wrapper around `codex exec` that enforces JSON event output.
 - `cx-workflow-*` — wrappers around `temporal workflow` operations (`start`, `cancel`, `query`, `signal`).
 
@@ -10,6 +12,8 @@ Operational wrappers for control-plane agents:
 See `package.json` `bin` entries for the command names:
 
 - `cx-codex-run`
+- `codex-nats-publish`
+- `codex-nats-soak`
 - `cx-workflow-start`
 - `cx-workflow-cancel`
 - `cx-workflow-query`

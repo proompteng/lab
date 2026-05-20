@@ -6,6 +6,7 @@ import { type createKubernetesClient, RESOURCE_MAP } from '../kube-types'
 import { type Condition, upsertCondition } from './conditions'
 import { parseStringList } from './env-config'
 import { hashAgentRunImmutableSpec } from './immutable-spec'
+import type { verifyJobConfigMaps } from './job-runtime'
 import { resolveMemory } from './namespace-state'
 import { type ImagePolicyCandidate, validateAuthSecretPolicy, validateImagePolicy } from './policy'
 import { extractProviderAwareJobFailure, isNonRetryableProviderFailure } from './provider-capacity'
@@ -64,6 +65,7 @@ type WorkflowReconcilerDependencies = {
     runtimeConfig: Record<string, unknown>,
   ) => Promise<void>
   normalizeLabelValue: (value: string) => string
+  verifyJobConfigMaps: typeof verifyJobConfigMaps
   isJobComplete: (job: Record<string, unknown>) => boolean
   isJobFailed: (job: Record<string, unknown>) => boolean
 }
@@ -620,8 +622,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
           stepStatus.finishedAt = deps.nowIso()
           workflowFailure = {
             reason: 'MissingWorkloadImage',
-            message:
-              'spec.workload.image, AGENTS_AGENT_RUNNER_IMAGE, or AGENTS_AGENT_IMAGE is required for workflow runtime',
+            message: 'spec.workload.image or AGENTS_AGENT_RUNNER_IMAGE is required for workflow runtime',
           }
           break
         }
@@ -1062,6 +1063,64 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
           workflowFailure = {
             reason: failureDetail.reason,
             message: `workflow step ${stepSpec.name}: ${failureDetail.message}`,
+          }
+          break
+        }
+        const configMapVerification = await deps.verifyJobConfigMaps(kube, job, jobNamespace)
+        if (!configMapVerification.ok) {
+          const message = `workflow step ${stepSpec.name} job ${jobName} is missing mounted ConfigMaps: ${configMapVerification.missing.join(', ')}`
+          baseConditions = upsertCondition(baseConditions, {
+            type: 'Warning',
+            status: 'True',
+            reason: 'WorkflowConfigMapMissing',
+            message,
+          })
+          logAgentsControllerWarn('reconcile_workflow_config_missing', {
+            ...logContext,
+            decision: 'workflow_config_missing',
+            reason: 'WorkflowConfigMapMissing',
+            step: stepSpec.name,
+            job: jobName,
+            missingConfigMaps: configMapVerification.missing,
+            message,
+            durationMs: Date.now() - reconcileStartedAt,
+          })
+          if (stepStatus.attempt < maxAttempts) {
+            setWorkflowStepPhase(stepStatus, 'Retrying', 'Runtime ConfigMap missing; retrying')
+            stepStatus.finishedAt = deps.nowIso()
+            stepStatus.nextRetryAt =
+              stepSpec.retryBackoffSeconds > 0
+                ? new Date(now + stepSpec.retryBackoffSeconds * 1000).toISOString()
+                : deps.nowIso()
+            if (loopStatus) {
+              upsertWorkflowLoopIteration(loopStatus, iterationIndex, {
+                phase: 'Running',
+                attempts: stepStatus.attempt,
+                startedAt: stepStatus.startedAt,
+                finishedAt: stepStatus.finishedAt,
+                message: 'Runtime ConfigMap missing; retrying',
+                jobRef: stepStatus.jobRef,
+              })
+            }
+            workflowRunning = true
+            break
+          }
+          setWorkflowStepPhase(stepStatus, 'Failed', 'Runtime ConfigMap missing')
+          stepStatus.finishedAt = deps.nowIso()
+          if (loopStatus) {
+            upsertWorkflowLoopIteration(loopStatus, iterationIndex, {
+              phase: 'Failed',
+              attempts: stepStatus.attempt,
+              startedAt: stepStatus.startedAt,
+              finishedAt: stepStatus.finishedAt,
+              message: 'Runtime ConfigMap missing',
+              jobRef: stepStatus.jobRef,
+            })
+            loopStatus.stopReason = 'LoopIterationFailed'
+          }
+          workflowFailure = {
+            reason: 'WorkflowConfigMapMissing',
+            message,
           }
           break
         }

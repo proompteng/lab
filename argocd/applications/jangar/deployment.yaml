@@ -152,22 +152,10 @@ spec:
               value: "false"
             - name: JANGAR_GITHUB_MERGE_FORCE
               value: "false"
-            - name: JANGAR_AGENTS_CONTROLLER_ENABLED
-              value: "false"
-            - name: JANGAR_PRIMITIVES_RECONCILER
-              value: "false"
-            - name: JANGAR_ORCHESTRATION_CONTROLLER_ENABLED_FLAG_KEY
-              value: jangar_orchestration_controller_enabled
-            - name: JANGAR_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY
-              value: jangar_supporting_controller_enabled
             - name: JANGAR_STAGE_CLEARANCE_ENFORCEMENT
               value: hold
             - name: JANGAR_STAGE_CLEARANCE_HOLD_STAGES
               value: implement,verify
-            - name: JANGAR_AGENTS_CONTROLLER_ENABLED_FLAG_KEY
-              value: jangar_agents_controller_enabled
-            - name: JANGAR_PRIMITIVES_RECONCILER_FLAG_KEY
-              value: jangar_primitives_reconciler_enabled
             - name: JANGAR_CI_MAX_WAIT_MS
               value: "3600000"
             - name: JANGAR_REVIEW_MAX_WAIT_MS
@@ -176,8 +164,6 @@ spec:
               value: "3"
             - name: JANGAR_CODEX_BACKOFF_SCHEDULE_MS
               value: 300000,900000,2700000
-            - name: FACTEUR_INTERNAL_URL
-              value: http://facteur-internal.facteur.svc.cluster.local
             - name: MINIO_ENDPOINT
               value: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
             - name: MINIO_ACCESS_KEY
@@ -194,14 +180,14 @@ spec:
                   optional: true
             - name: MINIO_SECURE
               value: "false"
-            - name: JANGAR_CODEX_RERUN_ORCHESTRATION
-              value: codex-autonomous
-            - name: JANGAR_CODEX_RERUN_ORCHESTRATION_NAMESPACE
-              value: jangar
-            - name: JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION
-              value: codex-autonomous
-            - name: JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE
-              value: jangar
+            - name: AGENTS_CODEX_RERUN_ORCHESTRATION
+              value: codex-rerun
+            - name: AGENTS_CODEX_RERUN_ORCHESTRATION_NAMESPACE
+              value: agents
+            - name: AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION
+              value: codex-system-improvement
+            - name: AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE
+              value: agents
             - name: DISCORD_BOT_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -222,8 +208,6 @@ spec:
               value: "1"
             - name: JANGAR_REDIS_URL
               value: redis://jangar-openwebui-redis:6379/1
-            - name: JANGAR_AGENT_COMMS_SUBSCRIBER_DISABLED
-              value: "false"
             - name: NATS_URL
               value: nats://nats.nats.svc.cluster.local:4222
             - name: NATS_USER

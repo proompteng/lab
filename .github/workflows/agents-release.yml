@@ -6,17 +6,28 @@ on:
       - agents-build-push
     types:
       - completed
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'agents-build-push run id that uploaded the agents-values artifact'
+        required: true
+      source_sha:
+        description: '40-character source commit SHA built by the agents-build-push run'
+        required: true
 
 concurrency:
-  group: agents-release-${{ github.event.workflow_run.head_sha }}
+  group: agents-release-${{ github.event.workflow_run.head_sha || inputs.source_sha || github.run_id }}
   cancel-in-progress: true
 
 jobs:
   promote:
     if: >-
       ${{
-        github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.head_branch == 'main'
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.head_branch == 'main'
+        )
       }}
     runs-on: ubuntu-latest
     permissions:
@@ -34,21 +45,45 @@ jobs:
         id: meta
         shell: bash
         env:
-          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_RUN_ID: ${{ inputs.run_id }}
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+          WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
           set -euo pipefail
           git fetch origin main
           CURRENT_MAIN="$(git rev-parse origin/main)"
-          TAG="${SOURCE_SHA:0:8}"
-          if [ "${SOURCE_SHA}" = "${CURRENT_MAIN}" ]; then
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            SOURCE_SHA="${INPUT_SOURCE_SHA}"
+            RUN_ID="${INPUT_RUN_ID}"
             PROMOTE=true
+            PROMOTION_SOURCE="manual_dispatch"
+            if ! [[ "${SOURCE_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+              echo "source_sha must be a 40-character git SHA" >&2
+              exit 1
+            fi
+            if ! [[ "${RUN_ID}" =~ ^[0-9]+$ ]]; then
+              echo "run_id must be a numeric GitHub Actions run id" >&2
+              exit 1
+            fi
           else
-            PROMOTE=false
+            SOURCE_SHA="${WORKFLOW_RUN_HEAD_SHA}"
+            RUN_ID="${WORKFLOW_RUN_ID}"
+            PROMOTION_SOURCE="workflow_run"
+            if [ "${SOURCE_SHA}" = "${CURRENT_MAIN}" ]; then
+              PROMOTE=true
+            else
+              PROMOTE=false
+            fi
           fi
+          TAG="${SOURCE_SHA:0:8}"
           {
             echo "promote=${PROMOTE}"
             echo "source_sha=${SOURCE_SHA}"
             echo "tag=${TAG}"
+            echo "run_id=${RUN_ID}"
+            echo "promotion_source=${PROMOTION_SOURCE}"
           } >> "${GITHUB_OUTPUT}"
 
       - name: Download Agents values artifact
@@ -57,7 +92,7 @@ jobs:
         with:
           name: agents-values
           path: .artifacts/agents
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ steps.meta.outputs.run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Stage Agents values
@@ -94,8 +129,8 @@ jobs:
 
             - Source commit: `${{ steps.meta.outputs.source_sha }}`
             - Image tag: `${{ steps.meta.outputs.tag }}`
-            - Source CI run: `${{ github.event.workflow_run.id }}`
-            - Runner image pin preserved
+            - Agents build run: `${{ steps.meta.outputs.run_id }}`
+            - Promotion source: `${{ steps.meta.outputs.promotion_source }}`
 
       - name: No manifest changes detected
         if: steps.meta.outputs.promote == 'true' && steps.changes.outputs.changed != 'true'

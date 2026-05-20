@@ -1,10 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
+import { Effect } from 'effect'
 
 import { RESOURCE_MAP, type KubernetesClient } from '../kube-types'
 
 import {
   getAgentRunHandler,
   getRunHandler,
+  getRunWithServicesEffect,
+  makeRunReadLayer,
+  RunReadKubeError,
   type AgentRunDetailsUpdate,
   type RunLookupRecord,
   type RunReadApiStore,
@@ -160,6 +164,40 @@ describe('run read v1 API', () => {
     expect(response.status).toBe(404)
     const body = (await response.json()) as { error?: string }
     expect(body.error).toBe('Run not found')
+    expect(store.close).toHaveBeenCalled()
+  })
+
+  it('returns typed service-layer Kubernetes errors and still closes the store', async () => {
+    const run: RunLookupRecord = {
+      kind: 'agent',
+      record: {
+        id: 'record-1',
+        agentName: 'demo-agent',
+        deliveryId: 'delivery-1',
+        provider: 'job',
+        status: 'Running',
+        externalRunId: 'agent-run-1',
+        payload: { request: { namespace: 'agents' } },
+        createdAt: now,
+        updatedAt: now,
+      },
+    }
+    const store = createStoreMock({ getRunById: vi.fn(async () => run) })
+    const kube = { ...createKubeMock(null), get: vi.fn(async () => Promise.reject(new Error('api unavailable'))) }
+
+    const result = await Effect.runPromise(
+      getRunWithServicesEffect('record-1', 'agents').pipe(
+        Effect.provide(makeRunReadLayer({ storeFactory: () => store, kubeClient: kube })),
+        Effect.either,
+      ),
+    )
+
+    if (result._tag !== 'Left') throw new Error('expected run read to fail')
+    expect(result.left).toBeInstanceOf(RunReadKubeError)
+    if (!(result.left instanceof RunReadKubeError)) throw new Error('expected RunReadKubeError')
+    expect(result.left.operation).toBe('get-resource')
+    expect(result.left.resource).toBe(RESOURCE_MAP.AgentRun)
+    expect(result.left.namespace).toBe('agents')
     expect(store.close).toHaveBeenCalled()
   })
 })

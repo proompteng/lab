@@ -456,10 +456,16 @@ ENV NODE_ENV=development
 COPY json/ .
 RUN --mount=type=cache,id=bun-install-cache-workspace-tools,target=/root/.bun/install/cache \
   bun install --no-save --ignore-scripts --linker=hoisted \
+    --filter @proompteng/agent-contracts \
     --filter @proompteng/codex \
     --filter @proompteng/otel \
     --filter @proompteng/temporal-bun-sdk \
     --filter @proompteng/cx-tools
+
+FROM workspace-tools-deps AS agent-contracts-build
+WORKDIR /app
+COPY full/packages/agent-contracts ./packages/agent-contracts
+RUN bun --cwd=packages/agent-contracts run build
 
 FROM workspace-tools-deps AS codex-build
 WORKDIR /app
@@ -545,7 +551,7 @@ ENV JANGAR_BUILD_MINIFY=${JANGAR_BUILD_MINIFY}
 ENV JANGAR_BUILD_SOURCEMAP=${JANGAR_BUILD_SOURCEMAP}
 ENV CI=${JANGAR_BUILD_CI}
 ENV JANGAR_BUILD_LOG_LEVEL=${JANGAR_BUILD_LOG_LEVEL}
-RUN if [ -f .output/server/index.mjs ] && [ -f .output/server/proto/proompteng/agents/v1/agentctl.proto ]; then \
+RUN if [ -f .output/server/index.mjs ]; then \
     echo "Using complete prebuilt .output from build context"; \
   else \
     bun run build; \
@@ -571,6 +577,8 @@ COPY --from=tools /usr/local/bin/kubectl /usr/local/bin/kubectl
 COPY --from=tools /usr/local/bin/nats /usr/local/bin/nats
 
 WORKDIR /app
+COPY --from=agent-contracts-build /app/packages/agent-contracts/package.json /app/packages/agent-contracts/package.json
+COPY --from=agent-contracts-build /app/packages/agent-contracts/dist /app/packages/agent-contracts/dist
 COPY --from=codex-build /app/packages/codex/package.json /app/packages/codex/package.json
 COPY --from=codex-build /app/packages/codex/dist /app/packages/codex/dist
 COPY --from=otel-build /app/packages/otel/package.json /app/packages/otel/package.json
@@ -583,7 +591,10 @@ RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-r
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-start.js /usr/local/bin/cx-workflow-start \
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-cancel.js /usr/local/bin/cx-workflow-cancel \
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-query.js /usr/local/bin/cx-workflow-query \
-  && ln -sf /app/packages/cx-tools/dist/cx-workflow-signal.js /usr/local/bin/cx-workflow-signal
+  && ln -sf /app/packages/cx-tools/dist/cx-workflow-signal.js /usr/local/bin/cx-workflow-signal \
+  && ln -sf /app/packages/cx-tools/dist/codex-nats-publish.js /usr/local/bin/codex-nats-publish \
+  && ln -sf /app/packages/cx-tools/dist/codex-nats-soak.js /usr/local/bin/codex-nats-soak \
+  && chmod +x /app/packages/cx-tools/dist/*.js
 
 COPY --from=jangar-deps-prod /app/node_modules ./node_modules
 COPY --from=jangar-pty /tmp/node-pty/build /app/node_modules/node-pty/build
@@ -606,17 +617,10 @@ RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-r
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-query.js /usr/local/bin/cx-workflow-query \
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-signal.js /usr/local/bin/cx-workflow-signal \
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-cancel.js /usr/local/bin/cx-workflow-cancel \
-  && chmod +x /usr/local/bin/cx-codex-run /usr/local/bin/cx-workflow-start /usr/local/bin/cx-workflow-query /usr/local/bin/cx-workflow-signal /usr/local/bin/cx-workflow-cancel
+  && ln -sf /app/packages/cx-tools/dist/codex-nats-publish.js /usr/local/bin/codex-nats-publish \
+  && ln -sf /app/packages/cx-tools/dist/codex-nats-soak.js /usr/local/bin/codex-nats-soak \
+  && chmod +x /app/packages/cx-tools/dist/*.js
 
-COPY --from=jangar-build /app/services/jangar/scripts/codex-nats-publish.ts /usr/local/bin/codex-nats-publish
-COPY --from=jangar-build /app/services/jangar/scripts/codex-nats-soak.ts /usr/local/bin/codex-nats-soak
-RUN chmod +x /usr/local/bin/codex-nats-publish /usr/local/bin/codex-nats-soak
-
-ENV JANGAR_AGENTS_CONTROLLER_ENABLED=0 \
-  JANGAR_ORCHESTRATION_CONTROLLER_ENABLED=0 \
-  JANGAR_SUPPORTING_CONTROLLER_ENABLED=0 \
-  JANGAR_AGENT_COMMS_SUBSCRIBER_DISABLED=true \
-  JANGAR_PRIMITIVES_RECONCILER=0
 ENV JANGAR_VERSION=${JANGAR_VERSION} \
   JANGAR_COMMIT=${JANGAR_COMMIT}
 
@@ -628,6 +632,8 @@ ARG JANGAR_COMMIT=""
 
 ENV PATH="/usr/local/go/bin:${PATH}"
 
+COPY --from=agent-contracts-build /app/packages/agent-contracts/package.json /app/packages/agent-contracts/package.json
+COPY --from=agent-contracts-build /app/packages/agent-contracts/dist /app/packages/agent-contracts/dist
 COPY --from=codex-build /app/packages/codex/package.json /app/packages/codex/package.json
 COPY --from=codex-build /app/packages/codex/dist /app/packages/codex/dist
 COPY --from=otel-build /app/packages/otel/package.json /app/packages/otel/package.json
@@ -640,7 +646,10 @@ RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-r
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-start.js /usr/local/bin/cx-workflow-start \
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-cancel.js /usr/local/bin/cx-workflow-cancel \
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-query.js /usr/local/bin/cx-workflow-query \
-  && ln -sf /app/packages/cx-tools/dist/cx-workflow-signal.js /usr/local/bin/cx-workflow-signal
+  && ln -sf /app/packages/cx-tools/dist/cx-workflow-signal.js /usr/local/bin/cx-workflow-signal \
+  && ln -sf /app/packages/cx-tools/dist/codex-nats-publish.js /usr/local/bin/codex-nats-publish \
+  && ln -sf /app/packages/cx-tools/dist/codex-nats-soak.js /usr/local/bin/codex-nats-soak \
+  && chmod +x /app/packages/cx-tools/dist/*.js
 
 WORKDIR /app
 COPY --from=jangar-deps-prod /app/node_modules ./node_modules
@@ -654,7 +663,6 @@ COPY --from=jangar-build /app/services/jangar/src/worker.ts ./src/worker.ts
 COPY --from=jangar-build /app/services/jangar/src/server/runtime-entry-config.ts ./src/server/runtime-entry-config.ts
 COPY --from=jangar-build /app/services/jangar/src/server/runtime-tooling-config.ts ./src/server/runtime-tooling-config.ts
 COPY --from=jangar-build /app/services/jangar/src/server/control-plane-runtime-admission.ts ./src/server/control-plane-runtime-admission.ts
-COPY --from=jangar-build /app/services/jangar/src/server/control-plane-runtime-proof-surface.ts ./src/server/control-plane-runtime-proof-surface.ts
 COPY --from=jangar-pty /tmp/node-pty/build /app/services/jangar/.output/server/node_modules/node-pty/build
 COPY --from=jangar-pty /tmp/node-pty/prebuilds /app/services/jangar/.output/server/node_modules/node-pty/prebuilds
 WORKDIR /app
@@ -667,18 +675,9 @@ RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-r
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-query.js /usr/local/bin/cx-workflow-query \
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-signal.js /usr/local/bin/cx-workflow-signal \
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-cancel.js /usr/local/bin/cx-workflow-cancel \
-  && chmod +x /usr/local/bin/cx-codex-run /usr/local/bin/cx-workflow-start /usr/local/bin/cx-workflow-query /usr/local/bin/cx-workflow-signal /usr/local/bin/cx-workflow-cancel
-
-RUN mkdir -p /root/.codex
-COPY --from=jangar-build /app/services/jangar/scripts/codex-config-container.toml /root/.codex/config.toml
-COPY --from=jangar-build /app/services/jangar/scripts/agent-runner.ts /usr/local/bin/agent-runner
-COPY --from=jangar-build /app/services/jangar/scripts/codex-nats-publish.ts /usr/local/bin/codex-nats-publish
-COPY --from=jangar-build /app/services/jangar/scripts/codex-nats-soak.ts /usr/local/bin/codex-nats-soak
-COPY --from=jangar-build /app/services/jangar/scripts/codex ./scripts/codex
-COPY --from=jangar-build /app/services/jangar/scripts/agent-providers /etc/agent-providers
-COPY skills/ /root/.codex/skills/
-RUN ln -sf /app/services/jangar/scripts/codex/codex-implement.ts /usr/local/bin/codex-implement \
-  && chmod +x /usr/local/bin/agent-runner /usr/local/bin/codex-nats-publish /usr/local/bin/codex-nats-soak /app/services/jangar/scripts/codex/codex-implement.ts
+  && ln -sf /app/packages/cx-tools/dist/codex-nats-publish.js /usr/local/bin/codex-nats-publish \
+  && ln -sf /app/packages/cx-tools/dist/codex-nats-soak.js /usr/local/bin/codex-nats-soak \
+  && chmod +x /app/packages/cx-tools/dist/*.js
 
 ENV JANGAR_VERSION=${JANGAR_VERSION} \
   JANGAR_COMMIT=${JANGAR_COMMIT}

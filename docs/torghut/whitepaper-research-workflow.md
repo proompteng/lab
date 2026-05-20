@@ -114,8 +114,9 @@ For Kafka ingestion path:
 
 For AgentRun submission:
 
-- `WHITEPAPER_AGENTRUN_SUBMIT_URL` or `JANGAR_BASE_URL` (default fallback: `http://agents.agents.svc.cluster.local`)
-- optional `JANGAR_API_KEY`
+- `WHITEPAPER_AGENTRUN_SUBMIT_URL` or `AGENTS_BASE_URL` (default fallback: `http://agents.agents.svc.cluster.local`)
+- optional `WHITEPAPER_AGENTRUN_API_TOKEN` or `AGENTS_API_KEY`
+- `JANGAR_BASE_URL` / `JANGAR_API_KEY` are compatibility aliases only for older deployments.
 
 For deterministic engineering trigger + rollout policy:
 
@@ -134,7 +135,8 @@ For comment-based requeue:
 
 For manual control endpoint auth:
 
-- optional `WHITEPAPER_WORKFLOW_API_TOKEN` (if unset, Torghut falls back to `JANGAR_API_KEY`)
+- optional `WHITEPAPER_WORKFLOW_API_TOKEN` (if unset, Torghut falls back to `WHITEPAPER_AGENTRUN_API_TOKEN`,
+  then `AGENTS_API_KEY`, then the legacy `JANGAR_API_KEY`)
 - when either token is set, send `Authorization: Bearer <token>` or `x-whitepaper-token`
 
 ## Trigger path A (normal): GitHub issue -> Kafka -> Torghut

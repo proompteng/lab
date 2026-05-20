@@ -35,7 +35,7 @@ private fun parseMinioEndpoint(
       "${if (defaultSecure) "https" else "http"}://$endpoint"
     }
   val uri = URI.create(normalized)
-  val host = uri.host ?: throw IllegalArgumentException("MINIO_ENDPOINT must include a host")
+  val host = uri.host ?: throw IllegalArgumentException("AGENTS_ARTIFACTS_ENDPOINT must include a host")
   val port =
     when {
       uri.port != -1 -> uri.port

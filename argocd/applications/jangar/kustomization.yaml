@@ -12,7 +12,6 @@ resources:
   - codex-auth-sealedsecret.yaml
   - discord-codex-bot-sealedsecret.yaml
   - discord-success-channel-sealedsecret.yaml
-  - codex-run-complete-kafkasource.yaml
   - codex-github-events-kafkasource.yaml
   - app-tailscale-service.yaml
   - tailscale-service.yaml
@@ -28,28 +27,9 @@ resources:
   - alloy-service.yaml
   - alloy-deployment.yaml
   - serviceaccount.yaml
-  - codex-workflow-rbac.yaml
   - post-deploy-verifier-rbac.yaml
   - clusterrolebinding.yaml
-  - workflow-completions-rbac.yaml
-  - jangar-primitives-agentprovider.yaml
-  - jangar-primitives-agent.yaml
-  - jangar-primitives-memory.yaml
-  - jangar-primitives-tool.yaml
-  - jangar-primitives-toolrun.yaml
-  - jangar-primitives-approvalpolicy.yaml
-  - jangar-primitives-signal.yaml
-  - jangar-primitives-signal-delivery.yaml
-  - jangar-primitives-artifact.yaml
-  - jangar-primitives-budget.yaml
-  - jangar-primitives-secretbinding.yaml
-  - jangar-primitives-workspace.yaml
-  - jangar-primitives-schedule.yaml
   - limitrange-defaults.yaml
-  - jangar-primitives-orchestration.yaml
-  - jangar-primitives-sub-orchestration.yaml
-  - jangar-primitives-orchestrationrun.yaml
-  - jangar-primitives-agentrun.yaml
 helmCharts:
   - name: open-webui
     repo: https://helm.openwebui.com

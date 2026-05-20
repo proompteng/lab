@@ -23,7 +23,7 @@ import {
   RPC_RESOURCE_MAP,
   readFileContent,
   readTextInput,
-} from '../../legacy'
+} from '../../runtime'
 import { buildImplementationSpecYaml } from '../../templates/implementation-spec'
 import { TransportService } from '../../transport'
 import { AgentctlContext } from '../context'

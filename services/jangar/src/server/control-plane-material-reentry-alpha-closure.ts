@@ -5,7 +5,7 @@ import type {
   MaterialReentryImplementerDispatch,
   TorghutAlphaRepairClosureBoardRef,
   TorghutConsumerEvidenceStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 
 const ZERO_NOTIONAL_TEXT = new Set(['0', '0.0', '0.00', '0.0000'])
 const AVAILABLE_NO_DELTA_STATES = new Set(['available', 'open', 'ready', 'remaining', 'unused'])
@@ -149,7 +149,7 @@ const buildTorghutAlphaClosureImplementerDispatch = (input: {
     target_stage: 'implement',
     target_role: 'engineer',
     signal_name: signalName,
-    channel: 'workflow.general.requirement',
+    channel: 'agentrun.general.requirement',
     description,
     priority: 'critical',
     dedupe_key: dedupeKey,

@@ -1,38 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const pgMocks = vi.hoisted(() => {
-  const end = vi.fn(async () => undefined)
-  const query = vi.fn(async () => ({ rows: [] }))
-  const construct = vi.fn()
-  class Pool {
-    constructor(options?: unknown) {
-      construct(options)
-    }
-    query = query
-    end = end
-  }
-  return { Pool, construct, query, end }
-})
+import {
+  closeMemoryProviderPools,
+  queryMemory,
+  resolveMemoryConnection,
+  writeMemoryEmbedding,
+  writeMemoryEvent,
+  writeMemoryKv,
+} from '~/server/memory-provider'
 
-vi.mock('pg', () => ({
-  Pool: pgMocks.Pool,
-}))
-
-import { closeMemoryProviderPools, writeMemoryEmbedding, writeMemoryEvent } from '~/server/memory-provider'
-
-const connection = {
-  dataset: 'test-memory',
-  schema: 'public',
-  embeddingDimension: 3,
-  connectionString: 'postgresql://memory-provider-test',
-}
-
-describe('memory-provider', () => {
+describe('memory-provider Agents service client', () => {
   const originalEnv = { ...process.env }
 
   beforeEach(() => {
     vi.clearAllMocks()
-    process.env = { ...originalEnv }
+    process.env = {
+      ...originalEnv,
+      AGENTS_SERVICE_BASE_URL: 'http://agents.test',
+      AGENTS_SERVICE_CLIENT_NAME: 'jangar-memory-provider-test',
+    }
   })
 
   afterEach(async () => {
@@ -41,101 +27,112 @@ describe('memory-provider', () => {
     vi.unstubAllGlobals()
   })
 
-  it('uses fallback embeddings only in development when no embedding endpoint is configured', async () => {
-    process.env.NODE_ENV = 'development'
-    delete process.env.OPENAI_API_KEY
-    delete process.env.OPENAI_EMBEDDING_API_BASE_URL
-    delete process.env.OPENAI_API_BASE_URL
-    delete process.env.OPENAI_API_BASE
+  it('resolves Memory metadata through Agents without reading backing Secrets locally', async () => {
+    const getMemoryResource = vi.fn(async () => ({
+      spec: {
+        type: 'postgres',
+        connection: {
+          secretRef: {
+            name: 'agents-db-next-app',
+            key: 'uri',
+          },
+        },
+      },
+    }))
 
-    const fetchMock = vi.fn()
+    await expect(resolveMemoryConnection('agent-memory', 'agents', undefined, { getMemoryResource })).resolves.toEqual({
+      memoryRef: 'agent-memory',
+      namespace: 'agents',
+    })
+
+    expect(getMemoryResource).toHaveBeenCalledWith('agent-memory', 'agents')
+  })
+
+  it('submits memory writes and queries through the Agents memory operation API', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            kind: 'Memory',
+            namespace: 'agents',
+            resource: { kind: 'Memory', metadata: { name: 'agent-memory' }, spec: { type: 'postgres' } },
+          }),
+          { headers: { 'content-type': 'application/json' }, status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, operation: 'event' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, operation: 'kv' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, operation: 'embedding' }), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            operation: 'query',
+            results: [{ key: 'note-1', score: 0.91, metadata: { source: 'test' } }],
+          }),
+          { status: 200 },
+        ),
+      )
     vi.stubGlobal('fetch', fetchMock)
 
-    await writeMemoryEmbedding(connection, 'key-1', 'hello world')
-
-    expect(fetchMock).not.toHaveBeenCalled()
-    expect(pgMocks.query).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO public.memory_embeddings'), [
-      'test-memory',
-      'key-1',
-      expect.stringMatching(/^\[[^\]]+\]$/),
-      {},
+    const connection = await resolveMemoryConnection('agent-memory', 'agents')
+    await writeMemoryEvent(connection, 'sync-started', { ok: true })
+    await writeMemoryKv(connection, 'last-run', { id: 'run-1' })
+    await writeMemoryEmbedding(connection, 'note-1', 'hello world', { source: 'test' })
+    await expect(queryMemory(connection, 'hello', 5)).resolves.toEqual([
+      { key: 'note-1', score: 0.91, metadata: { source: 'test' } },
     ])
-  })
 
-  it('fails closed in production when hosted embeddings are misconfigured', async () => {
-    process.env.NODE_ENV = 'production'
-    delete process.env.OPENAI_API_KEY
-    delete process.env.OPENAI_EMBEDDING_API_BASE_URL
-    delete process.env.OPENAI_API_BASE_URL
-    delete process.env.OPENAI_API_BASE
-
-    await expect(writeMemoryEmbedding(connection, 'key-1', 'hello world')).rejects.toThrow(/missing OPENAI_API_KEY/i)
-  })
-
-  it('fails when the embedding input exceeds the configured maximum length', async () => {
-    process.env.NODE_ENV = 'production'
-    process.env.OPENAI_API_KEY = 'test-key'
-    process.env.OPENAI_EMBEDDING_DIMENSION = '3'
-    process.env.OPENAI_EMBEDDING_MAX_INPUT_CHARS = '5'
-
-    const fetchMock = vi.fn()
-    vi.stubGlobal('fetch', fetchMock)
-
-    await expect(writeMemoryEmbedding(connection, 'key-1', 'hello world')).rejects.toThrow(/input too large/i)
-    expect(fetchMock).not.toHaveBeenCalled()
-  })
-
-  it('fails when the embedding request exceeds the configured timeout', async () => {
-    process.env.NODE_ENV = 'production'
-    process.env.OPENAI_API_KEY = 'test-key'
-    process.env.OPENAI_EMBEDDING_DIMENSION = '3'
-    process.env.OPENAI_EMBEDDING_TIMEOUT_MS = '5'
-
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
-        return new Promise((_resolve, reject) => {
-          init?.signal?.addEventListener('abort', () => {
-            const error = new Error('aborted')
-            error.name = 'AbortError'
-            reject(error)
-          })
-        })
-      }),
-    )
-
-    await expect(writeMemoryEmbedding(connection, 'key-1', 'hello world')).rejects.toThrow(/timed out/i)
-  })
-
-  it('reuses pooled postgres clients across repeated writes', async () => {
-    process.env.NODE_ENV = 'development'
-
-    await writeMemoryEvent(connection, 'sync-started', { ok: true })
-    await writeMemoryEvent(connection, 'sync-finished', { ok: true })
-
-    expect(pgMocks.construct).toHaveBeenCalledTimes(1)
-    expect(pgMocks.construct).toHaveBeenCalledWith({
-      connectionString: connection.connectionString,
-      ssl: { rejectUnauthorized: false },
-      max: 2,
-    })
-    expect(pgMocks.query).toHaveBeenCalledTimes(2)
-
-    await closeMemoryProviderPools()
-
-    expect(pgMocks.end).toHaveBeenCalledTimes(1)
-  })
-
-  it('allows the memory postgres pool size to be lowered by env', async () => {
-    process.env.NODE_ENV = 'development'
-    process.env.JANGAR_MEMORY_DB_POOL_MAX = '1'
-
-    await writeMemoryEvent(connection, 'sync-started', { ok: true })
-
-    expect(pgMocks.construct).toHaveBeenCalledWith({
-      connectionString: connection.connectionString,
-      ssl: { rejectUnauthorized: false },
-      max: 1,
-    })
+    const calls = fetchMock.mock.calls as unknown as [URL, RequestInit][]
+    expect(calls[0]?.[0].toString()).toBe('http://agents.test/v1/memories/resources?name=agent-memory&namespace=agents')
+    expect(calls.slice(1).map(([url]) => url.toString())).toEqual([
+      'http://agents.test/v1/memory-operations',
+      'http://agents.test/v1/memory-operations',
+      'http://agents.test/v1/memory-operations',
+      'http://agents.test/v1/memory-operations',
+    ])
+    expect(calls.slice(1).map(([, init]) => init.method)).toEqual(['POST', 'POST', 'POST', 'POST'])
+    expect(calls.slice(1).map(([, init]) => (init.headers as Record<string, string>)['x-agents-client'])).toEqual([
+      'jangar-memory-provider-test',
+      'jangar-memory-provider-test',
+      'jangar-memory-provider-test',
+      'jangar-memory-provider-test',
+    ])
+    expect(
+      calls.slice(1).every(([, init]) => Boolean((init.headers as Record<string, string>)['idempotency-key'])),
+    ).toBe(true)
+    expect(calls.slice(1).map(([, init]) => JSON.parse(String(init.body)))).toEqual([
+      {
+        memoryRef: 'agent-memory',
+        namespace: 'agents',
+        operation: 'event',
+        eventType: 'sync-started',
+        payload: { ok: true },
+      },
+      {
+        memoryRef: 'agent-memory',
+        namespace: 'agents',
+        operation: 'kv',
+        key: 'last-run',
+        value: { id: 'run-1' },
+      },
+      {
+        memoryRef: 'agent-memory',
+        namespace: 'agents',
+        operation: 'embedding',
+        key: 'note-1',
+        text: 'hello world',
+        metadata: { source: 'test' },
+      },
+      {
+        memoryRef: 'agent-memory',
+        namespace: 'agents',
+        operation: 'query',
+        query: 'hello',
+        limit: 5,
+      },
+    ])
   })
 })

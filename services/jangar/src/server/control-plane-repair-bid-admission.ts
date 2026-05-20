@@ -9,7 +9,7 @@ import type {
   TorghutAlphaReadinessStrikeLedger,
   TorghutAlphaReadinessStrikeSlot,
   TorghutRepairBidSettlementLot,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import type { TorghutConsumerEvidenceStatus } from '~/server/control-plane-torghut-consumer-evidence'
 
 export const REPAIR_BID_ADMISSION_DESIGN_ARTIFACT =

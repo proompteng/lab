@@ -1,5 +1,3 @@
-import type { ActionSloBudgetActionClass, EvidencePressureDecision } from '~/data/agents-control-plane'
-import { asRecord, asString } from '~/server/primitives-http'
 import {
   SWARM_EVIDENCE_PRESSURE_ANNOTATION_DECISION,
   SWARM_EVIDENCE_PRESSURE_ANNOTATION_FRESH_UNTIL,
@@ -8,7 +6,10 @@ import {
   SWARM_EVIDENCE_PRESSURE_ANNOTATION_REASON_CODES,
   SWARM_EVIDENCE_PRESSURE_ANNOTATION_REQUIRED_REPAIR_RECEIPTS,
   SWARM_EVIDENCE_PRESSURE_ANNOTATION_WATCH_BACKOFF_STATE,
-} from '~/server/supporting-primitives-schedule-runner'
+} from '@proompteng/agent-contracts/swarm-contracts'
+
+import type { ActionSloBudgetActionClass, EvidencePressureDecision } from '~/server/control-plane-status-types'
+import { asRecord, asString } from '~/server/primitives-http'
 
 export type EvidencePressureTrace = {
   ledgerId: string

@@ -73,11 +73,13 @@ describe('agents build-image helpers', () => {
   it('uses the Agents workspace as the default control-plane prune scope', () => {
     expect(__private.parsePruneScopes(undefined, 'control-plane')).toEqual([
       '@proompteng/agents',
+      '@proompteng/agent-contracts',
       '@proompteng/otel',
       '@proompteng/temporal-bun-sdk',
     ])
     expect(__private.parsePruneScopes(undefined, undefined)).toEqual([
       '@proompteng/agents',
+      '@proompteng/agent-contracts',
       '@proompteng/otel',
       '@proompteng/temporal-bun-sdk',
     ])
@@ -86,6 +88,7 @@ describe('agents build-image helpers', () => {
   it('uses the Agents workspace as the default controller prune scope', () => {
     expect(__private.parsePruneScopes(undefined, 'controller')).toEqual([
       '@proompteng/agents',
+      '@proompteng/agent-contracts',
       '@proompteng/otel',
       '@proompteng/temporal-bun-sdk',
     ])

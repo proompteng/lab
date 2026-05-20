@@ -32,6 +32,10 @@ const writeLine = (child: FakeChildProcess, payload: unknown) => {
   child.stdout.write(Buffer.from(`${JSON.stringify(payload)}\n`))
 }
 
+const writeLines = (child: FakeChildProcess, payloads: unknown[]) => {
+  child.stdout.write(Buffer.from(`${payloads.map((payload) => JSON.stringify(payload)).join('\n')}\n`))
+}
+
 type JsonRpcRequest = { id: number; method: string; params?: unknown } & Record<string, unknown>
 type JsonRpcMessage = { id?: number; method?: string; params?: unknown; result?: unknown } & Record<string, unknown>
 
@@ -128,6 +132,20 @@ const drainStream = async (stream: AsyncGenerator<unknown, unknown, void>) => {
     deltas.push(next.value)
   }
   return deltas
+}
+
+const withTimeout = async <T>(promise: Promise<T>, label: string): Promise<T> => {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(`timed out waiting for ${label}`)), 500)
+      }),
+    ])
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
 }
 
 describe('CodexAppServerClient v2 notifications', () => {
@@ -345,6 +363,49 @@ describe('CodexAppServerClient v2 notifications', () => {
       params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed', items: [], error: null } },
     })
     await drainStream(stream as unknown as AsyncGenerator<unknown, unknown, void>)
+  })
+
+  it('does not drop same-chunk turn notifications before runTurnStream returns', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const runPromise = client.runTurnStream('hello')
+    await respondToThreadStart(child, 'thread-1')
+
+    const request = await nextRequest(child)
+    expect(request.method).toBe('turn/start')
+    writeLines(child, [
+      {
+        id: request.id,
+        result: { turn: { id: 'turn-1', status: 'inProgress', items: [], error: null } },
+      },
+      {
+        method: 'item/agentMessage/delta',
+        params: {
+          threadId: 'thread-1',
+          turnId: 'turn-1',
+          itemId: 'item-1',
+          delta: 'done',
+        },
+      },
+      {
+        method: 'turn/completed',
+        params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed', items: [], error: null } },
+      },
+    ])
+
+    const { stream, turnId } = await runPromise
+    expect(turnId).toBe('turn-1')
+    await expect(withTimeout(stream.next(), 'same-chunk message delta')).resolves.toEqual({
+      done: false,
+      value: { type: 'message', delta: 'done' },
+    })
+    await expect(withTimeout(stream.next(), 'same-chunk turn completion')).resolves.toMatchObject({
+      done: true,
+      value: { id: 'turn-1', status: 'completed' },
+    })
+    client.stop()
   })
 
   it('omits summary override from turn/start payload by default', async () => {

@@ -5,6 +5,7 @@ import { type AgentsControllerLifecycleActor, createAgentsControllerLifecycleAct
 export type CrdCheckState = {
   ok: boolean
   missing: string[]
+  forbidden: string[]
   checkedAt: string
 }
 

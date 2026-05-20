@@ -1,19 +1,30 @@
-import { type CreateAuditEventInput, createPrimitivesStore } from '~/server/primitives-store'
+import { randomUUID } from 'node:crypto'
+
+import { type AuditEventContext, buildAuditPayload } from '~/server/audit-logging'
+import { emitAuditEventToOptionalSink } from '~/server/audit-sink'
+
+export type CreateAuditEventInput = {
+  entityType: string
+  entityId: string
+  eventType: string
+  context?: AuditEventContext
+  details?: Record<string, unknown>
+}
 
 export const emitAuditEventBestEffort = async (
   input: CreateAuditEventInput,
-  deps: { storeFactory?: typeof createPrimitivesStore } = {},
+  deps: { emit?: typeof emitAuditEventToOptionalSink } = {},
 ) => {
-  let store: ReturnType<typeof createPrimitivesStore> | null = null
   try {
-    store = (deps.storeFactory ?? createPrimitivesStore)()
-    await store.ready
-    await store.createAuditEvent(input)
+    await (deps.emit ?? emitAuditEventToOptionalSink)({
+      id: randomUUID(),
+      entityType: input.entityType,
+      entityId: input.entityId,
+      eventType: input.eventType,
+      payload: buildAuditPayload({ context: input.context, details: input.details }),
+      createdAt: new Date(),
+    })
   } catch {
     // audit is best-effort
-  } finally {
-    if (store) {
-      await store.close()
-    }
   }
 }

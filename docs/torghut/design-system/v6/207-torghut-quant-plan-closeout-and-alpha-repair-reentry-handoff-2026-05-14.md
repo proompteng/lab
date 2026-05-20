@@ -162,7 +162,7 @@ broker state, market data, trading flags, AgentRuns, GitOps resources, or empiri
 - `services/torghut/app/trading/alpha_readiness_settlement_conveyor.py` is `848` lines and owns no-delta lease logic.
 - `services/torghut/app/trading/alpha_repair_dividend_ledger.py` is `637` lines and owns Jangar-facing no-delta
   custody.
-- `services/jangar/src/data/agents-control-plane.ts` is `2974` lines and remains the high-risk control-plane
+- `services/jangar/src/server/control-plane-status-types.ts` is `2974` lines and remains the high-risk control-plane
   integration boundary.
 - `services/jangar/src/server/control-plane-status.ts` and
   `services/jangar/src/server/control-plane-material-action-verdict.ts` own the Jangar status and material-action

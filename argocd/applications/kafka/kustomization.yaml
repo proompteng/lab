@@ -43,11 +43,6 @@ resources:
   - torghut-topics.yaml
   - torghut-sim-topics.yaml
   - torghut-options-topics.yaml
-  - kafka-exporter-deployment.yaml
-  - kafka-exporter-service.yaml
-  - alloy-configmap.yaml
-  - alloy-deployment.yaml
-  - alloy-rbac.yaml
 patches:
   # Make the operator watch all namespaces
   - target:

@@ -1,4 +1,4 @@
-import type { TorghutAlphaRepairDividendLedgerRef } from '~/data/agents-control-plane'
+import type { TorghutAlphaRepairDividendLedgerRef } from '~/server/control-plane-status-types'
 import {
   normalizeNonEmpty,
   normalizeNumber,

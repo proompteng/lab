@@ -17,20 +17,6 @@ type KubernetesManifest = {
   }
 }
 
-type KubernetesSecretManifest = {
-  apiVersion?: string
-  kind?: string
-  type?: string
-  data?: Record<string, string>
-  stringData?: Record<string, string>
-  metadata?: Record<string, unknown> & {
-    name?: string
-    namespace?: string
-    labels?: Record<string, string>
-    annotations?: Record<string, string>
-  }
-}
-
 type Options = {
   kustomizePath: string
   valuesPath: string
@@ -472,41 +458,6 @@ const resolveDatabaseSecretRequirement = (
   return name ? { namespace, name } : null
 }
 
-const buildDatabaseSecretAliasManifest = (
-  source: KubernetesSecretManifest,
-  options: {
-    sourceNamespace: string
-    sourceName: string
-    targetNamespace: string
-    targetName: string
-  },
-): KubernetesSecretManifest => ({
-  apiVersion: source.apiVersion ?? 'v1',
-  kind: 'Secret',
-  type: source.type,
-  data: source.data ?? {},
-  stringData: source.stringData,
-  metadata: {
-    name: options.targetName,
-    namespace: options.targetNamespace,
-    labels: {
-      'app.kubernetes.io/name': 'agents',
-      'app.kubernetes.io/component': 'database',
-      'agents.proompteng.ai/compat-source-secret': options.sourceName,
-      ...source.metadata?.labels,
-    },
-    annotations: {
-      'agents.proompteng.ai/created-by': 'agents-deploy-service',
-      'agents.proompteng.ai/compat-source-secret': `${options.sourceNamespace}/${options.sourceName}`,
-    },
-  },
-})
-
-const resolveDatabaseSecretSource = (requirement: DatabaseSecretRequirement) => ({
-  sourceNamespace: requirement.namespace,
-  sourceName: requirement.name,
-})
-
 const ensureDatabaseSecretReady = async (requirement: DatabaseSecretRequirement | null) => {
   if (!requirement) return
   ensureCli('kubectl')
@@ -526,31 +477,9 @@ const ensureDatabaseSecretReady = async (requirement: DatabaseSecretRequirement 
     return
   }
 
-  if (!parseBoolean(process.env.AGENTS_CREATE_DB_SECRET_ALIAS, false)) {
-    fatal(
-      `Database secret ${requirement.namespace}/${requirement.name} is missing. Create/migrate the Agents database secret before applying, or set AGENTS_CREATE_DB_SECRET_ALIAS=true to re-apply the Agents-owned target secret for this rollout.`,
-    )
-  }
-
-  const { sourceNamespace, sourceName } = resolveDatabaseSecretSource(requirement)
-  const source = await capture(['kubectl', '-n', sourceNamespace, 'get', 'secret', sourceName, '-o', 'json'])
-  const manifest = buildDatabaseSecretAliasManifest(JSON.parse(source) as KubernetesSecretManifest, {
-    sourceNamespace,
-    sourceName,
-    targetNamespace: requirement.namespace,
-    targetName: requirement.name,
-  })
-  const tmpDir = mkdtempSync(`${tmpdir()}/agents-db-secret-`)
-  const tmpPath = resolve(tmpDir, 'secret.yaml')
-  try {
-    writeFileSync(tmpPath, YAML.stringify(manifest, { lineWidth: 120 }))
-    await run('kubectl', ['apply', '-f', tmpPath])
-    console.log(
-      `Created compatibility database secret ${requirement.namespace}/${requirement.name} from ${sourceNamespace}/${sourceName}`,
-    )
-  } finally {
-    rmSync(tmpDir, { recursive: true, force: true })
-  }
+  fatal(
+    `Database secret ${requirement.namespace}/${requirement.name} is missing. Create or migrate the Agents-owned database secret before applying.`,
+  )
 }
 
 const isArgoHookManifest = (manifest: unknown): boolean => {
@@ -685,6 +614,4 @@ export const __private = {
   updateValuesFile,
   readRunnerImagePin,
   resolveDatabaseSecretRequirement,
-  resolveDatabaseSecretSource,
-  buildDatabaseSecretAliasManifest,
 }

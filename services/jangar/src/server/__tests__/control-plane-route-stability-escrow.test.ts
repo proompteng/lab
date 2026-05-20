@@ -5,7 +5,7 @@ import type {
   ControlPlaneControllerWitnessQuorum,
   MaterialActionVerdict,
   MaterialActionVerdictEpoch,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import type { FailureDomainRouteProbe } from '~/server/control-plane-failure-domain-leases'
 import {
   buildRouteStabilityEscrow,
@@ -127,7 +127,7 @@ const controllerWitness = (
 const routeProbe = (reachable: boolean): FailureDomainRouteProbe => ({
   status: reachable ? 'healthy' : 'degraded',
   reachable,
-  url: 'http://agents.agents.svc.cluster.local/api/agents/control-plane/status?namespace=agents',
+  url: 'http://agents.agents.svc.cluster.local/v1/control-plane/status?namespace=agents',
   status_code: reachable ? 200 : null,
   latency_ms: reachable ? 21 : 2000,
   message: reachable ? 'route probe succeeded' : 'connect ECONNREFUSED 10.0.0.10:80',

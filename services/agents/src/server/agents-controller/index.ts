@@ -36,6 +36,7 @@ import {
   normalizeLabelValue,
   resolveRunnerServiceAccount,
   submitJobRun,
+  verifyJobConfigMaps,
 } from './job-runtime'
 import {
   markAgentsControllerStarted,
@@ -145,6 +146,7 @@ export type AgentsControllerHealth = {
   namespaces: string[] | null
   crdsReady: boolean | null
   missingCrds: string[]
+  forbiddenCrds?: string[]
   lastCheckedAt: string | null
   agentRunIngestion?: AgentRunIngestionHealth[]
 }
@@ -428,6 +430,7 @@ export const getAgentsControllerHealth = (): AgentsControllerHealth => ({
   namespaces: controllerState.namespaces ?? resolveConfiguredNamespaces(),
   crdsReady: controllerState.crdCheckState?.ok ?? null,
   missingCrds: controllerState.crdCheckState?.missing ?? [],
+  forbiddenCrds: controllerState.crdCheckState?.forbidden ?? [],
   lastCheckedAt: controllerState.crdCheckState?.checkedAt ?? null,
   agentRunIngestion: controllerState.agentRunIngestion,
 })
@@ -487,6 +490,12 @@ const setStatus = async (
     const existingArtifacts = readNested(resource, ['status', 'artifacts'])
     if (existingArtifacts) {
       nextStatusBase = { ...nextStatusBase, artifacts: existingArtifacts }
+    }
+  }
+  if (kind === 'AgentRun' && status.runner === undefined) {
+    const existingRunner = readNested(resource, ['status', 'runner'])
+    if (existingRunner) {
+      nextStatusBase = { ...nextStatusBase, runner: existingRunner }
     }
   }
 
@@ -842,6 +851,7 @@ const { reconcileWorkflowRun } = createWorkflowReconciler({
   submitJobRun,
   applyJobTtlAfterStatus,
   normalizeLabelValue,
+  verifyJobConfigMaps,
   isJobComplete,
   isJobFailed,
 })
@@ -870,6 +880,7 @@ const { reconcileAgentRun } = createAgentRunReconciler({
   buildContractStatus,
   resolveRunnerServiceAccount,
   applyJobTtlAfterStatus,
+  verifyJobConfigMaps,
   isJobComplete,
   isJobFailed,
   recordAgentQueueDepth,
@@ -1150,6 +1161,13 @@ const startNamespaceWatches = async (
           ...toLogError(error),
         }),
       onRestart: (restartReason) => {
+        if (restartReason === 'closed') {
+          logAgentsControllerDebug('agentrun_watch_restarted', {
+            namespace,
+            reason: restartReason,
+          })
+          return
+        }
         logAgentsControllerWarn('agentrun_watch_restarted', {
           namespace,
           reason: restartReason,
@@ -1285,6 +1303,7 @@ const startAgentsControllerInternal = async () => {
   if (!crdsReady.ok) {
     logAgentsControllerError('startup_missing_crds', {
       missingCrds: crdsReady.missing,
+      forbiddenCrds: crdsReady.forbidden,
     })
     runtimeMutableState.starting = false
     markAgentsControllerStartFailed(runtimeMutableState.lifecycleActor)

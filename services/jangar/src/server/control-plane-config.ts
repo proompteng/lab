@@ -3,26 +3,8 @@ type EnvSource = Record<string, string | undefined>
 const DEFAULT_CACHE_CLUSTER_ID = 'default'
 const DEFAULT_HEARTBEAT_TTL_SECONDS = 120
 const DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 15
-const DEFAULT_LEADER_ELECTION_LEASE_NAME = 'jangar-controller-leader'
-const DEFAULT_LEADER_ELECTION_ENABLED = true
-const DEFAULT_LEADER_ELECTION_LEASE_DURATION_SECONDS = 30
-const DEFAULT_LEADER_ELECTION_RENEW_DEADLINE_SECONDS = 20
-const DEFAULT_LEADER_ELECTION_RETRY_PERIOD_SECONDS = 5
-const DEFAULT_WATCH_WINDOW_MINUTES = 15
-const DEFAULT_WATCH_STREAM_LIMIT = 20
-const DEFAULT_WATCH_RESTART_DEGRADE_THRESHOLD = 2
-const MAX_RECORDED_STREAMS = 200
-const DEFAULT_WORKFLOWS_WINDOW_MINUTES = 15
-const MIN_WINDOW_MINUTES = 1
-const MAX_WINDOW_MINUTES = 24 * 60
 const DEFAULT_EXECUTION_TRUST_SWARMS = ['jangar-control-plane', 'torghut-quant']
 const DEFAULT_EXECUTION_TRUST_SUMMARY_LIMIT = 20
-const DEFAULT_WORKFLOW_SWARMS = ['jangar-control-plane']
-const DEFAULT_ROLLOUT_DEPLOYMENTS = ['agents', 'agents-controllers']
-const DEFAULT_WATCH_RELIABILITY_BLOCK_ERRORS = 6
-const DEFAULT_WATCH_RELIABILITY_BLOCK_RESTARTS = 3
-const DEFAULT_WORKFLOWS_WARNING_BACKOFF_THRESHOLD = 2
-const DEFAULT_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD = 3
 const DEFAULT_TORGHUT_STATUS_TIMEOUT_MS = 15000
 const DEFAULT_STATUS_CACHE_TTL_MS = 0
 const DEFAULT_STATUS_CACHE_MAX_ENTRIES = 32
@@ -58,11 +40,6 @@ const parseStringList = (value: string | undefined) =>
 
 const uniqueStrings = (values: string[]) => [...new Set(values)]
 
-const isControllerWorkloadFlagEnabled = (value: string | undefined, defaultValue: boolean) => {
-  const normalized = (value ?? (defaultValue ? '1' : '0')).trim().toLowerCase()
-  return normalized !== '0' && normalized !== 'false'
-}
-
 const normalizeUrl = (value: string | undefined) => {
   const normalized = normalizeNonEmpty(value)
   return normalized ? normalized.replace(/\/+$/, '') : null
@@ -82,37 +59,11 @@ export type ControlPlaneHeartbeatConfig = {
   sourceNamespace: string
 }
 
-export type LeaderElectionSettings = {
-  enabled: boolean
-  required: boolean
-  leaseName: string
-  leaseNamespace: string
-  leaseDurationSeconds: number
-  renewDeadlineSeconds: number
-  retryPeriodSeconds: number
-  podNamespace: string
-  podName: string
-  podUid: string | null
-}
-
-export type ControlPlaneWatchReliabilityConfig = {
-  windowMinutes: number
-  streamLimit: number
-  restartDegradeThreshold: number
-}
-
 export type ControlPlaneStatusConfig = {
   executionTrustSwarms: string[]
   executionTrustSummaryLimit: number
   torghutStatusUrl: string | null
   torghutStatusTimeoutMs: number
-  workflowsWindowMinutes: number
-  workflowsSwarms: string[]
-  watchReliabilityBlockErrors: number
-  watchReliabilityBlockRestarts: number
-  rolloutDeployments: string[]
-  workflowsWarningBackoffThreshold: number
-  workflowsDegradedBackoffThreshold: number
   statusCacheTtlMs: number
   statusCacheMaxEntries: number
 }
@@ -152,85 +103,8 @@ export const resolveControlPlaneHeartbeatConfig = (env: EnvSource = process.env)
   }
 }
 
-export const resolveLeaderElectionSettings = (env: EnvSource = process.env): LeaderElectionSettings => {
-  let leaseDurationSeconds = parsePositiveInt(
-    env.JANGAR_LEADER_ELECTION_LEASE_DURATION_SECONDS,
-    DEFAULT_LEADER_ELECTION_LEASE_DURATION_SECONDS,
-    1,
-  )
-  let renewDeadlineSeconds = parsePositiveInt(
-    env.JANGAR_LEADER_ELECTION_RENEW_DEADLINE_SECONDS,
-    DEFAULT_LEADER_ELECTION_RENEW_DEADLINE_SECONDS,
-    1,
-  )
-  let retryPeriodSeconds = parsePositiveInt(
-    env.JANGAR_LEADER_ELECTION_RETRY_PERIOD_SECONDS,
-    DEFAULT_LEADER_ELECTION_RETRY_PERIOD_SECONDS,
-    1,
-  )
-
-  if (!(retryPeriodSeconds < renewDeadlineSeconds)) {
-    renewDeadlineSeconds = DEFAULT_LEADER_ELECTION_RENEW_DEADLINE_SECONDS
-    retryPeriodSeconds = DEFAULT_LEADER_ELECTION_RETRY_PERIOD_SECONDS
-  }
-  if (!(renewDeadlineSeconds < leaseDurationSeconds)) {
-    leaseDurationSeconds = DEFAULT_LEADER_ELECTION_LEASE_DURATION_SECONDS
-    renewDeadlineSeconds = DEFAULT_LEADER_ELECTION_RENEW_DEADLINE_SECONDS
-    retryPeriodSeconds = DEFAULT_LEADER_ELECTION_RETRY_PERIOD_SECONDS
-  }
-
-  return {
-    enabled: parseBoolean(env.JANGAR_LEADER_ELECTION_ENABLED, DEFAULT_LEADER_ELECTION_ENABLED),
-    required:
-      !isRuntimeTestEnv(env) &&
-      (isControllerWorkloadFlagEnabled(env.JANGAR_AGENTS_CONTROLLER_ENABLED, true) ||
-        isControllerWorkloadFlagEnabled(env.JANGAR_ORCHESTRATION_CONTROLLER_ENABLED, true) ||
-        isControllerWorkloadFlagEnabled(env.JANGAR_SUPPORTING_CONTROLLER_ENABLED, true) ||
-        isControllerWorkloadFlagEnabled(env.JANGAR_PRIMITIVES_RECONCILER, true)),
-    leaseName: normalizeNonEmpty(env.JANGAR_LEADER_ELECTION_LEASE_NAME) ?? DEFAULT_LEADER_ELECTION_LEASE_NAME,
-    leaseNamespace: normalizeNonEmpty(env.JANGAR_LEADER_ELECTION_LEASE_NAMESPACE) ?? '',
-    leaseDurationSeconds,
-    renewDeadlineSeconds,
-    retryPeriodSeconds,
-    podNamespace: normalizeNonEmpty(env.JANGAR_POD_NAMESPACE) ?? normalizeNonEmpty(env.POD_NAMESPACE) ?? 'default',
-    podName: normalizeNonEmpty(env.HOSTNAME) ?? 'unknown',
-    podUid: normalizeNonEmpty(env.JANGAR_POD_UID),
-  }
-}
-
-export const resolveControlPlaneWatchReliabilityConfig = (
-  env: EnvSource = process.env,
-): ControlPlaneWatchReliabilityConfig => ({
-  windowMinutes: parsePositiveInt(
-    env.JANGAR_CONTROL_PLANE_WATCH_HEALTH_WINDOW_MINUTES,
-    DEFAULT_WATCH_WINDOW_MINUTES,
-    1,
-    MAX_WINDOW_MINUTES,
-  ),
-  streamLimit: parsePositiveInt(
-    env.JANGAR_CONTROL_PLANE_WATCH_HEALTH_STREAM_LIMIT,
-    DEFAULT_WATCH_STREAM_LIMIT,
-    1,
-    MAX_RECORDED_STREAMS,
-  ),
-  restartDegradeThreshold: parsePositiveInt(
-    env.JANGAR_CONTROL_PLANE_WATCH_HEALTH_RESTART_DEGRADE_THRESHOLD,
-    DEFAULT_WATCH_RESTART_DEGRADE_THRESHOLD,
-    1,
-  ),
-})
-
 export const resolveControlPlaneStatusConfig = (env: EnvSource = process.env): ControlPlaneStatusConfig => {
   const executionTrustSwarms = uniqueStrings(parseStringList(env.JANGAR_CONTROL_PLANE_EXECUTION_TRUST_SWARMS))
-  const workflowsSwarms = uniqueStrings(parseStringList(env.JANGAR_WORKFLOWS_SWARMS))
-  const legacyWorkflowSwarms = uniqueStrings(parseStringList(env.JANGAR_WORKFLOW_SWARMS))
-  const rolloutDeployments = uniqueStrings(parseStringList(env.JANGAR_CONTROL_PLANE_ROLLOUT_DEPLOYMENTS))
-
-  const workflowsWarningBackoffThreshold = parsePositiveInt(
-    env.JANGAR_WORKFLOWS_WARNING_BACKOFF_THRESHOLD,
-    DEFAULT_WORKFLOWS_WARNING_BACKOFF_THRESHOLD,
-    1,
-  )
 
   return {
     executionTrustSwarms: executionTrustSwarms.length > 0 ? executionTrustSwarms : [...DEFAULT_EXECUTION_TRUST_SWARMS],
@@ -246,35 +120,6 @@ export const resolveControlPlaneStatusConfig = (env: EnvSource = process.env): C
       DEFAULT_TORGHUT_STATUS_TIMEOUT_MS,
       100,
       30_000,
-    ),
-    workflowsWindowMinutes: parsePositiveInt(
-      env.JANGAR_WORKFLOWS_WINDOW_MINUTES ?? env.JANGAR_WORKFLOW_WINDOW_MINUTES,
-      DEFAULT_WORKFLOWS_WINDOW_MINUTES,
-      MIN_WINDOW_MINUTES,
-      MAX_WINDOW_MINUTES,
-    ),
-    workflowsSwarms:
-      workflowsSwarms.length > 0
-        ? workflowsSwarms
-        : legacyWorkflowSwarms.length > 0
-          ? legacyWorkflowSwarms
-          : [...DEFAULT_WORKFLOW_SWARMS],
-    watchReliabilityBlockErrors: parsePositiveInt(
-      env.JANGAR_CONTROL_PLANE_WATCH_RELIABILITY_BLOCK_ERRORS,
-      DEFAULT_WATCH_RELIABILITY_BLOCK_ERRORS,
-      1,
-    ),
-    watchReliabilityBlockRestarts: parsePositiveInt(
-      env.JANGAR_CONTROL_PLANE_WATCH_RELIABILITY_BLOCK_RESTARTS,
-      DEFAULT_WATCH_RELIABILITY_BLOCK_RESTARTS,
-      1,
-    ),
-    rolloutDeployments: rolloutDeployments.length > 0 ? rolloutDeployments : [...DEFAULT_ROLLOUT_DEPLOYMENTS],
-    workflowsWarningBackoffThreshold,
-    workflowsDegradedBackoffThreshold: parsePositiveInt(
-      env.JANGAR_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD,
-      DEFAULT_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD,
-      workflowsWarningBackoffThreshold,
     ),
     statusCacheTtlMs: parsePositiveInt(
       env.JANGAR_CONTROL_PLANE_STATUS_CACHE_TTL_MS,
@@ -299,11 +144,6 @@ export const resolveControlPlaneCacheFreshnessConfig = (
 })
 
 export const validateControlPlaneConfig = (env: EnvSource = process.env) => {
-  const leaderElection = resolveLeaderElectionSettings(env)
-  if (!leaderElection.leaseName.trim()) {
-    throw new Error('JANGAR_LEADER_ELECTION_LEASE_NAME must not be empty')
-  }
-
   const status = resolveControlPlaneStatusConfig(env)
   if (status.torghutStatusUrl) {
     try {
@@ -314,6 +154,5 @@ export const validateControlPlaneConfig = (env: EnvSource = process.env) => {
   }
 
   resolveControlPlaneHeartbeatConfig(env)
-  resolveControlPlaneWatchReliabilityConfig(env)
   resolveControlPlaneCacheFreshnessConfig(env)
 }

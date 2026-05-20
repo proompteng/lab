@@ -355,7 +355,7 @@ Engineer stage:
 
 Likely source files:
 
-- `services/jangar/src/data/agents-control-plane.ts`
+- `services/jangar/src/server/control-plane-status-types.ts`
 - `services/jangar/src/server/control-plane-status-types.ts`
 - `services/jangar/src/server/control-plane-status.ts`
 - `services/jangar/src/server/control-plane-db-status.ts`

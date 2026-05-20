@@ -1,40 +1,39 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 
-import { Pool } from 'pg'
+import {
+  fetchMemoryResourceFromAgentsService,
+  submitMemoryOperationToAgentsService,
+  type AgentsMemoryOperation,
+  type AgentsMemoryOperationResult,
+  type AgentsServiceJsonResult,
+} from '@proompteng/agent-contracts/memory-client'
 
 import { resolveEmbeddingConfig } from './memory-config'
-import { type KubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 
-type MemoryConnection = {
-  dataset: string
-  schema: string
-  embeddingDimension: number
-  connectionString: string
+export type MemoryConnection = {
+  memoryRef: string
+  namespace: string
 }
 
-type MemoryQueryResult = {
+export type MemoryQueryResult = {
   key: string
   score: number | null
   metadata: Record<string, unknown>
 }
 
 type EnvSource = Record<string, string | undefined>
-
-const DEFAULT_MEMORY_DATABASE_POOL_MAX = 2
-
-const globalState = globalThis as typeof globalThis & {
-  __jangarMemoryProviderPools?: Map<string, Pool>
-}
+type MemoryResourceGetter = (memoryName: string, namespace: string) => Promise<Record<string, unknown> | null>
+type MemoryOperationSubmitter = (
+  input: {
+    deliveryId: string
+    memoryRef: string
+    namespace: string
+    operation: AgentsMemoryOperation
+  },
+  env?: EnvSource,
+) => Promise<AgentsServiceJsonResult<AgentsMemoryOperationResult>>
 
 const asString = (value: unknown) => (typeof value === 'string' && value.trim().length > 0 ? value.trim() : null)
-
-const parsePositiveInt = (value: string | undefined, fallback: number) => {
-  const normalized = asString(value)
-  if (!normalized) return fallback
-  const parsed = Number.parseInt(normalized, 10)
-  if (!Number.isFinite(parsed) || parsed <= 0) return fallback
-  return Math.floor(parsed)
-}
 
 const readNested = (obj: Record<string, unknown>, path: string[]) => {
   let cursor: unknown = obj
@@ -45,216 +44,86 @@ const readNested = (obj: Record<string, unknown>, path: string[]) => {
   return cursor ?? null
 }
 
-const decodeBase64 = (value: string | null) => {
-  if (!value) return null
-  try {
-    return Buffer.from(value, 'base64').toString('utf8')
-  } catch {
-    return null
-  }
-}
+const stableOperationPrefix = (operation: AgentsMemoryOperation) =>
+  createHash('sha256').update(JSON.stringify(operation)).digest('hex').slice(0, 16)
 
-const buildConnectionString = (secret: Record<string, unknown>, preferredKey?: string | null) => {
-  if (preferredKey) {
-    const preferred = asString(secret[preferredKey])
-    if (preferred) return preferred
-  }
-  const url = asString(secret.url) ?? asString(secret.uri) ?? asString(secret.connectionString)
-  if (url) return url
-  const endpoint = asString(secret.endpoint) ?? asString(secret.host)
-  const database = asString(secret.database) ?? asString(secret.dbname)
-  const username = asString(secret.username) ?? asString(secret.user)
-  const password = asString(secret.password)
-
-  if (!endpoint || !database || !username || !password) {
-    throw new Error('connection secret missing url/endpoint/database/username/password')
-  }
-
-  const encodedUser = encodeURIComponent(username)
-  const encodedPassword = encodeURIComponent(password)
-  return `postgresql://${encodedUser}:${encodedPassword}@${endpoint}/${database}?sslmode=require`
-}
-
-const generateFallbackEmbedding = (text: string, dimension: number) => {
-  const hash = createHash('sha256').update(text).digest()
-  const vector = Array.from({ length: dimension }, () => 0)
-  for (let i = 0; i < dimension; i += 1) {
-    const idx = i % hash.length
-    const value = (hash[idx] ?? 0) / 255
-    vector[i] = value * 2 - 1
-  }
-  return vector
-}
+const createDeliveryId = (connection: MemoryConnection, operation: AgentsMemoryOperation) =>
+  `memory-${connection.namespace}-${connection.memoryRef}-${stableOperationPrefix(operation)}-${randomUUID()}`
 
 export const loadEmbeddingConfig = (env: EnvSource = process.env) => resolveEmbeddingConfig(env)
 
-const getPoolCache = () => {
-  if (!globalState.__jangarMemoryProviderPools) {
-    globalState.__jangarMemoryProviderPools = new Map<string, Pool>()
+export const closeMemoryProviderPools = async () => undefined
+
+const getMemoryResourceFromAgentsService: MemoryResourceGetter = async (memoryName, namespace) => {
+  const result = await fetchMemoryResourceFromAgentsService({ name: memoryName, namespace })
+  if (result.ok) {
+    const resource = result.body.resource
+    return resource && typeof resource === 'object' && !Array.isArray(resource) ? resource : null
   }
-  return globalState.__jangarMemoryProviderPools
+  if (result.status === 404) {
+    return null
+  }
+  throw new Error(result.error ?? `Agents service returned HTTP ${result.status}`)
 }
 
-const getMemoryPool = (connectionString: string) => {
-  const pools = getPoolCache()
-  const existing = pools.get(connectionString)
-  if (existing) return existing
-
-  const max = parsePositiveInt(
-    process.env.JANGAR_MEMORY_DB_POOL_MAX ?? process.env.JANGAR_DB_POOL_MAX,
-    DEFAULT_MEMORY_DATABASE_POOL_MAX,
-  )
-  const created = new Pool({ connectionString, ssl: { rejectUnauthorized: false }, max })
-  pools.set(connectionString, created)
-  return created
-}
-
-export const closeMemoryProviderPools = async () => {
-  const pools = getPoolCache()
-  const activePools = [...pools.values()]
-  pools.clear()
-  await Promise.all(activePools.map((pool) => pool.end()))
-}
-
-const embedText = async (text: string, dimension: number) => {
-  const embeddingConfig = resolveEmbeddingConfig(process.env)
-  if (!embeddingConfig.hasExplicitBaseUrl && !embeddingConfig.apiKey && embeddingConfig.allowDevFallback) {
-    return generateFallbackEmbedding(text, dimension)
-  }
-
-  const { apiBaseUrl, apiKey, model, dimension: configuredDimension, timeoutMs, maxInputChars } = embeddingConfig
-  if (embeddingConfig.hosted && !apiKey) {
-    throw new Error(
-      'missing OPENAI_API_KEY; set it or point OPENAI_EMBEDDING_API_BASE_URL/OPENAI_API_BASE_URL at an OpenAI-compatible endpoint',
-    )
-  }
-  if (text.length > maxInputChars) {
-    throw new Error(`embedding input too large (${text.length} chars; max ${maxInputChars})`)
-  }
-  if (configuredDimension !== dimension) {
-    const error = new Error(
-      `memory embedding dimension mismatch: expected ${dimension} but OPENAI_EMBEDDING_DIMENSION is ${configuredDimension}`,
-    )
-    if (embeddingConfig.allowDevFallback) {
-      console.warn('[jangar] memory provider using fallback embeddings', error.message)
-      return generateFallbackEmbedding(text, dimension)
-    }
-    throw error
-  }
-
-  const controller = new AbortController()
-  const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs)
-  const headers: Record<string, string> = {
-    'content-type': 'application/json',
-  }
-  if (apiKey) {
-    headers.authorization = `Bearer ${apiKey}`
-  }
-
-  try {
-    const response = await fetch(`${apiBaseUrl.replace(/\/+$/, '')}/embeddings`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ model, input: text }),
-      signal: controller.signal,
-    })
-
-    if (!response.ok) {
-      const body = await response.text()
-      throw new Error(`embedding request failed (${response.status}): ${body}`)
-    }
-
-    const json = (await response.json()) as { data?: { embedding?: number[] }[] }
-    const embedding = json.data?.[0]?.embedding
-    if (!embedding || !Array.isArray(embedding)) {
-      throw new Error('embedding response missing data[0].embedding')
-    }
-    if (embedding.length !== dimension) {
-      const error = new Error(`embedding dimension mismatch: expected ${dimension} but got ${embedding.length}`)
-      if (embeddingConfig.allowDevFallback) {
-        console.warn('[jangar] memory provider using fallback embeddings', error.message)
-        return generateFallbackEmbedding(text, dimension)
-      }
-      throw error
-    }
-    return embedding
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`embedding request timed out after ${timeoutMs}ms`)
-    }
-    throw error
-  } finally {
-    clearTimeout(timeoutHandle)
-  }
-}
-
-const vectorToPg = (vector: number[]) => `[${vector.join(',')}]`
-
-export const resolveMemoryConnection = async (
-  memoryName: string,
-  namespace: string,
-  kube: KubernetesClient,
-): Promise<MemoryConnection> => {
-  const memory = await kube.get(RESOURCE_MAP.Memory, memoryName, namespace)
-  if (!memory) {
-    throw new Error(`memory ${memoryName} not found in ${namespace}`)
-  }
-
+const assertMemoryResourceSupported = (memoryName: string, namespace: string, memory: Record<string, unknown>) => {
   const spec = (readNested(memory, ['spec']) ?? {}) as Record<string, unknown>
   const memoryType = asString(readNested(spec, ['type'])) ?? 'custom'
   if (memoryType !== 'postgres') {
     throw new Error(`memory ${memoryName} uses unsupported type ${memoryType}`)
   }
 
-  const dataset = memoryName
-  const schema = 'public'
+  return { memoryRef: memoryName, namespace }
+}
 
-  const connRef = readNested(spec, ['connection', 'secretRef']) as Record<string, unknown> | null
-  const secretName = asString(connRef?.name)
-  const secretKey = asString(connRef?.key)
-  if (!secretName) {
-    throw new Error(`memory ${memoryName} missing spec.connection.secretRef.name`)
+export const resolveMemoryConnection = async (
+  memoryName: string,
+  namespace: string,
+  _kube?: unknown,
+  deps: { getMemoryResource?: MemoryResourceGetter } = {},
+): Promise<MemoryConnection> => {
+  const getMemoryResource = deps.getMemoryResource ?? getMemoryResourceFromAgentsService
+  const memory = await getMemoryResource(memoryName, namespace)
+  if (!memory) {
+    throw new Error(`memory ${memoryName} not found in ${namespace}`)
   }
 
-  const secret = await kube.get('secret', secretName, namespace)
-  if (!secret) {
-    throw new Error(`secret ${namespace}/${secretName} not found`)
+  return assertMemoryResourceSupported(memoryName, namespace, memory)
+}
+
+const submitMemoryOperation = async (
+  connection: MemoryConnection,
+  operation: AgentsMemoryOperation,
+  submitter: MemoryOperationSubmitter = submitMemoryOperationToAgentsService,
+) => {
+  const result = await submitter({
+    deliveryId: createDeliveryId(connection, operation),
+    memoryRef: connection.memoryRef,
+    namespace: connection.namespace,
+    operation,
+  })
+  if (!result.ok) {
+    throw new Error(result.error ?? `Agents memory operation failed with HTTP ${result.status}`)
   }
-
-  const data = (readNested(secret, ['data']) ?? {}) as Record<string, unknown>
-  const decodedSecret: Record<string, unknown> = {}
-  for (const [key, value] of Object.entries(data)) {
-    const decoded = decodeBase64(asString(value))
-    if (decoded != null) decodedSecret[key] = decoded
-  }
-
-  const connectionString = buildConnectionString(decodedSecret, secretKey)
-  const embeddingDimension = resolveEmbeddingConfig(process.env).dimension
-
-  return { dataset, schema, embeddingDimension, connectionString }
+  return result.body
 }
 
 export const writeMemoryEvent = async (
   connection: MemoryConnection,
   eventType: string,
   payload: Record<string, unknown>,
+  submitter?: MemoryOperationSubmitter,
 ) => {
-  const pool = getMemoryPool(connection.connectionString)
-  await pool.query(
-    `INSERT INTO ${connection.schema}.memory_events (dataset, event_type, payload) VALUES ($1, $2, $3)`,
-    [connection.dataset, eventType, payload],
-  )
+  await submitMemoryOperation(connection, { operation: 'event', eventType, payload }, submitter)
 }
 
-export const writeMemoryKv = async (connection: MemoryConnection, key: string, value: Record<string, unknown>) => {
-  const pool = getMemoryPool(connection.connectionString)
-  await pool.query(
-    `INSERT INTO ${connection.schema}.memory_kv (dataset, key, value)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (dataset, key)
-     DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
-    [connection.dataset, key, value],
-  )
+export const writeMemoryKv = async (
+  connection: MemoryConnection,
+  key: string,
+  value: Record<string, unknown>,
+  submitter?: MemoryOperationSubmitter,
+) => {
+  await submitMemoryOperation(connection, { operation: 'kv', key, value }, submitter)
 }
 
 export const writeMemoryEmbedding = async (
@@ -262,36 +131,17 @@ export const writeMemoryEmbedding = async (
   key: string,
   text: string,
   metadata: Record<string, unknown> = {},
+  submitter?: MemoryOperationSubmitter,
 ) => {
-  const embedding = await embedText(text, connection.embeddingDimension)
-  const vector = vectorToPg(embedding)
-  const pool = getMemoryPool(connection.connectionString)
-  await pool.query(
-    `INSERT INTO ${connection.schema}.memory_embeddings (dataset, key, embedding, metadata)
-     VALUES ($1, $2, $3::vector, $4)`,
-    [connection.dataset, key, vector, metadata],
-  )
+  await submitMemoryOperation(connection, { operation: 'embedding', key, text, metadata }, submitter)
 }
 
 export const queryMemory = async (
   connection: MemoryConnection,
   query: string,
   limit = 10,
+  submitter?: MemoryOperationSubmitter,
 ): Promise<MemoryQueryResult[]> => {
-  const embedding = await embedText(query, connection.embeddingDimension)
-  const vector = vectorToPg(embedding)
-  const pool = getMemoryPool(connection.connectionString)
-  const { rows } = await pool.query(
-    `SELECT key, metadata, (1 - (embedding <=> $1::vector)) as score
-     FROM ${connection.schema}.memory_embeddings
-     WHERE dataset = $2
-     ORDER BY embedding <=> $1::vector
-     LIMIT $3`,
-    [vector, connection.dataset, limit],
-  )
-  return rows.map((row: { key: string; score: number | null; metadata: Record<string, unknown> }) => ({
-    key: row.key,
-    score: row.score,
-    metadata: row.metadata ?? {},
-  }))
+  const result = await submitMemoryOperation(connection, { operation: 'query', query, limit }, submitter)
+  return result.results ?? []
 }

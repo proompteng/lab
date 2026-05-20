@@ -10,7 +10,7 @@ import type {
   DependencyVerdictExchange,
   ExecutionTrustStatus,
   SourceRolloutTruthExchange,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import type { ControlPlaneRolloutHealth, ControlPlaneWatchReliability } from '~/server/control-plane-status-types'
 import type { TorghutConsumerEvidenceStatus } from '~/server/control-plane-torghut-consumer-evidence'
 
@@ -239,7 +239,7 @@ const currentAcceptedWarrant = (warrant: WarrantState) =>
 
 const requiredValidationCommands = (actionClass: DependencyVerdictActionClass) =>
   compactStrings([
-    'curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq .dependency_verdict_exchange',
+    'curl -fsS http://agents.agents.svc.cluster.local/v1/control-plane/status?namespace=agents | jq .dependency_verdict_exchange',
     'curl -fsS http://torghut.torghut.svc.cluster.local/trading/consumer-evidence | jq .route_warrant_exchange',
     ...(actionClass === 'paper' || actionClass === 'live'
       ? [

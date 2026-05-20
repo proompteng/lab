@@ -31,11 +31,8 @@ service:
 
 database:
   secretRef:
-    name: agents-db-app
-    key: url
-  caSecret:
-    name: agents-db-ca
-    key: ca.crt
+    name: agents-db-next-app
+    key: uri
 
 resources:
   requests:

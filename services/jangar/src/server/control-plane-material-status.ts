@@ -5,7 +5,7 @@ import type {
   FailureDomainLeaseSet,
   ReconciledActionClock,
   WorkflowsReliabilityStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import {
   buildControlPlaneMaterialActionArtifacts,
   type RepairScheduleAttemptResolver,
@@ -29,13 +29,11 @@ import type {
   DatabaseStatus,
 } from '~/server/control-plane-status-types'
 import type { TorghutConsumerEvidenceResolution } from '~/server/control-plane-torghut-consumer-evidence'
-import type { KubeGateway } from '~/server/kube-gateway'
 
 export type BuildControlPlaneMaterialStatusInput = {
   now: Date
   namespace: string
   service: string
-  kube: KubeGateway
   workflows: WorkflowsReliabilityStatus
   watchReliability: ControlPlaneWatchReliability
   agentRunIngestion: AgentRunIngestionStatus
@@ -94,7 +92,6 @@ export const buildControlPlaneMaterialStatus = async (input: BuildControlPlaneMa
     now: input.now,
     namespace: input.namespace,
     service: input.service,
-    kube: input.kube,
     agentRunIngestion: input.agentRunIngestion,
     admissionPassports: input.runtimeAdmission.admissionPassports,
     dependencyQuorum: input.dependencyQuorum,

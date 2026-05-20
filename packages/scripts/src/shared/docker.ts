@@ -203,7 +203,7 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
   const image = `${options.registry}/${options.repository}:${options.tag}`
   const cwd = options.cwd ?? repoRoot
   const ghTokenEnv = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
-  const dockerEnv = { DOCKER_BUILDKIT: process.env.DOCKER_BUILDKIT ?? '1' }
+  const dockerEnv = { ...process.env, DOCKER_BUILDKIT: process.env.DOCKER_BUILDKIT ?? '1' } as Record<string, string>
   const noCache = options.noCache ?? (isTruthyEnv(process.env.DOCKER_NO_CACHE) || isTruthyEnv(process.env.NO_CACHE))
   const cacheMode = normalizeCacheMode(options.cacheMode ?? process.env.DOCKER_BUILD_CACHE_MODE)
   const attestations = resolveBuildAttestations()
@@ -333,7 +333,7 @@ export const buildAndPushDockerImages = async (options: DockerBakeOptions): Prom
   }
 
   const ghTokenEnv = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
-  const dockerEnv = { DOCKER_BUILDKIT: process.env.DOCKER_BUILDKIT ?? '1' }
+  const dockerEnv = { ...process.env, DOCKER_BUILDKIT: process.env.DOCKER_BUILDKIT ?? '1' } as Record<string, string>
   const attestations = resolveBuildAttestations()
   const secretSpecs = [
     ...new Set(

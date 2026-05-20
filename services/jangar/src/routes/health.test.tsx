@@ -29,7 +29,7 @@ describe('health route', () => {
     globalThis.fetch = originalFetch
   })
 
-  it('reports Agents service identity under Agents runtime env', async () => {
+  it('keeps Jangar service identity when Agents runtime env leaks into Jangar', async () => {
     process.env.AGENTS_IMAGE = 'registry.example/lab/agents-controller:abc123'
 
     const { Route } = await import('./health')
@@ -38,7 +38,11 @@ describe('health route', () => {
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toMatchObject({
       status: 'ok',
-      service: 'agents',
+      service: 'jangar',
+      agents_dependency: {
+        status: 'healthy',
+        ready: true,
+      },
       agentsService: {
         service: 'agents',
       },
@@ -53,6 +57,10 @@ describe('health route', () => {
     await expect(response.json()).resolves.toMatchObject({
       status: 'ok',
       service: 'jangar',
+      agents_dependency: {
+        status: 'healthy',
+        ready: true,
+      },
       agentsController: {
         enabled: true,
         crdsReady: true,
@@ -60,7 +68,7 @@ describe('health route', () => {
     })
   })
 
-  it('degrades when the Agents service health endpoint is unreachable', async () => {
+  it('reports Agents dependency unavailability without failing Jangar health', async () => {
     globalThis.fetch = vi.fn(async () => {
       throw new Error('connect ECONNREFUSED')
     }) as unknown as typeof globalThis.fetch
@@ -68,10 +76,15 @@ describe('health route', () => {
     const { Route } = await import('./health')
     const response = await Route.options.server.handlers.GET()
 
-    expect(response.status).toBe(503)
+    expect(response.status).toBe(200)
     await expect(response.json()).resolves.toMatchObject({
-      status: 'degraded',
+      status: 'ok',
       service: 'jangar',
+      agents_dependency: {
+        status: 'unavailable',
+        ready: false,
+        error: 'connect ECONNREFUSED',
+      },
       agentsService: {
         status: 'unavailable',
         error: 'connect ECONNREFUSED',

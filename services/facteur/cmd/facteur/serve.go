@@ -2,7 +2,6 @@ package facteur
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"net/url"
 	"os"
@@ -13,18 +12,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
-
 	"github.com/proompteng/lab/services/facteur/internal/config"
-	"github.com/proompteng/lab/services/facteur/internal/knowledge"
-	"github.com/proompteng/lab/services/facteur/internal/orchestrator"
 	"github.com/proompteng/lab/services/facteur/internal/server"
 	"github.com/proompteng/lab/services/facteur/internal/session"
 	"github.com/proompteng/lab/services/facteur/internal/telemetry"
 )
 
 var (
-	postgresOpener   = openPostgres
 	migrationsRunner = applyMigrations
 )
 
@@ -37,7 +31,7 @@ func NewServeCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Start the facteur Discord ↔ Argo bridge server",
+		Short: "Start the facteur Discord to Agents bridge server",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			path := configPath
 			if path == "" {
@@ -55,16 +49,11 @@ func NewServeCommand() *cobra.Command {
 			}
 			cfg.Postgres.DSN = dsn
 
-			implementerNamespace := firstNonEmpty(cfg.Implementer.AutonomousNamespace, cfg.Implementer.Namespace, cfg.Argo.Namespace, "jangar")
-			implementerTemplate := firstNonEmpty(cfg.Implementer.AutonomousWorkflowTemplate, "codex-autonomous")
 			cmd.Printf(
-				"config: argo ns=%s template=%s sa=%s implementer_enabled=%t implementer_ns=%s implementer_template=%s redis=%s postgres=%s listen=%s\n",
-				cfg.Argo.Namespace,
-				cfg.Argo.WorkflowTemplate,
-				cfg.Argo.ServiceAccount,
-				cfg.Implementer.Enabled,
-				implementerNamespace,
-				implementerTemplate,
+				"config: dispatch_target=agents agents_url=%s agent_namespace=%s agent=%s redis=%s postgres=%s listen=%s\n",
+				cfg.Implementer.AgentsBaseURL,
+				cfg.Implementer.Namespace,
+				cfg.Implementer.AgentName,
 				redactURL(cfg.Redis.URL),
 				redactURL(cfg.Postgres.DSN),
 				cfg.Server.ListenAddress,
@@ -97,84 +86,16 @@ func NewServeCommand() *cobra.Command {
 				return fmt.Errorf("init redis store: %w", err)
 			}
 
-			db, err := postgresOpener(cmd.Context(), cfg.Postgres.DSN)
+			dispatcher, _, err := buildDispatcher(cfg)
 			if err != nil {
 				return err
-			}
-			defer func() {
-				if closeErr := db.Close(); closeErr != nil {
-					cmd.PrintErrf("close postgres: %v\n", closeErr)
-				}
-			}()
-
-			dispatcher, runner, err := buildDispatcher(cfg)
-			if err != nil {
-				return err
-			}
-
-			knowledgeStore := knowledge.NewStore(db)
-
-			implementerOpts := server.CodexImplementerOptions{}
-			if cfg.Implementer.Enabled {
-				implementerCfg := orchestrator.Config{
-					Namespace:                    cfg.Implementer.Namespace,
-					AutonomousNamespace:          cfg.Implementer.AutonomousNamespace,
-					WorkflowTemplate:             cfg.Implementer.WorkflowTemplate,
-					AutonomousWorkflowTemplate:   cfg.Implementer.AutonomousWorkflowTemplate,
-					ServiceAccount:               cfg.Implementer.ServiceAccount,
-					AutonomousServiceAccount:     cfg.Implementer.AutonomousServiceAccount,
-					Parameters:                   map[string]string{},
-					AutonomousGenerateNamePrefix: cfg.Implementer.AutonomousGenerateNamePrefix,
-					JudgePrompt:                  cfg.Implementer.JudgePrompt,
-				}
-
-				for k, v := range cfg.Argo.Parameters {
-					implementerCfg.Parameters[k] = v
-				}
-				for k, v := range cfg.Implementer.Parameters {
-					implementerCfg.Parameters[k] = v
-				}
-
-				if implementerCfg.Namespace == "" {
-					implementerCfg.Namespace = cfg.Argo.Namespace
-				}
-				if implementerCfg.WorkflowTemplate == "" {
-					implementerCfg.WorkflowTemplate = cfg.Argo.WorkflowTemplate
-				}
-				if implementerCfg.ServiceAccount == "" {
-					implementerCfg.ServiceAccount = cfg.Argo.ServiceAccount
-				}
-				if implementerCfg.AutonomousWorkflowTemplate == "" {
-					implementerCfg.AutonomousWorkflowTemplate = "codex-autonomous"
-				}
-				if implementerCfg.AutonomousGenerateNamePrefix == "" {
-					implementerCfg.AutonomousGenerateNamePrefix = "codex-autonomous-"
-				}
-
-				implementer, err := orchestrator.NewImplementer(knowledgeStore, runner, implementerCfg)
-				if err != nil {
-					return fmt.Errorf("init codex implementer: %w", err)
-				}
-
-				implementerOpts = server.CodexImplementerOptions{
-					Enabled:     true,
-					Implementer: implementer,
-				}
-				effectiveNamespace := firstNonEmpty(implementerCfg.AutonomousNamespace, implementerCfg.Namespace, "jangar")
-				effectiveTemplate := firstNonEmpty(implementerCfg.AutonomousWorkflowTemplate, "codex-autonomous")
-				cmd.Printf(
-					"codex implementation orchestration enabled (namespace=%s template=%s)\n",
-					effectiveNamespace,
-					effectiveTemplate,
-				)
 			}
 
 			srv, err := server.New(server.Options{
-				ListenAddress:    cfg.Server.ListenAddress,
-				Prefork:          prefork,
-				Dispatcher:       dispatcher,
-				Store:            sessionStore,
-				CodexImplementer: implementerOpts,
+				ListenAddress: cfg.Server.ListenAddress,
+				Prefork:       prefork,
+				Dispatcher:    dispatcher,
+				Store:         sessionStore,
 			})
 			if err != nil {
 				return fmt.Errorf("init server: %w", err)
@@ -198,31 +119,6 @@ func NewServeCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&prefork, "prefork", false, "Enable Fiber prefork mode for maximised throughput")
 
 	return cmd
-}
-
-func openPostgres(ctx context.Context, dsn string) (*sql.DB, error) {
-	db, err := sql.Open("pgx", dsn)
-	if err != nil {
-		return nil, fmt.Errorf("open postgres: %w", err)
-	}
-
-	db.SetMaxOpenConns(20)
-	db.SetMaxIdleConns(10)
-	db.SetConnMaxIdleTime(5 * time.Minute)
-	db.SetConnMaxLifetime(60 * time.Minute)
-
-	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	if err := db.PingContext(pingCtx); err != nil {
-		closeErr := db.Close()
-		if closeErr != nil {
-			return nil, fmt.Errorf("ping postgres: %v (close error: %w)", err, closeErr)
-		}
-		return nil, fmt.Errorf("ping postgres: %w", err)
-	}
-
-	return db, nil
 }
 
 func cloneStringMap(input map[string]string) map[string]string {
@@ -255,13 +151,4 @@ func redactURL(raw string) string {
 	}
 
 	return parsed.String()
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
-	return ""
 }

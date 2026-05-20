@@ -30,7 +30,7 @@ env:
 
 database:
   secretRef:
-    name: agents-db-app
+    name: agents-db-next-app
     key: uri
 
 controller:

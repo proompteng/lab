@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { ActionSloBudget } from '~/data/agents-control-plane'
+import type { ActionSloBudget } from '~/server/control-plane-status-types'
 import {
   buildNegativeEvidenceRouterStatus,
   NEGATIVE_EVIDENCE_ROUTER_DESIGN_ARTIFACT,

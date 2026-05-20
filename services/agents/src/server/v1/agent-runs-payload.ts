@@ -3,6 +3,11 @@ import { asString } from '../primitives'
 export type AgentRunPayload = {
   agentRef: { name: string }
   namespace: string
+  metadata?: {
+    generateName?: string
+    labels?: Record<string, string>
+    annotations?: Record<string, string>
+  }
   idempotencyKey?: string
   implementationSpecRef?: { name: string }
   implementation?: Record<string, unknown>

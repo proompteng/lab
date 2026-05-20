@@ -2,16 +2,20 @@ import { Buffer } from 'node:buffer'
 
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
-import * as S from '@effect/schema/Schema'
-import * as Either from 'effect/Either'
-import { publishAgentMessages } from '~/server/agent-messages-bus'
-import { createAgentMessagesStore } from '~/server/agent-messages-store'
-import { resolveChatConfig } from '~/server/chat-config'
+import {
+  parseAgentRunNotifyPayload,
+  parseAgentRunRunCompletePayload,
+} from '@proompteng/agent-contracts/agent-run-callbacks'
 import {
   buildBackfillDedupeKey,
   parseAgentMessagesFromEvents,
   parseAgentMessagesFromLog,
-} from '~/server/codex-judge-agent-messages'
+} from '@proompteng/agent-contracts/agent-message-artifacts'
+import { submitAgentMessagesToAgentsService } from '@proompteng/agent-contracts/agent-messages-client'
+import { buildCodexOrchestrationParameters } from '@proompteng/agent-contracts/codex-orchestration-parameters'
+import { submitOrchestrationRunToAgentsService } from '@proompteng/agent-contracts/orchestration-runs-client'
+
+import { resolveChatConfig } from '~/server/chat-config'
 import { extractImplementationManifestFromArchive, extractTextFromArchive } from '~/server/codex-judge-artifacts'
 import { loadCodexJudgeConfig } from '~/server/codex-judge-config'
 import {
@@ -26,7 +30,6 @@ import { resolveBooleanFeatureToggle } from '~/server/feature-flags'
 import { createGitHubClient, GitHubRateLimitError, type PullRequest } from '~/server/github-client'
 import { ingestGithubReviewEvent } from '~/server/github-review-ingest'
 import { createPostgresMemoriesStore } from '~/server/memories-store'
-import { submitOrchestrationRunToAgentsService } from '~/server/agents-service-proxy'
 
 type MemoryStoreFactory = () => ReturnType<typeof createPostgresMemoriesStore>
 
@@ -37,6 +40,7 @@ const globalOverrides = globalThis as typeof globalThis & {
   __codexJudgeMemoryStoreMock?: ReturnType<typeof createPostgresMemoriesStore>
   __codexJudgeMemoryStoreFactory?: MemoryStoreFactory
   __codexJudgeOrchestrationSubmitMock?: typeof submitOrchestrationRunToAgentsService
+  __codexJudgeAgentMessagesSubmitMock?: typeof submitAgentMessagesToAgentsService
 }
 
 let cachedStore: ReturnType<typeof createCodexJudgeStore> | null = null
@@ -74,6 +78,8 @@ const resolveGithub = () => {
 const getGithub = () => resolveGithub()
 const resolveOrchestrationSubmit = () =>
   globalOverrides.__codexJudgeOrchestrationSubmitMock ?? submitOrchestrationRunToAgentsService
+const resolveAgentMessagesSubmit = () =>
+  globalOverrides.__codexJudgeAgentMessagesSubmitMock ?? submitAgentMessagesToAgentsService
 const getMemoryStoreFactory = () => globalOverrides.__codexJudgeMemoryStoreFactory ?? createPostgresMemoriesStore
 
 const scheduledRuns = new Map<string, NodeJS.Timeout>()
@@ -99,124 +105,13 @@ const safeParseJson = (value: string) => {
   }
 }
 
-const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value)
-
-const decodeBase64Json = (value: string) => {
-  try {
-    const decoded = Buffer.from(value, 'base64').toString('utf8')
-    return safeParseJson(decoded)
-  } catch {
-    return {}
-  }
-}
 
 const isGitHubRateLimitError = (error: unknown): error is GitHubRateLimitError => {
   if (error instanceof GitHubRateLimitError) return true
   if (!error || typeof error !== 'object') return false
   return 'retryAt' in error && 'status' in error
-}
-
-const getParamValue = (params: ReadonlyArray<{ name?: string; value?: string }>, name: string) => {
-  const match = params.find((param) => param.name === name)
-  return match?.value ?? ''
-}
-
-const ParameterSchema = S.Struct({
-  name: S.optional(S.String),
-  value: S.optional(S.String),
-})
-
-const ParametersSchema = S.Array(ParameterSchema)
-
-const ArtifactSchema = S.Struct({
-  name: S.optional(S.String),
-  key: S.optional(S.String),
-  bucket: S.optional(S.String),
-  url: S.optional(S.String),
-})
-
-const EventBodySchema = S.Struct({
-  repository: S.optional(S.String),
-  repo: S.optional(S.String),
-  issueNumber: S.optional(S.Union(S.String, S.Number)),
-  issue_number: S.optional(S.Union(S.String, S.Number)),
-  head: S.optional(S.String),
-  base: S.optional(S.String),
-  prompt: S.optional(S.String),
-  issueTitle: S.optional(S.String),
-  issueBody: S.optional(S.String),
-  issueUrl: S.optional(S.String),
-  turnId: S.optional(S.String),
-  turn_id: S.optional(S.String),
-  threadId: S.optional(S.String),
-  thread_id: S.optional(S.String),
-  iteration: S.optional(S.Union(S.String, S.Number)),
-  iteration_cycle: S.optional(S.Union(S.String, S.Number)),
-  iterationCycle: S.optional(S.Union(S.String, S.Number)),
-  iterations: S.optional(S.Union(S.String, S.Number)),
-})
-
-const RunCompletePayloadSchema = S.Struct({
-  metadata: S.optional(
-    S.Struct({
-      name: S.optional(S.String),
-      uid: S.optional(S.String),
-      namespace: S.optional(S.String),
-    }),
-  ),
-  status: S.optional(
-    S.Struct({
-      phase: S.optional(S.String),
-      startedAt: S.optional(S.String),
-      finishedAt: S.optional(S.String),
-    }),
-  ),
-  arguments: S.optional(
-    S.Struct({
-      parameters: S.optional(ParametersSchema),
-    }),
-  ),
-  artifacts: S.optional(S.Array(S.Unknown)),
-  stage: S.optional(S.String),
-  workflowName: S.optional(S.String),
-  workflowNamespace: S.optional(S.String),
-  workflowUid: S.optional(S.String),
-  repository: S.optional(S.String),
-  issueNumber: S.optional(S.Union(S.String, S.Number)),
-  branch: S.optional(S.String),
-  base: S.optional(S.String),
-  prompt: S.optional(S.String),
-  iteration: S.optional(S.Union(S.String, S.Number)),
-  iterationCycle: S.optional(S.Union(S.String, S.Number)),
-  iteration_cycle: S.optional(S.Union(S.String, S.Number)),
-  iterations: S.optional(S.Union(S.String, S.Number)),
-  startedAt: S.optional(S.String),
-  finishedAt: S.optional(S.String),
-})
-
-const decodeSchema = <SchemaT extends S.Schema.AnyNoContext>(
-  schema: SchemaT,
-  input: unknown,
-  fallback: S.Schema.Type<SchemaT>,
-): S.Schema.Type<SchemaT> => {
-  const decoded = S.decodeUnknownEither(schema)(input)
-  return Either.isLeft(decoded) ? fallback : decoded.right
-}
-
-const normalizeRepo = (value: unknown) => (typeof value === 'string' ? value.trim() : '')
-
-const normalizeNumber = (value: unknown) => {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value === 'string') {
-    const trimmed = value.trim()
-    if (!trimmed) return 0
-    const parsed = Number(trimmed)
-    return Number.isFinite(parsed) ? parsed : 0
-  }
-  return 0
 }
 
 const normalizeOptionalString = (value: unknown) => {
@@ -225,393 +120,8 @@ const normalizeOptionalString = (value: unknown) => {
   return trimmed.length > 0 ? trimmed : null
 }
 
-const normalizeStringMap = (value: unknown) => {
-  if (!isRecord(value)) return {}
-  const entries = Object.entries(value)
-  const result: Record<string, string> = {}
-  for (const [key, entry] of entries) {
-    if (entry == null) continue
-    if (typeof entry === 'string') {
-      const trimmed = entry.trim()
-      if (trimmed) {
-        result[key] = trimmed
-      }
-      continue
-    }
-    if (typeof entry === 'number' || typeof entry === 'boolean') {
-      result[key] = String(entry)
-    }
-  }
-  return result
-}
-
-const readMetadataMap = (value: unknown) => {
-  if (typeof value === 'string') {
-    return normalizeStringMap(safeParseJson(value))
-  }
-  return normalizeStringMap(value)
-}
-
-const getMetadataValue = (
-  rawMetadata: Record<string, unknown>,
-  labels: Record<string, string>,
-  annotations: Record<string, string>,
-  keys: string[],
-) => {
-  for (const key of keys) {
-    const candidate = labels[key] ?? annotations[key]
-    if (candidate && candidate.trim().length > 0) {
-      return candidate.trim()
-    }
-    const direct = rawMetadata[key]
-    if (typeof direct === 'string' && direct.trim().length > 0) {
-      return direct.trim()
-    }
-  }
-  return ''
-}
-
-const REPO_METADATA_KEYS = [
-  'codex.repository',
-  'codex.repo',
-  'repository',
-  'repo',
-  'github.repository',
-  'facteur.codex.repository',
-]
-
-const ISSUE_METADATA_KEYS = [
-  'codex.issue_number',
-  'codex.issue-number',
-  'codex.issueNumber',
-  'codex.issue',
-  'issue_number',
-  'issue-number',
-  'issueNumber',
-  'issue',
-  'github.issue_number',
-  'facteur.codex.issue_number',
-]
-
-const HEAD_METADATA_KEYS = [
-  'codex.head',
-  'codex.head_branch',
-  'codex.head-branch',
-  'codex.headBranch',
-  'head',
-  'head_branch',
-  'head-branch',
-  'headBranch',
-  'branch',
-  'codex.branch',
-]
-
-const BASE_METADATA_KEYS = [
-  'codex.base',
-  'codex.base_branch',
-  'codex.base-branch',
-  'codex.baseBranch',
-  'base',
-  'base_branch',
-  'base-branch',
-  'baseBranch',
-]
-
-const TURN_METADATA_KEYS = ['codex.turn_id', 'codex.turn-id', 'codex.turnId', 'turn_id', 'turn-id', 'turnId']
-
-const THREAD_METADATA_KEYS = [
-  'codex.thread_id',
-  'codex.thread-id',
-  'codex.threadId',
-  'thread_id',
-  'thread-id',
-  'threadId',
-]
-
-const extractRepositoryFromRawEvent = (rawEvent: Record<string, unknown>) => {
-  const repositoryValue = rawEvent.repository
-  if (typeof repositoryValue === 'string') {
-    return normalizeRepo(repositoryValue)
-  }
-  if (isRecord(repositoryValue)) {
-    const fullName = normalizeRepo(repositoryValue.full_name)
-    if (fullName) return fullName
-    const repoName = normalizeRepo(repositoryValue.name)
-    if (repoName) {
-      const owner = isRecord(repositoryValue.owner)
-        ? normalizeRepo(repositoryValue.owner.login ?? repositoryValue.owner.name)
-        : ''
-      if (owner) {
-        return `${owner}/${repoName}`
-      }
-    }
-  }
-
-  const repoValue = rawEvent.repo
-  if (typeof repoValue === 'string') {
-    return normalizeRepo(repoValue)
-  }
-  if (isRecord(repoValue)) {
-    const fullName = normalizeRepo(repoValue.full_name)
-    if (fullName) return fullName
-    const repoName = normalizeRepo(repoValue.name)
-    if (repoName) {
-      const owner = isRecord(repoValue.owner) ? normalizeRepo(repoValue.owner.login ?? repoValue.owner.name) : ''
-      if (owner) {
-        return `${owner}/${repoName}`
-      }
-    }
-  }
-
-  return ''
-}
-
-const extractIssueNumberFromRawEvent = (rawEvent: Record<string, unknown>) => {
-  const direct = normalizeNumber(rawEvent.issue_number ?? rawEvent.issueNumber ?? rawEvent.number ?? 0)
-  if (direct) return direct
-  if (isRecord(rawEvent.issue)) {
-    const issueNumber = normalizeNumber(rawEvent.issue.number ?? rawEvent.issue.issue_number ?? 0)
-    if (issueNumber) return issueNumber
-  }
-  if (isRecord(rawEvent.pull_request)) {
-    const prNumber = normalizeNumber(rawEvent.pull_request.number ?? 0)
-    if (prNumber) return prNumber
-  }
-  return 0
-}
-
-const extractBranchFromRawEvent = (rawEvent: Record<string, unknown>, field: 'head' | 'base') => {
-  const direct = rawEvent[field]
-  if (typeof direct === 'string') {
-    return normalizeRepo(direct)
-  }
-  const pr = isRecord(rawEvent.pull_request) ? rawEvent.pull_request : null
-  const branch = pr && isRecord(pr[field]) ? pr[field] : null
-  if (branch && typeof branch.ref === 'string') {
-    return normalizeRepo(branch.ref)
-  }
-  return ''
-}
-
-const parseRunCompletePayload = (payload: Record<string, unknown>) => {
-  const rawData = (payload.data as Record<string, unknown> | string | undefined) ?? payload
-  const data = typeof rawData === 'string' ? safeParseJson(rawData) : isRecord(rawData) ? rawData : {}
-  const decodedPayload = decodeSchema(RunCompletePayloadSchema, data, {})
-  const rawMetadata = (() => {
-    if (isRecord(data.metadata)) return data.metadata
-    if (typeof data.metadata === 'string') return safeParseJson(data.metadata)
-    return decodedPayload.metadata ?? {}
-  })()
-  const metadataRecord: Record<string, unknown> = isRecord(rawMetadata) ? rawMetadata : {}
-  const rawStatus = (() => {
-    if (isRecord(data.status)) return data.status
-    if (typeof data.status === 'string') return safeParseJson(data.status)
-    return decodedPayload.status ?? {}
-  })()
-  const rawArguments = (() => {
-    if (isRecord(data.arguments)) return data.arguments
-    if (typeof data.arguments === 'string') return safeParseJson(data.arguments)
-    return decodedPayload.arguments ?? {}
-  })()
-  const argumentsRecord = isRecord(rawArguments) ? rawArguments : {}
-  const params = decodeSchema(
-    ParametersSchema,
-    argumentsRecord.parameters ?? decodedPayload.arguments?.parameters ?? [],
-    [],
-  )
-
-  const eventBodyRaw = getParamValue(params, 'eventBody')
-  const eventBody = decodeSchema(EventBodySchema, eventBodyRaw ? decodeBase64Json(eventBodyRaw) : {}, {})
-  const rawEventRaw = getParamValue(params, 'rawEvent')
-  const rawEvent = rawEventRaw ? decodeBase64Json(rawEventRaw) : {}
-
-  const labels = readMetadataMap(metadataRecord.labels)
-  const annotations = readMetadataMap(metadataRecord.annotations)
-
-  const metadataRepository = normalizeRepo(getMetadataValue(metadataRecord, labels, annotations, REPO_METADATA_KEYS))
-  const metadataIssueNumber = normalizeNumber(
-    getMetadataValue(metadataRecord, labels, annotations, ISSUE_METADATA_KEYS),
-  )
-  const metadataHead = normalizeRepo(getMetadataValue(metadataRecord, labels, annotations, HEAD_METADATA_KEYS))
-  const metadataBase = normalizeRepo(getMetadataValue(metadataRecord, labels, annotations, BASE_METADATA_KEYS))
-  const metadataTurnId = normalizeOptionalString(
-    getMetadataValue(metadataRecord, labels, annotations, TURN_METADATA_KEYS),
-  )
-  const metadataThreadId = normalizeOptionalString(
-    getMetadataValue(metadataRecord, labels, annotations, THREAD_METADATA_KEYS),
-  )
-
-  const repository =
-    normalizeRepo(decodedPayload.repository) ||
-    normalizeRepo(eventBody.repository ?? eventBody.repo) ||
-    metadataRepository ||
-    normalizeRepo(extractRepositoryFromRawEvent(rawEvent))
-  const issueNumber =
-    normalizeNumber(decodedPayload.issueNumber ?? 0) ||
-    normalizeNumber(eventBody.issueNumber ?? eventBody.issue_number ?? 0) ||
-    metadataIssueNumber ||
-    extractIssueNumberFromRawEvent(rawEvent)
-  const head =
-    normalizeRepo(decodedPayload.branch) ||
-    normalizeRepo(eventBody.head) ||
-    normalizeRepo(getParamValue(params, 'head')) ||
-    metadataHead ||
-    normalizeRepo(extractBranchFromRawEvent(rawEvent, 'head'))
-  const base =
-    normalizeRepo(decodedPayload.base) ||
-    normalizeRepo(eventBody.base) ||
-    normalizeRepo(getParamValue(params, 'base')) ||
-    metadataBase ||
-    normalizeRepo(extractBranchFromRawEvent(rawEvent, 'base'))
-  const prompt =
-    typeof decodedPayload.prompt === 'string'
-      ? decodedPayload.prompt.trim()
-      : typeof eventBody.prompt === 'string'
-        ? eventBody.prompt.trim()
-        : null
-  const iterationRaw =
-    normalizeNumber(decodedPayload.iteration ?? 0) ||
-    normalizeNumber(eventBody.iteration ?? 0) ||
-    normalizeNumber(getParamValue(params, 'iteration'))
-  const iterationCycleRaw =
-    normalizeNumber(decodedPayload.iterationCycle ?? decodedPayload.iteration_cycle ?? 0) ||
-    normalizeNumber(eventBody.iterationCycle ?? eventBody.iteration_cycle ?? 0) ||
-    normalizeNumber(getParamValue(params, 'iteration_cycle'))
-  const iterationsRaw =
-    normalizeNumber(decodedPayload.iterations ?? 0) ||
-    normalizeNumber(eventBody.iterations ?? 0) ||
-    normalizeNumber(getParamValue(params, 'iterations'))
-  const iteration = iterationRaw > 0 ? iterationRaw : null
-  const iterationCycle = iterationCycleRaw > 0 ? iterationCycleRaw : null
-  const iterations = iterationsRaw > 0 ? iterationsRaw : null
-  const issueTitle = typeof eventBody.issueTitle === 'string' ? eventBody.issueTitle : null
-  const issueBody = typeof eventBody.issueBody === 'string' ? eventBody.issueBody : null
-  const issueUrl = typeof eventBody.issueUrl === 'string' ? eventBody.issueUrl : null
-  const turnId = normalizeOptionalString(eventBody.turnId ?? eventBody.turn_id) ?? metadataTurnId
-  const threadId = normalizeOptionalString(eventBody.threadId ?? eventBody.thread_id) ?? metadataThreadId
-  const artifacts = (() => {
-    if (Array.isArray(data.artifacts)) return data.artifacts
-    if (typeof data.artifacts === 'string') {
-      const parsed = safeParseJson(data.artifacts)
-      return Array.isArray(parsed) ? parsed : []
-    }
-    return decodedPayload.artifacts ?? []
-  })()
-    .map((artifact: unknown) => {
-      const decoded = decodeSchema(ArtifactSchema, artifact, {})
-      const name = decoded.name ?? ''
-      const key = decoded.key ?? ''
-      if (!name || !key) return null
-      return {
-        name,
-        key,
-        bucket: decoded.bucket ?? null,
-        url: decoded.url ?? null,
-        metadata: isRecord(artifact) ? artifact : {},
-      }
-    })
-    .filter((artifact): artifact is NonNullable<typeof artifact> => Boolean(artifact))
-
-  return {
-    repository,
-    issueNumber,
-    head,
-    base,
-    prompt,
-    iteration,
-    iterationCycle,
-    iterations,
-    issueTitle,
-    issueBody,
-    issueUrl,
-    turnId,
-    threadId,
-    workflowName:
-      typeof decodedPayload.workflowName === 'string' && decodedPayload.workflowName.trim()
-        ? decodedPayload.workflowName.trim()
-        : String(metadataRecord.name ?? ''),
-    workflowUid:
-      (typeof decodedPayload.workflowUid === 'string' ? decodedPayload.workflowUid.trim() : '') ||
-      (typeof metadataRecord.uid === 'string' ? metadataRecord.uid : null),
-    workflowNamespace:
-      (typeof decodedPayload.workflowNamespace === 'string' ? decodedPayload.workflowNamespace.trim() : '') ||
-      (typeof metadataRecord.namespace === 'string' ? metadataRecord.namespace : null),
-    stage: typeof decodedPayload.stage === 'string' ? decodedPayload.stage : null,
-    phase: typeof rawStatus.phase === 'string' ? rawStatus.phase : null,
-    startedAt:
-      normalizeOptionalString(decodedPayload.startedAt) ??
-      (typeof rawStatus.startedAt === 'string' ? rawStatus.startedAt : null),
-    finishedAt:
-      normalizeOptionalString(decodedPayload.finishedAt) ??
-      (typeof rawStatus.finishedAt === 'string' ? rawStatus.finishedAt : null),
-    artifacts,
-    runCompletePayload: data,
-  }
-}
-
-const parseNotifyPayload = (payload: Record<string, unknown>) => {
-  const rawData = (payload.data as Record<string, unknown> | string | undefined) ?? payload
-  const data = typeof rawData === 'string' ? safeParseJson(rawData) : rawData
-  const workflowName =
-    typeof data.workflow_name === 'string'
-      ? data.workflow_name
-      : typeof data.workflowName === 'string'
-        ? data.workflowName
-        : ''
-  const workflowNamespace =
-    typeof data.workflow_namespace === 'string'
-      ? data.workflow_namespace
-      : typeof data.workflowNamespace === 'string'
-        ? data.workflowNamespace
-        : null
-  const repository = normalizeRepo(data.repository)
-  const issueNumber = Number(data.issue_number ?? data.issueNumber ?? 0)
-  const branch =
-    typeof data.head_branch === 'string'
-      ? data.head_branch.trim()
-      : typeof data.branch === 'string'
-        ? data.branch.trim()
-        : ''
-  const prompt = typeof data.prompt === 'string' ? data.prompt : null
-  const prNumberRaw = data.pr_number ?? data.prNumber
-  const prNumber = typeof prNumberRaw === 'number' ? prNumberRaw : Number(prNumberRaw ?? 0)
-  const prUrl = typeof data.pr_url === 'string' ? data.pr_url : typeof data.prUrl === 'string' ? data.prUrl : null
-  const headSha =
-    typeof data.head_sha === 'string' ? data.head_sha : typeof data.headSha === 'string' ? data.headSha : null
-  const stage = typeof data.stage === 'string' ? data.stage : null
-  const reviewStatus =
-    typeof data.review_status === 'string'
-      ? data.review_status
-      : typeof data.reviewStatus === 'string'
-        ? data.reviewStatus
-        : null
-  const reviewSummary = isRecord(data.review_summary)
-    ? data.review_summary
-    : isRecord(data.reviewSummary)
-      ? data.reviewSummary
-      : null
-  const iterationRaw = normalizeNumber(data.iteration ?? 0)
-  const iterationCycleRaw = normalizeNumber(data.iteration_cycle ?? data.iterationCycle ?? 0)
-  const iteration = iterationRaw > 0 ? iterationRaw : null
-  const iterationCycle = iterationCycleRaw > 0 ? iterationCycleRaw : null
-  return {
-    workflowName,
-    workflowNamespace,
-    repository,
-    issueNumber,
-    branch,
-    prompt,
-    prNumber: Number.isFinite(prNumber) && prNumber > 0 ? prNumber : null,
-    prUrl,
-    headSha,
-    stage,
-    iteration,
-    iterationCycle,
-    reviewStatus,
-    reviewSummary,
-    notifyPayload: data,
-  }
-}
+const parseRunCompletePayload = parseAgentRunRunCompletePayload
+const parseNotifyPayload = parseAgentRunNotifyPayload
 
 const parseRepositoryParts = (repository: string) => {
   const [owner, repo] = repository.split('/')
@@ -775,7 +285,7 @@ const scheduleEvaluation = (runId: string, delayMs: number, options: { reschedul
   scheduledRuns.set(runId, timeout)
 }
 
-const getArtifactBucket = () => config.workflowArtifactsBucket
+const getArtifactBucket = () => config.artifactBucket
 const MAX_ARTIFACT_BYTES = 50 * 1024 * 1024
 const MAX_LOG_CHARS = 20_000
 
@@ -816,61 +326,7 @@ type ResolvedArtifact = {
 
 const coalesceString = (value: string | null | undefined) => (value && value.trim().length > 0 ? value : null)
 
-const addParam = (params: Record<string, string>, key: string, value: unknown) => {
-  if (value == null) return
-  if (typeof value === 'string') {
-    const trimmed = value.trim()
-    if (trimmed.length > 0) {
-      params[key] = trimmed
-    }
-    return
-  }
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    params[key] = String(value)
-    return
-  }
-  if (typeof value === 'boolean') {
-    params[key] = value ? 'true' : 'false'
-    return
-  }
-  params[key] = JSON.stringify(value)
-}
-
-const addParamAlias = (params: Record<string, string>, keys: string[], value: unknown) => {
-  for (const key of keys) {
-    addParam(params, key, value)
-  }
-}
-
-const buildCodexParameters = (input: {
-  repository?: string | null
-  issueNumber?: number | string | null
-  base?: string | null
-  head?: string | null
-  prompt?: string | null
-  judgePrompt?: string | null
-  attempt?: number | string | null
-  parentRunUid?: string | null
-  iterationCycle?: number | string | null
-  iterationsCount?: number | string | null
-  resumeKey?: string | null
-  changesKey?: string | null
-}) => {
-  const params: Record<string, string> = {}
-  addParam(params, 'repository', input.repository)
-  addParamAlias(params, ['issueNumber', 'issue_number'], input.issueNumber)
-  addParam(params, 'base', input.base)
-  addParam(params, 'head', input.head)
-  addParam(params, 'prompt', input.prompt)
-  addParamAlias(params, ['judgePrompt', 'judge_prompt'], input.judgePrompt)
-  addParam(params, 'attempt', input.attempt)
-  addParamAlias(params, ['parentRunUid', 'parent_run_uid'], input.parentRunUid)
-  addParamAlias(params, ['iterationCycle', 'iteration_cycle'], input.iterationCycle)
-  addParamAlias(params, ['implementationIterations', 'implementation_iterations'], input.iterationsCount)
-  addParamAlias(params, ['implementationResumeKey', 'implementation_resume_key'], input.resumeKey)
-  addParamAlias(params, ['implementationChangesKey', 'implementation_changes_key'], input.changesKey)
-  return params
-}
+const buildCodexParameters = buildCodexOrchestrationParameters
 
 const mergeArtifactEntry = (existing: ResolvedArtifact | undefined, incoming: ResolvedArtifact) => {
   if (!existing) return incoming
@@ -888,8 +344,8 @@ const addArtifactEntry = (map: Map<string, ResolvedArtifact>, incoming: Resolved
   map.set(incoming.name, mergeArtifactEntry(existing, incoming))
 }
 
-const buildFallbackArtifactEntries = (workflowName: string, bucket: string): ResolvedArtifact[] => {
-  const baseKey = `${workflowName}/${workflowName}`
+const buildFallbackArtifactEntries = (agentRunName: string, bucket: string): ResolvedArtifact[] => {
+  const baseKey = `${agentRunName}/${agentRunName}`
   return FALLBACK_ARTIFACTS.map((artifact) => ({
     name: artifact.name,
     key: `${baseKey}/${artifact.path}`,
@@ -899,7 +355,7 @@ const buildFallbackArtifactEntries = (workflowName: string, bucket: string): Res
   }))
 }
 
-const updateArtifactsFromWorkflow = async (
+const updateArtifactsFromAgentRun = async (
   run: CodexRunRecord,
   artifactsOverride?: Array<{
     name: string
@@ -909,12 +365,12 @@ const updateArtifactsFromWorkflow = async (
     metadata?: Record<string, unknown>
   }>,
 ) => {
-  const workflowName = run.workflowName
-  if (!workflowName) return []
+  const agentRunName = run.agentRunName
+  if (!agentRunName) return []
   const artifactBucket = getArtifactBucket()
 
   const artifactMap = new Map<string, ResolvedArtifact>()
-  for (const artifact of buildFallbackArtifactEntries(workflowName, artifactBucket)) {
+  for (const artifact of buildFallbackArtifactEntries(agentRunName, artifactBucket)) {
     addArtifactEntry(artifactMap, artifact)
   }
 
@@ -1664,7 +1120,7 @@ const resolveCommitSha = async (run: CodexRunRecord, fallbackCommitSha: string |
 }
 
 const applyArtifactFallback = async (run: CodexRunRecord, artifacts: ResolvedArtifact[]) => {
-  if (!run.workflowName) return
+  if (!run.agentRunName) return
 
   const existingLogExcerpt = extractLogExcerpt(run.notifyPayload)
   const existingSessionId = run.notifyPayload ? extractSessionIdFromPayload(run.notifyPayload) : null
@@ -1700,11 +1156,12 @@ const applyArtifactFallback = async (run: CodexRunRecord, artifacts: ResolvedArt
   const resolvedCommitSha = await resolveCommitSha(run, commitSha)
 
   if (!hasLogExcerpt(logExcerpt) && !prompt && !sessionId && !resolvedCommitSha) return
+  const existingNotifyPayload = isRecord(run.notifyPayload) ? parseNotifyPayload(run.notifyPayload).notifyPayload : {}
 
   const fallbackPayload = {
-    ...(isRecord(run.notifyPayload) ? run.notifyPayload : {}),
-    workflow_name: run.workflowName,
-    workflow_namespace: run.workflowNamespace,
+    ...existingNotifyPayload,
+    agent_run_name: run.agentRunName,
+    agent_run_namespace: run.agentRunNamespace,
     repository,
     issue_number: issueNumber,
     head_branch: run.branch,
@@ -1717,8 +1174,8 @@ const applyArtifactFallback = async (run: CodexRunRecord, artifacts: ResolvedArt
   }
 
   await store.attachNotify({
-    workflowName: run.workflowName,
-    workflowNamespace: run.workflowNamespace,
+    agentRunName: run.agentRunName,
+    agentRunNamespace: run.agentRunNamespace,
     notifyPayload: fallbackPayload,
     repository,
     issueNumber,
@@ -1728,12 +1185,7 @@ const applyArtifactFallback = async (run: CodexRunRecord, artifacts: ResolvedArt
 }
 
 const backfillAgentMessages = async (run: CodexRunRecord, artifacts: ResolvedArtifact[]) => {
-  let agentStore: ReturnType<typeof createAgentMessagesStore> | null = null
   try {
-    agentStore = createAgentMessagesStore()
-    const hasMessages = await agentStore.hasMessages({ runId: run.id, workflowUid: run.workflowUid })
-    if (hasMessages) return
-
     const artifactMap = buildArtifactIndex(artifacts)
     const eventArtifact = artifactMap.get('implementation-events') ?? null
     const agentArtifact = artifactMap.get('implementation-agent-log') ?? null
@@ -1752,9 +1204,9 @@ const backfillAgentMessages = async (run: CodexRunRecord, artifacts: ResolvedArt
     const stage = run.stage ?? null
 
     const records = messages.map((message, index) => ({
-      workflowUid: run.workflowUid,
-      workflowName: run.workflowName,
-      workflowNamespace: run.workflowNamespace,
+      agentRunUid: run.agentRunUid,
+      agentRunName: run.agentRunName,
+      agentRunNamespace: run.agentRunNamespace,
       runId: run.id,
       stepId: null,
       agentId: null,
@@ -1768,20 +1220,12 @@ const backfillAgentMessages = async (run: CodexRunRecord, artifacts: ResolvedArt
       dedupeKey: buildBackfillDedupeKey(run.id, message.attrs),
     }))
 
-    const inserted = await agentStore.insertMessages(records)
-    if (inserted.length > 0) {
-      publishAgentMessages(inserted)
-    }
+    await resolveAgentMessagesSubmit()({
+      skipIfExisting: { runId: run.id, agentRunUid: run.agentRunUid },
+      messages: records,
+    })
   } catch (error) {
     console.warn('Failed to backfill agent messages', error)
-  } finally {
-    if (agentStore) {
-      try {
-        await agentStore.close()
-      } catch (error) {
-        console.warn('Failed to close agent messages store', error)
-      }
-    }
   }
 }
 
@@ -1853,11 +1297,11 @@ const evaluateRun = async (runId: string) => {
           branch: run.branch,
         },
         suggestedFixes: {
-          fix: 'Ensure the workflow metadata includes repository, issue number, and head branch.',
+          fix: 'Ensure the AgentRun metadata includes repository, issue number, and head branch.',
         },
         nextPrompt: null,
         systemSuggestions: {
-          suggestions: ['Attach codex repository/issue/head/base metadata to workflow labels or annotations.'],
+          suggestions: ['Attach codex repository/issue/head/base metadata to AgentRun labels or annotations.'],
         },
       })
       const refreshedRun = (await store.getRunById(run.id)) ?? run
@@ -2022,8 +1466,8 @@ const buildSystemImprovementPrompt = (
     `- Stage: ${run.stage ?? 'unknown'}`,
     `- Attempt: ${run.attempt}`,
     `- Failure reason: ${failureReason}`,
-    run.workflowName ? `- Workflow: ${run.workflowName}` : null,
-    run.workflowNamespace ? `- Workflow namespace: ${run.workflowNamespace}` : null,
+    run.agentRunName ? `- AgentRun: ${run.agentRunName}` : null,
+    run.agentRunNamespace ? `- AgentRun namespace: ${run.agentRunNamespace}` : null,
     '',
     'Run links:',
     links.length > 0 ? links.map((entry) => `- ${entry}`).join('\n') : '- n/a',
@@ -2051,7 +1495,7 @@ const buildSystemImprovementPrompt = (
     '',
     'Rollback steps:',
     '- Revert the system-improvement PR or roll back the GitOps revision.',
-    '- Confirm the rollback restores the prior healthy workflow behavior.',
+    '- Confirm the rollback restores the prior healthy AgentRun behavior.',
   ]
     .filter((line): line is string => line !== null)
     .join('\n')
@@ -2079,7 +1523,7 @@ const maybeSubmitSystemImprovementWorkflow = async (
       head: branch,
       prompt,
       judgePrompt: config.systemImprovementJudgePrompt,
-      parentRunUid: run.workflowUid ?? run.id,
+      parentRunUid: run.agentRunUid ?? run.id,
     })
     try {
       await submitter({
@@ -2134,7 +1578,7 @@ const processRerunQueue = async () => {
         runId: run.id,
         decision: 'needs_human',
         reasons: { error: 'rerun_submission_failed', detail: result.error ?? null },
-        suggestedFixes: { fix: 'Check Facteur availability and requeue the rerun.' },
+        suggestedFixes: { fix: 'Check Agents rerun orchestration availability and requeue the rerun.' },
         nextPrompt: null,
         systemSuggestions: {},
       })
@@ -2209,7 +1653,7 @@ const submitRerun = async (run: CodexRunRecord, prompt: string, attempt: number)
       prompt,
       judgePrompt: config.defaultJudgePrompt,
       attempt,
-      parentRunUid: run.workflowUid ?? run.id,
+      parentRunUid: run.agentRunUid ?? run.id,
       iterationCycle,
       iterationsCount,
       resumeKey: resumeArtifacts.resumeKey,
@@ -2240,98 +1684,18 @@ const submitRerun = async (run: CodexRunRecord, prompt: string, attempt: number)
   if (orchestrationResult?.status === 'submitted') {
     return orchestrationResult
   }
-  let lastError: string | undefined =
+  const lastError =
     orchestrationResult?.status === 'failed'
       ? `Native orchestration submission failed: ${orchestrationResult.error}`
       : 'Native orchestration is not configured for reruns'
 
-  const { CodexTaskSchema, CodexTaskStage, CodexIterationsPolicySchema } = await import('./proto/codex_task_pb')
-  const { create, toBinary } = await import('@bufbuild/protobuf')
-  const { timestampFromDate } = await import('@bufbuild/protobuf/wkt')
-
-  const iterationsPolicy = iterationsCount
-    ? create(CodexIterationsPolicySchema, { mode: 'fixed', count: iterationsCount })
-    : undefined
-
-  const message = create(CodexTaskSchema, {
-    stage: CodexTaskStage.IMPLEMENTATION,
-    prompt,
-    repository: run.repository,
-    base: typeof run.runCompletePayload?.base === 'string' ? String(run.runCompletePayload.base) : 'main',
-    head: run.branch,
-    issueNumber: BigInt(run.issueNumber),
-    issueUrl:
-      typeof run.runCompletePayload?.issueUrl === 'string'
-        ? String(run.runCompletePayload.issueUrl)
-        : `https://github.com/${run.repository}/issues/${run.issueNumber}`,
-    issueTitle:
-      typeof run.runCompletePayload?.issueTitle === 'string'
-        ? String(run.runCompletePayload.issueTitle)
-        : `Issue #${run.issueNumber}`,
-    issueBody:
-      typeof run.runCompletePayload?.issueBody === 'string' ? String(run.runCompletePayload.issueBody) : prompt,
-    sender: 'jangar',
-    issuedAt: timestampFromDate(new Date()),
-    deliveryId,
-    metadataVersion: 1,
-    iterations: iterationsPolicy,
-    iterationCycle,
+  await store.updateRerunSubmission({
+    id: claimed.submission.id,
+    status: 'failed',
+    responseStatus: null,
+    error: lastError,
   })
-
-  const payload = toBinary(CodexTaskSchema, message)
-
-  const maxAttempts = RERUN_SUBMISSION_BACKOFF_MS.length + 1
-  for (let index = 0; index < maxAttempts; index += 1) {
-    let responseStatus: number | null = null
-    try {
-      const response = await fetch(`${config.facteurBaseUrl}/codex/tasks`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-protobuf' },
-        body: payload,
-      })
-      responseStatus = response.status
-
-      const responseText = response.ok ? '' : await response.text().catch(() => '')
-      if (!response.ok) {
-        lastError = `Facteur rerun submission failed with status ${response.status}${responseText ? `: ${responseText}` : ''}`
-        if (index >= maxAttempts - 1) {
-          await store.updateRerunSubmission({
-            id: claimed.submission.id,
-            status: 'failed',
-            responseStatus,
-            error: lastError,
-          })
-          return { status: 'failed', error: lastError }
-        }
-        await wait(RERUN_SUBMISSION_BACKOFF_MS[index] ?? 0)
-        continue
-      }
-
-      await store.updateRerunSubmission({
-        id: claimed.submission.id,
-        status: 'submitted',
-        responseStatus,
-        error: null,
-        submittedAt: new Date().toISOString(),
-      })
-
-      return { status: 'submitted' }
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : String(error)
-      if (index >= maxAttempts - 1) {
-        await store.updateRerunSubmission({
-          id: claimed.submission.id,
-          status: 'failed',
-          responseStatus,
-          error: lastError,
-        })
-        return { status: 'failed', error: lastError }
-      }
-      await wait(RERUN_SUBMISSION_BACKOFF_MS[index] ?? 0)
-    }
-  }
-
-  return { status: 'failed', error: lastError ?? 'rerun_submission_failed' }
+  return { status: 'failed', error: lastError }
 }
 
 const DISCORD_MESSAGE_LIMIT = 1900
@@ -2484,13 +1848,13 @@ const writeMemories = async (run: CodexRunRecord, evaluation: CodexEvaluationRec
       shouldClose = true
     }
     const namespace = `codex:${run.repository}:${run.issueNumber}`
-    const workflowTag = run.workflowName ? `workflow-${run.workflowName}` : 'workflow-unknown'
+    const agentRunTag = run.agentRunName ? `agentrun-${run.agentRunName}` : 'agentrun-unknown'
     const stageTag = run.stage ? `stage-${run.stage}` : 'stage-unknown'
     const tags = [
       'codex',
       run.repository,
       `issue-${run.issueNumber}`,
-      workflowTag,
+      agentRunTag,
       `attempt-${run.attempt}`,
       run.status,
       stageTag,
@@ -2500,9 +1864,9 @@ const writeMemories = async (run: CodexRunRecord, evaluation: CodexEvaluationRec
       runId: run.id,
       commitSha: run.commitSha,
       ciUrl: run.ciUrl,
-      workflowName: run.workflowName,
-      workflowNamespace: run.workflowNamespace,
-      workflowUid: run.workflowUid,
+      agentRunName: run.agentRunName,
+      agentRunNamespace: run.agentRunNamespace,
+      agentRunUid: run.agentRunUid,
       startedAt: run.startedAt,
       finishedAt: run.finishedAt,
       createdAt: run.createdAt,
@@ -2554,6 +1918,8 @@ export const __private = {
   fetchArtifactBuffer,
   findCommitShaInValue,
   normalizeBranchRef,
+  parseNotifyPayload,
+  parseRunCompletePayload,
   resolveCiContext,
   processRerunQueue,
   writeMemories,
@@ -2562,7 +1928,10 @@ export const handleRunComplete = async (payload: Record<string, unknown>) => {
   await ensureStoreReady()
   const parsed = parseRunCompletePayload(payload)
   const existing =
-    parsed.workflowName.length > 0 ? await store.getRunByWorkflow(parsed.workflowName, parsed.workflowNamespace) : null
+    (parsed.runId ? await store.getRunById(parsed.runId) : null) ??
+    (parsed.agentRunName.length > 0
+      ? await store.getRunByAgentRun(parsed.agentRunName, parsed.agentRunNamespace)
+      : null)
   const resolvedRepository = parsed.repository || existing?.repository || UNKNOWN_REPOSITORY
   const resolvedIssueNumber =
     parsed.issueNumber > 0 ? parsed.issueNumber : existing?.issueNumber ? Number(existing.issueNumber) : 0
@@ -2572,19 +1941,20 @@ export const handleRunComplete = async (payload: Record<string, unknown>) => {
     (typeof existing?.runCompletePayload?.base === 'string' ? existing.runCompletePayload.base : null) ||
     null
   const resolvedPrompt = parsed.prompt ?? existing?.prompt ?? null
-  const resolvedWorkflowUid = parsed.workflowUid ?? existing?.workflowUid ?? null
-  const resolvedWorkflowNamespace = parsed.workflowNamespace ?? existing?.workflowNamespace ?? null
+  const resolvedAgentRunUid = parsed.agentRunUid ?? existing?.agentRunUid ?? null
+  const resolvedAgentRunNamespace = parsed.agentRunNamespace ?? existing?.agentRunNamespace ?? null
   const resolvedStage = parsed.stage ?? existing?.stage ?? null
   const resolvedTurnId = parsed.turnId ?? existing?.turnId ?? null
   const resolvedThreadId = parsed.threadId ?? existing?.threadId ?? null
 
   const run = await store.upsertRunComplete({
+    runId: parsed.runId,
     repository: resolvedRepository,
     issueNumber: resolvedIssueNumber,
     branch: resolvedBranch,
-    workflowName: parsed.workflowName,
-    workflowUid: resolvedWorkflowUid,
-    workflowNamespace: resolvedWorkflowNamespace,
+    agentRunName: parsed.agentRunName,
+    agentRunUid: resolvedAgentRunUid,
+    agentRunNamespace: resolvedAgentRunNamespace,
     stage: resolvedStage,
     turnId: resolvedTurnId,
     threadId: resolvedThreadId,
@@ -2607,12 +1977,16 @@ export const handleRunComplete = async (payload: Record<string, unknown>) => {
       iteration: parsed.iteration,
       iteration_cycle: parsed.iterationCycle,
       iterations: parsed.iterations,
+      runId: parsed.runId,
+      agentRunName: parsed.agentRunName,
+      agentRunNamespace: parsed.agentRunNamespace,
+      agentRunUid: parsed.agentRunUid,
     },
     startedAt: parsed.startedAt,
     finishedAt: parsed.finishedAt,
   })
 
-  const resolvedArtifacts = await updateArtifactsFromWorkflow(run, parsed.artifacts)
+  const resolvedArtifacts = await updateArtifactsFromAgentRun(run, parsed.artifacts)
   await applyArtifactFallback(run, resolvedArtifacts)
   await backfillAgentMessages(run, resolvedArtifacts)
   if (run.status === 'run_complete') {
@@ -2630,14 +2004,24 @@ const parseRerunPayload = (payload: Record<string, unknown>) => {
   const attempt = Number.parseInt(String(attemptRaw ?? ''), 10)
   const prompt = typeof payload.prompt === 'string' ? payload.prompt.trim() : ''
   const runId = typeof payload.run_id === 'string' ? payload.run_id.trim() : ''
-  const workflowName = typeof payload.workflow_name === 'string' ? payload.workflow_name.trim() : ''
-  const workflowNamespace = typeof payload.workflow_namespace === 'string' ? payload.workflow_namespace.trim() : ''
-  const resolvedWorkflowNamespace = workflowNamespace || config.workflowNamespace || null
+  const agentRunName =
+    typeof payload.agent_run_name === 'string'
+      ? payload.agent_run_name.trim()
+      : typeof payload.agentRunName === 'string'
+        ? payload.agentRunName.trim()
+        : ''
+  const agentRunNamespace =
+    typeof payload.agent_run_namespace === 'string'
+      ? payload.agent_run_namespace.trim()
+      : typeof payload.agentRunNamespace === 'string'
+        ? payload.agentRunNamespace.trim()
+        : ''
+  const resolvedAgentRunNamespace = agentRunNamespace || config.agentRunNamespace || null
   const deliveryId =
     typeof payload.delivery_id === 'string'
       ? payload.delivery_id.trim()
-      : workflowName && Number.isFinite(attempt)
-        ? `${workflowName}:${attempt}`
+      : agentRunName && Number.isFinite(attempt)
+        ? `${agentRunName}:${attempt}`
         : `rerun-${Date.now()}`
 
   if (!repository || !Number.isFinite(issueNumber) || !Number.isFinite(attempt) || !prompt) {
@@ -2650,8 +2034,8 @@ const parseRerunPayload = (payload: Record<string, unknown>) => {
     attempt,
     prompt,
     runId: runId || null,
-    workflowName: workflowName || null,
-    workflowNamespace: resolvedWorkflowNamespace,
+    agentRunName: agentRunName || null,
+    agentRunNamespace: resolvedAgentRunNamespace,
     deliveryId,
   }
 }
@@ -2662,8 +2046,8 @@ export const handleRerunRequest = async (payload: Record<string, unknown>) => {
 
   const run = parsed.runId
     ? await store.getRunById(parsed.runId)
-    : parsed.workflowName
-      ? await store.getRunByWorkflow(parsed.workflowName, parsed.workflowNamespace)
+    : parsed.agentRunName
+      ? await store.getRunByAgentRun(parsed.agentRunName, parsed.agentRunNamespace)
       : null
 
   if (!run) {
@@ -2690,13 +2074,14 @@ export const handleRerunRequest = async (payload: Record<string, unknown>) => {
 export const handleNotify = async (payload: Record<string, unknown>) => {
   await ensureStoreReady()
   const parsed = parseNotifyPayload(payload)
-  if (!parsed.workflowName) {
-    throw new Error('notify payload missing workflow name')
+  if (!parsed.agentRunName && !parsed.runId) {
+    throw new Error('notify payload missing AgentRun identity')
   }
 
   const run = await store.attachNotify({
-    workflowName: parsed.workflowName,
-    workflowNamespace: parsed.workflowNamespace,
+    runId: parsed.runId,
+    agentRunName: parsed.agentRunName,
+    agentRunNamespace: parsed.agentRunNamespace,
     notifyPayload: parsed.notifyPayload,
     repository: parsed.repository,
     issueNumber: parsed.issueNumber,

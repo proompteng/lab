@@ -9,7 +9,7 @@ import type {
   RouteStabilityMaterialActionContract,
   SourceRolloutTruthExchange,
   WorkflowsReliabilityStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import { ACTION_CUSTODY_DESIGN_ARTIFACT, buildActionCustodyProjection } from '~/server/control-plane-action-custody'
 import type { TorghutConsumerEvidenceStatus } from '~/server/control-plane-torghut-consumer-evidence'
 
@@ -176,7 +176,7 @@ const routeEscrow = (
     {
       attempt_id: 'route-attempt:current',
       attempted_at: now.toISOString(),
-      url: 'http://agents.agents.svc.cluster.local/api/agents/control-plane/status?namespace=agents',
+      url: 'http://agents.agents.svc.cluster.local/v1/control-plane/status?namespace=agents',
       result: 'success',
       status_code: 200,
       latency_ms: 20,

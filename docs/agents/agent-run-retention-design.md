@@ -33,7 +33,7 @@ Jobs, so Agents needs a first-class retention policy for its CRDs.
 ## Controller Behavior
 
 - Add an environment-backed default `agentRunRetentionSeconds`.
-  - Env: `JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS`.
+  - Env: `AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS`.
 - Determine effective retention:
   1. `spec.ttlSecondsAfterFinished` if present
   2. Controller default env value
@@ -46,12 +46,12 @@ Jobs, so Agents needs a first-class retention policy for its CRDs.
 ## Helm Chart Changes
 
 - Add `controller.agentRunRetentionSeconds` (int) to `values.yaml`.
-- Wire to env var `JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS`.
+- Wire to env var `AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS`.
 - Update `values.schema.json` accordingly.
 
 ## Tests
 
-- Unit tests in `services/jangar/src/server/__tests__/agents-controller.test.ts`:
+- Unit tests in `services/agents/src/server/agents-controller`:
   - Does not delete running runs.
   - Does not delete completed runs before TTL.
   - Deletes completed runs after TTL.

@@ -22,10 +22,12 @@ func TestNewRootCommandRegistersSubcommands(t *testing.T) {
 		names[child.Name()] = struct{}{}
 	}
 
-	for _, expected := range []string{"serve", "migrate", "codex-listen"} {
+	for _, expected := range []string{"serve", "migrate"} {
 		_, ok := names[expected]
 		require.Truef(t, ok, "expected %s command to be registered", expected)
 	}
+	_, ok := names["codex-listen"]
+	require.False(t, ok, "codex-listen belonged to the removed Froussard Kafka bridge")
 }
 
 func TestExecuteHonoursDefaultArgs(t *testing.T) {

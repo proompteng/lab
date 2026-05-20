@@ -1,0 +1,88 @@
+apiVersion: orchestration.proompteng.ai/v1alpha1
+kind: Orchestration
+metadata:
+  name: codex-rerun
+  namespace: agents
+  labels:
+    app.kubernetes.io/name: agents
+    app.kubernetes.io/component: codex-runtime
+spec:
+  entrypoint: implement
+  steps:
+    - name: implement
+      kind: AgentRun
+      agentRef:
+        name: codex-agent
+      with:
+        implementation: |-
+          {
+            "summary": "Codex rerun for {{repository}}#{{issueNumber}}",
+            "text": "{{codexPrompt}}",
+            "source": {
+              "provider": "github",
+              "externalId": "{{repository}}#{{issueNumber}}",
+              "url": "{{issueUrl}}"
+            },
+            "contract": {
+              "requiredKeys": ["repository", "issueNumber", "base", "head", "stage"]
+            },
+            "metadata": {
+              "stage": "implementation"
+            }
+          }
+        runtime: |-
+          {"type":"job","config":{"serviceAccountName":"agents-sa"}}
+        secrets: '["github-token","codex-auth"]'
+        policy: |-
+          {"secretBindingRef":"codex-github-token"}
+        vcsRef: github
+        vcsPolicy: |-
+          {"required":true,"mode":"read-write"}
+        goal: |-
+          {"objective":"{{codexPrompt}}","tokenBudget":250000}
+        ttlSecondsAfterFinished: "86400"
+---
+apiVersion: orchestration.proompteng.ai/v1alpha1
+kind: Orchestration
+metadata:
+  name: codex-system-improvement
+  namespace: agents
+  labels:
+    app.kubernetes.io/name: agents
+    app.kubernetes.io/component: codex-runtime
+spec:
+  entrypoint: implement
+  steps:
+    - name: implement
+      kind: AgentRun
+      agentRef:
+        name: codex-agent
+      with:
+        implementation: |-
+          {
+            "summary": "Codex system improvement for {{repository}}#{{issueNumber}}",
+            "text": "{{codexPrompt}}",
+            "source": {
+              "provider": "github",
+              "externalId": "{{repository}}#{{issueNumber}}",
+              "url": "{{issueUrl}}"
+            },
+            "contract": {
+              "requiredKeys": ["repository", "issueNumber", "base", "head", "stage"]
+            },
+            "metadata": {
+              "stage": "implementation",
+              "kind": "system-improvement"
+            }
+          }
+        runtime: |-
+          {"type":"job","config":{"serviceAccountName":"agents-sa"}}
+        secrets: '["github-token","codex-auth"]'
+        policy: |-
+          {"secretBindingRef":"codex-github-token"}
+        vcsRef: github
+        vcsPolicy: |-
+          {"required":true,"mode":"read-write"}
+        goal: |-
+          {"objective":"{{codexPrompt}}","tokenBudget":250000}
+        ttlSecondsAfterFinished: "86400"

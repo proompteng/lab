@@ -10,16 +10,16 @@ import kotlinx.serialization.json.JsonElement
 data class CodexResearchWorkflowInput(
   val prompt: String,
   val metadata: Map<String, String> = emptyMap(),
-  val argoWorkflowName: String,
+  val agentRunName: String,
   val artifactKey: String,
-  val argoPollTimeoutSeconds: Long,
+  val agentRunPollTimeoutSeconds: Long,
 )
 
 @Serializable
 data class CodexResearchWorkflowResult(
   val workflowId: String,
   val runId: String,
-  val argoWorkflowName: String,
+  val agentRunName: String,
   val artifactReferences: List<ArtifactReference>,
   val status: String,
 )

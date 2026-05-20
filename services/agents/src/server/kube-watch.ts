@@ -2,6 +2,11 @@ import type { KubeConfig } from '@kubernetes/client-node'
 import { Context, Effect, Layer } from 'effect'
 
 import { buildKubernetesResourceCollectionPath, getNativeKubeClients } from './kube-types'
+import {
+  recordWatchReliabilityError,
+  recordWatchReliabilityEvent,
+  recordWatchReliabilityRestart,
+} from './control-plane-watch-reliability'
 import { startKubernetesWatch } from './kubernetes-watch-client'
 
 type WatchEvent = {
@@ -94,9 +99,9 @@ export const resetKubectlWatchCompatibilityCacheForTests = () => {
 export const createResourceWatchStarter = (deps: ResourceWatchStarterDependencies = {}) => {
   const buildWatchPath = deps.buildWatchPath ?? defaultBuildWatchPath
   const getKubeConfig = deps.getKubeConfig ?? defaultGetKubeConfig
-  const recordEvent = deps.recordEvent ?? (() => undefined)
-  const recordError = deps.recordError ?? (() => undefined)
-  const recordRestart = deps.recordRestart ?? (() => undefined)
+  const recordEvent = deps.recordEvent ?? recordWatchReliabilityEvent
+  const recordError = deps.recordError ?? recordWatchReliabilityError
+  const recordRestart = deps.recordRestart ?? recordWatchReliabilityRestart
   const startWatch = deps.startKubernetesWatch ?? startKubernetesWatch
 
   return (options: WatchOptions): WatchHandle => {

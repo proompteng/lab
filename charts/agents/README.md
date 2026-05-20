@@ -79,7 +79,7 @@ Create the namespace and database Secret:
 ```bash
 kubectl create namespace agents
 
-kubectl -n agents create secret generic agents-db-app \
+kubectl -n agents create secret generic agents-db-next-app \
   --from-literal=url='postgresql://USER:PASSWORD@HOST:5432/agents?sslmode=require'
 ```
 
@@ -107,7 +107,7 @@ imagePolicy:
 
 database:
   secretRef:
-    name: agents-db-app
+    name: agents-db-next-app
     key: url
 
 controller:
@@ -264,7 +264,8 @@ imagePolicy:
   requireDigest: true
 ```
 
-`imagePolicy.requireDigest=true` rejects mutable chart-managed images at render time. It covers the control plane, runner image defaults, Argo CD hooks, Helm tests, and legacy runtime image values.
+`imagePolicy.requireDigest=true` rejects mutable chart-managed images at render time. It covers the control plane,
+runner image defaults, Argo CD hooks, Helm tests, and non-canonical runtime image env aliases.
 
 ### Database
 
@@ -273,7 +274,7 @@ Use an existing Secret for production:
 ```yaml
 database:
   secretRef:
-    name: agents-db-app
+    name: agents-db-next-app
     key: url
   caSecret:
     name: agents-db-ca
@@ -328,9 +329,8 @@ Precedence:
 
 1. `env.vars.AGENTS_AGENT_RUNNER_IMAGE`
 2. `runner.image.*`
-3. `runtime.agentRunnerImage` legacy fallback
 
-Prefer `runner.image.*` for new installs.
+Use `env.vars.AGENTS_AGENT_RUNNER_IMAGE` for an explicit runner image override.
 
 ### Availability
 
@@ -392,7 +392,7 @@ Helm cannot safely read live Secret or ConfigMap payloads during template render
 rolloutChecksums:
   enabled: true
   secrets:
-    - name: agents-db-app
+    - name: agents-db-next-app
       namespace: agents
       checksum: d34db33fd34db33fd34db33fd34db33fd34db33fd34db33fd34db33fd34db33f
 ```
@@ -400,7 +400,7 @@ rolloutChecksums:
 Generate a stable Secret payload hash:
 
 ```bash
-kubectl -n agents get secret agents-db-app -o json |
+kubectl -n agents get secret agents-db-next-app -o json |
   jq -cS '{data: .data, binaryData: .binaryData}' |
   sha256sum | awk '{print $1}'
 ```
@@ -475,7 +475,7 @@ Check database connectivity and migrations first:
 
 ```bash
 kubectl -n agents logs deploy/agents --tail=200
-kubectl -n agents get secret agents-db-app -o jsonpath='{.data.url}' | base64 -d
+kubectl -n agents get secret agents-db-next-app -o jsonpath='{.data.url}' | base64 -d
 ```
 
 Common causes:

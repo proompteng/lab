@@ -37,11 +37,16 @@ describe('Agents integrations config', () => {
     expect(featureFlags.endpoint).toBeNull()
     expect(featureFlags.timeoutMs).toBe(500)
     expect(agentComms.disabled).toBe(false)
-    expect(agentComms.filterSubjects).toEqual([
-      'workflow.>',
-      'agents.workflow.>',
-      'argo.workflow.>',
-      'workflow_comms.agent_messages.>',
-    ])
+    expect(agentComms.filterSubjects).toEqual(['agentrun.>'])
+  })
+
+  it('rejects non-canonical agent comms subject families', () => {
+    expect(() =>
+      resolveAgentCommsSubscriberConfig({
+        AGENTS_AGENT_COMMS_SUBJECTS: 'agentrun.>,agents.agentrun.>,agents.agent_messages.>,workflow.general.>',
+      }),
+    ).toThrow(
+      'AGENTS_AGENT_COMMS_SUBJECTS only supports canonical agentrun.* subjects: agents.agentrun.>, agents.agent_messages.>, workflow.general.>',
+    )
   })
 })

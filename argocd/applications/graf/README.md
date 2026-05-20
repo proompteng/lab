@@ -8,7 +8,7 @@
 - The Graf API Knative service is exposed through a Tailscale LoadBalancer at host `graf`.
 - Neo4j credentials live in the `graf-auth` SealedSecret checked in as `graf-auth-secret.yaml`; the Helm values reference it via `neo4j.passwordFromSecret`. Rotate them by generating a new password, updating the sealed secret, and applying it before syncing Argo CD.
 - The `/v1` graph APIs now require a bearer token. The Knative service reads `GRAF_API_BEARER_TOKENS` from the `graf-api` SealedSecret defined in `graf-api-secret.yaml` (`bearer-tokens` key, comma or newline separated). The checked-in manifest currently contains a placeholder (`REPLACE_WITH_ACTUAL_TOKENS`), so re-seal it with the real tokens before the next sync:
-- The Codex workflow template and its RBAC helpers live in `argocd/applications/argo-workflows` because they must stay in the `argo-workflows` namespace; they are no longer rendered through this `graf` kustomization.
+- Codex research runs through the Agents service. The Graf Knative service uses `AGENTS_ARTIFACTS_*` to read the same `agents-artifacts` bucket used by the Agents runner.
 
   ```bash
   cat <<'YAML' > /tmp/graf-api-secret.yaml

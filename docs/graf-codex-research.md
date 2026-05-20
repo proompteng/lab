@@ -1,29 +1,34 @@
 # Graf Codex Research Workflow
 
-- Temporal: Graf starts a worker on `graf-codex-research`, connects to the in-cluster namespace (default `default`), and uses the Kubernetes service account token to push Argo workflows.
-- Argo: the new `codex-research-workflow` template (see `argocd/applications/argo-workflows/codex-research-workflow.yaml`) accepts prompts, runs the Codex runner container, and writes a structured JSON artifact to `MinIO`.
-- MinIO: Graf downloads the artifact from the configured bucket (production uses `argo-workflows`) using the same ServiceAccount credentials that power the Argo template.
+- Temporal: Graf starts a worker on `graf-codex-research`, connects to the in-cluster namespace (default `default`), and owns the orchestration history for Codex research requests.
+- Agents: Graf submits `AgentRun` resources through `POST /v1/agent-runs` on the Agents control plane. The `graf-codex-agent` provider runs the generalized Codex app-server harness and uploads the declared artifact.
+- Artifacts: Graf downloads the artifact from the Agents-owned `agents-artifacts` bucket after the AgentRun reaches `Succeeded`.
 
 ## Configuration
 
 Set the following secrets/configmaps for the Knative Graf service:
 
-| Env var                                 | Description                                                                                | Default                   |
-| --------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------- |
-| `TEMPORAL_ADDRESS`                      | gRPC endpoint for Temporal frontend (`temporal-frontend.temporal.svc.cluster.local:7233`). | required                  |
-| `TEMPORAL_NAMESPACE`                    | Namespace Graf worker should use.                                                          | `default`                 |
-| `TEMPORAL_TASK_QUEUE`                   | Task queue the Codex research workflow listens on.                                         | `graf-codex-research`     |
-| `TEMPORAL_IDENTITY`                     | Worker identity string sent to Temporal.                                                   | `graf`                    |
-| `ARGO_API_SERVER`                       | Kubernetes API host (usually `https://kubernetes.default.svc`).                            | default                   |
-| `ARGO_NAMESPACE`                        | Namespace where the Argo workflow lives.                                                   | `argo-workflows`          |
-| `ARGO_WORKFLOW_TEMPLATE_NAME`           | Template Graf submits.                                                                     | `codex-research-workflow` |
-| `MINIO_ENDPOINT`                        | MinIO URL (e.g., `http://observability-minio.minio.svc.cluster.local:9000`).               | required                  |
-| `MINIO_BUCKET`                          | Archive bucket where Argo stores the artifact.                                             | required                  |
-| `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | Credentials for Graf to talk to MinIO.                                                     | required                  |
-| `MINIO_REGION`                          | Optional region hint passed to both Graf and the Argo template.                            | _unset_                   |
-| `MINIO_SECURE`                          | `true/false` toggle when `MINIO_ENDPOINT` omits the scheme.                                | `true`                    |
+| Env var                                 | Description                                                                                | Default                                  |
+| --------------------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------- |
+| `TEMPORAL_ADDRESS`                      | gRPC endpoint for Temporal frontend (`temporal-frontend.temporal.svc.cluster.local:7233`). | required                                 |
+| `TEMPORAL_NAMESPACE`                    | Namespace Graf worker should use.                                                          | `default`                                |
+| `TEMPORAL_TASK_QUEUE`                   | Task queue the Codex research workflow listens on.                                         | `graf-codex-research`                    |
+| `TEMPORAL_IDENTITY`                     | Worker identity string sent to Temporal.                                                   | `graf`                                   |
+| `AGENTS_BASE_URL`                       | Agents control-plane URL.                                                                  | `http://agents.agents.svc.cluster.local` |
+| `AGENTS_NAMESPACE`                      | Namespace where Graf AgentRuns are created.                                                | `agents`                                 |
+| `AGENTS_GRAF_AGENT_NAME`                | Agent resource Graf submits against.                                                       | `graf-codex-agent`                       |
+| `AGENTS_SERVICE_ACCOUNT_NAME`           | ServiceAccount used by the runner Job.                                                     | `agents-sa`                              |
+| `AGENTS_SECRET_BINDING_REF`             | SecretBinding required by Agents admission.                                                | `codex-github-token`                     |
+| `AGENTS_RUN_SECRETS`                    | Comma-separated secrets requested by the run.                                              | `github-token,codex-auth,graf-api,...`   |
+| `AGENTS_RUN_POLL_TIMEOUT_SECONDS`       | Maximum wait for AgentRun completion.                                                      | `7200`                                   |
+| `AGENTS_ARTIFACTS_ENDPOINT`             | S3-compatible artifact endpoint used by the Agents runner and Graf downloader.             | required                                 |
+| `AGENTS_ARTIFACTS_BUCKET`               | Agents-owned bucket where the runner uploads Graf artifacts.                               | `agents-artifacts`                      |
+| `AGENTS_ARTIFACTS_ACCESS_KEY_ID`        | Access key for Graf to download runner artifacts.                                          | required                                 |
+| `AGENTS_ARTIFACTS_SECRET_ACCESS_KEY`    | Secret key for Graf to download runner artifacts.                                          | required                                 |
+| `AGENTS_ARTIFACTS_REGION`               | Optional region hint.                                                                      | _unset_                                  |
+| `AGENTS_ARTIFACTS_SECURE`               | `true/false` toggle when `AGENTS_ARTIFACTS_ENDPOINT` omits the scheme.                     | `true`                                   |
 
-Graf now bundles the Knative service account with a `Role`/`RoleBinding` in `argocd/applications/argo-workflows/codex-research-rbac.yaml` so it can create and poll workflows in `argo-workflows`.
+Graf no longer creates or polls Argo Workflows for Codex research. Artifact upload and download now use the Agents artifact contract end to end.
 
 ## HTTP contract
 
@@ -42,10 +47,10 @@ Content-Type: application/json
 {
   "workflowId": "graf-codex-research-<uuid>",
   "runId": "<temporal-run-id>",
-  "argoWorkflowName": "codex-research-<uuid>",
+  "agentRunName": "codex-research-<uuid>",
   "artifactReferences": [
     {
-      "bucket": "argo-workflows",
+      "bucket": "agents-artifacts",
       "key": "codex-research/codex-research-<uuid>/codex-artifact.json",
       "endpoint": "http://observability-minio.minio.svc.cluster.local:9000"
     }
@@ -53,7 +58,7 @@ Content-Type: application/json
 }
 ```
 
-Graf returns the expected artifact reference immediately; downstream consumers can poll MinIO or watch Temporal history while Graf orchestrates the Argo/Codex run.
+Graf returns the expected artifact reference immediately; downstream consumers can poll the Agents artifact bucket or watch Temporal history while Graf submits and monitors the Agents/Codex run.
 
 ## Codex Graf helper
 
@@ -66,18 +71,18 @@ cat payload.json \
     --token-file /var/run/secrets/codex/graf-token
 ```
 
-`codex-graf` automatically sets `Content-Type: application/json`, masks the bearer token when logging, and respects the environment variables `CODEX_GRAF_BASE_URL` and `CODEX_GRAF_BEARER_TOKEN` when the CLI flags are omitted. Use it inside Argo/Temporal workflows or interactive sessions to persist Codex findings through the exposed `/v1/*` endpoints (entities, relationships, complement, clean, etc.) without invoking the `/v1/codex-research` route directly from Codex jobs.
+`codex-graf` automatically sets `Content-Type: application/json`, masks the bearer token when logging, and respects the environment variables `CODEX_GRAF_BASE_URL` and `CODEX_GRAF_BEARER_TOKEN` when the CLI flags are omitted. Use it inside AgentRun/Temporal workflows or interactive sessions to persist Codex findings through the exposed `/v1/*` endpoints (entities, relationships, complement, clean, etc.) without invoking the `/v1/codex-research` route directly from Codex jobs.
 
-## Argo workflow
+## Agents Runtime
 
-`codex-research-workflow` lives in `argocd/applications/argo-workflows`. Operators can sync it with:
+Graf uses the generic Agents CRDs in `argocd/applications/agents`:
 
 ```bash
-kubectl -n argo-workflows apply -f argocd/applications/argo-workflows/codex-research-workflow.yaml
-kubectl -n argo-workflows apply -f argocd/applications/argo-workflows/codex-research-rbac.yaml
+kubectl -n agents apply -f argocd/applications/agents/graf-codex-agentprovider.yaml
+kubectl -n agents apply -f argocd/applications/agents/graf-codex-agent.yaml
 ```
 
-The template ships the prompt into the Codex container, unlocks `codex exec`, and captures `/workspace/lab/codex-artifact.json` as an S3 artifact. The artifact is wired into MinIO via template parameters so Graf can compute the bucket/key before the workflow finishes.
+The AgentProvider ships the prompt through the versioned runner contract, executes the Codex app-server adapter, and uploads `/workspace/lab/codex-artifact.json` as the `codex-artifact` output artifact. Graf computes the bucket/key before the AgentRun finishes and downloads that object after the run succeeds.
 
 ## Testing / Validation
 

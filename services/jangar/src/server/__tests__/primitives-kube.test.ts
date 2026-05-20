@@ -78,36 +78,36 @@ describe('primitives-kube', () => {
     }
   })
 
-  it('uses CustomObjectsApi for custom resource reads', async () => {
-    customObjectsMock.getNamespacedCustomObject.mockResolvedValue({ metadata: { name: 'run-1' } })
+  it('uses CustomObjectsApi for Jangar-owned custom resource reads', async () => {
+    customObjectsMock.getNamespacedCustomObject.mockResolvedValue({ metadata: { name: 'workflow-1' } })
 
     const kube = createKubernetesClient()
-    const result = await kube.get(RESOURCE_MAP.AgentRun, 'run-1', 'agents')
+    const result = await kube.get(RESOURCE_MAP.Workflow, 'workflow-1', 'torghut')
 
-    expect(result).toEqual({ metadata: { name: 'run-1' } })
+    expect(result).toEqual({ metadata: { name: 'workflow-1' } })
     expect(customObjectsMock.getNamespacedCustomObject).toHaveBeenCalledWith({
-      group: 'agents.proompteng.ai',
+      group: 'argoproj.io',
       version: 'v1alpha1',
-      namespace: 'agents',
-      plural: 'agentruns',
-      name: 'run-1',
+      namespace: 'torghut',
+      plural: 'workflows',
+      name: 'workflow-1',
     })
     expect(objectApiMock.read).not.toHaveBeenCalled()
   })
 
-  it('uses CustomObjectsApi for custom resource lists', async () => {
+  it('uses CustomObjectsApi for Jangar-owned custom resource lists', async () => {
     customObjectsMock.listNamespacedCustomObject.mockResolvedValue({ items: [] })
 
     const kube = createKubernetesClient()
-    const result = await kube.list(RESOURCE_MAP.AgentRun, 'agents', 'agents.proompteng.ai/agent-run=run-1')
+    const result = await kube.list(RESOURCE_MAP.Workflow, 'torghut', 'workflows.argoproj.io/workflow=workflow-1')
 
     expect(result).toEqual({ items: [] })
     expect(customObjectsMock.listNamespacedCustomObject).toHaveBeenCalledWith({
-      group: 'agents.proompteng.ai',
+      group: 'argoproj.io',
       version: 'v1alpha1',
-      namespace: 'agents',
-      plural: 'agentruns',
-      labelSelector: 'agents.proompteng.ai/agent-run=run-1',
+      namespace: 'torghut',
+      plural: 'workflows',
+      labelSelector: 'workflows.argoproj.io/workflow=workflow-1',
     })
     expect(objectApiMock.list).not.toHaveBeenCalled()
   })
@@ -172,30 +172,30 @@ describe('primitives-kube', () => {
     expect(customObjectsMock.listNamespacedCustomObject).not.toHaveBeenCalled()
   })
 
-  it('preserves name and namespace when patching custom resources', async () => {
-    customObjectsMock.patchNamespacedCustomObject.mockResolvedValue({ metadata: { name: 'run-1' } })
+  it('preserves name and namespace when patching Jangar-owned custom resources', async () => {
+    customObjectsMock.patchNamespacedCustomObject.mockResolvedValue({ metadata: { name: 'workflow-1' } })
 
     const kube = createKubernetesClient()
-    await kube.patch(RESOURCE_MAP.AgentRun, 'run-1', 'agents', {
+    await kube.patch(RESOURCE_MAP.Workflow, 'workflow-1', 'torghut', {
       metadata: {
-        finalizers: ['agents.proompteng.ai/runtime-cleanup'],
+        finalizers: ['jangar.proompteng.ai/simulation-cleanup'],
       },
     })
 
     expect(customObjectsMock.patchNamespacedCustomObject).toHaveBeenCalledWith(
       {
-        group: 'agents.proompteng.ai',
+        group: 'argoproj.io',
         version: 'v1alpha1',
-        namespace: 'agents',
-        plural: 'agentruns',
-        name: 'run-1',
+        namespace: 'torghut',
+        plural: 'workflows',
+        name: 'workflow-1',
         body: {
-          apiVersion: 'agents.proompteng.ai/v1alpha1',
-          kind: 'AgentRun',
+          apiVersion: 'argoproj.io/v1alpha1',
+          kind: 'Workflow',
           metadata: {
-            name: 'run-1',
-            namespace: 'agents',
-            finalizers: ['agents.proompteng.ai/runtime-cleanup'],
+            name: 'workflow-1',
+            namespace: 'torghut',
+            finalizers: ['jangar.proompteng.ai/simulation-cleanup'],
           },
         },
       },
@@ -205,6 +205,13 @@ describe('primitives-kube', () => {
       }),
     )
     expect(objectApiMock.patch).not.toHaveBeenCalled()
+  })
+
+  it('does not resolve Agents CRDs from the Jangar kube helper', () => {
+    expect(RESOURCE_MAP).not.toHaveProperty('AgentRun')
+    expect(() => resolveKubernetesResourceTarget('agentruns.agents.proompteng.ai')).toThrow(
+      /unsupported kubernetes resource/,
+    )
   })
 
   it('resolves PersistentVolumeClaim aliases through the core v1 resource target', () => {
@@ -250,10 +257,10 @@ describe('primitives-kube', () => {
     expect(customObjectsMock.listNamespacedCustomObject).not.toHaveBeenCalled()
   })
 
-  it('patches custom resource status through CustomObjectsApi with the current resourceVersion', async () => {
+  it('patches Jangar-owned custom resource status through CustomObjectsApi with the current resourceVersion', async () => {
     customObjectsMock.getNamespacedCustomObject.mockResolvedValue({
       metadata: {
-        name: 'run-1',
+        name: 'workflow-1',
         resourceVersion: '42',
       },
     })
@@ -261,11 +268,11 @@ describe('primitives-kube', () => {
 
     const kube = createKubernetesClient()
     await kube.applyStatus({
-      apiVersion: 'agents.proompteng.ai/v1alpha1',
-      kind: 'AgentRun',
+      apiVersion: 'argoproj.io/v1alpha1',
+      kind: 'Workflow',
       metadata: {
-        name: 'run-1',
-        namespace: 'agents',
+        name: 'workflow-1',
+        namespace: 'torghut',
       },
       status: {
         phase: 'Running',
@@ -274,18 +281,18 @@ describe('primitives-kube', () => {
 
     expect(customObjectsMock.patchNamespacedCustomObjectStatus).toHaveBeenCalledWith(
       {
-        group: 'agents.proompteng.ai',
+        group: 'argoproj.io',
         version: 'v1alpha1',
-        namespace: 'agents',
-        plural: 'agentruns',
-        name: 'run-1',
+        namespace: 'torghut',
+        plural: 'workflows',
+        name: 'workflow-1',
         fieldManager: 'jangar-status',
         body: {
-          apiVersion: 'agents.proompteng.ai/v1alpha1',
-          kind: 'AgentRun',
+          apiVersion: 'argoproj.io/v1alpha1',
+          kind: 'Workflow',
           metadata: {
-            name: 'run-1',
-            namespace: 'agents',
+            name: 'workflow-1',
+            namespace: 'torghut',
             resourceVersion: '42',
           },
           status: {

@@ -9,37 +9,93 @@ import type {
   FailureDomainLeaseStatus,
   RuntimeKitStatus,
   WorkflowsReliabilityStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import type {
   ControlPlaneRolloutHealth,
   DatabaseStatus,
   DeploymentRolloutStatus,
 } from '~/server/control-plane-status-types'
-import type { KubeGateway, KubeGatewayEvent, KubeGatewayPod } from '~/server/kube-gateway'
+import type { FailureDomainRouteProbe } from '~/server/control-plane-failure-domain-route-probe'
+export {
+  resolveFailureDomainRouteProbe,
+  type FailureDomainRouteProbe,
+  type FailureDomainRouteProbeInput,
+} from '~/server/control-plane-failure-domain-route-probe'
 
 export const FAILURE_DOMAIN_LEASES_DESIGN_ARTIFACT =
   'docs/agents/designs/75-jangar-failure-domain-leases-and-database-routability-holdbacks-2026-05-05.md'
 
 const VALID_LEASE_TTL_MS = 60_000
 const NON_VALID_LEASE_TTL_MS = 0
-const ROUTE_PROBE_TIMEOUT_MS = 2_000
-const DEFAULT_APP_NAMESPACE = 'jangar'
 const IMAGE_PULL_REASONS = new Set(['ErrImagePull', 'ImagePullBackOff', 'InvalidImageName'])
 
-export type FailureDomainRouteProbe = {
-  status: 'healthy' | 'degraded' | 'unknown'
-  reachable: boolean
-  url: string | null
-  status_code: number | null
-  latency_ms: number
-  message: string
-  observed_at: string
+export type FailureDomainKubernetesEvidence = {
+  pods: FailureDomainPod[]
+  events: FailureDomainEvent[]
+  collection_errors: string[]
 }
 
-export type FailureDomainKubernetesEvidence = {
-  pods: KubeGatewayPod[]
-  events: KubeGatewayEvent[]
-  collection_errors: string[]
+export type FailureDomainCondition = {
+  type: string | null
+  status: string | null
+  reason: string | null
+  lastTransitionTime: string | null
+  message?: string | null
+}
+
+export type FailureDomainMetadata = {
+  name: string
+  namespace: string | null
+  generation: number | null
+  labels: Record<string, string>
+  annotations?: Record<string, string>
+  creationTimestamp: string | null
+  deletionTimestamp?: string | null
+}
+
+export type FailureDomainContainerState = {
+  waiting?: {
+    reason: string | null
+    message: string | null
+  }
+  terminated?: {
+    reason: string | null
+    message: string | null
+    exitCode: number | null
+  }
+  running?: boolean
+}
+
+export type FailureDomainContainerStatus = {
+  name: string
+  image: string | null
+  image_id?: string | null
+  ready: boolean
+  state: FailureDomainContainerState
+}
+
+export type FailureDomainPod = {
+  metadata: FailureDomainMetadata
+  status: {
+    phase: string | null
+    conditions: FailureDomainCondition[]
+    containerStatuses: FailureDomainContainerStatus[]
+  }
+}
+
+export type FailureDomainEvent = {
+  metadata: FailureDomainMetadata
+  type: string | null
+  reason: string | null
+  message: string | null
+  firstTimestamp: string | null
+  lastTimestamp: string | null
+  eventTime: string | null
+  involvedObject: {
+    kind: string | null
+    name: string | null
+    namespace: string | null
+  }
 }
 
 export type FailureDomainLeaseSetInput = {
@@ -54,49 +110,13 @@ export type FailureDomainLeaseSetInput = {
   kubernetesEvidence: FailureDomainKubernetesEvidence
 }
 
-export type FailureDomainRouteProbeInput = {
-  now: Date
-  namespace: string
-  service: string
-  env?: Record<string, string | undefined>
-}
-
-export type FailureDomainKubernetesEvidenceInput = {
-  namespace: string
-  service: string
-  kube: KubeGateway
-  env?: Record<string, string | undefined>
-}
-
 export const emptyFailureDomainKubernetesEvidence = (): FailureDomainKubernetesEvidence => ({
   pods: [],
   events: [],
   collection_errors: [],
 })
 
-const normalizeNonEmpty = (value: string | undefined | null) => {
-  const normalized = value?.trim()
-  return normalized && normalized.length > 0 ? normalized : null
-}
-
-const parseBoolean = (value: string | undefined, fallback: boolean) => {
-  const normalized = normalizeNonEmpty(value)?.toLowerCase()
-  if (!normalized) return fallback
-  if (['1', 'true', 'yes', 'y', 'on', 'enabled'].includes(normalized)) return true
-  if (['0', 'false', 'no', 'n', 'off', 'disabled'].includes(normalized)) return false
-  return fallback
-}
-
-const parsePositiveInt = (value: string | undefined, fallback: number) => {
-  const normalized = normalizeNonEmpty(value)
-  if (!normalized) return fallback
-  const parsed = Number.parseInt(normalized, 10)
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback
-}
-
 const uniqueStrings = (values: string[]) => [...new Set(values.filter((value) => value.length > 0))]
-
-const normalizeErrorMessage = (value: unknown) => (value instanceof Error ? value.message : String(value))
 
 const hashJson = (value: unknown, length = 16) =>
   createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, length)
@@ -159,7 +179,7 @@ const conditionIsTrue = (condition: { status: string | null }) => normalizeText(
 
 const hasDatabaseNameToken = (name: string) => /(^|[-_.])(db|database|postgres|postgresql)($|[-_.])/.test(name)
 
-const isDatabasePod = (pod: KubeGatewayPod) => {
+const isDatabasePod = (pod: FailureDomainPod) => {
   const name = normalizeText(pod.metadata.name)
   const labels = pod.metadata.labels
   return (
@@ -173,20 +193,21 @@ const isDatabasePod = (pod: KubeGatewayPod) => {
   )
 }
 
-const podHasDisruptionTarget = (pod: KubeGatewayPod) =>
+const podHasDisruptionTarget = (pod: FailureDomainPod) =>
   pod.status.conditions.some((condition) => condition.type === 'DisruptionTarget' && conditionIsTrue(condition))
 
-const podReadyCondition = (pod: KubeGatewayPod) =>
+const podReadyCondition = (pod: FailureDomainPod) =>
   pod.status.conditions.find((condition) => condition.type === 'Ready') ?? null
 
-const podHasReadyContainer = (pod: KubeGatewayPod) => pod.status.containerStatuses.some((container) => container.ready)
+const podHasReadyContainer = (pod: FailureDomainPod) =>
+  pod.status.containerStatuses.some((container) => container.ready)
 
-const podEvidenceRef = (pod: KubeGatewayPod) => `pod:${pod.metadata.namespace ?? 'unknown'}:${pod.metadata.name}`
+const podEvidenceRef = (pod: FailureDomainPod) => `pod:${pod.metadata.namespace ?? 'unknown'}:${pod.metadata.name}`
 
-const eventEvidenceRef = (event: KubeGatewayEvent) =>
+const eventEvidenceRef = (event: FailureDomainEvent) =>
   `event:${event.metadata.namespace ?? 'unknown'}:${event.metadata.name}`
 
-const hasDatabasePodSplitReadiness = (pod: KubeGatewayPod) => {
+const hasDatabasePodSplitReadiness = (pod: FailureDomainPod) => {
   const readyCondition = podReadyCondition(pod)
   return Boolean(pod.metadata.deletionTimestamp) || podHasDisruptionTarget(pod) || readyCondition?.status === 'False'
 }
@@ -306,7 +327,7 @@ const buildRouteLease = (input: FailureDomainLeaseSetInput): FailureDomainLease 
   })
 }
 
-const isImagePullContainer = (pod: KubeGatewayPod) =>
+const isImagePullContainer = (pod: FailureDomainPod) =>
   pod.status.containerStatuses.some((container) => {
     const reason = container.state.waiting?.reason
     const message = normalizeText(container.state.waiting?.message)
@@ -318,7 +339,7 @@ const isImagePullContainer = (pod: KubeGatewayPod) =>
     )
   })
 
-const isImagePullEvent = (event: KubeGatewayEvent) => {
+const isImagePullEvent = (event: FailureDomainEvent) => {
   const reason = event.reason ?? ''
   const message = normalizeText(event.message)
   return (
@@ -428,7 +449,7 @@ const buildRolloutLease = (input: FailureDomainLeaseSetInput): FailureDomainLeas
   })
 }
 
-const isConfigMapMissingEvent = (event: KubeGatewayEvent) => {
+const isConfigMapMissingEvent = (event: FailureDomainEvent) => {
   const reason = normalizeText(event.reason)
   const message = normalizeText(event.message)
   return (
@@ -437,7 +458,7 @@ const isConfigMapMissingEvent = (event: KubeGatewayEvent) => {
   )
 }
 
-const hasMountConflict = (event: KubeGatewayEvent) => {
+const hasMountConflict = (event: FailureDomainEvent) => {
   const message = normalizeText(event.message)
   return message.includes('mountvolume') && (message.includes('already exists') || message.includes('multi-attach'))
 }
@@ -677,104 +698,4 @@ export const buildFailureDomainLeaseSet = (input: FailureDomainLeaseSetInput): F
     leases,
     holdbacks,
   }
-}
-
-const resolveRouteProbeUrl = ({ namespace, service, env = process.env }: FailureDomainRouteProbeInput) => {
-  const explicitUrl = normalizeNonEmpty(env.JANGAR_CONTROL_PLANE_ROUTE_HEALTH_URL)
-  if (explicitUrl) return explicitUrl
-
-  const defaultProbeEnabled = parseBoolean(env.JANGAR_CONTROL_PLANE_ROUTE_PROBE_ENABLED, false)
-  if (!defaultProbeEnabled) return null
-
-  const routeNamespace =
-    normalizeNonEmpty(env.JANGAR_CONTROL_PLANE_ROUTE_NAMESPACE) ??
-    normalizeNonEmpty(env.JANGAR_POD_NAMESPACE) ??
-    DEFAULT_APP_NAMESPACE
-  const routeService = normalizeNonEmpty(env.JANGAR_CONTROL_PLANE_ROUTE_SERVICE) ?? service
-  const routePath = normalizeNonEmpty(env.JANGAR_CONTROL_PLANE_ROUTE_HEALTH_PATH) ?? '/health'
-  return `http://${routeService}.${routeNamespace || namespace}.svc.cluster.local${routePath.startsWith('/') ? routePath : `/${routePath}`}`
-}
-
-export const resolveFailureDomainRouteProbe = async (
-  input: FailureDomainRouteProbeInput,
-): Promise<FailureDomainRouteProbe> => {
-  const observedAt = input.now.toISOString()
-  const url = resolveRouteProbeUrl(input)
-  if (!url) {
-    return {
-      status: 'healthy',
-      reachable: true,
-      url: null,
-      status_code: null,
-      latency_ms: 0,
-      message: 'status route generated a response; external route probe is not configured',
-      observed_at: observedAt,
-    }
-  }
-
-  const timeoutMs = parsePositiveInt(input.env?.JANGAR_CONTROL_PLANE_ROUTE_PROBE_TIMEOUT_MS, ROUTE_PROBE_TIMEOUT_MS)
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), timeoutMs)
-  const start = Date.now()
-
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: { accept: 'application/json' },
-    })
-    return {
-      status: response.ok ? 'healthy' : 'degraded',
-      reachable: response.ok,
-      url,
-      status_code: response.status,
-      latency_ms: Math.max(0, Date.now() - start),
-      message: response.ok ? 'route probe succeeded' : `route probe returned HTTP ${response.status}`,
-      observed_at: observedAt,
-    }
-  } catch (error) {
-    return {
-      status: 'degraded',
-      reachable: false,
-      url,
-      status_code: null,
-      latency_ms: Math.max(0, Date.now() - start),
-      message: normalizeErrorMessage(error),
-      observed_at: observedAt,
-    }
-  } finally {
-    clearTimeout(timeout)
-  }
-}
-
-export const collectFailureDomainKubernetesEvidence = async ({
-  namespace,
-  kube,
-  env = process.env,
-}: FailureDomainKubernetesEvidenceInput): Promise<FailureDomainKubernetesEvidence> => {
-  const configuredNamespaces = (normalizeNonEmpty(env.JANGAR_FAILURE_DOMAIN_EVIDENCE_NAMESPACES) ?? '')
-    .split(',')
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0)
-  const namespaces = uniqueStrings([
-    namespace,
-    normalizeNonEmpty(env.JANGAR_CONTROL_PLANE_ROUTE_NAMESPACE) ?? DEFAULT_APP_NAMESPACE,
-    ...configuredNamespaces,
-  ])
-  const evidence = emptyFailureDomainKubernetesEvidence()
-
-  for (const currentNamespace of namespaces) {
-    try {
-      evidence.pods.push(...(await kube.listPods(currentNamespace)))
-    } catch (error) {
-      evidence.collection_errors.push(`${currentNamespace}: pods: ${normalizeErrorMessage(error)}`)
-    }
-
-    try {
-      evidence.events.push(...(await kube.listEvents(currentNamespace)))
-    } catch (error) {
-      evidence.collection_errors.push(`${currentNamespace}: events: ${normalizeErrorMessage(error)}`)
-    }
-  }
-
-  return evidence
 }

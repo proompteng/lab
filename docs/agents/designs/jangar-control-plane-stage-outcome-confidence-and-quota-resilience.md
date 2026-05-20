@@ -38,7 +38,7 @@ Rollback path for this slice:
 
 - Revert the workflow confidence fields and namespace degradation wiring in:
   - `services/jangar/src/server/control-plane-status.ts`
-  - `services/jangar/src/data/agents-control-plane.ts`
+  - `services/jangar/src/server/control-plane-status-types.ts`
   - `services/jangar/src/components/agents-control-plane-status.tsx`
 - Restore prior test expectations in `services/jangar/src/server/__tests__/control-plane-status.test.ts`.
 
@@ -137,7 +137,7 @@ Introduce a stage outcome confidence envelope that feeds both status and freeze 
 
 ## Proposed implementation slices
 
-1. Data contract update in `services/jangar/src/data/agents-control-plane.ts`:
+1. Data contract update in `services/jangar/src/server/control-plane-status-types.ts`:
    add stage outcome confidence fields and confidence enum.
 2. Status collector update in `services/jangar/src/server/control-plane-status.ts`:
    emit confidence downgrade when workflow collection fails instead of silent zero-as-healthy semantics.

@@ -5,23 +5,24 @@ metadata:
   namespace: facteur
 data:
   config.yaml: |
-    argo:
-      namespace: argo-workflows
-      parameters:
-        payload: '{}'
-      service_account: facteur-workflow
-      workflow_template: facteur-dispatch
     codex_implementation_orchestrator:
       enabled: true
-      namespace: argo-workflows
-      autonomous_namespace: jangar
-      workflow_template: codex-autonomous
-      autonomous_workflow_template: codex-autonomous
-      service_account: codex-workflow
-      autonomous_service_account: jangar-inspector
+      agents_base_url: http://agents.agents.svc.cluster.local
+      namespace: agents
+      agent_name: codex-agent
+      runtime_type: job
+      runtime_config:
+        serviceAccountName: agents-sa
+      secrets:
+        - github-token
+        - codex-auth
+      secret_binding_ref: codex-github-token
+      vcs_provider: github
+      vcs_policy_mode: read-write
+      vcs_required: true
+      goal_token_budget: 250000
+      ttl_seconds_after_finished: 86400
       parameters:
-        rawEvent: ''
-        eventBody: ''
         head: ''
         base: ''
     discord:

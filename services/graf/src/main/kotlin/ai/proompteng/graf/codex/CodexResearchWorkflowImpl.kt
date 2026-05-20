@@ -21,7 +21,7 @@ class CodexResearchWorkflowImpl : CodexResearchWorkflow {
       CodexResearchActivities::class.java,
       ActivityOptions
         .newBuilder()
-        // Must be >= argoConfig.pollTimeoutSeconds (default 2h) otherwise long Codex runs time out early.
+        // Must be >= Agents poll timeout (default 2h) otherwise long Codex runs time out early.
         .setScheduleToCloseTimeout(Duration.ofHours(3))
         .setStartToCloseTimeout(Duration.ofHours(3))
         .setRetryOptions(RetryOptions.newBuilder().setMaximumAttempts(3).build())
@@ -30,25 +30,25 @@ class CodexResearchWorkflowImpl : CodexResearchWorkflow {
 
   override fun run(input: CodexResearchWorkflowInput): CodexResearchWorkflowResult {
     val submission =
-      submitActivities.submitArgoWorkflow(
-        SubmitArgoWorkflowRequest(
-          workflowName = input.argoWorkflowName,
+      submitActivities.submitAgentRun(
+        SubmitAgentRunRequest(
+          runName = input.agentRunName,
           prompt = input.prompt,
           metadata = input.metadata,
           artifactKey = input.artifactKey,
         ),
       )
-    val completed = activities.waitForArgoWorkflow(submission.workflowName, input.argoPollTimeoutSeconds)
+    val completed = activities.waitForAgentRun(submission.recordId, input.agentRunPollTimeoutSeconds)
     val artifactReference =
       completed.artifactReferences.firstOrNull()
-        ?: throw IllegalStateException("Argo workflow ${submission.workflowName} completed without artifacts")
+        ?: throw IllegalStateException("AgentRun ${submission.resourceName} completed without artifacts")
     val payload = activities.downloadArtifact(artifactReference)
     activities.persistCodexArtifact(payload, input)
     val info = Workflow.getInfo()
     return CodexResearchWorkflowResult(
       workflowId = info.workflowId,
       runId = info.runId,
-      argoWorkflowName = submission.workflowName,
+      agentRunName = submission.runName,
       artifactReferences = completed.artifactReferences,
       status = completed.phase,
     )

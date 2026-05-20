@@ -17,7 +17,7 @@ import type {
   StageClearancePacket,
   StageClearanceStage,
   WorkflowsReliabilityStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import { dependencyVerdictForActionSloClass } from '~/server/control-plane-dependency-verdict'
 import type { TorghutConsumerEvidenceStatus } from '~/server/control-plane-torghut-consumer-evidence'
 

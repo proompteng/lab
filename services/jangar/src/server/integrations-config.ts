@@ -1,15 +1,8 @@
 type EnvSource = Record<string, string | undefined>
 
-const DEFAULT_NATS_URL = 'nats://nats.nats.svc.cluster.local:4222'
 const DEFAULT_FEATURE_FLAGS_TIMEOUT_MS = 500
 const DEFAULT_FEATURE_FLAGS_NAMESPACE = 'default'
 const DEFAULT_FEATURE_FLAGS_ENTITY_ID = 'jangar'
-const DEFAULT_AGENT_COMMS_FILTER_SUBJECTS = [
-  'workflow.>',
-  'agents.workflow.>',
-  'argo.workflow.>',
-  'workflow_comms.agent_messages.>',
-]
 
 const TRUE_BOOLEAN_VALUES = new Set(['1', 'true', 'yes', 'on', 'enabled'])
 const FALSE_BOOLEAN_VALUES = new Set(['0', 'false', 'no', 'off', 'disabled'])
@@ -35,53 +28,12 @@ const parsePositiveInt = (value: string | undefined, fallback: number) => {
   return Math.floor(parsed)
 }
 
-const parseFilterSubjects = (value: string | undefined) =>
-  (value ?? '')
-    .split(',')
-    .map((subject) => subject.trim())
-    .filter((subject) => subject.length > 0)
-
-export type AgentCommsSubscriberConfig = {
-  disabled: boolean
-  natsUrl: string
-  natsUser?: string
-  natsPassword?: string
-  streamName: string
-  consumerName: string
-  pullBatchSize: number
-  pullExpiresMs: number
-  reconnectDelayMs: number
-  maxAckPending: number
-  ackWaitMs: number
-  consumerDescription: string
-  filterSubjects: string[]
-}
-
 export type FeatureFlagsClientConfig = {
   enabled: boolean
   endpoint: string | null
   timeoutMs: number
   namespaceKey: string
   entityId: string
-}
-
-export const resolveAgentCommsSubscriberConfig = (env: EnvSource = process.env): AgentCommsSubscriberConfig => {
-  const filterSubjects = parseFilterSubjects(env.JANGAR_AGENT_COMMS_SUBJECTS)
-  return {
-    disabled: env.NODE_ENV === 'test' || Boolean(env.VITEST) || env.JANGAR_AGENT_COMMS_SUBSCRIBER_DISABLED === 'true',
-    natsUrl: normalizeNonEmpty(env.NATS_URL) ?? DEFAULT_NATS_URL,
-    natsUser: normalizeNonEmpty(env.NATS_USER) ?? undefined,
-    natsPassword: normalizeNonEmpty(env.NATS_PASSWORD) ?? undefined,
-    streamName: 'agent-comms',
-    consumerName: 'jangar-agent-comms',
-    pullBatchSize: 250,
-    pullExpiresMs: 1500,
-    reconnectDelayMs: 2000,
-    maxAckPending: 20000,
-    ackWaitMs: 30000,
-    consumerDescription: 'Jangar agent communications ingestion',
-    filterSubjects: filterSubjects.length > 0 ? filterSubjects : [...DEFAULT_AGENT_COMMS_FILTER_SUBJECTS],
-  }
 }
 
 export const resolveFeatureFlagsClientConfig = (env: EnvSource = process.env): FeatureFlagsClientConfig => ({
@@ -93,15 +45,6 @@ export const resolveFeatureFlagsClientConfig = (env: EnvSource = process.env): F
 })
 
 export const validateIntegrationsConfig = (env: EnvSource = process.env) => {
-  const agentComms = resolveAgentCommsSubscriberConfig(env)
-  if (!agentComms.disabled) {
-    try {
-      new URL(agentComms.natsUrl)
-    } catch {
-      throw new Error(`NATS_URL is invalid: ${agentComms.natsUrl}`)
-    }
-  }
-
   const featureFlags = resolveFeatureFlagsClientConfig(env)
   if (featureFlags.endpoint) {
     try {

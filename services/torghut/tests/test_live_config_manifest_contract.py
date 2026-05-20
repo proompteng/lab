@@ -310,6 +310,9 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertEqual(
             env.get("TRADING_MARKET_CONTEXT_URL"), settings.trading_market_context_url
         )
+        self.assertEqual(
+            env.get("AGENTS_BASE_URL"), "http://agents.agents.svc.cluster.local"
+        )
         self.assertEqual(env.get("TRADING_MARKET_CONTEXT_TIMEOUT_SECONDS"), "5")
         self.assertEqual(env.get("TRADING_MARKET_CONTEXT_REQUIRED"), "false")
         self.assertEqual(env.get("TRADING_MARKET_CONTEXT_FAIL_MODE"), "shadow_only")
@@ -615,6 +618,9 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertNotIn("TRADING_JANGAR_CONTROL_PLANE_CACHE_TTL_SECONDS", sim_env)
         self.assertNotIn("TRADING_JANGAR_QUANT_HEALTH_URL", sim_env)
         self.assertNotIn("TRADING_MARKET_CONTEXT_URL", sim_env)
+        self.assertEqual(
+            sim_env.get("AGENTS_BASE_URL"), "http://agents.agents.svc.cluster.local"
+        )
         self.assertNotIn("JANGAR_BASE_URL", sim_env)
         self.assertNotIn("JANGAR_API_KEY", sim_env)
         self.assertFalse(

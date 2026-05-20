@@ -128,40 +128,25 @@ spec:
             - name: PGSSLROOTCERT
               value: "/etc/agents/ca/{{ .Values.database.caSecret.key | default "ca.crt" }}"
             {{- end }}
-            {{- if .Values.workflowRuntime.native.rerunOrchestration }}
+            {{- if .Values.agentRuntime.native.rerunOrchestration }}
             - name: AGENTS_CODEX_RERUN_ORCHESTRATION
-              value: {{ .Values.workflowRuntime.native.rerunOrchestration | quote }}
+              value: {{ .Values.agentRuntime.native.rerunOrchestration | quote }}
             {{- end }}
-            {{- if .Values.workflowRuntime.native.rerunOrchestrationNamespace }}
+            {{- if .Values.agentRuntime.native.rerunOrchestrationNamespace }}
             - name: AGENTS_CODEX_RERUN_ORCHESTRATION_NAMESPACE
-              value: {{ .Values.workflowRuntime.native.rerunOrchestrationNamespace | quote }}
+              value: {{ .Values.agentRuntime.native.rerunOrchestrationNamespace | quote }}
             {{- end }}
-            {{- if .Values.workflowRuntime.native.systemImprovementOrchestration }}
+            {{- if .Values.agentRuntime.native.systemImprovementOrchestration }}
             - name: AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION
-              value: {{ .Values.workflowRuntime.native.systemImprovementOrchestration | quote }}
+              value: {{ .Values.agentRuntime.native.systemImprovementOrchestration | quote }}
             {{- end }}
-            {{- if .Values.workflowRuntime.native.systemImprovementOrchestrationNamespace }}
+            {{- if .Values.agentRuntime.native.systemImprovementOrchestrationNamespace }}
             - name: AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE
-              value: {{ .Values.workflowRuntime.native.systemImprovementOrchestrationNamespace | quote }}
+              value: {{ .Values.agentRuntime.native.systemImprovementOrchestrationNamespace | quote }}
             {{- end }}
             {{- if and (not (hasKey $envVars "AGENTS_AGENT_RUNNER_IMAGE")) .Values.runner.image.repository }}
             - name: AGENTS_AGENT_RUNNER_IMAGE
               value: "{{ .Values.runner.image.repository }}:{{ .Values.runner.image.tag }}{{- if .Values.runner.image.digest }}@{{ .Values.runner.image.digest }}{{ end }}"
-            {{- else if and .Values.runtime.agentRunnerImage (not (hasKey $envVars "AGENTS_AGENT_RUNNER_IMAGE")) }}
-            - name: AGENTS_AGENT_RUNNER_IMAGE
-              value: {{ .Values.runtime.agentRunnerImage | quote }}
-            {{- end }}
-            {{- if and .Values.runtime.agentImage (not (hasKey $envVars "AGENTS_AGENT_IMAGE")) }}
-            - name: AGENTS_AGENT_IMAGE
-              value: {{ .Values.runtime.agentImage | quote }}
-            {{- end }}
-            {{- if and .Values.runtime.scheduleRunnerImage (not (hasKey $envVars "AGENTS_SCHEDULE_RUNNER_IMAGE")) }}
-            - name: AGENTS_SCHEDULE_RUNNER_IMAGE
-              value: {{ .Values.runtime.scheduleRunnerImage | quote }}
-            {{- end }}
-            {{- if and .Values.runtime.scheduleServiceAccount (not (hasKey $envVars "AGENTS_SCHEDULE_SERVICE_ACCOUNT")) }}
-            - name: AGENTS_SCHEDULE_SERVICE_ACCOUNT
-              value: {{ .Values.runtime.scheduleServiceAccount | quote }}
             {{- end }}
             {{- if and .Values.audit.sink.type (ne .Values.audit.sink.type "none") (not (hasKey $envVars "AGENTS_AUDIT_SINK_TYPE")) }}
             - name: AGENTS_AUDIT_SINK_TYPE
@@ -182,6 +167,10 @@ spec:
             {{- if not (hasKey $envVars "AGENTS_SERVER_PROFILE") }}
             - name: AGENTS_SERVER_PROFILE
               value: "agents-control-plane"
+            {{- end }}
+            {{- if and (not (hasKey $envVars "AGENTS_CORS_ALLOWED_ORIGINS")) .Values.cors.allowedOrigins (gt (len .Values.cors.allowedOrigins) 0) }}
+            - name: AGENTS_CORS_ALLOWED_ORIGINS
+              value: {{ join "," .Values.cors.allowedOrigins | quote }}
             {{- end }}
             {{- range $name, $value := $envVars }}
             - name: {{ $name }}

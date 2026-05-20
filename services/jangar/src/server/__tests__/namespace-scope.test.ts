@@ -4,7 +4,7 @@ import { assertClusterScopedForWildcard, parseNamespaceScopeEnv } from '~/server
 
 const original = process.env.JANGAR_RBAC_CLUSTER_SCOPED
 const originalEnv = {
-  JANGAR_AGENTS_CONTROLLER_NAMESPACES: process.env.JANGAR_AGENTS_CONTROLLER_NAMESPACES,
+  JANGAR_WORKFLOW_RELIABILITY_NAMESPACES: process.env.JANGAR_WORKFLOW_RELIABILITY_NAMESPACES,
 }
 
 afterEach(() => {
@@ -14,107 +14,107 @@ afterEach(() => {
     process.env.JANGAR_RBAC_CLUSTER_SCOPED = original
   }
 
-  if (originalEnv.JANGAR_AGENTS_CONTROLLER_NAMESPACES == null) {
-    delete process.env.JANGAR_AGENTS_CONTROLLER_NAMESPACES
+  if (originalEnv.JANGAR_WORKFLOW_RELIABILITY_NAMESPACES == null) {
+    delete process.env.JANGAR_WORKFLOW_RELIABILITY_NAMESPACES
   } else {
-    process.env.JANGAR_AGENTS_CONTROLLER_NAMESPACES = originalEnv.JANGAR_AGENTS_CONTROLLER_NAMESPACES
+    process.env.JANGAR_WORKFLOW_RELIABILITY_NAMESPACES = originalEnv.JANGAR_WORKFLOW_RELIABILITY_NAMESPACES
   }
 })
 
 describe('namespace scope', () => {
   it('throws when wildcard namespaces are used without cluster RBAC', () => {
     delete process.env.JANGAR_RBAC_CLUSTER_SCOPED
-    expect(() => assertClusterScopedForWildcard(['*'], 'agents controller')).toThrow(
-      "[jangar] agents controller namespaces '*' require rbac.clusterScoped=true",
+    expect(() => assertClusterScopedForWildcard(['*'], 'workflow reliability status')).toThrow(
+      "[jangar] workflow reliability status namespaces '*' require JANGAR_RBAC_CLUSTER_SCOPED=true",
     )
   })
 
   it('allows wildcard namespaces when cluster RBAC is enabled', () => {
     process.env.JANGAR_RBAC_CLUSTER_SCOPED = 'true'
-    expect(() => assertClusterScopedForWildcard(['*'], 'agents controller')).not.toThrow()
+    expect(() => assertClusterScopedForWildcard(['*'], 'workflow reliability status')).not.toThrow()
   })
 
   it('allows non-wildcard namespaces without cluster RBAC', () => {
     delete process.env.JANGAR_RBAC_CLUSTER_SCOPED
-    expect(() => assertClusterScopedForWildcard(['agents'], 'agents controller')).not.toThrow()
+    expect(() => assertClusterScopedForWildcard(['agents'], 'workflow reliability status')).not.toThrow()
   })
 
   it('parses CSV namespaces', () => {
-    process.env.JANGAR_AGENTS_CONTROLLER_NAMESPACES = 'agents,agents-ci'
+    process.env.JANGAR_WORKFLOW_RELIABILITY_NAMESPACES = 'agents,agents-ci'
     expect(
-      parseNamespaceScopeEnv('JANGAR_AGENTS_CONTROLLER_NAMESPACES', {
+      parseNamespaceScopeEnv('JANGAR_WORKFLOW_RELIABILITY_NAMESPACES', {
         fallback: ['default'],
-        label: 'agents controller',
+        label: 'workflow reliability status',
       }),
     ).toEqual(['agents', 'agents-ci'])
   })
 
   it('parses JSON array namespaces', () => {
-    process.env.JANGAR_AGENTS_CONTROLLER_NAMESPACES = '["agents","agents-ci"]'
+    process.env.JANGAR_WORKFLOW_RELIABILITY_NAMESPACES = '["agents","agents-ci"]'
     expect(
-      parseNamespaceScopeEnv('JANGAR_AGENTS_CONTROLLER_NAMESPACES', {
+      parseNamespaceScopeEnv('JANGAR_WORKFLOW_RELIABILITY_NAMESPACES', {
         fallback: ['default'],
-        label: 'agents controller',
+        label: 'workflow reliability status',
       }),
     ).toEqual(['agents', 'agents-ci'])
   })
 
   it('rejects invalid JSON without falling back to CSV', () => {
-    process.env.JANGAR_AGENTS_CONTROLLER_NAMESPACES = '["agents",]'
+    process.env.JANGAR_WORKFLOW_RELIABILITY_NAMESPACES = '["agents",]'
     expect(() =>
-      parseNamespaceScopeEnv('JANGAR_AGENTS_CONTROLLER_NAMESPACES', {
+      parseNamespaceScopeEnv('JANGAR_WORKFLOW_RELIABILITY_NAMESPACES', {
         fallback: ['default'],
-        label: 'agents controller',
+        label: 'workflow reliability status',
       }),
-    ).toThrow(/invalid JANGAR_AGENTS_CONTROLLER_NAMESPACES JSON/i)
+    ).toThrow(/invalid JANGAR_WORKFLOW_RELIABILITY_NAMESPACES JSON/i)
   })
 
   it('rejects namespaces containing whitespace', () => {
-    process.env.JANGAR_AGENTS_CONTROLLER_NAMESPACES = 'agents,agents ci'
+    process.env.JANGAR_WORKFLOW_RELIABILITY_NAMESPACES = 'agents,agents ci'
     expect(() =>
-      parseNamespaceScopeEnv('JANGAR_AGENTS_CONTROLLER_NAMESPACES', {
+      parseNamespaceScopeEnv('JANGAR_WORKFLOW_RELIABILITY_NAMESPACES', {
         fallback: ['default'],
-        label: 'agents controller',
+        label: 'workflow reliability status',
       }),
     ).toThrow(/must not contain whitespace/i)
   })
 
   it('rejects invalid DNS label namespaces', () => {
-    process.env.JANGAR_AGENTS_CONTROLLER_NAMESPACES = 'Agents'
+    process.env.JANGAR_WORKFLOW_RELIABILITY_NAMESPACES = 'Agents'
     expect(() =>
-      parseNamespaceScopeEnv('JANGAR_AGENTS_CONTROLLER_NAMESPACES', {
+      parseNamespaceScopeEnv('JANGAR_WORKFLOW_RELIABILITY_NAMESPACES', {
         fallback: ['default'],
-        label: 'agents controller',
+        label: 'workflow reliability status',
       }),
     ).toThrow(/must be a valid DNS label/i)
   })
 
   it('rejects empty parsed list', () => {
-    process.env.JANGAR_AGENTS_CONTROLLER_NAMESPACES = ',,,'
+    process.env.JANGAR_WORKFLOW_RELIABILITY_NAMESPACES = ',,,'
     expect(() =>
-      parseNamespaceScopeEnv('JANGAR_AGENTS_CONTROLLER_NAMESPACES', {
+      parseNamespaceScopeEnv('JANGAR_WORKFLOW_RELIABILITY_NAMESPACES', {
         fallback: ['default'],
-        label: 'agents controller',
+        label: 'workflow reliability status',
       }),
     ).toThrow(/cannot be empty/i)
   })
 
   it('rejects empty env var value', () => {
-    process.env.JANGAR_AGENTS_CONTROLLER_NAMESPACES = '   '
+    process.env.JANGAR_WORKFLOW_RELIABILITY_NAMESPACES = '   '
     expect(() =>
-      parseNamespaceScopeEnv('JANGAR_AGENTS_CONTROLLER_NAMESPACES', {
+      parseNamespaceScopeEnv('JANGAR_WORKFLOW_RELIABILITY_NAMESPACES', {
         fallback: ['default'],
-        label: 'agents controller',
+        label: 'workflow reliability status',
       }),
     ).toThrow(/set but empty/i)
   })
 
   it('dedupes namespaces stably', () => {
-    process.env.JANGAR_AGENTS_CONTROLLER_NAMESPACES = 'agents,agents,agents-ci'
+    process.env.JANGAR_WORKFLOW_RELIABILITY_NAMESPACES = 'agents,agents,agents-ci'
     expect(
-      parseNamespaceScopeEnv('JANGAR_AGENTS_CONTROLLER_NAMESPACES', {
+      parseNamespaceScopeEnv('JANGAR_WORKFLOW_RELIABILITY_NAMESPACES', {
         fallback: ['default'],
-        label: 'agents controller',
+        label: 'workflow reliability status',
       }),
     ).toEqual(['agents', 'agents-ci'])
   })

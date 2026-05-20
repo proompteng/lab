@@ -2,6 +2,10 @@
 
 Status: Implemented (2026-02-05)
 
+2026-05-20 update: generic Codex NATS helpers are no longer Jangar-owned. `codex-nats-publish` and
+`codex-nats-soak` now live under `services/agents/scripts/codex/`; Jangar images may still copy those helpers into
+`/usr/local/bin` for transitional runtime admission compatibility, but source ownership belongs to Agents.
+
 ## Summary
 
 Moved the Codex Docker image assets (Dockerfile, runtime scripts, and build helper) out of `apps/froussard` and into
@@ -44,8 +48,8 @@ harder to evolve Jangar without touching unrelated webhook code and increases ri
   - `services/jangar/scripts/codex/codex-research.ts`
   - `services/jangar/scripts/codex/codex-graf.ts`
   - `services/jangar/scripts/codex/lib/**`
-  - `services/jangar/scripts/codex-nats-publish.ts`
-  - `services/jangar/scripts/codex-nats-soak.ts`
+  - `services/agents/scripts/codex/codex-nats-publish.ts`
+  - `services/agents/scripts/codex/codex-nats-soak.ts`
   - `services/jangar/scripts/discord-channel.ts`
 - Jangar service runtime still uses its own `services/jangar/scripts/agent-runner.ts` and
   `services/jangar/scripts/codex-implement.ts` for the control-plane container image.
@@ -77,8 +81,8 @@ primary Jangar app code.
 | `apps/froussard/src/codex/cli/*`                     | `services/jangar/scripts/codex/*`                     |
 | `apps/froussard/src/codex/cli/lib/*`                 | `services/jangar/scripts/codex/lib/*`                 |
 | `apps/froussard/src/codex/cli/__tests__/*`           | `services/jangar/scripts/codex/__tests__/*`           |
-| `apps/froussard/scripts/codex-nats-publish.ts`       | `services/jangar/scripts/codex-nats-publish.ts`       |
-| `apps/froussard/scripts/codex-nats-soak.ts`          | `services/jangar/scripts/codex-nats-soak.ts`          |
+| `apps/froussard/scripts/codex-nats-publish.ts`       | `services/agents/scripts/codex/codex-nats-publish.ts` |
+| `apps/froussard/scripts/codex-nats-soak.ts`          | `services/agents/scripts/codex/codex-nats-soak.ts`    |
 | `apps/froussard/scripts/discord-channel.ts`          | `services/jangar/scripts/discord-channel.ts`          |
 
 ### Consolidate duplicate scripts

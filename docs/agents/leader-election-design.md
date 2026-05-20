@@ -1,25 +1,24 @@
-# Leader Election Design (Jangar Controllers)
+# Leader Election Design (Agents Controllers)
 
-Status: Implemented (2026-02-08)
+Status: Current (2026-05-19)
 
 Docs index: [README](README.md)
 
 ## Purpose
 
-Define how Jangar controllers use Kubernetes leader election to support safe horizontal scaling, prevent double
+Define how Agents controllers use Kubernetes leader election to support safe horizontal scaling, prevent double
 reconciliation, and provide predictable failover behavior.
 
-## Implementation (As Of 2026-02-08)
+## Implementation
 
-- Code: Leader election runtime lives in `services/jangar/src/server/leader-election.ts`.
-- Code: Controllers are started/stopped based on leadership via `ensureAgentCommsRuntime` in
-  `services/jangar/src/server/agent-comms-runtime.ts`.
+- Code: Leader election runtime lives in `services/agents/src/server/leader-election.ts`.
+- Code: Controllers are started/stopped by `services/agents/src/server/controller-runtime.ts`.
 - Code: Lease CRUD is implemented via `kubectl get/create/replace lease` to remain Bun-compatible (avoids TLS issues
   with the Kubernetes client in some environments).
-- HTTP readiness: `/ready` exists and reports controller health, not leadership. See `services/jangar/src/routes/ready.tsx`.
+- HTTP readiness: `/ready` exists and reports controller health, not leadership. See `services/agents/src/routes/ready.tsx`.
 - HTTP readiness: `/ready` includes `leaderElection` status in the response body for debuggability.
-- Mutation gating: HTTP mutation routes can use `requireLeaderForMutationHttp()` from `services/jangar/src/server/leader-election.ts`.
-- Mutation gating: gRPC mutation methods are gated in `services/jangar/src/server/agentctl-grpc.ts`.
+- Mutation gating: HTTP mutation routes can use `requireLeaderForMutationHttp()` from `services/agents/src/server/leader-election.ts`.
+- Mutation gating: gRPC mutation methods are gated in `services/agents/src/server/agentctl-grpc.ts`.
 - Chart: Values are `controller.leaderElection.*` in `charts/agents/values.yaml` with schema in `charts/agents/values.schema.json`.
 - Chart: Env wiring is in `charts/agents/templates/deployment.yaml` and `charts/agents/templates/deployment-controllers.yaml`.
 - Chart: RBAC is in `charts/agents/templates/rbac.yaml` (Lease permissions in the namespace).
@@ -28,7 +27,7 @@ reconciliation, and provide predictable failover behavior.
 
 ## Goals
 
-- Ensure exactly one active reconciler across the controller loops in a given Jangar release at any time.
+- Ensure exactly one active reconciler across the controller loops in a given Agents release at any time.
 - Provide fast, deterministic failover on leader loss.
 - Keep webhook and gRPC mutation paths leader-gated to avoid duplicate writes.
 - Surface clear status and metrics around leadership changes.
@@ -41,7 +40,7 @@ reconciliation, and provide predictable failover behavior.
 
 ## Design Summary
 
-- Use a single Kubernetes Lease to elect one leader across all controller loops running in the Jangar controllers
+- Use a single Kubernetes Lease to elect one leader across all controller loops running in the Agents controllers
   process (the `Deployment/agents-controllers` workload).
 - Only the leader runs reconciliation loops and accepts mutating requests (webhooks, gRPC mutation endpoints).
 - Non-leaders stay alive, remain ready, and serve read-only endpoints. Mutation endpoints are rejected with retry
@@ -53,7 +52,7 @@ becomes the baseline and a sharding design should explicitly replace the "single
 ## Lease Details
 
 - Resource: `coordination.k8s.io/v1` Lease in the controller namespace.
-- Default lease name: `jangar-controller-leader`.
+- Default lease name: `agents-controller-leader`.
 - Namespace: release namespace (same as the deployment), configurable.
 - Owner identity: `<pod-name>_<uid>`.
 - Timing defaults:
@@ -68,7 +67,7 @@ Timing must satisfy `retryPeriod < renewDeadline < leaseDuration`.
 The lease name must be stable across rollouts (to prevent a "double leader" during an upgrade) and unique within the
 namespace (to prevent unrelated installs fighting over leadership). Recommended options:
 
-- Default: a fixed name like `jangar-controller-leader` when there is one `agents-controllers` deployment per namespace.
+- Default: a fixed name like `agents-controller-leader` when there is one `agents-controllers` deployment per namespace.
 - Alternative: include the Helm release name if multiple releases may share a namespace.
 
 ## Controller Gating
@@ -84,7 +83,7 @@ On leadership loss, stop watches and reconcile loops cleanly before returning no
 
 ### Implementation Sketch (Lease Acquire/Renew)
 
-Jangar controllers are implemented in TypeScript, so this is not using `controller-runtime`'s built-in leader election.
+Agents controllers are implemented in TypeScript, so this is not using `controller-runtime`'s built-in leader election.
 The intended behavior is still the Kubernetes standard:
 
 1. Try to read the Lease.
@@ -127,12 +126,12 @@ Add a `controller.leaderElection` section to `charts/agents/values.yaml`:
 
 Map values into env vars consumed by the controller runtime, for example:
 
-- `JANGAR_LEADER_ELECTION_ENABLED`
-- `JANGAR_LEADER_ELECTION_LEASE_NAME`
-- `JANGAR_LEADER_ELECTION_LEASE_NAMESPACE`
-- `JANGAR_LEADER_ELECTION_LEASE_DURATION_SECONDS`
-- `JANGAR_LEADER_ELECTION_RENEW_DEADLINE_SECONDS`
-- `JANGAR_LEADER_ELECTION_RETRY_PERIOD_SECONDS`
+- `AGENTS_LEADER_ELECTION_ENABLED`
+- `AGENTS_LEADER_ELECTION_LEASE_NAME`
+- `AGENTS_LEADER_ELECTION_LEASE_NAMESPACE`
+- `AGENTS_LEADER_ELECTION_LEASE_DURATION_SECONDS`
+- `AGENTS_LEADER_ELECTION_RENEW_DEADLINE_SECONDS`
+- `AGENTS_LEADER_ELECTION_RETRY_PERIOD_SECONDS`
 
 ### Defaults And Backwards Compatibility
 

@@ -10,9 +10,9 @@ The chart now treats gRPC for the control plane as chart-driven and deterministi
 
 - `grpc.enabled` controls control-plane gRPC service exposure and listener configuration.
 - When `grpc.manageEnvVar=true` (default), the chart owns these control-plane environment variables:
-  - `JANGAR_GRPC_ENABLED`
-  - `JANGAR_GRPC_HOST`
-  - `JANGAR_GRPC_PORT`
+  - `AGENTS_GRPC_ENABLED`
+  - `AGENTS_GRPC_HOST`
+  - `AGENTS_GRPC_PORT`
 - Controllers retain chart-managed defaults in `charts/agents/templates/deployment-controllers.yaml` unless
   they are explicitly overridden in `controllers.env.vars`.
 
@@ -26,17 +26,17 @@ The chart now treats gRPC for the control plane as chart-driven and deterministi
 
 - `grpc.enabled` is the source-of-truth for whether control-plane gRPC is enabled.
 - `grpc.manageEnvVar` (default `true`) controls whether the chart injects control-plane values for
-  `JANGAR_GRPC_ENABLED`, `JANGAR_GRPC_HOST`, and `JANGAR_GRPC_PORT`.
+  `AGENTS_GRPC_ENABLED`, `AGENTS_GRPC_HOST`, and `AGENTS_GRPC_PORT`.
 - `env.vars` and `controlPlane.env.vars` are control-plane override points when
   `grpc.manageEnvVar=true`; controller-side managed defaults are controlled by
   `controllers.env.vars` only.
 - `grpc.manageEnvVar=false` restores manual env-var ownership for control-plane gRPC keys.
-- Controllers are owned by `controllers.env.vars` for chart-managed `JANGAR_GRPC_*` defaults: if you set controller-side
+- Controllers are owned by `controllers.env.vars` for chart-managed `AGENTS_GRPC_*` defaults: if you set controller-side
   gRPC env vars there, those values become authoritative for controller behavior; otherwise defaults are deterministic:
-  - `JANGAR_GRPC_ENABLED=0`
-  - `JANGAR_GRPC_HOST=0.0.0.0`
-  - `JANGAR_GRPC_PORT=grpc.port`
-- In managed mode, structured `envFrom` entries that list managed `JANGAR_GRPC_*` keys are validated against these maps.
+  - `AGENTS_GRPC_ENABLED=0`
+  - `AGENTS_GRPC_HOST=0.0.0.0`
+  - `AGENTS_GRPC_PORT=grpc.port`
+- In managed mode, structured `envFrom` entries that list managed `AGENTS_GRPC_*` keys are validated against these maps.
   If a managed key is listed in envFrom, each consuming component map must pin a matching value only when you intentionally override chart defaults (or use manual mode).
 
 ## Migration guidance
@@ -50,16 +50,16 @@ The chart now treats gRPC for the control plane as chart-driven and deterministi
    ```
 
 2. Remove manual control-plane gRPC values once migrated:
-   - `env.vars.JANGAR_GRPC_ENABLED`
-   - `env.vars.JANGAR_GRPC_HOST` (if present)
-   - `env.vars.JANGAR_GRPC_PORT` (if present)
-   - `controlPlane.env.vars.JANGAR_GRPC_ENABLED`
-   - `controlPlane.env.vars.JANGAR_GRPC_HOST` (if present)
-   - `controlPlane.env.vars.JANGAR_GRPC_PORT` (if present)
+   - `env.vars.AGENTS_GRPC_ENABLED`
+   - `env.vars.AGENTS_GRPC_HOST` (if present)
+   - `env.vars.AGENTS_GRPC_PORT` (if present)
+   - `controlPlane.env.vars.AGENTS_GRPC_ENABLED`
+   - `controlPlane.env.vars.AGENTS_GRPC_HOST` (if present)
+   - `controlPlane.env.vars.AGENTS_GRPC_PORT` (if present)
 
 3. For controller-side gRPC migration:
-   - Keep `controllers.env.vars.JANGAR_GRPC_ENABLED` explicit only when non-zero behavior is intentional.
-   - Leave it unset for the default chart-managed `JANGAR_GRPC_ENABLED=0`.
+   - Keep `controllers.env.vars.AGENTS_GRPC_ENABLED` explicit only when non-zero behavior is intentional.
+   - Leave it unset for the default chart-managed `AGENTS_GRPC_ENABLED=0`.
    - If structured `envFrom` lists managed gRPC keys, set matching values in the component map first and remove those keys from envFrom unless intended.
 
 4. For control-plane exceptions, set `grpc.manageEnvVar: false` and continue managing
@@ -69,29 +69,29 @@ The chart now treats gRPC for the control plane as chart-driven and deterministi
 
 | Values                                    | Rendered object(s)                                                       | Effect                                                      |
 | ----------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------- |
-| `grpc.enabled=true`, `manageEnvVar=true`  | `Service/agents-grpc`, `containerPort: grpc`, `JANGAR_GRPC_ENABLED=true` | Server exposes and listens on gRPC port.                    |
-| `grpc.enabled=false`, `manageEnvVar=true` | no gRPC service/port, `JANGAR_GRPC_ENABLED=false`                        | Server does not expose/listen.                              |
-| `manageEnvVar=false`                      | no chart-managed control-plane `JANGAR_GRPC_*` env vars are injected     | Explicit control-plane env-var management must be complete. |
+| `grpc.enabled=true`, `manageEnvVar=true`  | `Service/agents-grpc`, `containerPort: grpc`, `AGENTS_GRPC_ENABLED=true` | Server exposes and listens on gRPC port.                    |
+| `grpc.enabled=false`, `manageEnvVar=true` | no gRPC service/port, `AGENTS_GRPC_ENABLED=false`                        | Server does not expose/listen.                              |
+| `manageEnvVar=false`                      | no chart-managed control-plane `AGENTS_GRPC_*` env vars are injected     | Explicit control-plane env-var management must be complete. |
 
 ## Validation
 
-- Helm validation fails when `grpc.manageEnvVar=true` and explicit control-plane `JANGAR_GRPC_*` values
+- Helm validation fails when `grpc.manageEnvVar=true` and explicit control-plane `AGENTS_GRPC_*` values
   disagree with managed values, including mismatched values across `env.vars` and `controlPlane.env.vars`.
-- Helm validation also fails when structured `envFrom` entries include managed `JANGAR_GRPC_*` keys that are not pinned to matching chart-managed values in the consuming component maps.
+- Helm validation also fails when structured `envFrom` entries include managed `AGENTS_GRPC_*` keys that are not pinned to matching chart-managed values in the consuming component maps.
 
 ```bash
 helm template charts/agents \
   --set grpc.enabled=true \
   --set grpc.manageEnvVar=true \
-  --set controlPlane.env.vars.JANGAR_GRPC_ENABLED=true
+  --set controlPlane.env.vars.AGENTS_GRPC_ENABLED=true
 ```
 
 Controller-side validation example:
 
 ```bash
 helm template charts/agents \
-  --set controllers.env.vars.JANGAR_GRPC_ENABLED=true \
-  --set controllers.env.vars.JANGAR_GRPC_HOST=127.0.0.1
+  --set controllers.env.vars.AGENTS_GRPC_ENABLED=true \
+  --set controllers.env.vars.AGENTS_GRPC_HOST=127.0.0.1
 ```
 
 ## Related checklist
@@ -103,4 +103,4 @@ helm template charts/agents \
 
 - Service and env-var drift: managed mode ensures `grpc.enabled` and control-plane gRPC env vars remain aligned.
 - Contradictory overrides: validation fails in chart render, preventing silent drift.
-- Runtime diagnostics: malformed `JANGAR_GRPC_*` env values degrade control-plane status and include explicit reason text, preventing hidden control-plane observability blind spots.
+- Runtime diagnostics: malformed `AGENTS_GRPC_*` env values degrade control-plane status and include explicit reason text, preventing hidden control-plane observability blind spots.

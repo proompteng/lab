@@ -3,7 +3,7 @@ import { sql } from 'kysely'
 import { getDb } from '~/server/db'
 import { getRegisteredMigrationNames } from '~/server/kysely-migrations'
 import { asString } from '~/server/primitives-http'
-import type { DatabaseMigrationConsistency } from '~/data/agents-control-plane'
+import type { DatabaseMigrationConsistency } from '~/server/control-plane-status-types'
 import type { DatabaseStatus } from './control-plane-status-types'
 
 const MIGRATION_TABLE_CANDIDATES = ['kysely_migration', 'kysely_migrations'] as const

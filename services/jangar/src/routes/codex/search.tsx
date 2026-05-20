@@ -445,8 +445,8 @@ function RunCard({ entry }: { entry: CodexRunHistoryEntry }) {
             {run.stage ? <StatusPill value={run.stage} tone="muted" /> : null}
           </div>
           <div className="text-xs text-muted-foreground">
-            Workflow <span className="text-foreground">{run.workflowName}</span>
-            {run.workflowNamespace ? <span className="text-muted-foreground"> / {run.workflowNamespace}</span> : null}
+            AgentRun <span className="text-foreground">{run.agentRunName}</span>
+            {run.agentRunNamespace ? <span className="text-muted-foreground"> / {run.agentRunNamespace}</span> : null}
           </div>
           <div className="text-xs text-muted-foreground">
             Branch <span className="text-foreground">{run.branch}</span>

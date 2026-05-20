@@ -1,3 +1,5 @@
+import type { AgentRunIngestionStatus } from '@proompteng/agent-contracts/control-plane-status'
+
 export type AgentRunIngestionHealth = {
   namespace: string
   lastWatchEventAt: string | null
@@ -18,6 +20,7 @@ export type AgentsControllerHealthState = {
   namespaces: string[] | null
   crdsReady: boolean | null
   missingCrds: string[]
+  forbiddenCrds?: string[]
   lastCheckedAt: string | null
   agentRunIngestion?: AgentRunIngestionHealth[]
 }
@@ -72,9 +75,9 @@ export const buildReadinessReasonCodes = (input: {
   agentsControllerHealthy: boolean
   memoryProviderReady?: boolean
   servingPassportReady?: boolean
-  agentsController: Pick<AgentsControllerHealthState, 'crdsReady' | 'missingCrds'>
-  orchestrationController: Pick<AgentsControllerHealthState, 'crdsReady' | 'missingCrds'>
-  supportingController: Pick<AgentsControllerHealthState, 'crdsReady' | 'missingCrds'>
+  agentsController: Pick<AgentsControllerHealthState, 'crdsReady' | 'missingCrds' | 'forbiddenCrds'>
+  orchestrationController: Pick<AgentsControllerHealthState, 'crdsReady' | 'missingCrds' | 'forbiddenCrds'>
+  supportingController: Pick<AgentsControllerHealthState, 'crdsReady' | 'missingCrds' | 'forbiddenCrds'>
 }) =>
   uniqueStrings([
     ...(input.controllersOk ? [] : ['controller_crd_check_failed']),
@@ -85,13 +88,62 @@ export const buildReadinessReasonCodes = (input: {
     ...(input.agentsController.crdsReady === false
       ? input.agentsController.missingCrds.map((name) => `missing_agents_controller_crd:${name}`)
       : []),
+    ...(input.agentsController.crdsReady === false
+      ? (input.agentsController.forbiddenCrds ?? []).map((name) => `forbidden_agents_controller_crd:${name}`)
+      : []),
     ...(input.orchestrationController.crdsReady === false
       ? input.orchestrationController.missingCrds.map((name) => `missing_orchestration_controller_crd:${name}`)
+      : []),
+    ...(input.orchestrationController.crdsReady === false
+      ? (input.orchestrationController.forbiddenCrds ?? []).map(
+          (name) => `forbidden_orchestration_controller_crd:${name}`,
+        )
       : []),
     ...(input.supportingController.crdsReady === false
       ? input.supportingController.missingCrds.map((name) => `missing_supporting_controller_crd:${name}`)
       : []),
+    ...(input.supportingController.crdsReady === false
+      ? (input.supportingController.forbiddenCrds ?? []).map((name) => `forbidden_supporting_controller_crd:${name}`)
+      : []),
   ])
+
+const buildStandbyAgentRunIngestionStatus = (
+  namespace: string,
+  health: AgentsControllerHealthState,
+): AgentRunIngestionStatus => {
+  const entry = health.agentRunIngestion?.find((item) => item.namespace === namespace)
+  return {
+    namespace,
+    status: 'unknown',
+    message: 'AgentRun ingestion is owned by the active controller leader',
+    last_watch_event_at: entry?.lastWatchEventAt ?? null,
+    last_resync_at: entry?.lastResyncAt ?? null,
+    untouched_run_count: entry?.untouchedRunCount ?? 0,
+    oldest_untouched_age_seconds: entry?.oldestUntouchedAgeSeconds ?? null,
+  }
+}
+
+const toAgentRunIngestionStatus = (assessment: AgentRunIngestionAssessment): AgentRunIngestionStatus => ({
+  namespace: assessment.namespace,
+  status: assessment.status,
+  message: assessment.message,
+  last_watch_event_at: assessment.lastWatchEventAt,
+  last_resync_at: assessment.lastResyncAt,
+  untouched_run_count: assessment.untouchedRunCount,
+  oldest_untouched_age_seconds: assessment.oldestUntouchedAgeSeconds,
+})
+
+export const buildAgentRunIngestionStatuses = (input: {
+  namespaces: string[]
+  agentsController: AgentsControllerHealthState
+  activeControllerReplica: boolean
+  assessAgentRunIngestion: AgentsReadyResponseInput['assessAgentRunIngestion']
+}): AgentRunIngestionStatus[] =>
+  input.namespaces.map((namespace) =>
+    input.activeControllerReplica
+      ? toAgentRunIngestionStatus(input.assessAgentRunIngestion(namespace, input.agentsController))
+      : buildStandbyAgentRunIngestionStatus(namespace, input.agentsController),
+  )
 
 export const buildAgentsRuntimeReadyResponse = (input: AgentsReadyResponseInput) => {
   const namespaces = input.agentsController.namespaces?.length ? input.agentsController.namespaces : ['agents']
@@ -104,6 +156,12 @@ export const buildAgentsRuntimeReadyResponse = (input: AgentsReadyResponseInput)
   const agentsControllerHealthy = activeControllerReplica
     ? isAgentRunIngestionReady(input.agentsController, input.assessAgentRunIngestion)
     : leaderElectionReady
+  const agentRunIngestion = buildAgentRunIngestionStatuses({
+    namespaces,
+    agentsController: input.agentsController,
+    activeControllerReplica,
+    assessAgentRunIngestion: input.assessAgentRunIngestion,
+  })
   const httpReady = controllersOk && leaderElectionReady
   const status = httpReady && agentsControllerHealthy ? 'ok' : 'degraded'
   const reasonCodes = buildReadinessReasonCodes({
@@ -122,6 +180,7 @@ export const buildAgentsRuntimeReadyResponse = (input: AgentsReadyResponseInput)
     httpReady,
     reason_codes: reasonCodes,
     namespaces,
+    agentrun_ingestion: agentRunIngestion,
     leaderElection: input.leaderElection,
     agentsController: input.agentsController,
     orchestrationController: input.orchestrationController,

@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { KubernetesClient } from '~/server/primitives-kube'
 import {
   extractRuntimeServiceAccount,
   validateApprovalPolicies,
@@ -8,64 +7,58 @@ import {
   validateSecretBinding,
 } from '~/server/primitives-policy'
 
-const createKubeMock = (resources: Record<string, Record<string, unknown> | null>): KubernetesClient => ({
-  apply: vi.fn(async (resource) => resource),
-  applyManifest: vi.fn(async () => ({})),
-  applyStatus: vi.fn(async (resource) => resource),
-  createManifest: vi.fn(async () => ({})),
-  delete: vi.fn(async () => ({})),
-  patch: vi.fn(async (_resource, _name, _namespace, patch) => patch as Record<string, unknown>),
-  get: vi.fn(async (resource, name, namespace) => resources[`${resource}:${namespace}:${name}`] ?? null),
-  list: vi.fn(async () => ({ items: [] })),
-  logs: vi.fn(async () => ''),
-  listEvents: vi.fn(async () => ({ items: [] })),
-})
+const createResourceGetter = (resources: Record<string, Record<string, unknown> | null>) =>
+  vi.fn(async (kind: string, name: string, namespace: string) => resources[`${kind}:${namespace}:${name}`] ?? null)
 
 describe('primitives policy', () => {
   it('rejects missing budget', async () => {
-    const kube = createKubeMock({})
-    await expect(validateBudget('jangar', 'missing-budget', kube)).rejects.toThrow('budget not found')
+    const getResource = createResourceGetter({})
+    await expect(validateBudget('jangar', 'missing-budget', getResource)).rejects.toThrow('budget not found')
+    expect(getResource).toHaveBeenCalledWith('Budget', 'missing-budget', 'jangar')
   })
 
   it('rejects missing approval policy', async () => {
-    const kube = createKubeMock({})
-    await expect(validateApprovalPolicies('jangar', ['missing-policy'], kube)).rejects.toThrow(
+    const getResource = createResourceGetter({})
+    await expect(validateApprovalPolicies('jangar', ['missing-policy'], getResource)).rejects.toThrow(
       'approval policies not found',
     )
+    expect(getResource).toHaveBeenCalledWith('ApprovalPolicy', 'missing-policy', 'jangar')
   })
 
   it('rejects denied approval policy', async () => {
-    const kube = createKubeMock({
-      'approvalpolicies.approvals.proompteng.ai:jangar:policy-1': { status: { phase: 'Denied' } },
+    const getResource = createResourceGetter({
+      'ApprovalPolicy:jangar:policy-1': { status: { phase: 'Denied' } },
     })
-    await expect(validateApprovalPolicies('jangar', ['policy-1'], kube)).rejects.toThrow('approval policy policy-1 is')
+    await expect(validateApprovalPolicies('jangar', ['policy-1'], getResource)).rejects.toThrow(
+      'approval policy policy-1 is',
+    )
   })
 
   it('accepts ready approval policy', async () => {
-    const kube = createKubeMock({
-      'approvalpolicies.approvals.proompteng.ai:jangar:policy-2': { status: { phase: 'Approved' } },
+    const getResource = createResourceGetter({
+      'ApprovalPolicy:jangar:policy-2': { status: { phase: 'Approved' } },
     })
-    await expect(validateApprovalPolicies('jangar', ['policy-2'], kube)).resolves.toBeUndefined()
+    await expect(validateApprovalPolicies('jangar', ['policy-2'], getResource)).resolves.toBeUndefined()
   })
 
   it('rejects exceeded budget usage', async () => {
-    const kube = createKubeMock({
-      'budgets.budgets.proompteng.ai:jangar:budget-1': {
+    const getResource = createResourceGetter({
+      'Budget:jangar:budget-1': {
         spec: { limits: { tokens: 1000, dollars: 50 } },
         status: { used: { tokens: 1200, dollars: 60 } },
       },
     })
-    await expect(validateBudget('jangar', 'budget-1', kube)).rejects.toThrow('budget budget-1 tokens exceeded')
+    await expect(validateBudget('jangar', 'budget-1', getResource)).rejects.toThrow('budget budget-1 tokens exceeded')
   })
 
   it('accepts budget within limits', async () => {
-    const kube = createKubeMock({
-      'budgets.budgets.proompteng.ai:jangar:budget-2': {
+    const getResource = createResourceGetter({
+      'Budget:jangar:budget-2': {
         spec: { limits: { tokens: 1000, dollars: 50 } },
         status: { used: { tokens: 800, dollars: 40 } },
       },
     })
-    await expect(validateBudget('jangar', 'budget-2', kube)).resolves.toBeUndefined()
+    await expect(validateBudget('jangar', 'budget-2', getResource)).resolves.toBeUndefined()
   })
 
   it('validates secret binding subjects and secrets', async () => {
@@ -75,8 +68,8 @@ describe('primitives policy', () => {
         subjects: [{ kind: 'Agent', name: 'codex-implementation', namespace: 'jangar' }],
       },
     }
-    const kube = createKubeMock({
-      'secretbindings.security.proompteng.ai:jangar:binding-1': binding,
+    const getResource = createResourceGetter({
+      'SecretBinding:jangar:binding-1': binding,
     })
 
     await expect(
@@ -85,7 +78,7 @@ describe('primitives policy', () => {
         'binding-1',
         { kind: 'Agent', name: 'codex-implementation', namespace: 'jangar' },
         ['alpha'],
-        kube,
+        getResource,
       ),
     ).resolves.toBeUndefined()
 
@@ -95,7 +88,7 @@ describe('primitives policy', () => {
         'binding-1',
         { kind: 'Agent', name: 'codex-implementation', namespace: 'jangar' },
         ['gamma'],
-        kube,
+        getResource,
       ),
     ).rejects.toThrow('missing secrets')
   })

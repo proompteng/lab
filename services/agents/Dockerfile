@@ -110,6 +110,11 @@ WORKDIR /app
 COPY full/packages/codex ./packages/codex
 RUN bun --cwd=packages/codex run build
 
+FROM agents-workspace-deps AS agent-contracts-build
+WORKDIR /app
+COPY full/packages/agent-contracts ./packages/agent-contracts
+RUN bun --cwd=packages/agent-contracts run build
+
 FROM agents-workspace-deps AS otel-build
 WORKDIR /app
 COPY full/packages/otel ./packages/otel
@@ -131,6 +136,7 @@ FROM agents-workspace-deps AS agents-build
 WORKDIR /app
 RUN rm -rf /app/packages /app/services
 COPY full/ .
+COPY --from=agent-contracts-build /app/packages/agent-contracts/dist /app/packages/agent-contracts/dist
 COPY --from=codex-build /app/packages/codex/dist /app/packages/codex/dist
 COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
 COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/dist /app/packages/temporal-bun-sdk/dist
@@ -160,6 +166,8 @@ COPY --from=agents-tools /usr/local/bin/nats /usr/local/bin/nats
 WORKDIR /app
 COPY --from=codex-build /app/packages/codex/package.json /app/packages/codex/package.json
 COPY --from=codex-build /app/packages/codex/dist /app/packages/codex/dist
+COPY --from=agent-contracts-build /app/packages/agent-contracts/package.json /app/packages/agent-contracts/package.json
+COPY --from=agent-contracts-build /app/packages/agent-contracts/dist /app/packages/agent-contracts/dist
 COPY --from=otel-build /app/packages/otel/package.json /app/packages/otel/package.json
 COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
 COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/package.json /app/packages/temporal-bun-sdk/package.json
@@ -170,13 +178,18 @@ RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-r
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-start.js /usr/local/bin/cx-workflow-start \
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-cancel.js /usr/local/bin/cx-workflow-cancel \
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-query.js /usr/local/bin/cx-workflow-query \
-  && ln -sf /app/packages/cx-tools/dist/cx-workflow-signal.js /usr/local/bin/cx-workflow-signal
+  && ln -sf /app/packages/cx-tools/dist/cx-workflow-signal.js /usr/local/bin/cx-workflow-signal \
+  && ln -sf /app/packages/cx-tools/dist/codex-nats-publish.js /usr/local/bin/codex-nats-publish \
+  && ln -sf /app/packages/cx-tools/dist/codex-nats-soak.js /usr/local/bin/codex-nats-soak \
+  && chmod +x /app/packages/cx-tools/dist/*.js
 
 COPY --from=agents-deps-prod /app/node_modules ./node_modules
 WORKDIR /app/services/agents
 COPY --from=agents-build /app/services/agents/package.json ./package.json
 COPY --from=agents-build /app/services/agents/src ./src
 COPY --from=agents-build /app/services/agents/scripts ./scripts
+
+RUN bun -e "for (const specifier of ['@proompteng/agent-contracts/policy-validation','@proompteng/agent-contracts/controller-witness','@proompteng/agent-contracts/swarm-material-reentry']) await import(specifier)"
 
 ENV AGENTS_AGENTS_CONTROLLER_ENABLED=0 \
   AGENTS_ORCHESTRATION_CONTROLLER_ENABLED=0 \
@@ -201,6 +214,8 @@ COPY --from=agents-tools /usr/local/bin/nats /usr/local/bin/nats
 WORKDIR /app
 COPY --from=codex-build /app/packages/codex/package.json /app/packages/codex/package.json
 COPY --from=codex-build /app/packages/codex/dist /app/packages/codex/dist
+COPY --from=agent-contracts-build /app/packages/agent-contracts/package.json /app/packages/agent-contracts/package.json
+COPY --from=agent-contracts-build /app/packages/agent-contracts/dist /app/packages/agent-contracts/dist
 COPY --from=otel-build /app/packages/otel/package.json /app/packages/otel/package.json
 COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
 COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/package.json /app/packages/temporal-bun-sdk/package.json
@@ -211,13 +226,18 @@ RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-r
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-start.js /usr/local/bin/cx-workflow-start \
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-cancel.js /usr/local/bin/cx-workflow-cancel \
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-query.js /usr/local/bin/cx-workflow-query \
-  && ln -sf /app/packages/cx-tools/dist/cx-workflow-signal.js /usr/local/bin/cx-workflow-signal
+  && ln -sf /app/packages/cx-tools/dist/cx-workflow-signal.js /usr/local/bin/cx-workflow-signal \
+  && ln -sf /app/packages/cx-tools/dist/codex-nats-publish.js /usr/local/bin/codex-nats-publish \
+  && ln -sf /app/packages/cx-tools/dist/codex-nats-soak.js /usr/local/bin/codex-nats-soak \
+  && chmod +x /app/packages/cx-tools/dist/*.js
 
 COPY --from=agents-deps-prod /app/node_modules ./node_modules
 WORKDIR /app/services/agents
 COPY --from=agents-build /app/services/agents/package.json ./package.json
 COPY --from=agents-build /app/services/agents/src ./src
 COPY --from=agents-build /app/services/agents/scripts ./scripts
+
+RUN bun -e "for (const specifier of ['@proompteng/agent-contracts/policy-validation','@proompteng/agent-contracts/controller-witness','@proompteng/agent-contracts/swarm-material-reentry']) await import(specifier)"
 
 ENV AGENTS_SERVER_PROFILE=agents-controllers \
   AGENTS_CONTROL_PLANE_CACHE_ENABLED=0 \

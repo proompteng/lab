@@ -1,10 +1,10 @@
-# Codex Docker Sidecar Runbook
+# Retired Codex Docker Sidecar Runbook
 
 ## Overview
 
-- Codex workflow pods now ship with a rootless Docker sidecar (`docker:25.0-dind-rootless`) exposing `tcp://localhost:2375` with TLS disabled.
-- The sidecar owns `/var/lib/docker` on an `emptyDir` volume; the main Codex container mounts it read-only to reuse layers without permitting mutation.
-- `DOCKER_HOST=tcp://localhost:2375` is baked into the Codex image; `DOCKER_TLS_VERIFY` should be unset for the in-pod daemon (bootstrap treats `0`/`false` as unset). `DOCKER_ENABLED=1` is set by the docker-enabled WorkflowTemplates so bootstrap waits for the sidecar. Image default for `DOCKER_ENABLED` remains `0` to avoid blocking workflows without a daemon.
+This runbook documents the retired Argo Codex workflow Docker sidecar. The generic Agents runtime no longer
+ships this sidecar or its old privileged policy from shared `argo-workflows` GitOps. Keep this document only
+for investigating historical workflow pods or archived incidents.
 
 ## Validate the daemon
 
@@ -43,7 +43,8 @@
 ## Safety notes
 
 - Port 2375 is plaintext inside the pod network; do not publish it outside the pod. Keep network policies scoped to the workflow namespace.
-- Sidecar runs `privileged` but rootless daemon; RBAC binding `codex-docker-privileged` scopes usage to the Codex workflow service account.
+- The retired sidecar ran privileged but used a rootless daemon. Current Agents runner images must not depend on
+  this shared Argo workflow policy.
 - If Pod Security Admission rejects the pod, confirm the namespace allows privileged pods for this service account before retrying.
 
 ## Rollout checklist (staging first)

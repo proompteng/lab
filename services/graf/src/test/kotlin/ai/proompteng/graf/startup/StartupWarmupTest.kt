@@ -22,7 +22,7 @@ class StartupWarmupTest {
   private val minioConfig =
     MinioConfig(
       endpoint = "http://localhost:9000",
-      bucket = "argo-workflows",
+      bucket = "agents-artifacts",
       accessKey = "key",
       secretKey = "secret",
       secure = false,

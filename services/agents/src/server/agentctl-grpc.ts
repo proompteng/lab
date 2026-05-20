@@ -10,7 +10,7 @@ import { KubeConfig, Log } from '@kubernetes/client-node'
 
 import { postAgentRunsHandler } from '../routes/v1/agent-runs'
 import { resolveAgentctlGrpcConfig } from './agentctl-grpc-config'
-import { buildAgentsControlPlaneStatus } from './control-plane-status'
+import { getAgentsControlPlaneStatus } from './control-plane-status'
 import { type GrpcStatus as ControlPlaneGrpcStatus } from './control-plane-grpc'
 import { startResourceWatch } from './kube-watch'
 import { getLeaderElectionStatus } from './leader-election'
@@ -1139,7 +1139,7 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
           status: 'healthy',
           message: '',
         }
-        const status = buildAgentsControlPlaneStatus({
+        const status = await getAgentsControlPlaneStatus({
           namespace,
           service: SERVICE_NAME,
           grpc: grpcStatus,

@@ -1,7 +1,6 @@
 import { validateAtlasRuntimeConfig } from './atlas-config'
 import { resolveChatConfig, validateChatConfig } from './chat-config'
 import { validateControlPlaneConfig } from './control-plane-config'
-import { validateControllerRuntimeConfig } from './controller-runtime-config'
 import { validateGithubReviewConfig } from './github-review-config'
 import { validateIntegrationsConfig } from './integrations-config'
 import { validateMemoryConfig } from './memory-config'
@@ -23,7 +22,6 @@ export const validateRuntimeProfileConfiguration = (
 ) => {
   const chatConfig = resolveChatConfig(env)
   resolveMetricsConfig(env)
-  validateControllerRuntimeConfig(env)
   validateControlPlaneConfig(env)
   validateIntegrationsConfig(env)
   validateTorghutConfig(env)

@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { requireLeaderForMutationHttp } from '~/server/leader-election'
 
 import { cancelTorghutSimulationRun, syncTorghutSimulationRun } from '~/server/torghut-simulation-control-plane'
+import { requireTorghutSimulationMutationHttp } from '~/server/torghut-simulation-mutation-gate'
 
 export const Route = createFileRoute('/api/torghut/simulation/runs/$id')({
   server: {
@@ -32,8 +32,8 @@ export const getSimulationRunHandler = async (id: string) => {
 }
 
 export const cancelSimulationRunHandler = async (id: string) => {
-  const leaderResponse = requireLeaderForMutationHttp()
-  if (leaderResponse) return leaderResponse
+  const mutationGateResponse = requireTorghutSimulationMutationHttp()
+  if (mutationGateResponse) return mutationGateResponse
   const run = await cancelTorghutSimulationRun(id)
   if (!run) {
     return jsonResponse({ ok: false, message: 'simulation run not found' }, 404)

@@ -8,7 +8,7 @@ import type {
   SourceServingContractVerdictExchange,
   StageCreditLedger,
   WorkflowsReliabilityStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import {
   buildRolloutProofPassport,
   buildRunnerCapacityFutures,

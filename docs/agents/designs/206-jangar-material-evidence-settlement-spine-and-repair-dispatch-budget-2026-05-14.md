@@ -409,7 +409,7 @@ Next implementation milestone:
   that distinguishes transport gaps from business repair-only truth.
 - Files likely changed: `services/jangar/src/server/control-plane-material-evidence-settlement.ts`,
   `services/jangar/src/server/control-plane-status.ts`, `services/jangar/src/routes/ready.tsx`,
-  `services/jangar/src/data/agents-control-plane.ts`, and focused tests under `services/jangar/src/server/__tests__`.
+  `services/jangar/src/server/control-plane-status-types.ts`, and focused tests under `services/jangar/src/server/__tests__`.
 - Production gate: one selected repair budget or a typed hold; never broad dispatch from partial Torghut evidence.
 - Required evidence: local tests above plus live `/ready` and full-status settlement payload after deployment.
 

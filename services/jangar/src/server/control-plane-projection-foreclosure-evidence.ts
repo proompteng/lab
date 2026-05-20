@@ -2,22 +2,16 @@ import type {
   SourceRolloutTruthExchange,
   StageClearancePacket,
   TorghutConsumerEvidenceStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
+import {
+  fetchAgentRunProjectionAuthorityFromAgentsService,
+  type AgentsAgentRunProjectionAuthorityClaim,
+} from '@proompteng/agent-contracts/agent-run-projection-authority-client'
 import { getDb } from '~/server/db'
-import type { KubeGateway, KubeGatewayAgentRun, KubeGatewayJob } from '~/server/kube-gateway'
 
 export type JsonRecord = Record<string, unknown>
 
-export type ProjectionForeclosureAgentRunProjection = {
-  id: string
-  agent_name: string
-  delivery_id: string
-  status: string
-  external_run_id: string | null
-  payload: JsonRecord
-  created_at: string | null
-  updated_at: string | null
-}
+export type ProjectionForeclosureAgentRunProjection = AgentsAgentRunProjectionAuthorityClaim
 
 export type ProjectionForeclosureMarketContextProjection = {
   request_id: string
@@ -35,8 +29,6 @@ export type ProjectionForeclosureMarketContextProjection = {
 export type ProjectionForeclosureEvidence = {
   agentRunProjections: ProjectionForeclosureAgentRunProjection[]
   marketContextProjections: ProjectionForeclosureMarketContextProjection[]
-  liveAgentRuns: KubeGatewayAgentRun[]
-  liveJobs: KubeGatewayJob[]
   collectionErrors: string[]
 }
 
@@ -50,7 +42,7 @@ export type ProjectionForeclosureNotaryInput = ProjectionForeclosureEvidence & {
   torghutConsumerEvidence: TorghutConsumerEvidenceStatus
 }
 
-export const ACTIVE_PROJECTION_STATUSES = new Set([
+export const MARKET_CONTEXT_ACTIVE_PROJECTION_STATUSES = new Set([
   'pending',
   'queued',
   'started',
@@ -61,19 +53,17 @@ export const ACTIVE_PROJECTION_STATUSES = new Set([
   'progressing',
 ])
 
-const ACTIVE_PROJECTION_STATUS_QUERY_VALUES = [
-  ...ACTIVE_PROJECTION_STATUSES,
-  ...[...ACTIVE_PROJECTION_STATUSES].map((status) =>
+const MARKET_CONTEXT_ACTIVE_PROJECTION_STATUS_QUERY_VALUES = [
+  ...MARKET_CONTEXT_ACTIVE_PROJECTION_STATUSES,
+  ...[...MARKET_CONTEXT_ACTIVE_PROJECTION_STATUSES].map((status) =>
     status.replace(/(^|_)([a-z])/g, (_, prefix, char: string) => `${prefix}${char.toUpperCase()}`),
   ),
-  ...[...ACTIVE_PROJECTION_STATUSES].map((status) => status.toUpperCase()),
+  ...[...MARKET_CONTEXT_ACTIVE_PROJECTION_STATUSES].map((status) => status.toUpperCase()),
 ]
 
 export const emptyProjectionForeclosureEvidence = (): ProjectionForeclosureEvidence => ({
   agentRunProjections: [],
   marketContextProjections: [],
-  liveAgentRuns: [],
-  liveJobs: [],
   collectionErrors: [],
 })
 
@@ -87,38 +77,23 @@ export const isProjectionForeclosureConsumptionEnabled = (env: NodeJS.ProcessEnv
   return normalized === '1' || normalized === 'true' || normalized === 'on' || normalized === 'yes'
 }
 
-export const collectProjectionForeclosureEvidence = async (input: {
-  namespace: string
-  kube: KubeGateway
-}): Promise<ProjectionForeclosureEvidence> => {
+export const collectProjectionForeclosureEvidence = async (): Promise<ProjectionForeclosureEvidence> => {
   const evidence = emptyProjectionForeclosureEvidence()
   const db = getDb()
 
-  if (db) {
-    try {
-      const rows = await db
-        .selectFrom('agent_runs')
-        .select(['id', 'agent_name', 'delivery_id', 'status', 'external_run_id', 'payload', 'created_at', 'updated_at'])
-        .where('status', 'in', ACTIVE_PROJECTION_STATUS_QUERY_VALUES)
-        .orderBy('updated_at', 'desc')
-        .limit(100)
-        .execute()
-      evidence.agentRunProjections = rows
-        .filter((row) => ACTIVE_PROJECTION_STATUSES.has(normalizeStatus(row.status)))
-        .map((row) => ({
-          id: String(row.id),
-          agent_name: row.agent_name,
-          delivery_id: row.delivery_id,
-          status: row.status,
-          external_run_id: row.external_run_id,
-          payload: asRecord(row.payload),
-          created_at: toIso(row.created_at),
-          updated_at: toIso(row.updated_at),
-        }))
-    } catch (error) {
-      evidence.collectionErrors.push(`agent_runs projection collection failed: ${normalizeMessage(error)}`)
-    }
+  const agentRunResult = await fetchAgentRunProjectionAuthorityFromAgentsService({
+    limit: 100,
+    includeTerminalAudit: true,
+  })
+  if (agentRunResult.ok) {
+    evidence.agentRunProjections = agentRunResult.body.claims
+  } else {
+    evidence.collectionErrors.push(
+      `Agents service agent_run projection authority collection failed: ${agentRunResult.error ?? `HTTP ${agentRunResult.status}`}`,
+    )
+  }
 
+  if (db) {
     try {
       const rows = await db
         .selectFrom('torghut_market_context_runs')
@@ -134,12 +109,12 @@ export const collectProjectionForeclosureEvidence = async (input: {
           'created_at',
           'updated_at',
         ])
-        .where('status', 'in', ACTIVE_PROJECTION_STATUS_QUERY_VALUES)
+        .where('status', 'in', MARKET_CONTEXT_ACTIVE_PROJECTION_STATUS_QUERY_VALUES)
         .orderBy('updated_at', 'desc')
         .limit(100)
         .execute()
       evidence.marketContextProjections = rows
-        .filter((row) => ACTIVE_PROJECTION_STATUSES.has(normalizeStatus(row.status)))
+        .filter((row) => MARKET_CONTEXT_ACTIVE_PROJECTION_STATUSES.has(normalizeStatus(row.status)))
         .map((row) => ({
           request_id: row.request_id,
           symbol: row.symbol,
@@ -159,26 +134,7 @@ export const collectProjectionForeclosureEvidence = async (input: {
     }
   }
 
-  const [liveAgentRuns, liveJobs] = await Promise.all([
-    collectItems(() => input.kube.listAgentRuns(input.namespace), 'AgentRun live authority'),
-    collectItems(() => input.kube.listJobs(input.namespace), 'Job live authority'),
-  ])
-
-  evidence.liveAgentRuns = liveAgentRuns.items
-  evidence.liveJobs = liveJobs.items
-  evidence.collectionErrors.push(
-    ...[liveAgentRuns.error, liveJobs.error].filter((error): error is string => Boolean(error)),
-  )
-
   return evidence
-}
-
-const collectItems = async <T>(run: () => Promise<T[]>, label: string) => {
-  try {
-    return { items: await run(), error: null as string | null }
-  } catch (error) {
-    return { items: [] as T[], error: `${label} collection failed: ${normalizeMessage(error)}` }
-  }
 }
 
 const normalizeMessage = (value: unknown) => (value instanceof Error ? value.message : String(value))
@@ -188,9 +144,6 @@ const normalizeStatus = (value: string | null | undefined) =>
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9_.:-]+/g, '_')
-
-const asRecord = (value: unknown): JsonRecord =>
-  value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonRecord) : {}
 
 const toIso = (value: unknown): string | null => {
   if (!value) return null

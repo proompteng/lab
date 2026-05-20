@@ -243,9 +243,9 @@ export const up = async (db: Kysely<Database>) => {
       issue_number BIGINT NOT NULL,
       branch TEXT NOT NULL,
       attempt INT NOT NULL,
-      workflow_name TEXT NOT NULL,
-      workflow_uid TEXT,
-      workflow_namespace TEXT,
+      agent_run_name TEXT NOT NULL,
+      agent_run_uid TEXT,
+      agent_run_namespace TEXT,
       stage TEXT,
       status TEXT NOT NULL,
       phase TEXT,
@@ -317,14 +317,14 @@ export const up = async (db: Kysely<Database>) => {
   `.execute(db)
 
   await sql`
-    CREATE UNIQUE INDEX IF NOT EXISTS codex_judge_runs_workflow_uid_idx
-    ON ${sql.ref('codex_judge.runs')} (workflow_uid)
-    WHERE workflow_uid IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS codex_judge_runs_agent_run_uid_idx
+    ON ${sql.ref('codex_judge.runs')} (agent_run_uid)
+    WHERE agent_run_uid IS NOT NULL;
   `.execute(db)
 
   await sql`
-    CREATE UNIQUE INDEX IF NOT EXISTS codex_judge_runs_workflow_name_idx
-    ON ${sql.ref('codex_judge.runs')} (workflow_name, workflow_namespace);
+    CREATE UNIQUE INDEX IF NOT EXISTS codex_judge_runs_agent_run_name_idx
+    ON ${sql.ref('codex_judge.runs')} (agent_run_name, agent_run_namespace);
   `.execute(db)
 
   await sql`

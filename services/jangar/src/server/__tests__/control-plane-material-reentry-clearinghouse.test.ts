@@ -11,7 +11,7 @@ import type {
   TorghutAlphaRepairClosureBoardRef,
   TorghutConsumerEvidenceStatus,
   TorghutExecutableAlphaRepairReceipt,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import {
   buildMaterialReentryClearinghouse,
   MATERIAL_REENTRY_CLEARINGHOUSE_DESIGN_ARTIFACT,
@@ -651,7 +651,7 @@ describe('control-plane material reentry clearinghouse', () => {
       target_swarm: 'torghut-quant',
       target_stage: 'implement',
       target_role: 'engineer',
-      channel: 'workflow.general.requirement',
+      channel: 'agentrun.general.requirement',
       priority: 'critical',
       payload: expect.objectContaining({
         business_metric: 'routeable_candidate_count',
@@ -786,7 +786,7 @@ describe('control-plane material reentry clearinghouse', () => {
       target_swarm: 'torghut-quant',
       target_stage: 'implement',
       target_role: 'engineer',
-      channel: 'workflow.general.requirement',
+      channel: 'agentrun.general.requirement',
       priority: 'critical',
       payload: expect.objectContaining({
         business_metric: 'routeable_candidate_count',

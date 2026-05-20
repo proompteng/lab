@@ -90,6 +90,12 @@ describe('classifyAgentsImageMode', () => {
     expect(result.matchedPaths).toEqual(['packages/temporal-bun-sdk/src/index.ts'])
   })
 
+  it('builds a local image for Agents public contract changes', () => {
+    const result = classifyAgentsImageMode(['packages/agent-contracts/src/control-plane-status.ts'])
+    expect(result.mode).toBe('build-local-image')
+    expect(result.matchedPaths).toEqual(['packages/agent-contracts/src/control-plane-status.ts'])
+  })
+
   it('reuses the published image for documentation-only changes under local image prefixes', () => {
     expect(
       classifyAgentsImageMode([
@@ -137,15 +143,19 @@ describe('agents-ci workflow local Agents image build', () => {
     expect(workflow).toContain('--values-path argocd/applications/agents/values.yaml')
     expect(workflow).toContain('AGENTS_CONTROL_PLANE_IMAGE_REPOSITORY')
     expect(workflow).toContain('AGENTS_CONTROLLER_IMAGE_REPOSITORY')
+    expect(workflow).toContain('AGENTS_RUNNER_IMAGE_REPOSITORY')
     expect(workflow).not.toContain('resolve-published-jangar-image.ts')
     expect(workflow).not.toContain('jangar-release-contract')
   })
 
-  it('keeps Agents CI detached from Jangar source and package paths', () => {
+  it('keeps Agents CI detached from Jangar service and GitOps paths', () => {
     const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
 
     expect(workflow).not.toContain('services/jangar/**')
+    expect(workflow).not.toContain('argocd/applications/jangar/**')
+    expect(workflow).not.toContain('docs/jangar/application-architecture.md')
     expect(workflow).not.toContain('packages/scripts/src/jangar/**')
+    expect(workflow).not.toContain('packages/scripts/src/jangar/verify-deployment.ts')
     expect(workflow).not.toContain('--filter @proompteng/jangar')
     expect(workflow).not.toContain('packages/scripts/src/jangar/__tests__/release-contract.test.ts')
   })
@@ -166,11 +176,35 @@ describe('agents-ci workflow local Agents image build', () => {
     const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
 
     expect(workflow).toContain('-f "${WORKSPACE}/services/agents/Dockerfile"')
+    expect(workflow).toContain('-f "${WORKSPACE}/services/agents/Dockerfile.codex-runner"')
+    expect(workflow).toContain('--scope=@proompteng/agent-contracts')
+    expect(workflow).toContain('--scope=@proompteng/codex')
+    expect(workflow).toContain('cp -R "${PRUNE_DIR}/full/services/agents" "${PRUNE_DIR}/services/agents"')
+    expect(workflow).toContain('cp -R "${PRUNE_DIR}/full/packages/codex" "${PRUNE_DIR}/packages/codex"')
+    expect(workflow).toContain('packages/agent-contracts/**')
     expect(workflow).toContain('--target control-plane')
     expect(workflow).toContain('--target controller')
     expect(workflow).toContain('BUILT_AGENTS_CONTROLLER_IMAGE_REPOSITORY')
+    expect(workflow).toContain('BUILT_AGENTS_RUNNER_IMAGE_REPOSITORY')
+    expect(workflow).toContain('agents-runner-image-smoke')
     expect(workflow).toContain('--build-arg "AGENTS_VERSION=${AGENTS_VERSION}"')
     expect(workflow).not.toContain('-f "${WORKSPACE}/services/jangar/Dockerfile"')
     expect(workflow).not.toContain('--build-arg "JANGAR_VERSION=')
+  })
+})
+
+describe('agents-release workflow', () => {
+  it('can manually promote a specific Agents build artifact by run id and source SHA', () => {
+    const workflow = readFileSync(
+      new URL('../../../../../.github/workflows/agents-release.yml', import.meta.url),
+      'utf8',
+    )
+
+    expect(workflow).toContain('workflow_dispatch:')
+    expect(workflow).toContain('run_id:')
+    expect(workflow).toContain('source_sha:')
+    expect(workflow).toContain("github.event_name == 'workflow_dispatch'")
+    expect(workflow).toContain('run-id: ${{ steps.meta.outputs.run_id }}')
+    expect(workflow).toContain('Promotion source: `${{ steps.meta.outputs.promotion_source }}`')
   })
 })

@@ -110,16 +110,16 @@ POD
 If `NODE` is empty, attach the volume in Longhorn first or set `nodeName` manually to the node hosting the volume device.
 If fsck fails or I/O errors persist, proceed with the volume replacement in step 3.
 
-## 6) Verify Kafka and KafkaSource health
+## 6) Verify Kafka and remaining KafkaSource health
 
 ```bash
 kubectl -n kafka get kafka
 kubectl -n kafka get pods -o wide
-kubectl -n jangar get kafkasource jangar-codex-completions
-kubectl -n jangar describe kafkasource jangar-codex-completions | sed -n '/Conditions:/,/Events:/p'
+kubectl -n jangar get kafkasources.sources.knative.dev
 ```
 
-Ensure Kafka reports `Ready=True` and the KafkaSource `Ready` condition is `True`.
+Ensure Kafka reports `Ready=True`. The retired Codex workflow completion bridge no longer has a Jangar
+KafkaSource; only currently rendered application-specific sources should be checked here.
 
 ## 7) Re-enable Argo CD autosync
 

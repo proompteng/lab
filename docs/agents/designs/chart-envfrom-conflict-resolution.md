@@ -20,9 +20,9 @@ predictable, chart rendering validates structured `envFrom` keys against reserve
   pinned in the consuming component map when you are intentionally managing it:
   - control plane: `controlPlane.env.vars` or global `env.vars`
   - controllers: `controllers.env.vars` (or chart-managed default when `controllers.enabled=true`)
-- Managed `JANGAR_GRPC_*` keys do not need explicit pinning when relying on chart defaults:
-  - control plane: `JANGAR_GRPC_ENABLED={{ .Values.grpc.enabled }}`, `JANGAR_GRPC_HOST=0.0.0.0`, `JANGAR_GRPC_PORT={{ .Values.grpc.port }}`
-  - controllers: `JANGAR_GRPC_ENABLED=0`, `JANGAR_GRPC_HOST=0.0.0.0`, `JANGAR_GRPC_PORT={{ .Values.grpc.port }}`
+- Managed `AGENTS_GRPC_*` keys do not need explicit pinning when relying on chart defaults:
+  - control plane: `AGENTS_GRPC_ENABLED={{ .Values.grpc.enabled }}`, `AGENTS_GRPC_HOST=0.0.0.0`, `AGENTS_GRPC_PORT={{ .Values.grpc.port }}`
+  - controllers: `AGENTS_GRPC_ENABLED=0`, `AGENTS_GRPC_HOST=0.0.0.0`, `AGENTS_GRPC_PORT={{ .Values.grpc.port }}`
 - A reserved key may only be declared in one structured `envFrom` source across
   `envFromSecretRefs` and `envFromConfigMapRefs`; duplicates are rejected to avoid order-dependent precedence.
 - `envFrom` can still be a string (legacy mode): `['existing-secret']`.
@@ -51,12 +51,12 @@ validation:
   unless:
   - managed chart defaults apply (and the consuming map resolves to that value), or
   - the key is explicitly set in the consuming component map(s).
-- If `JANGAR_GRPC_*` is declared in structured `envFrom`, chart render enforces
+- If `AGENTS_GRPC_*` is declared in structured `envFrom`, chart render enforces
   deterministic values when `grpc.manageEnvVar=true`:
-  - control plane: `JANGAR_GRPC_ENABLED={{ .Values.grpc.enabled }}`, `JANGAR_GRPC_HOST=0.0.0.0`, `JANGAR_GRPC_PORT={{ .Values.grpc.port }}`
-  - controllers: `JANGAR_GRPC_ENABLED=0`, `JANGAR_GRPC_HOST=0.0.0.0`, `JANGAR_GRPC_PORT={{ .Values.grpc.port }}`
-- If both control-plane and controller component maps define managed `JANGAR_GRPC_*` and their resolved values disagree, envFrom validation fails to prevent cross-component drift.
-- If managed `JANGAR_GRPC_*` values are intentionally diverged, set
+  - control plane: `AGENTS_GRPC_ENABLED={{ .Values.grpc.enabled }}`, `AGENTS_GRPC_HOST=0.0.0.0`, `AGENTS_GRPC_PORT={{ .Values.grpc.port }}`
+  - controllers: `AGENTS_GRPC_ENABLED=0`, `AGENTS_GRPC_HOST=0.0.0.0`, `AGENTS_GRPC_PORT={{ .Values.grpc.port }}`
+- If both control-plane and controller component maps define managed `AGENTS_GRPC_*` and their resolved values disagree, envFrom validation fails to prevent cross-component drift.
+- If managed `AGENTS_GRPC_*` values are intentionally diverged, set
   `grpc.manageEnvVar=false` and control the values explicitly in each component.
 
 ## Migration guidance
@@ -66,13 +66,13 @@ validation:
 3. If validation blocks render, either:
    - add the key to the relevant component env map, or
    - disable enforcement by setting `validation.reservedEnvKeysEnforced=false`.
-4. Keep `env.vars`, `controlPlane.env.vars`, and `controllers.env.vars` aligned for managed `JANGAR_GRPC_*` when both are used.
+4. Keep `env.vars`, `controlPlane.env.vars`, and `controllers.env.vars` aligned for managed `AGENTS_GRPC_*` when both are used.
 
 ## Reserved key set used by this chart
 
-- `JANGAR_GRPC_ENABLED`, `JANGAR_GRPC_HOST`, `JANGAR_GRPC_PORT`
-- `JANGAR_MIGRATIONS`
-- `JANGAR_CONTROL_PLANE_CACHE_ENABLED`
+- `AGENTS_GRPC_ENABLED`, `AGENTS_GRPC_HOST`, `AGENTS_GRPC_PORT`
+- `AGENTS_MIGRATIONS`
+- `AGENTS_CONTROL_PLANE_CACHE_ENABLED`
 - `JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED`
 - `JANGAR_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS`
 - `JANGAR_AGENTRUN_ARTIFACTS_MAX`

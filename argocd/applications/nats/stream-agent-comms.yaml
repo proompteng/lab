@@ -5,10 +5,7 @@ metadata:
 spec:
   name: agent-comms
   subjects:
-    - workflow.>
-    - agents.workflow.>
-    - argo.workflow.>
-    - workflow_comms.agent_messages.>
+    - agentrun.>
   retention: limits
   storage: file
   maxAge: 168h

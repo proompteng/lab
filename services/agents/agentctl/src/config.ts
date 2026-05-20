@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, resolve } from 'node:path'
-import { DEFAULT_ADDRESS, DEFAULT_NAMESPACE, normalizeOutput } from './legacy'
+import { DEFAULT_ADDRESS, DEFAULT_NAMESPACE, normalizeOutput } from './runtime'
 
 export type OutputFormat = 'json' | 'table' | 'yaml' | 'yaml-stream' | 'text' | 'wide'
 

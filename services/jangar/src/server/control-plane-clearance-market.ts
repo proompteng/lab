@@ -21,7 +21,7 @@ import type {
   StageClearancePacket,
   TorghutConsumerEvidenceStatus,
   WorkflowsReliabilityStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import type {
   AgentRunIngestionStatus,
   ControlPlaneRolloutHealth,
@@ -382,7 +382,7 @@ const buildFailureDebt = (input: ClearanceMarketInput): ClearanceMarketFailureDe
       running_count: null,
       data_confidence: 'low',
       reason_codes: ['retained_failure_7d_projection_not_collected'],
-      evidence_refs: ['agents_control_plane.resources_current:retained:7d'],
+      evidence_refs: ['agents-service:resources_current:retained:7d'],
     },
   ]
 }

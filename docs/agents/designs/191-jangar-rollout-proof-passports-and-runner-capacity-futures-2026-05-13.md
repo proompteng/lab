@@ -137,7 +137,7 @@ GitOps resources, AgentRuns, broker state, trading flags, or market data.
 - High-risk source modules are already large and highly coupled: `agents-controller/index.ts` is `1827` lines,
   `control-plane-status.ts` is `766` lines, `control-plane-action-custody.ts` is `595` lines,
   `control-plane-stage-clearance.ts` is `563` lines, `control-plane-ready-truth-arbiter.ts` is `442` lines, and
-  `services/jangar/src/data/agents-control-plane.ts` is `2386` lines.
+  `services/jangar/src/server/control-plane-status-types.ts` is `2386` lines.
 - Existing focused tests cover control-plane status, action custody, stage clearance, ready truth, terminal debt,
   source-serving verdicts, watch reliability, and Torghut consumer evidence. The remaining gap is not basic reducer
   coverage; it is cross-surface admission coverage that proves a PR, rollout, source-serving status, and runner slot

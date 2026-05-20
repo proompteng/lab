@@ -173,51 +173,6 @@ describe('torghut market-context agent helpers', () => {
     expect(decision.reason).toBe('stale_snapshot_refresh')
   })
 
-  it('builds on-demand market-context AgentRuns as repository-bound batch tasks', async () => {
-    const { buildMarketContextAgentRun } = await import('../torghut-market-context-dispatch')
-
-    const agentRun = buildMarketContextAgentRun({
-      symbol: 'NVDA',
-      domain: 'news',
-      snapshotState: 'stale',
-      provider: 'codex-spark',
-      requestId: 'market-context-news-nvda-request',
-      now: new Date('2026-05-07T20:00:00.000Z'),
-      settings: {
-        providerChain: ['codex-spark', 'codex'],
-        onDemandDispatchEnabled: true,
-        onDemandDispatchCooldownSeconds: 900,
-        onDemandDispatchActiveRunSeconds: 3600,
-        onDemandDispatchNamespace: 'agents',
-        onDemandDispatchServiceAccountName: 'agents-sa',
-        onDemandDispatchPriorityClassName: 'torghut-market-context-low',
-        onDemandDispatchCallbackUrl: 'http://jangar/api/torghut/market-context',
-        onDemandDispatchTtlSeconds: 7200,
-        batchTradingStatusUrl: 'http://torghut/trading/status',
-        onDemandDispatchRepository: 'proompteng/lab',
-        onDemandDispatchBaseBranch: 'main',
-        onDemandDispatchHeadBranch: 'main',
-        onDemandDispatchVcsRefName: 'github',
-      },
-    })
-
-    expect(agentRun.spec.vcsRef).toEqual({ name: 'github' })
-    expect(agentRun.spec.vcsPolicy).toEqual({ required: true, mode: 'read-only' })
-    expect(agentRun.spec.parameters).toMatchObject({
-      executionMode: 'batch_task',
-      symbol: 'NVDA',
-      domain: 'news',
-      reason: 'on_demand_stale_snapshot_refresh',
-      provider: 'codex-spark',
-      callbackUrl: 'http://jangar/api/torghut/market-context',
-      requestId: 'market-context-news-nvda-request',
-      repository: 'proompteng/lab',
-      base: 'main',
-      head: 'main',
-    })
-    expect(agentRun.spec.parameters).not.toHaveProperty('tradingStatusUrl')
-  })
-
   it('suppresses on-demand dispatch when a provider run is already active', async () => {
     const { resolveMarketContextDispatchDecisionFromRows } = await import('../torghut-market-context-dispatch')
 
@@ -357,44 +312,5 @@ describe('torghut market-context agent helpers', () => {
     expect(decision.attempted).toBe(true)
     expect(decision.reason).toBe('dispatch_cooldown')
     expect(decision.runName).toBe('torghut-market-context-fundamentals-nvda-abcde')
-  })
-
-  it('builds market-context AgentRuns with repository metadata for the provider runner', async () => {
-    const { buildMarketContextAgentRun } = await import('../torghut-market-context-dispatch')
-
-    const agentRun = buildMarketContextAgentRun({
-      symbol: 'ORCL',
-      domain: 'fundamentals',
-      snapshotState: 'missing',
-      provider: 'codex-spark',
-      requestId: 'market-context-fundamentals-orcl-test',
-      now: new Date('2026-05-08T00:15:50.336Z'),
-      settings: {
-        providerChain: ['codex-spark', 'codex'],
-        onDemandDispatchEnabled: true,
-        onDemandDispatchCooldownSeconds: 900,
-        onDemandDispatchActiveRunSeconds: 3600,
-        onDemandDispatchNamespace: 'agents',
-        onDemandDispatchServiceAccountName: 'agents-sa',
-        onDemandDispatchPriorityClassName: 'torghut-market-context-low',
-        onDemandDispatchCallbackUrl: 'http://jangar.jangar.svc.cluster.local/api/torghut/market-context',
-        onDemandDispatchTtlSeconds: 7200,
-        batchTradingStatusUrl: 'http://torghut/trading/status',
-        onDemandDispatchRepository: 'proompteng/lab',
-        onDemandDispatchBaseBranch: 'main',
-        onDemandDispatchHeadBranch: 'main',
-        onDemandDispatchVcsRefName: 'github',
-      },
-    })
-
-    expect(agentRun.spec.vcsRef).toEqual({ name: 'github' })
-    expect(agentRun.spec.vcsPolicy).toEqual({ required: true, mode: 'read-only' })
-    expect(agentRun.spec.parameters).toMatchObject({
-      symbol: 'ORCL',
-      domain: 'fundamentals',
-      repository: 'proompteng/lab',
-      base: 'main',
-      head: 'main',
-    })
   })
 })

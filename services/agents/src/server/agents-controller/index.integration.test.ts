@@ -68,6 +68,7 @@ configureAgentsControllerRuntime({
 })
 
 const finalizer = 'agents.proompteng.ai/runtime-cleanup'
+const defaultRunnerImage = 'registry.ide-newton.ts.net/lab/agents-codex-runner:test'
 const defaultConcurrency = {
   perNamespace: 10,
   perAgent: 5,
@@ -97,7 +98,7 @@ const buildAgentRun = (overrides: Record<string, unknown> = {}) => ({
     agentRef: { name: 'agent-1' },
     implementationSpecRef: { name: 'impl-1' },
     runtime: { type: 'job', config: {} },
-    workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+    workload: { image: defaultRunnerImage },
   } as Record<string, unknown>,
   status: {},
   ...overrides,
@@ -1055,7 +1056,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'job', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        workload: { image: defaultRunnerImage },
         parameters: {
           repository: 'proompteng/lab',
         },
@@ -1136,7 +1137,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'job', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        workload: { image: defaultRunnerImage },
         idempotencyKey: 'market-key',
       },
     })
@@ -1209,7 +1210,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'job', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        workload: { image: defaultRunnerImage },
         memoryRef: { name: 'default-memory' },
       },
     })
@@ -1321,7 +1322,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'job', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        workload: { image: defaultRunnerImage },
         parameters: { prompt: 'forbidden override' },
       },
     })
@@ -1360,7 +1361,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'workflow', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        workload: { image: defaultRunnerImage },
         workflow: {
           steps: [
             {
@@ -1428,7 +1429,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'job', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        workload: { image: defaultRunnerImage },
         parameters: {
           linearRepo: 'proompteng/lab',
           linearIssue: '1234',
@@ -1448,9 +1449,7 @@ describe('agents controller reconcileAgentRun', () => {
 
   it('marks AgentRun failed when job runtime lacks an image', async () => {
     const previousImage = process.env.AGENTS_AGENT_RUNNER_IMAGE
-    const previousAgentImage = process.env.AGENTS_AGENT_IMAGE
     delete process.env.AGENTS_AGENT_RUNNER_IMAGE
-    delete process.env.AGENTS_AGENT_IMAGE
     const kube = buildKube()
     const agentRun = buildAgentRun({
       spec: {
@@ -1468,7 +1467,6 @@ describe('agents controller reconcileAgentRun', () => {
     expect(condition?.reason).toBe('MissingWorkloadImage')
 
     if (previousImage) process.env.AGENTS_AGENT_RUNNER_IMAGE = previousImage
-    if (previousAgentImage) process.env.AGENTS_AGENT_IMAGE = previousAgentImage
   })
 
   it('marks AgentRun failed when temporal runtime lacks workflowType and taskQueue', async () => {
@@ -1540,7 +1538,7 @@ describe('agents controller reconcileAgentRun', () => {
           agentRef: { name: 'agent-1' },
           implementationSpecRef: { name: 'impl-1' },
           runtime: { type: 'job', config: {} },
-          workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+          workload: { image: defaultRunnerImage },
           ttlSecondsAfterFinished: 60,
         },
         status: { phase: 'Failed', finishedAt },
@@ -1570,7 +1568,7 @@ describe('agents controller reconcileAgentRun', () => {
           agentRef: { name: 'agent-1' },
           implementationSpecRef: { name: 'impl-1' },
           runtime: { type: 'job', config: {} },
-          workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+          workload: { image: defaultRunnerImage },
           ttlSecondsAfterFinished: 0,
         },
         status: { phase: 'Succeeded', finishedAt },
@@ -1677,79 +1675,61 @@ describe('agents controller reconcileAgentRun', () => {
     expect(jobSpec.backoffLimit).toBe(0)
   })
 
-  it('injects NATS auth env from configured runner auth secret when allowlisted', async () => {
-    const previousSecretName = process.env.AGENTS_AGENT_RUNNER_NATS_AUTH_SECRET_NAME
-    const previousUsernameKey = process.env.AGENTS_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY
-    const previousPasswordKey = process.env.AGENTS_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY
-    process.env.AGENTS_AGENT_RUNNER_NATS_AUTH_SECRET_NAME = 'codex-nats-credentials'
-    process.env.AGENTS_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY = 'NATS_USER'
-    process.env.AGENTS_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY = 'NATS_PASSWORD'
-    try {
-      const apply = vi.fn(async (resource: Record<string, unknown>) => {
-        const metadata = (resource.metadata ?? {}) as Record<string, unknown>
-        const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
-        return { ...resource, metadata: { ...metadata, uid } }
-      })
-      const kube = buildKube({
-        apply,
-        get: vi.fn(async (resource: string, name?: string) => {
-          if (resource === RESOURCE_MAP.Agent) {
-            return {
-              metadata: { name: 'agent-1' },
-              spec: {
-                providerRef: { name: 'provider-1' },
-                defaults: { systemPrompt: 'default-agent-prompt' },
-                security: { allowedSecrets: ['codex-nats-credentials'] },
-              },
-            }
+  it('does not inject NATS auth env into runner jobs from controller-global settings', async () => {
+    const apply = vi.fn(async (resource: Record<string, unknown>) => {
+      const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+      const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+      return { ...resource, metadata: { ...metadata, uid } }
+    })
+    const kube = buildKube({
+      apply,
+      get: vi.fn(async (resource: string, name?: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: {
+              providerRef: { name: 'provider-1' },
+              defaults: { systemPrompt: 'default-agent-prompt' },
+              security: { allowedSecrets: ['codex-nats-credentials'] },
+            },
           }
-          if (resource === RESOURCE_MAP.AgentProvider) {
-            return {
-              metadata: { name: 'provider-1' },
-              spec: {
-                binary: '/usr/local/bin/agent-runner',
-              },
-            }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return {
+            metadata: { name: 'provider-1' },
+            spec: {
+              binary: '/bin/sh',
+              adapter: { type: 'exec' },
+            },
           }
-          if (resource === RESOURCE_MAP.ImplementationSpec) {
-            return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        if (resource === 'secret' && name === 'codex-nats-credentials') {
+          return {
+            metadata: { name: 'codex-nats-credentials' },
+            data: { NATS_USER: 'dXNlcg==', NATS_PASSWORD: 'cGFzcw==' },
           }
-          if (resource === 'secret' && name === 'codex-nats-credentials') {
-            return {
-              metadata: { name: 'codex-nats-credentials' },
-              data: { NATS_USER: 'dXNlcg==', NATS_PASSWORD: 'cGFzcw==' },
-            }
-          }
-          return null
-        }),
-      })
+        }
+        return null
+      }),
+    })
 
-      const agentRun = buildAgentRun()
+    const agentRun = buildAgentRun()
 
-      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
-      const appliedResources = apply.mock.calls.map((call) => call[0]) as Record<string, unknown>[]
-      const job = appliedResources.find((resource) => resource.kind === 'Job') as Record<string, unknown> | undefined
-      expect(job).toBeTruthy()
-      const jobSpec = (job?.spec ?? {}) as Record<string, unknown>
-      const template = (jobSpec.template ?? {}) as Record<string, unknown>
-      const podSpec = (template.spec ?? {}) as Record<string, unknown>
-      const containers = (podSpec.containers ?? []) as Array<Record<string, unknown>>
-      const env = (containers[0]?.env ?? []) as Array<Record<string, unknown>>
-      const natsUser = env.find((entry) => entry.name === 'NATS_USER')
-      const natsPassword = env.find((entry) => entry.name === 'NATS_PASSWORD')
-      expect(natsUser?.valueFrom).toEqual({ secretKeyRef: { name: 'codex-nats-credentials', key: 'NATS_USER' } })
-      expect(natsPassword?.valueFrom).toEqual({
-        secretKeyRef: { name: 'codex-nats-credentials', key: 'NATS_PASSWORD' },
-      })
-    } finally {
-      if (previousSecretName === undefined) delete process.env.AGENTS_AGENT_RUNNER_NATS_AUTH_SECRET_NAME
-      else process.env.AGENTS_AGENT_RUNNER_NATS_AUTH_SECRET_NAME = previousSecretName
-      if (previousUsernameKey === undefined) delete process.env.AGENTS_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY
-      else process.env.AGENTS_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY = previousUsernameKey
-      if (previousPasswordKey === undefined) delete process.env.AGENTS_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY
-      else process.env.AGENTS_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY = previousPasswordKey
-    }
+    const appliedResources = apply.mock.calls.map((call) => call[0]) as Record<string, unknown>[]
+    const job = appliedResources.find((resource) => resource.kind === 'Job') as Record<string, unknown> | undefined
+    expect(job).toBeTruthy()
+    const jobSpec = (job?.spec ?? {}) as Record<string, unknown>
+    const template = (jobSpec.template ?? {}) as Record<string, unknown>
+    const podSpec = (template.spec ?? {}) as Record<string, unknown>
+    const containers = (podSpec.containers ?? []) as Array<Record<string, unknown>>
+    const env = (containers[0]?.env ?? []) as Array<Record<string, unknown>>
+    expect(env.find((entry) => entry.name === 'NATS_USER')).toBeUndefined()
+    expect(env.find((entry) => entry.name === 'NATS_PASSWORD')).toBeUndefined()
   })
 
   it('honors runtime.config.backoffLimit for agent runner jobs', async () => {
@@ -1782,7 +1762,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'job', config: { backoffLimit: 2 } },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        workload: { image: defaultRunnerImage },
       },
     })
 
@@ -1831,7 +1811,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'job', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        workload: { image: defaultRunnerImage },
       },
     })
 
@@ -1899,7 +1879,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'job', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        workload: { image: defaultRunnerImage },
         systemPrompt: 'from-run',
       },
     })
@@ -1959,7 +1939,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'job', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        workload: { image: defaultRunnerImage },
       },
     })
 
@@ -2063,7 +2043,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'job', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        workload: { image: defaultRunnerImage },
         secrets: ['prompt-secret'],
       },
     })
@@ -2153,7 +2133,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'job', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        workload: { image: defaultRunnerImage },
       },
     })
 
@@ -2204,7 +2184,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'job', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        workload: { image: defaultRunnerImage },
         secrets: ['prompt-secret'],
       },
     })
@@ -2424,7 +2404,7 @@ describe('agents controller reconcileAgentRun', () => {
             schedulerName: 'run-scheduler',
           },
         },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        workload: { image: defaultRunnerImage },
       }
 
       lastJob = null
@@ -2561,7 +2541,7 @@ describe('agents controller reconcileAgentRun', () => {
           agentRef: { name: 'agent-1' },
           implementationSpecRef: { name: 'impl-1' },
           runtime: { type: 'job', config: {} },
-          workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+          workload: { image: defaultRunnerImage },
           secrets: ['blocked-secret'],
         },
       })
@@ -2666,7 +2646,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'workflow', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        workload: { image: defaultRunnerImage },
         workflow: { steps: [{ name: 'step-one' }] },
       },
     })
@@ -2756,7 +2736,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'workflow', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        workload: { image: defaultRunnerImage },
         workflow: {
           steps: [{ name: 'step-one' }, { name: 'step-two' }],
         },
@@ -2873,7 +2853,7 @@ describe('agents controller reconcileAgentRun', () => {
           agentRef: { name: 'agent-1' },
           implementationSpecRef: { name: 'impl-1' },
           runtime: { type: 'workflow', config: {} },
-          workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+          workload: { image: defaultRunnerImage },
           workflow: {
             steps: [
               {
@@ -3036,7 +3016,7 @@ describe('agents controller reconcileAgentRun', () => {
           agentRef: { name: 'agent-1' },
           implementationSpecRef: { name: 'impl-1' },
           runtime: { type: 'workflow', config: {} },
-          workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+          workload: { image: defaultRunnerImage },
           workflow: {
             steps: [
               {
@@ -3205,7 +3185,7 @@ describe('agents controller reconcileAgentRun', () => {
           agentRef: { name: 'agent-1' },
           implementationSpecRef: { name: 'impl-1' },
           runtime: { type: 'workflow', config: {} },
-          workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+          workload: { image: defaultRunnerImage },
           workflow: {
             steps: [
               {
@@ -3315,7 +3295,7 @@ describe('agents controller reconcileAgentRun', () => {
           agentRef: { name: 'agent-1' },
           implementationSpecRef: { name: 'impl-1' },
           runtime: { type: 'workflow', config: {} },
-          workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+          workload: { image: defaultRunnerImage },
           workflow: {
             steps: [
               {
@@ -3425,7 +3405,7 @@ describe('agents controller reconcileAgentRun', () => {
           agentRef: { name: 'agent-1' },
           implementationSpecRef: { name: 'impl-1' },
           runtime: { type: 'workflow', config: {} },
-          workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+          workload: { image: defaultRunnerImage },
           workflow: {
             steps: [
               {
@@ -3539,7 +3519,7 @@ describe('agents controller reconcileAgentRun', () => {
           agentRef: { name: 'agent-1' },
           implementationSpecRef: { name: 'impl-1' },
           runtime: { type: 'workflow', config: {} },
-          workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+          workload: { image: defaultRunnerImage },
           workflow: {
             steps: [
               {
@@ -3660,7 +3640,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'workflow', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        workload: { image: defaultRunnerImage },
         workflow: {
           steps: [{ name: 'step-one' }],
         },
@@ -3722,7 +3702,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'workflow', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        workload: { image: defaultRunnerImage },
         workflow: {
           steps: [{ name: 'step-one', retries: 1 }],
         },
@@ -3750,6 +3730,86 @@ describe('agents controller reconcileAgentRun', () => {
     const status = getLastStatus(kube)
     const warning = findCondition(status, 'Warning')
     expect(warning?.reason).toBe('WorkflowJobMissing')
+  })
+
+  it('retries workflow steps when mounted runtime ConfigMaps disappear', async () => {
+    const kube = buildKube({
+      get: vi.fn(async (resource: string, name: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+          }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return {
+            metadata: { name: 'provider-1' },
+            spec: { binary: '/usr/local/bin/agent-runner' },
+          }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        if (resource === 'job' && name === 'run-1-step-1-attempt-1') {
+          return {
+            metadata: { name: 'run-1-step-1-attempt-1', namespace: 'agents' },
+            spec: {
+              template: {
+                spec: {
+                  volumes: [
+                    { name: 'run-spec', configMap: { name: 'run-1-spec-step-1-attempt-1' } },
+                    { name: 'workspace', emptyDir: {} },
+                  ],
+                },
+              },
+            },
+            status: {},
+          }
+        }
+        if (resource === 'configmap' && name === 'run-1-spec-step-1-attempt-1') {
+          return null
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'workflow', config: {} },
+        workload: { image: defaultRunnerImage },
+        workflow: {
+          steps: [{ name: 'step-one', retries: 1 }],
+        },
+      },
+      status: {
+        phase: 'Running',
+        workflow: {
+          phase: 'Running',
+          steps: [
+            {
+              name: 'step-one',
+              phase: 'Running',
+              attempt: 1,
+              lastTransitionTime: '2026-01-20T00:00:00Z',
+              jobObservedAt: '2026-01-20T00:00:05Z',
+              jobRef: { name: 'run-1-step-1-attempt-1', namespace: 'agents' },
+            },
+          ],
+        },
+      },
+    })
+
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+    const status = getLastStatus(kube)
+    const warning = findCondition(status, 'Warning')
+    const workflow = (status.workflow as Record<string, unknown> | undefined) ?? {}
+    const steps = Array.isArray(workflow.steps) ? (workflow.steps as Record<string, unknown>[]) : []
+    expect(warning?.reason).toBe('WorkflowConfigMapMissing')
+    expect(steps[0]?.phase).toBe('Retrying')
+    expect(steps[0]?.message).toBe('Runtime ConfigMap missing; retrying')
   })
 
   it('retries workflow steps with backoff', async () => {
@@ -3796,7 +3856,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'workflow', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        workload: { image: defaultRunnerImage },
         workflow: {
           steps: [{ name: 'retry-step', retries: 1, retryBackoffSeconds: 60 }],
         },
@@ -3904,7 +3964,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'workflow', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        workload: { image: defaultRunnerImage },
         workflow: {
           steps: [{ name: 'deploy-step', retries: 0 }],
         },
@@ -4012,7 +4072,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'workflow', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        workload: { image: defaultRunnerImage },
         workflow: {
           steps: [{ name: 'deploy-step', retries: 0 }],
         },
@@ -4121,7 +4181,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'workflow', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        workload: { image: defaultRunnerImage },
         workflow: {
           steps: [{ name: 'deploy-step', retries: 2 }],
         },
@@ -4207,6 +4267,178 @@ describe('agents controller reconcileAgentRun', () => {
     expect(status.phase).toBe('Failed')
     expect(status.reason).toBe('DeadlineExceeded')
     expect(status.message).toBe('job exceeded active deadline')
+  })
+
+  it('warns when a direct job runtime loses mounted ConfigMaps', async () => {
+    const kube = buildKube({
+      get: vi.fn(async (resource: string, name: string) => {
+        if (resource === 'job' && name === 'job-1') {
+          return {
+            metadata: { name: 'job-1', namespace: 'agents' },
+            spec: {
+              template: {
+                spec: {
+                  volumes: [
+                    { name: 'run-spec', configMap: { name: 'run-1-spec' } },
+                    { name: 'workspace', emptyDir: {} },
+                  ],
+                },
+              },
+            },
+            status: {},
+          }
+        }
+        if (resource === 'configmap' && name === 'run-1-spec') {
+          return null
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      status: {
+        phase: 'Running',
+        runtimeRef: {
+          type: 'job',
+          name: 'job-1',
+          namespace: 'agents',
+          jobObservedAt: '2026-05-19T12:00:00Z',
+        },
+      },
+    })
+
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+    const status = getLastStatus(kube)
+    const warning = findCondition(status, 'Warning')
+    expect(status.phase).toBe('Running')
+    expect(warning?.reason).toBe('RuntimeConfigMapMissing')
+    expect(warning?.message).toContain('run-1-spec')
+  })
+
+  it('propagates runner terminal status and output artifacts from direct job pods', async () => {
+    const runnerMessage = JSON.stringify({
+      status: 'succeeded',
+      adapter: 'codex-app-server',
+      provider: 'codex',
+      exitCode: 0,
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      artifacts: {
+        outputArtifacts: [{ name: 'summary', key: 'runs/run-1/summary.json' }],
+      },
+    })
+    const kube = buildKube({
+      get: vi.fn(async (resource: string, name: string) => {
+        if (resource === 'job' && name === 'job-1') {
+          return {
+            metadata: { name: 'job-1', namespace: 'agents' },
+            status: { succeeded: 1, startTime: '2026-05-19T12:00:00Z', completionTime: '2026-05-19T12:01:00Z' },
+          }
+        }
+        return null
+      }),
+      list: vi.fn(async (resource: string, _namespace: string, labelSelector?: string) => {
+        if (resource === 'pods' && labelSelector?.startsWith('job-name=')) {
+          return {
+            items: [
+              {
+                metadata: { name: 'job-1-pod' },
+                status: {
+                  startTime: '2026-05-19T12:00:00Z',
+                  containerStatuses: [{ name: 'agent-runner', state: { terminated: { message: runnerMessage } } }],
+                },
+              },
+            ],
+          }
+        }
+        return { items: [] }
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      status: {
+        phase: 'Running',
+        runtimeRef: { type: 'job', name: 'job-1', namespace: 'agents' },
+        artifacts: [{ name: 'existing', path: '/workspace/existing.json' }],
+      },
+    })
+
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+    const status = getLastStatus(kube)
+    expect(status.phase).toBe('Succeeded')
+    expect(status.runner).toMatchObject({
+      status: 'succeeded',
+      adapter: 'codex-app-server',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+    })
+    expect(status.artifacts).toEqual([
+      { name: 'existing', path: '/workspace/existing.json' },
+      { name: 'summary', key: 'runs/run-1/summary.json' },
+    ])
+  })
+
+  it('marks direct jobs cancelled when the runner terminal status is cancelled', async () => {
+    const runnerMessage = JSON.stringify({
+      status: 'cancelled',
+      adapter: 'codex-app-server',
+      exitCode: 130,
+      error: 'received SIGTERM',
+    })
+    const kube = buildKube({
+      get: vi.fn(async (resource: string, name: string) => {
+        if (resource === 'job' && name === 'job-1') {
+          return {
+            metadata: { name: 'job-1', namespace: 'agents' },
+            status: {
+              failed: 1,
+              conditions: [
+                {
+                  type: 'Failed',
+                  status: 'True',
+                  reason: 'BackoffLimitExceeded',
+                  message: 'Job has reached the specified backoff limit',
+                },
+              ],
+            },
+          }
+        }
+        return null
+      }),
+      list: vi.fn(async (resource: string, _namespace: string, labelSelector?: string) => {
+        if (resource === 'pods' && labelSelector?.startsWith('job-name=')) {
+          return {
+            items: [
+              {
+                metadata: { name: 'job-1-pod' },
+                status: {
+                  containerStatuses: [{ name: 'agent-runner', state: { terminated: { message: runnerMessage } } }],
+                },
+              },
+            ],
+          }
+        }
+        return { items: [] }
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      status: {
+        phase: 'Running',
+        runtimeRef: { type: 'job', name: 'job-1', namespace: 'agents' },
+      },
+    })
+
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+    const status = getLastStatus(kube)
+    expect(status.phase).toBe('Cancelled')
+    expect(status.reason).toBe('RunnerCancelled')
+    expect(status.message).toBe('received SIGTERM')
+    expect(findCondition(status, 'Cancelled')?.reason).toBe('RunnerCancelled')
+    expect(status.runner).toMatchObject({ status: 'cancelled', adapter: 'codex-app-server', exitCode: 130 })
   })
 
   it('classifies direct job pod usage-limit logs as provider capacity exhaustion', async () => {
@@ -4302,7 +4534,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'workflow', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        workload: { image: defaultRunnerImage },
         workflow: {
           steps: [{ name: 'timeout-step', timeoutSeconds: 60 }],
         },
@@ -4376,7 +4608,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'workflow', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        workload: { image: defaultRunnerImage },
         workflow: {
           steps: [{ name: 'timeout-step', timeoutSeconds: 60 }],
         },
@@ -4645,7 +4877,7 @@ describe('agents controller resolveVcsContext', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'job', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        workload: { image: defaultRunnerImage },
         vcsRef: { name: 'vcs-1' },
         parameters: {
           repository: 'proompteng/lab',

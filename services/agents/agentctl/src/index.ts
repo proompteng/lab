@@ -16,7 +16,7 @@ import { exitCodeFor, formatError, isAgentctlError } from './cli/errors'
 import { parseGlobalFlags } from './cli/global-flags'
 import { renderGlobalFlags } from './cli/help'
 import { loadConfig, resolveConfig } from './config'
-import { EXIT_UNKNOWN, EXIT_VALIDATION, getVersion } from './legacy'
+import { EXIT_UNKNOWN, EXIT_VALIDATION, getVersion } from './runtime'
 import { TransportLive } from './transport'
 
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined'

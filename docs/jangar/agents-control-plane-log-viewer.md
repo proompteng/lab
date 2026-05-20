@@ -27,9 +27,9 @@ output safely, and correlate log output with run status/events without leaving t
 ## Background / current state
 
 - The Jangar UI already has a Logs tab on the AgentRun detail page that calls
-  `GET /api/agents/control-plane/logs` with `tailLines`, `pod`, and `container` parameters.
+  `GET /v1/control-plane/logs` with `tailLines`, `pod`, and `container` parameters.
 - The current endpoint returns log text plus a pod/container listing; it is a single snapshot and does not stream.
-- The control plane already streams resource/status updates via SSE at `/api/agents/control-plane/stream`.
+- The control plane already streams resource/status updates via SSE at `/v1/control-plane/stream`.
 - The agentctl gRPC service supports streaming logs (`StreamAgentRunLogs`) by proxying kubectl.
 
 This design builds on those primitives and fills the gaps around streaming, pagination, and UX polish.
@@ -72,7 +72,7 @@ This design builds on those primitives and fills the gaps around streaming, pagi
 
 ### Snapshot response (existing)
 
-**Endpoint**: `GET /api/agents/control-plane/logs`
+**Endpoint**: `GET /v1/control-plane/logs`
 
 Query:
 
@@ -114,7 +114,7 @@ Failure shape:
 
 ### Streaming response (new)
 
-**Endpoint**: `GET /api/agents/control-plane/logs/stream`
+**Endpoint**: `GET /v1/control-plane/logs/stream`
 
 Query:
 
@@ -183,21 +183,21 @@ Client state (per open log stream):
 
 ### Existing (snapshot)
 
-- `GET /api/agents/control-plane/logs`
+- `GET /v1/control-plane/logs`
   - Backed by Kubernetes `pod/log` API.
   - Caps `tailLines` at 5000.
   - Returns pod list for selector.
 
 ### New (stream)
 
-- `GET /api/agents/control-plane/logs/stream`
+- `GET /v1/control-plane/logs/stream`
   - SSE that proxies Kubernetes log streaming.
   - Supports `follow=false` for a one-shot stream.
   - Uses the same pod/container selection logic as the snapshot endpoint.
 
 ### Optional enhancements
 
-- `GET /api/agents/control-plane/logs/download`
+- `GET /v1/control-plane/logs/download`
   - Same query parameters as snapshot.
   - Returns `text/plain` for direct download (useful for long tail lines).
 
@@ -256,7 +256,7 @@ Client state (per open log stream):
    - Publish this design doc.
    - Align on endpoint names and SSE contract.
 2. **Phase 1: backend streaming**
-   - Add `/api/agents/control-plane/logs/stream` using the same selection logic as `/logs`.
+   - Add `/v1/control-plane/logs/stream` using the same selection logic as `/logs`.
    - Implement SSE framing and heartbeats.
 3. **Phase 2: UI enhancements**
    - Add follow toggle, auto-scroll, and status badges.
@@ -294,8 +294,8 @@ Client state (per open log stream):
 
 ## Appendix: related docs and code
 
-- `services/jangar/src/routes/api/agents/control-plane/logs.ts`
-- `services/jangar/src/data/agents-control-plane.ts`
-- `services/jangar/src/routes/agents-control-plane/agent-runs/$name.tsx`
+- Generic Agents log APIs and browser run pages now live under `services/agents`.
+- typed `@proompteng/agent-contracts/*-client` imports for Jangar domain consumers
+- `services/jangar/src/server/control-plane-status-types.ts` for domain status normalization only
 - `docs/jangar/primitives/control-plane.md`
 - `docs/agents/agentctl-cli-design.md`

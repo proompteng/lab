@@ -394,9 +394,9 @@ type CodexJudgeRuns = {
   issue_number: number
   branch: string
   attempt: number
-  workflow_name: string
-  workflow_uid: string | null
-  workflow_namespace: string | null
+  agent_run_name: string
+  agent_run_uid: string | null
+  agent_run_namespace: string | null
   turn_id: string | null
   thread_id: string | null
   stage: string | null
@@ -459,111 +459,6 @@ type CodexJudgeRerunSubmissions = {
   created_at: Generated<Timestamp>
   updated_at: Generated<Timestamp>
   submitted_at: Timestamp | null
-}
-
-type WorkflowCommsAgentMessage = {
-  id: Generated<string>
-  workflow_uid: string | null
-  workflow_name: string | null
-  workflow_namespace: string | null
-  run_id: string | null
-  step_id: string | null
-  agent_id: string | null
-  role: string
-  kind: string
-  timestamp: Timestamp
-  channel: string | null
-  stage: string | null
-  content: string
-  attrs: JsonValue
-  dedupe_key: string | null
-  created_at: Generated<Timestamp>
-}
-
-type JangarAgentRuns = {
-  id: Generated<string>
-  agent_name: string
-  delivery_id: string
-  provider: string
-  status: string
-  external_run_id: string | null
-  payload: JsonValue
-  created_at: Generated<Timestamp>
-  updated_at: Generated<Timestamp>
-}
-
-type JangarAgentRunIdempotencyKeys = {
-  id: Generated<string>
-  namespace: string
-  agent_name: string
-  idempotency_key: string
-  agent_run_name: string | null
-  agent_run_uid: string | null
-  terminal_phase: string | null
-  terminal_at: Timestamp | null
-  created_at: Generated<Timestamp>
-  updated_at: Generated<Timestamp>
-}
-
-type JangarMemoryResources = {
-  id: Generated<string>
-  memory_name: string
-  provider: string
-  status: string
-  connection_secret: JsonValue | null
-  created_at: Generated<Timestamp>
-  updated_at: Generated<Timestamp>
-}
-
-type JangarOrchestrationRuns = {
-  id: Generated<string>
-  orchestration_name: string
-  delivery_id: string
-  provider: string
-  status: string
-  external_run_id: string | null
-  payload: JsonValue
-  created_at: Generated<Timestamp>
-  updated_at: Generated<Timestamp>
-}
-
-type JangarAuditEvents = {
-  id: Generated<string>
-  entity_type: string
-  entity_id: string
-  event_type: string
-  payload: JsonValue
-  created_at: Generated<Timestamp>
-}
-
-type AgentsControlPlaneResourcesCurrent = {
-  id: Generated<string>
-  cluster: Generated<string>
-  kind: string
-  namespace: string
-  name: string
-  uid: string | null
-  api_version: string | null
-  resource_version: string | null
-  generation: number | null
-  labels: JsonValue
-  annotations: JsonValue
-  resource: JsonValue
-  fingerprint: string
-  resource_created_at: Timestamp | null
-  resource_updated_at: Timestamp | null
-  status_phase: string | null
-  spec_runtime_type: string | null
-  spec_agent_ref_name: string | null
-  spec_implementation_spec_ref_name: string | null
-  spec_source_provider: string | null
-  spec_source_external_id: string | null
-  spec_summary: string | null
-  spec_labels: string[]
-  last_seen_at: Generated<Timestamp>
-  deleted_at: Timestamp | null
-  created_at: Generated<Timestamp>
-  updated_at: Generated<Timestamp>
 }
 
 type TorghutQuantMetricsLatest = {
@@ -809,24 +704,6 @@ type TorghutMarketContextEvidence = {
   updated_at: Generated<Timestamp>
 }
 
-type AgentsControlPlaneComponentHeartbeats = {
-  id: Generated<string>
-  cluster: string
-  namespace: string
-  component: string
-  workload_role: string
-  pod_name: string
-  deployment_name: string
-  enabled: boolean
-  status: string
-  message: string
-  leadership_state: string
-  observed_at: Generated<Timestamp>
-  expires_at: Generated<Timestamp>
-  source_namespace: string
-  updated_at: Generated<Timestamp>
-}
-
 export type Database = {
   'atlas.repositories': AtlasRepositories
   'atlas.file_keys': AtlasFileKeys
@@ -856,13 +733,6 @@ export type Database = {
   'jangar_github.pr_files': JangarGithubPrFiles
   'jangar_github.pr_worktrees': JangarGithubPrWorktrees
   'jangar_github.write_actions': JangarGithubWriteActions
-  agent_runs: JangarAgentRuns
-  agent_run_idempotency_keys: JangarAgentRunIdempotencyKeys
-  memory_resources: JangarMemoryResources
-  orchestration_runs: JangarOrchestrationRuns
-  audit_events: JangarAuditEvents
-  'agents_control_plane.resources_current': AgentsControlPlaneResourcesCurrent
-  'agents_control_plane.component_heartbeats': AgentsControlPlaneComponentHeartbeats
   'torghut_control_plane.quant_metrics_latest': TorghutQuantMetricsLatest
   'torghut_control_plane.quant_metrics_series': TorghutQuantMetricsSeries
   'torghut_control_plane.quant_alerts': TorghutQuantAlerts
@@ -883,7 +753,6 @@ export type Database = {
   'codex_judge.artifacts': CodexJudgeArtifacts
   'codex_judge.evaluations': CodexJudgeEvaluations
   'codex_judge.rerun_submissions': CodexJudgeRerunSubmissions
-  'workflow_comms.agent_messages': WorkflowCommsAgentMessage
 }
 
 let db: Db | null | undefined

@@ -3,6 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
+    argocd.argoproj.io/sync-wave: "-10"
     controller-gen.kubebuilder.io/version: v0.20.0
   name: agentruns.agents.proompteng.ai
 spec:
@@ -600,6 +601,13 @@ spec:
                 type: string
               reason:
                 type: string
+              runner:
+                additionalProperties:
+                  x-kubernetes-preserve-unknown-fields: true
+                description: Runner carries the normalized terminal status emitted
+                  by the runner harness.
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
               runtimeRef:
                 additionalProperties:
                   x-kubernetes-preserve-unknown-fields: true

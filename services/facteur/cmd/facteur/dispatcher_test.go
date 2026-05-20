@@ -1,8 +1,6 @@
 package facteur
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -14,58 +12,43 @@ import (
 func TestBuildDispatcherReturnsNoopWhenDisabled(t *testing.T) {
 	t.Setenv("FACTEUR_DISABLE_DISPATCHER", "true")
 
-	dispatcher, runner, err := buildDispatcher(&config.Config{})
+	dispatcher, submitter, err := buildDispatcher(&config.Config{})
 	require.NoError(t, err)
-	require.Nil(t, runner)
+	require.Nil(t, submitter)
 
 	_, ok := dispatcher.(bridge.NoopDispatcher)
 	require.True(t, ok, "expected dispatcher to be noop dispatcher when disabled")
 }
 
-func TestBuildDispatcherPropagatesConfigErrors(t *testing.T) {
+func TestBuildDispatcherCreatesAgentRunDispatcher(t *testing.T) {
 	t.Setenv("FACTEUR_DISABLE_DISPATCHER", "")
-	t.Setenv("FACTEUR_KUBECONFIG", filepath.Join(t.TempDir(), "missing"))
+
+	dispatcher, submitter, err := buildDispatcher(&config.Config{
+		Implementer: config.ImplementerConfig{
+			AgentsBaseURL: "http://agents.agents.svc.cluster.local",
+			Namespace:     "agents",
+			AgentName:     "codex-agent",
+			RuntimeType:   "job",
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, dispatcher)
+	require.NotNil(t, submitter)
+}
+
+func TestBuildDispatcherPropagatesAgentsConfigErrors(t *testing.T) {
+	t.Setenv("FACTEUR_DISABLE_DISPATCHER", "")
 
 	_, _, err := buildDispatcher(&config.Config{
-		Argo: config.ArgoConfig{
-			Namespace:        "argo-workflows",
-			WorkflowTemplate: "template",
-			ServiceAccount:   "sa",
+		Implementer: config.ImplementerConfig{
+			AgentsBaseURL: "://bad-url",
+			Namespace:     "agents",
+			AgentName:     "codex-agent",
+			RuntimeType:   "job",
 		},
 	})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "kubeconfig")
-}
-
-func TestResolveRESTConfigPrefersFacteurEnv(t *testing.T) {
-	dir := t.TempDir()
-	kubePath := filepath.Join(dir, "config")
-	data := []byte(`apiVersion: v1
-clusters:
-- cluster:
-    server: https://example.invalid
-  name: default
-contexts:
-- context:
-    cluster: default
-    user: default
-  name: default
-current-context: default
-kind: Config
-preferences: {}
-users:
-- name: default
-  user:
-    token: fake
-`)
-
-	require.NoError(t, os.WriteFile(kubePath, data, 0o600))
-
-	t.Setenv("FACTEUR_KUBECONFIG", kubePath)
-	cfg, err := resolveRESTConfig()
-	require.NoError(t, err)
-	require.NotNil(t, cfg)
-	require.Contains(t, cfg.Host, "example.invalid")
+	require.Contains(t, err.Error(), "invalid base URL")
 }
 
 func TestIsDispatcherDisabled(t *testing.T) {

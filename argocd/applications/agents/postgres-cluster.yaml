@@ -1,0 +1,30 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: agents-db-next
+  namespace: agents
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+spec:
+  instances: 1
+  primaryUpdateStrategy: unsupervised
+  storage:
+    storageClass: rook-ceph-block
+    size: 50Gi
+  bootstrap:
+    initdb:
+      database: agents
+      owner: agents
+      encoding: "UTF8"
+      dataChecksums: true
+      postInitApplicationSQL:
+        - CREATE EXTENSION IF NOT EXISTS vector;
+        - CREATE EXTENSION IF NOT EXISTS pgcrypto;
+  inheritedMetadata:
+    annotations:
+      reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
+      reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "pgadmin"
+      reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
+      reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "pgadmin"
+# CNPG emits application credentials in `agents-db-next-app` (uri, user, password, host, port, dbname).
+# The chart and generic Memory resource consume that generated secret directly after the Agents-owned DB cutover.

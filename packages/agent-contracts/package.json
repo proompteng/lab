@@ -1,0 +1,126 @@
+{
+  "name": "@proompteng/agent-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./agents-health-client": {
+      "types": "./dist/agents-health-client.d.ts",
+      "default": "./dist/agents-health-client.js"
+    },
+    "./agent-runs-client": {
+      "types": "./dist/agent-runs-client.d.ts",
+      "default": "./dist/agent-runs-client.js"
+    },
+    "./agent-run-projection-authority-client": {
+      "types": "./dist/agent-run-projection-authority-client.d.ts",
+      "default": "./dist/agent-run-projection-authority-client.js"
+    },
+    "./agent-run-terminal-events-client": {
+      "types": "./dist/agent-run-terminal-events-client.d.ts",
+      "default": "./dist/agent-run-terminal-events-client.js"
+    },
+    "./agent-messages-client": {
+      "types": "./dist/agent-messages-client.d.ts",
+      "default": "./dist/agent-messages-client.js"
+    },
+    "./agent-jobs-client": {
+      "types": "./dist/agent-jobs-client.d.ts",
+      "default": "./dist/agent-jobs-client.js"
+    },
+    "./agents-ready": {
+      "types": "./dist/agents-ready.d.ts",
+      "default": "./dist/agents-ready.js"
+    },
+    "./agent-message-artifacts": {
+      "types": "./dist/agent-message-artifacts.d.ts",
+      "default": "./dist/agent-message-artifacts.js"
+    },
+    "./agent-run-callbacks": {
+      "types": "./dist/agent-run-callbacks.d.ts",
+      "default": "./dist/agent-run-callbacks.js"
+    },
+    "./codex-orchestration-parameters": {
+      "types": "./dist/codex-orchestration-parameters.d.ts",
+      "default": "./dist/codex-orchestration-parameters.js"
+    },
+    "./control-plane-status": {
+      "types": "./dist/control-plane-status.d.ts",
+      "default": "./dist/control-plane-status.js"
+    },
+    "./controller-witness": {
+      "types": "./dist/controller-witness.d.ts",
+      "default": "./dist/controller-witness.js"
+    },
+    "./execution-trust": {
+      "types": "./dist/execution-trust.d.ts",
+      "default": "./dist/execution-trust.js"
+    },
+    "./execution-trust-client": {
+      "types": "./dist/execution-trust-client.d.ts",
+      "default": "./dist/execution-trust-client.js"
+    },
+    "./memory-client": {
+      "types": "./dist/memory-client.d.ts",
+      "default": "./dist/memory-client.js"
+    },
+    "./orchestration-runs-client": {
+      "types": "./dist/orchestration-runs-client.d.ts",
+      "default": "./dist/orchestration-runs-client.js"
+    },
+    "./policy-reference-client": {
+      "types": "./dist/policy-reference-client.d.ts",
+      "default": "./dist/policy-reference-client.js"
+    },
+    "./runtime-admission": {
+      "types": "./dist/runtime-admission.d.ts",
+      "default": "./dist/runtime-admission.js"
+    },
+    "./policy-validation": {
+      "types": "./dist/policy-validation.d.ts",
+      "default": "./dist/policy-validation.js"
+    },
+    "./signals-client": {
+      "types": "./dist/signals-client.d.ts",
+      "default": "./dist/signals-client.js"
+    },
+    "./swarm-read-client": {
+      "types": "./dist/swarm-read-client.d.ts",
+      "default": "./dist/swarm-read-client.js"
+    },
+    "./swarm-analysis": {
+      "types": "./dist/swarm-analysis.d.ts",
+      "default": "./dist/swarm-analysis.js"
+    },
+    "./swarm-contracts": {
+      "types": "./dist/swarm-contracts.d.ts",
+      "default": "./dist/swarm-contracts.js"
+    },
+    "./swarm-material-reentry": {
+      "types": "./dist/swarm-material-reentry.d.ts",
+      "default": "./dist/swarm-material-reentry.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "bunx vitest run ./src/agents-clients.test.ts ./src/agents-ready.test.ts ./src/agent-message-artifacts.test.ts ./src/agent-run-callbacks.test.ts ./src/agent-run-projection-authority-client.test.ts ./src/agent-run-terminal-events-client.test.ts ./src/codex-orchestration-parameters.test.ts ./src/controller-witness.test.ts ./src/execution-trust.test.ts ./src/policy-validation.test.ts ./src/runtime-admission.test.ts ./src/signals-client.test.ts ./src/swarm-analysis.test.ts ./src/swarm-material-reentry.test.ts",
+    "tsc": "tsc --noEmit -p tsconfig.json",
+    "lint": "bunx oxfmt --check src",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
+  },
+  "dependencies": {
+    "effect": "3.21.2"
+  },
+  "devDependencies": {
+    "bun-types": "1.3.13",
+    "typescript": "6.0.3"
+  },
+  "packageManager": "bun@1.3.13"
+}

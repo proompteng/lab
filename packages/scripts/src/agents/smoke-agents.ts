@@ -169,15 +169,19 @@ type BuildHelmArgsInput = {
   imageRepository?: string
   controlPlaneImageRepository?: string
   controllersImageRepository?: string
+  runnerImageRepository?: string
   imageTag?: string
   controlPlaneImageTag?: string
   controllersImageTag?: string
+  runnerImageTag?: string
   imageDigestSet: boolean
   imageDigest: string
   controlPlaneImageDigestSet?: boolean
   controlPlaneImageDigest?: string
   controllersImageDigestSet?: boolean
   controllersImageDigest?: string
+  runnerImageDigestSet?: boolean
+  runnerImageDigest?: string
 }
 
 export const buildHelmArgs = ({
@@ -189,15 +193,19 @@ export const buildHelmArgs = ({
   imageRepository,
   controlPlaneImageRepository,
   controllersImageRepository,
+  runnerImageRepository,
   imageTag,
   controlPlaneImageTag,
   controllersImageTag,
+  runnerImageTag,
   imageDigestSet,
   imageDigest,
   controlPlaneImageDigestSet,
   controlPlaneImageDigest = '',
   controllersImageDigestSet,
   controllersImageDigest = '',
+  runnerImageDigestSet,
+  runnerImageDigest = '',
 }: BuildHelmArgsInput) => {
   const helmArgs = [
     'upgrade',
@@ -230,10 +238,16 @@ export const buildHelmArgs = ({
       helmArgs.push('--set', `controllers.image.repository=${controllersImageRepository}`)
     }
   }
+  if (runnerImageRepository) {
+    helmArgs.push('--set', `runner.image.repository=${runnerImageRepository}`)
+  }
   if (imageTag) {
     helmArgs.push('--set', `image.tag=${imageTag}`)
     helmArgs.push('--set', `controlPlane.image.tag=${controlPlaneImageTag ?? imageTag}`)
     helmArgs.push('--set', `controllers.image.tag=${controllersImageTag ?? imageTag}`)
+    if (runnerImageRepository) {
+      helmArgs.push('--set', `runner.image.tag=${runnerImageTag ?? imageTag}`)
+    }
   } else {
     if (controlPlaneImageTag) {
       helmArgs.push('--set', `controlPlane.image.tag=${controlPlaneImageTag}`)
@@ -241,17 +255,26 @@ export const buildHelmArgs = ({
     if (controllersImageTag) {
       helmArgs.push('--set', `controllers.image.tag=${controllersImageTag}`)
     }
+    if (runnerImageTag) {
+      helmArgs.push('--set', `runner.image.tag=${runnerImageTag}`)
+    }
   }
   if (imageDigestSet) {
     helmArgs.push('--set', `image.digest=${imageDigest}`)
     helmArgs.push('--set', `controlPlane.image.digest=${controlPlaneImageDigest ?? imageDigest}`)
     helmArgs.push('--set', `controllers.image.digest=${controllersImageDigest ?? imageDigest}`)
+    if (runnerImageRepository) {
+      helmArgs.push('--set', `runner.image.digest=${runnerImageDigest ?? imageDigest}`)
+    }
   } else {
     if (controlPlaneImageDigestSet) {
       helmArgs.push('--set', `controlPlane.image.digest=${controlPlaneImageDigest}`)
     }
     if (controllersImageDigestSet) {
       helmArgs.push('--set', `controllers.image.digest=${controllersImageDigest}`)
+    }
+    if (runnerImageDigestSet) {
+      helmArgs.push('--set', `runner.image.digest=${runnerImageDigest}`)
     }
   }
 
@@ -702,9 +725,11 @@ const main = async () => {
   const imageRepository = process.env.AGENTS_IMAGE_REPOSITORY
   const controlPlaneImageRepository = process.env.AGENTS_CONTROL_PLANE_IMAGE_REPOSITORY
   const controllersImageRepository = process.env.AGENTS_CONTROLLER_IMAGE_REPOSITORY
+  const runnerImageRepository = process.env.AGENTS_RUNNER_IMAGE_REPOSITORY
   const imageTag = process.env.AGENTS_IMAGE_TAG
   const controlPlaneImageTag = process.env.AGENTS_CONTROL_PLANE_IMAGE_TAG
   const controllersImageTag = process.env.AGENTS_CONTROLLER_IMAGE_TAG
+  const runnerImageTag = process.env.AGENTS_RUNNER_IMAGE_TAG
   const imageDigestSet = Object.prototype.hasOwnProperty.call(process.env, 'AGENTS_IMAGE_DIGEST')
   const imageDigest = process.env.AGENTS_IMAGE_DIGEST ?? ''
   const controlPlaneImageDigestSet = Object.prototype.hasOwnProperty.call(
@@ -714,6 +739,8 @@ const main = async () => {
   const controlPlaneImageDigest = process.env.AGENTS_CONTROL_PLANE_IMAGE_DIGEST ?? ''
   const controllersImageDigestSet = Object.prototype.hasOwnProperty.call(process.env, 'AGENTS_CONTROLLER_IMAGE_DIGEST')
   const controllersImageDigest = process.env.AGENTS_CONTROLLER_IMAGE_DIGEST ?? ''
+  const runnerImageDigestSet = Object.prototype.hasOwnProperty.call(process.env, 'AGENTS_RUNNER_IMAGE_DIGEST')
+  const runnerImageDigest = process.env.AGENTS_RUNNER_IMAGE_DIGEST ?? ''
 
   const agentctlCommand = agentctlBin.endsWith('.js') ? ['node', agentctlBin] : [agentctlBin]
   const agentctlExecutable = agentctlCommand[0]
@@ -801,15 +828,19 @@ const main = async () => {
     imageRepository,
     controlPlaneImageRepository,
     controllersImageRepository,
+    runnerImageRepository,
     imageTag,
     controlPlaneImageTag,
     controllersImageTag,
+    runnerImageTag,
     imageDigestSet,
     imageDigest,
     controlPlaneImageDigestSet,
     controlPlaneImageDigest,
     controllersImageDigestSet,
     controllersImageDigest,
+    runnerImageDigestSet,
+    runnerImageDigest,
   })
 
   log('Applying Agents chart CRDs...')

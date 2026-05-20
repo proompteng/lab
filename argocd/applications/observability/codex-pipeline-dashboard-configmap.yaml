@@ -38,62 +38,6 @@ data:
             "x": 0,
             "y": 0
           },
-          "id": 1,
-          "options": {
-            "tooltip": {
-              "mode": "single"
-            }
-          },
-          "targets": [
-            {
-              "expr": "sum(rate(kafka_consumergroup_current_offset_sum{consumergroup=\"jangar-codex-completions\", topic=\"argo.workflows.completions\"}[5m]))",
-              "legendFormat": "messages/sec",
-              "refId": "A"
-            }
-          ],
-          "title": "Kafka Completions Ingest Rate",
-          "type": "timeseries"
-        },
-        {
-          "datasource": "prom",
-          "fieldConfig": {
-            "defaults": {},
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 12,
-            "y": 0
-          },
-          "id": 2,
-          "options": {
-            "tooltip": {
-              "mode": "single"
-            }
-          },
-          "targets": [
-            {
-              "expr": "sum(kafka_consumergroup_lag_sum{consumergroup=\"jangar-codex-completions\", topic=\"argo.workflows.completions\"})",
-              "legendFormat": "lag",
-              "refId": "A"
-            }
-          ],
-          "title": "Kafka Completions Consumer Lag",
-          "type": "timeseries"
-        },
-        {
-          "datasource": "prom",
-          "fieldConfig": {
-            "defaults": {},
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 0,
-            "y": 8
-          },
           "id": 3,
           "options": {
             "tooltip": {
@@ -120,7 +64,7 @@ data:
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 8
+            "y": 0
           },
           "id": 4,
           "options": {
@@ -153,7 +97,7 @@ data:
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 16
+            "y": 8
           },
           "id": 5,
           "options": {
@@ -181,7 +125,7 @@ data:
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 16
+            "y": 8
           },
           "id": 6,
           "options": {
@@ -209,7 +153,7 @@ data:
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 24
+            "y": 16
           },
           "id": 7,
           "options": {
@@ -237,7 +181,7 @@ data:
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 24
+            "y": 16
           },
           "id": 8,
           "options": {
@@ -270,7 +214,7 @@ data:
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 32
+            "y": 24
           },
           "id": 9,
           "options": {

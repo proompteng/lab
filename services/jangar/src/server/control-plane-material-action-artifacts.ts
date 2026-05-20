@@ -7,10 +7,10 @@ import type {
   ReconciledActionClock,
   SourceRolloutTruthExchange,
   WorkflowsReliabilityStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import { buildActionCustodyProjection } from '~/server/control-plane-action-custody'
 import { buildClearanceMarketLedger, isClearanceMarketEnabled } from '~/server/control-plane-clearance-market'
-import { buildMaterialActionActivationReceipts } from '~/server/control-plane-controller-witness'
+import { buildMaterialActionActivationReceipts } from '~/server/control-plane-material-action-activation-receipts'
 import { buildDependencyVerdictExchange } from '~/server/control-plane-dependency-verdict'
 import type { ExecutionTrustSnapshot } from '~/server/control-plane-execution-trust'
 import { type FailureDomainRouteProbe } from '~/server/control-plane-failure-domain-leases'
@@ -26,6 +26,7 @@ import {
   collectRepairScheduleAttempts,
   type RepairScheduleAttemptCollection,
 } from '~/server/control-plane-repair-warrant-exchange'
+import { resolveRepairScheduleEvidenceNamespaces } from '~/server/control-plane-repair-schedule-evidence'
 import { buildRouteStabilityEscrow } from '~/server/control-plane-route-stability-escrow'
 import { buildStageClearancePackets } from '~/server/control-plane-stage-clearance'
 import { buildStageCreditLedger, isStageCreditLedgerEnabled } from '~/server/control-plane-stage-credit-ledger'
@@ -36,20 +37,16 @@ import type {
   DatabaseStatus,
 } from '~/server/control-plane-status-types'
 import type { TorghutConsumerEvidenceStatus } from '~/server/control-plane-torghut-consumer-evidence'
-import { resolveWorkflowNamespaces } from '~/server/control-plane-workflows'
-import type { KubeGateway } from '~/server/kube-gateway'
 
 export type RepairScheduleAttemptResolver = (input: {
   now: Date
   namespaces: string[]
-  kube: KubeGateway
 }) => Promise<RepairScheduleAttemptCollection>
 
 export type ControlPlaneMaterialActionArtifactsInput = {
   now: Date
   namespace: string
   service: string
-  kube: KubeGateway
   agentRunIngestion: AgentRunIngestionStatus
   admissionPassports: AdmissionPassportStatus[]
   dependencyQuorum: DependencyQuorumStatus
@@ -75,8 +72,7 @@ const normalizeMessage = (value: unknown) => (value instanceof Error ? value.mes
 export const buildControlPlaneMaterialActionArtifacts = async (input: ControlPlaneMaterialActionArtifactsInput) => {
   const repairScheduleAttempts = await (input.resolveRepairScheduleAttempts ?? collectRepairScheduleAttempts)({
     now: input.now,
-    namespaces: resolveWorkflowNamespaces(input.namespace),
-    kube: input.kube,
+    namespaces: resolveRepairScheduleEvidenceNamespaces(input.namespace),
   }).catch(
     (error: unknown): RepairScheduleAttemptCollection => ({
       attempts: [],

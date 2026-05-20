@@ -15,7 +15,7 @@ import (
 func TestHandler_Dispatch(t *testing.T) {
 	ctx := context.Background()
 	fake := &fakeDispatcher{
-		dispatchResult: bridge.DispatchResult{Namespace: "argo", WorkflowName: "facteur-dispatch", Message: "Workflow facteur-dispatch queued."},
+		dispatchResult: bridge.DispatchResult{Namespace: "agents", AgentRunName: "codex-agent-123", Message: "AgentRun codex-agent-123 queued."},
 	}
 
 	handler, err := discord.NewHandler(map[string][]string{
@@ -32,7 +32,7 @@ func TestHandler_Dispatch(t *testing.T) {
 
 	require.NoError(t, err)
 	require.True(t, resp.Ephemeral)
-	require.Contains(t, resp.Content, "facteur-dispatch queued")
+	require.Contains(t, resp.Content, "codex-agent-123 queued")
 	require.True(t, fake.dispatchCalled)
 	require.Equal(t, bridge.DispatchRequest{
 		Command: discord.CommandPlan,
@@ -65,7 +65,7 @@ func TestHandler_DispatchForbidden(t *testing.T) {
 func TestHandler_Status(t *testing.T) {
 	ctx := context.Background()
 	fake := &fakeDispatcher{
-		statusReport: bridge.StatusReport{Namespace: "argo", WorkflowTemplate: "facteur-dispatch", Ready: true},
+		statusReport: bridge.StatusReport{Namespace: "agents", AgentName: "codex-agent", Ready: true},
 	}
 
 	handler, err := discord.NewHandler(map[string][]string{}, fake, nil)
@@ -74,7 +74,7 @@ func TestHandler_Status(t *testing.T) {
 	resp, err := handler.Handle(ctx, discord.Interaction{Name: discord.CommandStatus})
 	require.NoError(t, err)
 	require.True(t, resp.Ephemeral)
-	require.Contains(t, resp.Content, "Workflow template")
+	require.Contains(t, resp.Content, "AgentRun dispatch target")
 	require.True(t, fake.statusCalled)
 }
 
@@ -93,7 +93,7 @@ func TestHandler_UnknownCommand(t *testing.T) {
 
 func TestHandler_DispatchErrorBubbles(t *testing.T) {
 	ctx := context.Background()
-	dispatchErr := errors.New("failed to submit workflow")
+	dispatchErr := errors.New("failed to submit AgentRun")
 	fake := &fakeDispatcher{dispatchErr: dispatchErr}
 
 	handler, err := discord.NewHandler(map[string][]string{}, fake, nil)
@@ -107,8 +107,8 @@ func TestHandler_DispatchPersistsSession(t *testing.T) {
 	ctx := context.Background()
 	fake := &fakeDispatcher{
 		dispatchResult: bridge.DispatchResult{
-			Namespace:     "argo",
-			WorkflowName:  "facteur-dispatch",
+			Namespace:     "agents",
+			AgentRunName:  "codex-agent-123",
 			CorrelationID: "corr-123",
 		},
 	}
@@ -126,7 +126,7 @@ func TestHandler_DispatchPersistsSession(t *testing.T) {
 	require.True(t, store.lastTTL >= 14*time.Minute)
 
 	store.getResult = store.lastValue
-	report := &fakeDispatcher{statusReport: bridge.StatusReport{Namespace: "argo", WorkflowTemplate: "facteur-dispatch"}}
+	report := &fakeDispatcher{statusReport: bridge.StatusReport{Namespace: "agents", AgentName: "codex-agent"}}
 	handlerWithStore, err := discord.NewHandler(nil, report, store)
 	require.NoError(t, err)
 

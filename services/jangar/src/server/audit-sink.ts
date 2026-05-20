@@ -1,5 +1,13 @@
-import type { AuditEventRecord } from '~/server/primitives-store'
 import { resolveAuditSinkConfig as resolveRuntimeAuditSinkConfig } from './runtime-tooling-config'
+
+export type AuditEventRecord = {
+  id: string
+  entityType: string
+  entityId: string
+  eventType: string
+  payload: Record<string, unknown>
+  createdAt: string | Date
+}
 
 type AuditSinkType = 'none' | 'stdout' | 'http'
 

@@ -7,8 +7,8 @@ data class AutoResearchConfig(
   val defaultOperatorGuidance: String,
   val defaultGoalsText: String,
 ) {
-  val workflowNamePrefix: String
-    get() = sanitizeWorkflowPrefix(stage)
+  val agentRunNamePrefix: String
+    get() = sanitizeAgentRunPrefix(stage)
 
   companion object {
     const val DEFAULT_KNOWLEDGE_BASE_NAME = "Graf AutoResearch Knowledge Base"
@@ -52,7 +52,7 @@ data class AutoResearchConfig(
       return AutoResearchConfig(knowledgeBaseName, stage, streamId, operatorGuidance, defaultGoals)
     }
 
-    private fun sanitizeWorkflowPrefix(rawStage: String): String {
+    private fun sanitizeAgentRunPrefix(rawStage: String): String {
       val normalized = rawStage.trim().lowercase()
       val cleaned =
         normalized

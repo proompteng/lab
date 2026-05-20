@@ -6,14 +6,14 @@ import { type KubernetesClient, RESOURCE_MAP } from './kube-types'
 import { resolveEmbeddingConfig } from './memory-config'
 import { asRecord, asString, readNested } from './primitives'
 
-type MemoryConnection = {
+export type MemoryConnection = {
   dataset: string
   schema: string
   embeddingDimension: number
   connectionString: string
 }
 
-type MemoryQueryResult = {
+export type MemoryQueryResult = {
   key: string
   score: number | null
   metadata: Record<string, unknown>

@@ -18,10 +18,6 @@ type JangarMetrics = {
   openWebUiDetailPreviewTruncations: Counter
   openWebUiDetailFallbacks: Counter
   openWebUiDetailRouteRequests: Counter
-  agentCommsInserted: Counter
-  agentCommsIngestErrors: Counter
-  agentCommsInsertDurationMs: Histogram
-  agentCommsBatchSize: Histogram
   githubReviewsSubmitted: Counter
   githubMergeAttempts: Counter
   githubMergeFailures: Counter
@@ -61,8 +57,6 @@ type MetricsState = {
 }
 
 type SseStream = 'chat' | 'agent-events' | 'control-plane' | 'torghut-quant' | 'torghut-decision'
-
-type AgentCommsErrorStage = 'fetch' | 'insert' | 'decode' | 'unknown'
 
 type MetricsAttributes = Record<string, string>
 
@@ -137,22 +131,6 @@ export const recordOpenWebUIDetailRouteRequest = (kind: string, outcome: string)
     kind: normalizeWatchLabel(kind),
     outcome: normalizeWatchLabel(outcome),
   })
-}
-
-export const recordAgentCommsBatch = (count: number, durationMs: number) => {
-  if (!metricsState.enabled) return
-  if (count > 0) {
-    recordCounter(metricsState.metrics?.agentCommsInserted, count)
-    recordHistogram(metricsState.metrics?.agentCommsBatchSize, count)
-  }
-  if (durationMs >= 0) {
-    recordHistogram(metricsState.metrics?.agentCommsInsertDurationMs, durationMs)
-  }
-}
-
-export const recordAgentCommsError = (stage: AgentCommsErrorStage) => {
-  if (!metricsState.enabled) return
-  recordCounter(metricsState.metrics?.agentCommsIngestErrors, 1, { stage })
 }
 
 export const recordGithubReviewSubmitted = (outcome: string) => {
@@ -513,19 +491,6 @@ const createMetricsState = (): MetricsState => {
       }),
       openWebUiDetailRouteRequests: meter.createCounter('jangar_openwebui_detail_route_requests_total', {
         description: 'Count of OpenWebUI detail-route requests by kind and outcome.',
-      }),
-      agentCommsInserted: meter.createCounter('jangar_agent_comms_inserted_total', {
-        description: 'Count of agent comms messages inserted into Postgres.',
-      }),
-      agentCommsIngestErrors: meter.createCounter('jangar_agent_comms_ingest_errors_total', {
-        description: 'Count of agent comms ingestion errors.',
-      }),
-      agentCommsInsertDurationMs: meter.createHistogram('jangar_agent_comms_insert_duration_ms', {
-        description: 'Time spent inserting agent comms batches into Postgres.',
-        unit: 'ms',
-      }),
-      agentCommsBatchSize: meter.createHistogram('jangar_agent_comms_batch_size', {
-        description: 'Batch size for agent comms inserts.',
       }),
       githubReviewsSubmitted: meter.createCounter('jangar_github_review_submitted_total', {
         description: 'Count of GitHub review submissions by outcome.',

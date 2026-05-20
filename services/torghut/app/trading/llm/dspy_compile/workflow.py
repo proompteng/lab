@@ -51,6 +51,8 @@ _PROMOTION_EVIDENCE_OVERRIDE_KEYS = {
     "fallbackRate",
     "evalReportRef",
 }
+
+
 def _normalize_local_path(candidate_ref: str) -> Path | None:
     parsed_ref = urlsplit(candidate_ref)
     if parsed_ref.scheme not in {"", "file"}:
@@ -113,6 +115,8 @@ def resolve_default_dspy_universe_ref(
     if resolved_symbols:
         return f"symbols:{','.join(resolved_symbols)}"
     return "torghut:equity:enabled"
+
+
 def build_compile_result(
     *,
     program_name: str,
@@ -476,7 +480,7 @@ def _sanitize_idempotency_key(value: str) -> str:
     return f"{head}-{digest}"
 
 
-def submit_jangar_agentrun(
+def submit_agents_agentrun(
     *,
     base_url: str,
     payload: Mapping[str, Any],
@@ -497,14 +501,14 @@ def submit_jangar_agentrun(
         timeout_seconds=timeout_seconds,
     )
     if status < 200 or status >= 300:
-        raise RuntimeError(f"jangar_submit_http_{status}:{body[:200]}")
+        raise RuntimeError(f"agents_submit_http_{status}:{body[:200]}")
     parsed = json.loads(body)
     if not isinstance(parsed, dict):
-        raise RuntimeError("invalid_jangar_response")
+        raise RuntimeError("invalid_agents_response")
     return cast(dict[str, Any], parsed)
 
 
-def get_jangar_agentrun(
+def get_agents_agentrun(
     *,
     base_url: str,
     agent_run_id: str,
@@ -514,7 +518,7 @@ def get_jangar_agentrun(
 ) -> dict[str, Any]:
     normalized_agent_run_id = agent_run_id.strip()
     if not normalized_agent_run_id:
-        raise RuntimeError("jangar_agentrun_id_required")
+        raise RuntimeError("agents_agentrun_id_required")
 
     query = urlencode({"namespace": namespace.strip() or "agents"})
     status_url = (
@@ -529,14 +533,14 @@ def get_jangar_agentrun(
         timeout_seconds=timeout_seconds,
     )
     if status < 200 or status >= 300:
-        raise RuntimeError(f"jangar_get_agentrun_http_{status}:{body[:200]}")
+        raise RuntimeError(f"agents_get_agentrun_http_{status}:{body[:200]}")
     parsed = json.loads(body)
     if not isinstance(parsed, dict):
-        raise RuntimeError("invalid_jangar_agentrun_response")
+        raise RuntimeError("invalid_agents_agentrun_response")
     return cast(dict[str, Any], parsed)
 
 
-def wait_for_jangar_agentrun_terminal_status(
+def wait_for_agents_agentrun_terminal_status(
     *,
     base_url: str,
     agent_run_id: str,
@@ -551,7 +555,7 @@ def wait_for_jangar_agentrun_terminal_status(
     last_phase = "unknown"
 
     while True:
-        response = get_jangar_agentrun(
+        response = get_agents_agentrun(
             base_url=base_url,
             agent_run_id=agent_run_id,
             namespace=namespace,
@@ -570,7 +574,7 @@ def wait_for_jangar_agentrun_terminal_status(
             return phase
         if time.monotonic() >= deadline:
             raise RuntimeError(
-                f"jangar_agentrun_terminal_wait_timeout:last_phase={last_phase}:agent_run_id={agent_run_id}"
+                f"agents_agentrun_terminal_wait_timeout:last_phase={last_phase}:agent_run_id={agent_run_id}"
             )
         time.sleep(normalized_poll)
 
@@ -1089,7 +1093,7 @@ def orchestrate_dspy_agentrun_workflow(
                 session.commit()
                 continue
 
-            response_payload = submit_jangar_agentrun(
+            response_payload = submit_agents_agentrun(
                 base_url=base_url,
                 payload=payload,
                 idempotency_key=idempotency_key,
@@ -1125,7 +1129,7 @@ def orchestrate_dspy_agentrun_workflow(
             # Persist each accepted submission immediately so partial orchestration runs remain auditable.
             session.commit()
 
-            terminal_phase = wait_for_jangar_agentrun_terminal_status(
+            terminal_phase = wait_for_agents_agentrun_terminal_status(
                 base_url=base_url,
                 agent_run_id=_extract_submitted_agentrun_id(response_payload),
                 namespace=namespace,
@@ -1186,7 +1190,7 @@ def orchestrate_dspy_agentrun_workflow(
             session.commit()
             if terminal_phase != "succeeded":
                 raise RuntimeError(
-                    f"jangar_agentrun_not_succeeded:{lane}:{terminal_phase}"
+                    f"agents_agentrun_not_succeeded:{lane}:{terminal_phase}"
                 )
         except Exception:
             session.rollback()
@@ -1456,9 +1460,9 @@ __all__ = [
     "orchestrate_dspy_agentrun_workflow",
     "build_promotion_record",
     "bundle_artifacts",
-    "get_jangar_agentrun",
-    "wait_for_jangar_agentrun_terminal_status",
-    "submit_jangar_agentrun",
+    "get_agents_agentrun",
+    "wait_for_agents_agentrun_terminal_status",
+    "submit_agents_agentrun",
     "upsert_workflow_artifact_record",
     "write_artifact_bundle",
 ]

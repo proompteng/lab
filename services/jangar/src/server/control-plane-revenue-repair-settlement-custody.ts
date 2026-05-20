@@ -12,7 +12,7 @@ import type {
   StageCreditLedger,
   TorghutConsumerEvidenceStatus,
   TorghutRevenueRepairQueueItem,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import type { ControlPlaneRolloutHealth } from '~/server/control-plane-status-types'
 
 export const REVENUE_REPAIR_SETTLEMENT_CUSTODY_DESIGN_ARTIFACT =

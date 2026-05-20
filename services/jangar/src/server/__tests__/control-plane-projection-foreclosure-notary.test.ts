@@ -4,14 +4,13 @@ import type {
   SourceRolloutTruthExchange,
   StageClearancePacket,
   TorghutConsumerEvidenceStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import {
   buildProjectionForeclosureNotary,
   PROJECTION_FORECLOSURE_NOTARY_DESIGN_ARTIFACT,
   type ProjectionForeclosureAgentRunProjection,
   type ProjectionForeclosureMarketContextProjection,
 } from '~/server/control-plane-projection-foreclosure-notary'
-import type { KubeGatewayAgentRun } from '~/server/kube-gateway'
 
 const now = new Date('2026-05-13T12:00:00.000Z')
 
@@ -99,14 +98,20 @@ const stagePacket = (overrides: Partial<StageClearancePacket> = {}): StageCleara
 const agentRunProjection = (
   overrides: Partial<ProjectionForeclosureAgentRunProjection> = {},
 ): ProjectionForeclosureAgentRunProjection => ({
-  id: '00000000-0000-0000-0000-000000000001',
-  agent_name: 'jangar-control-plane-implement',
-  delivery_id: 'delivery:stale',
-  status: 'Running',
-  external_run_id: 'jangar-control-plane-implement-old',
-  payload: {},
-  created_at: '2026-05-13T02:00:00.000Z',
-  updated_at: '2026-05-13T02:15:00.000Z',
+  claim_id: 'projection-claim:agentrun_execution:stale',
+  claim_class: 'agentrun_execution',
+  source_ref: 'agent_runs:00000000-0000-0000-0000-000000000001',
+  source_owner: 'jangar-control-plane-implement',
+  lane: 'jangar-control-plane-implement',
+  status: 'running',
+  observed_at: '2026-05-13T02:15:00.000Z',
+  last_heartbeat_at: '2026-05-13T02:15:00.000Z',
+  fresh_until: '2026-05-13T08:15:00.000Z',
+  live_authority_ref: 'agents-service-agentrun:jangar-control-plane-implement-old',
+  projection_ref: 'agent_runs:00000000-0000-0000-0000-000000000001',
+  authority_state: 'stale_foreclosed',
+  reason_codes: ['agents_service_agentrun_projection_not_renewed'],
+  value_gates: ['failed_agentrun_rate', 'ready_status_truth', 'manual_intervention_count'],
   ...overrides,
 })
 
@@ -126,32 +131,6 @@ const marketContextProjection = (
   ...overrides,
 })
 
-const liveAgentRun = (overrides: Partial<KubeGatewayAgentRun> = {}): KubeGatewayAgentRun => ({
-  metadata: {
-    name: 'jangar-control-plane-implement-live',
-    namespace: 'agents',
-    generation: 1,
-    labels: {},
-    annotations: {},
-    creationTimestamp: '2026-05-13T11:00:00.000Z',
-  },
-  spec: {
-    parameters: {},
-    agentRefName: 'jangar-control-plane',
-    implementationSpecRefName: null,
-    runtimeType: 'codex',
-  },
-  status: {
-    phase: 'Running',
-    reason: null,
-    message: null,
-    startedAt: '2026-05-13T11:00:00.000Z',
-    finishedAt: null,
-    conditions: [],
-  },
-  ...overrides,
-})
-
 const buildNotary = (overrides: Partial<Parameters<typeof buildProjectionForeclosureNotary>[0]> = {}) =>
   buildProjectionForeclosureNotary({
     now,
@@ -163,14 +142,12 @@ const buildNotary = (overrides: Partial<Parameters<typeof buildProjectionForeclo
     torghutConsumerEvidence: torghutEvidence(),
     agentRunProjections: [],
     marketContextProjections: [],
-    liveAgentRuns: [],
-    liveJobs: [],
     collectionErrors: [],
     ...overrides,
   })
 
 describe('buildProjectionForeclosureNotary', () => {
-  it('stale AgentRun rows stay visible but lose live authority', () => {
+  it('stale AgentRun authority claims stay visible but lose live authority', () => {
     const notary = buildNotary({
       agentRunProjections: [agentRunProjection()],
     })
@@ -180,9 +157,9 @@ describe('buildProjectionForeclosureNotary', () => {
     expect(notary.decision).toBe('observe_only')
     expect(claim).toMatchObject({
       authority_state: 'stale_foreclosed',
-      live_authority_ref: null,
+      live_authority_ref: 'agents-service-agentrun:jangar-control-plane-implement-old',
       projection_ref: 'agent_runs:00000000-0000-0000-0000-000000000001',
-      reason_codes: expect.arrayContaining(['agentrun_projection_not_renewed', 'live_agentrun_authority_missing']),
+      reason_codes: ['agents_service_agentrun_projection_not_renewed'],
     })
     expect(notary.foreclosure_receipts).toEqual(
       expect.arrayContaining([
@@ -198,19 +175,43 @@ describe('buildProjectionForeclosureNotary', () => {
     const notary = buildNotary({
       agentRunProjections: [
         agentRunProjection({
-          external_run_id: 'jangar-control-plane-implement-live',
-          payload: { timeoutSeconds: 86_400 },
+          claim_id: 'projection-claim:agentrun_execution:live',
+          live_authority_ref: 'agents-service-agentrun:jangar-control-plane-implement-live',
+          authority_state: 'authoritative',
+          reason_codes: ['agents_service_agentrun_projection_current'],
         }),
       ],
-      liveAgentRuns: [liveAgentRun()],
     })
     const claim = notary.claims.find((entry) => entry.claim_class === 'agentrun_execution')
 
     expect(notary.decision).toBe('allow')
     expect(claim).toMatchObject({
       authority_state: 'authoritative',
-      live_authority_ref: 'agentrun:agents:jangar-control-plane-implement-live',
-      reason_codes: ['agentrun_live_authority_current'],
+      live_authority_ref: 'agents-service-agentrun:jangar-control-plane-implement-live',
+      reason_codes: ['agents_service_agentrun_projection_current'],
+    })
+  })
+
+  it('honors Agents-owned projection authority state while assembling the Jangar notary', () => {
+    const notary = buildNotary({
+      agentRunProjections: [
+        agentRunProjection({
+          claim_id: 'projection-claim:agentrun_execution:foreclosed',
+          live_authority_ref: 'agents-service-agentrun:jangar-control-plane-implement-foreclosed',
+          status: 'running',
+          observed_at: '2026-05-13T11:59:00.000Z',
+          last_heartbeat_at: '2026-05-13T11:59:00.000Z',
+          authority_state: 'stale_foreclosed',
+        }),
+      ],
+    })
+    const claim = notary.claims.find((entry) => entry.claim_class === 'agentrun_execution')
+
+    expect(notary.decision).toBe('observe_only')
+    expect(claim).toMatchObject({
+      authority_state: 'stale_foreclosed',
+      live_authority_ref: 'agents-service-agentrun:jangar-control-plane-implement-foreclosed',
+      reason_codes: ['agents_service_agentrun_projection_not_renewed'],
     })
   })
 

@@ -1,13 +1,13 @@
 # Autonomous Codex Delivery System
 
-> Note: The production Codex pipeline is now implementation-only. Planning/review references below are historical design notes and should be treated as aspirational until reintroduced.
+> Note: The production Codex pipeline is now Agents-owned and implementation-only. Planning/review references below are historical design notes and should be treated as aspirational until reintroduced.
 
 ## 1. Background
 
 The current Codex automation stack is split across two services:
 
-- **Froussard** (`apps/froussard`) ingests GitHub/Discord events, derives Codex prompts, and publishes structured protobuf messages (`github.issues.codex.tasks`) to Kafka. Planning/implementation/review stages are gated inside `apps/froussard/src/webhooks/github/events/*.ts`.
-- **Facteur** (`services/facteur`) handles Discord workflows and consumes Codex tasks delivered by the Knative KafkaSource (`argocd/applications/facteur/overlays/cluster/facteur-codex-kafkasource.yaml`) on `/codex/tasks`, orchestrating Argo workflows when enabled.
+- **Froussard** (`apps/froussard`) ingests GitHub/Discord events, derives Codex prompts, and submits GitHub issue implementation runs directly to Agents.
+- **Facteur** (`services/facteur`) handles Discord/domain workflows and submits AgentRuns through the Agents service.
 
 Limitations:
 
@@ -76,7 +76,7 @@ Key components evolve from the current codebase:
    - For Discord: add command in `apps/froussard/src/webhooks/discord.ts` to capture free-form ideas, summarise with LLM, and publish same payload.
 
 2. **Plan Generation Triggers**
-   - Publish structured task payloads to `github.issues.codex.tasks` for planning/implementation/review, including `ideaId`, dependency hints, and risk labels.
+   - Submit implementation AgentRuns through the Agents API and keep future planning/review expansion behind new Agents-owned contracts.
    - Provide plan markers the orchestrator can map back to the idea graph.
 
 ### 6.2 Facteur Orchestrator (New Responsibilities)
@@ -134,14 +134,14 @@ Key components evolve from the current codebase:
      - `events`: append-only log of orchestration decisions.
 
 4. **Schedulers & Executors**
-   - Listen to Kafka topics (`codex.intent`, existing `github.issues.codex.tasks`, new status topics).
+   - Listen to future Agents-owned status or intent topics when those contracts exist.
    - Use `services/facteur/internal/argo` runner to submit workflows with stage-specific templates.
    - Implement concurrency controller to limit simultaneous heavy workflows; queue tasks based on priority from Idea Spec.
    - Provide REST/gRPC API for status queries and manual overrides (pause, resume, cancel).
 
 5. **Event Handling Enhancements**
    - Update `/codex/tasks` handler (`services/facteur/internal/server/server.go`) to:
-     - Deserialize `CodexTask` proto.
+     - Consume typed Agents event payloads.
      - Route to stage-specific executor.
      - Record delivery idempotently (deliveryId persisted in `runs`).
      - Emit internal events (`codex.execution`) via Kafka for monitoring/analytics.
@@ -176,15 +176,14 @@ Key components evolve from the current codebase:
 
 ## 7. Data Flow & Topics
 
-| Topic                       | Producer                | Consumer               | Payload                 |
-| --------------------------- | ----------------------- | ---------------------- | ----------------------- |
-| `codex.intent`              | Froussard               | Facteur                | Normalised Idea Spec    |
-| `github.issues.codex.tasks` | Froussard               | Facteur executor       | Protobuf CodexTask      |
-| `codex.plan`                | Planning workflow       | Facteur                | Plan artifacts metadata |
-| `codex.execution`           | Implementation workflow | Facteur, Observability | Progress, logs          |
-| `codex.review`              | Review workflow         | Facteur                | QA outcomes             |
-| `codex.deploy`              | Deploy workflow         | Facteur                | Deployment status       |
-| `codex.telemetry`           | All workflows           | Observability          | Metrics/traces          |
+| Topic             | Producer                | Consumer               | Payload                 |
+| ----------------- | ----------------------- | ---------------------- | ----------------------- |
+| `codex.intent`    | Froussard               | Facteur                | Normalised Idea Spec    |
+| `codex.plan`      | Planning workflow       | Facteur                | Plan artifacts metadata |
+| `codex.execution` | Implementation workflow | Facteur, Observability | Progress, logs          |
+| `codex.review`    | Review workflow         | Facteur                | QA outcomes             |
+| `codex.deploy`    | Deploy workflow         | Facteur                | Deployment status       |
+| `codex.telemetry` | All workflows           | Observability          | Metrics/traces          |
 
 ## 8. Knowledge Base Integration
 
@@ -276,10 +275,10 @@ For each phase:
 
 This design builds directly on the current codebase, evolving Froussard and Facteur into a cohesive autonomous platform while maintaining incremental rollout safety.
 
-## 16. Docker-Enabled Codex Workflows
+## 16. Retired Docker-Enabled Codex Workflows
 
-- **Image tooling:** `services/jangar/Dockerfile.codex` now bakes Docker CLI, Buildx, and Compose with default `DOCKER_HOST=tcp://localhost:2375`. `DOCKER_TLS_VERIFY` should be unset for the in-pod daemon (bootstrap treats `0`/`false` as unset). `DOCKER_ENABLED` defaults to `0` in the image and is set to `1` only on WorkflowTemplates that attach the Docker sidecar so non-docker workflows stay untouched.
-- **Rootless sidecar:** Every GitHub Codex WorkflowTemplate attaches a `docker:25.0-dind-rootless` sidecar listening on 2375, backed by an `emptyDir` at `/var/lib/docker` that is mounted read-only into the main Codex container to make image layers visible across steps without exposing write access.
-- **Bootstrap changes:** `codex-bootstrap` skips redundant `bun install` when `DOCKER_ENABLED=1` and cached modules exist, and it waits for `docker info` only when `DOCKER_ENABLED=1` so docker-ready workflows fail fast while other workflows proceed without delay.
-- **Policy guardrails:** A dedicated RBAC binding (`codex-docker-privileged` role in `argocd/applications/argo-workflows/codex-docker-policy.yaml`) scopes privileged pod usage to the Codex workflow service account; review namespace pod-security posture before promotion.
-- **Runbooks:** `docs/runbooks/codex-docker.md` documents validation (`docker info`, `docker run hello-world`, sample `docker build`), sidecar restart, and log collection. Roll staging first, monitor node pressure, then promote after Argo sync.
+- This section is historical. The generic Agents runner path no longer uses shared Argo Codex WorkflowTemplates
+  or the old Docker sidecar policy from `argocd/applications/argo-workflows`.
+- Current Agents runner images must carry their own declared runtime dependencies and must not rely on the retired
+  shared Argo workflow Docker sidecar.
+- `docs/runbooks/codex-docker.md` remains only as archived troubleshooting context for old workflow pods.

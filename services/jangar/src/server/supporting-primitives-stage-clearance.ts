@@ -1,29 +1,3 @@
-import type {
-  ActionSloBudgetActionClass,
-  ClearanceMarketDecision,
-  ClearanceMarketStageAdmission,
-  StageClearanceDecision,
-  StageClearancePacket,
-} from '~/data/agents-control-plane'
-import { asRecord, asString } from '~/server/primitives-http'
-import {
-  readMaterialReentryRequirementSignals,
-  type MaterialReentryRequirementSignal,
-} from '~/server/supporting-primitives-material-reentry-requirements'
-import {
-  applyMaterialEvidenceTrace,
-  readMaterialEvidenceSettlementTrace,
-  type MaterialEvidenceSettlementTrace,
-} from '~/server/supporting-primitives-material-evidence-trace'
-import { resolveSupportingPrimitivesConfig } from '~/server/supporting-primitives-config'
-import {
-  applyEvidencePressureTrace,
-  evidencePressureEnforced,
-  evidencePressureTraceForAction,
-  readEvidencePressureStatusSnapshot,
-  type EvidencePressureStatusSnapshot,
-  type EvidencePressureTrace,
-} from '~/server/supporting-primitives-evidence-pressure'
 import {
   SWARM_STAGE_CLEARANCE_ANNOTATION_ACTION_CLASS,
   SWARM_STAGE_CLEARANCE_ANNOTATION_CLEARANCE_MARKET_LEDGER_ID,
@@ -47,8 +21,36 @@ import {
   SWARM_STAGE_CREDIT_ANNOTATION_RUNNER_SLOT_FUTURE_EXPIRES_AT,
   SWARM_STAGE_CREDIT_ANNOTATION_RUNNER_SLOT_FUTURE_ID,
   SWARM_STAGE_CREDIT_ANNOTATION_SELECTED_REPAIR_LOT,
-} from '~/server/supporting-primitives-schedule-runner'
-import type { StageName } from '~/server/supporting-primitives-swarm-config'
+  type SwarmStageName,
+} from '@proompteng/agent-contracts/swarm-contracts'
+import {
+  readMaterialReentryRequirementSignals,
+  type MaterialReentryRequirementSignal,
+} from '@proompteng/agent-contracts/swarm-material-reentry'
+
+import type {
+  ActionSloBudgetActionClass,
+  ClearanceMarketDecision,
+  ClearanceMarketStageAdmission,
+  StageClearanceDecision,
+  StageClearancePacket,
+} from '~/server/control-plane-status-types'
+import { asRecord, asString } from '~/server/primitives-http'
+import {
+  applyMaterialEvidenceTrace,
+  readMaterialEvidenceSettlementTrace,
+  type MaterialEvidenceSettlementTrace,
+} from '~/server/supporting-primitives-material-evidence-trace'
+import { resolveSupportingPrimitivesConfig } from '~/server/supporting-primitives-config'
+import {
+  applyEvidencePressureTrace,
+  evidencePressureEnforced,
+  evidencePressureTraceForAction,
+  readEvidencePressureStatusSnapshot,
+  type EvidencePressureStatusSnapshot,
+  type EvidencePressureTrace,
+} from '~/server/supporting-primitives-evidence-pressure'
+type StageName = SwarmStageName
 
 export { stageClearanceStatusForStage } from '~/server/supporting-primitives-stage-clearance-status'
 
@@ -311,10 +313,10 @@ export const fetchStageClearanceStatusSnapshot = async (
   namespace: string,
   config = resolveSupportingPrimitivesConfig(process.env),
 ) => {
-  const url = new URL(config.scheduleRunnerAdmissionStatusUrl)
+  const url = new URL(config.runtimeAdmissionStatusUrl)
   url.searchParams.set('namespace', namespace)
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), config.scheduleRunnerAdmissionStatusTimeoutMs)
+  const timeout = setTimeout(() => controller.abort(), config.runtimeAdmissionStatusTimeoutMs)
   let response: Response
   try {
     response = await fetch(url, { headers: { accept: 'application/json' }, signal: controller.signal })

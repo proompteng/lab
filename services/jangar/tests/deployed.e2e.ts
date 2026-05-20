@@ -5,9 +5,9 @@ import { connect, StringCodec } from 'nats'
 
 const baseURL = process.env.JANGAR_DEPLOYED_BASE_URL ?? 'http://jangar'
 const shouldRun = process.env.PLAYWRIGHT_DEPLOYED === '1'
-const generalNatsUrl = process.env.JANGAR_AGENT_COMMS_NATS_URL ?? ''
-const generalNatsUser = process.env.JANGAR_AGENT_COMMS_NATS_USER
-const generalNatsPassword = process.env.JANGAR_AGENT_COMMS_NATS_PASSWORD
+const generalNatsUrl = process.env.AGENTS_AGENT_COMMS_NATS_URL ?? ''
+const generalNatsUser = process.env.AGENTS_AGENT_COMMS_NATS_USER
+const generalNatsPassword = process.env.AGENTS_AGENT_COMMS_NATS_PASSWORD
 const canPublishGeneral = shouldRun && Boolean(generalNatsUrl)
 
 const trackApiFailures = (page: import('@playwright/test').Page) => {
@@ -182,15 +182,15 @@ const publishGeneralMessage = async (content: string) => {
     sent_at: sentAt,
     timestamp: sentAt,
     kind: 'status',
-    workflow_uid: `e2e-${messageId}`,
-    workflow_name: 'e2e-general',
-    workflow_namespace: 'e2e',
+    agent_run_uid: `e2e-${messageId}`,
+    agent_run_name: 'e2e-general',
+    agent_run_namespace: 'e2e',
     agent_id: 'e2e-agent',
     role: 'assistant',
     channel: 'general',
     content,
   }
-  nc.publish('workflow.general.status', sc.encode(JSON.stringify(payload)))
+  nc.publish('agentrun.general.status', sc.encode(JSON.stringify(payload)))
   await nc.flush()
   await nc.close()
   return { messageId, sentAt }
@@ -258,7 +258,7 @@ test.describe('deployed jangar e2e', () => {
   test('general agent stream receives live messages', async ({ page }) => {
     test.skip(
       !canPublishGeneral,
-      'Set PLAYWRIGHT_DEPLOYED=1 and JANGAR_AGENT_COMMS_NATS_URL (plus creds) to publish a general message.',
+      'Set PLAYWRIGHT_DEPLOYED=1 and AGENTS_AGENT_COMMS_NATS_URL (plus creds) to publish a general message.',
     )
 
     const content = `e2e-general-${Date.now()}`

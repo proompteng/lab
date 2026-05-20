@@ -417,7 +417,7 @@ Required changed files are expected under:
 
 - `services/jangar/src/server/control-plane-controller-ingestion-settlement.ts`
 - `services/jangar/src/server/control-plane-status.ts`
-- `services/jangar/src/data/agents-control-plane.ts`
+- `services/jangar/src/server/control-plane-status-types.ts`
 - `services/jangar/src/server/__tests__/control-plane-controller-ingestion-settlement.test.ts`
 - `services/jangar/src/server/__tests__/control-plane-status.test.ts`
 

@@ -77,7 +77,7 @@ graph TD
     TNetpol["NetworkPolicy/agents-tailscale-ingress (ingress allowlist)"]
     DashCM["ConfigMap/agents-dashboard (Grafana dashboard JSON)"]
 
-    DbSecret["Secret/agents-db-app (DATABASE_URL)"]
+    DbSecret["Secret/agents-db-next-app (DATABASE_URL)"]
     TokenEnv["Secret/agents-github-token-env (envFrom)"]
 
     RunSpecCM["ConfigMap/<run>-spec-step-<n>-attempt-<n> (created by controller)"]
@@ -223,7 +223,6 @@ flowchart LR
 - Image resolution priority:
   1. `AgentRun.spec.workload.image`
   2. `AGENTS_AGENT_RUNNER_IMAGE`
-  3. `AGENTS_AGENT_IMAGE`
 - Job inputs must include a JSON spec (e.g., `run.json`) and optional provider input files.
 - Job should be labeled with `agents.proompteng.ai/agent-run` for tracking.
 
@@ -295,7 +294,7 @@ sequenceDiagram
 
 - Orchestration and OrchestrationRun execute in-cluster by default with no external workflow engine.
 - Native controller currently supports `AgentRun`, `ToolRun`, `SubOrchestration`, and `ApprovalGate` steps; other step kinds require adapters or future extensions.
-- Codex reruns/system-improvements should point at native OrchestrationRuns via `workflowRuntime.native.*`
+- Codex reruns/system-improvements should point at native OrchestrationRuns via `agentRuntime.native.*`
   values (or the equivalent `AGENTS_CODEX_RERUN_ORCHESTRATION` and `AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION` env vars).
 
 ### RBAC alignment
@@ -341,10 +340,11 @@ Controller behavior requires permissions to:
 
 Agent comms publishes vendor-neutral NATS subjects using the following pattern:
 
-- `workflow.<namespace>.<workflow>.<uid>.agent.<agentId>.<kind>` for workflow-scoped agent messages.
-- `workflow.general.<kind>` for general agent status updates.
+- `agentrun.<namespace>.<agentRun>.<uid>.agent.<agentId>.<kind>` for AgentRun-scoped agent messages.
+- `agentrun.general.<kind>` for general agent status updates.
 
-Legacy compatibility: `agents.workflow.*` subjects are still accepted alongside the `workflow.*` subject family.
+The retired `agents.agentrun.*` and `agents.agent_messages.*` subject families are intentionally not accepted;
+publishers must use `agentrun.*` or the HTTP message-ingestion API.
 
 ### RBAC modes
 

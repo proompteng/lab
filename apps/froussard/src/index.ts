@@ -60,6 +60,7 @@ export const createApp = () => {
   const webhookConfig: WebhookConfig = {
     idempotency: config.idempotency,
     atlas: config.atlas,
+    agents: config.agents,
     codebase: config.codebase,
     github: config.github,
     codexTriggerLogins: config.codex.triggerLogins,

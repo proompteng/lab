@@ -9,14 +9,7 @@ import { resolveParam, resolveParameters, resolveRunGoal } from './run-utils'
 import { buildRuntimeRef } from './runtime-resources'
 import type { SystemPromptRef } from './system-prompt'
 import { renderTemplate } from './template-hash'
-import {
-  buildAuthSecretPath,
-  collectBlockedSecrets,
-  type EnvVar,
-  resolveAuthSecretConfig,
-  secretHasKey,
-  type VcsResolution,
-} from './vcs-context'
+import { buildAuthSecretPath, type EnvVar, resolveAuthSecretConfig, type VcsResolution } from './vcs-context'
 import { resolveAgentRunnerDefaultsConfig } from './runtime-config'
 
 const MIN_RUNNER_JOB_TTL_SECONDS = 30
@@ -142,7 +135,64 @@ const buildJobResources = (workload: Record<string, unknown>) => {
   }
 }
 
+const resolveProviderSecretEnv = (providerSpec: Record<string, unknown>) => {
+  if (Array.isArray(providerSpec.secretEnv)) return providerSpec.secretEnv
+  const adapter = asRecord(providerSpec.adapter) ?? {}
+  const adapterSecretEnv = adapter.secretEnv
+  if (Array.isArray(adapterSecretEnv)) return adapterSecretEnv
+  const codexAdapter = asRecord(adapter.codex) ?? {}
+  return Array.isArray(codexAdapter.secretEnv) ? codexAdapter.secretEnv : []
+}
+
+const buildProviderSecretEnv = (providerSpec: Record<string, unknown>): EnvVar[] => {
+  const secretEnv = resolveProviderSecretEnv(providerSpec)
+  return secretEnv
+    .map((entry): EnvVar | null => {
+      const record = asRecord(entry)
+      if (!record) return null
+      const name = asString(record.name)?.trim()
+      const secretName = asString(record.secretName)?.trim()
+      const key = asString(record.key)?.trim()
+      if (!name || !secretName || !key) return null
+      const envVar: EnvVar = {
+        name,
+        valueFrom: {
+          secretKeyRef: {
+            name: secretName,
+            key,
+            ...(record.optional === true ? { optional: true } : {}),
+          },
+        },
+      }
+      return envVar
+    })
+    .filter((entry): entry is EnvVar => entry !== null)
+}
+
 const { buildEventPayload } = createImplementationContractTools(resolveParam)
+
+export const renderProviderOutputArtifacts = (
+  providerSpec: Record<string, unknown>,
+  context: Record<string, unknown>,
+): Array<Record<string, unknown>> => {
+  const outputArtifacts = Array.isArray(providerSpec.outputArtifacts) ? providerSpec.outputArtifacts : []
+  return outputArtifacts
+    .map((artifact): Record<string, unknown> | null => {
+      const record = asRecord(artifact)
+      const name = asString(record?.name)?.trim()
+      if (!name) return null
+      const path = asString(record?.path)
+      const key = asString(record?.key)
+      const url = asString(record?.url)
+      return {
+        name,
+        ...(path ? { path: renderTemplate(path, context) } : {}),
+        ...(key ? { key: renderTemplate(key, context) } : {}),
+        ...(url ? { url: renderTemplate(url, context) } : {}),
+      }
+    })
+    .filter((artifact): artifact is Record<string, unknown> => artifact !== null)
+}
 
 export const buildRunSpec = (
   agentRun: Record<string, unknown>,
@@ -157,7 +207,7 @@ export const buildRunSpec = (
 ) => {
   const context = buildRunSpecContext(agentRun, agent, implementation, parameters, memory, vcs ?? null)
   const eventPayload = buildEventPayload(implementation, parameters)
-  const goal = resolveRunGoal(agentRun, parameters)
+  const goal = resolveRunGoal(agentRun)
   return {
     provider: providerName ?? asString(readNested(agent, ['spec', 'providerRef', 'name'])) ?? '',
     agentRun: context.agentRun,
@@ -307,6 +357,27 @@ const createRunSpecConfigMap = async (
   return configName
 }
 
+const isAgentRunnerBinary = (binary: string | null) =>
+  !binary || binary === '/usr/local/bin/agent-runner' || binary.endsWith('/agent-runner')
+
+const resolveProviderAdapterType = (providerSpec: Record<string, unknown>): 'codex-app-server' | 'exec' => {
+  const explicitType = asString(readNested(providerSpec, ['adapter', 'type']))
+  if (explicitType === 'exec') return 'exec'
+  if (explicitType === 'codex-app-server') return 'codex-app-server'
+  return isAgentRunnerBinary(asString(providerSpec.binary)) ? 'codex-app-server' : 'exec'
+}
+
+const sanitizeProviderAdapterForRunner = (adapter: Record<string, unknown>) => {
+  const { secretEnv: _secretEnv, codex, ...rest } = adapter
+  const codexRecord = asRecord(codex)
+  if (!codexRecord) return rest
+  const { secretEnv: _codexSecretEnv, ...codexRest } = codexRecord
+  return {
+    ...rest,
+    codex: codexRest,
+  }
+}
+
 const buildAgentRunnerSpec = (
   runSpec: Record<string, unknown>,
   parameters: Record<string, string>,
@@ -316,8 +387,9 @@ const buildAgentRunnerSpec = (
 ) => {
   const explicitAdapter = asRecord(providerSpec.adapter)
   const binary = asString(providerSpec.binary)
+  const outputArtifacts = Array.isArray(providerSpec.outputArtifacts) ? providerSpec.outputArtifacts : []
   const defaultAdapter =
-    binary && binary !== '/usr/local/bin/agent-runner' && !binary.endsWith('/agent-runner')
+    resolveProviderAdapterType(providerSpec) === 'exec'
       ? {
           type: 'exec',
           exec: {
@@ -329,7 +401,7 @@ const buildAgentRunnerSpec = (
           },
         }
       : { type: 'codex-app-server' }
-  const adapter = explicitAdapter ?? defaultAdapter
+  const adapter = explicitAdapter ? sanitizeProviderAdapterForRunner(explicitAdapter) : defaultAdapter
 
   return {
     schemaVersion: 'agents.proompteng.ai/runner/v1',
@@ -344,6 +416,7 @@ const buildAgentRunnerSpec = (
       logPath: '/workspace/.agent/runner.log',
       logRetentionSeconds,
     },
+    ...(outputArtifacts.length > 0 ? { providerSpec: { outputArtifacts } } : {}),
     adapter,
   }
 }
@@ -402,6 +475,52 @@ const isImmutableJobApplyError = (error: unknown) => {
   return normalized.includes('job.batch') && normalized.includes('field is immutable')
 }
 
+const isKubeNotFoundMessage = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error)
+  const normalized = message.toLowerCase()
+  return normalized.includes('notfound') || normalized.includes(' not found')
+}
+
+export const getMountedConfigMapNames = (job: Record<string, unknown>) => {
+  const volumes = readNested(job, ['spec', 'template', 'spec', 'volumes'])
+  if (!Array.isArray(volumes)) return []
+
+  const names = new Set<string>()
+  for (const volume of volumes) {
+    const record = asRecord(volume)
+    const configMap = asRecord(record?.configMap)
+    const name = asString(configMap?.name)?.trim()
+    if (name) names.add(name)
+  }
+
+  return [...names].sort()
+}
+
+export const verifyJobConfigMaps = async (
+  kube: Pick<ReturnType<typeof createKubernetesClient>, 'get'>,
+  job: Record<string, unknown>,
+  namespace: string,
+): Promise<{ ok: true; names: string[] } | { ok: false; names: string[]; missing: string[] }> => {
+  const names = getMountedConfigMapNames(job)
+  if (names.length === 0) return { ok: true, names }
+
+  const missing: string[] = []
+  for (const name of names) {
+    try {
+      const configMap = await kube.get('configmap', name, namespace)
+      if (!configMap) missing.push(name)
+    } catch (error) {
+      if (isKubeNotFoundMessage(error)) {
+        missing.push(name)
+        continue
+      }
+      throw error
+    }
+  }
+
+  return missing.length === 0 ? { ok: true, names } : { ok: false, names, missing }
+}
+
 export const submitJobRun = async (
   kube: ReturnType<typeof createKubernetesClient>,
   agentRun: Record<string, unknown>,
@@ -416,12 +535,11 @@ export const submitJobRun = async (
 ) => {
   const workload = options.workload ?? asRecord(readNested(agentRun, ['spec', 'workload'])) ?? {}
   if (!workloadImage) {
-    throw new Error('spec.workload.image, AGENTS_AGENT_RUNNER_IMAGE, or AGENTS_AGENT_IMAGE is required for job runtime')
+    throw new Error('spec.workload.image or AGENTS_AGENT_RUNNER_IMAGE is required for job runtime')
   }
 
   const providerSpec = asRecord(provider.spec) ?? {}
   const inputFiles = Array.isArray(providerSpec.inputFiles) ? providerSpec.inputFiles : []
-  const outputArtifacts = Array.isArray(providerSpec.outputArtifacts) ? providerSpec.outputArtifacts : []
   const binary = asString(providerSpec.binary) ?? '/usr/local/bin/agent-runner'
   const providerName = asString(readNested(provider, ['metadata', 'name'])) ?? ''
 
@@ -429,6 +547,7 @@ export const submitJobRun = async (
   const vcsContext = options.vcs?.context ?? null
   const vcsRuntime = options.vcs?.runtime ?? null
   const context = buildRunSpecContext(agentRun, agent, implementation, parameters, memory, vcsContext)
+  const outputArtifacts = renderProviderOutputArtifacts(providerSpec, context)
 
   const argsTemplate = Array.isArray(providerSpec.argsTemplate) ? providerSpec.argsTemplate : []
   const args = argsTemplate.map((arg) => renderTemplate(String(arg), context))
@@ -438,60 +557,12 @@ export const submitJobRun = async (
     name: key,
     value: renderTemplate(String(value), context),
   }))
+  env.push(...buildProviderSecretEnv(providerSpec))
   if (providerName) {
     env.push({ name: 'AGENT_PROVIDER', value: providerName })
   }
   if (vcsRuntime?.env?.length) {
     env.push(...vcsRuntime.env)
-  }
-
-  // Allow the controller to inject NATS user/pass for runner pods without requiring every AgentRun
-  // to carry credentials. This is used by codex tooling like `codex-nats-publish`.
-  const runnerDefaults = resolveAgentRunnerDefaultsConfig(process.env)
-  const runnerNatsAuthSecretName = runnerDefaults.natsAuthSecretName
-  if (runnerNatsAuthSecretName) {
-    const alreadyHasUser = env.some((item) => item.name === 'NATS_USER')
-    const alreadyHasPass = env.some((item) => item.name === 'NATS_PASSWORD')
-    if (!alreadyHasUser || !alreadyHasPass) {
-      const usernameKey = runnerDefaults.natsAuthUsernameKey
-      const passwordKey = runnerDefaults.natsAuthPasswordKey
-
-      const security = asRecord(readNested(agent, ['spec', 'security'])) ?? {}
-      const allowedSecrets = parseStringList(security.allowedSecrets)
-      const blocked = collectBlockedSecrets([runnerNatsAuthSecretName])
-      const allowlisted = allowedSecrets.length === 0 || allowedSecrets.includes(runnerNatsAuthSecretName)
-
-      // Only inject if:
-      // - secret isn't blocked by controller policy
-      // - Agent allowlist allows it (or no allowlist is configured)
-      // - secret exists and has both keys (avoid CreateContainerConfigError on missing secrets/keys)
-      if (blocked.length === 0 && allowlisted) {
-        const secret = await kube.get('secret', runnerNatsAuthSecretName, namespace)
-        if (
-          secret &&
-          secretHasKey(secret, usernameKey) &&
-          secretHasKey(secret, passwordKey) &&
-          (!alreadyHasUser || !alreadyHasPass)
-        ) {
-          if (!alreadyHasUser) {
-            env.push({
-              name: 'NATS_USER',
-              valueFrom: {
-                secretKeyRef: { name: runnerNatsAuthSecretName, key: usernameKey },
-              },
-            })
-          }
-          if (!alreadyHasPass) {
-            env.push({
-              name: 'NATS_PASSWORD',
-              valueFrom: {
-                secretKeyRef: { name: runnerNatsAuthSecretName, key: passwordKey },
-              },
-            })
-          }
-        }
-      }
-    }
   }
 
   const runSpec = buildRunSpec(
@@ -500,7 +571,7 @@ export const submitJobRun = async (
     implementation,
     parameters,
     memory,
-    Array.isArray(outputArtifacts) ? outputArtifacts : [],
+    outputArtifacts,
     providerName,
     vcsContext,
     options.systemPrompt ?? null,
@@ -578,7 +649,6 @@ export const submitJobRun = async (
   const runUid = asString(metadata.uid)
   const jobName = makeName(runName, options.nameSuffix ?? 'job')
   const existingJobRef = await getExistingAgentRunJobRef(kube, jobName, namespace, runName, runtimeType)
-  if (existingJobRef) return existingJobRef
 
   const agentName = asString(readNested(agent, ['metadata', 'name']))
   const implName = asString(readNested(agentRun, ['spec', 'implementationSpecRef', 'name']))
@@ -613,6 +683,7 @@ export const submitJobRun = async (
     options.nameSuffix,
     agentRunnerSpec ?? undefined,
   )
+  if (existingJobRef) return existingJobRef
 
   const { volumeSpecs, volumeMounts } = buildVolumeSpecs(workload)
 
@@ -742,6 +813,8 @@ export const submitJobRun = async (
         envFrom: envFrom.length > 0 ? envFrom : undefined,
         resources: buildJobResources(workload),
         volumeMounts: [...volumeMounts, ...configVolumeMounts],
+        terminationMessagePath: '/workspace/.agent/status.json',
+        terminationMessagePolicy: 'File',
       },
     ],
     volumes: volumes.map((volume) => ({ name: volume.name, ...volume.spec })),

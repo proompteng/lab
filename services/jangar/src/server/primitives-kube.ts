@@ -199,26 +199,7 @@ const resolveCustomTargetFromResource = (resource: string) => {
 
 const RESOURCE_KIND_LOOKUP = Object.fromEntries(
   Object.entries({
-    Agent: 'agents.agents.proompteng.ai',
-    AgentRun: 'agentruns.agents.proompteng.ai',
-    AgentProvider: 'agentproviders.agents.proompteng.ai',
-    ImplementationSpec: 'implementationspecs.agents.proompteng.ai',
-    ImplementationSource: 'implementationsources.agents.proompteng.ai',
-    VersionControlProvider: 'versioncontrolproviders.agents.proompteng.ai',
-    Memory: 'memories.agents.proompteng.ai',
-    Tool: 'tools.tools.proompteng.ai',
-    ToolRun: 'toolruns.tools.proompteng.ai',
-    Orchestration: 'orchestrations.orchestration.proompteng.ai',
-    OrchestrationRun: 'orchestrationruns.orchestration.proompteng.ai',
-    ApprovalPolicy: 'approvalpolicies.approvals.proompteng.ai',
-    Budget: 'budgets.budgets.proompteng.ai',
-    SecretBinding: 'secretbindings.security.proompteng.ai',
-    Signal: 'signals.signals.proompteng.ai',
-    SignalDelivery: 'signaldeliveries.signals.proompteng.ai',
-    Schedule: 'schedules.schedules.proompteng.ai',
-    Swarm: 'swarms.swarm.proompteng.ai',
-    Artifact: 'artifacts.artifacts.proompteng.ai',
-    Workspace: 'workspaces.workspaces.proompteng.ai',
+    Workflow: 'workflows.argoproj.io',
   }).map(([kind, resource]) => [resource, kind]),
 )
 
@@ -638,26 +619,7 @@ export const createKubernetesClient = (): KubernetesClient => ({
 })
 
 export const RESOURCE_MAP = {
-  Agent: 'agents.agents.proompteng.ai',
-  AgentRun: 'agentruns.agents.proompteng.ai',
-  AgentProvider: 'agentproviders.agents.proompteng.ai',
-  ImplementationSpec: 'implementationspecs.agents.proompteng.ai',
-  ImplementationSource: 'implementationsources.agents.proompteng.ai',
-  VersionControlProvider: 'versioncontrolproviders.agents.proompteng.ai',
-  Memory: 'memories.agents.proompteng.ai',
-  Tool: 'tools.tools.proompteng.ai',
-  ToolRun: 'toolruns.tools.proompteng.ai',
-  Orchestration: 'orchestrations.orchestration.proompteng.ai',
-  OrchestrationRun: 'orchestrationruns.orchestration.proompteng.ai',
-  ApprovalPolicy: 'approvalpolicies.approvals.proompteng.ai',
-  Budget: 'budgets.budgets.proompteng.ai',
-  SecretBinding: 'secretbindings.security.proompteng.ai',
-  Signal: 'signals.signals.proompteng.ai',
-  SignalDelivery: 'signaldeliveries.signals.proompteng.ai',
-  Schedule: 'schedules.schedules.proompteng.ai',
-  Swarm: 'swarms.swarm.proompteng.ai',
-  Artifact: 'artifacts.artifacts.proompteng.ai',
-  Workspace: 'workspaces.workspaces.proompteng.ai',
+  Workflow: 'workflows.argoproj.io',
   PersistentVolumeClaim: 'persistentvolumeclaims',
 } as const
 
