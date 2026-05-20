@@ -31,6 +31,9 @@ const agentContractsOrchestrationRunsClientSource = fileURLToPath(
 const agentContractsPolicyReferenceClientSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/policy-reference-client.ts', import.meta.url),
 )
+const agentContractsPolicyValidationSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/policy-validation.ts', import.meta.url),
+)
 const agentContractsSignalsClientSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/signals-client.ts', import.meta.url),
 )
@@ -68,6 +71,7 @@ export default defineConfig({
       '@proompteng/agent-contracts/memory-client': agentContractsMemoryClientSource,
       '@proompteng/agent-contracts/orchestration-runs-client': agentContractsOrchestrationRunsClientSource,
       '@proompteng/agent-contracts/policy-reference-client': agentContractsPolicyReferenceClientSource,
+      '@proompteng/agent-contracts/policy-validation': agentContractsPolicyValidationSource,
       '@proompteng/agent-contracts/signals-client': agentContractsSignalsClientSource,
       '@proompteng/agent-contracts/swarm-read-client': agentContractsSwarmReadClientSource,
       '@proompteng/codex': codexStub,
@@ -99,6 +103,7 @@ export default defineConfig({
       '@proompteng/agent-contracts/memory-client': agentContractsMemoryClientSource,
       '@proompteng/agent-contracts/orchestration-runs-client': agentContractsOrchestrationRunsClientSource,
       '@proompteng/agent-contracts/policy-reference-client': agentContractsPolicyReferenceClientSource,
+      '@proompteng/agent-contracts/policy-validation': agentContractsPolicyValidationSource,
       '@proompteng/agent-contracts/signals-client': agentContractsSignalsClientSource,
       '@proompteng/agent-contracts/swarm-read-client': agentContractsSwarmReadClientSource,
       '@proompteng/codex': codexStub,

@@ -289,11 +289,12 @@ describe('smoke fixtures', () => {
     expect(fixture).toContain('systemPrompt:')
   })
 
-  it('keeps workflow smoke workload pulls off Docker Hub', () => {
+  it('keeps workflow smoke on the chart-managed runner image', () => {
     const fixture = readFileSync(resolve(process.cwd(), 'charts/agents/examples/agentrun-workflow-smoke.yaml'), 'utf8')
 
-    expect(fixture).toContain('image: mirror.gcr.io/library/busybox:1.36')
-    expect(fixture).not.toContain('image: busybox:')
+    expect(fixture).toContain('workload:')
+    expect(fixture).toContain('resources:')
+    expect(fixture).not.toMatch(/image:\s*(busybox|mirror\.gcr\.io\/library\/busybox)/)
   })
 })
 
