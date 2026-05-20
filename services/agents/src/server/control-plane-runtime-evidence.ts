@@ -1,52 +1,26 @@
 import { Context, Data, Effect, Layer } from 'effect'
 
+import type {
+  ControlPlaneRolloutHealth,
+  DeploymentRolloutStatus,
+  WorkflowsReliabilityStatus,
+} from '@proompteng/agent-contracts/control-plane-status'
+
 import {
   createKubeGateway,
   type KubeGateway,
   type KubeGatewayCondition,
   type KubeGatewayDeployment,
-  type KubeGatewayJob,
 } from './kube-gateway'
 
 type EnvSource = Record<string, string | undefined>
 
-export type WorkflowFailureReason = {
-  reason: string
-  count: number
-}
-
-export type WorkflowsReliabilityStatus = {
-  active_job_runs: number
-  recent_failed_jobs: number
-  backoff_limit_exceeded_jobs: number
-  window_minutes: number
-  top_failure_reasons: WorkflowFailureReason[]
-  data_confidence: 'high' | 'degraded' | 'unknown'
-  collection_errors: number
-  collected_namespaces: number
-  target_namespaces: number
-  message: string
-}
-
-export type DeploymentRolloutStatus = {
-  name: string
-  namespace: string
-  status: 'healthy' | 'degraded' | 'disabled'
-  desired_replicas: number
-  ready_replicas: number
-  available_replicas: number
-  updated_replicas: number
-  unavailable_replicas: number
-  message: string
-}
-
-export type ControlPlaneRolloutHealth = {
-  status: 'healthy' | 'degraded' | 'unknown'
-  observed_deployments: number
-  degraded_deployments: number
-  deployments: DeploymentRolloutStatus[]
-  message: string
-}
+export type {
+  ControlPlaneRolloutHealth,
+  DeploymentRolloutStatus,
+  WorkflowFailureReason,
+  WorkflowsReliabilityStatus,
+} from '@proompteng/agent-contracts/control-plane-status'
 
 export type ControlPlaneRuntimeEvidence = {
   workflows: WorkflowsReliabilityStatus

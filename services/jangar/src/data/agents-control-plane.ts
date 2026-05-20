@@ -1,80 +1,32 @@
+import type {
+  AgentsControlPlaneStatus,
+  ControlPlaneRolloutHealth,
+  DatabaseMigrationConsistency,
+  DatabaseStatus,
+  DeploymentRolloutStatus,
+  WorkflowsReliabilityStatus,
+} from '@proompteng/agent-contracts/control-plane-status'
+
+export type {
+  AgentRunIngestionStatus,
+  ControlPlaneRolloutHealth,
+  ControlPlaneWatchReliability,
+  ControlPlaneWatchReliabilityStream,
+  ControllerStatus,
+  DatabaseMigrationConsistency,
+  DatabaseStatus,
+  DeploymentRolloutStatus,
+  GrpcStatus,
+  HeartbeatAuthoritySource,
+  NamespaceStatus,
+  RuntimeAdapterStatus,
+  WorkflowDataConfidence,
+  WorkflowFailureReason,
+  WorkflowsReliabilityStatus,
+} from '@proompteng/agent-contracts/control-plane-status'
+
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
-
-export type ControllerStatus = {
-  name: string
-  enabled: boolean
-  started: boolean
-  scope_namespaces: string[]
-  crds_ready: boolean
-  missing_crds: string[]
-  last_checked_at: string
-  status: 'healthy' | 'degraded' | 'disabled' | 'unknown'
-  message: string
-  authority: HeartbeatAuthoritySource
-}
-
-export type RuntimeAdapterStatus = {
-  name: string
-  available: boolean
-  status: 'healthy' | 'configured' | 'degraded' | 'disabled' | 'unknown'
-  message: string
-  endpoint: string
-  authority: HeartbeatAuthoritySource
-}
-
-export type HeartbeatAuthoritySource = {
-  mode: 'heartbeat' | 'local' | 'rollout' | 'unknown'
-  namespace: string
-  source_deployment: string
-  source_pod: string
-  observed_at: string | null
-  fresh: boolean
-  message: string
-}
-
-export type WorkflowFailureReason = {
-  reason: string
-  count: number
-}
-
-export type WorkflowDataConfidence = 'high' | 'degraded' | 'unknown'
-
-export type DatabaseMigrationConsistency = {
-  status: 'healthy' | 'degraded' | 'unknown'
-  migration_table: string | null
-  registered_count: number
-  applied_count: number
-  unapplied_count: number
-  unexpected_count: number
-  latest_registered: string | null
-  latest_applied: string | null
-  missing_migrations: string[]
-  unexpected_migrations: string[]
-  message: string
-}
-
-export type DatabaseStatus = {
-  configured: boolean
-  connected: boolean
-  status: 'healthy' | 'degraded' | 'disabled'
-  message: string
-  latency_ms: number
-  migration_consistency: DatabaseMigrationConsistency
-}
-
-export type WorkflowsReliabilityStatus = {
-  active_job_runs: number
-  recent_failed_jobs: number
-  backoff_limit_exceeded_jobs: number
-  window_minutes: number
-  top_failure_reasons: WorkflowFailureReason[]
-  data_confidence: WorkflowDataConfidence
-  collection_errors: number
-  collected_namespaces: number
-  target_namespaces: number
-  message: string
-}
 
 export type ExecutionTrustStatus = {
   status: 'healthy' | 'degraded' | 'blocked' | 'unknown'
@@ -2826,70 +2778,6 @@ export type TerminalDebtCompactionLedger = {
   rollback_contract: TerminalDebtRollbackContract
 }
 
-export type DeploymentRolloutStatus = {
-  name: string
-  namespace: string
-  status: 'healthy' | 'degraded' | 'unknown' | 'disabled'
-  desired_replicas: number
-  ready_replicas: number
-  available_replicas: number
-  updated_replicas: number
-  unavailable_replicas: number
-  message: string
-}
-
-export type ControlPlaneRolloutHealth = {
-  status: 'healthy' | 'degraded' | 'unknown'
-  observed_deployments: number
-  degraded_deployments: number
-  deployments: DeploymentRolloutStatus[]
-  message: string
-}
-
-export type ControlPlaneWatchReliabilityStream = {
-  resource: string
-  namespace: string
-  events: number
-  errors: number
-  restarts: number
-  last_seen_at: string
-  error_reasons?: Record<string, number>
-  restart_reasons?: Record<string, number>
-}
-
-export type ControlPlaneWatchReliability = {
-  status: 'healthy' | 'degraded' | 'unknown'
-  window_minutes: number
-  observed_streams: number
-  total_events: number
-  total_errors: number
-  total_restarts: number
-  streams: ControlPlaneWatchReliabilityStream[]
-}
-
-export type AgentRunIngestionStatus = {
-  namespace: string
-  status: 'healthy' | 'degraded' | 'unknown'
-  message: string
-  last_watch_event_at: string | null
-  last_resync_at: string | null
-  untouched_run_count: number
-  oldest_untouched_age_seconds: number | null
-}
-
-export type GrpcStatus = {
-  enabled: boolean
-  address: string
-  status: 'healthy' | 'degraded' | 'disabled'
-  message: string
-}
-
-export type NamespaceStatus = {
-  namespace: string
-  status: 'healthy' | 'degraded'
-  degraded_components: string[]
-}
-
 export type EmpiricalDependencyStatus = {
   status: 'healthy' | 'degraded' | 'disabled' | 'unknown'
   endpoint: string
@@ -2908,26 +2796,13 @@ export type EmpiricalServicesStatus = {
   jobs: EmpiricalDependencyStatus
 }
 
-export type ControlPlaneStatus = {
-  service: string
-  generated_at: string
-  leader_election: {
-    enabled: boolean
-    required: boolean
-    is_leader: boolean
-    lease_name: string
-    lease_namespace: string
-    identity: string
-    last_transition_at: string
-    last_attempt_at: string
-    last_success_at: string
-    last_error: string
-  }
-  controllers: ControllerStatus[]
-  runtime_adapters: RuntimeAdapterStatus[]
-  /**
-   * Keep this field in sync with generated CRD annotations for CEL checks.
-   */
+export type ControlPlaneStatus = AgentsControlPlaneStatus & {
+  runtime_kits: RuntimeKitStatus[]
+  admission_passports: AdmissionPassportStatus[]
+  serving_passport_id: string | null
+  recovery_warrants: RecoveryWarrantStatus[]
+  runtime_proof_cells: RuntimeProofCellStatus[]
+  projection_watermarks: ProjectionWatermarkStatus[]
   workflows: WorkflowsReliabilityStatus
   dependency_quorum: DependencyQuorumStatus
   failure_domain_leases: FailureDomainLeaseSet
@@ -2966,23 +2841,11 @@ export type ControlPlaneStatus = {
   clearance_market_ledger: ClearanceMarketLedger | null
   source_rollout_truth_exchange: SourceRolloutTruthExchange
   route_stability_escrow: RouteStabilityEscrow
-  database: DatabaseStatus
-  grpc: GrpcStatus
-  watch_reliability: ControlPlaneWatchReliability
-  agentrun_ingestion: AgentRunIngestionStatus
-  runtime_kits: RuntimeKitStatus[]
-  admission_passports: AdmissionPassportStatus[]
-  serving_passport_id: string | null
-  recovery_warrants: RecoveryWarrantStatus[]
-  runtime_proof_cells: RuntimeProofCellStatus[]
-  projection_watermarks: ProjectionWatermarkStatus[]
-  rollout_health: ControlPlaneRolloutHealth
   empirical_services: EmpiricalServicesStatus
   torghut_consumer_evidence: TorghutConsumerEvidenceStatus
   execution_trust: ExecutionTrustStatus
   swarms: ExecutionTrustSwarm[]
   stages: ExecutionTrustStage[]
-  namespaces: NamespaceStatus[]
 }
 
 const defaultEmpiricalDependencyStatus = (message: string): EmpiricalDependencyStatus => ({

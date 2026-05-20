@@ -1,0 +1,30 @@
+{
+  "name": "@proompteng/agent-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./control-plane-status": {
+      "types": "./dist/control-plane-status.d.ts",
+      "default": "./dist/control-plane-status.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "tsc": "tsc --noEmit -p tsconfig.json",
+    "lint": "bunx oxfmt --check src",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
+  },
+  "devDependencies": {
+    "bun-types": "1.3.13",
+    "typescript": "6.0.3"
+  },
+  "packageManager": "bun@1.3.13"
+}

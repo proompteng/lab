@@ -20,6 +20,7 @@ on:
       - 'docs/agents/**'
       - 'docs/jangar/application-architecture.md'
       - 'packages/bumba/**'
+      - 'packages/agent-contracts/**'
       - 'packages/codex/**'
       - 'packages/cx-tools/**'
       - 'packages/design/**'
@@ -62,6 +63,7 @@ on:
       - 'docs/agents/**'
       - 'docs/jangar/application-architecture.md'
       - 'packages/bumba/**'
+      - 'packages/agent-contracts/**'
       - 'packages/codex/**'
       - 'packages/cx-tools/**'
       - 'packages/design/**'
@@ -446,6 +448,7 @@ jobs:
           echo "Pruning Agents image build context to ${PRUNE_DIR}"
           run_step "Prune turbo context" timeout "${PREP_TIMEOUT_MINUTES}m" bunx turbo prune \
             --scope=@proompteng/agents \
+            --scope=@proompteng/agent-contracts \
             --scope=@proompteng/codex \
             --scope=@proompteng/otel \
             --scope=@proompteng/temporal-bun-sdk \

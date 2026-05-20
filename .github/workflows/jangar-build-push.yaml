@@ -11,6 +11,7 @@ on:
       - 'services/jangar/**'
       - 'packages/scripts/src/jangar/**'
       - 'packages/scripts/src/shared/**'
+      - 'packages/agent-contracts/**'
       - 'packages/codex/**'
       - 'packages/cx-tools/**'
       - 'packages/otel/**'

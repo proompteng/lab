@@ -323,6 +323,14 @@
         "typescript": "^6.0.3",
       },
     },
+    "packages/agent-contracts": {
+      "name": "@proompteng/agent-contracts",
+      "version": "0.1.0",
+      "devDependencies": {
+        "bun-types": "1.3.13",
+        "typescript": "6.0.3",
+      },
+    },
     "packages/atelier": {
       "name": "@proompteng/atelier",
       "version": "0.0.1",
@@ -537,6 +545,7 @@
         "@grpc/grpc-js": "^1.14.3",
         "@grpc/proto-loader": "^0.8.0",
         "@kubernetes/client-node": "^1.4.0",
+        "@proompteng/agent-contracts": "workspace:*",
         "@proompteng/codex": "workspace:*",
         "@proompteng/otel": "workspace:*",
         "@proompteng/temporal-bun-sdk": "workspace:*",
@@ -704,7 +713,7 @@
         "@grpc/proto-loader": "^0.8.0",
         "@kubernetes/client-node": "^1.4.0",
         "@opentelemetry/exporter-prometheus": "0.216.0",
-        "@proompteng/agents": "workspace:*",
+        "@proompteng/agent-contracts": "workspace:*",
         "@proompteng/bumba": "workspace:*",
         "@proompteng/codex": "workspace:*",
         "@proompteng/design": "workspace:*",
@@ -2003,6 +2012,8 @@
     "@posthog/types": ["@posthog/types@1.372.8", "", {}, "sha512-ALpfCnWsMSM9Cw/6kyLPVpd81ZReEdZwmDxOi+DTJuIo7wDxBiu2cAsjOuA6D/AL22v7HOJrHsmBAPAWqS5X7Q=="],
 
     "@preact/signals-core": ["@preact/signals-core@1.14.1", "", {}, "sha512-vxPpfXqrwUe9lpjqfYNjAF/0RF/eFGeLgdJzdmIIZjpOnTmGmAB4BjWone562mJGMRP4frU6iZ6ei3PDsu52Ng=="],
+
+    "@proompteng/agent-contracts": ["@proompteng/agent-contracts@workspace:packages/agent-contracts"],
 
     "@proompteng/agentctl": ["@proompteng/agentctl@workspace:services/agents/agentctl"],
 

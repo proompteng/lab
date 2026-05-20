@@ -90,6 +90,12 @@ describe('classifyAgentsImageMode', () => {
     expect(result.matchedPaths).toEqual(['packages/temporal-bun-sdk/src/index.ts'])
   })
 
+  it('builds a local image for Agents public contract changes', () => {
+    const result = classifyAgentsImageMode(['packages/agent-contracts/src/control-plane-status.ts'])
+    expect(result.mode).toBe('build-local-image')
+    expect(result.matchedPaths).toEqual(['packages/agent-contracts/src/control-plane-status.ts'])
+  })
+
   it('reuses the published image for documentation-only changes under local image prefixes', () => {
     expect(
       classifyAgentsImageMode([
@@ -168,9 +174,11 @@ describe('agents-ci workflow local Agents image build', () => {
 
     expect(workflow).toContain('-f "${WORKSPACE}/services/agents/Dockerfile"')
     expect(workflow).toContain('-f "${WORKSPACE}/services/agents/Dockerfile.codex-runner"')
+    expect(workflow).toContain('--scope=@proompteng/agent-contracts')
     expect(workflow).toContain('--scope=@proompteng/codex')
     expect(workflow).toContain('cp -R "${PRUNE_DIR}/full/services/agents" "${PRUNE_DIR}/services/agents"')
     expect(workflow).toContain('cp -R "${PRUNE_DIR}/full/packages/codex" "${PRUNE_DIR}/packages/codex"')
+    expect(workflow).toContain('packages/agent-contracts/**')
     expect(workflow).toContain('--target control-plane')
     expect(workflow).toContain('--target controller')
     expect(workflow).toContain('BUILT_AGENTS_CONTROLLER_IMAGE_REPOSITORY')

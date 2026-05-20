@@ -5,6 +5,7 @@ const LOCAL_IMAGE_PREFIXES = [
   'packages/scripts/src/agents/deploy-service.ts',
   'packages/scripts/src/agents/smoke-agents.ts',
   'packages/otel/',
+  'packages/agent-contracts/',
   'packages/temporal-bun-sdk/',
   'packages/codex/',
   'packages/design/',

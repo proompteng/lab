@@ -6,9 +6,16 @@ import { resolveGrpcStatus } from './control-plane-grpc'
 import {
   createControlPlaneRuntimeEvidenceService,
   type ControlPlaneRuntimeEvidence,
-  type ControlPlaneRolloutHealth,
   type WorkflowsReliabilityStatus,
 } from './control-plane-runtime-evidence'
+import type {
+  AgentsControlPlaneStatus,
+  ComponentStatus,
+  ControlPlaneRolloutHealth,
+  ControllerStatus,
+  HeartbeatAuthoritySource,
+  RuntimeAdapterStatus,
+} from './control-plane-status-contract'
 import { getLeaderElectionStatus, type LeaderElectionStatus } from './leader-election'
 import { getOrchestrationControllerHealth } from './orchestration-controller'
 import { resolveRuntimeServiceName } from './runtime-identity'
@@ -24,121 +31,15 @@ type ControllerHealthSnapshot = {
 }
 
 type EnvSource = Record<string, string | undefined>
-type ComponentStatus = 'healthy' | 'degraded' | 'disabled' | 'unknown'
 
-export type HeartbeatAuthoritySource = {
-  mode: 'heartbeat' | 'local' | 'rollout' | 'unknown'
-  namespace: string
-  source_deployment: string
-  source_pod: string
-  observed_at: string | null
-  fresh: boolean
-  message: string
-}
-
-export type ControllerStatus = {
-  name: string
-  enabled: boolean
-  started: boolean
-  scope_namespaces: string[]
-  crds_ready: boolean
-  missing_crds: string[]
-  last_checked_at: string
-  status: ComponentStatus
-  message: string
-  authority: HeartbeatAuthoritySource
-}
-
-export type RuntimeAdapterStatus = {
-  name: string
-  available: boolean
-  status: ComponentStatus | 'configured'
-  message: string
-  endpoint: string
-  authority: HeartbeatAuthoritySource
-}
-
-export type AgentsControlPlaneStatus = {
-  service: string
-  generated_at: string
-  leader_election: {
-    enabled: boolean
-    required: boolean
-    is_leader: boolean
-    lease_name: string
-    lease_namespace: string
-    identity: string
-    last_transition_at: string
-    last_attempt_at: string
-    last_success_at: string
-    last_error: string
-  }
-  controllers: ControllerStatus[]
-  runtime_adapters: RuntimeAdapterStatus[]
-  database: {
-    configured: boolean
-    connected: boolean
-    status: 'disabled' | 'healthy' | 'degraded' | 'unknown'
-    message: string
-    latency_ms: number
-    migration_consistency: {
-      status: 'unknown'
-      migration_table: string | null
-      registered_count: number
-      applied_count: number
-      unapplied_count: number
-      unexpected_count: number
-      latest_registered: string | null
-      latest_applied: string | null
-      missing_migrations: string[]
-      unexpected_migrations: string[]
-      message: string
-    }
-  }
-  grpc: GrpcStatus
-  watch_reliability: {
-    status: 'unknown'
-    window_minutes: number
-    observed_streams: number
-    total_events: number
-    total_errors: number
-    total_restarts: number
-    streams: unknown[]
-  }
-  agentrun_ingestion: {
-    namespace: string
-    status: 'healthy' | 'degraded' | 'unknown'
-    message: string
-    last_watch_event_at: string | null
-    last_resync_at: string | null
-    untouched_run_count: number
-    oldest_untouched_age_seconds: number | null
-  }
-  runtime_kits: unknown[]
-  admission_passports: unknown[]
-  serving_passport_id: string | null
-  recovery_warrants: unknown[]
-  runtime_proof_cells: unknown[]
-  projection_watermarks: unknown[]
-  workflows: {
-    active_job_runs: number
-    recent_failed_jobs: number
-    backoff_limit_exceeded_jobs: number
-    window_minutes: number
-    top_failure_reasons: WorkflowsReliabilityStatus['top_failure_reasons']
-    data_confidence: WorkflowsReliabilityStatus['data_confidence']
-    collection_errors: number
-    collected_namespaces: number
-    target_namespaces: number
-    message: string
-  }
-  rollout_health: ControlPlaneRolloutHealth
-  namespaces: Array<{
-    namespace: string
-    status: 'healthy' | 'degraded'
-    degraded_components: string[]
-  }>
-}
+export type {
+  AgentsControlPlaneStatus,
+  ComponentStatus,
+  ControlPlaneRolloutHealth,
+  ControllerStatus,
+  HeartbeatAuthoritySource,
+  RuntimeAdapterStatus,
+} from './control-plane-status-contract'
 
 export class AgentsControlPlaneStatusError extends Data.TaggedError('AgentsControlPlaneStatusError')<{
   readonly operation: string

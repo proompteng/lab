@@ -9,6 +9,7 @@ on:
       - main
     paths:
       - 'charts/agents/**'
+      - 'packages/agent-contracts/**'
       - 'packages/codex/**'
       - 'packages/cx-tools/**'
       - 'packages/otel/**'
