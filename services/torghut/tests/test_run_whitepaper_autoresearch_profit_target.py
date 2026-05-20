@@ -4668,6 +4668,84 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertTrue(allowed_readiness["promotable"])
         self.assertEqual(allowed_readiness["status"], "promotion_ready")
 
+    def test_candidate_sleeve_goal_rows_carry_order_type_proof_refs(self) -> None:
+        spec = replace(
+            self._candidate_spec("spec-sleeve-order-type-proof"),
+            parameter_space={
+                "mechanism_overlay_ids": ["mixed_market_limit_execution_policy"]
+            },
+            hard_vetoes={
+                "required_order_type_ablation_passed": True,
+                "required_min_order_type_ablation_sample_count": "60",
+            },
+            promotion_contract={
+                "requires_order_type_execution_quality": True,
+                "requires_market_limit_order_mix": True,
+            },
+        )
+        evidence = runner.CandidateEvidenceBundle(
+            schema_version="torghut.candidate-evidence-bundle.v1",
+            evidence_bundle_id="ev-sleeve-order-type-proof",
+            candidate_id="cand-sleeve-order-type-proof",
+            candidate_spec_id=spec.candidate_spec_id,
+            dataset_snapshot_id="snapshot-sleeve-order-type-proof",
+            feature_spec_hash="hash-sleeve-order-type-proof",
+            code_commit="commit-test",
+            replay_artifact_refs=(
+                "replay.json",
+                "order-type-ablation.json",
+                "route-tca.json",
+            ),
+            objective_scorecard={
+                "net_pnl_per_day": "640",
+                "active_day_ratio": "1.0",
+                "positive_day_ratio": "1.0",
+                "order_type_ablation_passed": True,
+                "order_type_ablation_artifact_ref": "order-type-ablation.json",
+                "order_type_ablation_sample_count": 60,
+                "market_limit_order_mix_evidence_present": True,
+                "limit_fill_probability_evidence_present": True,
+                "price_improvement_evidence_present": True,
+                "opportunity_cost_evidence_present": True,
+                "execution_shortfall_evidence_present": True,
+                "route_tca_artifact_ref": "route-tca.json",
+                "order_type_opportunity_cost_bps": "4",
+                "market_order_spread_bps": "4",
+            },
+            fold_metrics=(),
+            stress_metrics=(),
+            cost_calibration={"status": "calibrated", "source": "route_tca"},
+            null_comparator={},
+            promotion_readiness={},
+        )
+
+        rows = runner._candidate_sleeve_goal_rows(
+            candidate_specs=(spec,),
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                        "rank": 1,
+                    }
+                ]
+            },
+            evidence_bundles=(evidence,),
+            false_positive_table=(),
+            best_false_negative_table=(),
+            portfolio=None,
+        )
+
+        self.assertEqual(
+            rows[0]["replay_artifact_refs"], list(evidence.replay_artifact_refs)
+        )
+        self.assertEqual(
+            rows[0]["order_type_execution_quality"]["artifact_refs"],
+            ["order-type-ablation.json"],
+        )
+        self.assertEqual(rows[0]["order_type_execution_quality"]["sample_count"], 60)
+        self.assertTrue(rows[0]["order_type_execution_quality"]["passed"])
+
     def test_candidate_board_fails_rejected_signal_candidate_without_labels(
         self,
     ) -> None:
@@ -4873,7 +4951,11 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             dataset_snapshot_id="snapshot-market-limit-pass",
             feature_spec_hash="hash-market-limit-pass",
             code_commit="commit-test",
-            replay_artifact_refs=("replay.json",),
+            replay_artifact_refs=(
+                "replay.json",
+                "order-type-ablation.json",
+                "route-tca.json",
+            ),
             objective_scorecard={
                 "net_pnl_per_day": "640",
                 "target_met": True,
@@ -4928,6 +5010,102 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         row = board["rows"][0]
         self.assertTrue(row["order_type_execution_quality"]["passed"])
         self.assertTrue(row["oracle_passed"])
+
+    def test_candidate_board_rejects_market_limit_candidate_with_unreachable_artifacts(
+        self,
+    ) -> None:
+        spec = replace(
+            self._candidate_spec("spec-market-limit-missing-artifact-ref"),
+            parameter_space={
+                "mechanism_overlay_ids": ["mixed_market_limit_execution_policy"]
+            },
+            hard_vetoes={
+                "required_order_type_ablation_passed": True,
+                "required_min_order_type_ablation_sample_count": "60",
+                "required_limit_fill_probability_evidence": True,
+                "required_price_improvement_evidence": True,
+                "required_opportunity_cost_evidence": True,
+                "required_execution_shortfall_evidence": True,
+                "required_max_order_type_opportunity_cost_bps": "8",
+                "required_max_market_order_spread_bps": "8",
+            },
+            promotion_contract={
+                "requires_order_type_execution_quality": True,
+                "requires_market_limit_order_mix": True,
+                "requires_limit_fill_probability": True,
+                "requires_execution_shortfall": True,
+            },
+        )
+        evidence = runner.CandidateEvidenceBundle(
+            schema_version="torghut.candidate-evidence-bundle.v1",
+            evidence_bundle_id="ev-market-limit-missing-artifact-ref",
+            candidate_id="cand-market-limit-missing-artifact-ref",
+            candidate_spec_id=spec.candidate_spec_id,
+            dataset_snapshot_id="snapshot-market-limit-missing-artifact-ref",
+            feature_spec_hash="hash-market-limit-missing-artifact-ref",
+            code_commit="commit-test",
+            replay_artifact_refs=("replay.json",),
+            objective_scorecard={
+                "net_pnl_per_day": "640",
+                "target_met": True,
+                "oracle_passed": True,
+                "profit_target_oracle": {"blockers": []},
+                "order_type_ablation_passed": True,
+                "order_type_ablation_artifact_ref": "order-type-ablation.json",
+                "order_type_ablation_sample_count": 60,
+                "market_limit_order_mix_evidence_present": True,
+                "limit_fill_probability_evidence_present": True,
+                "price_improvement_evidence_present": True,
+                "opportunity_cost_evidence_present": True,
+                "execution_shortfall_evidence_present": True,
+                "route_tca_artifact_ref": "route-tca.json",
+                "order_type_opportunity_cost_bps": "8",
+                "market_order_spread_bps": "8",
+            },
+            fold_metrics=(),
+            stress_metrics=(),
+            cost_calibration={"status": "calibrated", "source": "route_tca"},
+            null_comparator={},
+            promotion_readiness={},
+        )
+
+        board = runner._candidate_board_payload(
+            epoch_id="epoch-market-limit-missing-artifact-ref-board",
+            output_dir=Path("/tmp/epoch-market-limit-missing-artifact-ref-board"),
+            target=Decimal("500"),
+            candidate_specs=(spec,),
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                    }
+                ]
+            },
+            pre_replay_proposal_rows=(
+                {
+                    "candidate_spec_id": spec.candidate_spec_id,
+                    "rank": 1,
+                    "proposal_score": "9.0",
+                },
+            ),
+            proposal_rows=(),
+            evidence_bundles=(evidence,),
+            portfolio=None,
+            promotion_readiness={"promotable": True},
+            runtime_closure={},
+        )
+
+        row = board["rows"][0]
+        self.assertFalse(row["order_type_execution_quality"]["passed"])
+        self.assertFalse(row["oracle_passed"])
+        self.assertIn(
+            "order_type_proof_artifact_ref_missing_from_bundle", row["blockers"]
+        )
+        self.assertEqual(
+            row["order_type_execution_quality"]["missing_replay_artifact_refs"],
+            ["order-type-ablation.json", "route-tca.json"],
+        )
 
     def test_candidate_board_rejects_route_tca_boolean_without_artifact(
         self,

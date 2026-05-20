@@ -2847,6 +2847,11 @@ def _candidate_sleeve_goal_rows(
         spec = spec_by_id.get(candidate_spec_id)
         evidence = evidence_by_spec.get(candidate_spec_id)
         scorecard = evidence.objective_scorecard if evidence is not None else {}
+        order_type_summary = (
+            _candidate_board_order_type_execution_quality_summary(spec, scorecard)
+            if spec is not None
+            else {"required": False, "passed": True, "blockers": []}
+        )
         rows.append(
             {
                 "candidate_spec_id": candidate_spec_id,
@@ -2864,6 +2869,10 @@ def _candidate_sleeve_goal_rows(
                 "net_pnl_per_day": _string(scorecard.get("net_pnl_per_day")),
                 "active_day_ratio": _string(scorecard.get("active_day_ratio")),
                 "positive_day_ratio": _string(scorecard.get("positive_day_ratio")),
+                "replay_artifact_refs": list(evidence.replay_artifact_refs)
+                if evidence is not None
+                else [],
+                "order_type_execution_quality": order_type_summary,
                 "failure_reasons": [
                     _string(item)
                     for item in failure_by_spec.get(candidate_spec_id, ())
@@ -7172,7 +7181,10 @@ def _candidate_board_order_type_execution_quality_summary(
 
 
 def _candidate_board_scorecard_with_order_type_blockers(
-    spec: CandidateSpec, scorecard: Mapping[str, Any]
+    spec: CandidateSpec,
+    scorecard: Mapping[str, Any],
+    *,
+    replay_artifact_refs: Sequence[Any] = (),
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     summary = _candidate_board_order_type_execution_quality_summary(spec, scorecard)
     updated_scorecard = dict(scorecard)
@@ -7181,6 +7193,34 @@ def _candidate_board_scorecard_with_order_type_blockers(
         for blocker in cast(Sequence[Any], summary.get("blockers") or ())
         if _string(blocker)
     ]
+    required_artifact_refs = tuple(
+        dict.fromkeys(
+            item
+            for item in (
+                *cast(Sequence[Any], summary.get("artifact_refs") or ()),
+                *cast(Sequence[Any], summary.get("execution_artifact_refs") or ()),
+                *cast(Sequence[Any], summary.get("route_tca_artifact_refs") or ()),
+            )
+            if _string(item)
+        )
+    )
+    available_artifact_refs = {
+        _string(item) for item in replay_artifact_refs if _string(item)
+    }
+    missing_artifact_refs = [
+        _string(item)
+        for item in required_artifact_refs
+        if _string(item) not in available_artifact_refs
+    ]
+    if bool(summary.get("required")) and missing_artifact_refs:
+        blockers.append("order_type_proof_artifact_ref_missing_from_bundle")
+        summary = {
+            **summary,
+            "passed": False,
+            "blockers": list(dict.fromkeys(blockers)),
+            "missing_replay_artifact_refs": missing_artifact_refs,
+            "replay_artifact_refs_checked": sorted(available_artifact_refs),
+        }
     if blockers:
         updated_scorecard["oracle_passed"] = False
         oracle_payload = dict(_mapping(updated_scorecard.get("profit_target_oracle")))
@@ -7458,7 +7498,13 @@ def _candidate_board_payload(
             _candidate_board_scorecard_with_rejected_signal_blockers(spec, scorecard)
         )
         scorecard, order_type_summary = (
-            _candidate_board_scorecard_with_order_type_blockers(spec, scorecard)
+            _candidate_board_scorecard_with_order_type_blockers(
+                spec,
+                scorecard,
+                replay_artifact_refs=evidence.replay_artifact_refs
+                if evidence is not None
+                else (),
+            )
         )
         selected_for_replay = bool(selection.get("selected_for_replay"))
         in_best_portfolio = spec.candidate_spec_id in portfolio_sleeve_spec_ids
