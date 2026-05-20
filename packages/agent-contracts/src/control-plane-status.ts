@@ -93,6 +93,54 @@ export type AgentRunIngestionStatus = {
   oldest_untouched_age_seconds: number | null
 }
 
+export type ControllerWitnessSurface =
+  | 'serving_process'
+  | 'kubernetes_deployment'
+  | 'watch_epoch'
+  | 'agentrun_ingestion'
+
+export type ControllerWitnessDecision = 'allow' | 'allow_with_split' | 'repair_only' | 'hold_material' | 'block'
+
+export type ControlPlaneControllerWitness = {
+  witness_id: string
+  generated_at: string
+  expires_at: string
+  namespace: string
+  controller_surface: ControllerWitnessSurface
+  deployment_ref: string | null
+  pod_uid: string | null
+  image_ref: string | null
+  leader_identity: string | null
+  controller_started: boolean | null
+  deployment_available: boolean | null
+  watch_epoch_id: string | null
+  ingestion_epoch_id: string | null
+  last_watch_event_at: string | null
+  last_resync_at: string | null
+  observed_run_count: number | null
+  untouched_run_count: number | null
+  decision: ControllerWitnessDecision
+  reason_codes: string[]
+}
+
+export type ControlPlaneControllerWitnessQuorum = {
+  mode: 'shadow' | 'enforced'
+  design_artifact: string
+  quorum_id: string
+  generated_at: string
+  expires_at: string
+  namespace: string
+  decision: ControllerWitnessDecision
+  reason_codes: string[]
+  message: string
+  witness_refs: string[]
+  deployment_available: boolean
+  watch_epoch_current: boolean
+  controller_self_report_current: boolean
+  witnesses: ControlPlaneControllerWitness[]
+  rollback_target: string | null
+}
+
 export type WorkflowFailureReason = {
   reason: string
   count: number
@@ -160,6 +208,7 @@ export type AgentsControlPlaneStatus = {
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability
   agentrun_ingestion: AgentRunIngestionStatus
+  control_plane_controller_witness: ControlPlaneControllerWitnessQuorum
   runtime_kits: unknown[]
   admission_passports: unknown[]
   serving_passport_id: string | null

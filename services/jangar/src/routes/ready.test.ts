@@ -13,6 +13,7 @@ const buildJsonResponse = (payload: unknown, status = 200) =>
 
 const agentsControlPlaneClientMocks = vi.hoisted(() => ({
   getAgentsReadySnapshot: vi.fn(),
+  getAgentsControlPlaneStatusSnapshot: vi.fn(),
 }))
 
 const controlPlaneStatusMocks = vi.hoisted(() => ({
@@ -47,6 +48,7 @@ vi.mock('~/server/agents-control-plane-client', async () => {
   return {
     ...actual,
     getAgentsReadySnapshot: agentsControlPlaneClientMocks.getAgentsReadySnapshot,
+    getAgentsControlPlaneStatusSnapshot: agentsControlPlaneClientMocks.getAgentsControlPlaneStatusSnapshot,
   }
 })
 vi.mock('~/server/memory-provider-health', () => memoryProviderHealthMocks)
@@ -247,6 +249,19 @@ const buildAgentsReadySnapshot = (overrides: Record<string, unknown> = {}) => {
   const httpReady = (overrides.httpReady as boolean | undefined) ?? true
   const reasonCodes = (overrides.reasonCodes as string[] | undefined) ?? []
   const leaderElection = (overrides.leaderElection as Record<string, unknown> | undefined) ?? buildLeaderElection()
+  const agentRunIngestion = (overrides.agentRunIngestion as Record<string, unknown>[] | undefined) ?? [
+    {
+      namespace: 'agents',
+      status: reasonCodes.includes('agentrun_ingestion_not_ready') ? 'degraded' : 'healthy',
+      message: reasonCodes.includes('agentrun_ingestion_not_ready')
+        ? 'AgentRun ingestion not ready according to Agents service'
+        : 'AgentRun ingestion healthy',
+      last_watch_event_at: '2026-03-08T21:00:00Z',
+      last_resync_at: '2026-03-08T21:00:00Z',
+      untouched_run_count: 0,
+      oldest_untouched_age_seconds: null,
+    },
+  ]
 
   return {
     available: true,
@@ -256,6 +271,7 @@ const buildAgentsReadySnapshot = (overrides: Record<string, unknown> = {}) => {
     reasonCodes,
     namespaces,
     leaderElection,
+    agentRunIngestion,
     agentsController,
     orchestrationController,
     supportingController,
@@ -266,6 +282,7 @@ const buildAgentsReadySnapshot = (overrides: Record<string, unknown> = {}) => {
       httpReady,
       reason_codes: reasonCodes,
       namespaces,
+      agentrun_ingestion: agentRunIngestion,
       leaderElection,
       agentsController,
       orchestrationController,
@@ -273,6 +290,162 @@ const buildAgentsReadySnapshot = (overrides: Record<string, unknown> = {}) => {
     },
     error: null,
     ...overrides,
+  }
+}
+
+const buildAgentsControlPlaneStatusSnapshot = (overrides: Record<string, unknown> = {}) => {
+  const namespace = (overrides.namespace as string | undefined) ?? 'agents'
+  const agentRunIngestion =
+    (overrides.agentrun_ingestion as Record<string, unknown> | undefined) ??
+    ({
+      namespace,
+      status: 'healthy',
+      message: 'AgentRun ingestion healthy',
+      last_watch_event_at: '2026-03-08T21:00:00Z',
+      last_resync_at: '2026-03-08T21:00:00Z',
+      untouched_run_count: 0,
+      oldest_untouched_age_seconds: null,
+    } satisfies Record<string, unknown>)
+  const status = {
+    service: 'agents',
+    generated_at: '2026-03-08T21:00:00Z',
+    leader_election: {
+      enabled: true,
+      required: true,
+      is_leader: true,
+      lease_name: 'agents-controller-leader',
+      lease_namespace: namespace,
+      identity: 'agents-controllers-1',
+      last_transition_at: '2026-03-08T21:00:00Z',
+      last_attempt_at: '2026-03-08T21:00:00Z',
+      last_success_at: '2026-03-08T21:00:00Z',
+      last_error: '',
+    },
+    controllers: [
+      {
+        name: 'agents-controller',
+        enabled: true,
+        started: true,
+        scope_namespaces: [namespace],
+        crds_ready: true,
+        missing_crds: [],
+        last_checked_at: '2026-03-08T21:00:00Z',
+        status: 'healthy',
+        message: '',
+        authority: {
+          mode: 'local',
+          namespace,
+          source_deployment: '',
+          source_pod: '',
+          observed_at: '2026-03-08T21:00:00Z',
+          fresh: true,
+          message: 'agents-controller local controller state',
+        },
+      },
+    ],
+    runtime_adapters: [],
+    database: {
+      configured: false,
+      connected: false,
+      status: 'disabled',
+      message: 'DATABASE_URL is not set',
+      latency_ms: 0,
+      migration_consistency: {
+        status: 'unknown',
+        migration_table: null,
+        registered_count: 0,
+        applied_count: 0,
+        unapplied_count: 0,
+        unexpected_count: 0,
+        latest_registered: null,
+        latest_applied: null,
+        missing_migrations: [],
+        unexpected_migrations: [],
+        message: 'migration consistency unavailable',
+      },
+    },
+    grpc: {
+      enabled: false,
+      address: '',
+      status: 'disabled',
+      message: 'gRPC disabled',
+    },
+    watch_reliability: {
+      status: 'healthy',
+      window_minutes: 15,
+      observed_streams: 1,
+      total_events: 8,
+      total_errors: 0,
+      total_restarts: 0,
+      streams: [
+        {
+          resource: 'agentruns.agents.proompteng.ai',
+          namespace,
+          events: 8,
+          errors: 0,
+          restarts: 0,
+          last_seen_at: '2026-03-08T21:00:00Z',
+        },
+      ],
+    },
+    agentrun_ingestion: agentRunIngestion,
+    control_plane_controller_witness: {
+      mode: 'shadow',
+      design_artifact:
+        'docs/agents/designs/116-jangar-controller-witness-quorum-and-capital-activation-receipts-2026-05-06.md',
+      quorum_id: `controller-witness:${namespace}:agents-control-plane-status`,
+      generated_at: '2026-03-08T21:00:00Z',
+      expires_at: '2026-03-08T21:01:00Z',
+      namespace,
+      decision: 'allow',
+      reason_codes: [],
+      message: 'Agents controller ingestion self-report is current',
+      witness_refs: [
+        `witness:kubernetes_deployment:${namespace}:agents-control-plane-status`,
+        `witness:watch_epoch:${namespace}:agents-control-plane-status`,
+        `witness:agentrun_ingestion:${namespace}:agents-control-plane-status`,
+      ],
+      deployment_available: true,
+      watch_epoch_current: true,
+      controller_self_report_current: true,
+      witnesses: [],
+      rollback_target: 'use Agents controller logs and AgentRun status conditions for controller ingestion proof',
+    },
+    runtime_kits: [],
+    admission_passports: [],
+    serving_passport_id: null,
+    recovery_warrants: [],
+    runtime_proof_cells: [],
+    projection_watermarks: [],
+    workflows: {
+      active_job_runs: 0,
+      recent_failed_jobs: 0,
+      backoff_limit_exceeded_jobs: 0,
+      window_minutes: 60,
+      top_failure_reasons: [],
+      data_confidence: 'high',
+      collection_errors: 0,
+      collected_namespaces: 1,
+      target_namespaces: 1,
+      message: '1 namespace collected',
+    },
+    rollout_health: {
+      status: 'healthy',
+      observed_deployments: 2,
+      degraded_deployments: 0,
+      deployments: [],
+      message: '2 configured deployment(s) healthy',
+    },
+    namespaces: [{ namespace, status: 'healthy', degraded_components: [] }],
+    ...((overrides.controlPlaneStatus as Record<string, unknown> | undefined) ?? {}),
+  }
+
+  return {
+    available: (overrides.available as boolean | undefined) ?? true,
+    httpStatus: (overrides.httpStatus as number | undefined) ?? 200,
+    status,
+    raw: status,
+    error: (overrides.error as string | null | undefined) ?? null,
   }
 }
 
@@ -346,6 +519,9 @@ describe('getReadyHandler', () => {
     })
 
     agentsControlPlaneClientMocks.getAgentsReadySnapshot.mockResolvedValue(buildAgentsReadySnapshot())
+    agentsControlPlaneClientMocks.getAgentsControlPlaneStatusSnapshot.mockResolvedValue(
+      buildAgentsControlPlaneStatusSnapshot(),
+    )
   })
 
   it('returns 200 when leader is ready and AgentRun ingestion is healthy', async () => {
@@ -416,6 +592,19 @@ describe('getReadyHandler', () => {
 
   it('projects Torghut revenue-repair business evidence and material evidence settlement at the ready boundary', async () => {
     process.env.JANGAR_TORGHUT_STATUS_URL = 'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence'
+    agentsControlPlaneClientMocks.getAgentsControlPlaneStatusSnapshot.mockResolvedValue(
+      buildAgentsControlPlaneStatusSnapshot({
+        controlPlaneStatus: {
+          rollout_health: {
+            status: 'unknown',
+            observed_deployments: 0,
+            degraded_deployments: 0,
+            deployments: [],
+            message: 'runtime evidence unavailable in test',
+          },
+        },
+      }),
+    )
     globalThis.fetch = vi
       .fn()
       .mockResolvedValueOnce(
@@ -619,7 +808,7 @@ describe('getReadyHandler', () => {
       mode: 'observe',
       namespace: 'agents',
       serving_readiness: 'ok',
-      controller_witness_ref: 'controller-witness:agents:ready-hot-path',
+      controller_witness_ref: 'controller-witness:agents:agents-control-plane-status',
       database_status: 'disabled',
       source_serving_status: 'hold',
       verify_trust_foreclosure_board_ref: expect.any(String),
@@ -640,8 +829,7 @@ describe('getReadyHandler', () => {
       active_no_delta_release_key: 'alpha-window:ready-test',
       debt_classes: expect.arrayContaining([
         'source_rollout_truth_split',
-        'controller_witness_unavailable_on_hot_path',
-        'database_projection_unavailable_on_hot_path',
+        'database_projection_not_current',
         'torghut_business_repair_only',
         'torghut_no_delta_active',
         'revenue_repair_settlement_custody_deny',
@@ -809,6 +997,19 @@ describe('getReadyHandler', () => {
         reasonCodes: ['agentrun_ingestion_not_ready'],
       }),
     )
+    agentsControlPlaneClientMocks.getAgentsControlPlaneStatusSnapshot.mockResolvedValue(
+      buildAgentsControlPlaneStatusSnapshot({
+        agentrun_ingestion: {
+          namespace: 'agents',
+          status: 'degraded',
+          message: 'AgentRun ingestion not ready according to Agents service',
+          last_watch_event_at: null,
+          last_resync_at: '2026-03-08T21:00:00Z',
+          untouched_run_count: 1,
+          oldest_untouched_age_seconds: 60,
+        },
+      }),
+    )
 
     const { getReadyHandler } = await import('./ready')
 
@@ -825,16 +1026,31 @@ describe('getReadyHandler', () => {
         status: 'degraded',
         agentsController: buildAgentsControllerHealth({
           started: false,
-          agentRunIngestion: [
-            {
-              namespace: 'agents',
-              lastWatchEventAt: '2026-03-08T21:01:00Z',
-              lastResyncAt: '2026-03-08T21:00:00Z',
-              untouchedRunCount: 12,
-              oldestUntouchedAgeSeconds: 4_769_263,
-            },
-          ],
         }),
+        agentRunIngestion: [
+          {
+            namespace: 'agents',
+            status: 'degraded',
+            message: 'active controller is adopting 12 existing AgentRuns',
+            last_watch_event_at: '2026-03-08T21:01:00Z',
+            last_resync_at: '2026-03-08T21:00:00Z',
+            untouched_run_count: 12,
+            oldest_untouched_age_seconds: 4_769_263,
+          },
+        ],
+      }),
+    )
+    agentsControlPlaneClientMocks.getAgentsControlPlaneStatusSnapshot.mockResolvedValue(
+      buildAgentsControlPlaneStatusSnapshot({
+        agentrun_ingestion: {
+          namespace: 'agents',
+          status: 'degraded',
+          message: 'active controller is adopting 12 existing AgentRuns',
+          last_watch_event_at: '2026-03-08T21:01:00Z',
+          last_resync_at: '2026-03-08T21:00:00Z',
+          untouched_run_count: 12,
+          oldest_untouched_age_seconds: 4_769_263,
+        },
       }),
     )
 

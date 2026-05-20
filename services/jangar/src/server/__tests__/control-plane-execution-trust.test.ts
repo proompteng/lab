@@ -4,7 +4,6 @@ import { buildExecutionTrust } from '~/server/control-plane-execution-trust'
 import type { KubeGateway, KubeGatewaySwarm } from '~/server/kube-gateway'
 
 const createTestKubeGateway = (overrides: Partial<KubeGateway> = {}): KubeGateway => ({
-  listDeployments: vi.fn(async () => []),
   listAgentRuns: vi.fn(async () => []),
   listJobs: vi.fn(async () => []),
   listPods: vi.fn(async () => []),
@@ -18,7 +17,6 @@ const createTestKubeGateway = (overrides: Partial<KubeGateway> = {}): KubeGatewa
   replaceLease: vi.fn(async () => {
     throw new Error('not implemented in test gateway')
   }),
-  probeNamespacedResource: vi.fn(async () => 'ok' as const),
   serviceExists: vi.fn(async () => true),
   listSwarms: vi.fn(async () => []),
   ...overrides,

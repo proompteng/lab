@@ -126,6 +126,18 @@ describe('buildAgentsControlPlaneStatus', () => {
       status: 'healthy',
       untouched_run_count: 0,
     })
+    expect(status.control_plane_controller_witness).toMatchObject({
+      quorum_id: 'controller-witness:agents:agents-control-plane-status',
+      deployment_available: true,
+      watch_epoch_current: true,
+      controller_self_report_current: true,
+      decision: 'allow',
+      witnesses: expect.arrayContaining([
+        expect.objectContaining({ controller_surface: 'kubernetes_deployment' }),
+        expect.objectContaining({ controller_surface: 'watch_epoch' }),
+        expect.objectContaining({ controller_surface: 'agentrun_ingestion' }),
+      ]),
+    })
     expect(status.workflows).toMatchObject({
       active_job_runs: 1,
       data_confidence: 'high',

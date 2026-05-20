@@ -115,6 +115,15 @@ fail_if_path_exists \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-workflows.ts" \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-rollout-health.ts"
 
+fail_if_path_exists \
+  "Jangar must not infer generic AgentRun ingestion readiness after Agents owns /ready ingestion assessment" \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-serving-process-status.ts"
+
+fail_if_matches \
+  "Jangar /ready must consume Agents-reported AgentRun ingestion instead of rebuilding it from controller internals" \
+  'buildAgentRunIngestionStatus|agentrun_ingestion_not_ready' \
+  "${ROOT_DIR}/services/jangar/src/routes/ready.tsx"
+
 fail_if_matches \
   "Jangar config must not carry generic Agents runtime evidence knobs after Agents owns workflow and rollout status" \
   'JANGAR_CONTROL_PLANE_ROLLOUT_DEPLOYMENTS|JANGAR_WORKFLOWS_WINDOW_MINUTES|JANGAR_WORKFLOWS_WARNING_BACKOFF_THRESHOLD|JANGAR_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD|workflowsWindowMinutes|rolloutDeployments|workflowsWarningBackoffThreshold|workflowsDegradedBackoffThreshold' \
@@ -123,6 +132,11 @@ fail_if_matches \
 fail_if_matches \
   "Jangar kube gateway must not list generic Agents runtime Deployment/Job/Pod resources directly" \
   "client\\.list\\(['\"](deployments|jobs\\.batch|pods)['\"]" \
+  "${ROOT_DIR}/services/jangar/src/server/kube-gateway.ts"
+
+fail_if_matches \
+  "Jangar must not fetch generic Agents Deployment resources after Agents owns rollout health" \
+  "kind: 'Deployment'|kind: \"Deployment\"" \
   "${ROOT_DIR}/services/jangar/src/server/kube-gateway.ts"
 
 require_matches \

@@ -1,3 +1,5 @@
+import type { AgentRunIngestionStatus } from '@proompteng/agent-contracts/control-plane-status'
+
 export type AgentRunIngestionHealth = {
   namespace: string
   lastWatchEventAt: string | null
@@ -93,6 +95,44 @@ export const buildReadinessReasonCodes = (input: {
       : []),
   ])
 
+const buildStandbyAgentRunIngestionStatus = (
+  namespace: string,
+  health: AgentsControllerHealthState,
+): AgentRunIngestionStatus => {
+  const entry = health.agentRunIngestion?.find((item) => item.namespace === namespace)
+  return {
+    namespace,
+    status: 'unknown',
+    message: 'AgentRun ingestion is owned by the active controller leader',
+    last_watch_event_at: entry?.lastWatchEventAt ?? null,
+    last_resync_at: entry?.lastResyncAt ?? null,
+    untouched_run_count: entry?.untouchedRunCount ?? 0,
+    oldest_untouched_age_seconds: entry?.oldestUntouchedAgeSeconds ?? null,
+  }
+}
+
+const toAgentRunIngestionStatus = (assessment: AgentRunIngestionAssessment): AgentRunIngestionStatus => ({
+  namespace: assessment.namespace,
+  status: assessment.status,
+  message: assessment.message,
+  last_watch_event_at: assessment.lastWatchEventAt,
+  last_resync_at: assessment.lastResyncAt,
+  untouched_run_count: assessment.untouchedRunCount,
+  oldest_untouched_age_seconds: assessment.oldestUntouchedAgeSeconds,
+})
+
+export const buildAgentRunIngestionStatuses = (input: {
+  namespaces: string[]
+  agentsController: AgentsControllerHealthState
+  activeControllerReplica: boolean
+  assessAgentRunIngestion: AgentsReadyResponseInput['assessAgentRunIngestion']
+}): AgentRunIngestionStatus[] =>
+  input.namespaces.map((namespace) =>
+    input.activeControllerReplica
+      ? toAgentRunIngestionStatus(input.assessAgentRunIngestion(namespace, input.agentsController))
+      : buildStandbyAgentRunIngestionStatus(namespace, input.agentsController),
+  )
+
 export const buildAgentsRuntimeReadyResponse = (input: AgentsReadyResponseInput) => {
   const namespaces = input.agentsController.namespaces?.length ? input.agentsController.namespaces : ['agents']
   const controllersOk =
@@ -104,6 +144,12 @@ export const buildAgentsRuntimeReadyResponse = (input: AgentsReadyResponseInput)
   const agentsControllerHealthy = activeControllerReplica
     ? isAgentRunIngestionReady(input.agentsController, input.assessAgentRunIngestion)
     : leaderElectionReady
+  const agentRunIngestion = buildAgentRunIngestionStatuses({
+    namespaces,
+    agentsController: input.agentsController,
+    activeControllerReplica,
+    assessAgentRunIngestion: input.assessAgentRunIngestion,
+  })
   const httpReady = controllersOk && leaderElectionReady
   const status = httpReady && agentsControllerHealthy ? 'ok' : 'degraded'
   const reasonCodes = buildReadinessReasonCodes({
@@ -122,6 +168,7 @@ export const buildAgentsRuntimeReadyResponse = (input: AgentsReadyResponseInput)
     httpReady,
     reason_codes: reasonCodes,
     namespaces,
+    agentrun_ingestion: agentRunIngestion,
     leaderElection: input.leaderElection,
     agentsController: input.agentsController,
     orchestrationController: input.orchestrationController,

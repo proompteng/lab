@@ -90,6 +90,10 @@ describe('control-plane status route', () => {
       generated_at: '2026-05-19T12:00:00.000Z',
       controllers: expect.arrayContaining([expect.objectContaining({ name: 'agents-controller' })]),
       agentrun_ingestion: { namespace: 'workflow' },
+      control_plane_controller_witness: {
+        namespace: 'workflow',
+        controller_self_report_current: true,
+      },
       workflows: { active_job_runs: 2, data_confidence: 'high' },
       rollout_health: { status: 'healthy', observed_deployments: 2 },
       namespaces: expect.arrayContaining([expect.objectContaining({ namespace: 'workflow', status: 'healthy' })]),

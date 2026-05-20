@@ -42,20 +42,6 @@ export type KubeGatewayMetadata = {
   deletionTimestamp?: string | null
 }
 
-export type KubeGatewayDeployment = {
-  metadata: KubeGatewayMetadata
-  spec: {
-    replicas: number | null
-  }
-  status: {
-    readyReplicas: number | null
-    availableReplicas: number | null
-    updatedReplicas: number | null
-    unavailableReplicas: number | null
-    conditions: KubeGatewayCondition[]
-  }
-}
-
 export type KubeGatewayJob = {
   metadata: KubeGatewayMetadata
   status: {
@@ -135,10 +121,7 @@ export type KubeGatewaySwarm = {
   status: Record<string, unknown>
 }
 
-export type KubeGatewayResourceAccess = 'ok' | 'missing' | 'forbidden'
-
 export type KubeGateway = {
-  listDeployments: (namespace: string) => Promise<KubeGatewayDeployment[]>
   listAgentRuns: (namespace: string, labelSelector?: string) => Promise<KubeGatewayAgentRun[]>
   listJobs: (namespace: string, labelSelector?: string) => Promise<KubeGatewayJob[]>
   listPods: (namespace: string, labelSelector?: string) => Promise<KubeGatewayPod[]>
@@ -148,7 +131,6 @@ export type KubeGateway = {
   getLease: (namespace: string, name: string) => Promise<V1Lease | null>
   createLease: (namespace: string, lease: V1Lease) => Promise<V1Lease>
   replaceLease: (namespace: string, lease: V1Lease) => Promise<V1Lease>
-  probeNamespacedResource: (resource: string, namespace: string) => Promise<KubeGatewayResourceAccess>
   serviceExists: (namespace: string, name: string) => Promise<boolean>
   listSwarms: (namespace: string) => Promise<KubeGatewaySwarm[]>
 }
@@ -165,7 +147,6 @@ type KubeGatewayDeps = {
 }
 
 const normalizeMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
-const isForbiddenMessage = (value: string) => value.includes('forbidden') || value.includes('unauthorized')
 
 const asNonNegativeInteger = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.floor(value))
@@ -364,39 +345,6 @@ export const createKubeGateway = (
   client: KubernetesClient = createKubernetesClient(),
   deps: KubeGatewayDeps = {},
 ): KubeGateway => ({
-  listDeployments: async (namespace) =>
-    wrapTransport('agents service deployments list failed', async () => {
-      const listControlPlaneResources = deps.listControlPlaneResources ?? fetchControlPlaneResourcesFromAgentsService
-      const result = await listControlPlaneResources({ kind: 'Deployment', namespace })
-      if (!result.ok) {
-        throw new Error(result.error ?? `Agents service returned HTTP ${result.status}`)
-      }
-      const items = parseListItems(result.body, 'agents service deployments list')
-
-      return items
-        .map((item): KubeGatewayDeployment | null => {
-          const metadata = parseMetadata(item.metadata)
-          if (!metadata) return null
-
-          const spec = asRecord(item.spec) ?? {}
-          const status = asRecord(item.status) ?? {}
-
-          return {
-            metadata,
-            spec: {
-              replicas: asNonNegativeInteger(spec.replicas),
-            },
-            status: {
-              readyReplicas: asNonNegativeInteger(status.readyReplicas),
-              availableReplicas: asNonNegativeInteger(status.availableReplicas),
-              updatedReplicas: asNonNegativeInteger(status.updatedReplicas),
-              unavailableReplicas: asNonNegativeInteger(status.unavailableReplicas),
-              conditions: parseConditions(status.conditions),
-            },
-          }
-        })
-        .filter((entry): entry is KubeGatewayDeployment => entry !== null)
-    }),
   listAgentRuns: async (namespace, labelSelector) =>
     wrapTransport('agents service agentruns list failed', async () => {
       const listAgentRunResources = deps.listAgentRunResources ?? fetchAgentRunResourcesFromAgentsService
@@ -515,16 +463,6 @@ export const createKubeGateway = (
     wrapTransport('kube lease replace failed', async () => {
       return (await client.apply(withLeaseNamespace(namespace, lease) as unknown as Record<string, unknown>)) as V1Lease
     }),
-  probeNamespacedResource: async (resource, namespace) => {
-    try {
-      await client.list(resource, namespace)
-      return 'ok'
-    } catch (error) {
-      const message = normalizeMessage(error).toLowerCase()
-      if (isForbiddenMessage(message)) return 'forbidden'
-      return 'missing'
-    }
-  },
   serviceExists: async (namespace, name) =>
     wrapTransport('kube service get failed', async () => {
       const service = await client.get('service', name, namespace)

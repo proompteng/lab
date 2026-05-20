@@ -23,80 +23,6 @@ describe('kube gateway', () => {
     vi.clearAllMocks()
   })
 
-  it('lists deployment rollout fields through the Agents service boundary', async () => {
-    const client = createClient({ list: vi.fn() })
-    const listControlPlaneResources = vi.fn(async () => ({
-      ok: true as const,
-      status: 200,
-      body: {
-        ok: true,
-        kind: 'Deployment',
-        namespace: 'agents',
-        items: [
-          {
-            metadata: {
-              name: 'agents',
-              namespace: 'agents',
-              generation: 3,
-              labels: { app: 'agents' },
-              creationTimestamp: '2026-01-20T00:00:00Z',
-            },
-            spec: { replicas: 2 },
-            status: {
-              readyReplicas: 1,
-              availableReplicas: 1,
-              updatedReplicas: 2,
-              unavailableReplicas: 1,
-              conditions: [
-                { type: 'Available', status: 'False', reason: 'MinimumReplicasUnavailable' },
-                { type: 'Progressing', status: 'True', reason: 'ReplicaSetUpdated' },
-              ],
-            },
-          },
-        ],
-      },
-    }))
-
-    const gateway = createKubeGateway(client, { listControlPlaneResources })
-    const deployments = await gateway.listDeployments('agents')
-
-    expect(listControlPlaneResources).toHaveBeenCalledWith({ kind: 'Deployment', namespace: 'agents' })
-    expect(client.list).not.toHaveBeenCalled()
-    expect(deployments).toEqual([
-      {
-        metadata: {
-          name: 'agents',
-          namespace: 'agents',
-          generation: 3,
-          labels: { app: 'agents' },
-          annotations: {},
-          creationTimestamp: '2026-01-20T00:00:00Z',
-        },
-        spec: { replicas: 2 },
-        status: {
-          readyReplicas: 1,
-          availableReplicas: 1,
-          updatedReplicas: 2,
-          unavailableReplicas: 1,
-          conditions: [
-            {
-              type: 'Available',
-              status: 'False',
-              reason: 'MinimumReplicasUnavailable',
-              lastTransitionTime: null,
-            },
-            {
-              type: 'Progressing',
-              status: 'True',
-              reason: 'ReplicaSetUpdated',
-              lastTransitionTime: null,
-            },
-          ],
-        },
-      },
-    ])
-  })
-
   it('lists Jobs through the Agents service boundary and forwards selectors', async () => {
     const client = createClient({ list: vi.fn() })
     const listControlPlaneResources = vi.fn(async () => ({
@@ -333,10 +259,10 @@ describe('kube gateway', () => {
       })),
     })
 
-    await expect(gateway.listDeployments('agents')).rejects.toMatchObject({
+    await expect(gateway.listSwarms('agents')).rejects.toMatchObject({
       name: 'KubeGatewayError',
       kind: 'invalid_payload',
-      message: 'agents service deployments list returned invalid list payload',
+      message: 'agents service swarms list returned invalid list payload',
     } satisfies Partial<KubeGatewayError>)
   })
 
@@ -407,23 +333,5 @@ describe('kube gateway', () => {
         metadata: expect.objectContaining({ name: 'jangar-controller-leader', namespace: 'agents' }),
       }),
     )
-  })
-
-  it('classifies namespaced resource access results', async () => {
-    const gateway = createKubeGateway(
-      createClient({
-        list: vi
-          .fn()
-          .mockResolvedValueOnce({ items: [] })
-          .mockRejectedValueOnce(new Error('kubernetes list failed: Error from server (Forbidden): forbidden'))
-          .mockRejectedValueOnce(
-            new Error('kubernetes list failed: the server does not have a resource type "swarms.swarm.proompteng.ai"'),
-          ),
-      }),
-    )
-
-    await expect(gateway.probeNamespacedResource('tools.tools.proompteng.ai', 'agents')).resolves.toBe('ok')
-    await expect(gateway.probeNamespacedResource('tools.tools.proompteng.ai', 'agents')).resolves.toBe('forbidden')
-    await expect(gateway.probeNamespacedResource('swarms.swarm.proompteng.ai', 'agents')).resolves.toBe('missing')
   })
 })
