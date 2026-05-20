@@ -184,10 +184,7 @@ export const resolveAgentRunnerDefaultsConfig = (env: EnvSource = process.env): 
     podSecurityContext,
     imagePullSecrets: Array.isArray(imagePullSecrets) ? imagePullSecrets : null,
     resources,
-    defaultRunnerImage:
-      normalizeNonEmpty(readAgentsEnv(env, 'AGENTS_AGENT_RUNNER_IMAGE')) ??
-      normalizeNonEmpty(readAgentsEnv(env, 'AGENTS_AGENT_IMAGE')) ??
-      null,
+    defaultRunnerImage: normalizeNonEmpty(readAgentsEnv(env, 'AGENTS_AGENT_RUNNER_IMAGE')) ?? null,
   }
 }
 

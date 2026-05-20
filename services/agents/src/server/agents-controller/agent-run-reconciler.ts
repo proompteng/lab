@@ -673,8 +673,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       if (runtimeType === 'job') {
         workloadImage = resolveJobImage(workload)
         if (!workloadImage) {
-          const message =
-            'spec.workload.image, AGENTS_AGENT_RUNNER_IMAGE, or AGENTS_AGENT_IMAGE is required for job runtime'
+          const message = 'spec.workload.image or AGENTS_AGENT_RUNNER_IMAGE is required for job runtime'
           const updated = upsertCondition(conditions, {
             type: 'InvalidSpec',
             status: 'True',

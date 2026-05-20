@@ -1449,9 +1449,7 @@ describe('agents controller reconcileAgentRun', () => {
 
   it('marks AgentRun failed when job runtime lacks an image', async () => {
     const previousImage = process.env.AGENTS_AGENT_RUNNER_IMAGE
-    const previousAgentImage = process.env.AGENTS_AGENT_IMAGE
     delete process.env.AGENTS_AGENT_RUNNER_IMAGE
-    delete process.env.AGENTS_AGENT_IMAGE
     const kube = buildKube()
     const agentRun = buildAgentRun({
       spec: {
@@ -1469,7 +1467,6 @@ describe('agents controller reconcileAgentRun', () => {
     expect(condition?.reason).toBe('MissingWorkloadImage')
 
     if (previousImage) process.env.AGENTS_AGENT_RUNNER_IMAGE = previousImage
-    if (previousAgentImage) process.env.AGENTS_AGENT_IMAGE = previousAgentImage
   })
 
   it('marks AgentRun failed when temporal runtime lacks workflowType and taskQueue', async () => {

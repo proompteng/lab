@@ -12,7 +12,7 @@ cleanup.
 ## Current State
 
 - Runtime image selection in `services/agents/src/server/agents-controller/**`:
-  - Job runtime requires `spec.workload.image`, `AGENTS_AGENT_RUNNER_IMAGE`, or `AGENTS_AGENT_IMAGE`.
+  - Job runtime requires `spec.workload.image` or `AGENTS_AGENT_RUNNER_IMAGE`.
   - Workflow runtime requires the same image inputs.
 - Chart defaults:
   - `runner.image.repository` defaults to the Agents-owned Codex runner image in

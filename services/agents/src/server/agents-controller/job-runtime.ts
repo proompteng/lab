@@ -466,7 +466,7 @@ export const submitJobRun = async (
 ) => {
   const workload = options.workload ?? asRecord(readNested(agentRun, ['spec', 'workload'])) ?? {}
   if (!workloadImage) {
-    throw new Error('spec.workload.image, AGENTS_AGENT_RUNNER_IMAGE, or AGENTS_AGENT_IMAGE is required for job runtime')
+    throw new Error('spec.workload.image or AGENTS_AGENT_RUNNER_IMAGE is required for job runtime')
   }
 
   const providerSpec = asRecord(provider.spec) ?? {}

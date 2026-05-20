@@ -36,6 +36,14 @@ describe('Agents controller runtime config', () => {
     expect(resolveAgentsControllerAuthSecretConfig(env)).toBeNull()
   })
 
+  it('does not read the legacy generic AGENTS_AGENT_IMAGE runner alias', () => {
+    expect(
+      resolveAgentRunnerDefaultsConfig({
+        AGENTS_AGENT_IMAGE: 'registry.example/agents-runner:legacy-alias',
+      }).defaultRunnerImage,
+    ).toBeNull()
+  })
+
   it('reads canonical ImplementationSource webhook env names only', () => {
     expect(
       resolveImplementationSourceWebhookConfig({

@@ -620,8 +620,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
           stepStatus.finishedAt = deps.nowIso()
           workflowFailure = {
             reason: 'MissingWorkloadImage',
-            message:
-              'spec.workload.image, AGENTS_AGENT_RUNNER_IMAGE, or AGENTS_AGENT_IMAGE is required for workflow runtime',
+            message: 'spec.workload.image or AGENTS_AGENT_RUNNER_IMAGE is required for workflow runtime',
           }
           break
         }

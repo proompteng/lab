@@ -77,6 +77,8 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('AGENTS_CODEX_RERUN_ORCHESTRATION')
     expect(content).toContain('AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION')
     expect(content).toContain('JANGAR_CODEX_RERUN_ORCHESTRATION|JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION')
+    expect(content).toContain('legacy generic runner image aliases')
+    expect(content).toContain('AGENTS_AGENT_IMAGE|JANGAR_AGENT_RUNNER_IMAGE|JANGAR_AGENT_IMAGE')
     expect(content).toContain('legacy generic Agents /api/control-plane API compatibility aliases')
     expect(content).toContain('generic Agents browser control-plane route ownership')
     expect(content).toContain('generic Agents browser control-plane components')

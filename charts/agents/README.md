@@ -329,8 +329,7 @@ Precedence:
 1. `env.vars.AGENTS_AGENT_RUNNER_IMAGE`
 2. `runner.image.*`
 
-Use `env.vars.AGENTS_AGENT_IMAGE`, `env.vars.AGENTS_SCHEDULE_RUNNER_IMAGE`, or
-`env.vars.AGENTS_SCHEDULE_SERVICE_ACCOUNT` for explicit runtime overrides.
+Use `env.vars.AGENTS_AGENT_RUNNER_IMAGE` for an explicit runner image override.
 
 ### Availability
 

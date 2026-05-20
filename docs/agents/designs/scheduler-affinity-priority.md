@@ -19,14 +19,14 @@ Provide consistent scheduling defaults for AgentRun Jobs while allowing per-run 
 
 ## Default Fields
 
-- `controller.defaultWorkload.nodeSelector` → `JANGAR_AGENT_RUNNER_NODE_SELECTOR`
-- `controller.defaultWorkload.tolerations` → `JANGAR_AGENT_RUNNER_TOLERATIONS`
-- `controller.defaultWorkload.topologySpreadConstraints` → `JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS`
-- `controller.defaultWorkload.affinity` → `JANGAR_AGENT_RUNNER_AFFINITY`
-- `controller.defaultWorkload.podSecurityContext` → `JANGAR_AGENT_RUNNER_POD_SECURITY_CONTEXT`
-- `controller.defaultWorkload.imagePullSecrets` → `JANGAR_AGENT_RUNNER_IMAGE_PULL_SECRETS`
-- `controller.defaultWorkload.priorityClassName` → `JANGAR_AGENT_RUNNER_PRIORITY_CLASS`
-- `controller.defaultWorkload.schedulerName` → `JANGAR_AGENT_RUNNER_SCHEDULER_NAME`
+- `controller.defaultWorkload.nodeSelector` → `AGENTS_AGENT_RUNNER_NODE_SELECTOR`
+- `controller.defaultWorkload.tolerations` → `AGENTS_AGENT_RUNNER_TOLERATIONS`
+- `controller.defaultWorkload.topologySpreadConstraints` → `AGENTS_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS`
+- `controller.defaultWorkload.affinity` → `AGENTS_AGENT_RUNNER_AFFINITY`
+- `controller.defaultWorkload.podSecurityContext` → `AGENTS_AGENT_RUNNER_POD_SECURITY_CONTEXT`
+- `controller.defaultWorkload.imagePullSecrets` → `AGENTS_AGENT_RUNNER_IMAGE_PULL_SECRETS`
+- `controller.defaultWorkload.priorityClassName` → `AGENTS_AGENT_RUNNER_PRIORITY_CLASS`
+- `controller.defaultWorkload.schedulerName` → `AGENTS_AGENT_RUNNER_SCHEDULER_NAME`
 
 ## Override Rules
 

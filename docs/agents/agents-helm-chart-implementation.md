@@ -223,7 +223,6 @@ flowchart LR
 - Image resolution priority:
   1. `AgentRun.spec.workload.image`
   2. `AGENTS_AGENT_RUNNER_IMAGE`
-  3. `AGENTS_AGENT_IMAGE`
 - Job inputs must include a JSON spec (e.g., `run.json`) and optional provider input files.
 - Job should be labeled with `agents.proompteng.ai/agent-run` for tracking.
 
