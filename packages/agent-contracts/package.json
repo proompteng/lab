@@ -22,14 +22,22 @@
       "types": "./dist/agent-message-artifacts.d.ts",
       "default": "./dist/agent-message-artifacts.js"
     },
+    "./agent-run-callbacks": {
+      "types": "./dist/agent-run-callbacks.d.ts",
+      "default": "./dist/agent-run-callbacks.js"
+    },
     "./control-plane-status": {
       "types": "./dist/control-plane-status.d.ts",
       "default": "./dist/control-plane-status.js"
+    },
+    "./torghut-market-context-agentrun": {
+      "types": "./dist/torghut-market-context-agentrun.d.ts",
+      "default": "./dist/torghut-market-context-agentrun.js"
     }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "bunx vitest run ./src/agents-service-client.test.ts ./src/agents-ready.test.ts ./src/agent-message-artifacts.test.ts",
+    "test": "bunx vitest run ./src/agents-service-client.test.ts ./src/agents-ready.test.ts ./src/agent-message-artifacts.test.ts ./src/agent-run-callbacks.test.ts ./src/torghut-market-context-agentrun.test.ts",
     "tsc": "tsc --noEmit -p tsconfig.json",
     "lint": "bunx oxfmt --check src",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",

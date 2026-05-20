@@ -19,6 +19,12 @@ const agentContractsReadySource = fileURLToPath(
 const agentContractsMessageArtifactsSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/agent-message-artifacts.ts', import.meta.url),
 )
+const agentContractsRunCallbacksSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/agent-run-callbacks.ts', import.meta.url),
+)
+const agentContractsTorghutMarketContextAgentRunSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/torghut-market-context-agentrun.ts', import.meta.url),
+)
 const discordSource = fileURLToPath(new URL('../../packages/discord/src/index.ts', import.meta.url))
 
 export default defineConfig({
@@ -28,8 +34,10 @@ export default defineConfig({
       '@': root,
       '@proompteng/agent-contracts/agents-ready': agentContractsReadySource,
       '@proompteng/agent-contracts/agent-message-artifacts': agentContractsMessageArtifactsSource,
+      '@proompteng/agent-contracts/agent-run-callbacks': agentContractsRunCallbacksSource,
       '@proompteng/agent-contracts/agents-service-client': agentContractsServiceClientSource,
       '@proompteng/agent-contracts/control-plane-status': agentContractsControlPlaneStatusSource,
+      '@proompteng/agent-contracts/torghut-market-context-agentrun': agentContractsTorghutMarketContextAgentRunSource,
       '@proompteng/codex': codexStub,
       '@proompteng/codex/*': codexStub,
       '@proompteng/discord': discordSource,
@@ -49,8 +57,10 @@ export default defineConfig({
       '@': root,
       '@proompteng/agent-contracts/agents-ready': agentContractsReadySource,
       '@proompteng/agent-contracts/agent-message-artifacts': agentContractsMessageArtifactsSource,
+      '@proompteng/agent-contracts/agent-run-callbacks': agentContractsRunCallbacksSource,
       '@proompteng/agent-contracts/agents-service-client': agentContractsServiceClientSource,
       '@proompteng/agent-contracts/control-plane-status': agentContractsControlPlaneStatusSource,
+      '@proompteng/agent-contracts/torghut-market-context-agentrun': agentContractsTorghutMarketContextAgentRunSource,
       '@proompteng/codex': codexStub,
       '@proompteng/codex/*': codexStub,
       '@proompteng/discord': discordSource,
