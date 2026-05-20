@@ -526,6 +526,16 @@ fail_if_matches \
   "${ROOT_DIR}/packages/scripts/src/agents"
 
 fail_if_matches \
+  "Agents CI workflow must not run for Jangar-owned source or docs changes after Agents owns its runtime" \
+  'docs/jangar|services/jangar|packages/scripts/src/jangar|argocd/applications/jangar' \
+  "${ROOT_DIR}/.github/workflows/agents-ci.yml"
+
+fail_if_matches \
+  "Agents CI GitOps RBAC must not carry Jangar-specific role names after Agents CI owns its own verification scope" \
+  'jangar' \
+  "${ROOT_DIR}/argocd/applications/agents-ci"
+
+fail_if_matches \
   "Jangar GitOps must not own Codex run-complete ingestion" \
   'uri: /api/codex/run-complete|name: jangar-codex-completions|workflow-completions-rbac|workflow-completions-eventsource' \
   "${ROOT_DIR}/argocd/applications/jangar"

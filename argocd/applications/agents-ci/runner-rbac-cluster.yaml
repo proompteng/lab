@@ -40,7 +40,7 @@ roleRef:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: agents-ci-runner-jangar-verify-read
+  name: agents-ci-runner-argocd-verify-read
 rules:
   - apiGroups:
       - argoproj.io
@@ -54,7 +54,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: agents-ci-runner-jangar-verify-read
+  name: agents-ci-runner-argocd-verify-read
 subjects:
   - kind: ServiceAccount
     name: arc-arm64-gha-rs-kube-mode
@@ -62,7 +62,7 @@ subjects:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: agents-ci-runner-jangar-verify-read
+  name: agents-ci-runner-argocd-verify-read
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -92,7 +92,7 @@ roleRef:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: agents-ci-runner-jangar-rollout-read
+  name: agents-ci-runner-agents-rollout-read
 rules:
   - apiGroups:
       - apps
@@ -107,7 +107,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: agents-ci-runner-jangar-rollout-read
+  name: agents-ci-runner-agents-rollout-read
 subjects:
   - kind: ServiceAccount
     name: arc-arm64-gha-rs-kube-mode
@@ -115,7 +115,7 @@ subjects:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: agents-ci-runner-jangar-rollout-read
+  name: agents-ci-runner-agents-rollout-read
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

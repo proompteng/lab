@@ -19,9 +19,6 @@ const protectedBoundaryTriggerPaths = [
   'docs/agents/**',
   'docs/autonomous-codex-design.md',
   'docs/graf-codex-research.md',
-  'docs/jangar/codex-judge-argo-design.md',
-  'docs/jangar/codex-judge-argo-implementation.md',
-  'docs/jangar/jangar-application-dependency-tree.md',
   'docs/runbooks/codex-docker.md',
   'docs/runbooks/kafka-broker-storage-recovery.md',
   'docs/torghut/whitepaper-research-workflow.md',
@@ -132,6 +129,8 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('live AgentProvider spec.secretEnv before the live CRD schema catches up')
     expect(content).toContain('Argo CD Application reads after control-plane extraction')
     expect(content).toContain('Agents chart design docs must not advertise retired Jangar-managed chart env names')
+    expect(content).toContain('Agents CI workflow must not run for Jangar-owned source or docs changes')
+    expect(content).toContain('Agents CI GitOps RBAC must not carry Jangar-specific role names')
     expect(content).toContain(
       'JANGAR_MIGRATIONS|JANGAR_GRPC_|JANGAR_CONTROL_PLANE_CACHE_ENABLED|JANGAR_AGENTS_CONTROLLER_AUTH_SECRET',
     )
