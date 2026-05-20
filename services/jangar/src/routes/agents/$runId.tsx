@@ -43,9 +43,9 @@ function AgentsRunPage() {
       ordered.map(selector).find((value) => Boolean(value)) ?? null
 
     return {
-      workflowName: findValue((message) => message.workflowName),
-      workflowUid: findValue((message) => message.workflowUid),
-      workflowNamespace: findValue((message) => message.workflowNamespace),
+      agentRunName: findValue((message) => message.agentRunName),
+      agentRunUid: findValue((message) => message.agentRunUid),
+      agentRunNamespace: findValue((message) => message.agentRunNamespace),
       stage: findValue((message) => message.stage),
       firstMessageAt: ordered.length > 0 ? (ordered[0]?.timestamp ?? null) : null,
       lastMessageAt: ordered.length > 0 ? (ordered[ordered.length - 1]?.timestamp ?? null) : null,
@@ -77,16 +77,16 @@ function AgentsRunPage() {
         </div>
         <div className="grid gap-3 text-xs text-muted-foreground sm:grid-cols-2">
           <div className="space-y-1">
-            <div className="text-xs font-medium text-foreground">Workflow</div>
-            <div>{runMeta.workflowName ?? 'Unknown workflow'}</div>
+            <div className="text-xs font-medium text-foreground">AgentRun</div>
+            <div>{runMeta.agentRunName ?? 'Unknown AgentRun'}</div>
           </div>
           <div className="space-y-1">
-            <div className="text-xs font-medium text-foreground">Workflow UID</div>
-            <div>{runMeta.workflowUid ?? 'Unknown'}</div>
+            <div className="text-xs font-medium text-foreground">AgentRun UID</div>
+            <div>{runMeta.agentRunUid ?? 'Unknown'}</div>
           </div>
           <div className="space-y-1">
             <div className="text-xs font-medium text-foreground">Namespace</div>
-            <div>{runMeta.workflowNamespace ?? 'Unknown'}</div>
+            <div>{runMeta.agentRunNamespace ?? 'Unknown'}</div>
           </div>
           <div className="space-y-1">
             <div className="text-xs font-medium text-foreground">Stage</div>

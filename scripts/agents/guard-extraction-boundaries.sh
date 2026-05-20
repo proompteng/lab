@@ -128,6 +128,11 @@ fail_if_matches \
   "~\\/server\\/agents-control-plane-client|from ['\"]\\.\\/agents-control-plane-client|from ['\"]\\.\\.\\/agents-control-plane-client" \
   "${ROOT_DIR}/services/jangar/src"
 
+fail_if_matches \
+  "Agent message client contracts must use AgentRun-native identity fields, not workflow-shaped compatibility fields" \
+  'workflowUid|workflow_uid|workflowName|workflow_name|workflowNamespace|workflow_namespace|workflowStep|workflow_step|workflowStage|workflow_stage' \
+  "${ROOT_DIR}/packages/agent-contracts/src/agents-service-client.ts"
+
 fail_if_path_exists \
   "Jangar domain behavior must not be split into a separate jangar-agents-domain Argo app in the agents namespace" \
   "${ROOT_DIR}/argocd/applications/jangar-agents-domain"

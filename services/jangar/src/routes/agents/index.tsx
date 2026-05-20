@@ -53,9 +53,7 @@ function AgentsIndexPage() {
       <section className="grid gap-4 lg:grid-cols-2">
         <div className="space-y-2 p-4 rounded-none border border-border bg-card">
           <h2 className="text-sm font-semibold text-foreground">General channel</h2>
-          <p className="text-xs text-muted-foreground">
-            Global cross-workflow feed. Use this when you want the shared agent communications channel.
-          </p>
+          <p className="text-xs text-muted-foreground">Global AgentRun feed for the shared communications channel.</p>
           <Button variant="outline" render={<Link to="/agents/general" />}>
             Open /agents/general
           </Button>
@@ -102,7 +100,7 @@ function AgentsIndexPage() {
         ) : (
           <ul className="overflow-hidden rounded-none border border-border bg-card">
             {summaries.runs.map((summary) => (
-              <li key={summary.runId ?? summary.workflowUid} className="border-b border-border last:border-b-0">
+              <li key={summary.runId ?? summary.agentRunUid} className="border-b border-border last:border-b-0">
                 {summary.runId ? (
                   <Link
                     to="/agents/$runId"
@@ -113,8 +111,8 @@ function AgentsIndexPage() {
                       <div className="space-y-1">
                         <div className="text-sm font-semibold text-foreground">Run {summary.runId}</div>
                         <div className="text-xs text-muted-foreground">
-                          {summary.workflowName ?? 'Unknown workflow'}
-                          {summary.workflowNamespace ? ` (${summary.workflowNamespace})` : ''}
+                          {summary.agentRunName ?? 'Unknown AgentRun'}
+                          {summary.agentRunNamespace ? ` (${summary.agentRunNamespace})` : ''}
                         </div>
                       </div>
                       <div className="text-xs text-muted-foreground">{formatTimestamp(summary.lastMessageAt)}</div>
@@ -125,10 +123,10 @@ function AgentsIndexPage() {
                   <div className="flex flex-col gap-2 p-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="space-y-1">
-                        <div className="text-sm font-semibold text-foreground">Workflow {summary.workflowUid}</div>
+                        <div className="text-sm font-semibold text-foreground">AgentRun {summary.agentRunUid}</div>
                         <div className="text-xs text-muted-foreground">
-                          {summary.workflowName ?? 'Unknown workflow'}
-                          {summary.workflowNamespace ? ` (${summary.workflowNamespace})` : ''}
+                          {summary.agentRunName ?? 'Unknown AgentRun'}
+                          {summary.agentRunNamespace ? ` (${summary.agentRunNamespace})` : ''}
                         </div>
                       </div>
                       <div className="text-xs text-muted-foreground">{formatTimestamp(summary.lastMessageAt)}</div>
@@ -142,21 +140,21 @@ function AgentsIndexPage() {
         )}
       </section>
 
-      {summaries.workflows.length > 0 ? (
+      {summaries.agentRuns.length > 0 ? (
         <section className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold text-foreground">Workflows without run ids</h2>
-            <span className="text-xs text-muted-foreground">{summaries.workflows.length} workflows</span>
+            <h2 className="text-sm font-semibold text-foreground">AgentRuns without run ids</h2>
+            <span className="text-xs text-muted-foreground">{summaries.agentRuns.length} AgentRuns</span>
           </div>
           <ul className="overflow-hidden rounded-none border border-border bg-card">
-            {summaries.workflows.map((summary) => (
-              <li key={summary.workflowUid} className="flex flex-col gap-2 p-4 border-b border-border last:border-b-0">
+            {summaries.agentRuns.map((summary) => (
+              <li key={summary.agentRunUid} className="flex flex-col gap-2 p-4 border-b border-border last:border-b-0">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="space-y-1">
-                    <div className="text-sm font-semibold text-foreground">Workflow {summary.workflowUid}</div>
+                    <div className="text-sm font-semibold text-foreground">AgentRun {summary.agentRunUid}</div>
                     <div className="text-xs text-muted-foreground">
-                      {summary.workflowName ?? 'Unknown workflow'}
-                      {summary.workflowNamespace ? ` (${summary.workflowNamespace})` : ''}
+                      {summary.agentRunName ?? 'Unknown AgentRun'}
+                      {summary.agentRunNamespace ? ` (${summary.agentRunNamespace})` : ''}
                     </div>
                   </div>
                   <div className="text-xs text-muted-foreground">{formatTimestamp(summary.lastMessageAt)}</div>

@@ -7,9 +7,9 @@ import { cn } from '@/lib/utils'
 
 export type AgentMessage = {
   id: string | null
-  workflowUid: string | null
-  workflowName: string | null
-  workflowNamespace: string | null
+  agentRunUid: string | null
+  agentRunName: string | null
+  agentRunNamespace: string | null
   runId: string | null
   stepId: string | null
   agentId: string | null
@@ -62,7 +62,7 @@ const coerceContent = (value: unknown): string | null => {
 const toRecord = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null
 
-const normalizeAgentMessage = (payload: unknown): AgentMessage | null => {
+export const normalizeAgentMessage = (payload: unknown): AgentMessage | null => {
   const rootRecord = toRecord(payload)
   if (!rootRecord) return null
   const candidate = toRecord(rootRecord.message) ?? toRecord(rootRecord.data) ?? rootRecord
@@ -77,13 +77,11 @@ const normalizeAgentMessage = (payload: unknown): AgentMessage | null => {
 
   const message: AgentMessage = {
     id: coerceNonEmptyString(candidate.id ?? candidate.message_id ?? candidate.messageId),
-    workflowUid: coerceNonEmptyString(candidate.workflow_uid ?? candidate.workflowUid),
-    workflowName: coerceNonEmptyString(candidate.workflow_name ?? candidate.workflowName),
-    workflowNamespace: coerceNonEmptyString(candidate.workflow_namespace ?? candidate.workflowNamespace),
+    agentRunUid: coerceNonEmptyString(candidate.agent_run_uid ?? candidate.agentRunUid),
+    agentRunName: coerceNonEmptyString(candidate.agent_run_name ?? candidate.agentRunName),
+    agentRunNamespace: coerceNonEmptyString(candidate.agent_run_namespace ?? candidate.agentRunNamespace),
     runId: coerceString(candidate.run_id ?? candidate.runId),
-    stepId: coerceNonEmptyString(
-      candidate.step_id ?? candidate.stepId ?? candidate.workflow_step ?? candidate.workflowStep,
-    ),
+    stepId: coerceNonEmptyString(candidate.step_id ?? candidate.stepId),
     agentId: coerceNonEmptyString(candidate.agent_id ?? candidate.agentId),
     role,
     kind,
@@ -91,7 +89,7 @@ const normalizeAgentMessage = (payload: unknown): AgentMessage | null => {
       candidate.timestamp ?? candidate.sent_at ?? candidate.created_at ?? candidate.createdAt,
     ),
     channel: coerceNonEmptyString(candidate.channel),
-    stage: coerceNonEmptyString(candidate.stage ?? candidate.workflow_stage ?? candidate.workflowStage),
+    stage: coerceNonEmptyString(candidate.stage),
     content,
     tool: toRecord(candidate.tool ?? candidate.tool_call ?? candidate.toolCall),
     attrs: toRecord(candidate.attrs ?? candidate.attributes ?? candidate.meta),
@@ -116,7 +114,7 @@ const buildMessageKey = (message: AgentMessage): string => {
   if (message.id) return message.id
   const parts = [
     message.runId,
-    message.workflowUid,
+    message.agentRunUid,
     message.stepId,
     message.agentId,
     message.kind,
@@ -400,7 +398,7 @@ export const buildRunSummaries = (messages: AgentMessage[]) => {
   })
 
   const runMap = new Map<string, { message: AgentMessage; count: number }>()
-  const workflowMap = new Map<string, { message: AgentMessage; count: number }>()
+  const agentRunMap = new Map<string, { message: AgentMessage; count: number }>()
 
   for (const message of sorted) {
     const runId = message.runId?.trim()
@@ -414,13 +412,13 @@ export const buildRunSummaries = (messages: AgentMessage[]) => {
       continue
     }
 
-    const workflowUid = message.workflowUid?.trim()
-    if (!workflowUid) continue
-    const existing = workflowMap.get(workflowUid)
+    const agentRunUid = message.agentRunUid?.trim()
+    if (!agentRunUid) continue
+    const existing = agentRunMap.get(agentRunUid)
     if (existing) {
       existing.count += 1
     } else {
-      workflowMap.set(workflowUid, { message, count: 1 })
+      agentRunMap.set(agentRunUid, { message, count: 1 })
     }
   }
 
@@ -428,9 +426,9 @@ export const buildRunSummaries = (messages: AgentMessage[]) => {
     const preview = entry.message.content ? truncateText(entry.message.content.trim(), 120) : 'No content yet.'
     return {
       runId: entry.message.runId,
-      workflowUid: entry.message.workflowUid,
-      workflowName: entry.message.workflowName,
-      workflowNamespace: entry.message.workflowNamespace,
+      agentRunUid: entry.message.agentRunUid,
+      agentRunName: entry.message.agentRunName,
+      agentRunNamespace: entry.message.agentRunNamespace,
       lastAgent: entry.message.agentId,
       lastKind: entry.message.kind,
       lastMessageAt: entry.message.timestamp,
@@ -441,7 +439,7 @@ export const buildRunSummaries = (messages: AgentMessage[]) => {
 
   return {
     runs: Array.from(runMap.values()).map(summarize),
-    workflows: Array.from(workflowMap.values()).map(summarize),
+    agentRuns: Array.from(agentRunMap.values()).map(summarize),
   }
 }
 

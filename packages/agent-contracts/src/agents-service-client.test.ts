@@ -479,9 +479,9 @@ describe('agents-service-client', () => {
         skipIfExisting: { runId: 'run-1' },
         messages: [
           {
-            workflowUid: null,
-            workflowName: null,
-            workflowNamespace: null,
+            agentRunUid: 'agent-run-uid-1',
+            agentRunName: 'agent-run-1',
+            agentRunNamespace: 'agents',
             runId: 'run-1',
             stepId: null,
             agentId: null,
@@ -503,6 +503,17 @@ describe('agents-service-client', () => {
     const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
     expect(url.toString()).toBe('http://agents.test/api/agents/messages')
     expect(init.method).toBe('POST')
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>
+    expect(JSON.stringify(body)).not.toContain('workflow')
+    expect(body).toMatchObject({
+      messages: [
+        {
+          agentRunUid: 'agent-run-uid-1',
+          agentRunName: 'agent-run-1',
+          agentRunNamespace: 'agents',
+        },
+      ],
+    })
     expect(getHeader(init.headers, 'x-agents-client')).toBe('agent-contracts')
     expect(typeof init.body).toBe('string')
     expect(JSON.parse(init.body as string)).toMatchObject({

@@ -119,9 +119,9 @@ export type AgentsOrchestrationRunSubmitter = (
 ) => Promise<AgentsOrchestrationRunSubmitResult>
 
 export type AgentsAgentMessageInput = {
-  workflowUid: string | null
-  workflowName: string | null
-  workflowNamespace: string | null
+  agentRunUid: string | null
+  agentRunName: string | null
+  agentRunNamespace: string | null
   runId: string | null
   stepId: string | null
   agentId: string | null
@@ -139,7 +139,7 @@ export type AgentsAgentMessagesSubmitInput = {
   messages: AgentsAgentMessageInput[]
   skipIfExisting?: {
     runId?: string | null
-    workflowUid?: string | null
+    agentRunUid?: string | null
   }
 }
 

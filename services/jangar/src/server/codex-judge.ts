@@ -1823,9 +1823,9 @@ const backfillAgentMessages = async (run: CodexRunRecord, artifacts: ResolvedArt
     const stage = run.stage ?? null
 
     const records = messages.map((message, index) => ({
-      workflowUid: run.workflowUid,
-      workflowName: run.workflowName,
-      workflowNamespace: run.workflowNamespace,
+      agentRunUid: run.workflowUid,
+      agentRunName: run.workflowName,
+      agentRunNamespace: run.workflowNamespace,
       runId: run.id,
       stepId: null,
       agentId: null,
@@ -1840,7 +1840,7 @@ const backfillAgentMessages = async (run: CodexRunRecord, artifacts: ResolvedArt
     }))
 
     await resolveAgentMessagesSubmit()({
-      skipIfExisting: { runId: run.id, workflowUid: run.workflowUid },
+      skipIfExisting: { runId: run.id, agentRunUid: run.workflowUid },
       messages: records,
     })
   } catch (error) {
