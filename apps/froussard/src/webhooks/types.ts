@@ -32,7 +32,6 @@ export interface WebhookConfig {
   codexImplementationTriggerPhrase: string
   topics: {
     raw: string
-    codexJudge: string
     discordCommands: string
   }
   discord: {

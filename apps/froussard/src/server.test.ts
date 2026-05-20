@@ -39,7 +39,6 @@ vi.mock('@/effect/config', () => {
       clientId: 'client',
       topics: {
         raw: 'raw',
-        codexJudge: 'codex-judge',
         discordCommands: 'discord',
       },
     },

@@ -28,7 +28,6 @@ describe('makeAppRuntime', () => {
     KAFKA_USERNAME: 'user',
     KAFKA_PASSWORD: 'pass',
     KAFKA_TOPIC: 'raw-topic',
-    KAFKA_CODEX_JUDGE_TOPIC: 'github.webhook.codex.judge',
     KAFKA_DISCORD_COMMAND_TOPIC: 'discord.commands.incoming',
     DISCORD_PUBLIC_KEY: 'public-key',
     ATLAS_BASE_URL: 'http://jangar',

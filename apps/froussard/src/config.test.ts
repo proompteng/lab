@@ -8,7 +8,6 @@ const baseEnv = {
   KAFKA_USERNAME: 'user',
   KAFKA_PASSWORD: 'pass',
   KAFKA_TOPIC: 'raw-topic',
-  KAFKA_CODEX_JUDGE_TOPIC: 'github.webhook.codex.judge',
   KAFKA_DISCORD_COMMAND_TOPIC: 'discord.commands.incoming',
   ATLAS_BASE_URL: 'http://jangar',
   DISCORD_PUBLIC_KEY: 'public-key',
@@ -21,7 +20,6 @@ describe('loadConfig', () => {
     expect(config.idempotency.ttlMs).toBe(10 * 60 * 1000)
     expect(config.idempotency.maxEntries).toBe(10_000)
     expect(config.kafka.brokers).toEqual(['broker1:9092', 'broker2:9093'])
-    expect(config.kafka.topics.codexJudge).toBe('github.webhook.codex.judge')
     expect(config.agents.serviceBaseUrl).toBe('http://agents.agents.svc.cluster.local')
     expect(config.agents.serviceClientName).toBe('froussard')
     expect(config.agents.namespace).toBe('agents')
@@ -123,7 +121,6 @@ describe('loadConfig', () => {
   it('throws when required env is missing', () => {
     expect(() => loadConfig({ ...baseEnv, KAFKA_BROKERS: '' })).toThrow()
     expect(() => loadConfig({ ...baseEnv, GITHUB_WEBHOOK_SECRET: undefined })).toThrow()
-    expect(() => loadConfig({ ...baseEnv, KAFKA_CODEX_JUDGE_TOPIC: undefined })).toThrow()
     expect(() => loadConfig({ ...baseEnv, KAFKA_DISCORD_COMMAND_TOPIC: undefined })).toThrow()
     expect(() => loadConfig({ ...baseEnv, DISCORD_PUBLIC_KEY: undefined })).toThrow()
     expect(() => loadConfig({ ...baseEnv, ATLAS_BASE_URL: undefined, JANGAR_BASE_URL: undefined })).toThrow()

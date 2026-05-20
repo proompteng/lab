@@ -13,11 +13,9 @@ flowchart LR
   Discord[Discord interaction] --> Froussard
   subgraph Kafka Topics
     Raw[github.webhook.events]
-    CodexJudge[github.webhook.codex.judge]
     DiscordTopic[discord.commands.incoming]
   end
   Froussard -->|raw body| Raw
-  Froussard -->|codex judge filter| CodexJudge
   Froussard -->|GitHub issue implementation AgentRun| Agents
   Froussard -->|slash command| DiscordTopic
   DiscordTopic --> Facteur[Facteur Discord bridge]
@@ -31,7 +29,7 @@ The Argo CD application also provisions the `discord.commands.incoming` Kafka to
 
 - Validate GitHub `x-hub-signature-256` headers using `@octokit/webhooks`.
 - Validate Discord `x-signature-ed25519`/`x-signature-timestamp` headers using `discord-interactions` before parsing the payload.
-- Emit the original JSON event (`github.webhook.events`), submit GitHub issue implementation runs directly to the Agents `/v1/agent-runs` API, and publish the filtered Codex judge stream (`github.webhook.codex.judge`).
+- Emit the original JSON event (`github.webhook.events`) and submit GitHub issue implementation runs directly to the Agents `/v1/agent-runs` API.
 - Normalize Discord slash command payloads (command name, options, interaction token, user metadata) and publish them into `discord.commands.incoming`.
 - Provision and maintain the `discord.commands.incoming` Kafka topic for Facteur ingestion.
 - Surface health checks on `/health/liveness` and `/health/readiness`.
@@ -64,7 +62,6 @@ The local runtime exposes:
 - GitHub issue implementation runs are submitted directly to the Agents service configured by `AGENTS_SERVICE_BASE_URL`.
 - Discord slash command signature verification requires `DISCORD_PUBLIC_KEY`. Set
   `KAFKA_DISCORD_COMMAND_TOPIC` to control the output topic for normalized command events.
-- The Codex judge stream is configured via `KAFKA_CODEX_JUDGE_TOPIC` (defaulting to `github.webhook.codex.judge`).
 - Webhook idempotency defaults to a 10 minute TTL with 10,000 entries. Override via
   `FROUSSARD_WEBHOOK_IDEMPOTENCY_TTL_MS` and `FROUSSARD_WEBHOOK_IDEMPOTENCY_MAX_ENTRIES`.
 

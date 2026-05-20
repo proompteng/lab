@@ -194,7 +194,6 @@ describe('createWebhookHandler', () => {
     codexImplementationTriggerPhrase: 'implement issue',
     topics: {
       raw: 'raw-topic',
-      codexJudge: 'github.webhook.codex.judge',
       discordCommands: 'discord-topic',
     },
     discord: {
@@ -225,7 +224,6 @@ describe('createWebhookHandler', () => {
         clientId: 'froussard-webhook-producer',
         topics: {
           raw: baseConfig.topics.raw,
-          codexJudge: baseConfig.topics.codexJudge,
           discordCommands: baseConfig.topics.discordCommands,
         },
       },
@@ -905,9 +903,8 @@ describe('createWebhookHandler', () => {
         body: expect.stringContaining(':shipit:'),
       }),
     )
-    expect(publishedMessages).toHaveLength(2)
+    expect(publishedMessages).toHaveLength(1)
     expect(publishedMessages.some((message) => message.topic === 'raw-topic')).toBe(true)
-    expect(publishedMessages.some((message) => message.topic === baseConfig.topics.codexJudge)).toBe(true)
   })
 
   it('does not post a codex review request comment for large pull requests', async () => {
@@ -1114,9 +1111,8 @@ describe('createWebhookHandler', () => {
 
     expect(response.status).toBe(202)
     expect(githubServiceMock.createPullRequestComment).not.toHaveBeenCalled()
-    expect(publishedMessages).toHaveLength(2)
+    expect(publishedMessages).toHaveLength(1)
     expect(publishedMessages.some((message) => message.topic === 'raw-topic')).toBe(true)
-    expect(publishedMessages.some((message) => message.topic === baseConfig.topics.codexJudge)).toBe(true)
   })
 
   it('returns 401 when Discord signature verification fails', async () => {

@@ -663,6 +663,7 @@ require_matches \
 
 fail_if_path_exists \
   "Froussard/Facteur must not recreate the retired GitHub issue Codex Kafka bridge" \
+  "${ROOT_DIR}/argocd/applications/froussard/github-webhook-codex-judge-topic.yaml" \
   "${ROOT_DIR}/argocd/applications/froussard/github-issues-codex-tasks-topic.yaml" \
   "${ROOT_DIR}/argocd/applications/facteur/overlays/cluster/facteur-codex-kafkasource.yaml" \
   "${ROOT_DIR}/proto/proompteng/froussard/v1/codex_task.proto" \
@@ -675,7 +676,7 @@ fail_if_path_exists \
 
 fail_if_matches \
   "Froussard runtime must submit implementation runs directly to Agents instead of publishing the retired Codex task topic" \
-  'github\.issues\.codex\.tasks|KAFKA_CODEX_TOPIC_STRUCTURED|CodexTaskSchema|toCodexTaskProto' \
+  'github\.issues\.codex\.tasks|github\.webhook\.codex\.judge|KAFKA_CODEX_TOPIC_STRUCTURED|KAFKA_CODEX_JUDGE_TOPIC|CodexTaskSchema|toCodexTaskProto|codexJudge' \
   "${ROOT_DIR}/apps/froussard/src/codex" \
   "${ROOT_DIR}/apps/froussard/src/config.ts" \
   "${ROOT_DIR}/apps/froussard/src/index.ts" \
