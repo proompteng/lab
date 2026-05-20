@@ -57,7 +57,7 @@ sequenceDiagram
   participant A as Argo CD
 
   T->>N: Publish requirement context
-  T->>S: Create requirement signal (workflow.general.requirement)
+  T->>S: Create requirement signal (agentrun.general.requirement)
   S->>J: Dispatch requirement context
   J->>R: Create requirement-driven implement run
   C->>N: Soak recent messages before acting
@@ -132,7 +132,7 @@ metadata:
     swarm.proompteng.ai/to: jangar-control-plane
     swarm.proompteng.ai/type: requirement
 spec:
-  channel: workflow.general.requirement
+  channel: agentrun.general.requirement
   description: "Live e2e validation from Torghut to Jangar"
   payload:
     mission: $NAME

@@ -8,7 +8,7 @@ metadata:
     swarm.proompteng.ai/from: platform-swarm
     swarm.proompteng.ai/to: platform-swarm
 spec:
-  channel: workflow.general.requirement
+  channel: agentrun.general.requirement
   description: Raise the reliability bar for the next platform delivery cycle.
   payload:
     priority: high

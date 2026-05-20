@@ -690,6 +690,18 @@ fail_if_matches \
   "${ROOT_DIR}/services/agents/src/server/migrations"
 
 fail_if_matches \
+  "Agents implementation contracts must not normalize workflow-shaped stage aliases after AgentRun owns runtime identity" \
+  'workflowStage|workflow_stage' \
+  "${ROOT_DIR}/services/agents/src/server/agents-controller/implementation-contract.ts"
+
+fail_if_matches \
+  "Current Agents examples and runbooks must use AgentRun NATS subjects instead of retired workflow.general subjects" \
+  'workflow\.general\.' \
+  "${ROOT_DIR}/charts/agents/examples" \
+  "${ROOT_DIR}/docs/agents/agents-helm-chart-implementation.md" \
+  "${ROOT_DIR}/docs/agents/swarm-end-to-end-runbook.md"
+
+fail_if_matches \
   "Agents GitOps must not ship the old sample Argo WorkflowTemplate schedule bridge" \
   'agents-primitives-echo|kind: WorkflowTemplate|codex-workflow' \
   "${ROOT_DIR}/argocd/applications/agents"

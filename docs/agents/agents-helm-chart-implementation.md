@@ -340,10 +340,10 @@ Controller behavior requires permissions to:
 
 Agent comms publishes vendor-neutral NATS subjects using the following pattern:
 
-- `workflow.<namespace>.<workflow>.<uid>.agent.<agentId>.<kind>` for workflow-scoped agent messages.
-- `workflow.general.<kind>` for general agent status updates.
+- `agentrun.<namespace>.<agentRun>.<uid>.agent.<agentId>.<kind>` for AgentRun-scoped agent messages.
+- `agentrun.general.<kind>` for general agent status updates.
 
-Legacy compatibility: `agents.workflow.*` subjects are still accepted alongside the `workflow.*` subject family.
+The `agents.agentrun.*` and `agents.agent_messages.*` subject families are also accepted.
 
 ### RBAC modes
 

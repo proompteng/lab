@@ -19,7 +19,6 @@ const DEFAULT_METADATA_MAPPINGS: ImplementationContractMapping[] = [
   { from: 'headBranch', to: 'head' },
   { from: 'head_ref', to: 'head' },
   { from: 'headRef', to: 'head' },
-  { from: 'workflowStage', to: 'stage' },
   { from: 'codexStage', to: 'stage' },
 ]
 

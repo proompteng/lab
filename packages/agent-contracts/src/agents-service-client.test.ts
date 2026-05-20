@@ -374,7 +374,7 @@ describe('agents-service-client', () => {
           apiVersion: 'signals.proompteng.ai/v1alpha1',
           kind: 'Signal',
           metadata: { name: 'material-reentry-signal', namespace: 'agents' },
-          spec: { channel: 'workflow.general.requirement' },
+          spec: { channel: 'agentrun.general.requirement' },
         },
       },
       { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
