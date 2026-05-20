@@ -475,6 +475,52 @@ const isImmutableJobApplyError = (error: unknown) => {
   return normalized.includes('job.batch') && normalized.includes('field is immutable')
 }
 
+const isKubeNotFoundMessage = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error)
+  const normalized = message.toLowerCase()
+  return normalized.includes('notfound') || normalized.includes(' not found')
+}
+
+export const getMountedConfigMapNames = (job: Record<string, unknown>) => {
+  const volumes = readNested(job, ['spec', 'template', 'spec', 'volumes'])
+  if (!Array.isArray(volumes)) return []
+
+  const names = new Set<string>()
+  for (const volume of volumes) {
+    const record = asRecord(volume)
+    const configMap = asRecord(record?.configMap)
+    const name = asString(configMap?.name)?.trim()
+    if (name) names.add(name)
+  }
+
+  return [...names].sort()
+}
+
+export const verifyJobConfigMaps = async (
+  kube: Pick<ReturnType<typeof createKubernetesClient>, 'get'>,
+  job: Record<string, unknown>,
+  namespace: string,
+): Promise<{ ok: true; names: string[] } | { ok: false; names: string[]; missing: string[] }> => {
+  const names = getMountedConfigMapNames(job)
+  if (names.length === 0) return { ok: true, names }
+
+  const missing: string[] = []
+  for (const name of names) {
+    try {
+      const configMap = await kube.get('configmap', name, namespace)
+      if (!configMap) missing.push(name)
+    } catch (error) {
+      if (isKubeNotFoundMessage(error)) {
+        missing.push(name)
+        continue
+      }
+      throw error
+    }
+  }
+
+  return missing.length === 0 ? { ok: true, names } : { ok: false, names, missing }
+}
+
 export const submitJobRun = async (
   kube: ReturnType<typeof createKubernetesClient>,
   agentRun: Record<string, unknown>,
@@ -603,7 +649,6 @@ export const submitJobRun = async (
   const runUid = asString(metadata.uid)
   const jobName = makeName(runName, options.nameSuffix ?? 'job')
   const existingJobRef = await getExistingAgentRunJobRef(kube, jobName, namespace, runName, runtimeType)
-  if (existingJobRef) return existingJobRef
 
   const agentName = asString(readNested(agent, ['metadata', 'name']))
   const implName = asString(readNested(agentRun, ['spec', 'implementationSpecRef', 'name']))
@@ -638,6 +683,7 @@ export const submitJobRun = async (
     options.nameSuffix,
     agentRunnerSpec ?? undefined,
   )
+  if (existingJobRef) return existingJobRef
 
   const { volumeSpecs, volumeMounts } = buildVolumeSpecs(workload)
 

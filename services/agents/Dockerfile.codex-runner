@@ -105,5 +105,11 @@ COPY --from=codex-package-build /opt/proompteng/packages/codex/dist /app/node_mo
 RUN printf '%s\n' '#!/bin/sh' 'exec bun /app/services/agents/scripts/codex/agent-runner.js "$@"' > /usr/local/bin/agent-runner \
     && chmod +x /usr/local/bin/agent-runner /app/services/agents/scripts/codex/agent-runner.js
 
+RUN printf '%s\n' \
+    '{"schemaVersion":"agents.proompteng.ai/runner/v1","provider":"image-smoke","adapter":{"type":"exec","exec":{"binary":"/bin/true"}}}' \
+    > /tmp/agent-runner-smoke.json \
+    && /usr/local/bin/agent-runner /tmp/agent-runner-smoke.json \
+    && rm -f /tmp/agent-runner-smoke.json
+
 WORKDIR /workspace
 CMD ["bash"]

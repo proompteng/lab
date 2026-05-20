@@ -63,6 +63,14 @@ describe('Agents Codex runner image layout', () => {
     expect(content).not.toContain('npm/bin/npx-cli.js')
   })
 
+  it('smoke-tests the bundled runner during the final image build', () => {
+    const content = finalStage()
+
+    expect(content).toContain('/usr/local/bin/agent-runner /tmp/agent-runner-smoke.json')
+    expect(content).toContain('"provider":"image-smoke"')
+    expect(content).toContain('"binary":"/bin/true"')
+  })
+
   it('bundles the runner without runtime-resolving Effect or source TS modules', async () => {
     const outDir = await mkdtemp(join(tmpdir(), 'agents-runner-bundle-'))
     const outfile = join(outDir, 'agent-runner.js')

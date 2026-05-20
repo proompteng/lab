@@ -36,6 +36,7 @@ import {
   normalizeLabelValue,
   resolveRunnerServiceAccount,
   submitJobRun,
+  verifyJobConfigMaps,
 } from './job-runtime'
 import {
   markAgentsControllerStarted,
@@ -850,6 +851,7 @@ const { reconcileWorkflowRun } = createWorkflowReconciler({
   submitJobRun,
   applyJobTtlAfterStatus,
   normalizeLabelValue,
+  verifyJobConfigMaps,
   isJobComplete,
   isJobFailed,
 })
@@ -878,6 +880,7 @@ const { reconcileAgentRun } = createAgentRunReconciler({
   buildContractStatus,
   resolveRunnerServiceAccount,
   applyJobTtlAfterStatus,
+  verifyJobConfigMaps,
   isJobComplete,
   isJobFailed,
   recordAgentQueueDepth,

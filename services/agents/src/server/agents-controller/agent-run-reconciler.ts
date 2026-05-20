@@ -4,7 +4,7 @@ import { type createKubernetesClient, RESOURCE_MAP } from '../kube-types'
 import { type Condition, upsertCondition } from './conditions'
 import { parseStringList } from './env-config'
 import { hashAgentRunImmutableSpec } from './immutable-spec'
-import { buildRunSpecContext, renderProviderOutputArtifacts } from './job-runtime'
+import { buildRunSpecContext, renderProviderOutputArtifacts, verifyJobConfigMaps } from './job-runtime'
 import type { AgentsPrimitivesStoreRef } from './mutable-state'
 import { resolveMemory } from './namespace-state'
 import { isAgentRunTemplate, reconcileAgentRunDeletion, reconcileAgentRunTemplate } from './agent-run-template'
@@ -136,6 +136,7 @@ type AgentRunReconcilerDependencies = {
     namespace: string,
     runtimeConfig: Record<string, unknown>,
   ) => Promise<void>
+  verifyJobConfigMaps: typeof verifyJobConfigMaps
   isJobComplete: (job: Record<string, unknown>) => boolean
   isJobFailed: (job: Record<string, unknown>) => boolean
   recordAgentQueueDepth?: (
@@ -186,6 +187,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
     buildContractStatus,
     resolveRunnerServiceAccount,
     applyJobTtlAfterStatus,
+    verifyJobConfigMaps,
     isJobComplete,
     isJobFailed,
     recordAgentQueueDepth = () => {},
@@ -1161,12 +1163,14 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
     if (!runtimeRef) return
 
     if (runtimeRef.type === 'job') {
-      const job = await kube.get('job', asString(runtimeRef.name) ?? '', asString(runtimeRef.namespace) ?? namespace)
+      const jobName = asString(runtimeRef.name) ?? ''
+      const jobNamespace = asString(runtimeRef.namespace) ?? namespace
+      const job = await kube.get('job', jobName, jobNamespace)
       const runtimeRefRecord = asRecord(status.runtimeRef) ?? {}
       const jobObservedAt = asString(runtimeRefRecord.jobObservedAt)
       if (!job) {
         if (jobObservedAt) {
-          const message = `job ${asString(runtimeRef.name) ?? 'unknown'} not found`
+          const message = `job ${jobName || 'unknown'} not found`
           const updated = upsertCondition(conditions, {
             type: 'Warning',
             status: 'True',
@@ -1271,20 +1275,50 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
             : {}),
         })
         await applyJobTtlAfterStatus(kube, job, asString(runtimeRef.namespace) ?? namespace, runtimeConfig)
-      } else if (!jobObservedAt) {
-        await setStatus(kube, agentRun, {
-          observedGeneration,
-          phase: 'Running',
-          reason: undefined,
-          message: undefined,
-          startedAt: asString(status.startedAt) ?? nowIso(),
-          runtimeRef: {
-            ...runtimeRef,
-            jobObservedAt: nowIso(),
-          },
-          conditions,
-          vcs: asRecord(status.vcs) ?? undefined,
-        })
+      } else {
+        const configMapVerification = await verifyJobConfigMaps(kube, job, jobNamespace)
+        if (!configMapVerification.ok) {
+          const message = `job ${jobName || 'unknown'} is missing mounted ConfigMaps: ${configMapVerification.missing.join(', ')}`
+          const updated = upsertCondition(conditions, {
+            type: 'Warning',
+            status: 'True',
+            reason: 'RuntimeConfigMapMissing',
+            message,
+          })
+          logAgentsControllerWarn('reconcile_runtime_config_missing', {
+            ...logContext,
+            decision: 'runtime_config_missing',
+            reason: 'RuntimeConfigMapMissing',
+            job: jobName,
+            missingConfigMaps: configMapVerification.missing,
+            message,
+            durationMs: Date.now() - reconcileStartedAt,
+          })
+          await setStatus(kube, agentRun, {
+            observedGeneration,
+            phase: 'Running',
+            startedAt: asString(status.startedAt) ?? nowIso(),
+            runtimeRef,
+            conditions: updated,
+            vcs: asRecord(status.vcs) ?? undefined,
+          })
+          return
+        }
+        if (!jobObservedAt) {
+          await setStatus(kube, agentRun, {
+            observedGeneration,
+            phase: 'Running',
+            reason: undefined,
+            message: undefined,
+            startedAt: asString(status.startedAt) ?? nowIso(),
+            runtimeRef: {
+              ...runtimeRef,
+              jobObservedAt: nowIso(),
+            },
+            conditions,
+            vcs: asRecord(status.vcs) ?? undefined,
+          })
+        }
       }
     }
 

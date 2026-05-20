@@ -3732,6 +3732,86 @@ describe('agents controller reconcileAgentRun', () => {
     expect(warning?.reason).toBe('WorkflowJobMissing')
   })
 
+  it('retries workflow steps when mounted runtime ConfigMaps disappear', async () => {
+    const kube = buildKube({
+      get: vi.fn(async (resource: string, name: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+          }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return {
+            metadata: { name: 'provider-1' },
+            spec: { binary: '/usr/local/bin/agent-runner' },
+          }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        if (resource === 'job' && name === 'run-1-step-1-attempt-1') {
+          return {
+            metadata: { name: 'run-1-step-1-attempt-1', namespace: 'agents' },
+            spec: {
+              template: {
+                spec: {
+                  volumes: [
+                    { name: 'run-spec', configMap: { name: 'run-1-spec-step-1-attempt-1' } },
+                    { name: 'workspace', emptyDir: {} },
+                  ],
+                },
+              },
+            },
+            status: {},
+          }
+        }
+        if (resource === 'configmap' && name === 'run-1-spec-step-1-attempt-1') {
+          return null
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'workflow', config: {} },
+        workload: { image: defaultRunnerImage },
+        workflow: {
+          steps: [{ name: 'step-one', retries: 1 }],
+        },
+      },
+      status: {
+        phase: 'Running',
+        workflow: {
+          phase: 'Running',
+          steps: [
+            {
+              name: 'step-one',
+              phase: 'Running',
+              attempt: 1,
+              lastTransitionTime: '2026-01-20T00:00:00Z',
+              jobObservedAt: '2026-01-20T00:00:05Z',
+              jobRef: { name: 'run-1-step-1-attempt-1', namespace: 'agents' },
+            },
+          ],
+        },
+      },
+    })
+
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+    const status = getLastStatus(kube)
+    const warning = findCondition(status, 'Warning')
+    const workflow = (status.workflow as Record<string, unknown> | undefined) ?? {}
+    const steps = Array.isArray(workflow.steps) ? (workflow.steps as Record<string, unknown>[]) : []
+    expect(warning?.reason).toBe('WorkflowConfigMapMissing')
+    expect(steps[0]?.phase).toBe('Retrying')
+    expect(steps[0]?.message).toBe('Runtime ConfigMap missing; retrying')
+  })
+
   it('retries workflow steps with backoff', async () => {
     const jobStatuses = new Map<string, Record<string, unknown>>()
     const apply = vi.fn(async (resource: Record<string, unknown>) => {
@@ -4187,6 +4267,53 @@ describe('agents controller reconcileAgentRun', () => {
     expect(status.phase).toBe('Failed')
     expect(status.reason).toBe('DeadlineExceeded')
     expect(status.message).toBe('job exceeded active deadline')
+  })
+
+  it('warns when a direct job runtime loses mounted ConfigMaps', async () => {
+    const kube = buildKube({
+      get: vi.fn(async (resource: string, name: string) => {
+        if (resource === 'job' && name === 'job-1') {
+          return {
+            metadata: { name: 'job-1', namespace: 'agents' },
+            spec: {
+              template: {
+                spec: {
+                  volumes: [
+                    { name: 'run-spec', configMap: { name: 'run-1-spec' } },
+                    { name: 'workspace', emptyDir: {} },
+                  ],
+                },
+              },
+            },
+            status: {},
+          }
+        }
+        if (resource === 'configmap' && name === 'run-1-spec') {
+          return null
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      status: {
+        phase: 'Running',
+        runtimeRef: {
+          type: 'job',
+          name: 'job-1',
+          namespace: 'agents',
+          jobObservedAt: '2026-05-19T12:00:00Z',
+        },
+      },
+    })
+
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+    const status = getLastStatus(kube)
+    const warning = findCondition(status, 'Warning')
+    expect(status.phase).toBe('Running')
+    expect(warning?.reason).toBe('RuntimeConfigMapMissing')
+    expect(warning?.message).toContain('run-1-spec')
   })
 
   it('propagates runner terminal status and output artifacts from direct job pods', async () => {

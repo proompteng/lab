@@ -3,10 +3,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   buildRunSpecContext,
   buildRunSpec,
+  getMountedConfigMapNames,
   makeName,
   normalizeLabelValue,
   resolveRunnerServiceAccount,
   submitJobRun,
+  verifyJobConfigMaps,
 } from '~/server/agents-controller/job-runtime'
 
 describe('agents controller job-runtime module', () => {
@@ -175,6 +177,7 @@ describe('agents controller job-runtime module', () => {
   })
 
   it('returns an existing deterministic job for the same AgentRun', async () => {
+    const applied: Record<string, unknown>[] = []
     const existingJob = {
       metadata: {
         name: 'run-1-step-1-attempt-1',
@@ -185,14 +188,22 @@ describe('agents controller job-runtime module', () => {
     }
     const kube = {
       get: vi.fn(async (resource: string) => (resource === 'job' ? existingJob : null)),
-      apply: vi.fn(),
+      apply: vi.fn(async (resource: Record<string, unknown>) => {
+        applied.push(resource)
+        return resource
+      }),
     }
 
     const runtimeRef = await submitJobRun(
       kube as never,
       { metadata: { name: 'run-1', uid: 'run-uid-1', namespace: 'agents' }, spec: {} },
       { metadata: { name: 'agent-a' }, spec: {} },
-      { metadata: { name: 'provider-a' }, spec: {} },
+      {
+        metadata: { name: 'provider-a' },
+        spec: {
+          inputFiles: [{ path: '/workspace/input.txt', content: 'restored input' }],
+        },
+      },
       { metadata: { name: 'impl-a' }, source: { provider: 'github' }, summary: 'Run summary' },
       null,
       'agents',
@@ -207,7 +218,15 @@ describe('agents controller job-runtime module', () => {
       namespace: 'agents',
       uid: 'job-uid-1',
     })
-    expect(kube.apply).not.toHaveBeenCalled()
+    expect(applied.filter((resource) => resource.kind === 'ConfigMap')).toHaveLength(2)
+    expect(
+      applied.find(
+        (resource) =>
+          resource.kind === 'ConfigMap' &&
+          Boolean((resource.data as Record<string, unknown> | undefined)?.['agent-runner.json']),
+      ),
+    ).toBeTruthy()
+    expect(applied).not.toContainEqual(expect.objectContaining({ kind: 'Job' }))
   })
 
   it('adopts an existing deterministic job after a stale apply replay hits immutable fields', async () => {
@@ -255,5 +274,31 @@ describe('agents controller job-runtime module', () => {
     })
     expect(kube.apply).toHaveBeenCalledWith(expect.objectContaining({ kind: 'ConfigMap' }))
     expect(kube.apply).toHaveBeenCalledWith(expect.objectContaining({ kind: 'Job' }))
+  })
+
+  it('detects missing ConfigMaps mounted by an existing job', async () => {
+    const job = {
+      spec: {
+        template: {
+          spec: {
+            volumes: [
+              { name: 'run-spec', configMap: { name: 'run-1-spec' } },
+              { name: 'run-inputs', configMap: { name: 'run-1-inputs' } },
+              { name: 'workspace', emptyDir: {} },
+            ],
+          },
+        },
+      },
+    }
+    const kube = {
+      get: vi.fn(async (_resource: string, name: string) => (name === 'run-1-spec' ? { metadata: { name } } : null)),
+    }
+
+    expect(getMountedConfigMapNames(job)).toEqual(['run-1-inputs', 'run-1-spec'])
+    await expect(verifyJobConfigMaps(kube as never, job, 'agents')).resolves.toEqual({
+      ok: false,
+      names: ['run-1-inputs', 'run-1-spec'],
+      missing: ['run-1-inputs'],
+    })
   })
 })

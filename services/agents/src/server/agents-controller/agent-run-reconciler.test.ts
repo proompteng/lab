@@ -91,6 +91,7 @@ describe('agents controller agent-run reconciler', () => {
       buildContractStatus: () => undefined,
       resolveRunnerServiceAccount: () => null,
       applyJobTtlAfterStatus: vi.fn(),
+      verifyJobConfigMaps: vi.fn(async () => ({ ok: true as const, names: [] })),
       isJobComplete: () => false,
       isJobFailed: () => false,
     })
