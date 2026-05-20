@@ -192,6 +192,60 @@ class TestProfitTargetOracle(TestCase):
 
         self.assertTrue(result["passed"])
 
+    def test_profit_target_oracle_rejects_route_tca_without_durable_artifact(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "requires_order_type_execution_quality": True,
+            "order_type_ablation_passed": True,
+            "order_type_ablation_artifact_ref": "/tmp/order-type-ablation.json",
+            "order_type_ablation_sample_count": 60,
+            "market_limit_order_mix_evidence_present": True,
+            "limit_fill_probability_evidence_present": True,
+            "price_improvement_evidence_present": True,
+            "opportunity_cost_evidence_present": True,
+            "execution_shortfall_evidence_present": True,
+            "route_tca_evidence_present": True,
+            "order_type_opportunity_cost_bps": "8",
+            "market_order_spread_bps": "8",
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn("route_tca_evidence_present_failed", result["blockers"])
+
+    def test_profit_target_oracle_rejects_route_tca_as_order_type_ablation_artifact(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "requires_order_type_execution_quality": True,
+            "order_type_ablation_passed": True,
+            "order_type_execution_artifact_ref": "/tmp/order-type-execution.json",
+            "order_type_ablation_sample_count": 60,
+            "market_limit_order_mix_evidence_present": True,
+            "limit_fill_probability_evidence_present": True,
+            "price_improvement_evidence_present": True,
+            "opportunity_cost_evidence_present": True,
+            "execution_shortfall_evidence_present": True,
+            "route_tca_artifact_ref": "/tmp/route-tca.json",
+            "order_type_opportunity_cost_bps": "8",
+            "market_order_spread_bps": "8",
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn("order_type_ablation_artifact_present_failed", result["blockers"])
+
     def test_profit_target_oracle_rejects_pending_validation_contract_evidence(
         self,
     ) -> None:

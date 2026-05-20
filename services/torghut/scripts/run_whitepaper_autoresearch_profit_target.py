@@ -7077,19 +7077,21 @@ def _candidate_board_order_type_execution_quality_summary(
         scorecard.get("order_type_ablation_passed")
         or scorecard.get("market_limit_execution_policy_passed")
     )
-    raw_artifact_refs = (
-        scorecard.get("order_type_execution_artifact_refs")
-        or scorecard.get("order_type_ablation_artifact_refs")
-        or scorecard.get("market_limit_order_mix_artifact_refs")
-        or scorecard.get("route_tca_artifact_refs")
-        or scorecard.get("order_type_execution_artifact_ref")
-        or scorecard.get("order_type_ablation_artifact_ref")
-        or scorecard.get("market_limit_order_mix_artifact_ref")
-        or scorecard.get("route_tca_artifact_ref")
-    )
+    raw_artifact_refs = scorecard.get(
+        "order_type_ablation_artifact_refs"
+    ) or scorecard.get("order_type_ablation_artifact_ref")
     artifact_refs = _string_list_from_value(raw_artifact_refs)
     if not artifact_refs and _string(raw_artifact_refs):
         artifact_refs = [_string(raw_artifact_refs)]
+    raw_execution_artifact_refs = (
+        scorecard.get("order_type_execution_artifact_refs")
+        or scorecard.get("market_limit_order_mix_artifact_refs")
+        or scorecard.get("order_type_execution_artifact_ref")
+        or scorecard.get("market_limit_order_mix_artifact_ref")
+    )
+    execution_artifact_refs = _string_list_from_value(raw_execution_artifact_refs)
+    if not execution_artifact_refs and _string(raw_execution_artifact_refs):
+        execution_artifact_refs = [_string(raw_execution_artifact_refs)]
     sample_count = _candidate_board_first_int_field(
         scorecard,
         (
@@ -7147,9 +7149,7 @@ def _candidate_board_order_type_execution_quality_summary(
         route_tca_refs = _string_list_from_value(raw_route_tca_refs)
         if not route_tca_refs and _string(raw_route_tca_refs):
             route_tca_refs = [_string(raw_route_tca_refs)]
-        if not (
-            _boolish(scorecard.get("route_tca_evidence_present")) or route_tca_refs
-        ):
+        if not route_tca_refs:
             blockers.append("route_tca_evidence_present_failed")
         if opportunity_cost_bps > max_opportunity_cost_bps:
             blockers.append("order_type_opportunity_cost_bps_failed")
@@ -7160,6 +7160,8 @@ def _candidate_board_order_type_execution_quality_summary(
         "passed": not blockers,
         "blockers": blockers,
         "artifact_refs": artifact_refs,
+        "execution_artifact_refs": execution_artifact_refs,
+        "route_tca_artifact_refs": route_tca_refs if required else [],
         "sample_count": sample_count,
         "min_sample_count": min_sample_count,
         "opportunity_cost_bps": str(opportunity_cost_bps),

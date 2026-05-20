@@ -442,6 +442,43 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
         with self.assertRaisesRegex(ValueError, "evidence_bundle_schema_invalid"):
             evidence_bundle_from_payload({"schema_version": "bad"})
 
+    def test_evidence_bundle_marks_order_type_execution_artifact_without_ablation(
+        self,
+    ) -> None:
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-order-type-execution",
+            candidate={
+                "candidate_id": "cand-order-type-execution",
+                "runtime_family": "microbar_cross_sectional_pairs",
+                "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                "family_template_id": "microbar_cross_sectional_pairs_v1",
+                "full_window": {
+                    "net_per_day": "123",
+                    "trading_day_count": "1",
+                    "avg_filled_notional_per_day": "350000",
+                    "daily_net": {"2026-02-23": "123"},
+                    "daily_filled_notional": {"2026-02-23": "350000"},
+                    "daily_liquidity_notional": {"2026-02-23": "900000"},
+                    "decision_count_by_order_type": {"market": 2, "limit": 3},
+                    "filled_count_by_order_type": {"market": 2, "limit": 2},
+                    "limit_fill_rate": "0.6667",
+                },
+            },
+            dataset_snapshot_id="snap-order-type-execution",
+            result_path="/tmp/order-type-execution-replay.json",
+        )
+
+        self.assertEqual(
+            bundle.objective_scorecard["order_type_execution_artifact_ref"],
+            "/tmp/order-type-execution-replay.json",
+        )
+        self.assertEqual(
+            bundle.objective_scorecard["market_limit_order_mix_artifact_ref"],
+            "/tmp/order-type-execution-replay.json",
+        )
+        self.assertNotIn("order_type_ablation_artifact_ref", bundle.objective_scorecard)
+        self.assertNotIn("order_type_ablation_passed", bundle.objective_scorecard)
+
     def test_evidence_bundle_fails_delay_depth_without_recorded_daily_liquidity(
         self,
     ) -> None:

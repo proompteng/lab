@@ -1062,16 +1062,10 @@ def evaluate_profit_target_oracle(
     )
     order_type_artifact_refs = _artifact_refs(
         scorecard,
-        "order_type_execution_artifact_ref",
-        "order_type_execution_artifact_refs",
         "order_type_ablation_artifact_ref",
         "order_type_ablation_artifact_refs",
-        "market_limit_order_mix_artifact_ref",
-        "market_limit_order_mix_artifact_refs",
-        "route_tca_artifact_ref",
-        "route_tca_artifact_refs",
     )
-    order_type_artifact_present = bool(order_type_artifact_refs)
+    order_type_ablation_artifact_present = bool(order_type_artifact_refs)
     order_type_ablation_passed = _boolish(
         scorecard.get("order_type_ablation_passed")
         or scorecard.get("market_limit_execution_policy_passed")
@@ -1103,7 +1097,7 @@ def evaluate_profit_target_oracle(
     )
     route_tca_evidence_present = bool(
         _artifact_refs(scorecard, "route_tca_artifact_ref", "route_tca_artifact_refs")
-    ) or _boolish(scorecard.get("route_tca_evidence_present"))
+    )
     checks.extend(
         (
             {
@@ -1118,11 +1112,11 @@ def evaluate_profit_target_oracle(
             },
             {
                 "metric": "order_type_ablation_artifact_present",
-                "observed": str(order_type_artifact_present).lower(),
+                "observed": str(order_type_ablation_artifact_present).lower(),
                 "operator": "eq",
                 "threshold": "true",
                 "source_marker": "retail_order_flow_segmentation_ssrn_6414558_2026",
-                "passed": order_type_artifact_present
+                "passed": order_type_ablation_artifact_present
                 if require_order_type_execution_quality
                 else True,
             },

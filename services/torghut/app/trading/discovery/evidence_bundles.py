@@ -489,6 +489,16 @@ def evidence_bundle_from_frontier_candidate(
         for key, value in _order_type_execution_metrics(source).items():
             if key not in scorecard:
                 scorecard = {**scorecard, key: value}
+    if (
+        scorecard.get("market_limit_order_mix_evidence_present")
+        and "order_type_execution_artifact_ref" not in scorecard
+    ):
+        scorecard = {**scorecard, "order_type_execution_artifact_ref": result_path}
+    if (
+        scorecard.get("market_limit_order_mix_evidence_present")
+        and "market_limit_order_mix_artifact_ref" not in scorecard
+    ):
+        scorecard = {**scorecard, "market_limit_order_mix_artifact_ref": result_path}
     for key, value in _decomposition_activity_counts(candidate).items():
         if key not in scorecard:
             scorecard = {**scorecard, key: value}
