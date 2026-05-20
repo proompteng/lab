@@ -758,6 +758,11 @@ fail_if_matches \
   "${ROOT_DIR}/packages/agent-contracts/src/swarm-read-client.ts"
 
 fail_if_matches \
+  "Agents v1 typed resource routes must not request-rewrite into generic internal control-plane resource routes" \
+  '/api/agents/control-plane/resource|/api/agents/control-plane/resources|copyRequestWithKind|toKindResourceUrl' \
+  "${ROOT_DIR}/services/agents/src/routes/v1/resource-route-helpers.ts"
+
+fail_if_matches \
   "AgentRun resource consumers must use the dedicated /v1/agent-runs/resources contract instead of generic control-plane kind selectors" \
   '/api/agents/control-plane/resource|/api/agents/control-plane/resources|kind=AgentRun' \
   "${ROOT_DIR}/packages/agent-contracts/src/agent-runs-client.ts" \

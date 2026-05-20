@@ -100,6 +100,8 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain(
       'typed v1 resource endpoints instead of generic /api/agents/control-plane resource selectors',
     )
+    expect(content).toContain('typed resource routes must not request-rewrite')
+    expect(content).toContain('copyRequestWithKind|toKindResourceUrl')
     expect(content).toContain('generic Agents browser control-plane route ownership')
     expect(content).toContain('generic Agents browser control-plane components')
     expect(content).toContain('services/jangar/src/components/agents-control-plane.tsx')
