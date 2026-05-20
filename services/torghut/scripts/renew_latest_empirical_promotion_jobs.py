@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
+import psycopg
 import yaml
 from sqlalchemy import select
 
@@ -31,6 +32,11 @@ from app.trading.empirical_manifest import (
 US_EQUITIES_TIMEZONE = "America/New_York"
 US_EQUITIES_OPEN = time(9, 30)
 US_EQUITIES_CLOSE = time(16, 0)
+EXECUTION_ELIGIBLE_DECISION_STATUSES = (
+    "submitted",
+    "filled",
+    "partially_filled",
+)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -318,7 +324,12 @@ def _registry_runtime_window_targets(
         strategy_name = strategy_name or (
             _strategy_name_from_strategy_id(strategy_id) if strategy_id else None
         )
-        if not hypothesis_id or not candidate_id or not strategy_family or not strategy_name:
+        if (
+            not hypothesis_id
+            or not candidate_id
+            or not strategy_family
+            or not strategy_name
+        ):
             continue
         targets.append(
             RuntimeWindowImportTarget(
@@ -428,6 +439,17 @@ def _latest_completed_regular_session(now: datetime) -> tuple[datetime, datetime
     return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
 
 
+def _regular_session_for_timestamp(value: datetime) -> tuple[datetime, datetime]:
+    zone = ZoneInfo(US_EQUITIES_TIMEZONE)
+    local_value = value.astimezone(zone)
+    session_date = local_value.date()
+    while session_date.weekday() >= 5:
+        session_date -= timedelta(days=1)
+    start = datetime.combine(session_date, US_EQUITIES_OPEN, tzinfo=zone)
+    end = datetime.combine(session_date, US_EQUITIES_CLOSE, tzinfo=zone)
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+
+
 def _runtime_window_bounds(
     args: argparse.Namespace, now: datetime
 ) -> tuple[datetime, datetime]:
@@ -442,6 +464,89 @@ def _runtime_window_bounds(
             raise RuntimeError("runtime_window_end_must_be_after_start")
         return start, end
     return _latest_completed_regular_session(now)
+
+
+def _explicit_runtime_window_bounds(
+    args: argparse.Namespace,
+) -> tuple[datetime, datetime] | None:
+    start_arg = str(getattr(args, "runtime_window_start", "") or "").strip()
+    end_arg = str(getattr(args, "runtime_window_end", "") or "").strip()
+    if bool(start_arg) != bool(end_arg):
+        raise RuntimeError("runtime_window_bounds_require_start_and_end")
+    if not start_arg or not end_arg:
+        return None
+    start = _parse_dt(start_arg)
+    end = _parse_dt(end_arg)
+    if end <= start:
+        raise RuntimeError("runtime_window_end_must_be_after_start")
+    return start, end
+
+
+def _source_strategy_name_candidates(
+    *,
+    target: RuntimeWindowImportTarget,
+    runtime_manifest: Mapping[str, Any],
+) -> list[str]:
+    candidates: list[str] = []
+    for raw in (
+        target.strategy_name,
+        _as_text(runtime_manifest.get("strategy_name")),
+        _as_text(runtime_manifest.get("strategy_id")),
+    ):
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        variants = [
+            text,
+            text.split("@", 1)[0],
+            text.replace("_", "-"),
+            text.split("@", 1)[0].replace("_", "-"),
+        ]
+        for variant in variants:
+            normalized = variant.strip()
+            if normalized and normalized not in candidates:
+                candidates.append(normalized)
+    return candidates
+
+
+def _latest_source_activity_window(
+    *,
+    target: RuntimeWindowImportTarget,
+    runtime_manifest: Mapping[str, Any],
+) -> tuple[datetime, datetime] | None:
+    dsn = os.getenv(target.source_dsn_env, "").strip()
+    if not dsn:
+        return None
+    strategy_names = _source_strategy_name_candidates(
+        target=target,
+        runtime_manifest=runtime_manifest,
+    )
+    if not strategy_names:
+        return None
+    with psycopg.connect(dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                select max(d.created_at)
+                from trade_decisions d
+                join strategies s on s.id = d.strategy_id
+                where s.name = any(%s)
+                  and d.alpaca_account_label = %s
+                  and d.status = any(%s)
+                """,
+                (
+                    strategy_names,
+                    target.account_label,
+                    list(EXECUTION_ELIGIBLE_DECISION_STATUSES),
+                ),
+            )
+            row = cur.fetchone()
+            latest = row[0] if row else None
+    if latest is None:
+        return None
+    if latest.tzinfo is None:
+        latest = latest.replace(tzinfo=timezone.utc)
+    return _regular_session_for_timestamp(latest.astimezone(timezone.utc))
 
 
 def _latest_authoritative_rows(
@@ -568,7 +673,10 @@ def _run_runtime_window_import(
 ) -> dict[str, Any] | None:
     if not bool(getattr(args, "runtime_window_import", False)):
         return None
-    window_start, window_end = _runtime_window_bounds(args, now)
+    explicit_window = _explicit_runtime_window_bounds(args)
+    default_window_start, default_window_end = (
+        explicit_window or _runtime_window_bounds(args, now)
+    )
     imports: list[dict[str, Any]] = []
     for target in _runtime_window_targets(args):
         imports.append(
@@ -578,8 +686,9 @@ def _run_runtime_window_import(
                 manifest=manifest,
                 run_id=run_id,
                 manifest_path=manifest_path,
-                window_start=window_start,
-                window_end=window_end,
+                window_start=default_window_start,
+                window_end=default_window_end,
+                allow_source_activity_window=explicit_window is None,
             )
         )
     if len(imports) == 1:
@@ -608,8 +717,20 @@ def _run_runtime_window_import_target(
     manifest_path: Path,
     window_start: datetime,
     window_end: datetime,
+    allow_source_activity_window: bool = False,
 ) -> dict[str, Any]:
     runtime_manifest = _read_runtime_window_manifest(target.source_manifest_ref)
+    window_selection = "explicit_or_default"
+    if allow_source_activity_window:
+        source_activity_window = _latest_source_activity_window(
+            target=target,
+            runtime_manifest=runtime_manifest,
+        )
+        if source_activity_window is not None:
+            window_start, window_end = source_activity_window
+            window_selection = "latest_source_execution_activity"
+        else:
+            window_selection = "latest_completed_regular_session_no_source_activity"
     delay_depth_report_ref = _runtime_manifest_delay_depth_stress_report_ref(
         target=target,
         runtime_manifest=runtime_manifest,
@@ -691,6 +812,7 @@ def _run_runtime_window_import_target(
         "command": " ".join(command[:2] + ["..."]),
         "window_start": _utc_iso(window_start),
         "window_end": _utc_iso(window_end),
+        "window_selection": window_selection,
         "hypothesis_id": target.hypothesis_id,
         "strategy_name": target.strategy_name,
         "account_label": target.account_label,

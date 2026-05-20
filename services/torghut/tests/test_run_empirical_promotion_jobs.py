@@ -698,6 +698,205 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertIn("--delay-adjusted-depth-stress-report-ref", joined)
         self.assertIn("/proof/h-micro-delay-depth.json", joined)
 
+    def test_runtime_window_import_uses_latest_source_activity_window_when_unpinned(
+        self,
+    ) -> None:
+        manifest_path = self.tmp_dir / "empirical-promotion-manifest.yaml"
+        manifest_path.write_text("run_id: renew-1\n", encoding="utf-8")
+        micro_path = self.tmp_dir / "h-micro-01.json"
+        micro_path.write_text(
+            json.dumps(
+                {
+                    "candidate_id": "chip-paper-microbar-composite@execution-proof",
+                    "strategy_id": "microbar_volume_continuation_long_top2_chip_v1@paper",
+                    "dataset_snapshot_ref": "torghut-chip-full-day-20260505-4c330ce9-r1",
+                }
+            ),
+            encoding="utf-8",
+        )
+        completed = SimpleNamespace(
+            stdout=json.dumps({"inserted_windows": 1, "promotion_decision": "blocked"})
+        )
+        args = SimpleNamespace(
+            runtime_window_import=True,
+            runtime_window_target=[
+                (
+                    "hypothesis_id=H-MICRO-01,candidate_id=chip-paper-microbar-composite@execution-proof,"
+                    "strategy_family=microstructure_breakout,"
+                    "strategy_name=microbar-volume-continuation-long-top2-chip-v1,"
+                    f"source_manifest_ref={micro_path},"
+                    "dataset_snapshot_ref=torghut-chip-full-day-20260505-4c330ce9-r1"
+                )
+            ],
+            runtime_window_hypothesis_id="H-TSMOM-01",
+            runtime_window_candidate_id="",
+            runtime_window_observed_stage="paper",
+            runtime_window_strategy_family="intraday_tsmom_consistent",
+            runtime_window_source_dsn_env="SIM_DB_DSN",
+            runtime_window_strategy_name="intraday-tsmom-profit-v3",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_start="",
+            runtime_window_end="",
+            runtime_window_dataset_snapshot_ref="",
+            runtime_window_bucket_minutes=30,
+            runtime_window_sample_minutes=5,
+            runtime_window_source_manifest_ref=str(micro_path),
+            runtime_window_source_kind="paper_runtime_observed",
+        )
+        source_window = (
+            datetime(2026, 5, 15, 13, 30, tzinfo=timezone.utc),
+            datetime(2026, 5, 15, 20, 0, tzinfo=timezone.utc),
+        )
+
+        with (
+            patch.object(renewal.subprocess, "run", return_value=completed) as run_mock,
+            patch.object(
+                renewal,
+                "_latest_source_activity_window",
+                return_value=source_window,
+            ) as source_window_mock,
+        ):
+            payload = renewal._run_runtime_window_import(
+                args=args,
+                manifest={
+                    "candidate_id": "stale-empirical-candidate",
+                    "dataset_snapshot_ref": "stale-empirical-dataset",
+                },
+                run_id="renew-1",
+                manifest_path=manifest_path,
+                now=datetime(2026, 5, 19, 21, 23, tzinfo=timezone.utc),
+            )
+
+        self.assertIsNotNone(payload)
+        assert payload is not None
+        source_window_mock.assert_called_once()
+        self.assertEqual(payload["window_start"], "2026-05-15T13:30:00Z")
+        self.assertEqual(payload["window_end"], "2026-05-15T20:00:00Z")
+        self.assertEqual(
+            payload["window_selection"], "latest_source_execution_activity"
+        )
+        command = run_mock.call_args.args[0]
+        self.assertIn("--window-start", command)
+        self.assertEqual(
+            command[command.index("--window-start") + 1],
+            "2026-05-15T13:30:00Z",
+        )
+        self.assertEqual(
+            command[command.index("--window-end") + 1],
+            "2026-05-15T20:00:00Z",
+        )
+
+    def test_runtime_window_import_keeps_explicit_window_pinned(self) -> None:
+        manifest_path = self.tmp_dir / "empirical-promotion-manifest.yaml"
+        manifest_path.write_text("run_id: renew-1\n", encoding="utf-8")
+        micro_path = self.tmp_dir / "h-micro-01.json"
+        micro_path.write_text(
+            json.dumps({"candidate_id": "candidate-1"}),
+            encoding="utf-8",
+        )
+        completed = SimpleNamespace(
+            stdout=json.dumps({"inserted_windows": 1, "promotion_decision": "blocked"})
+        )
+        args = SimpleNamespace(
+            runtime_window_import=True,
+            runtime_window_target=[
+                (
+                    "hypothesis_id=H-MICRO-01,candidate_id=candidate-1,"
+                    "strategy_family=microstructure_breakout,"
+                    f"strategy_name=microbar-volume-continuation-long-top2-chip-v1,source_manifest_ref={micro_path}"
+                )
+            ],
+            runtime_window_hypothesis_id="H-TSMOM-01",
+            runtime_window_candidate_id="",
+            runtime_window_observed_stage="paper",
+            runtime_window_strategy_family="intraday_tsmom_consistent",
+            runtime_window_source_dsn_env="SIM_DB_DSN",
+            runtime_window_strategy_name="intraday-tsmom-profit-v3",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_start="2026-05-18T13:30:00Z",
+            runtime_window_end="2026-05-18T20:00:00Z",
+            runtime_window_dataset_snapshot_ref="",
+            runtime_window_bucket_minutes=30,
+            runtime_window_sample_minutes=5,
+            runtime_window_source_manifest_ref=str(micro_path),
+            runtime_window_source_kind="paper_runtime_observed",
+        )
+
+        with (
+            patch.object(renewal.subprocess, "run", return_value=completed),
+            patch.object(
+                renewal,
+                "_latest_source_activity_window",
+                return_value=(
+                    datetime(2026, 5, 15, 13, 30, tzinfo=timezone.utc),
+                    datetime(2026, 5, 15, 20, 0, tzinfo=timezone.utc),
+                ),
+            ) as source_window_mock,
+        ):
+            payload = renewal._run_runtime_window_import(
+                args=args,
+                manifest={},
+                run_id="renew-1",
+                manifest_path=manifest_path,
+                now=datetime(2026, 5, 19, 21, 23, tzinfo=timezone.utc),
+            )
+
+        source_window_mock.assert_not_called()
+        self.assertIsNotNone(payload)
+        assert payload is not None
+        self.assertEqual(payload["window_start"], "2026-05-18T13:30:00Z")
+        self.assertEqual(payload["window_end"], "2026-05-18T20:00:00Z")
+
+    def test_latest_source_activity_window_uses_execution_eligible_decisions(
+        self,
+    ) -> None:
+        target = renewal.RuntimeWindowImportTarget(
+            hypothesis_id="H-MICRO-01",
+            candidate_id="candidate-1",
+            observed_stage="paper",
+            strategy_family="microstructure_breakout",
+            source_dsn_env="SIM_DB_DSN",
+            strategy_name="microbar-volume-continuation-long-top2-chip-v1",
+            account_label="TORGHUT_SIM",
+            dataset_snapshot_ref="snapshot-1",
+            source_manifest_ref="h-micro-01.json",
+            source_kind="paper_runtime_observed",
+            delay_adjusted_depth_stress_report_ref="",
+        )
+        latest = datetime(2026, 5, 15, 17, 25, tzinfo=timezone.utc)
+        connection = MagicMock()
+        cursor_context = MagicMock()
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (latest,)
+        cursor_context.__enter__.return_value = cursor
+        connection.cursor.return_value = cursor_context
+        connection_context = MagicMock()
+        connection_context.__enter__.return_value = connection
+
+        with (
+            patch.dict(renewal.os.environ, {"SIM_DB_DSN": "postgresql://sim"}),
+            patch.object(renewal.psycopg, "connect", return_value=connection_context),
+        ):
+            window = renewal._latest_source_activity_window(
+                target=target,
+                runtime_manifest={
+                    "strategy_id": "microbar_volume_continuation_long_top2_chip_v1@paper"
+                },
+            )
+
+        self.assertEqual(
+            window,
+            (
+                datetime(2026, 5, 15, 13, 30, tzinfo=timezone.utc),
+                datetime(2026, 5, 15, 20, 0, tzinfo=timezone.utc),
+            ),
+        )
+        _, params = cursor.execute.call_args.args
+        self.assertIn("microbar-volume-continuation-long-top2-chip-v1", params[0])
+        self.assertIn("microbar_volume_continuation_long_top2_chip_v1", params[0])
+        self.assertEqual(params[1], "TORGHUT_SIM")
+        self.assertEqual(params[2], list(renewal.EXECUTION_ELIGIBLE_DECISION_STATUSES))
+
     def test_runtime_window_import_surfaces_multi_target_proof_blockers(
         self,
     ) -> None:
