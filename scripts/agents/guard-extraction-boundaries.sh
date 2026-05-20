@@ -132,6 +132,10 @@ fail_if_path_exists \
   "Jangar domain behavior must not be split into a separate jangar-agents-domain Argo app in the agents namespace" \
   "${ROOT_DIR}/argocd/applications/jangar-agents-domain"
 
+fail_if_path_exists \
+  "Jangar domain behavior must not be split into a separate jangar-agents-domain CI workflow" \
+  "${ROOT_DIR}/.github/workflows/jangar-agents-domain-ci.yml"
+
 fail_if_matches \
   "Product GitOps must not register a separate jangar-agents-domain app; Jangar should consume Agents APIs from its own domain" \
   "jangar-agents-domain" \

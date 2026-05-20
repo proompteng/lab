@@ -1,4 +1,4 @@
-name: jangar-agents-domain-ci
+name: torghut-agents-domain-ci
 
 permissions:
   contents: read
@@ -6,20 +6,18 @@ permissions:
 on:
   pull_request:
     paths:
-      - 'argocd/applications/jangar-agents-domain/**'
       - 'argocd/applications/torghut/agents-domain/**'
       - 'packages/scripts/src/jangar/__tests__/agents-domain-smoke.test.ts'
       - 'scripts/jangar/validate-agents-domain.sh'
-      - '.github/workflows/jangar-agents-domain-ci.yml'
+      - '.github/workflows/torghut-agents-domain-ci.yml'
   push:
     branches:
       - main
     paths:
-      - 'argocd/applications/jangar-agents-domain/**'
       - 'argocd/applications/torghut/agents-domain/**'
       - 'packages/scripts/src/jangar/__tests__/agents-domain-smoke.test.ts'
       - 'scripts/jangar/validate-agents-domain.sh'
-      - '.github/workflows/jangar-agents-domain-ci.yml'
+      - '.github/workflows/torghut-agents-domain-ci.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -40,5 +38,5 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/scripts
 
-      - name: Validate Jangar and Torghut Agents domain manifests
+      - name: Validate Torghut Agents domain manifests
         run: scripts/jangar/validate-agents-domain.sh
