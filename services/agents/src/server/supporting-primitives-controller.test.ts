@@ -53,6 +53,32 @@ describe('supporting primitives controller', () => {
     expect(__test__.resolveResourceListOrder()).toContain(RESOURCE_MAP.Swarm)
   })
 
+  it('does not fail the supporting CRD probe when the Swarm CRD is absent and swarm primitives are disabled', async () => {
+    process.env.AGENTS_SWARM_PRIMITIVE_ENABLED = 'false'
+    const probeNamespacedResource = vi.fn(async (resource: string) =>
+      resource === RESOURCE_MAP.Swarm ? 'missing' : 'ok',
+    )
+
+    await expect(__test__.checkCrds({ probeNamespacedResource })).resolves.toMatchObject({
+      ok: true,
+      missing: [],
+    })
+    expect(probeNamespacedResource).not.toHaveBeenCalledWith(RESOURCE_MAP.Swarm, expect.any(String))
+  })
+
+  it('requires the Swarm CRD when swarm primitives are explicitly enabled', async () => {
+    process.env.AGENTS_SWARM_PRIMITIVE_ENABLED = 'true'
+    const probeNamespacedResource = vi.fn(async (resource: string) =>
+      resource === RESOURCE_MAP.Swarm ? 'missing' : 'ok',
+    )
+
+    await expect(__test__.checkCrds({ probeNamespacedResource })).resolves.toMatchObject({
+      ok: false,
+      missing: [RESOURCE_MAP.Swarm],
+    })
+    expect(probeNamespacedResource).toHaveBeenCalledWith(RESOURCE_MAP.Swarm, 'agents')
+  })
+
   it('validates Tool specs and writes standard status', async () => {
     const { kube, statuses } = createKubeMock()
     await __test__.reconcileTool(kube, {
