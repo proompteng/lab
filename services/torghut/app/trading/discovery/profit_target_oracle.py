@@ -72,6 +72,20 @@ class ProfitTargetOraclePolicy:
     min_double_oos_independent_window_count: int = 2
     min_double_oos_pass_rate: Decimal = Decimal("1.00")
     max_missing_sleeve_daily_net_count: int = 0
+    max_validation_contract_pending_count: int = 0
+    max_validation_live_paper_parity_pending_count: int = 0
+    max_synthetic_evidence_not_promotion_proof_count: int = 0
+    require_rejected_signal_outcome_learning: bool = False
+    min_rejected_signal_outcome_label_count: int = 120
+    min_rejected_signal_reason_coverage: Decimal = Decimal("0.80")
+    max_rejected_signal_outcome_pending_ratio: Decimal = Decimal("0.05")
+    required_rejected_signal_counterfactual_fields: tuple[str, ...] = (
+        "counterfactual_return",
+        "route_tca",
+        "post_cost_net_pnl",
+        "executable_quote",
+    )
+    required_rejected_signal_outcome_persistence_state: str = "ok"
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -142,6 +156,21 @@ class ProfitTargetOraclePolicy:
             "min_double_oos_independent_window_count": self.min_double_oos_independent_window_count,
             "min_double_oos_pass_rate": str(self.min_double_oos_pass_rate),
             "max_missing_sleeve_daily_net_count": self.max_missing_sleeve_daily_net_count,
+            "max_validation_contract_pending_count": self.max_validation_contract_pending_count,
+            "max_validation_live_paper_parity_pending_count": self.max_validation_live_paper_parity_pending_count,
+            "max_synthetic_evidence_not_promotion_proof_count": self.max_synthetic_evidence_not_promotion_proof_count,
+            "require_rejected_signal_outcome_learning": self.require_rejected_signal_outcome_learning,
+            "min_rejected_signal_outcome_label_count": self.min_rejected_signal_outcome_label_count,
+            "min_rejected_signal_reason_coverage": str(
+                self.min_rejected_signal_reason_coverage
+            ),
+            "max_rejected_signal_outcome_pending_ratio": str(
+                self.max_rejected_signal_outcome_pending_ratio
+            ),
+            "required_rejected_signal_counterfactual_fields": list(
+                self.required_rejected_signal_counterfactual_fields
+            ),
+            "required_rejected_signal_outcome_persistence_state": self.required_rejected_signal_outcome_persistence_state,
         }
 
 
@@ -228,6 +257,28 @@ def _string_sequence(value: Any) -> list[str]:
     if "," in raw_value:
         return [item.strip() for item in raw_value.split(",") if item.strip()]
     return [raw_value]
+
+
+def _requires_rejected_signal_outcome_learning(
+    scorecard: Mapping[str, Any], policy: ProfitTargetOraclePolicy
+) -> bool:
+    if policy.require_rejected_signal_outcome_learning:
+        return True
+    if _boolish(
+        scorecard.get("requires_rejected_signal_outcome_learning")
+        or scorecard.get("rejected_signal_outcome_learning_required")
+        or scorecard.get("requires_rejected_signal_outcome_calibration")
+        or scorecard.get("rejected_signal_outcome_calibration_required")
+    ):
+        return True
+    overlay_ids = set(
+        _string_sequence(
+            scorecard.get("mechanism_overlay_ids")
+            or scorecard.get("mechanism_overlays")
+            or scorecard.get("overlay_ids")
+        )
+    )
+    return "rejected_signal_outcome_calibration" in overlay_ids
 
 
 def _start_equity(
@@ -422,6 +473,38 @@ def evaluate_profit_target_oracle(
             ),
             operator="lte",
             threshold=Decimal(max(0, policy.max_missing_sleeve_daily_net_count)),
+        ),
+        _numeric_check(
+            metric="validation_contract_pending_count",
+            observed=Decimal(
+                _nonnegative_int(scorecard.get("validation_contract_pending_count"))
+            ),
+            operator="lte",
+            threshold=Decimal(max(0, policy.max_validation_contract_pending_count)),
+        ),
+        _numeric_check(
+            metric="validation_live_paper_parity_pending_count",
+            observed=Decimal(
+                _nonnegative_int(
+                    scorecard.get("validation_live_paper_parity_pending_count")
+                )
+            ),
+            operator="lte",
+            threshold=Decimal(
+                max(0, policy.max_validation_live_paper_parity_pending_count)
+            ),
+        ),
+        _numeric_check(
+            metric="synthetic_evidence_not_promotion_proof_count",
+            observed=Decimal(
+                _nonnegative_int(
+                    scorecard.get("synthetic_evidence_not_promotion_proof_count")
+                )
+            ),
+            operator="lte",
+            threshold=Decimal(
+                max(0, policy.max_synthetic_evidence_not_promotion_proof_count)
+            ),
         ),
         _numeric_check(
             metric="best_day_share",
@@ -1041,6 +1124,92 @@ def evaluate_profit_target_oracle(
             **double_oos_cost_shock_net_check,
             "source_marker": "double_oos_cost_sensitivity_arxiv_2602_10785_2026",
         }
+    )
+    require_rejected_signal_learning = _requires_rejected_signal_outcome_learning(
+        scorecard, policy
+    )
+    rejected_signal_labeled_count = _nonnegative_int(
+        scorecard.get("rejected_signal_outcome_labeled_count")
+        or scorecard.get("rejected_signal_outcome_label_count")
+        or scorecard.get("rejected_signal_outcome_labeled_event_count")
+    )
+    rejected_signal_pending_ratio = _decimal(
+        scorecard.get("rejected_signal_outcome_pending_ratio"), default="1"
+    )
+    rejected_signal_reason_coverage = _decimal(
+        scorecard.get("rejected_signal_reason_coverage")
+        or scorecard.get("rejected_signal_outcome_reason_coverage")
+    )
+    rejected_signal_persistence_state = _string(
+        scorecard.get("rejected_signal_outcome_persistence_state")
+        or scorecard.get("rejected_signal_persistence_state")
+    ).lower()
+    observed_counterfactual_fields = set(
+        _string_sequence(
+            scorecard.get("rejected_signal_counterfactual_fields")
+            or scorecard.get("rejected_signal_counterfactual_fields_present")
+            or scorecard.get("rejected_signal_outcome_counterfactual_fields")
+        )
+    )
+    if _boolish(scorecard.get("rejected_signal_counterfactual_fields_present")):
+        observed_counterfactual_fields.update(
+            policy.required_rejected_signal_counterfactual_fields
+        )
+    required_counterfactual_fields = set(
+        policy.required_rejected_signal_counterfactual_fields
+    )
+    checks.extend(
+        (
+            _numeric_check(
+                metric="rejected_signal_outcome_labeled_count",
+                observed=Decimal(rejected_signal_labeled_count),
+                operator="gte",
+                threshold=Decimal(policy.min_rejected_signal_outcome_label_count)
+                if require_rejected_signal_learning
+                else Decimal("0"),
+            ),
+            _numeric_check(
+                metric="rejected_signal_outcome_pending_ratio",
+                observed=rejected_signal_pending_ratio,
+                operator="lte",
+                threshold=policy.max_rejected_signal_outcome_pending_ratio
+                if require_rejected_signal_learning
+                else Decimal("1"),
+            ),
+            _numeric_check(
+                metric="rejected_signal_reason_coverage",
+                observed=rejected_signal_reason_coverage,
+                operator="gte",
+                threshold=policy.min_rejected_signal_reason_coverage
+                if require_rejected_signal_learning
+                else Decimal("0"),
+            ),
+            {
+                "metric": "rejected_signal_counterfactual_fields_present",
+                "observed": sorted(observed_counterfactual_fields),
+                "operator": "contains",
+                "threshold": sorted(required_counterfactual_fields),
+                "source_marker": "rejected_signal_outcome_calibration",
+                "passed": required_counterfactual_fields.issubset(
+                    observed_counterfactual_fields
+                )
+                if require_rejected_signal_learning
+                else True,
+            },
+            {
+                "metric": "rejected_signal_outcome_persistence_state",
+                "observed": rejected_signal_persistence_state,
+                "operator": "eq",
+                "threshold": policy.required_rejected_signal_outcome_persistence_state,
+                "source_marker": "rejected_signal_outcome_calibration",
+                "passed": (
+                    rejected_signal_persistence_state
+                    == policy.required_rejected_signal_outcome_persistence_state
+                )
+                if require_rejected_signal_learning
+                else True,
+            },
+        )
     )
     blockers = [
         f"{item['metric']}_failed" for item in checks if not bool(item["passed"])

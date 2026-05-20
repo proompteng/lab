@@ -75,6 +75,90 @@ class TestProfitTargetOracle(TestCase):
         self.assertTrue(result["passed"])
         self.assertEqual(result["blockers"], [])
 
+    def test_profit_target_oracle_requires_rejected_signal_outcome_learning_when_declared(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "requires_rejected_signal_outcome_learning": True,
+            "rejected_signal_outcome_labeled_count": 119,
+            "rejected_signal_outcome_pending_ratio": "0.06",
+            "rejected_signal_reason_coverage": "0.79",
+            "rejected_signal_counterfactual_fields": [
+                "counterfactual_return",
+                "route_tca",
+                "post_cost_net_pnl",
+            ],
+            "rejected_signal_outcome_persistence_state": "stale",
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn(
+            "rejected_signal_outcome_labeled_count_failed", result["blockers"]
+        )
+        self.assertIn(
+            "rejected_signal_outcome_pending_ratio_failed", result["blockers"]
+        )
+        self.assertIn("rejected_signal_reason_coverage_failed", result["blockers"])
+        self.assertIn(
+            "rejected_signal_counterfactual_fields_present_failed",
+            result["blockers"],
+        )
+        self.assertIn(
+            "rejected_signal_outcome_persistence_state_failed", result["blockers"]
+        )
+
+    def test_profit_target_oracle_accepts_rejected_signal_outcome_learning_contract(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "mechanism_overlay_ids": ["rejected_signal_outcome_calibration"],
+            "rejected_signal_outcome_labeled_count": 120,
+            "rejected_signal_outcome_pending_ratio": "0.05",
+            "rejected_signal_reason_coverage": "0.80",
+            "rejected_signal_counterfactual_fields_present": True,
+            "rejected_signal_outcome_persistence_state": "ok",
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertTrue(result["passed"])
+
+    def test_profit_target_oracle_rejects_pending_validation_contract_evidence(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "validation_contract_pending_count": 1,
+            "validation_live_paper_parity_pending_count": 1,
+            "synthetic_evidence_not_promotion_proof_count": 1,
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn("validation_contract_pending_count_failed", result["blockers"])
+        self.assertIn(
+            "validation_live_paper_parity_pending_count_failed",
+            result["blockers"],
+        )
+        self.assertIn(
+            "synthetic_evidence_not_promotion_proof_count_failed",
+            result["blockers"],
+        )
+
     def test_profit_target_oracle_rejects_missing_market_impact_stress(
         self,
     ) -> None:

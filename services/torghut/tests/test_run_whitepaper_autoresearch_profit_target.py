@@ -4653,6 +4653,89 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertTrue(allowed_readiness["promotable"])
         self.assertEqual(allowed_readiness["status"], "promotion_ready")
 
+    def test_candidate_board_fails_rejected_signal_candidate_without_labels(
+        self,
+    ) -> None:
+        spec = replace(
+            self._candidate_spec("spec-rejected-signal-proof"),
+            parameter_space={
+                "mechanism_overlay_ids": ["rejected_signal_outcome_calibration"]
+            },
+            hard_vetoes={
+                "required_min_rejected_signal_outcome_label_count": "120",
+                "required_min_rejected_signal_reason_coverage": "0.80",
+                "required_max_rejected_signal_outcome_pending_ratio": "0.05",
+                "required_rejected_signal_counterfactual_fields": [
+                    "counterfactual_return",
+                    "route_tca",
+                    "post_cost_net_pnl",
+                    "executable_quote",
+                ],
+                "required_rejected_signal_outcome_persistence_state": "ok",
+            },
+            promotion_contract={"requires_rejected_signal_outcome_learning": True},
+        )
+        evidence = runner.CandidateEvidenceBundle(
+            schema_version="torghut.candidate-evidence-bundle.v1",
+            evidence_bundle_id="ev-rejected-signal-proof",
+            candidate_id="cand-rejected-signal-proof",
+            candidate_spec_id=spec.candidate_spec_id,
+            dataset_snapshot_id="snapshot-rejected-signal-proof",
+            feature_spec_hash="hash-rejected-signal-proof",
+            code_commit="commit-test",
+            replay_artifact_refs=("replay.json",),
+            objective_scorecard={
+                "net_pnl_per_day": "640",
+                "target_met": True,
+                "oracle_passed": True,
+                "profit_target_oracle": {"blockers": []},
+                "trade_decision_count": 9,
+                "orders_submitted_count": 9,
+            },
+            fold_metrics=(),
+            stress_metrics=(),
+            cost_calibration={"status": "provisional", "source": "paper_runtime"},
+            null_comparator={},
+            promotion_readiness={},
+        )
+
+        board = runner._candidate_board_payload(
+            epoch_id="epoch-rejected-signal-board",
+            output_dir=Path("/tmp/epoch-rejected-signal-board"),
+            target=Decimal("500"),
+            candidate_specs=(spec,),
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                    }
+                ]
+            },
+            pre_replay_proposal_rows=(
+                {
+                    "candidate_spec_id": spec.candidate_spec_id,
+                    "rank": 1,
+                    "proposal_score": "9.0",
+                },
+            ),
+            proposal_rows=(),
+            evidence_bundles=(evidence,),
+            portfolio=None,
+            promotion_readiness={"promotable": True},
+            runtime_closure={},
+        )
+
+        row = board["rows"][0]
+        self.assertFalse(row["oracle_passed"])
+        self.assertEqual(board["current_answer"], "no_promotion_ready_candidate")
+        self.assertIn("rejected_signal_outcome_labeled_count_failed", row["blockers"])
+        self.assertIn("rejected_signal_reason_coverage_failed", row["blockers"])
+        self.assertIn(
+            "rejected_signal_counterfactual_fields_present_failed", row["blockers"]
+        )
+        self.assertFalse(row["rejected_signal_outcome_learning"]["passed"])
+
     def test_candidate_board_separates_research_rank_from_executed_candidate(
         self,
     ) -> None:

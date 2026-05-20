@@ -1013,6 +1013,27 @@ def _portfolio_scorecard(
         ),
         Decimal("0"),
     )
+    sleeve_promotion_blockers: dict[str, list[str]] = {}
+    promotion_contract_blockers: list[str] = []
+    promotion_contract_blocker_observations: list[str] = []
+    for bundle in selected:
+        blockers = [
+            str(blocker)
+            for blocker in (
+                *evidence_bundle_blockers(bundle),
+                *cast(
+                    Sequence[Any],
+                    bundle.promotion_readiness.get("blockers") or (),
+                ),
+            )
+            if str(blocker)
+        ]
+        if blockers:
+            unique_blockers = list(dict.fromkeys(blockers))
+            sleeve_promotion_blockers[bundle.candidate_id] = unique_blockers
+            promotion_contract_blocker_observations.extend(blockers)
+            promotion_contract_blockers.extend(unique_blockers)
+    promotion_contract_blockers = list(dict.fromkeys(promotion_contract_blockers))
     scorecard = {
         "net_pnl_per_day": str(net_per_day),
         "portfolio_post_cost_net_pnl_per_day": str(net_per_day),
@@ -1148,6 +1169,23 @@ def _portfolio_scorecard(
         "daily_filled_notional": {
             day: str(value) for day, value in sorted(daily_notional.items())
         },
+        "sleeve_promotion_readiness_blockers": sleeve_promotion_blockers,
+        "promotion_contract_blockers": promotion_contract_blockers,
+        "validation_contract_pending_count": sum(
+            1
+            for blocker in promotion_contract_blocker_observations
+            if blocker == "validation_contract_pending"
+        ),
+        "validation_live_paper_parity_pending_count": sum(
+            1
+            for blocker in promotion_contract_blocker_observations
+            if blocker == "validation_live_paper_parity_pending"
+        ),
+        "synthetic_evidence_not_promotion_proof_count": sum(
+            1
+            for blocker in promotion_contract_blocker_observations
+            if blocker == "synthetic_evidence_not_promotion_proof"
+        ),
     }
     scorecard["profit_target_oracle"] = evaluate_profit_target_oracle(
         scorecard,

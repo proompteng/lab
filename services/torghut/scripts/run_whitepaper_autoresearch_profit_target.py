@@ -44,6 +44,7 @@ from app.trading.discovery.candidate_specs import candidate_spec_id_for_payload
 from app.trading.discovery.candidate_specs import candidate_spec_from_payload
 from app.trading.discovery.evidence_bundles import (
     CandidateEvidenceBundle,
+    evidence_bundle_blockers,
     evidence_bundle_from_frontier_candidate,
     evidence_bundle_from_payload,
 )
@@ -3367,6 +3368,20 @@ def _candidate_spec_is_false_negative_rescue(spec: CandidateSpec) -> bool:
         and _string(params.get("veto_relaxation_scope"))
         == "labeled_false_negative_only"
         and _string(params.get("outcome_label_filter")) == "profitable_after_costs"
+    )
+
+
+def _candidate_spec_requires_rejected_signal_outcome_learning(
+    spec: CandidateSpec,
+) -> bool:
+    overlays = spec.parameter_space.get("mechanism_overlay_ids", ())
+    overlay_ids = set(_string_list_from_value(overlays))
+    return (
+        "rejected_signal_outcome_calibration" in overlay_ids
+        or _boolish(
+            spec.promotion_contract.get("requires_rejected_signal_outcome_learning")
+        )
+        or "required_min_rejected_signal_outcome_label_count" in spec.hard_vetoes
     )
 
 
@@ -6936,6 +6951,149 @@ def _candidate_board_first_int_field(
     return 0
 
 
+def _candidate_board_rejected_signal_outcome_summary(
+    spec: CandidateSpec, scorecard: Mapping[str, Any]
+) -> dict[str, Any]:
+    required = _candidate_spec_requires_rejected_signal_outcome_learning(spec)
+    required_fields = tuple(
+        _string_list_from_value(
+            spec.hard_vetoes.get("required_rejected_signal_counterfactual_fields")
+        )
+        or (
+            "counterfactual_return",
+            "route_tca",
+            "post_cost_net_pnl",
+            "executable_quote",
+        )
+    )
+    observed_fields = set(
+        _string_list_from_value(
+            scorecard.get("rejected_signal_counterfactual_fields")
+            or scorecard.get("rejected_signal_outcome_counterfactual_fields")
+            or scorecard.get("rejected_signal_counterfactual_fields_present")
+        )
+    )
+    if _boolish(scorecard.get("rejected_signal_counterfactual_fields_present")):
+        observed_fields.update(required_fields)
+    min_label_count = _candidate_board_int_field(
+        spec.hard_vetoes, "required_min_rejected_signal_outcome_label_count"
+    )
+    if min_label_count <= 0:
+        min_label_count = 120
+    max_pending_ratio = _decimal(
+        spec.hard_vetoes.get("required_max_rejected_signal_outcome_pending_ratio"),
+        default="0.05",
+    )
+    min_reason_coverage = _decimal(
+        spec.hard_vetoes.get("required_min_rejected_signal_reason_coverage"),
+        default="0.80",
+    )
+    required_persistence_state = _string(
+        spec.hard_vetoes.get("required_rejected_signal_outcome_persistence_state")
+        or "ok"
+    ).lower()
+    label_count = _candidate_board_first_int_field(
+        scorecard,
+        (
+            "rejected_signal_outcome_labeled_count",
+            "rejected_signal_outcome_label_count",
+            "rejected_signal_outcome_labeled_event_count",
+        ),
+    )
+    pending_ratio = _decimal(
+        scorecard.get("rejected_signal_outcome_pending_ratio"), default="1"
+    )
+    reason_coverage = _decimal(
+        scorecard.get("rejected_signal_reason_coverage")
+        or scorecard.get("rejected_signal_outcome_reason_coverage")
+    )
+    persistence_state = _string(
+        scorecard.get("rejected_signal_outcome_persistence_state")
+        or scorecard.get("rejected_signal_persistence_state")
+    ).lower()
+    blockers: list[str] = []
+    if required:
+        if label_count < min_label_count:
+            blockers.append("rejected_signal_outcome_labeled_count_failed")
+        if pending_ratio > max_pending_ratio:
+            blockers.append("rejected_signal_outcome_pending_ratio_failed")
+        if reason_coverage < min_reason_coverage:
+            blockers.append("rejected_signal_reason_coverage_failed")
+        if not set(required_fields).issubset(observed_fields):
+            blockers.append("rejected_signal_counterfactual_fields_present_failed")
+        if persistence_state != required_persistence_state:
+            blockers.append("rejected_signal_outcome_persistence_state_failed")
+    return {
+        "required": required,
+        "passed": not blockers,
+        "blockers": blockers,
+        "labeled_count": label_count,
+        "min_labeled_count": min_label_count,
+        "pending_ratio": str(pending_ratio),
+        "max_pending_ratio": str(max_pending_ratio),
+        "reason_coverage": str(reason_coverage),
+        "min_reason_coverage": str(min_reason_coverage),
+        "persistence_state": persistence_state,
+        "required_persistence_state": required_persistence_state,
+        "counterfactual_fields": sorted(observed_fields),
+        "required_counterfactual_fields": list(required_fields),
+    }
+
+
+def _candidate_board_scorecard_with_rejected_signal_blockers(
+    spec: CandidateSpec, scorecard: Mapping[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    summary = _candidate_board_rejected_signal_outcome_summary(spec, scorecard)
+    updated_scorecard = dict(scorecard)
+    blockers = [
+        _string(blocker)
+        for blocker in cast(Sequence[Any], summary.get("blockers") or ())
+        if _string(blocker)
+    ]
+    if blockers:
+        updated_scorecard["oracle_passed"] = False
+        oracle_payload = dict(_mapping(updated_scorecard.get("profit_target_oracle")))
+        oracle_blockers = [
+            _string(blocker)
+            for blocker in cast(Sequence[Any], oracle_payload.get("blockers") or ())
+            if _string(blocker)
+        ]
+        oracle_payload["blockers"] = list(dict.fromkeys([*oracle_blockers, *blockers]))
+        updated_scorecard["profit_target_oracle"] = oracle_payload
+    return updated_scorecard, summary
+
+
+def _candidate_board_scorecard_with_evidence_blockers(
+    scorecard: Mapping[str, Any], evidence: CandidateEvidenceBundle | None
+) -> dict[str, Any]:
+    if evidence is None:
+        return dict(scorecard)
+    blockers = [
+        _string(blocker)
+        for blocker in (
+            *evidence_bundle_blockers(evidence),
+            *cast(
+                Sequence[Any],
+                evidence.promotion_readiness.get("blockers") or (),
+            ),
+        )
+        if _string(blocker)
+    ]
+    if not blockers:
+        return dict(scorecard)
+    updated_scorecard = dict(scorecard)
+    updated_scorecard["oracle_passed"] = False
+    oracle_payload = dict(_mapping(updated_scorecard.get("profit_target_oracle")))
+    oracle_blockers = [
+        _string(blocker)
+        for blocker in cast(Sequence[Any], oracle_payload.get("blockers") or ())
+        if _string(blocker)
+    ]
+    oracle_payload["blockers"] = list(dict.fromkeys([*oracle_blockers, *blockers]))
+    updated_scorecard["profit_target_oracle"] = oracle_payload
+    return updated_scorecard
+
+
 def _candidate_board_blockers(
     *,
     selected_for_replay: bool,
@@ -7136,7 +7294,15 @@ def _candidate_board_payload(
         pre_replay = pre_replay_by_spec.get(spec.candidate_spec_id, {})
         proposal = proposal_by_spec.get(spec.candidate_spec_id, pre_replay)
         evidence = evidence_by_spec.get(spec.candidate_spec_id)
-        scorecard = dict(evidence.objective_scorecard) if evidence is not None else {}
+        raw_scorecard = (
+            dict(evidence.objective_scorecard) if evidence is not None else {}
+        )
+        scorecard = _candidate_board_scorecard_with_evidence_blockers(
+            raw_scorecard, evidence
+        )
+        scorecard, rejected_signal_summary = (
+            _candidate_board_scorecard_with_rejected_signal_blockers(spec, scorecard)
+        )
         selected_for_replay = bool(selection.get("selected_for_replay"))
         in_best_portfolio = spec.candidate_spec_id in portfolio_sleeve_spec_ids
         blockers = _candidate_board_blockers(
@@ -7247,6 +7413,7 @@ def _candidate_board_payload(
                 "double_oos_cost_shock_net_pnl_per_day": _candidate_board_decimal_field(
                     scorecard, "double_oos_cost_shock_net_pnl_per_day"
                 ),
+                "rejected_signal_outcome_learning": rejected_signal_summary,
                 "blockers": blockers,
                 "replay_artifact_refs": list(evidence.replay_artifact_refs)
                 if evidence is not None

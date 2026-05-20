@@ -893,6 +893,22 @@ class TestPortfolioOptimizer(TestCase):
         self.assertIsNotNone(portfolio)
         assert portfolio is not None
         self.assertEqual(portfolio.objective_scorecard["net_pnl_per_day"], "560")
+        self.assertFalse(portfolio.objective_scorecard["oracle_passed"])
+        self.assertEqual(
+            portfolio.objective_scorecard["validation_contract_pending_count"], 2
+        )
+        self.assertEqual(
+            portfolio.objective_scorecard["validation_live_paper_parity_pending_count"],
+            1,
+        )
+        self.assertIn(
+            "validation_contract_pending_count_failed",
+            portfolio.objective_scorecard["profit_target_oracle"]["blockers"],
+        )
+        self.assertIn(
+            "validation_live_paper_parity_pending_count_failed",
+            portfolio.objective_scorecard["profit_target_oracle"]["blockers"],
+        )
         self.assertEqual(
             {sleeve["candidate_id"] for sleeve in portfolio.sleeves},
             {"validation-pending-a", "validation-pending-b"},
