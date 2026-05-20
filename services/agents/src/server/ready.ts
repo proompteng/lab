@@ -20,6 +20,7 @@ export type AgentsControllerHealthState = {
   namespaces: string[] | null
   crdsReady: boolean | null
   missingCrds: string[]
+  forbiddenCrds?: string[]
   lastCheckedAt: string | null
   agentRunIngestion?: AgentRunIngestionHealth[]
 }
@@ -74,9 +75,9 @@ export const buildReadinessReasonCodes = (input: {
   agentsControllerHealthy: boolean
   memoryProviderReady?: boolean
   servingPassportReady?: boolean
-  agentsController: Pick<AgentsControllerHealthState, 'crdsReady' | 'missingCrds'>
-  orchestrationController: Pick<AgentsControllerHealthState, 'crdsReady' | 'missingCrds'>
-  supportingController: Pick<AgentsControllerHealthState, 'crdsReady' | 'missingCrds'>
+  agentsController: Pick<AgentsControllerHealthState, 'crdsReady' | 'missingCrds' | 'forbiddenCrds'>
+  orchestrationController: Pick<AgentsControllerHealthState, 'crdsReady' | 'missingCrds' | 'forbiddenCrds'>
+  supportingController: Pick<AgentsControllerHealthState, 'crdsReady' | 'missingCrds' | 'forbiddenCrds'>
 }) =>
   uniqueStrings([
     ...(input.controllersOk ? [] : ['controller_crd_check_failed']),
@@ -87,11 +88,22 @@ export const buildReadinessReasonCodes = (input: {
     ...(input.agentsController.crdsReady === false
       ? input.agentsController.missingCrds.map((name) => `missing_agents_controller_crd:${name}`)
       : []),
+    ...(input.agentsController.crdsReady === false
+      ? (input.agentsController.forbiddenCrds ?? []).map((name) => `forbidden_agents_controller_crd:${name}`)
+      : []),
     ...(input.orchestrationController.crdsReady === false
       ? input.orchestrationController.missingCrds.map((name) => `missing_orchestration_controller_crd:${name}`)
       : []),
+    ...(input.orchestrationController.crdsReady === false
+      ? (input.orchestrationController.forbiddenCrds ?? []).map(
+          (name) => `forbidden_orchestration_controller_crd:${name}`,
+        )
+      : []),
     ...(input.supportingController.crdsReady === false
       ? input.supportingController.missingCrds.map((name) => `missing_supporting_controller_crd:${name}`)
+      : []),
+    ...(input.supportingController.crdsReady === false
+      ? (input.supportingController.forbiddenCrds ?? []).map((name) => `forbidden_supporting_controller_crd:${name}`)
       : []),
   ])
 

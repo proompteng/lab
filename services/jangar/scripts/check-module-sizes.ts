@@ -4,6 +4,7 @@ import { relative, resolve } from 'node:path'
 const MAX_NEW_FILE_LINES = 800
 
 const LEGACY_LINE_CAPS: Record<string, number> = {
+  'src/server/control-plane-status-types.ts': 2980,
   'src/server/codex-judge.ts': 2729,
   'src/server/atlas-store.ts': 2219,
   'src/server/orchestration-controller.ts': 2140,

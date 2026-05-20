@@ -36,6 +36,7 @@ const REQUIRED_CRDS = [
 type CrdCheckState = {
   ok: boolean
   missing: string[]
+  forbidden: string[]
   checkedAt: string
 }
 
@@ -161,7 +162,8 @@ const checkCrds = async (
   }
   const state = {
     ok: missing.length === 0 && forbidden.length === 0,
-    missing: [...missing, ...forbidden],
+    missing,
+    forbidden,
     checkedAt: nowIso(),
   }
   _crdCheckState = state
@@ -177,8 +179,13 @@ const checkCrds = async (
   return state
 }
 
-const buildMissingOrchestrationCrdsError = (missingCrds: string[]) =>
-  new Error(`missing orchestration CRDs: ${missingCrds.join(', ')}`)
+const buildMissingOrchestrationCrdsError = (missingCrds: string[], forbiddenCrds: string[] = []) => {
+  const failures = [
+    ...(missingCrds.length ? [`missing: ${missingCrds.join(', ')}`] : []),
+    ...(forbiddenCrds.length ? [`forbidden: ${forbiddenCrds.join(', ')}`] : []),
+  ]
+  return new Error(`orchestration CRD check failed: ${failures.join('; ')}`)
+}
 
 export const getOrchestrationControllerHealth = () => ({
   enabled: shouldStart(),
@@ -186,6 +193,7 @@ export const getOrchestrationControllerHealth = () => ({
   namespaces: controllerState.namespaces ?? resolveConfiguredNamespaces(),
   crdsReady: controllerState.crdCheckState?.ok ?? null,
   missingCrds: controllerState.crdCheckState?.missing ?? [],
+  forbiddenCrds: controllerState.crdCheckState?.forbidden ?? [],
   lastCheckedAt: controllerState.crdCheckState?.checkedAt ?? null,
 })
 
@@ -2145,7 +2153,7 @@ export const startOrchestrationController = async () => {
   try {
     const crds = await checkCrds()
     if (!crds.ok) {
-      throw buildMissingOrchestrationCrdsError(crds.missing)
+      throw buildMissingOrchestrationCrdsError(crds.missing, crds.forbidden)
     }
     if (lifecycleToken !== token) return
     const kube = createKubernetesClient()

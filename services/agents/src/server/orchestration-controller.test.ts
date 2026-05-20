@@ -499,7 +499,7 @@ describe('orchestration controller', () => {
     ])
 
     expect(error.message).toBe(
-      'missing orchestration CRDs: orchestrations.orchestration.proompteng.ai, orchestrationruns.orchestration.proompteng.ai',
+      'orchestration CRD check failed: missing: orchestrations.orchestration.proompteng.ai, orchestrationruns.orchestration.proompteng.ai',
     )
   })
 

@@ -43,6 +43,7 @@ describe('agents-ready', () => {
             namespaces: ['agents'],
             crdsReady: true,
             missingCrds: [],
+            forbiddenCrds: ['swarms.swarm.proompteng.ai'],
             lastCheckedAt: '2026-03-08T21:00:00Z',
             agentRunIngestion: [],
           },
@@ -77,6 +78,9 @@ describe('agents-ready', () => {
       ],
       leaderElection: {
         lastError: 'lease watch failed',
+      },
+      agentsController: {
+        forbiddenCrds: ['swarms.swarm.proompteng.ai'],
       },
     })
 

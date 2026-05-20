@@ -132,6 +132,45 @@ describe('buildAgentsRuntimeReadyResponse', () => {
     })
   })
 
+  it('returns a precise 503 reason when controller CRD access is forbidden', async () => {
+    const response = buildAgentsRuntimeReadyResponse({
+      leaderElection: {
+        required: true,
+        isLeader: true,
+        lastAttemptAt: '2026-05-18T00:00:00.000Z',
+        lastError: null,
+      },
+      agentsController: healthyController(),
+      orchestrationController: healthyController({ enabled: false, started: false, crdsReady: null }),
+      supportingController: healthyController({
+        crdsReady: false,
+        missingCrds: [],
+        forbiddenCrds: ['swarms.swarm.proompteng.ai'],
+      }),
+      assessAgentRunIngestion: vi.fn(() => ({
+        namespace: 'agents',
+        lastWatchEventAt: null,
+        lastResyncAt: null,
+        untouchedRunCount: 0,
+        oldestUntouchedAgeSeconds: null,
+        status: 'healthy' as const,
+        message: 'healthy',
+        dispatchPaused: false,
+      })),
+    })
+
+    expect(response.status).toBe(503)
+    expect(await readJson(response)).toMatchObject({
+      status: 'degraded',
+      httpReady: false,
+      reason_codes: ['controller_crd_check_failed', 'forbidden_supporting_controller_crd:swarms.swarm.proompteng.ai'],
+      supportingController: {
+        missingCrds: [],
+        forbiddenCrds: ['swarms.swarm.proompteng.ai'],
+      },
+    })
+  })
+
   it('publishes degraded AgentRun ingestion as Agents-owned readiness evidence', async () => {
     const response = buildAgentsRuntimeReadyResponse({
       leaderElection: {

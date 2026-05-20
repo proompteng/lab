@@ -17,6 +17,7 @@ export type ControllerStatus = {
   scope_namespaces: string[]
   crds_ready: boolean
   missing_crds: string[]
+  forbidden_crds?: string[]
   last_checked_at: string
   status: ComponentStatus
   message: string

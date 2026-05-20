@@ -75,6 +75,21 @@ describe('supporting primitives controller', () => {
     await expect(__test__.checkCrds({ probeNamespacedResource })).resolves.toMatchObject({
       ok: false,
       missing: [RESOURCE_MAP.Swarm],
+      forbidden: [],
+    })
+    expect(probeNamespacedResource).toHaveBeenCalledWith(RESOURCE_MAP.Swarm, 'agents')
+  })
+
+  it('surfaces forbidden Swarm access separately from missing CRDs', async () => {
+    process.env.AGENTS_SWARM_PRIMITIVE_ENABLED = 'true'
+    const probeNamespacedResource = vi.fn(async (resource: string) =>
+      resource === RESOURCE_MAP.Swarm ? 'forbidden' : 'ok',
+    )
+
+    await expect(__test__.checkCrds({ probeNamespacedResource })).resolves.toMatchObject({
+      ok: false,
+      missing: [],
+      forbidden: [RESOURCE_MAP.Swarm],
     })
     expect(probeNamespacedResource).toHaveBeenCalledWith(RESOURCE_MAP.Swarm, 'agents')
   })

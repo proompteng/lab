@@ -31,6 +31,7 @@ type ControllerHealthSnapshot = {
   namespaces?: string[] | null
   crdsReady: boolean | null
   missingCrds: string[]
+  forbiddenCrds?: string[]
   lastCheckedAt: string | null
 }
 
@@ -119,6 +120,9 @@ const resolveControllerStatus = (health: ControllerHealthSnapshot): ComponentSta
 
 const resolveControllerMessage = (health: ControllerHealthSnapshot) => {
   if (!health.enabled) return 'disabled'
+  if (health.crdsReady === false && health.forbiddenCrds?.length) {
+    return `insufficient RBAC for CRDs: ${health.forbiddenCrds.join(', ')}`
+  }
   if (health.crdsReady === false) return `missing CRDs: ${health.missingCrds.join(', ')}`
   if (!health.started) return 'controller not started'
   return ''
@@ -136,6 +140,7 @@ const buildControllerStatus = (
   scope_namespaces: health.namespaces ?? [],
   crds_ready: health.crdsReady === true,
   missing_crds: health.missingCrds,
+  forbidden_crds: health.forbiddenCrds ?? [],
   last_checked_at: health.lastCheckedAt ?? '',
   status: resolveControllerStatus(health),
   message: resolveControllerMessage(health),

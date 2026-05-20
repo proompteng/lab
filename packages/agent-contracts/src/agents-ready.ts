@@ -11,6 +11,7 @@ export type AgentsControllerHealthSnapshot = {
   namespaces: string[] | null
   crdsReady: boolean | null
   missingCrds: string[]
+  forbiddenCrds?: string[]
   lastCheckedAt: string | null
   agentRunIngestion?: Array<{
     namespace: string
@@ -75,6 +76,7 @@ const fallbackController = (namespace = 'agents'): AgentsControllerHealthSnapsho
   namespaces: [namespace],
   crdsReady: false,
   missingCrds: [],
+  forbiddenCrds: [],
   lastCheckedAt: null,
   agentRunIngestion: [],
 })
@@ -235,6 +237,9 @@ const normalizeController = (
         ? (value.crdsReady ?? null)
         : false,
     missingCrds: Array.isArray(value.missingCrds) ? value.missingCrds.filter((item) => typeof item === 'string') : [],
+    forbiddenCrds: Array.isArray(value.forbiddenCrds)
+      ? value.forbiddenCrds.filter((item) => typeof item === 'string')
+      : [],
     lastCheckedAt: typeof value.lastCheckedAt === 'string' ? value.lastCheckedAt : null,
     agentRunIngestion: Array.isArray(value.agentRunIngestion) ? value.agentRunIngestion : [],
   }

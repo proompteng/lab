@@ -38,6 +38,7 @@ type Condition = {
 type CrdCheckState = {
   ok: boolean
   missing: string[]
+  forbidden: string[]
   checkedAt: string
 }
 
@@ -156,7 +157,8 @@ const checkCrds = async (
 
   const state = {
     ok: missing.length === 0 && forbidden.length === 0,
-    missing: [...missing, ...forbidden],
+    missing,
+    forbidden,
     checkedAt: nowIso(),
   }
   controllerState.crdCheckState = state
@@ -181,6 +183,7 @@ export const getSupportingControllerHealth = () => ({
   namespaces: controllerState.namespaces ?? resolveConfiguredNamespaces(),
   crdsReady: controllerState.crdCheckState?.ok ?? null,
   missingCrds: controllerState.crdCheckState?.missing ?? [],
+  forbiddenCrds: controllerState.crdCheckState?.forbidden ?? [],
   lastCheckedAt: controllerState.crdCheckState?.checkedAt ?? null,
 })
 
@@ -1012,7 +1015,11 @@ export const startSupportingPrimitivesController = async () => {
     const kubeGateway = createKubeGateway()
     const crds = await checkCrds(kubeGateway)
     if (!crds.ok) {
-      throw new Error(`missing supporting primitives CRDs: ${crds.missing.join(', ')}`)
+      const failures = [
+        ...(crds.missing.length ? [`missing: ${crds.missing.join(', ')}`] : []),
+        ...(crds.forbidden.length ? [`forbidden: ${crds.forbidden.join(', ')}`] : []),
+      ]
+      throw new Error(`supporting primitives CRD check failed: ${failures.join('; ')}`)
     }
     const namespaces = await resolveNamespaces(kubeGateway)
     if (started || !starting) return

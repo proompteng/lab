@@ -145,6 +145,7 @@ export type AgentsControllerHealth = {
   namespaces: string[] | null
   crdsReady: boolean | null
   missingCrds: string[]
+  forbiddenCrds?: string[]
   lastCheckedAt: string | null
   agentRunIngestion?: AgentRunIngestionHealth[]
 }
@@ -428,6 +429,7 @@ export const getAgentsControllerHealth = (): AgentsControllerHealth => ({
   namespaces: controllerState.namespaces ?? resolveConfiguredNamespaces(),
   crdsReady: controllerState.crdCheckState?.ok ?? null,
   missingCrds: controllerState.crdCheckState?.missing ?? [],
+  forbiddenCrds: controllerState.crdCheckState?.forbidden ?? [],
   lastCheckedAt: controllerState.crdCheckState?.checkedAt ?? null,
   agentRunIngestion: controllerState.agentRunIngestion,
 })
@@ -1298,6 +1300,7 @@ const startAgentsControllerInternal = async () => {
   if (!crdsReady.ok) {
     logAgentsControllerError('startup_missing_crds', {
       missingCrds: crdsReady.missing,
+      forbiddenCrds: crdsReady.forbidden,
     })
     runtimeMutableState.starting = false
     markAgentsControllerStartFailed(runtimeMutableState.lifecycleActor)
