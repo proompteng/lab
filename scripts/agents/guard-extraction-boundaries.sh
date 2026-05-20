@@ -240,11 +240,24 @@ require_matches \
   'name: agents-db-next-app' \
   "${ARGO_DIR}/agents-primitives-memory.yaml"
 
+require_matches \
+  "Agents kind chart values must use the CNPG-compatible Agents database secret after the database cutover" \
+  'name: agents-db-next-app' \
+  "${CHART_DIR}/values-kind.yaml"
+
+require_matches \
+  "Agents kind e2e must default to the Agents-owned database application secret after the database cutover" \
+  'SECRET_NAME="\$\{SECRET_NAME:-agents-db-next-app\}"' \
+  "${ROOT_DIR}/scripts/agents/kind-e2e.sh"
+
 fail_if_matches \
   "Agents GitOps must not keep the old database compatibility alias secret after the Agents-owned database cutover" \
   'agents-db-app' \
   "${ARGO_DIR}/values.yaml" \
-  "${ARGO_DIR}/agents-primitives-memory.yaml"
+  "${ARGO_DIR}/agents-primitives-memory.yaml" \
+  "${CHART_DIR}/values-kind.yaml" \
+  "${CHART_DIR}/README.md" \
+  "${ROOT_DIR}/scripts/agents/kind-e2e.sh"
 
 if ! matches_multiline 'services:\n\s+- name: agents\n\s+port: 80' "${ARGO_DIR}/ingressroute-agents-api.yaml"; then
   echo "Agents extraction boundary violation: canonical agents.k8s.proompteng.ai IngressRoute must target the Agents service." >&2

@@ -64,6 +64,8 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('CREATE EXTENSION IF NOT EXISTS vector')
     expect(content).toContain('jangar\\.k8s\\.proompteng\\.ai')
     expect(content).toContain('Agents GitOps must not keep the old database compatibility alias secret')
+    expect(content).toContain('Agents kind chart values must use the CNPG-compatible Agents database secret')
+    expect(content).toContain('Agents kind e2e must default to the Agents-owned database application secret')
     expect(content).toContain('proxyAgentsServiceRequest|buildAgentsServiceProxyUrl')
     expect(content).toContain('Jangar-host compatibility Agents IngressRoute')
     expect(content).toContain('ingressroute-jangar-agents-api\\.yaml')
