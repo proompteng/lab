@@ -69,4 +69,21 @@ describe('agent messages route', () => {
     expect(response.status).toBe(400)
     await expect(response.json()).resolves.toMatchObject({ ok: false, error: 'messages[0].content is required' })
   })
+
+  it('maps malformed JSON bodies to HTTP 400 before opening storage', async () => {
+    const store = createStore()
+    const response = await postAgentMessagesHandler(
+      new Request('http://agents.local/v1/agent-messages', {
+        body: '{',
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
+      }),
+      createLayer(store),
+    )
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({ ok: false })
+    expect(store.insertMessages).not.toHaveBeenCalled()
+    expect(store.close).not.toHaveBeenCalled()
+  })
 })

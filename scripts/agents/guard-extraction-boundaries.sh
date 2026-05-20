@@ -691,6 +691,16 @@ require_matches \
   "${ROOT_DIR}/services/agents/src/server/v1/resource-read.ts"
 
 fail_if_matches \
+  "Agents v1 agent-message ingestion must use the typed Effect request program instead of nested ad hoc handler try/catch" \
+  'let payload: Record<string, unknown>|parseJsonBody[(]request[)].*catch|await Effect[.]runPromise[(]ingestAgentMessagesEffect' \
+  "${ROOT_DIR}/services/agents/src/server/v1/agent-messages.ts"
+
+require_matches \
+  "Agents v1 agent-message ingestion must expose the typed Effect request program and JSON body error" \
+  'postAgentMessagesEffect|AgentMessagesJsonBodyError|parseJsonBodyEffect' \
+  "${ROOT_DIR}/services/agents/src/server/v1/agent-messages.ts"
+
+fail_if_matches \
   "Jangar KubeGateway must list Agents CRDs through the Agents service boundary, not direct Kubernetes CRD access" \
   'RESOURCE_MAP|agentruns\.agents\.proompteng\.ai|swarms\.swarm\.proompteng\.ai' \
   "${ROOT_DIR}/services/jangar/src/server/kube-gateway.ts"
