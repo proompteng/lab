@@ -177,7 +177,7 @@ describe('buildRuntimeAdmissionSnapshot', () => {
 
   it('blocks collaboration admission when a resolved Codex NATS helper is not executable', async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'runtime-admission-'))
-    const scriptsDir = join(tempDir, 'services', 'jangar', 'scripts')
+    const scriptsDir = join(tempDir, 'services', 'agents', 'scripts', 'codex')
     const binDir = join(tempDir, 'bin')
     await mkdir(scriptsDir, { recursive: true })
     await mkdir(binDir, { recursive: true })

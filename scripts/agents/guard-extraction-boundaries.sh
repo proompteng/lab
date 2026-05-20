@@ -465,9 +465,17 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/migrations/20251229_workflow_comms_agent_messages.ts"
 
 fail_if_matches \
-  "Jangar Codex NATS publisher must emit AgentRun-native identity only, without workflow-shaped compatibility fields" \
+  "Agents Codex NATS publisher must emit AgentRun-native identity only, without workflow-shaped compatibility fields" \
   'workflow_uid|workflow_name|workflow_namespace|workflowUid|workflowName|workflowNamespace|workflow_stage|workflow_step|workflowStage|workflowStep|WORKFLOW_UID|WORKFLOW_NAME|WORKFLOW_NAMESPACE|WORKFLOW_STAGE|WORKFLOW_STEP' \
-  "${ROOT_DIR}/services/jangar/scripts/codex-nats-publish.ts"
+  "${ROOT_DIR}/services/agents/scripts/codex/codex-nats-publish.ts"
+
+fail_if_matches \
+  "Jangar images must not source Codex NATS helpers from services/jangar after Agents owns helper scripts" \
+  'services/jangar/scripts/codex-nats-(publish|soak)\.ts' \
+  "${ROOT_DIR}/services/jangar/Dockerfile" \
+  "${ROOT_DIR}/.github/workflows/jangar-build-push.yaml" \
+  "${ROOT_DIR}/packages/scripts/src/jangar/build-image.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/runtime-tooling-config.ts"
 
 fail_if_matches \
   "Jangar Codex judge source contract must use AgentRun-native runtime identity fields, not workflow-shaped camelCase fields or selectors" \

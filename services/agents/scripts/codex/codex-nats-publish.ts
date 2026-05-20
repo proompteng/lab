@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { Readable } from 'node:stream'
+import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 
 type Options = {
   kind: string
@@ -322,7 +323,7 @@ const main = async () => {
         stdout: 'pipe',
         stderr: 'inherit',
       })
-      const readable = tail.stdout ? Readable.fromWeb(tail.stdout) : null
+      const readable = tail.stdout ? Readable.fromWeb(tail.stdout as unknown as NodeReadableStream<Uint8Array>) : null
       if (!readable) return
       const rl = createInterface({ input: readable })
       for await (const line of rl) {

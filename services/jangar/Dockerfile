@@ -9,6 +9,7 @@
 # - `full/` contains the full pruned source tree
 # - `tsconfig.base.json` is copied into the context root by the build script
 # - `skills/` is present at the context root for Codex CLI skills
+# - `full/services/agents/scripts/codex` is present for Agents-owned NATS helpers used by runtime admission
 ARG BUN_VERSION=1.3.13
 ARG BUN_BASE_IMAGE=mirror.gcr.io/oven/bun
 ARG OPENVSCODE_VERSION=1.106.3
@@ -608,8 +609,8 @@ RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-r
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-cancel.js /usr/local/bin/cx-workflow-cancel \
   && chmod +x /usr/local/bin/cx-codex-run /usr/local/bin/cx-workflow-start /usr/local/bin/cx-workflow-query /usr/local/bin/cx-workflow-signal /usr/local/bin/cx-workflow-cancel
 
-COPY --from=jangar-build /app/services/jangar/scripts/codex-nats-publish.ts /usr/local/bin/codex-nats-publish
-COPY --from=jangar-build /app/services/jangar/scripts/codex-nats-soak.ts /usr/local/bin/codex-nats-soak
+COPY --from=jangar-build /app/services/agents/scripts/codex/codex-nats-publish.ts /usr/local/bin/codex-nats-publish
+COPY --from=jangar-build /app/services/agents/scripts/codex/codex-nats-soak.ts /usr/local/bin/codex-nats-soak
 RUN chmod +x /usr/local/bin/codex-nats-publish /usr/local/bin/codex-nats-soak
 
 ENV JANGAR_VERSION=${JANGAR_VERSION} \
@@ -664,8 +665,8 @@ RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-r
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-cancel.js /usr/local/bin/cx-workflow-cancel \
   && chmod +x /usr/local/bin/cx-codex-run /usr/local/bin/cx-workflow-start /usr/local/bin/cx-workflow-query /usr/local/bin/cx-workflow-signal /usr/local/bin/cx-workflow-cancel
 
-COPY --from=jangar-build /app/services/jangar/scripts/codex-nats-publish.ts /usr/local/bin/codex-nats-publish
-COPY --from=jangar-build /app/services/jangar/scripts/codex-nats-soak.ts /usr/local/bin/codex-nats-soak
+COPY --from=jangar-build /app/services/agents/scripts/codex/codex-nats-publish.ts /usr/local/bin/codex-nats-publish
+COPY --from=jangar-build /app/services/agents/scripts/codex/codex-nats-soak.ts /usr/local/bin/codex-nats-soak
 RUN chmod +x /usr/local/bin/codex-nats-publish /usr/local/bin/codex-nats-soak
 
 ENV JANGAR_VERSION=${JANGAR_VERSION} \

@@ -175,9 +175,9 @@ export const resolveCodexNatsHelperPathCandidatesFromConfig = (
   command: 'codex-nats-publish' | 'codex-nats-soak',
   cwd = process.cwd(),
 ) => [
-  join(cwd, 'services', 'jangar', 'scripts', `${command}.ts`),
+  join(cwd, 'services', 'agents', 'scripts', 'codex', `${command}.ts`),
   join(cwd, 'scripts', `${command}.ts`),
-  join(config.worktree, 'services', 'jangar', 'scripts', `${command}.ts`),
+  join(config.worktree, 'services', 'agents', 'scripts', 'codex', `${command}.ts`),
   join('/usr/local/bin', command),
 ]
 
