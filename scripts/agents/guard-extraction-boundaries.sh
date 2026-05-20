@@ -717,6 +717,11 @@ fail_if_matches \
   "${ROOT_DIR}/packages/scripts/src/jangar"
 
 fail_if_matches \
+  "Jangar must consume typed Agents client helpers instead of raw kind-string control-plane resource helpers" \
+  'fetchControlPlaneResourceFromAgentsService|fetchControlPlaneResourcesFromAgentsService|submitControlPlaneResourceToAgentsService' \
+  "${ROOT_DIR}/services/jangar/src/server"
+
+fail_if_matches \
   "Jangar workflow status must not reuse Agents controller namespace envs" \
   'JANGAR_AGENTS_CONTROLLER_NAMESPACES|AGENTS_ORCHESTRATION_CONTROLLER|AGENTS_SUPPORTING_CONTROLLER|AGENTS_PRIMITIVES_RECONCILER|AGENTS_RBAC_CLUSTER_SCOPED' \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-workflows.ts" \

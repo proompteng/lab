@@ -4,14 +4,17 @@ import {
   fetchAgentRunResourcesFromAgentsService,
   fetchAgentRunsFromAgentsService,
   fetchAgentsServiceJson,
+  fetchMemoryResourceFromAgentsService,
   fetchControlPlaneResourceFromAgentsService,
   fetchControlPlaneResourcesFromAgentsService,
+  fetchSwarmResourcesFromAgentsService,
   patchAgentRunAnnotationsViaAgentsService,
   resolveAgentsServiceBaseUrl,
   submitAgentRunToAgentsService,
   submitAgentMessagesToAgentsService,
   submitControlPlaneResourceToAgentsService,
   submitOrchestrationRunToAgentsService,
+  submitSignalResourceToAgentsService,
 } from './agents-service-client'
 
 const originalFetch = globalThis.fetch
@@ -245,6 +248,50 @@ describe('agents-service-client', () => {
     })
   })
 
+  it('exposes typed Swarm list and Memory get helpers for domain consumers', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            kind: 'Swarm',
+            namespace: 'agents',
+            items: [{ kind: 'Swarm', metadata: { name: 'platform-control-plane' } }],
+          }),
+          { headers: { 'content-type': 'application/json' }, status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            kind: 'Memory',
+            namespace: 'agents',
+            resource: { kind: 'Memory', metadata: { name: 'research-memory' } },
+          }),
+          { headers: { 'content-type': 'application/json' }, status: 200 },
+        ),
+      )
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+
+    await fetchSwarmResourcesFromAgentsService(
+      { namespace: 'agents', limit: 500 },
+      { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
+    )
+    await fetchMemoryResourceFromAgentsService(
+      { name: 'research-memory', namespace: 'agents' },
+      { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
+    )
+
+    expect((fetchMock.mock.calls[0] as unknown as [URL, RequestInit])[0].toString()).toBe(
+      'http://agents.test/api/agents/control-plane/resources?kind=Swarm&namespace=agents&limit=500',
+    )
+    expect((fetchMock.mock.calls[1] as unknown as [URL, RequestInit])[0].toString()).toBe(
+      'http://agents.test/api/agents/control-plane/resource?kind=Memory&name=research-memory&namespace=agents',
+    )
+  })
+
   it('patches AgentRun annotations through the Agents control-plane boundary', async () => {
     const fetchMock = vi.fn(async () => {
       return new Response(
@@ -404,6 +451,44 @@ describe('agents-service-client', () => {
         resource: { kind: 'Signal', metadata: { name: 'material-reentry-signal' } },
       },
     })
+  })
+
+  it('exposes typed Signal submission for domain publishers', async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          kind: 'Signal',
+          namespace: 'agents',
+          resource: { kind: 'Signal', metadata: { name: 'material-reentry-signal' } },
+        }),
+        {
+          headers: { 'content-type': 'application/json' },
+          status: 201,
+        },
+      )
+    })
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+
+    const result = await submitSignalResourceToAgentsService(
+      {
+        deliveryId: 'signal-delivery',
+        resource: {
+          apiVersion: 'signals.proompteng.ai/v1alpha1',
+          kind: 'Signal',
+          metadata: { name: 'material-reentry-signal', namespace: 'agents' },
+          spec: { channel: 'agentrun.general.requirement' },
+        },
+      },
+      { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
+    )
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
+    expect(url.toString()).toBe('http://agents.test/api/agents/control-plane/resource')
+    expect(init.method).toBe('POST')
+    expect(getHeader(init.headers, 'idempotency-key')).toBe('signal-delivery')
+    expect(result.ok).toBe(true)
   })
 
   it('submits orchestration runs through the Agents service boundary', async () => {

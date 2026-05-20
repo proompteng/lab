@@ -1,4 +1,8 @@
-import { fetchControlPlaneResourceFromAgentsService } from '@proompteng/agent-contracts/agents-service-client'
+import {
+  fetchApprovalPolicyResourceFromAgentsService,
+  fetchBudgetResourceFromAgentsService,
+  fetchSecretBindingResourceFromAgentsService,
+} from '@proompteng/agent-contracts/agents-service-client'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 
 const asArray = (value: unknown): string[] => {
@@ -71,7 +75,12 @@ type PolicyResourceGetter = (
 ) => Promise<Record<string, unknown> | null>
 
 const getPolicyResourceFromAgentsService: PolicyResourceGetter = async (kind, name, namespace) => {
-  const result = await fetchControlPlaneResourceFromAgentsService({ kind, name, namespace })
+  const result =
+    kind === 'ApprovalPolicy'
+      ? await fetchApprovalPolicyResourceFromAgentsService({ name, namespace })
+      : kind === 'Budget'
+        ? await fetchBudgetResourceFromAgentsService({ name, namespace })
+        : await fetchSecretBindingResourceFromAgentsService({ name, namespace })
   if (result.ok) {
     return asRecord(result.body.resource)
   }

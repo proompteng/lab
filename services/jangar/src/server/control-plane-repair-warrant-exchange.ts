@@ -14,7 +14,7 @@ import type {
   RepairWarrantSuppressedCandidate,
   SourceRolloutTruthExchange,
 } from '~/data/agents-control-plane'
-import { fetchControlPlaneResourcesFromAgentsService } from '@proompteng/agent-contracts/agents-service-client'
+import { fetchJobResourcesFromAgentsService } from '@proompteng/agent-contracts/agents-service-client'
 import type { ControlPlaneRolloutHealth, ControlPlaneWatchReliability } from '~/server/control-plane-status-types'
 import { asRecord, asString } from '~/server/primitives-http'
 import {
@@ -220,11 +220,7 @@ const parseScheduleJobs = (payload: unknown): RepairScheduleJob[] => {
 }
 
 const listScheduleJobsFromAgentsService: RepairScheduleJobLister = async (namespace) => {
-  const result = await fetchControlPlaneResourcesFromAgentsService({
-    kind: 'Job',
-    namespace,
-    labelSelector: SCHEDULE_LABEL,
-  })
+  const result = await fetchJobResourcesFromAgentsService({ namespace, labelSelector: SCHEDULE_LABEL })
   if (!result.ok) {
     throw new Error(result.error ?? `Agents service returned HTTP ${result.status}`)
   }

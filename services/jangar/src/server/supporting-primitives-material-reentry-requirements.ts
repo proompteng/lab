@@ -1,6 +1,6 @@
 import {
-  submitControlPlaneResourceToAgentsService,
-  type AgentsControlPlaneResourceSubmitInput,
+  submitSignalResourceToAgentsService,
+  type AgentsSignalResourceSubmitInput,
 } from '@proompteng/agent-contracts/agents-service-client'
 import { asRecord, asString } from '~/server/primitives-http'
 import { hashNameSuffix, makeHashedName } from '~/server/supporting-primitives-naming'
@@ -30,7 +30,7 @@ type MaterialReentryRequirementSignalPublisherInput = {
   swarmName: string
   existingSignalNames: Set<string>
   existingDedupeKeys?: Set<string>
-  submitResource?: (input: AgentsControlPlaneResourceSubmitInput) => Promise<unknown>
+  submitResource?: (input: AgentsSignalResourceSubmitInput) => Promise<unknown>
 }
 
 const asArray = (value: unknown) => (Array.isArray(value) ? value : [])
@@ -135,7 +135,7 @@ export const publishMaterialReentryRequirementSignals = async (
   const publishedSignals: Record<string, unknown>[] = []
   let publishErrors = 0
   const dedupeKeys = new Set(input.existingDedupeKeys ?? [])
-  const submitResource = input.submitResource ?? submitControlPlaneResourceToAgentsService
+  const submitResource = input.submitResource ?? submitSignalResourceToAgentsService
   for (const dispatch of input.materialReentryRequirementSignals) {
     if (dispatch.targetSwarm !== input.swarmName || dispatch.targetStage !== 'implement') continue
     const signalName = materialReentrySignalName(dispatch)

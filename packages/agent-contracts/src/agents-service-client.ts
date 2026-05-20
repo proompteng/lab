@@ -102,6 +102,16 @@ export type AgentsControlPlaneResourceSubmitInput = {
   resource: Record<string, unknown>
 }
 
+export type AgentsNamedControlPlaneResourceInput = {
+  name: string
+  namespace?: string | null
+}
+
+export type AgentsSignalResourceSubmitInput = {
+  deliveryId: string
+  resource: Record<string, unknown>
+}
+
 export type AgentsAgentRunAnnotationsPatchInput = {
   name: string
   namespace: string
@@ -285,6 +295,18 @@ export const fetchAgentRunResourcesFromAgentsService = async (
 ): Promise<AgentsServiceJsonResult<AgentsControlPlaneResourcesResult>> =>
   fetchControlPlaneResourcesFromAgentsService({ kind: 'AgentRun', ...input }, env)
 
+export const fetchSwarmResourcesFromAgentsService = async (
+  input: AgentsAgentRunResourceListInput = {},
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<AgentsControlPlaneResourcesResult>> =>
+  fetchControlPlaneResourcesFromAgentsService({ kind: 'Swarm', ...input }, env)
+
+export const fetchJobResourcesFromAgentsService = async (
+  input: AgentsAgentRunResourceListInput = {},
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<AgentsControlPlaneResourcesResult>> =>
+  fetchControlPlaneResourcesFromAgentsService({ kind: 'Job', ...input }, env)
+
 export const fetchControlPlaneResourceFromAgentsService = async (
   input: AgentsControlPlaneResourceGetInput,
   env: EnvSource = process.env,
@@ -295,6 +317,36 @@ export const fetchControlPlaneResourceFromAgentsService = async (
 
   return fetchAgentsServiceJson<AgentsControlPlaneResourceResult>(`/api/agents/control-plane/resource?${params}`, env)
 }
+
+export const fetchMemoryResourceFromAgentsService = async (
+  input: AgentsNamedControlPlaneResourceInput,
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<AgentsControlPlaneResourceResult>> =>
+  fetchControlPlaneResourceFromAgentsService({ kind: 'Memory', ...input }, env)
+
+export const fetchApprovalPolicyResourceFromAgentsService = async (
+  input: AgentsNamedControlPlaneResourceInput,
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<AgentsControlPlaneResourceResult>> =>
+  fetchControlPlaneResourceFromAgentsService({ kind: 'ApprovalPolicy', ...input }, env)
+
+export const fetchBudgetResourceFromAgentsService = async (
+  input: AgentsNamedControlPlaneResourceInput,
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<AgentsControlPlaneResourceResult>> =>
+  fetchControlPlaneResourceFromAgentsService({ kind: 'Budget', ...input }, env)
+
+export const fetchSecretBindingResourceFromAgentsService = async (
+  input: AgentsNamedControlPlaneResourceInput,
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<AgentsControlPlaneResourceResult>> =>
+  fetchControlPlaneResourceFromAgentsService({ kind: 'SecretBinding', ...input }, env)
+
+export const fetchStageTargetResourceFromAgentsService = async (
+  input: AgentsControlPlaneResourceGetInput,
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<AgentsControlPlaneResourceResult>> =>
+  fetchControlPlaneResourceFromAgentsService(input, env)
 
 export const submitControlPlaneResourceToAgentsService = async (
   input: AgentsControlPlaneResourceSubmitInput,
@@ -338,6 +390,12 @@ export const submitControlPlaneResourceToAgentsService = async (
     }
   }
 }
+
+export const submitSignalResourceToAgentsService = async (
+  input: AgentsSignalResourceSubmitInput,
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<AgentsControlPlaneResourceResult>> =>
+  submitControlPlaneResourceToAgentsService(input, env)
 
 export const patchAgentRunAnnotationsViaAgentsService = async (
   input: AgentsAgentRunAnnotationsPatchInput,

@@ -1,6 +1,6 @@
 import {
-  fetchControlPlaneResourceFromAgentsService,
   type AgentsControlPlaneResourceGetInput,
+  fetchStageTargetResourceFromAgentsService,
 } from '@proompteng/agent-contracts/agents-service-client'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { PROVIDER_CAPACITY_EXHAUSTED_REASON } from '~/server/provider-capacity-reasons'
@@ -501,13 +501,13 @@ export const makeGenerateName = (base: string, suffix: string) => {
 
 type StageTargetResourceFetcher = (
   input: AgentsControlPlaneResourceGetInput,
-) => ReturnType<typeof fetchControlPlaneResourceFromAgentsService>
+) => ReturnType<typeof fetchStageTargetResourceFromAgentsService>
 
 export const resolveStageTargetResource = async (
   targetRef: StageTargetRef,
   deps: { fetchResource?: StageTargetResourceFetcher } = {},
 ) => {
-  const fetchResource = deps.fetchResource ?? fetchControlPlaneResourceFromAgentsService
+  const fetchResource = deps.fetchResource ?? fetchStageTargetResourceFromAgentsService
   const result = await fetchResource({
     kind: targetRef.kind,
     name: targetRef.name,

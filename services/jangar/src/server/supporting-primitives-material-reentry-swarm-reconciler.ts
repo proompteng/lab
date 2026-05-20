@@ -1,4 +1,4 @@
-import { fetchControlPlaneResourcesFromAgentsService } from '@proompteng/agent-contracts/agents-service-client'
+import { fetchSwarmResourcesFromAgentsService } from '@proompteng/agent-contracts/agents-service-client'
 import { resolveSupportingPrimitivesConfig } from '~/server/supporting-primitives-config'
 
 export const MATERIAL_REENTRY_SWARM_RECONCILE_INTERVAL_MS = 30_000
@@ -22,7 +22,7 @@ const listItems = (payload: Record<string, unknown>) => {
 }
 
 const listSwarmsFromAgentsService: SwarmLister = async (namespace) => {
-  const result = await fetchControlPlaneResourcesFromAgentsService({ kind: 'Swarm', namespace, limit: 500 })
+  const result = await fetchSwarmResourcesFromAgentsService({ namespace, limit: 500 })
   if (!result.ok) {
     throw new Error(`Agents service Swarm resource list failed (${result.status}): ${result.error ?? 'unknown error'}`)
   }

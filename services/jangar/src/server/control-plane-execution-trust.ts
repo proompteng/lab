@@ -1,5 +1,5 @@
 import { resolveControlPlaneStatusConfig } from '~/server/control-plane-config'
-import { fetchControlPlaneResourcesFromAgentsService } from '@proompteng/agent-contracts/agents-service-client'
+import { fetchSwarmResourcesFromAgentsService } from '@proompteng/agent-contracts/agents-service-client'
 import { asRecord, asString } from '~/server/primitives-http'
 import type { ExecutionTrustStage, ExecutionTrustStatus, ExecutionTrustSwarm } from '~/data/agents-control-plane'
 
@@ -142,7 +142,7 @@ const parseListItems = (payload: unknown, context: string) => {
 }
 
 const listSwarmsFromAgentsService: ExecutionTrustSwarmLister = async (namespace) => {
-  const result = await fetchControlPlaneResourcesFromAgentsService({ kind: 'Swarm', namespace, limit: 500 })
+  const result = await fetchSwarmResourcesFromAgentsService({ namespace, limit: 500 })
   if (!result.ok) {
     throw new Error(`Agents service Swarm resource list failed (${result.status}): ${result.error ?? 'unknown error'}`)
   }

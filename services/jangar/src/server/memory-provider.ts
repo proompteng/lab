@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { Pool } from 'pg'
 
 import { resolveEmbeddingConfig } from './memory-config'
-import { fetchControlPlaneResourceFromAgentsService } from '@proompteng/agent-contracts/agents-service-client'
+import { fetchMemoryResourceFromAgentsService } from '@proompteng/agent-contracts/agents-service-client'
 import type { KubernetesClient } from '~/server/primitives-kube'
 
 type MemoryConnection = {
@@ -193,7 +193,7 @@ const embedText = async (text: string, dimension: number) => {
 const vectorToPg = (vector: number[]) => `[${vector.join(',')}]`
 
 const getMemoryResourceFromAgentsService: MemoryResourceGetter = async (memoryName, namespace) => {
-  const result = await fetchControlPlaneResourceFromAgentsService({ kind: 'Memory', name: memoryName, namespace })
+  const result = await fetchMemoryResourceFromAgentsService({ name: memoryName, namespace })
   if (result.ok) {
     const resource = result.body.resource
     return resource && typeof resource === 'object' && !Array.isArray(resource) ? resource : null
