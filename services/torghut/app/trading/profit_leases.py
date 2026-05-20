@@ -116,6 +116,25 @@ def _string_list(value: object) -> list[str]:
     )
 
 
+def _runtime_autoresearch_refs(item: Mapping[str, Any]) -> list[str]:
+    refs: list[str] = []
+    for key in (
+        "autoresearch_portfolio_candidate_id",
+        "portfolio_candidate_id",
+        "autoresearch_candidate_spec_id",
+        "candidate_spec_id",
+        "candidate_id",
+        "hypothesis_id",
+    ):
+        if text := _safe_text(item.get(key)):
+            refs.append(f"{key}:{text}")
+    source_ids = _string_list(item.get("source_candidate_ids"))
+    refs.extend(f"source_candidate_id:{source_id}" for source_id in source_ids)
+    evidence_refs = _string_list(item.get("evidence_refs"))
+    refs.extend(f"evidence_ref:{evidence_ref}" for evidence_ref in evidence_refs)
+    return sorted(set(refs))
+
+
 def _as_mapping(value: object) -> Mapping[str, Any]:
     return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else {}
 
@@ -407,7 +426,8 @@ def _promotion_source(
     hypothesis_id: str,
     account: str | None,
     window: str | None,
-    promotion_table_counts: Mapping[str, int],
+    item: Mapping[str, Any],
+    promotion_table_counts: Mapping[str, Any],
 ) -> dict[str, object]:
     counts = {
         name: _safe_int(promotion_table_counts.get(name))
@@ -437,6 +457,13 @@ def _promotion_source(
         autoresearch_candidates + autoresearch_proposals + autoresearch_portfolios
     )
     if autoresearch_rows > 0:
+        autoresearch_refs = _runtime_autoresearch_refs(item)
+        ready_refs = set(
+            _string_list(
+                promotion_table_counts.get("autoresearch_portfolio_ready_refs")
+            )
+        )
+        matching_ready_refs = sorted(set(autoresearch_refs) & ready_refs)
         autoresearch_missing: list[str] = []
         if autoresearch_candidates <= 0:
             autoresearch_missing.append("autoresearch_candidate_specs_empty")
@@ -445,13 +472,63 @@ def _promotion_source(
         if autoresearch_portfolios <= 0:
             autoresearch_missing.append("autoresearch_portfolio_candidates_empty")
         if autoresearch_ready > 0 and not autoresearch_missing:
+            if not autoresearch_refs:
+                return _source_record(
+                    proof_id=proof_id,
+                    hypothesis_id=hypothesis_id,
+                    account=account,
+                    window=window,
+                    source_class="research_candidate",
+                    source_ref="postgres:autoresearch_ledgers:unqualified",
+                    freshness_state="blocked",
+                    rows=autoresearch_rows,
+                    decision="repair_only",
+                    blocking_reason_codes=[
+                        "autoresearch_candidate_ref_missing",
+                        "autoresearch_portfolio_match_unverified",
+                    ],
+                )
+            if not ready_refs:
+                return _source_record(
+                    proof_id=proof_id,
+                    hypothesis_id=hypothesis_id,
+                    account=account,
+                    window=window,
+                    source_class="research_candidate",
+                    source_ref="postgres:autoresearch_ledgers:ready_refs_missing",
+                    freshness_state="blocked",
+                    rows=autoresearch_rows,
+                    decision="repair_only",
+                    blocking_reason_codes=[
+                        "autoresearch_portfolio_ready_refs_missing",
+                        "autoresearch_portfolio_match_unverified",
+                    ],
+                )
+            if not matching_ready_refs:
+                return _source_record(
+                    proof_id=proof_id,
+                    hypothesis_id=hypothesis_id,
+                    account=account,
+                    window=window,
+                    source_class="research_candidate",
+                    source_ref=(
+                        "postgres:autoresearch_ledgers:unmatched:"
+                        f"{','.join(autoresearch_refs)}"
+                    ),
+                    freshness_state="blocked",
+                    rows=autoresearch_rows,
+                    decision="repair_only",
+                    blocking_reason_codes=["autoresearch_portfolio_match_unverified"],
+                )
             return _source_record(
                 proof_id=proof_id,
                 hypothesis_id=hypothesis_id,
                 account=account,
                 window=window,
                 source_class="research_candidate",
-                source_ref="postgres:autoresearch_ledgers",
+                source_ref=(
+                    f"postgres:autoresearch_ledgers:{','.join(matching_ready_refs)}"
+                ),
                 freshness_state="current",
                 rows=autoresearch_rows,
                 decision="paper_candidate",
@@ -660,7 +737,7 @@ def build_profit_lease_projection(
     empirical_jobs_status: Mapping[str, Any] | None,
     dependency_quorum: Mapping[str, Any] | None,
     rejection_summary: Mapping[str, Any] | None = None,
-    promotion_table_counts: Mapping[str, int] | None = None,
+    promotion_table_counts: Mapping[str, Any] | None = None,
     data_readiness: Mapping[str, Any] | None = None,
     live_controls: Mapping[str, object] | None = None,
     account: str | None = None,
@@ -675,10 +752,15 @@ def build_profit_lease_projection(
     empirical = _as_mapping(empirical_jobs_status)
     quorum = _as_mapping(dependency_quorum)
     rejection = _as_mapping(rejection_summary)
+    raw_promotion_counts = _as_mapping(promotion_table_counts)
     counts = {
-        name: _safe_int(_as_mapping(promotion_table_counts).get(name))
+        name: _safe_int(raw_promotion_counts.get(name))
         for name in _PROMOTION_TABLE_NAMES
     }
+    promotion_evidence: dict[str, Any] = dict(counts)
+    promotion_evidence["autoresearch_portfolio_ready_refs"] = _string_list(
+        raw_promotion_counts.get("autoresearch_portfolio_ready_refs")
+    )
     readiness = _as_mapping(data_readiness)
     controls = _as_mapping(live_controls)
     account_label = account or _safe_text(quant.get("account"))
@@ -737,7 +819,8 @@ def build_profit_lease_projection(
                 hypothesis_id=hypothesis_id,
                 account=account_label,
                 window=window_label,
-                promotion_table_counts=counts,
+                item=item,
+                promotion_table_counts=promotion_evidence,
             ),
             _rejection_source(
                 proof_id=proof_id,

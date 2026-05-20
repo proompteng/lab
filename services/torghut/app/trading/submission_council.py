@@ -1238,12 +1238,14 @@ def _attach_lineage_refs(
     return attached_rows
 
 
-def _load_profit_promotion_table_counts(session: Session) -> dict[str, int]:
+def _load_profit_promotion_table_counts(session: Session) -> dict[str, Any]:
     portfolio_rows = list(
         session.execute(select(AutoresearchPortfolioCandidate)).scalars()
     )
     current_oracle_ready = 0
     current_policy_blocked = 0
+    ready_refs: set[str] = set()
+    ready_source_candidate_ids: set[str] = set()
     for row in portfolio_rows:
         current_oracle_passed = _autoresearch_portfolio_current_oracle_passed(row)
         if (
@@ -1251,11 +1253,36 @@ def _load_profit_promotion_table_counts(session: Session) -> dict[str, int]:
             and current_oracle_passed
         ):
             current_oracle_ready += 1
+            if portfolio_candidate_id := _safe_text(row.portfolio_candidate_id):
+                ready_refs.add(f"portfolio_candidate_id:{portfolio_candidate_id}")
+            raw_source_candidate_ids = row.source_candidate_ids_json
+            if isinstance(raw_source_candidate_ids, Sequence) and not isinstance(
+                raw_source_candidate_ids, (str, bytes, bytearray)
+            ):
+                for raw_source_id in cast(Sequence[object], raw_source_candidate_ids):
+                    source_candidate_id = _safe_text(raw_source_id)
+                    if source_candidate_id is None:
+                        continue
+                    ready_source_candidate_ids.add(source_candidate_id)
+                    ready_refs.add(f"source_candidate_id:{source_candidate_id}")
+                    ready_refs.add(f"candidate_spec_id:{source_candidate_id}")
         if (
             row.status not in _AUTORESEARCH_PORTFOLIO_READY_STATUSES
             or not current_oracle_passed
         ):
             current_policy_blocked += 1
+
+    if ready_source_candidate_ids:
+        spec_rows = session.execute(
+            select(AutoresearchCandidateSpec).where(
+                AutoresearchCandidateSpec.candidate_spec_id.in_(
+                    sorted(ready_source_candidate_ids)
+                )
+            )
+        ).scalars()
+        for spec_row in spec_rows:
+            if hypothesis_id := _safe_text(spec_row.hypothesis_id):
+                ready_refs.add(f"hypothesis_id:{hypothesis_id}")
 
     return {
         "research_candidates": int(
@@ -1292,6 +1319,7 @@ def _load_profit_promotion_table_counts(session: Session) -> dict[str, int]:
         ),
         "autoresearch_portfolio_ready": current_oracle_ready,
         "autoresearch_portfolio_blocked": current_policy_blocked,
+        "autoresearch_portfolio_ready_refs": sorted(ready_refs),
     }
 
 
