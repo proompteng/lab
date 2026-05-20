@@ -450,8 +450,7 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                 {
                     "hypothesis_id": "H-CONT-01",
                     "strategy_family": "intraday_continuation",
-                    "strategy_name": "microbar-volume-continuation-long-top2-chip-v1",
-                    "strategy_id": "intraday_tsmom_v1@paper",
+                    "strategy_id": "microbar_volume_continuation_long_top2_chip_v1@paper",
                     "candidate_id": "chip-paper-microbar-composite@execution-proof",
                     "dataset_snapshot_ref": "torghut-chip-full-day-20260505-4c330ce9-r1",
                 }
