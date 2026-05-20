@@ -84,7 +84,14 @@ def _passing_autoresearch_scorecard() -> dict[str, object]:
         ),
         "delay_adjusted_depth_stress_model": "latency_depth_haircut",
         "delay_adjusted_depth_stress_ms": "250",
+        "delay_adjusted_depth_liquidity_evidence_present": True,
+        "delay_adjusted_depth_liquidity_missing_day_count": 0,
+        "delay_adjusted_depth_latency_grid_ms": ["50", "150", "250"],
+        "delay_adjusted_depth_grid_max_stress_ms": "250",
         "delay_adjusted_depth_fillable_notional_per_day": "300000",
+        "delay_adjusted_depth_tail_coverage_passed": True,
+        "delay_adjusted_depth_worst_active_day_fillable_notional": "300000",
+        "delay_adjusted_depth_p10_active_day_fillable_notional": "300000",
         "delay_adjusted_depth_stress_net_pnl_per_day": "525",
         "double_oos_passed": True,
         "double_oos_artifact_ref": "s3://proof/current-ready-double-oos.json",
@@ -524,7 +531,10 @@ class TestEvidenceContinuity(TestCase):
                     approver_role="system",
                     decision_action="promote",
                     decision_rationale="promotion_allowed",
-                    evidence_bundle={"fold_metrics_count": 1, "stress_metrics_count": 1},
+                    evidence_bundle={
+                        "fold_metrics_count": 1,
+                        "stress_metrics_count": 1,
+                    },
                 )
             )
             session.commit()

@@ -100,7 +100,7 @@ _DEFAULT_CLICKHOUSE_HTTP_URL = (
 )
 _MAX_PERSISTED_FEEDBACK_EVIDENCE_BUNDLES = 512
 _MAX_PERSISTED_FEEDBACK_EVIDENCE_EPOCHS = 12
-_PORTFOLIO_FEEDBACK_STATUSES = frozenset({"blocked", "target_met"})
+_PORTFOLIO_FEEDBACK_STATUSES = frozenset({"blocked", "paper_probation", "target_met"})
 _REJECTED_SIGNAL_OUTCOME_REQUIRED_FIELDS = (
     "counterfactual_return",
     "route_tca",
@@ -1894,6 +1894,8 @@ def _persist_epoch_ledgers(
                     if _boolish(promotion_readiness.get("promotable"))
                     else "target_met"
                 )
+            elif _boolish(portfolio.objective_scorecard.get("target_met")):
+                portfolio_status = "paper_probation"
             session.add(
                 AutoresearchPortfolioCandidate(
                     portfolio_candidate_id=portfolio.portfolio_candidate_id,
@@ -8102,6 +8104,13 @@ def _candidate_board_payload(
     best_research_candidate = rows[0] if rows else None
     best_executed_candidate = _candidate_board_best_executed_candidate(rows)
     closest_promotion_candidate = _candidate_board_closest_promotion_candidate(rows)
+    paper_probation_candidate = (
+        closest_promotion_candidate
+        if closest_promotion_candidate is not None
+        and bool(closest_promotion_candidate.get("target_met"))
+        and not bool(closest_promotion_candidate.get("oracle_passed"))
+        else None
+    )
     promotion_ready = _boolish(promotion_readiness.get("promotable"))
     promotion_subject = _candidate_board_portfolio_promotion_subject(
         portfolio=portfolio,
@@ -8131,6 +8140,7 @@ def _candidate_board_payload(
         "best_research_candidate": best_research_candidate,
         "best_executed_candidate": best_executed_candidate,
         "closest_promotion_candidate": closest_promotion_candidate,
+        "paper_probation_candidate": paper_probation_candidate,
         "promotion_subject": promotion_subject,
         "double_oos_summary": _candidate_board_double_oos_summary(rows),
         "best_portfolio_candidate_id": _string(

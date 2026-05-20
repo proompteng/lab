@@ -217,17 +217,27 @@ def _load_family_template(
     return {str(key): item for key, item in cast(Mapping[Any, Any], payload).items()}
 
 
-def _family_feature_catalog(family_template_dir: Path | None) -> set[str]:
+def _family_template_catalog(
+    family_template_dir: Path | None,
+) -> dict[str, Mapping[str, Any]]:
     if family_template_dir is None or not family_template_dir.exists():
-        return set()
-    features: set[str] = set()
+        return {}
+    templates: dict[str, Mapping[str, Any]] = {}
     for path in family_template_dir.glob("*.yaml"):
         payload = yaml.safe_load(path.read_text(encoding="utf-8"))
         if not isinstance(payload, Mapping):
             continue
-        family_payload = {
+        templates[path.stem] = {
             str(key): item for key, item in cast(Mapping[Any, Any], payload).items()
         }
+    return templates
+
+
+def _family_feature_catalog_from_templates(
+    family_templates: Mapping[str, Mapping[str, Any]],
+) -> set[str]:
+    features: set[str] = set()
+    for family_payload in family_templates.values():
         features.update(_sequence_strings(family_payload.get("required_features")))
         features.update(_sequence_strings(family_payload.get("risk_controls")))
         liquidity = family_payload.get("liquidity_assumptions")
@@ -236,6 +246,28 @@ def _family_feature_catalog(family_template_dir: Path | None) -> set[str]:
         else:
             features.update(_sequence_strings(liquidity))
     return features
+
+
+def _family_feature_catalog(family_template_dir: Path | None) -> set[str]:
+    return _family_feature_catalog_from_templates(
+        _family_template_catalog(family_template_dir)
+    )
+
+
+def _seed_sweep_family_ids(seed_sweep_dir: Path | None) -> set[str]:
+    if seed_sweep_dir is None or not seed_sweep_dir.exists():
+        return set()
+    family_ids: set[str] = set()
+    for path in sorted(seed_sweep_dir.glob("profitability-frontier-*.yaml")):
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, Mapping):
+            continue
+        family_template_id = str(
+            cast(Mapping[Any, Any], payload).get("family_template_id") or ""
+        ).strip()
+        if family_template_id:
+            family_ids.add(family_template_id)
+    return family_ids
 
 
 def _seed_sweep_config_path(
@@ -370,6 +402,9 @@ def _blockers_for_spec(
     *,
     family_template_dir: Path | None,
     seed_sweep_dir: Path | None,
+    family_templates: Mapping[str, Mapping[str, Any]] | None = None,
+    feature_catalog: set[str] | None = None,
+    seed_sweep_family_ids: set[str] | None = None,
 ) -> tuple[CandidateCompilationBlocker, ...]:
     blockers: list[CandidateCompilationBlocker] = []
     claim_relation_blockers = _mapping_sequence(
@@ -408,8 +443,12 @@ def _blockers_for_spec(
             )
         )
 
-    family_template = _load_family_template(
-        spec.family_template_id, family_template_dir=family_template_dir
+    family_template = (
+        family_templates.get(spec.family_template_id, {})
+        if family_templates is not None
+        else _load_family_template(
+            spec.family_template_id, family_template_dir=family_template_dir
+        )
     )
     if family_template_dir is not None and not family_template:
         blockers.append(
@@ -428,13 +467,15 @@ def _blockers_for_spec(
                 detail={"family_template_id": spec.family_template_id},
             )
         )
-    if (
-        seed_sweep_dir is not None
-        and _seed_sweep_config_path(
+    seed_sweep_present = (
+        spec.family_template_id in seed_sweep_family_ids
+        if seed_sweep_family_ids is not None
+        else _seed_sweep_config_path(
             spec.family_template_id, seed_sweep_dir=seed_sweep_dir
         )
-        is None
-    ):
+        is not None
+    )
+    if seed_sweep_dir is not None and not seed_sweep_present:
         blockers.append(
             CandidateCompilationBlocker(
                 candidate_spec_id=spec.candidate_spec_id,
@@ -450,8 +491,12 @@ def _blockers_for_spec(
         FEATURE_ALIASES.get(feature, feature)
         for feature in _sequence_strings(spec.feature_contract.get("required_features"))
     }
-    feature_catalog = _family_feature_catalog(family_template_dir)
-    missing_features = sorted(required_features - feature_catalog)
+    resolved_feature_catalog = (
+        feature_catalog
+        if feature_catalog is not None
+        else _family_feature_catalog(family_template_dir)
+    )
+    missing_features = sorted(required_features - resolved_feature_catalog)
     if family_template_dir is not None and missing_features:
         blockers.append(
             CandidateCompilationBlocker(
@@ -504,11 +549,17 @@ def compile_whitepaper_candidate_specs(
     blockers: list[CandidateCompilationBlocker] = []
     executable_specs: list[CandidateSpec] = []
     blocked_specs: list[CandidateSpec] = []
+    family_templates = _family_template_catalog(family_template_dir)
+    feature_catalog = _family_feature_catalog_from_templates(family_templates)
+    seed_sweep_family_ids = _seed_sweep_family_ids(seed_sweep_dir)
     for spec in candidate_specs:
         spec_blockers = _blockers_for_spec(
             spec,
             family_template_dir=family_template_dir,
             seed_sweep_dir=seed_sweep_dir,
+            family_templates=family_templates,
+            feature_catalog=feature_catalog,
+            seed_sweep_family_ids=seed_sweep_family_ids,
         )
         blockers.extend(spec_blockers)
         if spec_blockers:

@@ -4118,7 +4118,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 target_net_pnl_per_day=Decimal("500"),
                 family_template_dir=Path("config/trading/families"),
                 seed_sweep_dir=Path("config/trading"),
-                universe_symbols=runner.LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE,
+                universe_symbols=("NVDA",),
             )
             missing_feature_blockers = [
                 blocker.to_payload()
@@ -5664,6 +5664,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             board["closest_promotion_candidate"]["candidate_id"],
             "chip-paper-microbar-composite@execution-proof",
         )
+        self.assertIsNone(board["paper_probation_candidate"])
         self.assertEqual(board["best_executed_candidate"]["decision_count"], 7)
         self.assertEqual(board["best_executed_candidate"]["submitted_order_count"], 7)
         self.assertEqual(board["best_executed_candidate"]["filled_order_count"], 7)
@@ -5676,6 +5677,72 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             board["double_oos_summary"]["blockers"],
         )
         self.assertRegex(board["status_digest"], r"^[0-9a-f]{64}$")
+
+    def test_candidate_board_surfaces_paper_probation_without_promotion(
+        self,
+    ) -> None:
+        spec = self._candidate_spec("spec-paper-probation")
+        evidence = runner.CandidateEvidenceBundle(
+            schema_version="torghut.candidate-evidence-bundle.v1",
+            evidence_bundle_id="ev-paper-probation",
+            candidate_id="cand-paper-probation",
+            candidate_spec_id=spec.candidate_spec_id,
+            dataset_snapshot_id="snapshot-paper-probation",
+            feature_spec_hash="hash-paper-probation",
+            code_commit="commit-test",
+            replay_artifact_refs=("paper-probation.json",),
+            objective_scorecard={
+                "net_pnl_per_day": "525",
+                "target_met": True,
+                "oracle_passed": False,
+                "trade_decision_count": 9,
+                "orders_submitted_count": 9,
+                "trade_count": 9,
+                "profit_target_oracle": {
+                    "blockers": ["delay_adjusted_depth_tail_coverage_passed_failed"]
+                },
+            },
+            fold_metrics=(),
+            stress_metrics=(),
+            cost_calibration={"status": "provisional", "source": "paper_runtime"},
+            null_comparator={},
+            promotion_readiness={},
+        )
+
+        board = runner._candidate_board_payload(
+            epoch_id="epoch-paper-probation-board",
+            output_dir=Path("/tmp/epoch-paper-probation-board"),
+            target=Decimal("500"),
+            candidate_specs=(spec,),
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                    }
+                ]
+            },
+            pre_replay_proposal_rows=(
+                {
+                    "candidate_spec_id": spec.candidate_spec_id,
+                    "rank": 1,
+                    "proposal_score": "9.0",
+                },
+            ),
+            proposal_rows=(),
+            evidence_bundles=(evidence,),
+            portfolio=None,
+            promotion_readiness={"promotable": False},
+            runtime_closure={},
+        )
+
+        self.assertEqual(board["current_answer"], "no_promotion_ready_candidate")
+        self.assertEqual(
+            board["paper_probation_candidate"]["candidate_id"], "cand-paper-probation"
+        )
+        self.assertEqual(
+            board["paper_probation_candidate"], board["closest_promotion_candidate"]
+        )
 
     def test_candidate_universe_symbols_default_to_chip_coverage_when_empty(
         self,
@@ -6274,6 +6341,137 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             blocked_payload.payload_json["promotion_readiness"]["blockers"],
             ["promotion_gate_report_denied"],
         )
+
+    def test_epoch_ledgers_persist_target_met_oracle_failed_as_paper_probation(
+        self,
+    ) -> None:
+        portfolio = runner.PortfolioCandidateSpec(
+            schema_version="torghut.portfolio-candidate-spec.v1",
+            portfolio_candidate_id="portfolio-paper-probation",
+            source_candidate_ids=("candidate-test",),
+            target_net_pnl_per_day=Decimal("500"),
+            sleeves=(),
+            capital_budget={},
+            correlation_budget={},
+            drawdown_budget={},
+            evidence_refs=(),
+            objective_scorecard={"oracle_passed": False, "target_met": True},
+            optimizer_report={},
+        )
+        started_at = datetime(2026, 5, 8, 17, 0, 0)
+        completed_at = datetime(2026, 5, 8, 17, 1, 0)
+
+        with patch(
+            "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+            side_effect=lambda: Session(self.engine),
+        ):
+            runner._persist_epoch_ledgers(
+                epoch_id="epoch-paper-probation",
+                status="ok",
+                target_net_pnl_per_day=Decimal("500"),
+                paper_run_ids=[],
+                sources=[],
+                candidate_specs=[],
+                proposal_rows=[],
+                portfolio=portfolio,
+                summary={
+                    "promotion_readiness": {
+                        "status": "blocked_pending_promotion_prerequisites",
+                        "promotable": False,
+                        "blockers": ["oracle_blocked"],
+                    }
+                },
+                runner_config={},
+                started_at=started_at,
+                completed_at=completed_at,
+            )
+
+        with Session(self.engine) as session:
+            saved = session.execute(select(AutoresearchPortfolioCandidate)).scalar_one()
+
+        self.assertEqual(saved.status, "paper_probation")
+        self.assertFalse(saved.payload_json["promotion_readiness"]["promotable"])
+        self.assertEqual(
+            saved.payload_json["promotion_readiness"]["blockers"], ["oracle_blocked"]
+        )
+
+    def test_feedback_evidence_loader_reconstructs_paper_probation_candidates(
+        self,
+    ) -> None:
+        spec = self._candidate_spec("candidate-portfolio-probation")
+        scorecard = {
+            "target_met": True,
+            "oracle_passed": False,
+            "net_pnl_per_day": "525",
+            "profit_target_oracle": {
+                "blockers": ["delay_adjusted_depth_tail_coverage_passed_failed"]
+            },
+        }
+        sleeve = {
+            "candidate_id": "candidate-portfolio-probation",
+            "candidate_spec_id": spec.candidate_spec_id,
+            "family_template_id": spec.family_template_id,
+            "runtime_family": spec.runtime_family,
+            "runtime_strategy_name": spec.runtime_strategy_name,
+            "weight": "1.00",
+            "expected_net_pnl_per_day": "525",
+            "source_expected_net_pnl_per_day": "525",
+            "risk_contribution": "2500",
+            "source_risk_contribution": "2500",
+            "correlation_cluster": "NVDA",
+            "params": {"signal_motif": "order_flow_continuation"},
+            "universe_symbols": ["NVDA"],
+        }
+
+        with (
+            Session(self.engine) as session,
+            patch(
+                "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+                side_effect=lambda: Session(self.engine),
+            ),
+        ):
+            session.add(
+                AutoresearchPortfolioCandidate(
+                    portfolio_candidate_id="portfolio-feedback-probation",
+                    epoch_id="portfolio-feedback-probation-epoch",
+                    source_candidate_ids_json=["candidate-portfolio-probation"],
+                    target_net_pnl_per_day=Decimal("500"),
+                    objective_scorecard_json=scorecard,
+                    optimizer_report_json={"method": "test"},
+                    payload_json={
+                        "schema_version": "torghut.portfolio-candidate-spec.v1",
+                        "portfolio_candidate_id": "portfolio-feedback-probation",
+                        "source_candidate_ids": ["candidate-portfolio-probation"],
+                        "target_net_pnl_per_day": "500",
+                        "sleeves": [sleeve],
+                        "objective_scorecard": scorecard,
+                        "optimizer_report": {"method": "test"},
+                        "promotion_readiness": {
+                            "stage": "research_portfolio",
+                            "status": "blocked_pending_promotion_prerequisites",
+                            "promotable": False,
+                            "blockers": [
+                                "delay_adjusted_depth_tail_coverage_passed_failed"
+                            ],
+                        },
+                    },
+                    status="paper_probation",
+                )
+            )
+            session.commit()
+
+            loaded, manifest = runner._load_recent_persisted_feedback_evidence_bundles()
+
+        self.assertEqual(len(loaded), 1)
+        self.assertEqual(loaded[0].candidate_spec_id, spec.candidate_spec_id)
+        self.assertEqual(
+            loaded[0].objective_scorecard["portfolio_status"], "paper_probation"
+        )
+        self.assertIn(
+            "delay_adjusted_depth_tail_coverage_passed_failed",
+            loaded[0].objective_scorecard["portfolio_blockers"],
+        )
+        self.assertEqual(manifest["portfolio_candidate_bundle_count"], 1)
 
     def test_persistence_failure_preserves_artifacts_and_returns_infra_failure(
         self,
