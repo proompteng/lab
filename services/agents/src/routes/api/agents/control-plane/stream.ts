@@ -2,8 +2,7 @@ import { EventEmitter } from 'node:events'
 
 import { createFileRoute, type AgentsServerRouteArgs } from '../../../../server/server-route'
 
-import { buildAgentsControlPlaneStatus, type AgentsControlPlaneStatus } from '../../../../server/control-plane-status'
-import { resolveGrpcStatus } from '../../../../server/control-plane-grpc'
+import { getAgentsControlPlaneStatus, type AgentsControlPlaneStatus } from '../../../../server/control-plane-status'
 import {
   type AgentPrimitiveKind,
   listPrimitiveKinds,
@@ -97,12 +96,7 @@ const toSummary = (resource: Record<string, unknown>) => ({
   status: asRecord(resource.status) ?? {},
 })
 
-const buildStatus = async (namespace: string) =>
-  buildAgentsControlPlaneStatus({
-    namespace,
-    service: 'agents',
-    grpc: await resolveGrpcStatus(),
-  })
+const buildStatus = async (namespace: string) => getAgentsControlPlaneStatus({ namespace, service: 'agents' })
 
 const emitStatus = async (stream: NamespaceStream, namespace: string) => {
   if (stream.statusTimeout) {
