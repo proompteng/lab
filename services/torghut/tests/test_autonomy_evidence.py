@@ -272,6 +272,81 @@ class TestEvidenceContinuity(TestCase):
             report.missing_runs[0]["counts"]["autoresearch_candidate_specs"], 1
         )
 
+    def test_research_run_with_autoresearch_ledgers_reports_autoresearch_blockers(
+        self,
+    ) -> None:
+        now = datetime(2026, 5, 20, 0, 0, tzinfo=timezone.utc)
+        with self.session_factory() as session:
+            session.add(
+                ResearchRun(
+                    run_id="run-autoresearch",
+                    status="passed",
+                    discovery_mode="whitepaper_autoresearch_profit_target",
+                )
+            )
+            session.add(
+                AutoresearchEpoch(
+                    epoch_id="epoch-run-blocked",
+                    status="no_profit_target_candidate",
+                    target_net_pnl_per_day=Decimal("500"),
+                    paper_run_ids_json=["run-autoresearch"],
+                    snapshot_manifest_json={},
+                    runner_config_json={},
+                    summary_json={},
+                    started_at=now,
+                    completed_at=now,
+                )
+            )
+            session.add(
+                AutoresearchCandidateSpec(
+                    candidate_spec_id="spec-run-blocked",
+                    epoch_id="epoch-run-blocked",
+                    hypothesis_id="H-CONT-01",
+                    candidate_kind="sleeve",
+                    family_template_id="late_day_continuation_v1",
+                    payload_json={"candidate_spec_id": "spec-run-blocked"},
+                    payload_hash="hash-run-blocked",
+                    status="eligible",
+                    blockers_json=[],
+                )
+            )
+            session.add(
+                AutoresearchProposalScore(
+                    epoch_id="epoch-run-blocked",
+                    candidate_spec_id="spec-run-blocked",
+                    model_id="mlx-ranker",
+                    backend="mlx",
+                    proposal_score=Decimal("12.5"),
+                    rank=1,
+                    selection_reason="exploitation",
+                    feature_hash="feature-hash",
+                    payload_json={},
+                )
+            )
+            session.add(
+                AutoresearchPortfolioCandidate(
+                    portfolio_candidate_id="portfolio-run-blocked",
+                    epoch_id="epoch-run-blocked",
+                    source_candidate_ids_json=["spec-run-blocked"],
+                    target_net_pnl_per_day=Decimal("500"),
+                    objective_scorecard_json={"net_pnl_per_day": "450"},
+                    optimizer_report_json={"selected_count": 1},
+                    payload_json={"portfolio_candidate_id": "portfolio-run-blocked"},
+                    status="blocked",
+                )
+            )
+            session.commit()
+
+            report = evaluate_evidence_continuity(session, run_limit=5)
+
+        self.assertEqual(report.checked_runs, 1)
+        self.assertEqual(report.failed_runs, 1)
+        missing = set(report.missing_runs[0]["missing_tables"])
+        self.assertIn("autoresearch_portfolio_ready", missing)
+        self.assertNotIn("research_candidates", missing)
+        self.assertNotIn("research_fold_metrics", missing)
+        self.assertNotIn("research_promotions", missing)
+
     def test_current_oracle_ready_autoresearch_portfolio_passes_without_legacy_rows(
         self,
     ) -> None:

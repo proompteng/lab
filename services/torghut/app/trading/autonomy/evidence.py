@@ -70,12 +70,7 @@ def _autoresearch_portfolio_current_oracle_passed(
     return bool(oracle.get("passed"))
 
 
-def _autoresearch_continuity_report(
-    session: Session,
-    *,
-    checked_at: datetime,
-    run_limit: int,
-) -> EvidenceContinuityCheckReport | None:
+def _autoresearch_continuity_counts(session: Session) -> dict[str, int] | None:
     portfolio_rows = list(
         session.execute(select(AutoresearchPortfolioCandidate)).scalars()
     )
@@ -107,19 +102,10 @@ def _autoresearch_continuity_report(
             counts["autoresearch_portfolio_ready"] += 1
         else:
             counts["autoresearch_portfolio_blocked"] += 1
+    return counts
 
-    latest_epoch_ids = [
-        str(epoch_id)
-        for (epoch_id,) in session.execute(
-            select(AutoresearchEpoch.epoch_id)
-            .order_by(
-                AutoresearchEpoch.completed_at.desc().nullslast(),
-                AutoresearchEpoch.created_at.desc(),
-            )
-            .limit(max(1, int(run_limit)))
-        ).all()
-    ]
-    run_ids = latest_epoch_ids or ["autoresearch_ledgers"]
+
+def _autoresearch_missing_tables(counts: Mapping[str, int]) -> list[str]:
     missing: list[str] = []
     if counts["autoresearch_epochs"] <= 0:
         missing.append("autoresearch_epochs")
@@ -136,6 +122,32 @@ def _autoresearch_continuity_report(
         and counts["autoresearch_portfolio_blocked"] > 0
     ):
         missing.append("autoresearch_portfolio_candidates_blocked")
+    return missing
+
+
+def _autoresearch_continuity_report(
+    session: Session,
+    *,
+    checked_at: datetime,
+    run_limit: int,
+) -> EvidenceContinuityCheckReport | None:
+    counts = _autoresearch_continuity_counts(session)
+    if counts is None:
+        return None
+
+    latest_epoch_ids = [
+        str(epoch_id)
+        for (epoch_id,) in session.execute(
+            select(AutoresearchEpoch.epoch_id)
+            .order_by(
+                AutoresearchEpoch.completed_at.desc().nullslast(),
+                AutoresearchEpoch.created_at.desc(),
+            )
+            .limit(max(1, int(run_limit)))
+        ).all()
+    ]
+    run_ids = latest_epoch_ids or ["autoresearch_ledgers"]
+    missing = _autoresearch_missing_tables(counts)
 
     missing_runs = (
         [
@@ -376,6 +388,12 @@ def evaluate_evidence_continuity(
 
     missing_runs: list[dict[str, Any]] = []
     run_lookup = {row.run_id: row for row in runs}
+    autoresearch_counts = _autoresearch_continuity_counts(session)
+    autoresearch_missing = (
+        _autoresearch_missing_tables(autoresearch_counts)
+        if autoresearch_counts is not None
+        else []
+    )
     for run_id in run_ids:
         run = run_lookup[run_id]
         candidate_count = int(candidate_counts.get(run_id, 0) or 0)
@@ -393,16 +411,29 @@ def evaluate_evidence_continuity(
         discovery_mode = str(run.discovery_mode or '').strip()
         require_strategy_factory_chain = discovery_mode.startswith('strategy_factory')
         missing: list[str] = []
-        if candidate_count <= 0:
-            missing.append("research_candidates")
-        if fold_count <= 0:
-            missing.append("research_fold_metrics")
-        if stress_count <= 0:
-            missing.append("research_stress_metrics")
-        if promotion_count <= 0:
-            missing.append("research_promotions")
-        elif promotion_audit_count <= 0:
-            missing.append("promotion_decision_audit")
+        use_autoresearch_continuity = (
+            autoresearch_counts is not None
+            and candidate_count <= 0
+            and promotion_count <= 0
+            and (
+                discovery_mode.startswith("whitepaper_autoresearch")
+                or discovery_mode.startswith("portfolio_profit_autoresearch")
+                or bool(autoresearch_counts)
+            )
+        )
+        if use_autoresearch_continuity:
+            missing.extend(autoresearch_missing)
+        else:
+            if candidate_count <= 0:
+                missing.append("research_candidates")
+            if fold_count <= 0:
+                missing.append("research_fold_metrics")
+            if stress_count <= 0:
+                missing.append("research_stress_metrics")
+            if promotion_count <= 0:
+                missing.append("research_promotions")
+            elif promotion_audit_count <= 0:
+                missing.append("promotion_decision_audit")
         if require_strategy_factory_chain:
             if attempt_count <= 0:
                 missing.append("research_attempts")
@@ -420,6 +451,7 @@ def evaluate_evidence_continuity(
                     "run_id": run_id,
                     "missing_tables": missing,
                     "counts": {
+                        **(autoresearch_counts or {}),
                         "candidate_economic_validity_card": economic_validity_count,
                         "research_attempts": attempt_count,
                         "research_candidates": candidate_count,
