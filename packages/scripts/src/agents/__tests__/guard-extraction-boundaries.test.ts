@@ -211,6 +211,7 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('github-webhook-codex-judge-topic.yaml')
     expect(content).toContain('github\\.webhook\\.codex\\.judge')
     expect(content).toContain('KAFKA_CODEX_JUDGE_TOPIC')
+    expect(content).toContain('services/jangar/src/server/proto/codex_task_pb.ts')
     expect(content).toContain('/agent-runs/github-issues|codex_listener|codex-listen|froussardpb|CodexTask')
     expect(content).toContain('Jangar Codex judge current schema and queries must use AgentRun-native physical columns')
     expect(content).toContain('workflow_name|workflow_uid|workflow_namespace|codex_judge_runs_workflow')

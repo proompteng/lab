@@ -682,6 +682,7 @@ fail_if_path_exists \
   "${ROOT_DIR}/argocd/applications/froussard/github-issues-codex-tasks-topic.yaml" \
   "${ROOT_DIR}/argocd/applications/facteur/overlays/cluster/facteur-codex-kafkasource.yaml" \
   "${ROOT_DIR}/proto/proompteng/froussard/v1/codex_task.proto" \
+  "${ROOT_DIR}/services/jangar/src/server/proto/codex_task_pb.ts" \
   "${ROOT_DIR}/apps/froussard/src/webhooks/github/payloads.ts" \
   "${ROOT_DIR}/services/facteur/cmd/facteur/codex_echo.go" \
   "${ROOT_DIR}/services/facteur/internal/codex/listener.go" \
