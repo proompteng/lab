@@ -148,11 +148,14 @@ describe('agents-ci workflow local Agents image build', () => {
     expect(workflow).not.toContain('jangar-release-contract')
   })
 
-  it('keeps Agents CI detached from Jangar packages while running boundary guards on Jangar source changes', () => {
+  it('keeps Agents CI detached from Jangar service and GitOps paths', () => {
     const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
 
-    expect(workflow).toContain('services/jangar/**')
+    expect(workflow).not.toContain('services/jangar/**')
+    expect(workflow).not.toContain('argocd/applications/jangar/**')
+    expect(workflow).not.toContain('docs/jangar/application-architecture.md')
     expect(workflow).not.toContain('packages/scripts/src/jangar/**')
+    expect(workflow).not.toContain('packages/scripts/src/jangar/verify-deployment.ts')
     expect(workflow).not.toContain('--filter @proompteng/jangar')
     expect(workflow).not.toContain('packages/scripts/src/jangar/__tests__/release-contract.test.ts')
   })

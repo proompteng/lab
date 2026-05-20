@@ -199,7 +199,7 @@ fail_if_matches \
   "Product GitOps must not register a separate jangar-agents-domain app; Jangar should consume Agents APIs from its own domain" \
   "jangar-agents-domain" \
   "${ROOT_DIR}/argocd/applicationsets/product.yaml" \
-  "${ROOT_DIR}/packages/scripts/src/jangar/__tests__/agents-domain-smoke.test.ts"
+  "${ROOT_DIR}/packages/scripts/src/torghut/__tests__/agents-domain-smoke.test.ts"
 
 fail_if_path_exists \
   "Jangar must not retain generic Agents runtime evidence collectors after Agents owns workflow and rollout status" \

@@ -12,13 +12,10 @@ const protectedBoundaryTriggerPaths = [
   'argocd/applications/argo-workflows/**',
   'argocd/applications/facteur/**',
   'argocd/applications/froussard/**',
-  'argocd/applications/jangar/**',
   'argocd/applications/traefik/values.yaml',
   'charts/agents/**',
   'docs/agents/**',
-  'docs/jangar/application-architecture.md',
   'packages/scripts/src/agents/**',
-  'packages/scripts/src/jangar/verify-deployment.ts',
   'proto/proompteng/facteur/v1/contract.proto',
   'services/agents/**',
   'services/facteur/README.md',
@@ -27,7 +24,6 @@ const protectedBoundaryTriggerPaths = [
   'services/facteur/internal/**',
   'services/graf/src/main/kotlin/**',
   'services/graf/src/test/kotlin/**',
-  'services/jangar/**',
   'scripts/agents/**',
 ]
 
