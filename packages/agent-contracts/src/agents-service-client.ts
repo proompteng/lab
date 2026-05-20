@@ -75,12 +75,6 @@ export type AgentsAgentRunListResult = {
   runs: AgentsAgentRunListItem[]
 }
 
-export type AgentsAgentRunAnnotationsPatchInput = {
-  name: string
-  namespace: string
-  annotations: Record<string, string | null>
-}
-
 export type AgentsOrchestrationRunSubmitResult = {
   orchestrationRun: Record<string, unknown>
   resource: Record<string, unknown> | null
@@ -236,51 +230,6 @@ export const fetchAgentRunsFromAgentsService = async (
 
   const suffix = params.size > 0 ? `?${params.toString()}` : ''
   return fetchAgentsServiceJson<AgentsAgentRunListResult>(`/v1/agent-runs${suffix}`, env)
-}
-
-export const patchAgentRunAnnotationsViaAgentsService = async (
-  input: AgentsAgentRunAnnotationsPatchInput,
-  env: EnvSource = process.env,
-): Promise<AgentsServiceJsonResult<Record<string, unknown>>> => {
-  const baseUrl = resolveAgentsServiceBaseUrl(env)
-  const targetUrl = new URL('/api/agents/control-plane/resource', `${baseUrl}/`)
-  targetUrl.searchParams.set('kind', 'AgentRun')
-  targetUrl.searchParams.set('name', input.name)
-  targetUrl.searchParams.set('namespace', input.namespace)
-
-  try {
-    const upstream = await fetch(targetUrl, {
-      body: JSON.stringify({ metadata: { annotations: input.annotations } }),
-      headers: {
-        accept: 'application/json',
-        'content-type': 'application/json',
-        'x-agents-client': resolveAgentsServiceClientName(env),
-      },
-      method: 'PATCH',
-    })
-    const body = await readJsonBody(upstream)
-    if (upstream.ok && body !== null) {
-      return {
-        ok: true,
-        status: upstream.status,
-        body,
-      }
-    }
-
-    return {
-      ok: false,
-      status: upstream.status,
-      body,
-      error: getBodyError(body) ?? upstream.statusText ?? `Agents service returned HTTP ${upstream.status}`,
-    }
-  } catch (error) {
-    return {
-      ok: false,
-      status: 0,
-      body: null,
-      error: getErrorMessage(error),
-    }
-  }
 }
 
 export const submitOrchestrationRunToAgentsService = async (

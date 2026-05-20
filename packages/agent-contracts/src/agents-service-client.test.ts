@@ -1,11 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { fetchAgentRunResourcesFromAgentsService } from './agent-runs-client'
+import { fetchAgentRunResourcesFromAgentsService, patchAgentRunAnnotationsViaAgentsService } from './agent-runs-client'
 import {
   fetchAgentRunsFromAgentsService,
   fetchAgentsHealthFromAgentsService,
   fetchAgentsServiceJson,
-  patchAgentRunAnnotationsViaAgentsService,
   resolveAgentsServiceBaseUrl,
   submitAgentRunToAgentsService,
   submitAgentMessagesToAgentsService,
@@ -207,7 +206,7 @@ describe('agents-service-client', () => {
     })
   })
 
-  it('lists raw AgentRun resources through the Agents control-plane boundary', async () => {
+  it('lists raw AgentRun resources through the dedicated Agents v1 resource boundary', async () => {
     const fetchMock = vi.fn(async () => {
       return new Response(
         JSON.stringify({
@@ -233,7 +232,7 @@ describe('agents-service-client', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
     expect(url.toString()).toBe(
-      'http://agents.test/api/agents/control-plane/resources?kind=AgentRun&namespace=agents&labelSelector=app%3Dartifact-collector&phase=Succeeded&limit=500',
+      'http://agents.test/v1/agent-runs/resources?namespace=agents&labelSelector=app%3Dartifact-collector&phase=Succeeded&limit=500',
     )
     expect(init.method).toBe('GET')
     expect(getHeader(init.headers, 'x-agents-client')).toBe('agent-contracts')
@@ -337,7 +336,7 @@ describe('agents-service-client', () => {
     )
   })
 
-  it('patches AgentRun annotations through the Agents control-plane boundary', async () => {
+  it('patches AgentRun annotations through the dedicated Agents v1 resource boundary', async () => {
     const fetchMock = vi.fn(async () => {
       return new Response(
         JSON.stringify({
@@ -370,9 +369,7 @@ describe('agents-service-client', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
-    expect(url.toString()).toBe(
-      'http://agents.test/api/agents/control-plane/resource?kind=AgentRun&name=artifact-run&namespace=agents',
-    )
+    expect(url.toString()).toBe('http://agents.test/v1/agent-runs/resources?name=artifact-run&namespace=agents')
     expect(init.method).toBe('PATCH')
     expect(init.headers).toMatchObject({
       accept: 'application/json',

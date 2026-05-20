@@ -732,6 +732,12 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server"
 
 fail_if_matches \
+  "AgentRun resource consumers must use the dedicated /v1/agent-runs/resources contract instead of generic control-plane kind selectors" \
+  '/api/agents/control-plane/resource|/api/agents/control-plane/resources|kind=AgentRun' \
+  "${ROOT_DIR}/packages/agent-contracts/src/agent-runs-client.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/whitepaper-finalize-consumer.ts"
+
+fail_if_matches \
   "Jangar must consume narrow Agents resource clients instead of the broad control-plane-resources-client module" \
   '@proompteng/agent-contracts/control-plane-resources-client' \
   "${ROOT_DIR}/services/jangar/src" \

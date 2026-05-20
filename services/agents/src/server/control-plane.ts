@@ -47,6 +47,11 @@ const routeSources: RouteSourceSpec[] = [
     load: () => import('../routes/v1/agent-runs'),
   },
   {
+    file: 'src/routes/v1/agent-runs/resources.ts',
+    sourceUrl: new URL('../routes/v1/agent-runs/resources.ts', import.meta.url),
+    load: () => import('../routes/v1/agent-runs/resources'),
+  },
+  {
     file: 'src/routes/v1/memories.ts',
     sourceUrl: new URL('../routes/v1/memories.ts', import.meta.url),
     load: () => import('../routes/v1/memories'),
