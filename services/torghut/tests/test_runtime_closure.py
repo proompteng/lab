@@ -1505,9 +1505,16 @@ data:
         self.assertEqual(report["missing_liquidity_days"], 2)
         self.assertEqual(report["unfillable_notional"], "600000")
         self.assertEqual(report["fillable_notional_per_day"], "0")
+        self.assertEqual(report["worst_active_day_fillable_notional"], "0")
+        self.assertEqual(report["p10_active_day_fillable_notional"], "0")
+        self.assertFalse(report["tail_coverage_passed"])
         self.assertEqual(report["post_delay_depth_net_pnl_per_day"], "0")
         self.assertIn(
             "delay_adjusted_depth_stress_liquidity_evidence_missing",
+            report["reasons"],
+        )
+        self.assertIn(
+            "delay_adjusted_depth_tail_fillable_notional_below_minimum",
             report["reasons"],
         )
         self.assertTrue(all(row["fillable_notional"] == "0" for row in report["daily"]))
@@ -1554,9 +1561,16 @@ data:
         self.assertEqual(report["fillable_notional_per_day"], "150000")
         self.assertEqual(report["unfillable_notional"], "500000")
         self.assertEqual(report["daily"][0]["fillable_ratio"], "0.375")
+        self.assertEqual(report["worst_active_day_fillable_notional"], "150000")
+        self.assertEqual(report["p10_active_day_fillable_notional"], "150000")
+        self.assertFalse(report["tail_coverage_passed"])
         self.assertEqual(report["post_delay_depth_net_pnl_per_day"], "112.5")
         self.assertIn(
             "delay_adjusted_depth_fillable_notional_below_minimum",
+            report["reasons"],
+        )
+        self.assertIn(
+            "delay_adjusted_depth_tail_fillable_notional_below_minimum",
             report["reasons"],
         )
         self.assertIn(

@@ -1011,6 +1011,19 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(
             summary["delay_adjusted_depth_fillable_notional_per_day"], "18750"
         )
+        self.assertEqual(
+            summary["delay_adjusted_depth_latency_grid_ms"], ["50", "150", "250"]
+        )
+        self.assertEqual(summary["delay_adjusted_depth_grid_max_stress_ms"], "250")
+        self.assertEqual(
+            summary["delay_adjusted_depth_worst_active_day_fillable_notional"],
+            "40000",
+        )
+        self.assertEqual(
+            summary["delay_adjusted_depth_p10_active_day_fillable_notional"],
+            "40000",
+        )
+        self.assertTrue(summary["delay_adjusted_depth_tail_coverage_passed"])
         self.assertTrue(summary["delay_adjusted_depth_liquidity_evidence_present"])
         self.assertEqual(summary["delay_adjusted_depth_liquidity_missing_day_count"], 0)
         self.assertEqual(summary["delay_adjusted_depth_fillable_ratio"], "1")
@@ -1074,6 +1087,13 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(
             summary["delay_adjusted_depth_fillable_notional_per_day"], "47500.00"
         )
+        self.assertEqual(
+            summary["delay_adjusted_depth_worst_active_day_fillable_notional"], "0"
+        )
+        self.assertEqual(
+            summary["delay_adjusted_depth_p10_active_day_fillable_notional"], "0"
+        )
+        self.assertFalse(summary["delay_adjusted_depth_tail_coverage_passed"])
         self.assertFalse(summary["delay_adjusted_depth_stress_passed"])
 
     def test_consistency_penalty_scales_delay_depth_net_for_thin_recorded_liquidity(
@@ -1121,6 +1141,19 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(
             summary["delay_adjusted_depth_fillable_notional_per_day"], "190000.00"
         )
+        self.assertEqual(
+            summary["delay_adjusted_depth_worst_grid_fillable_notional_per_day"],
+            "150000.00",
+        )
+        self.assertEqual(
+            summary["delay_adjusted_depth_worst_active_day_fillable_notional"],
+            "150000.00",
+        )
+        self.assertEqual(
+            summary["delay_adjusted_depth_p10_active_day_fillable_notional"],
+            "150000.00",
+        )
+        self.assertTrue(summary["delay_adjusted_depth_tail_coverage_passed"])
         self.assertEqual(summary["delay_adjusted_depth_fillable_ratio"], "0.475")
         self.assertEqual(
             summary["delay_adjusted_depth_unfillable_notional_per_day"], "210000.00"

@@ -410,6 +410,41 @@ def _delay_adjusted_depth_stress_passed(bundle: CandidateEvidenceBundle) -> bool
     )
 
 
+def _delay_adjusted_depth_liquidity_evidence_present(
+    bundle: CandidateEvidenceBundle,
+) -> bool:
+    scorecard = _scorecard(bundle)
+    return _boolish(
+        scorecard.get("delay_adjusted_depth_liquidity_evidence_present")
+        or scorecard.get("delay_depth_liquidity_evidence_present")
+        or scorecard.get("latency_depth_liquidity_evidence_present")
+    )
+
+
+def _delay_adjusted_depth_liquidity_missing_day_count(
+    bundle: CandidateEvidenceBundle,
+) -> int:
+    scorecard = _scorecard(bundle)
+    return int(
+        _decimal(
+            scorecard.get("delay_adjusted_depth_liquidity_missing_day_count")
+            or scorecard.get("delay_depth_liquidity_missing_day_count")
+            or scorecard.get("latency_depth_liquidity_missing_day_count")
+        )
+    )
+
+
+def _delay_adjusted_depth_tail_coverage_passed(
+    bundle: CandidateEvidenceBundle,
+) -> bool:
+    scorecard = _scorecard(bundle)
+    return _boolish(
+        scorecard.get("delay_adjusted_depth_tail_coverage_passed")
+        or scorecard.get("delay_depth_tail_coverage_passed")
+        or scorecard.get("latency_depth_tail_coverage_passed")
+    )
+
+
 def _delay_adjusted_depth_stress_artifact_ref(
     bundle: CandidateEvidenceBundle,
 ) -> str:
@@ -449,6 +484,28 @@ def _delay_adjusted_depth_fillable_notional_per_day(
         scorecard.get("delay_adjusted_depth_fillable_notional_per_day")
         or scorecard.get("delay_depth_stress_fillable_notional_per_day")
         or scorecard.get("latency_depth_fillable_notional_per_day")
+    )
+
+
+def _delay_adjusted_depth_worst_active_day_fillable_notional(
+    bundle: CandidateEvidenceBundle,
+) -> Decimal:
+    scorecard = _scorecard(bundle)
+    return _decimal(
+        scorecard.get("delay_adjusted_depth_worst_active_day_fillable_notional")
+        or scorecard.get("delay_depth_worst_active_day_fillable_notional")
+        or scorecard.get("latency_depth_worst_active_day_fillable_notional")
+    )
+
+
+def _delay_adjusted_depth_p10_active_day_fillable_notional(
+    bundle: CandidateEvidenceBundle,
+) -> Decimal:
+    scorecard = _scorecard(bundle)
+    return _decimal(
+        scorecard.get("delay_adjusted_depth_p10_active_day_fillable_notional")
+        or scorecard.get("delay_depth_p10_active_day_fillable_notional")
+        or scorecard.get("latency_depth_p10_active_day_fillable_notional")
     )
 
 
@@ -917,6 +974,20 @@ def _portfolio_scorecard(
         ),
         Decimal("0"),
     )
+    delay_depth_worst_active_day_fillable_notional = sum(
+        (
+            _delay_adjusted_depth_worst_active_day_fillable_notional(bundle) * weight
+            for bundle, weight in zip(selected, weights, strict=True)
+        ),
+        Decimal("0"),
+    )
+    delay_depth_p10_active_day_fillable_notional = sum(
+        (
+            _delay_adjusted_depth_p10_active_day_fillable_notional(bundle) * weight
+            for bundle, weight in zip(selected, weights, strict=True)
+        ),
+        Decimal("0"),
+    )
     double_oos_artifact_refs = [
         ref for ref in (_double_oos_artifact_ref(bundle) for bundle in selected) if ref
     ]
@@ -1023,6 +1094,19 @@ def _portfolio_scorecard(
         ),
         "delay_adjusted_depth_stress_passed": bool(selected)
         and all(_delay_adjusted_depth_stress_passed(bundle) for bundle in selected),
+        "delay_adjusted_depth_liquidity_evidence_present": bool(selected)
+        and all(
+            _delay_adjusted_depth_liquidity_evidence_present(bundle)
+            for bundle in selected
+        ),
+        "delay_adjusted_depth_liquidity_missing_day_count": sum(
+            _delay_adjusted_depth_liquidity_missing_day_count(bundle)
+            for bundle in selected
+        ),
+        "delay_adjusted_depth_tail_coverage_passed": bool(selected)
+        and all(
+            _delay_adjusted_depth_tail_coverage_passed(bundle) for bundle in selected
+        ),
         "delay_adjusted_depth_stress_artifact_refs": delay_depth_artifact_refs,
         "delay_adjusted_depth_stress_artifact_ref": delay_depth_artifact_refs[0]
         if delay_depth_artifact_refs
@@ -1034,8 +1118,16 @@ def _portfolio_scorecard(
                 default=Decimal("0"),
             )
         ),
+        "delay_adjusted_depth_latency_grid_ms": ["50", "150", "250"],
+        "delay_adjusted_depth_grid_max_stress_ms": "250",
         "delay_adjusted_depth_fillable_notional_per_day": str(
             delay_depth_fillable_notional_per_day
+        ),
+        "delay_adjusted_depth_worst_active_day_fillable_notional": str(
+            delay_depth_worst_active_day_fillable_notional
+        ),
+        "delay_adjusted_depth_p10_active_day_fillable_notional": str(
+            delay_depth_p10_active_day_fillable_notional
         ),
         "delay_adjusted_depth_stress_net_pnl_per_day": str(
             delay_depth_stress_net_pnl_per_day

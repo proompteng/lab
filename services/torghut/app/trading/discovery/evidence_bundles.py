@@ -13,6 +13,11 @@ EVIDENCE_BUNDLE_SCHEMA_VERSION = "torghut.candidate-evidence-bundle.v1"
 VALID_COST_CALIBRATION_STATUSES = frozenset({"calibrated", "provisional"})
 MARKET_IMPACT_STRESS_COST_BPS = Decimal("1")
 DELAY_ADJUSTED_DEPTH_STRESS_MS = Decimal("50")
+DELAY_ADJUSTED_DEPTH_STRESS_GRID_MS = (
+    Decimal("50"),
+    Decimal("150"),
+    Decimal("250"),
+)
 DELAY_ADJUSTED_DEPTH_STRESS_COST_BPS = Decimal("1")
 REPLAY_ACTIVITY_SCORECARD_KEYS = (
     "decision_count",
@@ -63,6 +68,42 @@ def _decimal_mapping_total(mapping: Mapping[str, Any]) -> Decimal:
     for value in mapping.values():
         total += _decimal(value)
     return total
+
+
+def _p10(values: Sequence[Decimal]) -> Decimal:
+    if not values:
+        return Decimal("0")
+    ordered = sorted(values)
+    index = int((len(ordered) - 1) * 0.10)
+    return ordered[index]
+
+
+def _delay_depth_fillability(
+    *,
+    daily_filled_notional: Mapping[str, Any],
+    daily_liquidity_notional: Mapping[str, Any],
+    stress_ms: Decimal,
+) -> tuple[Decimal, int, list[Decimal]]:
+    haircut_rate = min(Decimal("0.50"), stress_ms / Decimal("1000"))
+    total_fillable_notional = Decimal("0")
+    missing_liquidity_day_count = 0
+    active_day_fillable: list[Decimal] = []
+    for day, raw_filled_notional in daily_filled_notional.items():
+        filled_notional = _decimal(raw_filled_notional)
+        if filled_notional <= 0:
+            continue
+        liquidity_notional = _decimal(daily_liquidity_notional.get(day))
+        if liquidity_notional <= 0:
+            missing_liquidity_day_count += 1
+            active_day_fillable.append(Decimal("0"))
+            continue
+        fillable_notional = min(
+            filled_notional,
+            liquidity_notional * (Decimal("1") - haircut_rate),
+        )
+        active_day_fillable.append(fillable_notional)
+        total_fillable_notional += fillable_notional
+    return total_fillable_notional, missing_liquidity_day_count, active_day_fillable
 
 
 def _sum_mapping_int_values(mapping: Mapping[str, Any], key: str) -> int:
@@ -186,26 +227,46 @@ def _enrich_scorecard_with_replay_stress_metrics(
             and market_impact_net_pnl_per_day > 0
         )
 
-    delay_depth_haircut_rate = DELAY_ADJUSTED_DEPTH_STRESS_MS / Decimal("1000")
     delay_depth_total_filled_notional = _decimal_mapping_total(daily_filled_notional)
     if delay_depth_total_filled_notional <= 0 and trading_day_count > 0:
         delay_depth_total_filled_notional = (
             avg_filled_notional_per_day * trading_day_count
         )
-    delay_depth_total_fillable_notional = Decimal("0")
-    delay_depth_missing_liquidity_day_count = 0
-    for day, raw_filled_notional in daily_filled_notional.items():
-        filled_notional = _decimal(raw_filled_notional)
-        if filled_notional <= 0:
-            continue
-        liquidity_notional = _decimal(daily_liquidity_notional.get(day))
-        if liquidity_notional <= 0:
-            delay_depth_missing_liquidity_day_count += 1
-            continue
-        delay_depth_total_fillable_notional += min(
-            filled_notional,
-            liquidity_notional * (Decimal("1") - delay_depth_haircut_rate),
+    (
+        delay_depth_total_fillable_notional,
+        delay_depth_missing_liquidity_day_count,
+        _active_day_fillable,
+    ) = _delay_depth_fillability(
+        daily_filled_notional=daily_filled_notional,
+        daily_liquidity_notional=daily_liquidity_notional,
+        stress_ms=DELAY_ADJUSTED_DEPTH_STRESS_MS,
+    )
+    grid_fillability = {
+        str(stress_ms): _delay_depth_fillability(
+            daily_filled_notional=daily_filled_notional,
+            daily_liquidity_notional=daily_liquidity_notional,
+            stress_ms=stress_ms,
         )
+        for stress_ms in DELAY_ADJUSTED_DEPTH_STRESS_GRID_MS
+    }
+    max_grid_stress_ms = max(DELAY_ADJUSTED_DEPTH_STRESS_GRID_MS)
+    (
+        grid_worst_total_fillable_notional,
+        grid_worst_missing_liquidity_day_count,
+        grid_worst_active_day_fillable,
+    ) = grid_fillability[str(max_grid_stress_ms)]
+    p10_active_day_fillable = _p10(grid_worst_active_day_fillable)
+    worst_active_day_fillable = (
+        min(grid_worst_active_day_fillable)
+        if grid_worst_active_day_fillable
+        else Decimal("0")
+    )
+    tail_coverage_passed = (
+        bool(grid_worst_active_day_fillable)
+        and grid_worst_missing_liquidity_day_count == 0
+        and p10_active_day_fillable > 0
+        and worst_active_day_fillable > 0
+    )
     delay_depth_fillable_notional_per_day = (
         delay_depth_total_fillable_notional / trading_day_count
         if trading_day_count > 0
@@ -228,22 +289,45 @@ def _enrich_scorecard_with_replay_stress_metrics(
         enriched["delay_adjusted_depth_stress_model"] = "latency_depth_haircut"
     if "delay_adjusted_depth_stress_ms" not in enriched:
         enriched["delay_adjusted_depth_stress_ms"] = str(DELAY_ADJUSTED_DEPTH_STRESS_MS)
+    if "delay_adjusted_depth_latency_grid_ms" not in enriched:
+        enriched["delay_adjusted_depth_latency_grid_ms"] = [
+            str(stress_ms) for stress_ms in DELAY_ADJUSTED_DEPTH_STRESS_GRID_MS
+        ]
+    if "delay_adjusted_depth_grid_max_stress_ms" not in enriched:
+        enriched["delay_adjusted_depth_grid_max_stress_ms"] = str(max_grid_stress_ms)
     if "delay_adjusted_depth_fillable_notional_per_day" not in enriched:
         enriched["delay_adjusted_depth_fillable_notional_per_day"] = str(
             delay_depth_fillable_notional_per_day
         )
+    if "delay_adjusted_depth_worst_grid_fillable_notional_per_day" not in enriched:
+        enriched["delay_adjusted_depth_worst_grid_fillable_notional_per_day"] = str(
+            grid_worst_total_fillable_notional / trading_day_count
+            if trading_day_count > 0
+            else Decimal("0")
+        )
+    if "delay_adjusted_depth_worst_active_day_fillable_notional" not in enriched:
+        enriched["delay_adjusted_depth_worst_active_day_fillable_notional"] = str(
+            worst_active_day_fillable
+        )
+    if "delay_adjusted_depth_p10_active_day_fillable_notional" not in enriched:
+        enriched["delay_adjusted_depth_p10_active_day_fillable_notional"] = str(
+            p10_active_day_fillable
+        )
+    if "delay_adjusted_depth_tail_coverage_passed" not in enriched:
+        enriched["delay_adjusted_depth_tail_coverage_passed"] = tail_coverage_passed
     if "delay_adjusted_depth_liquidity_evidence_present" not in enriched:
         enriched["delay_adjusted_depth_liquidity_evidence_present"] = (
             bool(daily_liquidity_notional)
-            and delay_depth_missing_liquidity_day_count == 0
+            and grid_worst_missing_liquidity_day_count == 0
             and (
                 delay_depth_total_fillable_notional > 0
                 or delay_depth_total_filled_notional <= 0
             )
         )
     if "delay_adjusted_depth_liquidity_missing_day_count" not in enriched:
-        enriched["delay_adjusted_depth_liquidity_missing_day_count"] = (
-            delay_depth_missing_liquidity_day_count
+        enriched["delay_adjusted_depth_liquidity_missing_day_count"] = max(
+            delay_depth_missing_liquidity_day_count,
+            grid_worst_missing_liquidity_day_count,
         )
     if "delay_adjusted_depth_fillable_ratio" not in enriched:
         enriched["delay_adjusted_depth_fillable_ratio"] = str(
@@ -271,6 +355,7 @@ def _enrich_scorecard_with_replay_stress_metrics(
     if "delay_adjusted_depth_stress_passed" not in enriched:
         enriched["delay_adjusted_depth_stress_passed"] = (
             bool(enriched.get("delay_adjusted_depth_liquidity_evidence_present"))
+            and bool(enriched.get("delay_adjusted_depth_tail_coverage_passed"))
             and delay_depth_fillable_notional_per_day > 0
             and delay_depth_net_pnl_per_day > 0
         )

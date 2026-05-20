@@ -144,6 +144,14 @@ def _decimal_string(value: Decimal) -> str:
     return rendered or "0"
 
 
+def _p10(values: Sequence[Decimal]) -> Decimal:
+    if not values:
+        return Decimal("0")
+    ordered = sorted(values)
+    index = int((len(ordered) - 1) * 0.10)
+    return ordered[index]
+
+
 _MICROBAR_PORTFOLIO_SIGNAL_SETTINGS: dict[str, dict[str, str]] = {
     "open_window_continuation": {
         "rank_feature": "cross_section_session_open_rank",
@@ -1793,7 +1801,7 @@ def _market_impact_stress_report(
         else Decimal("0.1")
     )
     reference_adv = reference_notional / max_participation
-    daily_rows: list[dict[str, str]] = []
+    daily_rows: list[dict[str, Any]] = []
     total_impact_cost = Decimal("0")
     weighted_impact_bps_notional = Decimal("0")
     missing_liquidity_days: list[str] = []
@@ -1946,6 +1954,7 @@ def _delay_adjusted_depth_stress_report(
         else Decimal("0")
     )
     stress_delay_ms = Decimal("250")
+    latency_grid_ms = (Decimal("50"), Decimal("150"), Decimal("250"))
     depth_haircut_rate = min(
         Decimal("0.50"),
         max(Decimal("0.10"), stress_delay_ms / Decimal("1000")),
@@ -1955,7 +1964,7 @@ def _delay_adjusted_depth_stress_report(
         if config.max_participation_rate > 0
         else Decimal("0.1")
     )
-    daily_rows: list[dict[str, str]] = []
+    daily_rows: list[dict[str, Any]] = []
     total_delay_depth_cost = Decimal("0")
     total_fillable_notional = Decimal("0")
     total_unfillable_notional = Decimal("0")
@@ -1963,6 +1972,7 @@ def _delay_adjusted_depth_stress_report(
     weighted_delay_depth_bps_notional = Decimal("0")
     recorded_liquidity_days = 0
     missing_liquidity_days = 0
+    active_day_fillable_notional: list[Decimal] = []
     for day in sorted(daily_net):
         notional = daily_notional.get(day, Decimal("0"))
         liquidity_notional = daily_liquidity.get(day, Decimal("0"))
@@ -1980,6 +1990,24 @@ def _delay_adjusted_depth_stress_report(
             if liquidity_notional > 0 and notional > 0
             else Decimal("0")
         )
+        latency_grid_fillable_notional = {
+            _decimal_string(grid_ms): _decimal_string(
+                min(
+                    notional,
+                    liquidity_notional
+                    * (
+                        Decimal("1")
+                        - min(
+                            Decimal("0.50"),
+                            max(Decimal("0.10"), grid_ms / Decimal("1000")),
+                        )
+                    ),
+                )
+                if liquidity_notional > 0 and notional > 0
+                else Decimal("0")
+            )
+            for grid_ms in latency_grid_ms
+        }
         unfillable_notional = max(Decimal("0"), notional - fillable_notional)
         fillable_ratio = fillable_notional / notional if notional > 0 else Decimal("1")
         delay_depth_cost_bps = max(
@@ -1998,6 +2026,8 @@ def _delay_adjusted_depth_stress_report(
         total_delay_depth_cost += delay_depth_cost
         total_post_delay_depth_net_pnl += post_delay_depth_net
         weighted_delay_depth_bps_notional += delay_depth_cost_bps * notional
+        if notional > 0:
+            active_day_fillable_notional.append(fillable_notional)
         daily_rows.append(
             {
                 "day": day,
@@ -2006,6 +2036,7 @@ def _delay_adjusted_depth_stress_report(
                 "liquidity_notional": _decimal_string(liquidity_notional),
                 "stress_delay_ms": _decimal_string(stress_delay_ms),
                 "depth_haircut_rate": _decimal_string(depth_haircut_rate),
+                "latency_grid_fillable_notional": latency_grid_fillable_notional,
                 "fillable_notional": _decimal_string(fillable_notional),
                 "unfillable_notional": _decimal_string(unfillable_notional),
                 "fillable_ratio": _decimal_string(fillable_ratio),
@@ -2032,6 +2063,18 @@ def _delay_adjusted_depth_stress_report(
         if trading_days > 0
         else Decimal("0")
     )
+    worst_active_day_fillable_notional = (
+        min(active_day_fillable_notional)
+        if active_day_fillable_notional
+        else Decimal("0")
+    )
+    p10_active_day_fillable_notional = _p10(active_day_fillable_notional)
+    tail_coverage_passed = (
+        bool(active_day_fillable_notional)
+        and missing_liquidity_days == 0
+        and worst_active_day_fillable_notional >= program.objective.min_daily_notional
+        and p10_active_day_fillable_notional >= program.objective.min_daily_notional
+    )
     reasons: list[str] = []
     if trading_days <= 0:
         reasons.append("delay_adjusted_depth_stress_trading_days_missing")
@@ -2043,6 +2086,8 @@ def _delay_adjusted_depth_stress_report(
         reasons.append("delay_adjusted_depth_stress_cost_bps_zero")
     if fillable_notional_per_day < program.objective.min_daily_notional:
         reasons.append("delay_adjusted_depth_fillable_notional_below_minimum")
+    if not tail_coverage_passed:
+        reasons.append("delay_adjusted_depth_tail_fillable_notional_below_minimum")
     if post_delay_depth_net_pnl_per_day < program.objective.target_net_pnl_per_day:
         reasons.append("delay_adjusted_depth_stress_net_pnl_below_target")
     if not bool(report.get("objective_met")):
@@ -2086,6 +2131,15 @@ def _delay_adjusted_depth_stress_report(
         "delay_depth_cost": _decimal_string(total_delay_depth_cost),
         "delay_depth_cost_bps": _decimal_string(delay_depth_cost_bps),
         "stress_delay_ms": _decimal_string(stress_delay_ms),
+        "latency_grid_ms": [
+            _decimal_string(stress_ms) for stress_ms in latency_grid_ms
+        ],
+        "delay_adjusted_depth_latency_grid_ms": [
+            _decimal_string(stress_ms) for stress_ms in latency_grid_ms
+        ],
+        "delay_adjusted_depth_grid_max_stress_ms": _decimal_string(
+            max(latency_grid_ms)
+        ),
         "depth_haircut_rate": _decimal_string(depth_haircut_rate),
         "liquidity_input_source": "recorded_liquidity_notional"
         if recorded_liquidity_days
@@ -2101,6 +2155,20 @@ def _delay_adjusted_depth_stress_report(
         "avg_filled_notional_per_day": _decimal_string(avg_filled_notional),
         "unfillable_notional": _decimal_string(total_unfillable_notional),
         "fillable_notional_per_day": _decimal_string(fillable_notional_per_day),
+        "worst_active_day_fillable_notional": _decimal_string(
+            worst_active_day_fillable_notional
+        ),
+        "delay_adjusted_depth_worst_active_day_fillable_notional": _decimal_string(
+            worst_active_day_fillable_notional
+        ),
+        "p10_active_day_fillable_notional": _decimal_string(
+            p10_active_day_fillable_notional
+        ),
+        "delay_adjusted_depth_p10_active_day_fillable_notional": _decimal_string(
+            p10_active_day_fillable_notional
+        ),
+        "tail_coverage_passed": tail_coverage_passed,
+        "delay_adjusted_depth_tail_coverage_passed": tail_coverage_passed,
         "daily": daily_rows,
     }
 

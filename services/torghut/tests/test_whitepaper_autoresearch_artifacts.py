@@ -381,6 +381,21 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
             "350000",
         )
         self.assertEqual(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_worst_active_day_fillable_notional"
+            ],
+            "350000",
+        )
+        self.assertEqual(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_p10_active_day_fillable_notional"
+            ],
+            "350000",
+        )
+        self.assertTrue(
+            bundle.objective_scorecard["delay_adjusted_depth_tail_coverage_passed"]
+        )
+        self.assertEqual(
             bundle.objective_scorecard["delay_adjusted_depth_stress_net_pnl_per_day"],
             "88",
         )
@@ -429,6 +444,21 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
                 "delay_adjusted_depth_fillable_notional_per_day"
             ],
             "0",
+        )
+        self.assertEqual(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_worst_active_day_fillable_notional"
+            ],
+            "0",
+        )
+        self.assertEqual(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_p10_active_day_fillable_notional"
+            ],
+            "0",
+        )
+        self.assertFalse(
+            bundle.objective_scorecard["delay_adjusted_depth_tail_coverage_passed"]
         )
         self.assertFalse(
             bundle.objective_scorecard["delay_adjusted_depth_stress_passed"]
@@ -480,6 +510,27 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
                 "delay_adjusted_depth_fillable_notional_per_day"
             ],
             "295000.00",
+        )
+        self.assertEqual(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_worst_grid_fillable_notional_per_day"
+            ],
+            "275000.00",
+        )
+        self.assertEqual(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_worst_active_day_fillable_notional"
+            ],
+            "150000.00",
+        )
+        self.assertEqual(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_p10_active_day_fillable_notional"
+            ],
+            "150000.00",
+        )
+        self.assertTrue(
+            bundle.objective_scorecard["delay_adjusted_depth_tail_coverage_passed"]
         )
         self.assertEqual(
             bundle.objective_scorecard["delay_adjusted_depth_fillable_ratio"],

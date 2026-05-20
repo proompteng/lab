@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Mapping, cast
+from typing import Any, Mapping, Sequence, cast
 
 
 PROFIT_TARGET_ORACLE_SCHEMA_VERSION = "torghut.profit-target-oracle.v1"
@@ -62,8 +62,12 @@ class ProfitTargetOraclePolicy:
     require_market_impact_liquidity_evidence: bool = True
     require_delay_adjusted_depth_stress: bool = True
     require_delay_adjusted_depth_liquidity_evidence: bool = True
+    require_delay_adjusted_depth_latency_grid: bool = True
+    require_delay_adjusted_depth_tail_coverage: bool = True
     min_delay_adjusted_depth_stress_ms: Decimal = Decimal("50")
+    min_delay_adjusted_depth_grid_max_stress_ms: Decimal = Decimal("250")
     min_delay_adjusted_depth_fillable_notional_per_day: Decimal = Decimal("300000")
+    min_delay_adjusted_depth_tail_fillable_notional: Decimal = Decimal("300000")
     require_double_oos: bool = True
     min_double_oos_independent_window_count: int = 2
     min_double_oos_pass_rate: Decimal = Decimal("1.00")
@@ -117,11 +121,19 @@ class ProfitTargetOraclePolicy:
             ),
             "require_delay_adjusted_depth_stress": self.require_delay_adjusted_depth_stress,
             "require_delay_adjusted_depth_liquidity_evidence": self.require_delay_adjusted_depth_liquidity_evidence,
+            "require_delay_adjusted_depth_latency_grid": self.require_delay_adjusted_depth_latency_grid,
+            "require_delay_adjusted_depth_tail_coverage": self.require_delay_adjusted_depth_tail_coverage,
             "min_delay_adjusted_depth_stress_ms": str(
                 self.min_delay_adjusted_depth_stress_ms
             ),
+            "min_delay_adjusted_depth_grid_max_stress_ms": str(
+                self.min_delay_adjusted_depth_grid_max_stress_ms
+            ),
             "min_delay_adjusted_depth_fillable_notional_per_day": str(
                 self.min_delay_adjusted_depth_fillable_notional_per_day
+            ),
+            "min_delay_adjusted_depth_tail_fillable_notional": str(
+                self.min_delay_adjusted_depth_tail_fillable_notional
             ),
             "accepted_delay_adjusted_depth_stress_models": sorted(
                 _ACCEPTED_DELAY_ADJUSTED_DEPTH_STRESS_MODELS
@@ -201,6 +213,21 @@ def _artifact_refs(scorecard: Mapping[str, Any], *keys: str) -> list[str]:
         if normalized:
             refs.append(normalized)
     return refs
+
+
+def _string_sequence(value: Any) -> list[str]:
+    if isinstance(value, (list, tuple)):
+        return [
+            normalized
+            for item in cast(Sequence[Any], value)
+            if (normalized := _string(item))
+        ]
+    raw_value = _string(value)
+    if not raw_value:
+        return []
+    if "," in raw_value:
+        return [item.strip() for item in raw_value.split(",") if item.strip()]
+    return [raw_value]
 
 
 def _start_equity(
@@ -765,6 +792,94 @@ def evaluate_profit_target_oracle(
             else Decimal("999999999"),
         )
     )
+    delay_depth_latency_grid_ms = _string_sequence(
+        scorecard.get("delay_adjusted_depth_latency_grid_ms")
+        or scorecard.get("delay_depth_latency_grid_ms")
+        or scorecard.get("latency_depth_grid_ms")
+    )
+    required_latency_grid_ms = {"50", "150", "250"}
+    delay_depth_latency_grid_present = required_latency_grid_ms.issubset(
+        set(delay_depth_latency_grid_ms)
+    )
+    checks.append(
+        {
+            "metric": "delay_adjusted_depth_latency_grid_ms",
+            "observed": ",".join(delay_depth_latency_grid_ms),
+            "operator": "contains",
+            "threshold": sorted(required_latency_grid_ms),
+            "source_marker": "latency_execution_policy_arxiv_2504_00846_2025",
+            "passed": delay_depth_latency_grid_present
+            if (
+                policy.require_delay_adjusted_depth_stress
+                and policy.require_delay_adjusted_depth_latency_grid
+            )
+            else True,
+        }
+    )
+    checks.append(
+        _numeric_check(
+            metric="delay_adjusted_depth_grid_max_stress_ms",
+            observed=_decimal(
+                scorecard.get("delay_adjusted_depth_grid_max_stress_ms")
+                or scorecard.get("delay_depth_grid_max_stress_ms")
+                or scorecard.get("latency_depth_grid_max_stress_ms")
+            ),
+            operator="gte",
+            threshold=policy.min_delay_adjusted_depth_grid_max_stress_ms
+            if (
+                policy.require_delay_adjusted_depth_stress
+                and policy.require_delay_adjusted_depth_latency_grid
+            )
+            else Decimal("0"),
+        )
+    )
+    delay_depth_tail_coverage_passed = _boolish(
+        scorecard.get("delay_adjusted_depth_tail_coverage_passed")
+        or scorecard.get("delay_depth_tail_coverage_passed")
+        or scorecard.get("latency_depth_tail_coverage_passed")
+    )
+    checks.append(
+        {
+            "metric": "delay_adjusted_depth_tail_coverage_passed",
+            "observed": str(delay_depth_tail_coverage_passed).lower(),
+            "operator": "eq",
+            "threshold": "true",
+            "source_marker": "market_depth_execution_delays_ssrn_6440898_2026",
+            "passed": delay_depth_tail_coverage_passed
+            if (
+                policy.require_delay_adjusted_depth_stress
+                and policy.require_delay_adjusted_depth_tail_coverage
+            )
+            else True,
+        }
+    )
+    for metric_name, *keys in (
+        (
+            "delay_adjusted_depth_worst_active_day_fillable_notional",
+            "delay_adjusted_depth_worst_active_day_fillable_notional",
+            "delay_depth_worst_active_day_fillable_notional",
+            "latency_depth_worst_active_day_fillable_notional",
+        ),
+        (
+            "delay_adjusted_depth_p10_active_day_fillable_notional",
+            "delay_adjusted_depth_p10_active_day_fillable_notional",
+            "delay_depth_p10_active_day_fillable_notional",
+            "latency_depth_p10_active_day_fillable_notional",
+        ),
+    ):
+        checks.append(
+            _numeric_check(
+                metric=metric_name,
+                observed=max((_decimal(scorecard.get(key)) for key in keys)),
+                operator="gte",
+                threshold=policy.min_delay_adjusted_depth_tail_fillable_notional
+                if (
+                    policy.require_delay_adjusted_depth_stress
+                    and policy.require_delay_adjusted_depth_tail_coverage
+                )
+                else Decimal("0"),
+            )
+        )
     checks.append(
         {
             "metric": "delay_adjusted_depth_stress_model",
