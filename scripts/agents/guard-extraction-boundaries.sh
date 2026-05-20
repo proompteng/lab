@@ -186,6 +186,11 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-config.ts"
 
 fail_if_matches \
+  "Agents watch reliability config must not read Jangar compatibility env aliases" \
+  'JANGAR_CONTROL_PLANE_WATCH_HEALTH_' \
+  "${ROOT_DIR}/services/agents/src/server/control-plane-watch-reliability.ts"
+
+fail_if_matches \
   "Jangar kube gateway must not list generic Agents runtime Deployment/Job/Pod resources directly" \
   "client\\.list\\(['\"](deployments|jobs\\.batch|pods)['\"]" \
   "${ROOT_DIR}/services/jangar/src/server/kube-gateway.ts"

@@ -82,36 +82,21 @@ const parsePositiveInt = (value: string | undefined, fallback: number, minimum =
   return maximum === undefined ? bounded : Math.min(bounded, maximum)
 }
 
-const readConfigValue = (env: EnvSource, canonicalName: string, legacyName: string) =>
-  normalizeNonEmpty(env[canonicalName]) ?? normalizeNonEmpty(env[legacyName]) ?? undefined
-
 export const resolveControlPlaneWatchReliabilityConfig = (env: EnvSource = process.env): WatchReliabilityConfig => ({
   windowMinutes: parsePositiveInt(
-    readConfigValue(
-      env,
-      'AGENTS_CONTROL_PLANE_WATCH_HEALTH_WINDOW_MINUTES',
-      'JANGAR_CONTROL_PLANE_WATCH_HEALTH_WINDOW_MINUTES',
-    ),
+    normalizeNonEmpty(env.AGENTS_CONTROL_PLANE_WATCH_HEALTH_WINDOW_MINUTES) ?? undefined,
     DEFAULT_WATCH_WINDOW_MINUTES,
     1,
     MAX_WINDOW_MINUTES,
   ),
   streamLimit: parsePositiveInt(
-    readConfigValue(
-      env,
-      'AGENTS_CONTROL_PLANE_WATCH_HEALTH_STREAM_LIMIT',
-      'JANGAR_CONTROL_PLANE_WATCH_HEALTH_STREAM_LIMIT',
-    ),
+    normalizeNonEmpty(env.AGENTS_CONTROL_PLANE_WATCH_HEALTH_STREAM_LIMIT) ?? undefined,
     DEFAULT_WATCH_STREAM_LIMIT,
     1,
     MAX_RECORDED_STREAMS,
   ),
   restartDegradeThreshold: parsePositiveInt(
-    readConfigValue(
-      env,
-      'AGENTS_CONTROL_PLANE_WATCH_HEALTH_RESTART_DEGRADE_THRESHOLD',
-      'JANGAR_CONTROL_PLANE_WATCH_HEALTH_RESTART_DEGRADE_THRESHOLD',
-    ),
+    normalizeNonEmpty(env.AGENTS_CONTROL_PLANE_WATCH_HEALTH_RESTART_DEGRADE_THRESHOLD) ?? undefined,
     DEFAULT_WATCH_RESTART_DEGRADE_THRESHOLD,
     1,
   ),

@@ -54,12 +54,12 @@ describe('control-plane watch reliability', () => {
     expect(summary.total_restarts).toBe(2)
   })
 
-  it('reads Jangar threshold aliases only as compatibility fallback', () => {
+  it('ignores legacy Jangar threshold aliases', () => {
     expect(
       resolveControlPlaneWatchReliabilityConfig({
         JANGAR_CONTROL_PLANE_WATCH_HEALTH_RESTART_DEGRADE_THRESHOLD: '9',
       }).restartDegradeThreshold,
-    ).toBe(9)
+    ).toBe(2)
     expect(
       resolveControlPlaneWatchReliabilityConfig({
         AGENTS_CONTROL_PLANE_WATCH_HEALTH_RESTART_DEGRADE_THRESHOLD: '3',
