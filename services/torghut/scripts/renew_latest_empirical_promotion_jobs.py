@@ -527,7 +527,7 @@ def _latest_source_activity_window(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                select max(d.created_at)
+                select min(d.created_at), max(d.created_at)
                 from trade_decisions d
                 join strategies s on s.id = d.strategy_id
                 where s.name = any(%s)
@@ -541,12 +541,17 @@ def _latest_source_activity_window(
                 ),
             )
             row = cur.fetchone()
-            latest = row[0] if row else None
-    if latest is None:
+            earliest = row[0] if row else None
+            latest = row[1] if row else None
+    if earliest is None or latest is None:
         return None
+    if earliest.tzinfo is None:
+        earliest = earliest.replace(tzinfo=timezone.utc)
     if latest.tzinfo is None:
         latest = latest.replace(tzinfo=timezone.utc)
-    return _regular_session_for_timestamp(latest.astimezone(timezone.utc))
+    window_start, _ = _regular_session_for_timestamp(earliest.astimezone(timezone.utc))
+    _, window_end = _regular_session_for_timestamp(latest.astimezone(timezone.utc))
+    return window_start, window_end
 
 
 def _latest_authoritative_rows(
@@ -728,7 +733,7 @@ def _run_runtime_window_import_target(
         )
         if source_activity_window is not None:
             window_start, window_end = source_activity_window
-            window_selection = "latest_source_execution_activity"
+            window_selection = "source_execution_activity_span"
         else:
             window_selection = "latest_completed_regular_session_no_source_activity"
     delay_depth_report_ref = _runtime_manifest_delay_depth_stress_report_ref(

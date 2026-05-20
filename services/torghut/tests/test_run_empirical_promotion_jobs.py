@@ -744,7 +744,7 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             runtime_window_source_kind="paper_runtime_observed",
         )
         source_window = (
-            datetime(2026, 5, 15, 13, 30, tzinfo=timezone.utc),
+            datetime(2026, 5, 6, 13, 30, tzinfo=timezone.utc),
             datetime(2026, 5, 15, 20, 0, tzinfo=timezone.utc),
         )
 
@@ -770,16 +770,14 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertIsNotNone(payload)
         assert payload is not None
         source_window_mock.assert_called_once()
-        self.assertEqual(payload["window_start"], "2026-05-15T13:30:00Z")
+        self.assertEqual(payload["window_start"], "2026-05-06T13:30:00Z")
         self.assertEqual(payload["window_end"], "2026-05-15T20:00:00Z")
-        self.assertEqual(
-            payload["window_selection"], "latest_source_execution_activity"
-        )
+        self.assertEqual(payload["window_selection"], "source_execution_activity_span")
         command = run_mock.call_args.args[0]
         self.assertIn("--window-start", command)
         self.assertEqual(
             command[command.index("--window-start") + 1],
-            "2026-05-15T13:30:00Z",
+            "2026-05-06T13:30:00Z",
         )
         self.assertEqual(
             command[command.index("--window-end") + 1],
@@ -863,11 +861,12 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             source_kind="paper_runtime_observed",
             delay_adjusted_depth_stress_report_ref="",
         )
+        earliest = datetime(2026, 5, 6, 18, 0, tzinfo=timezone.utc)
         latest = datetime(2026, 5, 15, 17, 25, tzinfo=timezone.utc)
         connection = MagicMock()
         cursor_context = MagicMock()
         cursor = MagicMock()
-        cursor.fetchone.return_value = (latest,)
+        cursor.fetchone.return_value = (earliest, latest)
         cursor_context.__enter__.return_value = cursor
         connection.cursor.return_value = cursor_context
         connection_context = MagicMock()
@@ -887,7 +886,7 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertEqual(
             window,
             (
-                datetime(2026, 5, 15, 13, 30, tzinfo=timezone.utc),
+                datetime(2026, 5, 6, 13, 30, tzinfo=timezone.utc),
                 datetime(2026, 5, 15, 20, 0, tzinfo=timezone.utc),
             ),
         )
