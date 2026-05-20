@@ -415,6 +415,49 @@ def _market_impact_liquidity_evidence_present(
     )
 
 
+def _implementation_uncertainty_required(bundle: CandidateEvidenceBundle) -> bool:
+    return _boolish(_scorecard(bundle).get("implementation_uncertainty_required"))
+
+
+def _implementation_uncertainty_stability_passed(
+    bundle: CandidateEvidenceBundle,
+) -> bool:
+    scorecard = _scorecard(bundle)
+    if not _implementation_uncertainty_required(bundle):
+        return True
+    return _boolish(scorecard.get("implementation_uncertainty_stability_passed"))
+
+
+def _implementation_uncertainty_model_count(bundle: CandidateEvidenceBundle) -> int:
+    return int(
+        _decimal(_scorecard(bundle).get("implementation_uncertainty_model_count"))
+    )
+
+
+def _implementation_uncertainty_lower_net_per_day(
+    bundle: CandidateEvidenceBundle,
+) -> Decimal:
+    return _decimal(
+        _scorecard(bundle).get("implementation_uncertainty_lower_net_pnl_per_day")
+    )
+
+
+def _implementation_uncertainty_upper_net_per_day(
+    bundle: CandidateEvidenceBundle,
+) -> Decimal:
+    return _decimal(
+        _scorecard(bundle).get("implementation_uncertainty_upper_net_pnl_per_day")
+    )
+
+
+def _implementation_uncertainty_interval_width_per_day(
+    bundle: CandidateEvidenceBundle,
+) -> Decimal:
+    return _decimal(
+        _scorecard(bundle).get("implementation_uncertainty_interval_width_per_day")
+    )
+
+
 def _delay_adjusted_depth_stress_passed(bundle: CandidateEvidenceBundle) -> bool:
     scorecard = _scorecard(bundle)
     return _boolish(
@@ -1043,6 +1086,33 @@ def _portfolio_scorecard(
         (_market_impact_stress_cost_bps(bundle) for bundle in selected),
         default=Decimal("0"),
     )
+    implementation_uncertainty_required = any(
+        _implementation_uncertainty_required(bundle) for bundle in selected
+    )
+    implementation_uncertainty_model_count = sum(
+        _implementation_uncertainty_model_count(bundle) for bundle in selected
+    )
+    implementation_uncertainty_lower_net_pnl_per_day = sum(
+        (
+            _implementation_uncertainty_lower_net_per_day(bundle) * weight
+            for bundle, weight in zip(selected, weights, strict=True)
+        ),
+        Decimal("0"),
+    )
+    implementation_uncertainty_upper_net_pnl_per_day = sum(
+        (
+            _implementation_uncertainty_upper_net_per_day(bundle) * weight
+            for bundle, weight in zip(selected, weights, strict=True)
+        ),
+        Decimal("0"),
+    )
+    implementation_uncertainty_interval_width_per_day = sum(
+        (
+            _implementation_uncertainty_interval_width_per_day(bundle) * weight
+            for bundle, weight in zip(selected, weights, strict=True)
+        ),
+        Decimal("0"),
+    )
     sleeve_promotion_blockers: dict[str, list[str]] = {}
     promotion_contract_blockers: list[str] = []
     promotion_contract_blocker_observations: list[str] = []
@@ -1152,6 +1222,35 @@ def _portfolio_scorecard(
         "market_impact_stress_net_pnl_per_day": str(
             market_impact_stress_net_pnl_per_day
         ),
+        "implementation_uncertainty_required": implementation_uncertainty_required,
+        "implementation_uncertainty_model": "portfolio_impact_latency_cost_interval",
+        "implementation_uncertainty_model_count": implementation_uncertainty_model_count,
+        "implementation_uncertainty_stability_passed": bool(selected)
+        and all(
+            _implementation_uncertainty_stability_passed(bundle) for bundle in selected
+        )
+        and (
+            not implementation_uncertainty_required
+            or implementation_uncertainty_lower_net_pnl_per_day
+            >= target_net_pnl_per_day
+        ),
+        "implementation_uncertainty_lower_net_pnl_per_day": str(
+            implementation_uncertainty_lower_net_pnl_per_day
+        ),
+        "implementation_uncertainty_upper_net_pnl_per_day": str(
+            implementation_uncertainty_upper_net_pnl_per_day
+        ),
+        "implementation_uncertainty_interval_width_per_day": str(
+            implementation_uncertainty_interval_width_per_day
+        ),
+        "implementation_uncertainty_target_net_pnl_per_day": str(
+            target_net_pnl_per_day
+        ),
+        "implementation_uncertainty_source_markers": [
+            "lob_simulation_reality_gap_arxiv_2603_24137_2026",
+            "order_flow_market_impact_volatility_arxiv_2601_23172_2026",
+            "implementation_risk_backtesting_arxiv_2603_20319_2026",
+        ],
         "delay_adjusted_depth_stress_passed": bool(selected)
         and all(_delay_adjusted_depth_stress_passed(bundle) for bundle in selected),
         "delay_adjusted_depth_liquidity_evidence_present": bool(selected)
@@ -1282,6 +1381,17 @@ def _portfolio_selection_key(
         _scorecard_decimal(scorecard, "delay_adjusted_depth_stress_net_pnl_per_day"),
         _scorecard_decimal(scorecard, "delay_adjusted_depth_fillable_notional_per_day"),
         -_scorecard_decimal(scorecard, "delay_adjusted_depth_stress_ms"),
+        Decimal(
+            1
+            if bool(scorecard.get("implementation_uncertainty_stability_passed"))
+            else 0
+        ),
+        _scorecard_decimal(
+            scorecard, "implementation_uncertainty_lower_net_pnl_per_day"
+        ),
+        -_scorecard_decimal(
+            scorecard, "implementation_uncertainty_interval_width_per_day"
+        ),
         Decimal(1 if bool(scorecard.get("double_oos_passed")) else 0),
         _scorecard_decimal(scorecard, "double_oos_independent_window_count"),
         _scorecard_decimal(scorecard, "double_oos_pass_rate"),
@@ -1305,6 +1415,16 @@ def _portfolio_selection_key(
 
 def _empty_selection_key() -> tuple[Decimal, ...]:
     return (
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
         Decimal("0"),
         Decimal("0"),
         Decimal("0"),

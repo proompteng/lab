@@ -355,6 +355,16 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
                     "decision_count_by_order_type": {"market": 2, "limit": 3},
                     "filled_count_by_order_type": {"market": 2, "limit": 2},
                     "limit_fill_rate": "0.6667",
+                    "implementation_uncertainty_required": True,
+                    "implementation_uncertainty_model": "impact_latency_cost_model_interval",
+                    "implementation_uncertainty_model_count": 5,
+                    "implementation_uncertainty_stability_passed": False,
+                    "implementation_uncertainty_lower_net_pnl_per_day": "88",
+                    "implementation_uncertainty_upper_net_pnl_per_day": "120",
+                    "implementation_uncertainty_interval_width_per_day": "32",
+                    "implementation_uncertainty_scenarios": {
+                        "latency_depth_fillability": "88"
+                    },
                 },
                 "route_tca_artifact_ref": "/tmp/route-tca.json",
                 "order_type_execution_artifact_ref": "/tmp/order-type-execution.json",
@@ -413,6 +423,17 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
             5,
         )
         self.assertTrue(
+            bundle.objective_scorecard["implementation_uncertainty_required"]
+        )
+        self.assertEqual(
+            bundle.objective_scorecard["implementation_uncertainty_model_count"],
+            5,
+        )
+        self.assertIn(
+            "latency_depth_fillability",
+            bundle.objective_scorecard["implementation_uncertainty_scenarios"],
+        )
+        self.assertTrue(
             bundle.objective_scorecard["market_limit_order_mix_evidence_present"]
         )
         self.assertEqual(
@@ -433,7 +454,10 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
         self.assertTrue(
             bundle.objective_scorecard["execution_shortfall_evidence_present"]
         )
-        self.assertEqual(len(bundle.stress_metrics), 2)
+        self.assertEqual(len(bundle.stress_metrics), 3)
+        self.assertEqual(
+            bundle.stress_metrics[2]["stress_type"], "implementation_uncertainty"
+        )
         with self.assertRaisesRegex(ValueError, "evidence_bundle_schema_invalid"):
             evidence_bundle_from_payload({"schema_version": "bad"})
 

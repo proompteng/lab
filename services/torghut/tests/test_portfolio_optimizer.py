@@ -30,6 +30,13 @@ def _executable_scorecard_fields(index: int | str = 0) -> dict[str, object]:
         "market_impact_stress_cost_bps": "6",
         "market_impact_liquidity_evidence_present": True,
         "market_impact_stress_net_pnl_per_day": "535",
+        "implementation_uncertainty_required": True,
+        "implementation_uncertainty_model": "impact_latency_cost_model_interval",
+        "implementation_uncertainty_model_count": 5,
+        "implementation_uncertainty_stability_passed": True,
+        "implementation_uncertainty_lower_net_pnl_per_day": "515",
+        "implementation_uncertainty_upper_net_pnl_per_day": "540",
+        "implementation_uncertainty_interval_width_per_day": "25",
         "market_impact_stress_components": {
             "square_root_cost_bps": "6",
             "almgren_chriss_temporary_impact_bps": "4",
@@ -490,6 +497,15 @@ class TestPortfolioOptimizer(TestCase):
         )
         self.assertEqual(
             portfolio.objective_scorecard[
+                "implementation_uncertainty_lower_net_pnl_per_day"
+            ],
+            "1030",
+        )
+        self.assertTrue(
+            portfolio.objective_scorecard["implementation_uncertainty_stability_passed"]
+        )
+        self.assertEqual(
+            portfolio.objective_scorecard[
                 "delay_adjusted_depth_stress_net_pnl_per_day"
             ],
             "1040",
@@ -501,6 +517,79 @@ class TestPortfolioOptimizer(TestCase):
             "1050000",
         )
         self.assertTrue(portfolio.objective_scorecard["oracle_passed"])
+
+    def test_portfolio_oracle_rejects_implementation_uncertainty_lower_bound(
+        self,
+    ) -> None:
+        def bundle(candidate_id: str, symbol: str) -> CandidateEvidenceBundle:
+            return evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=f"spec-{candidate_id}",
+                candidate={
+                    "candidate_id": candidate_id,
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "300",
+                        "active_day_ratio": "1.0",
+                        "positive_day_ratio": "1.0",
+                        "worst_day_loss": "0",
+                        "max_drawdown": "0",
+                        "max_gross_exposure_pct_equity": "0.5",
+                        "min_cash": "5000",
+                        "negative_cash_observation_count": 0,
+                        "best_day_share": "0.2",
+                        "max_single_day_contribution_share": "0.2",
+                        "max_cluster_contribution_share": "0.34",
+                        "max_single_symbol_contribution_share": "0.25",
+                        "avg_filled_notional_per_day": "250000",
+                        "regime_slice_pass_rate": "0.55",
+                        "posterior_edge_lower": "0.01",
+                        "shadow_parity_status": "within_budget",
+                        "symbol_contribution_shares": {symbol: "1.0"},
+                        **_executable_scorecard_fields(candidate_id),
+                        "implementation_uncertainty_stability_passed": False,
+                        "implementation_uncertainty_lower_net_pnl_per_day": "245",
+                        "implementation_uncertainty_interval_width_per_day": "90",
+                    },
+                    "full_window": {
+                        "daily_net": {
+                            "2026-02-23": "300",
+                            "2026-02-24": "300",
+                            "2026-02-25": "300",
+                            "2026-02-26": "300",
+                        },
+                    },
+                },
+                dataset_snapshot_id="snapshot-implementation-uncertainty",
+                result_path=f"/tmp/{candidate_id}.json",
+            )
+
+        portfolio = optimize_portfolio_candidate(
+            evidence_bundles=[
+                bundle("implementation-risk-a", "AAPL"),
+                bundle("implementation-risk-b", "AMZN"),
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            oracle_policy=ProfitTargetOraclePolicy(
+                max_cluster_contribution_share=Decimal("0.50"),
+                max_single_symbol_contribution_share=Decimal("0.50"),
+                min_observed_trading_days=4,
+            ),
+            portfolio_size_min=2,
+            portfolio_size_max=2,
+        )
+
+        self.assertIsNotNone(portfolio)
+        assert portfolio is not None
+        self.assertFalse(portfolio.objective_scorecard["oracle_passed"])
+        self.assertEqual(
+            portfolio.objective_scorecard[
+                "implementation_uncertainty_lower_net_pnl_per_day"
+            ],
+            "490",
+        )
+        self.assertIn(
+            "implementation_uncertainty_lower_net_pnl_per_day_failed",
+            portfolio.objective_scorecard["profit_target_oracle"]["blockers"],
+        )
 
     def test_portfolio_blocks_missing_sleeve_market_impact_liquidity_evidence(
         self,

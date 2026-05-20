@@ -1310,6 +1310,16 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(summary["market_impact_stress_model"], "square_root")
         self.assertEqual(summary["market_impact_stress_cost_bps"], "20.0")
         self.assertEqual(summary["market_impact_stress_net_pnl_per_day"], "262.5")
+        self.assertTrue(summary["implementation_uncertainty_required"])
+        self.assertEqual(
+            summary["implementation_uncertainty_model"],
+            "impact_latency_cost_model_interval",
+        )
+        self.assertEqual(summary["implementation_uncertainty_model_count"], 5)
+        self.assertIn(
+            "impact_decay_reversion_1_5x",
+            summary["implementation_uncertainty_scenarios"],
+        )
         self.assertEqual(
             summary["market_impact_stress_components"]["source_marker"],
             "realistic_market_impact_arxiv_2603_29086_2026",
@@ -1398,6 +1408,54 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             "150",
         )
         self.assertFalse(summary["market_impact_stress_passed"])
+
+    def test_consistency_penalty_fails_implementation_uncertainty_lower_bound(
+        self,
+    ) -> None:
+        penalties, summary = frontier._consistency_penalty(
+            full_window_payload=self._payload(
+                start_date="2026-03-24",
+                end_date="2026-03-25",
+                daily_net={
+                    "2026-03-24": "514",
+                    "2026-03-25": "514",
+                },
+                daily_filled_notional={
+                    "2026-03-24": "100000",
+                    "2026-03-25": "100000",
+                },
+                daily_liquidity_notional={
+                    "2026-03-24": "10000000000000",
+                    "2026-03-25": "10000000000000",
+                },
+                decision_count=4,
+                filled_count=4,
+                wins=4,
+                losses=0,
+            ),
+            policy=frontier.FullWindowConsistencyPolicy(
+                target_net_per_day=frontier.Decimal("500"),
+                min_daily_net_pnl=frontier.Decimal("0"),
+                min_active_days=2,
+                min_active_ratio=frontier.Decimal("1"),
+                min_positive_days=2,
+                max_worst_day_loss=frontier.Decimal("250"),
+                max_negative_days=0,
+                max_drawdown=frontier.Decimal("500"),
+                max_best_day_share_of_total_pnl=frontier.Decimal("0.60"),
+                min_avg_filled_notional_per_day=frontier.Decimal("50000"),
+                min_avg_filled_notional_per_active_day=frontier.Decimal("50000"),
+                require_every_day_active=True,
+            ),
+        )
+
+        self.assertTrue(summary["market_impact_stress_passed"])
+        self.assertEqual(summary["market_impact_stress_net_pnl_per_day"], "504.0")
+        self.assertFalse(summary["implementation_uncertainty_stability_passed"])
+        self.assertEqual(
+            summary["implementation_uncertainty_lower_net_pnl_per_day"], "499.0"
+        )
+        self.assertGreater(penalties, frontier.Decimal("0"))
 
     def test_consistency_penalty_fails_delay_depth_when_filled_day_lacks_liquidity(
         self,

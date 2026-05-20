@@ -71,6 +71,8 @@ class ProfitTargetOraclePolicy:
     min_delay_adjusted_depth_grid_max_stress_ms: Decimal = Decimal("250")
     min_delay_adjusted_depth_fillable_notional_per_day: Decimal = Decimal("300000")
     min_delay_adjusted_depth_tail_fillable_notional: Decimal = Decimal("300000")
+    require_implementation_uncertainty_stability: bool = False
+    min_implementation_uncertainty_model_count: int = 2
     require_double_oos: bool = True
     min_double_oos_independent_window_count: int = 2
     min_double_oos_pass_rate: Decimal = Decimal("1.00")
@@ -159,6 +161,8 @@ class ProfitTargetOraclePolicy:
             "accepted_delay_adjusted_depth_stress_models": sorted(
                 _ACCEPTED_DELAY_ADJUSTED_DEPTH_STRESS_MODELS
             ),
+            "require_implementation_uncertainty_stability": self.require_implementation_uncertainty_stability,
+            "min_implementation_uncertainty_model_count": self.min_implementation_uncertainty_model_count,
             "require_double_oos": self.require_double_oos,
             "min_double_oos_independent_window_count": self.min_double_oos_independent_window_count,
             "min_double_oos_pass_rate": str(self.min_double_oos_pass_rate),
@@ -315,6 +319,34 @@ def _requires_order_type_execution_quality(
         )
     )
     return "mixed_market_limit_execution_policy" in overlay_ids
+
+
+def _requires_implementation_uncertainty_stability(
+    scorecard: Mapping[str, Any], policy: ProfitTargetOraclePolicy
+) -> bool:
+    if policy.require_implementation_uncertainty_stability:
+        return True
+    if _boolish(
+        scorecard.get("implementation_uncertainty_required")
+        or scorecard.get("requires_implementation_uncertainty_stability")
+        or scorecard.get("requires_implementation_risk_backtest_stability")
+    ):
+        return True
+    overlay_ids = set(
+        _string_sequence(
+            scorecard.get("mechanism_overlay_ids")
+            or scorecard.get("mechanism_overlays")
+            or scorecard.get("overlay_ids")
+        )
+    )
+    return bool(
+        {
+            "execution_reality_gap_stability",
+            "implementation_risk_backtest_stability",
+            "order_flow_impact_stability",
+        }
+        & overlay_ids
+    )
 
 
 def _start_equity(
@@ -1059,6 +1091,56 @@ def evaluate_profit_target_oracle(
             **delay_depth_net_check,
             "source_marker": "rl_market_limit_execution_arxiv_2507_06345_2026",
         }
+    )
+    require_implementation_uncertainty_stability = (
+        _requires_implementation_uncertainty_stability(scorecard, policy)
+    )
+    implementation_uncertainty_passed = _boolish(
+        scorecard.get("implementation_uncertainty_stability_passed")
+        or scorecard.get("implementation_risk_stability_passed")
+    )
+    implementation_uncertainty_model_count = _nonnegative_int(
+        scorecard.get("implementation_uncertainty_model_count")
+        or scorecard.get("implementation_risk_model_count")
+    )
+    implementation_uncertainty_lower_bound = _decimal(
+        scorecard.get("implementation_uncertainty_lower_net_pnl_per_day")
+        or scorecard.get("implementation_risk_lower_net_pnl_per_day")
+    )
+    checks.extend(
+        (
+            {
+                "metric": "implementation_uncertainty_stability_passed",
+                "observed": str(implementation_uncertainty_passed).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "implementation_risk_backtesting_arxiv_2603_20319_2026",
+                "passed": implementation_uncertainty_passed
+                if require_implementation_uncertainty_stability
+                else True,
+            },
+            _numeric_check(
+                metric="implementation_uncertainty_model_count",
+                observed=Decimal(implementation_uncertainty_model_count),
+                operator="gte",
+                threshold=Decimal(policy.min_implementation_uncertainty_model_count)
+                if require_implementation_uncertainty_stability
+                else Decimal("0"),
+            ),
+            {
+                **_numeric_check(
+                    metric="implementation_uncertainty_lower_net_pnl_per_day",
+                    observed=implementation_uncertainty_lower_bound,
+                    operator="gte",
+                    threshold=target_net_pnl_per_day,
+                ),
+                "source_marker": "lob_simulation_reality_gap_arxiv_2603_24137_2026",
+                "passed": implementation_uncertainty_lower_bound
+                >= target_net_pnl_per_day
+                if require_implementation_uncertainty_stability
+                else True,
+            },
+        )
     )
     require_order_type_execution_quality = _requires_order_type_execution_quality(
         scorecard, policy

@@ -1393,8 +1393,69 @@ def _delay_depth_fillability(
     return total_fillable_notional, missing_liquidity_day_count, active_day_fillable
 
 
+def _implementation_uncertainty_metrics(
+    *,
+    target_net_per_day: Decimal,
+    net_per_day: Decimal,
+    avg_filled_notional_per_day: Decimal,
+    square_root_impact_cost_bps: Decimal,
+    almgren_chriss_impact_cost_bps: Decimal,
+    nonlinear_impact_cost_bps: Decimal,
+    delay_depth_net_per_day: Decimal,
+) -> dict[str, Any]:
+    impact_scenarios = {
+        "square_root": net_per_day
+        - (
+            avg_filled_notional_per_day * square_root_impact_cost_bps / Decimal("10000")
+        ),
+        "almgren_chriss_proxy": net_per_day
+        - (
+            avg_filled_notional_per_day
+            * almgren_chriss_impact_cost_bps
+            / Decimal("10000")
+        ),
+        "selected_nonlinear_impact": net_per_day
+        - (avg_filled_notional_per_day * nonlinear_impact_cost_bps / Decimal("10000")),
+        "impact_decay_reversion_1_5x": net_per_day
+        - (
+            avg_filled_notional_per_day
+            * nonlinear_impact_cost_bps
+            * Decimal("1.5")
+            / Decimal("10000")
+        ),
+        "latency_depth_fillability": delay_depth_net_per_day,
+    }
+    lower_bound = min(impact_scenarios.values(), default=Decimal("0"))
+    upper_bound = max(impact_scenarios.values(), default=Decimal("0"))
+    interval_width = upper_bound - lower_bound
+    passed = (
+        bool(impact_scenarios)
+        and avg_filled_notional_per_day > 0
+        and lower_bound >= target_net_per_day
+    )
+    return {
+        "implementation_uncertainty_required": True,
+        "implementation_uncertainty_model": "impact_latency_cost_model_interval",
+        "implementation_uncertainty_model_count": len(impact_scenarios),
+        "implementation_uncertainty_stability_passed": passed,
+        "implementation_uncertainty_lower_net_pnl_per_day": str(lower_bound),
+        "implementation_uncertainty_upper_net_pnl_per_day": str(upper_bound),
+        "implementation_uncertainty_interval_width_per_day": str(interval_width),
+        "implementation_uncertainty_target_net_pnl_per_day": str(target_net_per_day),
+        "implementation_uncertainty_scenarios": {
+            name: str(value) for name, value in impact_scenarios.items()
+        },
+        "implementation_uncertainty_source_markers": [
+            "lob_simulation_reality_gap_arxiv_2603_24137_2026",
+            "order_flow_market_impact_volatility_arxiv_2601_23172_2026",
+            "implementation_risk_backtesting_arxiv_2603_20319_2026",
+        ],
+    }
+
+
 def _replay_stress_metrics(
     *,
+    target_net_per_day: Decimal,
     net_per_day: Decimal,
     trading_day_count: int,
     daily_filled_notional: Mapping[str, Decimal],
@@ -1479,6 +1540,15 @@ def _replay_stress_metrics(
     delay_depth_net_per_day = (net_per_day * delay_depth_fillable_ratio) - (
         delay_depth_fillable_notional_per_day * Decimal("1") / Decimal("10000")
     )
+    implementation_uncertainty = _implementation_uncertainty_metrics(
+        target_net_per_day=target_net_per_day,
+        net_per_day=net_per_day,
+        avg_filled_notional_per_day=avg_filled_notional_per_day,
+        square_root_impact_cost_bps=square_root_impact_cost_bps,
+        almgren_chriss_impact_cost_bps=almgren_chriss_impact_cost_bps,
+        nonlinear_impact_cost_bps=nonlinear_impact_cost_bps,
+        delay_depth_net_per_day=delay_depth_net_per_day,
+    )
     return {
         "market_impact_stress_passed": bool(
             total_liquidity_notional > 0
@@ -1558,6 +1628,7 @@ def _replay_stress_metrics(
             )
         ),
         "delay_adjusted_depth_stress_net_pnl_per_day": str(delay_depth_net_per_day),
+        **implementation_uncertainty,
     }
 
 
@@ -1634,6 +1705,7 @@ def _consistency_penalty(
         else Decimal("0")
     )
     replay_stress_metrics = _replay_stress_metrics(
+        target_net_per_day=policy.target_net_per_day,
         net_per_day=summary.net_per_day,
         trading_day_count=summary.trading_day_count,
         daily_filled_notional=daily_filled_notional,
@@ -1735,6 +1807,21 @@ def _consistency_penalty(
         ) * Decimal("1000")
     if min_cash < policy.min_cash:
         penalties += policy.min_cash - min_cash
+    implementation_uncertainty_lower_bound = Decimal(
+        str(
+            replay_stress_metrics.get(
+                "implementation_uncertainty_lower_net_pnl_per_day"
+            )
+            or "0"
+        )
+    )
+    if not bool(
+        replay_stress_metrics.get("implementation_uncertainty_stability_passed")
+    ):
+        penalties += max(
+            Decimal("0"),
+            policy.target_net_per_day - implementation_uncertainty_lower_bound,
+        )
 
     return (
         penalties,
@@ -3187,6 +3274,68 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                                 "delay_adjusted_depth_stress_net_pnl_per_day"
                             )
                             or "0"
+                        ),
+                        "implementation_uncertainty_required": bool(
+                            full_window_summary.get(
+                                "implementation_uncertainty_required"
+                            )
+                        ),
+                        "implementation_uncertainty_model": str(
+                            full_window_summary.get("implementation_uncertainty_model")
+                            or ""
+                        ),
+                        "implementation_uncertainty_model_count": int(
+                            full_window_summary.get(
+                                "implementation_uncertainty_model_count"
+                            )
+                            or 0
+                        ),
+                        "implementation_uncertainty_stability_passed": bool(
+                            full_window_summary.get(
+                                "implementation_uncertainty_stability_passed"
+                            )
+                        ),
+                        "implementation_uncertainty_lower_net_pnl_per_day": str(
+                            full_window_summary.get(
+                                "implementation_uncertainty_lower_net_pnl_per_day"
+                            )
+                            or "0"
+                        ),
+                        "implementation_uncertainty_upper_net_pnl_per_day": str(
+                            full_window_summary.get(
+                                "implementation_uncertainty_upper_net_pnl_per_day"
+                            )
+                            or "0"
+                        ),
+                        "implementation_uncertainty_interval_width_per_day": str(
+                            full_window_summary.get(
+                                "implementation_uncertainty_interval_width_per_day"
+                            )
+                            or "0"
+                        ),
+                        "implementation_uncertainty_target_net_pnl_per_day": str(
+                            full_window_summary.get(
+                                "implementation_uncertainty_target_net_pnl_per_day"
+                            )
+                            or "0"
+                        ),
+                        "implementation_uncertainty_scenarios": dict(
+                            cast(
+                                Mapping[str, Any],
+                                full_window_summary.get(
+                                    "implementation_uncertainty_scenarios"
+                                )
+                                or {},
+                            )
+                        ),
+                        "implementation_uncertainty_source_markers": list(
+                            cast(
+                                Sequence[Any],
+                                full_window_summary.get(
+                                    "implementation_uncertainty_source_markers"
+                                )
+                                or (),
+                            )
                         ),
                         "replay_lineage": replay_lineage,
                         "replay_window_coverage": _replay_window_coverage_payload(

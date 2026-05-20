@@ -22,6 +22,13 @@ def _executable_scorecard_fields() -> dict[str, object]:
         "market_impact_stress_cost_bps": "6",
         "market_impact_liquidity_evidence_present": True,
         "market_impact_stress_net_pnl_per_day": "535",
+        "implementation_uncertainty_required": True,
+        "implementation_uncertainty_model": "impact_latency_cost_model_interval",
+        "implementation_uncertainty_model_count": 5,
+        "implementation_uncertainty_stability_passed": True,
+        "implementation_uncertainty_lower_net_pnl_per_day": "515",
+        "implementation_uncertainty_upper_net_pnl_per_day": "540",
+        "implementation_uncertainty_interval_width_per_day": "25",
         "delay_adjusted_depth_stress_passed": True,
         "delay_adjusted_depth_stress_artifact_ref": "/tmp/delay-adjusted-depth-stress.json",
         "delay_adjusted_depth_stress_model": "latency_depth_haircut",
@@ -92,6 +99,30 @@ class TestProfitTargetOracle(TestCase):
 
         self.assertTrue(result["passed"])
         self.assertNotIn("market_impact_stress_model_failed", result["blockers"])
+
+    def test_profit_target_oracle_rejects_implementation_uncertainty_below_target(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "implementation_uncertainty_stability_passed": False,
+            "implementation_uncertainty_lower_net_pnl_per_day": "499.99",
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn(
+            "implementation_uncertainty_stability_passed_failed",
+            result["blockers"],
+        )
+        self.assertIn(
+            "implementation_uncertainty_lower_net_pnl_per_day_failed",
+            result["blockers"],
+        )
 
     def test_profit_target_oracle_requires_rejected_signal_outcome_learning_when_declared(
         self,

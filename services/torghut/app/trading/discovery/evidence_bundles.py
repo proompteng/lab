@@ -62,6 +62,16 @@ MARKET_IMPACT_SCORECARD_KEYS = (
     "nonlinear_market_impact_stress_cost_bps",
     "nonlinear_market_impact_stress_net_pnl_per_day",
     "permanent_impact_decay_model",
+    "implementation_uncertainty_required",
+    "implementation_uncertainty_model",
+    "implementation_uncertainty_model_count",
+    "implementation_uncertainty_stability_passed",
+    "implementation_uncertainty_lower_net_pnl_per_day",
+    "implementation_uncertainty_upper_net_pnl_per_day",
+    "implementation_uncertainty_interval_width_per_day",
+    "implementation_uncertainty_target_net_pnl_per_day",
+    "implementation_uncertainty_scenarios",
+    "implementation_uncertainty_source_markers",
 )
 
 
@@ -720,6 +730,23 @@ def evidence_bundle_from_frontier_candidate(
                 "artifact_ref": scorecard.get(
                     "delay_adjusted_depth_stress_artifact_ref"
                 ),
+            },
+            {
+                "source": "frontier_replay",
+                "stress_type": "implementation_uncertainty",
+                "model": scorecard.get("implementation_uncertainty_model"),
+                "model_count": scorecard.get("implementation_uncertainty_model_count"),
+                "lower_net_pnl_per_day": scorecard.get(
+                    "implementation_uncertainty_lower_net_pnl_per_day"
+                ),
+                "upper_net_pnl_per_day": scorecard.get(
+                    "implementation_uncertainty_upper_net_pnl_per_day"
+                ),
+                "interval_width_per_day": scorecard.get(
+                    "implementation_uncertainty_interval_width_per_day"
+                ),
+                "scenarios": scorecard.get("implementation_uncertainty_scenarios"),
+                "passed": scorecard.get("implementation_uncertainty_stability_passed"),
             },
         )
     payload_seed = {
