@@ -95,6 +95,7 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('services/jangar/src/components/agents-control-plane.tsx')
     expect(content).toContain('fetchPrimitive(List|Detail|Events|ControlPlaneStatus)')
     expect(content).toContain('Jangar app navigation must not link to generic Agents /control-plane pages')
+    expect(content).toContain('supporting-primitives-schedule-catchup.ts')
     expect(content).toContain(
       '/api/control-plane/(agent-events|agent-runs|events|implementation-sources|logs|resource|resources|status|stream)',
     )

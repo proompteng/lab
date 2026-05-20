@@ -537,7 +537,8 @@ fail_if_matches \
 
 fail_if_path_exists \
   "Jangar must not retain the schedule-runner implementation after Agents owns schedule reconciliation" \
-  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-schedule-runner.ts"
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-schedule-runner.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-schedule-catchup.ts"
 
 fail_if_matches \
   "Jangar must not retain schedule-runner image, service-account, or fire-time env ownership" \
