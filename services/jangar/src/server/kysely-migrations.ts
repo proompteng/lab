@@ -32,6 +32,7 @@ import * as torghutQuantPipelineHealthAccountWindowAsofIndexMigration from '~/se
 import * as torghutQuantPipelineHealthWindowIndexMigration from '~/server/migrations/20260505_torghut_quant_pipeline_health_window_index'
 import * as torghutQuantPipelineHealthAccountWindowCreatedAtIndexMigration from '~/server/migrations/20260508_torghut_quant_pipeline_health_account_window_created_at_index'
 import * as codexJudgeAgentRunColumnsMigration from '~/server/migrations/20260520_codex_judge_agentrun_columns'
+import * as dropCodexRerunSubmissionsMigration from '~/server/migrations/20260520_drop_codex_rerun_submissions'
 
 type MigrationMap = Record<string, Migration>
 
@@ -78,6 +79,7 @@ const migrations: MigrationMap = {
   '20260508_torghut_quant_pipeline_health_account_window_created_at_index':
     torghutQuantPipelineHealthAccountWindowCreatedAtIndexMigration,
   '20260520_codex_judge_agentrun_columns': codexJudgeAgentRunColumnsMigration,
+  '20260520_drop_codex_rerun_submissions': dropCodexRerunSubmissionsMigration,
 }
 
 export const getRegisteredMigrationNames = () => Object.keys(migrations).sort()

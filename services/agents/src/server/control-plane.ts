@@ -197,6 +197,16 @@ const routeSources: RouteSourceSpec[] = [
     load: () => import('../routes/v1/agent-runs/$id'),
   },
   {
+    file: 'src/routes/v1/agent-runs/$id/callbacks.ts',
+    sourceUrl: new URL('../routes/v1/agent-runs/$id/callbacks.ts', import.meta.url),
+    load: () => import('../routes/v1/agent-runs/$id/callbacks'),
+  },
+  {
+    file: 'src/routes/v1/agent-runs/$id/reruns.ts',
+    sourceUrl: new URL('../routes/v1/agent-runs/$id/reruns.ts', import.meta.url),
+    load: () => import('../routes/v1/agent-runs/$id/reruns'),
+  },
+  {
     file: 'src/routes/v1/runs/$id.ts',
     sourceUrl: new URL('../routes/v1/runs/$id.ts', import.meta.url),
     load: () => import('../routes/v1/runs/$id'),
@@ -260,6 +270,17 @@ const configureRuntimeDependencies = () => {
       recordAgentQueueDepth,
       resolveAuditContextFromRequest,
       resolveRepositoryFromParameters: (params) => resolveRepositoryFromParameters(params) ?? undefined,
+      validatePolicies,
+    },
+    agentRunCallbacks: {
+      storeFactory: createPrimitivesStore,
+      requireLeaderForMutation: requireLeaderForMutationHttp,
+    },
+    agentRunReruns: {
+      storeFactory: createPrimitivesStore,
+      kubeClientFactory: createKubernetesClient,
+      requireLeaderForMutation: requireLeaderForMutationHttp,
+      resolveRepositoryFromParameters,
       validatePolicies,
     },
     memories: {

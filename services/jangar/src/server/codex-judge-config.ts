@@ -12,8 +12,6 @@ export type CodexJudgeConfig = {
   discordBotToken: string | null
   discordChannelId: string | null
   discordApiBaseUrl: string
-  rerunOrchestrationName: string | null
-  rerunOrchestrationNamespace: string
   systemImprovementOrchestrationName: string | null
   systemImprovementOrchestrationNamespace: string
   systemImprovementJudgePrompt: string
@@ -65,13 +63,6 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
   const discordBotToken = (process.env.DISCORD_BOT_TOKEN ?? '').trim() || null
   const discordChannelId = (process.env.DISCORD_SUCCESS_CHANNEL_ID ?? '').trim() || null
   const discordApiBaseUrl = (process.env.DISCORD_API_BASE_URL ?? DEFAULT_DISCORD_API_BASE).trim()
-  const rerunOrchestrationName = (process.env.AGENTS_CODEX_RERUN_ORCHESTRATION ?? '').trim() || null
-  const rerunOrchestrationNamespace = (
-    process.env.AGENTS_CODEX_RERUN_ORCHESTRATION_NAMESPACE ??
-    agentRunNamespace ??
-    process.env.JANGAR_NAMESPACE ??
-    'jangar'
-  ).trim()
   const systemImprovementOrchestrationName = (process.env.AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION ?? '').trim() || null
   const systemImprovementOrchestrationNamespace = (
     process.env.AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE ??
@@ -98,8 +89,6 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
     discordBotToken,
     discordChannelId,
     discordApiBaseUrl,
-    rerunOrchestrationName,
-    rerunOrchestrationNamespace,
     systemImprovementOrchestrationName,
     systemImprovementOrchestrationNamespace,
     systemImprovementJudgePrompt,

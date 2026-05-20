@@ -391,8 +391,10 @@ Troubleshooting:
 
 ## Codex reruns/system improvements (native)
 
-- Configure `AGENTS_CODEX_RERUN_ORCHESTRATION` and/or `AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION` (plus the matching
-  `*_NAMESPACE` variables if needed).
+- Configure Codex reruns through `agentRuntime.native.rerunOrchestration` and
+  `agentRuntime.native.rerunOrchestrationNamespace` in the Agents Helm values.
+- Jangar system-improvement consumers may still set `AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION` and
+  `AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE`.
 - Ensure the referenced Orchestration exists and watch OrchestrationRun status for progress.
 
 ## Torghut v3 orchestration guard checks

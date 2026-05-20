@@ -39,6 +39,25 @@ type AgentRunIdempotencyKeys = {
   updated_at: Generated<Timestamp>
 }
 
+type AgentRunRerunSubmissions = {
+  id: Generated<string>
+  parent_ref: string
+  parent_agent_run_id: string | null
+  parent_agent_run_name: string | null
+  parent_agent_run_namespace: string | null
+  attempt: number
+  delivery_id: string
+  status: string
+  submission_attempt: number
+  response_status: number | null
+  error: string | null
+  request_payload: JsonValue
+  response_payload: JsonValue | null
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+  submitted_at: Timestamp | null
+}
+
 type MemoryResources = {
   id: Generated<string>
   memory_name: string
@@ -122,6 +141,7 @@ type AgentsCommsAgentMessage = {
 export type AgentsDatabase = {
   agent_runs: AgentRuns
   agent_run_idempotency_keys: AgentRunIdempotencyKeys
+  agent_run_rerun_submissions: AgentRunRerunSubmissions
   memory_resources: MemoryResources
   orchestration_runs: OrchestrationRuns
   audit_events: AuditEvents

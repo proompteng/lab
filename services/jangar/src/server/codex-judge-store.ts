@@ -106,20 +106,6 @@ export type CodexPendingRun = {
   updatedAt: string
 }
 
-export type CodexRerunSubmissionRecord = {
-  id: string
-  parentRunId: string
-  attempt: number
-  deliveryId: string
-  status: string
-  submissionAttempt: number
-  responseStatus: number | null
-  error: string | null
-  createdAt: string
-  updatedAt: string
-  submittedAt: string | null
-}
-
 export type CodexRunHistoryEntry = {
   run: CodexRunRecord
   artifacts: CodexArtifactRecord[]
@@ -232,31 +218,6 @@ export type UpsertArtifactsInput = {
   }>
 }
 
-export type ClaimRerunSubmissionInput = {
-  parentRunId: string
-  attempt: number
-  deliveryId: string
-}
-
-export type UpdateRerunSubmissionInput = {
-  id: string
-  status: string
-  responseStatus?: number | null
-  error?: string | null
-  submittedAt?: string | null
-}
-
-export type EnqueueRerunSubmissionInput = {
-  parentRunId: string
-  attempt: number
-  deliveryId: string
-}
-
-export type ListRerunSubmissionsInput = {
-  statuses?: string[]
-  limit?: number
-}
-
 export type CodexJudgeStore = {
   ready: Promise<void>
   upsertRunComplete: (input: UpsertRunCompleteInput) => Promise<CodexRunRecord>
@@ -275,12 +236,6 @@ export type CodexJudgeStore = {
   upsertArtifacts: (input: UpsertArtifactsInput) => Promise<CodexArtifactRecord[]>
   listArtifactsForRun: (runId: string) => Promise<CodexArtifactRecord[]>
   listRunsByStatus: (statuses: string[]) => Promise<CodexPendingRun[]>
-  claimRerunSubmission: (
-    input: ClaimRerunSubmissionInput,
-  ) => Promise<{ submission: CodexRerunSubmissionRecord; shouldSubmit: boolean } | null>
-  enqueueRerunSubmission: (input: EnqueueRerunSubmissionInput) => Promise<CodexRerunSubmissionRecord | null>
-  updateRerunSubmission: (input: UpdateRerunSubmissionInput) => Promise<CodexRerunSubmissionRecord | null>
-  listRerunSubmissions: (input?: ListRerunSubmissionsInput) => Promise<CodexRerunSubmissionRecord[]>
   getRunByAgentRun: (agentRunName: string, namespace?: string | null) => Promise<CodexRunRecord | null>
   getRunById: (runId: string) => Promise<CodexRunRecord | null>
   listRunsByIssue: (repository: string, issueNumber: number, branch?: string | null) => Promise<CodexRunRecord[]>
@@ -509,20 +464,6 @@ const rowToEvaluation = (row: Record<string, unknown>): CodexEvaluationRecord =>
   nextPrompt: row.next_prompt ? String(row.next_prompt) : null,
   systemSuggestions: (row.system_suggestions as Record<string, unknown>) ?? {},
   createdAt: String(row.created_at),
-})
-
-const rowToRerunSubmission = (row: Record<string, unknown>): CodexRerunSubmissionRecord => ({
-  id: String(row.id),
-  parentRunId: String(row.parent_run_id),
-  attempt: Number(row.attempt ?? 0),
-  deliveryId: String(row.delivery_id),
-  status: String(row.status),
-  submissionAttempt: Number(row.submission_attempt ?? 0),
-  responseStatus: row.response_status != null ? Number(row.response_status) : null,
-  error: row.error ? String(row.error) : null,
-  createdAt: String(row.created_at),
-  updatedAt: String(row.updated_at),
-  submittedAt: row.submitted_at ? String(row.submitted_at) : null,
 })
 
 export const createCodexJudgeStore = (
@@ -1159,125 +1100,6 @@ export const createCodexJudgeStore = (
     return rows
   }
 
-  const claimRerunSubmission = async (input: ClaimRerunSubmissionInput) => {
-    const updated = await db
-      .updateTable('codex_judge.rerun_submissions')
-      .set({
-        status: 'pending',
-        submission_attempt: sql`submission_attempt + 1`,
-        response_status: null,
-        error: null,
-        updated_at: sql`now()`,
-      })
-      .where('parent_run_id', '=', input.parentRunId)
-      .where('attempt', '=', input.attempt)
-      .where('status', 'in', ['failed', 'pending', 'queued'])
-      .returningAll()
-      .executeTakeFirst()
-
-    if (updated) {
-      return { submission: rowToRerunSubmission(updated as Record<string, unknown>), shouldSubmit: true }
-    }
-
-    const inserted = await db
-      .insertInto('codex_judge.rerun_submissions')
-      .values({
-        parent_run_id: input.parentRunId,
-        attempt: input.attempt,
-        delivery_id: input.deliveryId,
-        status: 'pending',
-        submission_attempt: 1,
-      })
-      .onConflict((oc) => oc.columns(['parent_run_id', 'attempt']).doNothing())
-      .returningAll()
-      .executeTakeFirst()
-
-    if (inserted) {
-      return { submission: rowToRerunSubmission(inserted as Record<string, unknown>), shouldSubmit: true }
-    }
-
-    const existing = await db
-      .selectFrom('codex_judge.rerun_submissions')
-      .selectAll()
-      .where('parent_run_id', '=', input.parentRunId)
-      .where('attempt', '=', input.attempt)
-      .executeTakeFirst()
-
-    if (existing) {
-      return { submission: rowToRerunSubmission(existing as Record<string, unknown>), shouldSubmit: false }
-    }
-
-    const existingByDelivery = await db
-      .selectFrom('codex_judge.rerun_submissions')
-      .selectAll()
-      .where('delivery_id', '=', input.deliveryId)
-      .executeTakeFirst()
-
-    return existingByDelivery
-      ? { submission: rowToRerunSubmission(existingByDelivery as Record<string, unknown>), shouldSubmit: false }
-      : null
-  }
-
-  const enqueueRerunSubmission = async (input: EnqueueRerunSubmissionInput) => {
-    const inserted = await db
-      .insertInto('codex_judge.rerun_submissions')
-      .values({
-        parent_run_id: input.parentRunId,
-        attempt: input.attempt,
-        delivery_id: input.deliveryId,
-        status: 'queued',
-        submission_attempt: 0,
-      })
-      .onConflict((oc) => oc.columns(['parent_run_id', 'attempt']).doNothing())
-      .returningAll()
-      .executeTakeFirst()
-
-    if (inserted) return rowToRerunSubmission(inserted as Record<string, unknown>)
-
-    const existing = await db
-      .selectFrom('codex_judge.rerun_submissions')
-      .selectAll()
-      .where('parent_run_id', '=', input.parentRunId)
-      .where('attempt', '=', input.attempt)
-      .executeTakeFirst()
-
-    return existing ? rowToRerunSubmission(existing as Record<string, unknown>) : null
-  }
-
-  const listRerunSubmissions = async (input: ListRerunSubmissionsInput = {}) => {
-    let query = db.selectFrom('codex_judge.rerun_submissions').selectAll()
-    if (input.statuses && input.statuses.length > 0) {
-      query = query.where('status', 'in', input.statuses)
-    }
-    if (input.limit && input.limit > 0) {
-      query = query.limit(input.limit)
-    }
-    const rows = await query.orderBy('updated_at asc').execute()
-    return rows.map((row) => rowToRerunSubmission(row as Record<string, unknown>))
-  }
-
-  const updateRerunSubmission = async (input: UpdateRerunSubmissionInput) => {
-    const update: Record<string, unknown> = { status: input.status, updated_at: sql`now()` }
-    if (input.responseStatus !== undefined) {
-      update.response_status = input.responseStatus
-    }
-    if (input.error !== undefined) {
-      update.error = input.error
-    }
-    if (input.submittedAt !== undefined) {
-      update.submitted_at = input.submittedAt ? new Date(input.submittedAt) : null
-    }
-
-    const updated = await db
-      .updateTable('codex_judge.rerun_submissions')
-      .set(update)
-      .where('id', '=', input.id)
-      .returningAll()
-      .executeTakeFirst()
-
-    return updated ? rowToRerunSubmission(updated as Record<string, unknown>) : null
-  }
-
   const close = async () => {
     if (resolved.shared) return
     await db.destroy()
@@ -1296,9 +1118,6 @@ export const createCodexJudgeStore = (
     upsertArtifacts,
     listArtifactsForRun,
     listRunsByStatus,
-    claimRerunSubmission,
-    enqueueRerunSubmission,
-    updateRerunSubmission,
     getRunByAgentRun,
     getRunById,
     listRunsByIssue,
@@ -1309,7 +1128,6 @@ export const createCodexJudgeStore = (
     listRecentRuns,
     listRunsPage,
     listIssueSummaries,
-    listRerunSubmissions,
     close,
   }
 }

@@ -3,12 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { resetCodexClient, setCodexClientFactory } from '~/server/codex-client'
 import type { ReviewSummary } from '~/server/github-client'
-import type {
-  CodexEvaluationRecord,
-  CodexJudgeStore,
-  CodexRerunSubmissionRecord,
-  CodexRunRecord,
-} from '../codex-judge-store'
+import type { CodexEvaluationRecord, CodexJudgeStore, CodexRunRecord } from '../codex-judge-store'
 
 let __private: Awaited<typeof import('../codex-judge')>['__private'] | null = null
 
@@ -40,8 +35,6 @@ const globalState = globalThis as typeof globalThis & {
     discordBotToken: string | null
     discordChannelId: string | null
     discordApiBaseUrl: string
-    rerunOrchestrationName: string | null
-    rerunOrchestrationNamespace: string
     systemImprovementOrchestrationName: string | null
     systemImprovementOrchestrationNamespace: string
     systemImprovementJudgePrompt: string
@@ -108,8 +101,6 @@ if (!globalState.__codexJudgeStoreMock) {
     upsertArtifacts: vi.fn(),
     listArtifactsForRun: vi.fn(async () => []),
     listRunsByStatus: vi.fn(),
-    claimRerunSubmission: vi.fn(),
-    updateRerunSubmission: vi.fn(),
     getRunByAgentRun: vi.fn(),
     getRunById: vi.fn(),
     listRunsByIssue: vi.fn(),
@@ -120,8 +111,6 @@ if (!globalState.__codexJudgeStoreMock) {
     listRecentRuns: vi.fn(),
     listRunsPage: vi.fn(),
     listIssueSummaries: vi.fn(),
-    enqueueRerunSubmission: vi.fn(),
-    listRerunSubmissions: vi.fn(),
     close: vi.fn(),
   }
 }
@@ -156,8 +145,6 @@ if (!globalState.__codexJudgeConfigMock) {
     discordBotToken: null,
     discordChannelId: null,
     discordApiBaseUrl: 'https://discord.com/api/v10',
-    rerunOrchestrationName: null,
-    rerunOrchestrationNamespace: 'jangar',
     systemImprovementOrchestrationName: null,
     systemImprovementOrchestrationNamespace: 'jangar',
     systemImprovementJudgePrompt: 'system improvement judge prompt',
@@ -328,49 +315,6 @@ const harness = (() => {
     listRunsByCommitSha: vi.fn(async () => []),
     listRunsByPrNumber: vi.fn(async () => []),
     listRunsByStatus: vi.fn(async () => [run]),
-    listRerunSubmissions: vi.fn(async () => [] as CodexRerunSubmissionRecord[]),
-    claimRerunSubmission: vi.fn(async ({ attempt, deliveryId }: { attempt: number; deliveryId: string }) => ({
-      submission: {
-        id: `rerun-${attempt}`,
-        parentRunId: run.id,
-        attempt,
-        deliveryId,
-        status: 'queued',
-        submissionAttempt: 0,
-        responseStatus: null,
-        error: null,
-        createdAt: now,
-        updatedAt: now,
-        submittedAt: null,
-      },
-      shouldSubmit: true,
-    })),
-    enqueueRerunSubmission: vi.fn(async ({ parentRunId, attempt, deliveryId }) => ({
-      id: `rerun-${attempt}`,
-      parentRunId,
-      attempt,
-      deliveryId,
-      status: 'queued',
-      submissionAttempt: 0,
-      responseStatus: null,
-      error: null,
-      createdAt: now,
-      updatedAt: now,
-      submittedAt: null,
-    })),
-    updateRerunSubmission: vi.fn(async ({ id, status, responseStatus, error, submittedAt }) => ({
-      id,
-      parentRunId: run.id,
-      attempt: run.attempt + 1,
-      deliveryId: `jangar-${run.id}-attempt-${run.attempt + 1}`,
-      status,
-      submissionAttempt: 1,
-      responseStatus: responseStatus ?? null,
-      error: error ?? null,
-      createdAt: now,
-      updatedAt: now,
-      submittedAt: submittedAt ?? null,
-    })),
     getRunHistory: vi.fn(async () => ({
       runs: [],
       stats: {
@@ -453,8 +397,6 @@ const harness = (() => {
     discordBotToken: null,
     discordChannelId: null,
     discordApiBaseUrl: 'https://discord.com/api/v10',
-    rerunOrchestrationName: null,
-    rerunOrchestrationNamespace: 'jangar',
     systemImprovementOrchestrationName: null,
     systemImprovementOrchestrationNamespace: 'jangar',
     systemImprovementJudgePrompt: 'system improvement judge prompt',
@@ -581,123 +523,6 @@ describe('codex judge guardrails', () => {
     expect(harness.store.updateDecision).toHaveBeenCalledWith(
       expect.objectContaining({
         decision: 'pass',
-      }),
-    )
-  })
-
-  it('marks runs needs_human without falling back to Facteur when rerun orchestration is missing', async () => {
-    const staleTimestamp = new Date(Date.now() - 60_000).toISOString()
-    const fetchMock = vi.fn()
-    global.fetch = fetchMock as unknown as typeof global.fetch
-
-    harness.store.listRerunSubmissions.mockResolvedValue([
-      {
-        id: 'rerun-1',
-        parentRunId: 'run-1',
-        attempt: 2,
-        deliveryId: 'jangar-run-1-attempt-2',
-        status: 'queued',
-        submissionAttempt: 0,
-        responseStatus: null,
-        error: null,
-        createdAt: new Date().toISOString(),
-        updatedAt: staleTimestamp,
-        submittedAt: null,
-      },
-    ])
-    harness.store.claimRerunSubmission.mockResolvedValue({
-      submission: {
-        id: 'rerun-1',
-        parentRunId: 'run-1',
-        attempt: 2,
-        deliveryId: 'jangar-run-1-attempt-2',
-        status: 'queued',
-        submissionAttempt: 0,
-        responseStatus: null,
-        error: null,
-        createdAt: new Date().toISOString(),
-        updatedAt: staleTimestamp,
-        submittedAt: null,
-      },
-      shouldSubmit: true,
-    })
-
-    const privateApi = await requirePrivate()
-    await privateApi.processRerunQueue()
-
-    expect(fetchMock).not.toHaveBeenCalled()
-    expect(harness.store.updateRunStatus).toHaveBeenCalledWith('run-1', 'needs_human')
-    expect(harness.store.updateRerunSubmission).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: 'failed',
-        responseStatus: null,
-        error: 'Native orchestration is not configured for reruns',
-      }),
-    )
-  })
-
-  it('persists failed rerun state when native rerun orchestration submission fails', async () => {
-    const staleTimestamp = new Date(Date.now() - 60_000).toISOString()
-    const submitMock = vi.fn(async (_input: { parameters: Record<string, string> }) => {
-      throw new Error('agents orchestration unavailable')
-    })
-    globalState.__codexJudgeOrchestrationSubmitMock = submitMock
-    harness.config.rerunOrchestrationName = 'codex-rerun'
-
-    harness.store.listRerunSubmissions.mockResolvedValue([
-      {
-        id: 'rerun-1',
-        parentRunId: 'run-1',
-        attempt: 2,
-        deliveryId: 'jangar-run-1-attempt-2',
-        status: 'queued',
-        submissionAttempt: 0,
-        responseStatus: null,
-        error: null,
-        createdAt: new Date().toISOString(),
-        updatedAt: staleTimestamp,
-        submittedAt: null,
-      },
-    ])
-    harness.store.claimRerunSubmission.mockResolvedValue({
-      submission: {
-        id: 'rerun-1',
-        parentRunId: 'run-1',
-        attempt: 2,
-        deliveryId: 'jangar-run-1-attempt-2',
-        status: 'queued',
-        submissionAttempt: 0,
-        responseStatus: null,
-        error: null,
-        createdAt: new Date().toISOString(),
-        updatedAt: staleTimestamp,
-        submittedAt: null,
-      },
-      shouldSubmit: true,
-    })
-
-    const privateApi = await requirePrivate()
-    await privateApi.processRerunQueue()
-
-    expect(submitMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        deliveryId: 'jangar-run-1-attempt-2',
-        orchestrationRef: { name: 'codex-rerun' },
-      }),
-    )
-    const submitInput = submitMock.mock.calls[0]?.[0]
-    expect(submitInput).toBeDefined()
-    if (!submitInput) throw new Error('missing submit input')
-    expect(submitInput.parameters.prompt).toBeUndefined()
-    expect(submitInput.parameters.stage).toBe('implementation')
-    expect(submitInput.parameters.codexPrompt).toBe('Implement the change.')
-    expect(submitInput.parameters.codex_prompt).toBe('Implement the change.')
-    expect(harness.store.updateRunStatus).toHaveBeenCalledWith('run-1', 'needs_human')
-    expect(harness.store.updateRerunSubmission).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: 'failed',
-        responseStatus: null,
-        error: 'Native orchestration submission failed: agents orchestration unavailable',
       }),
     )
   })

@@ -180,10 +180,6 @@ spec:
                   optional: true
             - name: MINIO_SECURE
               value: "false"
-            - name: AGENTS_CODEX_RERUN_ORCHESTRATION
-              value: codex-rerun
-            - name: AGENTS_CODEX_RERUN_ORCHESTRATION_NAMESPACE
-              value: agents
             - name: AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION
               value: codex-system-improvement
             - name: AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE

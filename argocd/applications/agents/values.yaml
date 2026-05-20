@@ -31,6 +31,10 @@ runner:
     repository: registry.ide-newton.ts.net/lab/agents-codex-runner
     tag: 9a8523b8
     digest: sha256:ec989b42cbe87bf15eed4ef84ecee3ee6dd515a8bb83517d8e11681ce6bbd649
+agentRuntime:
+  native:
+    rerunOrchestration: codex-rerun
+    rerunOrchestrationNamespace: agents
 argocdHooks:
   enabled: true
   image:

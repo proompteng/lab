@@ -555,9 +555,24 @@ fail_if_matches \
   "${ROOT_DIR}/argocd/applications/jangar"
 
 require_matches \
-  "Jangar domain consumer must configure Agents-owned Codex rerun orchestration with AGENTS_* env names" \
+  "Agents runtime must configure the Codex rerun orchestration in the Agents Helm values" \
+  'rerunOrchestration: codex-rerun' \
+  "${ROOT_DIR}/argocd/applications/agents/values.yaml"
+
+require_matches \
+  "Agents runtime must configure the Codex rerun orchestration namespace in the Agents Helm values" \
+  'rerunOrchestrationNamespace: agents' \
+  "${ROOT_DIR}/argocd/applications/agents/values.yaml"
+
+fail_if_matches \
+  "Jangar deployment must not configure Agents-owned Codex rerun orchestration after rerun API extraction" \
   'AGENTS_CODEX_RERUN_ORCHESTRATION' \
   "${ROOT_DIR}/argocd/applications/jangar/deployment.yaml"
+
+fail_if_matches \
+  "Jangar docs must not present Agents-owned Codex rerun env as Jangar judge configuration" \
+  'AGENTS_CODEX_RERUN_ORCHESTRATION' \
+  "${ROOT_DIR}/docs/jangar/autonomous-codex-end-to-end-design.md"
 
 require_matches \
   "Jangar domain consumer must configure Agents-owned system-improvement orchestration with AGENTS_* env names" \
@@ -586,6 +601,20 @@ fail_if_matches \
   'facteurBaseUrl|FACTEUR_INTERNAL_URL|/codex/tasks|CodexTaskSchema' \
   "${ROOT_DIR}/services/jangar/src/server/codex-judge.ts" \
   "${ROOT_DIR}/services/jangar/src/server/codex-judge-config.ts"
+
+fail_if_matches \
+  "Jangar Codex judge must not own AgentRun rerun queue after Agents rerun API extraction" \
+  'processRerunQueue|handleRerunRequest|claimRerunSubmission|enqueueRerunSubmission|listRerunSubmissions|updateRerunSubmission|AGENTS_CODEX_RERUN_ORCHESTRATION|rerunOrchestrationName|rerunOrchestrationNamespace' \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge-config.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge-store.ts" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/codex/rerun.tsx"
+
+require_matches \
+  "Agents service must own AgentRun rerun and callback v1 route registration" \
+  'agent-runs/\$id/(reruns|callbacks)' \
+  "${ROOT_DIR}/services/agents/src/server/control-plane.ts" \
+  "${ROOT_DIR}/services/agents/package.json"
 
 fail_if_path_exists \
   "Froussard/Facteur must not recreate the retired GitHub issue Codex Kafka bridge" \

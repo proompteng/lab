@@ -30,8 +30,6 @@ const globalState = globalThis as typeof globalThis & {
     discordBotToken: string | null
     discordChannelId: string | null
     discordApiBaseUrl: string
-    rerunOrchestrationName: string | null
-    rerunOrchestrationNamespace: string
     systemImprovementOrchestrationName: string | null
     systemImprovementOrchestrationNamespace: string
     systemImprovementJudgePrompt: string
@@ -94,8 +92,6 @@ const configMock: NonNullable<typeof globalState.__codexJudgeConfigMock> = {
   discordBotToken: null,
   discordChannelId: null,
   discordApiBaseUrl: 'https://discord.com/api/v10',
-  rerunOrchestrationName: null,
-  rerunOrchestrationNamespace: 'jangar',
   systemImprovementOrchestrationName: null,
   systemImprovementOrchestrationNamespace: 'jangar',
   systemImprovementJudgePrompt: 'system-improvement prompt',
@@ -140,10 +136,6 @@ if (!globalState.__codexJudgeStoreMock) {
     upsertArtifacts: vi.fn(),
     listArtifactsForRun: vi.fn(async () => []),
     listRunsByStatus: vi.fn(),
-    claimRerunSubmission: vi.fn(),
-    updateRerunSubmission: vi.fn(),
-    enqueueRerunSubmission: vi.fn(),
-    listRerunSubmissions: vi.fn(),
     getRunByAgentRun: vi.fn(),
     getRunById: vi.fn(),
     listRunsByIssue: vi.fn(),

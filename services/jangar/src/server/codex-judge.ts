@@ -92,9 +92,6 @@ const _RECONCILE_BASE_DELAY_MS = 1_000
 const _RECONCILE_JITTER_MS = 15_000
 const _PENDING_EVALUATION_STATUSES = ['run_complete', 'waiting_for_ci', 'judging'] as const
 const _RECONCILE_DISABLED = resolveChatConfig(process.env).isTest
-const RERUN_SUBMISSION_BACKOFF_MS = [2_000, 7_000, 15_000]
-const RERUN_WORKER_POLL_MS = 10_000
-const RERUN_WORKER_BATCH_SIZE = 10
 const DEFAULT_CI_EVENT_STREAM_ENABLED_FLAG_KEY = 'jangar.ci_event_stream.enabled'
 
 const safeParseJson = (value: string) => {
@@ -1541,163 +1538,6 @@ const maybeSubmitSystemImprovementWorkflow = async (
   return { submitted: false, error: 'system_improvement_orchestration_unconfigured' }
 }
 
-let rerunWorkerStarted = false
-
-const startRerunSubmissionWorker = () => {
-  if (rerunWorkerStarted || _RECONCILE_DISABLED) return
-  rerunWorkerStarted = true
-  setInterval(() => {
-    void processRerunQueue()
-  }, RERUN_WORKER_POLL_MS)
-}
-
-const shouldDelayRerun = (submissionAttempt: number, updatedAt: string | null) => {
-  const delayIndex = Math.min(Math.max(submissionAttempt, 0), RERUN_SUBMISSION_BACKOFF_MS.length - 1)
-  const delayMs = RERUN_SUBMISSION_BACKOFF_MS[delayIndex] ?? 0
-  if (delayMs <= 0) return false
-  const updatedMs = updatedAt ? Date.parse(updatedAt) : null
-  if (!updatedMs || Number.isNaN(updatedMs)) return false
-  return Date.now() - updatedMs < delayMs
-}
-
-const processRerunQueue = async () => {
-  await ensureStoreReady()
-  const submissions = await store.listRerunSubmissions({
-    statuses: ['queued', 'failed'],
-    limit: RERUN_WORKER_BATCH_SIZE,
-  })
-  for (const submission of submissions) {
-    if (shouldDelayRerun(submission.submissionAttempt, submission.updatedAt)) continue
-    const run = await store.getRunById(submission.parentRunId)
-    if (!run) continue
-    const prompt = run.nextPrompt ?? run.prompt
-    if (!prompt) continue
-    const result = await submitRerun(run, prompt, submission.attempt)
-    if (result.status === 'failed') {
-      await recordDecision({
-        runId: run.id,
-        decision: 'needs_human',
-        reasons: { error: 'rerun_submission_failed', detail: result.error ?? null },
-        suggestedFixes: { fix: 'Check Agents rerun orchestration availability and requeue the rerun.' },
-        nextPrompt: null,
-        systemSuggestions: {},
-      })
-      const updated = await store.updateRunStatus(run.id, 'needs_human')
-      if (updated) {
-        await sendDiscordEscalation(run, 'rerun_submission_failed')
-      }
-    }
-  }
-}
-
-type RerunSubmissionResult = { status: 'submitted' | 'skipped' | 'failed'; error?: string }
-
-const resolveResumeArtifactKeys = async (run: CodexRunRecord) => {
-  try {
-    const artifactRecords = await store.listArtifactsForRun(run.id)
-    if (artifactRecords.length === 0) {
-      return { resumeKey: null, changesKey: null }
-    }
-    const artifactMap = buildArtifactIndex(artifactRecords.map((artifact) => toResolvedArtifact(artifact)))
-    return {
-      resumeKey: artifactMap.get('implementation-resume')?.key ?? null,
-      changesKey: artifactMap.get('implementation-changes')?.key ?? null,
-    }
-  } catch (error) {
-    console.warn('Failed to resolve resume artifact keys for rerun', error)
-    return { resumeKey: null, changesKey: null }
-  }
-}
-
-const submitRerun = async (run: CodexRunRecord, prompt: string, attempt: number): Promise<RerunSubmissionResult> => {
-  const latestRun = await store.getRunById(run.id)
-  if (!latestRun || latestRun.status === 'superseded') {
-    return { status: 'skipped' }
-  }
-
-  const resumeArtifacts = await resolveResumeArtifactKeys(run)
-
-  const deliveryId = `jangar-${run.id}-attempt-${attempt}`
-  const claimed = await store.claimRerunSubmission({ parentRunId: run.id, attempt, deliveryId })
-  if (!claimed) {
-    return { status: 'failed', error: 'rerun_submission_claim_failed' }
-  }
-  if (!claimed.shouldSubmit) {
-    return { status: 'skipped' }
-  }
-
-  const baseRef =
-    typeof run.runCompletePayload?.base === 'string' && run.runCompletePayload.base.trim().length > 0
-      ? run.runCompletePayload.base.trim()
-      : 'main'
-  const iterationCycle =
-    typeof run.iterationCycle === 'number' && Number.isFinite(run.iterationCycle)
-      ? run.iterationCycle + 1
-      : typeof run.runCompletePayload?.iteration_cycle === 'number' &&
-          Number.isFinite(run.runCompletePayload?.iteration_cycle)
-        ? Number(run.runCompletePayload?.iteration_cycle) + 1
-        : 1
-  const iterationsCount =
-    typeof run.runCompletePayload?.iterations === 'number' && Number.isFinite(run.runCompletePayload?.iterations)
-      ? Number(run.runCompletePayload?.iterations)
-      : null
-
-  const submitViaOrchestration = async () => {
-    if (!config.rerunOrchestrationName) return null
-    const submitter = resolveOrchestrationSubmit()
-    const parameters = buildCodexParameters({
-      repository: run.repository,
-      issueNumber: run.issueNumber,
-      base: baseRef,
-      head: run.branch,
-      prompt,
-      judgePrompt: config.defaultJudgePrompt,
-      attempt,
-      parentRunUid: run.agentRunUid ?? run.id,
-      iterationCycle,
-      iterationsCount,
-      resumeKey: resumeArtifacts.resumeKey,
-      changesKey: resumeArtifacts.changesKey,
-    })
-    try {
-      await submitter({
-        deliveryId,
-        orchestrationRef: { name: config.rerunOrchestrationName },
-        namespace: config.rerunOrchestrationNamespace,
-        parameters,
-      })
-      await store.updateRerunSubmission({
-        id: claimed.submission.id,
-        status: 'submitted',
-        responseStatus: 201,
-        error: null,
-        submittedAt: new Date().toISOString(),
-      })
-      return { status: 'submitted' as const }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      return { status: 'failed' as const, error: message }
-    }
-  }
-
-  const orchestrationResult = await submitViaOrchestration()
-  if (orchestrationResult?.status === 'submitted') {
-    return orchestrationResult
-  }
-  const lastError =
-    orchestrationResult?.status === 'failed'
-      ? `Native orchestration submission failed: ${orchestrationResult.error}`
-      : 'Native orchestration is not configured for reruns'
-
-  await store.updateRerunSubmission({
-    id: claimed.submission.id,
-    status: 'failed',
-    responseStatus: null,
-    error: lastError,
-  })
-  return { status: 'failed', error: lastError }
-}
-
 const DISCORD_MESSAGE_LIMIT = 1900
 const DISCORD_ARTIFACT_PREFERENCE = [
   'implementation-log',
@@ -1921,7 +1761,6 @@ export const __private = {
   parseNotifyPayload,
   parseRunCompletePayload,
   resolveCiContext,
-  processRerunQueue,
   writeMemories,
 }
 export const handleRunComplete = async (payload: Record<string, unknown>) => {
@@ -1994,81 +1833,6 @@ export const handleRunComplete = async (payload: Record<string, unknown>) => {
   }
 
   return run
-}
-
-const parseRerunPayload = (payload: Record<string, unknown>) => {
-  const repository = typeof payload.repository === 'string' ? payload.repository.trim() : ''
-  const issueNumberRaw = payload.issue_number ?? payload.issueNumber
-  const issueNumber = Number.parseInt(String(issueNumberRaw ?? ''), 10)
-  const attemptRaw = payload.attempt ?? payload.rerun_attempt
-  const attempt = Number.parseInt(String(attemptRaw ?? ''), 10)
-  const prompt = typeof payload.prompt === 'string' ? payload.prompt.trim() : ''
-  const runId = typeof payload.run_id === 'string' ? payload.run_id.trim() : ''
-  const agentRunName =
-    typeof payload.agent_run_name === 'string'
-      ? payload.agent_run_name.trim()
-      : typeof payload.agentRunName === 'string'
-        ? payload.agentRunName.trim()
-        : ''
-  const agentRunNamespace =
-    typeof payload.agent_run_namespace === 'string'
-      ? payload.agent_run_namespace.trim()
-      : typeof payload.agentRunNamespace === 'string'
-        ? payload.agentRunNamespace.trim()
-        : ''
-  const resolvedAgentRunNamespace = agentRunNamespace || config.agentRunNamespace || null
-  const deliveryId =
-    typeof payload.delivery_id === 'string'
-      ? payload.delivery_id.trim()
-      : agentRunName && Number.isFinite(attempt)
-        ? `${agentRunName}:${attempt}`
-        : `rerun-${Date.now()}`
-
-  if (!repository || !Number.isFinite(issueNumber) || !Number.isFinite(attempt) || !prompt) {
-    throw new Error('rerun payload missing required fields (repository, issue_number, attempt, prompt)')
-  }
-
-  return {
-    repository,
-    issueNumber,
-    attempt,
-    prompt,
-    runId: runId || null,
-    agentRunName: agentRunName || null,
-    agentRunNamespace: resolvedAgentRunNamespace,
-    deliveryId,
-  }
-}
-
-export const handleRerunRequest = async (payload: Record<string, unknown>) => {
-  await ensureStoreReady()
-  const parsed = parseRerunPayload(payload)
-
-  const run = parsed.runId
-    ? await store.getRunById(parsed.runId)
-    : parsed.agentRunName
-      ? await store.getRunByAgentRun(parsed.agentRunName, parsed.agentRunNamespace)
-      : null
-
-  if (!run) {
-    throw new Error('rerun parent run not found')
-  }
-
-  await store.updateRunPrompt(run.id, run.prompt, parsed.prompt)
-  await store.updateRunStatus(run.id, 'needs_iteration')
-
-  const submission = await store.enqueueRerunSubmission({
-    parentRunId: run.id,
-    attempt: parsed.attempt,
-    deliveryId: parsed.deliveryId,
-  })
-
-  if (submission) {
-    startRerunSubmissionWorker()
-    void processRerunQueue()
-  }
-
-  return { run, submission }
 }
 
 export const handleNotify = async (payload: Record<string, unknown>) => {

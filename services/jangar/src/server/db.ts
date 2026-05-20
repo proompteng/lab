@@ -447,20 +447,6 @@ type CodexJudgeEvaluations = {
   created_at: Generated<Timestamp>
 }
 
-type CodexJudgeRerunSubmissions = {
-  id: Generated<string>
-  parent_run_id: string
-  attempt: number
-  delivery_id: string
-  status: string
-  submission_attempt: Generated<number>
-  response_status: number | null
-  error: string | null
-  created_at: Generated<Timestamp>
-  updated_at: Generated<Timestamp>
-  submitted_at: Timestamp | null
-}
-
 type TorghutQuantMetricsLatest = {
   id: Generated<string>
   strategy_id: string
@@ -752,7 +738,6 @@ export type Database = {
   'codex_judge.runs': CodexJudgeRuns
   'codex_judge.artifacts': CodexJudgeArtifacts
   'codex_judge.evaluations': CodexJudgeEvaluations
-  'codex_judge.rerun_submissions': CodexJudgeRerunSubmissions
 }
 
 let db: Db | null | undefined

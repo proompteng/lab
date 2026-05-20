@@ -40,8 +40,6 @@ const globalState = globalThis as typeof globalThis & {
     discordBotToken: string | null
     discordChannelId: string | null
     discordApiBaseUrl: string
-    rerunOrchestrationName: string | null
-    rerunOrchestrationNamespace: string
     systemImprovementOrchestrationName: string | null
     systemImprovementOrchestrationNamespace: string
     systemImprovementJudgePrompt: string
@@ -77,10 +75,6 @@ if (!globalState.__codexJudgeStoreMock) {
     upsertArtifacts: vi.fn(),
     listArtifactsForRun: vi.fn(async () => []),
     listRunsByStatus: vi.fn(),
-    claimRerunSubmission: vi.fn(),
-    updateRerunSubmission: vi.fn(),
-    enqueueRerunSubmission: vi.fn(),
-    listRerunSubmissions: vi.fn(),
     getRunByAgentRun: vi.fn(),
     getRunById: vi.fn(),
     listRunsByIssue: vi.fn(),
@@ -125,8 +119,6 @@ if (!globalState.__codexJudgeConfigMock) {
     discordBotToken: null,
     discordChannelId: null,
     discordApiBaseUrl: 'https://discord.com/api/v10',
-    rerunOrchestrationName: null,
-    rerunOrchestrationNamespace: 'jangar',
     systemImprovementOrchestrationName: null,
     systemImprovementOrchestrationNamespace: 'jangar',
     systemImprovementJudgePrompt: 'system improvement judge prompt',
@@ -177,10 +169,6 @@ const store = {
   updateRunPrInfo: vi.fn(),
   upsertArtifacts: vi.fn(),
   listRunsByStatus: vi.fn(),
-  claimRerunSubmission: vi.fn(),
-  updateRerunSubmission: vi.fn(),
-  enqueueRerunSubmission: vi.fn(),
-  listRerunSubmissions: vi.fn(),
   getRunByAgentRun: vi.fn(),
   getRunById: vi.fn(),
   listRunsByIssue: vi.fn(),

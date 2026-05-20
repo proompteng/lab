@@ -7,6 +7,8 @@ export type * from './agent-jobs-client'
 export type * from './agents-ready'
 export type * from './agent-message-artifacts'
 export type * from './agent-run-callbacks'
+export type * from './agent-run-callbacks-client'
+export type * from './agent-run-reruns-client'
 export type * from './codex-orchestration-parameters'
 export type * from './control-plane-status'
 export {
