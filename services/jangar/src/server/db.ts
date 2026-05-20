@@ -394,9 +394,9 @@ type CodexJudgeRuns = {
   issue_number: number
   branch: string
   attempt: number
-  workflow_name: string
-  workflow_uid: string | null
-  workflow_namespace: string | null
+  agent_run_name: string
+  agent_run_uid: string | null
+  agent_run_namespace: string | null
   turn_id: string | null
   thread_id: string | null
   stage: string | null

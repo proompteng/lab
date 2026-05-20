@@ -91,6 +91,17 @@ describe('migration registration', () => {
     expect(normalized).toContain('create index if not exists torghut_qm_latest_account_window_idx')
     expect(normalized).toContain('on torghut_control_plane.quant_metrics_latest(account, "window")')
   })
+
+  it('keeps the Codex judge AgentRun column rename migration registered', () => {
+    const migrationPath = new URL('../migrations/20260520_codex_judge_agentrun_columns.ts', import.meta.url)
+    const normalized = readFileSync(fileURLToPath(migrationPath), 'utf8').toLowerCase().replace(/\s+/g, ' ')
+
+    expect(normalized).toContain('rename column workflow_name to agent_run_name')
+    expect(normalized).toContain('rename column workflow_uid to agent_run_uid')
+    expect(normalized).toContain('rename column workflow_namespace to agent_run_namespace')
+    expect(normalized).toContain('create unique index if not exists codex_judge_runs_agent_run_uid_idx')
+    expect(normalized).toContain('create unique index if not exists codex_judge_runs_agent_run_name_idx')
+  })
 })
 
 describe('resolveAllowUnorderedMigrations', () => {

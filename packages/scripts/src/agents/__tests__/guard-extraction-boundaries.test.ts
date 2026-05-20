@@ -99,6 +99,8 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('Jangar Codex judge source contract must use AgentRun-native runtime identity fields')
     expect(content).toContain('getRunByWorkflow|selectCodexJudgeRunByWorkflow')
     expect(content).toContain('updateArtifactsFromWorkflow|workflowTag')
+    expect(content).toContain('Jangar Codex judge current schema and queries must use AgentRun-native physical columns')
+    expect(content).toContain('workflow_name|workflow_uid|workflow_namespace|codex_judge_runs_workflow')
     expect(content).toContain('workflow-shaped agent-message identity fields')
     expect(content).toContain(
       'workflowUid|workflow_uid|workflowName|workflow_name|workflowNamespace|workflow_namespace',

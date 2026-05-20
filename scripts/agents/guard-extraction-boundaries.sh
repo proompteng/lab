@@ -317,6 +317,13 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/codex-judge-config.ts"
 
 fail_if_matches \
+  "Jangar Codex judge current schema and queries must use AgentRun-native physical columns, not workflow-shaped run identity columns" \
+  'workflow_name|workflow_uid|workflow_namespace|codex_judge_runs_workflow' \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge-store.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge-run-rows.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20251228_init.ts"
+
+fail_if_matches \
   "Agents controller must not derive runner goals from deprecated AgentRun parameter aliases" \
   'goalObjective|goalTokenBudget' \
   "${ROOT_DIR}/services/agents/src/server/agents-controller" \
