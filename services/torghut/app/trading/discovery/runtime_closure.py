@@ -81,6 +81,17 @@ def _discover_runtime_root(source_path: Path) -> Path:
 
 
 _REPO_ROOT = _discover_runtime_root(Path(__file__))
+_MIN_SIMULATION_PARITY_SAMPLE_COUNT = 120
+_MAX_SIMULATION_LIVE_FILL_ERROR_BPS = Decimal("8")
+_MAX_ADVERSE_SELECTION_ERROR_BPS = Decimal("8")
+_EXECUTION_REALISM_PASS_STATUSES = frozenset(
+    {
+        "pass",
+        "passed",
+        "within_budget",
+        "within_tolerance",
+    }
+)
 
 
 def _string(value: Any) -> str:
@@ -142,6 +153,12 @@ def _decimal_string(value: Decimal) -> str:
     if "." in rendered:
         rendered = rendered.rstrip("0").rstrip(".")
     return rendered or "0"
+
+
+def _optional_decimal_string(value: Any) -> str:
+    if value is None or _string(value) == "":
+        return ""
+    return _decimal_string(_decimal(value))
 
 
 def _p10(values: Sequence[Decimal]) -> Decimal:
@@ -420,7 +437,7 @@ def _runtime_execution_realism_summary(payload: Mapping[str, Any]) -> dict[str, 
         _payload_value("live_paper_parity_status")
         or _payload_value("simulation_live_parity_status")
     )
-    return {
+    summary: dict[str, Any] = {
         "daily_lob_event_stream_count": _mapping(
             _payload_value("daily_lob_event_stream_count")
         ),
@@ -435,14 +452,12 @@ def _runtime_execution_realism_summary(payload: Mapping[str, Any]) -> dict[str, 
         "simulation_live_parity_status": live_paper_parity_status,
         "live_paper_parity_sample_count": live_paper_parity_sample_count,
         "simulation_live_parity_sample_count": live_paper_parity_sample_count,
-        "live_paper_parity_max_fill_error_bps": _decimal_string(
-            _decimal(_payload_value("live_paper_parity_max_fill_error_bps"))
+        "live_paper_parity_max_fill_error_bps": _optional_decimal_string(
+            _payload_value("live_paper_parity_max_fill_error_bps")
         ),
-        "live_paper_parity_max_adverse_selection_error_bps": _decimal_string(
-            _decimal(
-                _payload_value("live_paper_parity_max_adverse_selection_error_bps")
-                or _payload_value("adverse_selection_error_bps")
-            )
+        "live_paper_parity_max_adverse_selection_error_bps": _optional_decimal_string(
+            _payload_value("live_paper_parity_max_adverse_selection_error_bps")
+            or _payload_value("adverse_selection_error_bps")
         ),
         "implementation_trace_ref": _string(_payload_value("implementation_trace_ref")),
         "lob_event_stream_artifact_ref": _string(
@@ -455,6 +470,73 @@ def _runtime_execution_realism_summary(payload: Mapping[str, Any]) -> dict[str, 
             _payload_value("simulation_live_parity_artifact_ref")
         ),
     }
+    missing_evidence = _execution_realism_missing_evidence(summary)
+    summary["execution_realism_status"] = (
+        "complete" if not missing_evidence else "missing_required_evidence"
+    )
+    summary["execution_realism_missing_evidence"] = list(missing_evidence)
+    return summary
+
+
+def _execution_realism_missing_evidence(summary: Mapping[str, Any]) -> tuple[str, ...]:
+    missing: list[str] = []
+    parity_status = _string(
+        summary.get("live_paper_parity_status")
+        or summary.get("simulation_live_parity_status")
+    )
+    parity_sample_count = max(
+        _int(summary.get("live_paper_parity_sample_count")),
+        _int(summary.get("simulation_live_parity_sample_count")),
+    )
+    if (
+        max(
+            _int(summary.get("lob_event_stream_event_count")),
+            _int(summary.get("lob_event_stream_sample_count")),
+        )
+        <= 0
+    ):
+        missing.append("lob_event_stream_evidence_missing")
+    if _string(summary.get("lob_event_stream_artifact_ref")) == "":
+        missing.append("lob_event_stream_artifact_ref_missing")
+    if (
+        max(
+            _int(summary.get("fill_outcome_count")),
+            _int(summary.get("fill_outcome_sample_count")),
+        )
+        <= 0
+    ):
+        missing.append("fill_outcome_evidence_missing")
+    if _string(summary.get("fill_outcomes_artifact_ref")) == "":
+        missing.append("fill_outcomes_artifact_ref_missing")
+    if parity_sample_count <= 0:
+        missing.append("live_paper_parity_evidence_missing")
+    if _string(summary.get("simulation_live_parity_artifact_ref")) == "":
+        missing.append("simulation_live_parity_artifact_ref_missing")
+    if parity_status not in _EXECUTION_REALISM_PASS_STATUSES:
+        missing.append("live_paper_parity_status_not_within_budget")
+    if parity_sample_count < _MIN_SIMULATION_PARITY_SAMPLE_COUNT:
+        missing.append("live_paper_parity_sample_count_below_minimum")
+    fill_error_bps = summary.get("live_paper_parity_max_fill_error_bps")
+    adverse_selection_error_bps = summary.get(
+        "live_paper_parity_max_adverse_selection_error_bps"
+    )
+    if _string(fill_error_bps) == "":
+        missing.append("live_paper_parity_fill_error_evidence_missing")
+    elif _decimal(fill_error_bps) > _MAX_SIMULATION_LIVE_FILL_ERROR_BPS:
+        missing.append("live_paper_parity_fill_error_above_maximum")
+    if _string(adverse_selection_error_bps) == "":
+        missing.append("live_paper_parity_adverse_selection_error_evidence_missing")
+    elif _decimal(adverse_selection_error_bps) > _MAX_ADVERSE_SELECTION_ERROR_BPS:
+        missing.append("live_paper_parity_adverse_selection_error_above_maximum")
+    if (
+        _string(
+            summary.get("implementation_trace_ref")
+            or summary.get("runtime_implementation_artifact_ref")
+        )
+        == ""
+    ):
+        missing.append("implementation_trace_evidence_missing")
+    return tuple(missing)
 
 
 def _max_drawdown_from_daily_net(daily_net: Mapping[str, Decimal]) -> Decimal:
@@ -1116,7 +1198,16 @@ def _materialize_candidate_configmap(
 
 
 def _default_replay_executor(config: replay_mod.ReplayConfig) -> dict[str, Any]:
-    return replay_mod.run_replay(config)
+    payload = dict(replay_mod.run_replay(config))
+    realism_summary = _runtime_execution_realism_summary(payload)
+    missing_evidence = list(realism_summary["execution_realism_missing_evidence"])
+    payload["execution_realism_status"] = realism_summary["execution_realism_status"]
+    payload["execution_realism_missing_evidence"] = missing_evidence
+    execution_realism = _mapping(payload.get("execution_realism"))
+    execution_realism["status"] = realism_summary["execution_realism_status"]
+    execution_realism["missing_evidence"] = missing_evidence
+    payload["execution_realism"] = execution_realism
+    return payload
 
 
 def _run_runtime_replay(
@@ -1995,95 +2086,81 @@ def _delay_adjusted_depth_stress_report(
     report = _mapping(approval_report)
     summary = _mapping(report.get("summary"))
     scorecard = _mapping(report.get("scorecard"))
-    min_simulation_parity_sample_count = 120
-    max_simulation_live_fill_error_bps = Decimal("8")
-    max_adverse_selection_error_bps = Decimal("8")
     daily_lob_event_stream_count = _mapping(summary.get("daily_lob_event_stream_count"))
     daily_fill_outcome_count = _mapping(summary.get("daily_fill_outcome_count"))
     lob_event_stream_event_count = max(
         _int(summary.get("lob_event_stream_event_count")),
         _int(summary.get("lob_event_stream_sample_count")),
-        _int(scorecard.get("lob_event_stream_event_count")),
-        _int(scorecard.get("lob_event_stream_sample_count")),
-        _int(best_candidate.get("lob_event_stream_event_count")),
-        _int(best_candidate.get("lob_event_stream_sample_count")),
     )
     fill_outcome_count = max(
         _int(summary.get("fill_outcome_count")),
         _int(summary.get("fill_outcome_sample_count")),
-        _int(scorecard.get("fill_outcome_count")),
-        _int(scorecard.get("fill_outcome_sample_count")),
-        _int(best_candidate.get("fill_outcome_count")),
-        _int(best_candidate.get("fill_outcome_sample_count")),
     )
     live_paper_parity_sample_count = max(
         _int(summary.get("live_paper_parity_sample_count")),
         _int(summary.get("simulation_live_parity_sample_count")),
-        _int(scorecard.get("live_paper_parity_sample_count")),
-        _int(scorecard.get("simulation_live_parity_sample_count")),
-        _int(best_candidate.get("live_paper_parity_sample_count")),
-        _int(best_candidate.get("simulation_live_parity_sample_count")),
     )
     live_paper_parity_status = _string(
         summary.get("live_paper_parity_status")
-        or scorecard.get("live_paper_parity_status")
-        or best_candidate.get("live_paper_parity_status")
         or summary.get("simulation_live_parity_status")
-        or scorecard.get("simulation_live_parity_status")
-        or best_candidate.get("simulation_live_parity_status")
     )
+    live_paper_parity_max_fill_error_bps_raw = summary.get(
+        "live_paper_parity_max_fill_error_bps"
+    ) or summary.get("simulation_live_fill_error_bps")
     live_paper_parity_max_fill_error_bps = _decimal(
-        summary.get("live_paper_parity_max_fill_error_bps")
-        or scorecard.get("live_paper_parity_max_fill_error_bps")
-        or best_candidate.get("live_paper_parity_max_fill_error_bps")
-        or summary.get("simulation_live_fill_error_bps")
-        or scorecard.get("simulation_live_fill_error_bps")
-        or best_candidate.get("simulation_live_fill_error_bps")
+        live_paper_parity_max_fill_error_bps_raw
     )
+    live_paper_parity_max_adverse_selection_error_bps_raw = summary.get(
+        "live_paper_parity_max_adverse_selection_error_bps"
+    ) or summary.get("adverse_selection_error_bps")
     live_paper_parity_max_adverse_selection_error_bps = _decimal(
-        summary.get("live_paper_parity_max_adverse_selection_error_bps")
-        or scorecard.get("live_paper_parity_max_adverse_selection_error_bps")
-        or best_candidate.get("live_paper_parity_max_adverse_selection_error_bps")
-        or summary.get("adverse_selection_error_bps")
-        or scorecard.get("adverse_selection_error_bps")
-        or best_candidate.get("adverse_selection_error_bps")
+        live_paper_parity_max_adverse_selection_error_bps_raw
     )
     simulation_live_parity_status = _string(
         summary.get("simulation_live_parity_status")
-        or scorecard.get("simulation_live_parity_status")
-        or best_candidate.get("simulation_live_parity_status")
     )
     implementation_trace_ref = _string(
         summary.get("implementation_trace_ref")
-        or scorecard.get("implementation_trace_ref")
-        or best_candidate.get("implementation_trace_ref")
         or summary.get("runtime_implementation_artifact_ref")
-        or scorecard.get("runtime_implementation_artifact_ref")
-        or best_candidate.get("runtime_implementation_artifact_ref")
     )
-    parity_status_ok = live_paper_parity_status in {
-        "pass",
-        "passed",
-        "within_budget",
-        "within_tolerance",
-    }
+    lob_event_stream_artifact_ref = _string(
+        summary.get("lob_event_stream_artifact_ref")
+    )
+    fill_outcomes_artifact_ref = _string(summary.get("fill_outcomes_artifact_ref"))
+    simulation_live_parity_artifact_ref = _string(
+        summary.get("simulation_live_parity_artifact_ref")
+    )
+    parity_status_ok = live_paper_parity_status in _EXECUTION_REALISM_PASS_STATUSES
     lob_event_stream_evidence_present = lob_event_stream_event_count > 0
     fill_outcome_evidence_present = fill_outcome_count > 0
     live_paper_parity_evidence_present = (
-        live_paper_parity_sample_count >= min_simulation_parity_sample_count
+        live_paper_parity_sample_count >= _MIN_SIMULATION_PARITY_SAMPLE_COUNT
         and parity_status_ok
-        and live_paper_parity_max_fill_error_bps <= max_simulation_live_fill_error_bps
+        and _string(live_paper_parity_max_fill_error_bps_raw) != ""
+        and _string(live_paper_parity_max_adverse_selection_error_bps_raw) != ""
+        and live_paper_parity_max_fill_error_bps <= _MAX_SIMULATION_LIVE_FILL_ERROR_BPS
         and live_paper_parity_max_adverse_selection_error_bps
-        <= max_adverse_selection_error_bps
+        <= _MAX_ADVERSE_SELECTION_ERROR_BPS
     )
-    lob_execution_realism_evidence_present = all(
-        (
-            lob_event_stream_evidence_present,
-            fill_outcome_evidence_present,
-            live_paper_parity_evidence_present,
-            implementation_trace_ref != "",
-        )
+    execution_realism_missing_evidence = _execution_realism_missing_evidence(
+        {
+            "lob_event_stream_event_count": lob_event_stream_event_count,
+            "lob_event_stream_artifact_ref": lob_event_stream_artifact_ref,
+            "fill_outcome_count": fill_outcome_count,
+            "fill_outcomes_artifact_ref": fill_outcomes_artifact_ref,
+            "live_paper_parity_status": live_paper_parity_status,
+            "live_paper_parity_sample_count": live_paper_parity_sample_count,
+            "live_paper_parity_max_fill_error_bps": _optional_decimal_string(
+                live_paper_parity_max_fill_error_bps_raw
+            ),
+            "live_paper_parity_max_adverse_selection_error_bps": _optional_decimal_string(
+                live_paper_parity_max_adverse_selection_error_bps_raw
+            ),
+            "simulation_live_parity_artifact_ref": simulation_live_parity_artifact_ref,
+            "implementation_trace_ref": implementation_trace_ref,
+        }
     )
+    lob_execution_realism_evidence_present = not execution_realism_missing_evidence
     daily_net = {
         day: _decimal(value)
         for day, value in _mapping(summary.get("daily_net")).items()
@@ -2244,20 +2321,36 @@ def _delay_adjusted_depth_stress_report(
         reasons.append(
             "delay_adjusted_depth_live_paper_parity_status_not_within_budget"
         )
-    if live_paper_parity_sample_count < min_simulation_parity_sample_count:
+    if live_paper_parity_sample_count < _MIN_SIMULATION_PARITY_SAMPLE_COUNT:
         reasons.append(
             "delay_adjusted_depth_live_paper_parity_sample_count_below_minimum"
         )
-    if live_paper_parity_max_fill_error_bps > max_simulation_live_fill_error_bps:
+    if _string(live_paper_parity_max_fill_error_bps_raw) == "":
+        reasons.append(
+            "delay_adjusted_depth_live_paper_parity_fill_error_evidence_missing"
+        )
+    elif live_paper_parity_max_fill_error_bps > _MAX_SIMULATION_LIVE_FILL_ERROR_BPS:
         reasons.append(
             "delay_adjusted_depth_live_paper_parity_fill_error_above_maximum"
         )
-    if (
+    if _string(live_paper_parity_max_adverse_selection_error_bps_raw) == "":
+        reasons.append(
+            "delay_adjusted_depth_live_paper_parity_adverse_selection_error_evidence_missing"
+        )
+    elif (
         live_paper_parity_max_adverse_selection_error_bps
-        > max_adverse_selection_error_bps
+        > _MAX_ADVERSE_SELECTION_ERROR_BPS
     ):
         reasons.append(
             "delay_adjusted_depth_live_paper_parity_adverse_selection_error_above_maximum"
+        )
+    if lob_event_stream_artifact_ref == "":
+        reasons.append("delay_adjusted_depth_lob_event_stream_artifact_ref_missing")
+    if fill_outcomes_artifact_ref == "":
+        reasons.append("delay_adjusted_depth_fill_outcomes_artifact_ref_missing")
+    if simulation_live_parity_artifact_ref == "":
+        reasons.append(
+            "delay_adjusted_depth_simulation_live_parity_artifact_ref_missing"
         )
     if implementation_trace_ref == "":
         reasons.append("implementation_trace_evidence_missing")
@@ -2326,24 +2419,31 @@ def _delay_adjusted_depth_stress_report(
         "liquidity_input_source": "recorded_liquidity_notional"
         if recorded_liquidity_days
         else "missing_recorded_liquidity",
+        "execution_realism_status": "complete"
+        if not execution_realism_missing_evidence
+        else "missing_required_evidence",
+        "execution_realism_missing_evidence": list(execution_realism_missing_evidence),
         "lob_execution_realism_evidence_present": lob_execution_realism_evidence_present,
         "lob_event_stream_evidence_present": lob_event_stream_evidence_present,
+        "lob_event_stream_artifact_ref": lob_event_stream_artifact_ref,
         "lob_event_stream_event_count": lob_event_stream_event_count,
         "lob_event_stream_sample_count": lob_event_stream_event_count,
         "fill_outcome_evidence_present": fill_outcome_evidence_present,
+        "fill_outcomes_artifact_ref": fill_outcomes_artifact_ref,
         "fill_outcome_count": fill_outcome_count,
         "fill_outcome_sample_count": fill_outcome_count,
         "live_paper_parity_evidence_present": live_paper_parity_evidence_present,
         "live_paper_parity_status": live_paper_parity_status,
         "live_paper_parity_sample_count": live_paper_parity_sample_count,
-        "live_paper_parity_max_fill_error_bps": _decimal_string(
-            live_paper_parity_max_fill_error_bps
+        "live_paper_parity_max_fill_error_bps": _optional_decimal_string(
+            live_paper_parity_max_fill_error_bps_raw
         ),
-        "live_paper_parity_max_adverse_selection_error_bps": _decimal_string(
-            live_paper_parity_max_adverse_selection_error_bps
+        "live_paper_parity_max_adverse_selection_error_bps": _optional_decimal_string(
+            live_paper_parity_max_adverse_selection_error_bps_raw
         ),
         "simulation_live_parity_sample_count": live_paper_parity_sample_count,
         "simulation_live_parity_status": simulation_live_parity_status,
+        "simulation_live_parity_artifact_ref": simulation_live_parity_artifact_ref,
         "implementation_trace_ref": implementation_trace_ref,
         "recorded_liquidity_day_count": recorded_liquidity_days,
         "missing_liquidity_days": missing_liquidity_days,

@@ -276,7 +276,21 @@ class TestRuntimeClosure(TestCase):
             runtime_closure.replay_mod, "run_replay", return_value={"status": "ok"}
         ) as mock_run:
             payload = runtime_closure._default_replay_executor(config)
-        self.assertEqual(payload, {"status": "ok"})
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(
+            payload["execution_realism_status"], "missing_required_evidence"
+        )
+        self.assertIn(
+            "lob_event_stream_evidence_missing",
+            payload["execution_realism_missing_evidence"],
+        )
+        self.assertIn(
+            "live_paper_parity_fill_error_evidence_missing",
+            payload["execution_realism_missing_evidence"],
+        )
+        self.assertEqual(
+            payload["execution_realism"]["status"], "missing_required_evidence"
+        )
         mock_run.assert_called_once_with(config)  # type: ignore[arg-type]
 
     def test_shadow_validation_artifact_helper_covers_invalid_schema_and_pending_status(
@@ -1629,6 +1643,129 @@ data:
             report["reasons"],
         )
 
+    def test_delay_adjusted_depth_stress_rejects_candidate_metadata_as_runtime_evidence(
+        self,
+    ) -> None:
+        candidate_metadata = {
+            "lob_event_stream_event_count": 160,
+            "fill_outcome_count": 160,
+            "live_paper_parity_status": "within_budget",
+            "live_paper_parity_sample_count": 160,
+            "live_paper_parity_max_fill_error_bps": "4",
+            "live_paper_parity_max_adverse_selection_error_bps": "5",
+            "implementation_trace_ref": "s3://proof/runtime-implementation-trace.json",
+            "lob_event_stream_artifact_ref": "s3://proof/lob-events.json",
+            "fill_outcomes_artifact_ref": "s3://proof/fill-outcomes.json",
+            "simulation_live_parity_artifact_ref": "s3://proof/live-parity.json",
+        }
+        report = runtime_closure._delay_adjusted_depth_stress_report(
+            runner_run_id="run-depth-candidate-metadata",
+            best_candidate={
+                "candidate_id": "cand-depth-candidate-metadata",
+                "runtime_family": "microstructure_continuation",
+                "runtime_strategy_name": "microbar-volume-continuation-long-v1",
+                **candidate_metadata,
+            },
+            approval_report={
+                "objective_met": True,
+                "summary": {
+                    "trading_day_count": 2,
+                    "net_pnl": "1600",
+                    "daily_net": {
+                        "2026-05-18": "800",
+                        "2026-05-19": "800",
+                    },
+                    "daily_filled_notional": {
+                        "2026-05-18": "300000",
+                        "2026-05-19": "300000",
+                    },
+                    "daily_liquidity_notional": {
+                        "2026-05-18": "1200000",
+                        "2026-05-19": "1200000",
+                    },
+                },
+                "scorecard": {"net_pnl_per_day": "800", **candidate_metadata},
+            },
+            program=_program(),
+        )
+
+        self.assertFalse(report["objective_met"])
+        self.assertFalse(report["lob_execution_realism_evidence_present"])
+        self.assertEqual(report["lob_event_stream_event_count"], 0)
+        self.assertEqual(report["fill_outcome_count"], 0)
+        self.assertIn(
+            "delay_adjusted_depth_lob_event_stream_evidence_missing",
+            report["reasons"],
+        )
+        self.assertIn(
+            "delay_adjusted_depth_fill_outcome_evidence_missing",
+            report["reasons"],
+        )
+
+    def test_delay_adjusted_depth_stress_requires_explicit_parity_error_metrics(
+        self,
+    ) -> None:
+        report = runtime_closure._delay_adjusted_depth_stress_report(
+            runner_run_id="run-depth-missing-parity-errors",
+            best_candidate={
+                "candidate_id": "cand-depth-missing-parity-errors",
+                "runtime_family": "microstructure_continuation",
+                "runtime_strategy_name": "microbar-volume-continuation-long-v1",
+            },
+            approval_report={
+                "objective_met": True,
+                "summary": {
+                    "trading_day_count": 2,
+                    "net_pnl": "1600",
+                    "daily_net": {
+                        "2026-05-18": "800",
+                        "2026-05-19": "800",
+                    },
+                    "daily_filled_notional": {
+                        "2026-05-18": "300000",
+                        "2026-05-19": "300000",
+                    },
+                    "daily_liquidity_notional": {
+                        "2026-05-18": "1200000",
+                        "2026-05-19": "1200000",
+                    },
+                    "daily_lob_event_stream_count": {
+                        "2026-05-18": 80,
+                        "2026-05-19": 80,
+                    },
+                    "daily_fill_outcome_count": {
+                        "2026-05-18": 80,
+                        "2026-05-19": 80,
+                    },
+                    "lob_event_stream_event_count": 160,
+                    "fill_outcome_count": 160,
+                    "live_paper_parity_status": "within_budget",
+                    "live_paper_parity_sample_count": 160,
+                    "implementation_trace_ref": "s3://proof/runtime-implementation-trace.json",
+                    "lob_event_stream_artifact_ref": "s3://proof/lob-events.json",
+                    "fill_outcomes_artifact_ref": "s3://proof/fill-outcomes.json",
+                    "simulation_live_parity_artifact_ref": "s3://proof/live-parity.json",
+                },
+                "scorecard": {"net_pnl_per_day": "800"},
+            },
+            program=_program(),
+        )
+
+        self.assertFalse(report["objective_met"])
+        self.assertFalse(report["live_paper_parity_evidence_present"])
+        self.assertEqual(
+            report["execution_realism_status"], "missing_required_evidence"
+        )
+        self.assertEqual(report["live_paper_parity_max_fill_error_bps"], "")
+        self.assertIn(
+            "delay_adjusted_depth_live_paper_parity_fill_error_evidence_missing",
+            report["reasons"],
+        )
+        self.assertIn(
+            "delay_adjusted_depth_live_paper_parity_adverse_selection_error_evidence_missing",
+            report["reasons"],
+        )
+
     def test_delay_adjusted_depth_stress_accepts_lob_reality_gap_evidence(
         self,
     ) -> None:
@@ -1671,6 +1808,9 @@ data:
                     "live_paper_parity_max_fill_error_bps": "4",
                     "live_paper_parity_max_adverse_selection_error_bps": "5",
                     "implementation_trace_ref": "s3://proof/runtime-implementation-trace.json",
+                    "lob_event_stream_artifact_ref": "s3://proof/lob-events.json",
+                    "fill_outcomes_artifact_ref": "s3://proof/fill-outcomes.json",
+                    "simulation_live_parity_artifact_ref": "s3://proof/live-parity.json",
                 },
                 "scorecard": {"net_pnl_per_day": "800"},
             },
@@ -1731,6 +1871,9 @@ data:
                     "live_paper_parity_max_fill_error_bps": "4",
                     "live_paper_parity_max_adverse_selection_error_bps": "5",
                     "implementation_trace_ref": "s3://proof/runtime-implementation-trace.json",
+                    "lob_event_stream_artifact_ref": "s3://proof/lob-events.json",
+                    "fill_outcomes_artifact_ref": "s3://proof/fill-outcomes.json",
+                    "simulation_live_parity_artifact_ref": "s3://proof/live-parity.json",
                 },
                 "scorecard": {"net_pnl_per_day": "800"},
             },
