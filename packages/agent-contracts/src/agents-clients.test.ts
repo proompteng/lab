@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fetchAgentRunResourcesFromAgentsService, patchAgentRunAnnotationsViaAgentsService } from './agent-runs-client'
 import { fetchAgentRunsFromAgentsService, submitAgentRunToAgentsService } from './agent-runs-client'
 import { submitAgentMessagesToAgentsService } from './agent-messages-client'
-import { fetchAgentsHealthFromAgentsService } from './agents-health-client'
+import { buildAgentsDependencyHealth, fetchAgentsHealthFromAgentsService } from './agents-health-client'
 import { fetchAgentsJson, resolveAgentsServiceBaseUrl } from './agents-http'
 import { fetchExecutionTrustFromAgentsService } from './execution-trust-client'
 import { submitOrchestrationRunToAgentsService } from './orchestration-runs-client'
@@ -92,6 +92,67 @@ describe('agents typed service clients', () => {
           enabled: true,
           crdsReady: true,
         },
+      },
+    })
+  })
+
+  it('classifies Agents health dependency results for domain consumers', () => {
+    expect(
+      buildAgentsDependencyHealth({
+        ok: true,
+        status: 200,
+        body: {
+          status: 'ok',
+          service: 'agents',
+          agentsController: {
+            enabled: true,
+            crdsReady: true,
+          },
+        },
+      }),
+    ).toMatchObject({
+      status: 'healthy',
+      ready: true,
+      http_status: 200,
+      error: null,
+      controller: {
+        enabled: true,
+        crdsReady: true,
+      },
+    })
+
+    expect(
+      buildAgentsDependencyHealth({
+        ok: true,
+        status: 200,
+        body: {
+          status: 'ok',
+          service: 'agents',
+          agentsController: {
+            enabled: true,
+            crdsReady: false,
+          },
+        },
+      }),
+    ).toMatchObject({
+      status: 'degraded',
+      ready: false,
+    })
+
+    expect(
+      buildAgentsDependencyHealth({
+        ok: false,
+        status: 0,
+        body: null,
+        error: 'connect ECONNREFUSED',
+      }),
+    ).toMatchObject({
+      status: 'unavailable',
+      ready: false,
+      error: 'connect ECONNREFUSED',
+      controller: {
+        enabled: true,
+        crdsReady: false,
       },
     })
   })

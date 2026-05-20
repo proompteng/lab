@@ -665,10 +665,20 @@ fail_if_matches \
   'type AgentsDependencyStatus|type AgentsDependencySummary|const buildAgentsDependencySummary' \
   "${ROOT_DIR}/services/jangar/src/routes/ready.tsx"
 
+fail_if_matches \
+  "Jangar /health must use the shared Agents dependency health classifier instead of classifying generic Agents health locally" \
+  'type AgentsDependencyHealth|const buildAgentsDependencyHealth|const unavailableAgentsController' \
+  "${ROOT_DIR}/services/jangar/src/routes/health.tsx"
+
 require_matches \
   "Shared agent-contracts must own the Agents dependency summary classifier for domain consumers" \
   'buildAgentsDependencySummary' \
   "${ROOT_DIR}/packages/agent-contracts/src/agents-ready.ts"
+
+require_matches \
+  "Shared agent-contracts must own the Agents dependency health classifier for domain consumers" \
+  'buildAgentsDependencyHealth' \
+  "${ROOT_DIR}/packages/agent-contracts/src/agents-health-client.ts"
 
 fail_if_matches \
   "Jangar KubeGateway must list Agents CRDs through the Agents service boundary, not direct Kubernetes CRD access" \

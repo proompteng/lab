@@ -1,51 +1,15 @@
 import { createFileRoute } from '@tanstack/react-router'
 
 import {
+  buildAgentsDependencyHealth,
   fetchAgentsHealthFromAgentsService,
-  type AgentsHealthController,
-  type AgentsHealthPayload,
 } from '@proompteng/agent-contracts/agents-health-client'
 import { resolveRuntimeServiceName } from '~/server/runtime-identity'
 
-type AgentsDependencyHealth = {
-  status: 'healthy' | 'degraded' | 'unavailable'
-  ready: boolean
-  http_status: number
-  error: string | null
-  controller: AgentsHealthController
-}
-
-const unavailableAgentsController = (): AgentsHealthController => ({
-  enabled: true,
-  crdsReady: false,
-})
-
-const buildAgentsDependencyHealth = (input: {
-  ok: boolean
-  status: number
-  error?: string
-  controller: AgentsHealthController
-}): AgentsDependencyHealth => {
-  const ready = input.ok && (input.controller.enabled ? input.controller.crdsReady !== false : true)
-  return {
-    status: !input.ok ? 'unavailable' : ready ? 'healthy' : 'degraded',
-    ready,
-    http_status: input.status,
-    error: input.ok ? null : (input.error ?? `Agents service returned HTTP ${input.status}`),
-    controller: input.controller,
-  }
-}
-
 export const getHealthHandler = async () => {
   const agentsHealth = await fetchAgentsHealthFromAgentsService()
-  const agentsController = agentsHealth.body?.agentsController ?? unavailableAgentsController()
-  const agentsError = agentsHealth.ok ? undefined : (agentsHealth.error ?? undefined)
-  const agentsDependency = buildAgentsDependencyHealth({
-    ok: agentsHealth.ok,
-    status: agentsHealth.status,
-    error: agentsError,
-    controller: agentsController,
-  })
+  const agentsDependency = buildAgentsDependencyHealth(agentsHealth)
+  const agentsController = agentsDependency.controller
   const body = JSON.stringify({
     status: 'ok',
     service: resolveRuntimeServiceName(),

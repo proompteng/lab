@@ -13,6 +13,34 @@ export type AgentsHealthPayload = {
   agentsController?: AgentsHealthController
 }
 
+export type AgentsDependencyHealth = {
+  status: 'healthy' | 'degraded' | 'unavailable'
+  ready: boolean
+  http_status: number
+  error: string | null
+  controller: AgentsHealthController
+}
+
+export const unavailableAgentsController = (): AgentsHealthController => ({
+  enabled: true,
+  crdsReady: false,
+})
+
+export const buildAgentsDependencyHealth = (
+  result: AgentsServiceJsonResult<AgentsHealthPayload>,
+): AgentsDependencyHealth => {
+  const controller = result.body?.agentsController ?? unavailableAgentsController()
+  const ready = result.ok && (controller.enabled ? controller.crdsReady !== false : true)
+
+  return {
+    status: !result.ok ? 'unavailable' : ready ? 'healthy' : 'degraded',
+    ready,
+    http_status: result.status,
+    error: result.ok ? null : (result.error ?? `Agents service returned HTTP ${result.status}`),
+    controller,
+  }
+}
+
 export const fetchAgentsHealthFromAgentsService = async (
   env: EnvSource = process.env,
 ): Promise<AgentsServiceJsonResult<AgentsHealthPayload>> => fetchAgentsJson<AgentsHealthPayload>('/health', env)
