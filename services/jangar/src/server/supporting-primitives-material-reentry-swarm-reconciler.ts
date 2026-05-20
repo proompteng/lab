@@ -1,4 +1,4 @@
-import { fetchControlPlaneResourcesFromAgentsService } from '~/server/agents-service-client'
+import { fetchControlPlaneResourcesFromAgentsService } from '@proompteng/agent-contracts/agents-service-client'
 import { resolveSupportingPrimitivesConfig } from '~/server/supporting-primitives-config'
 
 export const MATERIAL_REENTRY_SWARM_RECONCILE_INTERVAL_MS = 30_000

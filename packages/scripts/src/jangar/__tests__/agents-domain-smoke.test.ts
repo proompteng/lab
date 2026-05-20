@@ -8,20 +8,11 @@ const readYamlObjects = (path: string) =>
     .map((document) => document.toJSON())
     .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
 
-const swarmAgentRunTemplatePaths = [
-  'argocd/applications/jangar-agents-domain/jangar-swarm-agentrun-templates.yaml',
-  'argocd/applications/torghut/agents-domain/torghut-swarm-agentrun-templates.yaml',
-]
+const swarmAgentRunTemplatePaths = ['argocd/applications/torghut/agents-domain/torghut-swarm-agentrun-templates.yaml']
 
-const swarmInstancePaths = [
-  'argocd/applications/jangar-agents-domain/jangar-swarm-instances.yaml',
-  'argocd/applications/torghut/agents-domain/torghut-swarm-instances.yaml',
-]
+const swarmInstancePaths = ['argocd/applications/torghut/agents-domain/torghut-swarm-instances.yaml']
 
-const swarmImplementationSpecPaths = [
-  'argocd/applications/jangar-agents-domain/jangar-swarm-implspecs.yaml',
-  'argocd/applications/torghut/agents-domain/torghut-swarm-implspecs.yaml',
-]
+const swarmImplementationSpecPaths = ['argocd/applications/torghut/agents-domain/torghut-swarm-implspecs.yaml']
 
 const stageContract = {
   discover: {
@@ -117,7 +108,7 @@ describe('Agents domain scheduled AgentRun templates', () => {
         .filter((entry): entry is [string, Record<string, unknown>] => typeof entry[0] === 'string'),
     )
 
-    for (const name of ['jangar-swarm-verify-template', 'torghut-swarm-verify-template']) {
+    for (const name of ['torghut-swarm-verify-template']) {
       const template = agentRunTemplates.get(name)
       const workflow = objectAt(objectAt(template, 'spec'), 'workflow')
       const steps = objectAt(workflow, 'steps') as Record<string, unknown>[] | undefined
@@ -138,10 +129,6 @@ describe('Agents domain scheduled AgentRun templates', () => {
     )
 
     for (const [name, expectedUrl] of [
-      ['jangar-swarm-discover-template', 'http://agents.agents.svc.cluster.local/ready'],
-      ['jangar-swarm-plan-template', 'http://agents.agents.svc.cluster.local/ready'],
-      ['jangar-swarm-implement-template', 'http://agents.agents.svc.cluster.local/ready'],
-      ['jangar-swarm-verify-template', 'http://agents.agents.svc.cluster.local/ready'],
       ['torghut-swarm-discover-template', 'http://torghut.torghut.svc.cluster.local/trading/revenue-repair'],
       ['torghut-swarm-plan-template', 'http://torghut.torghut.svc.cluster.local/trading/revenue-repair'],
       ['torghut-swarm-implement-template', 'http://torghut.torghut.svc.cluster.local/trading/revenue-repair'],
@@ -187,13 +174,7 @@ describe('Agents domain scheduled AgentRun templates', () => {
         manifest.kind === 'ImplementationSpec' &&
         objectAt(objectAt(manifest, 'metadata'), 'name') === 'torghut-swarm-deployer-v1',
     )
-    const jangarDeployerSpec = manifests.find(
-      (manifest) =>
-        manifest.kind === 'ImplementationSpec' &&
-        objectAt(objectAt(manifest, 'metadata'), 'name') === 'jangar-swarm-deployer-v1',
-    )
     const torghutText = stringAt(objectAt(torghutDeployerSpec, 'spec'), 'text')
-    const jangarText = stringAt(objectAt(jangarDeployerSpec, 'spec'), 'text')
 
     expect(torghutText).toContain('Select at most one unblock-first/high-impact PR')
     expect(torghutText).toContain('Ignore or close superseded release/promotion PRs')
@@ -201,8 +182,6 @@ describe('Agents domain scheduled AgentRun templates', () => {
     expect(torghutText).toContain('Never request Codex review automatically')
     expect(torghutText).toContain('/trading/revenue-repair')
     expect(torghutText).not.toContain('codex:review-request')
-    expect(jangarText).toContain('Select at most one unblock-first/high-impact PR')
-    expect(jangarText).not.toContain('/trading/revenue-repair')
   })
 
   it('requires implementation runs to use live business evidence before selecting work', () => {
@@ -212,23 +191,15 @@ describe('Agents domain scheduled AgentRun templates', () => {
         manifest.kind === 'ImplementationSpec' &&
         objectAt(objectAt(manifest, 'metadata'), 'name') === 'torghut-swarm-autonomous-implementation-v1',
     )
-    const jangarImplementerSpec = manifests.find(
-      (manifest) =>
-        manifest.kind === 'ImplementationSpec' &&
-        objectAt(objectAt(manifest, 'metadata'), 'name') === 'jangar-swarm-autonomous-implementation-v1',
-    )
     const torghutText = stringAt(objectAt(torghutImplementerSpec, 'spec'), 'text')
-    const jangarText = stringAt(objectAt(jangarImplementerSpec, 'spec'), 'text')
 
     expect(torghutText).toContain('Read `${swarmBusinessEvidenceUrl}` when provided')
     expect(torghutText).toContain('If the remote `${head}` branch is absent')
     expect(torghutText).toContain('top actionable `repair_queue` item')
     expect(torghutText).toContain('do not enable live submission while `business_state=repair_only`')
-    expect(jangarText).toContain('Read `${swarmBusinessEvidenceUrl}` when provided')
-    expect(jangarText).not.toContain('top actionable `repair_queue` item')
   })
 
-  it('keeps the Jangar and Torghut swarm three-role execution contract domain-owned', () => {
+  it('keeps the Torghut swarm three-role execution contract domain-owned', () => {
     const templates = new Map(
       swarmAgentRunTemplatePaths
         .flatMap(readYamlObjects)
@@ -262,9 +233,6 @@ describe('Agents domain scheduled AgentRun templates', () => {
         implementationSpecText.includes('jangar is the visibility surface')
       ) {
         errors.push(`${implementationSpecName}: Torghut swarm specs must not require Jangar as the visibility surface`)
-      }
-      if (implementationSpecName.startsWith('jangar-') && implementationSpecText.includes('/trading/revenue-repair')) {
-        errors.push(`${implementationSpecName}: Jangar swarm specs must not carry Torghut revenue-repair rules`)
       }
     }
 

@@ -12,9 +12,11 @@ import {
   submitAgentMessagesToAgentsService,
   submitControlPlaneResourceToAgentsService,
   submitOrchestrationRunToAgentsService,
-} from '~/server/agents-service-client'
+} from './agents-service-client'
 
 const originalFetch = globalThis.fetch
+const getHeader = (headers: RequestInit['headers'], name: string) =>
+  headers instanceof Headers ? headers.get(name) : ((headers as Record<string, string> | undefined)?.[name] ?? null)
 
 describe('agents-service-client', () => {
   afterEach(() => {
@@ -46,8 +48,8 @@ describe('agents-service-client', () => {
     const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
     expect(url.toString()).toBe('http://agents.test/health')
     expect(init.method).toBe('GET')
-    expect((init.headers as Headers).get('accept')).toBe('application/json')
-    expect((init.headers as Headers).get('x-agents-client')).toBe('jangar')
+    expect(getHeader(init.headers, 'accept')).toBe('application/json')
+    expect(getHeader(init.headers, 'x-agents-client')).toBe('agent-contracts')
     expect(result).toEqual({
       ok: true,
       status: 200,
@@ -89,7 +91,7 @@ describe('agents-service-client', () => {
       accept: 'application/json',
       'content-type': 'application/json',
       'idempotency-key': 'delivery-1',
-      'x-agents-client': 'jangar',
+      'x-agents-client': 'agent-contracts',
     })
     expect(result).toEqual({
       ok: true,
@@ -136,7 +138,7 @@ describe('agents-service-client', () => {
     const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
     expect(url.toString()).toBe('http://agents.test/v1/agent-runs?status=Running%2CPending&limit=100')
     expect(init.method).toBe('GET')
-    expect((init.headers as Headers).get('x-agents-client')).toBe('jangar')
+    expect(getHeader(init.headers, 'x-agents-client')).toBe('agent-contracts')
     expect(result).toEqual({
       ok: true,
       status: 200,
@@ -186,7 +188,7 @@ describe('agents-service-client', () => {
       'http://agents.test/api/agents/control-plane/resources?kind=AgentRun&namespace=agents&labelSelector=app%3Dwhitepaper&phase=Succeeded&limit=500',
     )
     expect(init.method).toBe('GET')
-    expect((init.headers as Headers).get('x-agents-client')).toBe('jangar')
+    expect(getHeader(init.headers, 'x-agents-client')).toBe('agent-contracts')
     expect(result).toEqual({
       ok: true,
       status: 200,
@@ -229,7 +231,7 @@ describe('agents-service-client', () => {
       'http://agents.test/api/agents/control-plane/resources?kind=Swarm&namespace=agents&limit=100',
     )
     expect(init.method).toBe('GET')
-    expect((init.headers as Headers).get('x-agents-client')).toBe('jangar')
+    expect(getHeader(init.headers, 'x-agents-client')).toBe('agent-contracts')
     expect(result).toEqual({
       ok: true,
       status: 200,
@@ -283,7 +285,7 @@ describe('agents-service-client', () => {
     expect(init.headers).toMatchObject({
       accept: 'application/json',
       'content-type': 'application/json',
-      'x-agents-client': 'jangar',
+      'x-agents-client': 'agent-contracts',
     })
     expect(JSON.parse(init.body as string)).toEqual({
       metadata: {
@@ -335,7 +337,7 @@ describe('agents-service-client', () => {
       'http://agents.test/api/agents/control-plane/resource?kind=OrchestrationRun&name=swarm-plan&namespace=agents',
     )
     expect(init.method).toBe('GET')
-    expect((init.headers as Headers).get('x-agents-client')).toBe('jangar')
+    expect(getHeader(init.headers, 'x-agents-client')).toBe('agent-contracts')
     expect(result).toEqual({
       ok: true,
       status: 200,
@@ -386,7 +388,7 @@ describe('agents-service-client', () => {
       accept: 'application/json',
       'content-type': 'application/json',
       'idempotency-key': 'signal-delivery',
-      'x-agents-client': 'jangar',
+      'x-agents-client': 'agent-contracts',
     })
     expect(JSON.parse(init.body as string)).toMatchObject({
       kind: 'Signal',
@@ -450,7 +452,7 @@ describe('agents-service-client', () => {
       accept: 'application/json',
       'content-type': 'application/json',
       'idempotency-key': 'delivery-1',
-      'x-agents-client': 'jangar',
+      'x-agents-client': 'agent-contracts',
     })
     expect(result).toEqual({
       orchestrationRun: {
@@ -501,7 +503,7 @@ describe('agents-service-client', () => {
     const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
     expect(url.toString()).toBe('http://agents.test/api/agents/messages')
     expect(init.method).toBe('POST')
-    expect((init.headers as Record<string, string>)['x-agents-client']).toBe('jangar')
+    expect(getHeader(init.headers, 'x-agents-client')).toBe('agent-contracts')
     expect(typeof init.body).toBe('string')
     expect(JSON.parse(init.body as string)).toMatchObject({
       skipIfExisting: { runId: 'run-1' },

@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { fetchAgentsServiceJson } from '~/server/agents-service-client'
+import { fetchAgentsServiceJson } from '@proompteng/agent-contracts/agents-service-client'
 import { resolveRuntimeServiceName } from '~/server/runtime-identity'
 
 type AgentsHealthController = {

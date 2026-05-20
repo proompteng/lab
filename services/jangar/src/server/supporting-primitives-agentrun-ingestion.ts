@@ -1,4 +1,7 @@
-import { resolveAgentsServiceBaseUrl } from '~/server/agents-service-client'
+import {
+  resolveAgentsServiceBaseUrl,
+  resolveAgentsServiceClientName,
+} from '@proompteng/agent-contracts/agents-service-client'
 import { asRecord, asString } from '~/server/primitives-http'
 
 const AGENTRUN_INGESTION_NOT_READY_REASON = 'agentrun_ingestion_not_ready'
@@ -56,7 +59,7 @@ const readAgentsReadyPayload = async () => {
   const response = await fetch(url, {
     headers: {
       accept: 'application/json',
-      'x-agents-client': 'jangar',
+      'x-agents-client': resolveAgentsServiceClientName(),
     },
   })
   const payload = asRecord(await response.json().catch(() => null))

@@ -1,7 +1,7 @@
 import {
   fetchControlPlaneResourceFromAgentsService,
   type AgentsControlPlaneResourceGetInput,
-} from '~/server/agents-service-client'
+} from '@proompteng/agent-contracts/agents-service-client'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { PROVIDER_CAPACITY_EXHAUSTED_REASON } from '~/server/provider-capacity-reasons'
 import { hashNameSuffix, makeHashedName } from '~/server/supporting-primitives-naming'

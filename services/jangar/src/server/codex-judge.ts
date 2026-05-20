@@ -7,7 +7,7 @@ import * as Either from 'effect/Either'
 import {
   submitAgentMessagesToAgentsService,
   submitOrchestrationRunToAgentsService,
-} from '~/server/agents-service-client'
+} from '@proompteng/agent-contracts/agents-service-client'
 import { resolveChatConfig } from '~/server/chat-config'
 import {
   buildBackfillDedupeKey,

@@ -7,6 +7,12 @@ const codexStub = fileURLToPath(new URL('./src/test-utils/codex-stub.ts', import
 const bunStub = fileURLToPath(new URL('./src/test-utils/bun-stub.ts', import.meta.url))
 const temporalBunSdkStub = fileURLToPath(new URL('./src/test-utils/temporal-bun-sdk-stub.ts', import.meta.url))
 const jsdomEnvSetup = fileURLToPath(new URL('./src/test-utils/vitest-jsdom-env.ts', import.meta.url))
+const agentContractsControlPlaneStatusSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/control-plane-status.ts', import.meta.url),
+)
+const agentContractsServiceClientSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/agents-service-client.ts', import.meta.url),
+)
 const discordSource = fileURLToPath(new URL('../../packages/discord/src/index.ts', import.meta.url))
 
 export default defineConfig({
@@ -14,6 +20,8 @@ export default defineConfig({
     alias: {
       '~': root,
       '@': root,
+      '@proompteng/agent-contracts/agents-service-client': agentContractsServiceClientSource,
+      '@proompteng/agent-contracts/control-plane-status': agentContractsControlPlaneStatusSource,
       '@proompteng/codex': codexStub,
       '@proompteng/codex/*': codexStub,
       '@proompteng/discord': discordSource,
@@ -31,6 +39,8 @@ export default defineConfig({
     alias: {
       '~': root,
       '@': root,
+      '@proompteng/agent-contracts/agents-service-client': agentContractsServiceClientSource,
+      '@proompteng/agent-contracts/control-plane-status': agentContractsControlPlaneStatusSource,
       '@proompteng/codex': codexStub,
       '@proompteng/codex/*': codexStub,
       '@proompteng/discord': discordSource,

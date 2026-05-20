@@ -2,7 +2,7 @@ import {
   fetchAgentRunResourcesFromAgentsService,
   patchAgentRunAnnotationsViaAgentsService,
   type AgentsAgentRunAnnotationsPatchInput,
-} from '~/server/agents-service-client'
+} from '@proompteng/agent-contracts/agents-service-client'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { resolveWhitepaperControlConfig } from '~/server/whitepaper-config'
 import { maybeFinalizeWhitepaperRun, type WhitepaperFinalizeTerminalStatusInput } from '~/server/whitepaper-finalize'

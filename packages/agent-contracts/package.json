@@ -10,6 +10,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./agents-service-client": {
+      "types": "./dist/agents-service-client.d.ts",
+      "default": "./dist/agents-service-client.js"
+    },
     "./control-plane-status": {
       "types": "./dist/control-plane-status.d.ts",
       "default": "./dist/control-plane-status.js"
@@ -17,6 +21,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "test": "bunx vitest run ./src/agents-service-client.test.ts",
     "tsc": "tsc --noEmit -p tsconfig.json",
     "lint": "bunx oxfmt --check src",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",

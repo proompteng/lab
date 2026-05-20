@@ -1,6 +1,7 @@
-type EnvSource = Record<string, string | undefined>
+export type EnvSource = Record<string, string | undefined>
 
 const DEFAULT_AGENTS_SERVICE_BASE_URL = 'http://agents.agents.svc.cluster.local'
+const DEFAULT_AGENTS_SERVICE_CLIENT_NAME = 'agent-contracts'
 
 const normalizeNonEmpty = (value: string | undefined | null) => {
   const normalized = value?.trim()
@@ -9,6 +10,9 @@ const normalizeNonEmpty = (value: string | undefined | null) => {
 
 export const resolveAgentsServiceBaseUrl = (env: EnvSource = process.env) =>
   (normalizeNonEmpty(env.AGENTS_SERVICE_BASE_URL) ?? DEFAULT_AGENTS_SERVICE_BASE_URL).replace(/\/+$/, '')
+
+export const resolveAgentsServiceClientName = (env: EnvSource = process.env) =>
+  normalizeNonEmpty(env.AGENTS_SERVICE_CLIENT_NAME) ?? DEFAULT_AGENTS_SERVICE_CLIENT_NAME
 
 export type AgentsServiceJsonResult<T> =
   | {
@@ -163,7 +167,7 @@ export const fetchAgentsServiceJson = async <T>(
   const targetUrl = new URL(path.startsWith('/') ? path : `/${path}`, `${baseUrl}/`)
   const requestHeaders = new Headers({
     accept: 'application/json',
-    'x-agents-client': 'jangar',
+    'x-agents-client': resolveAgentsServiceClientName(env),
   })
 
   try {
@@ -212,7 +216,7 @@ export const submitAgentRunToAgentsService = async (
         accept: 'application/json',
         'content-type': 'application/json',
         'idempotency-key': input.deliveryId,
-        'x-agents-client': 'jangar',
+        'x-agents-client': resolveAgentsServiceClientName(env),
       },
       method: 'POST',
     })
@@ -306,7 +310,7 @@ export const submitControlPlaneResourceToAgentsService = async (
         accept: 'application/json',
         'content-type': 'application/json',
         'idempotency-key': input.deliveryId,
-        'x-agents-client': 'jangar',
+        'x-agents-client': resolveAgentsServiceClientName(env),
       },
       method: 'POST',
     })
@@ -351,7 +355,7 @@ export const patchAgentRunAnnotationsViaAgentsService = async (
       headers: {
         accept: 'application/json',
         'content-type': 'application/json',
-        'x-agents-client': 'jangar',
+        'x-agents-client': resolveAgentsServiceClientName(env),
       },
       method: 'PATCH',
     })
@@ -397,7 +401,7 @@ export const submitOrchestrationRunToAgentsService = async (
       accept: 'application/json',
       'content-type': 'application/json',
       'idempotency-key': input.deliveryId,
-      'x-agents-client': 'jangar',
+      'x-agents-client': resolveAgentsServiceClientName(env),
     },
     method: 'POST',
   })
@@ -435,7 +439,7 @@ export const submitAgentMessagesToAgentsService = async (
     headers: {
       accept: 'application/json',
       'content-type': 'application/json',
-      'x-agents-client': 'jangar',
+      'x-agents-client': resolveAgentsServiceClientName(env),
     },
     method: 'POST',
   })
@@ -458,4 +462,5 @@ export const submitAgentMessagesToAgentsService = async (
 
 export const __test__ = {
   DEFAULT_AGENTS_SERVICE_BASE_URL,
+  DEFAULT_AGENTS_SERVICE_CLIENT_NAME,
 }

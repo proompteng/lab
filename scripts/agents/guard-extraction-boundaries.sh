@@ -111,6 +111,25 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src"
 
 fail_if_path_exists \
+  "Jangar must not own generic Agents service client contracts after agent-contracts owns the typed client" \
+  "${ROOT_DIR}/services/jangar/src/server/agents-service-client.ts"
+
+fail_if_matches \
+  "Jangar must consume the Agents service client from @proompteng/agent-contracts, not a local server wrapper" \
+  "~\\/server\\/agents-service-client|from ['\"]\\.\\/agents-service-client|from ['\"]\\.\\.\\/agents-service-client" \
+  "${ROOT_DIR}/services/jangar/src"
+
+fail_if_path_exists \
+  "Jangar domain behavior must not be split into a separate jangar-agents-domain Argo app in the agents namespace" \
+  "${ROOT_DIR}/argocd/applications/jangar-agents-domain"
+
+fail_if_matches \
+  "Product GitOps must not register a separate jangar-agents-domain app; Jangar should consume Agents APIs from its own domain" \
+  "jangar-agents-domain" \
+  "${ROOT_DIR}/argocd/applicationsets/product.yaml" \
+  "${ROOT_DIR}/packages/scripts/src/jangar/__tests__/agents-domain-smoke.test.ts"
+
+fail_if_path_exists \
   "Jangar must not retain generic Agents runtime evidence collectors after Agents owns workflow and rollout status" \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-workflows.ts" \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-rollout-health.ts"

@@ -14,7 +14,7 @@ import type {
   RepairWarrantSuppressedCandidate,
   SourceRolloutTruthExchange,
 } from '~/data/agents-control-plane'
-import { fetchControlPlaneResourcesFromAgentsService } from '~/server/agents-service-client'
+import { fetchControlPlaneResourcesFromAgentsService } from '@proompteng/agent-contracts/agents-service-client'
 import type { ControlPlaneRolloutHealth, ControlPlaneWatchReliability } from '~/server/control-plane-status-types'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 
