@@ -159,6 +159,11 @@ fail_if_matches \
   "~\\/server\\/agents-service-client|from ['\"]\\.\\/agents-service-client|from ['\"]\\.\\.\\/agents-service-client" \
   "${ROOT_DIR}/services/jangar/src"
 
+fail_if_matches \
+  "Jangar must consume typed Agents service helpers instead of the low-level fetchAgentsServiceJson boundary" \
+  'fetchAgentsServiceJson' \
+  "${ROOT_DIR}/services/jangar/src"
+
 fail_if_path_exists \
   "Jangar must not own generic Agents readiness/status verdict normalization after agent-contracts owns it" \
   "${ROOT_DIR}/services/jangar/src/server/agents-control-plane-client.ts"

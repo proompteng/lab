@@ -1,18 +1,11 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { fetchAgentsServiceJson } from '@proompteng/agent-contracts/agents-service-client'
+import {
+  fetchAgentsHealthFromAgentsService,
+  type AgentsHealthController,
+  type AgentsHealthPayload,
+} from '@proompteng/agent-contracts/agents-service-client'
 import { resolveRuntimeServiceName } from '~/server/runtime-identity'
-
-type AgentsHealthController = {
-  enabled: boolean
-  crdsReady: boolean | null
-}
-
-type AgentsHealthPayload = {
-  status?: string
-  service?: string
-  agentsController?: AgentsHealthController
-}
 
 type AgentsDependencyHealth = {
   status: 'healthy' | 'degraded' | 'unavailable'
@@ -44,7 +37,7 @@ const buildAgentsDependencyHealth = (input: {
 }
 
 export const getHealthHandler = async () => {
-  const agentsHealth = await fetchAgentsServiceJson<AgentsHealthPayload>('/health')
+  const agentsHealth = await fetchAgentsHealthFromAgentsService()
   const agentsController = agentsHealth.body?.agentsController ?? unavailableAgentsController()
   const agentsError = agentsHealth.ok ? undefined : (agentsHealth.error ?? undefined)
   const agentsDependency = buildAgentsDependencyHealth({

@@ -27,6 +27,17 @@ export type AgentsServiceJsonResult<T> =
       error: string | null
     }
 
+export type AgentsHealthController = {
+  enabled: boolean
+  crdsReady: boolean | null
+}
+
+export type AgentsHealthPayload = {
+  status?: string
+  service?: string
+  agentsController?: AgentsHealthController
+}
+
 export type AgentsOrchestrationRunSubmitInput = {
   deliveryId: string
   orchestrationRef: { name: string }
@@ -208,6 +219,10 @@ export const fetchAgentsServiceJson = async <T>(
     }
   }
 }
+
+export const fetchAgentsHealthFromAgentsService = async (
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<AgentsHealthPayload>> => fetchAgentsServiceJson<AgentsHealthPayload>('/health', env)
 
 export const submitAgentRunToAgentsService = async (
   input: AgentsAgentRunSubmitInput,

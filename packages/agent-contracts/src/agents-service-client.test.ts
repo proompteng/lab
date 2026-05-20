@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   fetchAgentRunResourcesFromAgentsService,
   fetchAgentRunsFromAgentsService,
+  fetchAgentsHealthFromAgentsService,
   fetchAgentsServiceJson,
   fetchMemoryResourceFromAgentsService,
   fetchControlPlaneResourceFromAgentsService,
@@ -57,6 +58,48 @@ describe('agents-service-client', () => {
       ok: true,
       status: 200,
       body: { status: 'ok' },
+    })
+  })
+
+  it('fetches the typed Agents health contract', async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          status: 'ok',
+          service: 'agents',
+          agentsController: {
+            enabled: true,
+            crdsReady: true,
+          },
+        }),
+        {
+          headers: { 'content-type': 'application/json' },
+          status: 200,
+        },
+      )
+    })
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+
+    const result = await fetchAgentsHealthFromAgentsService({
+      AGENTS_SERVICE_BASE_URL: 'http://agents.test',
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
+    expect(url.toString()).toBe('http://agents.test/health')
+    expect(init.method).toBe('GET')
+    expect(getHeader(init.headers, 'x-agents-client')).toBe('agent-contracts')
+    expect(result).toEqual({
+      ok: true,
+      status: 200,
+      body: {
+        status: 'ok',
+        service: 'agents',
+        agentsController: {
+          enabled: true,
+          crdsReady: true,
+        },
+      },
     })
   })
 
