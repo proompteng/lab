@@ -264,7 +264,8 @@ imagePolicy:
   requireDigest: true
 ```
 
-`imagePolicy.requireDigest=true` rejects mutable chart-managed images at render time. It covers the control plane, runner image defaults, Argo CD hooks, Helm tests, and legacy runtime image values.
+`imagePolicy.requireDigest=true` rejects mutable chart-managed images at render time. It covers the control plane,
+runner image defaults, Argo CD hooks, Helm tests, and non-canonical runtime image env aliases.
 
 ### Database
 

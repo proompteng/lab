@@ -720,6 +720,11 @@ fail_if_matches \
   "${ROOT_DIR}/services/agents/src/server/agents-controller/agent-run-reconciler.ts" \
   "${ROOT_DIR}/services/agents/src/server/agents-controller/workflow-reconciler.ts"
 
+fail_if_matches \
+  "Agents chart validation must not special-case Jangar runner image aliases after the chart rejects all non-canonical JANGAR_* env names" \
+  'JANGAR_AGENT_RUNNER_IMAGE|JANGAR_AGENT_IMAGE' \
+  "${ROOT_DIR}/charts/agents/templates/validation.yaml"
+
 fail_if_path_exists \
   "Jangar must not retain Agents controller runtime config after the controller extraction" \
   "${ROOT_DIR}/services/jangar/src/server/controller-runtime-config.ts"

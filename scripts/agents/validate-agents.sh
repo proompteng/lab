@@ -209,6 +209,22 @@ fi
 if run_with_helm3 helm template "${CHART_DIR}" \
   --kube-version "${KUBE_VERSION_FOR_HELM}" \
   --values "${CHART_DIR}/values-local.yaml" \
+  --set-string "env.vars.JANGAR_AGENT_RUNNER_IMAGE=registry.example/jangar-runner:legacy" >/dev/null 2>&1; then
+  echo "Agents chart should reject non-canonical JANGAR_* env overrides." >&2
+  exit 1
+fi
+
+if run_with_helm3 helm template "${CHART_DIR}" \
+  --kube-version "${KUBE_VERSION_FOR_HELM}" \
+  --values "${CHART_DIR}/values-local.yaml" \
+  --set-string "env.vars.AGENTS_AGENT_IMAGE=registry.example/agents-runner:legacy" >/dev/null 2>&1; then
+  echo "Agents chart should reject the removed AGENTS_AGENT_IMAGE runner image alias." >&2
+  exit 1
+fi
+
+if run_with_helm3 helm template "${CHART_DIR}" \
+  --kube-version "${KUBE_VERSION_FOR_HELM}" \
+  --values "${CHART_DIR}/values-local.yaml" \
   --set imagePolicy.requireDigest=true \
   --set "image.digest=${DUMMY_IMAGE_DIGEST}" \
   --set "runner.image.digest=${DUMMY_IMAGE_DIGEST}" \

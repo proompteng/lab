@@ -93,18 +93,23 @@
   "AGENTS_AGENTRUN_ARTIFACTS_MAX" (toString (.Values.controller.agentRunArtifacts.max | default 50))
   "AGENTS_AGENTRUN_ARTIFACTS_STRICT" (toString (.Values.controller.agentRunArtifacts.strict | default false))
 }}
-{{- $legacyRunnerImageEnvKeys := list "AGENTS_AGENT_IMAGE" "JANGAR_AGENT_RUNNER_IMAGE" "JANGAR_AGENT_IMAGE" -}}
-{{- $legacyRunnerImageEnvScopes := list
+{{- $removedRunnerImageEnvKeys := list "AGENTS_AGENT_IMAGE" -}}
+{{- $runtimeEnvScopes := list
   (dict "label" "env.vars" "vars" $globalEnvVars)
   (dict "label" "controlPlane.env.vars" "vars" $controlPlaneExplicitEnvVars)
   (dict "label" "controllers.env.vars" "vars" $controllersExplicitEnvVars)
 }}
-{{- range $legacyScope := $legacyRunnerImageEnvScopes }}
-{{- $legacyScopeLabel := index $legacyScope "label" -}}
-{{- $legacyScopeVars := index $legacyScope "vars" -}}
-{{- range $legacyEnvKey := $legacyRunnerImageEnvKeys }}
-{{- if hasKey $legacyScopeVars $legacyEnvKey }}
-{{- $errors = append $errors (printf "%s.%s is not supported; set runner.image.repository/tag/digest or %s.AGENTS_AGENT_RUNNER_IMAGE instead." $legacyScopeLabel $legacyEnvKey $legacyScopeLabel) -}}
+{{- range $runtimeEnvScope := $runtimeEnvScopes }}
+{{- $runtimeEnvScopeLabel := index $runtimeEnvScope "label" -}}
+{{- $runtimeEnvScopeVars := index $runtimeEnvScope "vars" -}}
+{{- range $runtimeEnvKey := $removedRunnerImageEnvKeys }}
+{{- if hasKey $runtimeEnvScopeVars $runtimeEnvKey }}
+{{- $errors = append $errors (printf "%s.%s is not supported; set runner.image.repository/tag/digest or %s.AGENTS_AGENT_RUNNER_IMAGE instead." $runtimeEnvScopeLabel $runtimeEnvKey $runtimeEnvScopeLabel) -}}
+{{- end -}}
+{{- end -}}
+{{- range $runtimeEnvKey, $_ := $runtimeEnvScopeVars }}
+{{- if regexMatch "^JANGAR_" $runtimeEnvKey }}
+{{- $errors = append $errors (printf "%s.%s is not supported in the Agents chart; use AGENTS_* env names or chart values instead." $runtimeEnvScopeLabel $runtimeEnvKey) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
