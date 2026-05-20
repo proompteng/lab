@@ -1490,6 +1490,91 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "active_loss_counter_candidate",
         )
 
+    def test_active_loss_counter_candidates_keep_relative_scores(
+        self,
+    ) -> None:
+        source_spec = self._candidate_spec("spec-active-loss-score-source")
+        daily_base = self._candidate_spec("spec-active-loss-score-daily")
+        adverse_base = self._candidate_spec("spec-active-loss-score-adverse")
+        daily_params = dict(
+            cast(dict[str, Any], daily_base.strategy_overrides["params"])
+        )
+        daily_params["feedback_remediation_profile"] = "daily_coverage_feedback_escape"
+        adverse_params = dict(
+            cast(dict[str, Any], adverse_base.strategy_overrides["params"])
+        )
+        adverse_params["feedback_remediation_profile"] = (
+            "adverse_selection_feedback_escape"
+        )
+        adverse_params["max_stop_loss_exits_per_session"] = "1"
+        adverse_params["stop_loss_lockout_seconds"] = "2400"
+        daily_spec = replace(
+            daily_base,
+            strategy_overrides={
+                **daily_base.strategy_overrides,
+                "params": daily_params,
+            },
+        )
+        adverse_spec = replace(
+            adverse_base,
+            strategy_overrides={
+                **adverse_base.strategy_overrides,
+                "params": adverse_params,
+            },
+        )
+        family_feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=source_spec.candidate_spec_id,
+            candidate={
+                "candidate_id": "cand-active-loss-score-source",
+                "family_template_id": source_spec.family_template_id,
+                "runtime_family": source_spec.runtime_family,
+                "runtime_strategy_name": source_spec.runtime_strategy_name,
+                "objective_scorecard": {
+                    "net_pnl_per_day": "-50",
+                    "active_day_ratio": "0.50",
+                    "positive_day_ratio": "0",
+                    "negative_day_count": 2,
+                    "decision_count": 4,
+                    "filled_count": 4,
+                    "avg_filled_notional_per_day": "40000",
+                    "worst_day_loss": "90",
+                    "max_drawdown": "130",
+                    "daily_net": {
+                        "2026-05-06": "-40",
+                        "2026-05-07": "-90",
+                    },
+                },
+            },
+            dataset_snapshot_id="snap-active-loss-score-feedback",
+            result_path="feedback://active-loss-score",
+        )
+
+        _model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(daily_spec, adverse_spec),
+            feedback_evidence_bundles=(family_feedback_bundle,),
+        )
+
+        row_by_spec = {row["candidate_spec_id"]: row for row in rows}
+        self.assertGreater(
+            Decimal(str(row_by_spec[adverse_spec.candidate_spec_id]["proposal_score"])),
+            Decimal(str(row_by_spec[daily_spec.candidate_spec_id]["proposal_score"])),
+        )
+        self.assertEqual(
+            row_by_spec[adverse_spec.candidate_spec_id]["active_loss_counter_tags"],
+            [
+                "adverse_selection_shortfall",
+                "daily_coverage_shortfall",
+                "loss_control_shortfall",
+                "notional_throughput_shortfall",
+            ],
+        )
+        self.assertIn(
+            "notional_throughput_shortfall",
+            row_by_spec[adverse_spec.candidate_spec_id][
+                "active_loss_counter_feedback_reasons"
+            ],
+        )
+
     def test_candidate_selection_caps_active_loss_counter_for_small_batches(
         self,
     ) -> None:

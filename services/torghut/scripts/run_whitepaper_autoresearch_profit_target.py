@@ -2990,6 +2990,75 @@ def _candidate_spec_matches_active_loss_counter_feedback(
     return bool(candidate_tags & feedback_reasons)
 
 
+def _active_loss_counter_proposal_score(
+    spec: CandidateSpec,
+    scorecard: Mapping[str, Any],
+    *,
+    raw_score: float,
+    target_score: float,
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
+) -> float:
+    policy = oracle_policy or ProfitTargetOraclePolicy()
+    candidate_tags = _candidate_spec_active_loss_counter_tags(spec)
+    feedback_reasons = _feedback_active_loss_counter_candidate_reasons(
+        scorecard,
+        oracle_policy=policy,
+    )
+    matched_tags = candidate_tags & feedback_reasons
+    params = _mapping(spec.strategy_overrides.get("params"))
+    remediation_profile = _string(params.get("feedback_remediation_profile"))
+    profile_bonus = {
+        "adverse_selection_feedback_escape": Decimal("160"),
+        "notional_throughput_feedback_escape": Decimal("110"),
+        "turnover_coverage_feedback_escape": Decimal("90"),
+        "daily_coverage_feedback_escape": Decimal("70"),
+        "consistency_guard_feedback_escape": Decimal("60"),
+        "symbol_diversification_feedback_escape": Decimal("40"),
+    }.get(remediation_profile, Decimal("0"))
+    capital_features = candidate_spec_capital_features(spec)
+    configured_daily_notional_capacity = _decimal(
+        capital_features.get("configured_daily_notional_capacity")
+    )
+    required_daily_notional = max(policy.min_avg_filled_notional_per_day, Decimal("1"))
+    capacity_ratio = min(
+        Decimal("2"),
+        configured_daily_notional_capacity / required_daily_notional,
+    )
+    loss_control_bonus = Decimal("0")
+    if _string(params.get("max_stop_loss_exits_per_session")) == "1":
+        loss_control_bonus += Decimal("20")
+    if _decimal(params.get("stop_loss_lockout_seconds")) >= Decimal("1800"):
+        loss_control_bonus += Decimal("20")
+    activity_count = max(
+        (_decimal(scorecard.get(key)) for key in _REPLAY_ACTIVITY_COUNT_KEYS),
+        default=Decimal("0"),
+    )
+    activity_bonus = min(activity_count, Decimal("100")) * Decimal("2")
+    avg_filled_notional_per_day = _decimal(scorecard.get("avg_filled_notional_per_day"))
+    activity_bonus += min(
+        Decimal("1"),
+        avg_filled_notional_per_day / required_daily_notional,
+    ) * Decimal("50")
+    activity_bonus += min(
+        Decimal("1"),
+        max(Decimal("0"), _decimal(scorecard.get("active_day_ratio"))),
+    ) * Decimal("50")
+    mlx_relative_signal = max(
+        Decimal("-250"),
+        min(Decimal("250"), Decimal(str(raw_score)) - Decimal(str(target_score))),
+    )
+    return float(
+        Decimal("-100000")
+        + _pre_replay_candidate_score(spec)
+        + (Decimal(len(matched_tags)) * Decimal("180"))
+        + profile_bonus
+        + (capacity_ratio * Decimal("40"))
+        + loss_control_bonus
+        + activity_bonus
+        + mlx_relative_signal
+    )
+
+
 def _scorecard_is_false_negative_rescue_feedback(
     scorecard: Mapping[str, Any],
 ) -> bool:
@@ -3796,7 +3865,13 @@ def _pre_replay_proposal_model_and_rows(
                     oracle_policy=policy,
                 )
             ):
-                return min(-100_000.0, target_by_spec.get(candidate_spec_id, raw_score))
+                return _active_loss_counter_proposal_score(
+                    spec,
+                    bundle.objective_scorecard,
+                    raw_score=raw_score,
+                    target_score=target_by_spec.get(candidate_spec_id, raw_score),
+                    oracle_policy=policy,
+                )
             return min(-1_000_000.0, target_by_spec.get(candidate_spec_id, raw_score))
         if (
             source == "feedback_shape_prior"
@@ -3852,6 +3927,24 @@ def _pre_replay_proposal_model_and_rows(
             "feedback_match_scope": feedback_match_scope_by_spec.get(
                 item.candidate_spec_id
             ),
+            "active_loss_counter_tags": sorted(
+                _candidate_spec_active_loss_counter_tags(
+                    spec_by_id[item.candidate_spec_id]
+                )
+            )
+            if row_selection_reason(item.candidate_spec_id)
+            == "pre_replay_mlx_active_loss_counter_candidate"
+            else [],
+            "active_loss_counter_feedback_reasons": sorted(
+                _feedback_active_loss_counter_candidate_reasons(
+                    feedback_bundle_by_spec[item.candidate_spec_id].objective_scorecard,
+                    oracle_policy=policy,
+                )
+            )
+            if row_selection_reason(item.candidate_spec_id)
+            == "pre_replay_mlx_active_loss_counter_candidate"
+            and item.candidate_spec_id in feedback_bundle_by_spec
+            else [],
             "feedback_evidence_context_count": len(feedback_evidence_bundles),
             "feature_hash": item.feature_hash,
             "features": feature_by_spec.get(item.candidate_spec_id, {}),

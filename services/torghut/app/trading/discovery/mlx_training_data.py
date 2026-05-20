@@ -786,7 +786,7 @@ def train_mlx_ranker(
     rows: Sequence[MlxTrainingRow],
     *,
     backend_preference: str = "mlx",
-    learning_rate: float = 0.05,
+    learning_rate: float = 0.01,
     steps: int = 256,
     l2_penalty: float = 0.001,
 ) -> MlxRankerModel:
