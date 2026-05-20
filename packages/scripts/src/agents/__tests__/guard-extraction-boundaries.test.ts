@@ -78,6 +78,11 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION')
     expect(content).toContain('JANGAR_CODEX_RERUN_ORCHESTRATION|JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION')
     expect(content).toContain('legacy generic Agents /api/control-plane API compatibility aliases')
+    expect(content).toContain('generic Agents browser control-plane route ownership')
+    expect(content).toContain('generic Agents browser control-plane components')
+    expect(content).toContain('services/jangar/src/components/agents-control-plane.tsx')
+    expect(content).toContain('fetchPrimitive(List|Detail|Events|ControlPlaneStatus)')
+    expect(content).toContain('Jangar app navigation must not link to generic Agents /control-plane pages')
     expect(content).toContain(
       '/api/control-plane/(agent-events|agent-runs|events|implementation-sources|logs|resource|resources|status|stream)',
     )

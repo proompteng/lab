@@ -29,7 +29,6 @@ import {
   IconHome,
   IconList,
   IconMessages,
-  IconRobot,
   IconTerminal2,
 } from '@tabler/icons-react'
 import { Link, useRouterState } from '@tanstack/react-router'
@@ -91,18 +90,8 @@ const appNav: AppNavItem[] = [
   },
 ]
 
-const agentsStudioNav: AppNavItem = {
-  to: '/control-plane/implementation-specs',
-  label: 'Control plane',
-  icon: IconRobot,
-}
-const controlPlaneNav: AppNavItem[] = [
-  { to: '/control-plane/implementation-specs', label: 'Specs', icon: IconFileText },
-  { to: '/control-plane/runs', label: 'Runs', icon: IconActivity },
-]
-
 const apiNav = [
-  { to: '/api/models', label: 'Models', icon: IconRobot },
+  { to: '/api/models', label: 'Models', icon: IconList },
   { to: '/api/health', label: 'Health', icon: IconHeart },
 ] as const
 
@@ -117,7 +106,6 @@ export function AppSidebar() {
   const pathname = useRouterState({ select: (state: JangarRouterState) => state.location.pathname })
   const { state: sidebarState } = useSidebar()
   const isCollapsed = sidebarState === 'collapsed'
-  const isControlPlaneRoute = pathname === '/control-plane' || pathname.startsWith('/control-plane/')
   const [terminalSessions, setTerminalSessions] = React.useState<TerminalSession[]>([])
 
   React.useEffect(() => {
@@ -161,68 +149,26 @@ export function AppSidebar() {
         </div>
       </SidebarHeader>
       <SidebarContent>
-        {!isControlPlaneRoute ? (
-          <SidebarGroup>
-            <SidebarGroupLabel>App</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {appNav.map((item) => {
-                  const children =
-                    item.to === '/terminals' && terminalSessions.length > 0
-                      ? terminalSessions.map((session) => ({
-                          to: `/terminals/${session.id}`,
-                          label: session.label || session.id,
-                        }))
-                      : item.children
-                  const hasActiveChild = children?.some(
-                    (child) => pathname === child.to || pathname.startsWith(`${child.to}/`),
-                  )
-                  const isActive = hasActiveChild
-                    ? false
-                    : item.to === '/codex/runs'
-                      ? pathname.startsWith('/codex')
-                      : pathname === item.to || pathname.startsWith(`${item.to}/`)
-                  return (
-                    <SidebarMenuItem key={item.to}>
-                      <SidebarNavButton
-                        icon={item.icon}
-                        isActive={isActive}
-                        isCollapsed={isCollapsed}
-                        label={item.label}
-                        to={item.to}
-                      />
-                      {children ? (
-                        <SidebarMenuSub>
-                          {children.map((child) => (
-                            <SidebarMenuSubItem key={child.to}>
-                              <SidebarMenuSubButton
-                                render={<Link to={child.to} />}
-                                isActive={pathname === child.to || pathname.startsWith(`${child.to}/`)}
-                              >
-                                {child.label}
-                              </SidebarMenuSubButton>
-                            </SidebarMenuSubItem>
-                          ))}
-                        </SidebarMenuSub>
-                      ) : null}
-                    </SidebarMenuItem>
-                  )
-                })}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        ) : null}
-
         <SidebarGroup>
-          <SidebarGroupLabel>{isControlPlaneRoute ? 'Control plane' : 'Agents'}</SidebarGroupLabel>
+          <SidebarGroupLabel>App</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {(isControlPlaneRoute ? controlPlaneNav : [agentsStudioNav]).map((item) => {
-                const isActive = isControlPlaneRoute
-                  ? item.to === '/control-plane'
-                    ? pathname === item.to
+              {appNav.map((item) => {
+                const children =
+                  item.to === '/terminals' && terminalSessions.length > 0
+                    ? terminalSessions.map((session) => ({
+                        to: `/terminals/${session.id}`,
+                        label: session.label || session.id,
+                      }))
+                    : item.children
+                const hasActiveChild = children?.some(
+                  (child) => pathname === child.to || pathname.startsWith(`${child.to}/`),
+                )
+                const isActive = hasActiveChild
+                  ? false
+                  : item.to === '/codex/runs'
+                    ? pathname.startsWith('/codex')
                     : pathname === item.to || pathname.startsWith(`${item.to}/`)
-                  : pathname === item.to || pathname.startsWith(`${item.to}/`)
                 return (
                   <SidebarMenuItem key={item.to}>
                     <SidebarNavButton
@@ -232,6 +178,20 @@ export function AppSidebar() {
                       label={item.label}
                       to={item.to}
                     />
+                    {children ? (
+                      <SidebarMenuSub>
+                        {children.map((child) => (
+                          <SidebarMenuSubItem key={child.to}>
+                            <SidebarMenuSubButton
+                              render={<Link to={child.to} />}
+                              isActive={pathname === child.to || pathname.startsWith(`${child.to}/`)}
+                            >
+                              {child.label}
+                            </SidebarMenuSubButton>
+                          </SidebarMenuSubItem>
+                        ))}
+                      </SidebarMenuSub>
+                    ) : null}
                   </SidebarMenuItem>
                 )
               })}
@@ -239,47 +199,43 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {!isControlPlaneRoute ? (
-          <SidebarGroup>
-            <SidebarGroupLabel>API</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {apiNav.map((item) => (
-                  <SidebarMenuItem key={item.to}>
-                    <SidebarNavButton
-                      icon={item.icon}
-                      isActive={pathname === item.to}
-                      isCollapsed={isCollapsed}
-                      label={item.label}
-                      to={item.to}
-                    />
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        ) : null}
+        <SidebarGroup>
+          <SidebarGroupLabel>API</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {apiNav.map((item) => (
+                <SidebarMenuItem key={item.to}>
+                  <SidebarNavButton
+                    icon={item.icon}
+                    isActive={pathname === item.to}
+                    isCollapsed={isCollapsed}
+                    label={item.label}
+                    to={item.to}
+                  />
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
 
-        {!isControlPlaneRoute ? (
-          <SidebarGroup>
-            <SidebarGroupLabel>Torghut</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {torghutNav.map((item) => (
-                  <SidebarMenuItem key={item.to}>
-                    <SidebarNavButton
-                      icon={item.icon}
-                      isActive={pathname === item.to}
-                      isCollapsed={isCollapsed}
-                      label={item.label}
-                      to={item.to}
-                    />
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        ) : null}
+        <SidebarGroup>
+          <SidebarGroupLabel>Torghut</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {torghutNav.map((item) => (
+                <SidebarMenuItem key={item.to}>
+                  <SidebarNavButton
+                    icon={item.icon}
+                    isActive={pathname === item.to}
+                    isCollapsed={isCollapsed}
+                    label={item.label}
+                    to={item.to}
+                  />
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
       </SidebarContent>
       <SidebarRail />
     </Sidebar>

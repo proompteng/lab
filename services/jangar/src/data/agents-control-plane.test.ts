@@ -1,8 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
-import { fetchPrimitiveList, normalizeControlPlaneStatusPayload } from './agents-control-plane'
-
-const originalFetch = globalThis.fetch
+import { normalizeControlPlaneStatusPayload } from './agents-control-plane'
 
 const genericAgentsStatusPayload = {
   service: 'agents',
@@ -76,10 +74,6 @@ const genericAgentsStatusPayload = {
 } satisfies Record<string, unknown>
 
 describe('normalizeControlPlaneStatusPayload', () => {
-  afterEach(() => {
-    globalThis.fetch = originalFetch
-  })
-
   it('backfills Jangar-owned domain status defaults for generic Agents status payloads', () => {
     const status = normalizeControlPlaneStatusPayload(genericAgentsStatusPayload, 'agents')
 
@@ -93,26 +87,6 @@ describe('normalizeControlPlaneStatusPayload', () => {
     expect(status.terminal_debt_compaction_ledger).toBeNull()
     expect(status.empirical_services.forecast.authoritative).toBe(false)
     expect(status.rollout_health.message).toBe('')
-  })
-
-  it('uses canonical Agents control-plane paths for browser resource list reads', async () => {
-    const fetchMock = vi.fn(async () => {
-      return new Response(JSON.stringify({ ok: true, items: [], total: 0, namespace: 'agents' }), {
-        headers: { 'content-type': 'application/json' },
-        status: 200,
-      })
-    })
-    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
-
-    const result = await fetchPrimitiveList({ kind: 'AgentRun', namespace: 'agents', limit: 50 })
-
-    expect(result).toEqual({ ok: true, items: [], total: 0, kind: 'AgentRun', namespace: 'agents' })
-    expect(fetchMock).toHaveBeenCalledWith(
-      'https://agents.k8s.proompteng.ai/api/agents/control-plane/resources?kind=AgentRun&namespace=agents&limit=50',
-      {
-        signal: undefined,
-      },
-    )
   })
 
   it('preserves legacy status fields while filling missing members', () => {

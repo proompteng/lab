@@ -719,28 +719,6 @@ test('github pull detail route screenshot', async ({ page }) => {
   await expect(page).toHaveScreenshot('github-pull-detail.png', { fullPage: true, animations: 'disabled' })
 })
 
-test('control-plane implementation spec route loads spec and agents', async ({ page }) => {
-  await page.goto('/control-plane/implementation-specs/ship-trading-ui?namespace=agents')
-  await expect(page.getByRole('heading', { name: 'Run spec' })).toBeVisible()
-  await expect(page.getByText('Ship trading UI', { exact: true }).last()).toBeVisible()
-  await expect(page.getByRole('combobox', { name: 'Agent' })).toContainText('codex-operator')
-  await expect(page.getByRole('button', { name: 'Run agent' })).toBeVisible()
-})
-
-test('control-plane runs route shows loader-backed runs', async ({ page }) => {
-  await page.goto('/control-plane/runs?namespace=agents')
-  await expect(page.getByRole('button', { name: 'Delete selected' })).toBeVisible()
-  await expect(page.getByText('run-1')).toBeVisible()
-  await expect(page.getByText('ship-trading-ui')).toBeVisible()
-})
-
-test('control-plane primitive aliases render real pages without redirecting', async ({ page }) => {
-  await page.goto('/control-plane/agents?namespace=agents')
-  await expect(page).toHaveURL(/\/control-plane\/agents\?namespace=agents$/)
-  await expect(page.getByRole('heading', { name: 'Agents' })).toBeVisible()
-  await expect(page.getByText('codex-operator')).toBeVisible()
-})
-
 test('torghut trading route loads trading summary data', async ({ page }) => {
   await page.goto('/torghut/trading')
   await expect(page.getByRole('heading', { name: 'Trading' })).toBeVisible()

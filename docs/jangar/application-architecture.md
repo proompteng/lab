@@ -153,16 +153,17 @@ These ownership lanes are the operational review boundaries for Jangar changes.
   - `services/jangar/src/server/*config.ts`
   - `services/jangar/src/server/kube-*.ts`
   - `services/jangar/src/server/primitives-*.ts`
-- Controllers and background control-plane logic
-  - `services/jangar/src/server/agents-controller/**`
-  - `services/jangar/src/server/orchestration-controller.ts`
-  - `services/jangar/src/server/supporting-primitives-controller.ts`
+- Domain readiness and Agents service client logic
+  - `services/jangar/src/server/agents-service-client.ts`
   - `services/jangar/src/server/leader-election.ts`
   - `services/jangar/src/server/control-plane-*.ts`
-- Control-plane UI and operator routes
-  - `services/jangar/src/routes/control-plane/**`
-  - `services/jangar/src/routes/api/agents/control-plane/**`
-  - `services/jangar/src/components/agents-control-plane*`
+- Agents-owned platform surfaces
+  - `services/agents/**`
+  - `charts/agents/**`
+  - `docs/agents/**`
+  - Jangar consumes Agents status through the service boundary instead of owning generic Agents routes,
+    controllers, CRDs, or browser control-plane resource pages.
+- Jangar domain status projection
   - `services/jangar/src/data/agents-control-plane.ts`
 - GitHub review surface
   - `services/jangar/src/routes/github/**`

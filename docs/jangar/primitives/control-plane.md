@@ -2,8 +2,9 @@
 
 ## Purpose
 
-Jangar is the control plane for all primitives in `*.proompteng.ai`. It is the only external API
-surface for creating and managing Agent, Memory, Orchestration, and supporting primitives.
+The generic Agents control plane is owned by `services/agents` and the `charts/agents` Helm release. Jangar is a
+domain client/consumer: it reads Agents state through the Agents service boundary and projects Torghut/Jangar readiness
+without owning generic Agents CRDs, controllers, mutation APIs, or browser resource pages.
 
 ## Related docs
 
@@ -11,11 +12,11 @@ surface for creating and managing Agent, Memory, Orchestration, and supporting p
 
 ## Responsibilities
 
-- Create/update/delete primitives (CRDs) on behalf of users
-- Enforce policy and guardrails (security, budgets, approvals)
-- Normalize provider-agnostic specs into provider bindings
-- Aggregate status and expose a unified API
-- Persist audit logs and lifecycle history in `jangar-db`
+- Keep Jangar/Torghut domain readiness and proof-carry status separate from generic Agents runtime health
+- Read generic Agents status through the Agents service client
+- Preserve domain audit and decision state in Jangar-owned storage
+- Route generic Agents create/update/delete/list/log/artifact flows to the Agents service instead of local Jangar
+  controllers or browser resource pages
 
 ## API surface (example)
 
@@ -49,17 +50,20 @@ Jangar must watch and aggregate:
 
 ## Persistence
 
-Use `jangar-db` (CNPG) as source of truth for:
+Use `jangar-db` (CNPG) as source of truth for Jangar domain data:
 
-- run metadata
 - audit events
 - policy decisions
-- cross-run correlation
+- Torghut/Jangar readiness and proof-carry state
+
+Generic Agents run metadata, idempotency keys, orchestration records, controller cache, and component heartbeats belong
+to the Agents database.
 
 ## Idempotency
 
-All Jangar endpoints must accept an idempotency key (`deliveryId`), stored in the database,
-and return consistent results on retries.
+Generic Agents endpoints must accept an idempotency key (`deliveryId`) through the Agents service and return consistent
+results on retries. Jangar should preserve idempotency for domain callbacks and event consumers without duplicating the
+generic Agents run records.
 
 ## UI surface
 

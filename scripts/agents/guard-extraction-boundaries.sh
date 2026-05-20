@@ -372,7 +372,7 @@ fail_if_matches \
 
 fail_if_matches \
   "Jangar browser data helpers must not expose generic Agents mutation helpers after Agents owns mutation APIs" \
-  'fetchAgentOptions|AgentOption|deletePrimitiveResource|AGENTS_AGENT_RUNS_API_PATH|method: .DELETE.' \
+  'fetchAgentOptions|AgentOption|deletePrimitiveResource|fetchPrimitive(List|Detail|Events|ControlPlaneStatus)|Primitive(List|Detail|Events)Result|AGENTS_AGENT_RUNS_API_PATH|AGENTS_CONTROL_PLANE_API_BASE|method: .DELETE.' \
   "${ROOT_DIR}/services/jangar/src/data/agents-control-plane.ts" \
   "${ROOT_DIR}/services/jangar/src/data/agents-api-paths.ts"
 
@@ -454,6 +454,26 @@ fail_if_path_exists \
   "${ROOT_DIR}/services/jangar/src/routes/api/control-plane/status.ts" \
   "${ROOT_DIR}/services/jangar/src/routes/api/control-plane/stream.ts" \
   "${ROOT_DIR}/services/jangar/src/routes/api/control-plane/implementation-sources/webhooks"
+
+fail_if_path_exists \
+  "Jangar must not retain generic Agents browser control-plane route ownership after the Agents UI/API extraction" \
+  "${ROOT_DIR}/services/jangar/src/routes/control-plane"
+
+fail_if_path_exists \
+  "Jangar must not retain generic Agents browser control-plane components after the Agents UI/API extraction" \
+  "${ROOT_DIR}/services/jangar/src/components/agents-control-plane.tsx" \
+  "${ROOT_DIR}/services/jangar/src/components/agents-control-plane-search.ts" \
+  "${ROOT_DIR}/services/jangar/src/components/agents-control-plane-redirect.tsx" \
+  "${ROOT_DIR}/services/jangar/src/components/agents-control-plane-primitives.tsx" \
+  "${ROOT_DIR}/services/jangar/src/components/agents-control-plane-stream.tsx" \
+  "${ROOT_DIR}/services/jangar/src/components/agents-control-plane-status.tsx" \
+  "${ROOT_DIR}/services/jangar/src/components/agents-control-plane-overview.tsx"
+
+fail_if_matches \
+  "Jangar app navigation must not link to generic Agents /control-plane pages after Agents owns that browser surface" \
+  '/control-plane/(implementation-specs|runs|agents|agent-runs|agent-providers|tools|tool-runs|orchestrations|orchestration-runs)' \
+  "${ROOT_DIR}/services/jangar/src/components/app-sidebar.tsx" \
+  "${ROOT_DIR}/services/jangar/src/components/app-shell.tsx"
 
 fail_if_matches \
   "Jangar browser and server code must use canonical Agents APIs instead of legacy /api/control-plane aliases" \

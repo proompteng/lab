@@ -28,7 +28,10 @@ const TEST_FILE_PATTERN = /\.(test|spec)\.tsx?$/
 const GENERATED_FILE_PATTERN = /\.gen\.ts$/
 
 const readSourceFiles = async (root: string): Promise<string[]> => {
-  const entries = await readdir(root, { withFileTypes: true })
+  const entries = await readdir(root, { withFileTypes: true }).catch((error: unknown) => {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return []
+    throw error
+  })
   const files = await Promise.all(
     entries.map(async (entry) => {
       const entryPath = resolve(root, entry.name)
@@ -48,7 +51,6 @@ const countLoc = (source: string) => source.split('\n').length
 const toRepoPath = (absolutePath: string) => relative(repoRoot, absolutePath).replaceAll('\\', '/')
 
 const toControlPlaneRoutePath = (absolutePath: string) => {
-  const repoPath = toRepoPath(absolutePath)
   const relativePath = relative(controlPlaneRoutesRoot, absolutePath).replaceAll('\\', '/')
   const withoutExtension = relativePath.replace(/\.tsx?$/, '')
   const segments = withoutExtension.split('/').filter(Boolean)

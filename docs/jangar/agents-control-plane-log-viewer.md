@@ -294,8 +294,8 @@ Client state (per open log stream):
 
 ## Appendix: related docs and code
 
-- `services/jangar/src/routes/api/agents/control-plane/logs.ts`
-- `services/jangar/src/data/agents-control-plane.ts`
-- `services/jangar/src/routes/agents-control-plane/agent-runs/$name.tsx`
+- Generic Agents log APIs and browser run pages now live under `services/agents`.
+- `services/jangar/src/server/agents-service-client.ts`
+- `services/jangar/src/data/agents-control-plane.ts` for domain status normalization only
 - `docs/jangar/primitives/control-plane.md`
 - `docs/agents/agentctl-cli-design.md`
