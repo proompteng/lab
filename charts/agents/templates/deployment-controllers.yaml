@@ -187,6 +187,10 @@ spec:
             - name: AGENTS_AUDIT_SINK_HTTP_HEADERS_JSON
               value: {{ toJson .Values.audit.sink.http.headers | quote }}
             {{- end }}
+            {{- if and (not (hasKey $envVars "AGENTS_CORS_ALLOWED_ORIGINS")) .Values.cors.allowedOrigins (gt (len .Values.cors.allowedOrigins) 0) }}
+            - name: AGENTS_CORS_ALLOWED_ORIGINS
+              value: {{ join "," .Values.cors.allowedOrigins | quote }}
+            {{- end }}
             {{- range $name, $value := $envVars }}
             - name: {{ $name }}
               value: {{ $value | quote }}

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('crossws/adapters/bun', () => ({
   default: vi.fn(() => ({
@@ -8,6 +8,19 @@ vi.mock('crossws/adapters/bun', () => ({
 }))
 
 import { createAgentsHttpRuntime } from './http-runtime'
+
+const allowedBrowserOrigin = 'https://control-plane.example.test'
+let previousCorsAllowedOrigins: string | undefined
+
+beforeEach(() => {
+  previousCorsAllowedOrigins = process.env.AGENTS_CORS_ALLOWED_ORIGINS
+  process.env.AGENTS_CORS_ALLOWED_ORIGINS = allowedBrowserOrigin
+})
+
+afterEach(() => {
+  if (previousCorsAllowedOrigins === undefined) delete process.env.AGENTS_CORS_ALLOWED_ORIGINS
+  else process.env.AGENTS_CORS_ALLOWED_ORIGINS = previousCorsAllowedOrigins
+})
 
 const buildRouteRuntime = () =>
   createAgentsHttpRuntime({
@@ -71,7 +84,7 @@ describe('Agents HTTP runtime', () => {
     await expect(response.json()).resolves.toEqual({ ok: true })
   })
 
-  it('answers CORS preflight for allowed Jangar browser calls to Agents routes', async () => {
+  it('answers CORS preflight for explicitly allowed browser calls to Agents routes', async () => {
     const runtime = await createAgentsHttpRuntime({
       routeSources: {
         './routes/v1/agent-runs.ts':
@@ -96,7 +109,7 @@ describe('Agents HTTP runtime', () => {
       new Request('https://agents.k8s.proompteng.ai/v1/agent-runs', {
         method: 'OPTIONS',
         headers: {
-          origin: 'https://jangar.k8s.proompteng.ai',
+          origin: allowedBrowserOrigin,
           'access-control-request-method': 'POST',
           'access-control-request-headers': 'content-type,idempotency-key',
         },
@@ -104,24 +117,38 @@ describe('Agents HTTP runtime', () => {
     )
 
     expect(response.status).toBe(204)
-    expect(response.headers.get('access-control-allow-origin')).toBe('https://jangar.k8s.proompteng.ai')
+    expect(response.headers.get('access-control-allow-origin')).toBe(allowedBrowserOrigin)
     expect(response.headers.get('access-control-allow-headers')).toBe(
       'accept, authorization, content-type, idempotency-key',
     )
   })
 
-  it('adds CORS response headers to allowed Jangar browser Agents reads', async () => {
+  it('adds CORS response headers to explicitly allowed browser Agents reads', async () => {
     const runtime = await buildRouteRuntime()
 
     const response = await runtime.handleRequest(
       new Request('https://agents.k8s.proompteng.ai/v1/agent-runs/run%201', {
-        headers: { origin: 'https://jangar.k8s.proompteng.ai' },
+        headers: { origin: allowedBrowserOrigin },
       }),
     )
 
     expect(response.status).toBe(200)
-    expect(response.headers.get('access-control-allow-origin')).toBe('https://jangar.k8s.proompteng.ai')
+    expect(response.headers.get('access-control-allow-origin')).toBe(allowedBrowserOrigin)
     await expect(response.json()).resolves.toEqual({ ok: true, id: 'run 1' })
+  })
+
+  it('does not allow browser Agents reads without explicit CORS configuration', async () => {
+    delete process.env.AGENTS_CORS_ALLOWED_ORIGINS
+    const runtime = await buildRouteRuntime()
+
+    const response = await runtime.handleRequest(
+      new Request('https://agents.k8s.proompteng.ai/v1/agent-runs/run%201', {
+        headers: { origin: allowedBrowserOrigin },
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('access-control-allow-origin')).toBeNull()
   })
 
   it('does not add CORS headers to unrelated API routes', async () => {
@@ -147,7 +174,7 @@ describe('Agents HTTP runtime', () => {
 
     const response = await runtime.handleRequest(
       new Request('https://agents.k8s.proompteng.ai/api/internal', {
-        headers: { origin: 'https://jangar.k8s.proompteng.ai' },
+        headers: { origin: allowedBrowserOrigin },
       }),
     )
 
@@ -184,7 +211,7 @@ describe('Agents HTTP runtime', () => {
       new Request('https://agents.k8s.proompteng.ai/v1/agent-runs', {
         method: 'POST',
         headers: {
-          origin: 'https://jangar.k8s.proompteng.ai',
+          origin: allowedBrowserOrigin,
           'content-type': 'application/json',
         },
         body: '{}',
@@ -192,7 +219,7 @@ describe('Agents HTTP runtime', () => {
     )
 
     expect(response.status).toBe(400)
-    expect(response.headers.get('access-control-allow-origin')).toBe('https://jangar.k8s.proompteng.ai')
+    expect(response.headers.get('access-control-allow-origin')).toBe(allowedBrowserOrigin)
     await expect(response.json()).resolves.toMatchObject({ ok: false })
   })
 
@@ -222,13 +249,13 @@ describe('Agents HTTP runtime', () => {
 
     const response = await runtime.handleRequest(
       new Request('https://agents.k8s.proompteng.ai/api/agents/events', {
-        headers: { origin: 'https://jangar.k8s.proompteng.ai' },
+        headers: { origin: allowedBrowserOrigin },
       }),
     )
 
     expect(response.status).toBe(200)
     expect(response.headers.get('content-type')).toContain('text/event-stream')
-    expect(response.headers.get('access-control-allow-origin')).toBe('https://jangar.k8s.proompteng.ai')
+    expect(response.headers.get('access-control-allow-origin')).toBe(allowedBrowserOrigin)
   })
 
   it('serves injected Prometheus metrics before route fallback handling', async () => {

@@ -168,6 +168,10 @@ spec:
             - name: AGENTS_SERVER_PROFILE
               value: "agents-control-plane"
             {{- end }}
+            {{- if and (not (hasKey $envVars "AGENTS_CORS_ALLOWED_ORIGINS")) .Values.cors.allowedOrigins (gt (len .Values.cors.allowedOrigins) 0) }}
+            - name: AGENTS_CORS_ALLOWED_ORIGINS
+              value: {{ join "," .Values.cors.allowedOrigins | quote }}
+            {{- end }}
             {{- range $name, $value := $envVars }}
             - name: {{ $name }}
               value: {{ $value | quote }}

@@ -151,6 +151,9 @@ metrics:
     labels:
       grafana_dashboard: '1'
 
+cors:
+  allowedOrigins: []
+
 resources:
   requests:
     cpu: 100m

@@ -59,7 +59,6 @@ type WebSocketRequest = Request & {
 const serverRoutePattern = /createFileRoute\(\s*(['"`])([^'"`]+)\1\s*\)/
 const serverMethods = ['DELETE', 'GET', 'OPTIONS', 'PATCH', 'POST', 'PUT'] as const
 const defaultClientOutputDirCandidates = () => [resolve(process.cwd(), '.output/public')]
-const defaultCorsAllowedOrigins = ['https://jangar.k8s.proompteng.ai']
 const defaultCorsAllowedMethods = 'DELETE, GET, OPTIONS, PATCH, POST, PUT'
 const defaultCorsAllowedHeaders = 'accept, authorization, content-type, idempotency-key'
 const corsMaxAgeSeconds = '86400'
@@ -132,7 +131,7 @@ const isCorsManagedPath = (pathname: string) =>
 
 const resolveCorsAllowedOrigins = () => {
   const configured = process.env.AGENTS_CORS_ALLOWED_ORIGINS
-  const values = configured?.split(',') ?? defaultCorsAllowedOrigins
+  const values = configured?.split(',') ?? []
   return new Set(values.map((value) => value.trim()).filter((value) => value.length > 0))
 }
 

@@ -44,6 +44,17 @@
       },
       "additionalProperties": false
     },
+    "cors": {
+      "type": "object",
+      "properties": {
+        "allowedOrigins": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Explicit browser origins allowed to call Agents API/SSE routes. Empty by default; domain clients must opt in through chart values or AGENTS_CORS_ALLOWED_ORIGINS."
+        }
+      },
+      "additionalProperties": false
+    },
     "controlPlane": {
       "type": "object",
       "properties": {
