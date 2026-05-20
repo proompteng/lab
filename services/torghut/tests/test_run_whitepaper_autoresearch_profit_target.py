@@ -566,6 +566,12 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "name: realReplayShardTimeoutSeconds\n        value: '900'", template
         )
         self.assertIn("name: realReplayShardWorkers\n        value: '4'", template)
+        self.assertIn("name: trainDays\n        value: '12'", template)
+        self.assertIn("name: holdoutDays\n        value: '8'", template)
+        self.assertIn("name: secondOosDays\n        value: '5'", template)
+        self.assertIn('--train-days "{{inputs.parameters.trainDays}}"', template)
+        self.assertIn('--holdout-days "{{inputs.parameters.holdoutDays}}"', template)
+        self.assertIn('--second-oos-days "{{inputs.parameters.secondOosDays}}"', template)
         self.assertIn("cpu: 4", template)
         self.assertIn("memory: 12Gi", template)
         self.assertIn("cpu: 8", template)
