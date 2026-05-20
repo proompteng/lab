@@ -2829,14 +2829,15 @@ def _profitability_search_goal(
 def _pre_replay_candidate_score(spec: CandidateSpec) -> Decimal:
     family_score = {
         "microbar_cross_sectional_pairs_v1": Decimal("70"),
-        "microstructure_continuation_matched_filter_v1": Decimal("65"),
-        "opening_drive_leader_reclaim_v1": Decimal("63"),
+        "intraday_tsmom_v2": Decimal("68"),
+        "late_day_continuation_v1": Decimal("62"),
         "momentum_pullback_v1": Decimal("60"),
         "washout_rebound_v2": Decimal("55"),
+        "microstructure_continuation_matched_filter_v1": Decimal("53"),
+        "opening_drive_leader_reclaim_v1": Decimal("52"),
         "breakout_reclaim_v2": Decimal("50"),
         "end_of_day_reversal_v1": Decimal("48"),
         "mean_reversion_rebound_v1": Decimal("45"),
-        "late_day_continuation_v1": Decimal("45"),
     }.get(spec.family_template_id, Decimal("40"))
     required_features = spec.feature_contract.get("required_features")
     feature_count = (
@@ -4110,21 +4111,47 @@ def _select_candidate_specs_for_replay(
                     interleaved.append(segment[index])
         return interleaved
 
+    runtime_strategy_floor_priority = {
+        "intraday-tsmom-profit-v3": 0,
+        "late-day-continuation-long-v1": 1,
+        "microbar-cross-sectional-pairs-v1": 2,
+        "breakout-continuation-long-v1": 3,
+    }
+    runtime_strategy_representatives: dict[str, CandidateSpec] = {}
+    for spec in sorted(
+        ordered_eligible,
+        key=lambda item: (
+            runtime_strategy_floor_priority.get(item.runtime_strategy_name, 100),
+            rank_position_by_spec.get(item.candidate_spec_id, 10**6),
+            item.candidate_spec_id,
+        ),
+    ):
+        if spec.runtime_strategy_name not in runtime_strategy_representatives:
+            runtime_strategy_representatives[spec.runtime_strategy_name] = spec
+    runtime_strategy_floor = (
+        list(runtime_strategy_representatives.values())[: min(4, replay_budget)]
+        if len(runtime_strategy_representatives) > 1
+        else []
+    )
+    runtime_strategy_floor_ids = {
+        spec.candidate_spec_id for spec in runtime_strategy_floor
+    }
     false_negative_rescue_candidates = [
         spec
         for spec in ordered_eligible
+        if spec.candidate_spec_id not in runtime_strategy_floor_ids
         if _candidate_spec_is_false_negative_rescue(spec)
     ]
     false_negative_rescue_count = min(
         3,
         max(0, requested_exploration_slots),
-        replay_budget,
+        replay_budget - len(runtime_strategy_floor),
         len(false_negative_rescue_candidates),
     )
     false_negative_rescue_exploration = take_diverse(
         false_negative_rescue_candidates,
         count=false_negative_rescue_count,
-        selected_so_far=(),
+        selected_so_far=runtime_strategy_floor,
     )
     false_negative_rescue_ids = {
         spec.candidate_spec_id for spec in false_negative_rescue_exploration
@@ -4132,17 +4159,20 @@ def _select_candidate_specs_for_replay(
     exploitation_candidates = [
         spec
         for spec in ordered_eligible
-        if spec.candidate_spec_id not in false_negative_rescue_ids
+        if spec.candidate_spec_id
+        not in runtime_strategy_floor_ids | false_negative_rescue_ids
     ]
     exploitation_count = min(
         max(0, int(top_k)),
-        replay_budget - len(false_negative_rescue_exploration),
+        replay_budget
+        - len(runtime_strategy_floor)
+        - len(false_negative_rescue_exploration),
         len(exploitation_candidates),
     )
     exploitation = take_diverse(
         exploitation_candidates,
         count=exploitation_count,
-        selected_so_far=false_negative_rescue_exploration,
+        selected_so_far=[*runtime_strategy_floor, *false_negative_rescue_exploration],
     )
     remaining = [
         item
@@ -4155,22 +4185,34 @@ def _select_candidate_specs_for_replay(
         if item.candidate_spec_id
         not in {
             spec.candidate_spec_id
-            for spec in (*false_negative_rescue_exploration, *exploitation)
+            for spec in (
+                *runtime_strategy_floor,
+                *false_negative_rescue_exploration,
+                *exploitation,
+            )
         }
     ]
     exploration_count = min(
         effective_exploration_slots,
-        replay_budget - len(false_negative_rescue_exploration) - len(exploitation),
+        replay_budget
+        - len(runtime_strategy_floor)
+        - len(false_negative_rescue_exploration)
+        - len(exploitation),
         len(remaining),
     )
     exploration = take_diverse(
         remaining,
         count=exploration_count,
-        selected_so_far=[*false_negative_rescue_exploration, *exploitation],
+        selected_so_far=[
+            *runtime_strategy_floor,
+            *false_negative_rescue_exploration,
+            *exploitation,
+        ],
     )
     synthetic_prior_probe_exploration_count = min(
         max(0, requested_exploration_slots - len(exploration)),
         replay_budget
+        - len(runtime_strategy_floor)
         - len(false_negative_rescue_exploration)
         - len(exploitation)
         - len(exploration),
@@ -4180,6 +4222,7 @@ def _select_candidate_specs_for_replay(
         synthetic_prior_probe_candidates,
         count=synthetic_prior_probe_exploration_count,
         selected_so_far=[
+            *runtime_strategy_floor,
             *false_negative_rescue_exploration,
             *exploitation,
             *exploration,
@@ -4188,6 +4231,7 @@ def _select_candidate_specs_for_replay(
     feedback_block_reaudit_count = min(
         requested_feedback_block_reaudit_slots,
         replay_budget
+        - len(runtime_strategy_floor)
         - len(false_negative_rescue_exploration)
         - len(exploitation)
         - len(exploration)
@@ -4198,6 +4242,7 @@ def _select_candidate_specs_for_replay(
         feedback_block_reaudit_candidates,
         count=feedback_block_reaudit_count,
         selected_so_far=[
+            *runtime_strategy_floor,
             *false_negative_rescue_exploration,
             *exploitation,
             *exploration,
@@ -4205,12 +4250,16 @@ def _select_candidate_specs_for_replay(
         ],
     )
     if (
-        len(false_negative_rescue_exploration) + len(exploitation) + len(exploration)
+        len(runtime_strategy_floor)
+        + len(false_negative_rescue_exploration)
+        + len(exploitation)
+        + len(exploration)
         < replay_budget
     ):
         selected_ids = {
             item.candidate_spec_id
             for item in (
+                *runtime_strategy_floor,
                 *false_negative_rescue_exploration,
                 *exploitation,
                 *exploration,
@@ -4226,12 +4275,14 @@ def _select_candidate_specs_for_replay(
         backfill = take_diverse(
             backfill_candidates,
             count=replay_budget
+            - len(runtime_strategy_floor)
             - len(false_negative_rescue_exploration)
             - len(exploitation)
             - len(exploration)
             - len(synthetic_prior_probe_exploration)
             - len(feedback_block_reaudit),
             selected_so_far=[
+                *runtime_strategy_floor,
                 *false_negative_rescue_exploration,
                 *exploitation,
                 *exploration,
@@ -4243,6 +4294,10 @@ def _select_candidate_specs_for_replay(
         backfill = []
     selected_reason = (
         {
+            item.candidate_spec_id: "runtime_strategy_floor"
+            for item in runtime_strategy_floor
+        }
+        | {
             item.candidate_spec_id: "false_negative_rescue_exploration"
             for item in false_negative_rescue_exploration
         }
@@ -4265,6 +4320,7 @@ def _select_candidate_specs_for_replay(
         {item.candidate_spec_id: "budget_backfill" for item in backfill}
     )
     selected = [
+        *runtime_strategy_floor,
         *false_negative_rescue_exploration,
         *exploitation,
         *exploration,
@@ -4360,6 +4416,11 @@ def _select_candidate_specs_for_replay(
                         "entry_notional_max_multiplier"
                     ]
                 ),
+                "configured_daily_notional_capacity": str(
+                    capital_features_by_spec[spec.candidate_spec_id][
+                        "configured_daily_notional_capacity"
+                    ]
+                ),
                 "capital_budget_overage_ratio": str(
                     capital_features_by_spec[spec.candidate_spec_id][
                         "capital_budget_overage_ratio"
@@ -4397,6 +4458,7 @@ def _select_candidate_specs_for_replay(
             "feedback_block_reaudit_slots_requested": requested_feedback_block_reaudit_slots,
             "feedback_block_reaudit_slots_effective": feedback_block_reaudit_capacity,
             "feedback_block_reaudit_selected_count": len(feedback_block_reaudit),
+            "runtime_strategy_floor_selected_count": len(runtime_strategy_floor),
             "portfolio_size_min": max(1, int(portfolio_size_min)),
             "selected_count": len(selected),
             "compiled_candidate_count": len(specs),

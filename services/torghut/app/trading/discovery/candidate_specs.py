@@ -2703,7 +2703,8 @@ def _notional_throughput_feedback_escape_profile(
     next_profile = json.loads(json.dumps(profile))
     params = _mapping(next_profile.get("params"))
     current_entries = _int_profile_param(params, "max_entries_per_session", default=4)
-    params["max_entries_per_session"] = str(max(8, min(12, current_entries + 6)))
+    params["max_entries_per_session"] = str(max(10, min(12, current_entries + 6)))
+    params["entry_notional_max_multiplier"] = "1.0"
     params["max_concurrent_positions"] = str(
         max(1, min(2, _profile_rank_count_floor(next_profile)))
     )

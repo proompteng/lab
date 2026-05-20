@@ -2494,6 +2494,60 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(scorecard["orders_submitted_count"], 0)
         self.assertEqual(scorecard["avg_filled_notional_per_day"], "0")
 
+    def test_real_replay_evidence_derives_activity_counts_from_decomposition(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            result_path = Path(tmp) / "result.json"
+            result_path.write_text(
+                json.dumps(
+                    {
+                        "top": [
+                            {
+                                "candidate_id": "cand-decomposition-activity",
+                                "objective_scorecard": {
+                                    "net_pnl_per_day": "-13.37",
+                                    "active_day_ratio": "0",
+                                },
+                                "decomposition": {
+                                    "families": {
+                                        "opening_drive_leader_reclaim_v1": {
+                                            "evaluations": 2,
+                                            "fills": 2,
+                                        }
+                                    },
+                                    "symbols": {
+                                        "NVDA": {
+                                            "filled_count": 2,
+                                            "net_pnl": "-40.13",
+                                        }
+                                    },
+                                },
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            replay = runner._real_replay_result_from_factory_payload(
+                {
+                    "experiments": [
+                        {
+                            "result_path": str(result_path),
+                            "candidate_spec_id": "spec-decomposition-activity",
+                            "dataset_snapshot_id": "real-decomposition-activity",
+                        }
+                    ]
+                }
+            )
+
+        self.assertEqual(len(replay.evidence_bundles), 1)
+        scorecard = replay.evidence_bundles[0].objective_scorecard
+        self.assertEqual(scorecard["decision_count"], 2)
+        self.assertEqual(scorecard["filled_count"], 2)
+        self.assertEqual(scorecard["filled_order_count"], 2)
+
     def test_candidate_selection_ignores_malformed_feedback_context_for_synthetic_prior(
         self,
     ) -> None:
@@ -3979,15 +4033,29 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertTrue(
             all(row["capital_budget"]["capital_feasible"] for row in selected_rows)
         )
-        self.assertEqual(
-            {row["selection_reason"] for row in selected_rows},
-            {"exploitation", "exploration", "budget_backfill"},
+        selected_reasons = {row["selection_reason"] for row in selected_rows}
+        self.assertIn("runtime_strategy_floor", selected_reasons)
+        self.assertLessEqual(
+            selected_reasons,
+            {
+                "runtime_strategy_floor",
+                "exploitation",
+                "exploration",
+                "budget_backfill",
+            },
         )
         proposal_selected = [row for row in proposal_rows if row["selected_for_replay"]]
         self.assertEqual(len(proposal_selected), 3)
-        self.assertEqual(
-            {row["replay_selection_reason"] for row in proposal_selected},
-            {"exploitation", "exploration", "budget_backfill"},
+        proposal_reasons = {row["replay_selection_reason"] for row in proposal_selected}
+        self.assertIn("runtime_strategy_floor", proposal_reasons)
+        self.assertLessEqual(
+            proposal_reasons,
+            {
+                "runtime_strategy_floor",
+                "exploitation",
+                "exploration",
+                "budget_backfill",
+            },
         )
         self.assertEqual(len(pre_replay_rows), payload["candidate_spec_count"])
         self.assertEqual(
@@ -4061,18 +4129,21 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             )
 
         self.assertEqual(payload["status"], "no_profit_target_candidate")
-        exploitation_rows = [
-            row
-            for row in selection["rows"]
-            if row["selected_for_replay"] and row["selection_reason"] == "exploitation"
-        ]
         replay_rows = sorted(
             [row for row in selection["rows"] if row["selected_for_replay"]],
             key=lambda row: row["replay_order"],
         )
-        self.assertEqual(len(exploitation_rows), 3)
+        self.assertEqual(len(replay_rows), 3)
         self.assertGreater(
-            len({row["family_template_id"] for row in exploitation_rows}),
+            sum(
+                1
+                for row in replay_rows
+                if row["selection_reason"] == "runtime_strategy_floor"
+            ),
+            0,
+        )
+        self.assertGreater(
+            len({row["runtime_strategy_name"] for row in replay_rows}),
             1,
         )
         self.assertEqual(
@@ -4083,6 +4154,97 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertGreater(
             len({row["family_template_id"] for row in replay_rows[:2]}),
             1,
+        )
+
+    def test_candidate_selection_reserves_distinct_runtime_strategy_floor(
+        self,
+    ) -> None:
+        breakout_primary = replace(
+            self._candidate_spec(
+                "spec-breakout-primary",
+                family_template_id="microstructure_continuation_matched_filter_v1",
+            ),
+            runtime_family="breakout_continuation_consistent",
+            runtime_strategy_name="breakout-continuation-long-v1",
+        )
+        breakout_secondary = replace(
+            self._candidate_spec(
+                "spec-breakout-secondary",
+                family_template_id="opening_drive_leader_reclaim_v1",
+            ),
+            runtime_family="breakout_continuation_consistent",
+            runtime_strategy_name="breakout-continuation-long-v1",
+        )
+        intraday = replace(
+            self._candidate_spec(
+                "spec-intraday", family_template_id="intraday_tsmom_v2"
+            ),
+            runtime_family="intraday_tsmom_consistent",
+            runtime_strategy_name="intraday-tsmom-profit-v3",
+        )
+        late_day = replace(
+            self._candidate_spec(
+                "spec-late-day", family_template_id="late_day_continuation_v1"
+            ),
+            runtime_family="late_day_continuation_consistent",
+            runtime_strategy_name="late-day-continuation-long-v1",
+        )
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(breakout_primary, breakout_secondary, intraday, late_day),
+            proposal_rows=[
+                {
+                    "candidate_spec_id": breakout_primary.candidate_spec_id,
+                    "rank": 1,
+                    "proposal_score": 100.0,
+                    "selection_reason": "pre_replay_mlx_rank",
+                },
+                {
+                    "candidate_spec_id": breakout_secondary.candidate_spec_id,
+                    "rank": 2,
+                    "proposal_score": 99.0,
+                    "selection_reason": "pre_replay_mlx_rank",
+                },
+                {
+                    "candidate_spec_id": intraday.candidate_spec_id,
+                    "rank": 3,
+                    "proposal_score": 10.0,
+                    "selection_reason": "pre_replay_mlx_rank",
+                },
+                {
+                    "candidate_spec_id": late_day.candidate_spec_id,
+                    "rank": 4,
+                    "proposal_score": 5.0,
+                    "selection_reason": "pre_replay_mlx_rank",
+                },
+            ],
+            top_k=2,
+            exploration_slots=0,
+            max_candidates=3,
+            portfolio_size_min=2,
+        )
+
+        selected_runtime_names = {spec.runtime_strategy_name for spec in selected}
+        self.assertEqual(
+            selected_runtime_names,
+            {
+                "breakout-continuation-long-v1",
+                "intraday-tsmom-profit-v3",
+                "late-day-continuation-long-v1",
+            },
+        )
+        row_by_spec = {row["candidate_spec_id"]: row for row in selection["rows"]}
+        self.assertEqual(
+            row_by_spec[intraday.candidate_spec_id]["selection_reason"],
+            "runtime_strategy_floor",
+        )
+        self.assertEqual(
+            row_by_spec[late_day.candidate_spec_id]["selection_reason"],
+            "runtime_strategy_floor",
+        )
+        self.assertEqual(
+            selection["budget"]["runtime_strategy_floor_selected_count"],
+            3,
         )
 
     def test_seed_recent_whitepapers_dedupes_execution_signatures(self) -> None:

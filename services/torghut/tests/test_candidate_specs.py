@@ -1156,6 +1156,12 @@ class TestCandidateSpecs(TestCase):
                 "symbol_diversification_feedback_escape",
             ],
         )
+        notional = expanded[3]
+        self.assertGreaterEqual(
+            int(notional["params"]["max_entries_per_session"]),
+            10,
+        )
+        self.assertEqual(notional["params"]["entry_notional_max_multiplier"], "1.0")
         diversified = expanded[-1]
         self.assertEqual(diversified["params"]["top_n"], "3")
         self.assertGreaterEqual(

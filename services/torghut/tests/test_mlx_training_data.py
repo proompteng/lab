@@ -124,6 +124,41 @@ class TestMlxTrainingData(TestCase):
         )
         self.assertEqual(features["capital_feasible_flag"], 1.0)
 
+    def test_candidate_capital_features_apply_entry_notional_multiplier_to_daily_capacity(
+        self,
+    ) -> None:
+        spec = CandidateSpec(
+            schema_version="torghut.candidate-spec.v1",
+            candidate_spec_id="spec-half-entry-notional",
+            hypothesis_id="H-HALF-ENTRY",
+            family_template_id="microbar_cross_sectional_pairs_v1",
+            candidate_kind="configuration",
+            runtime_family="microbar_cross_sectional_pairs",
+            runtime_strategy_name="microbar-cross-sectional-pairs-v1",
+            feature_contract={},
+            parameter_space={},
+            strategy_overrides={
+                "max_notional_per_trade": "30000",
+                "max_position_pct_equity": "0.50",
+                "params": {
+                    "entry_notional_max_multiplier": "0.5",
+                    "max_entries_per_session": "10",
+                    "max_concurrent_positions": "1",
+                    "top_n": "1",
+                },
+            },
+            objective={},
+            hard_vetoes={},
+            expected_failure_modes=(),
+            promotion_contract={},
+        )
+
+        features = candidate_spec_capital_features(spec)
+
+        self.assertEqual(features["entry_notional_max_multiplier"], 0.5)
+        self.assertEqual(features["configured_daily_notional_capacity"], 150000.0)
+        self.assertEqual(features["capital_feasible_flag"], 1.0)
+
     def test_candidate_capital_features_infer_uncapped_universe_slots(self) -> None:
         spec = CandidateSpec(
             schema_version="torghut.candidate-spec.v1",

@@ -40,6 +40,20 @@ def _string(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _int(value: Any) -> int:
+    try:
+        return int(float(str(value or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _sum_mapping_int_values(mapping: Mapping[str, Any], key: str) -> int:
+    total = 0
+    for payload in mapping.values():
+        total += _int(_mapping(payload).get(key))
+    return total
+
+
 def _is_synthetic_dataset_snapshot(dataset_snapshot_id: str) -> bool:
     normalized = dataset_snapshot_id.strip().lower()
     return any(
@@ -67,6 +81,24 @@ def _decomposition_symbol_contribution_shares(
         if symbol and share:
             shares[symbol] = share
     return shares
+
+
+def _decomposition_activity_counts(candidate: Mapping[str, Any]) -> dict[str, int]:
+    decomposition = _mapping(candidate.get("decomposition"))
+    families = _mapping(decomposition.get("families"))
+    symbols = _mapping(decomposition.get("symbols"))
+    decision_count = _sum_mapping_int_values(families, "evaluations")
+    filled_count = max(
+        _sum_mapping_int_values(families, "fills"),
+        _sum_mapping_int_values(symbols, "filled_count"),
+    )
+    counts: dict[str, int] = {}
+    if decision_count > 0:
+        counts["decision_count"] = decision_count
+    if filled_count > 0:
+        counts["filled_count"] = filled_count
+        counts["filled_order_count"] = filled_count
+    return counts
 
 
 @dataclass(frozen=True)
@@ -136,6 +168,9 @@ def evidence_bundle_from_frontier_candidate(
             if key in source:
                 scorecard = {**scorecard, key: source[key]}
                 break
+    for key, value in _decomposition_activity_counts(candidate).items():
+        if key not in scorecard:
+            scorecard = {**scorecard, key: value}
     daily_net = _mapping(full_window.get("daily_net"))
     if daily_net and "daily_net" not in scorecard:
         scorecard = {**scorecard, "daily_net": daily_net}

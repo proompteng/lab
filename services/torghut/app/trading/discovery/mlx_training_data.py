@@ -255,10 +255,15 @@ def candidate_spec_capital_features(spec: CandidateSpec) -> Mapping[str, float]:
         _float(params.get("max_entries_per_session")),
         1.0,
     )
+    entry_notional_multiplier = _positive_or_default(
+        _float(features.get("entry_notional_max_multiplier")),
+        1.0,
+    )
     features["inferred_universe_slot_floor"] = float(rank_count_floor)
     features["configured_daily_notional_capacity"] = (
         _float(features.get("max_notional_per_trade"))
         * features["max_entries_per_session"]
+        * entry_notional_multiplier
         * float(rank_count_floor)
     )
     return features
