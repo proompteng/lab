@@ -120,6 +120,16 @@ require_matches \
   'Host\(.*agents\.k8s\.proompteng\.ai.*\)' \
   "${ARGO_DIR}/ingressroute-agents-api.yaml"
 
+require_matches \
+  "Agents GitOps must declare an Agents-owned Postgres cluster before the database cutover" \
+  'name: agents-db-next' \
+  "${ARGO_DIR}/postgres-cluster.yaml"
+
+require_matches \
+  "Agents-owned Postgres cluster must bootstrap an Agents database owned by the Agents service user" \
+  'database: agents' \
+  "${ARGO_DIR}/postgres-cluster.yaml"
+
 if ! matches_multiline 'services:\n\s+- name: agents\n\s+port: 80' "${ARGO_DIR}/ingressroute-agents-api.yaml"; then
   echo "Agents extraction boundary violation: canonical agents.k8s.proompteng.ai IngressRoute must target the Agents service." >&2
   exit 1
@@ -133,6 +143,12 @@ fail_if_matches \
   "Agents GitOps kustomization must not include the removed Jangar-host compatibility Agents IngressRoute" \
   'ingressroute-jangar-agents-api\.yaml' \
   "${ARGO_DIR}/kustomization.yaml"
+
+fail_if_matches \
+  "Agents GitOps and chart values must not keep the Jangar browser origin as an Agents CORS compatibility bridge" \
+  'jangar\.k8s\.proompteng\.ai' \
+  "${ARGO_DIR}" \
+  "${CHART_DIR}"
 
 if matches_multiline 'kubernetesCRD:\n\s+enabled:\s*false' "${TRAEFIK_VALUES}"; then
   echo "Agents extraction boundary violation: Traefik GitOps must not disable the Kubernetes CRD provider required for Agents direct IngressRoute ownership." >&2
@@ -439,6 +455,11 @@ fail_if_matches \
   "Jangar database typing must not reintroduce Agents-owned table contracts after migration ownership moved to services/agents" \
   'agent_run_idempotency_keys|agents_control_plane_cache|agents_control_plane_component_heartbeats|agents_comms|workflow_comms|memory_resources|orchestration_runs' \
   "${ROOT_DIR}/services/jangar/src/server/db.ts"
+
+fail_if_matches \
+  "Agents deploy tooling must not recreate database compatibility alias secrets; the agents-db-app secret must already exist" \
+  'AGENTS_CREATE_DB_SECRET_ALIAS|compat-source-secret|buildDatabaseSecretAliasManifest|resolveDatabaseSecretSource|Created compatibility database secret' \
+  "${ROOT_DIR}/packages/scripts/src/agents"
 
 allowed_agents_comms_bridge="${ROOT_DIR}/services/agents/src/server/migrations/20260519_agents_comms_agent_messages.ts"
 agents_comms_bridge_matches="$(

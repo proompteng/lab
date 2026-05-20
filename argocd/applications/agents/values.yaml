@@ -182,9 +182,6 @@ agentComms:
       name: nats-agents-credentials
       usernameKey: username
       passwordKey: password
-cors:
-  allowedOrigins:
-    - https://jangar.k8s.proompteng.ai
 grpc:
   enabled: true
   port: 50051

@@ -2,6 +2,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: agents
 resources:
+  - postgres-cluster.yaml
   - codex-auth-sealedsecret.yaml
   - hf-router-token-sealedsecret.yaml
   - codex-secretbinding.yaml

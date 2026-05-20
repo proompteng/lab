@@ -249,55 +249,8 @@ runner:
     ).toBeNull()
   })
 
-  it('defaults database secret alias source to the Agents-owned target secret', () => {
-    expect(
-      __private.resolveDatabaseSecretSource({
-        namespace: 'agents',
-        name: 'agents-db-app',
-      }),
-    ).toEqual({
-      sourceNamespace: 'agents',
-      sourceName: 'agents-db-app',
-    })
-  })
-
-  it('builds an Agents-owned compatibility database secret without source ownership metadata', () => {
-    const manifest = __private.buildDatabaseSecretAliasManifest(
-      {
-        apiVersion: 'v1',
-        kind: 'Secret',
-        type: 'kubernetes.io/basic-auth',
-        data: {
-          uri: 'cG9zdGdyZXNxbDovL2FnZW50cw==',
-        },
-        metadata: {
-          name: 'agents-db-app',
-          namespace: 'agents',
-          uid: 'source-uid',
-          resourceVersion: '123',
-          ownerReferences: [{ name: 'source-owner' }],
-          annotations: {
-            'reflector.v1.k8s.emberstack.com/reflects': 'agents/agents-db-app',
-          },
-        },
-      },
-      {
-        sourceNamespace: 'agents',
-        sourceName: 'agents-db-app',
-        targetNamespace: 'agents',
-        targetName: 'agents-db-app',
-      },
-    )
-
-    expect(manifest.metadata?.name).toBe('agents-db-app')
-    expect(manifest.metadata?.namespace).toBe('agents')
-    expect(manifest.data?.uri).toBe('cG9zdGdyZXNxbDovL2FnZW50cw==')
-    expect(manifest.metadata).not.toHaveProperty('uid')
-    expect(manifest.metadata).not.toHaveProperty('resourceVersion')
-    expect(manifest.metadata).not.toHaveProperty('ownerReferences')
-    expect(manifest.metadata?.annotations).toEqual({
-      'agents.proompteng.ai/created-by': 'agents-deploy-service',
-      'agents.proompteng.ai/compat-source-secret': 'agents/agents-db-app',
-    })
+  it('does not expose database secret compatibility alias helpers', () => {
+    expect(__private).not.toHaveProperty('resolveDatabaseSecretSource')
+    expect(__private).not.toHaveProperty('buildDatabaseSecretAliasManifest')
   })
 })

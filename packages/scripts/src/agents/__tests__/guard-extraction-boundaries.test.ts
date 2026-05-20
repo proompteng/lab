@@ -58,6 +58,9 @@ describe('agents extraction boundary guard', () => {
 
     expect(content).toContain('ingressroute-agents-api\\.yaml')
     expect(content).toContain('agents\\.k8s\\.proompteng\\.ai')
+    expect(content).toContain('name: agents-db-next')
+    expect(content).toContain('database: agents')
+    expect(content).toContain('jangar\\.k8s\\.proompteng\\.ai')
     expect(content).toContain('proxyAgentsServiceRequest|buildAgentsServiceProxyUrl')
     expect(content).toContain('Jangar-host compatibility Agents IngressRoute')
     expect(content).toContain('ingressroute-jangar-agents-api\\.yaml')
@@ -76,6 +79,8 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('AGENTS_NAMESPACE')
     expect(content).toContain('JANGAR_AGENT_COMMS_SUBSCRIBER_DISABLED')
     expect(content).toContain('Jangar database typing must not reintroduce Agents-owned table contracts')
+    expect(content).toContain('Agents deploy tooling must not recreate database compatibility alias secrets')
+    expect(content).toContain('AGENTS_CREATE_DB_SECRET_ALIAS|compat-source-secret')
     expect(content).toContain('allowed_agents_comms_bridge=')
     expect(content).toContain('workflow_comms\\.agent_messages')
     expect(content).toContain('agents-control-plane runtime profile')
