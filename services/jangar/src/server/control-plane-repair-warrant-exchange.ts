@@ -16,15 +16,23 @@ import type {
 } from '~/data/agents-control-plane'
 import { fetchControlPlaneResourcesFromAgentsService } from '@proompteng/agent-contracts/agents-service-client'
 import type { ControlPlaneRolloutHealth, ControlPlaneWatchReliability } from '~/server/control-plane-status-types'
-import { asRecord, asString, readNested } from '~/server/primitives-http'
+import { asRecord, asString } from '~/server/primitives-http'
+import {
+  SCHEDULE_DEBT_ANNOTATION_IMAGE_REF,
+  SCHEDULE_DEBT_ANNOTATION_LANE,
+  SCHEDULE_DEBT_ANNOTATION_OBJECTIVE_REF,
+  SCHEDULE_DEBT_ANNOTATION_SOURCE_REF,
+} from '~/server/control-plane-repair-schedule-debt-annotations'
+export {
+  buildScheduleDebtAnnotations,
+  SCHEDULE_DEBT_ANNOTATION_IMAGE_REF,
+  SCHEDULE_DEBT_ANNOTATION_LANE,
+  SCHEDULE_DEBT_ANNOTATION_OBJECTIVE_REF,
+  SCHEDULE_DEBT_ANNOTATION_SOURCE_REF,
+} from '~/server/control-plane-repair-schedule-debt-annotations'
 
 export const REPAIR_WARRANT_EXCHANGE_DESIGN_ARTIFACT =
   'docs/agents/designs/146-jangar-repair-warrant-exchange-and-schedule-debt-firebreak-2026-05-07.md'
-
-export const SCHEDULE_DEBT_ANNOTATION_LANE = 'jangar.proompteng.ai/schedule-debt-lane'
-export const SCHEDULE_DEBT_ANNOTATION_SOURCE_REF = 'jangar.proompteng.ai/schedule-debt-source-ref'
-export const SCHEDULE_DEBT_ANNOTATION_IMAGE_REF = 'jangar.proompteng.ai/schedule-debt-image-ref'
-export const SCHEDULE_DEBT_ANNOTATION_OBJECTIVE_REF = 'jangar.proompteng.ai/schedule-debt-objective-ref'
 
 const PRODUCER_REVISION = '2026-05-07-repair-warrant-exchange-observe-v1'
 const DEFAULT_FRESHNESS_MS = 60_000
@@ -34,7 +42,6 @@ const SCHEDULE_LABEL = 'schedules.proompteng.ai/schedule'
 const SWARM_NAME_LABEL = 'swarm.proompteng.ai/name'
 const SWARM_STAGE_LABEL = 'swarm.proompteng.ai/stage'
 const RUNTIME_DIGEST_ANNOTATION = 'swarm.proompteng.ai/runtime-kit-set-digest'
-const ADMISSION_PRODUCER_REVISION_ANNOTATION = 'swarm.proompteng.ai/admission-producer-revision'
 const SOURCE_HEAD_ANNOTATION = 'jangar.proompteng.ai/source-head-sha'
 const GITOPS_REVISION_ANNOTATION = 'jangar.proompteng.ai/gitops-revision'
 
@@ -121,60 +128,6 @@ const uniqueStrings = (values: string[]) => [...new Set(values.filter((value) =>
 const normalizeNonEmpty = (value: string | undefined | null) => {
   const normalized = value?.trim()
   return normalized && normalized.length > 0 ? normalized : null
-}
-
-const firstNonEmpty = (values: Array<string | undefined | null>) => {
-  for (const value of values) {
-    const normalized = normalizeNonEmpty(value)
-    if (normalized) return normalized
-  }
-  return null
-}
-
-export const buildScheduleDebtAnnotations = ({
-  schedule,
-  scheduleName,
-  namespace,
-  image,
-}: {
-  schedule: unknown
-  scheduleName: string
-  namespace: string
-  image: string
-}) => {
-  const annotations = asRecord(readNested(schedule, ['metadata', 'annotations'])) ?? {}
-  const targetRef = asRecord(readNested(schedule, ['spec', 'targetRef'])) ?? {}
-  const targetKind = asString(targetRef.kind)
-  const targetName = asString(targetRef.name)
-  const targetNamespace = asString(targetRef.namespace) ?? namespace
-
-  return Object.fromEntries(
-    [
-      [SCHEDULE_DEBT_ANNOTATION_LANE, scheduleName],
-      [
-        SCHEDULE_DEBT_ANNOTATION_SOURCE_REF,
-        firstNonEmpty([
-          process.env.JANGAR_SOURCE_HEAD_SHA,
-          process.env.JANGAR_COMMIT,
-          process.env.GIT_COMMIT,
-          process.env.COMMIT_SHA,
-          process.env.JANGAR_GITOPS_REVISION,
-        ]),
-      ],
-      [
-        SCHEDULE_DEBT_ANNOTATION_IMAGE_REF,
-        firstNonEmpty([
-          asString(annotations[RUNTIME_DIGEST_ANNOTATION]),
-          asString(annotations[ADMISSION_PRODUCER_REVISION_ANNOTATION]),
-          image,
-        ]),
-      ],
-      [
-        SCHEDULE_DEBT_ANNOTATION_OBJECTIVE_REF,
-        targetKind && targetName ? `${targetKind}:${targetNamespace}:${targetName}` : scheduleName,
-      ],
-    ].filter((entry): entry is [string, string] => Boolean(entry[1])),
-  )
 }
 
 const normalizeReason = (value: string) =>
