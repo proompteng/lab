@@ -107,7 +107,6 @@ import { Route as ApiGithubPullsOwnerRepoNumberThreadsRouteImport } from './rout
 import { Route as ApiGithubPullsOwnerRepoNumberReviewRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/review'
 import { Route as ApiGithubPullsOwnerRepoNumberRefreshFilesRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/refresh-files'
 import { Route as ApiGithubPullsOwnerRepoNumberMergeRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/merge'
-import { Route as ApiGithubPullsOwnerRepoNumberJudgeRunsRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/judge-runs'
 import { Route as ApiGithubPullsOwnerRepoNumberFilesRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/files'
 import { Route as ApiGithubPullsOwnerRepoNumberDeploymentRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/deployment'
 import { Route as ApiGithubPullsOwnerRepoNumberChecksRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/checks'
@@ -651,12 +650,6 @@ const ApiGithubPullsOwnerRepoNumberMergeRoute =
     path: '/merge',
     getParentRoute: () => ApiGithubPullsOwnerRepoNumberRoute,
   } as any)
-const ApiGithubPullsOwnerRepoNumberJudgeRunsRoute =
-  ApiGithubPullsOwnerRepoNumberJudgeRunsRouteImport.update({
-    id: '/judge-runs',
-    path: '/judge-runs',
-    getParentRoute: () => ApiGithubPullsOwnerRepoNumberRoute,
-  } as any)
 const ApiGithubPullsOwnerRepoNumberFilesRoute =
   ApiGithubPullsOwnerRepoNumberFilesRouteImport.update({
     id: '/files',
@@ -779,7 +772,6 @@ export interface FileRoutesByFullPath {
   '/api/github/pulls/$owner/$repo/$number/checks': typeof ApiGithubPullsOwnerRepoNumberChecksRoute
   '/api/github/pulls/$owner/$repo/$number/deployment': typeof ApiGithubPullsOwnerRepoNumberDeploymentRoute
   '/api/github/pulls/$owner/$repo/$number/files': typeof ApiGithubPullsOwnerRepoNumberFilesRoute
-  '/api/github/pulls/$owner/$repo/$number/judge-runs': typeof ApiGithubPullsOwnerRepoNumberJudgeRunsRoute
   '/api/github/pulls/$owner/$repo/$number/merge': typeof ApiGithubPullsOwnerRepoNumberMergeRoute
   '/api/github/pulls/$owner/$repo/$number/refresh-files': typeof ApiGithubPullsOwnerRepoNumberRefreshFilesRoute
   '/api/github/pulls/$owner/$repo/$number/review': typeof ApiGithubPullsOwnerRepoNumberReviewRoute
@@ -882,7 +874,6 @@ export interface FileRoutesByTo {
   '/api/github/pulls/$owner/$repo/$number/checks': typeof ApiGithubPullsOwnerRepoNumberChecksRoute
   '/api/github/pulls/$owner/$repo/$number/deployment': typeof ApiGithubPullsOwnerRepoNumberDeploymentRoute
   '/api/github/pulls/$owner/$repo/$number/files': typeof ApiGithubPullsOwnerRepoNumberFilesRoute
-  '/api/github/pulls/$owner/$repo/$number/judge-runs': typeof ApiGithubPullsOwnerRepoNumberJudgeRunsRoute
   '/api/github/pulls/$owner/$repo/$number/merge': typeof ApiGithubPullsOwnerRepoNumberMergeRoute
   '/api/github/pulls/$owner/$repo/$number/refresh-files': typeof ApiGithubPullsOwnerRepoNumberRefreshFilesRoute
   '/api/github/pulls/$owner/$repo/$number/review': typeof ApiGithubPullsOwnerRepoNumberReviewRoute
@@ -988,7 +979,6 @@ export interface FileRoutesById {
   '/api/github/pulls/$owner/$repo/$number/checks': typeof ApiGithubPullsOwnerRepoNumberChecksRoute
   '/api/github/pulls/$owner/$repo/$number/deployment': typeof ApiGithubPullsOwnerRepoNumberDeploymentRoute
   '/api/github/pulls/$owner/$repo/$number/files': typeof ApiGithubPullsOwnerRepoNumberFilesRoute
-  '/api/github/pulls/$owner/$repo/$number/judge-runs': typeof ApiGithubPullsOwnerRepoNumberJudgeRunsRoute
   '/api/github/pulls/$owner/$repo/$number/merge': typeof ApiGithubPullsOwnerRepoNumberMergeRoute
   '/api/github/pulls/$owner/$repo/$number/refresh-files': typeof ApiGithubPullsOwnerRepoNumberRefreshFilesRoute
   '/api/github/pulls/$owner/$repo/$number/review': typeof ApiGithubPullsOwnerRepoNumberReviewRoute
@@ -1095,7 +1085,6 @@ export interface FileRouteTypes {
     | '/api/github/pulls/$owner/$repo/$number/checks'
     | '/api/github/pulls/$owner/$repo/$number/deployment'
     | '/api/github/pulls/$owner/$repo/$number/files'
-    | '/api/github/pulls/$owner/$repo/$number/judge-runs'
     | '/api/github/pulls/$owner/$repo/$number/merge'
     | '/api/github/pulls/$owner/$repo/$number/refresh-files'
     | '/api/github/pulls/$owner/$repo/$number/review'
@@ -1198,7 +1187,6 @@ export interface FileRouteTypes {
     | '/api/github/pulls/$owner/$repo/$number/checks'
     | '/api/github/pulls/$owner/$repo/$number/deployment'
     | '/api/github/pulls/$owner/$repo/$number/files'
-    | '/api/github/pulls/$owner/$repo/$number/judge-runs'
     | '/api/github/pulls/$owner/$repo/$number/merge'
     | '/api/github/pulls/$owner/$repo/$number/refresh-files'
     | '/api/github/pulls/$owner/$repo/$number/review'
@@ -1303,7 +1291,6 @@ export interface FileRouteTypes {
     | '/api/github/pulls/$owner/$repo/$number/checks'
     | '/api/github/pulls/$owner/$repo/$number/deployment'
     | '/api/github/pulls/$owner/$repo/$number/files'
-    | '/api/github/pulls/$owner/$repo/$number/judge-runs'
     | '/api/github/pulls/$owner/$repo/$number/merge'
     | '/api/github/pulls/$owner/$repo/$number/refresh-files'
     | '/api/github/pulls/$owner/$repo/$number/review'
@@ -2076,13 +2063,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiGithubPullsOwnerRepoNumberMergeRouteImport
       parentRoute: typeof ApiGithubPullsOwnerRepoNumberRoute
     }
-    '/api/github/pulls/$owner/$repo/$number/judge-runs': {
-      id: '/api/github/pulls/$owner/$repo/$number/judge-runs'
-      path: '/judge-runs'
-      fullPath: '/api/github/pulls/$owner/$repo/$number/judge-runs'
-      preLoaderRoute: typeof ApiGithubPullsOwnerRepoNumberJudgeRunsRouteImport
-      parentRoute: typeof ApiGithubPullsOwnerRepoNumberRoute
-    }
     '/api/github/pulls/$owner/$repo/$number/files': {
       id: '/api/github/pulls/$owner/$repo/$number/files'
       path: '/files'
@@ -2220,7 +2200,6 @@ interface ApiGithubPullsOwnerRepoNumberRouteChildren {
   ApiGithubPullsOwnerRepoNumberChecksRoute: typeof ApiGithubPullsOwnerRepoNumberChecksRoute
   ApiGithubPullsOwnerRepoNumberDeploymentRoute: typeof ApiGithubPullsOwnerRepoNumberDeploymentRoute
   ApiGithubPullsOwnerRepoNumberFilesRoute: typeof ApiGithubPullsOwnerRepoNumberFilesRoute
-  ApiGithubPullsOwnerRepoNumberJudgeRunsRoute: typeof ApiGithubPullsOwnerRepoNumberJudgeRunsRoute
   ApiGithubPullsOwnerRepoNumberMergeRoute: typeof ApiGithubPullsOwnerRepoNumberMergeRoute
   ApiGithubPullsOwnerRepoNumberRefreshFilesRoute: typeof ApiGithubPullsOwnerRepoNumberRefreshFilesRoute
   ApiGithubPullsOwnerRepoNumberReviewRoute: typeof ApiGithubPullsOwnerRepoNumberReviewRoute
@@ -2236,8 +2215,6 @@ const ApiGithubPullsOwnerRepoNumberRouteChildren: ApiGithubPullsOwnerRepoNumberR
       ApiGithubPullsOwnerRepoNumberDeploymentRoute,
     ApiGithubPullsOwnerRepoNumberFilesRoute:
       ApiGithubPullsOwnerRepoNumberFilesRoute,
-    ApiGithubPullsOwnerRepoNumberJudgeRunsRoute:
-      ApiGithubPullsOwnerRepoNumberJudgeRunsRoute,
     ApiGithubPullsOwnerRepoNumberMergeRoute:
       ApiGithubPullsOwnerRepoNumberMergeRoute,
     ApiGithubPullsOwnerRepoNumberRefreshFilesRoute:

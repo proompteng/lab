@@ -179,20 +179,16 @@ fail_if_path_exists \
   "${ROOT_DIR}/services/jangar/src/routes/api/codex/rerun.tsx" \
   "${ROOT_DIR}/services/jangar/src/routes/codex/runs.tsx" \
   "${ROOT_DIR}/services/jangar/src/routes/codex/search.tsx" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/github/pulls/\$owner/\$repo/\$number/judge-runs.tsx" \
   "${ROOT_DIR}/services/jangar/src/data/codex.ts" \
   "${ROOT_DIR}/services/jangar/src/server/codex-rerun-forwarding.ts"
 
 fail_if_matches \
   "Jangar app shell must not advertise generic Codex projection pages after Agents owns them" \
-  '/codex/(runs|search)|/api/codex/(github-events|issues|rerun|runs)' \
+  '/codex/(runs|search)|/api/codex/(github-events|issues|rerun|runs)|/api/github/pulls/.*judge-runs' \
   "${ROOT_DIR}/services/jangar/src/routeTree.gen.ts" \
   "${ROOT_DIR}/services/jangar/src/components/app-sidebar.tsx" \
   "${ROOT_DIR}/services/jangar/src/components/app-shell.tsx"
-
-fail_if_matches \
-  "Jangar GitHub PR domain route must use Agents Codex projection clients instead of Jangar judge storage or handlers" \
-  "createCodexJudgeStore|handleGithubWebhookEvent|from ['\"]~\\/server\\/codex-judge-store|from ['\"]\\.\\.\\/\\.\\.\\/\\.\\.\\/server\\/codex-judge-store|from ['\"]\\.\\/codex-judge-store" \
-  "${ROOT_DIR}/services/jangar/src/routes/api/github/pulls/\$owner/\$repo/\$number/judge-runs.tsx"
 
 require_matches \
   "Agents service must own canonical Codex run projection v1 route registration" \

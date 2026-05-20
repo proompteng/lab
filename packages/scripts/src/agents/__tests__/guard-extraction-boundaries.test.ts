@@ -166,14 +166,12 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain(
       'Jangar app shell must not advertise generic Codex projection pages after Agents owns them',
     )
-    expect(content).toContain(
-      'Jangar GitHub PR domain route must use Agents Codex projection clients instead of Jangar judge storage or handlers',
-    )
     expect(content).toContain('services/jangar/src/data/codex.ts')
     expect(content).toContain('services/jangar/src/server/codex-rerun-forwarding.ts')
-    expect(content).toContain('/codex/(runs|search)|/api/codex/(github-events|issues|rerun|runs)')
-    expect(content).toContain('createCodexJudgeStore|handleGithubWebhookEvent')
-    expect(content).toContain('handleGithubWebhookEvent')
+    expect(content).toContain('services/jangar/src/routes/api/github/pulls/\\$owner/\\$repo/\\$number/judge-runs.tsx')
+    expect(content).toContain(
+      '/codex/(runs|search)|/api/codex/(github-events|issues|rerun|runs)|/api/github/pulls/.*judge-runs',
+    )
     expect(content).toContain('codex-judge-store')
     expect(content).toContain('canonical Codex run projection v1 route registration')
     expect(content).toContain('codex/runs/(by-id|by-pr)')

@@ -7,7 +7,6 @@ import {
   fetchGithubPullChecks,
   fetchGithubPullDeploymentEvidenceSummary,
   fetchGithubPullFiles,
-  fetchGithubPullJudgeRuns,
   fetchGithubPullWriteActions,
   loadGithubPullDetailPageData,
   postGithubPullDeploymentEvidence,

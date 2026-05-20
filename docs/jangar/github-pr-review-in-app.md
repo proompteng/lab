@@ -39,7 +39,7 @@ This design builds on existing Jangar capabilities:
 - Agents ingests that raw stream via a KafkaSource to `/v1/codex/github-events`:
   - `argocd/applications/agents/codex-github-events-kafkasource.yaml`
   - Handler: `services/agents/src/server/v1/codex-github-events.ts`
-- Jangar PR detail routes read linked Codex runs through Agents Codex projection APIs.
+- The Jangar PR detail route includes linked Codex runs from Agents Codex projection APIs.
 - The former standalone Jangar Codex run/search pages and same-origin compatibility APIs were removed; generic run search belongs to Agents.
 
 ## UX Overview
@@ -241,6 +241,6 @@ Current Jangar surfaces are unauthenticated and rely on network guardrails. Revi
 
 - GitHub client: `services/jangar/src/server/github-client.ts`
 - Codex judge review gate: `services/jangar/src/server/codex-judge.ts`
-- Linked run data: `services/jangar/src/routes/api/github/pulls/$owner/$repo/$number/judge-runs.tsx`
+- Linked run data: `services/jangar/src/server/github-review-handlers.ts`
 - Agents Codex projection contract: `packages/agent-contracts/src/codex-runs-client.ts`
 - API route style: `services/jangar/src/routes/api/terminals.ts`

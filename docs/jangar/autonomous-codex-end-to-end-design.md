@@ -341,11 +341,11 @@ CREATE TABLE jangar_github.pr_worktrees (
 
 ## 13) API Changes
 
-### 13.1 Judge Runs by PR
+### 13.1 Linked AgentRun/Codex Projection by PR
 
-`GET /api/github/pulls/:owner/:repo/:number/judge-runs`
+`GET /api/github/pulls/:owner/:repo/:number`
 
-- Returns all `codex_judge.runs` for the PR.
+- Includes linked Codex runs from the Agents projection API. Generic Codex run search belongs to Agents.
 
 ### 13.2 Checks Grouped by Commit
 
