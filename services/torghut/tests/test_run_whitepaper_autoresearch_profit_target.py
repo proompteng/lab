@@ -25,6 +25,7 @@ from app.models import (
     AutoresearchPortfolioCandidate,
     AutoresearchProposalScore,
     Base,
+    RejectedSignalOutcomeEvent,
     WhitepaperAnalysisRun,
     WhitepaperClaim,
     WhitepaperClaimRelation,
@@ -796,6 +797,134 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(model["feedback_matched_spec_count"], 1)
         self.assertEqual(rows[0]["training_source"], "feedback_real_replay")
         self.assertEqual(rows[0]["feedback_match_scope"], "candidate_spec_id")
+
+    def test_feedback_evidence_loads_labeled_rejected_signal_outcomes(self) -> None:
+        spec = self._candidate_spec("spec-rejected-outcome-feedback")
+        required_fields = [
+            "counterfactual_return",
+            "route_tca",
+            "post_cost_net_pnl",
+            "executable_quote",
+        ]
+        with (
+            Session(self.engine) as session,
+            patch(
+                "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+                side_effect=lambda: Session(self.engine),
+            ),
+        ):
+            session.add_all(
+                [
+                    RejectedSignalOutcomeEvent(
+                        event_id="reject-outcome-labeled",
+                        source="quote_quality_gate",
+                        paper_source="ssrn-6607301",
+                        paper_claim_id="post-rejection-follow-up-sampling",
+                        account_label="paper",
+                        symbol="AAPL",
+                        event_ts=datetime(2026, 5, 18, 14, 30, 0),
+                        timeframe="1Min",
+                        seq="1",
+                        reject_reason="missing_executable_quote",
+                        outcome_label_status="labeled",
+                        counterfactual_required=True,
+                        required_outcome_fields_json=required_fields,
+                        event_payload_json={
+                            "candidate_spec_id": spec.candidate_spec_id
+                        },
+                        outcome_payload_json={
+                            "candidate_id": "cand-rejected-outcome",
+                            "candidate_spec_id": spec.candidate_spec_id,
+                            "family_template_id": spec.family_template_id,
+                            "runtime_family": spec.runtime_family,
+                            "runtime_strategy_name": spec.runtime_strategy_name,
+                            "counterfactual_return": "-0.0042",
+                            "route_tca": {"post_cost_expectancy_bps_proxy": "-11.5"},
+                            "post_cost_net_pnl": "-84.25",
+                            "executable_quote": {"bid": "100.00", "ask": "100.02"},
+                            "objective_scorecard": {
+                                "net_pnl_per_day": "-84.25",
+                                "active_day_ratio": "1",
+                                "positive_day_ratio": "0",
+                                "negative_day_count": 1,
+                            },
+                        },
+                    ),
+                    RejectedSignalOutcomeEvent(
+                        event_id="reject-outcome-pending",
+                        source="quote_quality_gate",
+                        paper_source="ssrn-6607301",
+                        paper_claim_id="post-rejection-follow-up-sampling",
+                        account_label="paper",
+                        symbol="MSFT",
+                        event_ts=datetime(2026, 5, 18, 14, 31, 0),
+                        timeframe="1Min",
+                        seq="2",
+                        reject_reason="missing_executable_quote",
+                        outcome_label_status="pending",
+                        counterfactual_required=True,
+                        required_outcome_fields_json=required_fields,
+                        event_payload_json={
+                            "candidate_spec_id": spec.candidate_spec_id
+                        },
+                        outcome_payload_json=None,
+                    ),
+                    RejectedSignalOutcomeEvent(
+                        event_id="reject-outcome-incomplete",
+                        source="quote_quality_gate",
+                        paper_source="ssrn-6607301",
+                        paper_claim_id="post-rejection-follow-up-sampling",
+                        account_label="paper",
+                        symbol="NVDA",
+                        event_ts=datetime(2026, 5, 18, 14, 32, 0),
+                        timeframe="1Min",
+                        seq="3",
+                        reject_reason="missing_executable_quote",
+                        outcome_label_status="labeled",
+                        counterfactual_required=True,
+                        required_outcome_fields_json=required_fields,
+                        event_payload_json={
+                            "candidate_spec_id": spec.candidate_spec_id
+                        },
+                        outcome_payload_json={
+                            "candidate_spec_id": spec.candidate_spec_id,
+                            "counterfactual_return": "-0.001",
+                        },
+                    ),
+                ]
+            )
+            session.commit()
+
+            loaded, manifest = runner._load_autoresearch_feedback_evidence_bundles(
+                (), include_persisted=True
+            )
+
+        model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(spec,), feedback_evidence_bundles=loaded
+        )
+
+        self.assertEqual(manifest["combined_bundle_count"], 1)
+        self.assertEqual(
+            manifest["persisted"]["rejected_signal_outcome_scanned_count"], 2
+        )
+        self.assertEqual(
+            manifest["persisted"]["rejected_signal_outcome_bundle_count"], 1
+        )
+        self.assertEqual(
+            manifest["persisted"]["rejected_signal_outcome_invalid_count"], 1
+        )
+        self.assertEqual(
+            manifest["persisted"]["rejected_signal_outcome_event_ids"],
+            ["reject-outcome-labeled"],
+        )
+        self.assertEqual(model["feedback_evidence_bundle_count"], 1)
+        self.assertEqual(model["feedback_matched_spec_count"], 1)
+        self.assertEqual(rows[0]["training_source"], "feedback_real_replay")
+        self.assertEqual(rows[0]["feedback_match_scope"], "candidate_spec_id")
+        self.assertEqual(
+            loaded[0].dataset_snapshot_id,
+            "rejected-signal-outcome:reject-outcome-labeled",
+        )
 
     def test_feedback_evidence_dedupe_handles_missing_bundle_ids(self) -> None:
         spec = self._candidate_spec("spec-feedback-dedupe")

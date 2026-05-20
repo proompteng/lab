@@ -25,6 +25,7 @@ from app.models import (
     AutoresearchEpoch,
     AutoresearchPortfolioCandidate,
     AutoresearchProposalScore,
+    RejectedSignalOutcomeEvent,
     WhitepaperAnalysisRun,
     VNextExperimentSpec,
 )
@@ -98,6 +99,12 @@ _DEFAULT_CLICKHOUSE_HTTP_URL = (
 )
 _MAX_PERSISTED_FEEDBACK_EVIDENCE_BUNDLES = 512
 _MAX_PERSISTED_FEEDBACK_EVIDENCE_EPOCHS = 12
+_REJECTED_SIGNAL_OUTCOME_REQUIRED_FIELDS = (
+    "counterfactual_return",
+    "route_tca",
+    "post_cost_net_pnl",
+    "executable_quote",
+)
 _PROGRAM_SOURCE_DEFAULT_CONFIDENCE = "0.70"
 _RUNTIME_CLOSURE_PROOF_ORACLE_BLOCKERS = frozenset(
     {
@@ -623,6 +630,146 @@ def _summary_scorecard_feedback_bundles_for_epoch(
     return tuple(bundles), stats
 
 
+def _outcome_payload_has_complete_rejected_signal_fields(
+    payload: Mapping[str, Any],
+    required_fields: Sequence[Any],
+) -> bool:
+    required = tuple(_string(field) for field in required_fields if _string(field))
+    if not required:
+        required = _REJECTED_SIGNAL_OUTCOME_REQUIRED_FIELDS
+    for field in required:
+        if field not in payload:
+            return False
+        value = payload.get(field)
+        if value is None:
+            return False
+        if isinstance(value, str) and not value.strip():
+            return False
+        if isinstance(value, Mapping) and not value:
+            return False
+    return True
+
+
+def _rejected_signal_outcome_payload_to_feedback_bundle(
+    row: RejectedSignalOutcomeEvent,
+    *,
+    code_commit: str = "unknown",
+) -> CandidateEvidenceBundle | None:
+    outcome_payload = _mapping(row.outcome_payload_json)
+    if not outcome_payload:
+        return None
+    if not _outcome_payload_has_complete_rejected_signal_fields(
+        outcome_payload, cast(Sequence[Any], row.required_outcome_fields_json or ())
+    ):
+        return None
+
+    embedded_bundle = _mapping(outcome_payload.get("candidate_evidence_bundle_payload"))
+    if embedded_bundle:
+        return evidence_bundle_from_payload(embedded_bundle)
+    if (
+        _string(outcome_payload.get("schema_version"))
+        == "torghut.candidate-evidence-bundle.v1"
+    ):
+        return evidence_bundle_from_payload(outcome_payload)
+
+    event_payload = _mapping(row.event_payload_json)
+    scorecard = _mapping(outcome_payload.get("objective_scorecard"))
+    if not scorecard:
+        scorecard = {}
+    for key in (
+        "net_pnl_per_day",
+        "active_day_ratio",
+        "positive_day_ratio",
+        "best_day_share",
+        "max_drawdown",
+        "worst_day_loss",
+        "avg_filled_notional_per_day",
+        "market_impact_stress_net_pnl_per_day",
+        "delay_adjusted_depth_stress_net_pnl_per_day",
+        "counterfactual_return",
+        "route_tca",
+        "post_cost_net_pnl",
+        "executable_quote",
+    ):
+        if key in outcome_payload and key not in scorecard:
+            scorecard = {**scorecard, key: outcome_payload[key]}
+    scorecard = {
+        **scorecard,
+        "rejected_signal_event_id": row.event_id,
+        "rejected_signal_symbol": row.symbol,
+        "rejected_signal_reason": row.reject_reason,
+        "rejected_signal_outcome_label_status": row.outcome_label_status,
+    }
+
+    candidate_spec_id = _string(outcome_payload.get("candidate_spec_id")) or _string(
+        event_payload.get("candidate_spec_id")
+    )
+    family_template_id = _string(outcome_payload.get("family_template_id")) or _string(
+        event_payload.get("family_template_id")
+    )
+    runtime_family = _string(outcome_payload.get("runtime_family")) or _string(
+        event_payload.get("runtime_family")
+    )
+    runtime_strategy_name = _string(
+        outcome_payload.get("runtime_strategy_name")
+    ) or _string(event_payload.get("runtime_strategy_name"))
+    execution_signature = _string(
+        outcome_payload.get("execution_signature")
+    ) or _string(event_payload.get("execution_signature"))
+    feedback_shape_key = _string(outcome_payload.get("feedback_shape_key")) or _string(
+        event_payload.get("feedback_shape_key")
+    )
+    feedback_risk_profile_key = _string(
+        outcome_payload.get("feedback_risk_profile_key")
+    ) or _string(event_payload.get("feedback_risk_profile_key"))
+    if not (
+        candidate_spec_id
+        or family_template_id
+        or execution_signature
+        or feedback_shape_key
+        or feedback_risk_profile_key
+    ):
+        return None
+
+    candidate_id = (
+        _string(outcome_payload.get("candidate_id"))
+        or _string(event_payload.get("candidate_id"))
+        or f"rejected-signal-{row.event_id}"
+    )
+    candidate = {
+        "candidate_id": candidate_id,
+        "family_template_id": family_template_id,
+        "runtime_family": runtime_family,
+        "runtime_strategy_name": runtime_strategy_name,
+        "execution_signature": execution_signature,
+        "feedback_shape_key": feedback_shape_key,
+        "feedback_risk_profile_key": feedback_risk_profile_key,
+        "objective_scorecard": scorecard,
+        "hard_vetoes": outcome_payload.get("hard_vetoes")
+        or outcome_payload.get("veto_reasons")
+        or scorecard.get("hard_vetoes")
+        or scorecard.get("veto_reasons")
+        or (),
+        "promotion_readiness": _mapping(outcome_payload.get("promotion_readiness"))
+        or {
+            "stage": "research_candidate",
+            "status": "blocked_by_rejected_signal_counterfactual_feedback",
+            "promotable": False,
+            "blockers": [
+                "requires_full_replay_validation",
+                "requires_live_paper_parity",
+            ],
+        },
+    }
+    return evidence_bundle_from_frontier_candidate(
+        candidate_spec_id=candidate_spec_id,
+        candidate=candidate,
+        dataset_snapshot_id=f"rejected-signal-outcome:{row.event_id}",
+        result_path=f"db://rejected_signal_outcome_events/{row.event_id}",
+        code_commit=code_commit,
+    )
+
+
 def _load_recent_persisted_feedback_evidence_bundles(
     *,
     limit: int = _MAX_PERSISTED_FEEDBACK_EVIDENCE_BUNDLES,
@@ -640,6 +787,9 @@ def _load_recent_persisted_feedback_evidence_bundles(
         "legacy_summary_unmatched_scorecard_count": 0,
         "legacy_summary_bundle_count": 0,
         "legacy_summary_invalid_spec_count": 0,
+        "rejected_signal_outcome_scanned_count": 0,
+        "rejected_signal_outcome_bundle_count": 0,
+        "rejected_signal_outcome_invalid_count": 0,
     }
     try:
         with SessionLocal() as session:
@@ -667,18 +817,51 @@ def _load_recent_persisted_feedback_evidence_bundles(
                 if epoch_ids
                 else []
             )
+            rejected_signal_outcome_rows = (
+                session.execute(
+                    select(RejectedSignalOutcomeEvent)
+                    .where(RejectedSignalOutcomeEvent.outcome_label_status == "labeled")
+                    .order_by(
+                        RejectedSignalOutcomeEvent.event_ts.desc(),
+                        RejectedSignalOutcomeEvent.created_at.desc(),
+                    )
+                    .limit(limit)
+                )
+                .scalars()
+                .all()
+            )
     except Exception as exc:
         manifest["status"] = "unavailable"
         manifest["error"] = str(exc)
         return (), manifest
 
     manifest["scanned_epoch_count"] = len(epochs)
+    manifest["rejected_signal_outcome_scanned_count"] = len(
+        rejected_signal_outcome_rows
+    )
     bundles: list[CandidateEvidenceBundle] = []
     invalid_payload_count = 0
+    rejected_signal_outcome_invalid_count = 0
+    rejected_signal_outcome_bundle_count = 0
     source_epoch_ids: list[str] = []
     legacy_source_epoch_ids: list[str] = []
+    rejected_signal_outcome_event_ids: list[str] = []
     candidate_specs_by_epoch: dict[str, list[CandidateSpec]] = {}
     invalid_spec_count = 0
+    for row in rejected_signal_outcome_rows:
+        if len(bundles) >= limit:
+            break
+        try:
+            bundle = _rejected_signal_outcome_payload_to_feedback_bundle(row)
+        except Exception:
+            rejected_signal_outcome_invalid_count += 1
+            continue
+        if bundle is None:
+            rejected_signal_outcome_invalid_count += 1
+            continue
+        bundles.append(bundle)
+        rejected_signal_outcome_bundle_count += 1
+        rejected_signal_outcome_event_ids.append(row.event_id)
     for row in spec_rows:
         try:
             spec = _candidate_spec_from_payload(_mapping(row.payload_json))
@@ -736,6 +919,13 @@ def _load_recent_persisted_feedback_evidence_bundles(
         )
     )
     manifest["legacy_summary_invalid_spec_count"] = invalid_spec_count
+    manifest["rejected_signal_outcome_bundle_count"] = (
+        rejected_signal_outcome_bundle_count
+    )
+    manifest["rejected_signal_outcome_invalid_count"] = (
+        rejected_signal_outcome_invalid_count
+    )
+    manifest["rejected_signal_outcome_event_ids"] = rejected_signal_outcome_event_ids
     return deduped, manifest
 
 
