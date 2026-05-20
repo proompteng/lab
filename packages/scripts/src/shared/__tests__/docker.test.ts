@@ -159,4 +159,42 @@ describe('resolveBuildAttestations', () => {
     expect(commands[0].slice(0, 4)).toEqual(['docker', 'buildx', 'build', '--push'])
     expect(commands[1].slice(0, 4)).toEqual(['docker', 'buildx', 'build', '--push'])
   })
+
+  it('preserves the process PATH when setting Docker BuildKit env', async () => {
+    const originalPath = process.env.PATH
+    process.env.PATH = '/custom/bin:/usr/bin'
+    let dockerEnv: Record<string, string> | undefined
+
+    try {
+      Bun.which = ((binary: string) => (binary === 'docker' ? '/custom/bin/docker' : null)) as typeof Bun.which
+      Bun.spawn = ((_command: Parameters<typeof Bun.spawn>[0], options: Parameters<typeof Bun.spawn>[1]) => {
+        dockerEnv = options?.env as Record<string, string> | undefined
+        return {
+          exited: Promise.resolve(0),
+          stdout: streamFromText(''),
+          stderr: streamFromText(''),
+        } as ReturnType<typeof Bun.spawn>
+      }) as typeof Bun.spawn
+      __private.setSpawnSync(((command: Parameters<typeof Bun.spawnSync>[0]) => {
+        const joined = typeof command === 'string' ? command : command.join(' ')
+        if (joined === 'docker buildx version') {
+          return { exitCode: 1, stdout: new Uint8Array(), stderr: new Uint8Array() } as ReturnType<typeof Bun.spawnSync>
+        }
+        return { exitCode: 1, stdout: new Uint8Array(), stderr: new Uint8Array() } as ReturnType<typeof Bun.spawnSync>
+      }) as typeof Bun.spawnSync)
+
+      await buildAndPushDockerImage({
+        registry: 'registry.example',
+        repository: 'lab/agents-control-plane',
+        tag: 'test',
+        context: '.',
+        dockerfile: 'Dockerfile',
+      })
+
+      expect(dockerEnv?.PATH).toBe('/custom/bin:/usr/bin')
+      expect(dockerEnv?.DOCKER_BUILDKIT).toBe('1')
+    } finally {
+      process.env.PATH = originalPath
+    }
+  })
 })

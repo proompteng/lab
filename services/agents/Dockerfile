@@ -110,6 +110,11 @@ WORKDIR /app
 COPY full/packages/codex ./packages/codex
 RUN bun --cwd=packages/codex run build
 
+FROM agents-workspace-deps AS agent-contracts-build
+WORKDIR /app
+COPY full/packages/agent-contracts ./packages/agent-contracts
+RUN bun --cwd=packages/agent-contracts run build
+
 FROM agents-workspace-deps AS otel-build
 WORKDIR /app
 COPY full/packages/otel ./packages/otel
@@ -131,6 +136,7 @@ FROM agents-workspace-deps AS agents-build
 WORKDIR /app
 RUN rm -rf /app/packages /app/services
 COPY full/ .
+COPY --from=agent-contracts-build /app/packages/agent-contracts/dist /app/packages/agent-contracts/dist
 COPY --from=codex-build /app/packages/codex/dist /app/packages/codex/dist
 COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
 COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/dist /app/packages/temporal-bun-sdk/dist
@@ -160,6 +166,8 @@ COPY --from=agents-tools /usr/local/bin/nats /usr/local/bin/nats
 WORKDIR /app
 COPY --from=codex-build /app/packages/codex/package.json /app/packages/codex/package.json
 COPY --from=codex-build /app/packages/codex/dist /app/packages/codex/dist
+COPY --from=agent-contracts-build /app/packages/agent-contracts/package.json /app/packages/agent-contracts/package.json
+COPY --from=agent-contracts-build /app/packages/agent-contracts/dist /app/packages/agent-contracts/dist
 COPY --from=otel-build /app/packages/otel/package.json /app/packages/otel/package.json
 COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
 COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/package.json /app/packages/temporal-bun-sdk/package.json
@@ -177,6 +185,8 @@ WORKDIR /app/services/agents
 COPY --from=agents-build /app/services/agents/package.json ./package.json
 COPY --from=agents-build /app/services/agents/src ./src
 COPY --from=agents-build /app/services/agents/scripts ./scripts
+
+RUN bun -e "for (const specifier of ['@proompteng/agent-contracts/policy-validation','@proompteng/agent-contracts/controller-witness','@proompteng/agent-contracts/swarm-material-reentry']) await import(specifier)"
 
 ENV AGENTS_AGENTS_CONTROLLER_ENABLED=0 \
   AGENTS_ORCHESTRATION_CONTROLLER_ENABLED=0 \
@@ -201,6 +211,8 @@ COPY --from=agents-tools /usr/local/bin/nats /usr/local/bin/nats
 WORKDIR /app
 COPY --from=codex-build /app/packages/codex/package.json /app/packages/codex/package.json
 COPY --from=codex-build /app/packages/codex/dist /app/packages/codex/dist
+COPY --from=agent-contracts-build /app/packages/agent-contracts/package.json /app/packages/agent-contracts/package.json
+COPY --from=agent-contracts-build /app/packages/agent-contracts/dist /app/packages/agent-contracts/dist
 COPY --from=otel-build /app/packages/otel/package.json /app/packages/otel/package.json
 COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
 COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/package.json /app/packages/temporal-bun-sdk/package.json
@@ -218,6 +230,8 @@ WORKDIR /app/services/agents
 COPY --from=agents-build /app/services/agents/package.json ./package.json
 COPY --from=agents-build /app/services/agents/src ./src
 COPY --from=agents-build /app/services/agents/scripts ./scripts
+
+RUN bun -e "for (const specifier of ['@proompteng/agent-contracts/policy-validation','@proompteng/agent-contracts/controller-witness','@proompteng/agent-contracts/swarm-material-reentry']) await import(specifier)"
 
 ENV AGENTS_SERVER_PROFILE=agents-controllers \
   AGENTS_CONTROL_PLANE_CACHE_ENABLED=0 \

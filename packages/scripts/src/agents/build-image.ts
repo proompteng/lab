@@ -51,6 +51,7 @@ const parsePlatforms = (value: string | undefined): string[] | undefined => {
 
 const defaultPruneScopesForTarget = (target: string | undefined): string[] => [
   '@proompteng/agents',
+  '@proompteng/agent-contracts',
   '@proompteng/otel',
   '@proompteng/temporal-bun-sdk',
 ]
