@@ -80,6 +80,46 @@ export type AgentRunsApiStore = {
 
 type AgentRunStoreServiceDefinition = {
   readonly open: Effect.Effect<AgentRunsApiStore, AgentRunStorageError>
+  readonly ready: (store: AgentRunsApiStore) => Effect.Effect<void, AgentRunStorageError>
+  readonly listRuns: (
+    store: AgentRunsApiStore,
+    input: AgentRunListInput,
+  ) => Effect.Effect<unknown[], AgentRunStorageError>
+  readonly getByDeliveryId: (
+    store: AgentRunsApiStore,
+    deliveryId: string,
+  ) => Effect.Effect<AgentRunRecord | null, AgentRunStorageError>
+  readonly getIdempotencyKey: (
+    store: AgentRunsApiStore,
+    input: { namespace: string; agentName: string; idempotencyKey: string },
+  ) => Effect.Effect<AgentRunIdempotencyRecord | null, AgentRunStorageError>
+  readonly reserveIdempotencyKey: (
+    store: AgentRunsApiStore,
+    input: { namespace: string; agentName: string; idempotencyKey: string },
+  ) => Effect.Effect<AgentRunIdempotencyReservation, AgentRunStorageError>
+  readonly deleteIdempotencyKey: (
+    store: AgentRunsApiStore,
+    input: { namespace: string; agentName: string; idempotencyKey: string },
+  ) => Effect.Effect<unknown, AgentRunStorageError>
+  readonly assignIdempotencyKey: (
+    store: AgentRunsApiStore,
+    input: {
+      namespace: string
+      agentName: string
+      idempotencyKey: string
+      agentRunName: string
+      agentRunUid: string | null
+    },
+  ) => Effect.Effect<unknown, AgentRunStorageError>
+  readonly createRun: (
+    store: AgentRunsApiStore,
+    input: Parameters<AgentRunsApiStore['createAgentRun']>[0],
+  ) => Effect.Effect<AgentRunRecord, AgentRunStorageError>
+  readonly createAuditEvent: (
+    store: AgentRunsApiStore,
+    input: Parameters<AgentRunsApiStore['createAuditEvent']>[0],
+  ) => Effect.Effect<unknown, AgentRunStorageError>
+  readonly close: (store: AgentRunsApiStore) => Effect.Effect<void>
 }
 
 export class AgentRunStoreService extends Context.Tag('agents/AgentRunStoreService')<
@@ -92,6 +132,21 @@ export const makeAgentRunStoreService = (storeFactory: () => AgentRunsApiStore):
     try: () => storeFactory(),
     catch: (cause) => new AgentRunStorageError({ operation: 'open-store', cause }),
   }),
+  ready: (store) => waitForAgentRunsStoreReadyEffect(store),
+  listRuns: (store, input) => storeEffect('list-runs', () => store.listAgentRuns(input)),
+  getByDeliveryId: (store, deliveryId) =>
+    storeEffect('read-delivery-id', () => store.getAgentRunByDeliveryId(deliveryId)),
+  getIdempotencyKey: (store, input) =>
+    storeEffect('read-idempotency-key', () => store.getAgentRunIdempotencyKey(input)),
+  reserveIdempotencyKey: (store, input) =>
+    storeEffect('reserve-idempotency-key', () => store.reserveAgentRunIdempotencyKey(input)),
+  deleteIdempotencyKey: (store, input) =>
+    storeEffect('delete-idempotency-key', () => store.deleteAgentRunIdempotencyKey(input)),
+  assignIdempotencyKey: (store, input) =>
+    storeEffect('assign-idempotency-key', () => store.assignAgentRunIdempotencyKey(input)),
+  createRun: (store, input) => storeEffect('create-agent-run', () => store.createAgentRun(input)),
+  createAuditEvent: (store, input) => storeEffect('create-audit-event', () => store.createAuditEvent(input)),
+  close: closeAgentRunsStoreEffect,
 })
 
 export const makeAgentRunStoreLayer = (storeFactory: () => AgentRunsApiStore) =>
@@ -133,7 +188,7 @@ export const listAgentRunsWithServicesEffect = (
     const stores = yield* AgentRunStoreService
     return yield* Effect.acquireUseRelease(
       stores.open,
-      (store) => listAgentRunsWithStoreEffect(store, input),
-      closeAgentRunsStoreEffect,
+      (store) => stores.ready(store).pipe(Effect.zipRight(stores.listRuns(store, input))),
+      stores.close,
     )
   })

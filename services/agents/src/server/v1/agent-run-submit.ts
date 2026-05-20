@@ -30,12 +30,7 @@ import {
   describeAgentRunSubmitError,
   toErrorMessage,
 } from './agent-run-errors'
-import {
-  AgentRunStoreService,
-  closeAgentRunsStoreEffect,
-  makeAgentRunStoreService,
-  storeEffect,
-} from './agent-run-store'
+import { AgentRunStoreService, makeAgentRunStoreService } from './agent-run-store'
 import { type AgentRunPayload, type WorkflowStepPayload, parseGoal, parseOptionalNumber } from './agent-runs-payload'
 import { buildDeliveryIdLabels } from './delivery-labels'
 
@@ -833,8 +828,8 @@ export const submitAgentRunWithServicesEffect = (
             source: 'v1.agent-runs',
           })
 
-          yield* storeEffect('store-ready', () => Promise.resolve(activeStore.ready).then(() => undefined))
-          const existing = yield* storeEffect('read-delivery-id', () => activeStore.getAgentRunByDeliveryId(deliveryId))
+          yield* stores.ready(activeStore)
+          const existing = yield* stores.getByDeliveryId(activeStore, deliveryId)
           const kube = yield* kubernetes.client(parsed.namespace)
 
           if (existing) {
@@ -851,13 +846,11 @@ export const submitAgentRunWithServicesEffect = (
           }
 
           if (submissionConfig.idempotencyEnabled) {
-            const scope = yield* storeEffect('read-idempotency-key', () =>
-              activeStore.getAgentRunIdempotencyKey({
-                namespace: parsed.namespace,
-                agentName: parsed.agentRef.name,
-                idempotencyKey: runIdempotencyKey,
-              }),
-            )
+            const scope = yield* stores.getIdempotencyKey(activeStore, {
+              namespace: parsed.namespace,
+              agentName: parsed.agentRef.name,
+              idempotencyKey: runIdempotencyKey,
+            })
 
             if (scope?.agentRunName) {
               const resource = yield* kubeEffect('get-idempotent-run', RESOURCE_MAP.AgentRun, parsed.namespace, () =>
@@ -1015,8 +1008,8 @@ export const submitAgentRunWithServicesEffect = (
 
           if (policyDecision._tag === 'Left') {
             const auditEventId = yield* ids.next
-            yield* storeEffect('create-audit-event', () =>
-              activeStore.createAuditEvent({
+            yield* stores
+              .createAuditEvent(activeStore, {
                 entityType: 'PolicyDecision',
                 entityId: auditEventId,
                 eventType: 'policy.denied',
@@ -1026,21 +1019,19 @@ export const submitAgentRunWithServicesEffect = (
                   checks: policyChecks,
                   reason: describeAgentRunSubmitError(policyDecision.left),
                 },
-              }),
-            ).pipe(Effect.catchAll(() => Effect.void))
+              })
+              .pipe(Effect.catchAll(() => Effect.void))
             return yield* Effect.fail(policyDecision.left)
           }
 
           const auditEventId = yield* ids.next
-          yield* storeEffect('create-audit-event', () =>
-            activeStore.createAuditEvent({
-              entityType: 'PolicyDecision',
-              entityId: auditEventId,
-              eventType: 'policy.allowed',
-              context: auditContext,
-              details: { subject: policyChecks.subject, checks: policyChecks },
-            }),
-          )
+          yield* stores.createAuditEvent(activeStore, {
+            entityType: 'PolicyDecision',
+            entityId: auditEventId,
+            eventType: 'policy.allowed',
+            context: auditContext,
+            details: { subject: policyChecks.subject, checks: policyChecks },
+          })
 
           const admissionRepository = resolveRepositoryFromParams(parsed.parameters) || null
           const admissionNow = yield* runtimeConfig.now()
@@ -1071,33 +1062,29 @@ export const submitAgentRunWithServicesEffect = (
           let idempotencyReservation: IdempotencyReservationState | null = null
 
           if (submissionConfig.idempotencyEnabled) {
-            let reservation = yield* storeEffect('reserve-idempotency-key', () =>
-              activeStore.reserveAgentRunIdempotencyKey({
-                namespace: parsed.namespace,
-                agentName: parsed.agentRef.name,
-                idempotencyKey: runIdempotencyKey,
-              }),
-            )
+            let reservation = yield* stores.reserveIdempotencyKey(activeStore, {
+              namespace: parsed.namespace,
+              agentName: parsed.agentRef.name,
+              idempotencyKey: runIdempotencyKey,
+            })
 
             if (
               !reservation.created &&
               !reservation.record.agentRunName &&
               (yield* runtimeConfig.isIdempotencyReservationStale(reservation.record.createdAt, submissionConfig))
             ) {
-              yield* storeEffect('delete-idempotency-key', () =>
-                activeStore.deleteAgentRunIdempotencyKey({
+              yield* stores
+                .deleteIdempotencyKey(activeStore, {
                   namespace: parsed.namespace,
                   agentName: parsed.agentRef.name,
                   idempotencyKey: runIdempotencyKey,
-                }),
-              ).pipe(Effect.catchAll(() => Effect.void))
-              reservation = yield* storeEffect('reserve-idempotency-key', () =>
-                activeStore.reserveAgentRunIdempotencyKey({
-                  namespace: parsed.namespace,
-                  agentName: parsed.agentRef.name,
-                  idempotencyKey: runIdempotencyKey,
-                }),
-              )
+                })
+                .pipe(Effect.catchAll(() => Effect.void))
+              reservation = yield* stores.reserveIdempotencyKey(activeStore, {
+                namespace: parsed.namespace,
+                agentName: parsed.agentRef.name,
+                idempotencyKey: runIdempotencyKey,
+              })
             }
 
             if (!reservation.created) {
@@ -1162,13 +1149,13 @@ export const submitAgentRunWithServicesEffect = (
           ).pipe(Effect.either)
           if (appliedResult._tag === 'Left') {
             if (idempotencyReservation) {
-              yield* storeEffect('delete-idempotency-key', () =>
-                activeStore.deleteAgentRunIdempotencyKey({
+              yield* stores
+                .deleteIdempotencyKey(activeStore, {
                   namespace: idempotencyReservation.namespace,
                   agentName: idempotencyReservation.agentName,
                   idempotencyKey: idempotencyReservation.idempotencyKey,
-                }),
-              ).pipe(Effect.catchAll(() => Effect.void))
+                })
+                .pipe(Effect.catchAll(() => Effect.void))
             }
             return yield* Effect.fail(appliedResult.left)
           }
@@ -1179,45 +1166,39 @@ export const submitAgentRunWithServicesEffect = (
           const provider = asString(readNested(applied, ['spec', 'runtime', 'type'])) ?? 'unknown'
 
           if (idempotencyReservation && externalRunId) {
-            yield* storeEffect('assign-idempotency-key', () =>
-              activeStore.assignAgentRunIdempotencyKey({
-                namespace: idempotencyReservation.namespace,
-                agentName: idempotencyReservation.agentName,
-                idempotencyKey: idempotencyReservation.idempotencyKey,
-                agentRunName: externalRunId,
-                agentRunUid: asString(metadata.uid) ?? null,
-              }),
-            )
+            yield* stores.assignIdempotencyKey(activeStore, {
+              namespace: idempotencyReservation.namespace,
+              agentName: idempotencyReservation.agentName,
+              idempotencyKey: idempotencyReservation.idempotencyKey,
+              agentRunName: externalRunId,
+              agentRunUid: asString(metadata.uid) ?? null,
+            })
           }
 
           const statusPhase = asString(asRecord(applied.status)?.phase) ?? 'Pending'
-          const record = yield* storeEffect('create-agent-run', () =>
-            activeStore.createAgentRun({
-              agentName: parsed.agentRef.name,
-              deliveryId,
+          const record = yield* stores.createRun(activeStore, {
+            agentName: parsed.agentRef.name,
+            deliveryId,
+            provider,
+            status: statusPhase,
+            externalRunId,
+            payload: { request: payload, resource: applied, status: asRecord(applied.status) ?? {} },
+          })
+          yield* stores.createAuditEvent(activeStore, {
+            entityType: 'AgentRun',
+            entityId: record.id,
+            eventType: 'agent_run.created',
+            context: auditContext,
+            details: {
+              agent: parsed.agentRef.name,
+              agentRunId: record.id,
+              agentRunName: externalRunId,
+              agentRunUid: asString(asRecord(applied.metadata)?.uid),
               provider,
-              status: statusPhase,
-              externalRunId,
-              payload: { request: payload, resource: applied, status: asRecord(applied.status) ?? {} },
-            }),
-          )
-          yield* storeEffect('create-audit-event', () =>
-            activeStore.createAuditEvent({
-              entityType: 'AgentRun',
-              entityId: record.id,
-              eventType: 'agent_run.created',
-              context: auditContext,
-              details: {
-                agent: parsed.agentRef.name,
-                agentRunId: record.id,
-                agentRunName: externalRunId,
-                agentRunUid: asString(asRecord(applied.metadata)?.uid),
-                provider,
-              },
-            }),
-          )
+            },
+          })
           return { status: 201, body: { ok: true, agentRun: record, resource: applied } }
         }),
-      closeAgentRunsStoreEffect,
+      stores.close,
     )
   })
