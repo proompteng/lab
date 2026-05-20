@@ -98,6 +98,8 @@ FEATURE_ALIASES = {
     "notional_tier": "turnover",
     "option_flow": "information_arrival_rate",
     "ofi_memory_state": "information_arrival_rate",
+    "opportunity_cost": "transaction_cost_stress",
+    "order_type_ablation": "transaction_cost_stress",
     "order_lifetime_filter": "quote_quality",
     "order_modification_count": "quote_quality",
     "order_flow_entropy": "realized_volatility",

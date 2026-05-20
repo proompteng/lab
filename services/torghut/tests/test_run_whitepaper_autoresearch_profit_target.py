@@ -3974,6 +3974,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertIn("unified_order_flow_impact_volatility_2026", source_ids)
         self.assertIn("closing_auction_market_making_2026", source_ids)
         self.assertIn("mixed_market_limit_execution_2026", source_ids)
+        self.assertIn("retail_limit_orders_2025", source_ids)
+        self.assertIn("retail_order_flow_segmentation_2026", source_ids)
         self.assertIn("lobdiff_event_stream_prediction_2026", source_ids)
         self.assertIn("neural_hawkes_lob_simulation_2025", source_ids)
         self.assertIn("algorithmic_retail_options_intraday_2026", source_ids)
@@ -4041,6 +4043,19 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertIn("market_depth", depth_delay_source.claims[0]["data_requirements"])
         self.assertIn(
             "execution_delay", depth_delay_source.claims[0]["data_requirements"]
+        )
+
+        retail_limit_source = next(
+            source for source in sources if source.run_id == "retail_limit_orders_2025"
+        )
+        self.assertTrue(
+            runner.compile_sources_to_hypothesis_cards([retail_limit_source])
+        )
+        self.assertIn(
+            "order_type_ablation", retail_limit_source.claims[0]["data_requirements"]
+        )
+        self.assertIn(
+            "opportunity_cost", retail_limit_source.claims[1]["data_requirements"]
         )
 
         ofi_news_source = next(
@@ -4735,6 +4750,94 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "rejected_signal_counterfactual_fields_present_failed", row["blockers"]
         )
         self.assertFalse(row["rejected_signal_outcome_learning"]["passed"])
+
+    def test_candidate_board_fails_market_limit_candidate_without_order_type_evidence(
+        self,
+    ) -> None:
+        spec = replace(
+            self._candidate_spec("spec-market-limit-proof"),
+            parameter_space={
+                "mechanism_overlay_ids": ["mixed_market_limit_execution_policy"]
+            },
+            hard_vetoes={
+                "required_order_type_ablation_passed": True,
+                "required_min_order_type_ablation_sample_count": "60",
+                "required_limit_fill_probability_evidence": True,
+                "required_price_improvement_evidence": True,
+                "required_opportunity_cost_evidence": True,
+                "required_execution_shortfall_evidence": True,
+                "required_max_order_type_opportunity_cost_bps": "8",
+                "required_max_market_order_spread_bps": "8",
+            },
+            promotion_contract={
+                "requires_order_type_execution_quality": True,
+                "requires_market_limit_order_mix": True,
+                "requires_limit_fill_probability": True,
+                "requires_execution_shortfall": True,
+            },
+        )
+        evidence = runner.CandidateEvidenceBundle(
+            schema_version="torghut.candidate-evidence-bundle.v1",
+            evidence_bundle_id="ev-market-limit-proof",
+            candidate_id="cand-market-limit-proof",
+            candidate_spec_id=spec.candidate_spec_id,
+            dataset_snapshot_id="snapshot-market-limit-proof",
+            feature_spec_hash="hash-market-limit-proof",
+            code_commit="commit-test",
+            replay_artifact_refs=("replay.json",),
+            objective_scorecard={
+                "net_pnl_per_day": "640",
+                "target_met": True,
+                "oracle_passed": True,
+                "profit_target_oracle": {"blockers": []},
+                "order_type_ablation_sample_count": 59,
+                "order_type_opportunity_cost_bps": "9",
+                "market_order_spread_bps": "9",
+            },
+            fold_metrics=(),
+            stress_metrics=(),
+            cost_calibration={"status": "provisional", "source": "paper_runtime"},
+            null_comparator={},
+            promotion_readiness={},
+        )
+
+        board = runner._candidate_board_payload(
+            epoch_id="epoch-market-limit-board",
+            output_dir=Path("/tmp/epoch-market-limit-board"),
+            target=Decimal("500"),
+            candidate_specs=(spec,),
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                    }
+                ]
+            },
+            pre_replay_proposal_rows=(
+                {
+                    "candidate_spec_id": spec.candidate_spec_id,
+                    "rank": 1,
+                    "proposal_score": "9.0",
+                },
+            ),
+            proposal_rows=(),
+            evidence_bundles=(evidence,),
+            portfolio=None,
+            promotion_readiness={"promotable": True},
+            runtime_closure={},
+        )
+
+        row = board["rows"][0]
+        self.assertFalse(row["oracle_passed"])
+        self.assertEqual(board["current_answer"], "no_promotion_ready_candidate")
+        self.assertIn("order_type_ablation_passed_failed", row["blockers"])
+        self.assertIn("order_type_ablation_artifact_present_failed", row["blockers"])
+        self.assertIn("order_type_ablation_sample_count_failed", row["blockers"])
+        self.assertIn("limit_fill_probability_evidence_present_failed", row["blockers"])
+        self.assertIn("route_tca_evidence_present_failed", row["blockers"])
+        self.assertIn("market_order_spread_bps_failed", row["blockers"])
+        self.assertFalse(row["order_type_execution_quality"]["passed"])
 
     def test_candidate_board_separates_research_rank_from_executed_candidate(
         self,

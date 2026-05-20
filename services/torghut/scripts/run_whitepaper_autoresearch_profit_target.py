@@ -7040,6 +7040,149 @@ def _candidate_board_rejected_signal_outcome_summary(
     }
 
 
+def _candidate_spec_requires_order_type_execution_quality(spec: CandidateSpec) -> bool:
+    overlay_ids = set(
+        _string_list_from_value(spec.parameter_space.get("mechanism_overlay_ids"))
+    )
+    return (
+        "mixed_market_limit_execution_policy" in overlay_ids
+        or _boolish(
+            spec.promotion_contract.get("requires_order_type_execution_quality")
+        )
+        or _boolish(spec.promotion_contract.get("requires_order_type_ablation"))
+        or _boolish(spec.promotion_contract.get("requires_market_limit_order_mix"))
+        or "required_order_type_ablation_passed" in spec.hard_vetoes
+        or "required_market_limit_order_mix_evidence" in spec.hard_vetoes
+    )
+
+
+def _candidate_board_order_type_execution_quality_summary(
+    spec: CandidateSpec, scorecard: Mapping[str, Any]
+) -> dict[str, Any]:
+    required = _candidate_spec_requires_order_type_execution_quality(spec)
+    min_sample_count = _candidate_board_int_field(
+        spec.hard_vetoes, "required_min_order_type_ablation_sample_count"
+    )
+    if min_sample_count <= 0:
+        min_sample_count = 60
+    max_opportunity_cost_bps = _decimal(
+        spec.hard_vetoes.get("required_max_order_type_opportunity_cost_bps"),
+        default="8",
+    )
+    max_market_order_spread_bps = _decimal(
+        spec.hard_vetoes.get("required_max_market_order_spread_bps"),
+        default="8",
+    )
+    order_type_ablation_passed = _boolish(
+        scorecard.get("order_type_ablation_passed")
+        or scorecard.get("market_limit_order_mix_passed")
+        or scorecard.get("market_limit_execution_policy_passed")
+    )
+    artifact_refs = _string_list_from_value(
+        scorecard.get("order_type_execution_artifact_refs")
+        or scorecard.get("order_type_ablation_artifact_refs")
+        or scorecard.get("market_limit_order_mix_artifact_refs")
+        or scorecard.get("route_tca_artifact_refs")
+        or scorecard.get("order_type_execution_artifact_ref")
+        or scorecard.get("order_type_ablation_artifact_ref")
+        or scorecard.get("market_limit_order_mix_artifact_ref")
+        or scorecard.get("route_tca_artifact_ref")
+    )
+    sample_count = _candidate_board_first_int_field(
+        scorecard,
+        (
+            "order_type_ablation_sample_count",
+            "market_limit_order_mix_sample_count",
+            "limit_fill_probability_sample_count",
+        ),
+    )
+    opportunity_cost_bps = _decimal(
+        scorecard.get("order_type_opportunity_cost_bps")
+        or scorecard.get("market_limit_order_mix_opportunity_cost_bps"),
+        default="999999",
+    )
+    market_order_spread_bps = _decimal(
+        scorecard.get("market_order_spread_bps")
+        or scorecard.get("market_limit_order_mix_market_spread_bps"),
+        default="999999",
+    )
+    blockers: list[str] = []
+    if required:
+        if not order_type_ablation_passed:
+            blockers.append("order_type_ablation_passed_failed")
+        if not artifact_refs:
+            blockers.append("order_type_ablation_artifact_present_failed")
+        if sample_count < min_sample_count:
+            blockers.append("order_type_ablation_sample_count_failed")
+        if not _boolish(
+            scorecard.get("limit_fill_probability_evidence_present")
+            or scorecard.get("limit_fill_probability_present")
+        ):
+            blockers.append("limit_fill_probability_evidence_present_failed")
+        if not _boolish(
+            scorecard.get("price_improvement_evidence_present")
+            or scorecard.get("route_price_improvement_evidence_present")
+        ):
+            blockers.append("price_improvement_evidence_present_failed")
+        if not _boolish(
+            scorecard.get("opportunity_cost_evidence_present")
+            or scorecard.get("order_type_opportunity_cost_evidence_present")
+        ):
+            blockers.append("opportunity_cost_evidence_present_failed")
+        if not _boolish(
+            scorecard.get("execution_shortfall_evidence_present")
+            or scorecard.get("order_type_execution_shortfall_evidence_present")
+        ):
+            blockers.append("execution_shortfall_evidence_present_failed")
+        if not (
+            _boolish(scorecard.get("route_tca_evidence_present"))
+            or _string_list_from_value(
+                scorecard.get("route_tca_artifact_refs")
+                or scorecard.get("route_tca_artifact_ref")
+            )
+        ):
+            blockers.append("route_tca_evidence_present_failed")
+        if opportunity_cost_bps > max_opportunity_cost_bps:
+            blockers.append("order_type_opportunity_cost_bps_failed")
+        if market_order_spread_bps > max_market_order_spread_bps:
+            blockers.append("market_order_spread_bps_failed")
+    return {
+        "required": required,
+        "passed": not blockers,
+        "blockers": blockers,
+        "artifact_refs": artifact_refs,
+        "sample_count": sample_count,
+        "min_sample_count": min_sample_count,
+        "opportunity_cost_bps": str(opportunity_cost_bps),
+        "max_opportunity_cost_bps": str(max_opportunity_cost_bps),
+        "market_order_spread_bps": str(market_order_spread_bps),
+        "max_market_order_spread_bps": str(max_market_order_spread_bps),
+    }
+
+
+def _candidate_board_scorecard_with_order_type_blockers(
+    spec: CandidateSpec, scorecard: Mapping[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    summary = _candidate_board_order_type_execution_quality_summary(spec, scorecard)
+    updated_scorecard = dict(scorecard)
+    blockers = [
+        _string(blocker)
+        for blocker in cast(Sequence[Any], summary.get("blockers") or ())
+        if _string(blocker)
+    ]
+    if blockers:
+        updated_scorecard["oracle_passed"] = False
+        oracle_payload = dict(_mapping(updated_scorecard.get("profit_target_oracle")))
+        oracle_blockers = [
+            _string(blocker)
+            for blocker in cast(Sequence[Any], oracle_payload.get("blockers") or ())
+            if _string(blocker)
+        ]
+        oracle_payload["blockers"] = list(dict.fromkeys([*oracle_blockers, *blockers]))
+        updated_scorecard["profit_target_oracle"] = oracle_payload
+    return updated_scorecard, summary
+
+
 def _candidate_board_scorecard_with_rejected_signal_blockers(
     spec: CandidateSpec, scorecard: Mapping[str, Any]
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -7303,6 +7446,9 @@ def _candidate_board_payload(
         scorecard, rejected_signal_summary = (
             _candidate_board_scorecard_with_rejected_signal_blockers(spec, scorecard)
         )
+        scorecard, order_type_summary = (
+            _candidate_board_scorecard_with_order_type_blockers(spec, scorecard)
+        )
         selected_for_replay = bool(selection.get("selected_for_replay"))
         in_best_portfolio = spec.candidate_spec_id in portfolio_sleeve_spec_ids
         blockers = _candidate_board_blockers(
@@ -7414,6 +7560,7 @@ def _candidate_board_payload(
                     scorecard, "double_oos_cost_shock_net_pnl_per_day"
                 ),
                 "rejected_signal_outcome_learning": rejected_signal_summary,
+                "order_type_execution_quality": order_type_summary,
                 "blockers": blockers,
                 "replay_artifact_refs": list(evidence.replay_artifact_refs)
                 if evidence is not None

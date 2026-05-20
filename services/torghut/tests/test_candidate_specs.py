@@ -256,12 +256,16 @@ class TestCandidateSpecs(TestCase):
                     "claim_type": "signal_mechanism",
                     "claim_text": (
                         "Dynamic allocation between market and limit orders can improve "
-                        "execution revenue when spread and limit fill probability are modeled."
+                        "execution revenue when spread, limit fill probability, order type "
+                        "ablation, price improvement, and opportunity cost are modeled."
                     ),
                     "data_requirements": [
                         "market_limit_order_mix",
                         "limit_fill_probability",
                         "execution_shortfall",
+                        "order_type_ablation",
+                        "opportunity_cost",
+                        "price_improvement",
                     ],
                     "confidence": "0.74",
                 }
@@ -279,6 +283,21 @@ class TestCandidateSpecs(TestCase):
             "mixed_market_limit_execution_policy",
             specs[0].parameter_space["mechanism_overlay_ids"],
         )
+        self.assertTrue(specs[0].hard_vetoes["required_order_type_ablation_passed"])
+        self.assertEqual(
+            specs[0].hard_vetoes["required_min_order_type_ablation_sample_count"],
+            "60",
+        )
+        self.assertTrue(specs[0].hard_vetoes["required_price_improvement_evidence"])
+        self.assertTrue(specs[0].hard_vetoes["required_opportunity_cost_evidence"])
+        self.assertEqual(
+            specs[0].hard_vetoes["required_max_order_type_opportunity_cost_bps"],
+            "8",
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["requires_order_type_execution_quality"]
+        )
+        self.assertTrue(specs[0].promotion_contract["requires_order_type_ablation"])
         self.assertTrue(specs[0].promotion_contract["requires_market_limit_order_mix"])
 
     def test_intraday_volume_forecast_claim_adds_periodicity_capacity_contract(

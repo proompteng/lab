@@ -86,6 +86,10 @@ class ProfitTargetOraclePolicy:
         "executable_quote",
     )
     required_rejected_signal_outcome_persistence_state: str = "ok"
+    require_order_type_execution_quality: bool = False
+    min_order_type_ablation_sample_count: int = 60
+    max_order_type_opportunity_cost_bps: Decimal = Decimal("8")
+    max_market_order_spread_bps: Decimal = Decimal("8")
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -171,6 +175,12 @@ class ProfitTargetOraclePolicy:
                 self.required_rejected_signal_counterfactual_fields
             ),
             "required_rejected_signal_outcome_persistence_state": self.required_rejected_signal_outcome_persistence_state,
+            "require_order_type_execution_quality": self.require_order_type_execution_quality,
+            "min_order_type_ablation_sample_count": self.min_order_type_ablation_sample_count,
+            "max_order_type_opportunity_cost_bps": str(
+                self.max_order_type_opportunity_cost_bps
+            ),
+            "max_market_order_spread_bps": str(self.max_market_order_spread_bps),
         }
 
 
@@ -279,6 +289,29 @@ def _requires_rejected_signal_outcome_learning(
         )
     )
     return "rejected_signal_outcome_calibration" in overlay_ids
+
+
+def _requires_order_type_execution_quality(
+    scorecard: Mapping[str, Any], policy: ProfitTargetOraclePolicy
+) -> bool:
+    if policy.require_order_type_execution_quality:
+        return True
+    if _boolish(
+        scorecard.get("requires_order_type_execution_quality")
+        or scorecard.get("order_type_execution_quality_required")
+        or scorecard.get("requires_order_type_ablation")
+        or scorecard.get("requires_market_limit_order_mix")
+        or scorecard.get("market_limit_order_mix_required")
+    ):
+        return True
+    overlay_ids = set(
+        _string_sequence(
+            scorecard.get("mechanism_overlay_ids")
+            or scorecard.get("mechanism_overlays")
+            or scorecard.get("overlay_ids")
+        )
+    )
+    return "mixed_market_limit_execution_policy" in overlay_ids
 
 
 def _start_equity(
@@ -1023,6 +1056,156 @@ def evaluate_profit_target_oracle(
             **delay_depth_net_check,
             "source_marker": "rl_market_limit_execution_arxiv_2507_06345_2026",
         }
+    )
+    require_order_type_execution_quality = _requires_order_type_execution_quality(
+        scorecard, policy
+    )
+    order_type_artifact_refs = _artifact_refs(
+        scorecard,
+        "order_type_execution_artifact_ref",
+        "order_type_execution_artifact_refs",
+        "order_type_ablation_artifact_ref",
+        "order_type_ablation_artifact_refs",
+        "market_limit_order_mix_artifact_ref",
+        "market_limit_order_mix_artifact_refs",
+        "route_tca_artifact_ref",
+        "route_tca_artifact_refs",
+    )
+    order_type_artifact_present = bool(order_type_artifact_refs)
+    order_type_ablation_passed = _boolish(
+        scorecard.get("order_type_ablation_passed")
+        or scorecard.get("market_limit_order_mix_passed")
+        or scorecard.get("market_limit_execution_policy_passed")
+    )
+    order_type_ablation_sample_count = _nonnegative_int(
+        scorecard.get("order_type_ablation_sample_count")
+        or scorecard.get("market_limit_order_mix_sample_count")
+        or scorecard.get("limit_fill_probability_sample_count")
+    )
+    limit_fill_probability_evidence_present = _boolish(
+        scorecard.get("limit_fill_probability_evidence_present")
+        or scorecard.get("limit_fill_probability_present")
+    )
+    price_improvement_evidence_present = _boolish(
+        scorecard.get("price_improvement_evidence_present")
+        or scorecard.get("route_price_improvement_evidence_present")
+    )
+    opportunity_cost_evidence_present = _boolish(
+        scorecard.get("opportunity_cost_evidence_present")
+        or scorecard.get("order_type_opportunity_cost_evidence_present")
+    )
+    execution_shortfall_evidence_present = _boolish(
+        scorecard.get("execution_shortfall_evidence_present")
+        or scorecard.get("order_type_execution_shortfall_evidence_present")
+    )
+    route_tca_evidence_present = bool(
+        _artifact_refs(scorecard, "route_tca_artifact_ref", "route_tca_artifact_refs")
+    ) or _boolish(scorecard.get("route_tca_evidence_present"))
+    checks.extend(
+        (
+            {
+                "metric": "order_type_ablation_passed",
+                "observed": str(order_type_ablation_passed).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "retail_limit_orders_rof_rfaf049_2025",
+                "passed": order_type_ablation_passed
+                if require_order_type_execution_quality
+                else True,
+            },
+            {
+                "metric": "order_type_ablation_artifact_present",
+                "observed": str(order_type_artifact_present).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "retail_order_flow_segmentation_ssrn_6414558_2026",
+                "passed": order_type_artifact_present
+                if require_order_type_execution_quality
+                else True,
+            },
+            _numeric_check(
+                metric="order_type_ablation_sample_count",
+                observed=Decimal(order_type_ablation_sample_count),
+                operator="gte",
+                threshold=Decimal(policy.min_order_type_ablation_sample_count)
+                if require_order_type_execution_quality
+                else Decimal("0"),
+            ),
+            {
+                "metric": "limit_fill_probability_evidence_present",
+                "observed": str(limit_fill_probability_evidence_present).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "rl_market_limit_execution_arxiv_2507_06345_2026",
+                "passed": limit_fill_probability_evidence_present
+                if require_order_type_execution_quality
+                else True,
+            },
+            {
+                "metric": "price_improvement_evidence_present",
+                "observed": str(price_improvement_evidence_present).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "retail_order_flow_segmentation_ssrn_6414558_2026",
+                "passed": price_improvement_evidence_present
+                if require_order_type_execution_quality
+                else True,
+            },
+            {
+                "metric": "opportunity_cost_evidence_present",
+                "observed": str(opportunity_cost_evidence_present).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "retail_limit_orders_rof_rfaf049_2025",
+                "passed": opportunity_cost_evidence_present
+                if require_order_type_execution_quality
+                else True,
+            },
+            {
+                "metric": "execution_shortfall_evidence_present",
+                "observed": str(execution_shortfall_evidence_present).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "retail_limit_orders_rof_rfaf049_2025",
+                "passed": execution_shortfall_evidence_present
+                if require_order_type_execution_quality
+                else True,
+            },
+            {
+                "metric": "route_tca_evidence_present",
+                "observed": str(route_tca_evidence_present).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "retail_order_flow_segmentation_ssrn_6414558_2026",
+                "passed": route_tca_evidence_present
+                if require_order_type_execution_quality
+                else True,
+            },
+            _numeric_check(
+                metric="order_type_opportunity_cost_bps",
+                observed=_decimal(
+                    scorecard.get("order_type_opportunity_cost_bps")
+                    or scorecard.get("market_limit_order_mix_opportunity_cost_bps"),
+                    default="999999",
+                ),
+                operator="lte",
+                threshold=policy.max_order_type_opportunity_cost_bps
+                if require_order_type_execution_quality
+                else Decimal("999999"),
+            ),
+            _numeric_check(
+                metric="market_order_spread_bps",
+                observed=_decimal(
+                    scorecard.get("market_order_spread_bps")
+                    or scorecard.get("market_limit_order_mix_market_spread_bps"),
+                    default="999999",
+                ),
+                operator="lte",
+                threshold=policy.max_market_order_spread_bps
+                if require_order_type_execution_quality
+                else Decimal("999999"),
+            ),
+        )
     )
     double_oos_artifact_refs = _artifact_refs(
         scorecard,

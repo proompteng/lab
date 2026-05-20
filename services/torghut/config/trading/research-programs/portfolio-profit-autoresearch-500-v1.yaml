@@ -433,6 +433,28 @@ research_sources:
       - claim_id: logistic_normal_execution_allocation
         summary: Logistic-normal allocation gives a trainable representation for mixed market/limit execution decisions.
         implication: Treat market/limit mix as an execution-policy feature, not as alpha, and require latency/fill stress before capital.
+  - source_id: retail_limit_orders_2025
+    title: 'Retail Limit Orders'
+    url: https://doi.org/10.1093/rof/rfaf049
+    published_at: '2025-10-07'
+    claims:
+      - claim_id: market_limit_order_type_ablation
+        summary: Market-versus-limit execution policies need replayed order-type ablations against matched route TCA, fill probability, and shortfall evidence.
+        implication: Block promotion for mixed market/limit candidates until order-type ablation artifacts prove the chosen order type beats the alternative after costs.
+      - claim_id: patient_limit_order_opportunity_cost
+        summary: Passive limit execution can improve price only when non-fill and adverse-selection opportunity costs stay inside the strategy edge budget.
+        implication: Require opportunity-cost and price-improvement evidence before using patient limit-order behavior as promotion proof.
+  - source_id: retail_order_flow_segmentation_2026
+    title: 'Retail Order Flow Segmentation, Price Improvements, and Market Quality'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6414558
+    published_at: '2026-05-18'
+    claims:
+      - claim_id: retail_flow_segmentation_route_quality
+        summary: Broker and flow-segment execution quality can vary enough that route-level evidence must be separated from headline backtest results.
+        implication: Treat route price improvement and broker-route TCA as mandatory validation evidence for mixed market/limit execution sleeves.
+      - claim_id: broker_route_price_improvement_dispersion
+        summary: Price-improvement observations must be tied to the actual route and order type before counting toward promotion.
+        implication: Fail closed when route TCA, price improvement, or fill-outcome artifacts are missing.
   - source_id: lobdiff_event_stream_prediction_2026
     title: 'Limit Order Book Event Stream Prediction with Diffusion Model'
     url: https://link.springer.com/article/10.1007/s41019-025-00328-4

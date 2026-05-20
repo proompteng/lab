@@ -3277,6 +3277,13 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
             "market-versus-limit order mix",
             "limit fill probability",
             "execution shortfall",
+            "opportunity cost",
+            "order type ablation",
+            "price improvement",
+            "broker route quality",
+            "marketable limit",
+            "passive limit",
+            "patient limit order",
             "dynamic allocation between market and limit",
             "mixed-market-limit",
             "mixed market limit",
@@ -3290,6 +3297,9 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
                     "market_limit_order_mix",
                     "limit_fill_probability",
                     "execution_shortfall",
+                    "order_type_ablation",
+                    "opportunity_cost",
+                    "price_improvement",
                     "route_tca",
                 ],
                 "rank_metric": "post_cost_net_pnl_after_fill_adjusted_execution",
@@ -3300,14 +3310,24 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
             {
                 "required_market_limit_order_mix_evidence": True,
                 "required_limit_fill_probability_evidence": True,
+                "required_order_type_ablation_passed": True,
+                "required_min_order_type_ablation_sample_count": "60",
+                "required_opportunity_cost_evidence": True,
+                "required_price_improvement_evidence": True,
+                "required_execution_shortfall_evidence": True,
+                "required_max_order_type_opportunity_cost_bps": "8",
                 "required_max_market_order_spread_bps": "8",
             }
         )
         promotion_contract.update(
             {
+                "requires_order_type_execution_quality": True,
+                "requires_order_type_ablation": True,
                 "requires_market_limit_order_mix": True,
                 "requires_limit_fill_probability": True,
                 "requires_execution_shortfall": True,
+                "requires_opportunity_cost": True,
+                "requires_price_improvement": True,
                 "execution_policy": "candidate_local_market_limit_mix",
             }
         )
