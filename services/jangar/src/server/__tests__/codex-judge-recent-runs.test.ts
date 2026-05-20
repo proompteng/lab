@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { getCodexRecentRunsHandler } from '~/routes/api/codex/runs/recent'
-import type { CodexRunSummaryRecord } from '../codex-judge-store'
+import type { CodexRunSummaryRecord } from '@proompteng/agent-contracts/codex-runs-client'
 
 const buildRunSummary = (overrides: Partial<CodexRunSummaryRecord> = {}): CodexRunSummaryRecord => ({
   id: 'run-1',
@@ -32,18 +32,13 @@ const buildRunSummary = (overrides: Partial<CodexRunSummaryRecord> = {}): CodexR
 })
 
 describe('codex recent runs route', () => {
-  it('returns recent runs from the store', async () => {
+  it('forwards recent run requests to the Agents service', async () => {
     const runs = [buildRunSummary()]
-    const store = {
-      listRecentRuns: vi.fn(async () => runs),
-      close: vi.fn(async () => {}),
-      ready: Promise.resolve(),
-    }
+    const client = vi.fn(async () => ({ ok: true as const, status: 200, body: { ok: true, runs } }))
 
-    const response = await getCodexRecentRunsHandler(new Request('http://localhost/api/codex/runs/recent'), () => store)
+    const response = await getCodexRecentRunsHandler(new Request('http://localhost/api/codex/runs/recent'), client)
 
-    expect(store.listRecentRuns).toHaveBeenCalledWith({ repository: undefined, limit: undefined })
-    expect(store.close).toHaveBeenCalled()
+    expect(client).toHaveBeenCalledWith({ repository: undefined, limit: undefined })
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual({ ok: true, runs })
   })

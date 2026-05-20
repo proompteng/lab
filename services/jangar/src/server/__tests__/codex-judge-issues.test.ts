@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { getCodexIssuesHandler } from '~/routes/api/codex/issues'
-import type { CodexIssueSummaryRecord } from '../codex-judge-store'
+import type { CodexIssueSummaryRecord } from '@proompteng/agent-contracts/codex-runs-client'
 
 const buildIssue = (overrides: Partial<CodexIssueSummaryRecord> = {}): CodexIssueSummaryRecord => ({
   issueNumber: 123,
@@ -18,21 +18,16 @@ describe('codex issues route', () => {
     await expect(response.json()).resolves.toEqual({ ok: false, error: 'repository is required' })
   })
 
-  it('returns issue summaries from the store', async () => {
+  it('forwards issue summary requests to the Agents service', async () => {
     const issues = [buildIssue()]
-    const store = {
-      listIssueSummaries: vi.fn(async () => issues),
-      close: vi.fn(async () => {}),
-      ready: Promise.resolve(),
-    }
+    const client = vi.fn(async () => ({ ok: true as const, status: 200, body: { ok: true, issues } }))
 
     const response = await getCodexIssuesHandler(
       new Request('http://localhost/api/codex/issues?repository=owner/repo'),
-      () => store,
+      client,
     )
 
-    expect(store.listIssueSummaries).toHaveBeenCalledWith('owner/repo', undefined)
-    expect(store.close).toHaveBeenCalled()
+    expect(client).toHaveBeenCalledWith({ repository: 'owner/repo', limit: undefined })
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual({ ok: true, issues })
   })

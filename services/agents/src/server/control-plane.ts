@@ -77,6 +77,26 @@ const routeSources: RouteSourceSpec[] = [
     load: () => import('../routes/v1/agent-events'),
   },
   {
+    file: 'src/routes/v1/codex/runs.ts',
+    sourceUrl: new URL('../routes/v1/codex/runs.ts', import.meta.url),
+    load: () => import('../routes/v1/codex/runs'),
+  },
+  {
+    file: 'src/routes/v1/codex/runs/list.ts',
+    sourceUrl: new URL('../routes/v1/codex/runs/list.ts', import.meta.url),
+    load: () => import('../routes/v1/codex/runs/list'),
+  },
+  {
+    file: 'src/routes/v1/codex/runs/recent.ts',
+    sourceUrl: new URL('../routes/v1/codex/runs/recent.ts', import.meta.url),
+    load: () => import('../routes/v1/codex/runs/recent'),
+  },
+  {
+    file: 'src/routes/v1/codex/issues.ts',
+    sourceUrl: new URL('../routes/v1/codex/issues.ts', import.meta.url),
+    load: () => import('../routes/v1/codex/issues'),
+  },
+  {
     file: 'src/routes/v1/implementation-sources/webhooks/$provider.ts',
     sourceUrl: new URL('../routes/v1/implementation-sources/webhooks/$provider.ts', import.meta.url),
     load: () => import('../routes/v1/implementation-sources/webhooks/$provider'),

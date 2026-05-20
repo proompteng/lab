@@ -44,6 +44,34 @@ const createStore = (overrides: Record<string, unknown> = {}) =>
     ...overrides,
   }) as unknown as AgentRunCallbacksApiDependencies['storeFactory'] extends () => infer Store ? Store : never
 
+const createCodexStore = (overrides: Record<string, unknown> = {}) =>
+  ({
+    ready: Promise.resolve(),
+    close: vi.fn(async () => {}),
+    attachNotify: vi.fn(async () => ({
+      id: 'codex-run-1',
+      repository: 'proompteng/lab',
+      issueNumber: 7152,
+      branch: 'codex/agents-split',
+      status: 'notified',
+    })),
+    getRunByAgentRun: vi.fn(async () => null),
+    getRunById: vi.fn(async () => null),
+    updateReviewStatus: vi.fn(async () => null),
+    updateRunPrInfo: vi.fn(async () => null),
+    upsertArtifacts: vi.fn(async () => []),
+    upsertRunComplete: vi.fn(async () => ({
+      id: 'codex-run-1',
+      repository: 'proompteng/lab',
+      issueNumber: 7152,
+      branch: 'codex/agents-split',
+      status: 'run_complete',
+    })),
+    ...overrides,
+  }) as unknown as NonNullable<AgentRunCallbacksApiDependencies['codexStoreFactory']> extends () => infer Store
+    ? Store
+    : never
+
 const request = (payload: Record<string, unknown>) =>
   new Request('http://agents.local/v1/agent-runs/agent-run-record-1/callbacks', {
     method: 'POST',
@@ -54,6 +82,7 @@ const request = (payload: Record<string, unknown>) =>
 describe('AgentRun callbacks v1 API', () => {
   it('ingests run-complete callbacks into the Agents AgentRun projection', async () => {
     const store = createStore()
+    const codexStore = createCodexStore()
 
     const response = await postAgentRunCallbacksHandler(
       'agent-run-record-1',
@@ -72,7 +101,7 @@ describe('AgentRun callbacks v1 API', () => {
         status: { phase: 'Succeeded' },
         artifacts: [{ name: 'status', key: 'runs/status.json' }],
       }),
-      { storeFactory: () => store },
+      { storeFactory: () => store, codexStoreFactory: () => codexStore },
     )
 
     expect(response.status).toBe(202)
@@ -105,10 +134,26 @@ describe('AgentRun callbacks v1 API', () => {
         eventType: 'agent_run.callback_received',
       }),
     )
+    expect(codexStore.upsertRunComplete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentRunName: 'agent-run-1',
+        agentRunNamespace: 'agents',
+        repository: 'proompteng/lab',
+        issueNumber: 7152,
+        branch: 'codex/agents-split',
+      }),
+    )
+    expect(codexStore.upsertArtifacts).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 'codex-run-1',
+        artifacts: [expect.objectContaining({ name: 'status', key: 'runs/status.json' })],
+      }),
+    )
   })
 
   it('ingests notify callbacks by external AgentRun name', async () => {
     const store = createStore()
+    const codexStore = createCodexStore()
 
     const response = await postAgentRunCallbacksHandler(
       'agent-run-1',
@@ -121,7 +166,7 @@ describe('AgentRun callbacks v1 API', () => {
         branch: 'codex/agents-split',
         pr_url: 'https://github.com/proompteng/lab/pull/7299',
       }),
-      { storeFactory: () => store },
+      { storeFactory: () => store, codexStoreFactory: () => codexStore },
     )
 
     expect(response.status).toBe(202)
@@ -137,6 +182,21 @@ describe('AgentRun callbacks v1 API', () => {
           }),
         }),
       }),
+    )
+    expect(codexStore.attachNotify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentRunName: 'agent-run-1',
+        agentRunNamespace: 'agents',
+        repository: 'proompteng/lab',
+        issueNumber: 7152,
+        branch: 'codex/agents-split',
+      }),
+    )
+    expect(codexStore.updateRunPrInfo).toHaveBeenCalledWith(
+      'codex-run-1',
+      7299,
+      'https://github.com/proompteng/lab/pull/7299',
+      null,
     )
   })
 })

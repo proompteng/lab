@@ -169,6 +169,20 @@ fail_if_matches \
   '@proompteng/agent-contracts/agents-service-client' \
   "${ROOT_DIR}/services/jangar/src"
 
+fail_if_matches \
+  "Jangar Codex run history APIs must forward to Agents-owned Codex projection clients instead of opening Jangar storage" \
+  "createCodexJudgeStore|from ['\"]~\\/server\\/codex-judge-store|from ['\"]\\.\\.\\/codex-judge-store" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/codex/runs.tsx" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/codex/runs/list.tsx" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/codex/runs/recent.tsx" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/codex/issues.tsx"
+
+require_matches \
+  "Agents service must own canonical Codex run projection v1 route registration" \
+  '/v1/codex/(runs|issues)|src/routes/v1/codex/(runs|issues)' \
+  "${ROOT_DIR}/services/agents/src/server/control-plane.ts" \
+  "${ROOT_DIR}/services/agents/package.json"
+
 fail_if_path_exists \
   "Jangar must not own generic Agents readiness/status verdict normalization after agent-contracts owns it" \
   "${ROOT_DIR}/services/jangar/src/server/agents-control-plane-client.ts"

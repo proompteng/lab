@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { getCodexRunsHandler } from '~/routes/api/codex/runs'
-import type { CodexRunHistory, CodexRunHistoryEntry, CodexRunRecord } from '../codex-judge-store'
+import type {
+  CodexRunHistoryEntry,
+  CodexRunHistoryResult,
+  CodexRunRecord,
+} from '@proompteng/agent-contracts/codex-runs-client'
 
 const buildRun = (overrides: Partial<CodexRunRecord> = {}): CodexRunRecord => ({
   id: 'run-1',
@@ -39,7 +43,8 @@ const buildRun = (overrides: Partial<CodexRunRecord> = {}): CodexRunRecord => ({
   ...overrides,
 })
 
-const buildHistory = (entries: CodexRunHistoryEntry[] = []): CodexRunHistory => ({
+const buildHistory = (entries: CodexRunHistoryEntry[] = []): CodexRunHistoryResult => ({
+  ok: true,
   runs: entries,
   stats: {
     completionRate: null,
@@ -58,7 +63,7 @@ describe('codex runs route', () => {
     await expect(response.json()).resolves.toEqual({ ok: false, error: 'repository is required' })
   })
 
-  it('returns run history from the store', async () => {
+  it('forwards run history requests to the Agents service', async () => {
     const history = buildHistory([
       {
         run: buildRun(),
@@ -67,25 +72,20 @@ describe('codex runs route', () => {
       },
     ])
 
-    const store = {
-      getRunHistory: vi.fn(async () => history),
-      close: vi.fn(async () => {}),
-      ready: Promise.resolve(),
-    }
+    const client = vi.fn(async () => ({ ok: true as const, status: 200, body: history }))
 
     const response = await getCodexRunsHandler(
       new Request('http://localhost/api/codex/runs?repository=owner/repo&issueNumber=123'),
-      () => store,
+      client,
     )
 
-    expect(store.getRunHistory).toHaveBeenCalledWith({
+    expect(client).toHaveBeenCalledWith({
       repository: 'owner/repo',
       issueNumber: 123,
       branch: undefined,
       limit: undefined,
     })
-    expect(store.close).toHaveBeenCalled()
     expect(response.status).toBe(200)
-    await expect(response.json()).resolves.toEqual({ ok: true, ...history })
+    await expect(response.json()).resolves.toEqual(history)
   })
 })

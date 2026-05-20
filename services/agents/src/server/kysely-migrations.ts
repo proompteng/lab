@@ -11,6 +11,7 @@ import * as agentsCommsAgentMessagesMigration from './migrations/20260519_agents
 import * as agentsCommsAgentRunIdentityMigration from './migrations/20260520_agents_comms_agent_run_identity'
 import * as agentsCommsAgentRunNameLookupMigration from './migrations/20260520_agents_comms_agent_run_name_lookup'
 import * as agentsAgentRunRerunSubmissionsMigration from './migrations/20260520_agents_agentrun_rerun_submissions'
+import * as agentsCodexRunProjectionMigration from './migrations/20260520_agents_codex_run_projection'
 
 type MigrationMap = Record<string, Migration>
 
@@ -30,6 +31,7 @@ const migrations: MigrationMap = {
   '20260212_agents_workflow_comms_agent_messages': agentsWorkflowCommsAgentMessagesMigration,
   '20260519_agents_comms_agent_messages': agentsCommsAgentMessagesMigration,
   '20260520_agents_agentrun_rerun_submissions': agentsAgentRunRerunSubmissionsMigration,
+  '20260520_agents_codex_run_projection': agentsCodexRunProjectionMigration,
   '20260520_agents_comms_agent_run_identity': agentsCommsAgentRunIdentityMigration,
   '20260520_agents_comms_agent_run_name_lookup': agentsCommsAgentRunNameLookupMigration,
 }

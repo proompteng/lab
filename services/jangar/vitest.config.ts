@@ -80,6 +80,9 @@ const agentContractsRunRerunsClientSource = fileURLToPath(
 const agentContractsCodexOrchestrationParametersSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/codex-orchestration-parameters.ts', import.meta.url),
 )
+const agentContractsCodexRunsClientSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/codex-runs-client.ts', import.meta.url),
+)
 const discordSource = fileURLToPath(new URL('../../packages/discord/src/index.ts', import.meta.url))
 
 export default defineConfig({
@@ -99,6 +102,7 @@ export default defineConfig({
       '@proompteng/agent-contracts/agent-messages-client': agentContractsAgentMessagesClientSource,
       '@proompteng/agent-contracts/agent-jobs-client': agentContractsAgentJobsClientSource,
       '@proompteng/agent-contracts/codex-orchestration-parameters': agentContractsCodexOrchestrationParametersSource,
+      '@proompteng/agent-contracts/codex-runs-client': agentContractsCodexRunsClientSource,
       '@proompteng/agent-contracts/control-plane-status': agentContractsControlPlaneStatusSource,
       '@proompteng/agent-contracts/json': agentContractsJsonSource,
       '@proompteng/agent-contracts/execution-trust': agentContractsExecutionTrustSource,
@@ -142,6 +146,7 @@ export default defineConfig({
       '@proompteng/agent-contracts/agent-messages-client': agentContractsAgentMessagesClientSource,
       '@proompteng/agent-contracts/agent-jobs-client': agentContractsAgentJobsClientSource,
       '@proompteng/agent-contracts/codex-orchestration-parameters': agentContractsCodexOrchestrationParametersSource,
+      '@proompteng/agent-contracts/codex-runs-client': agentContractsCodexRunsClientSource,
       '@proompteng/agent-contracts/control-plane-status': agentContractsControlPlaneStatusSource,
       '@proompteng/agent-contracts/json': agentContractsJsonSource,
       '@proompteng/agent-contracts/execution-trust': agentContractsExecutionTrustSource,

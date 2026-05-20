@@ -1,7 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { fetchCodexIssuesFromAgentsService } from '@proompteng/agent-contracts/codex-runs-client'
 import { errorResponse, okResponse } from '@proompteng/agent-contracts/json'
-
-import { type CodexJudgeStore, createCodexJudgeStore } from '~/server/codex-judge-store'
 
 export const Route = createFileRoute('/api/codex/issues')({
   server: {
@@ -19,11 +18,11 @@ const parseLimit = (value: string | null) => {
   return Math.min(Math.floor(parsed), 500)
 }
 
-type CodexIssuesStore = Pick<CodexJudgeStore, 'listIssueSummaries' | 'close' | 'ready'>
+type CodexIssuesClient = typeof fetchCodexIssuesFromAgentsService
 
 export const getCodexIssuesHandler = async (
   request: Request,
-  storeFactory: () => CodexIssuesStore = createCodexJudgeStore,
+  client: CodexIssuesClient = fetchCodexIssuesFromAgentsService,
 ) => {
   const url = new URL(request.url)
   const repository = url.searchParams.get('repository')?.trim() ?? ''
@@ -33,15 +32,17 @@ export const getCodexIssuesHandler = async (
     return errorResponse('repository is required')
   }
 
-  const store = storeFactory()
   try {
-    await store.ready
-    const issues = await store.listIssueSummaries(repository, limit ?? undefined)
-    return okResponse({ ok: true, issues })
+    const result = await client({ repository, limit: limit ?? undefined })
+    if (!result.ok) {
+      return errorResponse(
+        result.error ?? `Agents Codex issues request failed with HTTP ${result.status}`,
+        result.status || 502,
+      )
+    }
+    return okResponse(result.body, result.status)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    return errorResponse(message, message.includes('DATABASE_URL') ? 503 : 500)
-  } finally {
-    await store.close()
+    return errorResponse(message, 500)
   }
 }

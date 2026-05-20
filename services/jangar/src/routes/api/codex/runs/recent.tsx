@@ -1,7 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { fetchCodexRecentRunsFromAgentsService } from '@proompteng/agent-contracts/codex-runs-client'
 import { errorResponse, okResponse } from '@proompteng/agent-contracts/json'
-
-import { type CodexJudgeStore, createCodexJudgeStore } from '~/server/codex-judge-store'
 
 export const Route = createFileRoute('/api/codex/runs/recent')({
   server: {
@@ -19,28 +18,30 @@ const parseLimit = (value: string | null) => {
   return Math.min(Math.floor(parsed), 200)
 }
 
-type CodexRecentRunsStore = Pick<CodexJudgeStore, 'listRecentRuns' | 'close' | 'ready'>
+type CodexRecentRunsClient = typeof fetchCodexRecentRunsFromAgentsService
 
 export const getCodexRecentRunsHandler = async (
   request: Request,
-  storeFactory: () => CodexRecentRunsStore = createCodexJudgeStore,
+  client: CodexRecentRunsClient = fetchCodexRecentRunsFromAgentsService,
 ) => {
   const url = new URL(request.url)
   const repository = url.searchParams.get('repository')?.trim() ?? ''
   const limit = parseLimit(url.searchParams.get('limit'))
 
-  const store = storeFactory()
   try {
-    await store.ready
-    const runs = await store.listRecentRuns({
+    const result = await client({
       repository: repository || undefined,
       limit: limit ?? undefined,
     })
-    return okResponse({ ok: true, runs })
+    if (!result.ok) {
+      return errorResponse(
+        result.error ?? `Agents Codex recent runs request failed with HTTP ${result.status}`,
+        result.status || 502,
+      )
+    }
+    return okResponse(result.body, result.status)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    return errorResponse(message, message.includes('DATABASE_URL') ? 503 : 500)
-  } finally {
-    await store.close()
+    return errorResponse(message, 500)
   }
 }
