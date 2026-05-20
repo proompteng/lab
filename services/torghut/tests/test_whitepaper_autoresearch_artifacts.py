@@ -352,7 +352,13 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
                     "daily_net": {"2026-02-23": "123"},
                     "daily_filled_notional": {"2026-02-23": "350000"},
                     "daily_liquidity_notional": {"2026-02-23": "900000"},
+                    "decision_count_by_order_type": {"market": 2, "limit": 3},
+                    "filled_count_by_order_type": {"market": 2, "limit": 2},
+                    "limit_fill_rate": "0.6667",
                 },
+                "route_tca_artifact_ref": "/tmp/route-tca.json",
+                "order_type_execution_artifact_ref": "/tmp/order-type-execution.json",
+                "execution_shortfall_evidence_present": True,
             },
             dataset_snapshot_id="snap-fallback",
             result_path="/tmp/fallback.json",
@@ -401,6 +407,36 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
         )
         self.assertTrue(
             bundle.objective_scorecard["delay_adjusted_depth_stress_passed"]
+        )
+        self.assertEqual(
+            bundle.objective_scorecard["decision_count_by_order_type"],
+            {"market": 2, "limit": 3},
+        )
+        self.assertEqual(bundle.objective_scorecard["limit_fill_rate"], "0.6667")
+        self.assertEqual(
+            bundle.objective_scorecard["market_limit_order_mix_sample_count"],
+            5,
+        )
+        self.assertTrue(
+            bundle.objective_scorecard["market_limit_order_mix_evidence_present"]
+        )
+        self.assertEqual(
+            bundle.objective_scorecard["limit_fill_probability_sample_count"],
+            3,
+        )
+        self.assertTrue(
+            bundle.objective_scorecard["limit_fill_probability_evidence_present"]
+        )
+        self.assertEqual(
+            bundle.objective_scorecard["route_tca_artifact_ref"],
+            "/tmp/route-tca.json",
+        )
+        self.assertEqual(
+            bundle.objective_scorecard["order_type_execution_artifact_ref"],
+            "/tmp/order-type-execution.json",
+        )
+        self.assertTrue(
+            bundle.objective_scorecard["execution_shortfall_evidence_present"]
         )
         self.assertEqual(len(bundle.stress_metrics), 2)
         with self.assertRaisesRegex(ValueError, "evidence_bundle_schema_invalid"):

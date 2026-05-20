@@ -935,6 +935,47 @@ def _daily_int_metric(payload: Mapping[str, Any], key: str) -> dict[str, int]:
     return values
 
 
+def _int_mapping(value: Any) -> dict[str, int]:
+    if not isinstance(value, Mapping):
+        return {}
+    counts: dict[str, int] = {}
+    for key, item in cast(Mapping[Any, Any], value).items():
+        try:
+            count = int(float(str(item or 0)))
+        except (TypeError, ValueError):
+            count = 0
+        normalized_key = str(key or "").strip().lower()
+        if normalized_key:
+            counts[normalized_key] = count
+    return counts
+
+
+def _order_type_execution_metrics(payload: Mapping[str, Any]) -> dict[str, Any]:
+    decision_counts = _int_mapping(payload.get("decision_count_by_order_type"))
+    filled_counts = _int_mapping(payload.get("filled_count_by_order_type"))
+    market_decision_count = max(0, decision_counts.get("market", 0))
+    limit_decision_count = max(0, decision_counts.get("limit", 0))
+    market_limit_sample_count = market_decision_count + limit_decision_count
+    metrics: dict[str, Any] = {}
+    if decision_counts:
+        metrics["decision_count_by_order_type"] = decision_counts
+    if filled_counts:
+        metrics["filled_count_by_order_type"] = filled_counts
+    if "limit_fill_rate" in payload:
+        metrics["limit_fill_rate"] = str(payload.get("limit_fill_rate") or "0")
+    if market_limit_sample_count > 0:
+        metrics["market_limit_order_mix_sample_count"] = market_limit_sample_count
+        metrics["market_limit_order_mix_evidence_present"] = True
+    if market_decision_count > 0 and limit_decision_count > 0:
+        metrics["market_limit_order_mix_passed"] = True
+    if limit_decision_count > 0:
+        metrics["limit_fill_probability_sample_count"] = limit_decision_count
+        metrics["limit_fill_probability_evidence_present"] = (
+            "limit_fill_rate" in payload or filled_counts.get("limit", 0) > 0
+        )
+    return metrics
+
+
 DELAY_ADJUSTED_DEPTH_STRESS_GRID_MS = (
     Decimal("50"),
     Decimal("150"),
@@ -1331,6 +1372,7 @@ def _consistency_penalty(
                 day: str(value) for day, value in daily_min_cash.items()
             },
             "daily_negative_cash_observation_count": daily_negative_cash_observations,
+            **_order_type_execution_metrics(full_window_payload),
         },
     )
 
@@ -2593,6 +2635,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                             )
                             or "0"
                         ),
+                        **_order_type_execution_metrics(full_window_summary),
                     }
                 )
                 if second_oos_summary is not None:

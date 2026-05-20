@@ -4834,10 +4834,100 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertIn("order_type_ablation_passed_failed", row["blockers"])
         self.assertIn("order_type_ablation_artifact_present_failed", row["blockers"])
         self.assertIn("order_type_ablation_sample_count_failed", row["blockers"])
+        self.assertIn("market_limit_order_mix_evidence_present_failed", row["blockers"])
         self.assertIn("limit_fill_probability_evidence_present_failed", row["blockers"])
         self.assertIn("route_tca_evidence_present_failed", row["blockers"])
         self.assertIn("market_order_spread_bps_failed", row["blockers"])
         self.assertFalse(row["order_type_execution_quality"]["passed"])
+
+    def test_candidate_board_accepts_market_limit_candidate_with_order_type_evidence(
+        self,
+    ) -> None:
+        spec = replace(
+            self._candidate_spec("spec-market-limit-pass"),
+            parameter_space={
+                "mechanism_overlay_ids": ["mixed_market_limit_execution_policy"]
+            },
+            hard_vetoes={
+                "required_order_type_ablation_passed": True,
+                "required_min_order_type_ablation_sample_count": "60",
+                "required_limit_fill_probability_evidence": True,
+                "required_price_improvement_evidence": True,
+                "required_opportunity_cost_evidence": True,
+                "required_execution_shortfall_evidence": True,
+                "required_max_order_type_opportunity_cost_bps": "8",
+                "required_max_market_order_spread_bps": "8",
+            },
+            promotion_contract={
+                "requires_order_type_execution_quality": True,
+                "requires_market_limit_order_mix": True,
+                "requires_limit_fill_probability": True,
+                "requires_execution_shortfall": True,
+            },
+        )
+        evidence = runner.CandidateEvidenceBundle(
+            schema_version="torghut.candidate-evidence-bundle.v1",
+            evidence_bundle_id="ev-market-limit-pass",
+            candidate_id="cand-market-limit-pass",
+            candidate_spec_id=spec.candidate_spec_id,
+            dataset_snapshot_id="snapshot-market-limit-pass",
+            feature_spec_hash="hash-market-limit-pass",
+            code_commit="commit-test",
+            replay_artifact_refs=("replay.json",),
+            objective_scorecard={
+                "net_pnl_per_day": "640",
+                "target_met": True,
+                "oracle_passed": True,
+                "profit_target_oracle": {"blockers": []},
+                "order_type_ablation_passed": True,
+                "order_type_ablation_artifact_ref": "order-type-ablation.json",
+                "order_type_ablation_sample_count": 60,
+                "market_limit_order_mix_evidence_present": True,
+                "limit_fill_probability_evidence_present": True,
+                "price_improvement_evidence_present": True,
+                "opportunity_cost_evidence_present": True,
+                "execution_shortfall_evidence_present": True,
+                "route_tca_artifact_ref": "route-tca.json",
+                "order_type_opportunity_cost_bps": "8",
+                "market_order_spread_bps": "8",
+            },
+            fold_metrics=(),
+            stress_metrics=(),
+            cost_calibration={"status": "calibrated", "source": "route_tca"},
+            null_comparator={},
+            promotion_readiness={},
+        )
+
+        board = runner._candidate_board_payload(
+            epoch_id="epoch-market-limit-pass-board",
+            output_dir=Path("/tmp/epoch-market-limit-pass-board"),
+            target=Decimal("500"),
+            candidate_specs=(spec,),
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                    }
+                ]
+            },
+            pre_replay_proposal_rows=(
+                {
+                    "candidate_spec_id": spec.candidate_spec_id,
+                    "rank": 1,
+                    "proposal_score": "9.0",
+                },
+            ),
+            proposal_rows=(),
+            evidence_bundles=(evidence,),
+            portfolio=None,
+            promotion_readiness={"promotable": True},
+            runtime_closure={},
+        )
+
+        row = board["rows"][0]
+        self.assertTrue(row["order_type_execution_quality"]["passed"])
+        self.assertTrue(row["oracle_passed"])
 
     def test_candidate_board_separates_research_rank_from_executed_candidate(
         self,

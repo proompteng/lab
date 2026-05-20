@@ -31,6 +31,24 @@ REPLAY_ACTIVITY_SCORECARD_KEYS = (
     "filled_order_count",
     "avg_filled_notional_per_day",
     "daily_filled_notional",
+    "decision_count_by_order_type",
+    "filled_count_by_order_type",
+    "limit_fill_rate",
+    "market_limit_order_mix_sample_count",
+    "market_limit_order_mix_evidence_present",
+    "market_limit_order_mix_passed",
+    "limit_fill_probability_sample_count",
+    "limit_fill_probability_evidence_present",
+    "route_tca_artifact_ref",
+    "route_tca_artifact_refs",
+    "route_tca_evidence_present",
+    "order_type_execution_artifact_ref",
+    "order_type_execution_artifact_refs",
+    "order_type_ablation_artifact_ref",
+    "order_type_ablation_artifact_refs",
+    "execution_shortfall_evidence_present",
+    "price_improvement_evidence_present",
+    "opportunity_cost_evidence_present",
 )
 
 
@@ -68,6 +86,44 @@ def _decimal_mapping_total(mapping: Mapping[str, Any]) -> Decimal:
     for value in mapping.values():
         total += _decimal(value)
     return total
+
+
+def _int_mapping(value: Any) -> dict[str, int]:
+    if not isinstance(value, Mapping):
+        return {}
+    counts: dict[str, int] = {}
+    for key, item in cast(Mapping[Any, Any], value).items():
+        count = _int(item)
+        normalized_key = _string(key).lower()
+        if normalized_key:
+            counts[normalized_key] = count
+    return counts
+
+
+def _order_type_execution_metrics(source: Mapping[str, Any]) -> dict[str, Any]:
+    decision_counts = _int_mapping(source.get("decision_count_by_order_type"))
+    filled_counts = _int_mapping(source.get("filled_count_by_order_type"))
+    market_decision_count = max(0, decision_counts.get("market", 0))
+    limit_decision_count = max(0, decision_counts.get("limit", 0))
+    market_limit_sample_count = market_decision_count + limit_decision_count
+    metrics: dict[str, Any] = {}
+    if decision_counts:
+        metrics["decision_count_by_order_type"] = decision_counts
+    if filled_counts:
+        metrics["filled_count_by_order_type"] = filled_counts
+    if "limit_fill_rate" in source:
+        metrics["limit_fill_rate"] = _string(source.get("limit_fill_rate") or "0")
+    if market_limit_sample_count > 0:
+        metrics["market_limit_order_mix_sample_count"] = market_limit_sample_count
+        metrics["market_limit_order_mix_evidence_present"] = True
+    if market_decision_count > 0 and limit_decision_count > 0:
+        metrics["market_limit_order_mix_passed"] = True
+    if limit_decision_count > 0:
+        metrics["limit_fill_probability_sample_count"] = limit_decision_count
+        metrics["limit_fill_probability_evidence_present"] = (
+            "limit_fill_rate" in source or filled_counts.get("limit", 0) > 0
+        )
+    return metrics
 
 
 def _p10(values: Sequence[Decimal]) -> Decimal:
@@ -429,6 +485,10 @@ def evidence_bundle_from_frontier_candidate(
             if key in source:
                 scorecard = {**scorecard, key: source[key]}
                 break
+    for source in (candidate, summary, full_window):
+        for key, value in _order_type_execution_metrics(source).items():
+            if key not in scorecard:
+                scorecard = {**scorecard, key: value}
     for key, value in _decomposition_activity_counts(candidate).items():
         if key not in scorecard:
             scorecard = {**scorecard, key: value}

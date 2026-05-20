@@ -7075,10 +7075,9 @@ def _candidate_board_order_type_execution_quality_summary(
     )
     order_type_ablation_passed = _boolish(
         scorecard.get("order_type_ablation_passed")
-        or scorecard.get("market_limit_order_mix_passed")
         or scorecard.get("market_limit_execution_policy_passed")
     )
-    artifact_refs = _string_list_from_value(
+    raw_artifact_refs = (
         scorecard.get("order_type_execution_artifact_refs")
         or scorecard.get("order_type_ablation_artifact_refs")
         or scorecard.get("market_limit_order_mix_artifact_refs")
@@ -7088,6 +7087,9 @@ def _candidate_board_order_type_execution_quality_summary(
         or scorecard.get("market_limit_order_mix_artifact_ref")
         or scorecard.get("route_tca_artifact_ref")
     )
+    artifact_refs = _string_list_from_value(raw_artifact_refs)
+    if not artifact_refs and _string(raw_artifact_refs):
+        artifact_refs = [_string(raw_artifact_refs)]
     sample_count = _candidate_board_first_int_field(
         scorecard,
         (
@@ -7115,6 +7117,11 @@ def _candidate_board_order_type_execution_quality_summary(
         if sample_count < min_sample_count:
             blockers.append("order_type_ablation_sample_count_failed")
         if not _boolish(
+            scorecard.get("market_limit_order_mix_evidence_present")
+            or scorecard.get("market_limit_order_mix_present")
+        ):
+            blockers.append("market_limit_order_mix_evidence_present_failed")
+        if not _boolish(
             scorecard.get("limit_fill_probability_evidence_present")
             or scorecard.get("limit_fill_probability_present")
         ):
@@ -7134,12 +7141,14 @@ def _candidate_board_order_type_execution_quality_summary(
             or scorecard.get("order_type_execution_shortfall_evidence_present")
         ):
             blockers.append("execution_shortfall_evidence_present_failed")
+        raw_route_tca_refs = scorecard.get("route_tca_artifact_refs") or scorecard.get(
+            "route_tca_artifact_ref"
+        )
+        route_tca_refs = _string_list_from_value(raw_route_tca_refs)
+        if not route_tca_refs and _string(raw_route_tca_refs):
+            route_tca_refs = [_string(raw_route_tca_refs)]
         if not (
-            _boolish(scorecard.get("route_tca_evidence_present"))
-            or _string_list_from_value(
-                scorecard.get("route_tca_artifact_refs")
-                or scorecard.get("route_tca_artifact_ref")
-            )
+            _boolish(scorecard.get("route_tca_evidence_present")) or route_tca_refs
         ):
             blockers.append("route_tca_evidence_present_failed")
         if opportunity_cost_bps > max_opportunity_cost_bps:

@@ -323,6 +323,50 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertGreaterEqual(penalties, Decimal("600"))
         self.assertEqual(summary["negative_days"], 2)
 
+    def test_consistency_penalty_preserves_order_type_execution_metrics(self) -> None:
+        payload = self._payload(
+            start_date="2026-04-01",
+            end_date="2026-04-02",
+            daily_net={"2026-04-01": "120", "2026-04-02": "80"},
+            decision_count=4,
+            filled_count=3,
+            wins=2,
+            losses=0,
+        )
+        payload["decision_count_by_order_type"] = {"market": 2, "limit": 2}
+        payload["filled_count_by_order_type"] = {"market": 2, "limit": 1}
+        payload["limit_fill_rate"] = "0.50"
+
+        _, summary = frontier._consistency_penalty(
+            full_window_payload=payload,
+            policy=frontier.FullWindowConsistencyPolicy(
+                target_net_per_day=Decimal("10"),
+                min_daily_net_pnl=Decimal("-1000"),
+                min_active_days=1,
+                min_active_ratio=Decimal("0"),
+                min_positive_days=1,
+                max_worst_day_loss=Decimal("1000"),
+                max_negative_days=2,
+                max_drawdown=Decimal("1000"),
+                max_best_day_share_of_total_pnl=Decimal("1"),
+                min_avg_filled_notional_per_day=Decimal("0"),
+                min_avg_filled_notional_per_active_day=Decimal("0"),
+                require_every_day_active=False,
+            ),
+        )
+
+        self.assertEqual(
+            summary["decision_count_by_order_type"], {"market": 2, "limit": 2}
+        )
+        self.assertEqual(
+            summary["filled_count_by_order_type"], {"market": 2, "limit": 1}
+        )
+        self.assertEqual(summary["limit_fill_rate"], "0.50")
+        self.assertEqual(summary["market_limit_order_mix_sample_count"], 4)
+        self.assertEqual(summary["limit_fill_probability_sample_count"], 2)
+        self.assertTrue(summary["market_limit_order_mix_evidence_present"])
+        self.assertTrue(summary["limit_fill_probability_evidence_present"])
+
     def test_train_screen_failures_reports_worst_day_loss(self) -> None:
         failures = frontier._train_screen_failures(
             train_payload=self._payload(

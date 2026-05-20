@@ -1074,13 +1074,16 @@ def evaluate_profit_target_oracle(
     order_type_artifact_present = bool(order_type_artifact_refs)
     order_type_ablation_passed = _boolish(
         scorecard.get("order_type_ablation_passed")
-        or scorecard.get("market_limit_order_mix_passed")
         or scorecard.get("market_limit_execution_policy_passed")
     )
     order_type_ablation_sample_count = _nonnegative_int(
         scorecard.get("order_type_ablation_sample_count")
         or scorecard.get("market_limit_order_mix_sample_count")
         or scorecard.get("limit_fill_probability_sample_count")
+    )
+    market_limit_order_mix_evidence_present = _boolish(
+        scorecard.get("market_limit_order_mix_evidence_present")
+        or scorecard.get("market_limit_order_mix_present")
     )
     limit_fill_probability_evidence_present = _boolish(
         scorecard.get("limit_fill_probability_evidence_present")
@@ -1131,6 +1134,16 @@ def evaluate_profit_target_oracle(
                 if require_order_type_execution_quality
                 else Decimal("0"),
             ),
+            {
+                "metric": "market_limit_order_mix_evidence_present",
+                "observed": str(market_limit_order_mix_evidence_present).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "retail_limit_orders_rof_rfaf049_2025",
+                "passed": market_limit_order_mix_evidence_present
+                if require_order_type_execution_quality
+                else True,
+            },
             {
                 "metric": "limit_fill_probability_evidence_present",
                 "observed": str(limit_fill_probability_evidence_present).lower(),

@@ -439,9 +439,30 @@ research_sources:
     published_at: '2025-10-07'
     claims:
       - claim_id: market_limit_order_type_ablation
+        claim_type: feature_recipe
+        claim_text: Market-versus-limit execution policies need replayed order-type ablations against matched route TCA, fill probability, and shortfall evidence.
+        data_requirements:
+          - order_type_ablation
+          - market_limit_order_mix
+          - limit_fill_probability
+          - route_tca
+          - execution_shortfall
+        asset_scope: us_equities_execution
+        horizon_scope: intraday_execution
+        expected_direction: neutral
         summary: Market-versus-limit execution policies need replayed order-type ablations against matched route TCA, fill probability, and shortfall evidence.
         implication: Block promotion for mixed market/limit candidates until order-type ablation artifacts prove the chosen order type beats the alternative after costs.
       - claim_id: patient_limit_order_opportunity_cost
+        claim_type: risk_constraint
+        claim_text: Passive limit execution can improve price only when non-fill and adverse-selection opportunity costs stay inside the strategy edge budget.
+        data_requirements:
+          - opportunity_cost
+          - price_improvement
+          - fill_outcomes
+          - post_cost_net_pnl
+        asset_scope: us_equities_execution
+        horizon_scope: intraday_execution
+        expected_direction: neutral
         summary: Passive limit execution can improve price only when non-fill and adverse-selection opportunity costs stay inside the strategy edge budget.
         implication: Require opportunity-cost and price-improvement evidence before using patient limit-order behavior as promotion proof.
   - source_id: retail_order_flow_segmentation_2026
@@ -450,9 +471,29 @@ research_sources:
     published_at: '2026-05-18'
     claims:
       - claim_id: retail_flow_segmentation_route_quality
+        claim_type: validation_requirement
+        claim_text: Broker and flow-segment execution quality can vary enough that route-level evidence must be separated from headline backtest results.
+        data_requirements:
+          - broker_route
+          - route_tca
+          - price_improvement
+          - execution_shortfall
+        asset_scope: us_equities_execution
+        horizon_scope: intraday_execution
+        expected_direction: neutral
         summary: Broker and flow-segment execution quality can vary enough that route-level evidence must be separated from headline backtest results.
         implication: Treat route price improvement and broker-route TCA as mandatory validation evidence for mixed market/limit execution sleeves.
       - claim_id: broker_route_price_improvement_dispersion
+        claim_type: risk_constraint
+        claim_text: Price-improvement observations must be tied to the actual route and order type before counting toward promotion.
+        data_requirements:
+          - price_improvement
+          - route_tca
+          - market_limit_order_mix
+          - fill_outcomes
+        asset_scope: us_equities_execution
+        horizon_scope: intraday_execution
+        expected_direction: neutral
         summary: Price-improvement observations must be tied to the actual route and order type before counting toward promotion.
         implication: Fail closed when route TCA, price improvement, or fill-outcome artifacts are missing.
   - source_id: lobdiff_event_stream_prediction_2026

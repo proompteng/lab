@@ -154,6 +154,9 @@ class TestProfitTargetOracle(TestCase):
         self.assertIn("order_type_ablation_artifact_present_failed", result["blockers"])
         self.assertIn("order_type_ablation_sample_count_failed", result["blockers"])
         self.assertIn(
+            "market_limit_order_mix_evidence_present_failed", result["blockers"]
+        )
+        self.assertIn(
             "limit_fill_probability_evidence_present_failed", result["blockers"]
         )
         self.assertIn("price_improvement_evidence_present_failed", result["blockers"])
@@ -172,6 +175,7 @@ class TestProfitTargetOracle(TestCase):
             "order_type_ablation_passed": True,
             "order_type_ablation_artifact_ref": "/tmp/order-type-ablation.json",
             "order_type_ablation_sample_count": 60,
+            "market_limit_order_mix_evidence_present": True,
             "limit_fill_probability_evidence_present": True,
             "price_improvement_evidence_present": True,
             "opportunity_cost_evidence_present": True,
