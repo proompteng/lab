@@ -2828,11 +2828,44 @@ def _candidate_sleeve_goal_rows(
     portfolio: PortfolioCandidateSpec | None,
     limit: int = 16,
 ) -> list[dict[str, Any]]:
-    if portfolio is not None:
-        return [dict(sleeve) for sleeve in portfolio.sleeves[:limit]]
-
     spec_by_id = {spec.candidate_spec_id: spec for spec in candidate_specs}
     evidence_by_spec = {bundle.candidate_spec_id: bundle for bundle in evidence_bundles}
+    if portfolio is not None:
+        rows: list[dict[str, Any]] = []
+        for sleeve in portfolio.sleeves[:limit]:
+            row = dict(sleeve)
+            candidate_spec_id = _string(row.get("candidate_spec_id"))
+            spec = spec_by_id.get(candidate_spec_id)
+            evidence = evidence_by_spec.get(candidate_spec_id)
+            scorecard = evidence.objective_scorecard if evidence is not None else {}
+            if spec is not None:
+                row["family_template_id"] = spec.family_template_id
+                row["runtime_family"] = spec.runtime_family
+                row["runtime_strategy_name"] = spec.runtime_strategy_name
+                row["market_impact_proof"] = (
+                    _candidate_board_market_impact_proof_summary(scorecard)
+                )
+                row["regime_specialist_validation"] = (
+                    _candidate_board_regime_specialist_summary(spec, scorecard)
+                )
+                row["order_type_execution_quality"] = (
+                    _candidate_board_order_type_execution_quality_summary(
+                        spec, scorecard
+                    )
+                )
+            row["evidence_status"] = "replayed" if evidence is not None else "missing"
+            row["evidence_lineage"] = _candidate_board_evidence_lineage_summary(
+                evidence
+            )
+            row["replay_window_coverage"] = (
+                _candidate_board_replay_window_coverage_summary(scorecard)
+            )
+            row["replay_artifact_refs"] = (
+                list(evidence.replay_artifact_refs) if evidence is not None else []
+            )
+            rows.append(row)
+        return rows
+
     failure_by_spec = {
         _string(row.get("candidate_spec_id")): list(
             cast(Sequence[Any], row.get("failure_reasons") or ())
@@ -7450,6 +7483,109 @@ def _candidate_board_replay_window_coverage_summary(
     }
 
 
+def _candidate_board_market_impact_proof_summary(
+    scorecard: Mapping[str, Any],
+) -> dict[str, Any]:
+    components = _mapping(scorecard.get("market_impact_stress_components"))
+    source_marker = _string(components.get("source_marker"))
+    model = _string(
+        scorecard.get("nonlinear_market_impact_stress_model")
+        or scorecard.get("market_impact_stress_model")
+    )
+    artifact_ref = _string(
+        scorecard.get("market_impact_stress_artifact_ref")
+        or scorecard.get("impact_stress_artifact_ref")
+        or scorecard.get("cost_shock_artifact_ref")
+    )
+    cost_bps = _candidate_board_decimal_field(
+        scorecard, "nonlinear_market_impact_stress_cost_bps"
+    ) or _candidate_board_decimal_field(scorecard, "market_impact_stress_cost_bps")
+    net_pnl_per_day = _candidate_board_decimal_field(
+        scorecard, "nonlinear_market_impact_stress_net_pnl_per_day"
+    ) or _candidate_board_decimal_field(
+        scorecard, "market_impact_stress_net_pnl_per_day"
+    )
+    nonlinear_passed = _boolish(
+        scorecard.get("nonlinear_market_impact_stress_passed")
+        or scorecard.get("market_impact_stress_passed")
+    )
+    blockers: list[str] = []
+    if not artifact_ref:
+        blockers.append("market_impact_stress_artifact_missing")
+    if not model:
+        blockers.append("market_impact_stress_model_missing")
+    if not cost_bps or _decimal(cost_bps) <= 0:
+        blockers.append("market_impact_stress_cost_bps_missing")
+    if not net_pnl_per_day:
+        blockers.append("market_impact_stress_net_pnl_missing")
+    if not source_marker:
+        blockers.append("nonlinear_market_impact_components_missing")
+    if model and artifact_ref and cost_bps and not nonlinear_passed:
+        blockers.append("nonlinear_market_impact_stress_failed")
+    if not scorecard:
+        state = "not_replayed"
+    elif blockers:
+        state = "blocked"
+    else:
+        state = "passed"
+    return {
+        "state": state,
+        "passed": state == "passed",
+        "model": model,
+        "cost_bps": cost_bps,
+        "net_pnl_per_day": net_pnl_per_day,
+        "artifact_ref": artifact_ref,
+        "component_source_marker": source_marker,
+        "selected_component_model": _string(components.get("selected_model")),
+        "selected_component_cost_bps": _string(components.get("selected_cost_bps")),
+        "blockers": blockers,
+        "source_marker": "realistic_market_impact_arxiv_2603_29086_2026",
+    }
+
+
+def _candidate_board_regime_specialist_summary(
+    spec: CandidateSpec,
+    scorecard: Mapping[str, Any],
+) -> dict[str, Any]:
+    required_rate = _decimal(
+        spec.hard_vetoes.get("required_min_regime_slice_pass_rate")
+        or spec.promotion_contract.get("required_min_regime_slice_pass_rate")
+    )
+    observed_rate = _decimal(scorecard.get("regime_slice_pass_rate"))
+    source_claims = _list_of_mappings(spec.feature_contract.get("source_claims"))
+    regime_claim_ids = [
+        _string(claim.get("claim_id"))
+        for claim in source_claims
+        if _string(claim.get("claim_type"))
+        in {"market_regime", "validation_requirement", "risk_constraint"}
+    ]
+    blockers: list[str] = []
+    if scorecard and required_rate > 0 and "regime_slice_pass_rate" not in scorecard:
+        blockers.append("regime_slice_pass_rate_missing")
+    if scorecard and required_rate > 0 and observed_rate < required_rate:
+        blockers.append("regime_slice_pass_rate_below_specialist_threshold")
+    if not scorecard:
+        state = "not_replayed"
+    elif blockers:
+        state = "blocked"
+    else:
+        state = "passed"
+    return {
+        "state": state,
+        "passed": state == "passed",
+        "regime_slice_pass_rate": str(observed_rate) if scorecard else "",
+        "required_min_regime_slice_pass_rate": str(required_rate)
+        if required_rate > 0
+        else "",
+        "regime_claim_ids": [claim_id for claim_id in regime_claim_ids if claim_id],
+        "blockers": blockers,
+        "source_markers": [
+            "risk_sensitive_specialist_routing_arxiv_2604_10402_2026",
+            "validated_vvg_classifier_arxiv_2605_11423_2026",
+        ],
+    }
+
+
 def _candidate_board_scorecard_with_replay_window_blockers(
     scorecard: Mapping[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -7625,6 +7761,12 @@ def _candidate_board_status_digest(rows: Sequence[Mapping[str, Any]]) -> str:
             "target_met": bool(row.get("target_met")),
             "oracle_passed": bool(row.get("oracle_passed")),
             "activity_count": _candidate_board_activity_count(row),
+            "market_impact_proof_state": _string(
+                _mapping(row.get("market_impact_proof")).get("state")
+            ),
+            "regime_specialist_state": _string(
+                _mapping(row.get("regime_specialist_validation")).get("state")
+            ),
             "blockers": [
                 _string(blocker)
                 for blocker in cast(Sequence[Any], row.get("blockers") or ())
@@ -7666,6 +7808,77 @@ def _candidate_board_double_oos_summary(
         "passed_candidate_count": len(passed_rows),
         "missing_artifact_candidate_count": len(missing_artifact_rows),
         "max_independent_window_count": max(independent_window_counts, default=0),
+        "blockers": blockers,
+    }
+
+
+def _candidate_board_portfolio_promotion_subject(
+    *,
+    portfolio: PortfolioCandidateSpec | None,
+    portfolio_payload: Mapping[str, Any],
+    portfolio_scorecard: Mapping[str, Any],
+    promotion_readiness: Mapping[str, Any],
+    runtime_closure: Mapping[str, Any],
+    rows: Sequence[Mapping[str, Any]],
+) -> dict[str, Any] | None:
+    if portfolio is None:
+        return None
+    source_candidate_ids = [
+        _string(candidate_id)
+        for candidate_id in cast(Sequence[Any], portfolio.source_candidate_ids)
+        if _string(candidate_id)
+    ]
+    sleeve_candidate_spec_ids = [
+        _string(sleeve.get("candidate_spec_id"))
+        for sleeve in _list_of_mappings(portfolio_payload.get("sleeves"))
+        if _string(sleeve.get("candidate_spec_id"))
+    ]
+    readiness_blockers = [
+        _string(blocker)
+        for blocker in cast(Sequence[Any], promotion_readiness.get("blockers") or ())
+        if _string(blocker)
+    ]
+    blockers = list(
+        dict.fromkeys([*_oracle_blockers(portfolio_scorecard), *readiness_blockers])
+    )
+    return {
+        "type": "portfolio",
+        "portfolio_candidate_id": _string(
+            portfolio_payload.get("portfolio_candidate_id")
+        ),
+        "source_candidate_ids": source_candidate_ids,
+        "sleeve_candidate_spec_ids": sleeve_candidate_spec_ids,
+        "oracle_passed": _boolish(portfolio_scorecard.get("oracle_passed")),
+        "target_met": _boolish(portfolio_scorecard.get("target_met")),
+        "net_pnl_per_day": _candidate_board_decimal_field(
+            portfolio_scorecard, "net_pnl_per_day"
+        )
+        or _candidate_board_decimal_field(
+            portfolio_scorecard, "portfolio_post_cost_net_pnl_per_day"
+        ),
+        "market_impact_proof": _candidate_board_market_impact_proof_summary(
+            portfolio_scorecard
+        ),
+        "runtime_closure_status": _string(runtime_closure.get("status")),
+        "promotion_readiness_status": _string(promotion_readiness.get("status")),
+        "promotable": _boolish(promotion_readiness.get("promotable")),
+        "component_rows": [
+            {
+                "candidate_spec_id": _string(row.get("candidate_spec_id")),
+                "candidate_id": _string(row.get("candidate_id")),
+                "status": _string(row.get("status")),
+                "oracle_passed": _boolish(row.get("oracle_passed")),
+                "target_met": _boolish(row.get("target_met")),
+                "market_impact_proof_state": _string(
+                    _mapping(row.get("market_impact_proof")).get("state")
+                ),
+                "regime_specialist_state": _string(
+                    _mapping(row.get("regime_specialist_validation")).get("state")
+                ),
+            }
+            for row in rows
+            if _string(row.get("candidate_spec_id")) in set(sleeve_candidate_spec_ids)
+        ],
         "blockers": blockers,
     }
 
@@ -7715,6 +7928,10 @@ def _candidate_board_payload(
         )
         scorecard, replay_window_coverage = (
             _candidate_board_scorecard_with_replay_window_blockers(scorecard)
+        )
+        market_impact_proof = _candidate_board_market_impact_proof_summary(scorecard)
+        regime_specialist_validation = _candidate_board_regime_specialist_summary(
+            spec, scorecard
         )
         scorecard, rejected_signal_summary = (
             _candidate_board_scorecard_with_rejected_signal_blockers(spec, scorecard)
@@ -7838,6 +8055,8 @@ def _candidate_board_payload(
                 "double_oos_cost_shock_net_pnl_per_day": _candidate_board_decimal_field(
                     scorecard, "double_oos_cost_shock_net_pnl_per_day"
                 ),
+                "market_impact_proof": market_impact_proof,
+                "regime_specialist_validation": regime_specialist_validation,
                 "rejected_signal_outcome_learning": rejected_signal_summary,
                 "order_type_execution_quality": order_type_summary,
                 "evidence_lineage": evidence_lineage,
@@ -7859,9 +8078,18 @@ def _candidate_board_payload(
     best_executed_candidate = _candidate_board_best_executed_candidate(rows)
     closest_promotion_candidate = _candidate_board_closest_promotion_candidate(rows)
     promotion_ready = _boolish(promotion_readiness.get("promotable"))
+    promotion_subject = _candidate_board_portfolio_promotion_subject(
+        portfolio=portfolio,
+        portfolio_payload=portfolio_payload,
+        portfolio_scorecard=portfolio_scorecard,
+        promotion_readiness=promotion_readiness,
+        runtime_closure=runtime_closure,
+        rows=rows,
+    )
     promotion_candidate_found = (
+        promotion_ready and portfolio_oracle_passed and promotion_subject is not None
+    ) or (
         promotion_ready
-        and portfolio_oracle_passed
         and closest_promotion_candidate is not None
         and bool(closest_promotion_candidate.get("oracle_passed"))
     )
@@ -7878,6 +8106,7 @@ def _candidate_board_payload(
         "best_research_candidate": best_research_candidate,
         "best_executed_candidate": best_executed_candidate,
         "closest_promotion_candidate": closest_promotion_candidate,
+        "promotion_subject": promotion_subject,
         "double_oos_summary": _candidate_board_double_oos_summary(rows),
         "best_portfolio_candidate_id": _string(
             portfolio_payload.get("portfolio_candidate_id")

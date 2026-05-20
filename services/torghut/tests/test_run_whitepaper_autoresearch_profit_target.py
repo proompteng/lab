@@ -1489,6 +1489,17 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                         "avg_filled_notional_per_day": "500000",
                         "market_impact_stress_passed": True,
                         "market_impact_stress_artifact_ref": "feedback://market-impact",
+                        "market_impact_stress_model": "almgren_chriss_proxy",
+                        "market_impact_stress_cost_bps": "6",
+                        "market_impact_stress_components": {
+                            "source_marker": "realistic_market_impact_arxiv_2603_29086_2026",
+                            "selected_model": "almgren_chriss_proxy",
+                            "selected_cost_bps": "6",
+                        },
+                        "nonlinear_market_impact_stress_passed": True,
+                        "nonlinear_market_impact_stress_model": "almgren_chriss_proxy",
+                        "nonlinear_market_impact_stress_cost_bps": "6",
+                        "nonlinear_market_impact_stress_net_pnl_per_day": "500",
                         "market_impact_liquidity_evidence_present": True,
                         "market_impact_stress_net_pnl_per_day": "500",
                         "delay_adjusted_depth_stress_passed": True,
@@ -4563,6 +4574,22 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
 
     def test_candidate_board_helpers_keep_blockers_explicit(self) -> None:
+        spec = replace(
+            self._candidate_spec("spec-regime-diagnostics"),
+            hard_vetoes={"required_min_regime_slice_pass_rate": "0.45"},
+            feature_contract={
+                "source_claims": [
+                    {
+                        "claim_id": "risk-sensitive-routing",
+                        "claim_type": "market_regime",
+                    },
+                    {
+                        "claim_id": "vvg-validation",
+                        "claim_type": "validation_requirement",
+                    },
+                ]
+            },
+        )
         evidence = runner.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-test",
@@ -4581,6 +4608,43 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
 
         self.assertEqual(runner._candidate_board_int_field({"bad": object()}, "bad"), 0)
+        self.assertEqual(
+            runner._candidate_board_market_impact_proof_summary(
+                {
+                    "market_impact_stress_model": "almgren_chriss_proxy",
+                    "market_impact_stress_cost_bps": "150",
+                    "market_impact_stress_net_pnl_per_day": "510",
+                    "market_impact_stress_artifact_ref": "/tmp/impact.json",
+                    "market_impact_stress_components": {
+                        "source_marker": "realistic_market_impact_arxiv_2603_29086_2026",
+                        "selected_model": "almgren_chriss_proxy",
+                        "selected_cost_bps": "150",
+                    },
+                    "nonlinear_market_impact_stress_passed": True,
+                }
+            )["state"],
+            "passed",
+        )
+        missing_impact = runner._candidate_board_market_impact_proof_summary(
+            {"target_met": True}
+        )
+        self.assertEqual(missing_impact["state"], "blocked")
+        self.assertIn(
+            "nonlinear_market_impact_components_missing",
+            missing_impact["blockers"],
+        )
+        regime_summary = runner._candidate_board_regime_specialist_summary(
+            spec, {"regime_slice_pass_rate": "0.30"}
+        )
+        self.assertEqual(regime_summary["state"], "blocked")
+        self.assertIn(
+            "regime_slice_pass_rate_below_specialist_threshold",
+            regime_summary["blockers"],
+        )
+        self.assertEqual(
+            regime_summary["regime_claim_ids"],
+            ["risk-sensitive-routing", "vvg-validation"],
+        )
         self.assertEqual(
             runner._candidate_board_blockers(
                 selected_for_replay=True,
@@ -4748,6 +4812,139 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertEqual(rows[0]["order_type_execution_quality"]["sample_count"], 60)
         self.assertTrue(rows[0]["order_type_execution_quality"]["passed"])
+
+        portfolio = runner.PortfolioCandidateSpec(
+            schema_version="torghut.portfolio-candidate-spec.v1",
+            portfolio_candidate_id="portfolio-sleeve-order-type-proof",
+            source_candidate_ids=(evidence.candidate_id,),
+            target_net_pnl_per_day=Decimal("500"),
+            sleeves=(
+                {
+                    "candidate_id": evidence.candidate_id,
+                    "candidate_spec_id": spec.candidate_spec_id,
+                    "weight": "1",
+                },
+            ),
+            capital_budget={},
+            correlation_budget={},
+            drawdown_budget={},
+            evidence_refs=(),
+            objective_scorecard={"target_met": True, "oracle_passed": True},
+            optimizer_report={},
+        )
+        portfolio_rows = runner._candidate_sleeve_goal_rows(
+            candidate_specs=(spec,),
+            candidate_selection={"rows": []},
+            evidence_bundles=(evidence,),
+            false_positive_table=(),
+            best_false_negative_table=(),
+            portfolio=portfolio,
+        )
+
+        self.assertEqual(portfolio_rows[0]["evidence_status"], "replayed")
+        self.assertEqual(
+            portfolio_rows[0]["replay_artifact_refs"],
+            list(evidence.replay_artifact_refs),
+        )
+        self.assertTrue(portfolio_rows[0]["evidence_lineage"]["passed"])
+        self.assertTrue(portfolio_rows[0]["order_type_execution_quality"]["passed"])
+        self.assertEqual(portfolio_rows[0]["market_impact_proof"]["state"], "blocked")
+
+    def test_candidate_board_marks_portfolio_promotion_found_when_portfolio_oracle_passes(
+        self,
+    ) -> None:
+        spec = self._candidate_spec("spec-portfolio-promotion-subject")
+        evidence = runner.CandidateEvidenceBundle(
+            schema_version="torghut.candidate-evidence-bundle.v1",
+            evidence_bundle_id="ev-portfolio-promotion-subject",
+            candidate_id="cand-portfolio-promotion-subject",
+            candidate_spec_id=spec.candidate_spec_id,
+            dataset_snapshot_id="snapshot-portfolio-promotion-subject",
+            feature_spec_hash="hash-portfolio-promotion-subject",
+            code_commit="commit-test",
+            replay_artifact_refs=("component-replay.json",),
+            objective_scorecard={
+                "target_met": False,
+                "oracle_passed": False,
+                "net_pnl_per_day": "260",
+            },
+            fold_metrics=(),
+            stress_metrics=(),
+            cost_calibration={},
+            null_comparator={},
+            promotion_readiness={},
+        )
+        portfolio = runner.PortfolioCandidateSpec(
+            schema_version="torghut.portfolio-candidate-spec.v1",
+            portfolio_candidate_id="portfolio-promotion-subject",
+            source_candidate_ids=(evidence.candidate_id,),
+            target_net_pnl_per_day=Decimal("500"),
+            sleeves=(
+                {
+                    "candidate_id": evidence.candidate_id,
+                    "candidate_spec_id": spec.candidate_spec_id,
+                    "weight": "1",
+                },
+            ),
+            capital_budget={},
+            correlation_budget={},
+            drawdown_budget={},
+            evidence_refs=("portfolio-replay.json",),
+            objective_scorecard={
+                "target_met": True,
+                "oracle_passed": True,
+                "net_pnl_per_day": "535",
+                "market_impact_stress_artifact_ref": "portfolio-impact.json",
+                "market_impact_stress_model": "almgren_chriss_proxy",
+                "market_impact_stress_cost_bps": "8",
+                "market_impact_stress_net_pnl_per_day": "515",
+                "market_impact_stress_components": {
+                    "source_marker": "realistic_market_impact_arxiv_2603_29086_2026",
+                    "selected_model": "almgren_chriss_proxy",
+                    "selected_cost_bps": "8",
+                },
+                "nonlinear_market_impact_stress_passed": True,
+            },
+            optimizer_report={},
+        )
+
+        board = runner._candidate_board_payload(
+            epoch_id="epoch-portfolio-promotion-subject",
+            output_dir=Path("/tmp/torghut-test"),
+            target=Decimal("500"),
+            candidate_specs=(spec,),
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                        "rank": 1,
+                    }
+                ]
+            },
+            pre_replay_proposal_rows=(),
+            proposal_rows=(),
+            evidence_bundles=(evidence,),
+            portfolio=portfolio,
+            promotion_readiness={"status": "promotion_ready", "promotable": True},
+            runtime_closure={"status": "ready_for_promotion_review"},
+        )
+
+        self.assertEqual(board["current_answer"], "promotion_candidate_found")
+        self.assertEqual(board["promotion_subject"]["type"], "portfolio")
+        self.assertEqual(
+            board["promotion_subject"]["portfolio_candidate_id"],
+            "portfolio-promotion-subject",
+        )
+        self.assertTrue(board["promotion_subject"]["oracle_passed"])
+        self.assertTrue(board["promotion_subject"]["promotable"])
+        self.assertEqual(
+            board["promotion_subject"]["market_impact_proof"]["state"], "passed"
+        )
+        self.assertFalse(board["closest_promotion_candidate"]["oracle_passed"])
+        self.assertEqual(
+            board["rows"][0]["status"], "portfolio_component_passed_oracle"
+        )
 
     def test_candidate_board_fails_rejected_signal_candidate_without_labels(
         self,
