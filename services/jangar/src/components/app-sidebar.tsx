@@ -28,7 +28,6 @@ import {
   IconHeart,
   IconHome,
   IconList,
-  IconMessages,
   IconTerminal2,
 } from '@tabler/icons-react'
 import { Link, useRouterState } from '@tanstack/react-router'
@@ -63,12 +62,6 @@ const appNav: AppNavItem[] = [
     ],
   },
   { to: '/terminals', label: 'Terminals', icon: IconTerminal2 },
-  {
-    to: '/agents',
-    label: 'Agent comms',
-    icon: IconMessages,
-    children: [{ to: '/agents/general', label: 'General' }],
-  },
   {
     to: '/atlas',
     label: 'Atlas',

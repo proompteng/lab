@@ -17,7 +17,6 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as TerminalsIndexRouteImport } from './routes/terminals/index'
 import { Route as LibraryIndexRouteImport } from './routes/library/index'
 import { Route as AtlasIndexRouteImport } from './routes/atlas/index'
-import { Route as AgentsIndexRouteImport } from './routes/agents/index'
 import { Route as TorghutVisualsRouteImport } from './routes/torghut/visuals'
 import { Route as TorghutTradingRouteImport } from './routes/torghut/trading'
 import { Route as TorghutSymbolsRouteImport } from './routes/torghut/symbols'
@@ -37,8 +36,6 @@ import { Route as ApiMemoriesRouteImport } from './routes/api/memories'
 import { Route as ApiHealthRouteImport } from './routes/api/health'
 import { Route as ApiEnrichRouteImport } from './routes/api/enrich'
 import { Route as ApiCodeSearchRouteImport } from './routes/api/code-search'
-import { Route as AgentsGeneralRouteImport } from './routes/agents/general'
-import { Route as AgentsRunIdRouteImport } from './routes/agents/$runId'
 import { Route as TerminalsSessionIdIndexRouteImport } from './routes/terminals/$sessionId/index'
 import { Route as LibraryWhitepapersIndexRouteImport } from './routes/library/whitepapers/index'
 import { Route as GithubPullsIndexRouteImport } from './routes/github/pulls/index'
@@ -164,11 +161,6 @@ const AtlasIndexRoute = AtlasIndexRouteImport.update({
   path: '/atlas/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AgentsIndexRoute = AgentsIndexRouteImport.update({
-  id: '/agents/',
-  path: '/agents/',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const TorghutVisualsRoute = TorghutVisualsRouteImport.update({
   id: '/torghut/visuals',
   path: '/torghut/visuals',
@@ -262,16 +254,6 @@ const ApiEnrichRoute = ApiEnrichRouteImport.update({
 const ApiCodeSearchRoute = ApiCodeSearchRouteImport.update({
   id: '/api/code-search',
   path: '/api/code-search',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AgentsGeneralRoute = AgentsGeneralRouteImport.update({
-  id: '/agents/general',
-  path: '/agents/general',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AgentsRunIdRoute = AgentsRunIdRouteImport.update({
-  id: '/agents/$runId',
-  path: '/agents/$runId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const TerminalsSessionIdIndexRoute = TerminalsSessionIdIndexRouteImport.update({
@@ -754,8 +736,6 @@ export interface FileRoutesByFullPath {
   '/mcp': typeof McpRoute
   '/memories': typeof MemoriesRoute
   '/ready': typeof ReadyRoute
-  '/agents/$runId': typeof AgentsRunIdRoute
-  '/agents/general': typeof AgentsGeneralRoute
   '/api/code-search': typeof ApiCodeSearchRoute
   '/api/enrich': typeof ApiEnrichRoute
   '/api/health': typeof ApiHealthRoute
@@ -775,7 +755,6 @@ export interface FileRoutesByFullPath {
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/trading': typeof TorghutTradingRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
-  '/agents/': typeof AgentsIndexRoute
   '/atlas/': typeof AtlasIndexRoute
   '/library/': typeof LibraryIndexRoute
   '/terminals/': typeof TerminalsIndexRoute
@@ -870,8 +849,6 @@ export interface FileRoutesByTo {
   '/mcp': typeof McpRoute
   '/memories': typeof MemoriesRoute
   '/ready': typeof ReadyRoute
-  '/agents/$runId': typeof AgentsRunIdRoute
-  '/agents/general': typeof AgentsGeneralRoute
   '/api/code-search': typeof ApiCodeSearchRoute
   '/api/enrich': typeof ApiEnrichRoute
   '/api/health': typeof ApiHealthRoute
@@ -889,7 +866,6 @@ export interface FileRoutesByTo {
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/trading': typeof TorghutTradingRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
-  '/agents': typeof AgentsIndexRoute
   '/atlas': typeof AtlasIndexRoute
   '/library': typeof LibraryIndexRoute
   '/terminals': typeof TerminalsIndexRoute
@@ -985,8 +961,6 @@ export interface FileRoutesById {
   '/mcp': typeof McpRoute
   '/memories': typeof MemoriesRoute
   '/ready': typeof ReadyRoute
-  '/agents/$runId': typeof AgentsRunIdRoute
-  '/agents/general': typeof AgentsGeneralRoute
   '/api/code-search': typeof ApiCodeSearchRoute
   '/api/enrich': typeof ApiEnrichRoute
   '/api/health': typeof ApiHealthRoute
@@ -1006,7 +980,6 @@ export interface FileRoutesById {
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/trading': typeof TorghutTradingRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
-  '/agents/': typeof AgentsIndexRoute
   '/atlas/': typeof AtlasIndexRoute
   '/library/': typeof LibraryIndexRoute
   '/terminals/': typeof TerminalsIndexRoute
@@ -1103,8 +1076,6 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/memories'
     | '/ready'
-    | '/agents/$runId'
-    | '/agents/general'
     | '/api/code-search'
     | '/api/enrich'
     | '/api/health'
@@ -1124,7 +1095,6 @@ export interface FileRouteTypes {
     | '/torghut/symbols'
     | '/torghut/trading'
     | '/torghut/visuals'
-    | '/agents/'
     | '/atlas/'
     | '/library/'
     | '/terminals/'
@@ -1219,8 +1189,6 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/memories'
     | '/ready'
-    | '/agents/$runId'
-    | '/agents/general'
     | '/api/code-search'
     | '/api/enrich'
     | '/api/health'
@@ -1238,7 +1206,6 @@ export interface FileRouteTypes {
     | '/torghut/symbols'
     | '/torghut/trading'
     | '/torghut/visuals'
-    | '/agents'
     | '/atlas'
     | '/library'
     | '/terminals'
@@ -1333,8 +1300,6 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/memories'
     | '/ready'
-    | '/agents/$runId'
-    | '/agents/general'
     | '/api/code-search'
     | '/api/enrich'
     | '/api/health'
@@ -1354,7 +1319,6 @@ export interface FileRouteTypes {
     | '/torghut/symbols'
     | '/torghut/trading'
     | '/torghut/visuals'
-    | '/agents/'
     | '/atlas/'
     | '/library/'
     | '/terminals/'
@@ -1450,8 +1414,6 @@ export interface RootRouteChildren {
   McpRoute: typeof McpRoute
   MemoriesRoute: typeof MemoriesRoute
   ReadyRoute: typeof ReadyRoute
-  AgentsRunIdRoute: typeof AgentsRunIdRoute
-  AgentsGeneralRoute: typeof AgentsGeneralRoute
   ApiCodeSearchRoute: typeof ApiCodeSearchRoute
   ApiEnrichRoute: typeof ApiEnrichRoute
   ApiHealthRoute: typeof ApiHealthRoute
@@ -1471,7 +1433,6 @@ export interface RootRouteChildren {
   TorghutSymbolsRoute: typeof TorghutSymbolsRoute
   TorghutTradingRoute: typeof TorghutTradingRoute
   TorghutVisualsRoute: typeof TorghutVisualsRoute
-  AgentsIndexRoute: typeof AgentsIndexRoute
   AtlasIndexRoute: typeof AtlasIndexRoute
   LibraryIndexRoute: typeof LibraryIndexRoute
   TerminalsIndexRoute: typeof TerminalsIndexRoute
@@ -1585,13 +1546,6 @@ declare module '@tanstack/react-router' {
       path: '/atlas'
       fullPath: '/atlas/'
       preLoaderRoute: typeof AtlasIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agents/': {
-      id: '/agents/'
-      path: '/agents'
-      fullPath: '/agents/'
-      preLoaderRoute: typeof AgentsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/torghut/visuals': {
@@ -1725,20 +1679,6 @@ declare module '@tanstack/react-router' {
       path: '/api/code-search'
       fullPath: '/api/code-search'
       preLoaderRoute: typeof ApiCodeSearchRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agents/general': {
-      id: '/agents/general'
-      path: '/agents/general'
-      fullPath: '/agents/general'
-      preLoaderRoute: typeof AgentsGeneralRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agents/$runId': {
-      id: '/agents/$runId'
-      path: '/agents/$runId'
-      fullPath: '/agents/$runId'
-      preLoaderRoute: typeof AgentsRunIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/terminals/$sessionId/': {
@@ -2561,8 +2501,6 @@ const rootRouteChildren: RootRouteChildren = {
   McpRoute: McpRoute,
   MemoriesRoute: MemoriesRoute,
   ReadyRoute: ReadyRoute,
-  AgentsRunIdRoute: AgentsRunIdRoute,
-  AgentsGeneralRoute: AgentsGeneralRoute,
   ApiCodeSearchRoute: ApiCodeSearchRoute,
   ApiEnrichRoute: ApiEnrichRoute,
   ApiHealthRoute: ApiHealthRoute,
@@ -2582,7 +2520,6 @@ const rootRouteChildren: RootRouteChildren = {
   TorghutSymbolsRoute: TorghutSymbolsRoute,
   TorghutTradingRoute: TorghutTradingRoute,
   TorghutVisualsRoute: TorghutVisualsRoute,
-  AgentsIndexRoute: AgentsIndexRoute,
   AtlasIndexRoute: AtlasIndexRoute,
   LibraryIndexRoute: LibraryIndexRoute,
   TerminalsIndexRoute: TerminalsIndexRoute,

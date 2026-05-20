@@ -687,6 +687,13 @@ fail_if_path_exists \
   "${ROOT_DIR}/services/jangar/src/routes/control-plane"
 
 fail_if_path_exists \
+  "Jangar must not retain the generic Agents communications browser surface after Agents owns platform UI/API" \
+  "${ROOT_DIR}/services/jangar/src/routes/agents" \
+  "${ROOT_DIR}/services/jangar/src/components/agent-comms.tsx" \
+  "${ROOT_DIR}/services/jangar/src/components/__tests__/agent-comms.test.ts" \
+  "${ROOT_DIR}/services/jangar/src/data/agents-api-paths.ts"
+
+fail_if_path_exists \
   "Jangar must not retain generic Agents browser control-plane components after the Agents UI/API extraction" \
   "${ROOT_DIR}/services/jangar/src/components/agents-control-plane.tsx" \
   "${ROOT_DIR}/services/jangar/src/components/agents-control-plane-search.ts" \
@@ -698,7 +705,7 @@ fail_if_path_exists \
 
 fail_if_matches \
   "Jangar app navigation must not link to generic Agents /control-plane pages after Agents owns that browser surface" \
-  '/control-plane/(implementation-specs|runs|agents|agent-runs|agent-providers|tools|tool-runs|orchestrations|orchestration-runs)' \
+  '/agents|/control-plane/(implementation-specs|runs|agents|agent-runs|agent-providers|tools|tool-runs|orchestrations|orchestration-runs)' \
   "${ROOT_DIR}/services/jangar/src/components/app-sidebar.tsx" \
   "${ROOT_DIR}/services/jangar/src/components/app-shell.tsx"
 

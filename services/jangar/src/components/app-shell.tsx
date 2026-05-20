@@ -84,7 +84,6 @@ const ROOT_LABELS = new Map<string, string>([
   ['/atlas/search', 'Search'],
   ['/atlas/enrich', 'Enrich'],
   ['/atlas/indexed', 'Indexed'],
-  ['/agents', 'Agents'],
   ['/codex', 'Codex'],
   ['/codex/search', 'Search'],
   ['/codex/runs', 'All runs'],
