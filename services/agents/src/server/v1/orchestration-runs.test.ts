@@ -1,10 +1,16 @@
+import { Effect } from 'effect'
 import { describe, expect, it, vi } from 'vitest'
 
 import { RESOURCE_MAP, type KubernetesClient } from '../kube-types'
 import type { OrchestrationRunRecord } from '../primitives-store'
 
 import { postOrchestrationRunsHandler, type OrchestrationRunsApiStore } from './orchestration-runs'
-import { OrchestrationSubmitNotFoundError, submitOrchestrationRun } from './orchestration-submit'
+import {
+  makeOrchestrationSubmitLayer,
+  OrchestrationSubmitNotFoundError,
+  submitOrchestrationRun,
+  submitOrchestrationRunWithServicesEffect,
+} from './orchestration-submit'
 
 const now = new Date('2026-05-19T12:00:00.000Z')
 
@@ -86,10 +92,11 @@ describe('orchestration runs v1 API', () => {
   it('submits an orchestration run through the Effect boundary', async () => {
     const store = createStore()
     const kube = createKube()
+    const idGenerator = vi.fn(() => 'policy-allowed-id')
 
     const response = await postOrchestrationRunsHandler(
       request({ orchestrationRef: { name: 'demo-orchestration' }, namespace: 'agents' }),
-      { storeFactory: () => store, kubeClient: kube },
+      { storeFactory: () => store, kubeClient: kube, idGenerator },
     )
 
     expect(response.status).toBe(201)
@@ -104,6 +111,50 @@ describe('orchestration runs v1 API', () => {
       expect.objectContaining({
         kind: 'OrchestrationRun',
         spec: expect.objectContaining({ deliveryId: 'delivery-1' }),
+      }),
+    )
+    expect(store.createAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityType: 'PolicyDecision',
+        entityId: 'policy-allowed-id',
+        eventType: 'policy.allowed',
+      }),
+    )
+    expect(store.close).toHaveBeenCalled()
+  })
+
+  it('provides submit dependencies through an Effect service layer', async () => {
+    const store = createStore()
+    const kube = createKube()
+    const idGenerator = vi.fn(() => 'policy-decision-1')
+    const resolveRepositoryFromParameters = vi.fn(() => 'proompteng/lab')
+
+    const result = await Effect.runPromise(
+      submitOrchestrationRunWithServicesEffect({
+        deliveryId: 'delivery-1',
+        orchestrationRef: { name: 'demo-orchestration' },
+        namespace: 'agents',
+        parameters: { repo: 'ignored' },
+      }).pipe(
+        Effect.provide(
+          makeOrchestrationSubmitLayer({
+            storeFactory: () => store,
+            kubeClient: kube,
+            idGenerator,
+            resolveRepositoryFromParameters,
+          }),
+        ),
+      ),
+    )
+
+    expect(result.idempotent).toBe(false)
+    expect(resolveRepositoryFromParameters).toHaveBeenCalledWith({ repo: 'ignored' })
+    expect(idGenerator).toHaveBeenCalledTimes(1)
+    expect(store.createAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityType: 'PolicyDecision',
+        entityId: 'policy-decision-1',
+        context: expect.objectContaining({ repository: 'proompteng/lab' }),
       }),
     )
     expect(store.close).toHaveBeenCalled()
@@ -138,6 +189,7 @@ describe('orchestration runs v1 API', () => {
   it('returns 403 for typed policy denial and still records the denied audit event', async () => {
     const store = createStore()
     const kube = createKube()
+    const idGenerator = vi.fn(() => 'policy-denied-id')
 
     const response = await postOrchestrationRunsHandler(
       request({
@@ -148,6 +200,7 @@ describe('orchestration runs v1 API', () => {
       {
         storeFactory: () => store,
         kubeClient: kube,
+        idGenerator,
         validatePolicies: vi.fn(async () => {
           throw new Error('budget daily-budget exceeded')
         }),
@@ -160,6 +213,7 @@ describe('orchestration runs v1 API', () => {
     expect(body.error).toContain('budget daily-budget exceeded')
     expect(store.createAuditEvent).toHaveBeenCalledWith(
       expect.objectContaining({
+        entityId: 'policy-denied-id',
         eventType: 'policy.denied',
         details: expect.objectContaining({
           reason: expect.stringContaining('budget daily-budget exceeded'),

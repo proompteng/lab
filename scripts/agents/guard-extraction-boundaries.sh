@@ -315,12 +315,12 @@ fail_if_matches \
 
 fail_if_matches \
   "Jangar browser control-plane routes must stay read-only for generic Agents resources after Agents owns mutation APIs" \
-  'deletePrimitiveResource|AGENTS_AGENT_RUNS_API_PATH|AGENTS_CONTROL_PLANE_API_BASE.*/resource|kind: .ImplementationSpec.|kind: .AgentRun.' \
+  'Run agent|Create spec|Save ImplementationSpec|Delete selected|deletePrimitiveResource|AGENTS_AGENT_RUNS_API_PATH|AGENTS_CONTROL_PLANE_API_BASE.*/resource|kind: .ImplementationSpec.|kind: .AgentRun.' \
   "${ROOT_DIR}/services/jangar/src/routes/control-plane"
 
 fail_if_matches \
   "Jangar browser data helpers must not expose generic Agents mutation helpers after Agents owns mutation APIs" \
-  'deletePrimitiveResource|AGENTS_AGENT_RUNS_API_PATH|method: .DELETE.' \
+  'fetchAgentOptions|AgentOption|deletePrimitiveResource|AGENTS_AGENT_RUNS_API_PATH|method: .DELETE.' \
   "${ROOT_DIR}/services/jangar/src/data/agents-control-plane.ts" \
   "${ROOT_DIR}/services/jangar/src/data/agents-api-paths.ts"
 
