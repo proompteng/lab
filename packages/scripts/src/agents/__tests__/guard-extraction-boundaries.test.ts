@@ -80,6 +80,9 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain(
       'Graf artifact config must not keep legacy MINIO_* environment fallbacks after Agents owns artifacts',
     )
+    expect(content).toContain(
+      'Jangar memory provider must use Agents memory operation APIs instead of Agents-owned Secrets or DB tables',
+    )
     expect(content).toContain('ALPACA_|mcp_servers\\.alpaca|alpaca-mcp')
     expect(content).toContain('Domain AgentRun swarm producers must use AgentRun-native NATS subject prefixes')
     expect(content).toContain(

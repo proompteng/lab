@@ -5,6 +5,7 @@ import { errorResponse } from '../http'
 import type { AgentsApiDependencies } from './agents'
 import type { AgentRunsApiDependencies } from './agent-runs'
 import type { MemoriesApiDependencies } from './memories'
+import type { MemoryOperationsApiDependencies } from './memory-operations'
 import type { MemoryQueriesApiDependencies } from './memory-queries'
 import type { OrchestrationRunsApiDependencies } from './orchestration-runs'
 import type { OrchestrationsApiDependencies } from './orchestrations'
@@ -23,6 +24,7 @@ export type AgentsV1RuntimeDependencies = {
   agents?: Partial<AgentsApiDependencies>
   agentRuns?: Partial<AgentRunsApiDependencies>
   memories?: Partial<MemoriesApiDependencies>
+  memoryOperations?: Partial<MemoryOperationsApiDependencies>
   memoryQueries?: Partial<MemoryQueriesApiDependencies>
   orchestrations?: Partial<OrchestrationsApiDependencies>
   orchestrationRuns?: Partial<OrchestrationRunsApiDependencies>
@@ -42,6 +44,9 @@ export type AgentsV1RuntimeService = {
   resolveMemoriesDependencies: (
     overrides?: Partial<MemoriesApiDependencies>,
   ) => Effect.Effect<MemoriesApiDependencies, AgentsV1RuntimeConfigurationError>
+  resolveMemoryOperationsDependencies: (
+    overrides?: Partial<MemoryOperationsApiDependencies>,
+  ) => Effect.Effect<MemoryOperationsApiDependencies, AgentsV1RuntimeConfigurationError>
   resolveMemoryQueriesDependencies: (
     overrides?: Partial<MemoryQueriesApiDependencies>,
   ) => Effect.Effect<MemoryQueriesApiDependencies, AgentsV1RuntimeConfigurationError>
@@ -113,6 +118,8 @@ export const createAgentsV1RuntimeService = (
       Effect.flatMap((resolved) => ensureStoreFactory('Memories API', resolved)),
       Effect.map((resolved) => resolved as MemoriesApiDependencies),
     ),
+  resolveMemoryOperationsDependencies: (overrides = {}) =>
+    Effect.succeed({ ...dependencies.memoryOperations, ...overrides } as MemoryOperationsApiDependencies),
   resolveMemoryQueriesDependencies: (overrides = {}) =>
     Effect.succeed({ ...dependencies.memoryQueries, ...overrides } as MemoryQueriesApiDependencies),
   resolveOrchestrationsDependencies: (overrides = {}) =>
@@ -204,6 +211,13 @@ export const resolveMemoryQueriesApiDependencies = (
 ): Promise<ResolvedDependencyResult<MemoryQueriesApiDependencies>> =>
   toResolvedDependencyResult(
     runWithConfiguredOrAdHocRuntime((service) => service.resolveMemoryQueriesDependencies(overrides)),
+  )
+
+export const resolveMemoryOperationsApiDependencies = (
+  overrides: Partial<MemoryOperationsApiDependencies> = {},
+): Promise<ResolvedDependencyResult<MemoryOperationsApiDependencies>> =>
+  toResolvedDependencyResult(
+    runWithConfiguredOrAdHocRuntime((service) => service.resolveMemoryOperationsDependencies(overrides)),
   )
 
 export const resolveOrchestrationsApiDependencies = (

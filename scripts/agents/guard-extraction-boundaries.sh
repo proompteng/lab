@@ -630,6 +630,11 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/memory-provider.ts"
 
 fail_if_matches \
+  "Jangar memory provider must use Agents memory operation APIs instead of Agents-owned Secrets or DB tables" \
+  "from 'pg'|kube\\.get\\('secret'|memory_(events|kv|embeddings)|connectionString" \
+  "${ROOT_DIR}/services/jangar/src/server/memory-provider.ts"
+
+fail_if_matches \
   "Jangar material-reentry requirement publisher must submit Signals through the Agents service boundary" \
   'kube\.apply|createKubernetesClient|RESOURCE_MAP\.Signal' \
   "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-material-reentry-requirements.ts"

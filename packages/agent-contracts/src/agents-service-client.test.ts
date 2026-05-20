@@ -10,7 +10,7 @@ import {
   submitAgentMessagesToAgentsService,
   submitOrchestrationRunToAgentsService,
 } from './agents-service-client'
-import { fetchMemoryResourceFromAgentsService } from './memory-client'
+import { fetchMemoryResourceFromAgentsService, submitMemoryOperationToAgentsService } from './memory-client'
 import { submitSwarmRequirementSignalToAgentsService } from './signals-client'
 import { fetchStageTargetResourceFromAgentsService, fetchSwarmResourcesFromAgentsService } from './swarm-read-client'
 
@@ -286,6 +286,63 @@ describe('agents-service-client', () => {
     expect((fetchMock.mock.calls[1] as unknown as [URL, RequestInit])[0].toString()).toBe(
       'http://agents.test/v1/memories/resources?name=research-memory&namespace=agents',
     )
+  })
+
+  it('submits memory operations through the dedicated Agents memory API', async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          operation: 'embedding',
+          memoryRef: 'research-memory',
+          namespace: 'agents',
+        }),
+        {
+          headers: { 'content-type': 'application/json' },
+          status: 200,
+        },
+      )
+    })
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+
+    const result = await submitMemoryOperationToAgentsService(
+      {
+        deliveryId: 'memory-op-1',
+        memoryRef: 'research-memory',
+        namespace: 'agents',
+        operation: {
+          operation: 'embedding',
+          key: 'note-1',
+          text: 'remember this',
+          metadata: { source: 'test' },
+        },
+      },
+      { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
+    )
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
+    expect(url.toString()).toBe('http://agents.test/v1/memory-operations')
+    expect(init.method).toBe('POST')
+    expect(getHeader(init.headers, 'idempotency-key')).toBe('memory-op-1')
+    expect(getHeader(init.headers, 'x-agents-client')).toBe('agent-contracts')
+    expect(JSON.parse(String(init.body))).toEqual({
+      memoryRef: 'research-memory',
+      namespace: 'agents',
+      operation: 'embedding',
+      key: 'note-1',
+      text: 'remember this',
+      metadata: { source: 'test' },
+    })
+    expect(result).toEqual({
+      ok: true,
+      status: 200,
+      body: {
+        ok: true,
+        operation: 'embedding',
+        memoryRef: 'research-memory',
+        namespace: 'agents',
+      },
+    })
   })
 
   it('patches AgentRun annotations through the dedicated Agents v1 resource boundary', async () => {

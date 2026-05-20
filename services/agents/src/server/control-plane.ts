@@ -97,6 +97,11 @@ const routeSources: RouteSourceSpec[] = [
     load: () => import('../routes/v1/memory-queries'),
   },
   {
+    file: 'src/routes/v1/memory-operations.ts',
+    sourceUrl: new URL('../routes/v1/memory-operations.ts', import.meta.url),
+    load: () => import('../routes/v1/memory-operations'),
+  },
+  {
     file: 'src/routes/v1/orchestrations.ts',
     sourceUrl: new URL('../routes/v1/orchestrations.ts', import.meta.url),
     load: () => import('../routes/v1/orchestrations'),
@@ -245,6 +250,10 @@ const configureRuntimeDependencies = () => {
     },
     memoryQueries: {
       kubeClientFactory: createKubernetesClient,
+    },
+    memoryOperations: {
+      kubeClientFactory: createKubernetesClient,
+      requireLeaderForMutation: requireLeaderForMutationHttp,
     },
     orchestrations: {
       storeFactory: createPrimitivesStore,

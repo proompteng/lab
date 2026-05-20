@@ -77,6 +77,7 @@
     "./routes/v1/memories": "./src/routes/v1/memories.ts",
     "./routes/v1/memories/$id": "./src/routes/v1/memories/$id.ts",
     "./routes/v1/memories/resources": "./src/routes/v1/memories/resources.ts",
+    "./routes/v1/memory-operations": "./src/routes/v1/memory-operations.ts",
     "./routes/v1/memory-queries": "./src/routes/v1/memory-queries.ts",
     "./routes/v1/orchestrations": "./src/routes/v1/orchestrations.ts",
     "./routes/v1/orchestrations/$id": "./src/routes/v1/orchestrations/$id.ts",
