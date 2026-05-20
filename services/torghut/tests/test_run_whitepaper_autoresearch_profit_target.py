@@ -1410,6 +1410,86 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "pre_replay_mlx_family_feedback_blocked",
         )
 
+    def test_candidate_selection_keeps_active_loss_counter_candidate(
+        self,
+    ) -> None:
+        source_spec = self._candidate_spec("spec-active-loss-source")
+        adaptive_base = self._candidate_spec(
+            "spec-active-loss-adaptive",
+            entry_minute_after_open="75",
+        )
+        adaptive_params = dict(
+            cast(dict[str, Any], adaptive_base.strategy_overrides["params"])
+        )
+        adaptive_params["feedback_remediation_profile"] = (
+            "adverse_selection_feedback_escape"
+        )
+        adaptive_spec = replace(
+            adaptive_base,
+            strategy_overrides={
+                **adaptive_base.strategy_overrides,
+                "params": adaptive_params,
+            },
+        )
+        family_feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=source_spec.candidate_spec_id,
+            candidate={
+                "candidate_id": "cand-active-loss-source",
+                "family_template_id": source_spec.family_template_id,
+                "runtime_family": source_spec.runtime_family,
+                "runtime_strategy_name": source_spec.runtime_strategy_name,
+                "objective_scorecard": {
+                    "net_pnl_per_day": "-50",
+                    "active_day_ratio": "0.67",
+                    "positive_day_ratio": "0",
+                    "negative_day_count": 2,
+                    "decision_count": 4,
+                    "filled_count": 4,
+                    "avg_filled_notional_per_day": "40000",
+                    "worst_day_loss": "90",
+                    "max_drawdown": "130",
+                    "daily_net": {
+                        "2026-05-06": "-40",
+                        "2026-05-07": "-90",
+                    },
+                },
+            },
+            dataset_snapshot_id="snap-active-loss-feedback",
+            result_path="feedback://active-loss",
+        )
+
+        _model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(adaptive_spec,),
+            feedback_evidence_bundles=(family_feedback_bundle,),
+        )
+
+        self.assertEqual(rows[0]["training_source"], "feedback_family_replay")
+        self.assertEqual(
+            rows[0]["selection_reason"],
+            "pre_replay_mlx_active_loss_counter_candidate",
+        )
+        self.assertGreater(Decimal(str(rows[0]["proposal_score"])), Decimal("-999999"))
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(adaptive_spec,),
+            proposal_rows=rows,
+            top_k=0,
+            exploration_slots=1,
+            max_candidates=1,
+            portfolio_size_min=1,
+        )
+
+        self.assertEqual(selected, [adaptive_spec])
+        self.assertEqual(selection["budget"]["eligible_candidate_count"], 1)
+        self.assertEqual(
+            selection["budget"]["active_loss_counter_candidate_selected_count"],
+            1,
+        )
+        self.assertEqual(
+            selection["rows"][0]["selection_reason"],
+            "active_loss_counter_candidate",
+        )
+
     def test_candidate_selection_blocks_no_activity_feedback_from_reaudit(
         self,
     ) -> None:

@@ -2806,6 +2806,146 @@ def _notional_throughput_feedback_escape_profile(
     )
 
 
+def _adverse_selection_feedback_escape_profile(
+    profile: Mapping[str, Any],
+) -> dict[str, Any]:
+    next_profile = json.loads(json.dumps(profile))
+    params = _mapping(next_profile.get("params"))
+    current_entries = _int_profile_param(params, "max_entries_per_session", default=4)
+    params["max_entries_per_session"] = str(max(10, min(12, current_entries + 6)))
+    params["entry_notional_max_multiplier"] = "1.0"
+    params["max_concurrent_positions"] = "1"
+    current_cooldown = _int_profile_param(params, "entry_cooldown_seconds", default=600)
+    params["entry_cooldown_seconds"] = str(max(600, min(1200, current_cooldown)))
+    current_hold_seconds = _int_profile_param(params, "max_hold_seconds", default=900)
+    params["max_hold_seconds"] = str(max(900, min(1800, current_hold_seconds)))
+    params["long_stop_loss_bps"] = str(
+        min(5, max(4, _int_profile_param(params, "long_stop_loss_bps", default=4)))
+    )
+    params["short_stop_loss_bps"] = str(
+        min(5, max(4, _int_profile_param(params, "short_stop_loss_bps", default=4)))
+    )
+    params["max_session_negative_exit_bps"] = str(
+        min(
+            4,
+            max(
+                2,
+                _int_profile_param(params, "max_session_negative_exit_bps", default=3),
+            ),
+        )
+    )
+    params["max_stop_loss_exits_per_session"] = "1"
+    params["stop_loss_lockout_seconds"] = str(
+        max(1800, _int_profile_param(params, "stop_loss_lockout_seconds", default=1800))
+    )
+    for key in (
+        "entry_minute_after_open",
+        "leader_reclaim_start_minutes_since_open",
+    ):
+        if key in params:
+            params[key] = str(
+                min(120, _int_profile_param(params, key, default=45) + 15)
+            )
+    if "entry_start_minute_utc" in params:
+        params["entry_start_minute_utc"] = str(
+            min(
+                1140,
+                _int_profile_param(params, "entry_start_minute_utc", default=840) + 15,
+            )
+        )
+    long_confirmation_steps = (
+        (
+            "min_cross_section_continuation_rank",
+            Decimal("0.08"),
+            Decimal("0.58"),
+            Decimal("0.92"),
+        ),
+        (
+            "min_cross_section_opening_window_return_rank",
+            Decimal("0.06"),
+            Decimal("0.52"),
+            Decimal("0.92"),
+        ),
+        (
+            "leader_reclaim_min_recent_imbalance_pressure",
+            Decimal("0.04"),
+            Decimal("0.04"),
+            Decimal("0.40"),
+        ),
+        (
+            "leader_reclaim_min_recent_microprice_bias_bps",
+            Decimal("0.12"),
+            Decimal("0.12"),
+            Decimal("0.80"),
+        ),
+        (
+            "min_recent_imbalance_pressure",
+            Decimal("0.04"),
+            Decimal("0.02"),
+            Decimal("0.40"),
+        ),
+        (
+            "min_recent_microprice_bias_bps",
+            Decimal("0.12"),
+            Decimal("0.10"),
+            Decimal("0.80"),
+        ),
+        (
+            "min_recent_above_opening_window_close_ratio",
+            Decimal("0.06"),
+            Decimal("0.58"),
+            Decimal("0.88"),
+        ),
+        (
+            "min_recent_above_vwap_w5m_ratio",
+            Decimal("0.06"),
+            Decimal("0.58"),
+            Decimal("0.88"),
+        ),
+    )
+    short_confirmation_steps = (
+        (
+            "max_recent_imbalance_pressure",
+            Decimal("-0.04"),
+            Decimal("-0.40"),
+            Decimal("-0.02"),
+        ),
+        (
+            "max_recent_microprice_bias_bps",
+            Decimal("-0.12"),
+            Decimal("-0.80"),
+            Decimal("-0.10"),
+        ),
+        (
+            "max_cross_section_continuation_rank",
+            Decimal("-0.06"),
+            Decimal("0.08"),
+            Decimal("0.55"),
+        ),
+    )
+    for key, delta, lower, upper in (
+        *long_confirmation_steps,
+        *short_confirmation_steps,
+    ):
+        if key not in params:
+            continue
+        params[key] = _clamped_profile_decimal(
+            params=params,
+            key=key,
+            default=Decimal(str(params[key])),
+            delta=delta,
+            lower=lower,
+            upper=upper,
+            places=Decimal("0.01"),
+        )
+    next_profile["params"] = params
+    return _cash_constrain_profile(
+        next_profile,
+        capital_profile="feedback_adverse_selection_cash_constrained_1x",
+        label="adverse_selection_feedback_escape",
+    )
+
+
 def _symbol_diversification_feedback_escape_profile(
     profile: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -2898,6 +3038,7 @@ def _portfolio_feedback_escape_execution_profiles(
             _consistency_guard_feedback_escape_profile(profile),
             _turnover_coverage_feedback_escape_profile(profile),
             _notional_throughput_feedback_escape_profile(profile),
+            _adverse_selection_feedback_escape_profile(profile),
             _symbol_diversification_feedback_escape_profile(profile),
         ):
             key = _stable_hash(next_profile)

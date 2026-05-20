@@ -1153,6 +1153,7 @@ class TestCandidateSpecs(TestCase):
                 "consistency_guard_feedback_escape",
                 "turnover_coverage_feedback_escape",
                 "notional_throughput_feedback_escape",
+                "adverse_selection_feedback_escape",
                 "symbol_diversification_feedback_escape",
             ],
         )
@@ -1162,6 +1163,15 @@ class TestCandidateSpecs(TestCase):
             10,
         )
         self.assertEqual(notional["params"]["entry_notional_max_multiplier"], "1.0")
+        adverse_selection = expanded[4]
+        self.assertEqual(
+            adverse_selection["params"]["feedback_remediation_profile"],
+            "adverse_selection_feedback_escape",
+        )
+        self.assertEqual(
+            adverse_selection["params"]["max_stop_loss_exits_per_session"],
+            "1",
+        )
         diversified = expanded[-1]
         self.assertEqual(diversified["params"]["top_n"], "3")
         self.assertGreaterEqual(
