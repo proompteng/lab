@@ -681,6 +681,16 @@ require_matches \
   "${ROOT_DIR}/packages/agent-contracts/src/agents-health-client.ts"
 
 fail_if_matches \
+  "Agents v1 resource-read API must use typed Effect errors instead of ad hoc string-matched storage/kube errors" \
+  "message\\.includes\\('DATABASE_URL'\\)|const message = error instanceof Error" \
+  "${ROOT_DIR}/services/agents/src/server/v1/resource-read.ts"
+
+require_matches \
+  "Agents v1 resource-read API must expose typed Effect services and errors" \
+  'ResourceReadKubeError|ResourceReadStorageError|ResourceReadKubernetesService|makeResourceReadKubernetesLayer' \
+  "${ROOT_DIR}/services/agents/src/server/v1/resource-read.ts"
+
+fail_if_matches \
   "Jangar KubeGateway must list Agents CRDs through the Agents service boundary, not direct Kubernetes CRD access" \
   'RESOURCE_MAP|agentruns\.agents\.proompteng\.ai|swarms\.swarm\.proompteng\.ai' \
   "${ROOT_DIR}/services/jangar/src/server/kube-gateway.ts"
