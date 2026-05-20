@@ -676,7 +676,13 @@ fail_if_matches \
   "${ROOT_DIR}/docs/agents/leader-election-design.md" \
   "${ROOT_DIR}/docs/agents/agent-run-retention-design.md" \
   "${ROOT_DIR}/docs/agents/agentrun-creation-guide.md" \
-  "${ROOT_DIR}/docs/agents/runbooks.md"
+  "${ROOT_DIR}/docs/agents/runbooks.md" \
+  "${ROOT_DIR}/docs/agents/designs/custom-system-prompt-agent-runs.md"
+
+fail_if_matches \
+  "Current Agents system-prompt docs must describe the Agents app-server runner, not legacy shell Codex runtime" \
+  'codex exec|services/jangar/api/agents|services/jangar/scripts/codex|services/jangar/src/server/agents-controller|jangar-db-app|JANGAR_|/app/services/jangar|codex-implement' \
+  "${ROOT_DIR}/docs/agents/designs/custom-system-prompt-agent-runs.md"
 
 fail_if_matches \
   "Agents chart design docs must not advertise retired Jangar-managed chart env names" \
@@ -691,6 +697,13 @@ fail_if_matches \
   "${ROOT_DIR}/charts/agents/values.schema.json" \
   "${ROOT_DIR}/charts/agents/templates/deployment.yaml" \
   "${ROOT_DIR}/charts/agents/templates/deployment-controllers.yaml"
+
+for crd in "${CHART_DIR}"/crds/*.yaml; do
+  require_matches \
+    "Agents CRDs must sync before CR instances so Argo upgrades live schemas before applying AgentProvider resources" \
+    'argocd\.argoproj\.io/sync-wave:\s*"-10"' \
+    "${crd}"
+done
 
 fail_if_matches \
   "Jangar runtime must not own generic Agents runner image selection" \
