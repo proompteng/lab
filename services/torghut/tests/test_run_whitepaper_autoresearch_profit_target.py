@@ -1170,6 +1170,95 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             rows[0]["selection_reason"], "pre_replay_mlx_feedback_penalized"
         )
 
+    def test_portfolio_candidate_feedback_skips_non_feedback_and_empty_scorecards(
+        self,
+    ) -> None:
+        non_feedback_status = AutoresearchPortfolioCandidate(
+            portfolio_candidate_id="portfolio-feedback-ready",
+            epoch_id="portfolio-feedback-skip-epoch",
+            source_candidate_ids_json=["candidate-feedback-ready"],
+            target_net_pnl_per_day=Decimal("500"),
+            objective_scorecard_json={"net_pnl_per_day": "520"},
+            optimizer_report_json={},
+            payload_json={
+                "sleeves": [{"candidate_spec_id": "candidate-feedback-ready"}],
+            },
+            status="promotion_ready",
+        )
+        empty_scorecard = AutoresearchPortfolioCandidate(
+            portfolio_candidate_id="portfolio-feedback-empty",
+            epoch_id="portfolio-feedback-skip-epoch",
+            source_candidate_ids_json=["candidate-feedback-empty"],
+            target_net_pnl_per_day=Decimal("500"),
+            objective_scorecard_json={},
+            optimizer_report_json={},
+            payload_json={
+                "sleeves": [{"candidate_spec_id": "candidate-feedback-empty"}],
+            },
+            status="blocked",
+        )
+
+        self.assertEqual(
+            runner._portfolio_candidate_row_to_feedback_bundles(non_feedback_status),
+            (),
+        )
+        self.assertEqual(
+            runner._portfolio_candidate_row_to_feedback_bundles(empty_scorecard),
+            (),
+        )
+
+    def test_portfolio_candidate_feedback_uses_fallback_sleeves_and_skips_invalid_ones(
+        self,
+    ) -> None:
+        scorecard = {
+            "net_pnl_per_day": "520",
+            "profit_target_oracle": {
+                "passed": False,
+                "blockers": ["profit_factor_below_oracle"],
+            },
+        }
+        fallback_row = AutoresearchPortfolioCandidate(
+            portfolio_candidate_id="portfolio-feedback-fallback",
+            epoch_id="portfolio-feedback-fallback-epoch",
+            source_candidate_ids_json=["candidate-feedback-fallback"],
+            target_net_pnl_per_day=Decimal("500"),
+            objective_scorecard_json=scorecard,
+            optimizer_report_json={},
+            payload_json={"objective_scorecard": scorecard},
+            status="paper_probation",
+        )
+        invalid_sleeve_row = AutoresearchPortfolioCandidate(
+            portfolio_candidate_id="portfolio-feedback-invalid-sleeve",
+            epoch_id="portfolio-feedback-fallback-epoch",
+            source_candidate_ids_json=[],
+            target_net_pnl_per_day=Decimal("500"),
+            objective_scorecard_json=scorecard,
+            optimizer_report_json={},
+            payload_json={"sleeves": [{}], "objective_scorecard": scorecard},
+            status="blocked",
+        )
+
+        fallback_bundles = runner._portfolio_candidate_row_to_feedback_bundles(
+            fallback_row
+        )
+
+        self.assertEqual(len(fallback_bundles), 1)
+        self.assertEqual(
+            fallback_bundles[0].candidate_spec_id, "candidate-feedback-fallback"
+        )
+        self.assertEqual(
+            fallback_bundles[0].objective_scorecard["portfolio_status"],
+            "paper_probation",
+        )
+        self.assertIn(
+            "profit_factor_below_oracle",
+            fallback_bundles[0].objective_scorecard["portfolio_blockers"],
+        )
+        self.assertEqual(
+            runner._portfolio_candidate_row_to_feedback_bundles(invalid_sleeve_row),
+            (),
+        )
+
     def test_feedback_evidence_persisted_loader_skips_empty_invalid_and_limited_payloads(
         self,
     ) -> None:

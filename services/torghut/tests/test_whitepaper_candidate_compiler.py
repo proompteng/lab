@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase
 
 import app.trading.discovery.candidate_specs as candidate_specs_module
+import app.trading.discovery.whitepaper_candidate_compiler as compiler_module
 from app.trading.discovery.hypothesis_cards import build_hypothesis_cards
 from app.trading.discovery.whitepaper_candidate_compiler import (
     compile_claim_payloads_to_whitepaper_experiments,
@@ -1320,6 +1321,121 @@ class TestWhitepaperCandidateCompiler(TestCase):
             len(compilation.blocked_specs), _expected_portfolio_target_candidate_count()
         )
         self.assertEqual(compilation.blockers[0].reason, "seed_sweep_missing")
+
+    def test_cached_catalog_helpers_skip_invalid_seed_rows(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            family_dir = root / "families"
+            seed_dir = root / "seeds"
+            family_dir.mkdir()
+            seed_dir.mkdir()
+            (family_dir / "cached_family.yaml").write_text(
+                "\n".join(
+                    [
+                        "required_features:",
+                        "  - order_flow_imbalance",
+                        "risk_controls:",
+                        "  - volatility_shock_veto",
+                        "liquidity_assumptions:",
+                        "  quote_quality: true",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (seed_dir / "profitability-frontier-invalid.yaml").write_text(
+                "- not-a-mapping\n",
+                encoding="utf-8",
+            )
+            (seed_dir / "profitability-frontier-valid.yaml").write_text(
+                "family_template_id: cached_family\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                compiler_module._family_feature_catalog(family_dir),
+                {"order_flow_imbalance", "volatility_shock_veto", "quote_quality"},
+            )
+            self.assertEqual(
+                compiler_module._seed_sweep_family_ids(seed_dir),
+                {"cached_family"},
+            )
+
+    def test_reality_gap_relation_helper_rejects_unrelated_claim_shapes(self) -> None:
+        spec = candidate_specs_module.CandidateSpec(
+            schema_version="torghut.candidate-spec.v1",
+            candidate_spec_id="spec-reality-gap-helper",
+            hypothesis_id="hyp-reality-gap-helper",
+            family_template_id="microstructure_continuation_matched_filter_v1",
+            candidate_kind="sleeve",
+            runtime_family="breakout_continuation_consistent",
+            runtime_strategy_name="breakout-continuation-long-v1",
+            feature_contract={
+                "source_claims": [
+                    {
+                        "claim_id": "feature-source",
+                        "claim_type": "feature_recipe",
+                        "claim_text": "LOB simulation feature recipe.",
+                    },
+                    {
+                        "claim_id": "risk-source",
+                        "claim_type": "risk_constraint",
+                        "claim_text": "Simulation reality gap requires fill outcomes.",
+                    },
+                    {
+                        "claim_id": "risk-target",
+                        "claim_type": "risk_constraint",
+                        "claim_text": "Capital sizing risk target.",
+                    },
+                    {
+                        "claim_id": "signal-target",
+                        "claim_type": "signal_mechanism",
+                        "claim_text": "LOB simulation signal target.",
+                    },
+                ]
+            },
+            parameter_space={"mechanism_overlay_ids": []},
+            strategy_overrides={},
+            objective={"target_net_pnl_per_day": "500"},
+            hard_vetoes={},
+            expected_failure_modes=(),
+            promotion_contract={},
+        )
+
+        self.assertEqual(compiler_module._claim_type(None), "")
+        self.assertIn(
+            "flow", compiler_module._claim_haystack(None, {"claim_text": "flow"})
+        )
+        self.assertFalse(
+            compiler_module._is_simulation_reality_gap_validation_relation(
+                {
+                    "relation_type": "supports",
+                    "source_claim_id": "risk-source",
+                    "target_claim_id": "signal-target",
+                },
+                spec,
+            )
+        )
+        self.assertFalse(
+            compiler_module._is_simulation_reality_gap_validation_relation(
+                {
+                    "relation_type": "invalidates",
+                    "source_claim_id": "feature-source",
+                    "target_claim_id": "signal-target",
+                },
+                spec,
+            )
+        )
+        self.assertFalse(
+            compiler_module._is_simulation_reality_gap_validation_relation(
+                {
+                    "relation_type": "invalidates",
+                    "source_claim_id": "risk-source",
+                    "target_claim_id": "risk-target",
+                },
+                spec,
+            )
+        )
 
     def test_contradictory_claim_relation_blocks_dependent_candidate_specs(
         self,
