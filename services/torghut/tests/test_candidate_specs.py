@@ -1133,6 +1133,9 @@ class TestCandidateSpecs(TestCase):
                 "entry_minute_after_open": "not-a-decimal",
                 "exit_minute_after_open": "invalid",
                 "top_n": "2",
+                "gate_feature": "cross_section_positive_opening_window_return_from_prev_close_ratio",
+                "gate_min": "0.20",
+                "gate_max": "0.80",
             },
             "universe_symbols": ["NVDA", "AAPL"],
             "max_notional_per_trade": "90000",
@@ -1157,6 +1160,10 @@ class TestCandidateSpecs(TestCase):
                 "symbol_diversification_feedback_escape",
             ],
         )
+        for next_profile in expanded:
+            self.assertNotIn("gate_feature", next_profile["params"])
+            self.assertNotIn("gate_min", next_profile["params"])
+            self.assertNotIn("gate_max", next_profile["params"])
         notional = expanded[3]
         self.assertGreaterEqual(
             int(notional["params"]["max_entries_per_session"]),

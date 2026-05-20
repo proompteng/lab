@@ -2584,11 +2584,22 @@ def _cash_constrain_profile(
     return profile
 
 
+def _drop_fragile_prev_close_positive_gate(params: dict[str, Any]) -> None:
+    if (
+        str(params.get("gate_feature") or "")
+        == "cross_section_positive_opening_window_return_from_prev_close_ratio"
+    ):
+        params.pop("gate_feature", None)
+        params.pop("gate_min", None)
+        params.pop("gate_max", None)
+
+
 def _daily_coverage_feedback_escape_profile(
     profile: Mapping[str, Any],
 ) -> dict[str, Any]:
     next_profile = json.loads(json.dumps(profile))
     params = _mapping(next_profile.get("params"))
+    _drop_fragile_prev_close_positive_gate(params)
     params["max_entries_per_session"] = str(
         max(2, min(4, _int_profile_param(params, "max_entries_per_session", default=2)))
     )
@@ -2626,6 +2637,7 @@ def _consistency_guard_feedback_escape_profile(
 ) -> dict[str, Any]:
     next_profile = json.loads(json.dumps(profile))
     params = _mapping(next_profile.get("params"))
+    _drop_fragile_prev_close_positive_gate(params)
     params["entry_cooldown_seconds"] = str(
         max(1200, _int_profile_param(params, "entry_cooldown_seconds", default=1200))
     )
@@ -2665,6 +2677,7 @@ def _turnover_coverage_feedback_escape_profile(
 ) -> dict[str, Any]:
     next_profile = json.loads(json.dumps(profile))
     params = _mapping(next_profile.get("params"))
+    _drop_fragile_prev_close_positive_gate(params)
     current_entries = _int_profile_param(params, "max_entries_per_session", default=3)
     params["max_entries_per_session"] = str(max(2, min(5, current_entries + 1)))
     params["max_concurrent_positions"] = str(
@@ -2702,6 +2715,7 @@ def _notional_throughput_feedback_escape_profile(
 ) -> dict[str, Any]:
     next_profile = json.loads(json.dumps(profile))
     params = _mapping(next_profile.get("params"))
+    _drop_fragile_prev_close_positive_gate(params)
     current_entries = _int_profile_param(params, "max_entries_per_session", default=4)
     params["max_entries_per_session"] = str(max(10, min(12, current_entries + 6)))
     params["entry_notional_max_multiplier"] = "1.0"
@@ -2811,6 +2825,7 @@ def _adverse_selection_feedback_escape_profile(
 ) -> dict[str, Any]:
     next_profile = json.loads(json.dumps(profile))
     params = _mapping(next_profile.get("params"))
+    _drop_fragile_prev_close_positive_gate(params)
     current_entries = _int_profile_param(params, "max_entries_per_session", default=4)
     params["max_entries_per_session"] = str(max(10, min(12, current_entries + 6)))
     params["entry_notional_max_multiplier"] = "1.0"
@@ -2951,6 +2966,7 @@ def _symbol_diversification_feedback_escape_profile(
 ) -> dict[str, Any]:
     next_profile = json.loads(json.dumps(profile))
     params = _mapping(next_profile.get("params"))
+    _drop_fragile_prev_close_positive_gate(params)
     diversified_symbols: list[str] = []
     seen_symbols: set[str] = set()
     raw_symbols = next_profile.get("universe_symbols")
