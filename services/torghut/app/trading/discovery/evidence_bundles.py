@@ -631,6 +631,16 @@ def evidence_bundle_from_frontier_candidate(
         value = _string(candidate.get(key))
         if value and key not in scorecard:
             scorecard = {**scorecard, key: value}
+    replay_lineage = _mapping(candidate.get("replay_lineage"))
+    if replay_lineage and "replay_lineage" not in scorecard:
+        scorecard = {**scorecard, "replay_lineage": replay_lineage}
+    replay_window_coverage = _mapping(
+        scorecard.get("replay_window_coverage")
+        or candidate.get("replay_window_coverage")
+        or replay_lineage.get("replay_window_coverage")
+    )
+    if replay_window_coverage and "replay_window_coverage" not in scorecard:
+        scorecard = {**scorecard, "replay_window_coverage": replay_window_coverage}
     scorecard = _enrich_scorecard_with_replay_stress_metrics(
         scorecard=scorecard,
         full_window=full_window,

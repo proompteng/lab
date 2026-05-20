@@ -108,6 +108,7 @@ _REJECTED_SIGNAL_OUTCOME_REQUIRED_FIELDS = (
     "executable_quote",
 )
 _PROGRAM_SOURCE_DEFAULT_CONFIDENCE = "0.70"
+_SECOND_OOS_WINDOW_ID = "second_oos"
 _RUNTIME_CLOSURE_PROOF_ORACLE_BLOCKERS = frozenset(
     {
         "shadow_parity_status_failed",
@@ -2852,6 +2853,10 @@ def _candidate_sleeve_goal_rows(
             if spec is not None
             else {"required": False, "passed": True, "blockers": []}
         )
+        evidence_lineage = _candidate_board_evidence_lineage_summary(evidence)
+        replay_window_coverage = _candidate_board_replay_window_coverage_summary(
+            scorecard
+        )
         rows.append(
             {
                 "candidate_spec_id": candidate_spec_id,
@@ -2872,6 +2877,8 @@ def _candidate_sleeve_goal_rows(
                 "replay_artifact_refs": list(evidence.replay_artifact_refs)
                 if evidence is not None
                 else [],
+                "evidence_lineage": evidence_lineage,
+                "replay_window_coverage": replay_window_coverage,
                 "order_type_execution_quality": order_type_summary,
                 "failure_reasons": [
                     _string(item)
@@ -7257,6 +7264,159 @@ def _candidate_board_scorecard_with_rejected_signal_blockers(
     return updated_scorecard, summary
 
 
+def _candidate_board_evidence_lineage_summary(
+    evidence: CandidateEvidenceBundle | None,
+) -> dict[str, Any]:
+    if evidence is None:
+        return {
+            "present": False,
+            "passed": False,
+            "blockers": ["evidence_bundle_missing"],
+            "dataset_snapshot_id": "",
+            "feature_spec_hash": "",
+            "code_commit": "",
+            "replay_artifact_ref_count": 0,
+        }
+
+    blockers: list[str] = []
+    dataset_snapshot_id = _string(evidence.dataset_snapshot_id)
+    feature_spec_hash = _string(evidence.feature_spec_hash)
+    code_commit = _string(evidence.code_commit)
+    replay_artifact_refs = [
+        _string(item) for item in evidence.replay_artifact_refs if _string(item)
+    ]
+
+    if not dataset_snapshot_id:
+        blockers.append("dataset_snapshot_missing")
+    if not feature_spec_hash:
+        blockers.append("feature_spec_hash_missing")
+    if not code_commit or code_commit.lower() == "unknown":
+        blockers.append("code_commit_missing_or_unknown")
+    if not replay_artifact_refs:
+        blockers.append("replay_artifact_missing")
+
+    return {
+        "present": True,
+        "passed": not blockers,
+        "blockers": blockers,
+        "dataset_snapshot_id": dataset_snapshot_id,
+        "feature_spec_hash": feature_spec_hash,
+        "code_commit": code_commit,
+        "replay_artifact_ref_count": len(replay_artifact_refs),
+        "sample_replay_artifact_refs": replay_artifact_refs[:5],
+    }
+
+
+def _candidate_board_scorecard_with_lineage_blockers(
+    scorecard: Mapping[str, Any], evidence: CandidateEvidenceBundle | None
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    summary = _candidate_board_evidence_lineage_summary(evidence)
+    updated_scorecard = dict(scorecard)
+    blockers = [
+        _string(blocker)
+        for blocker in cast(Sequence[Any], summary.get("blockers") or ())
+        if _string(blocker)
+    ]
+    if blockers:
+        updated_scorecard["oracle_passed"] = False
+        oracle_payload = dict(_mapping(updated_scorecard.get("profit_target_oracle")))
+        oracle_blockers = [
+            _string(blocker)
+            for blocker in cast(Sequence[Any], oracle_payload.get("blockers") or ())
+            if _string(blocker)
+        ]
+        oracle_payload["blockers"] = list(dict.fromkeys([*oracle_blockers, *blockers]))
+        updated_scorecard["profit_target_oracle"] = oracle_payload
+    return updated_scorecard, summary
+
+
+def _candidate_board_replay_window_coverage_summary(
+    scorecard: Mapping[str, Any],
+) -> dict[str, Any]:
+    required = _boolish(scorecard.get("target_met")) or _boolish(
+        scorecard.get("oracle_passed")
+    )
+    replay_lineage = _mapping(scorecard.get("replay_lineage"))
+    coverage = _mapping(scorecard.get("replay_window_coverage"))
+    expected_windows = _string_list_from_value(
+        coverage.get("expected_windows") or replay_lineage.get("expected_windows")
+    )
+    present_windows = _string_list_from_value(
+        coverage.get("present_windows") or replay_lineage.get("present_windows")
+    )
+    missing_windows = _string_list_from_value(
+        coverage.get("missing_windows") or replay_lineage.get("missing_windows")
+    )
+    if (
+        _candidate_board_int_field(scorecard, "double_oos_independent_window_count")
+        >= 2
+        and _SECOND_OOS_WINDOW_ID not in expected_windows
+    ):
+        expected_windows.append(_SECOND_OOS_WINDOW_ID)
+    for required_window in ("train", "holdout", "full_window"):
+        if required_window not in expected_windows:
+            expected_windows.append(required_window)
+
+    blockers: list[str] = []
+    lineage_hash = _string(replay_lineage.get("lineage_hash"))
+    coverage_hash = _string(coverage.get("lineage_hash"))
+    if required:
+        if not replay_lineage:
+            blockers.append("replay_lineage_missing")
+        if not coverage:
+            blockers.append("replay_window_coverage_missing")
+        if not lineage_hash:
+            blockers.append("replay_lineage_hash_missing")
+        if not coverage_hash:
+            blockers.append("replay_window_coverage_hash_missing")
+        if lineage_hash and coverage_hash and lineage_hash != coverage_hash:
+            blockers.append("replay_lineage_hash_mismatch")
+        missing_required_windows = [
+            window_id
+            for window_id in expected_windows
+            if window_id not in present_windows or window_id in missing_windows
+        ]
+        if missing_required_windows:
+            blockers.append("replay_window_missing")
+    else:
+        missing_required_windows = []
+
+    return {
+        "required": required,
+        "passed": not blockers,
+        "blockers": blockers,
+        "lineage_hash": lineage_hash,
+        "coverage_hash": coverage_hash,
+        "expected_windows": expected_windows,
+        "present_windows": present_windows,
+        "missing_windows": missing_windows,
+        "missing_required_windows": missing_required_windows,
+    }
+
+
+def _candidate_board_scorecard_with_replay_window_blockers(
+    scorecard: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    summary = _candidate_board_replay_window_coverage_summary(scorecard)
+    updated_scorecard = dict(scorecard)
+    blockers = [
+        _string(blocker)
+        for blocker in cast(Sequence[Any], summary.get("blockers") or ())
+        if _string(blocker)
+    ]
+    if blockers:
+        updated_scorecard["oracle_passed"] = False
+        oracle_payload = dict(_mapping(updated_scorecard.get("profit_target_oracle")))
+        oracle_blockers = [
+            _string(blocker)
+            for blocker in cast(Sequence[Any], oracle_payload.get("blockers") or ())
+            if _string(blocker)
+        ]
+        oracle_payload["blockers"] = list(dict.fromkeys([*oracle_blockers, *blockers]))
+        updated_scorecard["profit_target_oracle"] = oracle_payload
+    return updated_scorecard, summary
+
+
 def _candidate_board_scorecard_with_evidence_blockers(
     scorecard: Mapping[str, Any], evidence: CandidateEvidenceBundle | None
 ) -> dict[str, Any]:
@@ -7494,6 +7654,12 @@ def _candidate_board_payload(
         scorecard = _candidate_board_scorecard_with_evidence_blockers(
             raw_scorecard, evidence
         )
+        scorecard, evidence_lineage = _candidate_board_scorecard_with_lineage_blockers(
+            scorecard, evidence
+        )
+        scorecard, replay_window_coverage = (
+            _candidate_board_scorecard_with_replay_window_blockers(scorecard)
+        )
         scorecard, rejected_signal_summary = (
             _candidate_board_scorecard_with_rejected_signal_blockers(spec, scorecard)
         )
@@ -7618,6 +7784,8 @@ def _candidate_board_payload(
                 ),
                 "rejected_signal_outcome_learning": rejected_signal_summary,
                 "order_type_execution_quality": order_type_summary,
+                "evidence_lineage": evidence_lineage,
+                "replay_window_coverage": replay_window_coverage,
                 "blockers": blockers,
                 "replay_artifact_refs": list(evidence.replay_artifact_refs)
                 if evidence is not None

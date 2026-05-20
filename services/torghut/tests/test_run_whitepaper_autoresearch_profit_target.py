@@ -4739,6 +4739,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(
             rows[0]["replay_artifact_refs"], list(evidence.replay_artifact_refs)
         )
+        self.assertTrue(rows[0]["evidence_lineage"]["passed"])
+        self.assertEqual(rows[0]["evidence_lineage"]["code_commit"], "commit-test")
+        self.assertEqual(rows[0]["evidence_lineage"]["replay_artifact_ref_count"], 3)
         self.assertEqual(
             rows[0]["order_type_execution_quality"]["artifact_refs"],
             ["order-type-ablation.json"],
@@ -4828,6 +4831,67 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "rejected_signal_counterfactual_fields_present_failed", row["blockers"]
         )
         self.assertFalse(row["rejected_signal_outcome_learning"]["passed"])
+
+    def test_candidate_board_rejects_unknown_code_commit_lineage(self) -> None:
+        spec = self._candidate_spec("spec-unknown-lineage")
+        evidence = runner.CandidateEvidenceBundle(
+            schema_version="torghut.candidate-evidence-bundle.v1",
+            evidence_bundle_id="ev-unknown-lineage",
+            candidate_id="cand-unknown-lineage",
+            candidate_spec_id=spec.candidate_spec_id,
+            dataset_snapshot_id="snapshot-unknown-lineage",
+            feature_spec_hash="hash-unknown-lineage",
+            code_commit="unknown",
+            replay_artifact_refs=("replay.json",),
+            objective_scorecard={
+                "net_pnl_per_day": "700",
+                "target_met": True,
+                "oracle_passed": True,
+                "profit_target_oracle": {"blockers": []},
+            },
+            fold_metrics=(),
+            stress_metrics=(),
+            cost_calibration={"status": "calibrated", "source": "route_tca"},
+            null_comparator={},
+            promotion_readiness={},
+        )
+
+        board = runner._candidate_board_payload(
+            epoch_id="epoch-unknown-lineage-board",
+            output_dir=Path("/tmp/epoch-unknown-lineage-board"),
+            target=Decimal("500"),
+            candidate_specs=(spec,),
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                    }
+                ]
+            },
+            pre_replay_proposal_rows=(
+                {
+                    "candidate_spec_id": spec.candidate_spec_id,
+                    "rank": 1,
+                    "proposal_score": "9.0",
+                },
+            ),
+            proposal_rows=(),
+            evidence_bundles=(evidence,),
+            portfolio=None,
+            promotion_readiness={"promotable": True},
+            runtime_closure={},
+        )
+
+        row = board["rows"][0]
+        self.assertFalse(row["oracle_passed"])
+        self.assertFalse(row["evidence_lineage"]["passed"])
+        self.assertIn("code_commit_missing_or_unknown", row["blockers"])
+        self.assertIn(
+            "code_commit_missing_or_unknown",
+            row["evidence_lineage"]["blockers"],
+        )
+        self.assertEqual(board["current_answer"], "no_promotion_ready_candidate")
 
     def test_candidate_board_fails_market_limit_candidate_without_order_type_evidence(
         self,
@@ -4972,6 +5036,18 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 "route_tca_artifact_ref": "route-tca.json",
                 "order_type_opportunity_cost_bps": "8",
                 "market_order_spread_bps": "8",
+                "replay_lineage": {
+                    "lineage_hash": "lineage-market-limit-pass",
+                    "expected_windows": ["train", "holdout", "full_window"],
+                    "present_windows": ["train", "holdout", "full_window"],
+                    "missing_windows": [],
+                },
+                "replay_window_coverage": {
+                    "lineage_hash": "lineage-market-limit-pass",
+                    "expected_windows": ["train", "holdout", "full_window"],
+                    "present_windows": ["train", "holdout", "full_window"],
+                    "missing_windows": [],
+                },
             },
             fold_metrics=(),
             stress_metrics=(),

@@ -197,6 +197,142 @@ def _write_json_output(path: Path, payload: Mapping[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
 
+def _stable_payload_hash(payload: Any) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _replay_lineage_window_payload(
+    *,
+    window_id: str,
+    replay_payload: Mapping[str, Any] | None,
+    start_date: date | None,
+    end_date: date | None,
+    skipped: bool,
+) -> dict[str, Any]:
+    if replay_payload is None:
+        return {
+            "window_id": window_id,
+            "start_date": start_date.isoformat() if start_date is not None else "",
+            "end_date": end_date.isoformat() if end_date is not None else "",
+            "skipped": True,
+            "trading_day_count": 0,
+            "decision_count": 0,
+            "filled_count": 0,
+            "payload_sha256": "",
+            "daily_net_sha256": "",
+        }
+    summary = summarize_replay_profitability(replay_payload)
+    daily_net = {day: str(value) for day, value in summary.daily_net.items()}
+    return {
+        "window_id": window_id,
+        "start_date": start_date.isoformat() if start_date is not None else "",
+        "end_date": end_date.isoformat() if end_date is not None else "",
+        "skipped": skipped,
+        "trading_day_count": summary.trading_day_count,
+        "decision_count": summary.decision_count,
+        "filled_count": summary.filled_count,
+        "payload_sha256": _stable_payload_hash(replay_payload) if not skipped else "",
+        "daily_net_sha256": _stable_payload_hash(daily_net) if not skipped else "",
+    }
+
+
+def _candidate_replay_lineage_payload(
+    *,
+    candidate_configmap_path: Path,
+    candidate_search_key: str,
+    dataset_snapshot_id: str,
+    train_payload: Mapping[str, Any],
+    holdout_payload: Mapping[str, Any],
+    full_window_payload: Mapping[str, Any],
+    second_oos_payload: Mapping[str, Any] | None,
+    window: FrontierReplayWindows,
+    full_window_start: date,
+    full_window_end: date,
+    holdout_replay_skipped: bool,
+    full_window_replay_skipped: bool,
+) -> dict[str, Any]:
+    windows = {
+        "train": _replay_lineage_window_payload(
+            window_id="train",
+            replay_payload=train_payload,
+            start_date=window.train_start,
+            end_date=window.train_end,
+            skipped=False,
+        ),
+        "holdout": _replay_lineage_window_payload(
+            window_id="holdout",
+            replay_payload=holdout_payload,
+            start_date=window.holdout_start,
+            end_date=window.holdout_end,
+            skipped=holdout_replay_skipped,
+        ),
+        "full_window": _replay_lineage_window_payload(
+            window_id="full_window",
+            replay_payload=full_window_payload,
+            start_date=full_window_start,
+            end_date=full_window_end,
+            skipped=full_window_replay_skipped,
+        ),
+    }
+    if window.second_oos_days:
+        windows[_SECOND_OOS_WINDOW_ID] = _replay_lineage_window_payload(
+            window_id=_SECOND_OOS_WINDOW_ID,
+            replay_payload=second_oos_payload,
+            start_date=window.second_oos_start,
+            end_date=window.second_oos_end,
+            skipped=second_oos_payload is None
+            or bool(
+                isinstance(second_oos_payload, Mapping)
+                and second_oos_payload.get("skipped")
+            ),
+        )
+    expected_windows = list(windows)
+    missing_windows = [
+        name
+        for name, payload in windows.items()
+        if bool(payload.get("skipped"))
+        or int(payload.get("trading_day_count") or 0) <= 0
+    ]
+    configmap_bytes = candidate_configmap_path.read_bytes()
+    lineage_payload: dict[str, Any] = {
+        "schema_version": "torghut.frontier-replay-lineage.v1",
+        "candidate_configmap_ref": str(candidate_configmap_path),
+        "candidate_configmap_sha256": hashlib.sha256(configmap_bytes).hexdigest(),
+        "candidate_search_key": candidate_search_key,
+        "dataset_snapshot_id": dataset_snapshot_id,
+        "expected_windows": expected_windows,
+        "present_windows": [
+            name for name in expected_windows if name not in set(missing_windows)
+        ],
+        "missing_windows": missing_windows,
+        "windows": windows,
+    }
+    lineage_payload["lineage_hash"] = _stable_payload_hash(lineage_payload)
+    return lineage_payload
+
+
+def _replay_window_coverage_payload(
+    replay_lineage: Mapping[str, Any],
+) -> dict[str, Any]:
+    windows = replay_lineage.get("windows")
+    window_count = len(windows) if isinstance(windows, Mapping) else 0
+    return {
+        "schema_version": "torghut.replay-window-coverage.v1",
+        "lineage_hash": str(replay_lineage.get("lineage_hash") or ""),
+        "expected_windows": list(
+            cast(Sequence[Any], replay_lineage.get("expected_windows") or ())
+        ),
+        "present_windows": list(
+            cast(Sequence[Any], replay_lineage.get("present_windows") or ())
+        ),
+        "missing_windows": list(
+            cast(Sequence[Any], replay_lineage.get("missing_windows") or ())
+        ),
+        "window_count": window_count,
+    }
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Search replay configs using holdout profitability plus full-window consistency.",
@@ -2709,6 +2845,21 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                 candidate_payload["dataset_snapshot_id"] = (
                     dataset_snapshot_receipt.snapshot_id
                 )
+                replay_lineage = _candidate_replay_lineage_payload(
+                    candidate_configmap_path=candidate_configmap_path,
+                    candidate_search_key=candidate_key,
+                    dataset_snapshot_id=dataset_snapshot_receipt.snapshot_id,
+                    train_payload=train_payload,
+                    holdout_payload=holdout_payload,
+                    full_window_payload=full_window_payload,
+                    second_oos_payload=second_oos_payload,
+                    window=window,
+                    full_window_start=full_window_start,
+                    full_window_end=full_window_end,
+                    holdout_replay_skipped=holdout_replay_skipped,
+                    full_window_replay_skipped=full_window_replay_skipped,
+                )
+                candidate_payload["replay_lineage"] = replay_lineage
                 candidate_payload["screening"] = {
                     "schema_version": "torghut.frontier-train-screen.v1",
                     "enabled": bool(getattr(args, "train_screening", True)),
@@ -2940,6 +3091,10 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                                 "delay_adjusted_depth_stress_net_pnl_per_day"
                             )
                             or "0"
+                        ),
+                        "replay_lineage": replay_lineage,
+                        "replay_window_coverage": _replay_window_coverage_payload(
+                            replay_lineage
                         ),
                         **_order_type_execution_metrics(full_window_summary),
                     }

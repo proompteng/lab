@@ -20,6 +20,53 @@ import scripts.search_consistent_profitability_frontier as frontier
 
 
 class TestSearchConsistentProfitabilityFrontier(TestCase):
+    def test_candidate_replay_lineage_payload_hashes_window_coverage(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            candidate_configmap = root / "candidate.yaml"
+            candidate_configmap.write_text("data:\n  strategies.yaml: '{}'\n")
+            replay_payload = self._payload(
+                start_date="2026-03-18",
+                end_date="2026-03-19",
+                daily_net={"2026-03-18": "100", "2026-03-19": "150"},
+                decision_count=2,
+                filled_count=2,
+                wins=2,
+                losses=0,
+            )
+            window = frontier.FrontierReplayWindows(
+                train_days=(date(2026, 3, 18),),
+                holdout_days=(date(2026, 3, 19),),
+                second_oos_days=(),
+            )
+
+            lineage = frontier._candidate_replay_lineage_payload(
+                candidate_configmap_path=candidate_configmap,
+                candidate_search_key="candidate-key",
+                dataset_snapshot_id="snapshot-lineage",
+                train_payload=replay_payload,
+                holdout_payload=replay_payload,
+                full_window_payload=replay_payload,
+                second_oos_payload=None,
+                window=window,
+                full_window_start=date(2026, 3, 18),
+                full_window_end=date(2026, 3, 19),
+                holdout_replay_skipped=False,
+                full_window_replay_skipped=False,
+            )
+
+        coverage = frontier._replay_window_coverage_payload(lineage)
+        self.assertEqual(
+            lineage["schema_version"], "torghut.frontier-replay-lineage.v1"
+        )
+        self.assertEqual(lineage["missing_windows"], [])
+        self.assertEqual(
+            lineage["present_windows"], ["train", "holdout", "full_window"]
+        )
+        self.assertTrue(lineage["lineage_hash"])
+        self.assertEqual(coverage["lineage_hash"], lineage["lineage_hash"])
+        self.assertEqual(coverage["window_count"], 3)
+
     def test_parse_args_supports_harness_v2_flags(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

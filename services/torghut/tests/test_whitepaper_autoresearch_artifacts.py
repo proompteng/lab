@@ -479,6 +479,53 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
         self.assertNotIn("order_type_ablation_artifact_ref", bundle.objective_scorecard)
         self.assertNotIn("order_type_ablation_passed", bundle.objective_scorecard)
 
+    def test_evidence_bundle_preserves_replay_lineage_and_window_coverage(
+        self,
+    ) -> None:
+        replay_lineage = {
+            "schema_version": "torghut.frontier-replay-lineage.v1",
+            "lineage_hash": "lineage-hash",
+            "expected_windows": ["train", "holdout", "full_window"],
+            "present_windows": ["train", "holdout", "full_window"],
+            "missing_windows": [],
+        }
+        replay_window_coverage = {
+            "schema_version": "torghut.replay-window-coverage.v1",
+            "lineage_hash": "lineage-hash",
+            "expected_windows": ["train", "holdout", "full_window"],
+            "present_windows": ["train", "holdout", "full_window"],
+            "missing_windows": [],
+            "window_count": 3,
+        }
+
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-replay-lineage",
+            candidate={
+                "candidate_id": "cand-replay-lineage",
+                "runtime_family": "microbar_cross_sectional_pairs",
+                "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                "family_template_id": "microbar_cross_sectional_pairs_v1",
+                "replay_lineage": replay_lineage,
+                "objective_scorecard": {
+                    "net_pnl_per_day": "640",
+                    "replay_window_coverage": replay_window_coverage,
+                },
+                "full_window": {
+                    "net_per_day": "640",
+                    "trading_day_count": "1",
+                    "daily_net": {"2026-02-23": "640"},
+                },
+            },
+            dataset_snapshot_id="snap-replay-lineage",
+            result_path="/tmp/replay-lineage.json",
+        )
+
+        self.assertEqual(bundle.objective_scorecard["replay_lineage"], replay_lineage)
+        self.assertEqual(
+            bundle.objective_scorecard["replay_window_coverage"],
+            replay_window_coverage,
+        )
+
     def test_evidence_bundle_preserves_nested_order_type_ablation_artifact(
         self,
     ) -> None:
