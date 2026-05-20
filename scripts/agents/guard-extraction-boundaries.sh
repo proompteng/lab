@@ -497,6 +497,15 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/codex-judge-run-rows.ts" \
   "${ROOT_DIR}/services/jangar/src/server/migrations/20251228_init.ts"
 
+fail_if_path_exists \
+  "Jangar must not own the generic runtime proof-surface reducer after agent-contracts owns runtime admission contracts" \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-runtime-proof-surface.ts"
+
+fail_if_matches \
+  "Jangar control-plane status shim must not redefine generic runtime admission status types" \
+  'export type (RuntimeKit|AdmissionPassport|RecoveryWarrant|RuntimeProofCell|ProjectionWatermark)' \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-status-types.ts"
+
 fail_if_matches \
   "Agents controller must not derive runner goals from deprecated AgentRun parameter aliases" \
   'goalObjective|goalTokenBudget' \

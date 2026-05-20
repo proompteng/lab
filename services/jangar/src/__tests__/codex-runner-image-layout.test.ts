@@ -20,11 +20,12 @@ describe('codex runner image layout', () => {
       'COPY --from=jangar-build /app/services/jangar/src/server/control-plane-runtime-admission.ts ./src/server/control-plane-runtime-admission.ts',
     )
     expect(runtimeStage).toContain(
-      'COPY --from=jangar-build /app/services/jangar/src/server/control-plane-runtime-proof-surface.ts ./src/server/control-plane-runtime-proof-surface.ts',
+      'COPY --from=agent-contracts-build /app/packages/agent-contracts/dist /app/packages/agent-contracts/dist',
     )
     expect(runtimeStage).toContain(
       'COPY --from=jangar-build /app/services/jangar/src/server/runtime-tooling-config.ts ./src/server/runtime-tooling-config.ts',
     )
+    expect(runtimeStage).not.toContain('control-plane-runtime-proof-surface.ts')
     for (const line of helperCopyLines) {
       expect(controlPlaneStage).toContain(line)
       expect(runtimeStage).toContain(line)

@@ -3,20 +3,20 @@ import { accessSync, constants, existsSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import process from 'node:process'
 
+import type { ExecutionTrustStatus } from '@proompteng/agent-contracts/execution-trust'
+import { buildRuntimeProofSurface } from '@proompteng/agent-contracts/runtime-admission'
 import type {
   AdmissionPassportConsumerClass,
   AdmissionPassportDecision,
   AdmissionPassportStatus,
   AdmissionPassportSubjectStatus,
-  ExecutionTrustStatus,
   ProjectionWatermarkStatus,
   RecoveryWarrantStatus,
   RuntimeKitComponentStatus,
   RuntimeKitDecision,
   RuntimeKitStatus,
   RuntimeProofCellStatus,
-} from '~/server/control-plane-status-types'
-import { buildRuntimeProofSurface } from './control-plane-runtime-proof-surface'
+} from '@proompteng/agent-contracts/runtime-admission'
 import { resolveCodexNatsHelperPathCandidatesFromConfig, resolveRuntimeAdmissionConfig } from './runtime-tooling-config'
 
 const DEFAULT_WORKTREE = '/workspace/lab'

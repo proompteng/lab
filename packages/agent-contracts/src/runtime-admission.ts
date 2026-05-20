@@ -1,16 +1,128 @@
 import { createHash } from 'node:crypto'
 
-import type {
-  AdmissionPassportStatus,
-  ProjectionWatermarkConsumerKey,
-  ProjectionWatermarkStatus,
-  RecoveryWarrantExecutionClass,
-  RecoveryWarrantStatus,
-  RuntimeKitComponentStatus,
-  RuntimeKitStatus,
-  RuntimeProofCellStatus,
-  RuntimeProofKind,
-} from '~/server/control-plane-status-types'
+export type RuntimeKitClass = 'serving' | 'collaboration'
+
+export type RuntimeKitDecision = 'healthy' | 'degraded' | 'blocked' | 'unknown'
+
+export type RuntimeKitComponentKind = 'python_helper' | 'binary' | 'workspace_path' | 'config_file' | 'service_url'
+
+export type RuntimeKitComponentStatus = {
+  component_kind: RuntimeKitComponentKind
+  component_ref: string
+  required: boolean
+  present: boolean
+  digest: string | null
+  reason_code: string | null
+  evidence_ref: string | null
+}
+
+export type RuntimeKitStatus = {
+  runtime_kit_id: string
+  kit_class: RuntimeKitClass
+  subject_ref: string
+  image_ref: string
+  workspace_contract_version: string
+  component_digest: string
+  decision: RuntimeKitDecision
+  observed_at: string
+  fresh_until: string
+  producer_revision: string
+  reason_codes: string[]
+  components: RuntimeKitComponentStatus[]
+}
+
+export type AdmissionPassportConsumerClass = 'serving' | 'swarm_plan' | 'swarm_implement' | 'swarm_verify'
+
+export type AdmissionPassportDecision = 'allow' | 'degrade' | 'hold' | 'block'
+
+export type AdmissionPassportSubjectStatus = {
+  subject_kind: 'authority' | 'runtime_kit'
+  subject_ref: string
+  required: boolean
+  decision: AdmissionPassportDecision
+  evidence_ref: string | null
+}
+
+export type AdmissionPassportStatus = {
+  admission_passport_id: string
+  consumer_class: AdmissionPassportConsumerClass
+  authority_session_id: string
+  recovery_case_set_digest: string
+  runtime_kit_set_digest: string
+  decision: AdmissionPassportDecision
+  reason_codes: string[]
+  required_subjects: AdmissionPassportSubjectStatus[]
+  required_runtime_kits: string[]
+  issued_at: string
+  fresh_until: string
+  producer_revision: string
+}
+
+export type RecoveryWarrantExecutionClass = 'serving' | 'collaboration' | 'discover' | 'plan' | 'implement' | 'verify'
+
+export type RecoveryWarrantStatusValue = 'draft' | 'active' | 'sealed' | 'superseded' | 'broken' | 'quarantined'
+
+export type RuntimeProofKind =
+  | 'image_digest'
+  | 'runtime_kit'
+  | 'helper_asset'
+  | 'config_digest'
+  | 'secret_binding'
+  | 'network_identity'
+
+export type RuntimeProofCellStatusValue = 'healthy' | 'degraded' | 'missing' | 'expired' | 'quarantined'
+
+export type RuntimeProofCellStatus = {
+  runtime_proof_cell_id: string
+  recovery_warrant_id: string | null
+  runtime_kit_id: string
+  proof_kind: RuntimeProofKind
+  proof_subject: string
+  expected_ref: string | null
+  observed_ref: string | null
+  artifact_ref: string | null
+  content_hash: string | null
+  status: RuntimeProofCellStatusValue
+  required: boolean
+  reason_codes: string[]
+  observed_at: string
+  expires_at: string
+}
+
+export type ProjectionWatermarkStatusValue = 'fresh' | 'degraded' | 'expired' | 'quarantined'
+
+export type ProjectionWatermarkConsumerKey = 'service_ready' | 'control_plane_status' | 'deploy_verification'
+
+export type ProjectionWatermarkStatus = {
+  projection_watermark_id: string
+  consumer_key: ProjectionWatermarkConsumerKey
+  recovery_warrant_id: string
+  projection_digest: string
+  source_ref: string
+  observed_at: string
+  expires_at: string
+  status: ProjectionWatermarkStatusValue
+  reason_codes: string[]
+}
+
+export type RecoveryWarrantStatus = {
+  recovery_warrant_id: string
+  recovery_epoch_id: string
+  swarm_name: string
+  execution_class: RecoveryWarrantExecutionClass
+  admitted_revision: string
+  admitted_image_digest: string | null
+  runtime_kit_digest: string
+  admission_passport_id: string | null
+  required_proof_cell_ids: string[]
+  active_backlog_seat_count: number
+  projection_watermark_ids: string[]
+  status: RecoveryWarrantStatusValue
+  opened_at: string
+  sealed_at: string | null
+  superseded_at: string | null
+  reason_codes: string[]
+}
 
 const IMAGE_DIGEST_PATTERN = /sha256:[a-f0-9]{64}/i
 
@@ -190,7 +302,7 @@ const projectionConsumerKeysForWarrant = (
   executionClass: RecoveryWarrantExecutionClass,
 ): ProjectionWatermarkConsumerKey[] => {
   if (executionClass === 'serving') {
-    return ['jangar_ready', 'control_plane_status', 'deploy_verification']
+    return ['service_ready', 'control_plane_status', 'deploy_verification']
   }
   if (executionClass === 'plan' || executionClass === 'implement' || executionClass === 'verify') {
     return ['control_plane_status', 'deploy_verification']
@@ -287,7 +399,7 @@ const buildRecoveryWarrantStatus = ({
         runtime_kit_digest: passport.runtime_kit_set_digest,
       }),
     )}`,
-    swarm_name: 'jangar-control-plane',
+    swarm_name: 'agents-control-plane',
     execution_class: executionClass,
     admitted_revision: passport.producer_revision,
     admitted_image_digest: extractAdmittedImageDigest(runtimeKits),

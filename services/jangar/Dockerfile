@@ -457,10 +457,16 @@ ENV NODE_ENV=development
 COPY json/ .
 RUN --mount=type=cache,id=bun-install-cache-workspace-tools,target=/root/.bun/install/cache \
   bun install --no-save --ignore-scripts --linker=hoisted \
+    --filter @proompteng/agent-contracts \
     --filter @proompteng/codex \
     --filter @proompteng/otel \
     --filter @proompteng/temporal-bun-sdk \
     --filter @proompteng/cx-tools
+
+FROM workspace-tools-deps AS agent-contracts-build
+WORKDIR /app
+COPY full/packages/agent-contracts ./packages/agent-contracts
+RUN bun --cwd=packages/agent-contracts run build
 
 FROM workspace-tools-deps AS codex-build
 WORKDIR /app
@@ -572,6 +578,8 @@ COPY --from=tools /usr/local/bin/kubectl /usr/local/bin/kubectl
 COPY --from=tools /usr/local/bin/nats /usr/local/bin/nats
 
 WORKDIR /app
+COPY --from=agent-contracts-build /app/packages/agent-contracts/package.json /app/packages/agent-contracts/package.json
+COPY --from=agent-contracts-build /app/packages/agent-contracts/dist /app/packages/agent-contracts/dist
 COPY --from=codex-build /app/packages/codex/package.json /app/packages/codex/package.json
 COPY --from=codex-build /app/packages/codex/dist /app/packages/codex/dist
 COPY --from=otel-build /app/packages/otel/package.json /app/packages/otel/package.json
@@ -624,6 +632,8 @@ ARG JANGAR_COMMIT=""
 
 ENV PATH="/usr/local/go/bin:${PATH}"
 
+COPY --from=agent-contracts-build /app/packages/agent-contracts/package.json /app/packages/agent-contracts/package.json
+COPY --from=agent-contracts-build /app/packages/agent-contracts/dist /app/packages/agent-contracts/dist
 COPY --from=codex-build /app/packages/codex/package.json /app/packages/codex/package.json
 COPY --from=codex-build /app/packages/codex/dist /app/packages/codex/dist
 COPY --from=otel-build /app/packages/otel/package.json /app/packages/otel/package.json
@@ -650,7 +660,6 @@ COPY --from=jangar-build /app/services/jangar/src/worker.ts ./src/worker.ts
 COPY --from=jangar-build /app/services/jangar/src/server/runtime-entry-config.ts ./src/server/runtime-entry-config.ts
 COPY --from=jangar-build /app/services/jangar/src/server/runtime-tooling-config.ts ./src/server/runtime-tooling-config.ts
 COPY --from=jangar-build /app/services/jangar/src/server/control-plane-runtime-admission.ts ./src/server/control-plane-runtime-admission.ts
-COPY --from=jangar-build /app/services/jangar/src/server/control-plane-runtime-proof-surface.ts ./src/server/control-plane-runtime-proof-surface.ts
 COPY --from=jangar-pty /tmp/node-pty/build /app/services/jangar/.output/server/node_modules/node-pty/build
 COPY --from=jangar-pty /tmp/node-pty/prebuilds /app/services/jangar/.output/server/node_modules/node-pty/prebuilds
 WORKDIR /app

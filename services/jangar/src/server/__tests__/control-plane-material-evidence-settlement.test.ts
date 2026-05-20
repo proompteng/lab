@@ -273,7 +273,7 @@ const buildSpine = (overrides: Partial<Parameters<typeof buildMaterialEvidenceSe
     projectionWatermarks: [
       {
         projection_watermark_id: 'projection-watermark:ready',
-        consumer_key: 'jangar_ready',
+        consumer_key: 'service_ready',
         recovery_warrant_id: 'recovery-warrant:serving',
         projection_digest: 'digest',
         source_ref: 'admission-passport:serving',

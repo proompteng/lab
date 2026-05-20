@@ -11,6 +11,26 @@ import type {
   ExecutionTrustStatus,
   ExecutionTrustSwarm,
 } from '@proompteng/agent-contracts/execution-trust'
+import type {
+  AdmissionPassportConsumerClass,
+  AdmissionPassportDecision,
+  AdmissionPassportStatus,
+  AdmissionPassportSubjectStatus,
+  ProjectionWatermarkConsumerKey,
+  ProjectionWatermarkStatus,
+  ProjectionWatermarkStatusValue,
+  RecoveryWarrantExecutionClass,
+  RecoveryWarrantStatus,
+  RecoveryWarrantStatusValue,
+  RuntimeKitClass,
+  RuntimeKitComponentKind,
+  RuntimeKitComponentStatus,
+  RuntimeKitDecision,
+  RuntimeKitStatus,
+  RuntimeProofCellStatus,
+  RuntimeProofCellStatusValue,
+  RuntimeProofKind,
+} from '@proompteng/agent-contracts/runtime-admission'
 
 export type {
   AgentRunIngestionStatus,
@@ -34,146 +54,29 @@ export type {
   ExecutionTrustStatus,
   ExecutionTrustSwarm,
 } from '@proompteng/agent-contracts/execution-trust'
+export type {
+  AdmissionPassportConsumerClass,
+  AdmissionPassportDecision,
+  AdmissionPassportStatus,
+  AdmissionPassportSubjectStatus,
+  ProjectionWatermarkConsumerKey,
+  ProjectionWatermarkStatus,
+  ProjectionWatermarkStatusValue,
+  RecoveryWarrantExecutionClass,
+  RecoveryWarrantStatus,
+  RecoveryWarrantStatusValue,
+  RuntimeKitClass,
+  RuntimeKitComponentKind,
+  RuntimeKitComponentStatus,
+  RuntimeKitDecision,
+  RuntimeKitStatus,
+  RuntimeProofCellStatus,
+  RuntimeProofCellStatusValue,
+  RuntimeProofKind,
+} from '@proompteng/agent-contracts/runtime-admission'
 
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
-
-export type RuntimeKitClass = 'serving' | 'collaboration'
-
-export type RuntimeKitDecision = 'healthy' | 'degraded' | 'blocked' | 'unknown'
-
-export type RuntimeKitComponentKind = 'python_helper' | 'binary' | 'workspace_path' | 'config_file' | 'service_url'
-
-export type RuntimeKitComponentStatus = {
-  component_kind: RuntimeKitComponentKind
-  component_ref: string
-  required: boolean
-  present: boolean
-  digest: string | null
-  reason_code: string | null
-  evidence_ref: string | null
-}
-
-export type RuntimeKitStatus = {
-  runtime_kit_id: string
-  kit_class: RuntimeKitClass
-  subject_ref: string
-  image_ref: string
-  workspace_contract_version: string
-  component_digest: string
-  decision: RuntimeKitDecision
-  observed_at: string
-  fresh_until: string
-  producer_revision: string
-  reason_codes: string[]
-  components: RuntimeKitComponentStatus[]
-}
-
-export type AdmissionPassportConsumerClass = 'serving' | 'swarm_plan' | 'swarm_implement' | 'swarm_verify'
-
-export type AdmissionPassportDecision = 'allow' | 'degrade' | 'hold' | 'block'
-
-export type AdmissionPassportSubjectStatus = {
-  subject_kind: 'authority' | 'runtime_kit'
-  subject_ref: string
-  required: boolean
-  decision: AdmissionPassportDecision
-  evidence_ref: string | null
-}
-
-export type AdmissionPassportStatus = {
-  admission_passport_id: string
-  consumer_class: AdmissionPassportConsumerClass
-  authority_session_id: string
-  recovery_case_set_digest: string
-  runtime_kit_set_digest: string
-  decision: AdmissionPassportDecision
-  reason_codes: string[]
-  required_subjects: AdmissionPassportSubjectStatus[]
-  required_runtime_kits: string[]
-  issued_at: string
-  fresh_until: string
-  producer_revision: string
-}
-
-export type RecoveryWarrantExecutionClass =
-  | 'serving'
-  | 'collaboration'
-  | 'discover'
-  | 'plan'
-  | 'implement'
-  | 'verify'
-  | 'torghut_quant'
-
-export type RecoveryWarrantStatusValue = 'draft' | 'active' | 'sealed' | 'superseded' | 'broken' | 'quarantined'
-
-export type RuntimeProofKind =
-  | 'image_digest'
-  | 'runtime_kit'
-  | 'helper_asset'
-  | 'config_digest'
-  | 'secret_binding'
-  | 'network_identity'
-
-export type RuntimeProofCellStatusValue = 'healthy' | 'degraded' | 'missing' | 'expired' | 'quarantined'
-
-export type RuntimeProofCellStatus = {
-  runtime_proof_cell_id: string
-  recovery_warrant_id: string | null
-  runtime_kit_id: string
-  proof_kind: RuntimeProofKind
-  proof_subject: string
-  expected_ref: string | null
-  observed_ref: string | null
-  artifact_ref: string | null
-  content_hash: string | null
-  status: RuntimeProofCellStatusValue
-  required: boolean
-  reason_codes: string[]
-  observed_at: string
-  expires_at: string
-}
-
-export type ProjectionWatermarkStatusValue = 'fresh' | 'degraded' | 'expired' | 'quarantined'
-
-export type ProjectionWatermarkConsumerKey =
-  | 'jangar_ready'
-  | 'control_plane_status'
-  | 'deploy_verification'
-  | 'torghut_dependency_quorum'
-  | 'torghut_quant_health'
-  | 'torghut_market_context'
-
-export type ProjectionWatermarkStatus = {
-  projection_watermark_id: string
-  consumer_key: ProjectionWatermarkConsumerKey
-  recovery_warrant_id: string
-  projection_digest: string
-  source_ref: string
-  observed_at: string
-  expires_at: string
-  status: ProjectionWatermarkStatusValue
-  reason_codes: string[]
-}
-
-export type RecoveryWarrantStatus = {
-  recovery_warrant_id: string
-  recovery_epoch_id: string
-  swarm_name: string
-  execution_class: RecoveryWarrantExecutionClass
-  admitted_revision: string
-  admitted_image_digest: string | null
-  runtime_kit_digest: string
-  admission_passport_id: string | null
-  required_proof_cell_ids: string[]
-  active_backlog_seat_count: number
-  projection_watermark_ids: string[]
-  status: RecoveryWarrantStatusValue
-  opened_at: string
-  sealed_at: string | null
-  superseded_at: string | null
-  reason_codes: string[]
-}
 
 export type DependencyQuorumDecision = 'allow' | 'delay' | 'block' | 'unknown'
 

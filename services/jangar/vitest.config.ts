@@ -46,6 +46,9 @@ const agentContractsPolicyReferenceClientSource = fileURLToPath(
 const agentContractsPolicyValidationSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/policy-validation.ts', import.meta.url),
 )
+const agentContractsRuntimeAdmissionSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/runtime-admission.ts', import.meta.url),
+)
 const agentContractsSignalsClientSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/signals-client.ts', import.meta.url),
 )
@@ -98,6 +101,7 @@ export default defineConfig({
       '@proompteng/agent-contracts/orchestration-runs-client': agentContractsOrchestrationRunsClientSource,
       '@proompteng/agent-contracts/policy-reference-client': agentContractsPolicyReferenceClientSource,
       '@proompteng/agent-contracts/policy-validation': agentContractsPolicyValidationSource,
+      '@proompteng/agent-contracts/runtime-admission': agentContractsRuntimeAdmissionSource,
       '@proompteng/agent-contracts/signals-client': agentContractsSignalsClientSource,
       '@proompteng/agent-contracts/swarm-analysis': agentContractsSwarmAnalysisSource,
       '@proompteng/agent-contracts/swarm-contracts': agentContractsSwarmContractsSource,
@@ -138,6 +142,7 @@ export default defineConfig({
       '@proompteng/agent-contracts/orchestration-runs-client': agentContractsOrchestrationRunsClientSource,
       '@proompteng/agent-contracts/policy-reference-client': agentContractsPolicyReferenceClientSource,
       '@proompteng/agent-contracts/policy-validation': agentContractsPolicyValidationSource,
+      '@proompteng/agent-contracts/runtime-admission': agentContractsRuntimeAdmissionSource,
       '@proompteng/agent-contracts/signals-client': agentContractsSignalsClientSource,
       '@proompteng/agent-contracts/swarm-analysis': agentContractsSwarmAnalysisSource,
       '@proompteng/agent-contracts/swarm-contracts': agentContractsSwarmContractsSource,
