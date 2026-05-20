@@ -41,6 +41,8 @@ export type CodexAppServerRunnerStatus = {
   finishedAt: string
   threadId?: string
   turnId?: string
+  turnStatus?: Turn['status']
+  turnError?: string
   model?: string
   effort?: string
   cwd?: string | null
@@ -116,6 +118,11 @@ export class CodexRunnerStatusError extends Data.TaggedError('CodexRunnerStatusE
   readonly cause: unknown
 }> {}
 
+export class CodexRunnerArtifactError extends Data.TaggedError('CodexRunnerArtifactError')<{
+  readonly operation: 'upload-output-artifacts'
+  readonly cause: unknown
+}> {}
+
 export type CodexRunnerError =
   | CodexRunnerInputError
   | CodexRunnerWorkspaceError
@@ -123,6 +130,7 @@ export type CodexRunnerError =
   | CodexRunnerTurnError
   | CodexRunnerCancellationError
   | CodexRunnerStatusError
+  | CodexRunnerArtifactError
 
 export type CodexAppServerClientFactoryService = {
   create: (options: CodexAppServerOptions) => Effect.Effect<CodexAppServerRunnerClient, CodexRunnerClientError>
@@ -186,6 +194,9 @@ const describeRunnerError = (error: unknown) => {
   if (error instanceof CodexRunnerStatusError) {
     return `${error._tag}: ${error.operation}${error.path ? ` ${error.path}` : ''}: ${toErrorMessage(error.cause)}`
   }
+  if (error instanceof CodexRunnerArtifactError) {
+    return `${error._tag}: ${error.operation}: ${toErrorMessage(error.cause)}`
+  }
   return toErrorMessage(error)
 }
 
@@ -194,6 +205,38 @@ const describeAbortReason = (reason: unknown): string | undefined => {
   if (reason instanceof Error) return reason.message
   if (isRecord(reason) && typeof reason.signal === 'string') return reason.signal
   return undefined
+}
+
+const describeTurnError = (turn: Turn): string => {
+  const message = turn.error?.message?.trim()
+  const details = turn.error?.additionalDetails?.trim()
+  const status = `Codex app-server turn ${turn.id} finished with status ${turn.status}`
+  return [message && message.length > 0 ? message : status, details]
+    .filter((part) => part && part.length > 0)
+    .join(': ')
+}
+
+const terminalErrorForTurn = (
+  turn: Turn | null,
+  threadId: string | undefined,
+  turnId: string | undefined,
+): CodexRunnerTurnError | CodexRunnerCancellationError | null => {
+  if (!turn || turn.status === 'completed') return null
+  if (turn.status === 'interrupted') {
+    return new CodexRunnerCancellationError({
+      operation: 'cancel-turn',
+      threadId,
+      turnId,
+      signal: 'app-server-interrupted',
+      cause: new Error(describeTurnError(turn)),
+    })
+  }
+  return new CodexRunnerTurnError({
+    operation: 'stream-turn',
+    threadId,
+    turnId,
+    cause: new Error(describeTurnError(turn)),
+  })
 }
 
 const cancellationErrorFor = (signal: AbortSignal, threadId?: string, turnId?: string): CodexRunnerCancellationError =>
@@ -679,6 +722,7 @@ export const runCodexAppServerAdapter = async (
 
   let threadId: string | undefined
   let turnId: string | undefined
+  let finalTurn: Turn | null = null
   let exitCode = 1
   let errorMessage: string | undefined
   let caughtError: unknown
@@ -749,21 +793,34 @@ export const runCodexAppServerAdapter = async (
         const { value, done } = cancellationWaiter
           ? await Promise.race([nextDelta, cancellationWaiter.promise])
           : await nextDelta
-        if (done) break
+        if (done) {
+          finalTurn = value ?? null
+          break
+        }
         writeDelta(value, logStream)
       }
     } finally {
       cancellationWaiter?.cleanup()
     }
-    outputArtifacts = await (options.uploadArtifacts ?? uploadOutputArtifacts)(outputArtifacts)
+    const terminalError = terminalErrorForTurn(finalTurn, threadId, turnId)
+    if (terminalError) {
+      throw terminalError
+    }
+    try {
+      outputArtifacts = await (options.uploadArtifacts ?? uploadOutputArtifacts)(outputArtifacts)
+    } catch (cause) {
+      throw new CodexRunnerArtifactError({ operation: 'upload-output-artifacts', cause })
+    }
     exitCode = 0
   } catch (error) {
     let runnerError = error
     if (error instanceof CodexRunnerCancellationError) {
-      try {
-        await interruptAppServerTurn(client, error, threadId, turnId)
-      } catch (interruptError) {
-        runnerError = interruptError
+      if (options.abortSignal?.aborted) {
+        try {
+          await interruptAppServerTurn(client, error, threadId, turnId)
+        } catch (interruptError) {
+          runnerError = interruptError
+        }
       }
       exitCode = 130
     } else {
@@ -790,6 +847,8 @@ export const runCodexAppServerAdapter = async (
       finishedAt: timestampUtc(now),
       ...(threadId ? { threadId } : {}),
       ...(turnId ? { turnId } : {}),
+      ...(finalTurn?.status ? { turnStatus: finalTurn.status } : {}),
+      ...(finalTurn && finalTurn.status !== 'completed' ? { turnError: describeTurnError(finalTurn) } : {}),
       ...(adapter.model ? { model: adapter.model } : {}),
       ...(adapter.effort ? { effort: adapter.effort } : {}),
       ...(adapter.cwd !== undefined ? { cwd: adapter.cwd } : {}),

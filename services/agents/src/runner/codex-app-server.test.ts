@@ -7,6 +7,7 @@ import type { CodexAppServerOptions, CodexAppServerTurnOptions, StreamDelta, Tur
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  CodexRunnerArtifactError,
   CodexRunnerCancellationError,
   CodexRunnerClientError,
   CodexRunnerInputError,
@@ -21,6 +22,16 @@ const makeStream = async function* (): AsyncGenerator<StreamDelta, Turn | null, 
   yield { type: 'message', delta: 'done' }
   return null
 }
+
+const makeTurn = (status: Turn['status'], error: Turn['error'] = null): Turn => ({
+  id: `turn-${status}`,
+  items: [],
+  status,
+  error,
+  startedAt: 1,
+  completedAt: 2,
+  durationMs: 1000,
+})
 
 const deferred = <T = void>() => {
   let resolve!: (value: T | PromiseLike<T>) => void
@@ -390,6 +401,147 @@ describe('codex app-server runner adapter', () => {
     })
     expect(String(status.error)).toContain('CodexRunnerTurnError')
     expect(String(status.error)).toContain('stream disconnected')
+  })
+
+  it('fails the runner when the app-server stream returns a failed final turn', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
+    const runPath = join(dir, 'run.json')
+    const statusPath = join(dir, 'status.json')
+    await writeFile(runPath, `${JSON.stringify({ implementation: { text: 'final turn fails' } })}\n`, 'utf8')
+
+    const stream = async function* (): AsyncGenerator<StreamDelta, Turn | null, void> {
+      yield { type: 'message', delta: 'started' }
+      return makeTurn('failed', {
+        message: 'policy denied',
+        codexErrorInfo: null,
+        additionalDetails: 'approval mode rejected the command',
+      })
+    }
+
+    await expect(
+      runCodexAppServerAdapter(
+        {
+          provider: 'codex-runner',
+          payloads: { eventFilePath: runPath },
+          artifacts: { statusPath },
+        },
+        {},
+        {
+          createClient: () => ({
+            runTurnStream: async () => ({
+              stream: stream(),
+              turnId: 'turn-failed',
+              threadId: 'thread-failed',
+            }),
+          }),
+        },
+      ),
+    ).rejects.toBeInstanceOf(CodexRunnerTurnError)
+
+    const status = JSON.parse(await readFile(statusPath, 'utf8')) as Record<string, unknown>
+    expect(status).toMatchObject({
+      exitCode: 1,
+      status: 'failed',
+      threadId: 'thread-failed',
+      turnId: 'turn-failed',
+      turnStatus: 'failed',
+      turnError: 'policy denied: approval mode rejected the command',
+    })
+    expect(String(status.error)).toContain('CodexRunnerTurnError')
+  })
+
+  it('classifies artifact upload failures after a successful app-server turn', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
+    const runPath = join(dir, 'run.json')
+    const statusPath = join(dir, 'status.json')
+    await writeFile(runPath, `${JSON.stringify({ implementation: { text: 'upload artifact' } })}\n`, 'utf8')
+
+    const stream = async function* (): AsyncGenerator<StreamDelta, Turn | null, void> {
+      yield { type: 'message', delta: 'done' }
+      return makeTurn('completed')
+    }
+
+    await expect(
+      runCodexAppServerAdapter(
+        {
+          provider: 'codex-runner',
+          payloads: { eventFilePath: runPath },
+          artifacts: { statusPath },
+          providerSpec: {
+            outputArtifacts: [{ name: 'codex-artifact', path: '/workspace/artifact.json', key: 'runs/run-1.json' }],
+          },
+        },
+        {},
+        {
+          createClient: () => ({
+            runTurnStream: async () => ({
+              stream: stream(),
+              turnId: 'turn-artifact',
+              threadId: 'thread-artifact',
+            }),
+          }),
+          uploadArtifacts: async () => {
+            throw new Error('s3 unavailable')
+          },
+        },
+      ),
+    ).rejects.toBeInstanceOf(CodexRunnerArtifactError)
+
+    const status = JSON.parse(await readFile(statusPath, 'utf8')) as Record<string, unknown>
+    expect(status).toMatchObject({
+      exitCode: 1,
+      status: 'failed',
+      threadId: 'thread-artifact',
+      turnId: 'turn-artifact',
+      turnStatus: 'completed',
+    })
+    expect(String(status.error)).toContain('CodexRunnerArtifactError')
+    expect(String(status.error)).toContain('s3 unavailable')
+  })
+
+  it('marks app-server interrupted final turns as cancelled without sending a second interrupt', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
+    const runPath = join(dir, 'run.json')
+    const statusPath = join(dir, 'status.json')
+    await writeFile(runPath, `${JSON.stringify({ implementation: { text: 'server interrupts' } })}\n`, 'utf8')
+
+    const interruptTurn = vi.fn().mockResolvedValue(undefined)
+    const stream = async function* (): AsyncGenerator<StreamDelta, Turn | null, void> {
+      yield { type: 'message', delta: 'started' }
+      return makeTurn('interrupted')
+    }
+
+    await expect(
+      runCodexAppServerAdapter(
+        {
+          provider: 'codex-runner',
+          payloads: { eventFilePath: runPath },
+          artifacts: { statusPath },
+        },
+        {},
+        {
+          createClient: () => ({
+            runTurnStream: async () => ({
+              stream: stream(),
+              turnId: 'turn-interrupted',
+              threadId: 'thread-interrupted',
+            }),
+            interruptTurn,
+          }),
+        },
+      ),
+    ).rejects.toBeInstanceOf(CodexRunnerCancellationError)
+
+    expect(interruptTurn).not.toHaveBeenCalled()
+    const status = JSON.parse(await readFile(statusPath, 'utf8')) as Record<string, unknown>
+    expect(status).toMatchObject({
+      exitCode: 130,
+      status: 'cancelled',
+      threadId: 'thread-interrupted',
+      turnId: 'turn-interrupted',
+      turnStatus: 'interrupted',
+    })
+    expect(String(status.error)).toContain('app-server-interrupted')
   })
 
   it('interrupts the app-server turn and writes cancelled status when the runner is terminated', async () => {
