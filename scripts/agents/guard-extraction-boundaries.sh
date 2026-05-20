@@ -403,6 +403,19 @@ fail_if_matches \
   'submitCodexCallbackToAgentsService|AgentsCodexCallbackSubmitter|handleNotify|handleRunComplete' \
   "${ROOT_DIR}/services/jangar/src/server/agents-service-client.ts"
 
+fail_if_path_exists \
+  "Agents must not expose legacy Codex notify/run-complete callback bridge after runner/app-server events own status and messages" \
+  "${ROOT_DIR}/services/agents/src/server/codex-callbacks.ts" \
+  "${ROOT_DIR}/services/agents/src/server/codex-callbacks.test.ts" \
+  "${ROOT_DIR}/services/agents/src/routes/api/agents/codex/notify.ts" \
+  "${ROOT_DIR}/services/agents/src/routes/api/agents/codex/run-complete.ts"
+
+fail_if_matches \
+  "Agents package exports and route registration must not expose legacy Codex notify/run-complete callback routes" \
+  'codex-callbacks|api/agents/codex/(notify|run-complete)' \
+  "${ROOT_DIR}/services/agents/package.json" \
+  "${ROOT_DIR}/services/agents/src/server/control-plane.ts"
+
 fail_if_matches \
   "Jangar deploy verifier must read Agents control-plane status through the Agents service, not svc/jangar proxy routes" \
   "namespaces/jangar/services/jangar|defaultControlPlaneServiceName = 'jangar'|statusServiceName" \

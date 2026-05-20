@@ -102,16 +102,6 @@ const routeSources: RouteSourceSpec[] = [
     load: () => import('../routes/api/agents/messages'),
   },
   {
-    file: 'src/routes/api/agents/codex/notify.ts',
-    sourceUrl: new URL('../routes/api/agents/codex/notify.ts', import.meta.url),
-    load: () => import('../routes/api/agents/codex/notify'),
-  },
-  {
-    file: 'src/routes/api/agents/codex/run-complete.ts',
-    sourceUrl: new URL('../routes/api/agents/codex/run-complete.ts', import.meta.url),
-    load: () => import('../routes/api/agents/codex/run-complete'),
-  },
-  {
     file: 'src/routes/api/agents/implementation-sources/webhooks/$provider.ts',
     sourceUrl: new URL('../routes/api/agents/implementation-sources/webhooks/$provider.ts', import.meta.url),
     load: () => import('../routes/api/agents/implementation-sources/webhooks/$provider'),

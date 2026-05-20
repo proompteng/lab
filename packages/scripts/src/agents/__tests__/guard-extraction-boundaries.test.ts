@@ -94,6 +94,8 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('Jangar database typing must not reintroduce Agents-owned table contracts')
     expect(content).toContain('Agents deploy tooling must not recreate database compatibility alias secrets')
     expect(content).toContain('AGENTS_CREATE_DB_SECRET_ALIAS|compat-source-secret')
+    expect(content).toContain('Agents must not expose legacy Codex notify/run-complete callback bridge')
+    expect(content).toContain('api/agents/codex/(notify|run-complete)')
     expect(content).toContain('retired workflow_comms agent-message store')
     expect(content).toContain('Jangar Codex NATS publisher must emit AgentRun-native identity only')
     expect(content).toContain('Jangar Codex judge source contract must use AgentRun-native runtime identity fields')

@@ -58,11 +58,11 @@ describe('Agents HTTP runtime', () => {
   it('registers OPTIONS server route handlers', async () => {
     const runtime = await createAgentsHttpRuntime({
       routeSources: {
-        './routes/api/agents/codex/notify.ts':
-          "export const Route = createFileRoute('/api/agents/codex/notify')({ server: { handlers: { OPTIONS: handler } } })",
+        './routes/api/agents/messages.ts':
+          "export const Route = createFileRoute('/api/agents/messages')({ server: { handlers: { OPTIONS: handler } } })",
       },
       routeModules: {
-        './routes/api/agents/codex/notify.ts': async () => ({
+        './routes/api/agents/messages.ts': async () => ({
           Route: {
             options: {
               server: {
@@ -77,7 +77,7 @@ describe('Agents HTTP runtime', () => {
     })
 
     const response = await runtime.handleRequest(
-      new Request('http://agents.local/api/agents/codex/notify', { method: 'OPTIONS' }),
+      new Request('http://agents.local/api/agents/messages', { method: 'OPTIONS' }),
     )
 
     expect(response.status).toBe(200)
