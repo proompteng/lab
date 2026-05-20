@@ -34,9 +34,6 @@ spec:
     spec:
       containers:
         - name: app
-          env:
-            - name: JANGAR_RUNTIME_IMAGE
-              value: registry.ide-newton.ts.net/lab/jangar:old-tag@sha256:old
 `,
     'utf8',
   )
@@ -78,14 +75,17 @@ describe('updateJangarManifests', () => {
       digest: 'sha256:newdigest',
     })
     expect(serviceManifest.metadata?.annotations?.['deploy.knative.dev/rollout']).toBe(rolloutTimestamp)
-    expect(serviceManifest.spec?.template?.spec?.containers?.[0]?.env).toContainEqual({
-      name: 'JANGAR_RUNTIME_IMAGE',
-      value: 'registry.ide-newton.ts.net/lab/jangar:new-tag@sha256:newdigest',
-    })
+    const serviceEnv = serviceManifest.spec?.template?.spec?.containers?.[0]?.env ?? []
+    expect(serviceEnv).not.toContainEqual(expect.objectContaining({ name: 'JANGAR_RUNTIME_IMAGE' }))
+    expect(serviceEnv).toEqual(
+      expect.arrayContaining([
+        { name: 'JANGAR_MANIFEST_IMAGE_DIGEST', value: 'sha256:newdigest' },
+        { name: 'JANGAR_SERVING_IMAGE_DIGEST', value: 'sha256:newdigest' },
+      ]),
+    )
     expect(result.changed).toEqual({
       kustomization: true,
       service: true,
-      runtimeImageEnv: true,
       sourceHeadShaEnv: false,
       gitopsRevisionEnv: false,
       sourceCiRunIdEnv: false,

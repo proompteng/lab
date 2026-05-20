@@ -288,7 +288,9 @@ fail_if_path_exists \
 
 fail_if_path_exists \
   "Jangar must not infer generic AgentRun ingestion readiness after Agents owns /ready ingestion assessment" \
-  "${ROOT_DIR}/services/jangar/src/server/control-plane-serving-process-status.ts"
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-serving-process-status.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-agentrun-ingestion.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/__tests__/supporting-primitives-agentrun-ingestion.test.ts"
 
 fail_if_path_exists \
   "Jangar must not own generic Agents watch reliability after Agents owns watch status evidence" \
@@ -306,7 +308,7 @@ fail_if_matches \
 
 fail_if_matches \
   "Jangar config must not carry generic Agents runtime evidence knobs after Agents owns workflow and rollout status" \
-  'JANGAR_CONTROL_PLANE_ROLLOUT_DEPLOYMENTS|JANGAR_WORKFLOWS_WINDOW_MINUTES|JANGAR_WORKFLOWS_WARNING_BACKOFF_THRESHOLD|JANGAR_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD|workflowsWindowMinutes|rolloutDeployments|workflowsWarningBackoffThreshold|workflowsDegradedBackoffThreshold' \
+  'JANGAR_CONTROL_PLANE_CACHE_|JANGAR_CONTROL_PLANE_HEARTBEAT_|JANGAR_CONTROL_PLANE_ROLLOUT_DEPLOYMENTS|JANGAR_WORKFLOWS_WINDOW_MINUTES|JANGAR_WORKFLOWS_WARNING_BACKOFF_THRESHOLD|JANGAR_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD|resolveControlPlaneCache|resolveControlPlaneHeartbeat|workflowsWindowMinutes|rolloutDeployments|workflowsWarningBackoffThreshold|workflowsDegradedBackoffThreshold' \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-config.ts"
 
 fail_if_path_exists \
@@ -586,10 +588,17 @@ fail_if_path_exists \
 
 fail_if_matches \
   "Jangar ready must consume runtime-admission proof fields from the Agents service, not build them locally" \
-  'buildRuntimeAdmissionSnapshot|~/server/control-plane-runtime-admission|JANGAR_RUNTIME_IMAGE|JANGAR_IMAGE' \
+  'buildRuntimeAdmissionSnapshot|~/server/control-plane-runtime-admission|JANGAR_RUNTIME_IMAGE' \
   "${ROOT_DIR}/services/jangar/src/routes/ready.tsx" \
   "${ROOT_DIR}/services/jangar/src/server/runtime-tooling-config.ts" \
-  "${ROOT_DIR}/services/jangar/Dockerfile"
+  "${ROOT_DIR}/services/jangar/Dockerfile" \
+  "${ROOT_DIR}/packages/scripts/src/jangar/update-manifests.ts" \
+  "${ROOT_DIR}/argocd/applications/jangar"
+
+fail_if_matches \
+  "Jangar GitOps must not configure the local Codex harness after Agents owns Codex runner execution" \
+  'CODEX_BINARY|CODEX_CWD|JANGAR_CODEX_REVIEWERS|JANGAR_CODEX_MAX_ATTEMPTS|JANGAR_CODEX_BACKOFF_SCHEDULE_MS' \
+  "${ROOT_DIR}/argocd/applications/jangar"
 
 fail_if_matches \
   "Jangar control-plane status shim must not redefine generic runtime admission status types" \
@@ -1036,6 +1045,16 @@ fail_if_matches \
   "${ROOT_DIR}/argocd/applications/jangar"
 
 fail_if_matches \
+  "Jangar deploy verification must use canonical AGENTS_VERIFY_CONTROL_PLANE_* env names, not deprecated JANGAR aliases" \
+  'JANGAR_VERIFY_STATUS_SERVICE_|JANGAR_VERIFY_CONTROL_PLANE_STATUS_NAMESPACE' \
+  "${ROOT_DIR}/packages/scripts/src/jangar/verify-deployment.ts"
+
+fail_if_matches \
+  "Jangar release promotion gating must not treat Agents Codex runtime or skill-only changes as Jangar build triggers" \
+  'packages/codex/|skills/' \
+  "${ROOT_DIR}/packages/scripts/src/jangar/resolve-release-metadata.ts"
+
+fail_if_matches \
   "Jangar docs must not advertise removed Agents controller runtime config" \
   'controller-runtime-config|JANGAR_AGENTS_CONTROLLER_' \
   "${ROOT_DIR}/services/jangar/README.md" \
@@ -1307,9 +1326,13 @@ fail_if_matches \
   "Jangar must not create or write Agents-owned control-plane database tables" \
   'agents_control_plane|agent_run_idempotency_keys|CREATE TABLE IF NOT EXISTS agent_runs|CREATE TABLE IF NOT EXISTS orchestration_runs|CREATE TABLE IF NOT EXISTS memory_resources' \
   "${ROOT_DIR}/services/jangar/src/server/db.ts" \
-  "${ROOT_DIR}/services/jangar/src/server/control-plane-heartbeat-store.ts" \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-clearance-market.ts" \
   "${ROOT_DIR}/services/jangar/src/server/migrations"
+
+fail_if_path_exists \
+  "Jangar must not retain an Agents-owned control-plane heartbeat store after heartbeat contracts moved to agent-contracts" \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-heartbeat-store.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/__tests__/control-plane-heartbeat-store.test.ts"
 
 fail_if_matches \
   "Jangar database typing must not reintroduce Agents-owned table contracts after migration ownership moved to services/agents" \

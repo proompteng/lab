@@ -56,8 +56,6 @@ spec:
               value: production
             - name: UI_PORT
               value: "8080"
-            - name: JANGAR_RUNTIME_IMAGE
-              value: registry.ide-newton.ts.net/lab/jangar:c347efe9@sha256:34aee0e27eebfffcc37156a41c4a9b2c1809b8893be655683da6c61c12e9df1c
             - name: JANGAR_SOURCE_HEAD_SHA
               value: c347efe90c715c57a8f29320e670076b6efff8d7
             - name: JANGAR_GITOPS_REVISION
@@ -106,10 +104,6 @@ spec:
               value: "20000"
             - name: OTEL_LOGS_EXPORTER
               value: none
-            - name: CODEX_BINARY
-              value: /usr/local/bin/codex
-            - name: CODEX_CWD
-              value: /workspace/lab
             - name: BUN_INSTALL_CACHE_DIR
               value: /workspace/.bun-install-cache
             - name: CODEX_REPO_SLUG
@@ -126,8 +120,6 @@ spec:
               value: "12"
             - name: JANGAR_WHITEPAPER_OUTPUT_FETCH_DELAY_MS
               value: "5000"
-            - name: JANGAR_CODEX_REVIEWERS
-              value: codex,codex[bot],chatgpt-codex-connector,chatgpt-codex-connector[bot],gregkonush
             - name: JANGAR_MODELS
               value: gpt-5.5
             - name: JANGAR_DEFAULT_MODEL
@@ -156,10 +148,6 @@ spec:
               value: "3600000"
             - name: JANGAR_REVIEW_MAX_WAIT_MS
               value: "3600000"
-            - name: JANGAR_CODEX_MAX_ATTEMPTS
-              value: "3"
-            - name: JANGAR_CODEX_BACKOFF_SCHEDULE_MS
-              value: 300000,900000,2700000
             - name: MINIO_ENDPOINT
               value: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
             - name: MINIO_ACCESS_KEY

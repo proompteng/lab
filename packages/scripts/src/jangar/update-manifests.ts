@@ -129,19 +129,6 @@ export const updateJangarManifests = (options: UpdateManifestsOptions) => {
     console.log(`Updated ${serviceManifestPath} annotation deploy.knative.dev/rollout to ${options.rolloutTimestamp}`)
   }
 
-  const runtimeImageRef = `${options.imageName}:${options.tag}@${digest}`
-  const runtimeImageEnvChanged = upsertDeploymentContainerEnvValue(
-    serviceManifestPath,
-    'app',
-    'JANGAR_RUNTIME_IMAGE',
-    runtimeImageRef,
-  )
-  if (!runtimeImageEnvChanged) {
-    console.warn('Warning: jangar runtime image env was not updated; manifest may already match.')
-  } else {
-    console.log(`Updated ${serviceManifestPath} env JANGAR_RUNTIME_IMAGE to ${runtimeImageRef}`)
-  }
-
   const sourceHeadSha = normalizeOptional(options.sourceHeadSha)
   const gitopsRevision = normalizeOptional(options.gitopsRevision)
   const sourceServingProofEnv = buildSourceServingProofEnv({
@@ -174,7 +161,6 @@ export const updateJangarManifests = (options: UpdateManifestsOptions) => {
     changed: {
       kustomization: kustomizationChanged,
       service: serviceChanged,
-      runtimeImageEnv: runtimeImageEnvChanged,
       sourceHeadShaEnv: sourceServingProofEnvChanged.JANGAR_SOURCE_HEAD_SHA ?? false,
       gitopsRevisionEnv: sourceServingProofEnvChanged.JANGAR_GITOPS_REVISION ?? false,
       sourceCiRunIdEnv: sourceServingProofEnvChanged.JANGAR_SOURCE_CI_RUN_ID ?? false,
