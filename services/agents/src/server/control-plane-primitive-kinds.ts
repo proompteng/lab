@@ -22,8 +22,12 @@ export type AgentPrimitiveKind =
   | 'Orchestration'
   | 'OrchestrationRun'
 
-type PrimitiveKindConfig = {
-  kind: AgentPrimitiveKind
+export type ControlPlaneRuntimeResourceKind = 'Deployment' | 'Job' | 'Pod'
+
+export type ControlPlaneResourceKind = AgentPrimitiveKind | ControlPlaneRuntimeResourceKind
+
+type PrimitiveKindConfig<TKind extends ControlPlaneResourceKind = ControlPlaneResourceKind> = {
+  kind: TKind
   resource: string
 }
 
@@ -31,7 +35,7 @@ type ListPrimitiveKindsOptions = {
   includeSwarm?: boolean
 }
 
-const PRIMITIVE_KIND_CONFIG: PrimitiveKindConfig[] = [
+const AGENT_PRIMITIVE_KIND_CONFIG: Array<PrimitiveKindConfig<AgentPrimitiveKind>> = [
   { kind: 'Agent', resource: RESOURCE_MAP.Agent },
   { kind: 'AgentRun', resource: RESOURCE_MAP.AgentRun },
   { kind: 'AgentProvider', resource: RESOURCE_MAP.AgentProvider },
@@ -54,14 +58,22 @@ const PRIMITIVE_KIND_CONFIG: PrimitiveKindConfig[] = [
   { kind: 'OrchestrationRun', resource: RESOURCE_MAP.OrchestrationRun },
 ]
 
+const RUNTIME_RESOURCE_KIND_CONFIG: Array<PrimitiveKindConfig<ControlPlaneRuntimeResourceKind>> = [
+  { kind: 'Deployment', resource: RESOURCE_MAP.Deployment },
+  { kind: 'Job', resource: RESOURCE_MAP.Job },
+  { kind: 'Pod', resource: RESOURCE_MAP.Pod },
+]
+
 const KIND_LOOKUP = new Map(
-  PRIMITIVE_KIND_CONFIG.flatMap((entry) => [
+  [...AGENT_PRIMITIVE_KIND_CONFIG, ...RUNTIME_RESOURCE_KIND_CONFIG].flatMap((entry) => [
     [entry.kind.toLowerCase(), entry],
     [entry.kind.replace(/\s+/g, '').toLowerCase(), entry],
   ]),
 )
 
-export const resolvePrimitiveKind = (raw?: string | null) => {
+export function resolvePrimitiveKind(raw: AgentPrimitiveKind): PrimitiveKindConfig<AgentPrimitiveKind> | null
+export function resolvePrimitiveKind(raw?: string | null): PrimitiveKindConfig | null
+export function resolvePrimitiveKind(raw?: string | null): PrimitiveKindConfig | null {
   if (!raw) return null
   const normalized = raw.trim().toLowerCase()
   if (!normalized) return null
@@ -69,6 +81,6 @@ export const resolvePrimitiveKind = (raw?: string | null) => {
 }
 
 export const listPrimitiveKinds = (options: ListPrimitiveKindsOptions = {}) =>
-  PRIMITIVE_KIND_CONFIG.filter((entry) => entry.kind !== 'Swarm' || options.includeSwarm === true).map(
+  AGENT_PRIMITIVE_KIND_CONFIG.filter((entry) => entry.kind !== 'Swarm' || options.includeSwarm === true).map(
     (entry) => entry.kind,
   )

@@ -182,4 +182,47 @@ describe('agents control-plane resources route', () => {
     expect((payload.items as Array<{ metadata?: Record<string, unknown> }>)[0]?.metadata?.name).toBe('agent-live')
     expect(kube.list).toHaveBeenCalledTimes(1)
   })
+
+  it('lists runtime Job resources through the Agents control-plane resource API without cache lookup', async () => {
+    process.env.AGENTS_CONTROL_PLANE_CACHE_ENABLED = 'on'
+
+    const cachedStore = {
+      ready: Promise.resolve(),
+      close: vi.fn(async () => undefined),
+      getDbNow: vi.fn(async () => new Date()),
+      upsertResource: vi.fn(),
+      markDeleted: vi.fn(),
+      markNotSeenSince: vi.fn(),
+      getResource: vi.fn(),
+      listResources: vi.fn(),
+    }
+    cacheStoreMocks.createControlPlaneCacheStore.mockReturnValue(cachedStore)
+    const kube = {
+      list: vi.fn(async () => ({
+        items: [
+          {
+            apiVersion: 'batch/v1',
+            kind: 'Job',
+            metadata: { name: 'run-1-job', namespace: 'agents' },
+            status: { active: 1 },
+          },
+        ],
+      })),
+    }
+    kubeClientMocks.createKubernetesClient.mockReturnValue(kube as never)
+
+    const response = await listPrimitiveResources(
+      new Request(
+        'http://localhost/api/agents/control-plane/resources?kind=Job&namespace=agents&labelSelector=agents.proompteng.ai/agent-run=run-1',
+      ),
+      { kubeClient: kube as never, cacheStoreFactory: () => cachedStore as never },
+    )
+
+    expect(response.status).toBe(200)
+    const payload = (await response.json()) as Record<string, unknown>
+    expect(payload).toMatchObject({ ok: true, kind: 'Job', namespace: 'agents', total: 1 })
+    expect((payload.items as Array<{ metadata?: Record<string, unknown> }>)[0]?.metadata?.name).toBe('run-1-job')
+    expect(kube.list).toHaveBeenCalledWith('jobs.batch', 'agents', 'agents.proompteng.ai/agent-run=run-1')
+    expect(cachedStore.listResources).not.toHaveBeenCalled()
+  })
 })

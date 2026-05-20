@@ -120,6 +120,11 @@ fail_if_matches \
   'JANGAR_CONTROL_PLANE_ROLLOUT_DEPLOYMENTS|JANGAR_WORKFLOWS_WINDOW_MINUTES|JANGAR_WORKFLOWS_WARNING_BACKOFF_THRESHOLD|JANGAR_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD|workflowsWindowMinutes|rolloutDeployments|workflowsWarningBackoffThreshold|workflowsDegradedBackoffThreshold' \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-config.ts"
 
+fail_if_matches \
+  "Jangar kube gateway must not list generic Agents runtime Deployment/Job/Pod resources directly" \
+  "client\\.list\\(['\"](deployments|jobs\\.batch|pods)['\"]" \
+  "${ROOT_DIR}/services/jangar/src/server/kube-gateway.ts"
+
 require_matches \
   "Agents GitOps kustomization must include the canonical agents.k8s.proompteng.ai IngressRoute" \
   'ingressroute-agents-api\.yaml' \

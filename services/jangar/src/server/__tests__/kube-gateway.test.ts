@@ -23,9 +23,15 @@ describe('kube gateway', () => {
     vi.clearAllMocks()
   })
 
-  it('parses deployment rollout fields from the kubectl adapter', async () => {
-    const client = createClient({
-      list: vi.fn(async () => ({
+  it('lists deployment rollout fields through the Agents service boundary', async () => {
+    const client = createClient({ list: vi.fn() })
+    const listControlPlaneResources = vi.fn(async () => ({
+      ok: true as const,
+      status: 200,
+      body: {
+        ok: true,
+        kind: 'Deployment',
+        namespace: 'agents',
         items: [
           {
             metadata: {
@@ -48,12 +54,14 @@ describe('kube gateway', () => {
             },
           },
         ],
-      })),
-    })
+      },
+    }))
 
-    const gateway = createKubeGateway(client)
+    const gateway = createKubeGateway(client, { listControlPlaneResources })
     const deployments = await gateway.listDeployments('agents')
 
+    expect(listControlPlaneResources).toHaveBeenCalledWith({ kind: 'Deployment', namespace: 'agents' })
+    expect(client.list).not.toHaveBeenCalled()
     expect(deployments).toEqual([
       {
         metadata: {
@@ -87,12 +95,17 @@ describe('kube gateway', () => {
         },
       },
     ])
-    expect(client.list).toHaveBeenCalledWith('deployments', 'agents')
   })
 
-  it('forwards job selectors and normalizes job metadata', async () => {
-    const client = createClient({
-      list: vi.fn(async () => ({
+  it('lists Jobs through the Agents service boundary and forwards selectors', async () => {
+    const client = createClient({ list: vi.fn() })
+    const listControlPlaneResources = vi.fn(async () => ({
+      ok: true as const,
+      status: 200,
+      body: {
+        ok: true,
+        kind: 'Job',
+        namespace: 'agents',
         items: [
           {
             metadata: {
@@ -112,18 +125,69 @@ describe('kube gateway', () => {
             },
           },
         ],
-      })),
-    })
+      },
+    }))
 
-    const gateway = createKubeGateway(client)
+    const gateway = createKubeGateway(client, { listControlPlaneResources })
     const jobs = await gateway.listJobs('agents', 'schedules.proompteng.ai/schedule')
 
+    expect(listControlPlaneResources).toHaveBeenCalledWith({
+      kind: 'Job',
+      namespace: 'agents',
+      labelSelector: 'schedules.proompteng.ai/schedule',
+    })
+    expect(client.list).not.toHaveBeenCalled()
     expect(jobs[0]?.metadata.labels).toEqual({
       'swarm.proompteng.ai/name': 'jangar-control-plane',
       'schedules.proompteng.ai/schedule': 'plan',
     })
     expect(jobs[0]?.status.active).toBe(1)
-    expect(client.list).toHaveBeenCalledWith('jobs.batch', 'agents', 'schedules.proompteng.ai/schedule')
+  })
+
+  it('lists Pods through the Agents service boundary and forwards selectors', async () => {
+    const client = createClient({ list: vi.fn() })
+    const listControlPlaneResources = vi.fn(async () => ({
+      ok: true as const,
+      status: 200,
+      body: {
+        ok: true,
+        kind: 'Pod',
+        namespace: 'agents',
+        items: [
+          {
+            metadata: {
+              name: 'run-1-pod',
+              namespace: 'agents',
+              labels: { 'agents.proompteng.ai/agent-run': 'run-1' },
+              creationTimestamp: '2026-01-20T00:00:00Z',
+            },
+            status: {
+              phase: 'Failed',
+              containerStatuses: [
+                {
+                  name: 'runner',
+                  image: 'agents-codex-runner:test',
+                  ready: false,
+                  state: { terminated: { reason: 'Error', message: 'failed', exitCode: 1 } },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    }))
+
+    const gateway = createKubeGateway(client, { listControlPlaneResources })
+    const pods = await gateway.listPods('agents', 'agents.proompteng.ai/agent-run=run-1')
+
+    expect(listControlPlaneResources).toHaveBeenCalledWith({
+      kind: 'Pod',
+      namespace: 'agents',
+      labelSelector: 'agents.proompteng.ai/agent-run=run-1',
+    })
+    expect(client.list).not.toHaveBeenCalled()
+    expect(pods[0]?.status.phase).toBe('Failed')
+    expect(pods[0]?.status.containerStatuses[0]?.state.terminated?.exitCode).toBe(1)
   })
 
   it('lists AgentRuns through the Agents service boundary', async () => {
@@ -261,16 +325,18 @@ describe('kube gateway', () => {
   })
 
   it('classifies invalid list payloads', async () => {
-    const gateway = createKubeGateway(
-      createClient({
-        list: vi.fn(async () => ({ ok: true })),
-      }),
-    )
+    const gateway = createKubeGateway(createClient({ list: vi.fn() }), {
+      listControlPlaneResources: vi.fn(async () => ({
+        ok: true as const,
+        status: 200,
+        body: { ok: true } as never,
+      })),
+    })
 
     await expect(gateway.listDeployments('agents')).rejects.toMatchObject({
       name: 'KubeGatewayError',
       kind: 'invalid_payload',
-      message: 'kube deployments list returned invalid list payload',
+      message: 'agents service deployments list returned invalid list payload',
     } satisfies Partial<KubeGatewayError>)
   })
 

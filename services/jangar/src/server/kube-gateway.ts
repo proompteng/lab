@@ -365,8 +365,13 @@ export const createKubeGateway = (
   deps: KubeGatewayDeps = {},
 ): KubeGateway => ({
   listDeployments: async (namespace) =>
-    wrapTransport('kube deployments list failed', async () => {
-      const items = parseListItems(await client.list('deployments', namespace), 'kube deployments list')
+    wrapTransport('agents service deployments list failed', async () => {
+      const listControlPlaneResources = deps.listControlPlaneResources ?? fetchControlPlaneResourcesFromAgentsService
+      const result = await listControlPlaneResources({ kind: 'Deployment', namespace })
+      if (!result.ok) {
+        throw new Error(result.error ?? `Agents service returned HTTP ${result.status}`)
+      }
+      const items = parseListItems(result.body, 'agents service deployments list')
 
       return items
         .map((item): KubeGatewayDeployment | null => {
@@ -405,8 +410,13 @@ export const createKubeGateway = (
         .filter((entry): entry is KubeGatewayAgentRun => entry !== null)
     }),
   listJobs: async (namespace, labelSelector) =>
-    wrapTransport('kube jobs list failed', async () => {
-      const items = parseListItems(await client.list('jobs.batch', namespace, labelSelector), 'kube jobs list')
+    wrapTransport('agents service jobs list failed', async () => {
+      const listControlPlaneResources = deps.listControlPlaneResources ?? fetchControlPlaneResourcesFromAgentsService
+      const result = await listControlPlaneResources({ kind: 'Job', namespace, labelSelector })
+      if (!result.ok) {
+        throw new Error(result.error ?? `Agents service returned HTTP ${result.status}`)
+      }
+      const items = parseListItems(result.body, 'agents service jobs list')
 
       return items
         .map((item): KubeGatewayJob | null => {
@@ -429,8 +439,13 @@ export const createKubeGateway = (
         .filter((entry): entry is KubeGatewayJob => entry !== null)
     }),
   listPods: async (namespace, labelSelector) =>
-    wrapTransport('kube pods list failed', async () => {
-      const items = parseListItems(await client.list('pods', namespace, labelSelector), 'kube pods list')
+    wrapTransport('agents service pods list failed', async () => {
+      const listControlPlaneResources = deps.listControlPlaneResources ?? fetchControlPlaneResourcesFromAgentsService
+      const result = await listControlPlaneResources({ kind: 'Pod', namespace, labelSelector })
+      if (!result.ok) {
+        throw new Error(result.error ?? `Agents service returned HTTP ${result.status}`)
+      }
+      const items = parseListItems(result.body, 'agents service pods list')
 
       return items
         .map((item): KubeGatewayPod | null => {
