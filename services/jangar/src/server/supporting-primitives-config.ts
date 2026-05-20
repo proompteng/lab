@@ -46,6 +46,11 @@ const parseStringList = (value: string | undefined) =>
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0)
 
+const normalizeNatsSubjectPrefix = (value: string | undefined | null) => {
+  const normalized = normalizeNonEmpty(value)?.replace(/^\.+/, '').replace(/\.+$/, '')
+  return normalized === 'agentrun' ? normalized : 'agentrun'
+}
+
 export type SupportingPrimitivesConfig = {
   swarmRequirementMaxDispatchPerReconcile: number
   swarmRequirementMaxActivePerSwarm: number
@@ -84,7 +89,7 @@ export const resolveSupportingPrimitivesConfig = (env: EnvSource = process.env):
     normalizeNonEmpty(env.JANGAR_SWARM_NATS_URL) ??
     normalizeNonEmpty(env.NATS_URL) ??
     'nats://nats.nats.svc.cluster.local:4222',
-  swarmDefaultNatsSubjectPrefix: normalizeNonEmpty(env.JANGAR_SWARM_NATS_SUBJECT_PREFIX) ?? 'agentrun',
+  swarmDefaultNatsSubjectPrefix: normalizeNatsSubjectPrefix(env.JANGAR_SWARM_NATS_SUBJECT_PREFIX),
   swarmDefaultNatsChannel: normalizeNonEmpty(env.JANGAR_SWARM_NATS_CHANNEL) ?? 'general',
   podNamespace: normalizeNonEmpty(env.JANGAR_POD_NAMESPACE),
 })

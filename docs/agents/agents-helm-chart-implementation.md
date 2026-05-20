@@ -343,7 +343,8 @@ Agent comms publishes vendor-neutral NATS subjects using the following pattern:
 - `agentrun.<namespace>.<agentRun>.<uid>.agent.<agentId>.<kind>` for AgentRun-scoped agent messages.
 - `agentrun.general.<kind>` for general agent status updates.
 
-The `agents.agentrun.*` and `agents.agent_messages.*` subject families are also accepted.
+The retired `agents.agentrun.*` and `agents.agent_messages.*` subject families are intentionally not accepted;
+publishers must use `agentrun.*` or the HTTP message-ingestion API.
 
 ### RBAC modes
 

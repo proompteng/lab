@@ -30,13 +30,9 @@ config:
               - "$JS.API.>"
               - "$JS.ACK.>"
               - "agentrun.>"
-              - "agents.agentrun.>"
-              - "agents.agent_messages.>"
             subscribe:
               - "_INBOX.>"
               - "agentrun.>"
-              - "agents.agentrun.>"
-              - "agents.agent_messages.>"
         - user: jangar
           password: << $NATS_JANGAR_PASSWORD >>
           permissions:

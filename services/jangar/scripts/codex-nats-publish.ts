@@ -55,6 +55,11 @@ const coerceNonEmpty = (value?: string | null) => {
   return trimmed.length > 0 ? trimmed : null
 }
 
+const normalizeNatsSubjectPrefix = (value?: string | null) => {
+  const normalized = coerceNonEmpty(value)?.replace(/^\.+/, '').replace(/\.+$/, '')
+  return normalized === 'agentrun' ? normalized : 'agentrun'
+}
+
 const safeParseJson = (value: string | undefined) => {
   if (!value) return null
   try {
@@ -275,7 +280,7 @@ const main = async () => {
   const issueNumberRaw = coerceNonEmpty(process.env.CODEX_ISSUE_NUMBER) ?? coerceNonEmpty(process.env.ISSUE_NUMBER)
   const issueNumber = issueNumberRaw ? Number.parseInt(issueNumberRaw, 10) : null
   const branch = coerceNonEmpty(process.env.CODEX_BRANCH) ?? coerceNonEmpty(process.env.HEAD_BRANCH)
-  const subjectPrefix = process.env.NATS_SUBJECT_PREFIX?.trim() || 'agentrun'
+  const subjectPrefix = normalizeNatsSubjectPrefix(process.env.NATS_SUBJECT_PREFIX)
 
   const creds = resolveCredsFile()
   const natsArgs = buildNatsArgs(creds.path)
@@ -342,6 +347,7 @@ const main = async () => {
 
 export const __test__ = {
   buildPayload,
+  normalizeNatsSubjectPrefix,
 }
 
 if (import.meta.main) {

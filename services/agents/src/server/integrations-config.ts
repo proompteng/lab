@@ -4,13 +4,22 @@ const DEFAULT_NATS_URL = 'nats://nats.nats.svc.cluster.local:4222'
 const DEFAULT_FEATURE_FLAGS_TIMEOUT_MS = 500
 const DEFAULT_FEATURE_FLAGS_NAMESPACE = 'default'
 const DEFAULT_FEATURE_FLAGS_ENTITY_ID = 'agents'
-const DEFAULT_AGENT_COMMS_FILTER_SUBJECTS = ['agentrun.>', 'agents.agentrun.>', 'agents.agent_messages.>']
+const DEFAULT_AGENT_COMMS_FILTER_SUBJECTS = ['agentrun.>']
 
 const parseFilterSubjects = (value: string | undefined) =>
   (value ?? '')
     .split(',')
     .map((subject) => subject.trim())
     .filter((subject) => subject.length > 0)
+
+const normalizeAgentCommsFilterSubjects = (subjects: string[]) => {
+  const normalizedSubjects = subjects.map((subject) => subject.toLowerCase())
+  const invalid = normalizedSubjects.filter((subject) => !subject.startsWith('agentrun.'))
+  if (invalid.length > 0) {
+    throw new Error(`AGENTS_AGENT_COMMS_SUBJECTS only supports canonical agentrun.* subjects: ${invalid.join(', ')}`)
+  }
+  return normalizedSubjects
+}
 
 export type AgentCommsSubscriberConfig = {
   disabled: boolean
@@ -37,7 +46,9 @@ export type FeatureFlagsClientConfig = {
 }
 
 export const resolveAgentCommsSubscriberConfig = (env: EnvSource = process.env): AgentCommsSubscriberConfig => {
-  const filterSubjects = parseFilterSubjects(readAgentsEnv(env, 'AGENTS_AGENT_COMMS_SUBJECTS') ?? undefined)
+  const filterSubjects = normalizeAgentCommsFilterSubjects(
+    parseFilterSubjects(readAgentsEnv(env, 'AGENTS_AGENT_COMMS_SUBJECTS') ?? undefined),
+  )
   return {
     disabled:
       env.NODE_ENV === 'test' ||

@@ -439,6 +439,11 @@ const normalizeSubjectToken = (value: string | null | undefined, fallback: strin
   return normalized.replace(/^\.+/, '').replace(/\.+$/, '') || fallback
 }
 
+const normalizeNatsSubjectPrefix = (value: string | null | undefined, fallback: string) => {
+  const normalized = normalizeSubjectToken(value, fallback)
+  return normalized === 'agentrun' ? normalized : fallback
+}
+
 export const resolveSwarmNatsIntegration = (
   spec: Record<string, unknown>,
   owner: Record<string, unknown>,
@@ -447,7 +452,7 @@ export const resolveSwarmNatsIntegration = (
   const integrations = asRecord(spec.integrations) ?? {}
   const nats = asRecord(integrations.nats) ?? {}
   const url = normalizeNatsUrl(asString(nats.url)) || SWARM_DEFAULT_NATS_URL
-  const subjectPrefix = normalizeSubjectToken(asString(nats.subjectPrefix), SWARM_DEFAULT_NATS_SUBJECT_PREFIX)
+  const subjectPrefix = normalizeNatsSubjectPrefix(asString(nats.subjectPrefix), SWARM_DEFAULT_NATS_SUBJECT_PREFIX)
   const channel = normalizeSubjectToken(asString(nats.channel), SWARM_DEFAULT_NATS_CHANNEL)
   const rawPersonas = asRecord(nats.personas) ?? {}
   const personaEntries = Object.entries(rawPersonas)
@@ -561,6 +566,9 @@ export const resolveScheduleRuntimeInjection = (schedule: Record<string, unknown
   const humanName = asString(annotations[SWARM_SCHEDULE_ANNOTATION_HUMAN_NAME])
   const natsUrl = asString(annotations[SWARM_SCHEDULE_ANNOTATION_NATS_URL])
   const natsSubjectPrefix = asString(annotations[SWARM_SCHEDULE_ANNOTATION_NATS_SUBJECT_PREFIX])
+  const normalizedNatsSubjectPrefix = natsSubjectPrefix
+    ? normalizeNatsSubjectPrefix(natsSubjectPrefix, SWARM_DEFAULT_NATS_SUBJECT_PREFIX)
+    : null
   const natsChannel = asString(annotations[SWARM_SCHEDULE_ANNOTATION_NATS_CHANNEL])
   const missionLedgerRef = asString(annotations[SWARM_MISSION_ANNOTATION_LEDGER_REF])
   const businessMetric = asString(annotations[SWARM_MISSION_ANNOTATION_BUSINESS_METRIC])
@@ -587,7 +595,7 @@ export const resolveScheduleRuntimeInjection = (schedule: Record<string, unknown
   if (role) parameters.swarmAgentRole = role
   if (humanName) parameters.swarmHumanName = humanName
   if (natsUrl) parameters.natsUrl = natsUrl
-  if (natsSubjectPrefix) parameters.natsSubjectPrefix = natsSubjectPrefix
+  if (normalizedNatsSubjectPrefix) parameters.natsSubjectPrefix = normalizedNatsSubjectPrefix
   if (natsChannel) parameters.natsChannel = natsChannel
   if (missionLedgerRef) parameters.swarmMissionLedgerRef = missionLedgerRef
   if (businessMetric) parameters.swarmBusinessMetric = businessMetric

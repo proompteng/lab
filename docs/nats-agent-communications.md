@@ -134,7 +134,7 @@ Examples:
 Create a dedicated stream for agent communications:
 
 - Name: `agent-comms`
-- Subjects: `agentrun.>`, `agents.agentrun.>`, and `agents.agent_messages.>`
+- Subjects: `agentrun.>`
 - Retention: `limits`
 - MaxAge: 7 days
 - MaxBytes: 5–10Gi (tune)
@@ -157,7 +157,7 @@ Runtime step containers publish events to NATS directly.
 - Publish to run-specific subject **and** (if needed) the global general channel.
 
 - `NATS_URL`: `nats://nats.nats.svc.cluster.local:4222`
-- Optional: `NATS_SUBJECT_PREFIX` or computed subject per step
+- Optional: `NATS_SUBJECT_PREFIX=agentrun` or a computed `agentrun.*` subject per step
 
 Example bash step:
 

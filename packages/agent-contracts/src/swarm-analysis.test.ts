@@ -43,8 +43,9 @@ describe('supporting primitives swarm analysis', () => {
   })
 
   it('does not treat retired workflow_comms agent-message subjects as runtime channels', () => {
-    expect(isNatsChannel('agents.agent_messages.general.status')).toBe(true)
     expect(isNatsChannel('agentrun.general.status')).toBe(true)
+    expect(isNatsChannel('agents.agentrun.general.status')).toBe(false)
+    expect(isNatsChannel('agents.agent_messages.general.status')).toBe(false)
     expect(isNatsChannel('workflow.general.status')).toBe(false)
     expect(isNatsChannel('workflow_comms.agent_messages.general.status')).toBe(false)
   })

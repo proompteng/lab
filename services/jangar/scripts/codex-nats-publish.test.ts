@@ -45,4 +45,13 @@ describe('codex-nats-publish', () => {
     })
     expect(JSON.stringify(payload)).not.toMatch(/workflow[_A-Z]/i)
   })
+
+  it('normalizes legacy or domain-specific NATS subject prefixes to agentrun', () => {
+    expect(__test__.normalizeNatsSubjectPrefix(undefined)).toBe('agentrun')
+    expect(__test__.normalizeNatsSubjectPrefix('agentrun')).toBe('agentrun')
+    expect(__test__.normalizeNatsSubjectPrefix('.agentrun.')).toBe('agentrun')
+    expect(__test__.normalizeNatsSubjectPrefix('agents.agentrun')).toBe('agentrun')
+    expect(__test__.normalizeNatsSubjectPrefix('agents.agent_messages')).toBe('agentrun')
+    expect(__test__.normalizeNatsSubjectPrefix('workflow')).toBe('agentrun')
+  })
 })

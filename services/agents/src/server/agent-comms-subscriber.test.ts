@@ -111,7 +111,7 @@ describe('agent comms subscriber consume', () => {
     expect(insertMessages).toHaveBeenCalledTimes(1)
   })
 
-  it('normalizes Agents-owned subject families for Agents visibility', () => {
+  it('normalizes canonical AgentRun subject families for Agents visibility', () => {
     const agentRun = __test__.normalizePayload(
       JSON.stringify({
         content: 'agentrun update',
@@ -123,24 +123,21 @@ describe('agent comms subscriber consume', () => {
       }),
       'agentrun.agents.demo.abc.agent.codex.status',
     )
-    const agentsAgentRun = __test__.normalizePayload(
-      JSON.stringify({ content: 'agents agentrun update' }),
-      'agents.agentrun.agents.demo.abc.agent.codex.status',
-    )
-    const agentsMessages = __test__.normalizePayload(
-      JSON.stringify({ content: 'stored update' }),
-      'agents.agent_messages.general.status',
-    )
+    const general = __test__.normalizePayload(JSON.stringify({ content: 'general update' }), 'agentrun.general.status')
     expect(agentRun?.runId).toBe('run-1')
     expect(agentRun?.agentRunName).toBe('demo')
     expect(agentRun?.agentRunNamespace).toBe('agents')
     expect(agentRun?.agentRunUid).toBe('abc')
     expect(agentRun?.stage).toBe('implementation')
     expect(agentRun?.attrs?.runtime).toBe('agents_comms')
-    expect(agentsAgentRun?.agentRunName).toBe('demo')
-    expect(agentsAgentRun?.attrs?.runtime).toBe('agents_comms')
-    expect(agentsMessages?.channel).toBe('general')
-    expect(agentsMessages?.attrs?.runtime).toBe('agents_comms')
+    expect(general?.channel).toBe('general')
+    expect(general?.attrs?.runtime).toBe('agents_comms')
+    expect(
+      __test__.normalizePayload(JSON.stringify({ content: 'alias update' }), 'agents.agentrun.agents.demo.abc.status'),
+    ).toBeNull()
+    expect(
+      __test__.normalizePayload(JSON.stringify({ content: 'stored update' }), 'agents.agent_messages.general.status'),
+    ).toBeNull()
     expect(
       __test__.normalizePayload(JSON.stringify({ content: 'native update' }), 'workflow.general.status'),
     ).toBeNull()
@@ -187,11 +184,53 @@ describe('agent comms subscriber consume', () => {
           swarmHumanName: 'Platform Runtime',
         },
       }),
-      'agents.agent_messages.general.run-started',
+      'agentrun.general.run-started',
     )
 
     expect(message?.agentId).toBe('Unknown')
     expect(message?.role).toBe('Assistant')
     expect(message?.attrs?.swarmHumanName).toBe('Platform Runtime')
+  })
+
+  it('recreates an existing consumer when filter subjects are stale', async () => {
+    const info = vi.fn(async () => ({
+      config: {
+        ack_policy: 'explicit',
+        deliver_policy: 'all',
+        durable_name: 'agents-agent-comms',
+        filter_subjects: ['agentrun.>', 'agents.agentrun.>'],
+        max_ack_pending: 20000,
+      },
+    }))
+    const remove = vi.fn(async () => {})
+    const add = vi.fn(async () => {})
+    const manager = {
+      consumers: {
+        info,
+        delete: remove,
+        add,
+      },
+    }
+
+    await __test__.ensureConsumer(
+      manager as never,
+      {
+        ackWaitMs: 30000,
+        consumerDescription: 'Agents communications dependency check',
+        consumerName: 'agents-agent-comms',
+        filterSubjects: ['agentrun.>'],
+        maxAckPending: 20000,
+        streamName: 'agent-comms',
+      } as never,
+    )
+
+    expect(remove).toHaveBeenCalledWith('agent-comms', 'agents-agent-comms')
+    expect(add).toHaveBeenCalledWith(
+      'agent-comms',
+      expect.objectContaining({
+        durable_name: 'agents-agent-comms',
+        filter_subjects: ['agentrun.>'],
+      }),
+    )
   })
 })

@@ -107,6 +107,9 @@
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
     "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
   },
+  "dependencies": {
+    "effect": "3.21.2"
+  },
   "devDependencies": {
     "bun-types": "1.3.13",
     "typescript": "6.0.3"

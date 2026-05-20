@@ -6,8 +6,6 @@ spec:
   name: agent-comms
   subjects:
     - agentrun.>
-    - agents.agentrun.>
-    - agents.agent_messages.>
   retention: limits
   storage: file
   maxAge: 168h

@@ -1,10 +1,19 @@
+import { Effect } from 'effect'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { fetchAgentRunResourcesFromAgentsService, patchAgentRunAnnotationsViaAgentsService } from './agent-runs-client'
 import { fetchAgentRunsFromAgentsService, submitAgentRunToAgentsService } from './agent-runs-client'
 import { submitAgentMessagesToAgentsService } from './agent-messages-client'
 import { buildAgentsDependencyHealth, fetchAgentsHealthFromAgentsService } from './agents-health-client'
-import { fetchAgentsJson, resolveAgentsServiceBaseUrl } from './agents-http'
+import {
+  AgentsHttpStatusError,
+  AgentsTransportError,
+  fetchAgentsJson,
+  fetchAgentsJsonEffect,
+  makeAgentsHttpClientLayer,
+  postAgentsJsonEffect,
+  resolveAgentsServiceBaseUrl,
+} from './agents-http'
 import { fetchExecutionTrustFromAgentsService } from './execution-trust-client'
 import { submitOrchestrationRunToAgentsService } from './orchestration-runs-client'
 import { fetchMemoryResourceFromAgentsService, submitMemoryOperationToAgentsService } from './memory-client'
@@ -51,6 +60,113 @@ describe('agents typed service clients', () => {
       ok: true,
       status: 200,
       body: { status: 'ok' },
+    })
+  })
+
+  it('classifies transport failures in the Effect boundary and preserves legacy failure results', async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new TypeError('connect ECONNREFUSED')
+    })
+    const env = { AGENTS_SERVICE_BASE_URL: 'http://agents.test' }
+    const effectResult = await Effect.runPromise(
+      fetchAgentsJsonEffect<{ status: string }>('/health', env).pipe(
+        Effect.provide(makeAgentsHttpClientLayer({ fetch: fetchMock as unknown as typeof fetch })),
+        Effect.either,
+      ),
+    )
+
+    expect(effectResult._tag).toBe('Left')
+    if (effectResult._tag === 'Left') {
+      expect(effectResult.left).toBeInstanceOf(AgentsTransportError)
+      expect(effectResult.left).toMatchObject({
+        method: 'GET',
+        url: 'http://agents.test/health',
+      })
+    }
+
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+    await expect(fetchAgentsJson('/health', env)).resolves.toEqual({
+      ok: false,
+      status: 0,
+      body: null,
+      error: 'connect ECONNREFUSED',
+    })
+  })
+
+  it('classifies HTTP error bodies in the Effect boundary and preserves the returned body', async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(JSON.stringify({ ok: false, error: 'database unavailable' }), {
+        headers: { 'content-type': 'application/json' },
+        status: 503,
+        statusText: 'Service Unavailable',
+      })
+    })
+    const env = { AGENTS_SERVICE_BASE_URL: 'http://agents.test' }
+    const effectResult = await Effect.runPromise(
+      fetchAgentsJsonEffect<{ ok: false; error: string }>('/ready', env).pipe(
+        Effect.provide(makeAgentsHttpClientLayer({ fetch: fetchMock as unknown as typeof fetch })),
+        Effect.either,
+      ),
+    )
+
+    expect(effectResult._tag).toBe('Left')
+    if (effectResult._tag === 'Left') {
+      expect(effectResult.left).toBeInstanceOf(AgentsHttpStatusError)
+      expect(effectResult.left).toMatchObject({
+        method: 'GET',
+        url: 'http://agents.test/ready',
+        status: 503,
+        body: { ok: false, error: 'database unavailable' },
+        error: 'database unavailable',
+      })
+    }
+
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+    await expect(fetchAgentsJson('/ready', env)).resolves.toEqual({
+      ok: false,
+      status: 503,
+      body: { ok: false, error: 'database unavailable' },
+      error: 'database unavailable',
+    })
+  })
+
+  it('sends client headers and idempotency keys through the Effect HTTP client', async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { 'content-type': 'application/json' },
+        status: 201,
+      })
+    })
+
+    const result = await Effect.runPromise(
+      postAgentsJsonEffect<{ ok: true }>(
+        '/v1/agent-runs',
+        { agentRef: { name: 'codex' } },
+        {
+          env: {
+            AGENTS_SERVICE_BASE_URL: 'http://agents.test',
+            AGENTS_SERVICE_CLIENT_NAME: 'facteur',
+          },
+          idempotencyKey: 'delivery-123',
+        },
+      ).pipe(Effect.provide(makeAgentsHttpClientLayer({ fetch: fetchMock as unknown as typeof fetch }))),
+    )
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
+    expect(url.toString()).toBe('http://agents.test/v1/agent-runs')
+    expect(init.method).toBe('POST')
+    expect(init.body).toBe(JSON.stringify({ agentRef: { name: 'codex' } }))
+    expect(init.headers).toMatchObject({
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'idempotency-key': 'delivery-123',
+      'x-agents-client': 'facteur',
+    })
+    expect(result).toEqual({
+      ok: true,
+      status: 201,
+      body: { ok: true },
     })
   })
 

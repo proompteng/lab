@@ -98,10 +98,6 @@ const parseSubject = (subject: string) => {
   if (parts.length < 2) return null
   const prefix = (() => {
     if (parts[0] === 'agentrun') return { offset: 1, runtime: 'agents_comms' }
-    if (parts[0] === 'agents' && parts[1] === 'agentrun') return { offset: 2, runtime: 'agents_comms' }
-    if (parts[0] === 'agents' && parts[1] === 'agent_messages') {
-      return { offset: 2, runtime: 'agents_comms' }
-    }
     return null
   })()
   if (!prefix) return null
@@ -237,6 +233,23 @@ const isAlreadyExists = (error: unknown) => {
 
 const isPushConsumer = (config: ConsumerConfig) => typeof config.deliver_subject === 'string'
 
+const resolveConsumerFilterSubjects = (config: ConsumerConfig) => {
+  if (Array.isArray(config.filter_subjects)) return config.filter_subjects
+  if (typeof config.filter_subject === 'string') return [config.filter_subject]
+  return []
+}
+
+const normalizeStringList = (values: string[]) => [...values].sort()
+
+const sameStringList = (left: string[], right: string[]) => {
+  const normalizedLeft = normalizeStringList(left)
+  const normalizedRight = normalizeStringList(right)
+  return (
+    normalizedLeft.length === normalizedRight.length &&
+    normalizedLeft.every((value, index) => value === normalizedRight[index])
+  )
+}
+
 const shouldReconnect = (error: unknown) => {
   if (!isNatsError(error)) return false
   return (
@@ -274,6 +287,10 @@ const ensureConsumer = async (manager: JetStreamManager, config: SubscriberConfi
     if (info.config.deliver_policy !== expected.deliver_policy) mismatches.push('deliver_policy')
     if (info.config.max_ack_pending !== expected.max_ack_pending) mismatches.push('max_ack_pending')
     if (info.config.durable_name !== expected.durable_name) mismatches.push('durable_name')
+    if (info.config.ack_wait !== expected.ack_wait) mismatches.push('ack_wait')
+    if (!sameStringList(resolveConsumerFilterSubjects(info.config), resolveConsumerFilterSubjects(expected))) {
+      mismatches.push('filter_subjects')
+    }
 
     if (mismatches.length > 0) {
       console.warn('Agent comms consumer config mismatch', {
@@ -281,6 +298,8 @@ const ensureConsumer = async (manager: JetStreamManager, config: SubscriberConfi
         stream: config.streamName,
         mismatches,
       })
+      await manager.consumers.delete(config.streamName, config.consumerName)
+      await manager.consumers.add(config.streamName, expected)
     }
 
     return
@@ -546,5 +565,6 @@ export const startAgentCommsSubscriber = () => {
 
 export const __test__ = {
   consumeStream,
+  ensureConsumer,
   normalizePayload,
 }
