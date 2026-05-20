@@ -1,5 +1,5 @@
 import { createFileRoute, type AgentsServerRouteArgs } from '../../../server/server-route'
-import { getFixedKindResource } from '../resource-route-helpers'
+import { getTypedResourceHandler } from '../../../server/v1/typed-resources'
 
 export const Route = createFileRoute('/v1/memories/resources')({
   server: {
@@ -9,5 +9,5 @@ export const Route = createFileRoute('/v1/memories/resources')({
   },
 })
 
-export const getMemoryResource = (request: Request, deps: Parameters<typeof getFixedKindResource>[2] = {}) =>
-  getFixedKindResource('Memory', request, deps)
+export const getMemoryResource = (request: Request, deps: Parameters<typeof getTypedResourceHandler>[2] = {}) =>
+  getTypedResourceHandler('Memory', request, deps)

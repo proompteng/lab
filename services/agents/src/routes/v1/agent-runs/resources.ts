@@ -1,6 +1,5 @@
 import { createFileRoute, type AgentsServerRouteArgs } from '../../../server/server-route'
-
-import { listFixedKindResources, patchFixedKindResourceMetadata } from '../resource-route-helpers'
+import { listTypedResourceHandler, patchTypedResourceMetadataHandler } from '../../../server/v1/typed-resources'
 
 export const Route = createFileRoute('/v1/agent-runs/resources')({
   server: {
@@ -11,10 +10,10 @@ export const Route = createFileRoute('/v1/agent-runs/resources')({
   },
 })
 
-export const listAgentRunResources = (request: Request, deps: Parameters<typeof listFixedKindResources>[2] = {}) =>
-  listFixedKindResources('AgentRun', request, deps)
+export const listAgentRunResources = (request: Request, deps: Parameters<typeof listTypedResourceHandler>[2] = {}) =>
+  listTypedResourceHandler('AgentRun', request, deps)
 
 export const patchAgentRunResourceAnnotations = async (
   request: Request,
-  deps: Parameters<typeof patchFixedKindResourceMetadata>[2] = {},
-) => patchFixedKindResourceMetadata('AgentRun', request, deps)
+  deps: Parameters<typeof patchTypedResourceMetadataHandler>[2] = {},
+) => patchTypedResourceMetadataHandler('AgentRun', request, deps)

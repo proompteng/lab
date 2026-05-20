@@ -48,6 +48,8 @@ export type TypedResourceDeps = {
   kubeClient?: KubernetesClient
 }
 
+export type TypedResourceApiDependencies = TypedResourceDeps
+
 export const makeTypedResourceLayer = (deps: TypedResourceDeps = {}) =>
   Layer.succeed(TypedResourceKubernetesService, { client: deps.kubeClient ?? createKubernetesClient() })
 
@@ -381,3 +383,27 @@ export const typedResourceResponse = async (
   const error = describeTypedResourceError(result.left)
   return errorResponse(error.message, error.status, 'details' in error ? error.details : undefined)
 }
+
+export const listTypedResourceHandler = (
+  kind: ControlPlaneResourceKind,
+  request: Request,
+  deps: TypedResourceApiDependencies = {},
+) => typedResourceResponse(listTypedResourceEffect(kind, request), deps)
+
+export const getTypedResourceHandler = (
+  kind: ControlPlaneResourceKind,
+  request: Request,
+  deps: TypedResourceApiDependencies = {},
+) => typedResourceResponse(getTypedResourceEffect(kind, request), deps)
+
+export const postTypedResourceHandler = (
+  kind: ControlPlaneResourceKind,
+  request: Request,
+  deps: TypedResourceApiDependencies = {},
+) => typedResourceResponse(postTypedResourceEffect(kind, request), deps, 201)
+
+export const patchTypedResourceMetadataHandler = (
+  kind: ControlPlaneResourceKind,
+  request: Request,
+  deps: TypedResourceApiDependencies = {},
+) => typedResourceResponse(patchTypedResourceMetadataEffect(kind, request), deps)

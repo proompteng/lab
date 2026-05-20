@@ -1,5 +1,5 @@
 import { createFileRoute, type AgentsServerRouteArgs } from '../../../server/server-route'
-import { getFixedKindResource } from '../resource-route-helpers'
+import { getTypedResourceHandler } from '../../../server/v1/typed-resources'
 
 export const Route = createFileRoute('/v1/approval-policies/resources')({
   server: {
@@ -9,5 +9,5 @@ export const Route = createFileRoute('/v1/approval-policies/resources')({
   },
 })
 
-export const getApprovalPolicyResource = (request: Request, deps: Parameters<typeof getFixedKindResource>[2] = {}) =>
-  getFixedKindResource('ApprovalPolicy', request, deps)
+export const getApprovalPolicyResource = (request: Request, deps: Parameters<typeof getTypedResourceHandler>[2] = {}) =>
+  getTypedResourceHandler('ApprovalPolicy', request, deps)

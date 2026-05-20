@@ -1,5 +1,5 @@
 import { createFileRoute, type AgentsServerRouteArgs } from '../../../server/server-route'
-import { getFixedKindResource, postFixedKindResource } from '../resource-route-helpers'
+import { getTypedResourceHandler, postTypedResourceHandler } from '../../../server/v1/typed-resources'
 
 export const Route = createFileRoute('/v1/signals/resources')({
   server: {
@@ -10,8 +10,8 @@ export const Route = createFileRoute('/v1/signals/resources')({
   },
 })
 
-export const getSignalResource = (request: Request, deps: Parameters<typeof getFixedKindResource>[2] = {}) =>
-  getFixedKindResource('Signal', request, deps)
+export const getSignalResource = (request: Request, deps: Parameters<typeof getTypedResourceHandler>[2] = {}) =>
+  getTypedResourceHandler('Signal', request, deps)
 
-export const postSignalResource = (request: Request, deps: Parameters<typeof postFixedKindResource>[2] = {}) =>
-  postFixedKindResource('Signal', request, deps)
+export const postSignalResource = (request: Request, deps: Parameters<typeof postTypedResourceHandler>[2] = {}) =>
+  postTypedResourceHandler('Signal', request, deps)

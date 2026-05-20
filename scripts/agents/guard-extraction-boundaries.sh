@@ -757,10 +757,14 @@ fail_if_matches \
   "${ROOT_DIR}/packages/agent-contracts/src/signals-client.ts" \
   "${ROOT_DIR}/packages/agent-contracts/src/swarm-read-client.ts"
 
+fail_if_path_exists \
+  "Agents v1 typed resource routes must not retain a route-local typed resource helper shim" \
+  "${ROOT_DIR}/services/agents/src/routes/v1/resource-route-helpers.ts"
+
 fail_if_matches \
   "Agents v1 typed resource routes must not request-rewrite into generic internal control-plane resource routes" \
   '/api/agents/control-plane/resource|/api/agents/control-plane/resources|copyRequestWithKind|toKindResourceUrl' \
-  "${ROOT_DIR}/services/agents/src/routes/v1/resource-route-helpers.ts"
+  "${ROOT_DIR}/services/agents/src/server/v1/typed-resources.ts"
 
 fail_if_matches \
   "AgentRun resource consumers must use the dedicated /v1/agent-runs/resources contract instead of generic control-plane kind selectors" \
