@@ -678,7 +678,7 @@
       },
       "additionalProperties": false
     },
-    "workflowRuntime": {
+    "agentRuntime": {
       "type": "object",
       "properties": {
         "native": {

@@ -685,6 +685,14 @@ fail_if_matches \
   "${ROOT_DIR}/docs/agents/designs"
 
 fail_if_matches \
+  "Agents chart must expose agentRuntime values instead of workflowRuntime after runtime ownership moved to Agents" \
+  'workflowRuntime' \
+  "${ROOT_DIR}/charts/agents/values.yaml" \
+  "${ROOT_DIR}/charts/agents/values.schema.json" \
+  "${ROOT_DIR}/charts/agents/templates/deployment.yaml" \
+  "${ROOT_DIR}/charts/agents/templates/deployment-controllers.yaml"
+
+fail_if_matches \
   "Jangar runtime must not own generic Agents runner image selection" \
   'JANGAR_AGENT_RUNNER_IMAGE|JANGAR_AGENT_IMAGE|defaultWorkloadImage|resolveDefaultWorkloadImage' \
   "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-config.ts" \

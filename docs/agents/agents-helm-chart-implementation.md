@@ -294,7 +294,7 @@ sequenceDiagram
 
 - Orchestration and OrchestrationRun execute in-cluster by default with no external workflow engine.
 - Native controller currently supports `AgentRun`, `ToolRun`, `SubOrchestration`, and `ApprovalGate` steps; other step kinds require adapters or future extensions.
-- Codex reruns/system-improvements should point at native OrchestrationRuns via `workflowRuntime.native.*`
+- Codex reruns/system-improvements should point at native OrchestrationRuns via `agentRuntime.native.*`
   values (or the equivalent `AGENTS_CODEX_RERUN_ORCHESTRATION` and `AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION` env vars).
 
 ### RBAC alignment

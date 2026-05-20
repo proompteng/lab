@@ -128,21 +128,21 @@ spec:
             - name: PGSSLROOTCERT
               value: "/etc/agents/ca/{{ .Values.database.caSecret.key | default "ca.crt" }}"
             {{- end }}
-            {{- if .Values.workflowRuntime.native.rerunOrchestration }}
+            {{- if .Values.agentRuntime.native.rerunOrchestration }}
             - name: AGENTS_CODEX_RERUN_ORCHESTRATION
-              value: {{ .Values.workflowRuntime.native.rerunOrchestration | quote }}
+              value: {{ .Values.agentRuntime.native.rerunOrchestration | quote }}
             {{- end }}
-            {{- if .Values.workflowRuntime.native.rerunOrchestrationNamespace }}
+            {{- if .Values.agentRuntime.native.rerunOrchestrationNamespace }}
             - name: AGENTS_CODEX_RERUN_ORCHESTRATION_NAMESPACE
-              value: {{ .Values.workflowRuntime.native.rerunOrchestrationNamespace | quote }}
+              value: {{ .Values.agentRuntime.native.rerunOrchestrationNamespace | quote }}
             {{- end }}
-            {{- if .Values.workflowRuntime.native.systemImprovementOrchestration }}
+            {{- if .Values.agentRuntime.native.systemImprovementOrchestration }}
             - name: AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION
-              value: {{ .Values.workflowRuntime.native.systemImprovementOrchestration | quote }}
+              value: {{ .Values.agentRuntime.native.systemImprovementOrchestration | quote }}
             {{- end }}
-            {{- if .Values.workflowRuntime.native.systemImprovementOrchestrationNamespace }}
+            {{- if .Values.agentRuntime.native.systemImprovementOrchestrationNamespace }}
             - name: AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE
-              value: {{ .Values.workflowRuntime.native.systemImprovementOrchestrationNamespace | quote }}
+              value: {{ .Values.agentRuntime.native.systemImprovementOrchestrationNamespace | quote }}
             {{- end }}
             {{- if and (not (hasKey $envVars "AGENTS_AGENT_RUNNER_IMAGE")) .Values.runner.image.repository }}
             - name: AGENTS_AGENT_RUNNER_IMAGE

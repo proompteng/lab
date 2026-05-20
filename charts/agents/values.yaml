@@ -266,7 +266,7 @@ env:
     PORT: '8080'
     AGENTS_MIGRATIONS: 'auto'
 
-workflowRuntime:
+agentRuntime:
   native:
     rerunOrchestration: ''
     rerunOrchestrationNamespace: ''

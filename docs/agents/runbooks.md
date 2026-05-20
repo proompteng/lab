@@ -76,8 +76,8 @@ GitOps rollout notes (native workflow runtime):
 - Keep `controller.enabled`, `orchestrationController.enabled`, and `supportingController.enabled` at their defaults
   unless you are intentionally disabling native runtime components.
 - To point Codex reruns/system improvements at native orchestration, set
-  `workflowRuntime.native.rerunOrchestration` and/or `workflowRuntime.native.systemImprovementOrchestration`
-  (plus the matching `workflowRuntime.native.*Namespace` values if needed) in `argocd/applications/agents/values.yaml`.
+  `agentRuntime.native.rerunOrchestration` and/or `agentRuntime.native.systemImprovementOrchestration`
+  (plus the matching `agentRuntime.native.*Namespace` values if needed) in `argocd/applications/agents/values.yaml`.
 
 CI runners use `argocd/applications/agents-ci` to provision the `agents-ci` namespace and RBAC for ARC
 so GitHub Actions can execute smoke tests against the chart.
