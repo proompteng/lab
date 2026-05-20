@@ -4,12 +4,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from decimal import Decimal
+from typing import Any, Mapping, cast
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from ...models import (
+    AutoresearchCandidateSpec,
+    AutoresearchEpoch,
+    AutoresearchPortfolioCandidate,
+    AutoresearchProposalScore,
     ResearchAttempt,
     ResearchCandidate,
     ResearchCostCalibration,
@@ -20,6 +25,17 @@ from ...models import (
     ResearchStressMetrics,
     ResearchValidationTest,
 )
+from ..discovery.profit_target_oracle import evaluate_profit_target_oracle
+
+
+_AUTORESEARCH_PORTFOLIO_READY_STATUSES = {
+    "paper_candidate",
+    "promotion_ready",
+    "ready_for_promotion",
+    "ready_for_promotion_review",
+    "accepted",
+    "promoted",
+}
 
 
 @dataclass(frozen=True)
@@ -39,6 +55,108 @@ class EvidenceContinuityCheckReport:
             "missing_runs": list(self.missing_runs),
             "ok": self.failed_runs == 0,
         }
+
+
+def _autoresearch_portfolio_current_oracle_passed(
+    row: AutoresearchPortfolioCandidate,
+) -> bool:
+    scorecard = row.objective_scorecard_json
+    if not isinstance(scorecard, Mapping):
+        return False
+    oracle = evaluate_profit_target_oracle(
+        cast(Mapping[str, Any], scorecard),
+        target_net_pnl_per_day=Decimal(row.target_net_pnl_per_day),
+    )
+    return bool(oracle.get("passed"))
+
+
+def _autoresearch_continuity_report(
+    session: Session,
+    *,
+    checked_at: datetime,
+    run_limit: int,
+) -> EvidenceContinuityCheckReport | None:
+    portfolio_rows = list(
+        session.execute(select(AutoresearchPortfolioCandidate)).scalars()
+    )
+    counts = {
+        "autoresearch_epochs": int(
+            session.execute(select(func.count(AutoresearchEpoch.id))).scalar_one()
+        ),
+        "autoresearch_candidate_specs": int(
+            session.execute(
+                select(func.count(AutoresearchCandidateSpec.id))
+            ).scalar_one()
+        ),
+        "autoresearch_proposal_scores": int(
+            session.execute(select(func.count(AutoresearchProposalScore.id))).scalar_one()
+        ),
+        "autoresearch_portfolio_candidates": len(portfolio_rows),
+        "autoresearch_portfolio_ready": 0,
+        "autoresearch_portfolio_blocked": 0,
+    }
+    if not any(counts.values()):
+        return None
+
+    for row in portfolio_rows:
+        oracle_ready = (
+            row.status in _AUTORESEARCH_PORTFOLIO_READY_STATUSES
+            and _autoresearch_portfolio_current_oracle_passed(row)
+        )
+        if oracle_ready:
+            counts["autoresearch_portfolio_ready"] += 1
+        else:
+            counts["autoresearch_portfolio_blocked"] += 1
+
+    latest_epoch_ids = [
+        str(epoch_id)
+        for (epoch_id,) in session.execute(
+            select(AutoresearchEpoch.epoch_id)
+            .order_by(
+                AutoresearchEpoch.completed_at.desc().nullslast(),
+                AutoresearchEpoch.created_at.desc(),
+            )
+            .limit(max(1, int(run_limit)))
+        ).all()
+    ]
+    run_ids = latest_epoch_ids or ["autoresearch_ledgers"]
+    missing: list[str] = []
+    if counts["autoresearch_epochs"] <= 0:
+        missing.append("autoresearch_epochs")
+    if counts["autoresearch_candidate_specs"] <= 0:
+        missing.append("autoresearch_candidate_specs")
+    if counts["autoresearch_proposal_scores"] <= 0:
+        missing.append("autoresearch_proposal_scores")
+    if counts["autoresearch_portfolio_candidates"] <= 0:
+        missing.append("autoresearch_portfolio_candidates")
+    if counts["autoresearch_portfolio_ready"] <= 0:
+        missing.append("autoresearch_portfolio_ready")
+    if (
+        counts["autoresearch_portfolio_ready"] <= 0
+        and counts["autoresearch_portfolio_blocked"] > 0
+    ):
+        missing.append("autoresearch_portfolio_candidates_blocked")
+
+    missing_runs = (
+        [
+            {
+                "run_id": run_ids[0],
+                "missing_tables": missing,
+                "counts": counts,
+                "discovery_mode": "whitepaper_autoresearch",
+                "source_ref": "postgres:autoresearch_ledgers",
+            }
+        ]
+        if missing
+        else []
+    )
+    return EvidenceContinuityCheckReport(
+        checked_at=checked_at,
+        run_ids=run_ids,
+        checked_runs=1,
+        failed_runs=len(missing_runs),
+        missing_runs=missing_runs,
+    )
 
 
 def evaluate_evidence_continuity(
@@ -62,6 +180,13 @@ def evaluate_evidence_continuity(
     )
     run_ids = [row.run_id for row in runs]
     if not run_ids:
+        autoresearch_report = _autoresearch_continuity_report(
+            session,
+            checked_at=checked_at,
+            run_limit=resolved_limit,
+        )
+        if autoresearch_report is not None:
+            return autoresearch_report
         return EvidenceContinuityCheckReport(
             checked_at=checked_at,
             run_ids=[],

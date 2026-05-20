@@ -35,6 +35,7 @@ _MARKET_STALE_COUNT_FIELDS = {
     "regime": "stale_regime_count",
 }
 _PROMOTION_FRAGMENTS = (
+    "autoresearch",
     "forecast",
     "promotion",
     "research_candidates",
