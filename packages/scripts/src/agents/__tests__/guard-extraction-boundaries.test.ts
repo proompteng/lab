@@ -71,6 +71,12 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('Jangar-host compatibility Agents IngressRoute')
     expect(content).toContain('ingressroute-jangar-agents-api\\.yaml')
     expect(content).toContain('workflow_comms\\.agent_messages|legacy_workflow_comms')
+    expect(content).toContain('NATS agent-comms GitOps must expose only Agents-native subjects')
+    expect(content).toContain('Generic Agents Codex providers must not grant trading or broker MCP tooling')
+    expect(content).toContain(
+      'Agents Graf provider must not preserve legacy AutoResearch or Argo workflow artifact defaults',
+    )
+    expect(content).toContain('ALPACA_|mcp_servers\\.alpaca|alpaca-mcp')
     expect(content).toContain('WorkflowCommsAgentMessage|workflow_agent_messages_')
     expect(content).toContain('goalObjective|goalTokenBudget')
     expect(content).toContain('argo\\.workflows\\.completions')

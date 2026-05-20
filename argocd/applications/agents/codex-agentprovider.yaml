@@ -19,7 +19,6 @@ spec:
   envTemplate:
     CODEX_LOG_LEVEL: info
     NATS_URL: nats://nats.nats.svc.cluster.local:4222
-    ALPACA_PAPER_TRADE: "true"
   inputFiles:
     - path: /root/.codex/config.toml
       content: |-
@@ -44,9 +43,6 @@ spec:
         collaboration_modes = true
         responses_websockets = false
         goals = true
-
-        [mcp_servers.alpaca]
-        command = "/usr/local/bin/alpaca-mcp-server"
 
         [shell_environment_policy]
         ignore_default_excludes = true

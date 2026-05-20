@@ -131,7 +131,6 @@ spec:
     CODEX_DISABLE_RESUME: "1"
     CODEX_MAX_SESSION_ATTEMPTS: "1"
     CODEX_MODEL: gpt-5.5
-    ALPACA_PAPER_TRADE: "true"
   inputFiles:
     - path: /root/.codex/config.toml
       content: |-
@@ -156,9 +155,6 @@ spec:
         collaboration_modes = true
         responses_websockets = false
         goals = true
-
-        [mcp_servers.alpaca]
-        command = "/usr/local/bin/alpaca-mcp-server"
 
         [shell_environment_policy]
         ignore_default_excludes = true

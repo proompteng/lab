@@ -20,12 +20,8 @@ spec:
     CODEX_LOG_LEVEL: info
     CODEX_GRAF_BASE_URL: http://graf.graf.svc.cluster.local
     NATS_URL: nats://nats.nats.svc.cluster.local:4222
-    AUTO_RESEARCH_ARTIFACT_PATH: /workspace/lab/codex-artifact.json
-    AUTO_RESEARCH_JSON_LOG: /workspace/lab/.codex-research-events.jsonl
-    AUTO_RESEARCH_AGENT_LOG: /workspace/lab/.codex-research-agent.log
-    AUTO_RESEARCH_RUNTIME_LOG: /workspace/lab/.codex-research-runtime.log
     AGENTS_ARTIFACTS_ENDPOINT: http://observability-minio.minio.svc.cluster.local:9000
-    AGENTS_ARTIFACTS_BUCKET: argo-workflows
+    AGENTS_ARTIFACTS_BUCKET: agents-artifacts
     AGENTS_ARTIFACTS_SECURE: "false"
   secretEnv:
     - name: CODEX_GRAF_BEARER_TOKEN

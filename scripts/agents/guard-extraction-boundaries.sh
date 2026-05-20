@@ -355,6 +355,24 @@ fail_if_matches \
   "${ROOT_DIR}/argocd/applications/agents"
 
 fail_if_matches \
+  "NATS agent-comms GitOps must expose only Agents-native subjects after Agents owns agent-message ingestion" \
+  'workflow_comms\.agent_messages|legacy_workflow_comms|workflow\.>|agents\.workflow\.>|argo\.workflow|jangar-agent-comms' \
+  "${ROOT_DIR}/argocd/applications/nats"
+
+fail_if_matches \
+  "Generic Agents Codex providers must not grant trading or broker MCP tooling" \
+  'ALPACA_|mcp_servers\.alpaca|alpaca-mcp' \
+  "${ROOT_DIR}/argocd/applications/agents/codex-agentprovider.yaml" \
+  "${ROOT_DIR}/argocd/applications/agents/codex-spark-agentprovider.yaml" \
+  "${ROOT_DIR}/argocd/applications/agents/codex-spark-smoke-agentprovider.yaml" \
+  "${ROOT_DIR}/argocd/applications/agents/codex-secretbinding.yaml"
+
+fail_if_matches \
+  "Agents Graf provider must not preserve legacy AutoResearch or Argo workflow artifact defaults" \
+  'AUTO_RESEARCH_|AGENTS_ARTIFACTS_BUCKET:\s*argo-workflows' \
+  "${ROOT_DIR}/argocd/applications/agents/graf-codex-agentprovider.yaml"
+
+fail_if_matches \
   "Jangar must not create or type the retired workflow_comms agent-message store after Agents owns agent-message storage" \
   'workflow_comms\.agent_messages|WorkflowCommsAgentMessage|workflow_agent_messages_' \
   "${ROOT_DIR}/services/jangar/src/server/db.ts" \
