@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import itertools
 import json
 import os
@@ -111,6 +112,22 @@ class FullWindowConsistencyPolicy:
 
 
 @dataclass(frozen=True)
+class OrderTypeAblationPolicy:
+    enabled: bool
+    max_candidates: int
+    min_sample_count: int
+    max_opportunity_cost_bps: Decimal
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "max_candidates": self.max_candidates,
+            "min_sample_count": self.min_sample_count,
+            "max_opportunity_cost_bps": str(self.max_opportunity_cost_bps),
+        }
+
+
+@dataclass(frozen=True)
 class FrontierReplayWindows:
     train_days: tuple[date, ...]
     holdout_days: tuple[date, ...]
@@ -149,6 +166,30 @@ def _optional_int(value: Any, *, default: int) -> int:
     if value is None:
         return default
     return int(value)
+
+
+def _order_type_ablation_policy(
+    sweep_config: Mapping[str, Any],
+) -> OrderTypeAblationPolicy:
+    raw_value = sweep_config.get("order_type_ablation")
+    if raw_value is None:
+        return OrderTypeAblationPolicy(
+            enabled=False,
+            max_candidates=0,
+            min_sample_count=60,
+            max_opportunity_cost_bps=Decimal("8"),
+        )
+    if not isinstance(raw_value, Mapping):
+        raise ValueError("sweep_config_order_type_ablation_not_mapping")
+    value = cast(Mapping[str, Any], raw_value)
+    return OrderTypeAblationPolicy(
+        enabled=bool(value.get("enabled", False)),
+        max_candidates=max(0, int(value.get("max_candidates", 1) or 0)),
+        min_sample_count=max(0, int(value.get("min_sample_count", 60) or 0)),
+        max_opportunity_cost_bps=Decimal(
+            str(value.get("max_opportunity_cost_bps", "8"))
+        ),
+    )
 
 
 def _write_json_output(path: Path, payload: Mapping[str, Any]) -> None:
@@ -974,6 +1015,187 @@ def _order_type_execution_metrics(payload: Mapping[str, Any]) -> dict[str, Any]:
             "limit_fill_rate" in payload or filled_counts.get("limit", 0) > 0
         )
     return metrics
+
+
+def _normalized_order_type(value: Any) -> str:
+    raw_value = str(value or "").strip().lower()
+    if raw_value in {"limit", "prefer_limit"}:
+        return "limit"
+    return "market"
+
+
+def _selected_entry_order_type(
+    *,
+    candidate_params: Mapping[str, Any],
+    strategy_overrides: Mapping[str, Any],
+) -> str:
+    if "entry_order_type" in candidate_params:
+        return _normalized_order_type(candidate_params.get("entry_order_type"))
+    if "entry_order_type" in strategy_overrides:
+        return _normalized_order_type(strategy_overrides.get("entry_order_type"))
+    return "market"
+
+
+def _forced_order_type_sample_count(
+    payload: Mapping[str, Any],
+    *,
+    order_type: str,
+) -> int:
+    decision_counts = _int_mapping(payload.get("decision_count_by_order_type"))
+    if decision_counts:
+        return max(0, decision_counts.get(order_type, 0))
+    return max(0, int(payload.get("decision_count") or 0))
+
+
+def _payload_digest(payload: Mapping[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+
+
+def _order_type_ablation_artifact_dir(
+    *,
+    args: argparse.Namespace,
+    root: Path,
+) -> Path:
+    json_output = getattr(args, "json_output", None)
+    if isinstance(json_output, Path):
+        return json_output.parent / "frontier-artifacts"
+    return root / "frontier-artifacts"
+
+
+def _order_type_replay_arm_summary(
+    *,
+    order_type: str,
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    summary = summarize_replay_profitability(payload)
+    daily_filled_notional = _daily_filled_notional(payload)
+    total_filled_notional = sum(daily_filled_notional.values(), Decimal("0"))
+    avg_filled_notional_per_day = (
+        total_filled_notional / Decimal(summary.trading_day_count)
+        if summary.trading_day_count > 0
+        else Decimal("0")
+    )
+    arm_summary: dict[str, Any] = {
+        "order_type": order_type,
+        "start_date": summary.start_date,
+        "end_date": summary.end_date,
+        "trading_day_count": summary.trading_day_count,
+        "net_pnl": str(summary.net_pnl),
+        "net_per_day": str(summary.net_per_day),
+        "active_days": summary.active_days,
+        "decision_count": summary.decision_count,
+        "filled_count": summary.filled_count,
+        "sample_count": _forced_order_type_sample_count(payload, order_type=order_type),
+        "limit_fill_rate": str(payload.get("limit_fill_rate", "0")),
+        "total_filled_notional": str(total_filled_notional),
+        "avg_filled_notional_per_day": str(avg_filled_notional_per_day),
+        "payload_sha256": _payload_digest(payload),
+        "daily_net": {day: str(value) for day, value in summary.daily_net.items()},
+        "daily_filled_notional": {
+            day: str(value) for day, value in daily_filled_notional.items()
+        },
+    }
+    arm_summary.update(_order_type_execution_metrics(payload))
+    return arm_summary
+
+
+def _order_type_ablation_payload(
+    *,
+    candidate_index: int,
+    candidate_id: str,
+    policy: OrderTypeAblationPolicy,
+    candidate_params: Mapping[str, Any],
+    strategy_overrides: Mapping[str, Any],
+    market_payload: Mapping[str, Any],
+    limit_payload: Mapping[str, Any],
+    start_date: date,
+    end_date: date,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    selected_order_type = _selected_entry_order_type(
+        candidate_params=candidate_params,
+        strategy_overrides=strategy_overrides,
+    )
+    alternative_order_type = "limit" if selected_order_type == "market" else "market"
+    market_summary = _order_type_replay_arm_summary(
+        order_type="market",
+        payload=market_payload,
+    )
+    limit_summary = _order_type_replay_arm_summary(
+        order_type="limit",
+        payload=limit_payload,
+    )
+    selected_summary = (
+        market_summary if selected_order_type == "market" else limit_summary
+    )
+    alternative_summary = (
+        limit_summary if selected_order_type == "market" else market_summary
+    )
+    selected_net_per_day = Decimal(str(selected_summary["net_per_day"]))
+    alternative_net_per_day = Decimal(str(alternative_summary["net_per_day"]))
+    opportunity_cost_per_day = max(
+        Decimal("0"),
+        alternative_net_per_day - selected_net_per_day,
+    )
+    selected_notional = Decimal(str(selected_summary["avg_filled_notional_per_day"]))
+    alternative_notional = Decimal(
+        str(alternative_summary["avg_filled_notional_per_day"])
+    )
+    opportunity_cost_denominator = max(selected_notional, alternative_notional)
+    opportunity_cost_bps = (
+        opportunity_cost_per_day / opportunity_cost_denominator * Decimal("10000")
+        if opportunity_cost_denominator > 0
+        else Decimal("0")
+    )
+    market_sample_count = int(market_summary["sample_count"])
+    limit_sample_count = int(limit_summary["sample_count"])
+    sample_count = market_sample_count + limit_sample_count
+    passed = (
+        sample_count >= policy.min_sample_count
+        and opportunity_cost_bps <= policy.max_opportunity_cost_bps
+        and selected_net_per_day >= alternative_net_per_day
+    )
+    artifact_payload: dict[str, Any] = {
+        "schema_version": "torghut.order-type-ablation.v1",
+        "candidate_index": candidate_index,
+        "candidate_id": candidate_id,
+        "window": {
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+        },
+        "policy": policy.to_payload(),
+        "candidate_params": dict(candidate_params),
+        "strategy_overrides": dict(strategy_overrides),
+        "selected_order_type": selected_order_type,
+        "alternative_order_type": alternative_order_type,
+        "market": market_summary,
+        "limit": limit_summary,
+        "market_sample_count": market_sample_count,
+        "limit_sample_count": limit_sample_count,
+        "sample_count": sample_count,
+        "selected_net_per_day": str(selected_net_per_day),
+        "alternative_net_per_day": str(alternative_net_per_day),
+        "opportunity_cost_per_day": str(opportunity_cost_per_day),
+        "opportunity_cost_denominator": str(opportunity_cost_denominator),
+        "opportunity_cost_bps": str(opportunity_cost_bps),
+        "passed": passed,
+    }
+    scorecard_update = {
+        "order_type_ablation_sample_count": sample_count,
+        "order_type_ablation_passed": passed,
+        "order_type_ablation_selected_order_type": selected_order_type,
+        "order_type_ablation_alternative_order_type": alternative_order_type,
+        "order_type_opportunity_cost_bps": str(opportunity_cost_bps),
+        "order_type_opportunity_cost_evidence_present": True,
+        "opportunity_cost_evidence_present": True,
+        "market_limit_order_mix_evidence_present": sample_count > 0,
+        "market_limit_order_mix_sample_count": sample_count,
+        "market_limit_execution_policy_passed": passed,
+        "limit_fill_probability_sample_count": limit_sample_count,
+        "limit_fill_probability_evidence_present": limit_sample_count > 0,
+    }
+    return artifact_payload, scorecard_update
 
 
 DELAY_ADJUSTED_DEPTH_STRESS_GRID_MS = (
@@ -2101,6 +2323,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
         ),
         min_cash=Decimal(str(consistency_constraints.get("min_cash", "-999999999"))),
     )
+    order_type_ablation_policy = _order_type_ablation_policy(sweep_config)
     max_train_screen_worst_day_loss = Decimal(
         str(
             getattr(args, "max_train_screen_worst_day_loss", "")
@@ -2165,6 +2388,11 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
         prefix="torghut-consistent-profitability-frontier-"
     ) as tmpdir:
         root = Path(tmpdir)
+        order_type_ablation_artifact_dir = _order_type_ablation_artifact_dir(
+            args=args,
+            root=root,
+        )
+        order_type_ablation_evaluated = 0
         cached_rows: list[Any] | None = None
         if args.prefetch_full_window_rows:
             cached_rows = _prefetch_signal_rows(
@@ -2391,6 +2619,84 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     - second_oos_penalty
                 )
                 candidate_payload = base_result.to_payload()
+                order_type_ablation_update: dict[str, Any] = {}
+                if (
+                    order_type_ablation_policy.enabled
+                    and not full_window_replay_skipped
+                    and order_type_ablation_evaluated
+                    < order_type_ablation_policy.max_candidates
+                ):
+                    order_type_arm_payloads: dict[str, Mapping[str, Any]] = {}
+                    for forced_order_type in ("market", "limit"):
+                        arm_configmap = apply_candidate_to_configmap_with_overrides(
+                            configmap_payload=base_configmap,
+                            strategy_name=strategy_name,
+                            candidate_params={
+                                **params_candidate,
+                                "entry_order_type": forced_order_type,
+                            },
+                            strategy_overrides=override_candidate,
+                            disable_other_strategies=disable_other_strategies,
+                        )
+                        arm_configmap_path = (
+                            root
+                            / f"candidate-{candidate_index:04d}-order-type-{forced_order_type}.yaml"
+                        )
+                        arm_configmap_path.write_text(
+                            yaml.safe_dump(arm_configmap, sort_keys=False),
+                            encoding="utf-8",
+                        )
+                        order_type_arm_payloads[forced_order_type] = run_replay(
+                            _build_replay_config(
+                                strategy_configmap_path=arm_configmap_path,
+                                clickhouse_http_url=str(args.clickhouse_http_url),
+                                clickhouse_username=(
+                                    str(args.clickhouse_username).strip() or None
+                                ),
+                                clickhouse_password=clickhouse_password,
+                                start_date=full_window_start,
+                                end_date=full_window_end,
+                                start_equity=Decimal(str(args.start_equity)),
+                                chunk_minutes=max(1, int(args.chunk_minutes)),
+                                symbols=candidate_symbols,
+                                progress_log_interval_seconds=max(
+                                    1, int(args.progress_log_seconds)
+                                ),
+                            )
+                        )
+                    artifact_payload, order_type_ablation_update = (
+                        _order_type_ablation_payload(
+                            candidate_index=candidate_index,
+                            candidate_id=str(candidate_payload["candidate_id"]),
+                            policy=order_type_ablation_policy,
+                            candidate_params=params_candidate,
+                            strategy_overrides=override_candidate,
+                            market_payload=order_type_arm_payloads["market"],
+                            limit_payload=order_type_arm_payloads["limit"],
+                            start_date=full_window_start,
+                            end_date=full_window_end,
+                        )
+                    )
+                    artifact_path = (
+                        order_type_ablation_artifact_dir
+                        / f"candidate-{candidate_index:04d}-order-type-ablation.json"
+                    )
+                    artifact_ref = str(artifact_path)
+                    artifact_payload["artifact_ref"] = artifact_ref
+                    _write_json_output(artifact_path, artifact_payload)
+                    order_type_ablation_update["order_type_ablation_artifact_ref"] = (
+                        artifact_ref
+                    )
+                    candidate_payload["order_type_ablation"] = {
+                        "artifact_ref": artifact_ref,
+                        "passed": artifact_payload["passed"],
+                        "sample_count": artifact_payload["sample_count"],
+                        "selected_order_type": artifact_payload["selected_order_type"],
+                        "opportunity_cost_bps": artifact_payload[
+                            "opportunity_cost_bps"
+                        ],
+                    }
+                    order_type_ablation_evaluated += 1
                 candidate_payload["full_window"] = full_window_summary
                 if second_oos_summary is not None:
                     candidate_payload["second_oos"] = second_oos_summary
@@ -2638,6 +2944,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                         **_order_type_execution_metrics(full_window_summary),
                     }
                 )
+                objective_scorecard_payload.update(order_type_ablation_update)
                 if second_oos_summary is not None:
                     holdout_oos_passed = _holdout_oos_passed(
                         holdout_payload=holdout_payload,
