@@ -52,6 +52,11 @@ const routeSources: RouteSourceSpec[] = [
     load: () => import('../routes/v1/agent-runs/resources'),
   },
   {
+    file: 'src/routes/v1/agent-runs/projection-authority.ts',
+    sourceUrl: new URL('../routes/v1/agent-runs/projection-authority.ts', import.meta.url),
+    load: () => import('../routes/v1/agent-runs/projection-authority'),
+  },
+  {
     file: 'src/routes/v1/agent-runs/terminal-events.ts',
     sourceUrl: new URL('../routes/v1/agent-runs/terminal-events.ts', import.meta.url),
     load: () => import('../routes/v1/agent-runs/terminal-events'),

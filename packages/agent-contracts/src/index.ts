@@ -1,5 +1,6 @@
 export type * from './agents-health-client'
 export type * from './agent-runs-client'
+export type * from './agent-run-projection-authority-client'
 export type * from './agent-run-terminal-events-client'
 export type * from './agent-messages-client'
 export type * from './agent-jobs-client'

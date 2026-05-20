@@ -18,6 +18,10 @@
       "types": "./dist/agent-runs-client.d.ts",
       "default": "./dist/agent-runs-client.js"
     },
+    "./agent-run-projection-authority-client": {
+      "types": "./dist/agent-run-projection-authority-client.d.ts",
+      "default": "./dist/agent-run-projection-authority-client.js"
+    },
     "./agent-run-terminal-events-client": {
       "types": "./dist/agent-run-terminal-events-client.d.ts",
       "default": "./dist/agent-run-terminal-events-client.js"
@@ -93,7 +97,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "bunx vitest run ./src/agents-clients.test.ts ./src/agents-ready.test.ts ./src/agent-message-artifacts.test.ts ./src/agent-run-callbacks.test.ts ./src/agent-run-terminal-events-client.test.ts ./src/codex-orchestration-parameters.test.ts ./src/execution-trust.test.ts ./src/policy-validation.test.ts ./src/signals-client.test.ts ./src/swarm-analysis.test.ts ./src/swarm-material-reentry.test.ts",
+    "test": "bunx vitest run ./src/agents-clients.test.ts ./src/agents-ready.test.ts ./src/agent-message-artifacts.test.ts ./src/agent-run-callbacks.test.ts ./src/agent-run-projection-authority-client.test.ts ./src/agent-run-terminal-events-client.test.ts ./src/codex-orchestration-parameters.test.ts ./src/execution-trust.test.ts ./src/policy-validation.test.ts ./src/signals-client.test.ts ./src/swarm-analysis.test.ts ./src/swarm-material-reentry.test.ts",
     "tsc": "tsc --noEmit -p tsconfig.json",
     "lint": "bunx oxfmt --check src",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",

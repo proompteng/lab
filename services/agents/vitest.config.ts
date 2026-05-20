@@ -6,6 +6,9 @@ const root = fileURLToPath(new URL('./src', import.meta.url))
 const agentContractsPolicyValidationSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/policy-validation.ts', import.meta.url),
 )
+const agentContractsAgentRunProjectionAuthorityClientSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/agent-run-projection-authority-client.ts', import.meta.url),
+)
 const agentContractsAgentRunTerminalEventsClientSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/agent-run-terminal-events-client.ts', import.meta.url),
 )
@@ -24,6 +27,8 @@ export default defineConfig({
     alias: {
       '~': root,
       '@': root,
+      '@proompteng/agent-contracts/agent-run-projection-authority-client':
+        agentContractsAgentRunProjectionAuthorityClientSource,
       '@proompteng/agent-contracts/agent-run-terminal-events-client': agentContractsAgentRunTerminalEventsClientSource,
       '@proompteng/agent-contracts/execution-trust': agentContractsExecutionTrustSource,
       '@proompteng/agent-contracts/policy-validation': agentContractsPolicyValidationSource,
@@ -38,6 +43,8 @@ export default defineConfig({
     alias: {
       '~': root,
       '@': root,
+      '@proompteng/agent-contracts/agent-run-projection-authority-client':
+        agentContractsAgentRunProjectionAuthorityClientSource,
       '@proompteng/agent-contracts/agent-run-terminal-events-client': agentContractsAgentRunTerminalEventsClientSource,
       '@proompteng/agent-contracts/execution-trust': agentContractsExecutionTrustSource,
       '@proompteng/agent-contracts/policy-validation': agentContractsPolicyValidationSource,

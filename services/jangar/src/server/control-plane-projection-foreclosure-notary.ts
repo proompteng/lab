@@ -13,8 +13,7 @@ import type {
   StageClearancePacket,
 } from '~/server/control-plane-status-types'
 import {
-  ACTIVE_PROJECTION_STATUSES,
-  type JsonRecord,
+  MARKET_CONTEXT_ACTIVE_PROJECTION_STATUSES,
   type ProjectionForeclosureAgentRunProjection,
   type ProjectionForeclosureMarketContextProjection,
   type ProjectionForeclosureNotaryInput,
@@ -79,9 +78,6 @@ const TERMINAL_STATUSES = new Set([
 const hashJson = (value: unknown, length = 16) =>
   createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, length)
 
-const asRecord = (value: unknown): JsonRecord =>
-  value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonRecord) : {}
-
 const parseDate = (value: string | null | undefined) => {
   if (!value) return null
   const date = new Date(value)
@@ -109,50 +105,6 @@ const uniqueStrings = (values: Array<string | null | undefined>) => [
 const uniqueValueGates = (values: ProjectionForeclosureValueGate[]) =>
   [...new Set(values)] as ProjectionForeclosureValueGate[]
 
-const readNumber = (value: unknown): number | null => {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value === 'string' && value.trim().length > 0) {
-    const parsed = Number(value)
-    return Number.isFinite(parsed) ? parsed : null
-  }
-  return null
-}
-
-const readNestedNumber = (payload: JsonRecord, keys: string[]) => {
-  for (const key of keys) {
-    const value = payload[key]
-    const direct = readNumber(value)
-    if (direct !== null) return direct
-  }
-
-  const spec = asRecord(payload.spec)
-  for (const key of keys) {
-    const value = spec[key]
-    const nested = readNumber(value)
-    if (nested !== null) return nested
-  }
-
-  const parameters = asRecord(payload.parameters)
-  for (const key of keys) {
-    const value = parameters[key]
-    const nested = readNumber(value)
-    if (nested !== null) return nested
-  }
-
-  return null
-}
-
-const authorityBudgetSeconds = (payload: JsonRecord) => {
-  const timeoutSeconds =
-    readNestedNumber(payload, ['timeoutSeconds', 'timeout_seconds', 'maxRuntimeSeconds', 'max_runtime_seconds']) ??
-    (readNestedNumber(payload, ['timeoutMs', 'timeout_ms']) ?? 0) / 1000
-  const scheduleSeconds =
-    readNestedNumber(payload, ['scheduleIntervalSeconds', 'schedule_interval_seconds', 'everySeconds']) ??
-    (readNestedNumber(payload, ['scheduleIntervalMs', 'schedule_interval_ms', 'everyMs']) ?? 0) / 1000
-
-  return Math.max(DEFAULT_AUTHORITY_BUDGET_SECONDS, timeoutSeconds, scheduleSeconds * 2)
-}
-
 const claimId = (claimClass: ProjectionForeclosureClaimClass, parts: unknown[]) =>
   `projection-claim:${claimClass}:${hashJson(parts, 14)}`
 
@@ -168,67 +120,6 @@ const buildClaim = (input: Omit<ProjectionForeclosureClaim, 'claim_id'>): Projec
   reason_codes: uniqueStrings(input.reason_codes).map(normalizeStatus),
   value_gates: uniqueValueGates(input.value_gates),
 })
-
-const classifyAgentRunProjection = (
-  input: ProjectionForeclosureNotaryInput,
-  projection: ProjectionForeclosureAgentRunProjection,
-): ProjectionForeclosureClaim => {
-  const status = normalizeStatus(projection.status)
-  const observedAt = projection.updated_at ?? projection.created_at
-  const observedDate = parseDate(observedAt) ?? input.now
-  const budgetSeconds = authorityBudgetSeconds(projection.payload)
-  const freshUntil = addSeconds(observedDate, budgetSeconds)
-  const projectionRef = `agent_runs:${projection.id}`
-  const agentsAuthorityRef = projection.external_run_id
-    ? `agents-service-agentrun:${projection.external_run_id}`
-    : `agents-service-agent-run-record:${projection.id}`
-
-  if (TERMINAL_STATUSES.has(status)) {
-    return buildClaim({
-      claim_class: 'agentrun_execution',
-      source_ref: projectionRef,
-      source_owner: projection.agent_name,
-      lane: normalizeStatus(projection.agent_name),
-      status,
-      observed_at: observedAt,
-      last_heartbeat_at: projection.updated_at,
-      fresh_until: null,
-      live_authority_ref: agentsAuthorityRef,
-      projection_ref: projectionRef,
-      authority_state: 'terminal_audit',
-      reason_codes: ['agents_service_agentrun_projection_terminal_audit'],
-      value_gates: ['failed_agentrun_rate', 'handoff_evidence_quality'],
-    })
-  }
-
-  const authorityState: ProjectionForeclosureAuthorityState =
-    ACTIVE_PROJECTION_STATUSES.has(status) && freshUntil.getTime() >= input.now.getTime()
-      ? 'authoritative'
-      : ACTIVE_PROJECTION_STATUSES.has(status)
-        ? 'stale_foreclosed'
-        : 'grace'
-
-  return buildClaim({
-    claim_class: 'agentrun_execution',
-    source_ref: projectionRef,
-    source_owner: projection.agent_name,
-    lane: normalizeStatus(projection.agent_name),
-    status,
-    observed_at: observedAt,
-    last_heartbeat_at: projection.updated_at,
-    fresh_until: freshUntil.toISOString(),
-    live_authority_ref: agentsAuthorityRef,
-    projection_ref: projectionRef,
-    authority_state: authorityState,
-    reason_codes:
-      authorityState === 'authoritative'
-        ? ['agents_service_agentrun_projection_current']
-        : authorityState === 'stale_foreclosed'
-          ? ['agents_service_agentrun_projection_not_renewed']
-          : ['agents_service_agentrun_projection_inside_grace_budget'],
-    value_gates: ['failed_agentrun_rate', 'ready_status_truth', 'manual_intervention_count'],
-  })
-}
 
 const marketContextClaimClass = (domain: string): ProjectionForeclosureClaimClass => {
   const normalized = normalizeDomain(domain)
@@ -268,7 +159,9 @@ const classifyMarketContextProjection = (
   }
 
   const authorityState: ProjectionForeclosureAuthorityState =
-    ACTIVE_PROJECTION_STATUSES.has(status) && freshUntil.getTime() < input.now.getTime() ? 'stale_foreclosed' : 'grace'
+    MARKET_CONTEXT_ACTIVE_PROJECTION_STATUSES.has(status) && freshUntil.getTime() < input.now.getTime()
+      ? 'stale_foreclosed'
+      : 'grace'
 
   return buildClaim({
     claim_class: marketContextClaimClass(domain),
@@ -555,7 +448,7 @@ export const buildProjectionForeclosureNotary = (
   input: ProjectionForeclosureNotaryInput,
 ): ProjectionForeclosureNotary => {
   const claims = [
-    ...input.agentRunProjections.map((projection) => classifyAgentRunProjection(input, projection)),
+    ...input.agentRunProjections,
     ...input.marketContextProjections.map((projection) => classifyMarketContextProjection(input, projection)),
     classifyTorghutRouteCustody(input),
     classifySourceRolloutTruth(input),

@@ -62,6 +62,7 @@
     "./routes/v1/agents/$id": "./src/routes/v1/agents/$id.ts",
     "./routes/v1/agent-runs": "./src/routes/v1/agent-runs.ts",
     "./routes/v1/agent-runs/$id": "./src/routes/v1/agent-runs/$id.ts",
+    "./routes/v1/agent-runs/projection-authority": "./src/routes/v1/agent-runs/projection-authority.ts",
     "./routes/v1/agent-runs/resources": "./src/routes/v1/agent-runs/resources.ts",
     "./routes/v1/agent-runs/terminal-events": "./src/routes/v1/agent-runs/terminal-events.ts",
     "./routes/v1/agent-runs/terminal-events-ack": "./src/routes/v1/agent-runs/terminal-events-ack.ts",

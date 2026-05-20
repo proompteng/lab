@@ -626,6 +626,23 @@ require_matches \
   "${ROOT_DIR}/services/jangar/src/server/whitepaper-finalize-consumer.ts"
 
 fail_if_matches \
+  "Jangar projection foreclosure must consume Agents-owned AgentRun projection authority instead of raw AgentRun rows or local AgentRun authority classification" \
+  'fetchAgentRunsFromAgentsService|\bACTIVE_PROJECTION_STATUSES\b|classifyAgentRunProjection|authorityBudgetSeconds|readNestedNumber|agentRunProjectionAuthorityClaimToEvidence' \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-projection-foreclosure-evidence.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-projection-foreclosure-notary.ts"
+
+require_matches \
+  "Agents service must own AgentRun projection authority classification for domain consumers" \
+  '/v1/agent-runs/projection-authority' \
+  "${ROOT_DIR}/services/agents/src/server/control-plane.ts" \
+  "${ROOT_DIR}/packages/agent-contracts/src/agent-run-projection-authority-client.ts"
+
+require_matches \
+  "Jangar projection foreclosure must consume the typed Agents projection-authority client" \
+  'agent-run-projection-authority-client' \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-projection-foreclosure-evidence.ts"
+
+fail_if_matches \
   "Jangar KubeGateway must list Agents CRDs through the Agents service boundary, not direct Kubernetes CRD access" \
   'RESOURCE_MAP|agentruns\.agents\.proompteng\.ai|swarms\.swarm\.proompteng\.ai' \
   "${ROOT_DIR}/services/jangar/src/server/kube-gateway.ts"
