@@ -6,6 +6,11 @@ import type {
   DeploymentRolloutStatus,
   WorkflowsReliabilityStatus,
 } from '@proompteng/agent-contracts/control-plane-status'
+import type {
+  ExecutionTrustStage,
+  ExecutionTrustStatus,
+  ExecutionTrustSwarm,
+} from '@proompteng/agent-contracts/execution-trust'
 
 export type {
   AgentRunIngestionStatus,
@@ -24,59 +29,14 @@ export type {
   WorkflowFailureReason,
   WorkflowsReliabilityStatus,
 } from '@proompteng/agent-contracts/control-plane-status'
+export type {
+  ExecutionTrustStage,
+  ExecutionTrustStatus,
+  ExecutionTrustSwarm,
+} from '@proompteng/agent-contracts/execution-trust'
 
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
-
-export type ExecutionTrustStatus = {
-  status: 'healthy' | 'degraded' | 'blocked' | 'unknown'
-  reason: string
-  last_evaluated_at: string
-  blocking_windows: Array<{
-    type: 'swarms' | 'stages' | 'dependencies'
-    scope: string
-    name?: string
-    reason: string
-    class: 'degraded' | 'blocked' | 'unknown'
-  }>
-  evidence_summary: string[]
-}
-
-export type ExecutionTrustSwarm = {
-  name: string
-  namespace: string
-  phase: string
-  ready: boolean
-  updated_at: string | null
-  observed_generation: number | null
-  freeze: {
-    reason: string | null
-    until: string | null
-  } | null
-  requirements_pending: number
-  requirements_pending_class: 'healthy' | 'degraded' | 'blocked' | 'unknown'
-  last_discover_at: string | null
-  last_plan_at: string | null
-  last_implement_at: string | null
-  last_verify_at: string | null
-}
-
-export type ExecutionTrustStage = {
-  swarm: string
-  namespace: string
-  stage: 'discover' | 'plan' | 'implement' | 'verify'
-  phase: string
-  last_run_at: string | null
-  next_expected_at: string | null
-  configured_every_ms: number | null
-  age_ms: number | null
-  stale_after_ms: number | null
-  stale: boolean
-  recent_failed_jobs: number
-  recent_backoff_limit_exceeded_jobs: number
-  last_failure_reason: string | null
-  data_confidence: 'high' | 'degraded' | 'unknown'
-}
 
 export type RuntimeKitClass = 'serving' | 'collaboration'
 

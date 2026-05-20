@@ -137,6 +137,11 @@ const routeSources: RouteSourceSpec[] = [
     load: () => import('../routes/v1/control-plane/status'),
   },
   {
+    file: 'src/routes/v1/control-plane/execution-trust.ts',
+    sourceUrl: new URL('../routes/v1/control-plane/execution-trust.ts', import.meta.url),
+    load: () => import('../routes/v1/control-plane/execution-trust'),
+  },
+  {
     file: 'src/routes/v1/control-plane/events.ts',
     sourceUrl: new URL('../routes/v1/control-plane/events.ts', import.meta.url),
     load: () => import('../routes/v1/control-plane/events'),

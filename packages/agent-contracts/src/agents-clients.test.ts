@@ -5,6 +5,7 @@ import { fetchAgentRunsFromAgentsService, submitAgentRunToAgentsService } from '
 import { submitAgentMessagesToAgentsService } from './agent-messages-client'
 import { fetchAgentsHealthFromAgentsService } from './agents-health-client'
 import { fetchAgentsJson, resolveAgentsServiceBaseUrl } from './agents-http'
+import { fetchExecutionTrustFromAgentsService } from './execution-trust-client'
 import { submitOrchestrationRunToAgentsService } from './orchestration-runs-client'
 import { fetchMemoryResourceFromAgentsService, submitMemoryOperationToAgentsService } from './memory-client'
 import { submitSwarmRequirementSignalToAgentsService } from './signals-client'
@@ -281,6 +282,35 @@ describe('agents typed service clients', () => {
     )
     expect((fetchMock.mock.calls[1] as unknown as [URL, RequestInit])[0].toString()).toBe(
       'http://agents.test/v1/memories/resources?name=research-memory&namespace=agents',
+    )
+  })
+
+  it('exposes the Agents-owned execution trust endpoint for domain consumers', async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          executionTrust: {
+            status: 'healthy',
+            reason: 'execution trust is healthy.',
+            last_evaluated_at: '2026-05-20T12:00:00Z',
+            blocking_windows: [],
+            evidence_summary: [],
+          },
+          swarms: [],
+          stages: [],
+        }),
+        { headers: { 'content-type': 'application/json' }, status: 200 },
+      )
+    })
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+
+    await fetchExecutionTrustFromAgentsService(
+      { namespace: 'agents', swarms: ['platform-control-plane'], summaryLimit: 12 },
+      { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
+    )
+
+    expect((fetchMock.mock.calls[0] as unknown as [URL, RequestInit])[0].toString()).toBe(
+      'http://agents.test/v1/control-plane/execution-trust?namespace=agents&swarms=platform-control-plane&summaryLimit=12',
     )
   })
 

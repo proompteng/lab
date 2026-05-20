@@ -46,6 +46,14 @@
       "types": "./dist/control-plane-status.d.ts",
       "default": "./dist/control-plane-status.js"
     },
+    "./execution-trust": {
+      "types": "./dist/execution-trust.d.ts",
+      "default": "./dist/execution-trust.js"
+    },
+    "./execution-trust-client": {
+      "types": "./dist/execution-trust-client.d.ts",
+      "default": "./dist/execution-trust-client.js"
+    },
     "./memory-client": {
       "types": "./dist/memory-client.d.ts",
       "default": "./dist/memory-client.js"
@@ -73,7 +81,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "bunx vitest run ./src/agents-clients.test.ts ./src/agents-ready.test.ts ./src/agent-message-artifacts.test.ts ./src/agent-run-callbacks.test.ts ./src/codex-orchestration-parameters.test.ts ./src/policy-validation.test.ts ./src/signals-client.test.ts",
+    "test": "bunx vitest run ./src/agents-clients.test.ts ./src/agents-ready.test.ts ./src/agent-message-artifacts.test.ts ./src/agent-run-callbacks.test.ts ./src/codex-orchestration-parameters.test.ts ./src/execution-trust.test.ts ./src/policy-validation.test.ts ./src/signals-client.test.ts",
     "tsc": "tsc --noEmit -p tsconfig.json",
     "lint": "bunx oxfmt --check src",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",

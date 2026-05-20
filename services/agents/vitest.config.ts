@@ -6,6 +6,9 @@ const root = fileURLToPath(new URL('./src', import.meta.url))
 const agentContractsPolicyValidationSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/policy-validation.ts', import.meta.url),
 )
+const agentContractsExecutionTrustSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/execution-trust.ts', import.meta.url),
+)
 const codexSource = fileURLToPath(new URL('../../packages/codex/src/index.ts', import.meta.url))
 const otelApiSource = fileURLToPath(new URL('../../packages/otel/src/api.ts', import.meta.url))
 const temporalSdkSource = fileURLToPath(new URL('../../packages/temporal-bun-sdk/src/index.ts', import.meta.url))
@@ -15,6 +18,7 @@ export default defineConfig({
     alias: {
       '~': root,
       '@': root,
+      '@proompteng/agent-contracts/execution-trust': agentContractsExecutionTrustSource,
       '@proompteng/agent-contracts/policy-validation': agentContractsPolicyValidationSource,
       '@proompteng/codex': codexSource,
       '@proompteng/otel/api': otelApiSource,
@@ -26,6 +30,7 @@ export default defineConfig({
     alias: {
       '~': root,
       '@': root,
+      '@proompteng/agent-contracts/execution-trust': agentContractsExecutionTrustSource,
       '@proompteng/agent-contracts/policy-validation': agentContractsPolicyValidationSource,
       '@proompteng/codex': codexSource,
       '@proompteng/otel/api': otelApiSource,

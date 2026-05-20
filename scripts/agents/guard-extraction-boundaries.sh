@@ -619,6 +619,17 @@ fail_if_matches \
   'createKubernetesClient|RESOURCE_MAP\.(AgentRun|OrchestrationRun)|agents\.proompteng\.ai/v1alpha1|orchestration\.proompteng\.ai/v1alpha1' \
   "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-swarm-analysis.ts"
 
+fail_if_matches \
+  "Jangar execution trust must consume the Agents execution-trust API instead of listing and evaluating Swarms locally" \
+  'fetchSwarmResourcesFromAgentsService|listSwarmsFromAgentsService|toExecutionTrustSwarmResources|SWARM_STAGE_NAMES|stageStates' \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-execution-trust.ts"
+
+require_matches \
+  "Agents service must own the execution-trust HTTP API for domain consumers" \
+  '/v1/control-plane/execution-trust' \
+  "${ROOT_DIR}/services/agents/src/server/control-plane.ts" \
+  "${ROOT_DIR}/packages/agent-contracts/src/execution-trust-client.ts"
+
 fail_if_path_exists \
   "Jangar must not retain the schedule-runner implementation after Agents owns schedule reconciliation" \
   "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-schedule-runner.ts" \
