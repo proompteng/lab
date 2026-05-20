@@ -133,6 +133,10 @@ def _enrich_scorecard_with_replay_stress_metrics(
         enriched.get("avg_filled_notional_per_day")
         or full_window.get("avg_filled_notional_per_day")
     )
+    trading_day_count = _decimal(
+        enriched.get("trading_day_count") or full_window.get("trading_day_count")
+    )
+    daily_filled_notional = _mapping(full_window.get("daily_filled_notional"))
     daily_liquidity_notional = _mapping(full_window.get("daily_liquidity_notional"))
     if daily_liquidity_notional and "daily_liquidity_notional" not in enriched:
         enriched["daily_liquidity_notional"] = daily_liquidity_notional
@@ -150,15 +154,10 @@ def _enrich_scorecard_with_replay_stress_metrics(
     if (
         avg_liquidity_notional_per_day <= 0
         and daily_liquidity_notional
-        and _decimal(
-            enriched.get("trading_day_count") or full_window.get("trading_day_count")
-        )
-        > 0
+        and trading_day_count > 0
     ):
-        avg_liquidity_notional_per_day = _decimal_mapping_total(
-            daily_liquidity_notional
-        ) / _decimal(
-            enriched.get("trading_day_count") or full_window.get("trading_day_count")
+        avg_liquidity_notional_per_day = (
+            _decimal_mapping_total(daily_liquidity_notional) / trading_day_count
         )
     if (
         avg_liquidity_notional_per_day > 0
@@ -187,13 +186,44 @@ def _enrich_scorecard_with_replay_stress_metrics(
             and market_impact_net_pnl_per_day > 0
         )
 
-    delay_depth_fillable_notional_per_day = avg_filled_notional_per_day
+    delay_depth_haircut_rate = DELAY_ADJUSTED_DEPTH_STRESS_MS / Decimal("1000")
+    delay_depth_total_filled_notional = _decimal_mapping_total(daily_filled_notional)
+    if delay_depth_total_filled_notional <= 0 and trading_day_count > 0:
+        delay_depth_total_filled_notional = (
+            avg_filled_notional_per_day * trading_day_count
+        )
+    delay_depth_total_fillable_notional = Decimal("0")
+    delay_depth_missing_liquidity_day_count = 0
+    for day, raw_filled_notional in daily_filled_notional.items():
+        filled_notional = _decimal(raw_filled_notional)
+        if filled_notional <= 0:
+            continue
+        liquidity_notional = _decimal(daily_liquidity_notional.get(day))
+        if liquidity_notional <= 0:
+            delay_depth_missing_liquidity_day_count += 1
+            continue
+        delay_depth_total_fillable_notional += min(
+            filled_notional,
+            liquidity_notional * (Decimal("1") - delay_depth_haircut_rate),
+        )
+    delay_depth_fillable_notional_per_day = (
+        delay_depth_total_fillable_notional / trading_day_count
+        if trading_day_count > 0
+        else Decimal("0")
+    )
     delay_depth_cost_per_day = (
         delay_depth_fillable_notional_per_day
         * DELAY_ADJUSTED_DEPTH_STRESS_COST_BPS
         / Decimal("10000")
     )
-    delay_depth_net_pnl_per_day = net_pnl_per_day - delay_depth_cost_per_day
+    delay_depth_fillable_ratio = (
+        delay_depth_total_fillable_notional / delay_depth_total_filled_notional
+        if delay_depth_total_filled_notional > 0
+        else Decimal("1")
+    )
+    delay_depth_net_pnl_per_day = (
+        net_pnl_per_day * delay_depth_fillable_ratio
+    ) - delay_depth_cost_per_day
     if "delay_adjusted_depth_stress_model" not in enriched:
         enriched["delay_adjusted_depth_stress_model"] = "latency_depth_haircut"
     if "delay_adjusted_depth_stress_ms" not in enriched:
@@ -201,6 +231,36 @@ def _enrich_scorecard_with_replay_stress_metrics(
     if "delay_adjusted_depth_fillable_notional_per_day" not in enriched:
         enriched["delay_adjusted_depth_fillable_notional_per_day"] = str(
             delay_depth_fillable_notional_per_day
+        )
+    if "delay_adjusted_depth_liquidity_evidence_present" not in enriched:
+        enriched["delay_adjusted_depth_liquidity_evidence_present"] = (
+            bool(daily_liquidity_notional)
+            and delay_depth_missing_liquidity_day_count == 0
+            and (
+                delay_depth_total_fillable_notional > 0
+                or delay_depth_total_filled_notional <= 0
+            )
+        )
+    if "delay_adjusted_depth_liquidity_missing_day_count" not in enriched:
+        enriched["delay_adjusted_depth_liquidity_missing_day_count"] = (
+            delay_depth_missing_liquidity_day_count
+        )
+    if "delay_adjusted_depth_fillable_ratio" not in enriched:
+        enriched["delay_adjusted_depth_fillable_ratio"] = str(
+            delay_depth_fillable_ratio
+        )
+    if "delay_adjusted_depth_unfillable_notional_per_day" not in enriched:
+        enriched["delay_adjusted_depth_unfillable_notional_per_day"] = str(
+            max(
+                Decimal("0"),
+                (
+                    delay_depth_total_filled_notional
+                    - delay_depth_total_fillable_notional
+                )
+                / trading_day_count
+                if trading_day_count > 0
+                else Decimal("0"),
+            )
         )
     if "delay_adjusted_depth_stress_net_pnl_per_day" not in enriched:
         enriched["delay_adjusted_depth_stress_net_pnl_per_day"] = str(
@@ -210,7 +270,7 @@ def _enrich_scorecard_with_replay_stress_metrics(
         enriched["delay_adjusted_depth_stress_artifact_ref"] = result_path
     if "delay_adjusted_depth_stress_passed" not in enriched:
         enriched["delay_adjusted_depth_stress_passed"] = (
-            avg_liquidity_notional_per_day >= delay_depth_fillable_notional_per_day
+            bool(enriched.get("delay_adjusted_depth_liquidity_evidence_present"))
             and delay_depth_fillable_notional_per_day > 0
             and delay_depth_net_pnl_per_day > 0
         )

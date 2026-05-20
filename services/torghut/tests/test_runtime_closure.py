@@ -1500,8 +1500,67 @@ data:
         self.assertFalse(report["objective_met"])
         self.assertEqual(report["model"], "latency_depth_haircut")
         self.assertEqual(report["stress_delay_ms"], "250")
+        self.assertEqual(report["liquidity_input_source"], "missing_recorded_liquidity")
+        self.assertEqual(report["recorded_liquidity_day_count"], 0)
+        self.assertEqual(report["missing_liquidity_days"], 2)
+        self.assertEqual(report["unfillable_notional"], "600000")
+        self.assertEqual(report["fillable_notional_per_day"], "0")
+        self.assertEqual(report["post_delay_depth_net_pnl_per_day"], "0")
+        self.assertIn(
+            "delay_adjusted_depth_stress_liquidity_evidence_missing",
+            report["reasons"],
+        )
+        self.assertTrue(all(row["fillable_notional"] == "0" for row in report["daily"]))
+
+    def test_delay_adjusted_depth_stress_scales_net_when_recorded_depth_is_thin(
+        self,
+    ) -> None:
+        report = runtime_closure._delay_adjusted_depth_stress_report(
+            runner_run_id="run-depth-thin",
+            best_candidate={
+                "candidate_id": "cand-depth-thin",
+                "runtime_family": "microstructure_continuation",
+                "runtime_strategy_name": "microbar-volume-continuation-long-v1",
+            },
+            approval_report={
+                "objective_met": True,
+                "summary": {
+                    "trading_day_count": 2,
+                    "net_pnl": "1600",
+                    "daily_net": {
+                        "2026-05-18": "800",
+                        "2026-05-19": "800",
+                    },
+                    "daily_filled_notional": {
+                        "2026-05-18": "400000",
+                        "2026-05-19": "400000",
+                    },
+                    "daily_liquidity_notional": {
+                        "2026-05-18": "200000",
+                        "2026-05-19": "200000",
+                    },
+                },
+                "scorecard": {"net_pnl_per_day": "800"},
+            },
+            program=_program(),
+        )
+
+        self.assertFalse(report["objective_met"])
+        self.assertEqual(
+            report["liquidity_input_source"], "recorded_liquidity_notional"
+        )
+        self.assertEqual(report["recorded_liquidity_day_count"], 2)
+        self.assertEqual(report["missing_liquidity_days"], 0)
+        self.assertEqual(report["fillable_notional_per_day"], "150000")
+        self.assertEqual(report["unfillable_notional"], "500000")
+        self.assertEqual(report["daily"][0]["fillable_ratio"], "0.375")
+        self.assertEqual(report["post_delay_depth_net_pnl_per_day"], "112.5")
         self.assertIn(
             "delay_adjusted_depth_fillable_notional_below_minimum",
+            report["reasons"],
+        )
+        self.assertIn(
+            "delay_adjusted_depth_stress_net_pnl_below_target",
             report["reasons"],
         )
 

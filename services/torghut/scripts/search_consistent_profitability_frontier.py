@@ -938,10 +938,12 @@ def _daily_int_metric(payload: Mapping[str, Any], key: str) -> dict[str, int]:
 def _replay_stress_metrics(
     *,
     net_per_day: Decimal,
+    trading_day_count: int,
+    daily_filled_notional: Mapping[str, Decimal],
+    daily_liquidity_notional: Mapping[str, Decimal],
     avg_filled_notional_per_day: Decimal,
     total_filled_notional: Decimal,
     total_liquidity_notional: Decimal,
-    avg_liquidity_notional_per_day: Decimal,
 ) -> dict[str, Any]:
     participation = (
         total_filled_notional / total_liquidity_notional
@@ -952,8 +954,31 @@ def _replay_stress_metrics(
     market_impact_net_per_day = net_per_day - (
         avg_filled_notional_per_day * market_impact_cost_bps / Decimal("10000")
     )
-    delay_depth_fillable_notional_per_day = avg_filled_notional_per_day
-    delay_depth_net_per_day = net_per_day - (
+    delay_depth_haircut_rate = Decimal("0.05")
+    delay_depth_total_fillable_notional = Decimal("0")
+    delay_depth_missing_liquidity_day_count = 0
+    for day, filled_notional in daily_filled_notional.items():
+        if filled_notional <= 0:
+            continue
+        liquidity_notional = daily_liquidity_notional.get(day, Decimal("0"))
+        if liquidity_notional <= 0:
+            delay_depth_missing_liquidity_day_count += 1
+            continue
+        delay_depth_total_fillable_notional += min(
+            filled_notional,
+            liquidity_notional * (Decimal("1") - delay_depth_haircut_rate),
+        )
+    delay_depth_fillable_notional_per_day = (
+        delay_depth_total_fillable_notional / Decimal(trading_day_count)
+        if trading_day_count > 0
+        else Decimal("0")
+    )
+    delay_depth_fillable_ratio = (
+        delay_depth_total_fillable_notional / total_filled_notional
+        if total_filled_notional > 0
+        else Decimal("1")
+    )
+    delay_depth_net_per_day = (net_per_day * delay_depth_fillable_ratio) - (
         delay_depth_fillable_notional_per_day * Decimal("1") / Decimal("10000")
     )
     return {
@@ -966,14 +991,30 @@ def _replay_stress_metrics(
         "market_impact_stress_cost_bps": str(market_impact_cost_bps),
         "market_impact_stress_net_pnl_per_day": str(market_impact_net_per_day),
         "delay_adjusted_depth_stress_passed": bool(
-            avg_liquidity_notional_per_day >= delay_depth_fillable_notional_per_day
+            total_liquidity_notional > 0
+            and delay_depth_missing_liquidity_day_count == 0
             and delay_depth_fillable_notional_per_day > 0
             and delay_depth_net_per_day > 0
         ),
         "delay_adjusted_depth_stress_model": "latency_depth_haircut",
         "delay_adjusted_depth_stress_ms": "50",
+        "delay_adjusted_depth_liquidity_evidence_present": bool(
+            total_liquidity_notional > 0
+            and delay_depth_missing_liquidity_day_count == 0
+        ),
+        "delay_adjusted_depth_liquidity_missing_day_count": delay_depth_missing_liquidity_day_count,
         "delay_adjusted_depth_fillable_notional_per_day": str(
             delay_depth_fillable_notional_per_day
+        ),
+        "delay_adjusted_depth_fillable_ratio": str(delay_depth_fillable_ratio),
+        "delay_adjusted_depth_unfillable_notional_per_day": str(
+            max(
+                Decimal("0"),
+                (total_filled_notional - delay_depth_total_fillable_notional)
+                / Decimal(trading_day_count)
+                if trading_day_count > 0
+                else Decimal("0"),
+            )
         ),
         "delay_adjusted_depth_stress_net_pnl_per_day": str(delay_depth_net_per_day),
     }
@@ -1053,10 +1094,12 @@ def _consistency_penalty(
     )
     replay_stress_metrics = _replay_stress_metrics(
         net_per_day=summary.net_per_day,
+        trading_day_count=summary.trading_day_count,
+        daily_filled_notional=daily_filled_notional,
+        daily_liquidity_notional=daily_liquidity_notional,
         avg_filled_notional_per_day=avg_filled_notional_per_day,
         total_filled_notional=total_filled_notional,
         total_liquidity_notional=total_liquidity_notional,
-        avg_liquidity_notional_per_day=avg_liquidity_notional_per_day,
     )
     best_day_share_of_total_pnl = _max_best_day_share_of_total_pnl(
         daily_net=summary.daily_net,

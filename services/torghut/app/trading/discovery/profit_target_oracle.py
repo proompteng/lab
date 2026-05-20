@@ -61,6 +61,7 @@ class ProfitTargetOraclePolicy:
     min_market_impact_stress_cost_bps: Decimal = Decimal("1")
     require_market_impact_liquidity_evidence: bool = True
     require_delay_adjusted_depth_stress: bool = True
+    require_delay_adjusted_depth_liquidity_evidence: bool = True
     min_delay_adjusted_depth_stress_ms: Decimal = Decimal("50")
     min_delay_adjusted_depth_fillable_notional_per_day: Decimal = Decimal("300000")
     require_double_oos: bool = True
@@ -115,6 +116,7 @@ class ProfitTargetOraclePolicy:
                 _ACCEPTED_MARKET_IMPACT_STRESS_MODELS
             ),
             "require_delay_adjusted_depth_stress": self.require_delay_adjusted_depth_stress,
+            "require_delay_adjusted_depth_liquidity_evidence": self.require_delay_adjusted_depth_liquidity_evidence,
             "min_delay_adjusted_depth_stress_ms": str(
                 self.min_delay_adjusted_depth_stress_ms
             ),
@@ -725,6 +727,43 @@ def evaluate_profit_target_oracle(
             if policy.require_delay_adjusted_depth_stress
             else True,
         }
+    )
+    delay_depth_liquidity_evidence_present = _boolish(
+        scorecard.get("delay_adjusted_depth_liquidity_evidence_present")
+        or scorecard.get("delay_depth_liquidity_evidence_present")
+        or scorecard.get("latency_depth_liquidity_evidence_present")
+    )
+    checks.append(
+        {
+            "metric": "delay_adjusted_depth_liquidity_evidence_present",
+            "observed": str(delay_depth_liquidity_evidence_present).lower(),
+            "operator": "eq",
+            "threshold": "true",
+            "source_marker": "market_depth_execution_delays_ssrn_6440898_2026",
+            "passed": delay_depth_liquidity_evidence_present
+            if (
+                policy.require_delay_adjusted_depth_stress
+                and policy.require_delay_adjusted_depth_liquidity_evidence
+            )
+            else True,
+        }
+    )
+    checks.append(
+        _numeric_check(
+            metric="delay_adjusted_depth_liquidity_missing_day_count",
+            observed=_decimal(
+                scorecard.get("delay_adjusted_depth_liquidity_missing_day_count")
+                or scorecard.get("delay_depth_liquidity_missing_day_count")
+                or scorecard.get("latency_depth_liquidity_missing_day_count")
+            ),
+            operator="lte",
+            threshold=Decimal("0")
+            if (
+                policy.require_delay_adjusted_depth_stress
+                and policy.require_delay_adjusted_depth_liquidity_evidence
+            )
+            else Decimal("999999999"),
+        )
     )
     checks.append(
         {

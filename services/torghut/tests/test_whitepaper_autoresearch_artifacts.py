@@ -391,6 +391,115 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
         with self.assertRaisesRegex(ValueError, "evidence_bundle_schema_invalid"):
             evidence_bundle_from_payload({"schema_version": "bad"})
 
+    def test_evidence_bundle_fails_delay_depth_without_recorded_daily_liquidity(
+        self,
+    ) -> None:
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-missing-depth",
+            candidate={
+                "candidate_id": "cand-missing-depth",
+                "runtime_family": "microbar_cross_sectional_pairs",
+                "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                "family_template_id": "microbar_cross_sectional_pairs_v1",
+                "full_window": {
+                    "net_per_day": "700",
+                    "trading_day_count": "1",
+                    "avg_filled_notional_per_day": "350000",
+                    "daily_net": {"2026-02-23": "700"},
+                    "daily_filled_notional": {"2026-02-23": "350000"},
+                },
+            },
+            dataset_snapshot_id="snap-missing-depth",
+            result_path="/tmp/missing-depth.json",
+        )
+
+        self.assertFalse(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_liquidity_evidence_present"
+            ]
+        )
+        self.assertEqual(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_liquidity_missing_day_count"
+            ],
+            1,
+        )
+        self.assertEqual(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_fillable_notional_per_day"
+            ],
+            "0",
+        )
+        self.assertFalse(
+            bundle.objective_scorecard["delay_adjusted_depth_stress_passed"]
+        )
+
+    def test_evidence_bundle_uses_per_day_depth_not_average_liquidity(self) -> None:
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-thin-depth",
+            candidate={
+                "candidate_id": "cand-thin-depth",
+                "runtime_family": "microbar_cross_sectional_pairs",
+                "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                "family_template_id": "microbar_cross_sectional_pairs_v1",
+                "full_window": {
+                    "net_per_day": "800",
+                    "trading_day_count": "2",
+                    "avg_filled_notional_per_day": "400000",
+                    "daily_net": {
+                        "2026-02-23": "800",
+                        "2026-02-24": "800",
+                    },
+                    "daily_filled_notional": {
+                        "2026-02-23": "400000",
+                        "2026-02-24": "400000",
+                    },
+                    "daily_liquidity_notional": {
+                        "2026-02-23": "1000000",
+                        "2026-02-24": "200000",
+                    },
+                },
+            },
+            dataset_snapshot_id="snap-thin-depth",
+            result_path="/tmp/thin-depth.json",
+        )
+
+        self.assertTrue(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_liquidity_evidence_present"
+            ]
+        )
+        self.assertEqual(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_liquidity_missing_day_count"
+            ],
+            0,
+        )
+        self.assertEqual(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_fillable_notional_per_day"
+            ],
+            "295000.00",
+        )
+        self.assertEqual(
+            bundle.objective_scorecard["delay_adjusted_depth_fillable_ratio"],
+            "0.7375",
+        )
+        self.assertEqual(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_unfillable_notional_per_day"
+            ],
+            "105000.00",
+        )
+        self.assertEqual(
+            Decimal(
+                bundle.objective_scorecard[
+                    "delay_adjusted_depth_stress_net_pnl_per_day"
+                ]
+            ),
+            Decimal("560.5"),
+        )
+
     def test_mlx_ranker_covers_fallback_and_error_edges(self) -> None:
         rows = [
             build_mlx_training_rows(

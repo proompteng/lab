@@ -26,6 +26,8 @@ def _executable_scorecard_fields() -> dict[str, object]:
         "delay_adjusted_depth_stress_artifact_ref": "/tmp/delay-adjusted-depth-stress.json",
         "delay_adjusted_depth_stress_model": "latency_depth_haircut",
         "delay_adjusted_depth_stress_ms": "250",
+        "delay_adjusted_depth_liquidity_evidence_present": True,
+        "delay_adjusted_depth_liquidity_missing_day_count": 0,
         "delay_adjusted_depth_fillable_notional_per_day": "525000",
         "delay_adjusted_depth_stress_net_pnl_per_day": "520",
         "double_oos_passed": True,
@@ -192,6 +194,30 @@ class TestProfitTargetOracle(TestCase):
         )
         self.assertIn(
             "delay_adjusted_depth_stress_net_pnl_per_day_failed",
+            result["blockers"],
+        )
+
+    def test_profit_target_oracle_rejects_missing_delay_depth_liquidity_evidence(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "delay_adjusted_depth_liquidity_evidence_present": False,
+            "delay_adjusted_depth_liquidity_missing_day_count": 1,
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn(
+            "delay_adjusted_depth_liquidity_evidence_present_failed",
+            result["blockers"],
+        )
+        self.assertIn(
+            "delay_adjusted_depth_liquidity_missing_day_count_failed",
             result["blockers"],
         )
 

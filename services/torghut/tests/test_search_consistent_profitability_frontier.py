@@ -1011,6 +1011,12 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(
             summary["delay_adjusted_depth_fillable_notional_per_day"], "18750"
         )
+        self.assertTrue(summary["delay_adjusted_depth_liquidity_evidence_present"])
+        self.assertEqual(summary["delay_adjusted_depth_liquidity_missing_day_count"], 0)
+        self.assertEqual(summary["delay_adjusted_depth_fillable_ratio"], "1")
+        self.assertEqual(
+            summary["delay_adjusted_depth_unfillable_notional_per_day"], "0"
+        )
         self.assertEqual(
             summary["delay_adjusted_depth_stress_net_pnl_per_day"], "298.125"
         )
@@ -1022,6 +1028,106 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 "2026-04-01": "1250000",
                 "2026-04-02": "1500000",
             },
+        )
+
+    def test_consistency_penalty_fails_delay_depth_when_filled_day_lacks_liquidity(
+        self,
+    ) -> None:
+        _, summary = frontier._consistency_penalty(
+            full_window_payload=self._payload(
+                start_date="2026-03-24",
+                end_date="2026-03-25",
+                daily_net={
+                    "2026-03-24": "800",
+                    "2026-03-25": "800",
+                },
+                daily_filled_notional={
+                    "2026-03-24": "200000",
+                    "2026-03-25": "200000",
+                },
+                daily_liquidity_notional={
+                    "2026-03-24": "100000",
+                },
+                decision_count=4,
+                filled_count=4,
+                wins=4,
+                losses=0,
+            ),
+            policy=frontier.FullWindowConsistencyPolicy(
+                target_net_per_day=frontier.Decimal("500"),
+                min_daily_net_pnl=frontier.Decimal("0"),
+                min_active_days=2,
+                min_active_ratio=frontier.Decimal("1"),
+                min_positive_days=2,
+                max_worst_day_loss=frontier.Decimal("250"),
+                max_negative_days=0,
+                max_drawdown=frontier.Decimal("500"),
+                max_best_day_share_of_total_pnl=frontier.Decimal("0.75"),
+                min_avg_filled_notional_per_day=frontier.Decimal("50000"),
+                min_avg_filled_notional_per_active_day=frontier.Decimal("50000"),
+                require_every_day_active=True,
+            ),
+        )
+
+        self.assertFalse(summary["delay_adjusted_depth_liquidity_evidence_present"])
+        self.assertEqual(summary["delay_adjusted_depth_liquidity_missing_day_count"], 1)
+        self.assertEqual(
+            summary["delay_adjusted_depth_fillable_notional_per_day"], "47500.00"
+        )
+        self.assertFalse(summary["delay_adjusted_depth_stress_passed"])
+
+    def test_consistency_penalty_scales_delay_depth_net_for_thin_recorded_liquidity(
+        self,
+    ) -> None:
+        _, summary = frontier._consistency_penalty(
+            full_window_payload=self._payload(
+                start_date="2026-03-24",
+                end_date="2026-03-25",
+                daily_net={
+                    "2026-03-24": "800",
+                    "2026-03-25": "800",
+                },
+                daily_filled_notional={
+                    "2026-03-24": "400000",
+                    "2026-03-25": "400000",
+                },
+                daily_liquidity_notional={
+                    "2026-03-24": "200000",
+                    "2026-03-25": "200000",
+                },
+                decision_count=4,
+                filled_count=4,
+                wins=4,
+                losses=0,
+            ),
+            policy=frontier.FullWindowConsistencyPolicy(
+                target_net_per_day=frontier.Decimal("500"),
+                min_daily_net_pnl=frontier.Decimal("0"),
+                min_active_days=2,
+                min_active_ratio=frontier.Decimal("1"),
+                min_positive_days=2,
+                max_worst_day_loss=frontier.Decimal("250"),
+                max_negative_days=0,
+                max_drawdown=frontier.Decimal("500"),
+                max_best_day_share_of_total_pnl=frontier.Decimal("0.75"),
+                min_avg_filled_notional_per_day=frontier.Decimal("50000"),
+                min_avg_filled_notional_per_active_day=frontier.Decimal("50000"),
+                require_every_day_active=True,
+            ),
+        )
+
+        self.assertTrue(summary["delay_adjusted_depth_liquidity_evidence_present"])
+        self.assertEqual(summary["delay_adjusted_depth_liquidity_missing_day_count"], 0)
+        self.assertEqual(
+            summary["delay_adjusted_depth_fillable_notional_per_day"], "190000.00"
+        )
+        self.assertEqual(summary["delay_adjusted_depth_fillable_ratio"], "0.475")
+        self.assertEqual(
+            summary["delay_adjusted_depth_unfillable_notional_per_day"], "210000.00"
+        )
+        self.assertEqual(
+            frontier.Decimal(summary["delay_adjusted_depth_stress_net_pnl_per_day"]),
+            frontier.Decimal("361"),
         )
 
     def test_consistency_penalty_reports_and_penalizes_capital_realism(self) -> None:

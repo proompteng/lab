@@ -1934,6 +1934,10 @@ def _delay_adjusted_depth_stress_report(
         day: _decimal(value)
         for day, value in _mapping(summary.get("daily_filled_notional")).items()
     }
+    daily_liquidity = {
+        day: _decimal(value)
+        for day, value in _mapping(summary.get("daily_liquidity_notional")).items()
+    }
     trading_days = max(_int(summary.get("trading_day_count")), len(daily_net))
     total_filled_notional = sum(daily_notional.values(), Decimal("0"))
     avg_filled_notional = (
@@ -1946,29 +1950,38 @@ def _delay_adjusted_depth_stress_report(
         Decimal("0.50"),
         max(Decimal("0.10"), stress_delay_ms / Decimal("1000")),
     )
-    reference_notional = max(
-        program.objective.min_daily_notional,
-        avg_filled_notional,
-        Decimal("1"),
-    )
     max_participation = (
         config.max_participation_rate
         if config.max_participation_rate > 0
         else Decimal("0.1")
     )
-    reference_adv = reference_notional / max_participation
     daily_rows: list[dict[str, str]] = []
     total_delay_depth_cost = Decimal("0")
     total_fillable_notional = Decimal("0")
+    total_unfillable_notional = Decimal("0")
+    total_post_delay_depth_net_pnl = Decimal("0")
     weighted_delay_depth_bps_notional = Decimal("0")
+    recorded_liquidity_days = 0
+    missing_liquidity_days = 0
     for day in sorted(daily_net):
         notional = daily_notional.get(day, Decimal("0"))
+        liquidity_notional = daily_liquidity.get(day, Decimal("0"))
+        if liquidity_notional > 0:
+            recorded_liquidity_days += 1
+        elif notional > 0:
+            missing_liquidity_days += 1
         participation = (
-            min(Decimal("1"), notional / reference_adv)
-            if reference_adv > 0 and notional > 0
+            min(Decimal("1"), notional / liquidity_notional)
+            if liquidity_notional > 0 and notional > 0
             else Decimal("0")
         )
-        fillable_notional = notional * (Decimal("1") - depth_haircut_rate)
+        fillable_notional = (
+            min(notional, liquidity_notional * (Decimal("1") - depth_haircut_rate))
+            if liquidity_notional > 0 and notional > 0
+            else Decimal("0")
+        )
+        unfillable_notional = max(Decimal("0"), notional - fillable_notional)
+        fillable_ratio = fillable_notional / notional if notional > 0 else Decimal("1")
         delay_depth_cost_bps = max(
             Decimal("1"),
             config.impact_bps_at_full_participation
@@ -1978,19 +1991,24 @@ def _delay_adjusted_depth_stress_report(
             )
             * depth_haircut_rate,
         )
-        delay_depth_cost = (notional * delay_depth_cost_bps) / BPS_SCALE
-        post_delay_depth_net = daily_net[day] - delay_depth_cost
+        delay_depth_cost = (fillable_notional * delay_depth_cost_bps) / BPS_SCALE
+        post_delay_depth_net = (daily_net[day] * fillable_ratio) - delay_depth_cost
         total_fillable_notional += fillable_notional
+        total_unfillable_notional += unfillable_notional
         total_delay_depth_cost += delay_depth_cost
+        total_post_delay_depth_net_pnl += post_delay_depth_net
         weighted_delay_depth_bps_notional += delay_depth_cost_bps * notional
         daily_rows.append(
             {
                 "day": day,
                 "net_pnl": _decimal_string(daily_net[day]),
                 "filled_notional": _decimal_string(notional),
+                "liquidity_notional": _decimal_string(liquidity_notional),
                 "stress_delay_ms": _decimal_string(stress_delay_ms),
                 "depth_haircut_rate": _decimal_string(depth_haircut_rate),
                 "fillable_notional": _decimal_string(fillable_notional),
+                "unfillable_notional": _decimal_string(unfillable_notional),
+                "fillable_ratio": _decimal_string(fillable_ratio),
                 "participation_rate_proxy": _decimal_string(participation),
                 "delay_depth_cost_bps": _decimal_string(delay_depth_cost_bps),
                 "delay_depth_cost": _decimal_string(delay_depth_cost),
@@ -2008,7 +2026,7 @@ def _delay_adjusted_depth_stress_report(
         else Decimal("0")
     )
     net_pnl = _decimal(summary.get("net_pnl"))
-    post_delay_depth_net_pnl = net_pnl - total_delay_depth_cost
+    post_delay_depth_net_pnl = total_post_delay_depth_net_pnl
     post_delay_depth_net_pnl_per_day = (
         post_delay_depth_net_pnl / Decimal(trading_days)
         if trading_days > 0
@@ -2019,6 +2037,8 @@ def _delay_adjusted_depth_stress_report(
         reasons.append("delay_adjusted_depth_stress_trading_days_missing")
     if total_filled_notional <= 0:
         reasons.append("delay_adjusted_depth_stress_filled_notional_missing")
+    if missing_liquidity_days:
+        reasons.append("delay_adjusted_depth_stress_liquidity_evidence_missing")
     if delay_depth_cost_bps <= 0:
         reasons.append("delay_adjusted_depth_stress_cost_bps_zero")
     if fillable_notional_per_day < program.objective.min_daily_notional:
@@ -2067,8 +2087,11 @@ def _delay_adjusted_depth_stress_report(
         "delay_depth_cost_bps": _decimal_string(delay_depth_cost_bps),
         "stress_delay_ms": _decimal_string(stress_delay_ms),
         "depth_haircut_rate": _decimal_string(depth_haircut_rate),
-        "reference_notional": _decimal_string(reference_notional),
-        "reference_adv_proxy": _decimal_string(reference_adv),
+        "liquidity_input_source": "recorded_liquidity_notional"
+        if recorded_liquidity_days
+        else "missing_recorded_liquidity",
+        "recorded_liquidity_day_count": recorded_liquidity_days,
+        "missing_liquidity_days": missing_liquidity_days,
         "max_participation_rate": _decimal_string(max_participation),
         "impact_participation_exponent": _decimal_string(
             config.impact_participation_exponent
@@ -2076,6 +2099,7 @@ def _delay_adjusted_depth_stress_report(
         "trading_day_count": trading_days,
         "total_filled_notional": _decimal_string(total_filled_notional),
         "avg_filled_notional_per_day": _decimal_string(avg_filled_notional),
+        "unfillable_notional": _decimal_string(total_unfillable_notional),
         "fillable_notional_per_day": _decimal_string(fillable_notional_per_day),
         "daily": daily_rows,
     }
