@@ -836,6 +836,50 @@ require_matches \
   'buildAgentsDependencyHealth' \
   "${ROOT_DIR}/packages/agent-contracts/src/agents-health-client.ts"
 
+if matches_multiline "export[[:space:]]+(type[[:space:]]+)?\\{[^;]+from ['\"]\\.\\/agent-run" \
+  "${ROOT_DIR}/services/agents/src/server/v1/agent-runs.ts"; then
+  echo "Agents extraction boundary violation: Agents v1 AgentRuns HTTP edge must not act as a compatibility barrel for submit/store internals." >&2
+  exit 1
+fi
+
+fail_if_matches \
+  "Agents v1 AgentRuns HTTP edge must not own the dependency contract after dependency injection moved to a dedicated module" \
+  'export type AgentRunsApiDependencies' \
+  "${ROOT_DIR}/services/agents/src/server/v1/agent-runs.ts"
+
+require_matches \
+  "Agents v1 AgentRuns dependency contract must live in the dedicated dependency module" \
+  'export type AgentRunsApiDependencies' \
+  "${ROOT_DIR}/services/agents/src/server/v1/agent-runs-dependencies.ts"
+
+fail_if_matches \
+  "Agents v1 AgentRuns dependency module must not import the HTTP handler or submit implementation" \
+  "from ['\"]\\.\\/(agent-runs|agent-run-submit)['\"]" \
+  "${ROOT_DIR}/services/agents/src/server/v1/agent-runs-dependencies.ts"
+
+fail_if_matches \
+  "AgentRun submit/read/runtime modules must not import dependency types from the AgentRuns HTTP handler" \
+  "from ['\"]\\.\\/agent-runs['\"]" \
+  "${ROOT_DIR}/services/agents/src/server/v1/agent-run-submit.ts" \
+  "${ROOT_DIR}/services/agents/src/server/v1/run-read.ts" \
+  "${ROOT_DIR}/services/agents/src/server/v1/runtime.ts"
+
+fail_if_matches \
+  "Agents v1 control-plane status HTTP edge must run the typed Effect program instead of a broad try/catch wrapper" \
+  'try \{|catch \(error\)|getAgentsControlPlaneStatus\(' \
+  "${ROOT_DIR}/services/agents/src/server/v1/control-plane-status.ts"
+
+require_matches \
+  "Agents v1 control-plane status HTTP edge must provide the typed status service layer" \
+  'getAgentsControlPlaneStatusEffect|makeAgentsControlPlaneStatusLayer|Effect\.either' \
+  "${ROOT_DIR}/services/agents/src/server/v1/control-plane-status.ts"
+
+fail_if_matches \
+  "Agents-owned controller-ingestion settlement must stay domain-neutral and avoid Jangar/Torghut evidence types" \
+  'TorghutConsumerEvidenceStatus|torghut_|jangar\.|~\/server\/control-plane-status-types' \
+  "${ROOT_DIR}/packages/agent-contracts/src/control-plane-status.ts" \
+  "${ROOT_DIR}/services/agents/src/server/control-plane-status.ts"
+
 fail_if_matches \
   "Agents v1 resource-read API must use typed Effect errors instead of ad hoc string-matched storage/kube errors" \
   "message\\.includes\\('DATABASE_URL'\\)|const message = error instanceof Error" \

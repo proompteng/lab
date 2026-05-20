@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { AgentRunsApiStore } from '../../server/v1/agent-runs'
+import type { AgentRunsApiStore } from '../../server/v1/agent-run-store'
 import { configureAgentsV1Runtime, resetAgentsV1RuntimeForTests } from '../../server/v1/runtime'
 
 import { getAgentRunsHandler } from './agent-runs'
@@ -99,7 +99,7 @@ describe('Agents v1 AgentRun route ownership', () => {
     expect(store.close).toHaveBeenCalledTimes(1)
   })
 
-  it('lets tests and compatibility callers override configured route dependencies', async () => {
+  it('lets tests inject route dependencies without using compatibility barrels', async () => {
     const configuredStore = createStore([{ id: 'configured-run' }])
     const overrideStore = createStore([{ id: 'override-run' }])
     configureAgentsV1Runtime({

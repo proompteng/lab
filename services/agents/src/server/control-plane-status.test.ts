@@ -183,6 +183,15 @@ describe('buildAgentsControlPlaneStatus', () => {
       ]),
     })
     expect(status.control_plane_controller_witness.quorum_id).toMatch(/^controller-witness:/)
+    expect(status.controller_ingestion_settlement).toMatchObject({
+      schema_version: 'agents.controller-ingestion-settlement.v1',
+      decision: 'hold',
+      controller_witness_ref: status.control_plane_controller_witness.quorum_id,
+      execution_trust_status: 'healthy',
+      database_status: 'unknown',
+      rollout_health_status: 'healthy',
+    })
+    expect(JSON.stringify(status.controller_ingestion_settlement)).not.toMatch(/torghut|jangar/i)
     expect(status.watch_reliability).toMatchObject({
       status: 'healthy',
       observed_streams: 1,

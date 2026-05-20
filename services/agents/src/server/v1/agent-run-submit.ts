@@ -13,9 +13,8 @@ import {
   type PolicyChecks,
   validatePolicies,
 } from '../primitives-policy'
-import type { EnvSource } from '../runtime-env'
 
-import type { AgentRunsApiDependencies } from './agent-runs'
+import type { AgentRunRuntimeConfigOptions, AgentRunsApiDependencies } from './agent-runs-dependencies'
 import {
   AgentRunAdmissionRejectedError,
   AgentRunConflictError,
@@ -142,11 +141,6 @@ export type AgentRunSubmissionConfig = {
     readonly perRepo: number
     readonly cluster: number
   }
-}
-
-export type AgentRunRuntimeConfigOptions = {
-  readonly env?: EnvSource
-  readonly now?: () => number
 }
 
 type AgentRunRuntimeConfigServiceDefinition = {

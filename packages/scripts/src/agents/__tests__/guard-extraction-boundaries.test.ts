@@ -230,5 +230,19 @@ describe('agents extraction boundary guard', () => {
     )
     expect(content).toContain('agents-control-plane runtime profile')
     expect(content).toContain('agents-controllers runtime profile')
+    expect(content).toContain(
+      'Agents v1 AgentRuns HTTP edge must not act as a compatibility barrel for submit/store internals',
+    )
+    expect(content).toContain('Agents v1 AgentRuns dependency contract must live in the dedicated dependency module')
+    expect(content).toContain('Agents v1 AgentRuns dependency module must not import the HTTP handler')
+    expect(content).toContain('AgentRun submit/read/runtime modules must not import dependency types')
+    expect(content).toContain(
+      'Agents v1 control-plane status HTTP edge must run the typed Effect program instead of a broad try/catch wrapper',
+    )
+    expect(content).toContain('getAgentsControlPlaneStatusEffect|makeAgentsControlPlaneStatusLayer|Effect\\.either')
+    expect(content).toContain(
+      'Agents-owned controller-ingestion settlement must stay domain-neutral and avoid Jangar/Torghut evidence types',
+    )
+    expect(content).toContain('TorghutConsumerEvidenceStatus|torghut_|jangar\\.')
   })
 })

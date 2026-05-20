@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { Effect } from 'effect'
 
-import type { AgentsControlPlaneStatusDependencies } from '../../../server/control-plane-status'
+import {
+  AgentsControlPlaneStatusError,
+  type AgentsControlPlaneStatusDependencies,
+} from '../../../server/control-plane-status'
 import type { GrpcStatus } from '../../../server/control-plane-grpc'
 import type { ControlPlaneRuntimeEvidence } from '../../../server/control-plane-runtime-evidence'
 import type { ControlPlaneWatchReliability } from '../../../server/control-plane-status-contract'
@@ -115,6 +118,10 @@ describe('control-plane status route', () => {
         namespace: 'platform',
         controller_self_report_current: true,
       },
+      controller_ingestion_settlement: {
+        schema_version: 'agents.controller-ingestion-settlement.v1',
+        namespace: 'platform',
+      },
       workflows: { active_job_runs: 2, data_confidence: 'high' },
       rollout_health: { status: 'healthy', observed_deployments: 2 },
       watch_reliability: { status: 'healthy', observed_streams: 1, total_events: 4 },
@@ -140,5 +147,29 @@ describe('control-plane status route', () => {
     expect(payload).not.toHaveProperty('stage_clearance_packets')
     expect(payload).not.toHaveProperty('torghut_consumer_evidence')
     expect(payload).not.toHaveProperty('dependency_quorum')
+    expect(JSON.stringify(payload.controller_ingestion_settlement)).not.toMatch(/torghut|jangar/i)
+  })
+
+  it('maps typed status Effect failures at the HTTP edge', async () => {
+    const response = await buildControlPlaneStatusResponse(new Request('http://agents.test/v1/control-plane/status'), {
+      ...deps,
+      collectRuntimeEvidence: () =>
+        Effect.fail(
+          new AgentsControlPlaneStatusError({
+            operation: 'collectRuntimeEvidence',
+            message: 'runtime evidence failed',
+          }),
+        ),
+    })
+
+    expect(response.status).toBe(500)
+    await expect(response.json()).resolves.toEqual({
+      ok: false,
+      error: 'runtime evidence failed',
+      details: {
+        namespace: 'agents',
+        operation: 'collectRuntimeEvidence',
+      },
+    })
   })
 })

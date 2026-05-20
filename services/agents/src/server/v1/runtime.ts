@@ -4,7 +4,7 @@ import { errorResponse } from '../http'
 
 import type { AgentsApiDependencies } from './agents'
 import type { AgentRunCallbacksApiDependencies } from './agent-run-callbacks'
-import type { AgentRunsApiDependencies } from './agent-runs'
+import type { AgentRunsApiDependencies } from './agent-runs-dependencies'
 import type { AgentRunRerunsApiDependencies } from './agent-run-reruns'
 import type { MemoriesApiDependencies } from './memories'
 import type { MemoryOperationsApiDependencies } from './memory-operations'

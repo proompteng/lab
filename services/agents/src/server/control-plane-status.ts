@@ -1,5 +1,7 @@
 import { Context, Data, Effect, Layer } from 'effect'
 
+import { buildControlPlaneControllerIngestionSettlement } from '@proompteng/agent-contracts/control-plane-status'
+import type { ExecutionTrustStatus } from '@proompteng/agent-contracts/execution-trust'
 import { buildControllerWitnessQuorum } from '@proompteng/agent-contracts/controller-witness'
 import { assessAgentRunIngestion, getAgentsControllerHealth, type AgentsControllerHealth } from './agents-controller'
 import { buildRuntimeAdmissionSnapshot } from './control-plane-runtime-admission'
@@ -54,6 +56,24 @@ export class AgentsControlPlaneStatusError extends Data.TaggedError('AgentsContr
   readonly message: string
 }> {}
 
+export const describeAgentsControlPlaneStatusError = (error: unknown) => {
+  if (error instanceof AgentsControlPlaneStatusError) return error.message
+  return error instanceof Error ? error.message : String(error)
+}
+
+export const agentsControlPlaneStatusErrorDetails = (
+  error: unknown,
+  details: Record<string, unknown> = {},
+): Record<string, unknown> => {
+  if (error instanceof AgentsControlPlaneStatusError) {
+    return {
+      ...details,
+      operation: error.operation,
+    }
+  }
+  return details
+}
+
 export type BuildAgentsControlPlaneStatusInput = {
   namespace: string
   grpc: GrpcStatus
@@ -62,6 +82,7 @@ export type BuildAgentsControlPlaneStatusInput = {
   env?: EnvSource
   runtimeEvidence?: ControlPlaneRuntimeEvidence
   watchReliability?: ControlPlaneWatchReliability
+  executionTrust?: ExecutionTrustStatus
 }
 
 export type GetAgentsControlPlaneStatusInput = Omit<BuildAgentsControlPlaneStatusInput, 'grpc'> & {
@@ -253,6 +274,14 @@ const unknownWatchReliability = (): ControlPlaneWatchReliability => ({
   streams: [],
 })
 
+const assumedHealthyExecutionTrust = (now: Date): ExecutionTrustStatus => ({
+  status: 'healthy',
+  reason: 'execution trust assumed healthy for local status compilation',
+  last_evaluated_at: now.toISOString(),
+  blocking_windows: [],
+  evidence_summary: [],
+})
+
 const buildDegradedComponents = (input: {
   controllers: ControllerStatus[]
   runtimeAdapters: RuntimeAdapterStatus[]
@@ -330,8 +359,21 @@ export const buildAgentsControlPlaneStatus = (
     agentRunIngestion,
     watchReliability,
   })
+  const executionTrust = input.executionTrust ?? assumedHealthyExecutionTrust(now)
+  const database = buildDatabaseStatus(env)
   const runtimeAdmission = buildRuntimeAdmissionSnapshot({
     now,
+    executionTrust,
+  })
+  const controllerIngestionSettlement = buildControlPlaneControllerIngestionSettlement({
+    now,
+    namespace,
+    servingReadiness: degradedComponents.length > 0 ? 'degraded' : 'ok',
+    controllerWitness,
+    agentRunIngestion,
+    executionTrust,
+    database,
+    rolloutHealth,
   })
 
   return {
@@ -340,11 +382,12 @@ export const buildAgentsControlPlaneStatus = (
     leader_election: buildLeaderElectionStatus(leaderElection),
     controllers,
     runtime_adapters: runtimeAdapters,
-    database: buildDatabaseStatus(env),
+    database,
     grpc: input.grpc,
     watch_reliability: watchReliability,
     agentrun_ingestion: agentRunIngestion,
     control_plane_controller_witness: controllerWitness,
+    controller_ingestion_settlement: controllerIngestionSettlement,
     runtime_kits: runtimeAdmission.runtimeKits,
     admission_passports: runtimeAdmission.admissionPassports,
     serving_passport_id: runtimeAdmission.servingPassportId,
@@ -427,6 +470,9 @@ export const AgentsControlPlaneStatusApiLive = Layer.succeed(
   AgentsControlPlaneStatusApi,
   createAgentsControlPlaneStatusService(),
 )
+
+export const makeAgentsControlPlaneStatusLayer = (deps: AgentsControlPlaneStatusDependencies = {}) =>
+  Layer.succeed(AgentsControlPlaneStatusApi, createAgentsControlPlaneStatusService(deps))
 
 export const getAgentsControlPlaneStatusEffect = (input: GetAgentsControlPlaneStatusInput) =>
   Effect.flatMap(AgentsControlPlaneStatusApi, (service) => service.get(input))

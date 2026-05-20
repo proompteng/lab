@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { RESOURCE_MAP, type KubernetesClient } from '../kube-types'
 
-import { postAgentRunsHandler, type AgentRunsApiStore } from './agent-runs'
+import type { AgentRunsApiStore } from './agent-run-store'
+import { postAgentRunsHandler } from './agent-runs'
 
 type MockResolvedValueOnce = {
   mockResolvedValueOnce: (value: unknown) => MockResolvedValueOnce

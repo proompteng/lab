@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto'
 
+import {
+  buildControlPlaneControllerIngestionSettlement,
+  type ControlPlaneSourceServingSnapshot,
+} from '@proompteng/agent-contracts/control-plane-status'
+
 import type {
   ControllerIngestionSettlement,
   ControllerIngestionSettlementDecision,
@@ -65,6 +70,25 @@ const normalizeReason = (value: string | null | undefined) =>
     .replace(/[^a-z0-9_.:-]+/g, '_') ?? null
 
 const uniqueStrings = (values: Array<string | null | undefined>) => [...new Set(values.filter(Boolean) as string[])]
+
+const toControlPlaneSourceServingSnapshot = (
+  exchange: SourceServingContractVerdictExchange,
+): ControlPlaneSourceServingSnapshot => ({
+  verdict_ref: exchange.exchange_id,
+  status: exchange.status,
+  fresh_until: exchange.fresh_until,
+  source_head_sha: exchange.source_sha,
+  serving_build_commit: exchange.serving_build_commit,
+  manifest_image_digest: exchange.manifest_image_digest,
+  serving_image_digest: exchange.serving_image_digest,
+  allowed_action_classes: exchange.allowed_action_classes,
+  repair_only_action_classes: exchange.repair_only_action_classes,
+  held_action_classes: exchange.held_action_classes,
+  blocked_action_classes: exchange.blocked_action_classes,
+  reason_codes: exchange.reason_codes,
+  evidence_refs: exchange.verdict_refs,
+  rollback_target: exchange.rollback_target,
+})
 
 const parseTimestampMs = (value: string | null | undefined) => {
   if (!value) return null
@@ -138,16 +162,6 @@ const torghutCarryStatus = (
   return 'unknown'
 }
 
-const controllerWitnessReasons = (input: BuildControllerIngestionSettlementInput) =>
-  uniqueStrings([
-    isFresh(input.controllerWitness.expires_at, input.now) ? null : 'controller_witness_stale',
-    input.controllerWitness.deployment_available ? null : 'controller_deployment_unavailable',
-    input.controllerWitness.watch_epoch_current ? null : 'watch_epoch_not_current',
-    input.controllerWitness.controller_self_report_current ? null : 'controller_self_report_not_current',
-    input.agentRunIngestion.status === 'healthy' ? null : `agentrun_ingestion_${input.agentRunIngestion.status}`,
-    ...input.controllerWitness.reason_codes,
-  ]).map((reason) => normalizeReason(reason) ?? reason)
-
 const sourceServingMaterialDecision = (
   exchange: SourceServingContractVerdictExchange,
 ): SourceServingContractVerdictExchange['status'] => {
@@ -191,15 +205,6 @@ const sourceCarryReasons = (
     carryStatus === 'current' || carryStatus === 'unknown' ? null : `torghut_verification_carry_${carryStatus}`,
   ]).map((reason) => normalizeReason(reason) ?? reason)
 }
-
-const platformReasons = (input: BuildControllerIngestionSettlementInput) =>
-  uniqueStrings([
-    input.servingReadiness === 'ok' ? null : `serving_readiness_${input.servingReadiness}`,
-    input.rolloutHealth.status === 'healthy' ? null : `rollout_health_${input.rolloutHealth.status}`,
-    input.database.status === 'healthy' ? null : `database_${input.database.status}`,
-    input.executionTrust.status === 'healthy' ? null : `execution_trust_${input.executionTrust.status}`,
-    isZeroNotional(input.torghutConsumerEvidence.max_notional) ? null : 'capital_notional_nonzero',
-  ]).map((reason) => normalizeReason(reason) ?? reason)
 
 const hasBlockingContradiction = (
   input: BuildControllerIngestionSettlementInput,
@@ -268,10 +273,25 @@ export const buildControllerIngestionSettlement = (
   input: BuildControllerIngestionSettlementInput,
   mode: ReadyTruthArbiterMode = 'observe',
 ): ControllerIngestionSettlement => {
+  const genericSettlement = buildControlPlaneControllerIngestionSettlement({
+    now: input.now,
+    namespace: input.namespace,
+    mode,
+    servingReadiness: input.servingReadiness,
+    controllerWitness: input.controllerWitness,
+    agentRunIngestion: input.agentRunIngestion,
+    executionTrust: input.executionTrust,
+    database: input.database,
+    rolloutHealth: input.rolloutHealth,
+    sourceServing: toControlPlaneSourceServingSnapshot(input.sourceServingContractVerdictExchange),
+  })
   const carryStatus = torghutCarryStatus(input)
-  const controllerReasons = controllerWitnessReasons(input)
+  const controllerReasons = genericSettlement.controller_reason_codes
   const sourceReasons = sourceCarryReasons(input, carryStatus)
-  const nonControllerPlatformReasons = platformReasons(input)
+  const nonControllerPlatformReasons = uniqueStrings([
+    ...genericSettlement.platform_reason_codes,
+    isZeroNotional(input.torghutConsumerEvidence.max_notional) ? null : 'capital_notional_nonzero',
+  ]).map((reason) => normalizeReason(reason) ?? reason)
   const reasonCodes = uniqueStrings([...controllerReasons, ...sourceReasons, ...nonControllerPlatformReasons])
   const decision = decisionFor({
     hasBlocker: hasBlockingContradiction(input, carryStatus, reasonCodes),
@@ -286,9 +306,8 @@ export const buildControllerIngestionSettlement = (
     platformReasons: nonControllerPlatformReasons,
   })
   const evidenceRefs = uniqueStrings([
-    input.controllerWitness.quorum_id,
-    ...input.controllerWitness.witness_refs,
-    input.sourceServingContractVerdictExchange.exchange_id,
+    genericSettlement.settlement_id,
+    ...genericSettlement.evidence_refs,
     input.verifyTrustForeclosureBoard?.board_id,
     input.repairSlotEscrow?.escrow_id,
     input.torghutConsumerEvidence.receipt_id,
@@ -297,8 +316,7 @@ export const buildControllerIngestionSettlement = (
   const settlementId = `controller-ingestion-settlement:${input.namespace}:${hashJson({
     decision,
     reason_codes: reasonCodes,
-    controller_witness_ref: input.controllerWitness.quorum_id,
-    source_serving_ref: input.sourceServingContractVerdictExchange.exchange_id,
+    generic_settlement_ref: genericSettlement.settlement_id,
     verify_board_ref: input.verifyTrustForeclosureBoard?.board_id ?? null,
     repair_slot_ref: input.repairSlotEscrow?.escrow_id ?? null,
     torghut_carry_status: carryStatus,
@@ -311,22 +329,23 @@ export const buildControllerIngestionSettlement = (
     generated_at: input.now.toISOString(),
     fresh_until: freshUntilFor(input),
     namespace: input.namespace,
-    governing_design_refs: [
+    governing_design_refs: uniqueStrings([
+      ...genericSettlement.governing_design_refs,
       CONTROLLER_INGESTION_SETTLEMENT_DESIGN_ARTIFACT,
       CONTROLLER_INGESTION_SETTLEMENT_TORGHUT_DESIGN_ARTIFACT,
       'swarm-validation-contract:every-run-cites-governing-requirement',
-    ],
+    ]),
     decision,
     serving_readiness: input.servingReadiness,
-    controller_witness_ref: input.controllerWitness.quorum_id,
-    controller_witness_decision: input.controllerWitness.decision,
-    deployment_available: input.controllerWitness.deployment_available,
-    watch_epoch_current: input.controllerWitness.watch_epoch_current,
-    controller_self_report_current: input.controllerWitness.controller_self_report_current,
-    agentrun_ingestion_current: input.agentRunIngestion.status === 'healthy',
-    execution_trust_status: input.executionTrust.status,
-    database_status: input.database.status,
-    source_serving_verdict_ref: input.sourceServingContractVerdictExchange.exchange_id,
+    controller_witness_ref: genericSettlement.controller_witness_ref,
+    controller_witness_decision: genericSettlement.controller_witness_decision,
+    deployment_available: genericSettlement.deployment_available,
+    watch_epoch_current: genericSettlement.watch_epoch_current,
+    controller_self_report_current: genericSettlement.controller_self_report_current,
+    agentrun_ingestion_current: genericSettlement.agentrun_ingestion_current,
+    execution_trust_status: genericSettlement.execution_trust_status,
+    database_status: genericSettlement.database_status,
+    source_serving_verdict_ref: genericSettlement.source_serving_verdict_ref,
     source_serving_status: input.sourceServingContractVerdictExchange.status,
     source_head_sha: input.sourceServingContractVerdictExchange.source_sha,
     serving_build_commit: input.sourceServingContractVerdictExchange.serving_build_commit,
