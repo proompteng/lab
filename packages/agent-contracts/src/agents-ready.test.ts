@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { buildAgentsReadySnapshot, getAgentsControlPlaneStatusSnapshot, getAgentsReadySnapshot } from './agents-ready'
+import {
+  buildAgentsDependencySummary,
+  buildAgentsReadySnapshot,
+  getAgentsControlPlaneStatusSnapshot,
+  getAgentsReadySnapshot,
+} from './agents-ready'
 import { AGENTS_CONTROLLER_WITNESS_DESIGN_ARTIFACT } from './control-plane-status'
 
 const originalFetch = globalThis.fetch
@@ -114,6 +119,64 @@ describe('agents-ready', () => {
           message: 'Agents service did not report AgentRun ingestion status',
         },
       ],
+    })
+  })
+
+  it('classifies Agents dependency readiness from Agents service snapshots', () => {
+    const readySnapshot = buildAgentsReadySnapshot({
+      payload: {
+        status: 'ok',
+        httpReady: true,
+        namespaces: ['agents'],
+        agentrun_ingestion: [
+          {
+            namespace: 'agents',
+            status: 'healthy',
+            message: 'AgentRun ingestion healthy',
+            last_watch_event_at: '2026-03-08T21:00:00Z',
+            last_resync_at: '2026-03-08T21:00:00Z',
+            untouched_run_count: 0,
+            oldest_untouched_age_seconds: null,
+          },
+        ],
+      },
+      httpStatus: 200,
+    })
+    const statusSnapshot = {
+      available: true,
+      httpStatus: 200,
+      status: {} as Awaited<ReturnType<typeof getAgentsControlPlaneStatusSnapshot>>['status'],
+      raw: null,
+      error: null,
+    }
+
+    expect(
+      buildAgentsDependencySummary({
+        agentsReady: readySnapshot,
+        agentsControlPlaneStatus: statusSnapshot,
+        controllersOk: true,
+        agentsControllerHealthy: true,
+      }),
+    ).toMatchObject({
+      status: 'healthy',
+      ready: true,
+      service_available: true,
+      control_plane_available: true,
+      controller_ready: true,
+      agentrun_ingestion_ready: true,
+    })
+
+    expect(
+      buildAgentsDependencySummary({
+        agentsReady: readySnapshot,
+        agentsControlPlaneStatus: statusSnapshot,
+        controllersOk: true,
+        agentsControllerHealthy: false,
+      }),
+    ).toMatchObject({
+      status: 'degraded',
+      ready: true,
+      agentrun_ingestion_ready: false,
     })
   })
 

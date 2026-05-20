@@ -68,6 +68,23 @@ export type AgentsControlPlaneStatusSnapshot = {
   error: string | null
 }
 
+export type AgentsDependencyStatus = 'healthy' | 'degraded' | 'unavailable'
+
+export type AgentsDependencySummary = {
+  status: AgentsDependencyStatus
+  ready: boolean
+  service_available: boolean
+  http_ready: boolean
+  http_status: number
+  control_plane_available: boolean
+  control_plane_http_status: number
+  controller_ready: boolean
+  agentrun_ingestion_ready: boolean
+  reason_codes: string[]
+  error: string | null
+  control_plane_error: string | null
+}
+
 export const uniqueStrings = (values: string[]) => [...new Set(values.filter((value) => value.length > 0))]
 
 const fallbackController = (namespace = 'agents'): AgentsControllerHealthSnapshot => ({
@@ -304,6 +321,39 @@ const normalizeAgentRunIngestionStatuses = (
 
 export const isControllerHealthReady = (health: Pick<AgentsControllerHealthSnapshot, 'enabled' | 'crdsReady'>) =>
   !health.enabled || health.crdsReady !== false
+
+export const buildAgentsDependencySummary = (input: {
+  agentsReady: AgentsReadySnapshot
+  agentsControlPlaneStatus: AgentsControlPlaneStatusSnapshot
+  controllersOk: boolean
+  agentsControllerHealthy: boolean
+}): AgentsDependencySummary => {
+  const ready =
+    input.agentsReady.available &&
+    input.agentsReady.httpReady &&
+    input.agentsControlPlaneStatus.available &&
+    input.controllersOk
+  const status: AgentsDependencyStatus = !input.agentsReady.available
+    ? 'unavailable'
+    : ready && input.agentsReady.status === 'ok' && input.agentsControllerHealthy
+      ? 'healthy'
+      : 'degraded'
+
+  return {
+    status,
+    ready,
+    service_available: input.agentsReady.available,
+    http_ready: input.agentsReady.httpReady,
+    http_status: input.agentsReady.httpStatus,
+    control_plane_available: input.agentsControlPlaneStatus.available,
+    control_plane_http_status: input.agentsControlPlaneStatus.httpStatus,
+    controller_ready: input.controllersOk,
+    agentrun_ingestion_ready: input.agentsControllerHealthy,
+    reason_codes: input.agentsReady.reasonCodes,
+    error: input.agentsReady.error,
+    control_plane_error: input.agentsControlPlaneStatus.error,
+  }
+}
 
 export const buildAgentsReadySnapshot = (input: {
   payload: AgentsReadyPayload | null

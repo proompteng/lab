@@ -661,6 +661,16 @@ require_matches \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-projection-foreclosure-evidence.ts"
 
 fail_if_matches \
+  "Jangar /ready must use the shared Agents dependency summary instead of classifying generic Agents readiness locally" \
+  'type AgentsDependencyStatus|type AgentsDependencySummary|const buildAgentsDependencySummary' \
+  "${ROOT_DIR}/services/jangar/src/routes/ready.tsx"
+
+require_matches \
+  "Shared agent-contracts must own the Agents dependency summary classifier for domain consumers" \
+  'buildAgentsDependencySummary' \
+  "${ROOT_DIR}/packages/agent-contracts/src/agents-ready.ts"
+
+fail_if_matches \
   "Jangar KubeGateway must list Agents CRDs through the Agents service boundary, not direct Kubernetes CRD access" \
   'RESOURCE_MAP|agentruns\.agents\.proompteng\.ai|swarms\.swarm\.proompteng\.ai' \
   "${ROOT_DIR}/services/jangar/src/server/kube-gateway.ts"

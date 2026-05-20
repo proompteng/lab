@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import {
   type AgentsControllerHealthSnapshot,
+  buildAgentsDependencySummary,
   getAgentsControlPlaneStatusSnapshot,
   isControllerHealthReady,
   getAgentsReadySnapshot,
@@ -170,56 +171,6 @@ const buildBusinessEvidence = (
 }
 
 const readyPathFreshUntil = (now: Date) => new Date(now.getTime() + 60_000).toISOString()
-
-type AgentsDependencyStatus = 'healthy' | 'degraded' | 'unavailable'
-
-type AgentsDependencySummary = {
-  status: AgentsDependencyStatus
-  ready: boolean
-  service_available: boolean
-  http_ready: boolean
-  http_status: number
-  control_plane_available: boolean
-  control_plane_http_status: number
-  controller_ready: boolean
-  agentrun_ingestion_ready: boolean
-  reason_codes: string[]
-  error: string | null
-  control_plane_error: string | null
-}
-
-const buildAgentsDependencySummary = (input: {
-  agentsReady: Awaited<ReturnType<typeof getAgentsReadySnapshot>>
-  agentsControlPlaneStatus: Awaited<ReturnType<typeof getAgentsControlPlaneStatusSnapshot>>
-  controllersOk: boolean
-  agentsControllerHealthy: boolean
-}): AgentsDependencySummary => {
-  const ready =
-    input.agentsReady.available &&
-    input.agentsReady.httpReady &&
-    input.agentsControlPlaneStatus.available &&
-    input.controllersOk
-  const status: AgentsDependencyStatus = !input.agentsReady.available
-    ? 'unavailable'
-    : ready && input.agentsReady.status === 'ok' && input.agentsControllerHealthy
-      ? 'healthy'
-      : 'degraded'
-
-  return {
-    status,
-    ready,
-    service_available: input.agentsReady.available,
-    http_ready: input.agentsReady.httpReady,
-    http_status: input.agentsReady.httpStatus,
-    control_plane_available: input.agentsControlPlaneStatus.available,
-    control_plane_http_status: input.agentsControlPlaneStatus.httpStatus,
-    controller_ready: input.controllersOk,
-    agentrun_ingestion_ready: input.agentsControllerHealthy,
-    reason_codes: input.agentsReady.reasonCodes,
-    error: input.agentsReady.error,
-    control_plane_error: input.agentsControlPlaneStatus.error,
-  }
-}
 
 const buildReadyPathSourceServingExchange = (now: Date, namespace: string): SourceServingContractVerdictExchange => ({
   mode: 'observe',
