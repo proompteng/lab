@@ -479,6 +479,71 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
         self.assertNotIn("order_type_ablation_artifact_ref", bundle.objective_scorecard)
         self.assertNotIn("order_type_ablation_passed", bundle.objective_scorecard)
 
+    def test_evidence_bundle_preserves_nested_order_type_ablation_artifact(
+        self,
+    ) -> None:
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-order-type-ablation",
+            candidate={
+                "candidate_id": "cand-order-type-ablation",
+                "runtime_family": "microbar_cross_sectional_pairs",
+                "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                "family_template_id": "microbar_cross_sectional_pairs_v1",
+                "full_window": {
+                    "net_per_day": "123",
+                    "trading_day_count": "1",
+                    "avg_filled_notional_per_day": "350000",
+                    "daily_net": {"2026-02-23": "123"},
+                    "daily_filled_notional": {"2026-02-23": "350000"},
+                    "daily_liquidity_notional": {"2026-02-23": "900000"},
+                    "decision_count_by_order_type": {"market": 2, "limit": 3},
+                    "filled_count_by_order_type": {"market": 2, "limit": 2},
+                    "limit_fill_rate": "0.6667",
+                },
+                "order_type_ablation": {
+                    "artifact_ref": "/tmp/order-type-ablation.json",
+                    "passed": True,
+                    "sample_count": 60,
+                    "selected_order_type": "limit",
+                    "opportunity_cost_bps": "4.5",
+                    "limit_sample_count": 30,
+                },
+            },
+            dataset_snapshot_id="snap-order-type-ablation",
+            result_path="/tmp/order-type-ablation-replay.json",
+        )
+
+        self.assertEqual(
+            bundle.objective_scorecard["order_type_ablation_artifact_ref"],
+            "/tmp/order-type-ablation.json",
+        )
+        self.assertTrue(bundle.objective_scorecard["order_type_ablation_passed"])
+        self.assertEqual(
+            bundle.objective_scorecard["order_type_ablation_sample_count"], 60
+        )
+        self.assertEqual(
+            bundle.objective_scorecard["order_type_ablation_selected_order_type"],
+            "limit",
+        )
+        self.assertEqual(
+            bundle.objective_scorecard["order_type_opportunity_cost_bps"],
+            "4.5",
+        )
+        self.assertTrue(
+            bundle.objective_scorecard["order_type_opportunity_cost_evidence_present"]
+        )
+        self.assertEqual(
+            bundle.objective_scorecard["limit_fill_probability_sample_count"],
+            30,
+        )
+        self.assertNotIn("route_tca_artifact_ref", bundle.objective_scorecard)
+        self.assertNotIn(
+            "price_improvement_evidence_present", bundle.objective_scorecard
+        )
+        self.assertNotIn(
+            "execution_shortfall_evidence_present", bundle.objective_scorecard
+        )
+
     def test_evidence_bundle_fails_delay_depth_without_recorded_daily_liquidity(
         self,
     ) -> None:

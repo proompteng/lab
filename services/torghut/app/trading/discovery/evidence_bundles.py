@@ -126,6 +126,52 @@ def _order_type_execution_metrics(source: Mapping[str, Any]) -> dict[str, Any]:
     return metrics
 
 
+def _order_type_ablation_metrics(source: Mapping[str, Any]) -> dict[str, Any]:
+    raw_ablation = source.get("order_type_ablation")
+    if not isinstance(raw_ablation, Mapping):
+        return {}
+    ablation = cast(Mapping[str, Any], raw_ablation)
+    metrics: dict[str, Any] = {}
+    artifact_ref = _string(
+        ablation.get("artifact_ref") or ablation.get("order_type_ablation_artifact_ref")
+    )
+    if artifact_ref:
+        metrics["order_type_ablation_artifact_ref"] = artifact_ref
+    sample_count = _int(
+        ablation.get("sample_count") or ablation.get("order_type_ablation_sample_count")
+    )
+    if sample_count > 0:
+        metrics["order_type_ablation_sample_count"] = sample_count
+        metrics["market_limit_order_mix_sample_count"] = sample_count
+        metrics["market_limit_order_mix_evidence_present"] = True
+    if "passed" in ablation:
+        passed = bool(ablation.get("passed"))
+        metrics["order_type_ablation_passed"] = passed
+        metrics["market_limit_execution_policy_passed"] = passed
+    selected_order_type = _string(
+        ablation.get("selected_order_type")
+        or ablation.get("order_type_ablation_selected_order_type")
+    )
+    if selected_order_type:
+        metrics["order_type_ablation_selected_order_type"] = selected_order_type
+    opportunity_cost_bps = _string(
+        ablation.get("opportunity_cost_bps")
+        or ablation.get("order_type_opportunity_cost_bps")
+    )
+    if opportunity_cost_bps:
+        metrics["order_type_opportunity_cost_bps"] = opportunity_cost_bps
+        metrics["order_type_opportunity_cost_evidence_present"] = True
+        metrics["opportunity_cost_evidence_present"] = True
+    limit_sample_count = _int(
+        ablation.get("limit_sample_count")
+        or ablation.get("limit_fill_probability_sample_count")
+    )
+    if limit_sample_count > 0:
+        metrics["limit_fill_probability_sample_count"] = limit_sample_count
+        metrics["limit_fill_probability_evidence_present"] = True
+    return metrics
+
+
 def _p10(values: Sequence[Decimal]) -> Decimal:
     if not values:
         return Decimal("0")
@@ -488,6 +534,20 @@ def evidence_bundle_from_frontier_candidate(
     for source in (candidate, summary, full_window):
         for key, value in _order_type_execution_metrics(source).items():
             if key not in scorecard:
+                scorecard = {**scorecard, key: value}
+    for source in (candidate, summary, full_window):
+        for key, value in _order_type_ablation_metrics(source).items():
+            if key not in scorecard or key in {
+                "order_type_ablation_artifact_ref",
+                "order_type_ablation_sample_count",
+                "order_type_ablation_passed",
+                "order_type_ablation_selected_order_type",
+                "order_type_opportunity_cost_bps",
+                "order_type_opportunity_cost_evidence_present",
+                "opportunity_cost_evidence_present",
+                "limit_fill_probability_sample_count",
+                "limit_fill_probability_evidence_present",
+            }:
                 scorecard = {**scorecard, key: value}
     if (
         scorecard.get("market_limit_order_mix_evidence_present")
