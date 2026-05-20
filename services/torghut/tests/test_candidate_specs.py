@@ -308,6 +308,54 @@ class TestCandidateSpecs(TestCase):
             specs[0].promotion_contract["requires_implementation_uncertainty_stability"]
         )
 
+    def test_implementation_risk_claim_adds_backtest_stability_overlay(
+        self,
+    ) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-implementation-risk-backtesting",
+            claims=[
+                {
+                    "claim_id": "implementation-risk-engine-sensitivity",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Implementation risk in portfolio backtesting creates engine "
+                        "sensitivity and implementation uncertainty intervals under "
+                        "nonzero transaction costs."
+                    ),
+                    "data_requirements": [
+                        "multi_engine_replay",
+                        "engine_sensitivity",
+                        "implementation_uncertainty_interval",
+                        "conclusion_stability",
+                        "transaction_cost_stress",
+                    ],
+                    "confidence": "0.80",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+
+        self.assertIn(
+            "implementation_risk_backtest_stability",
+            specs[0].parameter_space["mechanism_overlay_ids"],
+        )
+        self.assertTrue(specs[0].hard_vetoes["required_multi_engine_replay"])
+        self.assertEqual(
+            specs[0].hard_vetoes["required_min_implementation_uncertainty_model_count"],
+            "2",
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["rejects_single_engine_backtest_proof"]
+        )
+        self.assertTrue(
+            specs[0].promotion_contract[
+                "requires_implementation_risk_backtest_stability"
+            ]
+        )
+
     def test_market_limit_execution_claim_adds_candidate_local_policy(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-market-limit-execution",

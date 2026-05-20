@@ -1463,3 +1463,86 @@ class TestWhitepaperCandidateCompiler(TestCase):
                 for spec in compilation.executable_specs
             )
         )
+
+    def test_implementation_risk_claims_compile_to_backtest_stability_overlay(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-arxiv-2603.20319",
+            claims=[
+                {
+                    "claim_id": "multi-engine-implementation-risk-replay",
+                    "claim_type": "feature_recipe",
+                    "claim_text": (
+                        "Implementation risk in portfolio backtesting means the "
+                        "same logical strategy must be replayed across independent "
+                        "engines before post-cost net PnL can be promotion evidence."
+                    ),
+                    "asset_scope": "us_equities_portfolio",
+                    "horizon_scope": "portfolio_backtesting",
+                    "expected_direction": "neutral",
+                    "data_requirements": [
+                        "multi_engine_replay",
+                        "engine_sensitivity",
+                        "implementation_uncertainty_interval",
+                        "transaction_cost_stress",
+                    ],
+                    "confidence": "0.78",
+                },
+                {
+                    "claim_id": "conclusion-stability-capital-gate",
+                    "claim_type": "risk_constraint",
+                    "claim_text": (
+                        "A candidate should affect capital gates only when the "
+                        "implementation-uncertainty lower bound stays above target "
+                        "and conclusion stability agrees across replay implementations."
+                    ),
+                    "asset_scope": "us_equities_portfolio",
+                    "horizon_scope": "portfolio_backtesting",
+                    "expected_direction": "neutral",
+                    "data_requirements": [
+                        "implementation_uncertainty_interval",
+                        "conclusion_stability",
+                        "post_cost_net_pnl",
+                        "multi_engine_replay",
+                    ],
+                    "confidence": "0.80",
+                },
+            ],
+            relations=[
+                {
+                    "relation_id": (
+                        "implementation-uncertainty-requires-multi-engine-stability"
+                    ),
+                    "relation_type": "requires_validation",
+                    "source_claim_id": "conclusion-stability-capital-gate",
+                    "target_claim_id": "multi-engine-implementation-risk-replay",
+                }
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        self.assertTrue(compilation.executable_specs)
+        self.assertTrue(
+            any(
+                "implementation_risk_backtest_stability"
+                in spec.parameter_space.get("mechanism_overlay_ids", [])
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract.get("rejects_single_engine_backtest_proof")
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.hard_vetoes.get(
+                    "required_implementation_uncertainty_lower_bound_above_target"
+                )
+                for spec in compilation.executable_specs
+            )
+        )

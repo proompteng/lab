@@ -731,6 +731,20 @@ research_sources:
       - claim_id: sim_to_live_reality_gap_validation
         summary: LOB simulation reality gaps require explicit parity metrics before adverse-selection estimates can affect capital gates.
         implication: Keep synthetic replay out of promotion proof unless it is bound to live-paper parity and route/TCA receipts.
+  - source_id: implementation_risk_backtesting_2026
+    title: 'Implementation Risk in Portfolio Backtesting: A Previously Unquantified Source of Error'
+    url: https://arxiv.org/abs/2603.20319
+    published_at: '2026-03-24'
+    claims:
+      - claim_id: multi_engine_implementation_risk_replay
+        summary: The same logical strategy can produce divergent post-cost portfolio metrics across backtest implementations.
+        implication: Require multi-engine or multi-implementation replay before accepting post-cost PnL as promotion evidence.
+      - claim_id: transaction_cost_implementation_divergence
+        summary: Transaction-cost handling is the dominant implementation-divergence driver in the paper's benchmark.
+        implication: Promotion proof needs engine-sensitivity and implementation-uncertainty diagnostics under nonzero costs.
+      - claim_id: conclusion_stability_capital_gate
+        summary: A result is capital-gate quality only when the implementation-uncertainty lower bound and conclusion-stability check survive replay differences.
+        implication: Reject single-engine backtest proof and require lower-bound net PnL above the target across replay implementations.
 families:
   - family_template_id: microstructure_continuation_matched_filter_v1
     seed_sweep_config: ../profitability-frontier-strict-daily-microstructure.yaml

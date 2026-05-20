@@ -3444,6 +3444,63 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
 
     if has_any(
         (
+            "implementation risk",
+            "implementation-risk",
+            "engine sensitivity",
+            "engine_sensitivity",
+            "implementation uncertainty",
+            "implementation_uncertainty_interval",
+            "conclusion stability",
+            "conclusion_stability",
+            "divergence amplification",
+            "divergence_amplification",
+            "multi-engine replay",
+            "multi_engine_replay",
+            "backtest engine",
+            "portfolio backtesting",
+        )
+    ):
+        overlay_ids.append("implementation_risk_backtest_stability")
+        overlay_contracts.append(
+            {
+                "overlay_id": "implementation_risk_backtest_stability",
+                "required_evidence": [
+                    "multi_engine_replay",
+                    "engine_sensitivity",
+                    "implementation_uncertainty_interval",
+                    "conclusion_stability",
+                    "transaction_cost_stress",
+                    "replay_harness_implementation_trace",
+                ],
+                "rank_metric": "implementation_uncertainty_lower_net_pnl_per_day",
+                "evidence_policy": (
+                    "promotion_requires_stable_conclusion_across_replay_engines"
+                ),
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_multi_engine_replay": True,
+                "required_min_implementation_uncertainty_model_count": "2",
+                "required_implementation_uncertainty_lower_bound_above_target": True,
+                "required_conclusion_stability_index": "1.00",
+                "required_replay_harness_implementation_trace": True,
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_implementation_uncertainty_stability": True,
+                "requires_implementation_risk_backtest_stability": True,
+                "requires_multi_engine_replay": True,
+                "requires_engine_sensitivity_report": True,
+                "requires_conclusion_stability": True,
+                "rejects_single_engine_backtest_proof": True,
+                "rejects_flat_cost_only_implementation_proof": True,
+            }
+        )
+
+    if has_any(
+        (
             "intraday volume",
             "volume forecasting",
             "volume forecast",
