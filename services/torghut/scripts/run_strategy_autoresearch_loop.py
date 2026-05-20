@@ -131,6 +131,12 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--train-days", type=int, default=6)
     parser.add_argument("--holdout-days", type=int, default=3)
+    parser.add_argument(
+        "--second-oos-days",
+        type=int,
+        default=0,
+        help="Optional independent second-OOS trading-day count forwarded into frontier validation.",
+    )
     parser.add_argument("--full-window-start-date", default="")
     parser.add_argument("--full-window-end-date", default="")
     parser.add_argument("--expected-last-trading-day", default="")
@@ -490,6 +496,7 @@ def _frontier_args(
         progress_log_seconds=int(args.progress_log_seconds),
         train_days=int(args.train_days),
         holdout_days=int(args.holdout_days),
+        second_oos_days=max(0, int(getattr(args, "second_oos_days", 0) or 0)),
         full_window_start_date=str(args.full_window_start_date),
         full_window_end_date=str(args.full_window_end_date),
         expected_last_trading_day=str(args.expected_last_trading_day),
@@ -786,6 +793,133 @@ def _runtime_closure_candidate(
     if cast(list[Any], best_candidate.get("hard_vetoes") or []):
         return None
     return best_candidate
+
+
+def _portfolio_objective_scorecard(
+    portfolio: PortfolioCandidateSpec | None,
+) -> Mapping[str, Any]:
+    return portfolio.objective_scorecard if portfolio is not None else {}
+
+
+def _portfolio_is_runtime_closure_candidate(
+    portfolio: PortfolioCandidateSpec | None,
+) -> bool:
+    scorecard = _portfolio_objective_scorecard(portfolio)
+    return bool(scorecard.get("target_met")) and bool(scorecard.get("oracle_passed"))
+
+
+def _runtime_closure_subject(
+    *,
+    best_candidate: Mapping[str, Any] | None,
+    portfolio: PortfolioCandidateSpec | None,
+) -> Mapping[str, Any] | PortfolioCandidateSpec | None:
+    if _portfolio_is_runtime_closure_candidate(portfolio):
+        return portfolio
+    return _runtime_closure_candidate(best_candidate)
+
+
+def _runtime_closure_pending_promotion_steps(
+    runtime_closure: Mapping[str, Any],
+) -> tuple[str, ...]:
+    return tuple(
+        step
+        for step in (
+            _string(item)
+            for item in cast(
+                list[Any], runtime_closure.get("next_required_steps") or []
+            )
+        )
+        if step and step != "promotion_review"
+    )
+
+
+def _runtime_closure_promotion_prerequisite_blockers(
+    runtime_closure: Mapping[str, Any],
+) -> tuple[str, ...]:
+    prerequisites = _mapping(runtime_closure.get("promotion_prerequisites"))
+    if not prerequisites:
+        return ("promotion_prerequisites_missing",)
+    if bool(prerequisites.get("allowed")):
+        return ()
+    reasons = tuple(
+        reason
+        for reason in (
+            _string(item)
+            for item in cast(list[Any], prerequisites.get("reasons") or [])
+        )
+        if reason
+    )
+    return reasons or ("promotion_prerequisites_denied",)
+
+
+def _portfolio_promotion_readiness(
+    *,
+    portfolio: PortfolioCandidateSpec,
+    runtime_closure: Mapping[str, Any],
+) -> dict[str, Any]:
+    blockers = list(
+        dict.fromkeys(
+            (
+                *_runtime_closure_pending_promotion_steps(runtime_closure),
+                *_runtime_closure_promotion_prerequisite_blockers(runtime_closure),
+            )
+        )
+    )
+    if not blockers:
+        status = "promotion_ready"
+        promotable = True
+        reason = (
+            "Portfolio candidate has passed oracle and runtime promotion prerequisites."
+        )
+    else:
+        status = "blocked_pending_promotion_prerequisites"
+        promotable = False
+        reason = (
+            "Portfolio candidate passed the profit oracle, but promotion still requires "
+            "runtime closure evidence before it can be activated."
+        )
+    return {
+        "candidate_id": portfolio.portfolio_candidate_id,
+        "portfolio_candidate_id": portfolio.portfolio_candidate_id,
+        "source_candidate_ids": list(portfolio.source_candidate_ids),
+        "family_template_id": "portfolio_whitepaper_autoresearch_v1",
+        "stage": "portfolio_candidate",
+        "status": status,
+        "promotable": promotable,
+        "reason": reason,
+        "blockers": blockers,
+        "required_evidence": [
+            "portfolio_optimizer_evidence",
+            "scheduler_v3_parity_replay",
+            "scheduler_v3_approval_replay",
+            "live_shadow_validation",
+            "promotion_prerequisites",
+        ],
+        "runtime_closure_status": _string(runtime_closure.get("status")),
+        "runtime_family": "",
+        "runtime_strategy_name": "",
+        "runtime_strategy_names": list(
+            cast(
+                list[str], _mapping(runtime_closure).get("runtime_strategy_names") or []
+            )
+        ),
+    }
+
+
+def _summary_promotion_readiness_for_outputs(
+    *,
+    best_candidate: Mapping[str, Any] | None,
+    portfolio: PortfolioCandidateSpec | None,
+    runtime_closure: Mapping[str, Any],
+) -> dict[str, Any]:
+    if _portfolio_is_runtime_closure_candidate(portfolio):
+        if portfolio is None:
+            raise ValueError("portfolio_runtime_closure_candidate_missing")
+        return _portfolio_promotion_readiness(
+            portfolio=portfolio,
+            runtime_closure=runtime_closure,
+        )
+    return summary_promotion_readiness(best_candidate)
 
 
 def _portfolio_oracle_policy(
@@ -1176,16 +1310,23 @@ def _persist_run_outputs(
     summary["best_portfolio_candidate"] = (
         portfolio.to_payload() if portfolio is not None else None
     )
-    summary["promotion_readiness"] = summary_promotion_readiness(best_candidate)
     runtime_closure = write_runtime_closure_bundle(
         run_root=run_root,
         runner_run_id=runner_run_id,
         program=program,
-        best_candidate=_runtime_closure_candidate(best_candidate),
+        best_candidate=_runtime_closure_subject(
+            best_candidate=best_candidate,
+            portfolio=portfolio,
+        ),
         manifest=manifest,
         execution_context=closure_execution_context,
     )
     summary["runtime_closure"] = runtime_closure.to_payload()
+    summary["promotion_readiness"] = _summary_promotion_readiness_for_outputs(
+        best_candidate=best_candidate,
+        portfolio=portfolio,
+        runtime_closure=summary["runtime_closure"],
+    )
     if error is not None:
         summary["error"] = dict(error)
     promotion_readiness_path.write_text(
