@@ -30,51 +30,6 @@ export const up = async (db: Kysely<AgentsDatabase>) => {
   `.execute(db)
 
   await sql`
-    DO $$
-    BEGIN
-      IF to_regclass('workflow_comms.agent_messages') IS NOT NULL THEN
-        INSERT INTO ${sql.ref(`${SCHEMA}.${TABLE}`)} (
-          id,
-          workflow_uid,
-          workflow_name,
-          workflow_namespace,
-          run_id,
-          step_id,
-          agent_id,
-          role,
-          kind,
-          timestamp,
-          channel,
-          stage,
-          content,
-          attrs,
-          dedupe_key,
-          created_at
-        )
-        SELECT
-          id,
-          workflow_uid,
-          workflow_name,
-          workflow_namespace,
-          run_id::TEXT,
-          step_id,
-          agent_id,
-          role,
-          kind,
-          timestamp,
-          channel,
-          stage,
-          content,
-          attrs,
-          dedupe_key,
-          created_at
-        FROM workflow_comms.agent_messages
-        ON CONFLICT (id) DO NOTHING;
-      END IF;
-    END $$;
-  `.execute(db)
-
-  await sql`
     CREATE INDEX IF NOT EXISTS agents_agent_messages_run_time_idx
     ON ${sql.ref(`${SCHEMA}.${TABLE}`)} (run_id, timestamp);
   `.execute(db)

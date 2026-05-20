@@ -19,9 +19,9 @@ const toBytes = (value: string) => new TextEncoder().encode(value)
 
 const buildRecord = (input: Record<string, unknown>, index: number): AgentMessageRecord => ({
   id: `msg-${index}`,
-  workflowUid: null,
-  workflowName: null,
-  workflowNamespace: null,
+  agentRunUid: null,
+  agentRunName: null,
+  agentRunNamespace: null,
   runId: null,
   stepId: null,
   agentId: null,
@@ -132,12 +132,12 @@ describe('agent comms subscriber consume', () => {
       'agents.agent_messages.general.status',
     )
     expect(agentRun?.runId).toBe('run-1')
-    expect(agentRun?.workflowName).toBe('demo')
-    expect(agentRun?.workflowNamespace).toBe('agents')
-    expect(agentRun?.workflowUid).toBe('abc')
+    expect(agentRun?.agentRunName).toBe('demo')
+    expect(agentRun?.agentRunNamespace).toBe('agents')
+    expect(agentRun?.agentRunUid).toBe('abc')
     expect(agentRun?.stage).toBe('implementation')
     expect(agentRun?.attrs?.runtime).toBe('agents_comms')
-    expect(agentsAgentRun?.workflowName).toBe('demo')
+    expect(agentsAgentRun?.agentRunName).toBe('demo')
     expect(agentsAgentRun?.attrs?.runtime).toBe('agents_comms')
     expect(agentsMessages?.channel).toBe('general')
     expect(agentsMessages?.attrs?.runtime).toBe('agents_comms')
@@ -156,6 +156,25 @@ describe('agent comms subscriber consume', () => {
         'workflow_comms.agent_messages.general.status',
       ),
     ).toBeNull()
+  })
+
+  it('prefers canonical agent run identity over legacy workflow aliases', () => {
+    const message = __test__.normalizePayload(
+      JSON.stringify({
+        content: 'canonical update',
+        agent_run_name: 'agent-run',
+        agent_run_namespace: 'agents',
+        agent_run_uid: 'agent-run-uid',
+        workflow_name: 'legacy-workflow',
+        workflow_namespace: 'legacy',
+        workflow_uid: 'legacy-uid',
+      }),
+      'agentrun.legacy.subject.subject-uid.agent.codex.status',
+    )
+
+    expect(message?.agentRunName).toBe('agent-run')
+    expect(message?.agentRunNamespace).toBe('agents')
+    expect(message?.agentRunUid).toBe('agent-run-uid')
   })
 
   it('keeps swarm persona attrs out of canonical agent and role fields', () => {

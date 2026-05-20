@@ -40,9 +40,9 @@ describe('getAgentEvents', () => {
       .mockResolvedValueOnce([
         {
           id: 'msg-1',
-          workflowUid: null,
-          workflowName: null,
-          workflowNamespace: null,
+          agentRunUid: 'agent-run-uid',
+          agentRunName: 'demo',
+          agentRunNamespace: 'agents',
           runId: null,
           stepId: null,
           agentId: 'agent-1',
@@ -75,6 +75,16 @@ describe('getAgentEvents', () => {
     }
     expect(bootText).toContain('retry: 1000')
     expect(bootText).toContain(': connected')
+
+    let dataText = bootText
+    for (let attempt = 0; attempt < 4 && !dataText.includes('data:'); attempt += 1) {
+      const chunk = await reader.read()
+      expect(chunk.done).toBe(false)
+      dataText += decodeChunk(chunk.value)
+    }
+    expect(dataText).toContain('"agent_run_uid":"agent-run-uid"')
+    expect(dataText).toContain('"agent_run_name":"demo"')
+    expect(dataText).not.toContain('"workflow_uid"')
 
     await vi.advanceTimersByTimeAsync(5000)
     let heartbeatText = ''

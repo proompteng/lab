@@ -34,8 +34,8 @@ const createLayer = (store: AgentMessagesStore) =>
 describe('Codex callback ingestion', () => {
   it('maps notify callbacks into generic agent messages', () => {
     const built = buildCodexCallbackMessage('notify', {
-      workflow_name: 'workflow-1',
-      workflow_namespace: 'froussard',
+      agent_run_name: 'agent-run-1',
+      agent_run_namespace: 'agents',
       stage: 'implementation',
       last_assistant_message: 'opened PR',
       repository: 'proompteng/lab',
@@ -43,9 +43,9 @@ describe('Codex callback ingestion', () => {
 
     expect(built.callback).toMatchObject({
       kind: 'notify',
-      workflowName: 'workflow-1',
-      workflowNamespace: 'froussard',
-      runId: 'workflow-1',
+      agentRunName: 'agent-run-1',
+      agentRunNamespace: 'agents',
+      runId: 'agent-run-1',
       stage: 'implementation',
     })
     expect(built.message).toMatchObject({
@@ -53,7 +53,7 @@ describe('Codex callback ingestion', () => {
       channel: 'general',
       content: 'opened PR',
       kind: 'codex.notify',
-      runId: 'workflow-1',
+      runId: 'agent-run-1',
       stage: 'implementation',
     })
     expect(built.message.attrs).toMatchObject({
@@ -86,9 +86,9 @@ describe('Codex callback ingestion', () => {
       ok: true,
       callback: {
         kind: 'run-complete',
-        workflowName: 'workflow-2',
-        workflowNamespace: 'froussard',
-        workflowUid: 'uid-2',
+        agentRunName: 'workflow-2',
+        agentRunNamespace: 'froussard',
+        agentRunUid: 'uid-2',
         runId: 'uid-2',
       },
       inserted: [{ kind: 'codex.run-complete', content: 'Codex run completed with phase Succeeded' }],
@@ -111,7 +111,7 @@ describe('Codex callback ingestion', () => {
     expect(response.status).toBe(400)
     await expect(response.json()).resolves.toMatchObject({
       ok: false,
-      error: 'callback payload must include workflowName, workflowUid, or runId',
+      error: 'callback payload must include agentRunName, agentRunUid, or runId',
     })
   })
 })

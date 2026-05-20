@@ -5,9 +5,9 @@ import { ensureMigrations } from './kysely-migrations'
 
 export type AgentMessageRecord = {
   id: string
-  workflowUid: string | null
-  workflowName: string | null
-  workflowNamespace: string | null
+  agentRunUid: string | null
+  agentRunName: string | null
+  agentRunNamespace: string | null
   runId: string | null
   stepId: string | null
   agentId: string | null
@@ -23,9 +23,9 @@ export type AgentMessageRecord = {
 }
 
 export type AgentMessageInput = {
-  workflowUid: string | null
-  workflowName: string | null
-  workflowNamespace: string | null
+  agentRunUid: string | null
+  agentRunName: string | null
+  agentRunNamespace: string | null
   runId: string | null
   stepId: string | null
   agentId: string | null
@@ -40,7 +40,7 @@ export type AgentMessageInput = {
 }
 
 export type AgentMessagesStore = {
-  hasMessages: (input: { runId?: string | null; workflowUid?: string | null }) => Promise<boolean>
+  hasMessages: (input: { runId?: string | null; agentRunUid?: string | null }) => Promise<boolean>
   insertMessages: (messages: AgentMessageInput[]) => Promise<AgentMessageRecord[]>
   listMessages: (input: ListAgentMessagesInput) => Promise<AgentMessageRecord[]>
   close: () => Promise<void>
@@ -88,13 +88,13 @@ const ensureSchema = async (db: Db) => {
   await ensureMigrations(db)
 }
 
-const countRows = async (db: Db, where: { runId?: string | null; workflowUid?: string | null }) => {
-  const { runId, workflowUid } = where
+const countRows = async (db: Db, where: { runId?: string | null; agentRunUid?: string | null }) => {
+  const { runId, agentRunUid } = where
   let query = db.selectFrom(`${SCHEMA}.${TABLE}`).select(sql<number>`count(*)`.as('count'))
   if (runId) {
     query = query.where('run_id', '=', runId)
-  } else if (workflowUid) {
-    query = query.where('workflow_uid', '=', workflowUid)
+  } else if (agentRunUid) {
+    query = query.where('workflow_uid', '=', agentRunUid)
   } else {
     return 0
   }
@@ -122,9 +122,9 @@ const mapRow = (row: {
   created_at: string | Date
 }): AgentMessageRecord => ({
   id: row.id,
-  workflowUid: row.workflow_uid,
-  workflowName: row.workflow_name,
-  workflowNamespace: row.workflow_namespace,
+  agentRunUid: row.workflow_uid,
+  agentRunName: row.workflow_name,
+  agentRunNamespace: row.workflow_namespace,
   runId: row.run_id,
   stepId: row.step_id,
   agentId: row.agent_id,
@@ -142,7 +142,7 @@ const mapRow = (row: {
 export type ListAgentMessagesInput = {
   identifiers?: string[]
   runId?: string | null
-  workflowUid?: string | null
+  agentRunUid?: string | null
   channel?: string | null
   since?: string | null
   limit?: number
@@ -163,14 +163,14 @@ export const createAgentMessagesStore = (options: AgentMessagesStoreOptions = {}
     await schemaReady
   }
 
-  const hasMessages = async ({ runId, workflowUid }: { runId?: string | null; workflowUid?: string | null }) => {
+  const hasMessages = async ({ runId, agentRunUid }: { runId?: string | null; agentRunUid?: string | null }) => {
     await ensureReady()
     if (runId) {
       const count = await countRows(db, { runId })
       if (count > 0) return true
     }
-    if (workflowUid) {
-      const count = await countRows(db, { workflowUid })
+    if (agentRunUid) {
+      const count = await countRows(db, { agentRunUid })
       if (count > 0) return true
     }
     return false
@@ -180,9 +180,9 @@ export const createAgentMessagesStore = (options: AgentMessagesStoreOptions = {}
     await ensureReady()
     const normalized = messages
       .map((message) => ({
-        workflow_uid: message.workflowUid,
-        workflow_name: message.workflowName,
-        workflow_namespace: message.workflowNamespace,
+        workflow_uid: message.agentRunUid,
+        workflow_name: message.agentRunName,
+        workflow_namespace: message.agentRunNamespace,
         run_id: message.runId,
         step_id: message.stepId,
         agent_id: message.agentId,
@@ -222,7 +222,7 @@ export const createAgentMessagesStore = (options: AgentMessagesStoreOptions = {}
 
   const listMessages = async (input: ListAgentMessagesInput): Promise<AgentMessageRecord[]> => {
     await ensureReady()
-    const { identifiers, runId, workflowUid, channel, since } = input
+    const { identifiers, runId, agentRunUid, channel, since } = input
     const limit = normalizeLimit(input.limit)
     let query = db.selectFrom(`${SCHEMA}.${TABLE}`).selectAll()
 
@@ -234,8 +234,8 @@ export const createAgentMessagesStore = (options: AgentMessagesStoreOptions = {}
       )
     } else if (runId) {
       query = query.where('run_id', '=', runId)
-    } else if (workflowUid) {
-      query = query.where('workflow_uid', '=', workflowUid)
+    } else if (agentRunUid) {
+      query = query.where('workflow_uid', '=', agentRunUid)
     }
 
     if (channel) {

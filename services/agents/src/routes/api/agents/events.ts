@@ -37,9 +37,9 @@ const normalizeLimit = (value: string | null) => {
 
 const buildPayload = (record: AgentMessageRecord) => ({
   id: record.id,
-  workflow_uid: record.workflowUid,
-  workflow_name: record.workflowName,
-  workflow_namespace: record.workflowNamespace,
+  agent_run_uid: record.agentRunUid,
+  agent_run_name: record.agentRunName,
+  agent_run_namespace: record.agentRunNamespace,
   run_id: record.runId,
   step_id: record.stepId,
   agent_id: record.agentId,
@@ -61,17 +61,17 @@ const safeJsonStringify = (value: unknown) => {
   }
 }
 
-const getPayloadWorkflowUid = (payload: Record<string, unknown>) => {
-  const value = payload.workflowUid ?? payload.workflow_uid
+const getPayloadAgentRunUid = (payload: Record<string, unknown>) => {
+  const value = payload.agentRunUid ?? payload.agent_run_uid ?? payload.workflowUid ?? payload.workflow_uid
   return typeof value === 'string' && value.trim().length > 0 ? value : null
 }
 
-const resolveWorkflowUid = async (runId: string) => {
+const resolveAgentRunUid = async (runId: string) => {
   const store = createPrimitivesStore()
   try {
     await store.ready
     const run = await store.getRunById(runId)
-    return run ? getPayloadWorkflowUid(run.record.payload) : null
+    return run ? getPayloadAgentRunUid(run.record.payload) : null
   } finally {
     await store.close()
   }
@@ -102,12 +102,12 @@ const looksLikeTransientDbBlip = (message: string) => {
 export const getAgentEvents = async (request: Request) => {
   const url = new URL(request.url)
   const runId = url.searchParams.get('runId')?.trim() || null
-  const workflowUid = url.searchParams.get('workflowUid')?.trim() || null
+  const agentRunUid = url.searchParams.get('agentRunUid')?.trim() || url.searchParams.get('workflowUid')?.trim() || null
   const channel = url.searchParams.get('channel')?.trim() || null
   const limit = normalizeLimit(url.searchParams.get('limit'))
 
-  if (!runId && !workflowUid && !channel) {
-    return jsonResponse({ ok: false, error: 'runId, workflowUid, or channel is required' }, 400)
+  if (!runId && !agentRunUid && !channel) {
+    return jsonResponse({ ok: false, error: 'runId, agentRunUid, or channel is required' }, 400)
   }
 
   void import('../../../server/agent-comms-subscriber')
@@ -118,13 +118,13 @@ export const getAgentEvents = async (request: Request) => {
 
   const identifiers = new Set<string>()
   if (runId) identifiers.add(runId)
-  if (workflowUid) identifiers.add(workflowUid)
-  if (runId && !workflowUid) {
+  if (agentRunUid) identifiers.add(agentRunUid)
+  if (runId && !agentRunUid) {
     try {
-      const resolved = await resolveWorkflowUid(runId)
+      const resolved = await resolveAgentRunUid(runId)
       if (resolved) identifiers.add(resolved)
     } catch (error) {
-      console.warn('Failed to resolve workflow uid for run', error)
+      console.warn('Failed to resolve agent run uid for run', error)
     }
   }
 
@@ -280,7 +280,7 @@ export const getAgentEvents = async (request: Request) => {
             if (identifiers.size > 0) {
               const matchesIdentifier =
                 (record.runId && identifiers.has(record.runId)) ||
-                (record.workflowUid && identifiers.has(record.workflowUid))
+                (record.agentRunUid && identifiers.has(record.agentRunUid))
               if (!matchesIdentifier) continue
             }
             if (channel && record.channel !== channel) continue

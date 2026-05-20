@@ -45,7 +45,7 @@ describe('agent messages ingest API', () => {
     const parsed = parseAgentMessagesIngestPayload({
       messages: [
         {
-          workflow_uid: 'workflow-uid',
+          agent_run_uid: 'agent-run-uid',
           runId: 'run-1',
           role: 'assistant',
           kind: 'message',
@@ -57,9 +57,9 @@ describe('agent messages ingest API', () => {
       skip_if_existing: { run_id: 'run-1' },
     })
 
-    expect(parsed.skipIfExisting).toEqual({ runId: 'run-1', workflowUid: null })
+    expect(parsed.skipIfExisting).toEqual({ runId: 'run-1', agentRunUid: null })
     expect(parsed.messages[0]).toMatchObject({
-      workflowUid: 'workflow-uid',
+      agentRunUid: 'agent-run-uid',
       runId: 'run-1',
       content: 'hello',
       dedupeKey: 'run-1:1',
@@ -77,9 +77,9 @@ describe('agent messages ingest API', () => {
       ingestAgentMessagesEffect({
         messages: [
           {
-            workflowUid: null,
-            workflowName: null,
-            workflowNamespace: null,
+            agentRunUid: null,
+            agentRunName: null,
+            agentRunNamespace: null,
             runId: 'run-1',
             stepId: null,
             agentId: null,
@@ -110,9 +110,9 @@ describe('agent messages ingest API', () => {
         skipIfExisting: { runId: 'run-1' },
         messages: [
           {
-            workflowUid: null,
-            workflowName: null,
-            workflowNamespace: null,
+            agentRunUid: null,
+            agentRunName: null,
+            agentRunNamespace: null,
             runId: 'run-1',
             stepId: null,
             agentId: null,

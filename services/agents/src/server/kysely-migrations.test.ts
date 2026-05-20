@@ -31,15 +31,12 @@ describe('Agents migration registration', () => {
     expect(__test__.AGENTS_MIGRATION_LOCK_TABLE).not.toBe('kysely_migration_lock')
   })
 
-  it('confines the legacy workflow_comms copy bridge to the one migration that backfills agent messages', () => {
+  it('does not reach back into the retired workflow_comms message store', () => {
     const serverDir = fileURLToPath(new URL('.', import.meta.url))
-    const allowedBridge = fileURLToPath(
-      new URL('./migrations/20260519_agents_comms_agent_messages.ts', import.meta.url),
-    )
     const matches = listTypeScriptFiles(serverDir).filter((path) =>
       readFileSync(path, 'utf8').includes('workflow_comms.agent_messages'),
     )
 
-    expect(matches).toEqual([allowedBridge])
+    expect(matches).toEqual([])
   })
 })

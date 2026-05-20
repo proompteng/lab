@@ -22,9 +22,9 @@ export class CodexCallbackInvalidPayloadError extends Data.TaggedError('CodexCal
 export type CodexCallbackIngestResult = {
   callback: {
     kind: CodexCallbackKind
-    workflowName: string | null
-    workflowNamespace: string | null
-    workflowUid: string | null
+    agentRunName: string | null
+    agentRunNamespace: string | null
+    agentRunUid: string | null
     runId: string | null
     stage: string | null
   }
@@ -128,12 +128,30 @@ export const buildCodexCallbackMessage = (
   const data = readCallbackData(payload)
   const metadata = readRecordField(data, 'metadata')
   const status = readRecordField(data, 'status')
-  const workflowName = firstString(data.workflowName, data.workflow_name, metadata.name)
-  const workflowNamespace = firstString(data.workflowNamespace, data.workflow_namespace, metadata.namespace)
-  const workflowUid = firstString(data.workflowUid, data.workflow_uid, metadata.uid)
+  const agentRunName = firstString(
+    data.agentRunName,
+    data.agent_run_name,
+    data.workflowName,
+    data.workflow_name,
+    metadata.name,
+  )
+  const agentRunNamespace = firstString(
+    data.agentRunNamespace,
+    data.agent_run_namespace,
+    data.workflowNamespace,
+    data.workflow_namespace,
+    metadata.namespace,
+  )
+  const agentRunUid = firstString(
+    data.agentRunUid,
+    data.agent_run_uid,
+    data.workflowUid,
+    data.workflow_uid,
+    metadata.uid,
+  )
   const stage = firstString(data.stage, data.workflowStage, data.workflow_stage)
   const runId =
-    firstString(data.runId, data.run_id, data.agentRunId, data.agent_run_id, workflowUid, workflowName) ?? null
+    firstString(data.runId, data.run_id, data.agentRunId, data.agent_run_id, agentRunUid, agentRunName) ?? null
   const timestamp =
     firstString(data.timestamp, data.finishedAt, data.finished_at, status.finishedAt, status.finished_at) ??
     new Date().toISOString()
@@ -144,25 +162,25 @@ export const buildCodexCallbackMessage = (
   const artifacts = readArtifacts(data)
   const content = buildContent(kind, data, status)
 
-  if (!runId && !workflowName && !workflowUid) {
+  if (!runId && !agentRunName && !agentRunUid) {
     throw new CodexCallbackInvalidPayloadError({
-      message: 'callback payload must include workflowName, workflowUid, or runId',
+      message: 'callback payload must include agentRunName, agentRunUid, or runId',
     })
   }
 
   return {
     callback: {
       kind,
-      workflowName,
-      workflowNamespace,
-      workflowUid,
+      agentRunName,
+      agentRunNamespace,
+      agentRunUid,
       runId,
       stage,
     },
     message: {
-      workflowUid,
-      workflowName,
-      workflowNamespace,
+      agentRunUid,
+      agentRunName,
+      agentRunNamespace,
       runId,
       stepId: null,
       agentId: 'codex',
@@ -181,7 +199,7 @@ export const buildCodexCallbackMessage = (
         artifacts,
         payload: data,
       },
-      dedupeKey: `codex-callback:${kind}:${runId ?? workflowUid ?? workflowName}:${stableHash(data)}`,
+      dedupeKey: `codex-callback:${kind}:${runId ?? agentRunUid ?? agentRunName}:${stableHash(data)}`,
     },
   }
 }
