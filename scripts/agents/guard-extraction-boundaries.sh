@@ -255,6 +255,24 @@ fail_if_matches \
   'JANGAR_CONTROL_PLANE_ROLLOUT_DEPLOYMENTS|JANGAR_WORKFLOWS_WINDOW_MINUTES|JANGAR_WORKFLOWS_WARNING_BACKOFF_THRESHOLD|JANGAR_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD|workflowsWindowMinutes|rolloutDeployments|workflowsWarningBackoffThreshold|workflowsDegradedBackoffThreshold' \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-config.ts"
 
+fail_if_path_exists \
+  "Jangar must not retain the copied Agents controller leader-election or kube-gateway runtime" \
+  "${ROOT_DIR}/services/jangar/src/server/leader-election.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/kube-gateway.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-leader-election-status.ts"
+
+fail_if_path_exists \
+  "Jangar tests must not preserve the copied Agents controller leader-election or kube-gateway runtime" \
+  "${ROOT_DIR}/services/jangar/src/server/__tests__/leader-election.test.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/__tests__/kube-gateway.test.ts"
+
+fail_if_matches \
+  "Jangar runtime must not carry copied Agents controller leader-election settings or guards" \
+  'JANGAR_LEADER_ELECTION|LeaderElectionSettings|resolveLeaderElectionSettings|__jangarLeaderElection|requireLeaderForMutationHttp' \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-config.ts" \
+  "${ROOT_DIR}/services/jangar/src/server" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/torghut/simulation"
+
 fail_if_matches \
   "Agents watch reliability config must not read Jangar compatibility env aliases" \
   'JANGAR_CONTROL_PLANE_WATCH_HEALTH_' \

@@ -1,11 +1,11 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { requireLeaderForMutationHttp } from '~/server/leader-election'
 
 import {
   listTorghutSimulationCampaigns,
   parseTorghutSimulationCampaignRequest,
   submitTorghutSimulationCampaign,
 } from '~/server/torghut-simulation-control-plane'
+import { requireTorghutSimulationMutationHttp } from '~/server/torghut-simulation-mutation-gate'
 
 export const Route = createFileRoute('/api/torghut/simulation/campaigns')({
   server: {
@@ -36,8 +36,8 @@ export const listSimulationCampaignsHandler = async (request: Request) => {
 }
 
 export const submitSimulationCampaignHandler = async (request: Request) => {
-  const leaderResponse = requireLeaderForMutationHttp()
-  if (leaderResponse) return leaderResponse
+  const mutationGateResponse = requireTorghutSimulationMutationHttp()
+  if (mutationGateResponse) return mutationGateResponse
   const payload: unknown = await request.json().catch(() => null)
   const parsed = parseTorghutSimulationCampaignRequest(payload)
   if (!parsed.ok) {

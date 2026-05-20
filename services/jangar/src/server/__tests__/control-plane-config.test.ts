@@ -4,7 +4,6 @@ import {
   resolveControlPlaneCacheReadConfig,
   resolveControlPlaneHeartbeatConfig,
   resolveControlPlaneStatusConfig,
-  resolveLeaderElectionSettings,
 } from '~/server/control-plane-config'
 
 describe('control-plane-config', () => {
@@ -26,33 +25,6 @@ describe('control-plane-config', () => {
       deploymentName: 'jangar',
       sourceNamespace: 'jangar',
     })
-  })
-
-  it('requires explicit Jangar leader election after Agents controller extraction and repairs invalid timing', () => {
-    const config = resolveLeaderElectionSettings({
-      JANGAR_LEADER_ELECTION_REQUIRED: 'true',
-      JANGAR_LEADER_ELECTION_RENEW_DEADLINE_SECONDS: '30',
-      JANGAR_LEADER_ELECTION_RETRY_PERIOD_SECONDS: '30',
-      JANGAR_LEADER_ELECTION_LEASE_DURATION_SECONDS: '30',
-      JANGAR_POD_NAMESPACE: 'agents',
-    })
-
-    expect(config.required).toBe(true)
-    expect(config.leaseDurationSeconds).toBe(30)
-    expect(config.renewDeadlineSeconds).toBe(20)
-    expect(config.retryPeriodSeconds).toBe(5)
-    expect(config.podNamespace).toBe('agents')
-  })
-
-  it('does not infer Jangar leader election from removed Agents controller flags', () => {
-    expect(
-      resolveLeaderElectionSettings({
-        JANGAR_AGENTS_CONTROLLER_ENABLED: 'true',
-        JANGAR_ORCHESTRATION_CONTROLLER_ENABLED: 'true',
-        JANGAR_SUPPORTING_CONTROLLER_ENABLED: 'true',
-        JANGAR_PRIMITIVES_RECONCILER: 'true',
-      }).required,
-    ).toBe(false)
   })
 
   it('parses Jangar-owned status settings and leaves generic Agents runtime evidence to Agents', () => {

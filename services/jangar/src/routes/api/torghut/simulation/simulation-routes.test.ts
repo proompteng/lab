@@ -4,11 +4,11 @@ import { submitSimulationCampaignHandler } from '~/routes/api/torghut/simulation
 import { cancelSimulationRunHandler } from '~/routes/api/torghut/simulation/runs/$id'
 import { submitSimulationRunHandler } from '~/routes/api/torghut/simulation/runs'
 
-const leaderElectionMocks = vi.hoisted(() => ({
-  requireLeaderForMutationHttp: vi.fn(),
+const mutationGateMocks = vi.hoisted(() => ({
+  requireTorghutSimulationMutationHttp: vi.fn(),
 }))
 
-vi.mock('~/server/leader-election', () => leaderElectionMocks)
+vi.mock('~/server/torghut-simulation-mutation-gate', () => mutationGateMocks)
 vi.mock('~/server/torghut-simulation-control-plane', () => ({
   listTorghutSimulationRuns: vi.fn(),
   parseTorghutSimulationRunRequest: vi.fn(() => ({
@@ -39,12 +39,12 @@ vi.mock('~/server/torghut-simulation-control-plane', () => ({
 
 describe('Torghut simulation mutation routes', () => {
   beforeEach(() => {
-    leaderElectionMocks.requireLeaderForMutationHttp.mockReset()
+    mutationGateMocks.requireTorghutSimulationMutationHttp.mockReset()
   })
 
-  it('rejects run submission when this Jangar replica is not leader', async () => {
-    leaderElectionMocks.requireLeaderForMutationHttp.mockReturnValue(
-      new Response(JSON.stringify({ error: 'Not leader' }), { status: 503 }),
+  it('rejects run submission when Torghut simulation mutations are disabled', async () => {
+    mutationGateMocks.requireTorghutSimulationMutationHttp.mockReturnValue(
+      new Response(JSON.stringify({ error: 'mutations disabled' }), { status: 503 }),
     )
 
     const response = await submitSimulationRunHandler(
@@ -58,9 +58,9 @@ describe('Torghut simulation mutation routes', () => {
     expect(response.status).toBe(503)
   })
 
-  it('rejects campaign submission when this Jangar replica is not leader', async () => {
-    leaderElectionMocks.requireLeaderForMutationHttp.mockReturnValue(
-      new Response(JSON.stringify({ error: 'Not leader' }), { status: 503 }),
+  it('rejects campaign submission when Torghut simulation mutations are disabled', async () => {
+    mutationGateMocks.requireTorghutSimulationMutationHttp.mockReturnValue(
+      new Response(JSON.stringify({ error: 'mutations disabled' }), { status: 503 }),
     )
 
     const response = await submitSimulationCampaignHandler(
@@ -74,9 +74,9 @@ describe('Torghut simulation mutation routes', () => {
     expect(response.status).toBe(503)
   })
 
-  it('rejects run cancellation when this Jangar replica is not leader', async () => {
-    leaderElectionMocks.requireLeaderForMutationHttp.mockReturnValue(
-      new Response(JSON.stringify({ error: 'Not leader' }), { status: 503 }),
+  it('rejects run cancellation when Torghut simulation mutations are disabled', async () => {
+    mutationGateMocks.requireTorghutSimulationMutationHttp.mockReturnValue(
+      new Response(JSON.stringify({ error: 'mutations disabled' }), { status: 503 }),
     )
 
     const response = await cancelSimulationRunHandler('sim-1')

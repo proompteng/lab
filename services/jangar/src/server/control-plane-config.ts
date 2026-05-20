@@ -3,11 +3,6 @@ type EnvSource = Record<string, string | undefined>
 const DEFAULT_CACHE_CLUSTER_ID = 'default'
 const DEFAULT_HEARTBEAT_TTL_SECONDS = 120
 const DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 15
-const DEFAULT_LEADER_ELECTION_LEASE_NAME = 'jangar-controller-leader'
-const DEFAULT_LEADER_ELECTION_ENABLED = true
-const DEFAULT_LEADER_ELECTION_LEASE_DURATION_SECONDS = 30
-const DEFAULT_LEADER_ELECTION_RENEW_DEADLINE_SECONDS = 20
-const DEFAULT_LEADER_ELECTION_RETRY_PERIOD_SECONDS = 5
 const DEFAULT_EXECUTION_TRUST_SWARMS = ['jangar-control-plane', 'torghut-quant']
 const DEFAULT_EXECUTION_TRUST_SUMMARY_LIMIT = 20
 const DEFAULT_TORGHUT_STATUS_TIMEOUT_MS = 15000
@@ -64,19 +59,6 @@ export type ControlPlaneHeartbeatConfig = {
   sourceNamespace: string
 }
 
-export type LeaderElectionSettings = {
-  enabled: boolean
-  required: boolean
-  leaseName: string
-  leaseNamespace: string
-  leaseDurationSeconds: number
-  renewDeadlineSeconds: number
-  retryPeriodSeconds: number
-  podNamespace: string
-  podName: string
-  podUid: string | null
-}
-
 export type ControlPlaneStatusConfig = {
   executionTrustSwarms: string[]
   executionTrustSummaryLimit: number
@@ -121,47 +103,6 @@ export const resolveControlPlaneHeartbeatConfig = (env: EnvSource = process.env)
   }
 }
 
-export const resolveLeaderElectionSettings = (env: EnvSource = process.env): LeaderElectionSettings => {
-  let leaseDurationSeconds = parsePositiveInt(
-    env.JANGAR_LEADER_ELECTION_LEASE_DURATION_SECONDS,
-    DEFAULT_LEADER_ELECTION_LEASE_DURATION_SECONDS,
-    1,
-  )
-  let renewDeadlineSeconds = parsePositiveInt(
-    env.JANGAR_LEADER_ELECTION_RENEW_DEADLINE_SECONDS,
-    DEFAULT_LEADER_ELECTION_RENEW_DEADLINE_SECONDS,
-    1,
-  )
-  let retryPeriodSeconds = parsePositiveInt(
-    env.JANGAR_LEADER_ELECTION_RETRY_PERIOD_SECONDS,
-    DEFAULT_LEADER_ELECTION_RETRY_PERIOD_SECONDS,
-    1,
-  )
-
-  if (!(retryPeriodSeconds < renewDeadlineSeconds)) {
-    renewDeadlineSeconds = DEFAULT_LEADER_ELECTION_RENEW_DEADLINE_SECONDS
-    retryPeriodSeconds = DEFAULT_LEADER_ELECTION_RETRY_PERIOD_SECONDS
-  }
-  if (!(renewDeadlineSeconds < leaseDurationSeconds)) {
-    leaseDurationSeconds = DEFAULT_LEADER_ELECTION_LEASE_DURATION_SECONDS
-    renewDeadlineSeconds = DEFAULT_LEADER_ELECTION_RENEW_DEADLINE_SECONDS
-    retryPeriodSeconds = DEFAULT_LEADER_ELECTION_RETRY_PERIOD_SECONDS
-  }
-
-  return {
-    enabled: parseBoolean(env.JANGAR_LEADER_ELECTION_ENABLED, DEFAULT_LEADER_ELECTION_ENABLED),
-    required: !isRuntimeTestEnv(env) && parseBoolean(env.JANGAR_LEADER_ELECTION_REQUIRED, false),
-    leaseName: normalizeNonEmpty(env.JANGAR_LEADER_ELECTION_LEASE_NAME) ?? DEFAULT_LEADER_ELECTION_LEASE_NAME,
-    leaseNamespace: normalizeNonEmpty(env.JANGAR_LEADER_ELECTION_LEASE_NAMESPACE) ?? '',
-    leaseDurationSeconds,
-    renewDeadlineSeconds,
-    retryPeriodSeconds,
-    podNamespace: normalizeNonEmpty(env.JANGAR_POD_NAMESPACE) ?? normalizeNonEmpty(env.POD_NAMESPACE) ?? 'default',
-    podName: normalizeNonEmpty(env.HOSTNAME) ?? 'unknown',
-    podUid: normalizeNonEmpty(env.JANGAR_POD_UID),
-  }
-}
-
 export const resolveControlPlaneStatusConfig = (env: EnvSource = process.env): ControlPlaneStatusConfig => {
   const executionTrustSwarms = uniqueStrings(parseStringList(env.JANGAR_CONTROL_PLANE_EXECUTION_TRUST_SWARMS))
 
@@ -203,11 +144,6 @@ export const resolveControlPlaneCacheFreshnessConfig = (
 })
 
 export const validateControlPlaneConfig = (env: EnvSource = process.env) => {
-  const leaderElection = resolveLeaderElectionSettings(env)
-  if (!leaderElection.leaseName.trim()) {
-    throw new Error('JANGAR_LEADER_ELECTION_LEASE_NAME must not be empty')
-  }
-
   const status = resolveControlPlaneStatusConfig(env)
   if (status.torghutStatusUrl) {
     try {

@@ -48,7 +48,6 @@ The cleanup program moved the highest-risk application boundaries behind explici
   - `services/jangar/src/server/terminal-worktrees.ts`
   - `services/jangar/src/server/terminal-command-runner.ts`
 - Kubernetes
-  - `services/jangar/src/server/kube-gateway.ts`
   - `services/jangar/src/server/primitives-kube.ts`
   - `services/jangar/src/server/primitives-watch.ts`
   - `services/jangar/src/server/kube-watch.ts`
@@ -157,7 +156,7 @@ These ownership lanes are the operational review boundaries for Jangar changes.
   - `services/jangar/src/server/primitives-*.ts`
 - Domain readiness and typed Agents service consumers
   - `@proompteng/agent-contracts/*-client` imports in `services/jangar/src/server/**`
-  - `services/jangar/src/server/leader-election.ts`
+  - `services/jangar/src/server/torghut-simulation-mutation-gate.ts`
   - `services/jangar/src/server/control-plane-*.ts`
 - Agents-owned platform surfaces
   - `services/agents/**`
