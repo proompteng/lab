@@ -14,6 +14,7 @@ const protectedBoundaryTriggerPaths = [
   'argocd/applications/froussard/**',
   'argocd/applications/graf/**',
   'argocd/applications/traefik/values.yaml',
+  'argocd/applications/torghut/**',
   'charts/agents/**',
   'docs/agents/**',
   'docs/autonomous-codex-design.md',
@@ -23,6 +24,8 @@ const protectedBoundaryTriggerPaths = [
   'docs/jangar/jangar-application-dependency-tree.md',
   'docs/runbooks/codex-docker.md',
   'docs/runbooks/kafka-broker-storage-recovery.md',
+  'docs/torghut/whitepaper-research-workflow.md',
+  'docs/torghut/design-system/v5/12-dspy-framework-adoption-for-quant-llm-autonomous-trading-2026-02-25.md',
   'packages/scripts/src/agents/**',
   'proto/proompteng/facteur/v1/contract.proto',
   'services/agents/**',
@@ -34,6 +37,16 @@ const protectedBoundaryTriggerPaths = [
   'services/graf/src/test/kotlin/**',
   'services/graf/README.md',
   'services/graf/build.gradle.kts',
+  'services/torghut/app/main.py',
+  'services/torghut/app/config.py',
+  'services/torghut/app/trading/llm/**',
+  'services/torghut/app/whitepapers/**',
+  'services/torghut/scripts/run_dspy_workflow.py',
+  'services/torghut/tests/test_live_config_manifest_contract.py',
+  'services/torghut/tests/test_llm_dspy_workflow.py',
+  'services/torghut/tests/test_run_dspy_workflow.py',
+  'services/torghut/tests/test_whitepaper_api.py',
+  'services/torghut/tests/test_whitepaper_workflow.py',
   'scripts/agents/**',
 ]
 
@@ -169,6 +182,7 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('workflow_name|workflow_uid|workflow_namespace|codex_judge_runs_workflow')
     expect(content).toContain('workflow-shaped agent-message identity fields')
     expect(content).toContain('Agents implementation contracts must not normalize workflow-shaped stage aliases')
+    expect(content).toContain('Torghut AgentRun producers must use Agents naming and service defaults')
     expect(content).toContain('retired workflow.general subjects')
     expect(content).toContain('Agents-owned controller witness design')
     expect(content).toContain('Jangar whitepaper fixtures for generic control-plane APIs')

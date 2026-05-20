@@ -18,8 +18,14 @@ from app.whitepapers.workflow import IssueKickoffResult
 class TestWhitepaperApi(TestCase):
     def setUp(self) -> None:
         self._saved_whitepaper_token = os.environ.get("WHITEPAPER_WORKFLOW_API_TOKEN")
+        self._saved_whitepaper_agentrun_token = os.environ.get(
+            "WHITEPAPER_AGENTRUN_API_TOKEN"
+        )
+        self._saved_agents_api_key = os.environ.get("AGENTS_API_KEY")
         self._saved_jangar_api_key = os.environ.get("JANGAR_API_KEY")
         os.environ.pop("WHITEPAPER_WORKFLOW_API_TOKEN", None)
+        os.environ.pop("WHITEPAPER_AGENTRUN_API_TOKEN", None)
+        os.environ.pop("AGENTS_API_KEY", None)
         os.environ.pop("JANGAR_API_KEY", None)
 
         self.engine = create_engine(
@@ -49,6 +55,16 @@ class TestWhitepaperApi(TestCase):
             os.environ["WHITEPAPER_WORKFLOW_API_TOKEN"] = self._saved_whitepaper_token
         else:
             os.environ.pop("WHITEPAPER_WORKFLOW_API_TOKEN", None)
+        if self._saved_whitepaper_agentrun_token is not None:
+            os.environ["WHITEPAPER_AGENTRUN_API_TOKEN"] = (
+                self._saved_whitepaper_agentrun_token
+            )
+        else:
+            os.environ.pop("WHITEPAPER_AGENTRUN_API_TOKEN", None)
+        if self._saved_agents_api_key is not None:
+            os.environ["AGENTS_API_KEY"] = self._saved_agents_api_key
+        else:
+            os.environ.pop("AGENTS_API_KEY", None)
         if self._saved_jangar_api_key is not None:
             os.environ["JANGAR_API_KEY"] = self._saved_jangar_api_key
         else:
@@ -78,7 +94,9 @@ class TestWhitepaperApi(TestCase):
         ),
     )
     def test_ingest_issue_endpoint(self, _mock_ingest: object) -> None:
-        response = self.client.post("/whitepapers/events/github-issue", json={"event": "issues"})
+        response = self.client.post(
+            "/whitepapers/events/github-issue", json={"event": "issues"}
+        )
         self.assertEqual(response.status_code, 202)
         payload = response.json()
         self.assertTrue(payload["accepted"])
@@ -99,23 +117,31 @@ class TestWhitepaperApi(TestCase):
         return_value={"run_id": "wp-1", "status": "completed"},
     )
     def test_finalize_endpoint(self, _mock_finalize: object) -> None:
-        response = self.client.post("/whitepapers/runs/wp-1/finalize", json={"status": "completed"})
+        response = self.client.post(
+            "/whitepapers/runs/wp-1/finalize", json={"status": "completed"}
+        )
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["status"], "completed")
 
     def test_control_endpoints_require_token_when_configured(self) -> None:
-        with patch.dict(os.environ, {"WHITEPAPER_WORKFLOW_API_TOKEN": "secret-token"}, clear=False):
-            response = self.client.post("/whitepapers/runs/wp-1/finalize", json={"status": "completed"})
+        with patch.dict(os.environ, {"AGENTS_API_KEY": "secret-token"}, clear=False):
+            response = self.client.post(
+                "/whitepapers/runs/wp-1/finalize", json={"status": "completed"}
+            )
             self.assertEqual(response.status_code, 401)
-            self.assertEqual(response.json()["detail"], "whitepaper_control_auth_required")
+            self.assertEqual(
+                response.json()["detail"], "whitepaper_control_auth_required"
+            )
 
     @patch(
         "app.main.WHITEPAPER_WORKFLOW.finalize_run",
         return_value={"run_id": "wp-1", "status": "completed"},
     )
     def test_control_endpoints_accept_valid_token(self, _mock_finalize: object) -> None:
-        with patch.dict(os.environ, {"WHITEPAPER_WORKFLOW_API_TOKEN": "secret-token"}, clear=False):
+        with patch.dict(
+            os.environ, {"WHITEPAPER_AGENTRUN_API_TOKEN": "secret-token"}, clear=False
+        ):
             response = self.client.post(
                 "/whitepapers/runs/wp-1/finalize",
                 json={"status": "completed"},
@@ -125,7 +151,11 @@ class TestWhitepaperApi(TestCase):
 
     @patch(
         "app.main.WHITEPAPER_WORKFLOW.approve_for_engineering",
-        return_value={"run_id": "wp-1", "status": "completed", "engineering_trigger": {"decision": "dispatched"}},
+        return_value={
+            "run_id": "wp-1",
+            "status": "completed",
+            "engineering_trigger": {"decision": "dispatched"},
+        },
     )
     def test_manual_approve_endpoint(self, _mock_approve: object) -> None:
         response = self.client.post(
@@ -141,10 +171,14 @@ class TestWhitepaperApi(TestCase):
         self.assertEqual(payload["engineering_trigger"]["decision"], "dispatched")
 
     @patch("app.main.whitepaper_semantic_indexing_enabled", return_value=False)
-    def test_semantic_search_rejected_when_disabled(self, _mock_semantic_enabled: object) -> None:
+    def test_semantic_search_rejected_when_disabled(
+        self, _mock_semantic_enabled: object
+    ) -> None:
         response = self.client.get("/whitepapers/search?q=quant+signal")
         self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.json()["detail"], "whitepaper_semantic_search_disabled")
+        self.assertEqual(
+            response.json()["detail"], "whitepaper_semantic_search_disabled"
+        )
 
     @patch("app.main.whitepaper_semantic_indexing_enabled", return_value=True)
     @patch(
@@ -153,7 +187,11 @@ class TestWhitepaperApi(TestCase):
             "items": [
                 {
                     "run_id": "wp-1",
-                    "chunk": {"source_scope": "synthesis", "chunk_index": 0, "snippet": "alpha discovery"},
+                    "chunk": {
+                        "source_scope": "synthesis",
+                        "chunk_index": 0,
+                        "snippet": "alpha discovery",
+                    },
                     "semantic_distance": 0.18,
                     "lexical_score": 0.31,
                     "hybrid_score": 0.029,

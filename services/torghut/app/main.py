@@ -212,6 +212,8 @@ def _extract_bearer_token(authorization_header: str | None) -> str | None:
 def _require_whitepaper_control_token(request: Request) -> None:
     expected_token = (
         os.getenv("WHITEPAPER_WORKFLOW_API_TOKEN", "").strip()
+        or os.getenv("WHITEPAPER_AGENTRUN_API_TOKEN", "").strip()
+        or os.getenv("AGENTS_API_KEY", "").strip()
         or os.getenv("JANGAR_API_KEY", "").strip()
     )
     if not expected_token:
@@ -2210,6 +2212,8 @@ def whitepaper_status() -> dict[str, object]:
     worker_running = bool(task is not None and not task.done())
     control_token = (
         os.getenv("WHITEPAPER_WORKFLOW_API_TOKEN", "").strip()
+        or os.getenv("WHITEPAPER_AGENTRUN_API_TOKEN", "").strip()
+        or os.getenv("AGENTS_API_KEY", "").strip()
         or os.getenv("JANGAR_API_KEY", "").strip()
     )
     return {

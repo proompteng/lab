@@ -1638,6 +1638,11 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Agents control-plane API for AgentRun submission. JANGAR_* remains a read-only compatibility alias
+    # only where older product callers still provide it explicitly.
+    agents_base_url: Optional[str] = Field(default=None, alias="AGENTS_BASE_URL")
+    agents_api_key: Optional[str] = Field(default=None, alias="AGENTS_API_KEY")
+
     # Jangar gateway (recommended for LLM calls in-cluster).
     jangar_base_url: Optional[str] = Field(default=None, alias="JANGAR_BASE_URL")
     jangar_api_key: Optional[str] = Field(default=None, alias="JANGAR_API_KEY")

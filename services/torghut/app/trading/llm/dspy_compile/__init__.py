@@ -39,7 +39,7 @@ from .workflow import (
     orchestrate_dspy_agentrun_workflow,
     build_promotion_record,
     bundle_artifacts,
-    submit_jangar_agentrun,
+    submit_agents_agentrun,
     upsert_workflow_artifact_record,
     write_artifact_bundle,
 )
@@ -77,7 +77,7 @@ __all__ = [
     "canonical_json",
     "hash_payload",
     "sha256_hex",
-    "submit_jangar_agentrun",
+    "submit_agents_agentrun",
     "upsert_workflow_artifact_record",
     "write_artifact_bundle",
 ]

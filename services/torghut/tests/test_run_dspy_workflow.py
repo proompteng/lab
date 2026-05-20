@@ -23,7 +23,9 @@ class _FakeSessionContext:
 
 
 class TestRunDSPyWorkflowScript(TestCase):
-    def test_main_passes_priority_id_and_writes_completed_iteration_report(self) -> None:
+    def test_main_passes_priority_id_and_writes_completed_iteration_report(
+        self,
+    ) -> None:
         with TemporaryDirectory() as tmpdir:
             artifact_root = Path(tmpdir) / "artifacts" / "dspy" / "run-1"
             responses = {
@@ -52,7 +54,9 @@ class TestRunDSPyWorkflowScript(TestCase):
                     str(artifact_root),
                 ],
             ):
-                with patch.object(run_dspy_workflow, "SessionLocal", return_value=MagicMock()):
+                with patch.object(
+                    run_dspy_workflow, "SessionLocal", return_value=MagicMock()
+                ):
                     run_dspy_workflow.SessionLocal.return_value = _FakeSessionContext()
                     with patch(
                         "scripts.run_dspy_workflow.orchestrate_dspy_agentrun_workflow",
@@ -77,11 +81,17 @@ class TestRunDSPyWorkflowScript(TestCase):
             self.assertTrue(iteration_path.exists())
             iteration_report = iteration_path.read_text(encoding="utf-8")
             self.assertIn("- status: completed", iteration_report)
-            self.assertIn(f"- artifact_path: {artifact_root.resolve()}", iteration_report)
+            self.assertIn(
+                f"- artifact_path: {artifact_root.resolve()}", iteration_report
+            )
             self.assertIn("- priority_id: P-1", iteration_report)
-            self.assertIn("- responses: compile, dataset-build, eval, promote", iteration_report)
+            self.assertIn(
+                "- responses: compile, dataset-build, eval, promote", iteration_report
+            )
 
-    def test_build_lane_overrides_includes_promote_artifact_hash_when_provided(self) -> None:
+    def test_build_lane_overrides_includes_promote_artifact_hash_when_provided(
+        self,
+    ) -> None:
         with TemporaryDirectory() as tmpdir:
             artifact_root = Path(tmpdir) / "artifacts" / "dspy" / "run-hash"
             argv = [
@@ -117,6 +127,33 @@ class TestRunDSPyWorkflowScript(TestCase):
                 "symbols:AAPL,MSFT,NVDA",
             )
 
+    def test_default_base_url_prefers_agents_settings(self) -> None:
+        original_agents_base_url = run_dspy_workflow.settings.agents_base_url
+        original_jangar_base_url = run_dspy_workflow.settings.jangar_base_url
+        try:
+            run_dspy_workflow.settings.agents_base_url = "http://agents.test/"
+            run_dspy_workflow.settings.jangar_base_url = "http://jangar.test/"
+            self.assertEqual(
+                run_dspy_workflow._default_base_url(), "http://agents.test"
+            )
+        finally:
+            run_dspy_workflow.settings.agents_base_url = original_agents_base_url
+            run_dspy_workflow.settings.jangar_base_url = original_jangar_base_url
+
+    def test_default_base_url_falls_back_to_agents_service(self) -> None:
+        original_agents_base_url = run_dspy_workflow.settings.agents_base_url
+        original_jangar_base_url = run_dspy_workflow.settings.jangar_base_url
+        try:
+            run_dspy_workflow.settings.agents_base_url = None
+            run_dspy_workflow.settings.jangar_base_url = None
+            self.assertEqual(
+                run_dspy_workflow._default_base_url(),
+                "http://agents.agents.svc.cluster.local",
+            )
+        finally:
+            run_dspy_workflow.settings.agents_base_url = original_agents_base_url
+            run_dspy_workflow.settings.jangar_base_url = original_jangar_base_url
+
     def test_main_records_failure_iteration_report_when_orchestration_fails(
         self,
     ) -> None:
@@ -140,13 +177,17 @@ class TestRunDSPyWorkflowScript(TestCase):
                     str(artifact_root),
                 ],
             ):
-                with patch.object(run_dspy_workflow, "SessionLocal", return_value=MagicMock()):
+                with patch.object(
+                    run_dspy_workflow, "SessionLocal", return_value=MagicMock()
+                ):
                     run_dspy_workflow.SessionLocal.return_value = _FakeSessionContext()
                     with patch(
                         "scripts.run_dspy_workflow.orchestrate_dspy_agentrun_workflow",
                         side_effect=RuntimeError("promotion_gate_blocked"),
                     ) as orchestrate_mock:
-                        with self.assertRaisesRegex(RuntimeError, "promotion_gate_blocked"):
+                        with self.assertRaisesRegex(
+                            RuntimeError, "promotion_gate_blocked"
+                        ):
                             run_dspy_workflow.main()
                         orchestrate_mock.assert_called_once()
 

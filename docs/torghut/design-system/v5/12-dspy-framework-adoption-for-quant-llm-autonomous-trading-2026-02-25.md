@@ -95,9 +95,9 @@ Create `services/torghut/app/trading/llm/dspy_compile/`:
 - compile outputs stored as immutable artifacts (`artifact_uri`, `artifact_hash`, `dataset_hash`, `metric_bundle`),
 - promotion to paper/shadow/live references DSPy artifact version in gate evidence.
 
-## Jangar Control-Plane Compatibility (Required)
+## Agents Control-Plane Compatibility (Required)
 
-All DSPy automation must be represented as Jangar AgentRuns (or Orchestration steps that create AgentRuns) with these rules:
+All DSPy automation must be represented as Agents AgentRuns (or Orchestration steps that create AgentRuns) with these rules:
 
 1. create runs through `POST /v1/agent-runs`,
 2. provide idempotency via request `Idempotency-Key` and payload `idempotencyKey`,
@@ -231,8 +231,8 @@ Required payload shape (conceptual):
 
 ## Acceptance Criteria
 
-- At least one DSPy compile/eval/promotion cycle is executed via Jangar AgentRuns end-to-end.
-- Jangar idempotency and policy checks pass for DSPy lanes with no manual CRD patching.
+- At least one DSPy compile/eval/promotion cycle is executed via Agents AgentRuns end-to-end.
+- Agents idempotency and policy checks pass for DSPy lanes with no manual CRD patching.
 - Runtime shadow pilot demonstrates schema-valid DSPy advisory outputs and deterministic fallback behavior.
 - Promotion evidence includes DSPy artifact hash and evaluation report pointers.
 

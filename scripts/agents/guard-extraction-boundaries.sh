@@ -1103,6 +1103,16 @@ fail_if_matches \
   "${ROOT_DIR}/docs/jangar/codex-judge-argo-implementation.md"
 
 fail_if_matches \
+  "Torghut AgentRun producers must use Agents naming and service defaults" \
+  'submit_jangar_agentrun|get_jangar_agentrun|wait_for_jangar_agentrun_terminal_status|_submit_jangar_agentrun|jangar_agentrun|jangar_submit_http|invalid_jangar_response|Jangar AgentRuns|Jangar /v1/agent-runs|http://jangar\.jangar\.svc\.cluster\.local/v1/agent-runs' \
+  "${ROOT_DIR}/services/torghut/app/trading/llm/dspy_compile" \
+  "${ROOT_DIR}/services/torghut/app/trading/llm/__init__.py" \
+  "${ROOT_DIR}/services/torghut/app/whitepapers/workflow.py" \
+  "${ROOT_DIR}/services/torghut/scripts/run_dspy_workflow.py" \
+  "${ROOT_DIR}/docs/torghut/whitepaper-research-workflow.md" \
+  "${ROOT_DIR}/docs/torghut/design-system/v5/12-dspy-framework-adoption-for-quant-llm-autonomous-trading-2026-02-25.md"
+
+fail_if_matches \
   "Froussard webhook/runtime identity must be AgentRun-native, not Argo workflow-native" \
   'ARGO_WORKFLOW_|workflowIdentifier|_Workflow:' \
   "${ROOT_DIR}/apps/froussard/src"

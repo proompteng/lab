@@ -12,7 +12,7 @@ from .dspy_compile import (
     evaluate_dspy_compile_artifact,
     orchestrate_dspy_agentrun_workflow,
     build_promotion_record,
-    submit_jangar_agentrun,
+    submit_agents_agentrun,
     write_artifact_bundle,
 )
 from .dspy_programs import DSPyReviewRuntime, DSPyRuntimeError
@@ -37,6 +37,6 @@ __all__ = [
     "evaluate_dspy_compile_artifact",
     "orchestrate_dspy_agentrun_workflow",
     "build_promotion_record",
-    "submit_jangar_agentrun",
+    "submit_agents_agentrun",
     "write_artifact_bundle",
 ]
