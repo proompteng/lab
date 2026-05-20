@@ -65,10 +65,12 @@ The control-plane status surface is now composed from collector modules instead 
 
 - `services/jangar/src/server/control-plane-status.ts`
 - `services/jangar/src/server/control-plane-execution-trust.ts`
-- `services/jangar/src/server/control-plane-workflows.ts`
-- `services/jangar/src/server/control-plane-rollout-health.ts`
 - `services/jangar/src/server/control-plane-db-status.ts`
 - `services/jangar/src/server/control-plane-empirical-services.ts`
+
+Generic Agents workflow reliability and rollout-health evidence is owned by `services/agents` and consumed through the
+Agents control-plane status/resource APIs. Jangar keeps only domain interpretation modules for Torghut/Jangar readiness
+and repair evidence.
 
 Module size is also guarded in CI:
 

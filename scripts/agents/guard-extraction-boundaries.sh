@@ -560,7 +560,8 @@ fail_if_matches \
   "${ROOT_DIR}/services/agents/src/server/agent-comms-subscriber.ts" \
   "${ROOT_DIR}/services/agents/src/server/codex-callbacks.ts" \
   "${ROOT_DIR}/services/agents/src/routes/api/agents/events.ts" \
-  "${ROOT_DIR}/services/agents/src/server/db.ts"
+  "${ROOT_DIR}/services/agents/src/server/db.ts" \
+  "${ROOT_DIR}/services/agents/src/server/migrations"
 
 fail_if_matches \
   "Agents GitOps must not ship the old sample Argo WorkflowTemplate schedule bridge" \
