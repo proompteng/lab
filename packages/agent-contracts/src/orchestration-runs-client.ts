@@ -1,4 +1,4 @@
-import { postAgentsJson, type EnvSource } from './agents-http'
+import { postAgentsJsonEffect, runAgentsJsonPromise, type EnvSource } from './agents-http'
 
 export type AgentsOrchestrationRunSubmitInput = {
   deliveryId: string
@@ -14,11 +14,11 @@ export type AgentsOrchestrationRunSubmitResult = {
   idempotent: boolean
 }
 
-export const submitOrchestrationRunToAgentsService = async (
+export const submitOrchestrationRunToAgentsServiceJsonEffect = (
   input: AgentsOrchestrationRunSubmitInput,
   env: EnvSource = process.env,
-): Promise<AgentsOrchestrationRunSubmitResult> => {
-  const result = await postAgentsJson<Record<string, unknown>>(
+) =>
+  postAgentsJsonEffect<Record<string, unknown>>(
     '/v1/orchestration-runs',
     {
       orchestrationRef: input.orchestrationRef,
@@ -31,6 +31,12 @@ export const submitOrchestrationRunToAgentsService = async (
       idempotencyKey: input.deliveryId,
     },
   )
+
+export const submitOrchestrationRunToAgentsService = async (
+  input: AgentsOrchestrationRunSubmitInput,
+  env: EnvSource = process.env,
+): Promise<AgentsOrchestrationRunSubmitResult> => {
+  const result = await runAgentsJsonPromise(submitOrchestrationRunToAgentsServiceJsonEffect(input, env))
 
   if (!result.ok) {
     const message = result.error ?? `Agents service returned HTTP ${result.status}`

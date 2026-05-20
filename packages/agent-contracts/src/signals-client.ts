@@ -1,4 +1,4 @@
-import { postAgentsJson, type AgentsServiceJsonResult, type EnvSource } from './agents-http'
+import { postAgentsJsonEffect, runAgentsJsonPromise, type AgentsServiceJsonResult, type EnvSource } from './agents-http'
 import {
   SWARM_REQUIREMENT_LABEL_CHANNEL,
   SWARM_REQUIREMENT_LABEL_FROM,
@@ -73,11 +73,21 @@ export const buildSwarmRequirementSignalResource = (
   }
 }
 
+export const submitSwarmRequirementSignalToAgentsServiceEffect = (
+  input: AgentsSwarmRequirementSignalSubmitInput,
+  env: EnvSource = process.env,
+) =>
+  postAgentsJsonEffect<AgentsSignalResourceResult>(
+    '/v1/signals/resources',
+    buildSwarmRequirementSignalResource(input),
+    {
+      env,
+      idempotencyKey: input.deliveryId,
+    },
+  )
+
 export const submitSwarmRequirementSignalToAgentsService = async (
   input: AgentsSwarmRequirementSignalSubmitInput,
   env: EnvSource = process.env,
 ): Promise<AgentsServiceJsonResult<AgentsSignalResourceResult>> =>
-  postAgentsJson<AgentsSignalResourceResult>('/v1/signals/resources', buildSwarmRequirementSignalResource(input), {
-    env,
-    idempotencyKey: input.deliveryId,
-  })
+  runAgentsJsonPromise(submitSwarmRequirementSignalToAgentsServiceEffect(input, env))

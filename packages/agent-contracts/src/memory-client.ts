@@ -1,7 +1,8 @@
 import {
   buildAgentsServiceUrl,
-  fetchAgentsJson,
-  postAgentsJson,
+  fetchAgentsJsonEffect,
+  postAgentsJsonEffect,
+  runAgentsJsonPromise,
   servicePath,
   type AgentsServiceJsonResult,
   type EnvSource,
@@ -23,16 +24,22 @@ export type AgentsMemoryResourceResult = {
   resource?: AgentsMemoryResource | null
 }
 
-export const fetchMemoryResourceFromAgentsService = async (
+export const fetchMemoryResourceFromAgentsServiceEffect = (
   input: AgentsMemoryResourceInput,
   env: EnvSource = process.env,
-): Promise<AgentsServiceJsonResult<AgentsMemoryResourceResult>> => {
+) => {
   const targetUrl = buildAgentsServiceUrl('/v1/memories/resources', env)
   targetUrl.searchParams.set('name', input.name)
   const namespace = input.namespace?.trim()
   if (namespace) targetUrl.searchParams.set('namespace', namespace)
-  return fetchAgentsJson<AgentsMemoryResourceResult>(servicePath(targetUrl), env)
+  return fetchAgentsJsonEffect<AgentsMemoryResourceResult>(servicePath(targetUrl), env)
 }
+
+export const fetchMemoryResourceFromAgentsService = async (
+  input: AgentsMemoryResourceInput,
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<AgentsMemoryResourceResult>> =>
+  runAgentsJsonPromise(fetchMemoryResourceFromAgentsServiceEffect(input, env))
 
 export type AgentsMemoryOperation =
   | {
@@ -72,18 +79,24 @@ export type AgentsMemoryOperationResult = {
   results?: { key: string; score: number | null; metadata: Record<string, unknown> }[]
 }
 
-export const submitMemoryOperationToAgentsService = async (
+export const submitMemoryOperationToAgentsServiceEffect = (
   input: AgentsMemoryOperationInput,
   env: EnvSource = process.env,
-): Promise<AgentsServiceJsonResult<AgentsMemoryOperationResult>> => {
+) => {
   const payload = {
     memoryRef: input.memoryRef,
     ...(input.namespace ? { namespace: input.namespace } : {}),
     ...input.operation,
   }
 
-  return postAgentsJson<AgentsMemoryOperationResult>('/v1/memory-operations', payload, {
+  return postAgentsJsonEffect<AgentsMemoryOperationResult>('/v1/memory-operations', payload, {
     env,
     idempotencyKey: input.deliveryId,
   })
 }
+
+export const submitMemoryOperationToAgentsService = async (
+  input: AgentsMemoryOperationInput,
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<AgentsMemoryOperationResult>> =>
+  runAgentsJsonPromise(submitMemoryOperationToAgentsServiceEffect(input, env))

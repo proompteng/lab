@@ -1,4 +1,9 @@
-import { fetchAgentsJson, type AgentsServiceJsonResult, type EnvSource } from './agents-http'
+import {
+  fetchAgentsJsonEffect,
+  runAgentsJsonPromise,
+  type AgentsServiceJsonResult,
+  type EnvSource,
+} from './agents-http'
 
 export type { AgentsServiceJsonResult } from './agents-http'
 
@@ -41,6 +46,10 @@ export const buildAgentsDependencyHealth = (
   }
 }
 
+export const fetchAgentsHealthFromAgentsServiceEffect = (env: EnvSource = process.env) =>
+  fetchAgentsJsonEffect<AgentsHealthPayload>('/health', env)
+
 export const fetchAgentsHealthFromAgentsService = async (
   env: EnvSource = process.env,
-): Promise<AgentsServiceJsonResult<AgentsHealthPayload>> => fetchAgentsJson<AgentsHealthPayload>('/health', env)
+): Promise<AgentsServiceJsonResult<AgentsHealthPayload>> =>
+  runAgentsJsonPromise(fetchAgentsHealthFromAgentsServiceEffect(env))

@@ -1,7 +1,8 @@
 import {
   buildAgentsServiceUrl,
-  fetchAgentsJson,
-  postAgentsJson,
+  fetchAgentsJsonEffect,
+  postAgentsJsonEffect,
+  runAgentsJsonPromise,
   servicePath,
   type AgentsServiceJsonResult,
   type EnvSource,
@@ -56,10 +57,10 @@ export type AgentsAgentRunTerminalEventAckResult = {
   resource: Record<string, unknown>
 }
 
-export const fetchAgentRunTerminalEventsFromAgentsService = async (
+export const fetchAgentRunTerminalEventsFromAgentsServiceEffect = (
   input: AgentsAgentRunTerminalEventsListInput = {},
   env: EnvSource = process.env,
-): Promise<AgentsServiceJsonResult<AgentsAgentRunTerminalEventsListResult>> => {
+) => {
   const targetUrl = buildAgentsServiceUrl('/v1/agent-runs/terminal-events', env)
   const namespace = input.namespace?.trim()
   if (namespace) targetUrl.searchParams.set('namespace', namespace)
@@ -71,11 +72,22 @@ export const fetchAgentRunTerminalEventsFromAgentsService = async (
     targetUrl.searchParams.set('includeAcked', input.includeAcked ? 'true' : 'false')
   }
   if (input.limit && input.limit > 0) targetUrl.searchParams.set('limit', String(Math.trunc(input.limit)))
-  return fetchAgentsJson<AgentsAgentRunTerminalEventsListResult>(servicePath(targetUrl), env)
+  return fetchAgentsJsonEffect<AgentsAgentRunTerminalEventsListResult>(servicePath(targetUrl), env)
 }
+
+export const fetchAgentRunTerminalEventsFromAgentsService = async (
+  input: AgentsAgentRunTerminalEventsListInput = {},
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<AgentsAgentRunTerminalEventsListResult>> =>
+  runAgentsJsonPromise(fetchAgentRunTerminalEventsFromAgentsServiceEffect(input, env))
+
+export const ackAgentRunTerminalEventViaAgentsServiceEffect = (
+  input: AgentsAgentRunTerminalEventAckInput,
+  env: EnvSource = process.env,
+) => postAgentsJsonEffect<AgentsAgentRunTerminalEventAckResult>('/v1/agent-runs/terminal-events/ack', input, { env })
 
 export const ackAgentRunTerminalEventViaAgentsService = async (
   input: AgentsAgentRunTerminalEventAckInput,
   env: EnvSource = process.env,
 ): Promise<AgentsServiceJsonResult<AgentsAgentRunTerminalEventAckResult>> =>
-  postAgentsJson<AgentsAgentRunTerminalEventAckResult>('/v1/agent-runs/terminal-events/ack', input, { env })
+  runAgentsJsonPromise(ackAgentRunTerminalEventViaAgentsServiceEffect(input, env))

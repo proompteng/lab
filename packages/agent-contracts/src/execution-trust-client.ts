@@ -1,6 +1,7 @@
 import {
   buildAgentsServiceUrl,
-  fetchAgentsJson,
+  fetchAgentsJsonEffect,
+  runAgentsJsonPromise,
   servicePath,
   type AgentsServiceJsonResult,
   type EnvSource,
@@ -13,10 +14,10 @@ export type AgentsExecutionTrustGetInput = {
   summaryLimit?: number | null
 }
 
-export const fetchExecutionTrustFromAgentsService = async (
+export const fetchExecutionTrustFromAgentsServiceEffect = (
   input: AgentsExecutionTrustGetInput = {},
   env: EnvSource = process.env,
-): Promise<AgentsServiceJsonResult<ExecutionTrustSnapshot>> => {
+) => {
   const targetUrl = buildAgentsServiceUrl('/v1/control-plane/execution-trust', env)
   const namespace = input.namespace?.trim()
   if (namespace) targetUrl.searchParams.set('namespace', namespace)
@@ -25,5 +26,11 @@ export const fetchExecutionTrustFromAgentsService = async (
   if (input.summaryLimit && input.summaryLimit > 0) {
     targetUrl.searchParams.set('summaryLimit', String(Math.trunc(input.summaryLimit)))
   }
-  return fetchAgentsJson<ExecutionTrustSnapshot>(servicePath(targetUrl), env)
+  return fetchAgentsJsonEffect<ExecutionTrustSnapshot>(servicePath(targetUrl), env)
 }
+
+export const fetchExecutionTrustFromAgentsService = async (
+  input: AgentsExecutionTrustGetInput = {},
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<ExecutionTrustSnapshot>> =>
+  runAgentsJsonPromise(fetchExecutionTrustFromAgentsServiceEffect(input, env))

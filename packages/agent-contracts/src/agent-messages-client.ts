@@ -1,4 +1,4 @@
-import { postAgentsJson, type EnvSource } from './agents-http'
+import { postAgentsJsonEffect, runAgentsJsonPromise, type EnvSource } from './agents-http'
 
 export type AgentsAgentMessageInput = {
   agentRunUid: string | null
@@ -33,11 +33,16 @@ export type AgentsAgentMessagesSubmitResult = {
   skipped: boolean
 }
 
+export const submitAgentMessagesToAgentsServiceJsonEffect = (
+  input: AgentsAgentMessagesSubmitInput,
+  env: EnvSource = process.env,
+) => postAgentsJsonEffect<Record<string, unknown>>('/v1/agent-messages', input, { env })
+
 export const submitAgentMessagesToAgentsService = async (
   input: AgentsAgentMessagesSubmitInput,
   env: EnvSource = process.env,
 ): Promise<AgentsAgentMessagesSubmitResult> => {
-  const result = await postAgentsJson<Record<string, unknown>>('/v1/agent-messages', input, { env })
+  const result = await runAgentsJsonPromise(submitAgentMessagesToAgentsServiceJsonEffect(input, env))
   if (!result.ok) {
     const message = result.error ?? `Agents service returned HTTP ${result.status}`
     throw new Error(`Agents service agent messages submit failed (${result.status}): ${message}`)

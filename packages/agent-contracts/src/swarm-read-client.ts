@@ -1,7 +1,8 @@
 import {
   appendAgentsListParams,
   buildAgentsServiceUrl,
-  fetchAgentsJson,
+  fetchAgentsJsonEffect,
+  runAgentsJsonPromise,
   servicePath,
   type AgentsResourceListInput,
   type AgentsServiceJsonResult,
@@ -34,24 +35,36 @@ export type AgentsStageTargetResourceResult = {
   resource?: AgentsStageTargetResource | null
 }
 
+export const fetchSwarmResourcesFromAgentsServiceEffect = (
+  input: AgentsSwarmResourceListInput = {},
+  env: EnvSource = process.env,
+) => {
+  const targetUrl = buildAgentsServiceUrl('/v1/swarms/resources', env)
+  appendAgentsListParams(targetUrl, input)
+  return fetchAgentsJsonEffect<AgentsSwarmResourcesResult>(servicePath(targetUrl), env)
+}
+
 export const fetchSwarmResourcesFromAgentsService = async (
   input: AgentsSwarmResourceListInput = {},
   env: EnvSource = process.env,
-): Promise<AgentsServiceJsonResult<AgentsSwarmResourcesResult>> => {
-  const targetUrl = buildAgentsServiceUrl('/v1/swarms/resources', env)
-  appendAgentsListParams(targetUrl, input)
-  return fetchAgentsJson<AgentsSwarmResourcesResult>(servicePath(targetUrl), env)
-}
+): Promise<AgentsServiceJsonResult<AgentsSwarmResourcesResult>> =>
+  runAgentsJsonPromise(fetchSwarmResourcesFromAgentsServiceEffect(input, env))
 
-export const fetchStageTargetResourceFromAgentsService = async (
+export const fetchStageTargetResourceFromAgentsServiceEffect = (
   input: AgentsStageTargetResourceGetInput,
   env: EnvSource = process.env,
-): Promise<AgentsServiceJsonResult<AgentsStageTargetResourceResult>> => {
+) => {
   const { kind, ...resourceInput } = input
   const path = kind === 'AgentRun' ? '/v1/agent-runs/resources' : '/v1/orchestration-runs/resources'
   const targetUrl = buildAgentsServiceUrl(path, env)
   targetUrl.searchParams.set('name', resourceInput.name)
   const namespace = resourceInput.namespace?.trim()
   if (namespace) targetUrl.searchParams.set('namespace', namespace)
-  return fetchAgentsJson<AgentsStageTargetResourceResult>(servicePath(targetUrl), env)
+  return fetchAgentsJsonEffect<AgentsStageTargetResourceResult>(servicePath(targetUrl), env)
 }
+
+export const fetchStageTargetResourceFromAgentsService = async (
+  input: AgentsStageTargetResourceGetInput,
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<AgentsStageTargetResourceResult>> =>
+  runAgentsJsonPromise(fetchStageTargetResourceFromAgentsServiceEffect(input, env))

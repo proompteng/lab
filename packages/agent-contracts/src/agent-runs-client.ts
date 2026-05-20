@@ -1,9 +1,10 @@
 import {
   appendAgentsListParams,
   buildAgentsServiceUrl,
-  fetchAgentsJson,
-  patchAgentsJson,
-  postAgentsJson,
+  fetchAgentsJsonEffect,
+  patchAgentsJsonEffect,
+  postAgentsJsonEffect,
+  runAgentsJsonPromise,
   servicePath,
   type AgentsResourceListInput,
   type AgentsServiceJsonResult,
@@ -58,24 +59,24 @@ export type AgentsAgentRunAnnotationsPatchInput = {
   annotations: Record<string, string | null>
 }
 
-export const submitAgentRunToAgentsService = async (
-  input: AgentsAgentRunSubmitInput,
-  env: EnvSource = process.env,
-): Promise<AgentsServiceJsonResult<Record<string, unknown>>> => {
+export const submitAgentRunToAgentsServiceEffect = (input: AgentsAgentRunSubmitInput, env: EnvSource = process.env) => {
   const targetUrl = buildAgentsServiceUrl('/v1/agent-runs', env)
   if (input.dryRun != null) {
     targetUrl.searchParams.set('dryRun', input.dryRun)
   }
-  return postAgentsJson<Record<string, unknown>>(servicePath(targetUrl), input.payload, {
+  return postAgentsJsonEffect<Record<string, unknown>>(servicePath(targetUrl), input.payload, {
     env,
     idempotencyKey: input.deliveryId,
   })
 }
 
-export const fetchAgentRunsFromAgentsService = async (
-  input: AgentsAgentRunListInput,
+export const submitAgentRunToAgentsService = async (
+  input: AgentsAgentRunSubmitInput,
   env: EnvSource = process.env,
-): Promise<AgentsServiceJsonResult<AgentsAgentRunListResult>> => {
+): Promise<AgentsServiceJsonResult<Record<string, unknown>>> =>
+  runAgentsJsonPromise(submitAgentRunToAgentsServiceEffect(input, env))
+
+export const fetchAgentRunsFromAgentsServiceEffect = (input: AgentsAgentRunListInput, env: EnvSource = process.env) => {
   const params = new URLSearchParams()
   const agentName = input.agentName?.trim()
   if (agentName) params.set('agentName', agentName)
@@ -84,29 +85,47 @@ export const fetchAgentRunsFromAgentsService = async (
   if (input.limit && input.limit > 0) params.set('limit', String(Math.trunc(input.limit)))
 
   const suffix = params.size > 0 ? `?${params.toString()}` : ''
-  return fetchAgentsJson<AgentsAgentRunListResult>(`/v1/agent-runs${suffix}`, env)
+  return fetchAgentsJsonEffect<AgentsAgentRunListResult>(`/v1/agent-runs${suffix}`, env)
+}
+
+export const fetchAgentRunsFromAgentsService = async (
+  input: AgentsAgentRunListInput,
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<AgentsAgentRunListResult>> =>
+  runAgentsJsonPromise(fetchAgentRunsFromAgentsServiceEffect(input, env))
+
+export const fetchAgentRunResourcesFromAgentsServiceEffect = (
+  input: AgentsAgentRunResourceListInput = {},
+  env: EnvSource = process.env,
+) => {
+  const targetUrl = buildAgentsServiceUrl('/v1/agent-runs/resources', env)
+  appendAgentsListParams(targetUrl, input)
+  return fetchAgentsJsonEffect<AgentsAgentRunResourcesResult>(servicePath(targetUrl), env)
 }
 
 export const fetchAgentRunResourcesFromAgentsService = async (
   input: AgentsAgentRunResourceListInput = {},
   env: EnvSource = process.env,
-): Promise<AgentsServiceJsonResult<AgentsAgentRunResourcesResult>> => {
-  const targetUrl = buildAgentsServiceUrl('/v1/agent-runs/resources', env)
-  appendAgentsListParams(targetUrl, input)
-  return fetchAgentsJson<AgentsAgentRunResourcesResult>(servicePath(targetUrl), env)
-}
+): Promise<AgentsServiceJsonResult<AgentsAgentRunResourcesResult>> =>
+  runAgentsJsonPromise(fetchAgentRunResourcesFromAgentsServiceEffect(input, env))
 
-export const patchAgentRunAnnotationsViaAgentsService = async (
+export const patchAgentRunAnnotationsViaAgentsServiceEffect = (
   input: AgentsAgentRunAnnotationsPatchInput,
   env: EnvSource = process.env,
-): Promise<AgentsServiceJsonResult<Record<string, unknown>>> => {
+) => {
   const targetUrl = buildAgentsServiceUrl('/v1/agent-runs/resources', env)
   targetUrl.searchParams.set('name', input.name)
   targetUrl.searchParams.set('namespace', input.namespace)
 
-  return patchAgentsJson<Record<string, unknown>>(
+  return patchAgentsJsonEffect<Record<string, unknown>>(
     servicePath(targetUrl),
     { metadata: { annotations: input.annotations } },
     { env },
   )
 }
+
+export const patchAgentRunAnnotationsViaAgentsService = async (
+  input: AgentsAgentRunAnnotationsPatchInput,
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<Record<string, unknown>>> =>
+  runAgentsJsonPromise(patchAgentRunAnnotationsViaAgentsServiceEffect(input, env))

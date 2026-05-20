@@ -318,7 +318,7 @@ const bodyForAgentsHttpError = <T>(error: AgentsHttpClientError): T | null => {
   return null
 }
 
-const runAgentsJsonPromise = <T>(
+export const runAgentsJsonPromise = <T>(
   effect: Effect.Effect<AgentsServiceJsonSuccess<T>, AgentsHttpClientError, AgentsHttpClient>,
 ): Promise<AgentsServiceJsonResult<T>> =>
   Effect.runPromise(

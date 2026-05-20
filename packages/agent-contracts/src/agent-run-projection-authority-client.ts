@@ -1,6 +1,7 @@
 import {
   buildAgentsServiceUrl,
-  fetchAgentsJson,
+  fetchAgentsJsonEffect,
+  runAgentsJsonPromise,
   servicePath,
   type AgentsServiceJsonResult,
   type EnvSource,
@@ -45,10 +46,10 @@ export type AgentsAgentRunProjectionAuthorityInput = {
   includeTerminalAudit?: boolean | null
 }
 
-export const fetchAgentRunProjectionAuthorityFromAgentsService = async (
+export const fetchAgentRunProjectionAuthorityFromAgentsServiceEffect = (
   input: AgentsAgentRunProjectionAuthorityInput = {},
   env: EnvSource = process.env,
-): Promise<AgentsServiceJsonResult<AgentsAgentRunProjectionAuthorityResult>> => {
+) => {
   const targetUrl = buildAgentsServiceUrl('/v1/agent-runs/projection-authority', env)
   const agentName = input.agentName?.trim()
   if (agentName) targetUrl.searchParams.set('agentName', agentName)
@@ -57,5 +58,11 @@ export const fetchAgentRunProjectionAuthorityFromAgentsService = async (
     targetUrl.searchParams.set('includeTerminalAudit', input.includeTerminalAudit ? 'true' : 'false')
   }
 
-  return fetchAgentsJson<AgentsAgentRunProjectionAuthorityResult>(servicePath(targetUrl), env)
+  return fetchAgentsJsonEffect<AgentsAgentRunProjectionAuthorityResult>(servicePath(targetUrl), env)
 }
+
+export const fetchAgentRunProjectionAuthorityFromAgentsService = async (
+  input: AgentsAgentRunProjectionAuthorityInput = {},
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<AgentsAgentRunProjectionAuthorityResult>> =>
+  runAgentsJsonPromise(fetchAgentRunProjectionAuthorityFromAgentsServiceEffect(input, env))

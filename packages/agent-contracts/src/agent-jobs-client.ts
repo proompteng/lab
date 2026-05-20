@@ -1,7 +1,8 @@
 import {
   appendAgentsListParams,
   buildAgentsServiceUrl,
-  fetchAgentsJson,
+  fetchAgentsJsonEffect,
+  runAgentsJsonPromise,
   servicePath,
   type AgentsResourceListInput,
   type AgentsServiceJsonResult,
@@ -20,11 +21,17 @@ export type AgentsJobResourcesResult = {
   items: AgentsJobResource[]
 }
 
+export const fetchJobResourcesFromAgentsServiceEffect = (
+  input: AgentsJobResourceListInput = {},
+  env: EnvSource = process.env,
+) => {
+  const targetUrl = buildAgentsServiceUrl('/v1/jobs/resources', env)
+  appendAgentsListParams(targetUrl, input)
+  return fetchAgentsJsonEffect<AgentsJobResourcesResult>(servicePath(targetUrl), env)
+}
+
 export const fetchJobResourcesFromAgentsService = async (
   input: AgentsJobResourceListInput = {},
   env: EnvSource = process.env,
-): Promise<AgentsServiceJsonResult<AgentsJobResourcesResult>> => {
-  const targetUrl = buildAgentsServiceUrl('/v1/jobs/resources', env)
-  appendAgentsListParams(targetUrl, input)
-  return fetchAgentsJson<AgentsJobResourcesResult>(servicePath(targetUrl), env)
-}
+): Promise<AgentsServiceJsonResult<AgentsJobResourcesResult>> =>
+  runAgentsJsonPromise(fetchJobResourcesFromAgentsServiceEffect(input, env))
