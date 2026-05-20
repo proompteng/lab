@@ -14,21 +14,26 @@ data class MinioConfig(
   val artifactEndpoint: String = sanitizeEndpointForArtifacts(endpoint, secure)
 
   companion object {
+    private const val DEFAULT_AGENTS_ARTIFACTS_BUCKET = "agents-artifacts"
+
     fun fromEnvironment(env: Map<String, String> = System.getenv()): MinioConfig {
       val endpoint =
-        env["MINIO_ENDPOINT"]?.takeIf { it.isNotBlank() }
-          ?: throw IllegalStateException("MINIO_ENDPOINT must be set")
+        env["AGENTS_ARTIFACTS_ENDPOINT"]?.takeIf { it.isNotBlank() }
+          ?: throw IllegalStateException("AGENTS_ARTIFACTS_ENDPOINT must be set")
       val bucket =
-        env["MINIO_BUCKET"]?.takeIf { it.isNotBlank() }
-          ?: throw IllegalStateException("MINIO_BUCKET must be set")
+        env["AGENTS_ARTIFACTS_BUCKET"]?.takeIf { it.isNotBlank() }
+          ?: DEFAULT_AGENTS_ARTIFACTS_BUCKET
       val accessKey =
-        env["MINIO_ACCESS_KEY"]?.takeIf { it.isNotBlank() }
-          ?: throw IllegalStateException("MINIO_ACCESS_KEY must be set")
+        env["AGENTS_ARTIFACTS_ACCESS_KEY_ID"]?.takeIf { it.isNotBlank() }
+          ?: throw IllegalStateException("AGENTS_ARTIFACTS_ACCESS_KEY_ID must be set")
       val secretKey =
-        env["MINIO_SECRET_KEY"]?.takeIf { it.isNotBlank() }
-          ?: throw IllegalStateException("MINIO_SECRET_KEY must be set")
-      val secure = env["MINIO_SECURE"]?.equals("true", ignoreCase = true) ?: true
-      val region = env["MINIO_REGION"]?.takeIf { it.isNotBlank() }
+        env["AGENTS_ARTIFACTS_SECRET_ACCESS_KEY"]?.takeIf { it.isNotBlank() }
+          ?: throw IllegalStateException("AGENTS_ARTIFACTS_SECRET_ACCESS_KEY must be set")
+      val secure =
+        env["AGENTS_ARTIFACTS_SECURE"]?.equals("true", ignoreCase = true)
+          ?: true
+      val region =
+        env["AGENTS_ARTIFACTS_REGION"]?.takeIf { it.isNotBlank() }
       return MinioConfig(endpoint, bucket, accessKey, secretKey, secure, region)
     }
 
@@ -43,7 +48,7 @@ data class MinioConfig(
           "${if (defaultSecure) "https" else "http"}://$endpoint"
         }
       val uri = URI.create(normalized)
-      val host = uri.host ?: throw IllegalArgumentException("MINIO_ENDPOINT must include a host")
+      val host = uri.host ?: throw IllegalArgumentException("AGENTS_ARTIFACTS_ENDPOINT must include a host")
       val port =
         when {
           uri.port != -1 -> uri.port

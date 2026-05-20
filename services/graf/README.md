@@ -22,7 +22,7 @@ This Quarkus/Kotlin microservice implements the persistence layer described in [
 | `QUARKUS_HTTP_PORT` / `PORT`      | HTTP port (defaults to `8080`; Quarkus reads both).                                                                  |
 | `QUARKUS_HTTP_CORS_*`             | CORS toggles injected via `graf-quarkus-config`.                                                                     |
 | `GRAF_API_BEARER_TOKENS`          | Comma/space-delimited bearer tokens for `/v1/**`.                                                                    |
-| `TEMPORAL_*`, `AGENTS_*`, `MINIO_*` | See [docs/graf-codex-research.md](../../docs/graf-codex-research.md) for AgentRun + artifact requirements.           |
+| `TEMPORAL_*`, `AGENTS_*`, `AGENTS_ARTIFACTS_*` | See [docs/graf-codex-research.md](../../docs/graf-codex-research.md) for AgentRun + artifact requirements. |
 
 ## AutoResearch configuration
 

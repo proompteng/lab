@@ -187,21 +187,58 @@ class MinioConfigTest {
   }
 
   @Test
-  fun `fromEnvironment parses booleans and region`() {
+  fun `fromEnvironment prefers canonical Agents artifact config`() {
     val env =
       mapOf(
-        "MINIO_ENDPOINT" to "minio-gateway:9000",
-        "MINIO_BUCKET" to "graf-bucket",
-        "MINIO_ACCESS_KEY" to "key",
-        "MINIO_SECRET_KEY" to "secret",
-        "MINIO_SECURE" to "false",
-        "MINIO_REGION" to "us-west-2",
+        "AGENTS_ARTIFACTS_ENDPOINT" to "agents-storage:9000",
+        "AGENTS_ARTIFACTS_BUCKET" to "agents-artifacts",
+        "AGENTS_ARTIFACTS_ACCESS_KEY_ID" to "agents-key",
+        "AGENTS_ARTIFACTS_SECRET_ACCESS_KEY" to "agents-secret",
+        "AGENTS_ARTIFACTS_SECURE" to "false",
+        "AGENTS_ARTIFACTS_REGION" to "us-west-2",
+      )
+
+    val config = MinioConfig.fromEnvironment(env)
+
+    assertEquals("agents-storage:9000", config.endpoint)
+    assertEquals("agents-artifacts", config.bucket)
+    assertEquals("agents-key", config.accessKey)
+    assertEquals("agents-secret", config.secretKey)
+    assertFalse(config.secure)
+    assertEquals("us-west-2", config.region)
+    assertEquals("agents-storage:9000", config.artifactEndpoint)
+  }
+
+  @Test
+  fun `fromEnvironment parses canonical booleans and region`() {
+    val env =
+      mapOf(
+        "AGENTS_ARTIFACTS_ENDPOINT" to "agents-storage:9000",
+        "AGENTS_ARTIFACTS_BUCKET" to "graf-bucket",
+        "AGENTS_ARTIFACTS_ACCESS_KEY_ID" to "key",
+        "AGENTS_ARTIFACTS_SECRET_ACCESS_KEY" to "secret",
+        "AGENTS_ARTIFACTS_SECURE" to "false",
+        "AGENTS_ARTIFACTS_REGION" to "us-west-2",
       )
 
     val config = MinioConfig.fromEnvironment(env)
 
     assertFalse(config.secure)
     assertEquals("us-west-2", config.region)
-    assertEquals("minio-gateway:9000", config.artifactEndpoint)
+    assertEquals("agents-storage:9000", config.artifactEndpoint)
+  }
+
+  @Test
+  fun `fromEnvironment defaults bucket to Agents artifacts`() {
+    val config =
+      MinioConfig.fromEnvironment(
+        mapOf(
+          "AGENTS_ARTIFACTS_ENDPOINT" to "agents-storage:9000",
+          "AGENTS_ARTIFACTS_ACCESS_KEY_ID" to "agents-key",
+          "AGENTS_ARTIFACTS_SECRET_ACCESS_KEY" to "agents-secret",
+        ),
+      )
+
+    assertEquals("agents-artifacts", config.bucket)
   }
 }

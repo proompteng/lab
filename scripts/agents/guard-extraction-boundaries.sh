@@ -409,6 +409,19 @@ fail_if_matches \
   "${ROOT_DIR}/argocd/applications/agents/graf-codex-agentprovider.yaml"
 
 fail_if_matches \
+  "Graf service artifact runtime must use Agents-owned artifact env names and bucket" \
+  'MINIO_(ENDPOINT|BUCKET|ACCESS_KEY|SECRET_KEY|SECURE|REGION)|argo-workflows' \
+  "${ROOT_DIR}/argocd/applications/graf/knative-service.yaml" \
+  "${ROOT_DIR}/docs/graf-codex-research.md" \
+  "${ROOT_DIR}/services/graf/README.md" \
+  "${ROOT_DIR}/services/graf/build.gradle.kts"
+
+fail_if_matches \
+  "Graf artifact config must not keep legacy MINIO_* environment fallbacks after Agents owns artifacts" \
+  'env\["MINIO_' \
+  "${ROOT_DIR}/services/graf/src/main/kotlin/ai/proompteng/graf/config/MinioConfig.kt"
+
+fail_if_matches \
   "Domain AgentRun swarm producers must use AgentRun-native NATS subject prefixes" \
   'natsSubjectPrefix:\s*workflow|subjectPrefix:\s*workflow|workflow\.general\.requirement' \
   "${ROOT_DIR}/argocd/applications/torghut/agents-domain" \

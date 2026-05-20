@@ -11,14 +11,14 @@ describe('agent runner artifact upload', () => {
     expect(
       resolveArtifactUploadConfig({
         MINIO_ENDPOINT: 'rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80',
-        MINIO_BUCKET: 'argo-workflows',
+        MINIO_BUCKET: 'agents-artifacts',
         accesskey: 'minio-access',
         secretkey: 'minio-secret',
         MINIO_SECURE: 'false',
       }),
     ).toMatchObject({
       endpoint: 'http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80',
-      bucket: 'argo-workflows',
+      bucket: 'agents-artifacts',
       accessKey: 'minio-access',
       secretKey: 'minio-secret',
       region: 'us-east-1',
@@ -48,7 +48,7 @@ describe('agent runner artifact upload', () => {
       {
         env: {
           AGENTS_ARTIFACTS_ENDPOINT: 'http://storage.internal:9000',
-          AGENTS_ARTIFACTS_BUCKET: 'argo-workflows',
+          AGENTS_ARTIFACTS_BUCKET: 'agents-artifacts',
           AGENTS_ARTIFACTS_ACCESS_KEY_ID: 'access',
           AGENTS_ARTIFACTS_SECRET_ACCESS_KEY: 'secret',
         },
@@ -62,12 +62,12 @@ describe('agent runner artifact upload', () => {
         name: 'codex-artifact',
         path: artifactPath,
         key: 'codex-research/run-1/codex-artifact.json',
-        url: 's3://argo-workflows/codex-research/run-1/codex-artifact.json',
+        url: 's3://agents-artifacts/codex-research/run-1/codex-artifact.json',
       },
     ])
     expect(requests).toHaveLength(1)
     expect(requests[0]?.url).toBe(
-      'http://storage.internal:9000/argo-workflows/codex-research/run-1/codex-artifact.json',
+      'http://storage.internal:9000/agents-artifacts/codex-research/run-1/codex-artifact.json',
     )
     expect(requests[0]?.init?.method).toBe('PUT')
     expect(requests[0]?.init?.headers).toMatchObject({

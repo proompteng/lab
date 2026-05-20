@@ -12,9 +12,11 @@ const protectedBoundaryTriggerPaths = [
   'argocd/applications/argo-workflows/**',
   'argocd/applications/facteur/**',
   'argocd/applications/froussard/**',
+  'argocd/applications/graf/**',
   'argocd/applications/traefik/values.yaml',
   'charts/agents/**',
   'docs/agents/**',
+  'docs/graf-codex-research.md',
   'packages/scripts/src/agents/**',
   'proto/proompteng/facteur/v1/contract.proto',
   'services/agents/**',
@@ -24,6 +26,8 @@ const protectedBoundaryTriggerPaths = [
   'services/facteur/internal/**',
   'services/graf/src/main/kotlin/**',
   'services/graf/src/test/kotlin/**',
+  'services/graf/README.md',
+  'services/graf/build.gradle.kts',
   'scripts/agents/**',
 ]
 
@@ -71,6 +75,10 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('Generic Agents Codex providers must not grant trading or broker MCP tooling')
     expect(content).toContain(
       'Agents Graf provider must not preserve legacy AutoResearch or Argo workflow artifact defaults',
+    )
+    expect(content).toContain('Graf service artifact runtime must use Agents-owned artifact env names and bucket')
+    expect(content).toContain(
+      'Graf artifact config must not keep legacy MINIO_* environment fallbacks after Agents owns artifacts',
     )
     expect(content).toContain('ALPACA_|mcp_servers\\.alpaca|alpaca-mcp')
     expect(content).toContain('Domain AgentRun swarm producers must use AgentRun-native NATS subject prefixes')

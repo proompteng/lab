@@ -69,10 +69,10 @@ tasks {
     environment("NEO4J_URI", "bolt://localhost:7687")
     environment("NEO4J_PASSWORD", "changeme")
     environment("NEO4J_USER", "neo4j")
-    environment("MINIO_ENDPOINT", "http://localhost:9000")
-    environment("MINIO_BUCKET", "graf-test")
-    environment("MINIO_ACCESS_KEY", "graf-access")
-    environment("MINIO_SECRET_KEY", "graf-secret")
+    environment("AGENTS_ARTIFACTS_ENDPOINT", "http://localhost:9000")
+    environment("AGENTS_ARTIFACTS_BUCKET", "agents-artifacts")
+    environment("AGENTS_ARTIFACTS_ACCESS_KEY_ID", "graf-access")
+    environment("AGENTS_ARTIFACTS_SECRET_ACCESS_KEY", "graf-secret")
     environment("GRAF_API_BEARER_TOKENS", "graf-test-token")
   }
 }
