@@ -37,7 +37,7 @@ spec:
     swarmTeamName: Torghut Traders
     ownerChannel: swarm://owner/trading
     natsChannel: general
-    natsSubjectPrefix: workflow
+    natsSubjectPrefix: agentrun
     objective: assess cluster/source/database state and create/update+merge required design-document PRs that improve, maintain, and innovate Torghut quant
     swarmMissionLedgerRef: /workspace/.agentrun/swarm/torghut-quant-mission-ledger.md
     swarmBusinessMetric: increase routeable post-cost profit evidence and live trading readiness without weakening capital safety
@@ -99,7 +99,7 @@ spec:
     swarmTeamName: Torghut Traders
     ownerChannel: swarm://owner/trading
     natsChannel: general
-    natsSubjectPrefix: workflow
+    natsSubjectPrefix: agentrun
     objective: assess cluster/source/database state and create/update+merge required design-document PRs that improve, maintain, and innovate Torghut quant
     swarmMissionLedgerRef: /workspace/.agentrun/swarm/torghut-quant-mission-ledger.md
     swarmBusinessMetric: increase routeable post-cost profit evidence and live trading readiness without weakening capital safety
@@ -163,7 +163,7 @@ spec:
     objective: grab the system design document, implement high-quality engineering changes, update impacted documentation, and deliver a production-ready PR
     ownerChannel: swarm://owner/trading
     natsChannel: general
-    natsSubjectPrefix: workflow
+    natsSubjectPrefix: agentrun
     swarmMissionLedgerRef: /workspace/.agentrun/swarm/torghut-quant-mission-ledger.md
     swarmBusinessMetric: increase routeable post-cost profit evidence and live trading readiness without weakening capital safety
     swarmBusinessEvidenceUrl: http://torghut.torghut.svc.cluster.local/trading/revenue-repair
@@ -234,7 +234,7 @@ spec:
     swarmTeamName: Torghut Traders
     ownerChannel: swarm://owner/trading
     natsChannel: general
-    natsSubjectPrefix: workflow
+    natsSubjectPrefix: agentrun
     objective: as release engineer, make Torghut PRs production-ready by fixing blockers until all required checks are green, then squash-merge and verify in-cluster GitOps rollout health
     swarmMissionLedgerRef: /workspace/.agentrun/swarm/torghut-quant-mission-ledger.md
     swarmBusinessMetric: increase routeable post-cost profit evidence and live trading readiness without weakening capital safety

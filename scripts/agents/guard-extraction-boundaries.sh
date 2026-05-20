@@ -365,12 +365,21 @@ fail_if_matches \
   "${ROOT_DIR}/argocd/applications/agents/codex-agentprovider.yaml" \
   "${ROOT_DIR}/argocd/applications/agents/codex-spark-agentprovider.yaml" \
   "${ROOT_DIR}/argocd/applications/agents/codex-spark-smoke-agentprovider.yaml" \
-  "${ROOT_DIR}/argocd/applications/agents/codex-secretbinding.yaml"
+  "${ROOT_DIR}/argocd/applications/agents/codex-secretbinding.yaml" \
+  "${ROOT_DIR}/charts/agents/examples/agentprovider-native-workflow.yaml"
 
 fail_if_matches \
   "Agents Graf provider must not preserve legacy AutoResearch or Argo workflow artifact defaults" \
   'AUTO_RESEARCH_|AGENTS_ARTIFACTS_BUCKET:\s*argo-workflows' \
   "${ROOT_DIR}/argocd/applications/agents/graf-codex-agentprovider.yaml"
+
+fail_if_matches \
+  "Domain AgentRun swarm producers must use AgentRun-native NATS subject prefixes" \
+  'natsSubjectPrefix:\s*workflow|subjectPrefix:\s*workflow|workflow\.general\.requirement' \
+  "${ROOT_DIR}/argocd/applications/torghut/agents-domain" \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-config.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-material-reentry-clearinghouse.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-material-reentry-alpha-closure.ts"
 
 fail_if_matches \
   "Jangar must not create or type the retired workflow_comms agent-message store after Agents owns agent-message storage" \

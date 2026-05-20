@@ -149,7 +149,7 @@ const buildTorghutAlphaClosureImplementerDispatch = (input: {
     target_stage: 'implement',
     target_role: 'engineer',
     signal_name: signalName,
-    channel: 'workflow.general.requirement',
+    channel: 'agentrun.general.requirement',
     description,
     priority: 'critical',
     dedupe_key: dedupeKey,

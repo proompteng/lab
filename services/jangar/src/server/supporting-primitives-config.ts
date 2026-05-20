@@ -84,7 +84,7 @@ export const resolveSupportingPrimitivesConfig = (env: EnvSource = process.env):
     normalizeNonEmpty(env.JANGAR_SWARM_NATS_URL) ??
     normalizeNonEmpty(env.NATS_URL) ??
     'nats://nats.nats.svc.cluster.local:4222',
-  swarmDefaultNatsSubjectPrefix: normalizeNonEmpty(env.JANGAR_SWARM_NATS_SUBJECT_PREFIX) ?? 'workflow',
+  swarmDefaultNatsSubjectPrefix: normalizeNonEmpty(env.JANGAR_SWARM_NATS_SUBJECT_PREFIX) ?? 'agentrun',
   swarmDefaultNatsChannel: normalizeNonEmpty(env.JANGAR_SWARM_NATS_CHANNEL) ?? 'general',
   podNamespace: normalizeNonEmpty(env.JANGAR_POD_NAMESPACE),
 })

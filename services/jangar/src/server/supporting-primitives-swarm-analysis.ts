@@ -361,6 +361,13 @@ export const isNatsChannel = (channel: string | null | undefined) => {
   if (lower.startsWith('workflow_comms.agent_messages.')) return false
   if (lower.startsWith('nats://') || lower.startsWith('tls://')) return true
   if (lower.startsWith('workflow.') || lower.startsWith('agents.workflow.') || lower.startsWith('argo.workflow.')) {
+    return false
+  }
+  if (
+    lower.startsWith('agentrun.') ||
+    lower.startsWith('agents.agentrun.') ||
+    lower.startsWith('agents.agent_messages.')
+  ) {
     return true
   }
   if (!lower.includes('://')) return true

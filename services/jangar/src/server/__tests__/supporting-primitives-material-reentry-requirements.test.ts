@@ -7,7 +7,7 @@ const buildDispatch = (signalName: string, dedupeKey: string) => ({
   sourceSwarm: 'jangar-control-plane',
   targetSwarm: 'torghut-quant',
   targetStage: 'implement' as const,
-  channel: 'workflow.general.requirement',
+  channel: 'agentrun.general.requirement',
   description: 'repair executable alpha evidence',
   priority: 'high',
   dedupeKey,

@@ -77,6 +77,10 @@ describe('agents extraction boundary guard', () => {
       'Agents Graf provider must not preserve legacy AutoResearch or Argo workflow artifact defaults',
     )
     expect(content).toContain('ALPACA_|mcp_servers\\.alpaca|alpaca-mcp')
+    expect(content).toContain('Domain AgentRun swarm producers must use AgentRun-native NATS subject prefixes')
+    expect(content).toContain(
+      'natsSubjectPrefix:\\s*workflow|subjectPrefix:\\s*workflow|workflow\\.general\\.requirement',
+    )
     expect(content).toContain('WorkflowCommsAgentMessage|workflow_agent_messages_')
     expect(content).toContain('goalObjective|goalTokenBudget')
     expect(content).toContain('argo\\.workflows\\.completions')
