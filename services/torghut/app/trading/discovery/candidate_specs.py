@@ -3269,6 +3269,51 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
 
     if has_any(
         (
+            "market-versus-limit",
+            "market versus limit",
+            "market-vs-limit",
+            "market and limit orders",
+            "market limit order mix",
+            "market-versus-limit order mix",
+            "limit fill probability",
+            "execution shortfall",
+            "dynamic allocation between market and limit",
+            "mixed-market-limit",
+            "mixed market limit",
+        )
+    ):
+        overlay_ids.append("mixed_market_limit_execution_policy")
+        overlay_contracts.append(
+            {
+                "overlay_id": "mixed_market_limit_execution_policy",
+                "required_evidence": [
+                    "market_limit_order_mix",
+                    "limit_fill_probability",
+                    "execution_shortfall",
+                    "route_tca",
+                ],
+                "rank_metric": "post_cost_net_pnl_after_fill_adjusted_execution",
+                "evidence_policy": "market_limit_mix_requires_real_fill_evidence",
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_market_limit_order_mix_evidence": True,
+                "required_limit_fill_probability_evidence": True,
+                "required_max_market_order_spread_bps": "8",
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_market_limit_order_mix": True,
+                "requires_limit_fill_probability": True,
+                "requires_execution_shortfall": True,
+                "execution_policy": "candidate_local_market_limit_mix",
+            }
+        )
+
+    if has_any(
+        (
             "nonlinear impact",
             "nonlinear_impact",
             "square-root",
@@ -3585,6 +3630,27 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
         "hard_vetoes": hard_vetoes,
         "promotion_contract": promotion_contract,
     }
+
+
+def _apply_mechanism_overlay_strategy_params(
+    strategy_overrides: Mapping[str, Any],
+    mechanism_overlays: Mapping[str, Any],
+) -> dict[str, Any]:
+    overlay_ids = set(
+        _string_sequence(
+            _mapping(mechanism_overlays.get("parameter_space")).get(
+                "mechanism_overlay_ids"
+            )
+        )
+    )
+    if "mixed_market_limit_execution_policy" not in overlay_ids:
+        return dict(strategy_overrides)
+    next_overrides = dict(strategy_overrides)
+    params = _mapping(next_overrides.get("params"))
+    params.setdefault("entry_order_type", "prefer_limit")
+    params.setdefault("market_order_spread_bps_max", "6")
+    next_overrides["params"] = params
+    return next_overrides
 
 
 def _family_scores_for_hypothesis(
@@ -4397,6 +4463,10 @@ def compile_candidate_specs(
                         }
                     )
                 mechanism_overlays = _mechanism_overlays_for_card(card)
+                strategy_overrides = _apply_mechanism_overlay_strategy_params(
+                    strategy_overrides,
+                    mechanism_overlays,
+                )
                 feature_contract.update(
                     _mapping(mechanism_overlays.get("feature_contract"))
                 )

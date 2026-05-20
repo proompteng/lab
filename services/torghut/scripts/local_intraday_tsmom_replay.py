@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 from urllib import error, parse, request
 
 import yaml
@@ -51,6 +51,7 @@ from app.trading.quote_quality import (
     assess_signal_quote_quality,
 )
 from app.trading.session_context import SessionContextTracker
+from app.trading.strategy_runtime import StrategyRuntime
 
 logging.getLogger("alembic").setLevel(logging.WARNING)
 
@@ -853,27 +854,95 @@ def _record_decision(stats: dict[str, Any], decision: StrategyDecision) -> None:
     stats["decision_count"] += 1
     symbol_counts = stats.setdefault("decision_symbols", defaultdict(int))
     symbol_counts[decision.symbol] += 1
+    order_type_counts = stats.setdefault(
+        "decision_count_by_order_type", defaultdict(int)
+    )
+    order_type_counts[decision.order_type] += 1
+
+
+def _record_fill_order_type(stats: dict[str, Any], order_type: str) -> None:
+    order_type_counts = stats.setdefault("filled_count_by_order_type", defaultdict(int))
+    order_type_counts[order_type] += 1
+
+
+def _decision_entry_order_type(decision: StrategyDecision) -> str:
+    raw = decision.params.get("entry_order_type")
+    if raw is None:
+        return "runtime_default"
+    value = str(raw).strip().lower()
+    return (
+        value
+        if value in {"market", "limit", "prefer_limit", "runtime_default"}
+        else "runtime_default"
+    )
+
+
+def _decision_market_order_spread_bps_max(decision: StrategyDecision) -> Decimal:
+    raw = decision.params.get("market_order_spread_bps_max")
+    if raw is None:
+        return Decimal("12")
+    try:
+        return max(Decimal("0"), min(Decimal("12"), Decimal(str(raw))))
+    except Exception:
+        return Decimal("12")
+
+
+def _decision_spread_bps(
+    decision: StrategyDecision,
+    *,
+    price: Decimal | None,
+    spread: Decimal | None,
+) -> Decimal | None:
+    execution_features = decision.params.get("execution_features")
+    if isinstance(execution_features, dict):
+        raw = execution_features.get("spread_bps")
+        if raw is not None:
+            try:
+                return Decimal(str(raw))
+            except Exception:
+                pass
+    if spread is None or spread <= 0 or price is None or price <= 0:
+        return None
+    return (spread / price) * Decimal("10000")
 
 
 def _apply_order_preferences(
     decision: StrategyDecision,
     signal: SignalEnvelope,
+    strategy_params: Mapping[str, Any] | None = None,
 ) -> StrategyDecision:
+    if strategy_params:
+        decision = decision.model_copy(
+            update={"params": {**dict(strategy_params), **decision.params}}
+        )
     position_exit = decision.params.get("position_exit")
     if isinstance(position_exit, dict):
         exit_type = str(position_exit.get("type") or "").strip()
         if exit_type == "session_flatten_minute_utc":
             return decision
-    if not settings.trading_execution_prefer_limit:
+    entry_order_type = _decision_entry_order_type(decision)
+    if entry_order_type == "market":
+        return decision
+    prefer_limit = (
+        entry_order_type in {"limit", "prefer_limit"}
+        or settings.trading_execution_prefer_limit
+    )
+    if not prefer_limit:
         return decision
     if decision.order_type != "market":
         return decision
     price = _extract_price(signal)
     spread = _extract_spread(signal)
-    if _should_keep_market_order_for_high_conviction_entry(
-        decision,
-        price=price,
-        spread=spread,
+    spread_bps = _decision_spread_bps(decision, price=price, spread=spread)
+    market_spread_bps_max = _decision_market_order_spread_bps_max(decision)
+    if (
+        entry_order_type != "limit"
+        and _should_keep_market_order_for_high_conviction_entry(
+            decision,
+            price=price,
+            spread=spread,
+        )
+        and (spread_bps is None or spread_bps <= market_spread_bps_max)
     ):
         return decision
     return decision.model_copy(
@@ -888,6 +957,8 @@ def _init_day_stats() -> dict[str, Any]:
     return {
         "decision_count": 0,
         "filled_count": 0,
+        "decision_count_by_order_type": defaultdict(int),
+        "filled_count_by_order_type": defaultdict(int),
         "filled_notional": Decimal("0"),
         "daily_adv_notional": Decimal("0"),
         "depth_notional": None,
@@ -920,6 +991,8 @@ def _init_funnel_stats() -> dict[str, Any]:
         "passed_trace_count": 0,
         "decision_count": 0,
         "filled_count": 0,
+        "decision_count_by_order_type": defaultdict(int),
+        "filled_count_by_order_type": defaultdict(int),
         "filled_notional": Decimal("0"),
         "closed_trade_count": 0,
         "gross_pnl": Decimal("0"),
@@ -931,6 +1004,8 @@ def _init_funnel_stats() -> dict[str, Any]:
 def _ensure_replay_stats_bucket(bucket: dict[str, Any]) -> dict[str, Any]:
     bucket.setdefault("decision_count", 0)
     bucket.setdefault("filled_count", 0)
+    bucket.setdefault("decision_count_by_order_type", defaultdict(int))
+    bucket.setdefault("filled_count_by_order_type", defaultdict(int))
     bucket.setdefault("filled_notional", Decimal("0"))
     bucket.setdefault("daily_adv_notional", Decimal("0"))
     bucket.setdefault("depth_notional", None)
@@ -1435,10 +1510,12 @@ def _apply_filled_decision(
     def _record_fill(fill_notional: Decimal, fill_cost: Decimal) -> None:
         day_bucket["cost_total"] += fill_cost
         day_bucket["filled_count"] += 1
+        _record_fill_order_type(day_bucket, decision.order_type)
         day_bucket["filled_notional"] += fill_notional
         if symbol_bucket is not None:
             symbol_bucket["cost_total"] += fill_cost
             symbol_bucket["filled_count"] += 1
+            _record_fill_order_type(symbol_bucket, decision.order_type)
             symbol_bucket["filled_notional"] += fill_notional
 
     owner_strategy_id = _decision_position_owner(
@@ -1860,7 +1937,17 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                         )
 
             for decision in executable_decisions:
-                decision = _apply_order_preferences(decision, signal)
+                strategy = strategies_by_id.get(decision.strategy_id)
+                strategy_params = (
+                    StrategyRuntime._strategy_params(strategy)
+                    if strategy is not None
+                    else None
+                )
+                decision = _apply_order_preferences(
+                    decision,
+                    signal,
+                    strategy_params=strategy_params,
+                )
                 _record_decision(day_bucket, decision)
                 decision_symbol_bucket = _active_symbol_funnel(
                     signal_day, decision.symbol
@@ -2009,6 +2096,13 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
     total_filled_notional = sum(
         (item["filled_notional"] for item in day_stats.values()), Decimal("0")
     )
+    decision_count_by_order_type: defaultdict[str, int] = defaultdict(int)
+    filled_count_by_order_type: defaultdict[str, int] = defaultdict(int)
+    for item in day_stats.values():
+        for order_type, count in item.get("decision_count_by_order_type", {}).items():
+            decision_count_by_order_type[str(order_type)] += int(count)
+        for order_type, count in item.get("filled_count_by_order_type", {}).items():
+            filled_count_by_order_type[str(order_type)] += int(count)
     total_gross = sum((item["gross_pnl"] for item in day_stats.values()), Decimal("0"))
     total_net = final_equity - config.start_equity
     total_cost = sum((item["cost_total"] for item in day_stats.values()), Decimal("0"))
@@ -2124,7 +2218,19 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
         "gross_pnl": str(total_gross),
         "total_cost": str(total_cost),
         "decision_count": total_decisions,
+        "decision_count_by_order_type": dict(
+            sorted(decision_count_by_order_type.items())
+        ),
         "filled_count": total_filled,
+        "filled_count_by_order_type": dict(sorted(filled_count_by_order_type.items())),
+        "limit_fill_rate": (
+            str(
+                Decimal(filled_count_by_order_type.get("limit", 0))
+                / Decimal(decision_count_by_order_type.get("limit", 1))
+            )
+            if decision_count_by_order_type.get("limit", 0) > 0
+            else None
+        ),
         "filled_notional": str(total_filled_notional),
         "wins": wins,
         "losses": losses,
@@ -2147,7 +2253,27 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
         "daily": {
             key: {
                 "decision_count": value["decision_count"],
+                "decision_count_by_order_type": dict(
+                    sorted(value.get("decision_count_by_order_type", {}).items())
+                ),
                 "filled_count": value["filled_count"],
+                "filled_count_by_order_type": dict(
+                    sorted(value.get("filled_count_by_order_type", {}).items())
+                ),
+                "limit_fill_rate": (
+                    str(
+                        Decimal(
+                            value.get("filled_count_by_order_type", {}).get("limit", 0)
+                        )
+                        / Decimal(
+                            value.get("decision_count_by_order_type", {}).get(
+                                "limit", 1
+                            )
+                        )
+                    )
+                    if value.get("decision_count_by_order_type", {}).get("limit", 0) > 0
+                    else None
+                ),
                 "filled_notional": str(value["filled_notional"]),
                 "daily_adv_notional": str(value["daily_adv_notional"]),
                 "depth_notional": str(value["depth_notional"])
@@ -2308,6 +2434,7 @@ def _flatten_positions(
         stats["net_pnl"] += trade.net_pnl
         stats["cost_total"] += exit_cost
         stats["filled_count"] += 1
+        _record_fill_order_type(stats, "market")
         stats["filled_notional"] += exit_notional
         symbol_bucket = funnel_stats.setdefault(
             (day.isoformat(), symbol), _init_funnel_stats()
@@ -2316,6 +2443,7 @@ def _flatten_positions(
         symbol_bucket["net_pnl"] += trade.net_pnl
         symbol_bucket["cost_total"] += exit_cost
         symbol_bucket["filled_count"] += 1
+        _record_fill_order_type(symbol_bucket, "market")
         symbol_bucket["filled_notional"] += exit_notional
         symbol_bucket["closed_trade_count"] += 1
         if trade.net_pnl > 0:

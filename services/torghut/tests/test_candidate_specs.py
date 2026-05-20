@@ -247,6 +247,40 @@ class TestCandidateSpecs(TestCase):
             "post_cost_nonlinear_impact",
         )
 
+    def test_market_limit_execution_claim_adds_candidate_local_policy(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-market-limit-execution",
+            claims=[
+                {
+                    "claim_id": "mixed-market-limit-execution-policy",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Dynamic allocation between market and limit orders can improve "
+                        "execution revenue when spread and limit fill probability are modeled."
+                    ),
+                    "data_requirements": [
+                        "market_limit_order_mix",
+                        "limit_fill_probability",
+                        "execution_shortfall",
+                    ],
+                    "confidence": "0.74",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("300")
+        )
+
+        params = specs[0].strategy_overrides["params"]
+        self.assertEqual(params["entry_order_type"], "prefer_limit")
+        self.assertEqual(params["market_order_spread_bps_max"], "6")
+        self.assertIn(
+            "mixed_market_limit_execution_policy",
+            specs[0].parameter_space["mechanism_overlay_ids"],
+        )
+        self.assertTrue(specs[0].promotion_contract["requires_market_limit_order_mix"])
+
     def test_intraday_volume_forecast_claim_adds_periodicity_capacity_contract(
         self,
     ) -> None:

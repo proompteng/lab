@@ -627,6 +627,121 @@ class TestLocalIntradayTsmomReplay(TestCase):
         self.assertEqual(updated.order_type, "market")
         self.assertIsNone(updated.limit_price)
 
+    def test_candidate_prefer_limit_converts_market_entry_when_global_default_false(
+        self,
+    ) -> None:
+        decision = StrategyDecision(
+            strategy_id="breakout-row-id",
+            symbol="META",
+            event_ts=datetime(2026, 3, 27, 19, 30, 0, tzinfo=timezone.utc),
+            timeframe="1Sec",
+            action="buy",
+            qty=Decimal("10"),
+            order_type="market",
+            time_in_force="day",
+            rationale="ordinary_entry",
+            params={"entry_order_type": "prefer_limit"},
+        )
+        signal = self._signal(bid="524.90", ask="525.10", price="525.00")
+
+        with patch(
+            "scripts.local_intraday_tsmom_replay.settings.trading_execution_prefer_limit",
+            False,
+        ):
+            updated = _apply_order_preferences(decision, signal)
+
+        self.assertEqual(updated.order_type, "limit")
+        self.assertEqual(updated.limit_price, Decimal("525.10"))
+
+    def test_strategy_params_can_drive_candidate_order_preference(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="breakout-row-id",
+            symbol="META",
+            event_ts=datetime(2026, 3, 27, 19, 30, 0, tzinfo=timezone.utc),
+            timeframe="1Sec",
+            action="buy",
+            qty=Decimal("10"),
+            order_type="market",
+            time_in_force="day",
+            rationale="ordinary_entry",
+            params={},
+        )
+        signal = self._signal(bid="524.90", ask="525.10", price="525.00")
+
+        with patch(
+            "scripts.local_intraday_tsmom_replay.settings.trading_execution_prefer_limit",
+            False,
+        ):
+            updated = _apply_order_preferences(
+                decision,
+                signal,
+                strategy_params={"entry_order_type": "prefer_limit"},
+            )
+
+        self.assertEqual(updated.order_type, "limit")
+        self.assertEqual(updated.limit_price, Decimal("525.10"))
+
+    def test_candidate_market_order_type_keeps_market_when_global_prefer_limit_true(
+        self,
+    ) -> None:
+        decision = StrategyDecision(
+            strategy_id="breakout-row-id",
+            symbol="META",
+            event_ts=datetime(2026, 3, 27, 19, 30, 0, tzinfo=timezone.utc),
+            timeframe="1Sec",
+            action="buy",
+            qty=Decimal("10"),
+            order_type="market",
+            time_in_force="day",
+            rationale="ordinary_entry",
+            params={"entry_order_type": "market"},
+        )
+        signal = self._signal(bid="524.90", ask="525.10", price="525.00")
+
+        with patch(
+            "scripts.local_intraday_tsmom_replay.settings.trading_execution_prefer_limit",
+            True,
+        ):
+            updated = _apply_order_preferences(decision, signal)
+
+        self.assertEqual(updated.order_type, "market")
+        self.assertIsNone(updated.limit_price)
+
+    def test_candidate_market_order_spread_cap_overrides_high_conviction_exception(
+        self,
+    ) -> None:
+        decision = StrategyDecision(
+            strategy_id="breakout-row-id",
+            symbol="META",
+            event_ts=datetime(2026, 3, 27, 19, 30, 0, tzinfo=timezone.utc),
+            timeframe="1Sec",
+            action="buy",
+            qty=Decimal("10"),
+            order_type="market",
+            time_in_force="day",
+            rationale="breakout_entry",
+            params={
+                "entry_order_type": "prefer_limit",
+                "market_order_spread_bps_max": "2",
+                "execution_features": {
+                    "spread_bps": Decimal("4"),
+                    "recent_microprice_bias_bps_avg": Decimal("0.20"),
+                    "cross_section_continuation_rank": Decimal("0.82"),
+                },
+                "strategy_runtime": {
+                    "source_strategy_runtime": [
+                        {"strategy_type": "breakout_continuation_long_v1"}
+                    ]
+                },
+            },
+        )
+        signal = self._signal(bid="524.90", ask="525.10", price="525.00")
+
+        updated = _apply_order_preferences(decision, signal)
+
+        self.assertEqual(updated.order_type, "limit")
+        self.assertEqual(updated.limit_price, Decimal("525.10"))
+
     def test_microbar_cross_sectional_short_entry_keeps_market_order(self) -> None:
         decision = StrategyDecision(
             strategy_id="short-cross-row-id",

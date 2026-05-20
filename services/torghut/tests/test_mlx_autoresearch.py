@@ -256,6 +256,8 @@ class TestMlxAutoresearch(TestCase):
                     "max_hold_seconds": ["900"],
                     "max_entries_per_session": ["2"],
                     "top_n": ["2"],
+                    "entry_order_type": ["prefer_limit"],
+                    "market_order_spread_bps_max": ["6"],
                 },
                 "strategy_overrides": {
                     "max_notional_per_trade": ["315900.20"],
@@ -273,7 +275,9 @@ class TestMlxAutoresearch(TestCase):
         self.assertTrue(descriptor.requires_cross_sectional_features)
         self.assertFalse(descriptor.capital_feasible)
         self.assertGreater(float(descriptor.capital_budget_overage_ratio), 0.0)
-        self.assertEqual(len(descriptor_numeric_vector(descriptor)), 12)
+        self.assertEqual(descriptor.expected_fill_mode, "prefer_limit")
+        self.assertEqual(descriptor.market_order_spread_bps_max, "6")
+        self.assertEqual(len(descriptor_numeric_vector(descriptor)), 14)
 
     def test_write_mlx_signal_bundle_persists_signal_rows(self) -> None:
         rows = [

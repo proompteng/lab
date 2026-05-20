@@ -271,6 +271,37 @@ class TestMlxTrainingData(TestCase):
         self.assertEqual(ranked[0].rank, 1)
         self.assertEqual(ranked[0].candidate_spec_id, evidenced_spec.candidate_spec_id)
 
+    def test_training_rows_encode_market_limit_execution_policy(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-market-limit-execution",
+            claims=[
+                {
+                    "claim_id": "mixed-market-limit-execution-policy",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Market and limit order mix with limit fill probability "
+                        "should control execution shortfall."
+                    ),
+                    "data_requirements": [
+                        "market_limit_order_mix",
+                        "limit_fill_probability",
+                        "execution_shortfall",
+                    ],
+                    "confidence": "0.74",
+                }
+            ],
+        )
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        rows = build_mlx_training_rows(candidate_specs=specs, evidence_bundles=[])
+        first_row = rows[0].to_payload()["features"]
+
+        self.assertEqual(first_row["entry_order_type_prefer_limit"], 1.0)
+        self.assertEqual(first_row["market_order_spread_bps_max"], 6.0)
+
     def test_negative_rank_bucket_lift_demotes_to_heuristic_order(self) -> None:
         rows = [
             MlxTrainingRow(

@@ -213,6 +213,7 @@ class MlxCandidateDescriptor:
     estimated_max_gross_exposure_pct_equity: str = "0"
     capital_budget_overage_ratio: str = "0"
     capital_feasible: bool = True
+    market_order_spread_bps_max: str = "12"
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -243,6 +244,7 @@ class MlxCandidateDescriptor:
             "estimated_max_gross_exposure_pct_equity": self.estimated_max_gross_exposure_pct_equity,
             "capital_budget_overage_ratio": self.capital_budget_overage_ratio,
             "capital_feasible": self.capital_feasible,
+            "market_order_spread_bps_max": self.market_order_spread_bps_max,
         }
 
 
@@ -290,7 +292,18 @@ def descriptor_from_sweep_config(
     )
     requires_quote_quality_gate = bool(template.liquidity_assumptions)
     expected_fill_mode = (
-        _string(_override_value(sweep_config, "entry_order_type")) or "runtime_default"
+        _string(
+            _param_value(sweep_config, "entry_order_type")
+            or _override_value(sweep_config, "entry_order_type")
+        )
+        or "runtime_default"
+    )
+    market_order_spread_bps_max = (
+        _string(
+            _param_value(sweep_config, "market_order_spread_bps_max")
+            or _override_value(sweep_config, "market_order_spread_bps_max")
+        )
+        or "12"
     )
     approval_path = "scheduler_v3"
     descriptor_payload: dict[str, Any] = {
@@ -314,6 +327,7 @@ def descriptor_from_sweep_config(
         "requires_cross_sectional_features": requires_cross_sectional_features,
         "requires_quote_quality_gate": requires_quote_quality_gate,
         "expected_fill_mode": expected_fill_mode,
+        "market_order_spread_bps_max": market_order_spread_bps_max,
         "approval_path": approval_path,
         **capital_budget,
     }
@@ -340,6 +354,7 @@ def descriptor_from_sweep_config(
         requires_quote_quality_gate=requires_quote_quality_gate,
         expected_fill_mode=expected_fill_mode,
         approval_path=approval_path,
+        market_order_spread_bps_max=market_order_spread_bps_max,
         max_position_pct_equity=str(capital_budget["max_position_pct_equity"]),
         configured_max_gross_exposure_pct_equity=str(
             capital_budget["configured_max_gross_exposure_pct_equity"]
@@ -385,4 +400,6 @@ def descriptor_numeric_vector(descriptor: MlxCandidateDescriptor) -> list[float]
         float(descriptor.requires_prev_day_features),
         float(descriptor.requires_cross_sectional_features),
         float(descriptor.requires_quote_quality_gate),
+        1.0 if descriptor.expected_fill_mode == "prefer_limit" else 0.0,
+        _float(descriptor.market_order_spread_bps_max),
     ]
