@@ -8,7 +8,7 @@ import type {
   SourceServingContractVerdictExchange,
   TorghutConsumerEvidenceStatus,
   WorkflowsReliabilityStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import {
   MATERIAL_EVIDENCE_SETTLEMENT_DESIGN_ARTIFACT,
   MATERIAL_EVIDENCE_SETTLEMENT_TORGHUT_DESIGN_ARTIFACT,

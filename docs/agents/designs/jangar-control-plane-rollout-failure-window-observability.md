@@ -28,7 +28,7 @@ These fields are computed from Kubernetes `jobs` in the control-plane namespace 
 
 Contract mapping:
 
-- Data type updates in `services/jangar/src/data/agents-control-plane.ts`
+- Data type updates in `services/jangar/src/server/control-plane-status-types.ts`
 - Rollout aggregation updates in `services/jangar/src/server/control-plane-status.ts`
 - Unit regression in `services/jangar/src/server/__tests__/control-plane-status.test.ts`
 
@@ -62,7 +62,7 @@ Contract mapping:
   - Must avoid false positives: failure counters are additive, while degraded/healthy stage decision remains based on active/stale criteria.
 - `services/jangar/src/server/agentctl-grpc.ts` and status routes:
   - Any shape extension is additive but must remain binary-compatible for clients.
-- `services/jangar/src/data/agents-control-plane.ts`:
+- `services/jangar/src/server/control-plane-status-types.ts`:
   - Shared API contract for frontend and external consumers.
 
 ### Test coverage gaps and additions
@@ -74,7 +74,7 @@ Contract mapping:
 ## Rollout evidence
 
 - Data contract updates landed in this cycle:
-  - `services/jangar/src/data/agents-control-plane.ts` (rollout stage contract field alignment)
+  - `services/jangar/src/server/control-plane-status-types.ts` (rollout stage contract field alignment)
   - `services/jangar/src/server/control-plane-status.ts` (per-stage reason rollup)
   - `services/jangar/src/server/__tests__/control-plane-status.test.ts` (contract validation)
 

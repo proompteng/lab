@@ -164,7 +164,7 @@ GitOps resources, AgentRuns, trading flags, broker state, or market data.
   - `services/jangar/src/server/control-plane-consumer-evidence-parity-settlement.ts` for the reducer;
   - `services/jangar/src/server/control-plane-status.ts` for full status projection;
   - `services/jangar/src/routes/ready.tsx` only for compact readback after full status proves stable;
-  - `services/jangar/src/data/agents-control-plane.ts` for typed status shape;
+  - `services/jangar/src/server/control-plane-status-types.ts` for typed status shape;
   - `services/jangar/src/server/__tests__/control-plane-consumer-evidence-parity-settlement.test.ts` and
     `control-plane-status.test.ts` for coverage.
 - Torghut already has implementation and tests for the adjacent contracts:
@@ -360,7 +360,7 @@ actions use the parity settlement.
 Engineer milestone 1: Jangar parity reducer.
 
 - Add `services/jangar/src/server/control-plane-consumer-evidence-parity-settlement.ts`.
-- Add types in `services/jangar/src/data/agents-control-plane.ts`.
+- Add types in `services/jangar/src/server/control-plane-status-types.ts`.
 - Unit-test allow, repair-only projection refresh, hold on compact/direct carry mismatch, hold on missing settlement
   ref, block on nonzero notional, and block on selected-hypothesis contradiction.
 - Value gates: `failed_agentrun_rate`, `ready_status_truth`, `handoff_evidence_quality`.
@@ -385,7 +385,7 @@ Required local checks for the Jangar implementation PR:
 ```bash
 bun run --filter jangar test -- services/jangar/src/server/__tests__/control-plane-consumer-evidence-parity-settlement.test.ts
 bun run --filter jangar test -- services/jangar/src/server/__tests__/control-plane-status.test.ts
-bunx oxfmt --check services/jangar/src/server/control-plane-consumer-evidence-parity-settlement.ts services/jangar/src/server/__tests__/control-plane-consumer-evidence-parity-settlement.test.ts services/jangar/src/data/agents-control-plane.ts
+bunx oxfmt --check services/jangar/src/server/control-plane-consumer-evidence-parity-settlement.ts services/jangar/src/server/__tests__/control-plane-consumer-evidence-parity-settlement.test.ts services/jangar/src/server/control-plane-status-types.ts
 ```
 
 Required rollout checks before deployer marks the implementation healthy:

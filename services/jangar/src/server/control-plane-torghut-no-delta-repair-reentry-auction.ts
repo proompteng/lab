@@ -1,4 +1,4 @@
-import type { TorghutNoDeltaRepairReentryAuctionRef } from '~/data/agents-control-plane'
+import type { TorghutNoDeltaRepairReentryAuctionRef } from '~/server/control-plane-status-types'
 import {
   normalizeNonEmpty,
   normalizeNumber,

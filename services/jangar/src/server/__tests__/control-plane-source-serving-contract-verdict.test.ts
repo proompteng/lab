@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { SourceRolloutTruthExchange } from '~/data/agents-control-plane'
+import type { SourceRolloutTruthExchange } from '~/server/control-plane-status-types'
 import {
   buildSourceServingContractVerdictExchange,
   SOURCE_SERVING_CONTRACT_VERDICT_DESIGN_ARTIFACT,

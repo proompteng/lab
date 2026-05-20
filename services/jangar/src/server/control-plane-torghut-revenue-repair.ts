@@ -1,4 +1,4 @@
-import type { TorghutRevenueRepairQueueItem } from '~/data/agents-control-plane'
+import type { TorghutRevenueRepairQueueItem } from '~/server/control-plane-status-types'
 import {
   normalizeNonEmpty,
   normalizeNumber,

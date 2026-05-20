@@ -5,7 +5,7 @@ import type {
   ConsumerEvidenceActionLease,
   MaterialActionVerdict,
   MaterialActionVerdictEpoch,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import {
   buildConsumerEvidenceLeaseSet,
   CONSUMER_EVIDENCE_LEASES_DESIGN_ARTIFACT,

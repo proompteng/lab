@@ -1,4 +1,4 @@
-import type { TorghutAlphaClosureDividendSlo } from '~/data/agents-control-plane'
+import type { TorghutAlphaClosureDividendSlo } from '~/server/control-plane-status-types'
 import {
   normalizeNonEmpty,
   normalizeNumber,

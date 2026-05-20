@@ -11,7 +11,7 @@ import type {
   ProjectionForeclosureValueGate,
   ProjectionMissingReceipt,
   StageClearancePacket,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import {
   ACTIVE_PROJECTION_STATUSES,
   type JsonRecord,

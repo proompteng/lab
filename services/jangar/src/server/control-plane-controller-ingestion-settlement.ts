@@ -13,7 +13,7 @@ import type {
   SourceServingContractVerdictExchange,
   TorghutConsumerEvidenceStatus,
   VerifyTrustForeclosureBoard,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import type {
   AgentRunIngestionStatus,
   ControlPlaneRolloutHealth,

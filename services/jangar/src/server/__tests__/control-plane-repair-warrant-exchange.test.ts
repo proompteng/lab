@@ -4,7 +4,7 @@ import type {
   ActionSloBudget,
   ActionSloBudgetActionClass,
   SourceRolloutTruthExchange,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import {
   buildRepairWarrantExchange,
   buildScheduleDebtWindow,

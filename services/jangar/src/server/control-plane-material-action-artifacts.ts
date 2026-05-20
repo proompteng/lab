@@ -7,7 +7,7 @@ import type {
   ReconciledActionClock,
   SourceRolloutTruthExchange,
   WorkflowsReliabilityStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import { buildActionCustodyProjection } from '~/server/control-plane-action-custody'
 import { buildClearanceMarketLedger, isClearanceMarketEnabled } from '~/server/control-plane-clearance-market'
 import { buildMaterialActionActivationReceipts } from '~/server/control-plane-controller-witness'

@@ -2,7 +2,7 @@ import type {
   MaterialEvidenceRepairTicketClass,
   MaterialEvidenceSettlementDecision,
   MaterialEvidenceSettlementMode,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import { asRecord, asString } from '~/server/primitives-http'
 import {
   SWARM_MATERIAL_EVIDENCE_ANNOTATION_BUSINESS_STATE,

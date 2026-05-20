@@ -15,7 +15,7 @@ import type {
   RuntimeKitDecision,
   RuntimeKitStatus,
   RuntimeProofCellStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import { buildRuntimeProofSurface } from './control-plane-runtime-proof-surface'
 import { resolveCodexNatsHelperPathCandidatesFromConfig, resolveRuntimeAdmissionConfig } from './runtime-tooling-config'
 

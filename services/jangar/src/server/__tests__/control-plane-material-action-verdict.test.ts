@@ -11,7 +11,7 @@ import type {
   ReconciledActionClock,
   RepairWarrantExchange,
   SourceRolloutTruthExchange,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import { buildMaterialActionVerdictEpoch } from '~/server/control-plane-material-action-verdict'
 import type {
   ControlPlaneRolloutHealth,

@@ -353,7 +353,7 @@ Required areas:
 
 - `services/jangar/src/server/control-plane-status.ts`
 - `services/jangar/src/server/__tests__/control-plane-status.test.ts`
-- shared types in `services/jangar/src/data/agents-control-plane.ts` if needed
+- shared types in `services/jangar/src/server/control-plane-status-types.ts` if needed
 
 Expected outcome:
 

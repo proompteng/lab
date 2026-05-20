@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { normalizeControlPlaneStatusPayload } from './agents-control-plane'
+import { normalizeControlPlaneStatusPayload } from './control-plane-status-types'
 
 const genericAgentsStatusPayload = {
   service: 'agents',

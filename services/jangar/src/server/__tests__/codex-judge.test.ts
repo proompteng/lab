@@ -736,7 +736,7 @@ describe('codex judge guardrails', () => {
     expect(parsed.agentRunUid).toBe('uid-123')
   })
 
-  it('ignores legacy workflow identity when AgentRun run-complete identity is present', async () => {
+  it('uses AgentRun-native run-complete identity when canonical fields are present', async () => {
     const privateApi = await requirePrivate()
 
     const parsed = privateApi.parseRunCompletePayload({
@@ -751,9 +751,6 @@ describe('codex judge guardrails', () => {
       agent_run_name: 'agentrun-current',
       agent_run_namespace: 'agents',
       agent_run_uid: 'uid-current',
-      workflowName: 'legacy-workflow',
-      workflowNamespace: 'legacy',
-      workflowUid: 'legacy-uid',
       status: { phase: 'Succeeded' },
     })
 
@@ -785,37 +782,17 @@ describe('codex judge guardrails', () => {
     )
   })
 
-  it('ignores legacy workflow identity when AgentRun notify identity is present', async () => {
+  it('uses AgentRun-native notify identity when canonical fields are present', async () => {
     const privateApi = await requirePrivate()
 
     const parsed = privateApi.parseNotifyPayload({
       agent_run_id: 'run-789',
       agent_run_name: 'agentrun-789',
       agent_run_namespace: 'agents',
-      workflow_name: 'legacy-workflow',
-      workflow_namespace: 'legacy',
       last_assistant_message: 'opened PR',
     })
 
     expect(parsed.agentRunName).toBe('agentrun-789')
     expect(parsed.agentRunNamespace).toBe('agents')
-  })
-
-  it('receives workflow-shaped identity stripping from the shared callback contract', async () => {
-    const privateApi = await requirePrivate()
-
-    const parsed = privateApi.parseNotifyPayload({
-      agent_run_id: 'run-current',
-      workflow_name: 'legacy-workflow',
-      workflow_namespace: 'legacy',
-      workflow_uid: 'legacy-uid',
-      workflow_stage: 'legacy-stage',
-      workflow_step: 'legacy-step',
-      agent_run_name: 'agentrun-current',
-      repository: 'proompteng/lab',
-    })
-
-    expect(parsed.notifyPayload).toMatchObject({ agent_run_name: 'agentrun-current', repository: 'proompteng/lab' })
-    expect(JSON.stringify(parsed.notifyPayload)).not.toContain('workflow')
   })
 })

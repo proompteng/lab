@@ -9,7 +9,7 @@ import type {
   RouteStabilityMaterialActionContract,
   SourceRolloutTruthExchange,
   WorkflowsReliabilityStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import { ACTION_CUSTODY_DESIGN_ARTIFACT, buildActionCustodyProjection } from '~/server/control-plane-action-custody'
 import type { TorghutConsumerEvidenceStatus } from '~/server/control-plane-torghut-consumer-evidence'
 

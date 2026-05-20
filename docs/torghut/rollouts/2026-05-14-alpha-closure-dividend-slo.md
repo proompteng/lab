@@ -79,8 +79,8 @@ hold reason for duplicate no-delta dispatch.
 - `uv run --frozen pyright --project pyrightconfig.alpha.json`
 - `uv run --frozen pyright --project pyrightconfig.scripts.json`
 - `bunx vitest run --config vitest.config.ts src/server/__tests__/control-plane-torghut-consumer-evidence.test.ts src/server/__tests__/control-plane-material-gate-digest.test.ts`
-- `bunx oxfmt --check src/data/agents-control-plane.ts src/server/control-plane-torghut-alpha-closure-dividend-slo.ts src/server/control-plane-torghut-consumer-evidence.ts src/server/control-plane-material-gate-digest.ts src/server/__tests__/control-plane-torghut-consumer-evidence.test.ts src/server/__tests__/control-plane-material-gate-digest.test.ts`
-- `bunx oxlint --config ../../.oxlintrc.json src/data/agents-control-plane.ts src/server/control-plane-torghut-alpha-closure-dividend-slo.ts src/server/control-plane-torghut-consumer-evidence.ts src/server/control-plane-material-gate-digest.ts src/server/__tests__/control-plane-torghut-consumer-evidence.test.ts src/server/__tests__/control-plane-material-gate-digest.test.ts`
+- `bunx oxfmt --check src/server/control-plane-status-types.ts src/server/control-plane-torghut-alpha-closure-dividend-slo.ts src/server/control-plane-torghut-consumer-evidence.ts src/server/control-plane-material-gate-digest.ts src/server/__tests__/control-plane-torghut-consumer-evidence.test.ts src/server/__tests__/control-plane-material-gate-digest.test.ts`
+- `bunx oxlint --config ../../.oxlintrc.json src/server/control-plane-status-types.ts src/server/control-plane-torghut-alpha-closure-dividend-slo.ts src/server/control-plane-torghut-consumer-evidence.ts src/server/control-plane-material-gate-digest.ts src/server/__tests__/control-plane-torghut-consumer-evidence.test.ts src/server/__tests__/control-plane-material-gate-digest.test.ts`
 - `bunx tsc --noEmit --project tsconfig.paths.json`
 - `bun run --cwd services/jangar docs:inventory:check`
 - `bunx oxfmt --check docs/jangar/architecture-inventory.md docs/torghut/rollouts/2026-05-14-alpha-closure-dividend-slo.md`

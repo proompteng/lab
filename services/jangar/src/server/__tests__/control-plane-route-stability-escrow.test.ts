@@ -5,7 +5,7 @@ import type {
   ControlPlaneControllerWitnessQuorum,
   MaterialActionVerdict,
   MaterialActionVerdictEpoch,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import type { FailureDomainRouteProbe } from '~/server/control-plane-failure-domain-leases'
 import {
   buildRouteStabilityEscrow,

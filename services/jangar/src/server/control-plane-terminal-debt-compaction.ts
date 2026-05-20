@@ -17,9 +17,9 @@ import type {
   TerminalDebtSummaryByClass,
   TorghutConsumerEvidenceStatus,
   WorkflowsReliabilityStatus,
-} from '~/data/agents-control-plane'
-import type { ReadyTruthArbiter } from '~/data/agents-control-plane'
-import type { ControlPlaneControllerWitnessQuorum } from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
+import type { ReadyTruthArbiter } from '~/server/control-plane-status-types'
+import type { ControlPlaneControllerWitnessQuorum } from '~/server/control-plane-status-types'
 import type { ControlPlaneWatchReliability } from '~/server/control-plane-status-types'
 
 export const TERMINAL_DEBT_COMPACTION_DESIGN_ARTIFACT =

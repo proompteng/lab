@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import type { StageClearancePacket } from '~/data/agents-control-plane'
+import type { StageClearancePacket } from '~/server/control-plane-status-types'
 import { resolveTorghutConsumerEvidence } from '~/server/control-plane-torghut-consumer-evidence'
 import { attachStageClearanceCustodyToTorghutEvidence } from '~/server/control-plane-torghut-stage-custody'
 

@@ -459,6 +459,11 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/codex-judge-run-rows.ts" \
   "${ROOT_DIR}/services/jangar/src/server/codex-judge-config.ts"
 
+fail_if_matches_including_tests \
+  "Jangar Codex judge tests must not carry workflow-shaped callback identity fixtures after the shared AgentRun callback contract owns the sanitizer quarantine" \
+  'workflowUid|workflow_uid|workflowName|workflow_name|workflowNamespace|workflow_namespace|workflowStep|workflow_step|workflowStage|workflow_stage' \
+  "${ROOT_DIR}/services/jangar/src/server/__tests__/codex-judge.test.ts"
+
 fail_if_matches \
   "Jangar Codex judge current schema and queries must use AgentRun-native physical columns, not workflow-shaped run identity columns" \
   'workflow_name|workflow_uid|workflow_namespace|codex_judge_runs_workflow' \
@@ -684,10 +689,19 @@ fail_if_matches \
   'Run agent|Create spec|Save ImplementationSpec|Delete selected|deletePrimitiveResource|AGENTS_AGENT_RUNS_API_PATH|AGENTS_CONTROL_PLANE_API_BASE.*/resource|kind: .ImplementationSpec.|kind: .AgentRun.' \
   "${ROOT_DIR}/services/jangar/src/routes/control-plane"
 
+fail_if_path_exists \
+  "Jangar must not keep an Agents-owned control-plane status contract under src/data" \
+  "${ROOT_DIR}/services/jangar/src/data/agents-control-plane.ts"
+
+fail_if_matches_including_tests \
+  "Jangar source must import domain control-plane status types from the server boundary, not the retired src/data Agents path" \
+  '~/data/agents-control-plane|\.\/agents-control-plane' \
+  "${ROOT_DIR}/services/jangar/src"
+
 fail_if_matches \
-  "Jangar browser data helpers must not expose generic Agents mutation helpers after Agents owns mutation APIs" \
+  "Jangar domain status types and browser data helpers must not expose generic Agents mutation helpers after Agents owns mutation APIs" \
   'fetchAgentOptions|AgentOption|deletePrimitiveResource|fetchPrimitive(List|Detail|Events|ControlPlaneStatus)|Primitive(List|Detail|Events)Result|AGENTS_AGENT_RUNS_API_PATH|AGENTS_CONTROL_PLANE_API_BASE|method: .DELETE.' \
-  "${ROOT_DIR}/services/jangar/src/data/agents-control-plane.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-status-types.ts" \
   "${ROOT_DIR}/services/jangar/src/data/agents-api-paths.ts"
 
 fail_if_matches \

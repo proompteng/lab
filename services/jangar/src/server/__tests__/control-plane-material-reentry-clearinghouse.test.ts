@@ -11,7 +11,7 @@ import type {
   TorghutAlphaRepairClosureBoardRef,
   TorghutConsumerEvidenceStatus,
   TorghutExecutableAlphaRepairReceipt,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import {
   buildMaterialReentryClearinghouse,
   MATERIAL_REENTRY_CLEARINGHOUSE_DESIGN_ARTIFACT,

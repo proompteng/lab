@@ -350,7 +350,7 @@ Engineer implementation validation:
 - `bun test services/jangar/src/server/__tests__/control-plane-cross-plane-closure-board.test.ts`
 - `bun test services/jangar/src/server/__tests__/control-plane-status.test.ts`
 - `bun test services/jangar/src/server/__tests__/supporting-primitives-controller.test.ts -t closure`
-- `bunx oxfmt --check services/jangar/src/server/control-plane-cross-plane-closure-board.ts services/jangar/src/server/__tests__/control-plane-cross-plane-closure-board.test.ts services/jangar/src/data/agents-control-plane.ts`
+- `bunx oxfmt --check services/jangar/src/server/control-plane-cross-plane-closure-board.ts services/jangar/src/server/__tests__/control-plane-cross-plane-closure-board.test.ts services/jangar/src/server/control-plane-status-types.ts`
 
 Deployer validation after rollout:
 

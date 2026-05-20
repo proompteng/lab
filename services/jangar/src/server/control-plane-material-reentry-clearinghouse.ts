@@ -18,7 +18,7 @@ import type {
   StageCreditLedger,
   TorghutConsumerEvidenceStatus,
   TorghutExecutableAlphaRepairReceipt,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import { buildTorghutAlphaClosureRepairPlanParts } from '~/server/control-plane-material-reentry-alpha-closure'
 import type { ControlPlaneWatchReliability, DatabaseStatus } from '~/server/control-plane-status-types'
 

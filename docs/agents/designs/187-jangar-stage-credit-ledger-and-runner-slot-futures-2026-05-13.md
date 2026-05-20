@@ -365,7 +365,7 @@ valid.
 The first bounded implementation milestone is a read-model PR:
 
 - Add `StageCreditLedger`, `StageCreditAccount`, and `RunnerSlotFuture` types to
-  `services/jangar/src/data/agents-control-plane.ts`.
+  `services/jangar/src/server/control-plane-status-types.ts`.
 - Add `services/jangar/src/server/control-plane-stage-credit-ledger.ts` as a pure reducer consuming database status,
   workflow reliability, AgentRun ingestion, controller witness, source-rollout truth, stage-clearance packets,
   clearance-market ledger, rollout health, failure-domain leases, and Torghut consumer evidence.

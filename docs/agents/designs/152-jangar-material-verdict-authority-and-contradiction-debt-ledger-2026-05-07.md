@@ -302,7 +302,7 @@ The owner lane is mechanical:
 Engineer stage:
 
 - Add `services/jangar/src/server/control-plane-material-verdict-authority.ts` as a pure reducer.
-- Add typed status contracts in `services/jangar/src/data/agents-control-plane.ts` and
+- Add typed status contracts in `services/jangar/src/server/control-plane-status-types.ts` and
   `services/jangar/src/server/control-plane-status-types.ts`.
 - Wire the reducer in `control-plane-status.ts` after action clocks, material verdicts, source-rollout truth, and
   controller witness are built.

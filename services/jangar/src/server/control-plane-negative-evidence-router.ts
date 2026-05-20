@@ -15,7 +15,7 @@ import type {
   NegativeEvidenceRouterStatus,
   RuntimeKitStatus,
   WorkflowsReliabilityStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import type {
   AgentRunIngestionStatus,
   ControlPlaneRolloutHealth,

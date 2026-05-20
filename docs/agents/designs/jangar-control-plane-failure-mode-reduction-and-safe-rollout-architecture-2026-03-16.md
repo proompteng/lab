@@ -41,7 +41,7 @@ High-risk surfaces reviewed in `services/jangar`:
 - `services/jangar/src/server/supporting-primitives-controller.ts`
   - owns freeze/readiness behavior for swarm objects and schedules.
   - currently computes freeze from a subset of stage signals and has historically focused on implement-stage triggers.
-- `services/jangar/src/data/agents-control-plane.ts`
+- `services/jangar/src/server/control-plane-status-types.ts`
   - health contract is already rich enough to carry additional confidence and rollout metadata without breaking the API shape.
 
 Test surface exists in:
@@ -167,7 +167,7 @@ Controller-level rollback contract:
 
 ## Implementation sequence
 
-1. Data contract extension in `services/jangar/src/data/agents-control-plane.ts`.
+1. Data contract extension in `services/jangar/src/server/control-plane-status-types.ts`.
 2. Confidence aggregation and decision wiring in `services/jangar/src/server/control-plane-status.ts`.
 3. Stage-aware freeze logic updates in `services/jangar/src/server/supporting-primitives-controller.ts`.
 4. Schedule parameter propagation for classified failure context.
@@ -208,7 +208,7 @@ Deployment gate:
 Rollout scope for engineer/deployer:
 
 - Scope to source modules:
-  - `services/jangar/src/data/agents-control-plane.ts`
+  - `services/jangar/src/server/control-plane-status-types.ts`
   - `services/jangar/src/server/control-plane-status.ts`
   - `services/jangar/src/server/supporting-primitives-controller.ts`
   - `services/jangar/src/server/torghut-trading.ts`

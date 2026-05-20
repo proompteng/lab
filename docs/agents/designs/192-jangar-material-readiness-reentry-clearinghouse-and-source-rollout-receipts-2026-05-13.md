@@ -120,7 +120,7 @@ resources, AgentRuns, broker state, trading flags, or market data.
 - High-risk source surfaces are large and cross-cutting: `control-plane-status.ts`, `control-plane-ready-truth-arbiter.ts`,
   `control-plane-stage-credit-ledger.ts`, `control-plane-source-rollout-truth-exchange.ts`,
   `control-plane-authority-provenance-settlement.ts`, `control-plane-watch-reliability.ts`, and
-  `src/data/agents-control-plane.ts`. Existing tests cover many reducers, but the remaining gap is a cross-surface
+  `src/server/control-plane-status-types.ts`. Existing tests cover many reducers, but the remaining gap is a cross-surface
   acceptance test proving a held material action maps to one next receipt instead of a long reason-code list.
 
 ### Database And Data Quality

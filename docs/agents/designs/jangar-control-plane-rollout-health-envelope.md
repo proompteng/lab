@@ -49,7 +49,7 @@ Implementation in `services/jangar/src/server/control-plane-status.ts`:
   - `kubectl` against `deployments.apps` with the in-cluster `agents-sa` service account returns `forbidden` in `agents` namespace.
 - Source/data findings:
   - `services/jangar/src/server/control-plane-status.ts` already has robust degradation patterns, so rollout health can be added without endpoint fragility.
-  - Data contract updates are additive in `services/jangar/src/data/agents-control-plane.ts`.
+  - Data contract updates are additive in `services/jangar/src/server/control-plane-status-types.ts`.
   - Deployment rollout view is rendered by existing UI component in `services/jangar/src/components/agents-control-plane-status.tsx`.
   - Tests were added in `services/jangar/src/server/__tests__/control-plane-status.test.ts` for healthy, degraded, and fallback paths.
 - Data/schema review:
@@ -58,7 +58,7 @@ Implementation in `services/jangar/src/server/control-plane-status.ts`:
 
 ## Implementation mapping
 
-- Data contract updates: `services/jangar/src/data/agents-control-plane.ts`
+- Data contract updates: `services/jangar/src/server/control-plane-status-types.ts`
 - Server status computation: `services/jangar/src/server/control-plane-status.ts`
 - UI rendering: `services/jangar/src/components/agents-control-plane-status.tsx`
 - Tests: `services/jangar/src/server/__tests__/control-plane-status.test.ts`

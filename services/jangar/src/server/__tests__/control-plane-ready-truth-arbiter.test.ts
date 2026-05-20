@@ -16,7 +16,7 @@ import type {
   StageCreditAccount,
   StageCreditLedger,
   TorghutConsumerEvidenceStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import { buildReadyTruthArbiter, READY_TRUTH_ARBITER_DESIGN_ARTIFACT } from '~/server/control-plane-ready-truth-arbiter'
 import type {
   ControlPlaneRolloutHealth,

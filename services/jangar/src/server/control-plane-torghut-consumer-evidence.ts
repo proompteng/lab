@@ -4,7 +4,7 @@ import type {
   TorghutConsumerEvidenceStatus,
   TorghutRepairBidSettlementLot,
   TorghutRepairBidSettlementStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import {
   deriveRevenueRepairEndpoint,
   readAlphaReadinessStrikeLedger,
@@ -52,7 +52,7 @@ import {
 import { normalizeRepairBidSettlementLot } from '~/server/control-plane-torghut-repair-bid-settlement'
 import { asRecord } from '~/server/primitives-http'
 
-export type { TorghutConsumerEvidenceStatus } from '~/data/agents-control-plane'
+export type { TorghutConsumerEvidenceStatus } from '~/server/control-plane-status-types'
 
 export type TorghutConsumerEvidenceResolution = {
   status: TorghutConsumerEvidenceStatus

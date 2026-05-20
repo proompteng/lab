@@ -12,7 +12,7 @@ import type {
   ExecutionTrustStatus,
   SourceServingContractVerdictExchange,
   TorghutRevenueRepairQueueItem,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import { resolveRuntimeServiceName } from '~/server/runtime-identity'
 import { buildControllerIngestionSettlement } from '~/server/control-plane-controller-ingestion-settlement'
 import { buildRuntimeAdmissionSnapshot, findAdmissionPassport } from '~/server/control-plane-runtime-admission'

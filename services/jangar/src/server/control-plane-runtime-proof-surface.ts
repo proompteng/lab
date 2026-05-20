@@ -10,7 +10,7 @@ import type {
   RuntimeKitStatus,
   RuntimeProofCellStatus,
   RuntimeProofKind,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 
 const IMAGE_DIGEST_PATTERN = /sha256:[a-f0-9]{64}/i
 

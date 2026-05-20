@@ -27,6 +27,29 @@ describe('agent-run-callbacks', () => {
     expect(parsed.phase).toBe('Succeeded')
   })
 
+  it('does not treat non-AgentRun resource metadata as AgentRun identity', () => {
+    const parsed = parseAgentRunRunCompletePayload({
+      apiVersion: 'argoproj.io/v1alpha1',
+      kind: 'Workflow',
+      metadata: {
+        name: 'legacy-workflow',
+        namespace: 'argo',
+        uid: 'workflow-uid',
+      },
+      workflowName: 'legacy-workflow',
+      workflowNamespace: 'argo',
+      workflowUid: 'workflow-uid',
+      status: { phase: 'Succeeded' },
+    })
+
+    expect(parsed.agentRunName).toBe('')
+    expect(parsed.agentRunNamespace).toBeNull()
+    expect(parsed.agentRunUid).toBeNull()
+    expect(parsed.runCompletePayload).not.toHaveProperty('workflowName')
+    expect(parsed.runCompletePayload).not.toHaveProperty('workflowNamespace')
+    expect(parsed.runCompletePayload).not.toHaveProperty('workflowUid')
+  })
+
   it('resolves GitHub metadata from encoded run-complete parameters', () => {
     const parsed = parseAgentRunRunCompletePayload({
       kind: 'AgentRun',

@@ -348,7 +348,7 @@ provider lane.
 Primary code/config surfaces:
 
 - `services/jangar/src/server/control-plane-status.ts`
-- `services/jangar/src/data/agents-control-plane.ts`
+- `services/jangar/src/server/control-plane-status-types.ts`
 - `services/jangar/src/server/supporting-primitives-controller.ts`
 - `services/jangar/src/server/agents-controller/**`
 - `services/jangar/scripts/codex/codex-implement.ts`

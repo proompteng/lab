@@ -13,7 +13,7 @@ import type {
   MaterialActionActivationReceiptDecision,
   NegativeEvidenceRouterStatus,
   RouteStabilityEscrow,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import type {
   AgentRunIngestionStatus,
   ControlPlaneRolloutHealth,

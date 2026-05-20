@@ -314,7 +314,7 @@ Admission rules:
 M1: Add the Jangar read model and tests.
 
 - Add `services/jangar/src/server/control-plane-repair-slot-escrow.ts`.
-- Add data types in `services/jangar/src/data/agents-control-plane.ts`.
+- Add data types in `services/jangar/src/server/control-plane-status-types.ts`.
 - Wire the object into `/api/agents/control-plane/status` and `/ready` in observe mode.
 - Tests:
   - current executable alpha repair receipt opens one observe-only `dispatch_repair` slot;
@@ -346,7 +346,7 @@ M4: Move `dispatch_repair` to hold/enforce only after observe evidence is clean.
 
 Local validation for the first implementation PR:
 
-- `bunx oxfmt --check services/jangar/src/server/control-plane-repair-slot-escrow.ts services/jangar/src/data/agents-control-plane.ts`
+- `bunx oxfmt --check services/jangar/src/server/control-plane-repair-slot-escrow.ts services/jangar/src/server/control-plane-status-types.ts`
 - `bun run --filter @proompteng/jangar test -- services/jangar/src/server/__tests__/control-plane-repair-slot-escrow.test.ts`
 - `bun run --filter @proompteng/jangar test -- services/jangar/src/routes/ready.test.ts`
 - `uv run --frozen pytest services/torghut/tests/test_executable_alpha_repair_receipts.py -k evidence_window`

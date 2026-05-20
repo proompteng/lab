@@ -228,4 +228,4 @@ Current ownership:
 - `services/agents/**`
 - `charts/agents/**`
 - typed `@proompteng/agent-contracts/*-client` imports for Jangar domain-client reads
-- `services/jangar/src/data/agents-control-plane.ts` for domain status payload normalization only
+- `services/jangar/src/server/control-plane-status-types.ts` for domain status payload normalization only

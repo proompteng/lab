@@ -317,7 +317,7 @@ integration point.
 Required code changes:
 
 1. Add `services/jangar/src/server/control-plane-ready-truth-arbiter.ts`.
-2. Add types to `services/jangar/src/data/agents-control-plane.ts` and status types.
+2. Add types to `services/jangar/src/server/control-plane-status-types.ts` and status types.
 3. Call the reducer from `control-plane-status.ts` after `stage_credit_ledger`, `source_serving_contract_verdict`, and
    `repair_bid_admission` are built.
 4. Add tests in `services/jangar/src/server/__tests__/control-plane-ready-truth-arbiter.test.ts`.

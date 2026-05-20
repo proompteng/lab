@@ -2,7 +2,7 @@ import type {
   SourceRolloutTruthExchange,
   StageClearancePacket,
   TorghutConsumerEvidenceStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import { fetchAgentRunsFromAgentsService } from '@proompteng/agent-contracts/agent-runs-client'
 import { getDb } from '~/server/db'
 

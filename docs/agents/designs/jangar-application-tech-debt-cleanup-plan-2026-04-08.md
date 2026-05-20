@@ -159,7 +159,7 @@ The app already has reusable control-plane fetchers and primitive views, but ado
 Evidence:
 
 - Shared helpers:
-  - `services/jangar/src/data/agents-control-plane.ts`
+  - `services/jangar/src/server/control-plane-status-types.ts`
   - `services/jangar/src/data/github.ts`
   - `services/jangar/src/components/agents-control-plane-primitives.tsx`
   - `services/jangar/src/components/agents-control-plane-overview.tsx`

@@ -11,7 +11,7 @@ import type {
   TorghutAlphaReadinessSettlementConveyorRef,
   TorghutConsumerEvidenceStatus,
   TorghutExecutableAlphaRepairReceiptSet,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import {
   buildRevenueRepairSettlementCustody,
   REVENUE_REPAIR_SETTLEMENT_CUSTODY_DESIGN_ARTIFACT,

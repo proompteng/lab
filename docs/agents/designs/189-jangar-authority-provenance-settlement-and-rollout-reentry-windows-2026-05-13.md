@@ -290,7 +290,7 @@ The reducer rules are deliberately conservative:
 Engineer stage should implement this in one bounded production PR:
 
 - Add `services/jangar/src/server/control-plane-authority-provenance-settlement.ts`.
-- Add `AuthorityProvenanceSettlement` types to `services/jangar/src/data/agents-control-plane.ts`.
+- Add `AuthorityProvenanceSettlement` types to `services/jangar/src/server/control-plane-status-types.ts`.
 - Compose the projection in `services/jangar/src/server/control-plane-status.ts`.
 - Render a compact settlement row in `services/jangar/src/components/agents-control-plane-status.tsx`.
 - Extend `packages/scripts/src/jangar/verify-deployment.ts` to require the field during Jangar deploy verification,
@@ -327,7 +327,7 @@ Local validation for the implementation PR:
 bun test services/jangar/src/server/__tests__/control-plane-status.test.ts
 bun test services/jangar/src/components/__tests__/agents-control-plane-status.test.tsx
 bun test packages/scripts/src/jangar/__tests__/verify-deployment.test.ts
-bunx oxfmt --check services/jangar/src/server/control-plane-authority-provenance-settlement.ts services/jangar/src/server/control-plane-status.ts services/jangar/src/data/agents-control-plane.ts services/jangar/src/components/agents-control-plane-status.tsx packages/scripts/src/jangar/verify-deployment.ts
+bunx oxfmt --check services/jangar/src/server/control-plane-authority-provenance-settlement.ts services/jangar/src/server/control-plane-status.ts services/jangar/src/server/control-plane-status-types.ts services/jangar/src/components/agents-control-plane-status.tsx packages/scripts/src/jangar/verify-deployment.ts
 ```
 
 Read-only runtime validation:

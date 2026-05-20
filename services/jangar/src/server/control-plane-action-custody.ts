@@ -13,7 +13,7 @@ import type {
   RouteStabilityMaterialActionContract,
   SourceRolloutTruthExchange,
   WorkflowsReliabilityStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import type { TorghutConsumerEvidenceStatus } from '~/server/control-plane-torghut-consumer-evidence'
 
 export const ACTION_CUSTODY_DESIGN_ARTIFACT =

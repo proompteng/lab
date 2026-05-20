@@ -5,7 +5,7 @@ import type {
   FailureDomainLeaseSet,
   ReconciledActionClock,
   WorkflowsReliabilityStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import {
   buildControlPlaneMaterialActionArtifacts,
   type RepairScheduleAttemptResolver,

@@ -1,4 +1,7 @@
-import type { TorghutAlphaEvidenceFoundryRef, TorghutAlphaRepairClosureBoardRef } from '~/data/agents-control-plane'
+import type {
+  TorghutAlphaEvidenceFoundryRef,
+  TorghutAlphaRepairClosureBoardRef,
+} from '~/server/control-plane-status-types'
 import {
   normalizeNonEmpty,
   normalizeNumber,

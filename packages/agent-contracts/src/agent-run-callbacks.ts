@@ -322,6 +322,10 @@ const stripLegacyWorkflowIdentityFields = (value: Record<string, unknown>) => {
   return next
 }
 
+const isAgentRunResourcePayload = (data: Record<string, unknown>) =>
+  firstNonEmptyString(data.kind) === 'AgentRun' ||
+  (firstNonEmptyString(data.apiVersion)?.startsWith('agents.proompteng.ai/') ?? false)
+
 const readArtifacts = (data: Record<string, unknown>): AgentRunCallbackArtifact[] => {
   const rawArtifacts = (() => {
     if (Array.isArray(data.artifacts)) return data.artifacts
@@ -430,11 +434,7 @@ export const parseAgentRunRunCompletePayload = (payload: Record<string, unknown>
   const threadId = normalizeOptionalString(eventBody.threadId ?? eventBody.thread_id) ?? metadataThreadId
   const artifacts = readArtifacts(data)
 
-  const agentRunMetadataName =
-    firstNonEmptyString(data.kind) === 'AgentRun' ||
-    firstNonEmptyString(data.apiVersion)?.startsWith('agents.proompteng.ai/')
-      ? firstNonEmptyString(metadataRecord.name)
-      : null
+  const agentRunMetadataName = isAgentRunResourcePayload(data) ? firstNonEmptyString(metadataRecord.name) : null
   const runId = firstNonEmptyString(data.runId, data.run_id, data.agentRunId, data.agent_run_id)
   const agentRunName = firstNonEmptyString(data.agentRunName, data.agent_run_name, agentRunMetadataName)
   const agentRunNamespace = firstNonEmptyString(
@@ -447,9 +447,9 @@ export const parseAgentRunRunCompletePayload = (payload: Record<string, unknown>
     data.agent_run_uid,
     agentRunMetadataName ? metadataRecord.uid : null,
   )
-  const resolvedAgentRunName = firstNonEmptyString(agentRunName, runId, metadataRecord.name) ?? ''
-  const resolvedAgentRunNamespace = firstNonEmptyString(agentRunNamespace, metadataRecord.namespace)
-  const resolvedAgentRunUid = firstNonEmptyString(agentRunUid, metadataRecord.uid)
+  const resolvedAgentRunName = firstNonEmptyString(agentRunName, runId) ?? ''
+  const resolvedAgentRunNamespace = firstNonEmptyString(agentRunNamespace)
+  const resolvedAgentRunUid = firstNonEmptyString(agentRunUid)
 
   return {
     repository,

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import type { ControlPlaneControllerWitnessQuorum, TorghutConsumerEvidenceStatus } from '~/data/agents-control-plane'
+import type {
+  ControlPlaneControllerWitnessQuorum,
+  TorghutConsumerEvidenceStatus,
+} from '~/server/control-plane-status-types'
 import {
   buildEvidencePressureLedger,
   EVIDENCE_PRESSURE_LEDGER_DESIGN_ARTIFACT,

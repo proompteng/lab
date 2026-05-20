@@ -6,7 +6,7 @@ import type {
   RepairBidAdmissionState,
   TorghutConsumerEvidenceStatus,
   WorkflowsReliabilityStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import {
   buildTerminalDebtCompactionLedger,
   TERMINAL_DEBT_COMPACTION_DESIGN_ARTIFACT,

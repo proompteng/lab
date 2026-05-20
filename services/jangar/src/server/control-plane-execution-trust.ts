@@ -1,7 +1,11 @@
 import { resolveControlPlaneStatusConfig } from '~/server/control-plane-config'
 import { fetchSwarmResourcesFromAgentsService } from '@proompteng/agent-contracts/swarm-read-client'
 import { asRecord, asString } from '~/server/primitives-http'
-import type { ExecutionTrustStage, ExecutionTrustStatus, ExecutionTrustSwarm } from '~/data/agents-control-plane'
+import type {
+  ExecutionTrustStage,
+  ExecutionTrustStatus,
+  ExecutionTrustSwarm,
+} from '~/server/control-plane-status-types'
 
 const DEFAULT_EXECUTION_TRUST_SUMMARY_LIMIT = 20
 const SWARM_STAGE_NAMES = ['discover', 'plan', 'implement', 'verify'] as const

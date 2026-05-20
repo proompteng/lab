@@ -22,7 +22,7 @@ import type {
   StageCreditAccount,
   StageCreditLedger,
   TorghutConsumerEvidenceStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import { isProjectionForeclosureConsumptionEnabled } from '~/server/control-plane-projection-foreclosure-notary'
 import type {
   ControlPlaneRolloutHealth,

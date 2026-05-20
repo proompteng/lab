@@ -11,7 +11,7 @@ import type {
   TorghutAlphaRepairDividendLedgerRef,
   TorghutConsumerEvidenceStatus,
   TorghutNoDeltaRepairReentryAuctionRef,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import {
   buildVerifyTrustForeclosureBoard,
   VERIFY_TRUST_FORECLOSURE_DESIGN_ARTIFACT,

@@ -118,7 +118,7 @@ The source tree explains why the contradiction exists:
 - `services/jangar/src/routes/ready.tsx`
   - promotes execution-trust data to readiness only when the optional execution-trust path is active;
   - does not require a shared receipt id with `Swarm.status`.
-- `services/jangar/src/data/agents-control-plane.ts`
+- `services/jangar/src/server/control-plane-status-types.ts`
   - already has the typed segment vocabulary needed for scoped vetoes, but no durable receipt contract that forces all
     projections to agree on the same authority snapshot.
 

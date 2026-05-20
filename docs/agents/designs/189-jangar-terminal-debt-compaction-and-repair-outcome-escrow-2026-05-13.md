@@ -354,7 +354,7 @@ Value gates: `ready_status_truth`, `handoff_evidence_quality`, `failed_agentrun_
 Engineer scope:
 
 - Add `control-plane-terminal-debt-compaction.ts`.
-- Add `TerminalDebtCompactionLedger` types to `services/jangar/src/data/agents-control-plane.ts` and status types.
+- Add `TerminalDebtCompactionLedger` types to `services/jangar/src/server/control-plane-status-types.ts` and status types.
 - Add the ledger to `/api/agents/control-plane/status`.
 - Group retained AgentRuns, Jobs, and Pods into active and retained audit cohorts.
 - Add tests proving a clean 15 minute workflow window with historical failures emits retained audit debt, not active

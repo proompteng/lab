@@ -24,7 +24,7 @@ This blind spot delays detection of schema incompatibilities and makes rollout i
 
 - `services/jangar/src/server/kysely-migrations.ts` maintains explicit migration registration.
 - `services/jangar/src/server/control-plane-status.ts` validates DB connectivity and latency but does not compare schema history against registration.
-- UI surfaces and API consumers use `DatabaseStatus` from `services/jangar/src/data/agents-control-plane.ts`.
+- UI surfaces and API consumers use `DatabaseStatus` from `services/jangar/src/server/control-plane-status-types.ts`.
 - There is existing migration-coverage work in progress around status reporting and workflow reliability.
 
 ## Alternatives and tradeoffs
@@ -70,7 +70,7 @@ Choose option 3 (runtime status-consistency signal).
   - `unexpected_migrations`
   - `message`
   - `status` (`healthy`/`degraded`/`unknown`)
-- Extend `DatabaseStatus` in `services/jangar/src/data/agents-control-plane.ts` and update control-plane status tests.
+- Extend `DatabaseStatus` in `services/jangar/src/server/control-plane-status-types.ts` and update control-plane status tests.
 - Keep `control-plane-status` response deterministic with bounded payload and no throw-through.
 
 ## Validation

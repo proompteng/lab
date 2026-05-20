@@ -4,7 +4,7 @@ import type {
   SourceRolloutTruthExchange,
   StageClearancePacket,
   TorghutConsumerEvidenceStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import {
   buildProjectionForeclosureNotary,
   PROJECTION_FORECLOSURE_NOTARY_DESIGN_ARTIFACT,

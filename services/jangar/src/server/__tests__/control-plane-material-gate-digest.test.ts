@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { RepairBidAdmissionState } from '~/data/agents-control-plane'
+import type { RepairBidAdmissionState } from '~/server/control-plane-status-types'
 import { buildMaterialGateDigest } from '~/server/control-plane-material-gate-digest'
 import type { TorghutConsumerEvidenceStatus } from '~/server/control-plane-torghut-consumer-evidence'
 

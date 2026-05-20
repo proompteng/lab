@@ -143,7 +143,7 @@ flags, AgentRuns, GitOps resources, broker state, or market data.
 
 ### Source And Test Surface
 
-- Jangar's high-risk integration file is `services/jangar/src/data/agents-control-plane.ts` at `2974` lines.
+- Jangar's high-risk integration file is `services/jangar/src/server/control-plane-status-types.ts` at `2974` lines.
 - Jangar control-plane reducers in scope include `control-plane-status.ts` (`766` lines),
   `control-plane-route-stability-escrow.ts` (`490` lines), and `control-plane-material-action-verdict.ts`
   (`680` lines).

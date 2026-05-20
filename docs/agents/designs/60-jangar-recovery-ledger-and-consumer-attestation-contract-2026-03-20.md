@@ -109,7 +109,7 @@ The current Jangar source tree still compresses too many meanings into one reque
   - computes control-runtime, workflow, watch, rollout, empirical-service, and execution-trust segments in one
     reducer
   - turns `execution_trust_blocked` and `empirical_jobs_degraded` into one global `dependency_quorum.decision="block"`
-- `services/jangar/src/data/agents-control-plane.ts`
+- `services/jangar/src/server/control-plane-status-types.ts`
   - already projects rich control-plane segments to the UI
   - still depends on the same broad blocked/degraded/healthy reduction rather than a consumer-scoped artifact
 

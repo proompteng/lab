@@ -1,4 +1,4 @@
-import type { StageClearancePacket } from '~/data/agents-control-plane'
+import type { StageClearancePacket } from '~/server/control-plane-status-types'
 import type {
   TorghutConsumerEvidenceResolution,
   TorghutConsumerEvidenceStatus,

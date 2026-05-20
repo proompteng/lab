@@ -13,7 +13,7 @@ import type {
   RepairWarrantScheduleDebtWindow,
   RepairWarrantSuppressedCandidate,
   SourceRolloutTruthExchange,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import { fetchJobResourcesFromAgentsService } from '@proompteng/agent-contracts/agent-jobs-client'
 import type { ControlPlaneRolloutHealth, ControlPlaneWatchReliability } from '~/server/control-plane-status-types'
 import { asRecord, asString } from '~/server/primitives-http'

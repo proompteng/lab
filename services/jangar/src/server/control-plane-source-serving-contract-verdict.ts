@@ -8,7 +8,7 @@ import type {
   SourceServingContractState,
   SourceServingContractVerdict,
   SourceServingContractVerdictExchange,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import type { ControlPlaneRolloutHealth } from '~/server/control-plane-status-types'
 import type { TorghutConsumerEvidenceStatus } from '~/server/control-plane-torghut-consumer-evidence'
 

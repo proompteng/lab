@@ -10,7 +10,7 @@ import type {
   DependencyVerdictExchange,
   ExecutionTrustStatus,
   SourceRolloutTruthExchange,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import type { ControlPlaneRolloutHealth, ControlPlaneWatchReliability } from '~/server/control-plane-status-types'
 import type { TorghutConsumerEvidenceStatus } from '~/server/control-plane-torghut-consumer-evidence'
 

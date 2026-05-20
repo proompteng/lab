@@ -14,7 +14,7 @@ import type {
   TorghutConsumerEvidenceStatus,
   TorghutExecutableAlphaRepairReceipt,
   TorghutRevenueRepairQueueItem,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 
 export const REPAIR_SLOT_ESCROW_DESIGN_ARTIFACT =
   'docs/agents/designs/194-jangar-receipt-settled-repair-slots-and-stage-custody-thaw-2026-05-14.md'

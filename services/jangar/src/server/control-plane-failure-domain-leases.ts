@@ -9,7 +9,7 @@ import type {
   FailureDomainLeaseStatus,
   RuntimeKitStatus,
   WorkflowsReliabilityStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import type {
   ControlPlaneRolloutHealth,
   DatabaseStatus,

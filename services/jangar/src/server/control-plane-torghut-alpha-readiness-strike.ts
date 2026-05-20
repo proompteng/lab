@@ -1,4 +1,7 @@
-import type { TorghutAlphaReadinessStrikeLedger, TorghutAlphaReadinessStrikeSlot } from '~/data/agents-control-plane'
+import type {
+  TorghutAlphaReadinessStrikeLedger,
+  TorghutAlphaReadinessStrikeSlot,
+} from '~/server/control-plane-status-types'
 import {
   normalizeNonEmpty,
   normalizeNumber,

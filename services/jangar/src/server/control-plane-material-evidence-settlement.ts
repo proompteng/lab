@@ -20,7 +20,7 @@ import type {
   TerminalDebtCompactionLedger,
   TorghutConsumerEvidenceStatus,
   WorkflowsReliabilityStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import type { ControlPlaneRolloutHealth } from '~/server/control-plane-status-types'
 
 export const MATERIAL_EVIDENCE_SETTLEMENT_DESIGN_ARTIFACT =

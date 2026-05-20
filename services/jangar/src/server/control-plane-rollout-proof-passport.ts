@@ -17,7 +17,7 @@ import type {
   StageLaunchTicket,
   StageLaunchTicketDecision,
   WorkflowsReliabilityStatus,
-} from '~/data/agents-control-plane'
+} from '~/server/control-plane-status-types'
 import type { FailureDomainKubernetesEvidence } from '~/server/control-plane-failure-domain-leases'
 import type { ControlPlaneRolloutHealth, RuntimeAdapterStatus } from '~/server/control-plane-status-types'
 import type { KubeGatewayEvent } from '~/server/kube-gateway'

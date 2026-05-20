@@ -1,4 +1,4 @@
-import type { ActionSloBudgetActionClass, EvidencePressureDecision } from '~/data/agents-control-plane'
+import type { ActionSloBudgetActionClass, EvidencePressureDecision } from '~/server/control-plane-status-types'
 import { asRecord, asString } from '~/server/primitives-http'
 import {
   SWARM_EVIDENCE_PRESSURE_ANNOTATION_DECISION,
