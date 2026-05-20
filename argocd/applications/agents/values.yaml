@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/agents-controller
-  tag: 49e31e5a
-  digest: sha256:8a7a77bbac2692d1a38986f0821ae3ab7eea4e2a41b7114e068e008dcee46aaa
+  tag: c347efe9
+  digest: sha256:0f0843fd2caa3221a35c625ee1e519d03bfea9545de8f5861c05b8b8cffb0053
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
@@ -11,26 +11,26 @@ nodeSelector:
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-control-plane
-    tag: 49e31e5a
-    digest: sha256:868937a1a5e7d20b69e48a42e02805d32fad81d7c533a85ef95886590975f2a7
+    tag: c347efe9
+    digest: sha256:9032dc57681a7144ad07c261a2f9aedba5bde9aa6c9896966df765db5b2f3b93
   env:
     vars:
       AGENTS_CONTROL_PLANE_CACHE_ENABLED: "true"
       AGENTS_CONTROL_PLANE_CACHE_ALLOW_STALE: "false"
       AGENTS_CONTROL_PLANE_CACHE_RESYNC_SECONDS: "60"
       AGENTS_CONTROL_PLANE_CACHE_MAX_PENDING_WRITES: "5000"
-      AGENTS_SOURCE_HEAD_SHA: 49e31e5a2e21e52bcdaba188eea1e564907a147d
-      AGENTS_GITOPS_REVISION: 49e31e5a2e21e52bcdaba188eea1e564907a147d
-      AGENTS_SOURCE_CI_RUN_ID: local-49e31e5a
+      AGENTS_SOURCE_HEAD_SHA: c347efe90c715c57a8f29320e670076b6efff8d7
+      AGENTS_GITOPS_REVISION: c347efe90c715c57a8f29320e670076b6efff8d7
+      AGENTS_SOURCE_CI_RUN_ID: "26183682572"
       AGENTS_SOURCE_CI_CONCLUSION: success
-      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:868937a1a5e7d20b69e48a42e02805d32fad81d7c533a85ef95886590975f2a7
-      AGENTS_SERVING_BUILD_COMMIT: 49e31e5a2e21e52bcdaba188eea1e564907a147d
-      AGENTS_SERVING_IMAGE_DIGEST: sha256:868937a1a5e7d20b69e48a42e02805d32fad81d7c533a85ef95886590975f2a7
+      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:9032dc57681a7144ad07c261a2f9aedba5bde9aa6c9896966df765db5b2f3b93
+      AGENTS_SERVING_BUILD_COMMIT: c347efe90c715c57a8f29320e670076b6efff8d7
+      AGENTS_SERVING_IMAGE_DIGEST: sha256:9032dc57681a7144ad07c261a2f9aedba5bde9aa6c9896966df765db5b2f3b93
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-codex-runner
-    tag: 49e31e5a
-    digest: sha256:eb21d378f21b8952b8f15f6dfaa71415e8ba96fb044207b076a6bebcda7f02ca
+    tag: c347efe9
+    digest: sha256:495f6ade79ffc7d4fe84ed66653713acdb6b93a7a3ce58f47f9bb89a3a183330
 argocdHooks:
   enabled: true
   image:
@@ -51,7 +51,8 @@ argocdHooks:
         implementationSpecRef:
           name: codex-spark-smoke-implspec
         goal:
-          objective: Verify Codex app-server runner protocol, status, artifact collection, and the promoted runner image without external side effects.
+          objective: Verify Codex app-server runner protocol, status, artifact collection, and the promoted runner image without
+            external side effects.
           tokenBudget: 8000
         runtime:
           type: workflow
@@ -80,8 +81,8 @@ controllers:
   replicaCount: 2
   image:
     repository: registry.ide-newton.ts.net/lab/agents-controller
-    tag: 49e31e5a
-    digest: sha256:8a7a77bbac2692d1a38986f0821ae3ab7eea4e2a41b7114e068e008dcee46aaa
+    tag: c347efe9
+    digest: sha256:0f0843fd2caa3221a35c625ee1e519d03bfea9545de8f5861c05b8b8cffb0053
   autoscaling:
     enabled: false
 swarm:
