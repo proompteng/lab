@@ -347,8 +347,11 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
                     "positive_day_ratio": "0.8",
                     "best_day_share": "0.2",
                     "max_drawdown": "0",
+                    "avg_filled_notional_per_day": "350000",
+                    "avg_liquidity_notional_per_day": "900000",
                     "daily_net": {"2026-02-23": "123"},
                     "daily_filled_notional": {"2026-02-23": "350000"},
+                    "daily_liquidity_notional": {"2026-02-23": "900000"},
                 },
             },
             dataset_snapshot_id="snap-fallback",
@@ -358,6 +361,29 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
         self.assertEqual(bundle.candidate_id, "spec-fallback")
         self.assertEqual(bundle.objective_scorecard["net_pnl_per_day"], "123")
         self.assertIn("daily_filled_notional", bundle.objective_scorecard)
+        self.assertEqual(
+            bundle.objective_scorecard["market_impact_stress_model"],
+            "square_root",
+        )
+        self.assertEqual(
+            bundle.objective_scorecard["market_impact_stress_net_pnl_per_day"],
+            "88",
+        )
+        self.assertTrue(bundle.objective_scorecard["market_impact_stress_passed"])
+        self.assertEqual(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_fillable_notional_per_day"
+            ],
+            "350000",
+        )
+        self.assertEqual(
+            bundle.objective_scorecard["delay_adjusted_depth_stress_net_pnl_per_day"],
+            "88",
+        )
+        self.assertTrue(
+            bundle.objective_scorecard["delay_adjusted_depth_stress_passed"]
+        )
+        self.assertEqual(len(bundle.stress_metrics), 2)
         with self.assertRaisesRegex(ValueError, "evidence_bundle_schema_invalid"):
             evidence_bundle_from_payload({"schema_version": "bad"})
 

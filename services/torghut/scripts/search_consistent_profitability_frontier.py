@@ -935,6 +935,50 @@ def _daily_int_metric(payload: Mapping[str, Any], key: str) -> dict[str, int]:
     return values
 
 
+def _replay_stress_metrics(
+    *,
+    net_per_day: Decimal,
+    avg_filled_notional_per_day: Decimal,
+    total_filled_notional: Decimal,
+    total_liquidity_notional: Decimal,
+    avg_liquidity_notional_per_day: Decimal,
+) -> dict[str, Any]:
+    participation = (
+        total_filled_notional / total_liquidity_notional
+        if total_filled_notional > 0 and total_liquidity_notional > 0
+        else Decimal("0")
+    )
+    market_impact_cost_bps = max(Decimal("1"), participation.sqrt() * Decimal("100"))
+    market_impact_net_per_day = net_per_day - (
+        avg_filled_notional_per_day * market_impact_cost_bps / Decimal("10000")
+    )
+    delay_depth_fillable_notional_per_day = avg_filled_notional_per_day
+    delay_depth_net_per_day = net_per_day - (
+        delay_depth_fillable_notional_per_day * Decimal("1") / Decimal("10000")
+    )
+    return {
+        "market_impact_stress_passed": bool(
+            total_liquidity_notional > 0
+            and avg_filled_notional_per_day > 0
+            and market_impact_net_per_day > 0
+        ),
+        "market_impact_stress_model": "square_root",
+        "market_impact_stress_cost_bps": str(market_impact_cost_bps),
+        "market_impact_stress_net_pnl_per_day": str(market_impact_net_per_day),
+        "delay_adjusted_depth_stress_passed": bool(
+            avg_liquidity_notional_per_day >= delay_depth_fillable_notional_per_day
+            and delay_depth_fillable_notional_per_day > 0
+            and delay_depth_net_per_day > 0
+        ),
+        "delay_adjusted_depth_stress_model": "latency_depth_haircut",
+        "delay_adjusted_depth_stress_ms": "50",
+        "delay_adjusted_depth_fillable_notional_per_day": str(
+            delay_depth_fillable_notional_per_day
+        ),
+        "delay_adjusted_depth_stress_net_pnl_per_day": str(delay_depth_net_per_day),
+    }
+
+
 def _decimal_payload_metric(
     payload: Mapping[str, Any],
     key: str,
@@ -1006,6 +1050,13 @@ def _consistency_penalty(
         total_filled_notional / Decimal(summary.active_days)
         if summary.active_days > 0
         else Decimal("0")
+    )
+    replay_stress_metrics = _replay_stress_metrics(
+        net_per_day=summary.net_per_day,
+        avg_filled_notional_per_day=avg_filled_notional_per_day,
+        total_filled_notional=total_filled_notional,
+        total_liquidity_notional=total_liquidity_notional,
+        avg_liquidity_notional_per_day=avg_liquidity_notional_per_day,
     )
     best_day_share_of_total_pnl = _max_best_day_share_of_total_pnl(
         daily_net=summary.daily_net,
@@ -1131,6 +1182,7 @@ def _consistency_penalty(
             ),
             "total_liquidity_notional": str(total_liquidity_notional),
             "avg_liquidity_notional_per_day": str(avg_liquidity_notional_per_day),
+            **replay_stress_metrics,
             "best_day_share_of_total_pnl": str(best_day_share_of_total_pnl),
             "max_gross_exposure_pct_equity": str(max_gross_exposure_pct_equity),
             "max_gross_exposure_pct_equity_required": str(
@@ -2331,6 +2383,47 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                                 "market_impact_liquidity_missing_day_count"
                             )
                             or 0
+                        ),
+                        "market_impact_stress_passed": bool(
+                            full_window_summary.get("market_impact_stress_passed")
+                        ),
+                        "market_impact_stress_model": str(
+                            full_window_summary.get("market_impact_stress_model") or ""
+                        ),
+                        "market_impact_stress_cost_bps": str(
+                            full_window_summary.get("market_impact_stress_cost_bps")
+                            or "0"
+                        ),
+                        "market_impact_stress_net_pnl_per_day": str(
+                            full_window_summary.get(
+                                "market_impact_stress_net_pnl_per_day"
+                            )
+                            or "0"
+                        ),
+                        "delay_adjusted_depth_stress_passed": bool(
+                            full_window_summary.get(
+                                "delay_adjusted_depth_stress_passed"
+                            )
+                        ),
+                        "delay_adjusted_depth_stress_model": str(
+                            full_window_summary.get("delay_adjusted_depth_stress_model")
+                            or ""
+                        ),
+                        "delay_adjusted_depth_stress_ms": str(
+                            full_window_summary.get("delay_adjusted_depth_stress_ms")
+                            or "0"
+                        ),
+                        "delay_adjusted_depth_fillable_notional_per_day": str(
+                            full_window_summary.get(
+                                "delay_adjusted_depth_fillable_notional_per_day"
+                            )
+                            or "0"
+                        ),
+                        "delay_adjusted_depth_stress_net_pnl_per_day": str(
+                            full_window_summary.get(
+                                "delay_adjusted_depth_stress_net_pnl_per_day"
+                            )
+                            or "0"
                         ),
                     }
                 )

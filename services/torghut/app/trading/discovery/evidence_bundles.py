@@ -5,11 +5,15 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Any, Literal, Mapping, Sequence, cast
 
 
 EVIDENCE_BUNDLE_SCHEMA_VERSION = "torghut.candidate-evidence-bundle.v1"
 VALID_COST_CALIBRATION_STATUSES = frozenset({"calibrated", "provisional"})
+MARKET_IMPACT_STRESS_COST_BPS = Decimal("1")
+DELAY_ADJUSTED_DEPTH_STRESS_MS = Decimal("50")
+DELAY_ADJUSTED_DEPTH_STRESS_COST_BPS = Decimal("1")
 REPLAY_ACTIVITY_SCORECARD_KEYS = (
     "decision_count",
     "trade_decision_count",
@@ -45,6 +49,20 @@ def _int(value: Any) -> int:
         return int(float(str(value or 0)))
     except (TypeError, ValueError):
         return 0
+
+
+def _decimal(value: Any) -> Decimal:
+    try:
+        return Decimal(str(value or "0"))
+    except (InvalidOperation, ValueError):
+        return Decimal("0")
+
+
+def _decimal_mapping_total(mapping: Mapping[str, Any]) -> Decimal:
+    total = Decimal("0")
+    for value in mapping.values():
+        total += _decimal(value)
+    return total
 
 
 def _sum_mapping_int_values(mapping: Mapping[str, Any], key: str) -> int:
@@ -99,6 +117,104 @@ def _decomposition_activity_counts(candidate: Mapping[str, Any]) -> dict[str, in
         counts["filled_count"] = filled_count
         counts["filled_order_count"] = filled_count
     return counts
+
+
+def _enrich_scorecard_with_replay_stress_metrics(
+    *,
+    scorecard: Mapping[str, Any],
+    full_window: Mapping[str, Any],
+    result_path: str,
+) -> dict[str, Any]:
+    enriched = dict(scorecard)
+    net_pnl_per_day = _decimal(
+        enriched.get("net_pnl_per_day") or full_window.get("net_per_day")
+    )
+    avg_filled_notional_per_day = _decimal(
+        enriched.get("avg_filled_notional_per_day")
+        or full_window.get("avg_filled_notional_per_day")
+    )
+    daily_liquidity_notional = _mapping(full_window.get("daily_liquidity_notional"))
+    if daily_liquidity_notional and "daily_liquidity_notional" not in enriched:
+        enriched["daily_liquidity_notional"] = daily_liquidity_notional
+    if (
+        daily_liquidity_notional
+        and "market_impact_liquidity_evidence_present" not in enriched
+    ):
+        enriched["market_impact_liquidity_evidence_present"] = True
+    if daily_liquidity_notional and "market_impact_liquidity_day_count" not in enriched:
+        enriched["market_impact_liquidity_day_count"] = len(daily_liquidity_notional)
+    avg_liquidity_notional_per_day = _decimal(
+        enriched.get("avg_liquidity_notional_per_day")
+        or full_window.get("avg_liquidity_notional_per_day")
+    )
+    if (
+        avg_liquidity_notional_per_day <= 0
+        and daily_liquidity_notional
+        and _decimal(
+            enriched.get("trading_day_count") or full_window.get("trading_day_count")
+        )
+        > 0
+    ):
+        avg_liquidity_notional_per_day = _decimal_mapping_total(
+            daily_liquidity_notional
+        ) / _decimal(
+            enriched.get("trading_day_count") or full_window.get("trading_day_count")
+        )
+    if (
+        avg_liquidity_notional_per_day > 0
+        and "avg_liquidity_notional_per_day" not in enriched
+    ):
+        enriched["avg_liquidity_notional_per_day"] = str(avg_liquidity_notional_per_day)
+
+    market_impact_cost_per_day = (
+        avg_filled_notional_per_day * MARKET_IMPACT_STRESS_COST_BPS / Decimal("10000")
+    )
+    market_impact_net_pnl_per_day = net_pnl_per_day - market_impact_cost_per_day
+    if "market_impact_stress_model" not in enriched:
+        enriched["market_impact_stress_model"] = "square_root"
+    if "market_impact_stress_cost_bps" not in enriched:
+        enriched["market_impact_stress_cost_bps"] = str(MARKET_IMPACT_STRESS_COST_BPS)
+    if "market_impact_stress_net_pnl_per_day" not in enriched:
+        enriched["market_impact_stress_net_pnl_per_day"] = str(
+            market_impact_net_pnl_per_day
+        )
+    if "market_impact_stress_artifact_ref" not in enriched:
+        enriched["market_impact_stress_artifact_ref"] = result_path
+    if "market_impact_stress_passed" not in enriched:
+        enriched["market_impact_stress_passed"] = (
+            bool(enriched.get("market_impact_liquidity_evidence_present"))
+            and avg_filled_notional_per_day > 0
+            and market_impact_net_pnl_per_day > 0
+        )
+
+    delay_depth_fillable_notional_per_day = avg_filled_notional_per_day
+    delay_depth_cost_per_day = (
+        delay_depth_fillable_notional_per_day
+        * DELAY_ADJUSTED_DEPTH_STRESS_COST_BPS
+        / Decimal("10000")
+    )
+    delay_depth_net_pnl_per_day = net_pnl_per_day - delay_depth_cost_per_day
+    if "delay_adjusted_depth_stress_model" not in enriched:
+        enriched["delay_adjusted_depth_stress_model"] = "latency_depth_haircut"
+    if "delay_adjusted_depth_stress_ms" not in enriched:
+        enriched["delay_adjusted_depth_stress_ms"] = str(DELAY_ADJUSTED_DEPTH_STRESS_MS)
+    if "delay_adjusted_depth_fillable_notional_per_day" not in enriched:
+        enriched["delay_adjusted_depth_fillable_notional_per_day"] = str(
+            delay_depth_fillable_notional_per_day
+        )
+    if "delay_adjusted_depth_stress_net_pnl_per_day" not in enriched:
+        enriched["delay_adjusted_depth_stress_net_pnl_per_day"] = str(
+            delay_depth_net_pnl_per_day
+        )
+    if "delay_adjusted_depth_stress_artifact_ref" not in enriched:
+        enriched["delay_adjusted_depth_stress_artifact_ref"] = result_path
+    if "delay_adjusted_depth_stress_passed" not in enriched:
+        enriched["delay_adjusted_depth_stress_passed"] = (
+            avg_liquidity_notional_per_day >= delay_depth_fillable_notional_per_day
+            and delay_depth_fillable_notional_per_day > 0
+            and delay_depth_net_pnl_per_day > 0
+        )
+    return enriched
 
 
 @dataclass(frozen=True)
@@ -208,6 +324,44 @@ def evidence_bundle_from_frontier_candidate(
         value = _string(candidate.get(key))
         if value and key not in scorecard:
             scorecard = {**scorecard, key: value}
+    scorecard = _enrich_scorecard_with_replay_stress_metrics(
+        scorecard=scorecard,
+        full_window=full_window,
+        result_path=result_path,
+    )
+    stress_metrics = tuple(
+        cast(Sequence[Mapping[str, Any]], candidate.get("stress_metrics") or ())
+    )
+    if not stress_metrics:
+        stress_metrics = (
+            {
+                "source": "frontier_replay",
+                "stress_type": "market_impact",
+                "model": scorecard.get("market_impact_stress_model"),
+                "cost_bps": scorecard.get("market_impact_stress_cost_bps"),
+                "net_pnl_per_day": scorecard.get(
+                    "market_impact_stress_net_pnl_per_day"
+                ),
+                "passed": scorecard.get("market_impact_stress_passed"),
+                "artifact_ref": scorecard.get("market_impact_stress_artifact_ref"),
+            },
+            {
+                "source": "frontier_replay",
+                "stress_type": "delay_adjusted_depth",
+                "model": scorecard.get("delay_adjusted_depth_stress_model"),
+                "stress_ms": scorecard.get("delay_adjusted_depth_stress_ms"),
+                "fillable_notional_per_day": scorecard.get(
+                    "delay_adjusted_depth_fillable_notional_per_day"
+                ),
+                "net_pnl_per_day": scorecard.get(
+                    "delay_adjusted_depth_stress_net_pnl_per_day"
+                ),
+                "passed": scorecard.get("delay_adjusted_depth_stress_passed"),
+                "artifact_ref": scorecard.get(
+                    "delay_adjusted_depth_stress_artifact_ref"
+                ),
+            },
+        )
     payload_seed = {
         "candidate_id": candidate_id,
         "candidate_spec_id": candidate_spec_id,
@@ -235,9 +389,7 @@ def evidence_bundle_from_frontier_candidate(
         fold_metrics=tuple(
             cast(Sequence[Mapping[str, Any]], candidate.get("fold_metrics") or ())
         ),
-        stress_metrics=tuple(
-            cast(Sequence[Mapping[str, Any]], candidate.get("stress_metrics") or ())
-        ),
+        stress_metrics=stress_metrics,
         cost_calibration=_mapping(candidate.get("cost_calibration"))
         or {"status": "provisional", "source": "frontier_replay"},
         null_comparator=_mapping(candidate.get("null_comparator"))

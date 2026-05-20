@@ -1490,6 +1490,117 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "active_loss_counter_candidate",
         )
 
+    def test_candidate_selection_caps_active_loss_counter_for_small_batches(
+        self,
+    ) -> None:
+        active_breakout = replace(
+            self._candidate_spec(
+                "spec-active-breakout",
+                family_template_id="breakout_reclaim_v2",
+            ),
+            runtime_family="breakout_continuation_consistent",
+            runtime_strategy_name="breakout-continuation-long-v1",
+        )
+        active_microbar = replace(
+            self._candidate_spec(
+                "spec-active-microbar",
+                family_template_id="microbar_cross_sectional_pairs_v1",
+            ),
+            runtime_family="microbar_cross_sectional_pairs",
+            runtime_strategy_name="microbar-cross-sectional-pairs-v1",
+        )
+        active_late_day = replace(
+            self._candidate_spec(
+                "spec-active-late-day",
+                family_template_id="late_day_continuation_v1",
+            ),
+            runtime_family="late_day_continuation_consistent",
+            runtime_strategy_name="late-day-continuation-long-v1",
+        )
+        runtime_intraday = replace(
+            self._candidate_spec(
+                "spec-runtime-intraday",
+                family_template_id="intraday_tsmom_v2",
+            ),
+            runtime_family="intraday_tsmom_consistent",
+            runtime_strategy_name="intraday-tsmom-profit-v3",
+        )
+        runtime_late_day = replace(
+            self._candidate_spec(
+                "spec-runtime-late-day",
+                family_template_id="opening_drive_leader_reclaim_v1",
+            ),
+            runtime_family="late_day_continuation_consistent",
+            runtime_strategy_name="late-day-continuation-long-v1",
+        )
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(
+                active_breakout,
+                active_microbar,
+                active_late_day,
+                runtime_intraday,
+                runtime_late_day,
+            ),
+            proposal_rows=[
+                {
+                    "candidate_spec_id": spec.candidate_spec_id,
+                    "rank": index,
+                    "proposal_score": 100.0 - index,
+                    "selection_reason": "pre_replay_mlx_active_loss_counter_candidate",
+                }
+                for index, spec in enumerate(
+                    (active_breakout, active_microbar, active_late_day),
+                    start=1,
+                )
+            ]
+            + [
+                {
+                    "candidate_spec_id": runtime_intraday.candidate_spec_id,
+                    "rank": 4,
+                    "proposal_score": 1.0,
+                    "selection_reason": "pre_replay_mlx_rank",
+                },
+                {
+                    "candidate_spec_id": runtime_late_day.candidate_spec_id,
+                    "rank": 5,
+                    "proposal_score": 0.5,
+                    "selection_reason": "pre_replay_mlx_rank",
+                },
+            ],
+            top_k=0,
+            exploration_slots=4,
+            max_candidates=4,
+            portfolio_size_min=2,
+        )
+
+        selected_reasons = {
+            row["candidate_spec_id"]: row["selection_reason"]
+            for row in selection["rows"]
+            if row["selected_for_replay"]
+        }
+        self.assertEqual(len(selected), 4)
+        self.assertEqual(
+            selection["budget"]["active_loss_counter_candidate_selected_count"],
+            2,
+        )
+        self.assertEqual(
+            sum(
+                1
+                for reason in selected_reasons.values()
+                if reason == "active_loss_counter_candidate"
+            ),
+            2,
+        )
+        self.assertGreaterEqual(
+            sum(
+                1
+                for reason in selected_reasons.values()
+                if reason == "runtime_strategy_floor"
+            ),
+            1,
+        )
+
     def test_candidate_selection_blocks_no_activity_feedback_from_reaudit(
         self,
     ) -> None:
@@ -3558,6 +3669,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                         "model": "square_root",
                         "impact_cost_bps": "5",
                         "liquidity_evidence_present": True,
+                        "net_pnl_per_day": "999",
                         "post_impact_net_pnl_per_day": "610",
                     }
                 )

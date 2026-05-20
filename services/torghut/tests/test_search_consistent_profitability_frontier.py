@@ -1001,6 +1001,20 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(summary["market_impact_liquidity_day_count"], 3)
         self.assertEqual(summary["market_impact_liquidity_missing_day_count"], 5)
         self.assertEqual(summary["avg_liquidity_notional_per_day"], "468750")
+        self.assertEqual(summary["market_impact_stress_model"], "square_root")
+        self.assertEqual(summary["market_impact_stress_cost_bps"], "20.0")
+        self.assertEqual(summary["market_impact_stress_net_pnl_per_day"], "262.5")
+        self.assertTrue(summary["market_impact_stress_passed"])
+        self.assertEqual(
+            summary["delay_adjusted_depth_stress_model"], "latency_depth_haircut"
+        )
+        self.assertEqual(
+            summary["delay_adjusted_depth_fillable_notional_per_day"], "18750"
+        )
+        self.assertEqual(
+            summary["delay_adjusted_depth_stress_net_pnl_per_day"], "298.125"
+        )
+        self.assertTrue(summary["delay_adjusted_depth_stress_passed"])
         self.assertEqual(
             summary["daily_liquidity_notional"],
             {
@@ -1437,6 +1451,24 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 top_by_stop["18"]["objective_scorecard"][
                     "market_impact_liquidity_evidence_present"
                 ]
+            )
+            self.assertEqual(
+                top_by_stop["18"]["objective_scorecard"]["market_impact_stress_model"],
+                "square_root",
+            )
+            self.assertIn(
+                "market_impact_stress_net_pnl_per_day",
+                top_by_stop["18"]["objective_scorecard"],
+            )
+            self.assertEqual(
+                top_by_stop["18"]["objective_scorecard"][
+                    "delay_adjusted_depth_stress_model"
+                ],
+                "latency_depth_haircut",
+            )
+            self.assertIn(
+                "delay_adjusted_depth_stress_net_pnl_per_day",
+                top_by_stop["18"]["objective_scorecard"],
             )
             self.assertTrue(
                 top_by_stop["18"]["objective_scorecard"]["double_oos_passed"]

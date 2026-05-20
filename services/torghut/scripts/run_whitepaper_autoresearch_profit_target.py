@@ -4246,8 +4246,11 @@ def _select_candidate_specs_for_replay(
         if proposal_selection_reason(spec.candidate_spec_id)
         == "pre_replay_mlx_active_loss_counter_candidate"
     ]
+    active_loss_counter_cap = 4
+    if replay_budget <= 4:
+        active_loss_counter_cap = max(1, replay_budget // 2)
     active_loss_counter_count = min(
-        4,
+        active_loss_counter_cap,
         max(0, requested_exploration_slots),
         replay_budget,
         len(active_loss_counter_candidates),
@@ -5837,9 +5840,9 @@ def _runtime_closure_market_impact_stress_update(
         ),
         "market_impact_stress_net_pnl_per_day": str(
             _decimal(
-                market_impact_report.get("net_pnl_per_day")
-                or market_impact_report.get("post_impact_net_pnl_per_day")
+                market_impact_report.get("post_impact_net_pnl_per_day")
                 or market_impact_report.get("stressed_net_pnl_per_day")
+                or market_impact_report.get("net_pnl_per_day")
             )
         ),
     }
