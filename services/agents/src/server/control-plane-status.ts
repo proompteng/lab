@@ -1,5 +1,6 @@
 import { Context, Data, Effect, Layer } from 'effect'
 
+import { buildControllerWitnessQuorum } from '@proompteng/agent-contracts/controller-witness'
 import { assessAgentRunIngestion, getAgentsControllerHealth, type AgentsControllerHealth } from './agents-controller'
 import type { GrpcStatus } from './control-plane-grpc'
 import { resolveGrpcStatus } from './control-plane-grpc'
@@ -19,7 +20,6 @@ import type {
   HeartbeatAuthoritySource,
   RuntimeAdapterStatus,
 } from './control-plane-status-contract'
-import { AGENTS_CONTROLLER_WITNESS_DESIGN_ARTIFACT } from './control-plane-status-contract'
 import { getLeaderElectionStatus, type LeaderElectionStatus } from './leader-election'
 import { getOrchestrationControllerHealth } from './orchestration-controller'
 import { resolveRuntimeServiceName } from './runtime-identity'
@@ -204,8 +204,6 @@ const buildDatabaseStatus = (env: EnvSource) => {
   }
 }
 
-const addSeconds = (value: Date, seconds: number) => new Date(value.getTime() + seconds * 1000)
-
 const buildAgentRunIngestionStatus = (
   namespace: string,
   health: AgentsControllerHealth,
@@ -220,135 +218,6 @@ const buildAgentRunIngestionStatus = (
     last_resync_at: assessment.lastResyncAt,
     untouched_run_count: assessment.untouchedRunCount,
     oldest_untouched_age_seconds: assessment.oldestUntouchedAgeSeconds,
-  }
-}
-
-const witnessId = (namespace: string, surface: string) => `witness:${surface}:${namespace}:agents-control-plane-status`
-
-const hasWatchEpoch = (
-  watchReliability: ControlPlaneWatchReliability,
-  agentRunIngestion: AgentsControlPlaneStatus['agentrun_ingestion'],
-) =>
-  watchReliability.status === 'healthy' ||
-  (agentRunIngestion.status === 'healthy' && agentRunIngestion.last_watch_event_at !== null)
-
-const buildControlPlaneControllerWitness = (input: {
-  namespace: string
-  now: Date
-  controller: ControllerStatus
-  agentRunIngestion: AgentsControlPlaneStatus['agentrun_ingestion']
-  watchReliability: ControlPlaneWatchReliability
-  leaderElection: LeaderElectionStatus
-}): ControlPlaneControllerWitnessQuorum => {
-  const generatedAt = input.now.toISOString()
-  const expiresAt = addSeconds(input.now, 60).toISOString()
-  const deploymentAvailable = input.controller.enabled && input.controller.started
-  const watchEpochCurrent = hasWatchEpoch(input.watchReliability, input.agentRunIngestion)
-  const controllerSelfReportCurrent = deploymentAvailable && input.agentRunIngestion.status === 'healthy'
-  const decision =
-    input.agentRunIngestion.status === 'degraded'
-      ? 'hold_material'
-      : controllerSelfReportCurrent
-        ? 'allow'
-        : deploymentAvailable && watchEpochCurrent
-          ? 'repair_only'
-          : 'hold_material'
-  const reasonCodes = [
-    ...(deploymentAvailable ? [] : ['controller_deployment_unavailable']),
-    ...(watchEpochCurrent ? [] : ['watch_epoch_not_current']),
-    ...(controllerSelfReportCurrent ? [] : ['controller_self_report_not_current']),
-    ...(input.agentRunIngestion.status === 'healthy' ? [] : [`agentrun_ingestion_${input.agentRunIngestion.status}`]),
-  ]
-  const witnessRefs = [
-    witnessId(input.namespace, 'kubernetes_deployment'),
-    witnessId(input.namespace, 'watch_epoch'),
-    witnessId(input.namespace, 'agentrun_ingestion'),
-  ]
-
-  return {
-    mode: 'shadow',
-    design_artifact: AGENTS_CONTROLLER_WITNESS_DESIGN_ARTIFACT,
-    quorum_id: `controller-witness:${input.namespace}:agents-control-plane-status`,
-    generated_at: generatedAt,
-    expires_at: expiresAt,
-    namespace: input.namespace,
-    decision,
-    reason_codes: reasonCodes,
-    message: controllerSelfReportCurrent
-      ? 'Agents controller ingestion self-report is current'
-      : 'Agents controller ingestion self-report is not fully current',
-    witness_refs: witnessRefs,
-    deployment_available: deploymentAvailable,
-    watch_epoch_current: watchEpochCurrent,
-    controller_self_report_current: controllerSelfReportCurrent,
-    witnesses: [
-      {
-        witness_id: witnessRefs[0],
-        generated_at: generatedAt,
-        expires_at: expiresAt,
-        namespace: input.namespace,
-        controller_surface: 'kubernetes_deployment',
-        deployment_ref: `${input.namespace}/agents-controllers`,
-        pod_uid: null,
-        image_ref: null,
-        leader_identity: input.leaderElection.identity,
-        controller_started: input.controller.started,
-        deployment_available: deploymentAvailable,
-        watch_epoch_id: null,
-        ingestion_epoch_id: null,
-        last_watch_event_at: null,
-        last_resync_at: null,
-        observed_run_count: null,
-        untouched_run_count: null,
-        decision: deploymentAvailable ? 'allow' : 'repair_only',
-        reason_codes: deploymentAvailable ? [] : ['controller_deployment_unavailable'],
-      },
-      {
-        witness_id: witnessRefs[1],
-        generated_at: generatedAt,
-        expires_at: expiresAt,
-        namespace: input.namespace,
-        controller_surface: 'watch_epoch',
-        deployment_ref: null,
-        pod_uid: null,
-        image_ref: null,
-        leader_identity: input.leaderElection.identity,
-        controller_started: null,
-        deployment_available: null,
-        watch_epoch_id: `watch:${input.namespace}:agents-control-plane-status`,
-        ingestion_epoch_id: null,
-        last_watch_event_at:
-          input.watchReliability.streams[0]?.last_seen_at ?? input.agentRunIngestion.last_watch_event_at,
-        last_resync_at: null,
-        observed_run_count: input.watchReliability.total_events,
-        untouched_run_count: null,
-        decision: watchEpochCurrent ? 'allow' : 'hold_material',
-        reason_codes: watchEpochCurrent ? [] : ['watch_epoch_not_current'],
-      },
-      {
-        witness_id: witnessRefs[2],
-        generated_at: generatedAt,
-        expires_at: expiresAt,
-        namespace: input.namespace,
-        controller_surface: 'agentrun_ingestion',
-        deployment_ref: null,
-        pod_uid: null,
-        image_ref: null,
-        leader_identity: input.leaderElection.identity,
-        controller_started: null,
-        deployment_available: null,
-        watch_epoch_id: null,
-        ingestion_epoch_id: `ingestion:${input.namespace}:agents-control-plane-status`,
-        last_watch_event_at: input.agentRunIngestion.last_watch_event_at,
-        last_resync_at: input.agentRunIngestion.last_resync_at,
-        observed_run_count: null,
-        untouched_run_count: input.agentRunIngestion.untouched_run_count,
-        decision: input.agentRunIngestion.status === 'healthy' ? 'allow' : 'hold_material',
-        reason_codes:
-          input.agentRunIngestion.status === 'healthy' ? [] : [`agentrun_ingestion_${input.agentRunIngestion.status}`],
-      },
-    ],
-    rollback_target: 'use Agents controller logs and AgentRun status conditions for controller ingestion proof',
   }
 }
 
@@ -410,6 +279,7 @@ export const buildAgentsControlPlaneStatus = (
   const namespace = input.namespace
   const runtimeEvidence = input.runtimeEvidence
   const watchReliability = input.watchReliability ?? unknownWatchReliability()
+  const rolloutHealth = runtimeEvidence?.rolloutHealth ?? unknownRolloutHealth()
   const agentsHealth = (deps.getAgentsControllerHealth ?? getAgentsControllerHealth)()
   const controllers = [
     buildControllerStatus('agents-controller', agentsHealth, namespace, now),
@@ -441,13 +311,16 @@ export const buildAgentsControlPlaneStatus = (
   ]
   const agentRunIngestion = buildAgentRunIngestionStatus(namespace, agentsHealth, deps)
   const leaderElection = (deps.getLeaderElectionStatus ?? getLeaderElectionStatus)()
-  const controllerWitness = buildControlPlaneControllerWitness({
+  const controllerWitness = buildControllerWitnessQuorum({
     namespace,
     now,
-    controller: workflowController,
+    servingController: workflowController,
+    effectiveController: workflowController,
+    rolloutHealth,
     agentRunIngestion,
     watchReliability,
-    leaderElection,
+    controllerDeploymentName: 'agents-controllers',
+    leaderIdentity: leaderElection.identity,
   })
   const degradedComponents = buildDegradedComponents({
     controllers,
@@ -475,7 +348,7 @@ export const buildAgentsControlPlaneStatus = (
     runtime_proof_cells: [],
     projection_watermarks: [],
     workflows: runtimeEvidence?.workflows ?? unknownWorkflows(),
-    rollout_health: runtimeEvidence?.rolloutHealth ?? unknownRolloutHealth(),
+    rollout_health: rolloutHealth,
     namespaces: [
       {
         namespace,

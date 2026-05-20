@@ -169,7 +169,7 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('Agents must not expose legacy Codex notify/run-complete callback bridge')
     expect(content).toContain('api/agents/codex/(notify|run-complete)')
     expect(content).toContain('retired workflow_comms agent-message store')
-    expect(content).toContain('Jangar Codex NATS publisher must emit AgentRun-native identity only')
+    expect(content).toContain('Agents Codex NATS publisher must emit AgentRun-native identity only')
     expect(content).toContain('Jangar Codex judge source contract must use AgentRun-native runtime identity fields')
     expect(content).toContain('getRunByWorkflow|selectCodexJudgeRunByWorkflow')
     expect(content).toContain('updateArtifactsFromWorkflow|workflowTag')

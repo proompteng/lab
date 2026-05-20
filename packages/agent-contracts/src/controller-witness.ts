@@ -1,42 +1,59 @@
 import { createHash } from 'node:crypto'
 
 import type {
-  ActionSloBudget,
+  AgentRunIngestionStatus,
   ControlPlaneControllerWitness,
   ControlPlaneControllerWitnessQuorum,
-  ControllerWitnessDecision,
-  MaterialActionVerdict,
-  MaterialActionVerdictDecision,
-  MaterialActionVerdictEpoch,
-  MaterialActionActivationReceipt,
-  MaterialActionActivationReceiptCapitalStage,
-  MaterialActionActivationReceiptDecision,
-  NegativeEvidenceRouterStatus,
-  RouteStabilityEscrow,
-} from '~/server/control-plane-status-types'
-import type {
-  AgentRunIngestionStatus,
   ControlPlaneRolloutHealth,
   ControlPlaneWatchReliability,
   ControllerStatus,
+  ControllerWitnessDecision,
   DeploymentRolloutStatus,
-} from '~/server/control-plane-status-types'
+} from './control-plane-status'
+import { AGENTS_CONTROLLER_WITNESS_DESIGN_ARTIFACT } from './control-plane-status'
 
-export const CONTROLLER_WITNESS_DESIGN_ARTIFACT =
-  'docs/agents/designs/116-jangar-controller-witness-quorum-and-capital-activation-receipts-2026-05-06.md'
+const DEFAULT_WITNESS_FRESHNESS_SECONDS = 60
 
-const DEFAULT_WITNESS_FRESHNESS_MINUTES = 5
+export type BuildControlPlaneControllerWitnessInput = {
+  namespace: string
+  now: Date
+  controller: ControllerStatus
+  agentRunIngestion: AgentRunIngestionStatus
+  watchReliability: ControlPlaneWatchReliability
+  leaderIdentity?: string | null
+  expiresInSeconds?: number
+}
+
+export type BuildControllerWitnessQuorumInput = {
+  namespace: string
+  now: Date
+  servingController: ControllerStatus
+  effectiveController: ControllerStatus
+  rolloutHealth: ControlPlaneRolloutHealth
+  watchReliability: ControlPlaneWatchReliability
+  agentRunIngestion: AgentRunIngestionStatus
+  controllerDeploymentName?: string
+  leaderIdentity?: string | null
+  expiresInSeconds?: number
+}
+
+const addSeconds = (date: Date, seconds: number) => new Date(date.getTime() + seconds * 1000)
 
 const hashJson = (value: unknown, length = 16) =>
   createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, length)
 
-const addMinutes = (date: Date, minutes: number) => new Date(date.getTime() + minutes * 60 * 1000)
-
 const uniqueStrings = (values: string[]) => [...new Set(values.filter((value) => value.trim().length > 0))]
 
-const findControllerDeployment = (rolloutHealth: ControlPlaneRolloutHealth, namespace: string) =>
+const agentRunIngestionUntouchedCount = (agentRunIngestion: AgentRunIngestionStatus) =>
+  Math.max(0, agentRunIngestion.untouched_run_count)
+
+const findControllerDeployment = (
+  rolloutHealth: ControlPlaneRolloutHealth,
+  namespace: string,
+  deploymentName: string,
+) =>
   rolloutHealth.deployments.find(
-    (deployment) => deployment.namespace === namespace && deployment.name === 'agents-controllers',
+    (deployment) => deployment.namespace === namespace && deployment.name === deploymentName,
   ) ?? null
 
 const isDeploymentAvailable = (deployment: DeploymentRolloutStatus | null) =>
@@ -72,9 +89,6 @@ const ingestionEpochId = (agentRunIngestion: AgentRunIngestionStatus) =>
     untouched_run_count: agentRunIngestionUntouchedCount(agentRunIngestion),
     oldest_untouched_age_seconds: agentRunIngestion.oldest_untouched_age_seconds,
   })}`
-
-const agentRunIngestionUntouchedCount = (agentRunIngestion: AgentRunIngestionStatus) =>
-  Math.max(0, agentRunIngestion.untouched_run_count)
 
 const buildWitnessId = (input: {
   namespace: string
@@ -232,17 +246,12 @@ const resolveQuorumDecision = (input: {
   }
 }
 
-export const buildControllerWitnessQuorum = (input: {
-  now: Date
-  namespace: string
-  servingController: ControllerStatus
-  effectiveController: ControllerStatus
-  rolloutHealth: ControlPlaneRolloutHealth
-  watchReliability: ControlPlaneWatchReliability
-  agentRunIngestion: AgentRunIngestionStatus
-}): ControlPlaneControllerWitnessQuorum => {
-  const expiresAt = addMinutes(input.now, DEFAULT_WITNESS_FRESHNESS_MINUTES).toISOString()
-  const deployment = findControllerDeployment(input.rolloutHealth, input.namespace)
+export const buildControllerWitnessQuorum = (
+  input: BuildControllerWitnessQuorumInput,
+): ControlPlaneControllerWitnessQuorum => {
+  const deploymentName = input.controllerDeploymentName ?? 'agents-controllers'
+  const expiresAt = addSeconds(input.now, input.expiresInSeconds ?? DEFAULT_WITNESS_FRESHNESS_SECONDS).toISOString()
+  const deployment = findControllerDeployment(input.rolloutHealth, input.namespace, deploymentName)
   const deploymentAvailable = isDeploymentAvailable(deployment)
   const deploymentRef = deployment ? `deployment/${deployment.namespace}/${deployment.name}` : null
   const watchId = watchEpochId(input.watchReliability)
@@ -259,6 +268,8 @@ export const buildControllerWitnessQuorum = (input: {
     watchHealthy,
     agentRunIngestion: input.agentRunIngestion,
   })
+  const controllerLeaderIdentity =
+    (input.leaderIdentity ?? input.effectiveController.authority.source_pod.trim()) || null
   const witnesses = [
     buildWitness({
       now: input.now,
@@ -271,7 +282,7 @@ export const buildControllerWitnessQuorum = (input: {
         ? `deployment/${input.namespace}/${input.effectiveController.authority.source_deployment}`
         : null,
       podUid: input.effectiveController.authority.source_pod || null,
-      leaderIdentity: input.effectiveController.authority.source_pod || null,
+      leaderIdentity: controllerLeaderIdentity,
       controllerStarted: input.effectiveController.started,
     }),
     buildWitness({
@@ -329,7 +340,7 @@ export const buildControllerWitnessQuorum = (input: {
 
   return {
     mode: 'shadow',
-    design_artifact: CONTROLLER_WITNESS_DESIGN_ARTIFACT,
+    design_artifact: AGENTS_CONTROLLER_WITNESS_DESIGN_ARTIFACT,
     quorum_id: quorumId,
     generated_at: input.now.toISOString(),
     expires_at: expiresAt,
@@ -349,100 +360,54 @@ export const buildControllerWitnessQuorum = (input: {
   }
 }
 
-const flattenNegativeEvidenceRefs = (router: NegativeEvidenceRouterStatus) =>
-  uniqueStrings(router.negative_evidence_refs.flatMap((entry) => entry.evidence_refs)).sort()
+const syntheticRolloutHealth = (
+  namespace: string,
+  controller: ControllerStatus,
+  deploymentName: string,
+): ControlPlaneRolloutHealth => {
+  const desiredReplicas = controller.enabled ? 1 : 0
+  const readyReplicas = controller.started ? 1 : 0
+  const status: DeploymentRolloutStatus['status'] = controller.enabled
+    ? controller.started
+      ? 'healthy'
+      : 'degraded'
+    : 'disabled'
 
-const receiptDecisionFromBudget = (budget: ActionSloBudget): MaterialActionActivationReceiptDecision => {
-  if (budget.decision === 'shadow_only') return 'observe_only'
-  if (budget.decision === 'allow') return 'allow'
-  if (budget.decision === 'observe_only') return 'observe_only'
-  if (budget.decision === 'repair_only') return 'repair_only'
-  if (budget.decision === 'block') return 'block'
-  return 'hold'
+  return {
+    status: status === 'healthy' ? 'healthy' : status === 'disabled' ? 'unknown' : 'degraded',
+    observed_deployments: 1,
+    degraded_deployments: status === 'healthy' ? 0 : 1,
+    deployments: [
+      {
+        name: deploymentName,
+        namespace,
+        status,
+        desired_replicas: desiredReplicas,
+        ready_replicas: readyReplicas,
+        available_replicas: readyReplicas,
+        updated_replicas: readyReplicas,
+        unavailable_replicas: Math.max(0, desiredReplicas - readyReplicas),
+        message: controller.message,
+      },
+    ],
+    message: controller.message,
+  }
 }
 
-const receiptDecisionFromVerdict = (
-  decision: MaterialActionVerdictDecision,
-): MaterialActionActivationReceiptDecision => {
-  if (decision === 'allow') return 'allow'
-  if (decision === 'repair_only') return 'repair_only'
-  if (decision === 'block') return 'block'
-  return 'hold'
-}
-
-const capitalStageForAction = (
-  actionClass: ActionSloBudget['action_class'],
-): MaterialActionActivationReceiptCapitalStage => {
-  if (actionClass === 'torghut_observe') return 'observe'
-  if (actionClass === 'paper_canary') return 'paper'
-  if (actionClass === 'live_micro_canary') return 'live_micro'
-  if (actionClass === 'live_scale') return 'live_scale'
-  if (actionClass === 'deploy_widen' || actionClass === 'merge_ready') return 'shadow'
-  return 'none'
-}
-
-const proofFreshnessRefs = (router: NegativeEvidenceRouterStatus) =>
-  router.positive_evidence_refs
-    .filter(
-      (ref) =>
-        ref.startsWith('runtime-kit:') ||
-        ref.startsWith('watch_reliability:') ||
-        ref.startsWith('database:') ||
-        ref.startsWith('execution_trust:'),
-    )
-    .sort()
-
-export const buildMaterialActionActivationReceipts = (input: {
-  now: Date
-  scope: string
-  controllerWitness: ControlPlaneControllerWitnessQuorum
-  router: NegativeEvidenceRouterStatus
-  budgets: ActionSloBudget[]
-  materialActionVerdictEpoch?: MaterialActionVerdictEpoch
-  routeStabilityEscrow?: RouteStabilityEscrow
-}): MaterialActionActivationReceipt[] =>
-  input.budgets.map((budget) => {
-    const verdict = input.materialActionVerdictEpoch?.final_verdicts.find(
-      (entry: MaterialActionVerdict) => entry.action_class === budget.action_class,
-    )
-    const decision = verdict ? receiptDecisionFromVerdict(verdict.decision) : receiptDecisionFromBudget(budget)
-    const receiptSource = {
-      action_class: budget.action_class,
-      budget_id: budget.budget_id,
-      controller_quorum_id: input.controllerWitness.quorum_id,
-      router_epoch_id: input.router.router_epoch_id,
-      material_action_verdict_epoch_id: input.materialActionVerdictEpoch?.epoch_id ?? null,
-      decision,
-      scope: input.scope,
-    }
-
-    return {
-      receipt_id: `receipt:${budget.action_class}:${hashJson(receiptSource)}`,
-      generated_at: input.now.toISOString(),
-      expires_at: budget.fresh_until,
-      action_class: budget.action_class,
-      scope: input.scope,
-      controller_witness_refs: input.controllerWitness.witness_refs,
-      route_stability_escrow_ref: input.routeStabilityEscrow?.escrow_id ?? null,
-      transport_contract_refs: [
-        input.router.router_epoch_id,
-        input.controllerWitness.quorum_id,
-        ...(input.materialActionVerdictEpoch ? [input.materialActionVerdictEpoch.epoch_id] : []),
-        ...(input.routeStabilityEscrow ? [input.routeStabilityEscrow.escrow_id] : []),
-        ...input.router.failure_domain_lease_refs,
-      ],
-      proof_freshness_refs: proofFreshnessRefs(input.router),
-      positive_authority_refs: input.router.positive_evidence_refs,
-      negative_authority_refs: uniqueStrings([
-        ...flattenNegativeEvidenceRefs(input.router),
-        ...(input.materialActionVerdictEpoch?.contradiction_refs ?? []),
-      ]),
-      capital_stage: capitalStageForAction(budget.action_class),
-      decision,
-      max_dispatches: verdict ? verdict.max_dispatches : budget.max_dispatches,
-      max_runtime_seconds: verdict ? verdict.max_runtime_seconds : budget.max_runtime_seconds,
-      max_notional: verdict ? verdict.max_notional : budget.max_notional,
-      required_repairs: verdict ? verdict.required_repair_actions : budget.required_repairs,
-      rollback_target: verdict?.rollback_target ?? budget.rollback_target ?? input.controllerWitness.rollback_target,
-    }
+export const buildControlPlaneControllerWitness = (
+  input: BuildControlPlaneControllerWitnessInput,
+): ControlPlaneControllerWitnessQuorum => {
+  const deploymentName = 'agents-controllers'
+  return buildControllerWitnessQuorum({
+    namespace: input.namespace,
+    now: input.now,
+    servingController: input.controller,
+    effectiveController: input.controller,
+    rolloutHealth: syntheticRolloutHealth(input.namespace, input.controller, deploymentName),
+    watchReliability: input.watchReliability,
+    agentRunIngestion: input.agentRunIngestion,
+    controllerDeploymentName: deploymentName,
+    leaderIdentity: input.leaderIdentity,
+    expiresInSeconds: input.expiresInSeconds,
   })
+}

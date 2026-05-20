@@ -49,7 +49,30 @@ const runtimeEvidence: ControlPlaneRuntimeEvidence = {
     status: 'healthy',
     observed_deployments: 2,
     degraded_deployments: 0,
-    deployments: [],
+    deployments: [
+      {
+        name: 'agents',
+        namespace: 'agents',
+        status: 'healthy',
+        desired_replicas: 1,
+        ready_replicas: 1,
+        available_replicas: 1,
+        updated_replicas: 1,
+        unavailable_replicas: 0,
+        message: 'agents deployment healthy',
+      },
+      {
+        name: 'agents-controllers',
+        namespace: 'agents',
+        status: 'healthy',
+        desired_replicas: 2,
+        ready_replicas: 2,
+        available_replicas: 2,
+        updated_replicas: 2,
+        unavailable_replicas: 0,
+        message: 'agents-controllers deployment healthy',
+      },
+    ],
     message: '2 configured deployment(s) healthy',
   },
 }
@@ -148,17 +171,18 @@ describe('buildAgentsControlPlaneStatus', () => {
       untouched_run_count: 0,
     })
     expect(status.control_plane_controller_witness).toMatchObject({
-      quorum_id: 'controller-witness:agents:agents-control-plane-status',
       deployment_available: true,
       watch_epoch_current: true,
       controller_self_report_current: true,
       decision: 'allow',
       witnesses: expect.arrayContaining([
+        expect.objectContaining({ controller_surface: 'serving_process' }),
         expect.objectContaining({ controller_surface: 'kubernetes_deployment' }),
         expect.objectContaining({ controller_surface: 'watch_epoch' }),
         expect.objectContaining({ controller_surface: 'agentrun_ingestion' }),
       ]),
     })
+    expect(status.control_plane_controller_witness.quorum_id).toMatch(/^controller-witness:/)
     expect(status.watch_reliability).toMatchObject({
       status: 'healthy',
       observed_streams: 1,

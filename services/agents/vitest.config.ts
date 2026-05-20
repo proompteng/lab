@@ -15,6 +15,9 @@ const agentContractsAgentRunTerminalEventsClientSource = fileURLToPath(
 const agentContractsExecutionTrustSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/execution-trust.ts', import.meta.url),
 )
+const agentContractsControllerWitnessSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/controller-witness.ts', import.meta.url),
+)
 const agentContractsSwarmMaterialReentrySource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/swarm-material-reentry.ts', import.meta.url),
 )
@@ -30,6 +33,7 @@ export default defineConfig({
       '@proompteng/agent-contracts/agent-run-projection-authority-client':
         agentContractsAgentRunProjectionAuthorityClientSource,
       '@proompteng/agent-contracts/agent-run-terminal-events-client': agentContractsAgentRunTerminalEventsClientSource,
+      '@proompteng/agent-contracts/controller-witness': agentContractsControllerWitnessSource,
       '@proompteng/agent-contracts/execution-trust': agentContractsExecutionTrustSource,
       '@proompteng/agent-contracts/policy-validation': agentContractsPolicyValidationSource,
       '@proompteng/agent-contracts/swarm-material-reentry': agentContractsSwarmMaterialReentrySource,
@@ -46,6 +50,7 @@ export default defineConfig({
       '@proompteng/agent-contracts/agent-run-projection-authority-client':
         agentContractsAgentRunProjectionAuthorityClientSource,
       '@proompteng/agent-contracts/agent-run-terminal-events-client': agentContractsAgentRunTerminalEventsClientSource,
+      '@proompteng/agent-contracts/controller-witness': agentContractsControllerWitnessSource,
       '@proompteng/agent-contracts/execution-trust': agentContractsExecutionTrustSource,
       '@proompteng/agent-contracts/policy-validation': agentContractsPolicyValidationSource,
       '@proompteng/agent-contracts/swarm-material-reentry': agentContractsSwarmMaterialReentrySource,

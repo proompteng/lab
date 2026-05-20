@@ -98,6 +98,7 @@ export const AGENTS_CONTROLLER_WITNESS_DESIGN_ARTIFACT = 'docs/agents/designs/ag
 
 export type ControllerWitnessSurface =
   | 'serving_process'
+  | 'controller_process'
   | 'kubernetes_deployment'
   | 'watch_epoch'
   | 'agentrun_ingestion'

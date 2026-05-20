@@ -10,7 +10,7 @@ import type {
 } from '~/server/control-plane-status-types'
 import { buildActionCustodyProjection } from '~/server/control-plane-action-custody'
 import { buildClearanceMarketLedger, isClearanceMarketEnabled } from '~/server/control-plane-clearance-market'
-import { buildMaterialActionActivationReceipts } from '~/server/control-plane-controller-witness'
+import { buildMaterialActionActivationReceipts } from '~/server/control-plane-material-action-activation-receipts'
 import { buildDependencyVerdictExchange } from '~/server/control-plane-dependency-verdict'
 import type { ExecutionTrustSnapshot } from '~/server/control-plane-execution-trust'
 import { type FailureDomainRouteProbe } from '~/server/control-plane-failure-domain-leases'
