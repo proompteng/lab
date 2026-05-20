@@ -72,7 +72,7 @@ export const buildAuthSecretPath = (config: AuthSecretConfig) => {
 }
 
 export const collectBlockedSecrets = (secrets: string[]) => {
-  const blocked = parseEnvStringList('AGENTS_AGENTS_CONTROLLER_BLOCKED_SECRETS')
+  const blocked = parseEnvStringList('AGENTS_CONTROLLER_BLOCKED_SECRETS')
   if (blocked.length === 0) return []
   const blockedSet = new Set(blocked)
   return Array.from(new Set(secrets.filter((secret) => blockedSet.has(secret))))
@@ -181,7 +181,7 @@ export const clearGithubAppTokenCache = () => {
 }
 
 export const resolveVcsPrRateLimits = () => {
-  const parsed = parseJsonEnv('AGENTS_AGENTS_CONTROLLER_VCS_PR_RATE_LIMITS')
+  const parsed = parseJsonEnv('AGENTS_CONTROLLER_VCS_PR_RATE_LIMITS')
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
   const record = parsed as Record<string, unknown>
   if (Object.keys(record).length === 0) return null

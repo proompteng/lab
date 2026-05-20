@@ -138,6 +138,8 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('agent-runs/[$]id/(reruns|callbacks)')
     expect(content).toContain('legacy generic runner image aliases')
     expect(content).toContain('AGENTS_AGENT_IMAGE|JANGAR_AGENT_RUNNER_IMAGE|JANGAR_AGENT_IMAGE')
+    expect(content).toContain('AGENTS_CONTROLLER_* instead of the extracted double-prefixed')
+    expect(content).toContain('AGENTS_AGENTS_CONTROLLER')
     expect(content).toContain('runner-level NATS auth for legacy exec progress helpers')
     expect(content).toContain('live AgentProvider spec.secretEnv before the live CRD schema catches up')
     expect(content).toContain('Argo CD Application reads after control-plane extraction')
@@ -167,6 +169,9 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('broad control-plane-resources-client module')
     expect(content).toContain('broad control-plane-resources-client package subpath')
     expect(content).toContain('agents-service-client')
+    expect(content).toContain('Jangar must not own generic supporting-primitives helper contracts')
+    expect(content).toContain('supporting-primitives-evidence-pressure.ts')
+    expect(content).toContain('supporting-primitives-(evidence-pressure|material-evidence-trace|naming')
     expect(content).toContain(
       'Jangar must not expose generic Codex projection compatibility routes after Agents owns Codex projections',
     )

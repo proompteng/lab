@@ -1,11 +1,6 @@
-import {
-  SWARM_NAME_LABEL,
-  SWARM_STAGE_LABEL,
-  SWARM_STAGE_NAMES,
-  type SwarmStageName,
-} from '@proompteng/agent-contracts/swarm-contracts'
+import { SWARM_NAME_LABEL, SWARM_STAGE_LABEL, SWARM_STAGE_NAMES, type SwarmStageName } from './swarm-contracts'
 
-import { asString, readNested } from '@proompteng/agent-contracts/json'
+import { asString, readNested } from './json'
 
 type StageName = SwarmStageName
 

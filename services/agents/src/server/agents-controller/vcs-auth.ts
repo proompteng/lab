@@ -105,7 +105,7 @@ const normalizeTokenTypeOverrides = (value: unknown) => {
 }
 
 const resolveDeprecatedTokenTypeOverrides = () => {
-  const overrides = parseEnvRecord('AGENTS_AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES')
+  const overrides = parseEnvRecord('AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES')
   if (!overrides) return null
   const output: Record<string, VcsTokenType[]> = {}
   for (const [key, value] of Object.entries(overrides)) {

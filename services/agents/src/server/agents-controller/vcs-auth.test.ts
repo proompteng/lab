@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { normalizeVcsMode, resolveVcsAuthMethod, validateVcsAuthConfig } from '~/server/agents-controller/vcs-auth'
 
 afterEach(() => {
-  delete process.env.AGENTS_AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES
+  delete process.env.AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES
 })
 
 describe('agents controller vcs-auth module', () => {
@@ -64,7 +64,7 @@ describe('agents controller vcs-auth module', () => {
   })
 
   it('respects deprecated token override map from env json', () => {
-    process.env.AGENTS_AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES = JSON.stringify({
+    process.env.AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES = JSON.stringify({
       gitlab: ['access_token'],
     })
     const result = validateVcsAuthConfig('gitlab', {

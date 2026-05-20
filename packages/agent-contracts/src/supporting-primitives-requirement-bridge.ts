@@ -1,13 +1,13 @@
-import { MATERIAL_REENTRY_DISPATCH_ANNOTATION } from '@proompteng/agent-contracts/swarm-material-reentry'
-import { SWARM_REQUIREMENT_LABEL_ID } from '@proompteng/agent-contracts/swarm-contracts'
+import { MATERIAL_REENTRY_DISPATCH_ANNOTATION } from './swarm-material-reentry'
+import { SWARM_REQUIREMENT_LABEL_ID } from './swarm-contracts'
 
-import { asString, readNested } from '@proompteng/agent-contracts/json'
+import { asString, readNested } from './json'
 import {
   ACTIVE_PHASES,
   isIdempotencyDuplicateRun,
   TERMINAL_FAILURE_PHASES,
   TERMINAL_SUCCESS_PHASES,
-} from '~/server/supporting-primitives-swarm-analysis'
+} from './swarm-analysis'
 
 export type RequirementRunState = {
   any: boolean

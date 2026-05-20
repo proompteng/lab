@@ -4,7 +4,7 @@ import { assertClusterScopedForWildcard, parseNamespaceScopeEnv } from './namesp
 
 const original = process.env.AGENTS_RBAC_CLUSTER_SCOPED
 const originalEnv = {
-  AGENTS_AGENTS_CONTROLLER_NAMESPACES: process.env.AGENTS_AGENTS_CONTROLLER_NAMESPACES,
+  AGENTS_CONTROLLER_NAMESPACES: process.env.AGENTS_CONTROLLER_NAMESPACES,
 }
 
 afterEach(() => {
@@ -14,10 +14,10 @@ afterEach(() => {
     process.env.AGENTS_RBAC_CLUSTER_SCOPED = original
   }
 
-  if (originalEnv.AGENTS_AGENTS_CONTROLLER_NAMESPACES == null) {
-    delete process.env.AGENTS_AGENTS_CONTROLLER_NAMESPACES
+  if (originalEnv.AGENTS_CONTROLLER_NAMESPACES == null) {
+    delete process.env.AGENTS_CONTROLLER_NAMESPACES
   } else {
-    process.env.AGENTS_AGENTS_CONTROLLER_NAMESPACES = originalEnv.AGENTS_AGENTS_CONTROLLER_NAMESPACES
+    process.env.AGENTS_CONTROLLER_NAMESPACES = originalEnv.AGENTS_CONTROLLER_NAMESPACES
   }
 })
 
@@ -40,9 +40,9 @@ describe('namespace scope', () => {
   })
 
   it('parses CSV namespaces', () => {
-    process.env.AGENTS_AGENTS_CONTROLLER_NAMESPACES = 'agents,agents-ci'
+    process.env.AGENTS_CONTROLLER_NAMESPACES = 'agents,agents-ci'
     expect(
-      parseNamespaceScopeEnv('AGENTS_AGENTS_CONTROLLER_NAMESPACES', {
+      parseNamespaceScopeEnv('AGENTS_CONTROLLER_NAMESPACES', {
         fallback: ['default'],
         label: 'agents controller',
       }),
@@ -50,9 +50,9 @@ describe('namespace scope', () => {
   })
 
   it('parses JSON array namespaces', () => {
-    process.env.AGENTS_AGENTS_CONTROLLER_NAMESPACES = '["agents","agents-ci"]'
+    process.env.AGENTS_CONTROLLER_NAMESPACES = '["agents","agents-ci"]'
     expect(
-      parseNamespaceScopeEnv('AGENTS_AGENTS_CONTROLLER_NAMESPACES', {
+      parseNamespaceScopeEnv('AGENTS_CONTROLLER_NAMESPACES', {
         fallback: ['default'],
         label: 'agents controller',
       }),
@@ -60,19 +60,19 @@ describe('namespace scope', () => {
   })
 
   it('rejects invalid JSON without falling back to CSV', () => {
-    process.env.AGENTS_AGENTS_CONTROLLER_NAMESPACES = '["agents",]'
+    process.env.AGENTS_CONTROLLER_NAMESPACES = '["agents",]'
     expect(() =>
-      parseNamespaceScopeEnv('AGENTS_AGENTS_CONTROLLER_NAMESPACES', {
+      parseNamespaceScopeEnv('AGENTS_CONTROLLER_NAMESPACES', {
         fallback: ['default'],
         label: 'agents controller',
       }),
-    ).toThrow(/invalid AGENTS_AGENTS_CONTROLLER_NAMESPACES JSON/i)
+    ).toThrow(/invalid AGENTS_CONTROLLER_NAMESPACES JSON/i)
   })
 
   it('rejects namespaces containing whitespace', () => {
-    process.env.AGENTS_AGENTS_CONTROLLER_NAMESPACES = 'agents,agents ci'
+    process.env.AGENTS_CONTROLLER_NAMESPACES = 'agents,agents ci'
     expect(() =>
-      parseNamespaceScopeEnv('AGENTS_AGENTS_CONTROLLER_NAMESPACES', {
+      parseNamespaceScopeEnv('AGENTS_CONTROLLER_NAMESPACES', {
         fallback: ['default'],
         label: 'agents controller',
       }),
@@ -80,9 +80,9 @@ describe('namespace scope', () => {
   })
 
   it('rejects invalid DNS label namespaces', () => {
-    process.env.AGENTS_AGENTS_CONTROLLER_NAMESPACES = 'Agents'
+    process.env.AGENTS_CONTROLLER_NAMESPACES = 'Agents'
     expect(() =>
-      parseNamespaceScopeEnv('AGENTS_AGENTS_CONTROLLER_NAMESPACES', {
+      parseNamespaceScopeEnv('AGENTS_CONTROLLER_NAMESPACES', {
         fallback: ['default'],
         label: 'agents controller',
       }),
@@ -90,9 +90,9 @@ describe('namespace scope', () => {
   })
 
   it('rejects empty parsed list', () => {
-    process.env.AGENTS_AGENTS_CONTROLLER_NAMESPACES = ',,,'
+    process.env.AGENTS_CONTROLLER_NAMESPACES = ',,,'
     expect(() =>
-      parseNamespaceScopeEnv('AGENTS_AGENTS_CONTROLLER_NAMESPACES', {
+      parseNamespaceScopeEnv('AGENTS_CONTROLLER_NAMESPACES', {
         fallback: ['default'],
         label: 'agents controller',
       }),
@@ -100,9 +100,9 @@ describe('namespace scope', () => {
   })
 
   it('rejects empty env var value', () => {
-    process.env.AGENTS_AGENTS_CONTROLLER_NAMESPACES = '   '
+    process.env.AGENTS_CONTROLLER_NAMESPACES = '   '
     expect(() =>
-      parseNamespaceScopeEnv('AGENTS_AGENTS_CONTROLLER_NAMESPACES', {
+      parseNamespaceScopeEnv('AGENTS_CONTROLLER_NAMESPACES', {
         fallback: ['default'],
         label: 'agents controller',
       }),
@@ -110,9 +110,9 @@ describe('namespace scope', () => {
   })
 
   it('dedupes namespaces stably', () => {
-    process.env.AGENTS_AGENTS_CONTROLLER_NAMESPACES = 'agents,agents,agents-ci'
+    process.env.AGENTS_CONTROLLER_NAMESPACES = 'agents,agents,agents-ci'
     expect(
-      parseNamespaceScopeEnv('AGENTS_AGENTS_CONTROLLER_NAMESPACES', {
+      parseNamespaceScopeEnv('AGENTS_CONTROLLER_NAMESPACES', {
         fallback: ['default'],
         label: 'agents controller',
       }),

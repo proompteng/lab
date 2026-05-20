@@ -10,14 +10,14 @@ import {
   SWARM_MATERIAL_EVIDENCE_ANNOTATION_SELECTED_TICKET,
   SWARM_MATERIAL_EVIDENCE_ANNOTATION_SELECTED_VALUE_GATE,
   SWARM_MATERIAL_EVIDENCE_ANNOTATION_SETTLEMENT_ID,
-} from '@proompteng/agent-contracts/swarm-contracts'
+} from './swarm-contracts'
 
+import { asRecord, asString } from './json'
 import type {
   MaterialEvidenceRepairTicketClass,
   MaterialEvidenceSettlementDecision,
   MaterialEvidenceSettlementMode,
-} from '~/server/control-plane-status-types'
-import { asRecord, asString } from '@proompteng/agent-contracts/json'
+} from './supporting-primitives-status'
 
 export type MaterialEvidenceSettlementTrace = {
   settlementId: string
@@ -53,13 +53,7 @@ const parseMaterialEvidenceMode = (value: unknown): MaterialEvidenceSettlementMo
 
 const parseMaterialEvidenceRepairTicketClass = (value: unknown): MaterialEvidenceRepairTicketClass | null => {
   const ticketClass = asString(value)
-  return ticketClass === 'none' ||
-    ticketClass === 'controller_ingestion' ||
-    ticketClass === 'verification_carry_rollout' ||
-    ticketClass === 'alpha_readiness' ||
-    ticketClass === 'consumer_evidence_projection_refresh'
-    ? ticketClass
-    : null
+  return ticketClass ?? null
 }
 
 export const readMaterialEvidenceSettlementTrace = (value: unknown): MaterialEvidenceSettlementTrace | null => {

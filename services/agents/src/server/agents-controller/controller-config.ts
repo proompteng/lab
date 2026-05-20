@@ -30,7 +30,7 @@ const DEFAULT_REPO_CONCURRENCY = {
 }
 
 export const parseRepoConcurrencyOverrides = () => {
-  const rawOverrides = parseEnvRecord('AGENTS_AGENTS_CONTROLLER_REPO_CONCURRENCY_OVERRIDES') ?? {}
+  const rawOverrides = parseEnvRecord('AGENTS_CONTROLLER_REPO_CONCURRENCY_OVERRIDES') ?? {}
   const overrides = new Map<string, number>()
   for (const [repo, rawLimit] of Object.entries(rawOverrides)) {
     const parsed = parseOptionalNumber(rawLimit)
@@ -42,10 +42,10 @@ export const parseRepoConcurrencyOverrides = () => {
 
 export const parseRepoConcurrency = (env: EnvSource = process.env): RepoConcurrencyConfig => {
   const enabled = parseBooleanEnv(
-    readAgentsEnv(env, 'AGENTS_AGENTS_CONTROLLER_REPO_CONCURRENCY_ENABLED'),
+    readAgentsEnv(env, 'AGENTS_CONTROLLER_REPO_CONCURRENCY_ENABLED'),
     DEFAULT_REPO_CONCURRENCY.enabled,
   )
-  const parsedDefault = parseOptionalNumber(readAgentsEnv(env, 'AGENTS_AGENTS_CONTROLLER_REPO_CONCURRENCY_DEFAULT'))
+  const parsedDefault = parseOptionalNumber(readAgentsEnv(env, 'AGENTS_CONTROLLER_REPO_CONCURRENCY_DEFAULT'))
   const defaultLimit =
     parsedDefault === undefined || parsedDefault < 0 ? DEFAULT_REPO_CONCURRENCY.defaultLimit : Math.floor(parsedDefault)
   return {
@@ -57,50 +57,42 @@ export const parseRepoConcurrency = (env: EnvSource = process.env): RepoConcurre
 
 export const parseConcurrency = (env: EnvSource = process.env) => ({
   perNamespace: parseNumberEnv(
-    readAgentsEnv(env, 'AGENTS_AGENTS_CONTROLLER_CONCURRENCY_NAMESPACE'),
+    readAgentsEnv(env, 'AGENTS_CONTROLLER_CONCURRENCY_NAMESPACE'),
     DEFAULT_CONCURRENCY.perNamespace,
     1,
   ),
-  perAgent: parseNumberEnv(
-    readAgentsEnv(env, 'AGENTS_AGENTS_CONTROLLER_CONCURRENCY_AGENT'),
-    DEFAULT_CONCURRENCY.perAgent,
-    1,
-  ),
-  cluster: parseNumberEnv(
-    readAgentsEnv(env, 'AGENTS_AGENTS_CONTROLLER_CONCURRENCY_CLUSTER'),
-    DEFAULT_CONCURRENCY.cluster,
-    1,
-  ),
+  perAgent: parseNumberEnv(readAgentsEnv(env, 'AGENTS_CONTROLLER_CONCURRENCY_AGENT'), DEFAULT_CONCURRENCY.perAgent, 1),
+  cluster: parseNumberEnv(readAgentsEnv(env, 'AGENTS_CONTROLLER_CONCURRENCY_CLUSTER'), DEFAULT_CONCURRENCY.cluster, 1),
   repoConcurrency: parseRepoConcurrency(env),
 })
 
 export const parseQueueLimits = (env: EnvSource = process.env) => ({
   perNamespace: parseNumberEnv(
-    readAgentsEnv(env, 'AGENTS_AGENTS_CONTROLLER_QUEUE_NAMESPACE'),
+    readAgentsEnv(env, 'AGENTS_CONTROLLER_QUEUE_NAMESPACE'),
     DEFAULT_QUEUE_LIMITS.perNamespace,
   ),
-  perRepo: parseNumberEnv(readAgentsEnv(env, 'AGENTS_AGENTS_CONTROLLER_QUEUE_REPO'), DEFAULT_QUEUE_LIMITS.perRepo),
-  cluster: parseNumberEnv(readAgentsEnv(env, 'AGENTS_AGENTS_CONTROLLER_QUEUE_CLUSTER'), DEFAULT_QUEUE_LIMITS.cluster),
+  perRepo: parseNumberEnv(readAgentsEnv(env, 'AGENTS_CONTROLLER_QUEUE_REPO'), DEFAULT_QUEUE_LIMITS.perRepo),
+  cluster: parseNumberEnv(readAgentsEnv(env, 'AGENTS_CONTROLLER_QUEUE_CLUSTER'), DEFAULT_QUEUE_LIMITS.cluster),
 })
 
 export const parseRateLimits = (env: EnvSource = process.env) => ({
   windowSeconds: parseNumberEnv(
-    readAgentsEnv(env, 'AGENTS_AGENTS_CONTROLLER_RATE_WINDOW_SECONDS'),
+    readAgentsEnv(env, 'AGENTS_CONTROLLER_RATE_WINDOW_SECONDS'),
     DEFAULT_RATE_LIMITS.windowSeconds,
     1,
   ),
   perNamespace: parseNumberEnv(
-    readAgentsEnv(env, 'AGENTS_AGENTS_CONTROLLER_RATE_NAMESPACE'),
+    readAgentsEnv(env, 'AGENTS_CONTROLLER_RATE_NAMESPACE'),
     DEFAULT_RATE_LIMITS.perNamespace,
   ),
-  perRepo: parseNumberEnv(readAgentsEnv(env, 'AGENTS_AGENTS_CONTROLLER_RATE_REPO'), DEFAULT_RATE_LIMITS.perRepo),
-  cluster: parseNumberEnv(readAgentsEnv(env, 'AGENTS_AGENTS_CONTROLLER_RATE_CLUSTER'), DEFAULT_RATE_LIMITS.cluster),
+  perRepo: parseNumberEnv(readAgentsEnv(env, 'AGENTS_CONTROLLER_RATE_REPO'), DEFAULT_RATE_LIMITS.perRepo),
+  cluster: parseNumberEnv(readAgentsEnv(env, 'AGENTS_CONTROLLER_RATE_CLUSTER'), DEFAULT_RATE_LIMITS.cluster),
 })
 
 const DEFAULT_AGENTRUN_IDEMPOTENCY_RESERVATION_TTL_SECONDS = 10 * 60
 
 const parseAdmissionNamespaces = (namespace: string, env: EnvSource) => {
-  const raw = readAgentsEnv(env, 'AGENTS_AGENTS_CONTROLLER_NAMESPACES')
+  const raw = readAgentsEnv(env, 'AGENTS_CONTROLLER_NAMESPACES')
   if (!raw) return { namespaces: [namespace], includeCluster: true }
   const list = raw
     .split(',')
@@ -142,7 +134,7 @@ export const resolveAgentRunAdmissionConfig = (
   namespace: string,
   env: EnvSource = process.env,
 ): AgentRunAdmissionConfig => ({
-  vcsProvidersEnabled: parseBooleanEnv(readAgentsEnv(env, 'AGENTS_AGENTS_CONTROLLER_VCS_PROVIDERS_ENABLED'), true),
+  vcsProvidersEnabled: parseBooleanEnv(readAgentsEnv(env, 'AGENTS_CONTROLLER_VCS_PROVIDERS_ENABLED'), true),
   idempotencyEnabled: parseBooleanEnv(readAgentsEnv(env, 'AGENTS_AGENTRUN_IDEMPOTENCY_ENABLED'), true),
   idempotencyReservationTtlSeconds: parseNumberEnv(
     readAgentsEnv(env, 'AGENTS_AGENTRUN_IDEMPOTENCY_RESERVATION_TTL_SECONDS'),

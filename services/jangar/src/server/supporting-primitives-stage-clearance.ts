@@ -40,7 +40,7 @@ import {
   applyMaterialEvidenceTrace,
   readMaterialEvidenceSettlementTrace,
   type MaterialEvidenceSettlementTrace,
-} from '~/server/supporting-primitives-material-evidence-trace'
+} from '@proompteng/agent-contracts/supporting-primitives-material-evidence-trace'
 import { resolveSupportingPrimitivesConfig } from '~/server/supporting-primitives-config'
 import {
   applyEvidencePressureTrace,
@@ -49,7 +49,7 @@ import {
   readEvidencePressureStatusSnapshot,
   type EvidencePressureStatusSnapshot,
   type EvidencePressureTrace,
-} from '~/server/supporting-primitives-evidence-pressure'
+} from '@proompteng/agent-contracts/supporting-primitives-evidence-pressure'
 type StageName = SwarmStageName
 
 export { stageClearanceStatusForStage } from '~/server/supporting-primitives-stage-clearance-status'

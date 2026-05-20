@@ -232,9 +232,9 @@ describe('agents controller startup', () => {
 
       expect(featureFlagsMocks.resolveBooleanFeatureToggle).toHaveBeenCalledTimes(1)
       expect(featureFlagsMocks.resolveBooleanFeatureToggle).toHaveBeenCalledWith({
-        key: 'agents.agents_controller.enabled',
-        keyEnvVar: 'AGENTS_AGENTS_CONTROLLER_ENABLED_FLAG_KEY',
-        fallbackEnvVar: 'AGENTS_AGENTS_CONTROLLER_ENABLED',
+        key: 'agents.controller.enabled',
+        keyEnvVar: 'AGENTS_CONTROLLER_ENABLED_FLAG_KEY',
+        fallbackEnvVar: 'AGENTS_CONTROLLER_ENABLED',
         defaultValue: true,
       })
     } finally {
@@ -545,7 +545,7 @@ describe('agents controller startup', () => {
 
   it('gates debug adoption logs behind the debug env flag', async () => {
     stopAgentsController()
-    const previousDebug = process.env.AGENTS_AGENTS_CONTROLLER_DEBUG_LOGS
+    const previousDebug = process.env.AGENTS_CONTROLLER_DEBUG_LOGS
     const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
     const state = { namespaces: new Map() }
     const kube = buildKube({
@@ -586,22 +586,22 @@ describe('agents controller startup', () => {
     })
 
     try {
-      delete process.env.AGENTS_AGENTS_CONTROLLER_DEBUG_LOGS
+      delete process.env.AGENTS_CONTROLLER_DEBUG_LOGS
       await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
       let messages = infoSpy.mock.calls.map((call) => String(call[0]))
       expect(messages.some((message) => message.includes('agentrun_resync_adopted'))).toBe(false)
 
       infoSpy.mockClear()
-      process.env.AGENTS_AGENTS_CONTROLLER_DEBUG_LOGS = 'true'
+      process.env.AGENTS_CONTROLLER_DEBUG_LOGS = 'true'
       await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
       messages = infoSpy.mock.calls.map((call) => String(call[0]))
       expect(messages.some((message) => message.includes('agentrun_resync_adopted'))).toBe(true)
     } finally {
       infoSpy.mockRestore()
       if (previousDebug === undefined) {
-        delete process.env.AGENTS_AGENTS_CONTROLLER_DEBUG_LOGS
+        delete process.env.AGENTS_CONTROLLER_DEBUG_LOGS
       } else {
-        process.env.AGENTS_AGENTS_CONTROLLER_DEBUG_LOGS = previousDebug
+        process.env.AGENTS_CONTROLLER_DEBUG_LOGS = previousDebug
       }
     }
   })
@@ -1504,8 +1504,8 @@ describe('agents controller reconcileAgentRun', () => {
   })
 
   it('deletes completed AgentRun after retention window', async () => {
-    const previousRetention = process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
-    process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '60'
+    const previousRetention = process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+    process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '60'
 
     try {
       const kube = buildKube()
@@ -1519,16 +1519,16 @@ describe('agents controller reconcileAgentRun', () => {
       expect(kube.delete).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents', { wait: false })
     } finally {
       if (previousRetention === undefined) {
-        delete process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+        delete process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
       } else {
-        process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
+        process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
       }
     }
   })
 
   it('respects per-run ttlSecondsAfterFinished override', async () => {
-    const previousRetention = process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
-    process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '3600'
+    const previousRetention = process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+    process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '3600'
 
     try {
       const kube = buildKube()
@@ -1549,16 +1549,16 @@ describe('agents controller reconcileAgentRun', () => {
       expect(kube.delete).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents', { wait: false })
     } finally {
       if (previousRetention === undefined) {
-        delete process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+        delete process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
       } else {
-        process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
+        process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
       }
     }
   })
 
   it('disables retention when per-run ttlSecondsAfterFinished is zero', async () => {
-    const previousRetention = process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
-    process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '60'
+    const previousRetention = process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+    process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '60'
 
     try {
       const kube = buildKube()
@@ -1579,16 +1579,16 @@ describe('agents controller reconcileAgentRun', () => {
       expect(kube.delete).not.toHaveBeenCalled()
     } finally {
       if (previousRetention === undefined) {
-        delete process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+        delete process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
       } else {
-        process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
+        process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
       }
     }
   })
 
   it('keeps completed AgentRun before retention window', async () => {
-    const previousRetention = process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
-    process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '3600'
+    const previousRetention = process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+    process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '3600'
 
     try {
       const kube = buildKube()
@@ -1601,9 +1601,9 @@ describe('agents controller reconcileAgentRun', () => {
       expect(kube.delete).not.toHaveBeenCalled()
     } finally {
       if (previousRetention === undefined) {
-        delete process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+        delete process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
       } else {
-        process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
+        process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
       }
     }
   })
@@ -2200,12 +2200,12 @@ describe('agents controller reconcileAgentRun', () => {
   })
 
   it('injects auth secret volume and CODEX_AUTH env var', async () => {
-    const previousName = process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_NAME
-    const previousKey = process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_KEY
-    const previousMountPath = process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH
-    process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_NAME = 'codex-auth'
-    process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_KEY = 'auth.json'
-    process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH = '/root/.codex'
+    const previousName = process.env.AGENTS_CONTROLLER_AUTH_SECRET_NAME
+    const previousKey = process.env.AGENTS_CONTROLLER_AUTH_SECRET_KEY
+    const previousMountPath = process.env.AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH
+    process.env.AGENTS_CONTROLLER_AUTH_SECRET_NAME = 'codex-auth'
+    process.env.AGENTS_CONTROLLER_AUTH_SECRET_KEY = 'auth.json'
+    process.env.AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH = '/root/.codex'
 
     try {
       const apply = vi.fn(async (resource: Record<string, unknown>) => {
@@ -2282,19 +2282,19 @@ describe('agents controller reconcileAgentRun', () => {
       expect(authMount?.readOnly).toBe(true)
     } finally {
       if (previousName === undefined) {
-        delete process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_NAME
+        delete process.env.AGENTS_CONTROLLER_AUTH_SECRET_NAME
       } else {
-        process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_NAME = previousName
+        process.env.AGENTS_CONTROLLER_AUTH_SECRET_NAME = previousName
       }
       if (previousKey === undefined) {
-        delete process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_KEY
+        delete process.env.AGENTS_CONTROLLER_AUTH_SECRET_KEY
       } else {
-        process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_KEY = previousKey
+        process.env.AGENTS_CONTROLLER_AUTH_SECRET_KEY = previousKey
       }
       if (previousMountPath === undefined) {
-        delete process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH
+        delete process.env.AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH
       } else {
-        process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH = previousMountPath
+        process.env.AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH = previousMountPath
       }
     }
   })
@@ -2515,8 +2515,8 @@ describe('agents controller reconcileAgentRun', () => {
     }
   })
   it('marks AgentRun failed when controller blocks secrets', async () => {
-    const previousBlocked = process.env.AGENTS_AGENTS_CONTROLLER_BLOCKED_SECRETS
-    process.env.AGENTS_AGENTS_CONTROLLER_BLOCKED_SECRETS = 'blocked-secret'
+    const previousBlocked = process.env.AGENTS_CONTROLLER_BLOCKED_SECRETS
+    process.env.AGENTS_CONTROLLER_BLOCKED_SECRETS = 'blocked-secret'
 
     try {
       const kube = buildKube({
@@ -2553,16 +2553,16 @@ describe('agents controller reconcileAgentRun', () => {
       expect(condition?.reason).toBe('SecretBlocked')
     } finally {
       if (previousBlocked === undefined) {
-        delete process.env.AGENTS_AGENTS_CONTROLLER_BLOCKED_SECRETS
+        delete process.env.AGENTS_CONTROLLER_BLOCKED_SECRETS
       } else {
-        process.env.AGENTS_AGENTS_CONTROLLER_BLOCKED_SECRETS = previousBlocked
+        process.env.AGENTS_CONTROLLER_BLOCKED_SECRETS = previousBlocked
       }
     }
   })
 
   it('marks AgentRun failed when auth secret is not allowlisted', async () => {
-    const previousName = process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_NAME
-    process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_NAME = 'codex-auth'
+    const previousName = process.env.AGENTS_CONTROLLER_AUTH_SECRET_NAME
+    process.env.AGENTS_CONTROLLER_AUTH_SECRET_NAME = 'codex-auth'
 
     try {
       const kube = buildKube({
@@ -2596,9 +2596,9 @@ describe('agents controller reconcileAgentRun', () => {
       expect(condition?.reason).toBe('SecretNotAllowed')
     } finally {
       if (previousName === undefined) {
-        delete process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_NAME
+        delete process.env.AGENTS_CONTROLLER_AUTH_SECRET_NAME
       } else {
-        process.env.AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_NAME = previousName
+        process.env.AGENTS_CONTROLLER_AUTH_SECRET_NAME = previousName
       }
     }
   })
@@ -2807,8 +2807,8 @@ describe('agents controller reconcileAgentRun', () => {
   })
 
   it('continues and stops loop workflow steps with CEL expressions', async () => {
-    const previousLoopsEnabled = process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
-    process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
+    const previousLoopsEnabled = process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+    process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
     try {
       const jobStatuses = new Map<string, Record<string, unknown>>()
       const apply = vi.fn(async (resource: Record<string, unknown>) => {
@@ -2961,17 +2961,17 @@ describe('agents controller reconcileAgentRun', () => {
       expect((fourthStep.loop as Record<string, unknown> | undefined)?.stopReason).toBe('LoopConditionFalse')
     } finally {
       if (previousLoopsEnabled === undefined) {
-        delete process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+        delete process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
       } else {
-        process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
+        process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
       }
     }
   })
 
   it('reads loop control payload from a custom source path', async () => {
-    const previousLoopsEnabled = process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+    const previousLoopsEnabled = process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
     const loopControlPath = '/tmp/.agentrun/loop-control.json'
-    process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
+    process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
     try {
       const jobStatuses = new Map<string, Record<string, unknown>>()
       const apply = vi.fn(async (resource: Record<string, unknown>) => {
@@ -3131,16 +3131,16 @@ describe('agents controller reconcileAgentRun', () => {
       expect((fourthStep.loop as Record<string, unknown> | undefined)?.stopReason).toBe('LoopConditionFalse')
     } finally {
       if (previousLoopsEnabled === undefined) {
-        delete process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+        delete process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
       } else {
-        process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
+        process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
       }
     }
   })
 
   it('stops loop when control payload is missing and onMissing=stop', async () => {
-    const previousLoopsEnabled = process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
-    process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
+    const previousLoopsEnabled = process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+    process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
     try {
       const jobStatuses = new Map<string, Record<string, unknown>>()
       const apply = vi.fn(async (resource: Record<string, unknown>) => {
@@ -3241,16 +3241,16 @@ describe('agents controller reconcileAgentRun', () => {
       expect((secondStep.loop as Record<string, unknown> | undefined)?.completedIterations).toBe(1)
     } finally {
       if (previousLoopsEnabled === undefined) {
-        delete process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+        delete process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
       } else {
-        process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
+        process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
       }
     }
   })
 
   it('fails loop when control payload is missing and onMissing=fail', async () => {
-    const previousLoopsEnabled = process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
-    process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
+    const previousLoopsEnabled = process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+    process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
     try {
       const jobStatuses = new Map<string, Record<string, unknown>>()
       const apply = vi.fn(async (resource: Record<string, unknown>) => {
@@ -3351,16 +3351,16 @@ describe('agents controller reconcileAgentRun', () => {
       expect((secondStep.loop as Record<string, unknown> | undefined)?.stopReason).toBe('LoopConditionError')
     } finally {
       if (previousLoopsEnabled === undefined) {
-        delete process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+        delete process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
       } else {
-        process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
+        process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
       }
     }
   })
 
   it('fails loop when control payload is invalid and onInvalid=fail', async () => {
-    const previousLoopsEnabled = process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
-    process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
+    const previousLoopsEnabled = process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+    process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
     try {
       const jobStatuses = new Map<string, Record<string, unknown>>()
       const apply = vi.fn(async (resource: Record<string, unknown>) => {
@@ -3465,16 +3465,16 @@ describe('agents controller reconcileAgentRun', () => {
       expect((secondStep.loop as Record<string, unknown> | undefined)?.stopReason).toBe('LoopConditionError')
     } finally {
       if (previousLoopsEnabled === undefined) {
-        delete process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+        delete process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
       } else {
-        process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
+        process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
       }
     }
   })
 
   it('stops loop at maxIterations when no condition is provided', async () => {
-    const previousLoopsEnabled = process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
-    process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
+    const previousLoopsEnabled = process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+    process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
     try {
       const jobStatuses = new Map<string, Record<string, unknown>>()
       const apply = vi.fn(async (resource: Record<string, unknown>) => {
@@ -3603,9 +3603,9 @@ describe('agents controller reconcileAgentRun', () => {
       expect((fourthStep.loop as Record<string, unknown> | undefined)?.stopReason).toBe('LoopMaxIterationsReached')
     } finally {
       if (previousLoopsEnabled === undefined) {
-        delete process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
+        delete process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
       } else {
-        process.env.AGENTS_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
+        process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = previousLoopsEnabled
       }
     }
   })
@@ -4661,8 +4661,8 @@ describe('agents controller reconcileAgentRun', () => {
   })
 
   it('uses controller retention default when spec override is missing', async () => {
-    const previousRetention = process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
-    process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '60'
+    const previousRetention = process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+    process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '60'
 
     try {
       const deleteMock = vi.fn(async () => ({}))
@@ -4677,9 +4677,9 @@ describe('agents controller reconcileAgentRun', () => {
       expect(deleteMock).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents', { wait: false })
     } finally {
       if (previousRetention === undefined) {
-        delete process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+        delete process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
       } else {
-        process.env.AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
+        process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
       }
     }
   })
@@ -4705,8 +4705,8 @@ describe('agents controller reconcileAgentRun', () => {
 
 describe('agents controller queue and rate limits', () => {
   it('blocks AgentRun when queue limit is exceeded', async () => {
-    const previousQueue = process.env.AGENTS_AGENTS_CONTROLLER_QUEUE_NAMESPACE
-    process.env.AGENTS_AGENTS_CONTROLLER_QUEUE_NAMESPACE = '1'
+    const previousQueue = process.env.AGENTS_CONTROLLER_QUEUE_NAMESPACE
+    process.env.AGENTS_CONTROLLER_QUEUE_NAMESPACE = '1'
 
     try {
       const kube = buildKube()
@@ -4740,9 +4740,9 @@ describe('agents controller queue and rate limits', () => {
       expect(condition?.message).toContain('queue limit')
     } finally {
       if (previousQueue === undefined) {
-        delete process.env.AGENTS_AGENTS_CONTROLLER_QUEUE_NAMESPACE
+        delete process.env.AGENTS_CONTROLLER_QUEUE_NAMESPACE
       } else {
-        process.env.AGENTS_AGENTS_CONTROLLER_QUEUE_NAMESPACE = previousQueue
+        process.env.AGENTS_CONTROLLER_QUEUE_NAMESPACE = previousQueue
       }
     }
   })
@@ -4785,13 +4785,13 @@ describe('agents controller queue and rate limits', () => {
   })
 
   it('blocks AgentRun when rate limit is exceeded', async () => {
-    const previousWindow = process.env.AGENTS_AGENTS_CONTROLLER_RATE_WINDOW_SECONDS
-    const previousNamespace = process.env.AGENTS_AGENTS_CONTROLLER_RATE_NAMESPACE
-    const previousCluster = process.env.AGENTS_AGENTS_CONTROLLER_RATE_CLUSTER
+    const previousWindow = process.env.AGENTS_CONTROLLER_RATE_WINDOW_SECONDS
+    const previousNamespace = process.env.AGENTS_CONTROLLER_RATE_NAMESPACE
+    const previousCluster = process.env.AGENTS_CONTROLLER_RATE_CLUSTER
 
-    process.env.AGENTS_AGENTS_CONTROLLER_RATE_WINDOW_SECONDS = '60'
-    process.env.AGENTS_AGENTS_CONTROLLER_RATE_NAMESPACE = '1'
-    process.env.AGENTS_AGENTS_CONTROLLER_RATE_CLUSTER = '1'
+    process.env.AGENTS_CONTROLLER_RATE_WINDOW_SECONDS = '60'
+    process.env.AGENTS_CONTROLLER_RATE_NAMESPACE = '1'
+    process.env.AGENTS_CONTROLLER_RATE_CLUSTER = '1'
     __test.resetControllerRateState()
 
     try {
@@ -4834,19 +4834,19 @@ describe('agents controller queue and rate limits', () => {
       __test.resetControllerRateState()
 
       if (previousWindow === undefined) {
-        delete process.env.AGENTS_AGENTS_CONTROLLER_RATE_WINDOW_SECONDS
+        delete process.env.AGENTS_CONTROLLER_RATE_WINDOW_SECONDS
       } else {
-        process.env.AGENTS_AGENTS_CONTROLLER_RATE_WINDOW_SECONDS = previousWindow
+        process.env.AGENTS_CONTROLLER_RATE_WINDOW_SECONDS = previousWindow
       }
       if (previousNamespace === undefined) {
-        delete process.env.AGENTS_AGENTS_CONTROLLER_RATE_NAMESPACE
+        delete process.env.AGENTS_CONTROLLER_RATE_NAMESPACE
       } else {
-        process.env.AGENTS_AGENTS_CONTROLLER_RATE_NAMESPACE = previousNamespace
+        process.env.AGENTS_CONTROLLER_RATE_NAMESPACE = previousNamespace
       }
       if (previousCluster === undefined) {
-        delete process.env.AGENTS_AGENTS_CONTROLLER_RATE_CLUSTER
+        delete process.env.AGENTS_CONTROLLER_RATE_CLUSTER
       } else {
-        process.env.AGENTS_AGENTS_CONTROLLER_RATE_CLUSTER = previousCluster
+        process.env.AGENTS_CONTROLLER_RATE_CLUSTER = previousCluster
       }
     }
   })

@@ -191,7 +191,7 @@ COPY --from=agents-build /app/services/agents/scripts ./scripts
 
 RUN bun -e "for (const specifier of ['@proompteng/agent-contracts/policy-validation','@proompteng/agent-contracts/controller-witness','@proompteng/agent-contracts/swarm-material-reentry']) await import(specifier)"
 
-ENV AGENTS_AGENTS_CONTROLLER_ENABLED=0 \
+ENV AGENTS_CONTROLLER_ENABLED=0 \
   AGENTS_ORCHESTRATION_CONTROLLER_ENABLED=0 \
   AGENTS_SUPPORTING_CONTROLLER_ENABLED=0 \
   AGENTS_AGENT_COMMS_SUBSCRIBER_DISABLED=true \

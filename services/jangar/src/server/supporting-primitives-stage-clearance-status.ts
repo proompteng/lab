@@ -1,4 +1,4 @@
-import { materialEvidenceStatusFields } from '~/server/supporting-primitives-material-evidence-trace'
+import { materialEvidenceStatusFields } from '@proompteng/agent-contracts/supporting-primitives-material-evidence-trace'
 import type { StageClearanceLaunchAdmission } from '~/server/supporting-primitives-stage-clearance'
 
 export const stageClearanceStatusForStage = (admission: StageClearanceLaunchAdmission) => ({

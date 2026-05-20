@@ -920,21 +920,23 @@ fail_if_matches \
   'RESOURCE_MAP|agentruns\.agents\.proompteng\.ai|swarms\.swarm\.proompteng\.ai' \
   "${ROOT_DIR}/services/jangar/src/server/kube-gateway.ts"
 
-fail_if_matches \
-  "Jangar swarm analysis must read AgentRun and OrchestrationRun targets through the Agents service boundary" \
-  'createKubernetesClient|RESOURCE_MAP\.(AgentRun|OrchestrationRun)|agents\.proompteng\.ai/v1alpha1|orchestration\.proompteng\.ai/v1alpha1' \
+fail_if_path_exists \
+  "Jangar must not retain generic Swarm run analysis after agent-contracts owns the shared implementation" \
   "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-swarm-analysis.ts"
 
-fail_if_matches \
-  "Jangar must not retain generic Swarm run analysis after agent-contracts owns the shared implementation" \
-  'TERMINAL_SUCCESS_PHASES = new Set|countConsecutive|fetchStageTargetResourceFromAgentsService|PROVIDER_CAPACITY_EXHAUSTED_REASON|readNested|sortByMostRecentRun|collectStaleStageSignals|stageStates' \
-  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-swarm-analysis.ts"
+fail_if_path_exists \
+  "Jangar must not own generic supporting-primitives helper contracts after agent-contracts owns them" \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-evidence-pressure.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-material-evidence-trace.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-naming.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-requirement-bridge.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-schedule-identity.ts"
 
 require_matches \
-  "Jangar swarm analysis must be a compatibility wrapper around the agent-contracts implementation" \
-  'swarm-analysis' \
-  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-swarm-analysis.ts" \
-  "${ROOT_DIR}/packages/agent-contracts/package.json"
+  "Agent contracts must own generic supporting-primitives helper contracts" \
+  'supporting-primitives-(evidence-pressure|material-evidence-trace|naming|requirement-bridge|schedule-identity|status)' \
+  "${ROOT_DIR}/packages/agent-contracts/package.json" \
+  "${ROOT_DIR}/packages/agent-contracts/src"
 
 fail_if_path_exists \
   "Jangar must not own generic Swarm CRD annotation constants after agent-contracts owns the shared contract" \
@@ -1183,6 +1185,24 @@ fail_if_matches \
   "${ROOT_DIR}/services/agents/src/server/agents-controller/job-runtime.ts" \
   "${ROOT_DIR}/services/agents/src/server/agents-controller/agent-run-reconciler.ts" \
   "${ROOT_DIR}/services/agents/src/server/agents-controller/workflow-reconciler.ts"
+
+fail_if_matches \
+  "Agents runtime, chart, and docs must use AGENTS_CONTROLLER_* instead of the extracted double-prefixed AGENTS_AGENTS_CONTROLLER_* names" \
+  'AGENTS_AGENTS_CONTROLLER' \
+  "${ROOT_DIR}/services/agents" \
+  "${ROOT_DIR}/charts/agents" \
+  "${ROOT_DIR}/argocd/applications/agents" \
+  "${ROOT_DIR}/docs/agents" \
+  "${ROOT_DIR}/packages/scripts/src/agents"
+
+fail_if_matches \
+  "ImplementationSource webhook runtime settings must use AGENTS_IMPLEMENTATION_SOURCE_WEBHOOK_* instead of generic controller webhook names" \
+  'AGENTS_CONTROLLER_WEBHOOK_' \
+  "${ROOT_DIR}/services/agents" \
+  "${ROOT_DIR}/charts/agents" \
+  "${ROOT_DIR}/argocd/applications/agents" \
+  "${ROOT_DIR}/docs/agents" \
+  "${ROOT_DIR}/packages/scripts/src/agents"
 
 fail_if_matches \
   "Agents chart validation must not special-case Jangar runner image aliases after the chart rejects all non-canonical JANGAR_* env names" \

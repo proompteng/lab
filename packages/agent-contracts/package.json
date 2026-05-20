@@ -106,6 +106,30 @@
       "types": "./dist/signals-client.d.ts",
       "default": "./dist/signals-client.js"
     },
+    "./supporting-primitives-evidence-pressure": {
+      "types": "./dist/supporting-primitives-evidence-pressure.d.ts",
+      "default": "./dist/supporting-primitives-evidence-pressure.js"
+    },
+    "./supporting-primitives-material-evidence-trace": {
+      "types": "./dist/supporting-primitives-material-evidence-trace.d.ts",
+      "default": "./dist/supporting-primitives-material-evidence-trace.js"
+    },
+    "./supporting-primitives-naming": {
+      "types": "./dist/supporting-primitives-naming.d.ts",
+      "default": "./dist/supporting-primitives-naming.js"
+    },
+    "./supporting-primitives-requirement-bridge": {
+      "types": "./dist/supporting-primitives-requirement-bridge.d.ts",
+      "default": "./dist/supporting-primitives-requirement-bridge.js"
+    },
+    "./supporting-primitives-schedule-identity": {
+      "types": "./dist/supporting-primitives-schedule-identity.d.ts",
+      "default": "./dist/supporting-primitives-schedule-identity.js"
+    },
+    "./supporting-primitives-status": {
+      "types": "./dist/supporting-primitives-status.d.ts",
+      "default": "./dist/supporting-primitives-status.js"
+    },
     "./swarm-read-client": {
       "types": "./dist/swarm-read-client.d.ts",
       "default": "./dist/swarm-read-client.js"

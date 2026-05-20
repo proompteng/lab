@@ -6,10 +6,10 @@ import {
   SWARM_EVIDENCE_PRESSURE_ANNOTATION_REASON_CODES,
   SWARM_EVIDENCE_PRESSURE_ANNOTATION_REQUIRED_REPAIR_RECEIPTS,
   SWARM_EVIDENCE_PRESSURE_ANNOTATION_WATCH_BACKOFF_STATE,
-} from '@proompteng/agent-contracts/swarm-contracts'
+} from './swarm-contracts'
 
-import type { ActionSloBudgetActionClass, EvidencePressureDecision } from '~/server/control-plane-status-types'
-import { asRecord, asString } from '@proompteng/agent-contracts/json'
+import { asRecord, asString } from './json'
+import type { ActionSloBudgetActionClass, EvidencePressureDecision } from './supporting-primitives-status'
 
 export type EvidencePressureTrace = {
   ledgerId: string

@@ -13,7 +13,7 @@ import {
   parseStringList,
 } from '~/server/agents-controller/env-config'
 
-const TEST_ENV_KEY = 'AGENTS_AGENTS_CONTROLLER_ENV_CONFIG_TEST'
+const TEST_ENV_KEY = 'AGENTS_CONTROLLER_ENV_CONFIG_TEST'
 
 afterEach(() => {
   delete process.env[TEST_ENV_KEY]

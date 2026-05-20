@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { isNatsChannel, resolveStageTargetResource } from '~/server/supporting-primitives-swarm-analysis'
+import { isNatsChannel, resolveStageTargetResource } from '@proompteng/agent-contracts/swarm-analysis'
 
 describe('supporting primitives swarm analysis', () => {
   it('resolves AgentRun target refs through the Agents service boundary', async () => {

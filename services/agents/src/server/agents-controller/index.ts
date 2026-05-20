@@ -91,7 +91,7 @@ const DEFAULT_TEMPORAL_HOST = 'temporal-frontend.temporal.svc.cluster.local'
 const DEFAULT_TEMPORAL_PORT = 7233
 const DEFAULT_TEMPORAL_ADDRESS = `${DEFAULT_TEMPORAL_HOST}:${DEFAULT_TEMPORAL_PORT}`
 const IMPLEMENTATION_TEXT_LIMIT = 128 * 1024
-const DEFAULT_AGENTS_CONTROLLER_ENABLED_FLAG_KEY = 'agents.agents_controller.enabled'
+const DEFAULT_AGENTS_CONTROLLER_ENABLED_FLAG_KEY = 'agents.controller.enabled'
 
 const BASE_REQUIRED_CRDS = [
   'agents.agents.proompteng.ai',
@@ -385,14 +385,14 @@ const shouldStartWithFeatureFlag = async () => {
   const resolveToggle = runtimeDependencies.resolveBooleanFeatureToggle ?? resolveBooleanFeatureToggle
   return resolveToggle({
     key: DEFAULT_AGENTS_CONTROLLER_ENABLED_FLAG_KEY,
-    keyEnvVar: 'AGENTS_AGENTS_CONTROLLER_ENABLED_FLAG_KEY',
-    fallbackEnvVar: 'AGENTS_AGENTS_CONTROLLER_ENABLED',
+    keyEnvVar: 'AGENTS_CONTROLLER_ENABLED_FLAG_KEY',
+    fallbackEnvVar: 'AGENTS_CONTROLLER_ENABLED',
     defaultValue: true,
   })
 }
 
 const parseNamespaces = () => {
-  return parseNamespaceScopeEnv('AGENTS_AGENTS_CONTROLLER_NAMESPACES', {
+  return parseNamespaceScopeEnv('AGENTS_CONTROLLER_NAMESPACES', {
     fallback: DEFAULT_NAMESPACES,
     label: 'agents controller',
   })

@@ -194,7 +194,7 @@ describe('AgentRun v1 API', () => {
         validatePolicies: vi.fn(async () => {}),
         runtimeConfig: {
           env: {
-            AGENTS_AGENTS_CONTROLLER_QUEUE_NAMESPACE: '1',
+            AGENTS_CONTROLLER_QUEUE_NAMESPACE: '1',
           },
         },
       },

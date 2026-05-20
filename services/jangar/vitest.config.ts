@@ -53,6 +53,24 @@ const agentContractsRuntimeAdmissionSource = fileURLToPath(
 const agentContractsSignalsClientSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/signals-client.ts', import.meta.url),
 )
+const agentContractsSupportingPrimitivesEvidencePressureSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/supporting-primitives-evidence-pressure.ts', import.meta.url),
+)
+const agentContractsSupportingPrimitivesMaterialEvidenceTraceSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/supporting-primitives-material-evidence-trace.ts', import.meta.url),
+)
+const agentContractsSupportingPrimitivesNamingSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/supporting-primitives-naming.ts', import.meta.url),
+)
+const agentContractsSupportingPrimitivesRequirementBridgeSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/supporting-primitives-requirement-bridge.ts', import.meta.url),
+)
+const agentContractsSupportingPrimitivesScheduleIdentitySource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/supporting-primitives-schedule-identity.ts', import.meta.url),
+)
+const agentContractsSupportingPrimitivesStatusSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/supporting-primitives-status.ts', import.meta.url),
+)
 const agentContractsSwarmAnalysisSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/swarm-analysis.ts', import.meta.url),
 )
@@ -113,6 +131,16 @@ export default defineConfig({
       '@proompteng/agent-contracts/policy-validation': agentContractsPolicyValidationSource,
       '@proompteng/agent-contracts/runtime-admission': agentContractsRuntimeAdmissionSource,
       '@proompteng/agent-contracts/signals-client': agentContractsSignalsClientSource,
+      '@proompteng/agent-contracts/supporting-primitives-evidence-pressure':
+        agentContractsSupportingPrimitivesEvidencePressureSource,
+      '@proompteng/agent-contracts/supporting-primitives-material-evidence-trace':
+        agentContractsSupportingPrimitivesMaterialEvidenceTraceSource,
+      '@proompteng/agent-contracts/supporting-primitives-naming': agentContractsSupportingPrimitivesNamingSource,
+      '@proompteng/agent-contracts/supporting-primitives-requirement-bridge':
+        agentContractsSupportingPrimitivesRequirementBridgeSource,
+      '@proompteng/agent-contracts/supporting-primitives-schedule-identity':
+        agentContractsSupportingPrimitivesScheduleIdentitySource,
+      '@proompteng/agent-contracts/supporting-primitives-status': agentContractsSupportingPrimitivesStatusSource,
       '@proompteng/agent-contracts/swarm-analysis': agentContractsSwarmAnalysisSource,
       '@proompteng/agent-contracts/swarm-contracts': agentContractsSwarmContractsSource,
       '@proompteng/agent-contracts/swarm-material-reentry': agentContractsSwarmMaterialReentrySource,
@@ -157,6 +185,16 @@ export default defineConfig({
       '@proompteng/agent-contracts/policy-validation': agentContractsPolicyValidationSource,
       '@proompteng/agent-contracts/runtime-admission': agentContractsRuntimeAdmissionSource,
       '@proompteng/agent-contracts/signals-client': agentContractsSignalsClientSource,
+      '@proompteng/agent-contracts/supporting-primitives-evidence-pressure':
+        agentContractsSupportingPrimitivesEvidencePressureSource,
+      '@proompteng/agent-contracts/supporting-primitives-material-evidence-trace':
+        agentContractsSupportingPrimitivesMaterialEvidenceTraceSource,
+      '@proompteng/agent-contracts/supporting-primitives-naming': agentContractsSupportingPrimitivesNamingSource,
+      '@proompteng/agent-contracts/supporting-primitives-requirement-bridge':
+        agentContractsSupportingPrimitivesRequirementBridgeSource,
+      '@proompteng/agent-contracts/supporting-primitives-schedule-identity':
+        agentContractsSupportingPrimitivesScheduleIdentitySource,
+      '@proompteng/agent-contracts/supporting-primitives-status': agentContractsSupportingPrimitivesStatusSource,
       '@proompteng/agent-contracts/swarm-analysis': agentContractsSwarmAnalysisSource,
       '@proompteng/agent-contracts/swarm-contracts': agentContractsSwarmContractsSource,
       '@proompteng/agent-contracts/swarm-material-reentry': agentContractsSwarmMaterialReentrySource,

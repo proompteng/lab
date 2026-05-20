@@ -297,80 +297,80 @@ spec:
               value: {{ .Values.swarm.enabled | default false | quote }}
             {{- end }}
             {{- if .Values.controller.enabled }}
-            - name: AGENTS_AGENTS_CONTROLLER_ENABLED
+            - name: AGENTS_CONTROLLER_ENABLED
               value: "1"
-            - name: AGENTS_AGENTS_CONTROLLER_NAMESPACES
+            - name: AGENTS_CONTROLLER_NAMESPACES
               value: {{ include "agents.controllerNamespaces" . | quote }}
-            - name: AGENTS_AGENTS_CONTROLLER_CONCURRENCY_NAMESPACE
+            - name: AGENTS_CONTROLLER_CONCURRENCY_NAMESPACE
               value: {{ .Values.controller.concurrency.perNamespace | default 10 | quote }}
-            - name: AGENTS_AGENTS_CONTROLLER_CONCURRENCY_AGENT
+            - name: AGENTS_CONTROLLER_CONCURRENCY_AGENT
               value: {{ .Values.controller.concurrency.perAgent | default 5 | quote }}
-            - name: AGENTS_AGENTS_CONTROLLER_CONCURRENCY_CLUSTER
+            - name: AGENTS_CONTROLLER_CONCURRENCY_CLUSTER
               value: {{ .Values.controller.concurrency.cluster | default 100 | quote }}
-            - name: AGENTS_AGENTS_CONTROLLER_QUEUE_NAMESPACE
+            - name: AGENTS_CONTROLLER_QUEUE_NAMESPACE
               value: {{ .Values.controller.queue.perNamespace | default 200 | quote }}
-            - name: AGENTS_AGENTS_CONTROLLER_QUEUE_REPO
+            - name: AGENTS_CONTROLLER_QUEUE_REPO
               value: {{ .Values.controller.queue.perRepo | default 50 | quote }}
-            - name: AGENTS_AGENTS_CONTROLLER_QUEUE_CLUSTER
+            - name: AGENTS_CONTROLLER_QUEUE_CLUSTER
               value: {{ .Values.controller.queue.cluster | default 1000 | quote }}
-            - name: AGENTS_AGENTS_CONTROLLER_RATE_WINDOW_SECONDS
+            - name: AGENTS_CONTROLLER_RATE_WINDOW_SECONDS
               value: {{ .Values.controller.rate.windowSeconds | default 60 | quote }}
-            - name: AGENTS_AGENTS_CONTROLLER_RATE_NAMESPACE
+            - name: AGENTS_CONTROLLER_RATE_NAMESPACE
               value: {{ .Values.controller.rate.perNamespace | default 120 | quote }}
-            - name: AGENTS_AGENTS_CONTROLLER_RATE_REPO
+            - name: AGENTS_CONTROLLER_RATE_REPO
               value: {{ .Values.controller.rate.perRepo | default 30 | quote }}
-            - name: AGENTS_AGENTS_CONTROLLER_RATE_CLUSTER
+            - name: AGENTS_CONTROLLER_RATE_CLUSTER
               value: {{ .Values.controller.rate.cluster | default 600 | quote }}
-            - name: AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+            - name: AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
               value: {{ .Values.controller.agentRunRetentionSeconds | default 2592000 | quote }}
             {{- if and .Values.controller.admissionPolicy.labels.required (gt (len .Values.controller.admissionPolicy.labels.required) 0) }}
-            - name: AGENTS_AGENTS_CONTROLLER_LABELS_REQUIRED
+            - name: AGENTS_CONTROLLER_LABELS_REQUIRED
               value: {{ .Values.controller.admissionPolicy.labels.required | toJson | quote }}
             {{- end }}
             {{- if and .Values.controller.admissionPolicy.labels.allowed (gt (len .Values.controller.admissionPolicy.labels.allowed) 0) }}
-            - name: AGENTS_AGENTS_CONTROLLER_LABELS_ALLOWED
+            - name: AGENTS_CONTROLLER_LABELS_ALLOWED
               value: {{ .Values.controller.admissionPolicy.labels.allowed | toJson | quote }}
             {{- end }}
             {{- if and .Values.controller.admissionPolicy.labels.denied (gt (len .Values.controller.admissionPolicy.labels.denied) 0) }}
-            - name: AGENTS_AGENTS_CONTROLLER_LABELS_DENIED
+            - name: AGENTS_CONTROLLER_LABELS_DENIED
               value: {{ .Values.controller.admissionPolicy.labels.denied | toJson | quote }}
             {{- end }}
             {{- if and .Values.controller.admissionPolicy.images.allowed (gt (len .Values.controller.admissionPolicy.images.allowed) 0) }}
-            - name: AGENTS_AGENTS_CONTROLLER_IMAGES_ALLOWED
+            - name: AGENTS_CONTROLLER_IMAGES_ALLOWED
               value: {{ .Values.controller.admissionPolicy.images.allowed | toJson | quote }}
             {{- end }}
             {{- if and .Values.controller.admissionPolicy.images.denied (gt (len .Values.controller.admissionPolicy.images.denied) 0) }}
-            - name: AGENTS_AGENTS_CONTROLLER_IMAGES_DENIED
+            - name: AGENTS_CONTROLLER_IMAGES_DENIED
               value: {{ .Values.controller.admissionPolicy.images.denied | toJson | quote }}
             {{- end }}
             {{- if and .Values.controller.admissionPolicy.secrets.blocked (gt (len .Values.controller.admissionPolicy.secrets.blocked) 0) }}
-            - name: AGENTS_AGENTS_CONTROLLER_BLOCKED_SECRETS
+            - name: AGENTS_CONTROLLER_BLOCKED_SECRETS
               value: {{ .Values.controller.admissionPolicy.secrets.blocked | toJson | quote }}
             {{- end }}
             {{- $vcsProvidersEnabled := true }}
             {{- if and (hasKey .Values "controller") (hasKey .Values.controller "vcsProviders") (hasKey .Values.controller.vcsProviders "enabled") }}
             {{- $vcsProvidersEnabled = .Values.controller.vcsProviders.enabled }}
             {{- end }}
-            - name: AGENTS_AGENTS_CONTROLLER_VCS_PROVIDERS_ENABLED
+            - name: AGENTS_CONTROLLER_VCS_PROVIDERS_ENABLED
               value: {{ $vcsProvidersEnabled | quote }}
             {{- if .Values.controller.vcsProviders.deprecatedTokenTypes }}
-            - name: AGENTS_AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES
+            - name: AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES
               value: {{ .Values.controller.vcsProviders.deprecatedTokenTypes | toJson | quote }}
             {{- end }}
             {{- if and .Values.controller.vcsProviders.prRateLimits (gt (len .Values.controller.vcsProviders.prRateLimits) 0) }}
-            - name: AGENTS_AGENTS_CONTROLLER_VCS_PR_RATE_LIMITS
+            - name: AGENTS_CONTROLLER_VCS_PR_RATE_LIMITS
               value: {{ .Values.controller.vcsProviders.prRateLimits | toJson | quote }}
             {{- end }}
             {{- if .Values.controller.authSecret.name }}
-            - name: AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_NAME
+            - name: AGENTS_CONTROLLER_AUTH_SECRET_NAME
               value: {{ .Values.controller.authSecret.name | quote }}
-            - name: AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_KEY
+            - name: AGENTS_CONTROLLER_AUTH_SECRET_KEY
               value: {{ .Values.controller.authSecret.key | default "auth.json" | quote }}
-            - name: AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH
+            - name: AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH
               value: {{ .Values.controller.authSecret.mountPath | default "/root/.codex" | quote }}
             {{- end }}
             {{- else }}
-            - name: AGENTS_AGENTS_CONTROLLER_ENABLED
+            - name: AGENTS_CONTROLLER_ENABLED
               value: "0"
             {{- end }}
             {{- if .Values.orchestrationController.enabled }}

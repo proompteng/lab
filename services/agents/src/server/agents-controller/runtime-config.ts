@@ -95,21 +95,21 @@ export const isRuntimeTestEnv = (env: EnvSource = process.env) => env.NODE_ENV =
 export const resolveAgentsControllerBehaviorConfig = (
   env: EnvSource = process.env,
 ): AgentsControllerBehaviorConfig => ({
-  enabled: !isRuntimeTestEnv(env) && parseBoolean(readAgentsEnv(env, 'AGENTS_AGENTS_CONTROLLER_ENABLED'), true),
-  vcsProvidersEnabled: parseBoolean(readAgentsEnv(env, 'AGENTS_AGENTS_CONTROLLER_VCS_PROVIDERS_ENABLED'), true),
+  enabled: !isRuntimeTestEnv(env) && parseBoolean(readAgentsEnv(env, 'AGENTS_CONTROLLER_ENABLED'), true),
+  vcsProvidersEnabled: parseBoolean(readAgentsEnv(env, 'AGENTS_CONTROLLER_VCS_PROVIDERS_ENABLED'), true),
   agentRunImmutabilityEnforced: parseBoolean(readAgentsEnv(env, 'AGENTS_AGENTRUN_IMMUTABILITY_ENFORCED'), true),
-  debugLogs: parseBoolean(readAgentsEnv(env, 'AGENTS_AGENTS_CONTROLLER_DEBUG_LOGS'), false),
+  debugLogs: parseBoolean(readAgentsEnv(env, 'AGENTS_CONTROLLER_DEBUG_LOGS'), false),
   resyncIntervalSeconds: Math.max(
     1,
     parsePositiveInt(
-      readAgentsEnv(env, 'AGENTS_AGENTS_CONTROLLER_RESYNC_INTERVAL_SECONDS'),
+      readAgentsEnv(env, 'AGENTS_CONTROLLER_RESYNC_INTERVAL_SECONDS'),
       DEFAULT_AGENTRUN_RESYNC_INTERVAL_SECONDS,
     ),
   ),
   untouchedWarnAfterSeconds: Math.max(
     1,
     parsePositiveInt(
-      readAgentsEnv(env, 'AGENTS_AGENTS_CONTROLLER_UNTOUCHED_WARN_AFTER_SECONDS'),
+      readAgentsEnv(env, 'AGENTS_CONTROLLER_UNTOUCHED_WARN_AFTER_SECONDS'),
       DEFAULT_AGENTRUN_UNTOUCHED_WARN_AFTER_SECONDS,
     ),
   ),
@@ -121,8 +121,8 @@ export const resolveAgentsControllerBehaviorConfig = (
       DEFAULT_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS,
     ),
   ),
-  agentRunRetentionSeconds: normalizeNonEmpty(readAgentsEnv(env, 'AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS'))
-    ? parsePositiveInt(readAgentsEnv(env, 'AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS'), 0)
+  agentRunRetentionSeconds: normalizeNonEmpty(readAgentsEnv(env, 'AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS'))
+    ? parsePositiveInt(readAgentsEnv(env, 'AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS'), 0)
     : null,
   artifactsMaxEntries: Math.min(
     50,
@@ -134,13 +134,13 @@ export const resolveAgentsControllerBehaviorConfig = (
 export const resolveAgentsControllerAuthSecretConfig = (
   env: EnvSource = process.env,
 ): AgentsControllerAuthSecretConfig => {
-  const name = normalizeNonEmpty(readAgentsEnv(env, 'AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_NAME'))
+  const name = normalizeNonEmpty(readAgentsEnv(env, 'AGENTS_CONTROLLER_AUTH_SECRET_NAME'))
   if (!name) return null
   return {
     name,
-    key: normalizeNonEmpty(readAgentsEnv(env, 'AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_KEY')) ?? DEFAULT_AUTH_SECRET_KEY,
+    key: normalizeNonEmpty(readAgentsEnv(env, 'AGENTS_CONTROLLER_AUTH_SECRET_KEY')) ?? DEFAULT_AUTH_SECRET_KEY,
     mountPath:
-      normalizeNonEmpty(readAgentsEnv(env, 'AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH')) ??
+      normalizeNonEmpty(readAgentsEnv(env, 'AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH')) ??
       DEFAULT_AUTH_SECRET_MOUNT_PATH,
   }
 }

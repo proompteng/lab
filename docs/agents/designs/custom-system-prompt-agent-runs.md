@@ -71,7 +71,7 @@ Security constraints:
 
 - Secret refs must be listed in `AgentRun.spec.secrets`.
 - If `Agent.spec.security.allowedSecrets` is non-empty, Secret refs must be allowlisted there.
-- Secret refs must not match `AGENTS_AGENTS_CONTROLLER_BLOCKED_SECRETS`.
+- Secret refs must not match `AGENTS_CONTROLLER_BLOCKED_SECRETS`.
 - ConfigMap refs do not require secret allowlisting.
 - Missing refs, missing keys, invalid refs, or policy failures mark the run invalid.
 

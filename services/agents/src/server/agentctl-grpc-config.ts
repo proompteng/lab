@@ -35,7 +35,7 @@ export const resolveAgentctlGrpcConfig = (env: EnvSource = process.env): Agentct
     buildSha: readAgentsEnv(env, 'AGENTS_COMMIT') ?? '',
     buildTime: readAgentsEnv(env, 'AGENTS_BUILD_TIME') ?? '',
     agentsControllerEnabled:
-      readAgentsEnv(env, 'AGENTS_AGENTS_CONTROLLER_ENABLED') === '1' ||
+      readAgentsEnv(env, 'AGENTS_CONTROLLER_ENABLED') === '1' ||
       readAgentsEnv(env, 'AGENTS_SERVER_PROFILE') === 'agents-controllers',
   }
 }
