@@ -1,4 +1,8 @@
-import type { AgentRunIngestionStatus, AgentsControlPlaneStatus } from './control-plane-status'
+import {
+  AGENTS_CONTROLLER_WITNESS_DESIGN_ARTIFACT,
+  type AgentRunIngestionStatus,
+  type AgentsControlPlaneStatus,
+} from './control-plane-status'
 import { fetchAgentsServiceJson } from './agents-service-client'
 
 export type AgentsControllerHealthSnapshot = {
@@ -171,8 +175,7 @@ const fallbackGenericStatus = (namespace: string, error: string | null): AgentsC
     },
     control_plane_controller_witness: {
       mode: 'shadow',
-      design_artifact:
-        'docs/agents/designs/116-jangar-controller-witness-quorum-and-capital-activation-receipts-2026-05-06.md',
+      design_artifact: AGENTS_CONTROLLER_WITNESS_DESIGN_ARTIFACT,
       quorum_id: `controller-witness:${namespace}:agents-control-plane-status-unavailable`,
       generated_at: generatedAt,
       expires_at: generatedAt,

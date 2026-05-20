@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { buildAgentsReadySnapshot, getAgentsControlPlaneStatusSnapshot, getAgentsReadySnapshot } from './agents-ready'
+import { AGENTS_CONTROLLER_WITNESS_DESIGN_ARTIFACT } from './control-plane-status'
 
 const originalFetch = globalThis.fetch
 
@@ -163,7 +164,7 @@ describe('agents-ready', () => {
             streams: [],
           },
           agentrun_ingestion: {
-            namespace: 'workflow',
+            namespace: 'agents',
             status: 'healthy',
             message: 'healthy',
             last_watch_event_at: '2026-03-08T21:00:00Z',
@@ -173,12 +174,11 @@ describe('agents-ready', () => {
           },
           control_plane_controller_witness: {
             mode: 'shadow',
-            design_artifact:
-              'docs/agents/designs/116-jangar-controller-witness-quorum-and-capital-activation-receipts-2026-05-06.md',
-            quorum_id: 'controller-witness:workflow:agents-control-plane-status',
+            design_artifact: AGENTS_CONTROLLER_WITNESS_DESIGN_ARTIFACT,
+            quorum_id: 'controller-witness:agents:agents-control-plane-status',
             generated_at: '2026-03-08T21:00:00Z',
             expires_at: '2026-03-08T21:01:00Z',
-            namespace: 'workflow',
+            namespace: 'agents',
             decision: 'allow',
             reason_codes: [],
             message: 'healthy',
@@ -214,17 +214,17 @@ describe('agents-ready', () => {
             deployments: [],
             message: 'healthy',
           },
-          namespaces: [{ namespace: 'workflow', status: 'healthy', degraded_components: [] }],
+          namespaces: [{ namespace: 'agents', status: 'healthy', degraded_components: [] }],
         }),
         { status: 200, headers: { 'content-type': 'application/json' } },
       )
     })
     globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
 
-    const snapshot = await getAgentsControlPlaneStatusSnapshot('workflow')
+    const snapshot = await getAgentsControlPlaneStatusSnapshot('agents')
 
     expect(fetchMock).toHaveBeenCalledWith(
-      new URL('/api/agents/control-plane/status?namespace=workflow', 'http://agents.agents.svc.cluster.local/'),
+      new URL('/api/agents/control-plane/status?namespace=agents', 'http://agents.agents.svc.cluster.local/'),
       expect.any(Object),
     )
     expect(snapshot).toMatchObject({
@@ -232,9 +232,9 @@ describe('agents-ready', () => {
       httpStatus: 200,
       status: {
         service: 'agents',
-        agentrun_ingestion: { namespace: 'workflow', status: 'healthy' },
+        agentrun_ingestion: { namespace: 'agents', status: 'healthy' },
         control_plane_controller_witness: {
-          quorum_id: 'controller-witness:workflow:agents-control-plane-status',
+          quorum_id: 'controller-witness:agents:agents-control-plane-status',
         },
       },
     })

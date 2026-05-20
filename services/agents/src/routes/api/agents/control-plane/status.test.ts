@@ -100,7 +100,7 @@ const deps: AgentsControlPlaneStatusDependencies = {
 describe('control-plane status route', () => {
   it('serves the Agents-owned generic status contract', async () => {
     const response = await buildControlPlaneStatusResponse(
-      new Request('http://agents.test/api/agents/control-plane/status?namespace=workflow'),
+      new Request('http://agents.test/api/agents/control-plane/status?namespace=platform'),
       deps,
     )
 
@@ -110,15 +110,15 @@ describe('control-plane status route', () => {
       service: 'agents',
       generated_at: '2026-05-19T12:00:00.000Z',
       controllers: expect.arrayContaining([expect.objectContaining({ name: 'agents-controller' })]),
-      agentrun_ingestion: { namespace: 'workflow' },
+      agentrun_ingestion: { namespace: 'platform' },
       control_plane_controller_witness: {
-        namespace: 'workflow',
+        namespace: 'platform',
         controller_self_report_current: true,
       },
       workflows: { active_job_runs: 2, data_confidence: 'high' },
       rollout_health: { status: 'healthy', observed_deployments: 2 },
       watch_reliability: { status: 'healthy', observed_streams: 1, total_events: 4 },
-      namespaces: expect.arrayContaining([expect.objectContaining({ namespace: 'workflow', status: 'healthy' })]),
+      namespaces: expect.arrayContaining([expect.objectContaining({ namespace: 'platform', status: 'healthy' })]),
     })
   })
 

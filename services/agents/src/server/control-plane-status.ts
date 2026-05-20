@@ -19,6 +19,7 @@ import type {
   HeartbeatAuthoritySource,
   RuntimeAdapterStatus,
 } from './control-plane-status-contract'
+import { AGENTS_CONTROLLER_WITNESS_DESIGN_ARTIFACT } from './control-plane-status-contract'
 import { getLeaderElectionStatus, type LeaderElectionStatus } from './leader-election'
 import { getOrchestrationControllerHealth } from './orchestration-controller'
 import { resolveRuntimeServiceName } from './runtime-identity'
@@ -261,8 +262,7 @@ const buildControlPlaneControllerWitness = (input: {
 
   return {
     mode: 'shadow',
-    design_artifact:
-      'docs/agents/designs/116-jangar-controller-witness-quorum-and-capital-activation-receipts-2026-05-06.md',
+    design_artifact: AGENTS_CONTROLLER_WITNESS_DESIGN_ARTIFACT,
     quorum_id: `controller-witness:${input.namespace}:agents-control-plane-status`,
     generated_at: generatedAt,
     expires_at: expiresAt,

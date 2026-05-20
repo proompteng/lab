@@ -93,6 +93,8 @@ export type AgentRunIngestionStatus = {
   oldest_untouched_age_seconds: number | null
 }
 
+export const AGENTS_CONTROLLER_WITNESS_DESIGN_ARTIFACT = 'docs/agents/designs/agents-controller-witness-quorum.md'
+
 export type ControllerWitnessSurface =
   | 'serving_process'
   | 'kubernetes_deployment'

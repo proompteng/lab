@@ -744,6 +744,13 @@ fail_if_matches \
   "${ROOT_DIR}/charts/agents/examples" \
   "${ROOT_DIR}/docs/agents/agents-helm-chart-implementation.md"
 
+fail_if_matches \
+  "Agents status/readiness contracts must cite the Agents-owned controller witness design, not the old Jangar artifact" \
+  '116-jangar-controller-witness-quorum-and-capital-activation-receipts' \
+  "${ROOT_DIR}/services/agents/src/server/control-plane-status.ts" \
+  "${ROOT_DIR}/packages/agent-contracts/src/agents-ready.ts" \
+  "${ROOT_DIR}/packages/agent-contracts/src/control-plane-status.ts"
+
 fail_if_matches_including_tests \
   "Agents service and contract tests must not use Jangar whitepaper fixtures for generic control-plane APIs" \
   'whitepaper-run|app=whitepaper|jangar\.proompteng\.ai/whitepaper' \
