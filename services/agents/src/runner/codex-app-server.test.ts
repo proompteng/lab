@@ -1,7 +1,8 @@
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { fileURLToPath } from 'node:url'
 
 import type { CodexAppServerOptions, CodexAppServerTurnOptions, StreamDelta, Turn } from '@proompteng/codex'
 import { describe, expect, it, vi } from 'vitest'
@@ -32,6 +33,8 @@ const makeTurn = (status: Turn['status'], error: Turn['error'] = null): Turn => 
   completedAt: 2,
   durationMs: 1000,
 })
+
+const fakeAppServerPath = fileURLToPath(new URL('../../scripts/codex/fake-app-server.ts', import.meta.url))
 
 const deferred = <T = void>() => {
   let resolve!: (value: T | PromiseLike<T>) => void
@@ -197,7 +200,7 @@ describe('codex app-server runner adapter', () => {
         },
       },
       {
-        binaryPath: resolve(process.cwd(), 'services/agents/scripts/codex/fake-app-server.ts'),
+        binaryPath: fakeAppServerPath,
         model: 'agents-fake-codex-app-server',
         effort: 'low',
         sandbox: 'danger-full-access',
