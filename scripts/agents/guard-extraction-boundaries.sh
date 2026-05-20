@@ -856,6 +856,16 @@ fail_if_matches_including_tests \
   "${ROOT_DIR}/packages/agent-contracts/src/agents-service-client.test.ts" \
   "${ROOT_DIR}/services/agents/src/routes/api/agents/control-plane/resource-cache.test.ts"
 
+fail_if_matches_including_tests \
+  "Agents service and contract tests must use domain-neutral fixtures at the generic Agents boundary" \
+  'Jangar|jangar|Torghut|torghut|whitepaper|registry\.example/jangar|marco-silva-jangar' \
+  "${ROOT_DIR}/packages/agent-contracts/src/agents-service-client.test.ts" \
+  "${ROOT_DIR}/packages/agent-contracts/src/signals-client.test.ts" \
+  "${ROOT_DIR}/services/agents/src/routes/v1/agent-runs.test.ts" \
+  "${ROOT_DIR}/services/agents/src/routes/v1/agent-runs/resources.test.ts" \
+  "${ROOT_DIR}/services/agents/src/server/agent-comms-subscriber.test.ts" \
+  "${ROOT_DIR}/services/agents/src/server/agents-controller/job-runtime.test.ts"
+
 fail_if_matches \
   "Agents GitOps must not ship the old sample Argo WorkflowTemplate schedule bridge" \
   'agents-primitives-echo|kind: WorkflowTemplate|codex-workflow' \

@@ -11,16 +11,16 @@ describe('signals-client', () => {
   it('builds a Signal resource from the typed swarm requirement contract', () => {
     const resource = buildSwarmRequirementSignalResource({
       deliveryId: 'requirement-1',
-      name: 'material-reentry-torghut-abc123',
+      name: 'runtime-requirement-codex-abc123',
       namespace: 'agents',
-      sourceSwarm: 'Jangar Control Plane',
-      targetSwarm: 'Torghut Quant',
+      sourceSwarm: 'Platform Scheduler',
+      targetSwarm: 'Codex Runtime',
       channel: 'agentrun.general.requirement',
-      description: 'repair executable alpha evidence',
+      description: 'repair runtime evidence',
       priority: 'High Priority',
-      payload: { value_gate: 'routeable_candidate_count' },
+      payload: { runtime_gate: 'artifact_collection' },
       annotations: {
-        'swarm.proompteng.ai/material-reentry-dispatch': 'requirement-1',
+        'swarm.proompteng.ai/runtime-requirement-dispatch': 'requirement-1',
       },
     })
 
@@ -28,24 +28,24 @@ describe('signals-client', () => {
       apiVersion: 'signals.proompteng.ai/v1alpha1',
       kind: 'Signal',
       metadata: {
-        name: 'material-reentry-torghut-abc123',
+        name: 'runtime-requirement-codex-abc123',
         namespace: 'agents',
         labels: {
           'swarm.proompteng.ai/type': 'requirement',
-          'swarm.proompteng.ai/from': 'jangar-control-plane',
-          'swarm.proompteng.ai/to': 'torghut-quant',
+          'swarm.proompteng.ai/from': 'platform-scheduler',
+          'swarm.proompteng.ai/to': 'codex-runtime',
           'swarm.proompteng.ai/requirement-channel': 'nats',
           priority: 'high-priority',
         },
         annotations: {
-          'swarm.proompteng.ai/material-reentry-dispatch': 'requirement-1',
+          'swarm.proompteng.ai/runtime-requirement-dispatch': 'requirement-1',
         },
       },
       spec: {
         channel: 'agentrun.general.requirement',
-        description: 'repair executable alpha evidence',
+        description: 'repair runtime evidence',
         priority: 'High Priority',
-        payload: { value_gate: 'routeable_candidate_count' },
+        payload: { runtime_gate: 'artifact_collection' },
       },
     })
   })
@@ -61,14 +61,14 @@ describe('signals-client', () => {
     const result = await submitSwarmRequirementSignalToAgentsService(
       {
         deliveryId: 'requirement-1',
-        name: 'material-reentry-torghut-abc123',
+        name: 'runtime-requirement-codex-abc123',
         namespace: 'agents',
-        sourceSwarm: 'jangar-control-plane',
-        targetSwarm: 'torghut-quant',
+        sourceSwarm: 'platform-scheduler',
+        targetSwarm: 'codex-runtime',
         channel: 'agentrun.general.requirement',
-        description: 'repair executable alpha evidence',
+        description: 'repair runtime evidence',
         priority: 'high',
-        payload: { value_gate: 'routeable_candidate_count' },
+        payload: { runtime_gate: 'artifact_collection' },
       },
       {
         AGENTS_SERVICE_BASE_URL: 'http://agents.test',
@@ -91,7 +91,7 @@ describe('signals-client', () => {
       apiVersion: 'signals.proompteng.ai/v1alpha1',
       kind: 'Signal',
       metadata: {
-        name: 'material-reentry-torghut-abc123',
+        name: 'runtime-requirement-codex-abc123',
         namespace: 'agents',
       },
     })

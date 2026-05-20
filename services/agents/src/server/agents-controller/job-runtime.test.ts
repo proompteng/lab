@@ -191,7 +191,7 @@ describe('agents controller job-runtime module', () => {
       { metadata: { name: 'impl-a' }, source: { provider: 'github' }, summary: 'Run summary' },
       null,
       'agents',
-      'registry.example/jangar:tag',
+      'registry.example/agents-runner:tag',
       'workflow',
       { nameSuffix: 'step-1-attempt-1' },
     )
@@ -237,7 +237,7 @@ describe('agents controller job-runtime module', () => {
       { metadata: { name: 'impl-a' }, source: { provider: 'github' }, summary: 'Run summary' },
       null,
       'agents',
-      'registry.example/jangar:tag',
+      'registry.example/agents-runner:tag',
       'workflow',
       { nameSuffix: 'step-1-attempt-1' },
     )

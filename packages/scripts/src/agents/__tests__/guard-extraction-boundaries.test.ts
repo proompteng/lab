@@ -135,6 +135,8 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('retired workflow.general subjects')
     expect(content).toContain('Agents-owned controller witness design')
     expect(content).toContain('Jangar whitepaper fixtures for generic control-plane APIs')
+    expect(content).toContain('domain-neutral fixtures')
+    expect(content).toContain('registry\\.example/jangar|marco-silva-jangar')
     expect(content).toContain(
       'workflowUid|workflow_uid|workflowName|workflow_name|workflowNamespace|workflow_namespace',
     )

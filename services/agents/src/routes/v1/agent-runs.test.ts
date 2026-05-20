@@ -43,7 +43,7 @@ describe('Agents v1 AgentRun route ownership', () => {
     expect(store.close).toHaveBeenCalledTimes(1)
   })
 
-  it('lists AgentRuns by status for domain consumers without requiring a Jangar database projection', async () => {
+  it('lists AgentRuns by status for domain consumers without requiring a domain database projection', async () => {
     const store = createStore([{ id: 'run-1', status: 'Running' }])
     configureAgentsV1Runtime({
       agentRuns: {

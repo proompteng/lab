@@ -182,9 +182,9 @@ describe('agent comms subscriber consume', () => {
         kind: 'run-started',
         content: 'release started',
         attrs: {
-          swarmAgentIdentity: 'marco-silva-jangar-deployer',
+          swarmAgentIdentity: 'platform-runtime-deployer',
           swarmAgentRole: 'deployer',
-          swarmHumanName: 'Marco Silva',
+          swarmHumanName: 'Platform Runtime',
         },
       }),
       'agents.agent_messages.general.run-started',
@@ -192,6 +192,6 @@ describe('agent comms subscriber consume', () => {
 
     expect(message?.agentId).toBe('Unknown')
     expect(message?.role).toBe('Assistant')
-    expect(message?.attrs?.swarmHumanName).toBe('Marco Silva')
+    expect(message?.attrs?.swarmHumanName).toBe('Platform Runtime')
   })
 })

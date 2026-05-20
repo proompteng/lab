@@ -396,7 +396,7 @@ describe('agents-service-client', () => {
           ok: true,
           kind: 'Signal',
           namespace: 'agents',
-          resource: { kind: 'Signal', metadata: { name: 'material-reentry-signal' } },
+          resource: { kind: 'Signal', metadata: { name: 'runtime-requirement-signal' } },
         }),
         {
           headers: { 'content-type': 'application/json' },
@@ -409,14 +409,14 @@ describe('agents-service-client', () => {
     const result = await submitSwarmRequirementSignalToAgentsService(
       {
         deliveryId: 'signal-delivery',
-        name: 'material-reentry-signal',
+        name: 'runtime-requirement-signal',
         namespace: 'agents',
-        sourceSwarm: 'jangar-control-plane',
-        targetSwarm: 'torghut-quant',
+        sourceSwarm: 'platform-scheduler',
+        targetSwarm: 'codex-runtime',
         channel: 'agentrun.general.requirement',
-        description: 'repair executable alpha evidence',
+        description: 'repair runtime evidence',
         priority: 'high',
-        payload: { value_gate: 'routeable_candidate_count' },
+        payload: { runtime_gate: 'artifact_collection' },
       },
       { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
     )

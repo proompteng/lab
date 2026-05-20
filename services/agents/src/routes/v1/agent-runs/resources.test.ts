@@ -4,11 +4,13 @@ import { listAgentRunResources, patchAgentRunResourceAnnotations } from './resou
 
 const buildKube = () => ({
   list: vi.fn(async () => ({
-    items: [{ kind: 'AgentRun', metadata: { name: 'wp-run', namespace: 'agents' }, status: { phase: 'Succeeded' } }],
+    items: [
+      { kind: 'AgentRun', metadata: { name: 'artifact-run', namespace: 'agents' }, status: { phase: 'Succeeded' } },
+    ],
   })),
   patch: vi.fn(async () => ({
     kind: 'AgentRun',
-    metadata: { name: 'wp-run', namespace: 'agents', annotations: { finalized: 'true' } },
+    metadata: { name: 'artifact-run', namespace: 'agents', annotations: { finalized: 'true' } },
   })),
 })
 
@@ -31,7 +33,7 @@ describe('Agents v1 AgentRun resource route', () => {
       ok: true,
       kind: 'AgentRun',
       namespace: 'agents',
-      items: [{ kind: 'AgentRun', metadata: { name: 'wp-run', namespace: 'agents' } }],
+      items: [{ kind: 'AgentRun', metadata: { name: 'artifact-run', namespace: 'agents' } }],
     })
     expect(kube.list).toHaveBeenCalledWith('agentruns.agents.proompteng.ai', 'agents', undefined)
   })
@@ -39,10 +41,10 @@ describe('Agents v1 AgentRun resource route', () => {
   it('patches AgentRun annotations through the dedicated v1 resource route', async () => {
     const kube = buildKube()
     const response = await patchAgentRunResourceAnnotations(
-      new Request('http://agents.local/v1/agent-runs/resources?name=wp-run&namespace=agents&kind=Swarm', {
+      new Request('http://agents.local/v1/agent-runs/resources?name=artifact-run&namespace=agents&kind=Swarm', {
         body: JSON.stringify({
           annotations: {
-            'jangar.proompteng.ai/whitepaper-finalized-phase': 'Succeeded',
+            'agents.proompteng.ai/finalized-phase': 'Succeeded',
           },
         }),
         method: 'PATCH',
@@ -55,12 +57,12 @@ describe('Agents v1 AgentRun resource route', () => {
       ok: true,
       kind: 'AgentRun',
       namespace: 'agents',
-      resource: { kind: 'AgentRun', metadata: { name: 'wp-run' } },
+      resource: { kind: 'AgentRun', metadata: { name: 'artifact-run' } },
     })
-    expect(kube.patch).toHaveBeenCalledWith('agentruns.agents.proompteng.ai', 'wp-run', 'agents', {
+    expect(kube.patch).toHaveBeenCalledWith('agentruns.agents.proompteng.ai', 'artifact-run', 'agents', {
       metadata: {
         annotations: {
-          'jangar.proompteng.ai/whitepaper-finalized-phase': 'Succeeded',
+          'agents.proompteng.ai/finalized-phase': 'Succeeded',
         },
       },
     })
