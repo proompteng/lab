@@ -1,27 +1,13 @@
 import { EventEmitter } from 'node:events'
 
-import { createFileRoute, type AgentsServerRouteArgs } from '../../../../server/server-route'
-
-import { getAgentsControlPlaneStatus, type AgentsControlPlaneStatus } from '../../../../server/control-plane-status'
-import {
-  type AgentPrimitiveKind,
-  listPrimitiveKinds,
-  resolvePrimitiveKind,
-} from '../../../../server/control-plane-primitive-kinds'
-import { isSwarmPrimitiveEnabled } from '../../../../server/controller-runtime-config'
-import { createKubernetesClient, type KubernetesClient, RESOURCE_MAP } from '../../../../server/kube-types'
-import { startResourceWatch } from '../../../../server/kube-watch'
-import { recordSseConnection, recordSseError } from '../../../../server/metrics'
-import { asRecord, asString, normalizeNamespace } from '../../../../server/primitives'
-import { buildResourceFingerprint } from '../../../../server/status-utils'
-
-export const Route = createFileRoute('/api/agents/control-plane/stream')({
-  server: {
-    handlers: {
-      GET: async ({ request }: AgentsServerRouteArgs) => streamControlPlaneEvents(request),
-    },
-  },
-})
+import { getAgentsControlPlaneStatus, type AgentsControlPlaneStatus } from '../control-plane-status'
+import { type AgentPrimitiveKind, listPrimitiveKinds, resolvePrimitiveKind } from '../control-plane-primitive-kinds'
+import { isSwarmPrimitiveEnabled } from '../controller-runtime-config'
+import { createKubernetesClient, type KubernetesClient, RESOURCE_MAP } from '../kube-types'
+import { startResourceWatch } from '../kube-watch'
+import { recordSseConnection, recordSseError } from '../metrics'
+import { asRecord, asString, normalizeNamespace } from '../primitives'
+import { buildResourceFingerprint } from '../status-utils'
 
 type ControlPlaneResourceEvent = {
   type: 'resource'

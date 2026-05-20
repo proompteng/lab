@@ -778,6 +778,14 @@ fail_if_matches \
   "${ROOT_DIR}/packages/agent-contracts/src" \
   "${ROOT_DIR}/services/jangar/src"
 
+fail_if_path_exists \
+  "Agents v1 public event/log/summary/stream APIs must not retain legacy /api/agents route files after the public boundary cut" \
+  "${ROOT_DIR}/services/agents/src/routes/api/agents/events.ts" \
+  "${ROOT_DIR}/services/agents/src/routes/api/agents/control-plane/events.ts" \
+  "${ROOT_DIR}/services/agents/src/routes/api/agents/control-plane/logs.ts" \
+  "${ROOT_DIR}/services/agents/src/routes/api/agents/control-plane/stream.ts" \
+  "${ROOT_DIR}/services/agents/src/routes/api/agents/control-plane/summary.ts"
+
 fail_if_matches \
   "Jangar must consume narrow Agents resource clients instead of the broad control-plane-resources-client module" \
   '@proompteng/agent-contracts/control-plane-resources-client' \
@@ -843,7 +851,7 @@ fail_if_matches \
   "${ROOT_DIR}/services/agents/src/server/agent-messages-store.ts" \
   "${ROOT_DIR}/services/agents/src/server/agent-comms-subscriber.ts" \
   "${ROOT_DIR}/services/agents/src/server/codex-callbacks.ts" \
-  "${ROOT_DIR}/services/agents/src/routes/api/agents/events.ts" \
+  "${ROOT_DIR}/services/agents/src/server/v1/agent-events.ts" \
   "${ROOT_DIR}/services/agents/src/server/db.ts" \
   "${ROOT_DIR}/services/agents/src/server/migrations"
 

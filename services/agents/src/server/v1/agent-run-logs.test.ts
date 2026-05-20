@@ -1,13 +1,13 @@
 import { Effect } from 'effect'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { KubernetesClient } from '../../../../server/kube-types'
+import type { KubernetesClient } from '../kube-types'
 import {
   AgentRunLogsKubeError,
   getAgentRunLogsEffect,
   makeAgentRunLogsKubeLayer,
-} from '../../../../server/v1/agent-run-logs'
-import { getAgentRunLogs } from './logs'
+  getAgentRunLogsHandler,
+} from './agent-run-logs'
 
 const buildPod = (name: string, phase: string, containers: string[], initContainers: string[] = []) => ({
   metadata: { name },
@@ -44,8 +44,8 @@ describe('getAgentRunLogs', () => {
       logs: vi.fn(async () => 'log output'),
     })
 
-    const response = await getAgentRunLogs(
-      new Request('http://localhost/api/agents/control-plane/logs?name=run-1&namespace=agents'),
+    const response = await getAgentRunLogsHandler(
+      new Request('http://localhost/v1/control-plane/logs?name=run-1&namespace=agents'),
       { kubeClient: kube },
     )
 
@@ -64,8 +64,8 @@ describe('getAgentRunLogs', () => {
   })
 
   it('returns ok with empty pods when none are found', async () => {
-    const response = await getAgentRunLogs(
-      new Request('http://localhost/api/agents/control-plane/logs?name=run-1&namespace=agents'),
+    const response = await getAgentRunLogsHandler(
+      new Request('http://localhost/v1/control-plane/logs?name=run-1&namespace=agents'),
       { kubeClient: createKubeMock() },
     )
 
@@ -78,7 +78,7 @@ describe('getAgentRunLogs', () => {
   })
 
   it('requires name and namespace', async () => {
-    const response = await getAgentRunLogs(new Request('http://localhost/api/agents/control-plane/logs?name=run-1'), {
+    const response = await getAgentRunLogsHandler(new Request('http://localhost/v1/control-plane/logs?name=run-1'), {
       kubeClient: createKubeMock(),
     })
 
@@ -93,8 +93,8 @@ describe('getAgentRunLogs', () => {
       logs: vi.fn(async () => 'log output'),
     })
 
-    const response = await getAgentRunLogs(
-      new Request('http://localhost/api/agents/control-plane/logs?name=run-1&namespace=agents&pod=missing-pod'),
+    const response = await getAgentRunLogsHandler(
+      new Request('http://localhost/v1/control-plane/logs?name=run-1&namespace=agents&pod=missing-pod'),
       { kubeClient: kube },
     )
 
@@ -112,9 +112,9 @@ describe('getAgentRunLogs', () => {
       logs: vi.fn(async () => 'log output'),
     })
 
-    const response = await getAgentRunLogs(
+    const response = await getAgentRunLogsHandler(
       new Request(
-        'http://localhost/api/agents/control-plane/logs?name=run-1&namespace=agents&pod=agent-run-1&container=missing',
+        'http://localhost/v1/control-plane/logs?name=run-1&namespace=agents&pod=agent-run-1&container=missing',
       ),
       { kubeClient: kube },
     )
@@ -134,8 +134,8 @@ describe('getAgentRunLogs', () => {
       }),
     })
 
-    const response = await getAgentRunLogs(
-      new Request('http://localhost/api/agents/control-plane/logs?name=run-1&namespace=agents'),
+    const response = await getAgentRunLogsHandler(
+      new Request('http://localhost/v1/control-plane/logs?name=run-1&namespace=agents'),
       { kubeClient: kube },
     )
 
@@ -154,8 +154,8 @@ describe('getAgentRunLogs', () => {
       }),
     })
 
-    const response = await getAgentRunLogs(
-      new Request('http://localhost/api/agents/control-plane/logs?name=run-1&namespace=agents'),
+    const response = await getAgentRunLogsHandler(
+      new Request('http://localhost/v1/control-plane/logs?name=run-1&namespace=agents'),
       { kubeClient: kube },
     )
 
@@ -174,9 +174,10 @@ describe('getAgentRunLogs', () => {
     })
 
     const result = await Effect.runPromise(
-      getAgentRunLogsEffect(
-        new Request('http://localhost/api/agents/control-plane/logs?name=run-1&namespace=agents'),
-      ).pipe(Effect.provide(makeAgentRunLogsKubeLayer({ kubeClient: kube })), Effect.either),
+      getAgentRunLogsEffect(new Request('http://localhost/v1/control-plane/logs?name=run-1&namespace=agents')).pipe(
+        Effect.provide(makeAgentRunLogsKubeLayer({ kubeClient: kube })),
+        Effect.either,
+      ),
     )
 
     if (result._tag !== 'Left') throw new Error('expected log read to fail')

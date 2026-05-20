@@ -1,25 +1,15 @@
-import { createFileRoute, type AgentsServerRouteArgs } from '../../../../server/server-route'
-
 import {
   buildCacheFreshnessState,
   cacheStateToResponse,
   resolveCacheFreshnessConfig,
-} from '../../../../server/control-plane-cache-freshness'
-import { createControlPlaneCacheStore, type ControlPlaneCacheStore } from '../../../../server/control-plane-cache-store'
-import { resolveControlPlaneCacheReadConfig } from '../../../../server/control-plane-cache-config'
-import { type AgentPrimitiveKind, resolvePrimitiveKind } from '../../../../server/control-plane-primitive-kinds'
-import { isSwarmPrimitiveEnabled } from '../../../../server/controller-runtime-config'
-import { okResponse } from '../../../../server/http'
-import { createKubernetesClient, type KubernetesClient } from '../../../../server/kube-types'
-import { asRecord, asString, normalizeNamespace } from '../../../../server/primitives'
-
-export const Route = createFileRoute('/api/agents/control-plane/summary')({
-  server: {
-    handlers: {
-      GET: async ({ request }: AgentsServerRouteArgs) => getControlPlaneSummary(request),
-    },
-  },
-})
+} from '../control-plane-cache-freshness'
+import { resolveControlPlaneCacheReadConfig } from '../control-plane-cache-config'
+import { createControlPlaneCacheStore, type ControlPlaneCacheStore } from '../control-plane-cache-store'
+import { type AgentPrimitiveKind, resolvePrimitiveKind } from '../control-plane-primitive-kinds'
+import { isSwarmPrimitiveEnabled } from '../controller-runtime-config'
+import { okResponse } from '../http'
+import { createKubernetesClient, type KubernetesClient } from '../kube-types'
+import { asRecord, asString, normalizeNamespace } from '../primitives'
 
 const SUMMARY_KINDS: AgentPrimitiveKind[] = [
   'Agent',

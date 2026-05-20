@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { __test__ } from './summary'
+import { __test__ } from './control-plane-summary'
 
 const originalSwarmPrimitiveEnabled = process.env.AGENTS_SWARM_PRIMITIVE_ENABLED
 

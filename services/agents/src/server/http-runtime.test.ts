@@ -226,11 +226,11 @@ describe('Agents HTTP runtime', () => {
   it('adds CORS headers to Agents SSE route responses', async () => {
     const runtime = await createAgentsHttpRuntime({
       routeSources: {
-        './routes/api/agents/events.ts':
-          "export const Route = createFileRoute('/api/agents/events')({ server: { handlers: { GET: handler } } })",
+        './routes/v1/agent-events.ts':
+          "export const Route = createFileRoute('/v1/agent-events')({ server: { handlers: { GET: handler } } })",
       },
       routeModules: {
-        './routes/api/agents/events.ts': async () => ({
+        './routes/v1/agent-events.ts': async () => ({
           Route: {
             options: {
               server: {
@@ -248,7 +248,7 @@ describe('Agents HTTP runtime', () => {
     })
 
     const response = await runtime.handleRequest(
-      new Request('https://agents.k8s.proompteng.ai/api/agents/events', {
+      new Request('https://agents.k8s.proompteng.ai/v1/agent-events', {
         headers: { origin: allowedBrowserOrigin },
       }),
     )

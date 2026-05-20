@@ -19,7 +19,7 @@ vi.mock('~/server/kube-types', async () => {
 
 import { RESOURCE_MAP } from '~/server/kube-types'
 
-import { getControlPlaneSummary } from './summary'
+import { getControlPlaneSummary } from './control-plane-summary'
 
 const buildList = (items: Record<string, unknown>[] = []) => ({ items })
 
@@ -82,7 +82,7 @@ describe('control plane summary route', () => {
     kubeClientMocks.createKubernetesClient.mockReturnValue(kube)
 
     const response = await getControlPlaneSummary(
-      new Request('http://localhost/api/agents/control-plane/summary?namespace=agents'),
+      new Request('http://localhost/v1/control-plane/summary?namespace=agents'),
       { kubeClient: kube },
     )
 
@@ -167,7 +167,7 @@ describe('control plane summary route', () => {
     kubeClientMocks.createKubernetesClient.mockReturnValue(kube)
 
     const response = await getControlPlaneSummary(
-      new Request('http://localhost/api/agents/control-plane/summary?namespace=agents'),
+      new Request('http://localhost/v1/control-plane/summary?namespace=agents'),
       { kubeClient: kube, cacheStoreFactory: () => cachedStore as never },
     )
 
@@ -250,7 +250,7 @@ describe('control plane summary route', () => {
     kubeClientMocks.createKubernetesClient.mockReturnValue(kube)
 
     const response = await getControlPlaneSummary(
-      new Request('http://localhost/api/agents/control-plane/summary?namespace=agents'),
+      new Request('http://localhost/v1/control-plane/summary?namespace=agents'),
       { kubeClient: kube },
     )
 

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { KubernetesClient } from '../../../../server/kube-types'
-import { listPrimitiveEvents } from './events'
+import type { KubernetesClient } from '../kube-types'
+import { listPrimitiveEvents } from './control-plane-events'
 
 const createKubeMock = (overrides: Partial<KubernetesClient> = {}): KubernetesClient => ({
   apply: vi.fn(async (resource) => resource),
@@ -41,7 +41,7 @@ describe('listPrimitiveEvents', () => {
     })
 
     const response = await listPrimitiveEvents(
-      new Request('http://localhost/api/agents/control-plane/events?kind=AgentRun&name=run-1&namespace=agents'),
+      new Request('http://localhost/v1/control-plane/events?kind=AgentRun&name=run-1&namespace=agents'),
       { kubeClient: kube },
     )
 
@@ -53,14 +53,13 @@ describe('listPrimitiveEvents', () => {
   })
 
   it('requires a supported kind and name', async () => {
-    const missingKind = await listPrimitiveEvents(
-      new Request('http://localhost/api/agents/control-plane/events?name=run-1'),
-      { kubeClient: createKubeMock() },
-    )
+    const missingKind = await listPrimitiveEvents(new Request('http://localhost/v1/control-plane/events?name=run-1'), {
+      kubeClient: createKubeMock(),
+    })
     expect(missingKind.status).toBe(400)
 
     const missingName = await listPrimitiveEvents(
-      new Request('http://localhost/api/agents/control-plane/events?kind=AgentRun'),
+      new Request('http://localhost/v1/control-plane/events?kind=AgentRun'),
       { kubeClient: createKubeMock() },
     )
     expect(missingName.status).toBe(400)

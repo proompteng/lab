@@ -1,18 +1,9 @@
-import { createFileRoute, type AgentsServerRouteArgs } from '../../../server/server-route'
 import { Duration, Effect } from 'effect'
 
-import { subscribeAgentMessages } from '../../../server/agent-messages-bus'
-import { type AgentMessageRecord, createAgentMessagesStore } from '../../../server/agent-messages-store'
-import { recordSseConnection, recordSseError } from '../../../server/metrics'
-import { createPrimitivesStore } from '../../../server/primitives-store'
-
-export const Route = createFileRoute('/api/agents/events')({
-  server: {
-    handlers: {
-      GET: async ({ request }: AgentsServerRouteArgs) => getAgentEvents(request),
-    },
-  },
-})
+import { subscribeAgentMessages } from '../agent-messages-bus'
+import { type AgentMessageRecord, createAgentMessagesStore } from '../agent-messages-store'
+import { recordSseConnection, recordSseError } from '../metrics'
+import { createPrimitivesStore } from '../primitives-store'
 
 const HEARTBEAT_INTERVAL_MS = 5000
 const DEFAULT_HISTORY_LIMIT = 500
@@ -110,7 +101,7 @@ export const getAgentEvents = async (request: Request) => {
     return jsonResponse({ ok: false, error: 'runId, agentRunUid, or channel is required' }, 400)
   }
 
-  void import('../../../server/agent-comms-subscriber')
+  void import('../agent-comms-subscriber')
     .then(({ startAgentCommsSubscriber }) => startAgentCommsSubscriber())
     .catch((error) => {
       console.warn('Agent comms subscriber failed to start', error)

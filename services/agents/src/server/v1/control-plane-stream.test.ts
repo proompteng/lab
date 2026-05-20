@@ -8,17 +8,17 @@ const kubeTypesMocks = vi.hoisted(() => ({
   createKubernetesClient: vi.fn(),
 }))
 
-vi.mock('../../../../server/kube-watch', () => kubeWatchMocks)
-vi.mock('../../../../server/kube-types', async () => {
-  const actual = await vi.importActual<typeof import('../../../../server/kube-types')>('../../../../server/kube-types')
+vi.mock('../kube-watch', () => kubeWatchMocks)
+vi.mock('../kube-types', async () => {
+  const actual = await vi.importActual<typeof import('../kube-types')>('../kube-types')
   return {
     ...actual,
     createKubernetesClient: kubeTypesMocks.createKubernetesClient,
   }
 })
 
-import { __test__ as controlPlaneStream, streamControlPlaneEvents } from './stream'
-import { RESOURCE_MAP } from '../../../../server/kube-types'
+import { RESOURCE_MAP } from '../kube-types'
+import { __test__ as controlPlaneStream, streamControlPlaneEvents } from './control-plane-stream'
 
 describe('Agents control plane stream', () => {
   afterEach(() => {
@@ -75,12 +75,12 @@ describe('Agents control plane stream', () => {
 
     const namespace = 'swarm-upgrade'
     const first = await streamControlPlaneEvents(
-      new Request(`http://localhost/api/agents/control-plane/stream?namespace=${namespace}`),
+      new Request(`http://localhost/v1/control-plane/stream?namespace=${namespace}`),
     )
     const callsAfterFirst = vi.mocked(kubeWatchMocks.startResourceWatch).mock.calls.length
 
     const second = await streamControlPlaneEvents(
-      new Request(`http://localhost/api/agents/control-plane/stream?namespace=${namespace}`),
+      new Request(`http://localhost/v1/control-plane/stream?namespace=${namespace}`),
     )
     const callsAfterSecond = vi.mocked(kubeWatchMocks.startResourceWatch).mock.calls.length
 

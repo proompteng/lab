@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { getAgentEvents } from '~/routes/api/agents/events'
+import { getAgentEvents } from './agent-events'
 
 const listMessagesMock = vi.fn()
 const closeMock = vi.fn(async () => {})
@@ -59,7 +59,7 @@ describe('getAgentEvents', () => {
       ])
       .mockResolvedValue([])
 
-    const request = new Request('http://localhost/api/agents/events?channel=general&limit=1')
+    const request = new Request('http://localhost/v1/agent-events?channel=general&limit=1')
     const response = await getAgentEvents(request)
 
     expect(response.headers.get('content-type')).toContain('text/event-stream')
