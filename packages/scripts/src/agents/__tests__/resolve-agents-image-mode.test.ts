@@ -192,3 +192,19 @@ describe('agents-ci workflow local Agents image build', () => {
     expect(workflow).not.toContain('--build-arg "JANGAR_VERSION=')
   })
 })
+
+describe('agents-release workflow', () => {
+  it('can manually promote a specific Agents build artifact by run id and source SHA', () => {
+    const workflow = readFileSync(
+      new URL('../../../../../.github/workflows/agents-release.yml', import.meta.url),
+      'utf8',
+    )
+
+    expect(workflow).toContain('workflow_dispatch:')
+    expect(workflow).toContain('run_id:')
+    expect(workflow).toContain('source_sha:')
+    expect(workflow).toContain("github.event_name == 'workflow_dispatch'")
+    expect(workflow).toContain('run-id: ${{ steps.meta.outputs.run_id }}')
+    expect(workflow).toContain('Promotion source: `${{ steps.meta.outputs.promotion_source }}`')
+  })
+})

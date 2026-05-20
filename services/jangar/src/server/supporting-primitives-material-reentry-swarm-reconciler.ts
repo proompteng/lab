@@ -1,4 +1,4 @@
-import { fetchSwarmResourcesFromAgentsService } from '@proompteng/agent-contracts/control-plane-resources-client'
+import { fetchSwarmResourcesFromAgentsService } from '@proompteng/agent-contracts/swarm-read-client'
 import { resolveSupportingPrimitivesConfig } from '~/server/supporting-primitives-config'
 
 export const MATERIAL_REENTRY_SWARM_RECONCILE_INTERVAL_MS = 30_000

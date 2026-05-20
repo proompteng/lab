@@ -16,10 +16,10 @@ const buildDispatch = (signalName: string, dedupeKey: string) => ({
 
 describe('supporting-primitives-material-reentry-requirements', () => {
   it('deduplicates material reentry requirement signals by dispatch key', async () => {
-    const submitResource = vi.fn().mockResolvedValue({})
+    const submitSignal = vi.fn().mockResolvedValue({})
 
     const result = await publishMaterialReentryRequirementSignals({
-      submitResource,
+      submitSignal,
       namespace: 'agents',
       swarmName: 'torghut-quant',
       existingSignalNames: new Set(),
@@ -31,32 +31,28 @@ describe('supporting-primitives-material-reentry-requirements', () => {
 
     expect(result.publishErrors).toBe(0)
     expect(result.publishedSignals).toHaveLength(1)
-    expect(submitResource).toHaveBeenCalledTimes(1)
-    const submitInput = submitResource.mock.calls[0]?.[0] as Record<string, unknown>
-    const signal = submitInput.resource as Record<string, unknown>
-    const metadata = signal.metadata as Record<string, unknown>
-    expect(metadata.name).toMatch(/^material-reentry-torghut-quant-[a-z0-9]+$/)
+    expect(submitSignal).toHaveBeenCalledTimes(1)
+    const submitInput = submitSignal.mock.calls[0]?.[0] as Record<string, unknown>
+    expect(submitInput.name).toMatch(/^material-reentry-torghut-quant-[a-z0-9]+$/)
     expect(submitInput).toMatchObject({
       deliveryId: 'repair-routeable-candidates',
-      resource: {
-        kind: 'Signal',
+      sourceSwarm: 'jangar-control-plane',
+      targetSwarm: 'torghut-quant',
+      annotations: {
+        'swarm.proompteng.ai/material-reentry-dispatch': 'repair-routeable-candidates',
+        'swarm.proompteng.ai/material-reentry-source-signal': 'material-reentry-torghut-alpha-first',
       },
-    })
-    expect(signal).toMatchObject({
-      metadata: {
-        annotations: {
-          'swarm.proompteng.ai/material-reentry-dispatch': 'repair-routeable-candidates',
-          'swarm.proompteng.ai/material-reentry-source-signal': 'material-reentry-torghut-alpha-first',
-        },
+      payload: {
+        material_reentry_dispatch_dedupe_key: 'repair-routeable-candidates',
       },
     })
   })
 
   it('skips material reentry signals when the dispatch key already exists', async () => {
-    const submitResource = vi.fn().mockResolvedValue({})
+    const submitSignal = vi.fn().mockResolvedValue({})
 
     const result = await publishMaterialReentryRequirementSignals({
-      submitResource,
+      submitSignal,
       namespace: 'agents',
       swarmName: 'torghut-quant',
       existingSignalNames: new Set(),
@@ -68,6 +64,6 @@ describe('supporting-primitives-material-reentry-requirements', () => {
 
     expect(result.publishErrors).toBe(0)
     expect(result.publishedSignals).toHaveLength(0)
-    expect(submitResource).not.toHaveBeenCalled()
+    expect(submitSignal).not.toHaveBeenCalled()
   })
 })

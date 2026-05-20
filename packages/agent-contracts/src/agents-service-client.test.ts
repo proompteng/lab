@@ -1,22 +1,24 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { fetchAgentRunResourcesFromAgentsService } from './agent-runs-client'
 import {
-  fetchAgentRunResourcesFromAgentsService,
   fetchAgentRunsFromAgentsService,
   fetchAgentsHealthFromAgentsService,
   fetchAgentsServiceJson,
-  fetchMemoryResourceFromAgentsService,
-  fetchControlPlaneResourceFromAgentsService,
-  fetchControlPlaneResourcesFromAgentsService,
-  fetchSwarmResourcesFromAgentsService,
   patchAgentRunAnnotationsViaAgentsService,
   resolveAgentsServiceBaseUrl,
   submitAgentRunToAgentsService,
   submitAgentMessagesToAgentsService,
-  submitControlPlaneResourceToAgentsService,
   submitOrchestrationRunToAgentsService,
-  submitSignalResourceToAgentsService,
 } from './agents-service-client'
+import {
+  fetchControlPlaneResourceFromAgentsService,
+  fetchControlPlaneResourcesFromAgentsService,
+  submitControlPlaneResourceToAgentsService,
+} from './control-plane-resource-transport'
+import { fetchMemoryResourceFromAgentsService } from './memory-client'
+import { submitSwarmRequirementSignalToAgentsService } from './signals-client'
+import { fetchSwarmResourcesFromAgentsService } from './swarm-read-client'
 
 const originalFetch = globalThis.fetch
 const getHeader = (headers: RequestInit['headers'], name: string) =>
@@ -513,15 +515,17 @@ describe('agents-service-client', () => {
     })
     globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
 
-    const result = await submitSignalResourceToAgentsService(
+    const result = await submitSwarmRequirementSignalToAgentsService(
       {
         deliveryId: 'signal-delivery',
-        resource: {
-          apiVersion: 'signals.proompteng.ai/v1alpha1',
-          kind: 'Signal',
-          metadata: { name: 'material-reentry-signal', namespace: 'agents' },
-          spec: { channel: 'agentrun.general.requirement' },
-        },
+        name: 'material-reentry-signal',
+        namespace: 'agents',
+        sourceSwarm: 'jangar-control-plane',
+        targetSwarm: 'torghut-quant',
+        channel: 'agentrun.general.requirement',
+        description: 'repair executable alpha evidence',
+        priority: 'high',
+        payload: { value_gate: 'routeable_candidate_count' },
       },
       { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
     )

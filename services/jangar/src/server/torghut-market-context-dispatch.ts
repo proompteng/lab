@@ -4,7 +4,7 @@ import { sql } from 'kysely'
 import {
   submitTorghutMarketContextAgentRun,
   type TorghutMarketContextAgentRunSubmitter as MarketContextAgentRunSubmitter,
-} from '@proompteng/agent-contracts/torghut-market-context-agentrun'
+} from '~/server/torghut-market-context-agentrun'
 
 import type { Db } from '~/server/db'
 import type { MarketContextProviderDomain } from '~/server/torghut-market-context-agents'

@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { Pool } from 'pg'
 
 import { resolveEmbeddingConfig } from './memory-config'
-import { fetchMemoryResourceFromAgentsService } from '@proompteng/agent-contracts/control-plane-resources-client'
+import { fetchMemoryResourceFromAgentsService } from '@proompteng/agent-contracts/memory-client'
 import type { KubernetesClient } from '~/server/primitives-kube'
 
 type MemoryConnection = {

@@ -1,16 +1,9 @@
 import {
-  submitSignalResourceToAgentsService,
-  type AgentsSignalResourceSubmitInput,
-} from '@proompteng/agent-contracts/control-plane-resources-client'
+  submitSwarmRequirementSignalToAgentsService,
+  type AgentsSwarmRequirementSignalSubmitInput,
+} from '@proompteng/agent-contracts/signals-client'
 import { asRecord, asString } from '~/server/primitives-http'
 import { hashNameSuffix, makeHashedName } from '~/server/supporting-primitives-naming'
-import {
-  normalizeLabelValue,
-  SWARM_REQUIREMENT_LABEL_CHANNEL,
-  SWARM_REQUIREMENT_LABEL_FROM,
-  SWARM_REQUIREMENT_LABEL_TO,
-  SWARM_REQUIREMENT_LABEL_TYPE,
-} from '~/server/supporting-primitives-swarm-config'
 
 export type MaterialReentryRequirementSignal = {
   signalName: string
@@ -30,7 +23,7 @@ type MaterialReentryRequirementSignalPublisherInput = {
   swarmName: string
   existingSignalNames: Set<string>
   existingDedupeKeys?: Set<string>
-  submitResource?: (input: AgentsSignalResourceSubmitInput) => Promise<unknown>
+  submitSignal?: (input: AgentsSwarmRequirementSignalSubmitInput) => Promise<unknown>
 }
 
 const asArray = (value: unknown) => (Array.isArray(value) ? value : [])
@@ -89,37 +82,27 @@ export const readMaterialReentryRequirementSignals = (status: Record<string, unk
 const materialReentrySignalName = (dispatch: MaterialReentryRequirementSignal) =>
   makeHashedName(`material-reentry-${dispatch.targetSwarm}`, hashNameSuffix(dispatch.dedupeKey))
 
-const materialReentrySignalResource = (
+const materialReentrySignalInput = (
   dispatch: MaterialReentryRequirementSignal,
   namespace: string,
-): Record<string, unknown> => {
+): AgentsSwarmRequirementSignalSubmitInput => {
   const name = materialReentrySignalName(dispatch)
   return {
-    apiVersion: 'signals.proompteng.ai/v1alpha1',
-    kind: 'Signal',
-    metadata: {
-      name,
-      namespace,
-      labels: {
-        [SWARM_REQUIREMENT_LABEL_TYPE]: 'requirement',
-        [SWARM_REQUIREMENT_LABEL_FROM]: normalizeLabelValue(dispatch.sourceSwarm),
-        [SWARM_REQUIREMENT_LABEL_TO]: normalizeLabelValue(dispatch.targetSwarm),
-        [SWARM_REQUIREMENT_LABEL_CHANNEL]: 'nats',
-        priority: normalizeLabelValue(dispatch.priority),
-      },
-      annotations: {
-        [MATERIAL_REENTRY_DISPATCH_ANNOTATION]: dispatch.dedupeKey,
-        'swarm.proompteng.ai/material-reentry-source-signal': dispatch.signalName,
-      },
+    deliveryId: dispatch.dedupeKey,
+    name,
+    namespace,
+    sourceSwarm: dispatch.sourceSwarm,
+    targetSwarm: dispatch.targetSwarm,
+    channel: dispatch.channel,
+    description: dispatch.description,
+    priority: dispatch.priority,
+    annotations: {
+      [MATERIAL_REENTRY_DISPATCH_ANNOTATION]: dispatch.dedupeKey,
+      'swarm.proompteng.ai/material-reentry-source-signal': dispatch.signalName,
     },
-    spec: {
-      channel: dispatch.channel,
-      description: dispatch.description,
-      priority: dispatch.priority,
-      payload: {
-        ...dispatch.payload,
-        material_reentry_dispatch_dedupe_key: dispatch.dedupeKey,
-      },
+    payload: {
+      ...dispatch.payload,
+      material_reentry_dispatch_dedupe_key: dispatch.dedupeKey,
     },
   }
 }
@@ -132,18 +115,18 @@ const summarizePublishError = (error: unknown) => {
 export const publishMaterialReentryRequirementSignals = async (
   input: MaterialReentryRequirementSignalPublisherInput,
 ) => {
-  const publishedSignals: Record<string, unknown>[] = []
+  const publishedSignals: AgentsSwarmRequirementSignalSubmitInput[] = []
   let publishErrors = 0
   const dedupeKeys = new Set(input.existingDedupeKeys ?? [])
-  const submitResource = input.submitResource ?? submitSignalResourceToAgentsService
+  const submitSignal = input.submitSignal ?? submitSwarmRequirementSignalToAgentsService
   for (const dispatch of input.materialReentryRequirementSignals) {
     if (dispatch.targetSwarm !== input.swarmName || dispatch.targetStage !== 'implement') continue
     const signalName = materialReentrySignalName(dispatch)
     if (input.existingSignalNames.has(signalName)) continue
     if (dedupeKeys.has(dispatch.dedupeKey)) continue
-    const signal = materialReentrySignalResource(dispatch, input.namespace)
+    const signal = materialReentrySignalInput(dispatch, input.namespace)
     try {
-      await submitResource({ deliveryId: dispatch.dedupeKey, resource: signal })
+      await submitSignal(signal)
       publishedSignals.push(signal)
       input.existingSignalNames.add(signalName)
       dedupeKeys.add(dispatch.dedupeKey)

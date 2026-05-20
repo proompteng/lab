@@ -1,5 +1,11 @@
+import type { AgentsServiceJsonResult, EnvSource } from './agents-service-client'
+import {
+  fetchControlPlaneResourcesFromAgentsService,
+  type AgentsControlPlaneResourceListOptions,
+  type AgentsControlPlaneResourcesResult,
+} from './control-plane-resource-transport'
+
 export {
-  fetchAgentRunResourcesFromAgentsService,
   fetchAgentRunsFromAgentsService,
   patchAgentRunAnnotationsViaAgentsService,
   submitAgentRunToAgentsService,
@@ -9,7 +15,16 @@ export type {
   AgentsAgentRunListInput,
   AgentsAgentRunListItem,
   AgentsAgentRunListResult,
-  AgentsAgentRunResourceListInput,
   AgentsAgentRunSubmitInput,
   AgentsServiceJsonResult,
 } from './agents-service-client'
+
+export type AgentsAgentRunResourceListInput = AgentsControlPlaneResourceListOptions
+
+export type { AgentsControlPlaneResourcesResult } from './control-plane-resource-transport'
+
+export const fetchAgentRunResourcesFromAgentsService = async (
+  input: AgentsAgentRunResourceListInput = {},
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<AgentsControlPlaneResourcesResult>> =>
+  fetchControlPlaneResourcesFromAgentsService({ kind: 'AgentRun', ...input }, env)

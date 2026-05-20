@@ -732,6 +732,24 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server"
 
 fail_if_matches \
+  "Jangar must consume narrow Agents resource clients instead of the broad control-plane-resources-client module" \
+  '@proompteng/agent-contracts/control-plane-resources-client' \
+  "${ROOT_DIR}/services/jangar/src" \
+  "${ROOT_DIR}/services/jangar/vitest.config.ts"
+
+fail_if_matches \
+  "Agent contracts must not expose the broad control-plane-resources-client package subpath after resource clients are split" \
+  'control-plane-resources-client' \
+  "${ROOT_DIR}/packages/agent-contracts/package.json" \
+  "${ROOT_DIR}/packages/agent-contracts/src/index.ts"
+
+fail_if_matches \
+  "Agent contracts must stay domain-neutral and must not expose Jangar/Torghut market-context AgentRun builders" \
+  'jangar|torghut|market-context' \
+  "${ROOT_DIR}/packages/agent-contracts/package.json" \
+  "${ROOT_DIR}/packages/agent-contracts/src"
+
+fail_if_matches \
   "Jangar workflow status must not reuse Agents controller namespace envs" \
   'JANGAR_AGENTS_CONTROLLER_NAMESPACES|AGENTS_ORCHESTRATION_CONTROLLER|AGENTS_SUPPORTING_CONTROLLER|AGENTS_PRIMITIVES_RECONCILER|AGENTS_RBAC_CLUSTER_SCOPED' \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-workflows.ts" \

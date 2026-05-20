@@ -26,6 +26,10 @@
       "types": "./dist/agent-messages-client.d.ts",
       "default": "./dist/agent-messages-client.js"
     },
+    "./agent-jobs-client": {
+      "types": "./dist/agent-jobs-client.d.ts",
+      "default": "./dist/agent-jobs-client.js"
+    },
     "./agents-ready": {
       "types": "./dist/agents-ready.d.ts",
       "default": "./dist/agents-ready.js"
@@ -42,26 +46,34 @@
       "types": "./dist/codex-orchestration-parameters.d.ts",
       "default": "./dist/codex-orchestration-parameters.js"
     },
-    "./control-plane-resources-client": {
-      "types": "./dist/control-plane-resources-client.d.ts",
-      "default": "./dist/control-plane-resources-client.js"
-    },
     "./control-plane-status": {
       "types": "./dist/control-plane-status.d.ts",
       "default": "./dist/control-plane-status.js"
+    },
+    "./memory-client": {
+      "types": "./dist/memory-client.d.ts",
+      "default": "./dist/memory-client.js"
     },
     "./orchestration-runs-client": {
       "types": "./dist/orchestration-runs-client.d.ts",
       "default": "./dist/orchestration-runs-client.js"
     },
-    "./torghut-market-context-agentrun": {
-      "types": "./dist/torghut-market-context-agentrun.d.ts",
-      "default": "./dist/torghut-market-context-agentrun.js"
+    "./policy-reference-client": {
+      "types": "./dist/policy-reference-client.d.ts",
+      "default": "./dist/policy-reference-client.js"
+    },
+    "./signals-client": {
+      "types": "./dist/signals-client.d.ts",
+      "default": "./dist/signals-client.js"
+    },
+    "./swarm-read-client": {
+      "types": "./dist/swarm-read-client.d.ts",
+      "default": "./dist/swarm-read-client.js"
     }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "bunx vitest run ./src/agents-service-client.test.ts ./src/agents-ready.test.ts ./src/agent-message-artifacts.test.ts ./src/agent-run-callbacks.test.ts ./src/codex-orchestration-parameters.test.ts ./src/torghut-market-context-agentrun.test.ts",
+    "test": "bunx vitest run ./src/agents-service-client.test.ts ./src/agents-ready.test.ts ./src/agent-message-artifacts.test.ts ./src/agent-run-callbacks.test.ts ./src/codex-orchestration-parameters.test.ts ./src/signals-client.test.ts",
     "tsc": "tsc --noEmit -p tsconfig.json",
     "lint": "bunx oxfmt --check src",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",

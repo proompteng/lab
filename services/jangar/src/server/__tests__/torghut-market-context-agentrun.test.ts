@@ -5,7 +5,7 @@ import {
   resolveSubmittedTorghutMarketContextAgentRunName,
   submitTorghutMarketContextAgentRun,
   type TorghutMarketContextAgentRunSettings,
-} from './torghut-market-context-agentrun'
+} from '~/server/torghut-market-context-agentrun'
 
 const settings: TorghutMarketContextAgentRunSettings = {
   onDemandDispatchNamespace: 'agents',
@@ -120,7 +120,7 @@ describe('torghut-market-context-agentrun', () => {
 
   it('submits on-demand market-context AgentRuns through the Agents service boundary', async () => {
     const submitAgentRun = vi.fn(async () => ({
-      ok: true,
+      ok: true as const,
       status: 201,
       body: {
         resource: {

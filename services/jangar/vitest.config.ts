@@ -22,11 +22,23 @@ const agentContractsAgentRunsClientSource = fileURLToPath(
 const agentContractsAgentMessagesClientSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/agent-messages-client.ts', import.meta.url),
 )
-const agentContractsControlPlaneResourcesClientSource = fileURLToPath(
-  new URL('../../packages/agent-contracts/src/control-plane-resources-client.ts', import.meta.url),
+const agentContractsAgentJobsClientSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/agent-jobs-client.ts', import.meta.url),
+)
+const agentContractsMemoryClientSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/memory-client.ts', import.meta.url),
 )
 const agentContractsOrchestrationRunsClientSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/orchestration-runs-client.ts', import.meta.url),
+)
+const agentContractsPolicyReferenceClientSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/policy-reference-client.ts', import.meta.url),
+)
+const agentContractsSignalsClientSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/signals-client.ts', import.meta.url),
+)
+const agentContractsSwarmReadClientSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/swarm-read-client.ts', import.meta.url),
 )
 const agentContractsReadySource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/agents-ready.ts', import.meta.url),
@@ -39,9 +51,6 @@ const agentContractsRunCallbacksSource = fileURLToPath(
 )
 const agentContractsCodexOrchestrationParametersSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/codex-orchestration-parameters.ts', import.meta.url),
-)
-const agentContractsTorghutMarketContextAgentRunSource = fileURLToPath(
-  new URL('../../packages/agent-contracts/src/torghut-market-context-agentrun.ts', import.meta.url),
 )
 const discordSource = fileURLToPath(new URL('../../packages/discord/src/index.ts', import.meta.url))
 
@@ -57,11 +66,14 @@ export default defineConfig({
       '@proompteng/agent-contracts/agents-health-client': agentContractsHealthClientSource,
       '@proompteng/agent-contracts/agent-runs-client': agentContractsAgentRunsClientSource,
       '@proompteng/agent-contracts/agent-messages-client': agentContractsAgentMessagesClientSource,
+      '@proompteng/agent-contracts/agent-jobs-client': agentContractsAgentJobsClientSource,
       '@proompteng/agent-contracts/codex-orchestration-parameters': agentContractsCodexOrchestrationParametersSource,
-      '@proompteng/agent-contracts/control-plane-resources-client': agentContractsControlPlaneResourcesClientSource,
       '@proompteng/agent-contracts/control-plane-status': agentContractsControlPlaneStatusSource,
+      '@proompteng/agent-contracts/memory-client': agentContractsMemoryClientSource,
       '@proompteng/agent-contracts/orchestration-runs-client': agentContractsOrchestrationRunsClientSource,
-      '@proompteng/agent-contracts/torghut-market-context-agentrun': agentContractsTorghutMarketContextAgentRunSource,
+      '@proompteng/agent-contracts/policy-reference-client': agentContractsPolicyReferenceClientSource,
+      '@proompteng/agent-contracts/signals-client': agentContractsSignalsClientSource,
+      '@proompteng/agent-contracts/swarm-read-client': agentContractsSwarmReadClientSource,
       '@proompteng/codex': codexStub,
       '@proompteng/codex/*': codexStub,
       '@proompteng/discord': discordSource,
@@ -86,11 +98,14 @@ export default defineConfig({
       '@proompteng/agent-contracts/agents-health-client': agentContractsHealthClientSource,
       '@proompteng/agent-contracts/agent-runs-client': agentContractsAgentRunsClientSource,
       '@proompteng/agent-contracts/agent-messages-client': agentContractsAgentMessagesClientSource,
+      '@proompteng/agent-contracts/agent-jobs-client': agentContractsAgentJobsClientSource,
       '@proompteng/agent-contracts/codex-orchestration-parameters': agentContractsCodexOrchestrationParametersSource,
-      '@proompteng/agent-contracts/control-plane-resources-client': agentContractsControlPlaneResourcesClientSource,
       '@proompteng/agent-contracts/control-plane-status': agentContractsControlPlaneStatusSource,
+      '@proompteng/agent-contracts/memory-client': agentContractsMemoryClientSource,
       '@proompteng/agent-contracts/orchestration-runs-client': agentContractsOrchestrationRunsClientSource,
-      '@proompteng/agent-contracts/torghut-market-context-agentrun': agentContractsTorghutMarketContextAgentRunSource,
+      '@proompteng/agent-contracts/policy-reference-client': agentContractsPolicyReferenceClientSource,
+      '@proompteng/agent-contracts/signals-client': agentContractsSignalsClientSource,
+      '@proompteng/agent-contracts/swarm-read-client': agentContractsSwarmReadClientSource,
       '@proompteng/codex': codexStub,
       '@proompteng/codex/*': codexStub,
       '@proompteng/discord': discordSource,
