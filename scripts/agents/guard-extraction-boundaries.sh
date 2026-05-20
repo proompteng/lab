@@ -620,6 +620,17 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-swarm-analysis.ts"
 
 fail_if_matches \
+  "Jangar must not retain generic Swarm run analysis after agent-contracts owns the shared implementation" \
+  'TERMINAL_SUCCESS_PHASES = new Set|countConsecutive|fetchStageTargetResourceFromAgentsService|PROVIDER_CAPACITY_EXHAUSTED_REASON|readNested|sortByMostRecentRun|collectStaleStageSignals|stageStates' \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-swarm-analysis.ts"
+
+require_matches \
+  "Jangar swarm analysis must be a compatibility wrapper around the agent-contracts implementation" \
+  'swarm-analysis' \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-swarm-analysis.ts" \
+  "${ROOT_DIR}/packages/agent-contracts/package.json"
+
+fail_if_matches \
   "Jangar execution trust must consume the Agents execution-trust API instead of listing and evaluating Swarms locally" \
   'fetchSwarmResourcesFromAgentsService|listSwarmsFromAgentsService|toExecutionTrustSwarmResources|SWARM_STAGE_NAMES|stageStates' \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-execution-trust.ts"
