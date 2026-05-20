@@ -365,7 +365,7 @@ export const getAgentsControlPlaneStatusSnapshot = async (
   namespace = 'agents',
 ): Promise<AgentsControlPlaneStatusSnapshot> => {
   const result = await fetchAgentsServiceJson<AgentsControlPlaneStatus>(
-    `/api/agents/control-plane/status?namespace=${encodeURIComponent(namespace)}`,
+    `/v1/control-plane/status?namespace=${encodeURIComponent(namespace)}`,
   )
   const error = result.ok ? null : (result.error ?? `Agents service returned HTTP ${result.status}`)
   const fallback = fallbackGenericStatus(namespace, error)

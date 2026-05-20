@@ -254,7 +254,7 @@ const decisionFor = (input: {
 
 const validationCommandsFor = (namespace: string, ticketClass: ControllerIngestionSettlementTicketClass) => {
   if (ticketClass === 'none') return []
-  const statusCommand = `curl -fsS 'http://agents.agents.svc.cluster.local/api/agents/control-plane/status?namespace=${namespace}' | jq '.controller_ingestion_settlement'`
+  const statusCommand = `curl -fsS 'http://agents.agents.svc.cluster.local/v1/control-plane/status?namespace=${namespace}' | jq '.controller_ingestion_settlement'`
   if (ticketClass === 'controller_ingestion') {
     return [statusCommand, `kubectl get deployments -n ${namespace} agents-controllers`]
   }

@@ -116,6 +116,7 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('broad control-plane-resources-client package subpath')
     expect(content).toContain('agents-service-client')
     expect(content).toContain('dedicated /v1/agent-runs/resources contract')
+    expect(content).toContain('v1 status and message APIs instead of web-internal /api/agents paths')
     expect(content).toContain('domain-neutral')
     expect(content).toContain('Jangar/Torghut market-context AgentRun builders')
     expect(content).toContain('AGENTS_RUNTIME_SERVICE|AGENTS_GITOPS_REVISION|AGENTS_RUNTIME_IMAGE|AGENTS_IMAGE')

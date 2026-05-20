@@ -244,7 +244,7 @@ const buildReadyPathSourceServingExchange = (now: Date, namespace: string): Sour
   blocked_action_classes: [],
   reason_codes: ['source_serving_contract_unavailable_on_ready_hot_path'],
   verdicts: [],
-  rollback_target: 'use /api/agents/control-plane/status for full source-serving rollout proof',
+  rollback_target: 'use /v1/control-plane/status for full source-serving rollout proof',
 })
 
 const executionTrustStatus = async (namespaces: string[]) => {

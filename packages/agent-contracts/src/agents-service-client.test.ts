@@ -524,7 +524,7 @@ describe('agents-service-client', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
-    expect(url.toString()).toBe('http://agents.test/api/agents/messages')
+    expect(url.toString()).toBe('http://agents.test/v1/agent-messages')
     expect(init.method).toBe('POST')
     const body = JSON.parse(String(init.body)) as Record<string, unknown>
     expect(JSON.stringify(body)).not.toContain('workflow')

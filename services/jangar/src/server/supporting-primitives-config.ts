@@ -78,7 +78,7 @@ export const resolveSupportingPrimitivesConfig = (env: EnvSource = process.env):
   evidencePressureLedgerMode: parseEvidencePressureLedgerMode(env.JANGAR_EVIDENCE_PRESSURE_LEDGER_MODE),
   runtimeAdmissionStatusUrl:
     normalizeNonEmpty(env.JANGAR_RUNTIME_ADMISSION_STATUS_URL) ??
-    'http://agents.agents.svc.cluster.local/api/agents/control-plane/status',
+    'http://agents.agents.svc.cluster.local/v1/control-plane/status',
   runtimeAdmissionStatusTimeoutMs: parsePositiveInt(env.JANGAR_RUNTIME_ADMISSION_STATUS_TIMEOUT_MS, 15_000),
   swarmDefaultNatsUrl:
     normalizeNonEmpty(env.JANGAR_SWARM_NATS_URL) ??

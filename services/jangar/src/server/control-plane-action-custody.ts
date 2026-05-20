@@ -350,7 +350,7 @@ const forbiddenShortcuts = (actionClass: ActionSloBudgetActionClass) =>
 
 const validationCommands = (actionClass: ActionSloBudgetActionClass) =>
   uniqueStrings([
-    'curl -fsS http://agents.agents.svc.cluster.local/api/agents/control-plane/status?namespace=agents | jq .ready_action_exchange',
+    'curl -fsS http://agents.agents.svc.cluster.local/v1/control-plane/status?namespace=agents | jq .ready_action_exchange',
     ...(actionClass === 'deploy_widen' || actionClass === 'merge_ready'
       ? [
           'bun run packages/scripts/src/jangar/verify-deployment.ts --require-synced --expected-revision <sha> --expected-revision-mode ancestor',

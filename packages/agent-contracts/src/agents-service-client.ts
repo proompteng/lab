@@ -281,7 +281,7 @@ export const submitAgentMessagesToAgentsService = async (
   env: EnvSource = process.env,
 ): Promise<AgentsAgentMessagesSubmitResult> => {
   const baseUrl = resolveAgentsServiceBaseUrl(env)
-  const targetUrl = new URL('/api/agents/messages', `${baseUrl}/`)
+  const targetUrl = new URL('/v1/agent-messages', `${baseUrl}/`)
   const upstream = await fetch(targetUrl, {
     body: JSON.stringify(input),
     headers: {

@@ -6,19 +6,17 @@ describe('resolveSupportingPrimitivesConfig', () => {
   it('defaults runtime admission status to the Agents status contract without legacy projections', () => {
     const config = resolveSupportingPrimitivesConfig({})
 
-    expect(config.runtimeAdmissionStatusUrl).toBe(
-      'http://agents.agents.svc.cluster.local/api/agents/control-plane/status',
-    )
+    expect(config.runtimeAdmissionStatusUrl).toBe('http://agents.agents.svc.cluster.local/v1/control-plane/status')
   })
 
   it('keeps explicit runtime admission URLs configurable for Jangar domain consumers', () => {
     const config = resolveSupportingPrimitivesConfig({
       JANGAR_RUNTIME_ADMISSION_STATUS_URL:
-        'http://agents.agents.svc.cluster.local/api/agents/control-plane/status?view=schedule-runner',
+        'http://agents.agents.svc.cluster.local/v1/control-plane/status?view=schedule-runner',
     })
 
     expect(config.runtimeAdmissionStatusUrl).toBe(
-      'http://agents.agents.svc.cluster.local/api/agents/control-plane/status?view=schedule-runner',
+      'http://agents.agents.svc.cluster.local/v1/control-plane/status?view=schedule-runner',
     )
   })
 

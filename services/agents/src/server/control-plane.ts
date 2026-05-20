@@ -52,6 +52,11 @@ const routeSources: RouteSourceSpec[] = [
     load: () => import('../routes/v1/agent-runs/resources'),
   },
   {
+    file: 'src/routes/v1/agent-messages.ts',
+    sourceUrl: new URL('../routes/v1/agent-messages.ts', import.meta.url),
+    load: () => import('../routes/v1/agent-messages'),
+  },
+  {
     file: 'src/routes/v1/approval-policies/resources.ts',
     sourceUrl: new URL('../routes/v1/approval-policies/resources.ts', import.meta.url),
     load: () => import('../routes/v1/approval-policies/resources'),
@@ -110,6 +115,11 @@ const routeSources: RouteSourceSpec[] = [
     file: 'src/routes/v1/jobs/resources.ts',
     sourceUrl: new URL('../routes/v1/jobs/resources.ts', import.meta.url),
     load: () => import('../routes/v1/jobs/resources'),
+  },
+  {
+    file: 'src/routes/v1/control-plane/status.ts',
+    sourceUrl: new URL('../routes/v1/control-plane/status.ts', import.meta.url),
+    load: () => import('../routes/v1/control-plane/status'),
   },
   {
     file: 'src/routes/v1/secret-bindings/resources.ts',

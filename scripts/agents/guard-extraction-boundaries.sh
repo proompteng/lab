@@ -773,6 +773,12 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/whitepaper-finalize-consumer.ts"
 
 fail_if_matches \
+  "Downstream Agents clients must use v1 status and message APIs instead of web-internal /api/agents paths" \
+  '/api/agents/(messages|control-plane/status)' \
+  "${ROOT_DIR}/packages/agent-contracts/src" \
+  "${ROOT_DIR}/services/jangar/src"
+
+fail_if_matches \
   "Jangar must consume narrow Agents resource clients instead of the broad control-plane-resources-client module" \
   '@proompteng/agent-contracts/control-plane-resources-client' \
   "${ROOT_DIR}/services/jangar/src" \

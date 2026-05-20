@@ -224,7 +224,7 @@ describe('agents-ready', () => {
     const snapshot = await getAgentsControlPlaneStatusSnapshot('agents')
 
     expect(fetchMock).toHaveBeenCalledWith(
-      new URL('/api/agents/control-plane/status?namespace=agents', 'http://agents.agents.svc.cluster.local/'),
+      new URL('/v1/control-plane/status?namespace=agents', 'http://agents.agents.svc.cluster.local/'),
       expect.any(Object),
     )
     expect(snapshot).toMatchObject({
