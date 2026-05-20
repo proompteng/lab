@@ -4,7 +4,6 @@ resources:
   - rbac.yaml
   - codex-workflow-serviceaccount.yaml
   - codex-workflow-rbac.yaml
-  - codex-implementation-semaphore.yaml
   - ingressroute.yaml
   - middleware-workflows-canonical-host.yaml
   - ingressroute-private.yaml
@@ -12,7 +11,6 @@ resources:
   - alloy-rbac.yaml
   - alloy-configmap.yaml
   - alloy-deployment.yaml
-  - codex-cluster-admin.yaml
 helmCharts:
   - name: argo-workflows
     repo: https://argoproj.github.io/argo-helm

@@ -14,6 +14,8 @@ const retiredRuntimePaths = [
   'argocd/applications/argo-workflows/workflow-completions-sensor.yaml',
   'argocd/applications/argo-workflows/argo-workflows-completions-topic.yaml',
   'argocd/applications/argo-workflows/codex-docker-policy.yaml',
+  'argocd/applications/argo-workflows/codex-cluster-admin.yaml',
+  'argocd/applications/argo-workflows/codex-implementation-semaphore.yaml',
 ]
 
 const readRepoFile = (path: string) => readFileSync(resolve(process.cwd(), path), 'utf8')
@@ -35,12 +37,13 @@ describe('Argo workflow primitive ownership', () => {
     expect(kustomization).not.toContain('codex-docker-policy')
   })
 
-  it('keeps Codex Workflow RBAC only for remaining domain-owned Argo workloads', () => {
+  it('keeps Codex Workflow RBAC least-privileged for remaining domain-owned Argo workloads', () => {
     const kustomization = readRepoFile('argocd/applications/argo-workflows/kustomization.yaml')
 
     expect(kustomization).toContain('codex-workflow-serviceaccount.yaml')
     expect(kustomization).toContain('codex-workflow-rbac.yaml')
-    expect(kustomization).toContain('codex-implementation-semaphore.yaml')
+    expect(kustomization).not.toContain('codex-cluster-admin.yaml')
+    expect(kustomization).not.toContain('codex-implementation-semaphore.yaml')
     expect(kustomization).not.toContain('agents-embeddings-config')
   })
 })
