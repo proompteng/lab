@@ -4324,6 +4324,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                         "liquidity_evidence_present": True,
                         "net_pnl_per_day": "999",
                         "post_impact_net_pnl_per_day": "610",
+                        "source_markers": [
+                            "realistic_market_impact_arxiv_2603_29086_2026"
+                        ],
                     }
                 )
                 + "\n",
@@ -4339,6 +4342,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                         "generated_at": "2026-05-19T13:00:00Z",
                         "fillable_notional_per_day": "300000",
                         "post_delay_depth_net_pnl_per_day": "605",
+                        "source_markers": [
+                            "lob_simulation_reality_gap_arxiv_2603_24137_2026"
+                        ],
                     }
                 )
                 + "\n",
@@ -4352,6 +4358,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                         "pass_rate": "1.00",
                         "post_double_oos_net_pnl_per_day": "615",
                         "post_cost_shock_net_pnl_per_day": "575",
+                        "source_markers": [
+                            "double_oos_walkforward_arxiv_2602_10785_2026"
+                        ],
                     }
                 )
                 + "\n",
@@ -4459,6 +4468,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "610",
         )
         self.assertEqual(
+            updated.objective_scorecard["market_impact_stress_source_markers"],
+            ["realistic_market_impact_arxiv_2603_29086_2026"],
+        )
+        self.assertEqual(
             updated.objective_scorecard["delay_adjusted_depth_stress_checks_total"],
             2,
         )
@@ -4468,6 +4481,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertTrue(
             updated.objective_scorecard["delay_adjusted_depth_stress_passed"]
+        )
+        self.assertEqual(
+            updated.objective_scorecard["delay_adjusted_depth_stress_source_markers"],
+            ["lob_simulation_reality_gap_arxiv_2603_24137_2026"],
         )
         self.assertEqual(
             updated.objective_scorecard["double_oos_artifact_ref"],
@@ -4481,6 +4498,18 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(
             updated.objective_scorecard["double_oos_cost_shock_net_pnl_per_day"],
             "575",
+        )
+        self.assertEqual(
+            updated.objective_scorecard["double_oos_source_markers"],
+            ["double_oos_walkforward_arxiv_2602_10785_2026"],
+        )
+        self.assertEqual(
+            updated.objective_scorecard["runtime_closure_source_markers"],
+            [
+                "double_oos_walkforward_arxiv_2602_10785_2026",
+                "lob_simulation_reality_gap_arxiv_2603_24137_2026",
+                "realistic_market_impact_arxiv_2603_29086_2026",
+            ],
         )
         self.assertIn(str(approval_replay_path), updated.evidence_refs)
 

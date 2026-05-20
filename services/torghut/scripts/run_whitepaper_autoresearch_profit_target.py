@@ -6667,6 +6667,10 @@ def _runtime_report_int(value: Any, *, default: int = 0) -> int:
         return default
 
 
+def _runtime_report_source_markers(report: Mapping[str, Any]) -> list[str]:
+    return sorted(set(_string_list_from_value(report.get("source_markers"))))
+
+
 def _runtime_closure_start_equity(runtime_closure: Mapping[str, Any]) -> Decimal:
     replay_plan = _load_json_mapping_artifact(runtime_closure.get("replay_plan_path"))
     execution_context = _mapping(replay_plan.get("execution_context"))
@@ -6730,6 +6734,9 @@ def _runtime_closure_market_impact_stress_update(
             or market_impact_report.get("passed")
         ),
         "market_impact_stress_artifact_ref": market_impact_report_path,
+        "market_impact_stress_source_markers": _runtime_report_source_markers(
+            market_impact_report
+        ),
         "market_impact_stress_model": model,
         "market_impact_stress_cost_bps": cost_bps,
         "market_impact_stress_components": components,
@@ -6792,6 +6799,9 @@ def _runtime_closure_delay_adjusted_depth_stress_update(
         ),
         "delay_adjusted_depth_stress_checked_at": checked_at,
         "delay_adjusted_depth_stress_artifact_ref": delay_depth_report_path,
+        "delay_adjusted_depth_stress_source_markers": _runtime_report_source_markers(
+            delay_depth_report
+        ),
         "delay_adjusted_depth_stress_report": dict(delay_depth_report),
         "delay_adjusted_depth_stress_model": _string(
             delay_depth_report.get("model") or delay_depth_report.get("stress_model")
@@ -6852,6 +6862,7 @@ def _runtime_closure_double_oos_update(
             double_oos_report.get("objective_met") or double_oos_report.get("passed")
         ),
         "double_oos_artifact_ref": double_oos_report_path,
+        "double_oos_source_markers": _runtime_report_source_markers(double_oos_report),
         "double_oos_independent_window_count": max(
             _runtime_report_int(double_oos_report.get("independent_window_count")),
             _runtime_report_int(double_oos_report.get("window_count")),
@@ -6910,6 +6921,19 @@ def _runtime_closure_scorecard_update(
         runtime_closure
     )
     double_oos_update = _runtime_closure_double_oos_update(runtime_closure)
+    runtime_closure_source_markers = sorted(
+        set(
+            _string_list_from_value(
+                market_impact_update.get("market_impact_stress_source_markers")
+            )
+            + _string_list_from_value(
+                delay_depth_update.get("delay_adjusted_depth_stress_source_markers")
+            )
+            + _string_list_from_value(
+                double_oos_update.get("double_oos_source_markers")
+            )
+        )
+    )
     return {
         "runtime_closure_proof": {
             "status": _string(runtime_closure.get("status")) or "missing",
@@ -6947,6 +6971,7 @@ def _runtime_closure_scorecard_update(
         "executable_replay_max_notional_per_trade": str(
             _portfolio_executable_max_notional(portfolio)
         ),
+        "runtime_closure_source_markers": runtime_closure_source_markers,
         **market_impact_update,
         **delay_depth_update,
         **double_oos_update,

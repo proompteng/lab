@@ -1234,6 +1234,38 @@ data:
                 "filled_count": 9,
                 "wins": 7,
                 "losses": 2,
+                "execution_realism": {
+                    "daily_lob_event_stream_count": {
+                        "2026-03-20": 40,
+                        "2026-03-21": 40,
+                        "2026-03-24": 40,
+                        "2026-03-25": 40,
+                        "2026-03-26": 40,
+                        "2026-03-27": 40,
+                        "2026-04-08": 40,
+                        "2026-04-09": 40,
+                    },
+                    "daily_fill_outcome_count": {
+                        "2026-03-20": 40,
+                        "2026-03-21": 40,
+                        "2026-03-24": 40,
+                        "2026-03-25": 40,
+                        "2026-03-26": 40,
+                        "2026-03-27": 40,
+                        "2026-04-08": 40,
+                        "2026-04-09": 40,
+                    },
+                    "lob_event_stream_event_count": 320,
+                    "fill_outcome_count": 320,
+                    "live_paper_parity_status": "within_budget",
+                    "live_paper_parity_sample_count": 160,
+                    "live_paper_parity_max_fill_error_bps": "3.5",
+                    "live_paper_parity_max_adverse_selection_error_bps": "4.0",
+                    "implementation_trace_ref": "s3://proof/runtime-implementation-trace.json",
+                    "lob_event_stream_artifact_ref": "s3://proof/lob-events.json",
+                    "fill_outcomes_artifact_ref": "s3://proof/fill-outcomes.json",
+                    "simulation_live_parity_artifact_ref": "s3://proof/live-parity.json",
+                },
                 "daily": {
                     "2026-03-20": {
                         "net_pnl": "1000",
@@ -1347,6 +1379,19 @@ data:
             self.assertIn("checked_at", delay_depth_report)
             self.assertIn("report_id", delay_depth_report)
             self.assertGreater(Decimal(delay_depth_report["delay_depth_cost_bps"]), 0)
+            self.assertTrue(
+                delay_depth_report["lob_execution_realism_evidence_present"]
+            )
+            self.assertEqual(delay_depth_report["lob_event_stream_event_count"], 320)
+            self.assertEqual(delay_depth_report["fill_outcome_count"], 320)
+            self.assertEqual(
+                delay_depth_report["live_paper_parity_status"], "within_budget"
+            )
+            self.assertEqual(delay_depth_report["live_paper_parity_sample_count"], 160)
+            self.assertEqual(
+                delay_depth_report["daily"][0]["lob_event_stream_count"], 40
+            )
+            self.assertEqual(delay_depth_report["daily"][0]["fill_outcome_count"], 40)
             stress_metrics = json.loads(
                 Path(summary.stress_metrics_path).read_text(encoding="utf-8")
             )
@@ -1514,10 +1559,135 @@ data:
             report["reasons"],
         )
         self.assertIn(
+            "delay_adjusted_depth_lob_event_stream_evidence_missing",
+            report["reasons"],
+        )
+        self.assertIn(
+            "delay_adjusted_depth_fill_outcome_evidence_missing",
+            report["reasons"],
+        )
+        self.assertIn(
+            "delay_adjusted_depth_live_paper_parity_evidence_missing",
+            report["reasons"],
+        )
+        self.assertIn(
+            "delay_adjusted_depth_live_paper_parity_sample_count_below_minimum",
+            report["reasons"],
+        )
+        self.assertIn("lob_execution_realism_evidence_missing", report["reasons"])
+        self.assertIn(
             "delay_adjusted_depth_tail_fillable_notional_below_minimum",
             report["reasons"],
         )
         self.assertTrue(all(row["fillable_notional"] == "0" for row in report["daily"]))
+
+    def test_delay_adjusted_depth_stress_rejects_aggregate_depth_without_lob_reality_evidence(
+        self,
+    ) -> None:
+        report = runtime_closure._delay_adjusted_depth_stress_report(
+            runner_run_id="run-depth-no-lob-proof",
+            best_candidate={
+                "candidate_id": "cand-depth-no-lob-proof",
+                "runtime_family": "microstructure_continuation",
+                "runtime_strategy_name": "microbar-volume-continuation-long-v1",
+            },
+            approval_report={
+                "objective_met": True,
+                "summary": {
+                    "trading_day_count": 2,
+                    "net_pnl": "1600",
+                    "daily_net": {
+                        "2026-05-18": "800",
+                        "2026-05-19": "800",
+                    },
+                    "daily_filled_notional": {
+                        "2026-05-18": "300000",
+                        "2026-05-19": "300000",
+                    },
+                    "daily_liquidity_notional": {
+                        "2026-05-18": "1200000",
+                        "2026-05-19": "1200000",
+                    },
+                },
+                "scorecard": {"net_pnl_per_day": "800"},
+            },
+            program=_program(),
+        )
+
+        self.assertFalse(report["objective_met"])
+        self.assertEqual(
+            report["liquidity_input_source"], "recorded_liquidity_notional"
+        )
+        self.assertFalse(report["lob_execution_realism_evidence_present"])
+        self.assertIn("lob_execution_realism_evidence_missing", report["reasons"])
+        self.assertIn(
+            "delay_adjusted_depth_lob_event_stream_evidence_missing",
+            report["reasons"],
+        )
+        self.assertIn(
+            "delay_adjusted_depth_fill_outcome_evidence_missing",
+            report["reasons"],
+        )
+
+    def test_delay_adjusted_depth_stress_accepts_lob_reality_gap_evidence(
+        self,
+    ) -> None:
+        report = runtime_closure._delay_adjusted_depth_stress_report(
+            runner_run_id="run-depth-lob-proof",
+            best_candidate={
+                "candidate_id": "cand-depth-lob-proof",
+                "runtime_family": "microstructure_continuation",
+                "runtime_strategy_name": "microbar-volume-continuation-long-v1",
+            },
+            approval_report={
+                "objective_met": True,
+                "summary": {
+                    "trading_day_count": 2,
+                    "net_pnl": "1600",
+                    "daily_net": {
+                        "2026-05-18": "800",
+                        "2026-05-19": "800",
+                    },
+                    "daily_filled_notional": {
+                        "2026-05-18": "300000",
+                        "2026-05-19": "300000",
+                    },
+                    "daily_liquidity_notional": {
+                        "2026-05-18": "1200000",
+                        "2026-05-19": "1200000",
+                    },
+                    "daily_lob_event_stream_count": {
+                        "2026-05-18": 80,
+                        "2026-05-19": 80,
+                    },
+                    "daily_fill_outcome_count": {
+                        "2026-05-18": 80,
+                        "2026-05-19": 80,
+                    },
+                    "lob_event_stream_event_count": 160,
+                    "fill_outcome_count": 160,
+                    "live_paper_parity_status": "within_budget",
+                    "live_paper_parity_sample_count": 160,
+                    "live_paper_parity_max_fill_error_bps": "4",
+                    "live_paper_parity_max_adverse_selection_error_bps": "5",
+                    "implementation_trace_ref": "s3://proof/runtime-implementation-trace.json",
+                },
+                "scorecard": {"net_pnl_per_day": "800"},
+            },
+            program=_program(),
+        )
+
+        self.assertTrue(report["objective_met"])
+        self.assertTrue(report["lob_execution_realism_evidence_present"])
+        self.assertTrue(report["live_paper_parity_evidence_present"])
+        self.assertEqual(report["lob_event_stream_event_count"], 160)
+        self.assertEqual(report["fill_outcome_count"], 160)
+        self.assertEqual(report["daily"][0]["lob_event_stream_count"], 80)
+        self.assertEqual(report["daily"][0]["fill_outcome_count"], 80)
+        self.assertIn(
+            "lob_simulation_reality_gap_arxiv_2603_24137_2026",
+            report["source_markers"],
+        )
 
     def test_delay_adjusted_depth_stress_scales_net_when_recorded_depth_is_thin(
         self,
@@ -1546,6 +1716,21 @@ data:
                         "2026-05-18": "200000",
                         "2026-05-19": "200000",
                     },
+                    "daily_lob_event_stream_count": {
+                        "2026-05-18": 80,
+                        "2026-05-19": 80,
+                    },
+                    "daily_fill_outcome_count": {
+                        "2026-05-18": 80,
+                        "2026-05-19": 80,
+                    },
+                    "lob_event_stream_event_count": 160,
+                    "fill_outcome_count": 160,
+                    "live_paper_parity_status": "within_budget",
+                    "live_paper_parity_sample_count": 160,
+                    "live_paper_parity_max_fill_error_bps": "4",
+                    "live_paper_parity_max_adverse_selection_error_bps": "5",
+                    "implementation_trace_ref": "s3://proof/runtime-implementation-trace.json",
                 },
                 "scorecard": {"net_pnl_per_day": "800"},
             },
@@ -1561,6 +1746,7 @@ data:
         self.assertEqual(report["fillable_notional_per_day"], "150000")
         self.assertEqual(report["unfillable_notional"], "500000")
         self.assertEqual(report["daily"][0]["fillable_ratio"], "0.375")
+        self.assertTrue(report["lob_execution_realism_evidence_present"])
         self.assertEqual(report["worst_active_day_fillable_notional"], "150000")
         self.assertEqual(report["p10_active_day_fillable_notional"], "150000")
         self.assertFalse(report["tail_coverage_passed"])
