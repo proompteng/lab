@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from unittest import TestCase
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.models import Base, StrategyHypothesisMetricWindow, VNextEmpiricalJobRun
+from app.models import (
+    Base,
+    StrategyHypothesisMetricWindow,
+    StrategyPromotionDecision,
+    VNextEmpiricalJobRun,
+)
 from app.trading.completion import (
     DOC29_EMPIRICAL_JOBS_GATE,
     DOC29_LIVE_CANARY_GATE,
@@ -42,6 +48,59 @@ def _truthful_empirical_payload(
             'model_refs': ['models/candidate@sha256:def'],
         },
     }
+
+
+def _promotion_decision(
+    *,
+    run_id: str,
+    candidate_id: str,
+    hypothesis_id: str,
+    promotion_target: str,
+    state: str,
+    allowed: bool = True,
+) -> StrategyPromotionDecision:
+    return StrategyPromotionDecision(
+        run_id=run_id,
+        candidate_id=candidate_id,
+        hypothesis_id=hypothesis_id,
+        promotion_target=promotion_target,
+        state=state,
+        allowed=allowed,
+        reason_summary='runtime_evidence_thresholds_satisfied' if allowed else 'runtime_evidence_denied',
+    )
+
+
+def _add_truthful_empirical_jobs(
+    session: Any,
+    *,
+    run_id: str = 'run-1',
+    candidate_id: str = 'cand-1',
+    dataset_snapshot_ref: str = 'snapshot-1',
+) -> None:
+    for job_type in (
+        'benchmark_parity',
+        'foundation_router_parity',
+        'janus_event_car',
+        'janus_hgrm_reward',
+    ):
+        session.add(
+            VNextEmpiricalJobRun(
+                run_id=run_id,
+                candidate_id=candidate_id,
+                job_name=job_type,
+                job_type=job_type,
+                job_run_id=f'job-{job_type}',
+                status='completed',
+                authority='empirical',
+                promotion_authority_eligible=True,
+                dataset_snapshot_ref=dataset_snapshot_ref,
+                artifact_refs=[f's3://artifacts/{job_type}.json'],
+                payload_json=_truthful_empirical_payload(
+                    job_run_id=f'job-{job_type}',
+                    dataset_snapshot_ref=dataset_snapshot_ref,
+                ),
+            )
+        )
 
 
 class TestCompletionTrace(TestCase):
@@ -109,9 +168,7 @@ class TestCompletionTrace(TestCase):
             )
 
         self.assertIn(DOC29_SIMULATION_FULL_DAY_GATE, row_ids)
-        gate = next(
-            item for item in status['gates'] if item['gate_id'] == DOC29_SIMULATION_FULL_DAY_GATE
-        )
+        gate = next(item for item in status['gates'] if item['gate_id'] == DOC29_SIMULATION_FULL_DAY_GATE)
         self.assertEqual(gate['status'], 'satisfied')
         self.assertEqual(gate['latest_run'], 'sim-2026-03-06-full-day')
 
@@ -153,7 +210,9 @@ class TestCompletionTrace(TestCase):
         self.assertEqual(gate['status'], 'satisfied')
         self.assertEqual(gate['source'], 'derived_from_empirical_jobs')
 
-    def test_doc29_completion_status_blocks_paper_gate_without_fill_price_budget(self) -> None:
+    def test_doc29_completion_status_blocks_paper_gate_without_fill_price_budget(
+        self,
+    ) -> None:
         trace = build_completion_trace(
             doc_id='doc29',
             gate_ids_attempted=[DOC29_SIMULATION_FULL_DAY_GATE],
@@ -224,7 +283,9 @@ class TestCompletionTrace(TestCase):
         self.assertEqual(paper_gate['status'], 'blocked')
         self.assertEqual(paper_gate['blocked_reason'], 'fill_price_error_budget_not_recorded')
 
-    def test_doc29_completion_status_satisfies_paper_gate_with_fill_price_budget(self) -> None:
+    def test_doc29_completion_status_satisfies_paper_gate_with_fill_price_budget(
+        self,
+    ) -> None:
         trace = build_completion_trace(
             doc_id='doc29',
             gate_ids_attempted=[DOC29_SIMULATION_FULL_DAY_GATE],
@@ -368,9 +429,10 @@ class TestCompletionTrace(TestCase):
             now = datetime.now(timezone.utc)
             paper_window_start = now - timedelta(days=2)
             for index in range(4):
+                run_id = f'paper-run-{index}'
                 session.add(
                     StrategyHypothesisMetricWindow(
-                        run_id=f'paper-run-{index}',
+                        run_id=run_id,
                         candidate_id='cand-1',
                         hypothesis_id='legacy_macd_rsi',
                         observed_stage='paper',
@@ -393,17 +455,227 @@ class TestCompletionTrace(TestCase):
                         payload_json={},
                     )
                 )
+                session.add(
+                    _promotion_decision(
+                        run_id=run_id,
+                        candidate_id='cand-1',
+                        hypothesis_id='legacy_macd_rsi',
+                        promotion_target='paper',
+                        state='0.10x canary',
+                    )
+                )
 
             live_window_start = now - timedelta(days=1)
             for index in range(10):
+                run_id = f'live-run-{index}'
                 session.add(
                     StrategyHypothesisMetricWindow(
-                        run_id=f'live-run-{index}',
+                        run_id=run_id,
                         candidate_id='cand-1',
                         hypothesis_id='legacy_macd_rsi',
                         observed_stage='live',
                         window_started_at=live_window_start,
                         window_ended_at=live_window_start,
+                        market_session_count=12,
+                        decision_count=220,
+                        trade_count=215,
+                        order_count=215,
+                        evidence_provenance='live_runtime_observed',
+                        evidence_maturity='empirically_validated',
+                        decision_alignment_ratio='0.98',
+                        avg_abs_slippage_bps='4.5',
+                        slippage_budget_bps='8.0',
+                        post_cost_expectancy_bps='1.4',
+                        continuity_ok=True,
+                        drift_ok=True,
+                        dependency_quorum_decision='allow',
+                        capital_stage='0.50x live',
+                        payload_json={},
+                    )
+                )
+                session.add(
+                    _promotion_decision(
+                        run_id=run_id,
+                        candidate_id='cand-1',
+                        hypothesis_id='legacy_macd_rsi',
+                        promotion_target='live',
+                        state='0.50x live',
+                    )
+                )
+            session.commit()
+
+            status = build_doc29_completion_status(
+                session=session,
+                stale_after_seconds=86400,
+                current_git_revision='abc123',
+                current_image_digest='sha256:test',
+            )
+
+        canary_gate = next(item for item in status['gates'] if item['gate_id'] == DOC29_LIVE_CANARY_GATE)
+        scale_gate = next(item for item in status['gates'] if item['gate_id'] == DOC29_LIVE_SCALE_GATE)
+        self.assertEqual(canary_gate['status'], 'satisfied')
+        self.assertEqual(scale_gate['status'], 'satisfied')
+
+    def test_doc29_live_canary_requires_allowed_promotion_decision(self) -> None:
+        trace = build_completion_trace(
+            doc_id='doc29',
+            gate_ids_attempted=[DOC29_SIMULATION_FULL_DAY_GATE],
+            run_id='sim-2026-03-06-full-day',
+            dataset_snapshot_ref='snapshot-1',
+            candidate_id='cand-1',
+            workflow_name='torghut-historical-simulation',
+            analysis_run_names=[],
+            artifact_refs=['s3://artifacts/run-full-lifecycle-manifest.json'],
+            db_row_refs={},
+            status_snapshot={},
+            result_by_gate={
+                DOC29_SIMULATION_FULL_DAY_GATE: {
+                    'status': TRACE_STATUS_SATISFIED,
+                    'artifact_ref': 's3://artifacts/run-full-lifecycle-manifest.json',
+                    'acceptance_snapshot': {
+                        'trade_decisions': 640,
+                        'executions': 320,
+                        'execution_tca_metrics': 320,
+                        'execution_order_events': 320,
+                        'coverage_ratio': 0.99,
+                        'fill_price_error_budget_status': 'within_budget',
+                    },
+                }
+            },
+            blocked_reasons={},
+            git_revision='abc123',
+            image_digest='sha256:test',
+        )
+        window_time = datetime.now(timezone.utc) - timedelta(minutes=5)
+        with self.session_local() as session:
+            persist_completion_trace(session=session, trace_payload=trace)
+            _add_truthful_empirical_jobs(session)
+            session.add(
+                StrategyHypothesisMetricWindow(
+                    run_id='paper-denied',
+                    candidate_id='cand-1',
+                    hypothesis_id='legacy_macd_rsi',
+                    observed_stage='paper',
+                    window_started_at=window_time,
+                    window_ended_at=window_time,
+                    market_session_count=50,
+                    decision_count=200,
+                    trade_count=194,
+                    order_count=194,
+                    evidence_provenance='paper_runtime_observed',
+                    evidence_maturity='empirically_validated',
+                    decision_alignment_ratio='0.97',
+                    avg_abs_slippage_bps='4.2',
+                    slippage_budget_bps='8.0',
+                    post_cost_expectancy_bps='1.1',
+                    continuity_ok=True,
+                    drift_ok=True,
+                    dependency_quorum_decision='allow',
+                    capital_stage='shadow',
+                    payload_json={},
+                )
+            )
+            session.add(
+                _promotion_decision(
+                    run_id='paper-denied',
+                    candidate_id='cand-1',
+                    hypothesis_id='legacy_macd_rsi',
+                    promotion_target='paper',
+                    state='0.10x canary',
+                    allowed=False,
+                )
+            )
+            session.commit()
+
+            status = build_doc29_completion_status(
+                session=session,
+                stale_after_seconds=86400,
+                current_git_revision='abc123',
+                current_image_digest='sha256:test',
+            )
+
+        canary_gate = next(item for item in status['gates'] if item['gate_id'] == DOC29_LIVE_CANARY_GATE)
+        self.assertEqual(canary_gate['status'], 'blocked')
+        self.assertEqual(canary_gate['blocked_reason'], 'promotion_decision_not_allowed')
+
+    def test_doc29_live_scale_requires_allowed_promotion_decision(self) -> None:
+        trace = build_completion_trace(
+            doc_id='doc29',
+            gate_ids_attempted=[DOC29_SIMULATION_FULL_DAY_GATE],
+            run_id='sim-2026-03-06-full-day',
+            dataset_snapshot_ref='snapshot-1',
+            candidate_id='cand-1',
+            workflow_name='torghut-historical-simulation',
+            analysis_run_names=[],
+            artifact_refs=['s3://artifacts/run-full-lifecycle-manifest.json'],
+            db_row_refs={},
+            status_snapshot={},
+            result_by_gate={
+                DOC29_SIMULATION_FULL_DAY_GATE: {
+                    'status': TRACE_STATUS_SATISFIED,
+                    'artifact_ref': 's3://artifacts/run-full-lifecycle-manifest.json',
+                    'acceptance_snapshot': {
+                        'trade_decisions': 640,
+                        'executions': 320,
+                        'execution_tca_metrics': 320,
+                        'execution_order_events': 320,
+                        'coverage_ratio': 0.99,
+                        'fill_price_error_budget_status': 'within_budget',
+                    },
+                }
+            },
+            blocked_reasons={},
+            git_revision='abc123',
+            image_digest='sha256:test',
+        )
+        window_time = datetime.now(timezone.utc) - timedelta(minutes=5)
+        with self.session_local() as session:
+            persist_completion_trace(session=session, trace_payload=trace)
+            _add_truthful_empirical_jobs(session)
+            session.add(
+                StrategyHypothesisMetricWindow(
+                    run_id='paper-allowed',
+                    candidate_id='cand-1',
+                    hypothesis_id='legacy_macd_rsi',
+                    observed_stage='paper',
+                    window_started_at=window_time,
+                    window_ended_at=window_time,
+                    market_session_count=50,
+                    decision_count=200,
+                    trade_count=194,
+                    order_count=194,
+                    evidence_provenance='paper_runtime_observed',
+                    evidence_maturity='empirically_validated',
+                    decision_alignment_ratio='0.97',
+                    avg_abs_slippage_bps='4.2',
+                    slippage_budget_bps='8.0',
+                    post_cost_expectancy_bps='1.1',
+                    continuity_ok=True,
+                    drift_ok=True,
+                    dependency_quorum_decision='allow',
+                    capital_stage='shadow',
+                    payload_json={},
+                )
+            )
+            session.add(
+                _promotion_decision(
+                    run_id='paper-allowed',
+                    candidate_id='cand-1',
+                    hypothesis_id='legacy_macd_rsi',
+                    promotion_target='paper',
+                    state='0.10x canary',
+                )
+            )
+            for index in range(10):
+                run_id = f'live-missing-decision-{index}'
+                session.add(
+                    StrategyHypothesisMetricWindow(
+                        run_id=run_id,
+                        candidate_id='cand-1',
+                        hypothesis_id='legacy_macd_rsi',
+                        observed_stage='live',
+                        window_started_at=window_time,
+                        window_ended_at=window_time,
                         market_session_count=12,
                         decision_count=220,
                         trade_count=215,
@@ -433,9 +705,12 @@ class TestCompletionTrace(TestCase):
         canary_gate = next(item for item in status['gates'] if item['gate_id'] == DOC29_LIVE_CANARY_GATE)
         scale_gate = next(item for item in status['gates'] if item['gate_id'] == DOC29_LIVE_SCALE_GATE)
         self.assertEqual(canary_gate['status'], 'satisfied')
-        self.assertEqual(scale_gate['status'], 'satisfied')
+        self.assertEqual(scale_gate['status'], 'blocked')
+        self.assertEqual(scale_gate['blocked_reason'], 'promotion_decision_evidence_missing')
 
-    def test_doc29_completion_status_scopes_paper_gate_to_empirical_lineage(self) -> None:
+    def test_doc29_completion_status_scopes_paper_gate_to_empirical_lineage(
+        self,
+    ) -> None:
         trace_matching = build_completion_trace(
             doc_id='doc29',
             gate_ids_attempted=[DOC29_SIMULATION_FULL_DAY_GATE],
@@ -536,7 +811,9 @@ class TestCompletionTrace(TestCase):
         self.assertEqual(paper_gate['status'], 'satisfied')
         self.assertEqual(paper_gate['latest_run'], 'sim-match')
 
-    def test_doc29_completion_status_scopes_live_canary_windows_to_paper_candidate(self) -> None:
+    def test_doc29_completion_status_scopes_live_canary_windows_to_paper_candidate(
+        self,
+    ) -> None:
         trace = build_completion_trace(
             doc_id='doc29',
             gate_ids_attempted=[DOC29_SIMULATION_FULL_DAY_GATE],
@@ -714,6 +991,15 @@ class TestCompletionTrace(TestCase):
                     dependency_quorum_decision='allow',
                     capital_stage='shadow',
                     payload_json={},
+                )
+            )
+            session.add(
+                _promotion_decision(
+                    run_id='paper-h-micro-50',
+                    candidate_id=candidate_id,
+                    hypothesis_id='H-MICRO-01',
+                    promotion_target='paper',
+                    state='0.10x canary',
                 )
             )
             session.commit()
