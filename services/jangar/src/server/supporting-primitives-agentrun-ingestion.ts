@@ -1,8 +1,5 @@
-import {
-  resolveAgentsServiceBaseUrl,
-  resolveAgentsServiceClientName,
-} from '@proompteng/agent-contracts/agents-service-client'
-import { asRecord, asString } from '~/server/primitives-http'
+import { getAgentsReadySnapshot } from '@proompteng/agent-contracts/agents-ready'
+import type { AgentRunIngestionStatus } from '@proompteng/agent-contracts/control-plane-status'
 
 const AGENTRUN_INGESTION_NOT_READY_REASON = 'agentrun_ingestion_not_ready'
 
@@ -37,57 +34,42 @@ const defaultAgentRunIngestionAssessment = (
   ...overrides,
 })
 
-const normalizeAgentRunIngestionHealth = (namespace: string, value: unknown): AgentRunIngestionHealth | null => {
-  const record = asRecord(value)
-  if (!record) return null
-  const entryNamespace = asString(record.namespace) ?? namespace
+const normalizeAgentRunIngestionHealth = (
+  namespace: string,
+  value: AgentRunIngestionStatus | undefined,
+): AgentRunIngestionHealth | null => {
+  if (!value) return null
+  const entryNamespace = value.namespace || namespace
   if (entryNamespace !== namespace) return null
-  const untouchedRunCount = typeof record.untouchedRunCount === 'number' ? record.untouchedRunCount : 0
-  const oldestUntouchedAgeSeconds =
-    typeof record.oldestUntouchedAgeSeconds === 'number' ? record.oldestUntouchedAgeSeconds : null
   return {
     namespace,
-    lastWatchEventAt: asString(record.lastWatchEventAt),
-    lastResyncAt: asString(record.lastResyncAt),
-    untouchedRunCount,
-    oldestUntouchedAgeSeconds,
+    lastWatchEventAt: value.last_watch_event_at,
+    lastResyncAt: value.last_resync_at,
+    untouchedRunCount: value.untouched_run_count,
+    oldestUntouchedAgeSeconds: value.oldest_untouched_age_seconds,
   }
-}
-
-const readAgentsReadyPayload = async () => {
-  const url = new URL('/ready', `${resolveAgentsServiceBaseUrl()}/`)
-  const response = await fetch(url, {
-    headers: {
-      accept: 'application/json',
-      'x-agents-client': resolveAgentsServiceClientName(),
-    },
-  })
-  const payload = asRecord(await response.json().catch(() => null))
-  return { ok: response.ok, payload }
 }
 
 export const assessAgentRunIngestionViaAgentsService = async (
   namespace: string,
 ): Promise<AgentRunIngestionAssessment> => {
   try {
-    const { ok, payload } = await readAgentsReadyPayload()
-    const agentsController = asRecord(payload?.agentsController)
-    if (!payload || !agentsController) {
+    const snapshot = await getAgentsReadySnapshot()
+    if (!snapshot.available) {
       return defaultAgentRunIngestionAssessment(namespace, {
-        message: ok
-          ? 'Agents readiness payload did not include AgentRun ingestion status'
+        message: snapshot.error
+          ? `Agents readiness unavailable: ${snapshot.error}`
           : 'Agents readiness endpoint is not ready',
       })
     }
 
-    const reasonCodes = Array.isArray(payload.reason_codes)
-      ? payload.reason_codes.filter((reason): reason is string => typeof reason === 'string')
-      : []
-    const entries = Array.isArray(agentsController.agentRunIngestion) ? agentsController.agentRunIngestion : []
     const entry =
-      entries.map((item) => normalizeAgentRunIngestionHealth(namespace, item)).find((item) => item !== null) ??
-      defaultAgentRunIngestionAssessment(namespace)
-    const ingestionNotReady = reasonCodes.includes(AGENTRUN_INGESTION_NOT_READY_REASON)
+      snapshot.agentRunIngestion
+        .map((item) => normalizeAgentRunIngestionHealth(namespace, item))
+        .find((item) => item !== null) ?? defaultAgentRunIngestionAssessment(namespace)
+    const ingestionNotReady =
+      snapshot.reasonCodes.includes(AGENTRUN_INGESTION_NOT_READY_REASON) ||
+      snapshot.agentRunIngestion.some((item) => item.namespace === namespace && item.status === 'degraded')
     if (ingestionNotReady) {
       return {
         ...entry,
@@ -97,8 +79,7 @@ export const assessAgentRunIngestionViaAgentsService = async (
       }
     }
 
-    const started = agentsController.started === true
-    if (!started) {
+    if (!snapshot.agentsController.started) {
       return {
         ...entry,
         status: 'unknown',
