@@ -117,6 +117,7 @@ _RUNTIME_CLOSURE_PROOF_ORACLE_BLOCKERS = frozenset(
         "executable_replay_notional_within_buying_power_failed",
         "market_impact_stress_passed_failed",
         "market_impact_stress_artifact_present_failed",
+        "market_impact_liquidity_evidence_present_failed",
         "market_impact_stress_model_failed",
         "market_impact_stress_cost_bps_failed",
         "market_impact_stress_net_pnl_per_day_failed",
@@ -1841,6 +1842,9 @@ def _candidate_quality_gate_failures(
             and replay_max_notional > replay_buying_power
         ):
             failures.append("executable_replay_notional_exceeds_buying_power")
+    for blocker in sorted(_oracle_blockers(scorecard)):
+        if blocker not in failures:
+            failures.append(blocker)
     return failures
 
 
@@ -2297,12 +2301,14 @@ def _candidate_search_remediation(
         "executable_replay_notional_exceeds_buying_power",
         "market_impact_stress_passed_failed",
         "market_impact_stress_artifact_present_failed",
-        "market_impact_stress_model_present_failed",
-        "market_impact_stress_cost_bps_positive_failed",
+        "market_impact_liquidity_evidence_present_failed",
+        "market_impact_stress_model_failed",
+        "market_impact_stress_cost_bps_failed",
         "market_impact_stress_net_pnl_per_day_failed",
         "delay_adjusted_depth_stress_passed_failed",
         "delay_adjusted_depth_stress_artifact_present_failed",
-        "delay_adjusted_depth_stress_ms_positive_failed",
+        "delay_adjusted_depth_stress_model_failed",
+        "delay_adjusted_depth_stress_ms_failed",
         "delay_adjusted_depth_fillable_notional_per_day_failed",
         "delay_adjusted_depth_stress_net_pnl_per_day_failed",
         "double_oos_passed_failed",
@@ -2341,11 +2347,15 @@ def _candidate_search_remediation(
                 "executable_replay_max_notional_per_trade",
                 "market_impact_stress_passed",
                 "market_impact_stress_artifact_ref",
+                "market_impact_liquidity_evidence_present",
                 "market_impact_stress_model",
                 "market_impact_stress_cost_bps",
                 "market_impact_stress_net_pnl_per_day",
                 "delay_adjusted_depth_stress_passed",
                 "delay_adjusted_depth_stress_artifact_ref",
+                "delay_adjusted_depth_stress_model",
+                "delay_adjusted_depth_stress_ms",
+                "delay_adjusted_depth_fillable_notional_per_day",
                 "delay_adjusted_depth_stress_net_pnl_per_day",
                 "double_oos_passed",
                 "double_oos_artifact_ref",

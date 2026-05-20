@@ -1198,6 +1198,52 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertIn("min_cash_below_oracle", failures)
         self.assertIn("negative_cash_observed", failures)
 
+    def test_candidate_quality_gate_preserves_current_oracle_blockers(self) -> None:
+        policy = runner.ProfitTargetOraclePolicy()
+
+        failures = runner._candidate_quality_gate_failures(
+            {
+                "net_pnl_per_day": "750",
+                "active_day_ratio": "1",
+                "positive_day_ratio": "1",
+                "profit_factor": "2",
+                "best_day_share": "0.1",
+                "worst_day_loss": "0",
+                "max_drawdown": "0",
+                "max_gross_exposure_pct_equity": "0.5",
+                "min_cash": "0",
+                "negative_cash_observation_count": "0",
+                "avg_filled_notional_per_day": "500000",
+                "regime_slice_pass_rate": "1",
+                "posterior_edge_lower": "0.01",
+                "shadow_parity_status": "within_budget",
+                "executable_replay_passed": True,
+                "executable_replay_artifact_ref": "/tmp/replay.json",
+                "executable_replay_order_count": "5",
+                "executable_replay_account_buying_power": "10000",
+                "executable_replay_max_notional_per_trade": "9000",
+                "profit_target_oracle": {
+                    "passed": False,
+                    "blockers": [
+                        "min_daily_net_pnl_failed",
+                        "max_single_day_contribution_share_failed",
+                        "max_single_symbol_contribution_share_failed",
+                        "max_cluster_contribution_share_failed",
+                        "market_impact_liquidity_evidence_present_failed",
+                        "delay_adjusted_depth_stress_model_failed",
+                    ],
+                },
+            },
+            oracle_policy=policy,
+        )
+
+        self.assertIn("min_daily_net_pnl_failed", failures)
+        self.assertIn("max_single_day_contribution_share_failed", failures)
+        self.assertIn("max_single_symbol_contribution_share_failed", failures)
+        self.assertIn("max_cluster_contribution_share_failed", failures)
+        self.assertIn("market_impact_liquidity_evidence_present_failed", failures)
+        self.assertIn("delay_adjusted_depth_stress_model_failed", failures)
+
     def test_candidate_quality_gate_flags_weak_profit_factor(self) -> None:
         policy = runner.ProfitTargetOraclePolicy()
 
@@ -4301,6 +4347,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     "blockers": [
                         "market_impact_stress_passed_failed",
                         "market_impact_stress_artifact_present_failed",
+                        "market_impact_liquidity_evidence_present_failed",
                         "market_impact_stress_model_failed",
                         "market_impact_stress_cost_bps_failed",
                         "market_impact_stress_net_pnl_per_day_failed",
@@ -5434,6 +5481,11 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                         "executable_replay_artifact_missing",
                         "executable_replay_account_buying_power_missing",
                         "executable_replay_max_notional_missing",
+                        "market_impact_liquidity_evidence_present_failed",
+                        "market_impact_stress_model_failed",
+                        "market_impact_stress_cost_bps_failed",
+                        "delay_adjusted_depth_stress_model_failed",
+                        "delay_adjusted_depth_stress_ms_failed",
                         "double_oos_artifact_present_failed",
                         "double_oos_cost_shock_net_pnl_per_day_failed",
                     ],
@@ -5455,6 +5507,14 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertIn(
             "executable_replay_artifact_ref",
+            proof_action["required_scorecard_fields"],
+        )
+        self.assertIn(
+            "market_impact_liquidity_evidence_present",
+            proof_action["required_scorecard_fields"],
+        )
+        self.assertIn(
+            "delay_adjusted_depth_stress_model",
             proof_action["required_scorecard_fields"],
         )
         self.assertIn(
