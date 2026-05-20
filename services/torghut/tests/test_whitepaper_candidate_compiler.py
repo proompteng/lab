@@ -720,6 +720,19 @@ class TestWhitepaperCandidateCompiler(TestCase):
             ]
         )
         self.assertTrue(
+            any(
+                "macro_announcement_dvar_momentum"
+                in spec.parameter_space["mechanism_overlay_ids"]
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            any(
+                spec.hard_vetoes.get("required_event_non_event_holdout_replay")
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
             all(
                 spec.promotion_contract.get("requires_live_paper_parity")
                 for spec in compilation.executable_specs
@@ -1088,6 +1101,19 @@ class TestWhitepaperCandidateCompiler(TestCase):
         self.assertTrue(
             all(
                 spec.objective["target_net_pnl_per_day"] == "300"
+                for spec in late_day_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                "macro_announcement_dvar_momentum"
+                in spec.parameter_space["mechanism_overlay_ids"]
+                for spec in late_day_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract.get("rejects_pooled_macro_and_non_macro_replay")
                 for spec in late_day_specs
             )
         )

@@ -1467,6 +1467,14 @@ class TestCandidateSpecs(TestCase):
             late_day.feature_contract["execution_profile"]["profile_id"],
             "late_day_continuation_v1:profile-1",
         )
+        self.assertIn(
+            "macro_announcement_dvar_momentum",
+            late_day.parameter_space["mechanism_overlay_ids"],
+        )
+        self.assertTrue(late_day.hard_vetoes["required_event_non_event_holdout_replay"])
+        self.assertTrue(
+            late_day.promotion_contract["rejects_pooled_macro_and_non_macro_replay"]
+        )
         params = late_day.strategy_overrides["params"]
         self.assertEqual(params["entry_start_minute_utc"], "1080")
         self.assertEqual(params["entry_end_minute_utc"], "1170")

@@ -3407,6 +3407,61 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
 
     if has_any(
         (
+            "macro announcement",
+            "macro_announcement",
+            "macroeconomic announcement",
+            "macroeconomic news",
+            "macro news",
+            "public information",
+            "incremental information",
+            "dvar",
+            "difference in abnormal return variance",
+            "event/non-event",
+            "event non-event",
+        )
+    ):
+        overlay_ids.append("macro_announcement_dvar_momentum")
+        overlay_contracts.append(
+            {
+                "overlay_id": "macro_announcement_dvar_momentum",
+                "required_evidence": [
+                    "macro_announcement_calendar",
+                    "dvar_incremental_information",
+                    "event_non_event_holdout_replay",
+                    "relative_volume",
+                    "route_tca",
+                    "live_paper_parity",
+                ],
+                "rank_metric": "post_cost_net_pnl_after_macro_event_holdout",
+                "evidence_policy": "macro_momentum_requires_event_non_event_replay",
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_macro_announcement_calendar": True,
+                "required_dvar_incremental_information": True,
+                "required_event_non_event_holdout_replay": True,
+                "required_min_macro_event_window_count": "20",
+                "required_min_macro_non_event_holdout_count": "60",
+                "required_min_macro_event_split_pass_rate": "0.60",
+                "required_max_macro_event_best_day_share": "0.25",
+                "required_min_route_tca_sample_count": "60",
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_macro_announcement_calendar": True,
+                "requires_dvar_incremental_information": True,
+                "requires_event_non_event_holdout_replay": True,
+                "requires_relative_volume_confirmation": True,
+                "requires_route_tca": True,
+                "requires_live_paper_parity": True,
+                "rejects_pooled_macro_and_non_macro_replay": True,
+            }
+        )
+
+    if has_any(
+        (
             "order-flow imbalance",
             "order flow imbalance",
             "order_flow_imbalance",
