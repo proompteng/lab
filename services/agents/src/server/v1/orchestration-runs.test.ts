@@ -4,7 +4,13 @@ import { describe, expect, it, vi } from 'vitest'
 import { RESOURCE_MAP, type KubernetesClient } from '../kube-types'
 import type { OrchestrationRunRecord } from '../primitives-store'
 
-import { postOrchestrationRunsHandler, type OrchestrationRunsApiStore } from './orchestration-runs'
+import {
+  getOrchestrationRunsHandler,
+  listOrchestrationRunsWithServicesEffect,
+  makeOrchestrationRunListStoreLayer,
+  postOrchestrationRunsHandler,
+  type OrchestrationRunsApiStore,
+} from './orchestration-runs'
 import {
   makeOrchestrationSubmitLayer,
   OrchestrationSubmitNotFoundError,
@@ -89,6 +95,62 @@ const request = (body: Record<string, unknown>, headers: Record<string, string> 
   })
 
 describe('orchestration runs v1 API', () => {
+  it('lists orchestration runs through the Effect store boundary', async () => {
+    const run = makeRecord({ id: 'orchestration-run-record-2' })
+    const store = createStore({ getOrchestrationRunsByName: vi.fn(async () => [run]) })
+
+    const result = await Effect.runPromise(
+      listOrchestrationRunsWithServicesEffect('demo-orchestration').pipe(
+        Effect.provide(makeOrchestrationRunListStoreLayer(() => store)),
+      ),
+    )
+
+    expect(result).toEqual([run])
+    expect(store.getOrchestrationRunsByName).toHaveBeenCalledWith('demo-orchestration')
+    expect(store.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not let store close failures mask successful orchestration run listing', async () => {
+    const run = makeRecord({ id: 'orchestration-run-record-2' })
+    const store = createStore({
+      getOrchestrationRunsByName: vi.fn(async () => [run]),
+      close: vi.fn(async () => {
+        throw new Error('close failed after response')
+      }),
+    })
+
+    const response = await getOrchestrationRunsHandler(
+      new Request('http://agents.local/v1/orchestration-runs?orchestrationId=demo-orchestration'),
+      { storeFactory: () => store },
+    )
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({
+      ok: true,
+      runs: [{ ...run, createdAt: now.toISOString(), updatedAt: now.toISOString() }],
+    })
+    expect(store.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes the store when readiness fails during orchestration run listing', async () => {
+    const store = createStore({
+      ready: Promise.reject(new Error('database boot failed')),
+      getOrchestrationRunsByName: vi.fn(async () => []),
+    })
+
+    const response = await getOrchestrationRunsHandler(
+      new Request('http://agents.local/v1/orchestration-runs?orchestrationId=demo-orchestration'),
+      { storeFactory: () => store },
+    )
+
+    expect(response.status).toBe(503)
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'orchestration run storage store-ready failed: database boot failed',
+    })
+    expect(store.getOrchestrationRunsByName).not.toHaveBeenCalled()
+    expect(store.close).toHaveBeenCalledTimes(1)
+  })
+
   it('submits an orchestration run through the Effect boundary', async () => {
     const store = createStore()
     const kube = createKube()

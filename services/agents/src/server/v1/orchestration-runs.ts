@@ -1,3 +1,5 @@
+import { Context, Effect, Layer } from 'effect'
+
 import { errorResponse, okResponse, parseJsonBody, requireIdempotencyKey } from '../http'
 import { asRecord, asString, normalizeNamespace } from '../primitives'
 import type { OrchestrationRunRecord } from '../primitives-store'
@@ -21,6 +23,21 @@ export type OrchestrationRunsApiDependencies = Omit<SubmitOrchestrationRunDeps, 
   storeFactory: () => OrchestrationRunsApiStore
   requireLeaderForMutation?: () => Response | null
 }
+
+type OrchestrationRunListStoreServiceDefinition = {
+  readonly open: Effect.Effect<OrchestrationRunsApiStore, OrchestrationSubmitStorageError>
+  readonly ready: (store: OrchestrationRunsApiStore) => Effect.Effect<void, OrchestrationSubmitStorageError>
+  readonly listByName: (
+    store: OrchestrationRunsApiStore,
+    orchestrationName: string,
+  ) => Effect.Effect<OrchestrationRunRecord[], OrchestrationSubmitStorageError>
+  readonly close: (store: OrchestrationRunsApiStore) => Effect.Effect<void>
+}
+
+export class OrchestrationRunListStoreService extends Context.Tag('agents/OrchestrationRunListStoreService')<
+  OrchestrationRunListStoreService,
+  OrchestrationRunListStoreServiceDefinition
+>() {}
 
 type OrchestrationRunPayload = {
   orchestrationRef: { name: string }
@@ -50,23 +67,59 @@ const parseOrchestrationRunPayload = (payload: Record<string, unknown>): Orchest
   return { orchestrationRef: { name }, namespace, parameters, policy }
 }
 
+const listStoreEffect = <A>(
+  operation: 'open-store' | 'store-ready' | 'list-runs',
+  run: () => A | Promise<A>,
+): Effect.Effect<A, OrchestrationSubmitStorageError> =>
+  Effect.tryPromise({
+    try: () => Promise.resolve(run()),
+    catch: (cause) => new OrchestrationSubmitStorageError({ operation, cause }),
+  })
+
+const closeListStoreEffect = (store: OrchestrationRunsApiStore) =>
+  Effect.tryPromise({
+    try: () => store.close(),
+    catch: () => undefined,
+  }).pipe(Effect.catchAll(() => Effect.void))
+
+export const makeOrchestrationRunListStoreLayer = (storeFactory: () => OrchestrationRunsApiStore) =>
+  Layer.succeed(OrchestrationRunListStoreService, {
+    open: listStoreEffect('open-store', storeFactory),
+    ready: (store) => listStoreEffect('store-ready', () => Promise.resolve(store.ready).then(() => undefined)),
+    listByName: (store, orchestrationName) =>
+      listStoreEffect('list-runs', () => store.getOrchestrationRunsByName(orchestrationName)),
+    close: closeListStoreEffect,
+  })
+
+export const listOrchestrationRunsWithServicesEffect = (
+  orchestrationName: string,
+): Effect.Effect<OrchestrationRunRecord[], OrchestrationSubmitStorageError, OrchestrationRunListStoreService> =>
+  Effect.gen(function* () {
+    const stores = yield* OrchestrationRunListStoreService
+    return yield* Effect.acquireUseRelease(
+      stores.open,
+      (store) => stores.ready(store).pipe(Effect.zipRight(stores.listByName(store, orchestrationName))),
+      stores.close,
+    )
+  })
+
+const listOrchestrationRunsEffect = (
+  deps: Pick<OrchestrationRunsApiDependencies, 'storeFactory'>,
+  orchestrationName: string,
+) =>
+  listOrchestrationRunsWithServicesEffect(orchestrationName).pipe(
+    Effect.provide(makeOrchestrationRunListStoreLayer(deps.storeFactory)),
+  )
+
 export const getOrchestrationRunsHandler = async (request: Request, deps: OrchestrationRunsApiDependencies) => {
   const url = new URL(request.url)
   const orchestrationName =
     asString(url.searchParams.get('orchestrationId')) ?? asString(url.searchParams.get('orchestrationName'))
   if (!orchestrationName) return errorResponse('orchestrationId is required', 400)
 
-  const store = deps.storeFactory()
-  try {
-    await store.ready
-    const runs = await store.getOrchestrationRunsByName(orchestrationName)
-    return okResponse({ ok: true, runs })
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return errorResponse(message, message.includes('DATABASE_URL') ? 503 : 500)
-  } finally {
-    await store.close()
-  }
+  const result = await Effect.runPromise(listOrchestrationRunsEffect(deps, orchestrationName).pipe(Effect.either))
+  if (result._tag === 'Right') return okResponse({ ok: true, runs: result.right })
+  return errorResponse(describeOrchestrationSubmitError(result.left), 503)
 }
 
 export const postOrchestrationRunsHandler = async (request: Request, deps: OrchestrationRunsApiDependencies) => {

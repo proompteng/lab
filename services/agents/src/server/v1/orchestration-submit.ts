@@ -61,6 +61,7 @@ type OrchestrationRunSubmitResult = {
 type OrchestrationSubmitStorageOperation =
   | 'open-store'
   | 'store-ready'
+  | 'list-runs'
   | 'read-idempotency-record'
   | 'create-run-record'
   | 'create-audit-event'
