@@ -54,9 +54,45 @@ export type { AgentRunsApiStore } from './agent-run-store'
 type AgentRunQueueDepthRecorder = NonNullable<AgentRunsApiDependencies['recordAgentQueueDepth']>
 type AgentRunAuditContextResolver = NonNullable<AgentRunsApiDependencies['resolveAuditContextFromRequest']>
 type AgentRunRepositoryResolver = NonNullable<AgentRunsApiDependencies['resolveRepositoryFromParameters']>
+type AgentRunResourceLookupOperation = Extract<AgentRunKubeOperation, 'get-existing-run' | 'get-idempotent-run'>
+type AgentRunKubernetesResource = Record<string, unknown>
 
 type AgentRunKubernetesServiceDefinition = {
   readonly client: (namespace: string) => Effect.Effect<KubernetesClient, AgentRunKubeError>
+  readonly getAgentRun: (
+    kube: KubernetesClient,
+    operation: AgentRunResourceLookupOperation,
+    name: string,
+    namespace: string,
+  ) => Effect.Effect<AgentRunKubernetesResource | null, AgentRunKubeError>
+  readonly getAgent: (
+    kube: KubernetesClient,
+    name: string,
+    namespace: string,
+  ) => Effect.Effect<AgentRunKubernetesResource | null, AgentRunKubeError>
+  readonly getImplementationSpec: (
+    kube: KubernetesClient,
+    name: string,
+    namespace: string,
+  ) => Effect.Effect<AgentRunKubernetesResource | null, AgentRunKubeError>
+  readonly getVcsProvider: (
+    kube: KubernetesClient,
+    name: string,
+    namespace: string,
+  ) => Effect.Effect<AgentRunKubernetesResource | null, AgentRunKubeError>
+  readonly evaluateAdmissionLimits: (
+    kube: KubernetesClient,
+    namespace: string,
+    repository: string | null,
+    config: Pick<AgentRunSubmissionConfig, 'admissionNamespaces' | 'concurrency' | 'queue' | 'rate'>,
+    now: number,
+    recordQueueDepth: AgentRunQueueDepthRecorder,
+  ) => Effect.Effect<AdmissionDecision, AgentRunKubeError>
+  readonly applyAgentRun: (
+    kube: KubernetesClient,
+    resource: AgentRunKubernetesResource,
+    namespace: string,
+  ) => Effect.Effect<AgentRunKubernetesResource, AgentRunKubeError>
 }
 
 type AgentRunPolicyServiceDefinition = {
@@ -671,6 +707,24 @@ export const makeAgentRunSubmitLayer = (deps: AgentRunsApiDependencies) =>
               cause,
             }),
         }),
+      getAgentRun: (kube, operation, name, namespace) =>
+        kubeEffect(operation, RESOURCE_MAP.AgentRun, namespace, () => kube.get(RESOURCE_MAP.AgentRun, name, namespace)),
+      getAgent: (kube, name, namespace) =>
+        kubeEffect('get-agent', RESOURCE_MAP.Agent, namespace, () => kube.get(RESOURCE_MAP.Agent, name, namespace)),
+      getImplementationSpec: (kube, name, namespace) =>
+        kubeEffect('get-implementation-spec', RESOURCE_MAP.ImplementationSpec, namespace, () =>
+          kube.get(RESOURCE_MAP.ImplementationSpec, name, namespace),
+        ),
+      getVcsProvider: (kube, name, namespace) =>
+        kubeEffect('get-vcs-provider', RESOURCE_MAP.VersionControlProvider, namespace, () =>
+          kube.get(RESOURCE_MAP.VersionControlProvider, name, namespace),
+        ),
+      evaluateAdmissionLimits: (kube, namespace, repository, config, now, recordQueueDepth) =>
+        kubeEffect('evaluate-admission-limits', RESOURCE_MAP.AgentRun, namespace, () =>
+          evaluateAdmissionLimits(kube, namespace, repository, config, now, recordQueueDepth),
+        ),
+      applyAgentRun: (kube, resource, namespace) =>
+        kubeEffect('apply-agent-run', RESOURCE_MAP.AgentRun, namespace, () => kube.apply(resource)),
     }),
     Layer.succeed(AgentRunPolicyService, {
       validate: (namespace, checks, kube) =>
@@ -838,9 +892,7 @@ export const submitAgentRunWithServicesEffect = (
               asString(readNested(existing.payload, ['request', 'namespace'])) ??
               parsed.namespace
             const resource = existing.externalRunId
-              ? yield* kubeEffect('get-existing-run', RESOURCE_MAP.AgentRun, resourceNamespace, () =>
-                  kube.get(RESOURCE_MAP.AgentRun, existing.externalRunId!, resourceNamespace),
-                )
+              ? yield* kubernetes.getAgentRun(kube, 'get-existing-run', existing.externalRunId, resourceNamespace)
               : null
             return { status: 200, body: { ok: true, agentRun: existing, resource, idempotent: true } }
           }
@@ -853,8 +905,11 @@ export const submitAgentRunWithServicesEffect = (
             })
 
             if (scope?.agentRunName) {
-              const resource = yield* kubeEffect('get-idempotent-run', RESOURCE_MAP.AgentRun, parsed.namespace, () =>
-                kube.get(RESOURCE_MAP.AgentRun, scope.agentRunName!, parsed.namespace),
+              const resource = yield* kubernetes.getAgentRun(
+                kube,
+                'get-idempotent-run',
+                scope.agentRunName,
+                parsed.namespace,
               )
               const phase = asString(readNested(resource, ['status', 'phase'])) ?? 'Pending'
 
@@ -888,9 +943,7 @@ export const submitAgentRunWithServicesEffect = (
             }
           }
 
-          const agent = yield* kubeEffect('get-agent', RESOURCE_MAP.Agent, parsed.namespace, () =>
-            kube.get(RESOURCE_MAP.Agent, parsed.agentRef.name, parsed.namespace),
-          )
+          const agent = yield* kubernetes.getAgent(kube, parsed.agentRef.name, parsed.namespace)
           if (!agent) {
             return yield* Effect.fail(
               new AgentRunNotFoundError({
@@ -930,11 +983,10 @@ export const submitAgentRunWithServicesEffect = (
                 if (inlineVcsName) return inlineVcsName
               }
               if (parsed.implementationSpecRef?.name) {
-                const impl = yield* kubeEffect(
-                  'get-implementation-spec',
-                  RESOURCE_MAP.ImplementationSpec,
+                const impl = yield* kubernetes.getImplementationSpec(
+                  kube,
+                  parsed.implementationSpecRef.name,
                   parsed.namespace,
-                  () => kube.get(RESOURCE_MAP.ImplementationSpec, parsed.implementationSpecRef!.name, parsed.namespace),
                 )
                 const implRef = asRecord(impl?.spec)
                 const implVcsRef = asRecord(implRef?.vcsRef)
@@ -955,12 +1007,7 @@ export const submitAgentRunWithServicesEffect = (
               )
             }
             if (vcsRefName) {
-              const vcsProvider = yield* kubeEffect(
-                'get-vcs-provider',
-                RESOURCE_MAP.VersionControlProvider,
-                parsed.namespace,
-                () => kube.get(RESOURCE_MAP.VersionControlProvider, vcsRefName, parsed.namespace),
-              )
+              const vcsProvider = yield* kubernetes.getVcsProvider(kube, vcsRefName, parsed.namespace)
               if (!vcsProvider) {
                 if (parsed.vcsPolicy?.required) {
                   return yield* Effect.fail(
@@ -1035,19 +1082,13 @@ export const submitAgentRunWithServicesEffect = (
 
           const admissionRepository = resolveRepositoryFromParams(parsed.parameters) || null
           const admissionNow = yield* runtimeConfig.now()
-          const admission = yield* kubeEffect(
-            'evaluate-admission-limits',
-            RESOURCE_MAP.AgentRun,
+          const admission = yield* kubernetes.evaluateAdmissionLimits(
+            kube,
             parsed.namespace,
-            () =>
-              evaluateAdmissionLimits(
-                kube,
-                parsed.namespace,
-                admissionRepository,
-                submissionConfig,
-                admissionNow,
-                queueDepth.record,
-              ),
+            admissionRepository,
+            submissionConfig,
+            admissionNow,
+            queueDepth.record,
           )
           if (!admission.ok) {
             return yield* Effect.fail(
@@ -1090,8 +1131,11 @@ export const submitAgentRunWithServicesEffect = (
             if (!reservation.created) {
               const scope = reservation.record
               if (scope.agentRunName) {
-                const resource = yield* kubeEffect('get-idempotent-run', RESOURCE_MAP.AgentRun, parsed.namespace, () =>
-                  kube.get(RESOURCE_MAP.AgentRun, scope.agentRunName!, parsed.namespace),
+                const resource = yield* kubernetes.getAgentRun(
+                  kube,
+                  'get-idempotent-run',
+                  scope.agentRunName,
+                  parsed.namespace,
                 )
                 const phase = asString(readNested(resource, ['status', 'phase'])) ?? 'Pending'
                 if (resource && !isTerminalPhase(phase)) {
@@ -1144,9 +1188,7 @@ export const submitAgentRunWithServicesEffect = (
           }
 
           const resource = createAgentRunResource(parsed, deliveryId, runIdempotencyKey)
-          const appliedResult = yield* kubeEffect('apply-agent-run', RESOURCE_MAP.AgentRun, parsed.namespace, () =>
-            kube.apply(resource),
-          ).pipe(Effect.either)
+          const appliedResult = yield* kubernetes.applyAgentRun(kube, resource, parsed.namespace).pipe(Effect.either)
           if (appliedResult._tag === 'Left') {
             if (idempotencyReservation) {
               yield* stores
