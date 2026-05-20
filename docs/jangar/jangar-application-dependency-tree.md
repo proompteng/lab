@@ -34,7 +34,6 @@ graph TD
   JDEPLOY --> JREDIS[Service: jangar-openwebui-redis]
   JDEPLOY --> NATSSEC[Secret: nats-jangar-credentials]
   JDEPLOY --> NATSSVC[nats.nats.svc.cluster.local:4222]
-  JDEPLOY --> KAFKASEC[Secrets: kafka-codex-username / kafka-codex-credentials]
   JDEPLOY --> MINIOSEC[Secret: observability-minio-creds]
   JDEPLOY --> CHSEC[Secret: jangar-clickhouse-auth]
   JDEPLOY --> CHSVC[torghut-clickhouse.torghut.svc]
@@ -43,9 +42,6 @@ graph TD
 
   OUI[OpenWebUI Helm release] --> JDB
   OUI --> JREDIS
-
-  KSRC1[KafkaSource: jangar-codex-github-events] --> KAFKASVC[kafka-kafka-bootstrap.kafka:9092]
-  KSRC1 --> KAFKASEC
 ```
 
 ## 3. Hard vs optional dependencies
@@ -56,7 +52,6 @@ Hard dependencies:
 1. `rook-ceph` (`rook-ceph-block` and `rook-cephfs` storage classes).
 1. `cloudnative-pg` (CNPG `Cluster` + generated DB secrets).
 1. `redis-operator` (for `Redis` custom resource).
-1. `knative` + `knative-eventing` + `kafka` (for `KafkaSource` resources).
 1. `nats` (NATS credentials + broker endpoint).
 1. `observability` (MinIO creds/endpoint currently referenced by `jangar` and CNPG backup config).
 1. `tailscale-operator` (for `LoadBalancer` services using `loadBalancerClass: tailscale`).
@@ -65,11 +60,12 @@ Optional or feature-gated integrations:
 
 1. `torghut` (`torghut-db-app` is optional; clickhouse integration depends on `torghut-clickhouse` service/creds).
 1. `facteur` (`facteur-internal` URL is configured; behavior depends on enabled feature paths).
+1. `kafka` (optional for Torghut simulation data paths; Codex GitHub event ingestion is owned by Agents).
 
 ## 4. Recommended enable order
 
 1. `sealed-secrets`, `rook-ceph`, `tailscale-operator` (bootstrap layer).
-1. `cloudnative-pg`, `redis-operator`, `knative`, `knative-eventing`, `kafka`, `nats`, `observability` (platform layer).
+1. `cloudnative-pg`, `redis-operator`, `nats`, `observability` (platform layer).
 1. `jangar` (product layer).
 1. Optional product integrations: `torghut`, `facteur`.
 

@@ -7,7 +7,7 @@ spec:
   bootstrapServers:
     - kafka-kafka-bootstrap.kafka:9092
   topics:
-    - github.webhook.codex.judge
+    - github.webhook.events
   consumerGroup: agents-codex-github-events
   initialOffset: earliest
   net:

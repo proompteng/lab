@@ -203,11 +203,21 @@ fail_if_path_exists \
   "Jangar GitOps must not own generic Codex GitHub event projection ingestion after Agents owns Codex projections" \
   "${ROOT_DIR}/argocd/applications/jangar/codex-github-events-kafkasource.yaml"
 
+fail_if_matches \
+  "Jangar GitOps must not configure retired CI event stream flags after Agents owns Codex GitHub event ingestion" \
+  'JANGAR_CI_EVENT_STREAM' \
+  "${ROOT_DIR}/argocd/applications/jangar/deployment.yaml"
+
 require_matches \
-  "Agents GitOps must own Codex GitHub event projection ingestion through the Agents service" \
-  '/v1/codex/github-events|name: agents-codex-github-events|namespace: agents' \
+  "Agents GitOps must own Codex GitHub event projection ingestion through the Agents service and raw GitHub topic" \
+  '/v1/codex/github-events|name: agents-codex-github-events|namespace: agents|github\.webhook\.events' \
   "${ROOT_DIR}/argocd/applications/agents/codex-github-events-kafkasource.yaml" \
   "${ROOT_DIR}/argocd/applications/agents/kustomization.yaml"
+
+fail_if_matches \
+  "Agents GitOps must not consume the retired Froussard Codex judge topic after raw GitHub event ingestion moved to Agents" \
+  'github\.webhook\.codex\.judge|KAFKA_CODEX_JUDGE_TOPIC|github-webhook-codex-judge-topic' \
+  "${ROOT_DIR}/argocd/applications/agents"
 
 fail_if_path_exists \
   "Jangar must not own generic Agents readiness/status verdict normalization after agent-contracts owns it" \
@@ -1399,6 +1409,14 @@ fail_if_matches \
   "${ROOT_DIR}/argocd/applications/kafka/kustomization.yaml" \
   "${ROOT_DIR}/docs/runbooks/codex-pipeline-observability.md" \
   "${ROOT_DIR}/docs/kafka-topics.md"
+
+fail_if_matches \
+  "Active GitHub/Codex docs must not describe the retired Froussard Codex judge topic as current runtime" \
+  'github\.webhook\.codex\.judge|github-webhook-codex-judge|KAFKA_CODEX_JUDGE_TOPIC' \
+  "${ROOT_DIR}/docs/kafka-topics.md" \
+  "${ROOT_DIR}/docs/jangar/github-pr-review-in-app.md" \
+  "${ROOT_DIR}/docs/jangar/codex-judge-argo-design.md" \
+  "${ROOT_DIR}/docs/jangar/codex-judge-argo-implementation.md"
 
 fail_if_matches \
   "Active Jangar docs must not describe the retired Argo workflow completion bridge as current runtime" \

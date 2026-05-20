@@ -50,10 +50,10 @@ const createStore = () => ({
   updateRunPrInfo: vi.fn(async () => ({ ...run, prNumber: 7299 })),
 })
 
-const request = (payload: Record<string, unknown>) =>
+const request = (payload: Record<string, unknown>, headers: Record<string, string> = {}) =>
   new Request('http://agents.test/v1/codex/github-events', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...headers },
     body: JSON.stringify(payload),
   })
 
@@ -124,6 +124,120 @@ describe('Codex GitHub events v1 API', () => {
       status: 'success',
       url: 'https://github.com/owner/repo/actions/runs/1',
       commitSha: 'abcdef1234567890',
+    })
+  })
+
+  it('accepts raw GitHub webhook payloads from the shared webhook topic', async () => {
+    const store = createStore()
+
+    const response = await postCodexGithubEventsHandler(
+      request(
+        {
+          action: 'synchronize',
+          repository: { full_name: 'owner/repo' },
+          pull_request: {
+            number: 7299,
+            html_url: 'https://github.com/owner/repo/pull/7299',
+            state: 'open',
+            merged: false,
+            head: { ref: 'codex/split', sha: 'abcdef1234567890' },
+          },
+        },
+        {
+          'x-github-delivery': 'delivery-raw-pr',
+          'x-github-event': 'pull_request',
+        },
+      ),
+      { storeFactory: () => store },
+    )
+
+    expect(response.status).toBe(202)
+    expect(store.listRunsByBranch).toHaveBeenCalledWith('owner/repo', 'codex/split')
+    expect(store.updateRunPrInfo).toHaveBeenCalledWith(
+      'codex-run-1',
+      7299,
+      'https://github.com/owner/repo/pull/7299',
+      'abcdef1234567890',
+      'open',
+      false,
+    )
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      event: 'pull_request',
+      action: 'synchronize',
+      updatedRunIds: ['codex-run-1'],
+    })
+  })
+
+  it('infers supported raw GitHub event types when Kafka headers are not preserved', async () => {
+    const store = createStore()
+
+    const response = await postCodexGithubEventsHandler(
+      request({
+        action: 'completed',
+        repository: { full_name: 'owner/repo' },
+        check_run: {
+          head_sha: 'abcdef1234567890',
+          status: 'completed',
+          conclusion: 'success',
+          html_url: 'https://github.com/owner/repo/actions/runs/1',
+          pull_requests: [{ number: 7299 }],
+        },
+      }),
+      { storeFactory: () => store },
+    )
+
+    expect(response.status).toBe(202)
+    expect(store.listRunsByCommitSha).toHaveBeenCalledWith('owner/repo', 'abcdef1234567890')
+    expect(store.updateCiStatus).toHaveBeenCalledWith({
+      runId: 'codex-run-1',
+      status: 'success',
+      url: 'https://github.com/owner/repo/actions/runs/1',
+      commitSha: 'abcdef1234567890',
+    })
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      event: 'check_run',
+      action: 'completed',
+    })
+  })
+
+  it('accepts CloudEvent-wrapped raw GitHub events from Knative KafkaSource delivery', async () => {
+    const store = createStore()
+
+    const response = await postCodexGithubEventsHandler(
+      request(
+        {
+          specversion: '1.0',
+          id: 'ce-delivery',
+          type: 'dev.knative.kafka.event',
+          data: {
+            action: 'submitted',
+            repository: { full_name: 'owner/repo' },
+            pull_request: {
+              number: 7299,
+              html_url: 'https://github.com/owner/repo/pull/7299',
+              state: 'open',
+              merged: false,
+              head: { ref: 'codex/split', sha: 'abcdef1234567890' },
+            },
+            review: { state: 'approved' },
+          },
+        },
+        {
+          'ce-xgithubevent': 'pull_request_review',
+          'ce-xgithubdelivery': 'delivery-cloud-event',
+        },
+      ),
+      { storeFactory: () => store },
+    )
+
+    expect(response.status).toBe(202)
+    expect(store.listRunsByPrNumber).toHaveBeenCalledWith('owner/repo', 7299)
+    expect(store.updateReviewStatus).toHaveBeenCalledWith({
+      runId: 'codex-run-1',
+      status: 'approved',
+      summary: { event: 'pull_request_review', action: 'submitted', deliveryId: 'delivery-cloud-event' },
     })
   })
 

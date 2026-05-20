@@ -173,7 +173,11 @@ describe('agents extraction boundary guard', () => {
       'Jangar must not own the generic Codex judge evaluator/store after Agents owns Codex projections',
     )
     expect(content).toContain('Jangar GitOps must not own generic Codex GitHub event projection ingestion')
+    expect(content).toContain('Jangar GitOps must not configure retired CI event stream flags')
     expect(content).toContain('Agents GitOps must own Codex GitHub event projection ingestion')
+    expect(content).toContain('github\\.webhook\\.events')
+    expect(content).toContain('Agents GitOps must not consume the retired Froussard Codex judge topic')
+    expect(content).toContain('Active GitHub/Codex docs must not describe the retired Froussard Codex judge topic')
     expect(content).toContain('dedicated /v1/agent-runs/resources contract')
     expect(content).toContain('v1 status and message APIs instead of web-internal /api/agents paths')
     expect(content).toContain('legacy /api/agents routes or route registrations')

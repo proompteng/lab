@@ -108,7 +108,7 @@ If any gate fails, the system must record why and either rerun or escalate to `n
 The autonomous run depends on these environment variables already present in the Jangar deployment:
 
 - GitHub: `GITHUB_TOKEN`, `JANGAR_GITHUB_REPOS_ALLOWED`, `JANGAR_GITHUB_REVIEWS_WRITE`, `JANGAR_GITHUB_MERGE_WRITE`, `JANGAR_GITHUB_MERGE_FORCE`
-- Codex judge: `JANGAR_CI_EVENT_STREAM_ENABLED`, `JANGAR_CI_MAX_WAIT_MS`, `JANGAR_REVIEW_MAX_WAIT_MS`, `JANGAR_CODEX_MAX_ATTEMPTS`, `JANGAR_CODEX_BACKOFF_SCHEDULE_MS`, `JANGAR_CODEX_REVIEWERS`, `AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION`, `AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE`
+- Codex judge compatibility: `JANGAR_CI_MAX_WAIT_MS`, `JANGAR_REVIEW_MAX_WAIT_MS`, `JANGAR_CODEX_MAX_ATTEMPTS`, `JANGAR_CODEX_BACKOFF_SCHEDULE_MS`, `JANGAR_CODEX_REVIEWERS`, `AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION`, `AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE`. GitHub event ingestion is owned by Agents at `/v1/codex/github-events`.
 - Agents reruns: `agentRuntime.native.rerunOrchestration` and `agentRuntime.native.rerunOrchestrationNamespace` in the Agents Helm values.
 - Argo artifacts: `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_SECURE`
 - Infra: `DATABASE_URL`, `JANGAR_REDIS_URL`, `NATS_URL`, `NATS_USER`, `NATS_PASSWORD`

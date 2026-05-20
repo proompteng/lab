@@ -28,10 +28,9 @@ spec:
 
 ## Existing Topics
 
-| Kafka Topic                  | Purpose                                                                                     | Notes                                                                                                                     |
-| ---------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `discord.commands.incoming`  | Normalized Discord slash command interactions published by Froussard.                       | Defined in `argocd/applications/froussard/discord-commands-topic.yaml`. 7-day retention.                                  |
-| `github.webhook.events`      | Raw GitHub webhook payloads published by the `froussard` service.                           | Strimzi resource: `github-webhook-events`. 7-day retention.                                                               |
-| `github.webhook.codex.judge` | Filtered GitHub webhook events for Codex judge CI/review gating (published by `froussard`). | Strimzi resource: `github-webhook-codex-judge`. 7-day retention.                                                          |
+| Kafka Topic                 | Purpose                                                           | Notes                                                                                    |
+| --------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `discord.commands.incoming` | Normalized Discord slash command interactions published by Froussard. | Defined in `argocd/applications/froussard/discord-commands-topic.yaml`. 7-day retention. |
+| `github.webhook.events`     | Raw GitHub webhook payloads published by the `froussard` service. | Strimzi resource: `github-webhook-events`. 7-day retention. Agents consumes this topic directly for Codex CI/review projection. |
 
 Add new rows whenever a topic is provisioned so downstream teams can reason about ownership and retention.

@@ -320,17 +320,23 @@ Provide CI status for the attempt commit SHA (prefer PR head SHA).
 - Use the attempt commit SHA (from artifacts) as the key for CI checks.
 - Do not use branch-level status, because shared resumable branches can show stale green checks.
 
+### Current extraction note
+
+This document describes the retired Jangar-owned Codex judge implementation. The current runtime keeps GitHub webhook
+intake in Froussard, publishes raw payloads on `github.webhook.events`, and lets Agents own Codex projection ingestion at
+`/v1/codex/github-events`.
+
 ### Implementation notes
 
 - Jangar already has `GITHUB_TOKEN` in `argocd/applications/jangar/deployment.yaml`; use it to
   enrich data from GitHub APIs when Kafka payloads are insufficient.
 - Prefer PR head SHA (from GitHub API) over branch head to avoid stale results.
-- Jangar does not poll. CI/review updates are delivered via the filtered Kafka stream and re-trigger judge evaluation.
+- Jangar does not poll. CI/review updates are delivered through the Agents Codex projection API boundary.
 
 ### Deliverables
 
-- Filtered GitHub webhook stream for Jangar (Kafka topic + publisher).
-  - Topic: `github.webhook.codex.judge` (producer: Froussard, consumer: Jangar).
+- Agents Codex GitHub event projection fed by the shared raw GitHub webhook stream.
+  - Topic: `github.webhook.events` (producer: Froussard, consumer: Agents).
 - Mapping of CI status to run records.
 
 ### Detailed tasks

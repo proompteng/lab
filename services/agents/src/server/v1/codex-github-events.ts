@@ -52,6 +52,75 @@ const SUPPORTED_EVENTS = new Set([
   'issue_comment',
 ])
 
+const EVENT_METADATA_KEYS = [
+  'event',
+  'event_type',
+  'eventType',
+  'name',
+  'x-github-event',
+  'xgithubevent',
+  'github_event',
+  'githubEvent',
+  'kafkaheaderxgithubevent',
+  'kafka_header_x_github_event',
+]
+
+const ACTION_METADATA_KEYS = [
+  'action',
+  'event_action',
+  'eventAction',
+  'x-github-action',
+  'xgithubaction',
+  'github_action',
+  'githubAction',
+  'kafkaheaderxgithubaction',
+  'kafka_header_x_github_action',
+]
+
+const DELIVERY_METADATA_KEYS = [
+  'deliveryId',
+  'delivery_id',
+  'x-github-delivery',
+  'xgithubdelivery',
+  'github_delivery',
+  'githubDelivery',
+  'kafkaheaderxgithubdelivery',
+  'kafka_header_x_github_delivery',
+]
+
+const DELIVERY_FALLBACK_METADATA_KEYS = ['id', 'key']
+
+const EVENT_HEADER_KEYS = [
+  'x-github-event',
+  'github-event',
+  'ce-x-github-event',
+  'ce-xgithubevent',
+  'ce-githubevent',
+  'ce-github-event',
+  'ce-kafkaheaderxgithubevent',
+]
+
+const ACTION_HEADER_KEYS = [
+  'x-github-action',
+  'github-action',
+  'ce-x-github-action',
+  'ce-xgithubaction',
+  'ce-githubaction',
+  'ce-github-action',
+  'ce-kafkaheaderxgithubaction',
+]
+
+const DELIVERY_HEADER_KEYS = [
+  'x-github-delivery',
+  'github-delivery',
+  'ce-x-github-delivery',
+  'ce-xgithubdelivery',
+  'ce-githubdelivery',
+  'ce-github-delivery',
+  'ce-kafkaheaderxgithubdelivery',
+  'ce-id',
+]
+
 const toErrorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -75,6 +144,63 @@ const normalizeOptionalNumber = (value: unknown) => {
 const normalizeSha = (value: unknown) => {
   const normalized = normalizeOptionalString(value)
   return normalized && /^[a-f0-9]{7,40}$/i.test(normalized) ? normalized : null
+}
+
+const normalizeEventName = (value: unknown) => {
+  const normalized = normalizeOptionalString(value)?.toLowerCase()
+  if (!normalized) return null
+  if (SUPPORTED_EVENTS.has(normalized)) return normalized
+  const suffix = normalized.split(/[.:/]/).at(-1)
+  return suffix && SUPPORTED_EVENTS.has(suffix) ? suffix : normalized
+}
+
+const readRecordString = (record: Record<string, unknown>, keys: string[]) => {
+  for (const key of keys) {
+    const value = normalizeOptionalString(record[key])
+    if (value) return value
+  }
+  return null
+}
+
+const readHeaderString = (headers: Headers | undefined, keys: string[]) => {
+  if (!headers) return null
+  for (const key of keys) {
+    const value = normalizeOptionalString(headers.get(key))
+    if (value) return value
+  }
+  return null
+}
+
+const metadataRecords = (payload: Record<string, unknown>) => {
+  const records: Record<string, unknown>[] = [payload]
+  for (const key of ['headers', 'kafkaHeaders', 'kafka_headers', 'extensions', 'attributes']) {
+    if (isRecord(payload[key])) records.push(payload[key])
+  }
+  return records
+}
+
+const readPayloadMetadataString = (payload: Record<string, unknown>, keys: string[]) => {
+  for (const record of metadataRecords(payload)) {
+    const value = readRecordString(record, keys)
+    if (value) return value
+  }
+  return null
+}
+
+const extractRawWebhookPayload = (payload: Record<string, unknown>) => {
+  if (isRecord(payload.payload)) return payload.payload
+  if (normalizeOptionalString(payload.specversion) && isRecord(payload.data)) return payload.data
+  return payload
+}
+
+const inferGithubEventFromPayload = (payload: Record<string, unknown>) => {
+  if (isRecord(payload.check_run)) return 'check_run'
+  if (isRecord(payload.check_suite)) return 'check_suite'
+  if (isRecord(payload.comment) && isRecord(payload.issue)) return 'issue_comment'
+  if (isRecord(payload.comment) && isRecord(payload.pull_request)) return 'pull_request_review_comment'
+  if (isRecord(payload.review) && isRecord(payload.pull_request)) return 'pull_request_review'
+  if (isRecord(payload.pull_request)) return 'pull_request'
+  return null
 }
 
 const extractRepositoryFromWebhookPayload = (payload: Record<string, unknown>) => {
@@ -104,21 +230,25 @@ const extractRepositoryFromWebhookPayload = (payload: Record<string, unknown>) =
   return null
 }
 
-const parseGithubWebhookEvent = (payload: Record<string, unknown>): GithubWebhookStreamEvent => {
-  const rawPayload = isRecord(payload.payload) ? payload.payload : payload
+const parseGithubWebhookEvent = (payload: Record<string, unknown>, headers?: Headers): GithubWebhookStreamEvent => {
+  const rawPayload = extractRawWebhookPayload(payload)
+  const eventName =
+    normalizeEventName(readPayloadMetadataString(payload, EVENT_METADATA_KEYS)) ??
+    normalizeEventName(readPayloadMetadataString(rawPayload, EVENT_METADATA_KEYS)) ??
+    normalizeEventName(readHeaderString(headers, EVENT_HEADER_KEYS)) ??
+    inferGithubEventFromPayload(rawPayload)
   return {
-    event:
-      normalizeOptionalString(
-        payload.event ?? payload.event_type ?? payload.eventType ?? payload.name ?? payload['x-github-event'],
-      ) ?? '',
+    event: eventName ?? '',
     action:
-      normalizeOptionalString(
-        payload.action ?? payload.event_action ?? payload.eventAction ?? payload['x-github-action'],
-      ) ?? null,
+      readPayloadMetadataString(payload, ACTION_METADATA_KEYS) ??
+      readPayloadMetadataString(rawPayload, ACTION_METADATA_KEYS) ??
+      readHeaderString(headers, ACTION_HEADER_KEYS),
     deliveryId:
-      normalizeOptionalString(
-        payload.deliveryId ?? payload.delivery_id ?? payload['x-github-delivery'] ?? payload.id ?? payload.key,
-      ) ?? null,
+      readPayloadMetadataString(payload, DELIVERY_METADATA_KEYS) ??
+      readPayloadMetadataString(rawPayload, DELIVERY_METADATA_KEYS) ??
+      readHeaderString(headers, DELIVERY_HEADER_KEYS) ??
+      readPayloadMetadataString(payload, DELIVERY_FALLBACK_METADATA_KEYS) ??
+      readPayloadMetadataString(rawPayload, DELIVERY_FALLBACK_METADATA_KEYS),
     repository:
       normalizeOptionalString(payload.repository) ??
       normalizeOptionalString(payload.repository_full_name) ??
@@ -314,7 +444,7 @@ export const ingestCodexGithubEventEffect = (request: Request, deps: CodexGithub
       try: () => parseJsonBody(request),
       catch: (cause) => new CodexGithubEventRequestError({ message: toErrorMessage(cause), status: 400 }),
     })
-    const event = parseGithubWebhookEvent(payload)
+    const event = parseGithubWebhookEvent(payload, request.headers)
     if (!SUPPORTED_EVENTS.has(event.event)) {
       return yield* Effect.fail(
         new CodexGithubEventRequestError({
