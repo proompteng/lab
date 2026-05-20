@@ -3220,6 +3220,8 @@ def _feedback_active_loss_counter_candidate_reasons(
         > policy.max_single_symbol_contribution_share
         or _decimal(scorecard.get("symbol_concentration_share"), default="0")
         > policy.max_single_symbol_contribution_share
+        or _decimal(scorecard.get("max_cluster_contribution_share"), default="0")
+        > policy.max_cluster_contribution_share
     ):
         reasons.add("symbol_concentration_shortfall")
     return reasons
@@ -3235,6 +3237,81 @@ def _candidate_spec_matches_active_loss_counter_feedback(
     if not candidate_tags:
         return False
     feedback_reasons = _feedback_active_loss_counter_candidate_reasons(
+        scorecard, oracle_policy=oracle_policy
+    )
+    return bool(candidate_tags & feedback_reasons)
+
+
+def _feedback_consistency_repair_candidate_reasons(
+    scorecard: Mapping[str, Any],
+    *,
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
+) -> set[str]:
+    if (
+        not scorecard
+        or _feedback_has_no_replay_activity(scorecard)
+        or _feedback_has_nonpositive_expected_value(scorecard)
+    ):
+        return set()
+    policy = oracle_policy or ProfitTargetOraclePolicy()
+    if (
+        _decimal(scorecard.get("max_gross_exposure_pct_equity"))
+        > policy.max_gross_exposure_pct_equity
+    ):
+        return set()
+    if _decimal(scorecard.get("min_cash")) < policy.min_cash:
+        return set()
+    if _decimal(scorecard.get("negative_cash_observation_count")) > Decimal(
+        max(0, policy.max_negative_cash_observation_count)
+    ):
+        return set()
+    reasons: set[str] = set()
+    if (
+        _decimal(scorecard.get("active_day_ratio"), default="1")
+        < policy.min_active_day_ratio
+    ):
+        reasons.add("daily_coverage_shortfall")
+    if (
+        _decimal(scorecard.get("avg_filled_notional_per_day"))
+        < policy.min_avg_filled_notional_per_day
+    ):
+        reasons.add("notional_throughput_shortfall")
+    if (
+        _decimal(scorecard.get("positive_day_ratio"), default="1")
+        < policy.min_positive_day_ratio
+        or _decimal(scorecard.get("negative_day_count")) > Decimal("0")
+        or _decimal(scorecard.get("worst_day_loss")) > Decimal("0")
+        or _decimal(scorecard.get("max_drawdown")) > Decimal("0")
+        or _decimal(scorecard.get("min_daily_net_pnl")) < policy.min_daily_net_pnl
+    ):
+        reasons.add("loss_control_shortfall")
+    if (
+        _decimal(scorecard.get("best_day_share"), default="0")
+        > policy.max_best_day_share
+    ):
+        reasons.update({"daily_coverage_shortfall", "loss_control_shortfall"})
+    if (
+        _decimal(scorecard.get("max_single_symbol_contribution_share"), default="0")
+        > policy.max_single_symbol_contribution_share
+        or _decimal(scorecard.get("symbol_concentration_share"), default="0")
+        > policy.max_single_symbol_contribution_share
+        or _decimal(scorecard.get("max_cluster_contribution_share"), default="0")
+        > policy.max_cluster_contribution_share
+    ):
+        reasons.add("symbol_concentration_shortfall")
+    return reasons
+
+
+def _candidate_spec_matches_consistency_repair_feedback(
+    spec: CandidateSpec,
+    scorecard: Mapping[str, Any],
+    *,
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
+) -> bool:
+    candidate_tags = _candidate_spec_active_loss_counter_tags(spec)
+    if not candidate_tags:
+        return False
+    feedback_reasons = _feedback_consistency_repair_candidate_reasons(
         scorecard, oracle_policy=oracle_policy
     )
     return bool(candidate_tags & feedback_reasons)
@@ -3306,6 +3383,62 @@ def _active_loss_counter_proposal_score(
         + loss_control_bonus
         + activity_bonus
         + mlx_relative_signal
+    )
+
+
+def _consistency_repair_proposal_score(
+    spec: CandidateSpec,
+    scorecard: Mapping[str, Any],
+    *,
+    raw_score: float,
+    target_score: float,
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
+) -> float:
+    policy = oracle_policy or ProfitTargetOraclePolicy()
+    candidate_tags = _candidate_spec_active_loss_counter_tags(spec)
+    feedback_reasons = _feedback_consistency_repair_candidate_reasons(
+        scorecard,
+        oracle_policy=policy,
+    )
+    matched_tags = candidate_tags & feedback_reasons
+    params = _mapping(spec.strategy_overrides.get("params"))
+    remediation_profile = _string(params.get("feedback_remediation_profile"))
+    profile_bonus = {
+        "consistency_guard_feedback_escape": Decimal("180"),
+        "daily_coverage_feedback_escape": Decimal("150"),
+        "adverse_selection_feedback_escape": Decimal("130"),
+        "symbol_diversification_feedback_escape": Decimal("120"),
+        "notional_throughput_feedback_escape": Decimal("80"),
+        "turnover_coverage_feedback_escape": Decimal("70"),
+    }.get(remediation_profile, Decimal("40"))
+    positive_shortfall = max(
+        Decimal("0"),
+        policy.min_positive_day_ratio
+        - _decimal(scorecard.get("positive_day_ratio"), default="1"),
+    )
+    concentration_excess = max(
+        Decimal("0"),
+        _decimal(scorecard.get("best_day_share"), default="0")
+        - policy.max_best_day_share,
+        _decimal(scorecard.get("max_single_symbol_contribution_share"), default="0")
+        - policy.max_single_symbol_contribution_share,
+        _decimal(scorecard.get("symbol_concentration_share"), default="0")
+        - policy.max_single_symbol_contribution_share,
+        _decimal(scorecard.get("max_cluster_contribution_share"), default="0")
+        - policy.max_cluster_contribution_share,
+    )
+    mlx_relative_signal = max(
+        Decimal("-250"),
+        min(Decimal("250"), Decimal(str(raw_score)) - Decimal(str(target_score))),
+    )
+    return float(
+        Decimal("-50000")
+        + _pre_replay_candidate_score(spec)
+        + (Decimal(len(matched_tags)) * Decimal("120"))
+        + profile_bonus
+        + mlx_relative_signal
+        - (positive_shortfall * Decimal("80"))
+        - (concentration_excess * Decimal("80"))
     )
 
 
@@ -4086,9 +4219,21 @@ def _pre_replay_proposal_model_and_rows(
             ):
                 return "pre_replay_mlx_active_loss_counter_candidate"
             return "pre_replay_mlx_family_feedback_blocked"
-        if source == "feedback_family_replay" and is_blocked:
-            return "pre_replay_mlx_family_feedback_penalized"
-        if source == "feedback_family_replay" and has_policy_penalty:
+        if (
+            source == "feedback_family_replay"
+            and bundle is not None
+            and (is_blocked or has_policy_penalty)
+        ):
+            spec = spec_by_id.get(candidate_spec_id)
+            if (
+                spec is not None
+                and _candidate_spec_matches_consistency_repair_feedback(
+                    spec,
+                    bundle.objective_scorecard,
+                    oracle_policy=policy,
+                )
+            ):
+                return "pre_replay_mlx_consistency_repair_candidate"
             return "pre_replay_mlx_family_feedback_penalized"
         return "pre_replay_mlx_rank"
 
@@ -4123,6 +4268,32 @@ def _pre_replay_proposal_model_and_rows(
                     oracle_policy=policy,
                 )
             return min(-1_000_000.0, target_by_spec.get(candidate_spec_id, raw_score))
+        if (
+            source == "feedback_family_replay"
+            and bundle is not None
+            and (
+                _feedback_is_blocked(bundle.objective_scorecard, oracle_policy=policy)
+                or _feedback_has_policy_penalty(
+                    bundle.objective_scorecard, oracle_policy=policy
+                )
+            )
+        ):
+            spec = spec_by_id.get(candidate_spec_id)
+            if (
+                spec is not None
+                and _candidate_spec_matches_consistency_repair_feedback(
+                    spec,
+                    bundle.objective_scorecard,
+                    oracle_policy=policy,
+                )
+            ):
+                return _consistency_repair_proposal_score(
+                    spec,
+                    bundle.objective_scorecard,
+                    raw_score=raw_score,
+                    target_score=target_by_spec.get(candidate_spec_id, raw_score),
+                    oracle_policy=policy,
+                )
         if (
             source == "feedback_shape_prior"
             and bundle is not None
@@ -4193,6 +4364,24 @@ def _pre_replay_proposal_model_and_rows(
             )
             if row_selection_reason(item.candidate_spec_id)
             == "pre_replay_mlx_active_loss_counter_candidate"
+            and item.candidate_spec_id in feedback_bundle_by_spec
+            else [],
+            "consistency_repair_tags": sorted(
+                _candidate_spec_active_loss_counter_tags(
+                    spec_by_id[item.candidate_spec_id]
+                )
+            )
+            if row_selection_reason(item.candidate_spec_id)
+            == "pre_replay_mlx_consistency_repair_candidate"
+            else [],
+            "consistency_repair_feedback_reasons": sorted(
+                _feedback_consistency_repair_candidate_reasons(
+                    feedback_bundle_by_spec[item.candidate_spec_id].objective_scorecard,
+                    oracle_policy=policy,
+                )
+            )
+            if row_selection_reason(item.candidate_spec_id)
+            == "pre_replay_mlx_consistency_repair_candidate"
             and item.candidate_spec_id in feedback_bundle_by_spec
             else [],
             "feedback_evidence_context_count": len(feedback_evidence_bundles),
@@ -4604,6 +4793,28 @@ def _select_candidate_specs_for_replay(
         selected_so_far=(),
     )
     active_loss_counter_ids = {spec.candidate_spec_id for spec in active_loss_counter}
+    consistency_repair_candidates = [
+        spec
+        for spec in ordered_eligible
+        if spec.candidate_spec_id not in active_loss_counter_ids
+        if proposal_selection_reason(spec.candidate_spec_id)
+        == "pre_replay_mlx_consistency_repair_candidate"
+    ]
+    consistency_repair_cap = 4
+    if replay_budget <= 4:
+        consistency_repair_cap = max(1, replay_budget // 2)
+    consistency_repair_count = min(
+        consistency_repair_cap,
+        max(0, requested_exploration_slots - len(active_loss_counter)),
+        replay_budget - len(active_loss_counter),
+        len(consistency_repair_candidates),
+    )
+    consistency_repair = take_diverse(
+        consistency_repair_candidates,
+        count=consistency_repair_count,
+        selected_so_far=active_loss_counter,
+    )
+    consistency_repair_ids = {spec.candidate_spec_id for spec in consistency_repair}
 
     runtime_strategy_floor_priority = {
         "intraday-tsmom-profit-v3": 0,
@@ -4620,16 +4831,16 @@ def _select_candidate_specs_for_replay(
             item.candidate_spec_id,
         ),
     ):
-        if spec.candidate_spec_id in active_loss_counter_ids:
+        if spec.candidate_spec_id in active_loss_counter_ids | consistency_repair_ids:
             continue
         if spec.runtime_strategy_name not in runtime_strategy_representatives:
             runtime_strategy_representatives[spec.runtime_strategy_name] = spec
     runtime_strategy_floor = (
         list(runtime_strategy_representatives.values())[
-            : min(4, replay_budget - len(active_loss_counter))
+            : min(4, replay_budget - len(active_loss_counter) - len(consistency_repair))
         ]
         if len(runtime_strategy_representatives) > 1
-        and replay_budget > len(active_loss_counter)
+        and replay_budget > len(active_loss_counter) + len(consistency_repair)
         else []
     )
     runtime_strategy_floor_ids = {
@@ -4640,18 +4851,26 @@ def _select_candidate_specs_for_replay(
         for spec in ordered_eligible
         if spec.candidate_spec_id not in runtime_strategy_floor_ids
         if spec.candidate_spec_id not in active_loss_counter_ids
+        if spec.candidate_spec_id not in consistency_repair_ids
         if _candidate_spec_is_false_negative_rescue(spec)
     ]
     false_negative_rescue_count = min(
         3,
-        max(0, requested_exploration_slots),
-        replay_budget - len(active_loss_counter) - len(runtime_strategy_floor),
+        max(0, requested_exploration_slots - len(consistency_repair)),
+        replay_budget
+        - len(active_loss_counter)
+        - len(consistency_repair)
+        - len(runtime_strategy_floor),
         len(false_negative_rescue_candidates),
     )
     false_negative_rescue_exploration = take_diverse(
         false_negative_rescue_candidates,
         count=false_negative_rescue_count,
-        selected_so_far=[*active_loss_counter, *runtime_strategy_floor],
+        selected_so_far=[
+            *active_loss_counter,
+            *consistency_repair,
+            *runtime_strategy_floor,
+        ],
     )
     false_negative_rescue_ids = {
         spec.candidate_spec_id for spec in false_negative_rescue_exploration
@@ -4661,6 +4880,7 @@ def _select_candidate_specs_for_replay(
         for spec in ordered_eligible
         if spec.candidate_spec_id
         not in active_loss_counter_ids
+        | consistency_repair_ids
         | runtime_strategy_floor_ids
         | false_negative_rescue_ids
     ]
@@ -4668,6 +4888,7 @@ def _select_candidate_specs_for_replay(
         max(0, int(top_k)),
         replay_budget
         - len(active_loss_counter)
+        - len(consistency_repair)
         - len(runtime_strategy_floor)
         - len(false_negative_rescue_exploration),
         len(exploitation_candidates),
@@ -4677,6 +4898,7 @@ def _select_candidate_specs_for_replay(
         count=exploitation_count,
         selected_so_far=[
             *active_loss_counter,
+            *consistency_repair,
             *runtime_strategy_floor,
             *false_negative_rescue_exploration,
         ],
@@ -4686,7 +4908,14 @@ def _select_candidate_specs_for_replay(
         for item in sorted(
             ordered_eligible,
             key=lambda spec: diversity_key(
-                spec, [*false_negative_rescue_exploration, *exploitation]
+                spec,
+                [
+                    *active_loss_counter,
+                    *consistency_repair,
+                    *runtime_strategy_floor,
+                    *false_negative_rescue_exploration,
+                    *exploitation,
+                ],
             ),
         )
         if item.candidate_spec_id
@@ -4695,6 +4924,7 @@ def _select_candidate_specs_for_replay(
             for spec in (
                 *runtime_strategy_floor,
                 *active_loss_counter,
+                *consistency_repair,
                 *false_negative_rescue_exploration,
                 *exploitation,
             )
@@ -4704,6 +4934,7 @@ def _select_candidate_specs_for_replay(
         effective_exploration_slots,
         replay_budget
         - len(active_loss_counter)
+        - len(consistency_repair)
         - len(runtime_strategy_floor)
         - len(false_negative_rescue_exploration)
         - len(exploitation),
@@ -4715,6 +4946,7 @@ def _select_candidate_specs_for_replay(
         selected_so_far=[
             *runtime_strategy_floor,
             *active_loss_counter,
+            *consistency_repair,
             *false_negative_rescue_exploration,
             *exploitation,
         ],
@@ -4723,6 +4955,7 @@ def _select_candidate_specs_for_replay(
         max(0, requested_exploration_slots - len(exploration)),
         replay_budget
         - len(active_loss_counter)
+        - len(consistency_repair)
         - len(runtime_strategy_floor)
         - len(false_negative_rescue_exploration)
         - len(exploitation)
@@ -4735,6 +4968,7 @@ def _select_candidate_specs_for_replay(
         selected_so_far=[
             *runtime_strategy_floor,
             *active_loss_counter,
+            *consistency_repair,
             *false_negative_rescue_exploration,
             *exploitation,
             *exploration,
@@ -4744,6 +4978,7 @@ def _select_candidate_specs_for_replay(
         requested_feedback_block_reaudit_slots,
         replay_budget
         - len(active_loss_counter)
+        - len(consistency_repair)
         - len(runtime_strategy_floor)
         - len(false_negative_rescue_exploration)
         - len(exploitation)
@@ -4757,6 +4992,7 @@ def _select_candidate_specs_for_replay(
         selected_so_far=[
             *runtime_strategy_floor,
             *active_loss_counter,
+            *consistency_repair,
             *false_negative_rescue_exploration,
             *exploitation,
             *exploration,
@@ -4766,6 +5002,7 @@ def _select_candidate_specs_for_replay(
     if (
         len(runtime_strategy_floor)
         + len(active_loss_counter)
+        + len(consistency_repair)
         + len(false_negative_rescue_exploration)
         + len(exploitation)
         + len(exploration)
@@ -4776,6 +5013,7 @@ def _select_candidate_specs_for_replay(
             for item in (
                 *runtime_strategy_floor,
                 *active_loss_counter,
+                *consistency_repair,
                 *false_negative_rescue_exploration,
                 *exploitation,
                 *exploration,
@@ -4792,6 +5030,7 @@ def _select_candidate_specs_for_replay(
             backfill_candidates,
             count=replay_budget
             - len(active_loss_counter)
+            - len(consistency_repair)
             - len(runtime_strategy_floor)
             - len(false_negative_rescue_exploration)
             - len(exploitation)
@@ -4801,6 +5040,7 @@ def _select_candidate_specs_for_replay(
             selected_so_far=[
                 *runtime_strategy_floor,
                 *active_loss_counter,
+                *consistency_repair,
                 *false_negative_rescue_exploration,
                 *exploitation,
                 *exploration,
@@ -4814,6 +5054,10 @@ def _select_candidate_specs_for_replay(
         {
             item.candidate_spec_id: "active_loss_counter_candidate"
             for item in active_loss_counter
+        }
+        | {
+            item.candidate_spec_id: "consistency_repair_candidate"
+            for item in consistency_repair
         }
         | {
             item.candidate_spec_id: "runtime_strategy_floor"
@@ -4843,6 +5087,7 @@ def _select_candidate_specs_for_replay(
     )
     selected = [
         *active_loss_counter,
+        *consistency_repair,
         *runtime_strategy_floor,
         *false_negative_rescue_exploration,
         *exploitation,
@@ -4982,6 +5227,7 @@ def _select_candidate_specs_for_replay(
             "feedback_block_reaudit_slots_effective": feedback_block_reaudit_capacity,
             "feedback_block_reaudit_selected_count": len(feedback_block_reaudit),
             "active_loss_counter_candidate_selected_count": len(active_loss_counter),
+            "consistency_repair_candidate_selected_count": len(consistency_repair),
             "runtime_strategy_floor_selected_count": len(runtime_strategy_floor),
             "portfolio_size_min": max(1, int(portfolio_size_min)),
             "selected_count": len(selected),
@@ -5016,7 +5262,7 @@ def _select_candidate_specs_for_replay(
                 for candidate_spec_id in block_reason_by_spec
                 if candidate_spec_id not in selected_pre_replay_blocked_ids
             ),
-            "replay_order_policy": "quality_gated_diversity_pick_order_with_synthetic_prior_probe_and_feedback_reaudit",
+            "replay_order_policy": "quality_gated_diversity_pick_order_with_consistency_repair_synthetic_prior_probe_and_feedback_reaudit",
             "capital_feasible_candidate_count": sum(
                 1
                 for features in capital_features_by_spec.values()

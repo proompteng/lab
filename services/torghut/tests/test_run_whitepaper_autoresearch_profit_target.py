@@ -1711,6 +1711,102 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "active_loss_counter_candidate",
         )
 
+    def test_candidate_selection_keeps_positive_consistency_repair_candidate(
+        self,
+    ) -> None:
+        source_spec = self._candidate_spec("spec-consistency-source")
+        repair_base = self._candidate_spec(
+            "spec-consistency-repair",
+            entry_minute_after_open="75",
+        )
+        repair_params = dict(
+            cast(dict[str, Any], repair_base.strategy_overrides["params"])
+        )
+        repair_params["feedback_remediation_profile"] = (
+            "consistency_guard_feedback_escape"
+        )
+        repair_spec = replace(
+            repair_base,
+            strategy_overrides={
+                **repair_base.strategy_overrides,
+                "params": repair_params,
+            },
+        )
+        family_feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=source_spec.candidate_spec_id,
+            candidate={
+                "candidate_id": "cand-consistency-source",
+                "family_template_id": source_spec.family_template_id,
+                "runtime_family": source_spec.runtime_family,
+                "runtime_strategy_name": source_spec.runtime_strategy_name,
+                "objective_scorecard": {
+                    "net_pnl_per_day": "900",
+                    "active_day_ratio": "0.40",
+                    "positive_day_ratio": "0.20",
+                    "negative_day_count": 0,
+                    "decision_count": 5,
+                    "filled_count": 5,
+                    "avg_filled_notional_per_day": "350000",
+                    "best_day_share": "0.84",
+                    "max_cluster_contribution_share": "0.70",
+                    "worst_day_loss": "0",
+                    "max_drawdown": "0",
+                    "min_daily_net_pnl": "0",
+                    "daily_net": {
+                        "2026-05-06": "4500",
+                        "2026-05-07": "0",
+                    },
+                },
+            },
+            dataset_snapshot_id="snap-consistency-feedback",
+            result_path="feedback://consistency",
+        )
+
+        _model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(repair_spec,),
+            feedback_evidence_bundles=(family_feedback_bundle,),
+        )
+
+        self.assertEqual(rows[0]["training_source"], "feedback_family_replay")
+        self.assertEqual(
+            rows[0]["selection_reason"],
+            "pre_replay_mlx_consistency_repair_candidate",
+        )
+        self.assertGreater(Decimal(str(rows[0]["proposal_score"])), Decimal("-999999"))
+        self.assertEqual(rows[0]["consistency_repair_tags"], ["loss_control_shortfall"])
+        self.assertIn(
+            "daily_coverage_shortfall",
+            rows[0]["consistency_repair_feedback_reasons"],
+        )
+        self.assertIn(
+            "loss_control_shortfall",
+            rows[0]["consistency_repair_feedback_reasons"],
+        )
+        self.assertIn(
+            "symbol_concentration_shortfall",
+            rows[0]["consistency_repair_feedback_reasons"],
+        )
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(repair_spec,),
+            proposal_rows=rows,
+            top_k=0,
+            exploration_slots=1,
+            max_candidates=1,
+            portfolio_size_min=1,
+        )
+
+        self.assertEqual(selected, [repair_spec])
+        self.assertEqual(selection["budget"]["eligible_candidate_count"], 1)
+        self.assertEqual(
+            selection["budget"]["consistency_repair_candidate_selected_count"],
+            1,
+        )
+        self.assertEqual(
+            selection["rows"][0]["selection_reason"],
+            "consistency_repair_candidate",
+        )
+
     def test_active_loss_counter_candidates_keep_relative_scores(
         self,
     ) -> None:
