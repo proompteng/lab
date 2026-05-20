@@ -568,9 +568,9 @@ const parseRunCompletePayload = (payload: Record<string, unknown>) => {
     data.agent_run_uid,
     agentRunMetadataName ? metadataRecord.uid : null,
   )
-  const workflowName = firstNonEmptyString(agentRunName, runId, metadataRecord.name)
-  const workflowNamespace = firstNonEmptyString(agentRunNamespace, metadataRecord.namespace)
-  const workflowUid = firstNonEmptyString(agentRunUid, metadataRecord.uid)
+  const resolvedAgentRunName = firstNonEmptyString(agentRunName, runId, metadataRecord.name) ?? ''
+  const resolvedAgentRunNamespace = firstNonEmptyString(agentRunNamespace, metadataRecord.namespace)
+  const resolvedAgentRunUid = firstNonEmptyString(agentRunUid, metadataRecord.uid)
 
   return {
     repository,
@@ -587,12 +587,9 @@ const parseRunCompletePayload = (payload: Record<string, unknown>) => {
     turnId,
     threadId,
     runId,
-    agentRunName,
-    agentRunNamespace,
-    agentRunUid,
-    workflowName: workflowName ?? '',
-    workflowUid,
-    workflowNamespace,
+    agentRunName: resolvedAgentRunName,
+    agentRunNamespace: resolvedAgentRunNamespace,
+    agentRunUid: resolvedAgentRunUid,
     stage: typeof decodedPayload.stage === 'string' ? decodedPayload.stage : null,
     phase: typeof rawStatus.phase === 'string' ? rawStatus.phase : null,
     startedAt:
@@ -613,8 +610,8 @@ const parseNotifyPayload = (payload: Record<string, unknown>) => {
   const runId = firstNonEmptyString(data.runId, data.run_id, data.agentRunId, data.agent_run_id)
   const agentRunName = firstNonEmptyString(data.agentRunName, data.agent_run_name)
   const agentRunNamespace = firstNonEmptyString(data.agentRunNamespace, data.agent_run_namespace)
-  const workflowName = firstNonEmptyString(agentRunName, runId) ?? ''
-  const workflowNamespace = agentRunNamespace ?? null
+  const resolvedAgentRunName = firstNonEmptyString(agentRunName, runId) ?? ''
+  const resolvedAgentRunNamespace = agentRunNamespace ?? null
   const repository = normalizeRepo(data.repository)
   const issueNumber = Number(data.issue_number ?? data.issueNumber ?? 0)
   const branch =
@@ -647,10 +644,8 @@ const parseNotifyPayload = (payload: Record<string, unknown>) => {
   const iterationCycle = iterationCycleRaw > 0 ? iterationCycleRaw : null
   return {
     runId,
-    agentRunName,
-    agentRunNamespace,
-    workflowName,
-    workflowNamespace,
+    agentRunName: resolvedAgentRunName,
+    agentRunNamespace: resolvedAgentRunNamespace,
     repository,
     issueNumber,
     branch,
@@ -829,7 +824,7 @@ const scheduleEvaluation = (runId: string, delayMs: number, options: { reschedul
   scheduledRuns.set(runId, timeout)
 }
 
-const getArtifactBucket = () => config.workflowArtifactsBucket
+const getArtifactBucket = () => config.artifactBucket
 const MAX_ARTIFACT_BYTES = 50 * 1024 * 1024
 const MAX_LOG_CHARS = 20_000
 
@@ -943,8 +938,8 @@ const addArtifactEntry = (map: Map<string, ResolvedArtifact>, incoming: Resolved
   map.set(incoming.name, mergeArtifactEntry(existing, incoming))
 }
 
-const buildFallbackArtifactEntries = (workflowName: string, bucket: string): ResolvedArtifact[] => {
-  const baseKey = `${workflowName}/${workflowName}`
+const buildFallbackArtifactEntries = (agentRunName: string, bucket: string): ResolvedArtifact[] => {
+  const baseKey = `${agentRunName}/${agentRunName}`
   return FALLBACK_ARTIFACTS.map((artifact) => ({
     name: artifact.name,
     key: `${baseKey}/${artifact.path}`,
@@ -954,7 +949,7 @@ const buildFallbackArtifactEntries = (workflowName: string, bucket: string): Res
   }))
 }
 
-const updateArtifactsFromWorkflow = async (
+const updateArtifactsFromAgentRun = async (
   run: CodexRunRecord,
   artifactsOverride?: Array<{
     name: string
@@ -964,12 +959,12 @@ const updateArtifactsFromWorkflow = async (
     metadata?: Record<string, unknown>
   }>,
 ) => {
-  const workflowName = run.workflowName
-  if (!workflowName) return []
+  const agentRunName = run.agentRunName
+  if (!agentRunName) return []
   const artifactBucket = getArtifactBucket()
 
   const artifactMap = new Map<string, ResolvedArtifact>()
-  for (const artifact of buildFallbackArtifactEntries(workflowName, artifactBucket)) {
+  for (const artifact of buildFallbackArtifactEntries(agentRunName, artifactBucket)) {
     addArtifactEntry(artifactMap, artifact)
   }
 
@@ -1719,7 +1714,7 @@ const resolveCommitSha = async (run: CodexRunRecord, fallbackCommitSha: string |
 }
 
 const applyArtifactFallback = async (run: CodexRunRecord, artifacts: ResolvedArtifact[]) => {
-  if (!run.workflowName) return
+  if (!run.agentRunName) return
 
   const existingLogExcerpt = extractLogExcerpt(run.notifyPayload)
   const existingSessionId = run.notifyPayload ? extractSessionIdFromPayload(run.notifyPayload) : null
@@ -1758,8 +1753,8 @@ const applyArtifactFallback = async (run: CodexRunRecord, artifacts: ResolvedArt
 
   const fallbackPayload = {
     ...(isRecord(run.notifyPayload) ? run.notifyPayload : {}),
-    workflow_name: run.workflowName,
-    workflow_namespace: run.workflowNamespace,
+    workflow_name: run.agentRunName,
+    workflow_namespace: run.agentRunNamespace,
     repository,
     issue_number: issueNumber,
     head_branch: run.branch,
@@ -1772,8 +1767,8 @@ const applyArtifactFallback = async (run: CodexRunRecord, artifacts: ResolvedArt
   }
 
   await store.attachNotify({
-    workflowName: run.workflowName,
-    workflowNamespace: run.workflowNamespace,
+    agentRunName: run.agentRunName,
+    agentRunNamespace: run.agentRunNamespace,
     notifyPayload: fallbackPayload,
     repository,
     issueNumber,
@@ -1802,9 +1797,9 @@ const backfillAgentMessages = async (run: CodexRunRecord, artifacts: ResolvedArt
     const stage = run.stage ?? null
 
     const records = messages.map((message, index) => ({
-      agentRunUid: run.workflowUid,
-      agentRunName: run.workflowName,
-      agentRunNamespace: run.workflowNamespace,
+      agentRunUid: run.agentRunUid,
+      agentRunName: run.agentRunName,
+      agentRunNamespace: run.agentRunNamespace,
       runId: run.id,
       stepId: null,
       agentId: null,
@@ -1819,7 +1814,7 @@ const backfillAgentMessages = async (run: CodexRunRecord, artifacts: ResolvedArt
     }))
 
     await resolveAgentMessagesSubmit()({
-      skipIfExisting: { runId: run.id, agentRunUid: run.workflowUid },
+      skipIfExisting: { runId: run.id, agentRunUid: run.agentRunUid },
       messages: records,
     })
   } catch (error) {
@@ -1895,11 +1890,11 @@ const evaluateRun = async (runId: string) => {
           branch: run.branch,
         },
         suggestedFixes: {
-          fix: 'Ensure the workflow metadata includes repository, issue number, and head branch.',
+          fix: 'Ensure the AgentRun metadata includes repository, issue number, and head branch.',
         },
         nextPrompt: null,
         systemSuggestions: {
-          suggestions: ['Attach codex repository/issue/head/base metadata to workflow labels or annotations.'],
+          suggestions: ['Attach codex repository/issue/head/base metadata to AgentRun labels or annotations.'],
         },
       })
       const refreshedRun = (await store.getRunById(run.id)) ?? run
@@ -2064,8 +2059,8 @@ const buildSystemImprovementPrompt = (
     `- Stage: ${run.stage ?? 'unknown'}`,
     `- Attempt: ${run.attempt}`,
     `- Failure reason: ${failureReason}`,
-    run.workflowName ? `- Workflow: ${run.workflowName}` : null,
-    run.workflowNamespace ? `- Workflow namespace: ${run.workflowNamespace}` : null,
+    run.agentRunName ? `- AgentRun: ${run.agentRunName}` : null,
+    run.agentRunNamespace ? `- AgentRun namespace: ${run.agentRunNamespace}` : null,
     '',
     'Run links:',
     links.length > 0 ? links.map((entry) => `- ${entry}`).join('\n') : '- n/a',
@@ -2093,7 +2088,7 @@ const buildSystemImprovementPrompt = (
     '',
     'Rollback steps:',
     '- Revert the system-improvement PR or roll back the GitOps revision.',
-    '- Confirm the rollback restores the prior healthy workflow behavior.',
+    '- Confirm the rollback restores the prior healthy AgentRun behavior.',
   ]
     .filter((line): line is string => line !== null)
     .join('\n')
@@ -2121,7 +2116,7 @@ const maybeSubmitSystemImprovementWorkflow = async (
       head: branch,
       prompt,
       judgePrompt: config.systemImprovementJudgePrompt,
-      parentRunUid: run.workflowUid ?? run.id,
+      parentRunUid: run.agentRunUid ?? run.id,
     })
     try {
       await submitter({
@@ -2251,7 +2246,7 @@ const submitRerun = async (run: CodexRunRecord, prompt: string, attempt: number)
       prompt,
       judgePrompt: config.defaultJudgePrompt,
       attempt,
-      parentRunUid: run.workflowUid ?? run.id,
+      parentRunUid: run.agentRunUid ?? run.id,
       iterationCycle,
       iterationsCount,
       resumeKey: resumeArtifacts.resumeKey,
@@ -2446,13 +2441,13 @@ const writeMemories = async (run: CodexRunRecord, evaluation: CodexEvaluationRec
       shouldClose = true
     }
     const namespace = `codex:${run.repository}:${run.issueNumber}`
-    const workflowTag = run.workflowName ? `workflow-${run.workflowName}` : 'workflow-unknown'
+    const agentRunTag = run.agentRunName ? `agentrun-${run.agentRunName}` : 'agentrun-unknown'
     const stageTag = run.stage ? `stage-${run.stage}` : 'stage-unknown'
     const tags = [
       'codex',
       run.repository,
       `issue-${run.issueNumber}`,
-      workflowTag,
+      agentRunTag,
       `attempt-${run.attempt}`,
       run.status,
       stageTag,
@@ -2462,9 +2457,9 @@ const writeMemories = async (run: CodexRunRecord, evaluation: CodexEvaluationRec
       runId: run.id,
       commitSha: run.commitSha,
       ciUrl: run.ciUrl,
-      workflowName: run.workflowName,
-      workflowNamespace: run.workflowNamespace,
-      workflowUid: run.workflowUid,
+      agentRunName: run.agentRunName,
+      agentRunNamespace: run.agentRunNamespace,
+      agentRunUid: run.agentRunUid,
       startedAt: run.startedAt,
       finishedAt: run.finishedAt,
       createdAt: run.createdAt,
@@ -2527,8 +2522,8 @@ export const handleRunComplete = async (payload: Record<string, unknown>) => {
   const parsed = parseRunCompletePayload(payload)
   const existing =
     (parsed.runId ? await store.getRunById(parsed.runId) : null) ??
-    (parsed.workflowName.length > 0
-      ? await store.getRunByWorkflow(parsed.workflowName, parsed.workflowNamespace)
+    (parsed.agentRunName.length > 0
+      ? await store.getRunByAgentRun(parsed.agentRunName, parsed.agentRunNamespace)
       : null)
   const resolvedRepository = parsed.repository || existing?.repository || UNKNOWN_REPOSITORY
   const resolvedIssueNumber =
@@ -2539,8 +2534,8 @@ export const handleRunComplete = async (payload: Record<string, unknown>) => {
     (typeof existing?.runCompletePayload?.base === 'string' ? existing.runCompletePayload.base : null) ||
     null
   const resolvedPrompt = parsed.prompt ?? existing?.prompt ?? null
-  const resolvedWorkflowUid = parsed.workflowUid ?? existing?.workflowUid ?? null
-  const resolvedWorkflowNamespace = parsed.workflowNamespace ?? existing?.workflowNamespace ?? null
+  const resolvedAgentRunUid = parsed.agentRunUid ?? existing?.agentRunUid ?? null
+  const resolvedAgentRunNamespace = parsed.agentRunNamespace ?? existing?.agentRunNamespace ?? null
   const resolvedStage = parsed.stage ?? existing?.stage ?? null
   const resolvedTurnId = parsed.turnId ?? existing?.turnId ?? null
   const resolvedThreadId = parsed.threadId ?? existing?.threadId ?? null
@@ -2550,9 +2545,9 @@ export const handleRunComplete = async (payload: Record<string, unknown>) => {
     repository: resolvedRepository,
     issueNumber: resolvedIssueNumber,
     branch: resolvedBranch,
-    workflowName: parsed.workflowName,
-    workflowUid: resolvedWorkflowUid,
-    workflowNamespace: resolvedWorkflowNamespace,
+    agentRunName: parsed.agentRunName,
+    agentRunUid: resolvedAgentRunUid,
+    agentRunNamespace: resolvedAgentRunNamespace,
     stage: resolvedStage,
     turnId: resolvedTurnId,
     threadId: resolvedThreadId,
@@ -2584,7 +2579,7 @@ export const handleRunComplete = async (payload: Record<string, unknown>) => {
     finishedAt: parsed.finishedAt,
   })
 
-  const resolvedArtifacts = await updateArtifactsFromWorkflow(run, parsed.artifacts)
+  const resolvedArtifacts = await updateArtifactsFromAgentRun(run, parsed.artifacts)
   await applyArtifactFallback(run, resolvedArtifacts)
   await backfillAgentMessages(run, resolvedArtifacts)
   if (run.status === 'run_complete') {
@@ -2614,7 +2609,7 @@ const parseRerunPayload = (payload: Record<string, unknown>) => {
       : typeof payload.agentRunNamespace === 'string'
         ? payload.agentRunNamespace.trim()
         : ''
-  const resolvedWorkflowNamespace = agentRunNamespace || config.workflowNamespace || null
+  const resolvedAgentRunNamespace = agentRunNamespace || config.agentRunNamespace || null
   const deliveryId =
     typeof payload.delivery_id === 'string'
       ? payload.delivery_id.trim()
@@ -2632,8 +2627,8 @@ const parseRerunPayload = (payload: Record<string, unknown>) => {
     attempt,
     prompt,
     runId: runId || null,
-    workflowName: agentRunName || null,
-    workflowNamespace: resolvedWorkflowNamespace,
+    agentRunName: agentRunName || null,
+    agentRunNamespace: resolvedAgentRunNamespace,
     deliveryId,
   }
 }
@@ -2644,8 +2639,8 @@ export const handleRerunRequest = async (payload: Record<string, unknown>) => {
 
   const run = parsed.runId
     ? await store.getRunById(parsed.runId)
-    : parsed.workflowName
-      ? await store.getRunByWorkflow(parsed.workflowName, parsed.workflowNamespace)
+    : parsed.agentRunName
+      ? await store.getRunByAgentRun(parsed.agentRunName, parsed.agentRunNamespace)
       : null
 
   if (!run) {
@@ -2672,14 +2667,14 @@ export const handleRerunRequest = async (payload: Record<string, unknown>) => {
 export const handleNotify = async (payload: Record<string, unknown>) => {
   await ensureStoreReady()
   const parsed = parseNotifyPayload(payload)
-  if (!parsed.workflowName && !parsed.runId) {
+  if (!parsed.agentRunName && !parsed.runId) {
     throw new Error('notify payload missing AgentRun identity')
   }
 
   const run = await store.attachNotify({
     runId: parsed.runId,
-    workflowName: parsed.workflowName,
-    workflowNamespace: parsed.workflowNamespace,
+    agentRunName: parsed.agentRunName,
+    agentRunNamespace: parsed.agentRunNamespace,
     notifyPayload: parsed.notifyPayload,
     repository: parsed.repository,
     issueNumber: parsed.issueNumber,

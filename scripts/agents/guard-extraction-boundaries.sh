@@ -309,6 +309,14 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/scripts/codex-nats-publish.ts"
 
 fail_if_matches \
+  "Jangar Codex judge source contract must use AgentRun-native runtime identity fields, not workflow-shaped camelCase fields or selectors" \
+  'workflowUid|workflowName|workflowNamespace|workflowArtifactsBucket|getRunByWorkflow|selectCodexJudgeRunByWorkflow|resolvedWorkflow|normalizedWorkflow|updateArtifactsFromWorkflow|workflowTag' \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge-store.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge-run-rows.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge-config.ts"
+
+fail_if_matches \
   "Agents controller must not derive runner goals from deprecated AgentRun parameter aliases" \
   'goalObjective|goalTokenBudget' \
   "${ROOT_DIR}/services/agents/src/server/agents-controller" \

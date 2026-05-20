@@ -3,8 +3,8 @@ import { sql } from 'kysely'
 import { resolveStoreDb, type Db } from '~/server/db'
 import {
   selectCodexJudgeRunById,
-  selectCodexJudgeRunByWorkflow,
-  selectCodexJudgeRunByWorkflowUid,
+  selectCodexJudgeRunByAgentRun,
+  selectCodexJudgeRunByAgentRunUid,
 } from '~/server/codex-judge-run-rows'
 import { ensureMigrations } from '~/server/kysely-migrations'
 
@@ -14,9 +14,9 @@ export type CodexRunRecord = {
   issueNumber: number
   branch: string
   attempt: number
-  workflowName: string
-  workflowUid: string | null
-  workflowNamespace: string | null
+  agentRunName: string
+  agentRunUid: string | null
+  agentRunNamespace: string | null
   turnId: string | null
   threadId: string | null
   stage: string | null
@@ -49,8 +49,8 @@ export type CodexRunSummaryRecord = {
   issueNumber: number
   branch: string
   attempt: number
-  workflowName: string
-  workflowNamespace: string | null
+  agentRunName: string
+  agentRunNamespace: string | null
   stage: string | null
   status: string
   phase: string | null
@@ -167,9 +167,9 @@ export type UpsertRunCompleteInput = {
   repository: string
   issueNumber: number
   branch: string
-  workflowName: string
-  workflowUid: string | null
-  workflowNamespace: string | null
+  agentRunName: string
+  agentRunUid: string | null
+  agentRunNamespace: string | null
   turnId: string | null
   threadId: string | null
   stage: string | null
@@ -185,8 +185,8 @@ export type UpsertRunCompleteInput = {
 
 export type AttachNotifyInput = {
   runId?: string | null
-  workflowName?: string | null
-  workflowNamespace?: string | null
+  agentRunName?: string | null
+  agentRunNamespace?: string | null
   notifyPayload: Record<string, unknown>
   repository?: string
   issueNumber?: number
@@ -281,7 +281,7 @@ export type CodexJudgeStore = {
   enqueueRerunSubmission: (input: EnqueueRerunSubmissionInput) => Promise<CodexRerunSubmissionRecord | null>
   updateRerunSubmission: (input: UpdateRerunSubmissionInput) => Promise<CodexRerunSubmissionRecord | null>
   listRerunSubmissions: (input?: ListRerunSubmissionsInput) => Promise<CodexRerunSubmissionRecord[]>
-  getRunByWorkflow: (workflowName: string, namespace?: string | null) => Promise<CodexRunRecord | null>
+  getRunByAgentRun: (agentRunName: string, namespace?: string | null) => Promise<CodexRunRecord | null>
   getRunById: (runId: string) => Promise<CodexRunRecord | null>
   listRunsByIssue: (repository: string, issueNumber: number, branch?: string | null) => Promise<CodexRunRecord[]>
   listRunsByBranch: (repository: string, branch: string) => Promise<CodexRunRecord[]>
@@ -430,9 +430,9 @@ const rowToRun = (row: Record<string, unknown>): CodexRunRecord => {
     issueNumber: Number(row.issue_number),
     branch: String(row.branch),
     attempt: Number(row.attempt),
-    workflowName: String(row.workflow_name),
-    workflowUid: row.workflow_uid ? String(row.workflow_uid) : null,
-    workflowNamespace: row.workflow_namespace ? String(row.workflow_namespace) : null,
+    agentRunName: String(row.workflow_name),
+    agentRunUid: row.workflow_uid ? String(row.workflow_uid) : null,
+    agentRunNamespace: row.workflow_namespace ? String(row.workflow_namespace) : null,
     turnId: row.turn_id ? String(row.turn_id) : null,
     threadId: row.thread_id ? String(row.thread_id) : null,
     stage: row.stage ? String(row.stage) : null,
@@ -466,8 +466,8 @@ const rowToRunSummary = (row: Record<string, unknown>): CodexRunSummaryRecord =>
   issueNumber: Number(row.issue_number),
   branch: String(row.branch),
   attempt: Number(row.attempt),
-  workflowName: String(row.workflow_name),
-  workflowNamespace: row.workflow_namespace ? String(row.workflow_namespace) : null,
+  agentRunName: String(row.workflow_name),
+  agentRunNamespace: row.workflow_namespace ? String(row.workflow_namespace) : null,
   stage: row.stage ? String(row.stage) : null,
   status: String(row.status),
   phase: row.phase ? String(row.phase) : null,
@@ -535,8 +535,8 @@ export const createCodexJudgeStore = (
   const db = resolved.db
   const ready = ensureSchema(db)
 
-  const getRunByWorkflow = async (workflowName: string, namespace?: string | null) => {
-    const row = await selectCodexJudgeRunByWorkflow(db, workflowName, namespace)
+  const getRunByAgentRun = async (agentRunName: string, namespace?: string | null) => {
+    const row = await selectCodexJudgeRunByAgentRun(db, agentRunName, namespace)
     return row ? rowToRun(row as Record<string, unknown>) : null
   }
 
@@ -821,11 +821,11 @@ export const createCodexJudgeStore = (
 
   const upsertRunComplete = async (input: UpsertRunCompleteInput) => {
     const existingById = await selectCodexJudgeRunById(db, input.runId)
-    const existingByUid = existingById ? null : await selectCodexJudgeRunByWorkflowUid(db, input.workflowUid)
+    const existingByUid = existingById ? null : await selectCodexJudgeRunByAgentRunUid(db, input.agentRunUid)
     const existingByName =
       existingById || existingByUid
         ? null
-        : await selectCodexJudgeRunByWorkflow(db, input.workflowName, input.workflowNamespace)
+        : await selectCodexJudgeRunByAgentRun(db, input.agentRunName, input.agentRunNamespace)
 
     const existing = existingById ?? existingByUid ?? existingByName
 
@@ -841,8 +841,8 @@ export const createCodexJudgeStore = (
           repository: input.repository,
           issue_number: input.issueNumber,
           branch: input.branch,
-          workflow_name: input.workflowName,
-          workflow_namespace: input.workflowNamespace ?? null,
+          workflow_name: input.agentRunName,
+          workflow_namespace: input.agentRunNamespace ?? null,
           turn_id: input.turnId ?? (existing.turn_id ? String(existing.turn_id) : null),
           thread_id: input.threadId ?? (existing.thread_id ? String(existing.thread_id) : null),
           stage: input.stage,
@@ -878,9 +878,9 @@ export const createCodexJudgeStore = (
         issue_number: input.issueNumber,
         branch: input.branch,
         attempt,
-        workflow_name: input.workflowName,
-        workflow_uid: input.workflowUid,
-        workflow_namespace: input.workflowNamespace,
+        workflow_name: input.agentRunName,
+        workflow_uid: input.agentRunUid,
+        workflow_namespace: input.agentRunNamespace,
         turn_id: input.turnId ?? null,
         thread_id: input.threadId ?? null,
         stage: input.stage,
@@ -901,15 +901,15 @@ export const createCodexJudgeStore = (
   }
 
   const attachNotify = async (input: AttachNotifyInput) => {
-    const normalizedWorkflowName = input.workflowName?.trim() || input.runId?.trim() || ''
+    const normalizedAgentRunName = input.agentRunName?.trim() || input.runId?.trim() || ''
     const rowById = await selectCodexJudgeRunById(db, input.runId)
     const row = rowById
       ? rowById
-      : normalizedWorkflowName
-        ? await selectCodexJudgeRunByWorkflow(db, normalizedWorkflowName, input.workflowNamespace)
+      : normalizedAgentRunName
+        ? await selectCodexJudgeRunByAgentRun(db, normalizedAgentRunName, input.agentRunNamespace)
         : null
     if (!row) {
-      if (!normalizedWorkflowName || !input.repository || !input.issueNumber || !input.branch) {
+      if (!normalizedAgentRunName || !input.repository || !input.issueNumber || !input.branch) {
         return null
       }
 
@@ -928,8 +928,8 @@ export const createCodexJudgeStore = (
           issue_number: input.issueNumber,
           branch: input.branch,
           attempt,
-          workflow_name: normalizedWorkflowName,
-          workflow_namespace: input.workflowNamespace ?? null,
+          workflow_name: normalizedAgentRunName,
+          workflow_namespace: input.agentRunNamespace ?? null,
           stage: input.stage ?? null,
           status: 'notified',
           iteration: input.iteration ?? null,
@@ -1299,7 +1299,7 @@ export const createCodexJudgeStore = (
     claimRerunSubmission,
     enqueueRerunSubmission,
     updateRerunSubmission,
-    getRunByWorkflow,
+    getRunByAgentRun,
     getRunById,
     listRunsByIssue,
     listRunsByBranch,

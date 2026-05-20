@@ -35,8 +35,8 @@ const globalState = globalThis as typeof globalThis & {
     reviewMaxWaitMs: number
     maxAttempts: number
     backoffScheduleMs: number[]
-    workflowArtifactsBucket: string
-    workflowNamespace: string | null
+    artifactBucket: string
+    agentRunNamespace: string | null
     discordBotToken: string | null
     discordChannelId: string | null
     discordApiBaseUrl: string
@@ -110,7 +110,7 @@ if (!globalState.__codexJudgeStoreMock) {
     listRunsByStatus: vi.fn(),
     claimRerunSubmission: vi.fn(),
     updateRerunSubmission: vi.fn(),
-    getRunByWorkflow: vi.fn(),
+    getRunByAgentRun: vi.fn(),
     getRunById: vi.fn(),
     listRunsByIssue: vi.fn(),
     listRunsByBranch: vi.fn(),
@@ -151,8 +151,8 @@ if (!globalState.__codexJudgeConfigMock) {
     reviewMaxWaitMs: 10_000,
     maxAttempts: 3,
     backoffScheduleMs: [0],
-    workflowArtifactsBucket: 'jangar-artifacts',
-    workflowNamespace: null,
+    artifactBucket: 'jangar-artifacts',
+    agentRunNamespace: null,
     discordBotToken: null,
     discordChannelId: null,
     discordApiBaseUrl: 'https://discord.com/api/v10',
@@ -189,9 +189,9 @@ const harness = (() => {
     issueNumber: 2125,
     branch: 'codex/issue-2125',
     attempt: 1,
-    workflowName: 'workflow-1',
-    workflowUid: null,
-    workflowNamespace: null,
+    agentRunName: 'agentrun-1',
+    agentRunUid: null,
+    agentRunNamespace: null,
     turnId: null,
     threadId: null,
     stage: 'implementation',
@@ -448,8 +448,8 @@ const harness = (() => {
     reviewMaxWaitMs: 10_000,
     maxAttempts: 3,
     backoffScheduleMs: [0],
-    workflowArtifactsBucket: 'jangar-artifacts',
-    workflowNamespace: null,
+    artifactBucket: 'jangar-artifacts',
+    agentRunNamespace: null,
     discordBotToken: null,
     discordChannelId: null,
     discordApiBaseUrl: 'https://discord.com/api/v10',
@@ -731,9 +731,9 @@ describe('codex judge guardrails', () => {
     expect(parsed.agentRunName).toBe('agentrun-123')
     expect(parsed.agentRunNamespace).toBe('agents')
     expect(parsed.agentRunUid).toBe('uid-123')
-    expect(parsed.workflowName).toBe('agentrun-123')
-    expect(parsed.workflowNamespace).toBe('agents')
-    expect(parsed.workflowUid).toBe('uid-123')
+    expect(parsed.agentRunName).toBe('agentrun-123')
+    expect(parsed.agentRunNamespace).toBe('agents')
+    expect(parsed.agentRunUid).toBe('uid-123')
   })
 
   it('ignores legacy workflow identity when AgentRun run-complete identity is present', async () => {
@@ -757,9 +757,9 @@ describe('codex judge guardrails', () => {
       status: { phase: 'Succeeded' },
     })
 
-    expect(parsed.workflowName).toBe('agentrun-current')
-    expect(parsed.workflowNamespace).toBe('agents')
-    expect(parsed.workflowUid).toBe('uid-current')
+    expect(parsed.agentRunName).toBe('agentrun-current')
+    expect(parsed.agentRunNamespace).toBe('agents')
+    expect(parsed.agentRunUid).toBe('uid-current')
   })
 
   it('parses AgentRun notify identity without requiring legacy workflow fields', async () => {
@@ -775,8 +775,8 @@ describe('codex judge guardrails', () => {
     expect(parsed.runId).toBe('run-456')
     expect(parsed.agentRunName).toBe('agentrun-456')
     expect(parsed.agentRunNamespace).toBe('agents')
-    expect(parsed.workflowName).toBe('agentrun-456')
-    expect(parsed.workflowNamespace).toBe('agents')
+    expect(parsed.agentRunName).toBe('agentrun-456')
+    expect(parsed.agentRunNamespace).toBe('agents')
     expect(parsed.notifyPayload).toEqual(
       expect.objectContaining({
         agent_run_id: 'run-456',
@@ -797,7 +797,7 @@ describe('codex judge guardrails', () => {
       last_assistant_message: 'opened PR',
     })
 
-    expect(parsed.workflowName).toBe('agentrun-789')
-    expect(parsed.workflowNamespace).toBe('agents')
+    expect(parsed.agentRunName).toBe('agentrun-789')
+    expect(parsed.agentRunNamespace).toBe('agents')
   })
 })

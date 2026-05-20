@@ -96,6 +96,9 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('AGENTS_CREATE_DB_SECRET_ALIAS|compat-source-secret')
     expect(content).toContain('retired workflow_comms agent-message store')
     expect(content).toContain('Jangar Codex NATS publisher must emit AgentRun-native identity only')
+    expect(content).toContain('Jangar Codex judge source contract must use AgentRun-native runtime identity fields')
+    expect(content).toContain('getRunByWorkflow|selectCodexJudgeRunByWorkflow')
+    expect(content).toContain('updateArtifactsFromWorkflow|workflowTag')
     expect(content).toContain('workflow-shaped agent-message identity fields')
     expect(content).toContain(
       'workflowUid|workflow_uid|workflowName|workflow_name|workflowNamespace|workflow_namespace',

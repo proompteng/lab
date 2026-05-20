@@ -53,8 +53,8 @@ const globalState = globalThis as typeof globalThis & {
     reviewMaxWaitMs: number
     maxAttempts: number
     backoffScheduleMs: number[]
-    workflowArtifactsBucket: string
-    workflowNamespace: string | null
+    artifactBucket: string
+    agentRunNamespace: string | null
     discordBotToken: string | null
     discordChannelId: string | null
     discordApiBaseUrl: string
@@ -86,7 +86,7 @@ if (!globalState.__codexJudgeStoreMock) {
     updateRerunSubmission: vi.fn(),
     enqueueRerunSubmission: vi.fn(),
     listRerunSubmissions: vi.fn(),
-    getRunByWorkflow: vi.fn(),
+    getRunByAgentRun: vi.fn(),
     getRunById: vi.fn(),
     listRunsByIssue: vi.fn(),
     listRunsByBranch: vi.fn(),
@@ -125,8 +125,8 @@ if (!globalState.__codexJudgeConfigMock) {
     reviewMaxWaitMs: 10_000,
     maxAttempts: 3,
     backoffScheduleMs: [0],
-    workflowArtifactsBucket: 'jangar-artifacts',
-    workflowNamespace: null,
+    artifactBucket: 'jangar-artifacts',
+    agentRunNamespace: null,
     discordBotToken: null,
     discordChannelId: null,
     discordApiBaseUrl: 'https://discord.com/api/v10',
@@ -179,20 +179,20 @@ afterEach(() => {
 describe('codex-judge artifact fallback', () => {
   it('uses workflow output filenames for fallback keys', async () => {
     const { buildFallbackArtifactEntries } = await requirePrivate()
-    const artifacts = buildFallbackArtifactEntries('workflow-1', 'jangar-artifacts')
+    const artifacts = buildFallbackArtifactEntries('agentrun-1', 'jangar-artifacts')
     const byName = new Map(artifacts.map((artifact) => [artifact.name, artifact]))
 
-    expect(byName.get('implementation-changes')?.key).toBe('workflow-1/workflow-1/.codex-implementation-changes.tar.gz')
-    expect(byName.get('implementation-patch')?.key).toBe('workflow-1/workflow-1/.codex-implementation.patch')
-    expect(byName.get('implementation-status')?.key).toBe('workflow-1/workflow-1/.codex-implementation-status.txt')
-    expect(byName.get('implementation-log')?.key).toBe('workflow-1/workflow-1/.codex-implementation.log')
-    expect(byName.get('implementation-events')?.key).toBe('workflow-1/workflow-1/.codex/implementation-events.jsonl')
-    expect(byName.get('implementation-agent-log')?.key).toBe('workflow-1/workflow-1/.codex-implementation-agent.log')
+    expect(byName.get('implementation-changes')?.key).toBe('agentrun-1/agentrun-1/.codex-implementation-changes.tar.gz')
+    expect(byName.get('implementation-patch')?.key).toBe('agentrun-1/agentrun-1/.codex-implementation.patch')
+    expect(byName.get('implementation-status')?.key).toBe('agentrun-1/agentrun-1/.codex-implementation-status.txt')
+    expect(byName.get('implementation-log')?.key).toBe('agentrun-1/agentrun-1/.codex-implementation.log')
+    expect(byName.get('implementation-events')?.key).toBe('agentrun-1/agentrun-1/.codex/implementation-events.jsonl')
+    expect(byName.get('implementation-agent-log')?.key).toBe('agentrun-1/agentrun-1/.codex-implementation-agent.log')
     expect(byName.get('implementation-runtime-log')?.key).toBe(
-      'workflow-1/workflow-1/.codex-implementation-runtime.log',
+      'agentrun-1/agentrun-1/.codex-implementation-runtime.log',
     )
-    expect(byName.get('implementation-resume')?.key).toBe('workflow-1/workflow-1/.codex/implementation-resume.json')
-    expect(byName.get('implementation-notify')?.key).toBe('workflow-1/workflow-1/.codex-implementation-notify.json')
+    expect(byName.get('implementation-resume')?.key).toBe('agentrun-1/agentrun-1/.codex/implementation-resume.json')
+    expect(byName.get('implementation-notify')?.key).toBe('agentrun-1/agentrun-1/.codex-implementation-notify.json')
   }, 15_000)
 })
 
@@ -215,7 +215,7 @@ describe('codex-judge artifact fetch', () => {
     const { fetchArtifactBuffer } = await requirePrivate()
     const result = await fetchArtifactBuffer({
       name: 'implementation-log',
-      key: 'workflow-1/workflow-1/.codex-implementation.log',
+      key: 'agentrun-1/agentrun-1/.codex-implementation.log',
       bucket: 'jangar-artifacts',
       url: null,
       metadata: {},
@@ -225,7 +225,7 @@ describe('codex-judge artifact fetch', () => {
     expect(getSignedUrl).toHaveBeenCalledTimes(1)
     expect(getObjectInputs[0]).toEqual({
       Bucket: 'jangar-artifacts',
-      Key: 'workflow-1/workflow-1/.codex-implementation.log',
+      Key: 'agentrun-1/agentrun-1/.codex-implementation.log',
     })
     expect(fetchMock).toHaveBeenCalledWith('http://minio.local/signed')
   })

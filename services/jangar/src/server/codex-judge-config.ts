@@ -7,8 +7,8 @@ export type CodexJudgeConfig = {
   reviewMaxWaitMs: number
   maxAttempts: number
   backoffScheduleMs: number[]
-  workflowArtifactsBucket: string
-  workflowNamespace: string | null
+  artifactBucket: string
+  agentRunNamespace: string | null
   discordBotToken: string | null
   discordChannelId: string | null
   discordApiBaseUrl: string
@@ -58,24 +58,25 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
     parseNumber(value, 0),
   )
   const resolvedBackoff = backoffScheduleMs.length > 0 ? backoffScheduleMs : [5 * 60_000, 15 * 60_000, 45 * 60_000]
-  const workflowArtifactsBucket =
+  const artifactBucket =
     (process.env.JANGAR_CODEX_ARTIFACT_BUCKET ?? process.env.ARTIFACT_BUCKET ?? 'jangar-artifacts').trim() ||
     'jangar-artifacts'
-  const workflowNamespace = (process.env.JANGAR_CODEX_WORKFLOW_NAMESPACE ?? '').trim() || null
+  const agentRunNamespace =
+    (process.env.AGENTS_CODEX_AGENT_RUN_NAMESPACE ?? process.env.JANGAR_CODEX_WORKFLOW_NAMESPACE ?? '').trim() || null
   const discordBotToken = (process.env.DISCORD_BOT_TOKEN ?? '').trim() || null
   const discordChannelId = (process.env.DISCORD_SUCCESS_CHANNEL_ID ?? '').trim() || null
   const discordApiBaseUrl = (process.env.DISCORD_API_BASE_URL ?? DEFAULT_DISCORD_API_BASE).trim()
   const rerunOrchestrationName = (process.env.AGENTS_CODEX_RERUN_ORCHESTRATION ?? '').trim() || null
   const rerunOrchestrationNamespace = (
     process.env.AGENTS_CODEX_RERUN_ORCHESTRATION_NAMESPACE ??
-    workflowNamespace ??
+    agentRunNamespace ??
     process.env.JANGAR_NAMESPACE ??
     'jangar'
   ).trim()
   const systemImprovementOrchestrationName = (process.env.AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION ?? '').trim() || null
   const systemImprovementOrchestrationNamespace = (
     process.env.AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE ??
-    workflowNamespace ??
+    agentRunNamespace ??
     process.env.JANGAR_NAMESPACE ??
     'jangar'
   ).trim()
@@ -93,8 +94,8 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
     reviewMaxWaitMs,
     maxAttempts,
     backoffScheduleMs: resolvedBackoff,
-    workflowArtifactsBucket,
-    workflowNamespace,
+    artifactBucket,
+    agentRunNamespace,
     discordBotToken,
     discordChannelId,
     discordApiBaseUrl,

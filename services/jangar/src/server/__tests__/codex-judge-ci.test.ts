@@ -28,8 +28,8 @@ const globalState = globalThis as typeof globalThis & {
     reviewMaxWaitMs: number
     maxAttempts: number
     backoffScheduleMs: number[]
-    workflowArtifactsBucket: string
-    workflowNamespace: string | null
+    artifactBucket: string
+    agentRunNamespace: string | null
     discordBotToken: string | null
     discordChannelId: string | null
     discordApiBaseUrl: string
@@ -68,7 +68,7 @@ if (!globalState.__codexJudgeStoreMock) {
     updateRerunSubmission: vi.fn(),
     enqueueRerunSubmission: vi.fn(),
     listRerunSubmissions: vi.fn(),
-    getRunByWorkflow: vi.fn(),
+    getRunByAgentRun: vi.fn(),
     getRunById: vi.fn(),
     listRunsByIssue: vi.fn(),
     listRunsByBranch: vi.fn(),
@@ -107,8 +107,8 @@ if (!globalState.__codexJudgeConfigMock) {
     reviewMaxWaitMs: 10_000,
     maxAttempts: 3,
     backoffScheduleMs: [1000],
-    workflowArtifactsBucket: 'jangar-artifacts',
-    workflowNamespace: null,
+    artifactBucket: 'jangar-artifacts',
+    agentRunNamespace: null,
     discordBotToken: null,
     discordChannelId: null,
     discordApiBaseUrl: 'https://discord.com/api/v10',
@@ -160,8 +160,8 @@ const config = {
   reviewMaxWaitMs: 10_000,
   maxAttempts: 3,
   backoffScheduleMs: [1000],
-  workflowArtifactsBucket: 'jangar-artifacts',
-  workflowNamespace: null,
+  artifactBucket: 'jangar-artifacts',
+  agentRunNamespace: null,
   discordBotToken: null,
   discordChannelId: null,
   discordApiBaseUrl: 'https://discord.com/api/v10',
@@ -179,9 +179,9 @@ const buildRun = (overrides: Partial<CodexRunRecord> = {}): CodexRunRecord => ({
   issueNumber: 123,
   branch: 'codex/issue-123',
   attempt: 1,
-  workflowName: 'workflow-1',
-  workflowUid: null,
-  workflowNamespace: null,
+  agentRunName: 'agentrun-1',
+  agentRunUid: null,
+  agentRunNamespace: null,
   turnId: null,
   threadId: null,
   stage: 'implementation',

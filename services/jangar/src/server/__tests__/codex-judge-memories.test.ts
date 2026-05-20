@@ -35,8 +35,8 @@ const globalState = globalThis as typeof globalThis & {
     reviewMaxWaitMs: number
     maxAttempts: number
     backoffScheduleMs: number[]
-    workflowArtifactsBucket: string
-    workflowNamespace: string | null
+    artifactBucket: string
+    agentRunNamespace: string | null
     discordBotToken: string | null
     discordChannelId: string | null
     discordApiBaseUrl: string
@@ -81,7 +81,7 @@ if (!globalState.__codexJudgeStoreMock) {
     updateRerunSubmission: vi.fn(),
     enqueueRerunSubmission: vi.fn(),
     listRerunSubmissions: vi.fn(),
-    getRunByWorkflow: vi.fn(),
+    getRunByAgentRun: vi.fn(),
     getRunById: vi.fn(),
     listRunsByIssue: vi.fn(),
     listRunsByBranch: vi.fn(),
@@ -120,8 +120,8 @@ if (!globalState.__codexJudgeConfigMock) {
     reviewMaxWaitMs: 10_000,
     maxAttempts: 3,
     backoffScheduleMs: [1000],
-    workflowArtifactsBucket: 'jangar-artifacts',
-    workflowNamespace: null,
+    artifactBucket: 'jangar-artifacts',
+    agentRunNamespace: null,
     discordBotToken: null,
     discordChannelId: null,
     discordApiBaseUrl: 'https://discord.com/api/v10',
@@ -181,7 +181,7 @@ const store = {
   updateRerunSubmission: vi.fn(),
   enqueueRerunSubmission: vi.fn(),
   listRerunSubmissions: vi.fn(),
-  getRunByWorkflow: vi.fn(),
+  getRunByAgentRun: vi.fn(),
   getRunById: vi.fn(),
   listRunsByIssue: vi.fn(),
   listRunsByBranch: vi.fn(),
@@ -260,9 +260,9 @@ describe('codex-judge memory snapshots', () => {
       issueNumber: 2126,
       branch: 'codex/issue-2126',
       attempt: 2,
-      workflowName: 'workflow-1',
-      workflowUid: 'workflow-uid',
-      workflowNamespace: 'jangar',
+      agentRunName: 'agentrun-1',
+      agentRunUid: 'agentrun-uid',
+      agentRunNamespace: 'jangar',
       turnId: null,
       threadId: null,
       stage: 'implementation',
@@ -312,9 +312,9 @@ describe('codex-judge memory snapshots', () => {
         runId: 'run-1',
         commitSha: run.commitSha,
         ciUrl: run.ciUrl,
-        workflowName: run.workflowName,
-        workflowNamespace: run.workflowNamespace,
-        workflowUid: run.workflowUid,
+        agentRunName: run.agentRunName,
+        agentRunNamespace: run.agentRunNamespace,
+        agentRunUid: run.agentRunUid,
         startedAt: run.startedAt,
         finishedAt: run.finishedAt,
         createdAt: run.createdAt,

@@ -35,8 +35,8 @@ const globalState = globalThis as typeof globalThis & {
     reviewMaxWaitMs: number
     maxAttempts: number
     backoffScheduleMs: number[]
-    workflowArtifactsBucket: string
-    workflowNamespace: string | null
+    artifactBucket: string
+    agentRunNamespace: string | null
     discordBotToken: string | null
     discordChannelId: string | null
     discordApiBaseUrl: string
@@ -68,7 +68,7 @@ if (!globalState.__codexJudgeStoreMock) {
     updateRerunSubmission: vi.fn(),
     enqueueRerunSubmission: vi.fn(),
     listRerunSubmissions: vi.fn(),
-    getRunByWorkflow: vi.fn(),
+    getRunByAgentRun: vi.fn(),
     getRunById: vi.fn(),
     listRunsByIssue: vi.fn(),
     listRunsByBranch: vi.fn(),
@@ -107,8 +107,8 @@ if (!globalState.__codexJudgeConfigMock) {
     reviewMaxWaitMs: 10_000,
     maxAttempts: 3,
     backoffScheduleMs: [1000],
-    workflowArtifactsBucket: 'jangar-artifacts',
-    workflowNamespace: null,
+    artifactBucket: 'jangar-artifacts',
+    agentRunNamespace: null,
     discordBotToken: null,
     discordChannelId: null,
     discordApiBaseUrl: 'https://discord.com/api/v10',
@@ -156,7 +156,7 @@ const store = {
   updateRerunSubmission: vi.fn(),
   enqueueRerunSubmission: vi.fn(),
   listRerunSubmissions: vi.fn(),
-  getRunByWorkflow: vi.fn(),
+  getRunByAgentRun: vi.fn(),
   getRunById: vi.fn(),
   listRunsByIssue: vi.fn(),
   listRunsByBranch: vi.fn(),
@@ -189,8 +189,8 @@ const config = {
   reviewMaxWaitMs: 10_000,
   maxAttempts: 3,
   backoffScheduleMs: [1000],
-  workflowArtifactsBucket: 'jangar-artifacts',
-  workflowNamespace: null,
+  artifactBucket: 'jangar-artifacts',
+  agentRunNamespace: null,
   discordBotToken: null,
   discordChannelId: null,
   discordApiBaseUrl: 'https://discord.com/api/v10',
@@ -230,9 +230,9 @@ const buildRun = (overrides: Partial<CodexRunRecord> = {}): CodexRunRecord => ({
   issueNumber: 123,
   branch: 'codex/issue-123',
   attempt: 1,
-  workflowName: 'workflow-1',
-  workflowUid: null,
-  workflowNamespace: 'agents',
+  agentRunName: 'agentrun-1',
+  agentRunUid: null,
+  agentRunNamespace: 'agents',
   turnId: null,
   threadId: null,
   stage: 'implementation',
@@ -273,8 +273,8 @@ const buildPayload = () => {
   return {
     data: {
       metadata: {
-        name: 'workflow-1',
-        uid: 'workflow-uid-1',
+        name: 'agentrun-1',
+        uid: 'agentrun-uid-1',
         namespace: 'agents',
       },
       status: {
@@ -311,8 +311,8 @@ describe('codex judge run-complete ingestion', () => {
     ({
       data: {
         metadata: {
-          name: 'workflow-1',
-          uid: 'workflow-uid-1',
+          name: 'agentrun-1',
+          uid: 'agentrun-uid-1',
           namespace: 'agents',
           labels: {
             'codex.repository': 'owner/repo',
@@ -336,11 +336,11 @@ describe('codex judge run-complete ingestion', () => {
       },
     }) as Record<string, unknown>
 
-  it('uses workflow metadata when eventBody is missing', async () => {
+  it('uses AgentRun metadata when eventBody is missing', async () => {
     const run = buildRun({ status: 'run_complete' })
     upsertRunComplete.mockResolvedValueOnce(run)
     upsertArtifacts.mockResolvedValueOnce([])
-    store.getRunByWorkflow.mockResolvedValueOnce(null)
+    store.getRunByAgentRun.mockResolvedValueOnce(null)
 
     const handler = await requireHandleRunComplete()
     await handler(buildMetadataPayload())
@@ -367,7 +367,7 @@ describe('codex judge run-complete ingestion', () => {
     const run = buildRun({ status: 'run_complete', phase: 'Failed' })
     upsertRunComplete.mockResolvedValueOnce(run)
     upsertArtifacts.mockResolvedValueOnce([])
-    store.getRunByWorkflow.mockResolvedValueOnce(null)
+    store.getRunByAgentRun.mockResolvedValueOnce(null)
 
     const handler = await requireHandleRunComplete()
     const result = await handler(buildMetadataPayload())

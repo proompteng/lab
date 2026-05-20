@@ -3,10 +3,12 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { loadCodexJudgeConfig } from '~/server/codex-judge-config'
 
 const managedEnvKeys = [
+  'AGENTS_CODEX_AGENT_RUN_NAMESPACE',
   'AGENTS_CODEX_RERUN_ORCHESTRATION',
   'AGENTS_CODEX_RERUN_ORCHESTRATION_NAMESPACE',
   'AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION',
   'AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE',
+  'JANGAR_CODEX_WORKFLOW_NAMESPACE',
   'JANGAR_CODEX_RERUN_ORCHESTRATION',
   'JANGAR_CODEX_RERUN_ORCHESTRATION_NAMESPACE',
   'JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION',
@@ -31,6 +33,28 @@ afterEach(() => {
 })
 
 describe('codex-judge-config', () => {
+  it('uses an AgentRun-native namespace config field for AgentRun callbacks', () => {
+    process.env.AGENTS_CODEX_AGENT_RUN_NAMESPACE = 'agents'
+    process.env.JANGAR_CODEX_WORKFLOW_NAMESPACE = 'legacy'
+
+    expect(loadCodexJudgeConfig()).toMatchObject({
+      agentRunNamespace: 'agents',
+      rerunOrchestrationNamespace: 'agents',
+      systemImprovementOrchestrationNamespace: 'agents',
+    })
+  })
+
+  it('keeps the old workflow namespace env as a compatibility fallback only', () => {
+    delete process.env.AGENTS_CODEX_AGENT_RUN_NAMESPACE
+    process.env.JANGAR_CODEX_WORKFLOW_NAMESPACE = 'legacy'
+
+    expect(loadCodexJudgeConfig()).toMatchObject({
+      agentRunNamespace: 'legacy',
+      rerunOrchestrationNamespace: 'legacy',
+      systemImprovementOrchestrationNamespace: 'legacy',
+    })
+  })
+
   it('uses only Agents-owned orchestration env names for rerun and system-improvement dispatch', () => {
     process.env.AGENTS_CODEX_RERUN_ORCHESTRATION = 'agents-rerun'
     process.env.AGENTS_CODEX_RERUN_ORCHESTRATION_NAMESPACE = 'agents'
