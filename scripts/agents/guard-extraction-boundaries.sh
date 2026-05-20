@@ -134,6 +134,16 @@ fail_if_matches \
   "${ROOT_DIR}/packages/agent-contracts/src/agents-service-client.ts"
 
 fail_if_path_exists \
+  "Jangar must not own generic Codex artifact-to-AgentMessage parsing after agent-contracts owns the contract" \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge-agent-messages.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/__tests__/codex-judge-agent-messages.test.ts"
+
+fail_if_matches \
+  "Jangar must import Codex artifact-to-AgentMessage parsing from @proompteng/agent-contracts" \
+  "codex-judge-agent-messages" \
+  "${ROOT_DIR}/services/jangar/src"
+
+fail_if_path_exists \
   "Jangar domain behavior must not be split into a separate jangar-agents-domain Argo app in the agents namespace" \
   "${ROOT_DIR}/argocd/applications/jangar-agents-domain"
 

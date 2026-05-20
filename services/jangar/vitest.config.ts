@@ -16,6 +16,9 @@ const agentContractsServiceClientSource = fileURLToPath(
 const agentContractsReadySource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/agents-ready.ts', import.meta.url),
 )
+const agentContractsMessageArtifactsSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/agent-message-artifacts.ts', import.meta.url),
+)
 const discordSource = fileURLToPath(new URL('../../packages/discord/src/index.ts', import.meta.url))
 
 export default defineConfig({
@@ -24,6 +27,7 @@ export default defineConfig({
       '~': root,
       '@': root,
       '@proompteng/agent-contracts/agents-ready': agentContractsReadySource,
+      '@proompteng/agent-contracts/agent-message-artifacts': agentContractsMessageArtifactsSource,
       '@proompteng/agent-contracts/agents-service-client': agentContractsServiceClientSource,
       '@proompteng/agent-contracts/control-plane-status': agentContractsControlPlaneStatusSource,
       '@proompteng/codex': codexStub,
@@ -44,6 +48,7 @@ export default defineConfig({
       '~': root,
       '@': root,
       '@proompteng/agent-contracts/agents-ready': agentContractsReadySource,
+      '@proompteng/agent-contracts/agent-message-artifacts': agentContractsMessageArtifactsSource,
       '@proompteng/agent-contracts/agents-service-client': agentContractsServiceClientSource,
       '@proompteng/agent-contracts/control-plane-status': agentContractsControlPlaneStatusSource,
       '@proompteng/codex': codexStub,
