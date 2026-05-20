@@ -17,6 +17,17 @@ fail_if_matches() {
   fi
 }
 
+fail_if_matches_including_tests() {
+  local description="$1"
+  local pattern="$2"
+  shift 2
+
+  if search_matches_including_tests "${pattern}" "$@"; then
+    echo "Agents extraction boundary violation: ${description}" >&2
+    exit 1
+  fi
+}
+
 require_matches() {
   local description="$1"
   local pattern="$2"
@@ -59,6 +70,35 @@ search_matches() {
     --exclude-dir='__tests__' \
     --exclude='*.test.*' \
     --exclude='*_test.go' \
+    --exclude='guard-extraction-boundaries.sh' \
+    -- "${pattern}" "${paths[@]}" 2>/dev/null
+}
+
+search_matches_including_tests() {
+  local pattern="$1"
+  shift
+
+  local paths=()
+  local path
+  for path in "$@"; do
+    if [[ -e "${path}" ]]; then
+      paths+=("${path}")
+    fi
+  done
+
+  if [[ "${#paths[@]}" -eq 0 ]]; then
+    return 1
+  fi
+
+  if command -v rg >/dev/null 2>&1; then
+    rg -n \
+      --glob '!guard-extraction-boundaries.sh' \
+      "${pattern}" \
+      "${paths[@]}"
+    return
+  fi
+
+  grep -R -E -n \
     --exclude='guard-extraction-boundaries.sh' \
     -- "${pattern}" "${paths[@]}" 2>/dev/null
 }
@@ -700,6 +740,12 @@ fail_if_matches \
   "${ROOT_DIR}/charts/agents/examples" \
   "${ROOT_DIR}/docs/agents/agents-helm-chart-implementation.md" \
   "${ROOT_DIR}/docs/agents/swarm-end-to-end-runbook.md"
+
+fail_if_matches_including_tests \
+  "Agents service and contract tests must not use Jangar whitepaper fixtures for generic control-plane APIs" \
+  'whitepaper-run|app=whitepaper|jangar\.proompteng\.ai/whitepaper' \
+  "${ROOT_DIR}/packages/agent-contracts/src/agents-service-client.test.ts" \
+  "${ROOT_DIR}/services/agents/src/routes/api/agents/control-plane/resource-cache.test.ts"
 
 fail_if_matches \
   "Agents GitOps must not ship the old sample Argo WorkflowTemplate schedule bridge" \

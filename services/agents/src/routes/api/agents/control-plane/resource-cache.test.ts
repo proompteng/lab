@@ -185,7 +185,7 @@ describe('agents control-plane resource route', () => {
         apiVersion: 'agents.proompteng.ai/v1alpha1',
         kind: 'AgentRun',
         metadata: {
-          name: 'whitepaper-run',
+          name: 'artifact-run',
           namespace: 'agents',
           annotations: (patch as { metadata: { annotations: Record<string, string> } }).metadata.annotations,
         },
@@ -194,13 +194,13 @@ describe('agents control-plane resource route', () => {
 
     const response = await patchPrimitiveResourceMetadata(
       new Request(
-        'http://localhost/api/agents/control-plane/resource?kind=AgentRun&name=whitepaper-run&namespace=agents',
+        'http://localhost/api/agents/control-plane/resource?kind=AgentRun&name=artifact-run&namespace=agents',
         {
           body: JSON.stringify({
             metadata: {
               annotations: {
-                'jangar.proompteng.ai/whitepaper-finalized-phase': 'Succeeded',
-                'jangar.proompteng.ai/whitepaper-finalized-run-id': 'wp-consumer',
+                'agents.proompteng.ai/finalized-phase': 'Succeeded',
+                'agents.proompteng.ai/finalized-run-id': 'artifact-consumer',
               },
             },
           }),
@@ -212,11 +212,11 @@ describe('agents control-plane resource route', () => {
     )
 
     expect(response.status).toBe(200)
-    expect(kube.patch).toHaveBeenCalledWith('agentruns.agents.proompteng.ai', 'whitepaper-run', 'agents', {
+    expect(kube.patch).toHaveBeenCalledWith('agentruns.agents.proompteng.ai', 'artifact-run', 'agents', {
       metadata: {
         annotations: {
-          'jangar.proompteng.ai/whitepaper-finalized-phase': 'Succeeded',
-          'jangar.proompteng.ai/whitepaper-finalized-run-id': 'wp-consumer',
+          'agents.proompteng.ai/finalized-phase': 'Succeeded',
+          'agents.proompteng.ai/finalized-run-id': 'artifact-consumer',
         },
       },
     })
@@ -227,7 +227,7 @@ describe('agents control-plane resource route', () => {
       resource: {
         kind: 'AgentRun',
         metadata: {
-          name: 'whitepaper-run',
+          name: 'artifact-run',
           namespace: 'agents',
         },
       },
@@ -238,7 +238,7 @@ describe('agents control-plane resource route', () => {
     const kube = { patch: vi.fn() }
     const response = await patchPrimitiveResourceMetadata(
       new Request(
-        'http://localhost/api/agents/control-plane/resource?kind=AgentRun&name=whitepaper-run&namespace=agents',
+        'http://localhost/api/agents/control-plane/resource?kind=AgentRun&name=artifact-run&namespace=agents',
         {
           body: JSON.stringify({ metadata: {} }),
           headers: { 'content-type': 'application/json' },

@@ -167,7 +167,7 @@ describe('agents-service-client', () => {
           kind: 'AgentRun',
           namespace: 'agents',
           total: 1,
-          items: [{ kind: 'AgentRun', metadata: { name: 'whitepaper-run' }, status: { phase: 'Succeeded' } }],
+          items: [{ kind: 'AgentRun', metadata: { name: 'artifact-run' }, status: { phase: 'Succeeded' } }],
         }),
         {
           headers: { 'content-type': 'application/json' },
@@ -178,14 +178,14 @@ describe('agents-service-client', () => {
     globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
 
     const result = await fetchAgentRunResourcesFromAgentsService(
-      { namespace: 'agents', limit: 500, labelSelector: 'app=whitepaper', phase: 'Succeeded' },
+      { namespace: 'agents', limit: 500, labelSelector: 'app=artifact-collector', phase: 'Succeeded' },
       { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
     )
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
     expect(url.toString()).toBe(
-      'http://agents.test/api/agents/control-plane/resources?kind=AgentRun&namespace=agents&labelSelector=app%3Dwhitepaper&phase=Succeeded&limit=500',
+      'http://agents.test/api/agents/control-plane/resources?kind=AgentRun&namespace=agents&labelSelector=app%3Dartifact-collector&phase=Succeeded&limit=500',
     )
     expect(init.method).toBe('GET')
     expect(getHeader(init.headers, 'x-agents-client')).toBe('agent-contracts')
@@ -197,7 +197,7 @@ describe('agents-service-client', () => {
         kind: 'AgentRun',
         namespace: 'agents',
         total: 1,
-        items: [{ kind: 'AgentRun', metadata: { name: 'whitepaper-run' }, status: { phase: 'Succeeded' } }],
+        items: [{ kind: 'AgentRun', metadata: { name: 'artifact-run' }, status: { phase: 'Succeeded' } }],
       },
     })
   })
@@ -210,7 +210,7 @@ describe('agents-service-client', () => {
           kind: 'Swarm',
           namespace: 'agents',
           total: 1,
-          items: [{ kind: 'Swarm', metadata: { name: 'jangar-control-plane' }, status: { phase: 'Ready' } }],
+          items: [{ kind: 'Swarm', metadata: { name: 'platform-control-plane' }, status: { phase: 'Ready' } }],
         }),
         {
           headers: { 'content-type': 'application/json' },
@@ -240,7 +240,7 @@ describe('agents-service-client', () => {
         kind: 'Swarm',
         namespace: 'agents',
         total: 1,
-        items: [{ kind: 'Swarm', metadata: { name: 'jangar-control-plane' }, status: { phase: 'Ready' } }],
+        items: [{ kind: 'Swarm', metadata: { name: 'platform-control-plane' }, status: { phase: 'Ready' } }],
       },
     })
   })
@@ -253,7 +253,7 @@ describe('agents-service-client', () => {
           kind: 'AgentRun',
           resource: {
             kind: 'AgentRun',
-            metadata: { name: 'whitepaper-run', annotations: { finalized: 'true' } },
+            metadata: { name: 'artifact-run', annotations: { finalized: 'true' } },
           },
         }),
         {
@@ -266,11 +266,11 @@ describe('agents-service-client', () => {
 
     const result = await patchAgentRunAnnotationsViaAgentsService(
       {
-        name: 'whitepaper-run',
+        name: 'artifact-run',
         namespace: 'agents',
         annotations: {
-          'jangar.proompteng.ai/whitepaper-finalized-phase': 'Succeeded',
-          'jangar.proompteng.ai/whitepaper-finalized-run-id': 'wp-consumer',
+          'agents.proompteng.ai/finalized-phase': 'Succeeded',
+          'agents.proompteng.ai/finalized-run-id': 'artifact-consumer',
         },
       },
       { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
@@ -279,7 +279,7 @@ describe('agents-service-client', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
     expect(url.toString()).toBe(
-      'http://agents.test/api/agents/control-plane/resource?kind=AgentRun&name=whitepaper-run&namespace=agents',
+      'http://agents.test/api/agents/control-plane/resource?kind=AgentRun&name=artifact-run&namespace=agents',
     )
     expect(init.method).toBe('PATCH')
     expect(init.headers).toMatchObject({
@@ -290,8 +290,8 @@ describe('agents-service-client', () => {
     expect(JSON.parse(init.body as string)).toEqual({
       metadata: {
         annotations: {
-          'jangar.proompteng.ai/whitepaper-finalized-phase': 'Succeeded',
-          'jangar.proompteng.ai/whitepaper-finalized-run-id': 'wp-consumer',
+          'agents.proompteng.ai/finalized-phase': 'Succeeded',
+          'agents.proompteng.ai/finalized-run-id': 'artifact-consumer',
         },
       },
     })
@@ -303,7 +303,7 @@ describe('agents-service-client', () => {
         kind: 'AgentRun',
         resource: {
           kind: 'AgentRun',
-          metadata: { name: 'whitepaper-run', annotations: { finalized: 'true' } },
+          metadata: { name: 'artifact-run', annotations: { finalized: 'true' } },
         },
       },
     })

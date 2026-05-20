@@ -51,6 +51,7 @@ describe('agents extraction boundary guard', () => {
 
     expect(content).toContain("--glob '!**/__tests__/**'")
     expect(content).toContain("--glob '!**/*.test.*'")
+    expect(content).toContain('fail_if_matches_including_tests')
   })
 
   it('guards legacy completion topics and reflected Jangar database secrets out of Agents runtime', () => {
@@ -108,6 +109,7 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('workflow-shaped agent-message identity fields')
     expect(content).toContain('Agents implementation contracts must not normalize workflow-shaped stage aliases')
     expect(content).toContain('retired workflow.general subjects')
+    expect(content).toContain('Jangar whitepaper fixtures for generic control-plane APIs')
     expect(content).toContain(
       'workflowUid|workflow_uid|workflowName|workflow_name|workflowNamespace|workflow_namespace',
     )
