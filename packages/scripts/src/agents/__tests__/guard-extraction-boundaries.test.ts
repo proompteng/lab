@@ -75,6 +75,7 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('goalObjective|goalTokenBudget')
     expect(content).toContain('argo\\.workflows\\.completions')
     expect(content).toContain('Jangar must not expose legacy Codex notify/run-complete callback routes')
+    expect(content).toContain('Agents docs must not retain the domain-specific Torghut/Jangar swarm e2e runbook')
     expect(content).toContain('reflection-(allowed|auto)-namespaces')
     expect(content).toContain('jangar-db-ca')
     expect(content).toContain('AGENTS_CODEX_RERUN_ORCHESTRATION')

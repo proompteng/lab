@@ -191,6 +191,10 @@ fail_if_path_exists \
   "Jangar domain behavior must not be split into a separate jangar-agents-domain CI workflow" \
   "${ROOT_DIR}/.github/workflows/jangar-agents-domain-ci.yml"
 
+fail_if_path_exists \
+  "Agents docs must not retain the domain-specific Torghut/Jangar swarm e2e runbook" \
+  "${ROOT_DIR}/docs/agents/swarm-end-to-end-runbook.md"
+
 fail_if_matches \
   "Product GitOps must not register a separate jangar-agents-domain app; Jangar should consume Agents APIs from its own domain" \
   "jangar-agents-domain" \
@@ -738,8 +742,7 @@ fail_if_matches \
   "Current Agents examples and runbooks must use AgentRun NATS subjects instead of retired workflow.general subjects" \
   'workflow\.general\.' \
   "${ROOT_DIR}/charts/agents/examples" \
-  "${ROOT_DIR}/docs/agents/agents-helm-chart-implementation.md" \
-  "${ROOT_DIR}/docs/agents/swarm-end-to-end-runbook.md"
+  "${ROOT_DIR}/docs/agents/agents-helm-chart-implementation.md"
 
 fail_if_matches_including_tests \
   "Agents service and contract tests must not use Jangar whitepaper fixtures for generic control-plane APIs" \
