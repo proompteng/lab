@@ -7,7 +7,7 @@ spec:
   type: postgres
   connection:
     secretRef:
-      name: agents-db-app
+      name: agents-db-next-app
       key: uri
   capabilities:
     - vector

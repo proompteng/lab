@@ -46,6 +46,8 @@ const parseNumber = (raw: string | undefined, fallback: number) => {
   return parsed
 }
 
+const firstEnv = (...values: Array<string | undefined>) => values.find((value) => value !== undefined)
+
 export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
   const githubToken = (process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN ?? '').trim() || null
   const githubApiBaseUrl = (process.env.GITHUB_API_BASE_URL ?? DEFAULT_GITHUB_API_BASE).trim()
@@ -65,16 +67,31 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
   const discordBotToken = (process.env.DISCORD_BOT_TOKEN ?? '').trim() || null
   const discordChannelId = (process.env.DISCORD_SUCCESS_CHANNEL_ID ?? '').trim() || null
   const discordApiBaseUrl = (process.env.DISCORD_API_BASE_URL ?? DEFAULT_DISCORD_API_BASE).trim()
-  const rerunOrchestrationName = (process.env.JANGAR_CODEX_RERUN_ORCHESTRATION ?? '').trim() || null
+  const rerunOrchestrationName =
+    (
+      firstEnv(process.env.AGENTS_CODEX_RERUN_ORCHESTRATION, process.env.JANGAR_CODEX_RERUN_ORCHESTRATION) ?? ''
+    ).trim() || null
   const rerunOrchestrationNamespace = (
-    process.env.JANGAR_CODEX_RERUN_ORCHESTRATION_NAMESPACE ??
+    firstEnv(
+      process.env.AGENTS_CODEX_RERUN_ORCHESTRATION_NAMESPACE,
+      process.env.JANGAR_CODEX_RERUN_ORCHESTRATION_NAMESPACE,
+    ) ??
     workflowNamespace ??
     process.env.JANGAR_NAMESPACE ??
     'jangar'
   ).trim()
-  const systemImprovementOrchestrationName = (process.env.JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION ?? '').trim() || null
+  const systemImprovementOrchestrationName =
+    (
+      firstEnv(
+        process.env.AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION,
+        process.env.JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION,
+      ) ?? ''
+    ).trim() || null
   const systemImprovementOrchestrationNamespace = (
-    process.env.JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE ??
+    firstEnv(
+      process.env.AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE,
+      process.env.JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE,
+    ) ??
     workflowNamespace ??
     process.env.JANGAR_NAMESPACE ??
     'jangar'

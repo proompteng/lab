@@ -1,7 +1,7 @@
 import { sql } from 'kysely'
 
-import { resolveStoreDb, type Db } from '~/server/db'
-import { ensureMigrations } from '~/server/kysely-migrations'
+import { resolveStoreDb, type Db } from './db'
+import { ensureMigrations } from './kysely-migrations'
 
 export type AgentMessageRecord = {
   id: string

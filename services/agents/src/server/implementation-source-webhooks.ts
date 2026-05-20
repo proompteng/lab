@@ -1,12 +1,12 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 
-import { resolveImplementationSourceWebhookConfig } from '~/server/agents-controller/runtime-config'
-import { createKubeGateway } from '~/server/kube-gateway'
-import { createKubernetesClient, RESOURCE_MAP } from '~/server/kube-types'
-import { assertClusterScopedForWildcard } from '~/server/namespace-scope'
-import { errorResponse, okResponse } from '~/server/http'
-import { asRecord, asString, readNested } from '~/server/primitives'
-import { shouldApplyStatus } from '~/server/status-utils'
+import { resolveImplementationSourceWebhookConfig } from './agents-controller/runtime-config'
+import { errorResponse, okResponse } from './http'
+import { createKubeGateway } from './kube-gateway'
+import { createKubernetesClient, RESOURCE_MAP } from './kube-types'
+import { assertClusterScopedForWildcard } from './namespace-scope'
+import { asRecord, asString, readNested } from './primitives'
+import { shouldApplyStatus } from './status-utils'
 
 const DEFAULT_NAMESPACES = ['agents']
 const IMPLEMENTATION_TEXT_LIMIT = 128 * 1024

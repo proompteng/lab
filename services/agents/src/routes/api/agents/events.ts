@@ -1,10 +1,10 @@
 import { createFileRoute, type AgentsServerRouteArgs } from '../../../server/server-route'
 import { Duration, Effect } from 'effect'
 
-import { subscribeAgentMessages } from '~/server/agent-messages-bus'
-import { type AgentMessageRecord, createAgentMessagesStore } from '~/server/agent-messages-store'
-import { recordSseConnection, recordSseError } from '~/server/metrics'
-import { createPrimitivesStore } from '~/server/primitives-store'
+import { subscribeAgentMessages } from '../../../server/agent-messages-bus'
+import { type AgentMessageRecord, createAgentMessagesStore } from '../../../server/agent-messages-store'
+import { recordSseConnection, recordSseError } from '../../../server/metrics'
+import { createPrimitivesStore } from '../../../server/primitives-store'
 
 export const Route = createFileRoute('/api/agents/events')({
   server: {
@@ -110,7 +110,7 @@ export const getAgentEvents = async (request: Request) => {
     return jsonResponse({ ok: false, error: 'runId, workflowUid, or channel is required' }, 400)
   }
 
-  void import('~/server/agent-comms-subscriber')
+  void import('../../../server/agent-comms-subscriber')
     .then(({ startAgentCommsSubscriber }) => startAgentCommsSubscriber())
     .catch((error) => {
       console.warn('Agent comms subscriber failed to start', error)

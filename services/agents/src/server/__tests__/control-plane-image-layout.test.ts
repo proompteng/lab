@@ -1,8 +1,21 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { join, relative } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
 const dockerfile = () => readFileSync(new URL('../../../Dockerfile', import.meta.url), 'utf8')
+const sourceRoot = fileURLToPath(new URL('../../', import.meta.url))
+
+const listProductionSources = (dir: string): string[] =>
+  readdirSync(dir).flatMap((entry) => {
+    const path = join(dir, entry)
+    const stat = statSync(path)
+    if (stat.isDirectory()) return listProductionSources(path)
+    if (!path.endsWith('.ts')) return []
+    if (path.endsWith('.test.ts') || path.endsWith('.spec.ts') || path.endsWith('.d.ts')) return []
+    return [path]
+  })
 
 const dockerfileTarget = (target: string) => {
   const content = dockerfile()
@@ -44,6 +57,15 @@ describe('Agents control-plane image layout', () => {
   it('starts each target in its split Agents profile', () => {
     expect(dockerfileTarget('control-plane')).toContain('AGENTS_SERVER_PROFILE=agents-control-plane')
     expect(dockerfileTarget('controller')).toContain('AGENTS_SERVER_PROFILE=agents-controllers')
+  })
+
+  it('keeps runtime source imports independent of test-only path aliases', () => {
+    const aliasedImports = listProductionSources(sourceRoot).flatMap((path) => {
+      const content = readFileSync(path, 'utf8')
+      return /(?:from\s+['"]|import\s*\(\s*['"])[@~]\//.test(content) ? [relative(sourceRoot, path)] : []
+    })
+
+    expect(aliasedImports).toEqual([])
   })
 
   it('keeps primitives reconciliation disabled only on the control-plane target', () => {

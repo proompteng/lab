@@ -13,10 +13,10 @@ import {
   StringCodec,
 } from 'nats'
 
-import { resolveAgentCommsSubscriberConfig, type AgentCommsSubscriberConfig } from '~/server/integrations-config'
-import { publishAgentMessages } from '~/server/agent-messages-bus'
-import { type AgentMessageInput, createAgentMessagesStore } from '~/server/agent-messages-store'
-import { recordAgentCommsBatch, recordAgentCommsError } from '~/server/metrics'
+import { publishAgentMessages } from './agent-messages-bus'
+import { type AgentMessageInput, createAgentMessagesStore } from './agent-messages-store'
+import { resolveAgentCommsSubscriberConfig, type AgentCommsSubscriberConfig } from './integrations-config'
+import { recordAgentCommsBatch, recordAgentCommsError } from './metrics'
 
 export type AgentCommsSubscriberService = {
   ready: Effect.Effect<void, Error>

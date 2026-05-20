@@ -130,6 +130,27 @@ require_matches \
   'database: agents' \
   "${ARGO_DIR}/postgres-cluster.yaml"
 
+require_matches \
+  "Agents-owned Postgres cluster must install pgvector for Memory resources that advertise vector capability" \
+  'CREATE EXTENSION IF NOT EXISTS vector' \
+  "${ARGO_DIR}/postgres-cluster.yaml"
+
+require_matches \
+  "Agents chart values must use the CNPG-generated Agents database secret after the database cutover" \
+  'name: agents-db-next-app' \
+  "${ARGO_DIR}/values.yaml"
+
+require_matches \
+  "Agents Memory primitive must use the CNPG-generated Agents database secret after the database cutover" \
+  'name: agents-db-next-app' \
+  "${ARGO_DIR}/agents-primitives-memory.yaml"
+
+fail_if_matches \
+  "Agents GitOps must not keep the old database compatibility alias secret after the Agents-owned database cutover" \
+  'agents-db-app' \
+  "${ARGO_DIR}/values.yaml" \
+  "${ARGO_DIR}/agents-primitives-memory.yaml"
+
 if ! matches_multiline 'services:\n\s+- name: agents\n\s+port: 80' "${ARGO_DIR}/ingressroute-agents-api.yaml"; then
   echo "Agents extraction boundary violation: canonical agents.k8s.proompteng.ai IngressRoute must target the Agents service." >&2
   exit 1
@@ -221,6 +242,21 @@ fail_if_matches \
   "Jangar GitOps must not point Codex execution back at Facteur or legacy Codex orchestrations" \
   'FACTEUR_INTERNAL_URL|codex-autonomous|github-codex-implementation' \
   "${ROOT_DIR}/argocd/applications/jangar"
+
+require_matches \
+  "Jangar domain consumer must configure Agents-owned Codex rerun orchestration with AGENTS_* env names" \
+  'AGENTS_CODEX_RERUN_ORCHESTRATION' \
+  "${ROOT_DIR}/argocd/applications/jangar/deployment.yaml"
+
+require_matches \
+  "Jangar domain consumer must configure Agents-owned system-improvement orchestration with AGENTS_* env names" \
+  'AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION' \
+  "${ROOT_DIR}/argocd/applications/jangar/deployment.yaml"
+
+fail_if_matches \
+  "Jangar GitOps must not publish Agents-owned orchestration settings under JANGAR_* names after the Agents orchestration cutover" \
+  'JANGAR_CODEX_RERUN_ORCHESTRATION|JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION' \
+  "${ROOT_DIR}/argocd/applications/jangar/deployment.yaml"
 
 fail_if_matches \
   "Jangar GitOps must not ship legacy Codex workflow service accounts or RBAC" \

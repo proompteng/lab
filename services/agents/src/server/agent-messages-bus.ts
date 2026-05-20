@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 
-import type { AgentMessageRecord } from '~/server/agent-messages-store'
+import type { AgentMessageRecord } from './agent-messages-store'
 
 type AgentMessagesHandler = (records: AgentMessageRecord[]) => void
 

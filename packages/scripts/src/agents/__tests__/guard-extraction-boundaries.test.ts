@@ -59,8 +59,11 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('ingressroute-agents-api\\.yaml')
     expect(content).toContain('agents\\.k8s\\.proompteng\\.ai')
     expect(content).toContain('name: agents-db-next')
+    expect(content).toContain('name: agents-db-next-app')
     expect(content).toContain('database: agents')
+    expect(content).toContain('CREATE EXTENSION IF NOT EXISTS vector')
     expect(content).toContain('jangar\\.k8s\\.proompteng\\.ai')
+    expect(content).toContain('Agents GitOps must not keep the old database compatibility alias secret')
     expect(content).toContain('proxyAgentsServiceRequest|buildAgentsServiceProxyUrl')
     expect(content).toContain('Jangar-host compatibility Agents IngressRoute')
     expect(content).toContain('ingressroute-jangar-agents-api\\.yaml')
@@ -71,6 +74,9 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('Jangar must not expose legacy Codex notify/run-complete callback routes')
     expect(content).toContain('reflection-(allowed|auto)-namespaces')
     expect(content).toContain('jangar-db-ca')
+    expect(content).toContain('AGENTS_CODEX_RERUN_ORCHESTRATION')
+    expect(content).toContain('AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION')
+    expect(content).toContain('JANGAR_CODEX_RERUN_ORCHESTRATION|JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION')
     expect(content).toContain('legacy generic Agents /api/control-plane API compatibility aliases')
     expect(content).toContain(
       '/api/control-plane/(agent-events|agent-runs|events|implementation-sources|logs|resource|resources|status|stream)',

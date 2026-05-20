@@ -180,13 +180,13 @@ spec:
                   optional: true
             - name: MINIO_SECURE
               value: "false"
-            - name: JANGAR_CODEX_RERUN_ORCHESTRATION
+            - name: AGENTS_CODEX_RERUN_ORCHESTRATION
               value: codex-rerun
-            - name: JANGAR_CODEX_RERUN_ORCHESTRATION_NAMESPACE
+            - name: AGENTS_CODEX_RERUN_ORCHESTRATION_NAMESPACE
               value: agents
-            - name: JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION
+            - name: AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION
               value: codex-system-improvement
-            - name: JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE
+            - name: AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE
               value: agents
             - name: DISCORD_BOT_TOKEN
               valueFrom:
