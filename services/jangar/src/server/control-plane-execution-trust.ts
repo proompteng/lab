@@ -1,5 +1,5 @@
 import { resolveControlPlaneStatusConfig } from '~/server/control-plane-config'
-import { fetchSwarmResourcesFromAgentsService } from '@proompteng/agent-contracts/agents-service-client'
+import { fetchSwarmResourcesFromAgentsService } from '@proompteng/agent-contracts/control-plane-resources-client'
 import { asRecord, asString } from '~/server/primitives-http'
 import type { ExecutionTrustStage, ExecutionTrustStatus, ExecutionTrustSwarm } from '~/data/agents-control-plane'
 

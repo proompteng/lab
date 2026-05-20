@@ -1,7 +1,7 @@
 import {
   submitSignalResourceToAgentsService,
   type AgentsSignalResourceSubmitInput,
-} from '@proompteng/agent-contracts/agents-service-client'
+} from '@proompteng/agent-contracts/control-plane-resources-client'
 import { asRecord, asString } from '~/server/primitives-http'
 import { hashNameSuffix, makeHashedName } from '~/server/supporting-primitives-naming'
 import {

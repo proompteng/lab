@@ -12,11 +12,9 @@ import {
   parseAgentMessagesFromEvents,
   parseAgentMessagesFromLog,
 } from '@proompteng/agent-contracts/agent-message-artifacts'
-import {
-  submitAgentMessagesToAgentsService,
-  submitOrchestrationRunToAgentsService,
-} from '@proompteng/agent-contracts/agents-service-client'
+import { submitAgentMessagesToAgentsService } from '@proompteng/agent-contracts/agent-messages-client'
 import { buildCodexOrchestrationParameters } from '@proompteng/agent-contracts/codex-orchestration-parameters'
+import { submitOrchestrationRunToAgentsService } from '@proompteng/agent-contracts/orchestration-runs-client'
 
 import { resolveChatConfig } from '~/server/chat-config'
 import { extractImplementationManifestFromArchive, extractTextFromArchive } from '~/server/codex-judge-artifacts'

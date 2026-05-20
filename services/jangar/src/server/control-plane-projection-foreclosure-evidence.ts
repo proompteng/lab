@@ -3,7 +3,7 @@ import type {
   StageClearancePacket,
   TorghutConsumerEvidenceStatus,
 } from '~/data/agents-control-plane'
-import { fetchAgentRunsFromAgentsService } from '@proompteng/agent-contracts/agents-service-client'
+import { fetchAgentRunsFromAgentsService } from '@proompteng/agent-contracts/agent-runs-client'
 import { getDb } from '~/server/db'
 
 export type JsonRecord = Record<string, unknown>

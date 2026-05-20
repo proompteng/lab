@@ -164,6 +164,11 @@ fail_if_matches \
   'fetchAgentsServiceJson' \
   "${ROOT_DIR}/services/jangar/src"
 
+fail_if_matches \
+  "Jangar must consume narrow Agents service client modules instead of the broad agents-service-client module" \
+  '@proompteng/agent-contracts/agents-service-client' \
+  "${ROOT_DIR}/services/jangar/src"
+
 fail_if_path_exists \
   "Jangar must not own generic Agents readiness/status verdict normalization after agent-contracts owns it" \
   "${ROOT_DIR}/services/jangar/src/server/agents-control-plane-client.ts"

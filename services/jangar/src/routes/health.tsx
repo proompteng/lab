@@ -4,7 +4,7 @@ import {
   fetchAgentsHealthFromAgentsService,
   type AgentsHealthController,
   type AgentsHealthPayload,
-} from '@proompteng/agent-contracts/agents-service-client'
+} from '@proompteng/agent-contracts/agents-health-client'
 import { resolveRuntimeServiceName } from '~/server/runtime-identity'
 
 type AgentsDependencyHealth = {

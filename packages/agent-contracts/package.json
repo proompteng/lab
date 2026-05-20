@@ -14,6 +14,18 @@
       "types": "./dist/agents-service-client.d.ts",
       "default": "./dist/agents-service-client.js"
     },
+    "./agents-health-client": {
+      "types": "./dist/agents-health-client.d.ts",
+      "default": "./dist/agents-health-client.js"
+    },
+    "./agent-runs-client": {
+      "types": "./dist/agent-runs-client.d.ts",
+      "default": "./dist/agent-runs-client.js"
+    },
+    "./agent-messages-client": {
+      "types": "./dist/agent-messages-client.d.ts",
+      "default": "./dist/agent-messages-client.js"
+    },
     "./agents-ready": {
       "types": "./dist/agents-ready.d.ts",
       "default": "./dist/agents-ready.js"
@@ -30,9 +42,17 @@
       "types": "./dist/codex-orchestration-parameters.d.ts",
       "default": "./dist/codex-orchestration-parameters.js"
     },
+    "./control-plane-resources-client": {
+      "types": "./dist/control-plane-resources-client.d.ts",
+      "default": "./dist/control-plane-resources-client.js"
+    },
     "./control-plane-status": {
       "types": "./dist/control-plane-status.d.ts",
       "default": "./dist/control-plane-status.js"
+    },
+    "./orchestration-runs-client": {
+      "types": "./dist/orchestration-runs-client.d.ts",
+      "default": "./dist/orchestration-runs-client.js"
     },
     "./torghut-market-context-agentrun": {
       "types": "./dist/torghut-market-context-agentrun.d.ts",

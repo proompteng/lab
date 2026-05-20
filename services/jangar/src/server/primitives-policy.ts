@@ -2,7 +2,7 @@ import {
   fetchApprovalPolicyResourceFromAgentsService,
   fetchBudgetResourceFromAgentsService,
   fetchSecretBindingResourceFromAgentsService,
-} from '@proompteng/agent-contracts/agents-service-client'
+} from '@proompteng/agent-contracts/control-plane-resources-client'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 
 const asArray = (value: unknown): string[] => {
