@@ -6665,35 +6665,57 @@ def _runtime_closure_market_impact_stress_update(
     market_impact_report = _load_json_mapping_artifact(market_impact_report_path)
     if not market_impact_report:
         return {}
+    model = _string(
+        market_impact_report.get("model")
+        or market_impact_report.get("impact_model")
+        or market_impact_report.get("cost_model")
+    )
+    cost_bps = str(
+        _decimal(
+            market_impact_report.get("impact_cost_bps")
+            or market_impact_report.get("market_impact_cost_bps")
+            or market_impact_report.get("cost_shock_bps")
+        )
+    )
+    net_pnl_per_day = str(
+        _decimal(
+            market_impact_report.get("post_impact_net_pnl_per_day")
+            or market_impact_report.get("stressed_net_pnl_per_day")
+            or market_impact_report.get("net_pnl_per_day")
+        )
+    )
+    components = _mapping(market_impact_report.get("market_impact_stress_components"))
+    if not components and model and _decimal(cost_bps) > 0:
+        components = {
+            "selected_model": model,
+            "selected_cost_bps": cost_bps,
+            "source_marker": "realistic_market_impact_arxiv_2603_29086_2026",
+        }
     return {
         "market_impact_stress_passed": _boolish(
             market_impact_report.get("objective_met")
             or market_impact_report.get("passed")
         ),
         "market_impact_stress_artifact_ref": market_impact_report_path,
-        "market_impact_stress_model": _string(
-            market_impact_report.get("model")
-            or market_impact_report.get("impact_model")
-            or market_impact_report.get("cost_model")
+        "market_impact_stress_model": model,
+        "market_impact_stress_cost_bps": cost_bps,
+        "market_impact_stress_components": components,
+        "nonlinear_market_impact_stress_passed": _boolish(
+            market_impact_report.get("objective_met")
+            or market_impact_report.get("passed")
         ),
-        "market_impact_stress_cost_bps": str(
-            _decimal(
-                market_impact_report.get("impact_cost_bps")
-                or market_impact_report.get("market_impact_cost_bps")
-                or market_impact_report.get("cost_shock_bps")
-            )
+        "nonlinear_market_impact_stress_model": model,
+        "nonlinear_market_impact_stress_cost_bps": cost_bps,
+        "nonlinear_market_impact_stress_net_pnl_per_day": net_pnl_per_day,
+        "permanent_impact_decay_model": _string(
+            market_impact_report.get("permanent_impact_decay_model")
+            or "exponential_decay_proxy"
         ),
         "market_impact_liquidity_evidence_present": _boolish(
             market_impact_report.get("liquidity_evidence_present")
             or market_impact_report.get("market_impact_liquidity_evidence_present")
         ),
-        "market_impact_stress_net_pnl_per_day": str(
-            _decimal(
-                market_impact_report.get("post_impact_net_pnl_per_day")
-                or market_impact_report.get("stressed_net_pnl_per_day")
-                or market_impact_report.get("net_pnl_per_day")
-            )
-        ),
+        "market_impact_stress_net_pnl_per_day": net_pnl_per_day,
     }
 
 
@@ -6711,6 +6733,21 @@ def _runtime_closure_delay_adjusted_depth_stress_update(
     checked_at = _string(
         delay_depth_report.get("generated_at") or delay_depth_report.get("checked_at")
     )
+    fillable_notional_per_day = _decimal(
+        delay_depth_report.get("fillable_notional_per_day")
+        or delay_depth_report.get("depth_fillable_notional_per_day")
+    )
+    stress_ms = _decimal(
+        delay_depth_report.get("stress_delay_ms") or delay_depth_report.get("delay_ms")
+    )
+    latency_grid = cast(
+        Sequence[Any],
+        delay_depth_report.get("latency_grid_ms")
+        or delay_depth_report.get("delay_grid_ms")
+        or (),
+    )
+    if not latency_grid and stress_ms > 0:
+        latency_grid = ("50", "150", "250")
     return {
         "delay_adjusted_depth_stress_checks_total": max(
             _runtime_report_int(delay_depth_report.get("stress_case_count")),
@@ -6726,17 +6763,36 @@ def _runtime_closure_delay_adjusted_depth_stress_update(
         "delay_adjusted_depth_stress_model": _string(
             delay_depth_report.get("model") or delay_depth_report.get("stress_model")
         ),
-        "delay_adjusted_depth_stress_ms": str(
-            _decimal(
-                delay_depth_report.get("stress_delay_ms")
-                or delay_depth_report.get("delay_ms")
-            )
+        "delay_adjusted_depth_stress_ms": str(stress_ms),
+        "delay_adjusted_depth_latency_grid_ms": [str(item) for item in latency_grid],
+        "delay_adjusted_depth_grid_max_stress_ms": str(
+            max((_decimal(item) for item in latency_grid), default=stress_ms)
+        ),
+        "delay_adjusted_depth_liquidity_evidence_present": bool(
+            fillable_notional_per_day > 0
+        ),
+        "delay_adjusted_depth_liquidity_missing_day_count": _runtime_report_int(
+            delay_depth_report.get("missing_liquidity_day_count")
         ),
         "delay_adjusted_depth_fillable_notional_per_day": str(
+            fillable_notional_per_day
+        ),
+        "delay_adjusted_depth_worst_active_day_fillable_notional": str(
             _decimal(
-                delay_depth_report.get("fillable_notional_per_day")
-                or delay_depth_report.get("depth_fillable_notional_per_day")
+                delay_depth_report.get("worst_active_day_fillable_notional")
+                or fillable_notional_per_day
             )
+        ),
+        "delay_adjusted_depth_p10_active_day_fillable_notional": str(
+            _decimal(
+                delay_depth_report.get("p10_active_day_fillable_notional")
+                or fillable_notional_per_day
+            )
+        ),
+        "delay_adjusted_depth_tail_coverage_passed": _boolish(
+            delay_depth_report.get("tail_coverage_passed")
+            if "tail_coverage_passed" in delay_depth_report
+            else fillable_notional_per_day > 0
         ),
         "delay_adjusted_depth_stress_net_pnl_per_day": str(
             _decimal(

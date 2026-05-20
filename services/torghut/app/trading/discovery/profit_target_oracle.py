@@ -12,12 +12,15 @@ _ACCEPTED_MARKET_IMPACT_STRESS_MODELS = frozenset(
     {
         "almgren_chriss",
         "almgren-chriss",
+        "almgren_chriss_proxy",
+        "almgren-chriss-proxy",
         "square_root",
         "square-root",
         "power_law",
         "power-law",
         "portfolio_square_root_impact",
         "portfolio_power_law_impact",
+        "portfolio_nonlinear_impact",
     }
 )
 _ACCEPTED_DELAY_ADJUSTED_DEPTH_STRESS_MODELS = frozenset(

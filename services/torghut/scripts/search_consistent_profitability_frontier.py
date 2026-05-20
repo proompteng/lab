@@ -221,9 +221,18 @@ def _replay_lineage_window_payload(
             "filled_count": 0,
             "payload_sha256": "",
             "daily_net_sha256": "",
+            "daily_filled_notional_sha256": "",
+            "daily_liquidity_notional_sha256": "",
         }
     summary = summarize_replay_profitability(replay_payload)
     daily_net = {day: str(value) for day, value in summary.daily_net.items()}
+    daily_filled_notional = {
+        day: str(value) for day, value in _daily_filled_notional(replay_payload).items()
+    }
+    daily_liquidity_notional = {
+        day: str(value)
+        for day, value in _daily_liquidity_notional(replay_payload).items()
+    }
     return {
         "window_id": window_id,
         "start_date": start_date.isoformat() if start_date is not None else "",
@@ -234,6 +243,14 @@ def _replay_lineage_window_payload(
         "filled_count": summary.filled_count,
         "payload_sha256": _stable_payload_hash(replay_payload) if not skipped else "",
         "daily_net_sha256": _stable_payload_hash(daily_net) if not skipped else "",
+        "daily_filled_notional_sha256": _stable_payload_hash(daily_filled_notional)
+        if not skipped
+        else "",
+        "daily_liquidity_notional_sha256": _stable_payload_hash(
+            daily_liquidity_notional
+        )
+        if not skipped
+        else "",
     }
 
 
@@ -1391,9 +1408,28 @@ def _replay_stress_metrics(
         if total_filled_notional > 0 and total_liquidity_notional > 0
         else Decimal("0")
     )
-    market_impact_cost_bps = max(Decimal("1"), participation.sqrt() * Decimal("100"))
+    square_root_impact_cost_bps = (
+        participation.sqrt() * Decimal("100") if participation > 0 else Decimal("0")
+    )
+    almgren_chriss_temporary_impact_bps = participation * Decimal("125")
+    almgren_chriss_permanent_impact_bps = (
+        participation.sqrt() * Decimal("25") if participation > 0 else Decimal("0")
+    )
+    almgren_chriss_impact_cost_bps = (
+        almgren_chriss_temporary_impact_bps + almgren_chriss_permanent_impact_bps
+    )
+    nonlinear_impact_cost_bps = max(
+        Decimal("1"),
+        square_root_impact_cost_bps,
+        almgren_chriss_impact_cost_bps,
+    )
+    market_impact_model = (
+        "almgren_chriss_proxy"
+        if almgren_chriss_impact_cost_bps > square_root_impact_cost_bps
+        else "square_root"
+    )
     market_impact_net_per_day = net_per_day - (
-        avg_filled_notional_per_day * market_impact_cost_bps / Decimal("10000")
+        avg_filled_notional_per_day * nonlinear_impact_cost_bps / Decimal("10000")
     )
     (
         delay_depth_total_fillable_notional,
@@ -1449,9 +1485,33 @@ def _replay_stress_metrics(
             and avg_filled_notional_per_day > 0
             and market_impact_net_per_day > 0
         ),
-        "market_impact_stress_model": "square_root",
-        "market_impact_stress_cost_bps": str(market_impact_cost_bps),
+        "market_impact_stress_model": market_impact_model,
+        "market_impact_stress_cost_bps": str(nonlinear_impact_cost_bps),
         "market_impact_stress_net_pnl_per_day": str(market_impact_net_per_day),
+        "market_impact_stress_components": {
+            "square_root_cost_bps": str(square_root_impact_cost_bps),
+            "almgren_chriss_temporary_impact_bps": str(
+                almgren_chriss_temporary_impact_bps
+            ),
+            "almgren_chriss_permanent_impact_bps": str(
+                almgren_chriss_permanent_impact_bps
+            ),
+            "almgren_chriss_cost_bps": str(almgren_chriss_impact_cost_bps),
+            "selected_cost_bps": str(nonlinear_impact_cost_bps),
+            "selected_model": market_impact_model,
+            "source_marker": "realistic_market_impact_arxiv_2603_29086_2026",
+        },
+        "nonlinear_market_impact_stress_passed": bool(
+            total_liquidity_notional > 0
+            and avg_filled_notional_per_day > 0
+            and market_impact_net_per_day > 0
+        ),
+        "nonlinear_market_impact_stress_model": market_impact_model,
+        "nonlinear_market_impact_stress_cost_bps": str(nonlinear_impact_cost_bps),
+        "nonlinear_market_impact_stress_net_pnl_per_day": str(
+            market_impact_net_per_day
+        ),
+        "permanent_impact_decay_model": "exponential_decay_proxy",
         "delay_adjusted_depth_stress_passed": bool(
             total_liquidity_notional > 0
             and grid_worst_missing_liquidity_day_count == 0
@@ -3023,6 +3083,42 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                                 "market_impact_stress_net_pnl_per_day"
                             )
                             or "0"
+                        ),
+                        "market_impact_stress_components": dict(
+                            cast(
+                                Mapping[str, Any],
+                                full_window_summary.get(
+                                    "market_impact_stress_components"
+                                )
+                                or {},
+                            )
+                        ),
+                        "nonlinear_market_impact_stress_passed": bool(
+                            full_window_summary.get(
+                                "nonlinear_market_impact_stress_passed"
+                            )
+                        ),
+                        "nonlinear_market_impact_stress_model": str(
+                            full_window_summary.get(
+                                "nonlinear_market_impact_stress_model"
+                            )
+                            or ""
+                        ),
+                        "nonlinear_market_impact_stress_cost_bps": str(
+                            full_window_summary.get(
+                                "nonlinear_market_impact_stress_cost_bps"
+                            )
+                            or "0"
+                        ),
+                        "nonlinear_market_impact_stress_net_pnl_per_day": str(
+                            full_window_summary.get(
+                                "nonlinear_market_impact_stress_net_pnl_per_day"
+                            )
+                            or "0"
+                        ),
+                        "permanent_impact_decay_model": str(
+                            full_window_summary.get("permanent_impact_decay_model")
+                            or ""
                         ),
                         "delay_adjusted_depth_stress_passed": bool(
                             full_window_summary.get(

@@ -30,6 +30,20 @@ def _executable_scorecard_fields(index: int | str = 0) -> dict[str, object]:
         "market_impact_stress_cost_bps": "6",
         "market_impact_liquidity_evidence_present": True,
         "market_impact_stress_net_pnl_per_day": "535",
+        "market_impact_stress_components": {
+            "square_root_cost_bps": "6",
+            "almgren_chriss_temporary_impact_bps": "4",
+            "almgren_chriss_permanent_impact_bps": "1",
+            "almgren_chriss_cost_bps": "5",
+            "selected_cost_bps": "6",
+            "selected_model": "square_root",
+            "source_marker": "realistic_market_impact_arxiv_2603_29086_2026",
+        },
+        "nonlinear_market_impact_stress_passed": True,
+        "nonlinear_market_impact_stress_model": "square_root",
+        "nonlinear_market_impact_stress_cost_bps": "6",
+        "nonlinear_market_impact_stress_net_pnl_per_day": "535",
+        "permanent_impact_decay_model": "exponential_decay_proxy",
         "delay_adjusted_depth_stress_passed": True,
         "delay_adjusted_depth_stress_artifact_ref": f"/tmp/delay-adjusted-depth-stress-{index}.json",
         "delay_adjusted_depth_stress_model": "latency_depth_haircut",
@@ -458,7 +472,17 @@ class TestPortfolioOptimizer(TestCase):
         assert portfolio is not None
         self.assertEqual(
             portfolio.objective_scorecard["market_impact_stress_model"],
-            "portfolio_square_root_impact",
+            "portfolio_nonlinear_impact",
+        )
+        self.assertEqual(
+            portfolio.objective_scorecard["market_impact_stress_models"],
+            ["square_root"],
+        )
+        self.assertEqual(
+            portfolio.objective_scorecard["market_impact_stress_components"][
+                "max_selected_cost_bps"
+            ],
+            "6",
         )
         self.assertEqual(
             portfolio.objective_scorecard["market_impact_stress_net_pnl_per_day"],

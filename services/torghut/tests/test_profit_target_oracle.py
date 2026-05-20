@@ -75,6 +75,24 @@ class TestProfitTargetOracle(TestCase):
         self.assertTrue(result["passed"])
         self.assertEqual(result["blockers"], [])
 
+    def test_profit_target_oracle_accepts_almgren_chriss_proxy_impact(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "market_impact_stress_model": "almgren_chriss_proxy",
+            "market_impact_stress_cost_bps": "150",
+            "market_impact_stress_net_pnl_per_day": "510",
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertTrue(result["passed"])
+        self.assertNotIn("market_impact_stress_model_failed", result["blockers"])
+
     def test_profit_target_oracle_requires_rejected_signal_outcome_learning_when_declared(
         self,
     ) -> None:

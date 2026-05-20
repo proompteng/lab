@@ -358,10 +358,24 @@ def _executable_replay_max_notional(bundle: CandidateEvidenceBundle) -> Decimal:
 def _market_impact_stress_passed(bundle: CandidateEvidenceBundle) -> bool:
     scorecard = _scorecard(bundle)
     return _boolish(
-        scorecard.get("market_impact_stress_passed")
+        scorecard.get("nonlinear_market_impact_stress_passed")
+        or scorecard.get("market_impact_stress_passed")
         or scorecard.get("cost_shock_stress_passed")
-        or scorecard.get("nonlinear_market_impact_stress_passed")
     )
+
+
+def _market_impact_stress_model(bundle: CandidateEvidenceBundle) -> str:
+    scorecard = _scorecard(bundle)
+    return _string(
+        scorecard.get("nonlinear_market_impact_stress_model")
+        or scorecard.get("market_impact_stress_model")
+    )
+
+
+def _market_impact_stress_components(
+    bundle: CandidateEvidenceBundle,
+) -> Mapping[str, Any]:
+    return _mapping(_scorecard(bundle).get("market_impact_stress_components"))
 
 
 def _market_impact_stress_artifact_ref(bundle: CandidateEvidenceBundle) -> str:
@@ -1013,6 +1027,22 @@ def _portfolio_scorecard(
         ),
         Decimal("0"),
     )
+    market_impact_models = sorted(
+        {
+            model
+            for model in (_market_impact_stress_model(bundle) for bundle in selected)
+            if model
+        }
+    )
+    market_impact_components_by_sleeve = {
+        bundle.candidate_id: dict(_market_impact_stress_components(bundle))
+        for bundle in selected
+        if _market_impact_stress_components(bundle)
+    }
+    market_impact_max_cost_bps = max(
+        (_market_impact_stress_cost_bps(bundle) for bundle in selected),
+        default=Decimal("0"),
+    )
     sleeve_promotion_blockers: dict[str, list[str]] = {}
     promotion_contract_blockers: list[str] = []
     promotion_contract_blocker_observations: list[str] = []
@@ -1099,12 +1129,21 @@ def _portfolio_scorecard(
         "market_impact_stress_artifact_ref": market_impact_artifact_refs[0]
         if market_impact_artifact_refs
         else "",
-        "market_impact_stress_model": "portfolio_square_root_impact",
-        "market_impact_stress_cost_bps": str(
-            max(
-                (_market_impact_stress_cost_bps(bundle) for bundle in selected),
-                default=Decimal("0"),
-            )
+        "market_impact_stress_model": "portfolio_nonlinear_impact",
+        "market_impact_stress_models": market_impact_models,
+        "market_impact_stress_cost_bps": str(market_impact_max_cost_bps),
+        "market_impact_stress_components": {
+            "selected_models": market_impact_models,
+            "max_selected_cost_bps": str(market_impact_max_cost_bps),
+            "sleeves": market_impact_components_by_sleeve,
+            "source_marker": "realistic_market_impact_arxiv_2603_29086_2026",
+        },
+        "nonlinear_market_impact_stress_passed": bool(selected)
+        and all(_market_impact_stress_passed(bundle) for bundle in selected),
+        "nonlinear_market_impact_stress_model": "portfolio_nonlinear_impact",
+        "nonlinear_market_impact_stress_cost_bps": str(market_impact_max_cost_bps),
+        "nonlinear_market_impact_stress_net_pnl_per_day": str(
+            market_impact_stress_net_pnl_per_day
         ),
         "market_impact_liquidity_evidence_present": bool(selected)
         and all(

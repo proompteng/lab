@@ -50,6 +50,19 @@ REPLAY_ACTIVITY_SCORECARD_KEYS = (
     "price_improvement_evidence_present",
     "opportunity_cost_evidence_present",
 )
+MARKET_IMPACT_SCORECARD_KEYS = (
+    "market_impact_stress_passed",
+    "market_impact_stress_artifact_ref",
+    "market_impact_stress_model",
+    "market_impact_stress_cost_bps",
+    "market_impact_stress_net_pnl_per_day",
+    "market_impact_stress_components",
+    "nonlinear_market_impact_stress_passed",
+    "nonlinear_market_impact_stress_model",
+    "nonlinear_market_impact_stress_cost_bps",
+    "nonlinear_market_impact_stress_net_pnl_per_day",
+    "permanent_impact_decay_model",
+)
 
 
 def _stable_hash(payload: Mapping[str, Any]) -> str:
@@ -340,26 +353,49 @@ def _enrich_scorecard_with_replay_stress_metrics(
     ):
         enriched["avg_liquidity_notional_per_day"] = str(avg_liquidity_notional_per_day)
 
-    market_impact_cost_per_day = (
-        avg_filled_notional_per_day * MARKET_IMPACT_STRESS_COST_BPS / Decimal("10000")
+    market_impact_components = _mapping(enriched.get("market_impact_stress_components"))
+    has_nonlinear_market_impact_proof = bool(
+        market_impact_components.get("source_marker")
+        and _string(
+            enriched.get("nonlinear_market_impact_stress_model")
+            or enriched.get("market_impact_stress_model")
+        )
+        and _decimal(
+            enriched.get("nonlinear_market_impact_stress_cost_bps")
+            or enriched.get("market_impact_stress_cost_bps")
+        )
+        > 0
+        and _string(
+            enriched.get("nonlinear_market_impact_stress_net_pnl_per_day")
+            or enriched.get("market_impact_stress_net_pnl_per_day")
+        )
     )
-    market_impact_net_pnl_per_day = net_pnl_per_day - market_impact_cost_per_day
-    if "market_impact_stress_model" not in enriched:
-        enriched["market_impact_stress_model"] = "square_root"
-    if "market_impact_stress_cost_bps" not in enriched:
-        enriched["market_impact_stress_cost_bps"] = str(MARKET_IMPACT_STRESS_COST_BPS)
-    if "market_impact_stress_net_pnl_per_day" not in enriched:
-        enriched["market_impact_stress_net_pnl_per_day"] = str(
-            market_impact_net_pnl_per_day
-        )
-    if "market_impact_stress_artifact_ref" not in enriched:
+    if (
+        has_nonlinear_market_impact_proof
+        and "market_impact_stress_artifact_ref" not in enriched
+    ):
         enriched["market_impact_stress_artifact_ref"] = result_path
-    if "market_impact_stress_passed" not in enriched:
-        enriched["market_impact_stress_passed"] = (
-            bool(enriched.get("market_impact_liquidity_evidence_present"))
-            and avg_filled_notional_per_day > 0
-            and market_impact_net_pnl_per_day > 0
-        )
+    if has_nonlinear_market_impact_proof:
+        if "nonlinear_market_impact_stress_model" not in enriched:
+            enriched["nonlinear_market_impact_stress_model"] = enriched.get(
+                "market_impact_stress_model"
+            )
+        if "nonlinear_market_impact_stress_cost_bps" not in enriched:
+            enriched["nonlinear_market_impact_stress_cost_bps"] = enriched.get(
+                "market_impact_stress_cost_bps"
+            )
+        if "nonlinear_market_impact_stress_net_pnl_per_day" not in enriched:
+            enriched["nonlinear_market_impact_stress_net_pnl_per_day"] = enriched.get(
+                "market_impact_stress_net_pnl_per_day"
+            )
+        if "nonlinear_market_impact_stress_passed" not in enriched:
+            enriched["nonlinear_market_impact_stress_passed"] = bool(
+                enriched.get("market_impact_stress_passed")
+            )
+    else:
+        enriched["market_impact_stress_passed"] = False
+        enriched["nonlinear_market_impact_stress_passed"] = False
+        enriched["nonlinear_market_impact_stress_missing"] = True
 
     delay_depth_total_filled_notional = _decimal_mapping_total(daily_filled_notional)
     if delay_depth_total_filled_notional <= 0 and trading_day_count > 0:
@@ -557,6 +593,13 @@ def evidence_bundle_from_frontier_candidate(
             "max_drawdown": _string(full_window.get("max_drawdown")),
         }
     for key in REPLAY_ACTIVITY_SCORECARD_KEYS:
+        if key in scorecard:
+            continue
+        for source in (candidate, summary, full_window):
+            if key in source:
+                scorecard = {**scorecard, key: source[key]}
+                break
+    for key in MARKET_IMPACT_SCORECARD_KEYS:
         if key in scorecard:
             continue
         for source in (candidate, summary, full_window):

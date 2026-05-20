@@ -367,19 +367,14 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
         self.assertEqual(bundle.candidate_id, "spec-fallback")
         self.assertEqual(bundle.objective_scorecard["net_pnl_per_day"], "123")
         self.assertIn("daily_filled_notional", bundle.objective_scorecard)
-        self.assertEqual(
-            bundle.objective_scorecard["market_impact_stress_model"],
-            "square_root",
-        )
-        self.assertEqual(
-            bundle.objective_scorecard["market_impact_stress_net_pnl_per_day"],
-            "88",
+        self.assertTrue(
+            bundle.objective_scorecard["nonlinear_market_impact_stress_missing"]
         )
         self.assertEqual(
             bundle.objective_scorecard["avg_liquidity_notional_per_day"],
             "900000",
         )
-        self.assertTrue(bundle.objective_scorecard["market_impact_stress_passed"])
+        self.assertFalse(bundle.objective_scorecard["market_impact_stress_passed"])
         self.assertEqual(
             bundle.objective_scorecard[
                 "delay_adjusted_depth_fillable_notional_per_day"

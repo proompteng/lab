@@ -64,6 +64,14 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             lineage["present_windows"], ["train", "holdout", "full_window"]
         )
         self.assertTrue(lineage["lineage_hash"])
+        self.assertEqual(
+            len(lineage["windows"]["full_window"]["daily_filled_notional_sha256"]),
+            64,
+        )
+        self.assertEqual(
+            len(lineage["windows"]["full_window"]["daily_liquidity_notional_sha256"]),
+            64,
+        )
         self.assertEqual(coverage["lineage_hash"], lineage["lineage_hash"])
         self.assertEqual(coverage["window_count"], 3)
 
@@ -1302,6 +1310,14 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(summary["market_impact_stress_model"], "square_root")
         self.assertEqual(summary["market_impact_stress_cost_bps"], "20.0")
         self.assertEqual(summary["market_impact_stress_net_pnl_per_day"], "262.5")
+        self.assertEqual(
+            summary["market_impact_stress_components"]["source_marker"],
+            "realistic_market_impact_arxiv_2603_29086_2026",
+        )
+        self.assertEqual(
+            summary["market_impact_stress_components"]["almgren_chriss_cost_bps"],
+            "10.00",
+        )
         self.assertTrue(summary["market_impact_stress_passed"])
         self.assertEqual(
             summary["delay_adjusted_depth_stress_model"], "latency_depth_haircut"
@@ -1340,6 +1356,48 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 "2026-04-02": "1500000",
             },
         )
+
+    def test_consistency_penalty_selects_almgren_chriss_proxy_when_stricter(
+        self,
+    ) -> None:
+        _, summary = frontier._consistency_penalty(
+            full_window_payload=self._payload(
+                start_date="2026-03-24",
+                end_date="2026-03-24",
+                daily_net={"2026-03-24": "1000"},
+                daily_filled_notional={"2026-03-24": "1000000"},
+                daily_liquidity_notional={"2026-03-24": "1000000"},
+                decision_count=10,
+                filled_count=10,
+                wins=10,
+                losses=0,
+            ),
+            policy=frontier.FullWindowConsistencyPolicy(
+                target_net_per_day=frontier.Decimal("500"),
+                min_daily_net_pnl=frontier.Decimal("0"),
+                min_active_days=1,
+                min_active_ratio=frontier.Decimal("1"),
+                min_positive_days=1,
+                max_worst_day_loss=frontier.Decimal("250"),
+                max_negative_days=0,
+                max_drawdown=frontier.Decimal("500"),
+                max_best_day_share_of_total_pnl=frontier.Decimal("1"),
+                min_avg_filled_notional_per_day=frontier.Decimal("50000"),
+                min_avg_filled_notional_per_active_day=frontier.Decimal("50000"),
+                require_every_day_active=True,
+            ),
+        )
+
+        self.assertEqual(summary["market_impact_stress_model"], "almgren_chriss_proxy")
+        self.assertEqual(summary["market_impact_stress_cost_bps"], "150")
+        self.assertEqual(
+            summary["market_impact_stress_components"]["square_root_cost_bps"], "100"
+        )
+        self.assertEqual(
+            summary["market_impact_stress_components"]["almgren_chriss_cost_bps"],
+            "150",
+        )
+        self.assertFalse(summary["market_impact_stress_passed"])
 
     def test_consistency_penalty_fails_delay_depth_when_filled_day_lacks_liquidity(
         self,
@@ -1892,6 +1950,17 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             self.assertEqual(
                 top_by_stop["18"]["objective_scorecard"]["market_impact_stress_model"],
                 "square_root",
+            )
+            self.assertEqual(
+                top_by_stop["18"]["objective_scorecard"][
+                    "market_impact_stress_components"
+                ]["source_marker"],
+                "realistic_market_impact_arxiv_2603_29086_2026",
+            )
+            self.assertTrue(
+                top_by_stop["18"]["objective_scorecard"][
+                    "nonlinear_market_impact_stress_passed"
+                ]
             )
             self.assertIn(
                 "market_impact_stress_net_pnl_per_day",
