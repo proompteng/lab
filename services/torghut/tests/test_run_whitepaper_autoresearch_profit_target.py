@@ -571,7 +571,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertIn("name: secondOosDays\n        value: '5'", template)
         self.assertIn('--train-days "{{inputs.parameters.trainDays}}"', template)
         self.assertIn('--holdout-days "{{inputs.parameters.holdoutDays}}"', template)
-        self.assertIn('--second-oos-days "{{inputs.parameters.secondOosDays}}"', template)
+        self.assertIn(
+            '--second-oos-days "{{inputs.parameters.secondOosDays}}"', template
+        )
         self.assertIn("cpu: 4", template)
         self.assertIn("memory: 12Gi", template)
         self.assertIn("cpu: 8", template)
@@ -1054,6 +1056,119 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(model["feedback_matched_spec_count"], 1)
         self.assertEqual(rows[0]["training_source"], "feedback_real_replay")
         self.assertEqual(rows[0]["selection_reason"], "pre_replay_mlx_feedback_blocked")
+
+    def test_feedback_evidence_persisted_loader_reconstructs_blocked_portfolio_candidates(
+        self,
+    ) -> None:
+        spec = self._candidate_spec("spec-portfolio-feedback")
+        scorecard = {
+            "net_pnl_per_day": "306.12",
+            "portfolio_post_cost_net_pnl_per_day": "306.12",
+            "active_day_ratio": "0.72",
+            "positive_day_ratio": "0.68",
+            "max_drawdown": "6400",
+            "max_single_symbol_contribution_share": "0.91",
+            "profit_target_oracle": {
+                "passed": False,
+                "blockers": [
+                    "portfolio_post_cost_net_pnl_per_day_failed",
+                    "max_single_symbol_contribution_share_failed",
+                    "max_drawdown_failed",
+                ],
+            },
+        }
+        sleeve = {
+            "candidate_id": "candidate-portfolio-feedback",
+            "candidate_spec_id": spec.candidate_spec_id,
+            "family_template_id": spec.family_template_id,
+            "runtime_family": spec.runtime_family,
+            "runtime_strategy_name": spec.runtime_strategy_name,
+            "weight": "0.50",
+            "expected_net_pnl_per_day": "153.06",
+            "source_expected_net_pnl_per_day": "306.12",
+            "risk_contribution": "3200",
+            "source_risk_contribution": "6400",
+            "correlation_cluster": "NVDA",
+            "params": {
+                "signal_motif": "order_flow_continuation",
+                "selection_mode": "top",
+                "rank_feature": "ofi_z",
+                "capital_profile": "feedback_escape",
+                "top_n": "2",
+            },
+            "universe_symbols": ["NVDA", "AMD"],
+        }
+
+        with (
+            Session(self.engine) as session,
+            patch(
+                "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+                side_effect=lambda: Session(self.engine),
+            ),
+        ):
+            session.add(
+                AutoresearchPortfolioCandidate(
+                    portfolio_candidate_id="portfolio-feedback-blocked",
+                    epoch_id="portfolio-feedback-epoch",
+                    source_candidate_ids_json=["candidate-portfolio-feedback"],
+                    target_net_pnl_per_day=Decimal("500"),
+                    objective_scorecard_json=scorecard,
+                    optimizer_report_json={"method": "test"},
+                    payload_json={
+                        "schema_version": "torghut.portfolio-candidate-spec.v1",
+                        "portfolio_candidate_id": "portfolio-feedback-blocked",
+                        "source_candidate_ids": ["candidate-portfolio-feedback"],
+                        "target_net_pnl_per_day": "500",
+                        "sleeves": [sleeve],
+                        "objective_scorecard": scorecard,
+                        "optimizer_report": {"method": "test"},
+                    },
+                    status="blocked",
+                )
+            )
+            session.commit()
+
+            loaded, manifest = runner._load_recent_persisted_feedback_evidence_bundles()
+
+        self.assertEqual(len(loaded), 1)
+        self.assertEqual(loaded[0].candidate_spec_id, spec.candidate_spec_id)
+        self.assertEqual(loaded[0].candidate_id, "candidate-portfolio-feedback")
+        self.assertEqual(
+            loaded[0].dataset_snapshot_id,
+            "autoresearch-portfolio-candidate:portfolio-feedback-epoch:portfolio-feedback-blocked",
+        )
+        self.assertEqual(
+            loaded[0].objective_scorecard["portfolio_candidate_id"],
+            "portfolio-feedback-blocked",
+        )
+        self.assertEqual(loaded[0].objective_scorecard["portfolio_status"], "blocked")
+        self.assertIn(
+            "portfolio_post_cost_net_pnl_per_day_failed",
+            loaded[0].objective_scorecard["portfolio_blockers"],
+        )
+        self.assertIn(
+            "max_drawdown_failed",
+            loaded[0].objective_scorecard["hard_vetoes"],
+        )
+        self.assertTrue(loaded[0].objective_scorecard["feedback_shape_key"])
+        self.assertTrue(loaded[0].objective_scorecard["feedback_risk_profile_key"])
+        self.assertEqual(manifest["status"], "loaded")
+        self.assertEqual(manifest["portfolio_candidate_scanned_count"], 1)
+        self.assertEqual(manifest["portfolio_candidate_bundle_count"], 1)
+        self.assertEqual(
+            manifest["portfolio_candidate_ids"], ["portfolio-feedback-blocked"]
+        )
+
+        model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(spec,), feedback_evidence_bundles=loaded
+        )
+
+        self.assertEqual(model["feedback_evidence_bundle_count"], 1)
+        self.assertEqual(model["feedback_matched_spec_count"], 1)
+        self.assertEqual(rows[0]["training_source"], "feedback_real_replay")
+        self.assertEqual(
+            rows[0]["selection_reason"], "pre_replay_mlx_feedback_penalized"
+        )
 
     def test_feedback_evidence_persisted_loader_skips_empty_invalid_and_limited_payloads(
         self,

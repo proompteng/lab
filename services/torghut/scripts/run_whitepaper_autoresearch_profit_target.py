@@ -99,6 +99,7 @@ _DEFAULT_CLICKHOUSE_HTTP_URL = (
 )
 _MAX_PERSISTED_FEEDBACK_EVIDENCE_BUNDLES = 512
 _MAX_PERSISTED_FEEDBACK_EVIDENCE_EPOCHS = 12
+_PORTFOLIO_FEEDBACK_STATUSES = frozenset({"blocked", "target_met"})
 _REJECTED_SIGNAL_OUTCOME_REQUIRED_FIELDS = (
     "counterfactual_return",
     "route_tca",
@@ -771,6 +772,188 @@ def _rejected_signal_outcome_payload_to_feedback_bundle(
     )
 
 
+def _ordered_unique_strings(values: Sequence[Any]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for value in values:
+        text = _string(value)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        unique.append(text)
+    return tuple(unique)
+
+
+def _portfolio_candidate_feedback_blockers(
+    *,
+    scorecard: Mapping[str, Any],
+    payload: Mapping[str, Any],
+) -> tuple[str, ...]:
+    blockers: list[Any] = list(_oracle_blockers(scorecard))
+    promotion_readiness = _mapping(payload.get("promotion_readiness"))
+    for source in (scorecard, promotion_readiness):
+        for key in ("hard_vetoes", "veto_reasons", "blockers"):
+            raw = source.get(key)
+            if isinstance(raw, Sequence) and not isinstance(raw, str):
+                blockers.extend(cast(Sequence[Any], raw))
+    return _ordered_unique_strings(blockers)
+
+
+def _portfolio_sleeve_feedback_metadata(
+    sleeve: Mapping[str, Any],
+) -> dict[str, Any]:
+    params = _mapping(sleeve.get("params"))
+    universe_symbols = [
+        symbol.upper()
+        for symbol in _string_list_from_value(sleeve.get("universe_symbols"))
+    ]
+    universe_key = ",".join(sorted(universe_symbols))
+    signal_key = "|".join(
+        part
+        for part in (
+            _string(params.get("signal_motif")) or _string(sleeve.get("signal")),
+            _string(params.get("selection_mode")),
+            _string(params.get("rank_feature")),
+        )
+        if part
+    )
+    family_template_id = _string(sleeve.get("family_template_id"))
+    runtime_family = _string(sleeve.get("runtime_family"))
+    runtime_strategy_name = _string(sleeve.get("runtime_strategy_name"))
+    execution_profile_id = _string(sleeve.get("execution_profile_id"))
+    risk_profile_payload = _feedback_risk_profile_key_payload(
+        family_template_id=family_template_id,
+        runtime_strategy_name=runtime_strategy_name,
+        execution_profile_id=execution_profile_id,
+        universe_key=universe_key,
+        signal_key=signal_key,
+    )
+    shape_payload = {
+        "family_template_id": family_template_id,
+        "runtime_family": runtime_family,
+        "runtime_strategy_name": runtime_strategy_name,
+        "execution_profile_id": execution_profile_id,
+        "universe_key": universe_key,
+        "signal_key": signal_key,
+        "capital_profile": _string(params.get("capital_profile")),
+        "entry_minute_after_open": _string(params.get("entry_minute_after_open")),
+        "exit_minute_after_open": _string(params.get("exit_minute_after_open")),
+        "entry_start_minute_utc": _string(params.get("entry_start_minute_utc")),
+        "entry_end_minute_utc": _string(params.get("entry_end_minute_utc")),
+        "max_entries_per_session": _string(params.get("max_entries_per_session")),
+        "max_concurrent_positions": _string(params.get("max_concurrent_positions")),
+        "top_n": _string(params.get("top_n")),
+        "max_pair_legs": _string(params.get("max_pair_legs")),
+        "long_stop_loss_bps": _string(params.get("long_stop_loss_bps")),
+        "short_stop_loss_bps": _string(params.get("short_stop_loss_bps")),
+        "max_session_negative_exit_bps": _string(
+            params.get("max_session_negative_exit_bps")
+        ),
+    }
+    metadata: dict[str, Any] = {
+        "family_template_id": family_template_id,
+        "runtime_family": runtime_family,
+        "runtime_strategy_name": runtime_strategy_name,
+        "execution_signature": _string(sleeve.get("execution_signature")),
+        "execution_profile_id": execution_profile_id,
+        "universe_key": universe_key,
+        "signal_key": signal_key,
+        "runtime_params": dict(params),
+        "universe_symbols": universe_symbols,
+    }
+    if any(_string(value) for value in risk_profile_payload.values()):
+        metadata["feedback_risk_profile_key"] = _stable_hash(risk_profile_payload)
+    if any(_string(value) for value in shape_payload.values()):
+        metadata["feedback_shape_key"] = _stable_hash(shape_payload)
+    return metadata
+
+
+def _portfolio_candidate_row_to_feedback_bundles(
+    row: AutoresearchPortfolioCandidate,
+    *,
+    code_commit: str = "unknown",
+) -> tuple[CandidateEvidenceBundle, ...]:
+    status = _string(row.status)
+    if status not in _PORTFOLIO_FEEDBACK_STATUSES:
+        return ()
+    payload = _mapping(row.payload_json)
+    scorecard = _mapping(row.objective_scorecard_json) or _mapping(
+        payload.get("objective_scorecard")
+    )
+    if not scorecard:
+        return ()
+    blockers = _portfolio_candidate_feedback_blockers(
+        scorecard=scorecard, payload=payload
+    )
+    sleeves = _list_of_mappings(payload.get("sleeves"))
+    if not sleeves:
+        sleeves = [
+            {"candidate_id": candidate_id, "candidate_spec_id": candidate_id}
+            for candidate_id in _string_list_from_value(row.source_candidate_ids_json)
+        ]
+    bundles: list[CandidateEvidenceBundle] = []
+    dataset_snapshot_id = (
+        f"autoresearch-portfolio-candidate:{row.epoch_id}:{row.portfolio_candidate_id}"
+    )
+    promotion_readiness = _mapping(payload.get("promotion_readiness")) or {
+        "stage": "research_portfolio",
+        "status": f"blocked_by_prior_portfolio_candidate:{status}",
+        "promotable": False,
+        "blockers": list(blockers),
+    }
+    for index, sleeve in enumerate(sleeves, start=1):
+        candidate_id = _string(sleeve.get("candidate_id")) or _string(
+            sleeve.get("candidate_spec_id")
+        )
+        candidate_spec_id = _string(sleeve.get("candidate_spec_id")) or candidate_id
+        if not candidate_spec_id:
+            continue
+        metadata = _portfolio_sleeve_feedback_metadata(sleeve)
+        sleeve_scorecard = {
+            **scorecard,
+            **metadata,
+            "candidate_id": candidate_id or candidate_spec_id,
+            "candidate_spec_id": candidate_spec_id,
+            "portfolio_candidate_id": row.portfolio_candidate_id,
+            "portfolio_epoch_id": row.epoch_id,
+            "portfolio_status": status,
+            "portfolio_target_net_pnl_per_day": str(row.target_net_pnl_per_day),
+            "portfolio_blockers": list(blockers),
+            "hard_vetoes": list(blockers),
+            "veto_reasons": list(blockers),
+            "sleeve_weight": _string(sleeve.get("weight")),
+            "sleeve_expected_net_pnl_per_day": _string(
+                sleeve.get("expected_net_pnl_per_day")
+            ),
+            "source_expected_net_pnl_per_day": _string(
+                sleeve.get("source_expected_net_pnl_per_day")
+            ),
+            "sleeve_risk_contribution": _string(sleeve.get("risk_contribution")),
+            "source_risk_contribution": _string(sleeve.get("source_risk_contribution")),
+            "correlation_cluster": _string(sleeve.get("correlation_cluster")),
+        }
+        candidate = {
+            "candidate_id": candidate_id or candidate_spec_id,
+            **metadata,
+            "objective_scorecard": sleeve_scorecard,
+            "hard_vetoes": blockers,
+            "promotion_readiness": promotion_readiness,
+        }
+        bundles.append(
+            evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=candidate_spec_id,
+                candidate=candidate,
+                dataset_snapshot_id=dataset_snapshot_id,
+                result_path=(
+                    f"db://autoresearch_portfolio_candidates/"
+                    f"{row.portfolio_candidate_id}/sleeves/{index}"
+                ),
+                code_commit=code_commit,
+            )
+        )
+    return tuple(bundles)
+
+
 def _load_recent_persisted_feedback_evidence_bundles(
     *,
     limit: int = _MAX_PERSISTED_FEEDBACK_EVIDENCE_BUNDLES,
@@ -791,6 +974,9 @@ def _load_recent_persisted_feedback_evidence_bundles(
         "rejected_signal_outcome_scanned_count": 0,
         "rejected_signal_outcome_bundle_count": 0,
         "rejected_signal_outcome_invalid_count": 0,
+        "portfolio_candidate_scanned_count": 0,
+        "portfolio_candidate_bundle_count": 0,
+        "portfolio_candidate_invalid_count": 0,
     }
     try:
         with SessionLocal() as session:
@@ -818,6 +1004,23 @@ def _load_recent_persisted_feedback_evidence_bundles(
                 if epoch_ids
                 else []
             )
+            portfolio_candidate_rows = (
+                session.execute(
+                    select(AutoresearchPortfolioCandidate)
+                    .where(
+                        AutoresearchPortfolioCandidate.status.in_(
+                            sorted(_PORTFOLIO_FEEDBACK_STATUSES)
+                        )
+                    )
+                    .order_by(
+                        AutoresearchPortfolioCandidate.created_at.desc(),
+                        AutoresearchPortfolioCandidate.updated_at.desc(),
+                    )
+                    .limit(limit)
+                )
+                .scalars()
+                .all()
+            )
             rejected_signal_outcome_rows = (
                 session.execute(
                     select(RejectedSignalOutcomeEvent)
@@ -840,13 +1043,17 @@ def _load_recent_persisted_feedback_evidence_bundles(
     manifest["rejected_signal_outcome_scanned_count"] = len(
         rejected_signal_outcome_rows
     )
+    manifest["portfolio_candidate_scanned_count"] = len(portfolio_candidate_rows)
     bundles: list[CandidateEvidenceBundle] = []
     invalid_payload_count = 0
     rejected_signal_outcome_invalid_count = 0
     rejected_signal_outcome_bundle_count = 0
+    portfolio_candidate_invalid_count = 0
+    portfolio_candidate_bundle_count = 0
     source_epoch_ids: list[str] = []
     legacy_source_epoch_ids: list[str] = []
     rejected_signal_outcome_event_ids: list[str] = []
+    portfolio_candidate_ids: list[str] = []
     candidate_specs_by_epoch: dict[str, list[CandidateSpec]] = {}
     invalid_spec_count = 0
     for row in rejected_signal_outcome_rows:
@@ -863,6 +1070,21 @@ def _load_recent_persisted_feedback_evidence_bundles(
         bundles.append(bundle)
         rejected_signal_outcome_bundle_count += 1
         rejected_signal_outcome_event_ids.append(row.event_id)
+    for row in portfolio_candidate_rows:
+        if len(bundles) >= limit:
+            break
+        try:
+            row_bundles = _portfolio_candidate_row_to_feedback_bundles(row)
+        except Exception:
+            portfolio_candidate_invalid_count += 1
+            continue
+        if not row_bundles:
+            portfolio_candidate_invalid_count += 1
+            continue
+        remaining = limit - len(bundles)
+        bundles.extend(row_bundles[:remaining])
+        portfolio_candidate_bundle_count += min(len(row_bundles), remaining)
+        portfolio_candidate_ids.append(row.portfolio_candidate_id)
     for row in spec_rows:
         try:
             spec = _candidate_spec_from_payload(_mapping(row.payload_json))
@@ -927,6 +1149,9 @@ def _load_recent_persisted_feedback_evidence_bundles(
         rejected_signal_outcome_invalid_count
     )
     manifest["rejected_signal_outcome_event_ids"] = rejected_signal_outcome_event_ids
+    manifest["portfolio_candidate_bundle_count"] = portfolio_candidate_bundle_count
+    manifest["portfolio_candidate_invalid_count"] = portfolio_candidate_invalid_count
+    manifest["portfolio_candidate_ids"] = portfolio_candidate_ids
     return deduped, manifest
 
 
@@ -4235,13 +4460,10 @@ def _pre_replay_proposal_model_and_rows(
             and (is_blocked or has_policy_penalty)
         ):
             spec = spec_by_id.get(candidate_spec_id)
-            if (
-                spec is not None
-                and _candidate_spec_matches_consistency_repair_feedback(
-                    spec,
-                    bundle.objective_scorecard,
-                    oracle_policy=policy,
-                )
+            if spec is not None and _candidate_spec_matches_consistency_repair_feedback(
+                spec,
+                bundle.objective_scorecard,
+                oracle_policy=policy,
             ):
                 return "pre_replay_mlx_consistency_repair_candidate"
             return "pre_replay_mlx_family_feedback_penalized"
@@ -4289,13 +4511,10 @@ def _pre_replay_proposal_model_and_rows(
             )
         ):
             spec = spec_by_id.get(candidate_spec_id)
-            if (
-                spec is not None
-                and _candidate_spec_matches_consistency_repair_feedback(
-                    spec,
-                    bundle.objective_scorecard,
-                    oracle_policy=policy,
-                )
+            if spec is not None and _candidate_spec_matches_consistency_repair_feedback(
+                spec,
+                bundle.objective_scorecard,
+                oracle_policy=policy,
             ):
                 return _consistency_repair_proposal_score(
                     spec,
