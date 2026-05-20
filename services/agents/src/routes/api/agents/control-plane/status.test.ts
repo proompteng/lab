@@ -4,6 +4,7 @@ import { Effect } from 'effect'
 import type { AgentsControlPlaneStatusDependencies } from '../../../../server/control-plane-status'
 import type { GrpcStatus } from '../../../../server/control-plane-grpc'
 import type { ControlPlaneRuntimeEvidence } from '../../../../server/control-plane-runtime-evidence'
+import type { ControlPlaneWatchReliability } from '../../../../server/control-plane-status-contract'
 import { buildControlPlaneStatusResponse } from './status'
 
 const grpc: GrpcStatus = {
@@ -44,6 +45,25 @@ const runtimeEvidence: ControlPlaneRuntimeEvidence = {
   },
 }
 
+const watchReliability: ControlPlaneWatchReliability = {
+  status: 'healthy',
+  window_minutes: 15,
+  observed_streams: 1,
+  total_events: 4,
+  total_errors: 0,
+  total_restarts: 0,
+  streams: [
+    {
+      resource: 'agentruns.agents.proompteng.ai',
+      namespace: 'agents',
+      events: 4,
+      errors: 0,
+      restarts: 0,
+      last_seen_at: '2026-05-19T11:59:45.000Z',
+    },
+  ],
+}
+
 const deps: AgentsControlPlaneStatusDependencies = {
   now: () => new Date('2026-05-19T12:00:00.000Z'),
   env: {},
@@ -74,6 +94,7 @@ const deps: AgentsControlPlaneStatusDependencies = {
     dispatchPaused: false,
   }),
   collectRuntimeEvidence: () => Effect.succeed(runtimeEvidence),
+  collectWatchReliability: () => Effect.succeed(watchReliability),
 }
 
 describe('control-plane status route', () => {
@@ -96,6 +117,7 @@ describe('control-plane status route', () => {
       },
       workflows: { active_job_runs: 2, data_confidence: 'high' },
       rollout_health: { status: 'healthy', observed_deployments: 2 },
+      watch_reliability: { status: 'healthy', observed_streams: 1, total_events: 4 },
       namespaces: expect.arrayContaining([expect.objectContaining({ namespace: 'workflow', status: 'healthy' })]),
     })
   })

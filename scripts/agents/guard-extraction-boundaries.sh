@@ -119,6 +119,15 @@ fail_if_path_exists \
   "Jangar must not infer generic AgentRun ingestion readiness after Agents owns /ready ingestion assessment" \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-serving-process-status.ts"
 
+fail_if_path_exists \
+  "Jangar must not own generic Agents watch reliability after Agents owns watch status evidence" \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-watch-reliability.ts"
+
+fail_if_matches \
+  "Jangar config must not retain generic Agents watch reliability knobs after Agents owns watch status evidence" \
+  'CONTROL_PLANE_WATCH_HEALTH|WatchReliabilityConfig|resolveControlPlaneWatchReliabilityConfig' \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-config.ts"
+
 fail_if_matches \
   "Jangar /ready must consume Agents-reported AgentRun ingestion instead of rebuilding it from controller internals" \
   'buildAgentRunIngestionStatus|agentrun_ingestion_not_ready' \

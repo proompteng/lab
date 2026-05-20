@@ -29,10 +29,6 @@ const memoryProviderHealthMocks = vi.hoisted(() => ({
   getMemoryProviderHealth: vi.fn(),
 }))
 
-const watchReliabilityMocks = vi.hoisted(() => ({
-  getWatchReliabilitySummary: vi.fn(),
-}))
-
 const metricsMocks = vi.hoisted(() => ({
   getMetricsSinkPressureSummary: vi.fn(),
 }))
@@ -52,7 +48,6 @@ vi.mock('~/server/agents-control-plane-client', async () => {
   }
 })
 vi.mock('~/server/memory-provider-health', () => memoryProviderHealthMocks)
-vi.mock('~/server/control-plane-watch-reliability', () => watchReliabilityMocks)
 vi.mock('~/server/metrics', () => metricsMocks)
 vi.mock('~/server/github-review-ingest', () => githubReviewIngestMocks)
 vi.mock('~/server/control-plane-execution-trust', async () => {
@@ -485,24 +480,6 @@ describe('getReadyHandler', () => {
         maxInputChars: 60000,
         hosted: false,
       },
-    })
-    watchReliabilityMocks.getWatchReliabilitySummary.mockReturnValue({
-      status: 'healthy',
-      window_minutes: 15,
-      observed_streams: 1,
-      total_events: 8,
-      total_errors: 0,
-      total_restarts: 0,
-      streams: [
-        {
-          resource: 'agentruns.agents.proompteng.ai',
-          namespace: 'agents',
-          events: 8,
-          errors: 0,
-          restarts: 0,
-          last_seen_at: '2026-03-08T21:00:00Z',
-        },
-      ],
     })
     metricsMocks.getMetricsSinkPressureSummary.mockReturnValue({
       status: 'healthy',

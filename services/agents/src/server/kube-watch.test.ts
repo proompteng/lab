@@ -28,6 +28,7 @@ import {
   makeResourceWatchService,
   resetKubectlWatchCompatibilityCacheForTests,
 } from './kube-watch'
+import { clearWatchReliabilityState, getWatchReliabilitySummary } from './control-plane-watch-reliability'
 
 type WatchCall = {
   path: string
@@ -79,6 +80,7 @@ describe('kube-watch', () => {
     recordReliabilityEventMock.mockReset()
     recordReliabilityErrorMock.mockReset()
     recordReliabilityRestartMock.mockReset()
+    clearWatchReliabilityState()
     watchMock.mockImplementation(async () => ({ abort: vi.fn() }))
     resetKubectlWatchCompatibilityCacheForTests()
   })
@@ -88,6 +90,7 @@ describe('kube-watch', () => {
       watchHandle.stop()
       watchHandle = null
     }
+    clearWatchReliabilityState()
     vi.useRealTimers()
   })
 
@@ -124,6 +127,43 @@ describe('kube-watch', () => {
     expect(recordReliabilityEventMock).toHaveBeenCalledWith({
       resource: 'agentruns',
       namespace: 'agents',
+    })
+  })
+
+  it('records watch reliability by default when metric hooks are not injected', async () => {
+    const defaultStarter = createResourceWatchStarter({
+      buildWatchPath: buildWatchPathMock,
+      getKubeConfig: () => ({}) as never,
+      startKubernetesWatch: (_kubeConfig, path, query, callback, done) => watchMock(path, query, callback, done),
+    })
+    watchHandle = defaultStarter({
+      resource: 'agentruns',
+      namespace: 'agents',
+      onEvent: vi.fn(),
+      restartDelayMs: 2000,
+    })
+
+    await flush()
+    const watchCall = getWatchCall()
+    watchCall.callback('ADDED', { kind: 'AgentRun', metadata: { resourceVersion: '12399' } })
+    watchCall.done(new Error('boom'))
+
+    const summary = getWatchReliabilitySummary()
+
+    expect(summary).toMatchObject({
+      status: 'degraded',
+      observed_streams: 1,
+      total_events: 1,
+      total_errors: 1,
+      total_restarts: 1,
+      streams: [
+        expect.objectContaining({
+          resource: 'agentruns',
+          namespace: 'agents',
+          error_reasons: { watch_error: 1 },
+          restart_reasons: { watch_error: 1 },
+        }),
+      ],
     })
   })
 

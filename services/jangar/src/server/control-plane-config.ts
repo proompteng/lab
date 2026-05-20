@@ -8,11 +8,6 @@ const DEFAULT_LEADER_ELECTION_ENABLED = true
 const DEFAULT_LEADER_ELECTION_LEASE_DURATION_SECONDS = 30
 const DEFAULT_LEADER_ELECTION_RENEW_DEADLINE_SECONDS = 20
 const DEFAULT_LEADER_ELECTION_RETRY_PERIOD_SECONDS = 5
-const DEFAULT_WATCH_WINDOW_MINUTES = 15
-const DEFAULT_WATCH_STREAM_LIMIT = 20
-const DEFAULT_WATCH_RESTART_DEGRADE_THRESHOLD = 2
-const MAX_RECORDED_STREAMS = 200
-const MAX_WINDOW_MINUTES = 24 * 60
 const DEFAULT_EXECUTION_TRUST_SWARMS = ['jangar-control-plane', 'torghut-quant']
 const DEFAULT_EXECUTION_TRUST_SUMMARY_LIMIT = 20
 const DEFAULT_TORGHUT_STATUS_TIMEOUT_MS = 15000
@@ -80,12 +75,6 @@ export type LeaderElectionSettings = {
   podNamespace: string
   podName: string
   podUid: string | null
-}
-
-export type ControlPlaneWatchReliabilityConfig = {
-  windowMinutes: number
-  streamLimit: number
-  restartDegradeThreshold: number
 }
 
 export type ControlPlaneStatusConfig = {
@@ -173,28 +162,6 @@ export const resolveLeaderElectionSettings = (env: EnvSource = process.env): Lea
   }
 }
 
-export const resolveControlPlaneWatchReliabilityConfig = (
-  env: EnvSource = process.env,
-): ControlPlaneWatchReliabilityConfig => ({
-  windowMinutes: parsePositiveInt(
-    env.JANGAR_CONTROL_PLANE_WATCH_HEALTH_WINDOW_MINUTES,
-    DEFAULT_WATCH_WINDOW_MINUTES,
-    1,
-    MAX_WINDOW_MINUTES,
-  ),
-  streamLimit: parsePositiveInt(
-    env.JANGAR_CONTROL_PLANE_WATCH_HEALTH_STREAM_LIMIT,
-    DEFAULT_WATCH_STREAM_LIMIT,
-    1,
-    MAX_RECORDED_STREAMS,
-  ),
-  restartDegradeThreshold: parsePositiveInt(
-    env.JANGAR_CONTROL_PLANE_WATCH_HEALTH_RESTART_DEGRADE_THRESHOLD,
-    DEFAULT_WATCH_RESTART_DEGRADE_THRESHOLD,
-    1,
-  ),
-})
-
 export const resolveControlPlaneStatusConfig = (env: EnvSource = process.env): ControlPlaneStatusConfig => {
   const executionTrustSwarms = uniqueStrings(parseStringList(env.JANGAR_CONTROL_PLANE_EXECUTION_TRUST_SWARMS))
 
@@ -251,6 +218,5 @@ export const validateControlPlaneConfig = (env: EnvSource = process.env) => {
   }
 
   resolveControlPlaneHeartbeatConfig(env)
-  resolveControlPlaneWatchReliabilityConfig(env)
   resolveControlPlaneCacheFreshnessConfig(env)
 }

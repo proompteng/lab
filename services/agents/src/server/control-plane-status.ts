@@ -8,6 +8,7 @@ import {
   type ControlPlaneRuntimeEvidence,
   type WorkflowsReliabilityStatus,
 } from './control-plane-runtime-evidence'
+import { createControlPlaneWatchReliabilityService } from './control-plane-watch-reliability'
 import type {
   AgentsControlPlaneStatus,
   ComponentStatus,
@@ -57,6 +58,7 @@ export type BuildAgentsControlPlaneStatusInput = {
   now?: Date
   env?: EnvSource
   runtimeEvidence?: ControlPlaneRuntimeEvidence
+  watchReliability?: ControlPlaneWatchReliability
 }
 
 export type GetAgentsControlPlaneStatusInput = Omit<BuildAgentsControlPlaneStatusInput, 'grpc'> & {
@@ -77,6 +79,11 @@ export type AgentsControlPlaneStatusDependencies = {
     now: Date
     env: EnvSource
   }) => Effect.Effect<ControlPlaneRuntimeEvidence, AgentsControlPlaneStatusError>
+  collectWatchReliability?: (input: {
+    namespace: string
+    now: Date
+    env: EnvSource
+  }) => Effect.Effect<ControlPlaneWatchReliability, AgentsControlPlaneStatusError>
 }
 
 export type AgentsControlPlaneStatusService = {
@@ -361,11 +368,22 @@ const unknownRolloutHealth = (): ControlPlaneRolloutHealth => ({
   message: runtimeEvidenceUnavailableMessage,
 })
 
+const unknownWatchReliability = (): ControlPlaneWatchReliability => ({
+  status: 'unknown',
+  window_minutes: 0,
+  observed_streams: 0,
+  total_events: 0,
+  total_errors: 0,
+  total_restarts: 0,
+  streams: [],
+})
+
 const buildDegradedComponents = (input: {
   controllers: ControllerStatus[]
   runtimeAdapters: RuntimeAdapterStatus[]
   grpc: GrpcStatus
   agentRunIngestion: AgentsControlPlaneStatus['agentrun_ingestion']
+  watchReliability: ControlPlaneWatchReliability
 }) => [
   ...input.controllers
     .filter((controller) => controller.status === 'degraded')
@@ -375,6 +393,7 @@ const buildDegradedComponents = (input: {
     .map((adapter) => `runtime_adapter:${adapter.name}`),
   ...(input.grpc.status === 'degraded' ? ['grpc'] : []),
   ...(input.agentRunIngestion.status === 'degraded' ? ['agentrun_ingestion'] : []),
+  ...(input.watchReliability.status === 'degraded' ? ['watch_reliability'] : []),
 ]
 
 export const buildAgentsControlPlaneStatus = (
@@ -385,6 +404,7 @@ export const buildAgentsControlPlaneStatus = (
   const env = input.env ?? deps.env ?? process.env
   const namespace = input.namespace
   const runtimeEvidence = input.runtimeEvidence
+  const watchReliability = input.watchReliability ?? unknownWatchReliability()
   const agentsHealth = (deps.getAgentsControllerHealth ?? getAgentsControllerHealth)()
   const controllers = [
     buildControllerStatus('agents-controller', agentsHealth, namespace, now),
@@ -415,15 +435,6 @@ export const buildAgentsControlPlaneStatus = (
     },
   ]
   const agentRunIngestion = buildAgentRunIngestionStatus(namespace, agentsHealth, deps)
-  const watchReliability: ControlPlaneWatchReliability = {
-    status: 'unknown',
-    window_minutes: 0,
-    observed_streams: 0,
-    total_events: 0,
-    total_errors: 0,
-    total_restarts: 0,
-    streams: [],
-  }
   const leaderElection = (deps.getLeaderElectionStatus ?? getLeaderElectionStatus)()
   const controllerWitness = buildControlPlaneControllerWitness({
     namespace,
@@ -438,6 +449,7 @@ export const buildAgentsControlPlaneStatus = (
     runtimeAdapters,
     grpc: input.grpc,
     agentRunIngestion,
+    watchReliability,
   })
 
   return {
@@ -503,9 +515,27 @@ export const createAgentsControlPlaneStatusService = (
               ),
             ))
       const runtimeEvidence = yield* collectRuntimeEvidence({ namespace: input.namespace, now, env })
+      const collectWatchReliability =
+        deps.collectWatchReliability ??
+        ((collectInput: { namespace: string; now: Date; env: EnvSource }) =>
+          createControlPlaneWatchReliabilityService({
+            env: collectInput.env,
+            now: () => collectInput.now,
+          })
+            .summarize()
+            .pipe(
+              Effect.mapError(
+                (error) =>
+                  new AgentsControlPlaneStatusError({
+                    operation: error.operation,
+                    message: error.message,
+                  }),
+              ),
+            ))
+      const watchReliability = yield* collectWatchReliability({ namespace: input.namespace, now, env })
 
       return yield* Effect.try({
-        try: () => buildAgentsControlPlaneStatus({ ...input, grpc, now, env, runtimeEvidence }, deps),
+        try: () => buildAgentsControlPlaneStatus({ ...input, grpc, now, env, runtimeEvidence, watchReliability }, deps),
         catch: toStatusError('buildControlPlaneStatus'),
       })
     }),

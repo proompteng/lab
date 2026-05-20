@@ -8,6 +8,7 @@ import {
 } from './control-plane-status'
 import type { GrpcStatus } from './control-plane-grpc'
 import type { ControlPlaneRuntimeEvidence } from './control-plane-runtime-evidence'
+import type { ControlPlaneWatchReliability } from './control-plane-status-contract'
 
 const now = new Date('2026-05-19T12:00:00.000Z')
 
@@ -53,6 +54,25 @@ const runtimeEvidence: ControlPlaneRuntimeEvidence = {
   },
 }
 
+const watchReliability: ControlPlaneWatchReliability = {
+  status: 'healthy',
+  window_minutes: 15,
+  observed_streams: 1,
+  total_events: 12,
+  total_errors: 0,
+  total_restarts: 0,
+  streams: [
+    {
+      resource: 'agentruns.agents.proompteng.ai',
+      namespace: 'agents',
+      events: 12,
+      errors: 0,
+      restarts: 0,
+      last_seen_at: '2026-05-19T11:59:45.000Z',
+    },
+  ],
+}
+
 const healthyController = {
   enabled: true,
   started: true,
@@ -91,12 +111,13 @@ const deps: AgentsControlPlaneStatusDependencies = {
     dispatchPaused: false,
   }),
   collectRuntimeEvidence: () => Effect.succeed(runtimeEvidence),
+  collectWatchReliability: () => Effect.succeed(watchReliability),
 }
 
 describe('buildAgentsControlPlaneStatus', () => {
   it('builds the generic Agents-owned status shape without domain placeholders', () => {
     const status = buildAgentsControlPlaneStatus(
-      { namespace: 'agents', service: 'agents', grpc, now, runtimeEvidence },
+      { namespace: 'agents', service: 'agents', grpc, now, runtimeEvidence, watchReliability },
       deps,
     )
 
@@ -138,6 +159,11 @@ describe('buildAgentsControlPlaneStatus', () => {
         expect.objectContaining({ controller_surface: 'agentrun_ingestion' }),
       ]),
     })
+    expect(status.watch_reliability).toMatchObject({
+      status: 'healthy',
+      observed_streams: 1,
+      total_events: 12,
+    })
     expect(status.workflows).toMatchObject({
       active_job_runs: 1,
       data_confidence: 'high',
@@ -151,6 +177,36 @@ describe('buildAgentsControlPlaneStatus', () => {
     expect(status).not.toHaveProperty('torghut_consumer_evidence')
     expect(status).not.toHaveProperty('dependency_quorum')
     expect(status).not.toHaveProperty('material_action_verdicts')
+  })
+
+  it('surfaces degraded watch reliability in namespace health', () => {
+    const status = buildAgentsControlPlaneStatus(
+      {
+        namespace: 'agents',
+        service: 'agents',
+        grpc,
+        now,
+        runtimeEvidence,
+        watchReliability: {
+          ...watchReliability,
+          status: 'degraded',
+          total_errors: 1,
+          streams: [
+            {
+              ...watchReliability.streams[0]!,
+              errors: 1,
+              error_reasons: { watch_error: 1 },
+            },
+          ],
+        },
+      },
+      deps,
+    )
+
+    expect(status.namespaces).toEqual([
+      { namespace: 'agents', status: 'degraded', degraded_components: ['watch_reliability'] },
+    ])
+    expect(status.control_plane_controller_witness.reason_codes).not.toContain('watch_epoch_not_current')
   })
 
   it('wraps status-service dependency failures in an Effect error', async () => {
