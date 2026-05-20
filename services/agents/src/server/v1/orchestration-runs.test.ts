@@ -285,6 +285,37 @@ describe('orchestration runs v1 API', () => {
     expect(kube.apply).not.toHaveBeenCalled()
   })
 
+  it('keeps allowed-audit storage failures as storage failures instead of policy denials', async () => {
+    const store = createStore({
+      createAuditEvent: vi.fn(async (input) => {
+        if (input.eventType === 'policy.allowed') {
+          throw new Error('audit table unavailable')
+        }
+        return {}
+      }),
+    })
+    const kube = createKube()
+    const idGenerator = vi.fn(() => 'policy-allowed-id')
+
+    const response = await postOrchestrationRunsHandler(
+      request({ orchestrationRef: { name: 'demo-orchestration' }, namespace: 'agents' }),
+      { storeFactory: () => store, kubeClient: kube, idGenerator },
+    )
+
+    expect(response.status).toBe(503)
+    const body = (await response.json()) as { error?: string }
+    expect(body.error).toBe('orchestration run storage create-audit-event failed: audit table unavailable')
+    expect(body.error).not.toContain('policy denied')
+    expect(store.createAuditEvent).toHaveBeenCalledTimes(1)
+    expect(store.createAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityId: 'policy-allowed-id',
+        eventType: 'policy.allowed',
+      }),
+    )
+    expect(kube.apply).not.toHaveBeenCalled()
+  })
+
   it('returns 503 for typed storage failures', async () => {
     const store = createStore({
       ready: new Promise((_, reject) => setTimeout(() => reject(new Error('DATABASE_URL missing')), 0)),

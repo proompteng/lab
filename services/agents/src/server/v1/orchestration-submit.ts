@@ -383,41 +383,34 @@ export const submitOrchestrationRunWithServicesEffect = (
             subject: { kind: 'Orchestration', name: input.orchestrationRef.name, namespace: input.namespace },
           }
 
-          const policyDecision = policies.validate(input.namespace, policyChecks, kube)
+          const policyDecision = yield* policies.validate(input.namespace, policyChecks, kube).pipe(Effect.either)
 
-          yield* policyDecision.pipe(
-            Effect.flatMap(() =>
-              Effect.gen(function* () {
-                const entityId = yield* ids.next
-                return yield* stores.createAuditEvent(activeStore, {
-                  entityType: 'PolicyDecision',
-                  entityId,
-                  eventType: 'policy.allowed',
-                  context: baseContext,
-                  details: { subject: policyChecks.subject, checks: policyChecks },
-                })
-              }),
-            ),
-            Effect.catchAll((error) =>
-              Effect.gen(function* () {
-                const entityId = yield* ids.next
-                yield* stores
-                  .createAuditEvent(activeStore, {
-                    entityType: 'PolicyDecision',
-                    entityId,
-                    eventType: 'policy.denied',
-                    context: baseContext,
-                    details: {
-                      subject: policyChecks.subject,
-                      checks: policyChecks,
-                      reason: describeOrchestrationSubmitError(error),
-                    },
-                  })
-                  .pipe(Effect.catchAll(() => Effect.void))
-                return yield* Effect.fail(error)
-              }),
-            ),
-          )
+          if (policyDecision._tag === 'Left') {
+            const auditEventId = yield* ids.next
+            yield* stores
+              .createAuditEvent(activeStore, {
+                entityType: 'PolicyDecision',
+                entityId: auditEventId,
+                eventType: 'policy.denied',
+                context: baseContext,
+                details: {
+                  subject: policyChecks.subject,
+                  checks: policyChecks,
+                  reason: describeOrchestrationSubmitError(policyDecision.left),
+                },
+              })
+              .pipe(Effect.catchAll(() => Effect.void))
+            return yield* Effect.fail(policyDecision.left)
+          }
+
+          const auditEventId = yield* ids.next
+          yield* stores.createAuditEvent(activeStore, {
+            entityType: 'PolicyDecision',
+            entityId: auditEventId,
+            eventType: 'policy.allowed',
+            context: baseContext,
+            details: { subject: policyChecks.subject, checks: policyChecks },
+          })
 
           const resource: Record<string, unknown> = {
             apiVersion: 'orchestration.proompteng.ai/v1alpha1',
