@@ -21,6 +21,7 @@ export const RETIRED_MIGRATION_NAMES = [
   '20260208_jangar_agentrun_idempotency',
   '20260220_remove_prompt_tuning',
   '20260308_agents_control_plane_component_heartbeats',
+  '20260418_embedding_dimension_4096',
   '20260520_codex_judge_agentrun_columns',
   '20260520_drop_codex_rerun_submissions',
 ] as const

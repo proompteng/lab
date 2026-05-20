@@ -1,8 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { Effect, Layer, ManagedRuntime, pipe } from 'effect'
 
-import { Memories, MemoriesLive } from '~/server/memories'
-import { parsePersistMemoryInput, parseRetrieveMemoryInput } from '~/server/memories-http'
+import { parsePersistMemoryNoteInput, parseRetrieveMemoryNotesInput } from '@proompteng/agent-contracts/memory-client'
+
+import { MemoryNotes, MemoryNotesLive, MemoryNotesServiceError } from '~/server/memory-notes'
 
 export const Route = createFileRoute('/api/memories')({
   server: {
@@ -13,7 +14,7 @@ export const Route = createFileRoute('/api/memories')({
   },
 })
 
-const handlerRuntime = ManagedRuntime.make(Layer.mergeAll(MemoriesLive))
+const handlerRuntime = ManagedRuntime.make(Layer.mergeAll(MemoryNotesLive))
 
 const jsonResponse = (payload: unknown, status = 200) => {
   const body = JSON.stringify(payload)
@@ -33,6 +34,12 @@ const resolveServiceError = (message: string) => {
   return errorResponse(message, 500)
 }
 
+const serviceErrorResponse = (error: unknown) => {
+  if (error instanceof MemoryNotesServiceError) return errorResponse(error.message, error.status)
+  const message = error instanceof Error ? error.message : String(error)
+  return resolveServiceError(message)
+}
+
 const resolveRequestError = (message: string) => {
   if (message === 'invalid JSON body') return errorResponse(message, 400)
   return resolveServiceError(message)
@@ -48,14 +55,14 @@ export const getMemoriesHandlerEffect = (request: Request) =>
         limit: url.searchParams.get('limit') ?? undefined,
       }
 
-      const parsed = parseRetrieveMemoryInput(payload)
+      const parsed = parseRetrieveMemoryNotesInput(payload)
       if (!parsed.ok) return errorResponse(parsed.message, 400)
 
-      const service = yield* Memories
+      const service = yield* MemoryNotes
       const records = yield* service.retrieve(parsed.value)
       return jsonResponse({ ok: true, memories: records })
     }),
-    Effect.catchAll((error) => Effect.succeed(resolveServiceError(error.message))),
+    Effect.catchAll((error) => Effect.succeed(serviceErrorResponse(error))),
   )
 
 export const postMemoriesHandlerEffect = (request: Request) =>
@@ -67,14 +74,20 @@ export const postMemoriesHandlerEffect = (request: Request) =>
       })
       if (!payload || typeof payload !== 'object') return errorResponse('invalid JSON body', 400)
 
-      const parsed = parsePersistMemoryInput(payload as Record<string, unknown>)
+      const parsed = parsePersistMemoryNoteInput(payload as Record<string, unknown>)
       if (!parsed.ok) return errorResponse(parsed.message, 400)
 
-      const service = yield* Memories
+      const service = yield* MemoryNotes
       const record = yield* service.persist(parsed.value)
       return jsonResponse({ ok: true, memory: record }, 201)
     }),
-    Effect.catchAll((error) => Effect.succeed(resolveRequestError(error.message))),
+    Effect.catchAll((error) =>
+      Effect.succeed(
+        error instanceof MemoryNotesServiceError
+          ? errorResponse(error.message, error.status)
+          : resolveRequestError(error.message),
+      ),
+    ),
   )
 
 export const getMemoriesHandler = (request: Request) => handlerRuntime.runPromise(getMemoriesHandlerEffect(request))

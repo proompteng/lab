@@ -1,8 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { Effect, Layer, ManagedRuntime, pipe } from 'effect'
 
-import { Memories, MemoriesLive } from '~/server/memories'
-import { normalizeOptionalNamespace } from '~/server/memories-http'
+import { normalizeOptionalMemoryNoteNamespace } from '@proompteng/agent-contracts/memory-client'
+
+import { MemoryNotes, MemoryNotesLive, MemoryNotesServiceError } from '~/server/memory-notes'
 
 export const Route = createFileRoute('/api/memories/count')({
   server: {
@@ -12,7 +13,7 @@ export const Route = createFileRoute('/api/memories/count')({
   },
 })
 
-const handlerRuntime = ManagedRuntime.make(Layer.mergeAll(MemoriesLive))
+const handlerRuntime = ManagedRuntime.make(Layer.mergeAll(MemoryNotesLive))
 
 const jsonResponse = (payload: unknown, status = 200) => {
   const body = JSON.stringify(payload)
@@ -32,17 +33,23 @@ const resolveServiceError = (message: string) => {
   return errorResponse(message, 500)
 }
 
+const serviceErrorResponse = (error: unknown) => {
+  if (error instanceof MemoryNotesServiceError) return errorResponse(error.message, error.status)
+  const message = error instanceof Error ? error.message : String(error)
+  return resolveServiceError(message)
+}
+
 export const getMemoriesCountHandlerEffect = (request: Request) =>
   pipe(
     Effect.gen(function* () {
       const url = new URL(request.url)
-      const namespace = normalizeOptionalNamespace(url.searchParams.get('namespace'))
+      const namespace = normalizeOptionalMemoryNoteNamespace(url.searchParams.get('namespace'))
 
-      const service = yield* Memories
+      const service = yield* MemoryNotes
       const count = yield* service.count({ namespace })
       return jsonResponse({ ok: true, count })
     }),
-    Effect.catchAll((error) => Effect.succeed(resolveServiceError(error.message))),
+    Effect.catchAll((error) => Effect.succeed(serviceErrorResponse(error))),
   )
 
 export const getMemoriesCountHandler = (request: Request) =>

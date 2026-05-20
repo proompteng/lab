@@ -100,6 +100,13 @@ describe('agents extraction boundary guard', () => {
       'Jangar memory provider must use Agents memory operation APIs instead of Agents-owned Secrets or DB tables',
     )
     expect(content).toContain(
+      'Jangar must not retain the Agents memory note store or local memory HTTP parser after Agents owns memory notes',
+    )
+    expect(content).toContain(
+      'Jangar memory compatibility routes and MCP must use the Agents memory service boundary instead of DB-backed memory tables',
+    )
+    expect(content).toContain('Agents service must own memory note persistence, retrieval, count, and stats endpoints')
+    expect(content).toContain(
       'Shared Argo Workflows GitOps must not retain generic Agents WorkflowTemplate or Argo completion ingestion manifests',
     )
     expect(content).toContain('Shared Argo Workflows GitOps must not retain the retired Codex Docker privileged policy')

@@ -176,28 +176,6 @@ type AtlasIngestionTargets = {
   kind: string
 }
 
-type MemoriesEntries = {
-  id: Generated<string>
-  created_at: Generated<Timestamp>
-  updated_at: Generated<Timestamp>
-  execution_id: string | null
-  task_name: string
-  task_description: string | null
-  repository_ref: Generated<string>
-  repository_commit: string | null
-  repository_path: string | null
-  content: string
-  summary: string
-  metadata: JsonValue
-  tags: string[]
-  source: string
-  embedding: unknown
-  encoder_model: string
-  encoder_version: string | null
-  last_accessed_at: Timestamp | null
-  next_review_at: Timestamp | null
-}
-
 type TorghutSymbols = {
   symbol: string
   enabled: Generated<boolean>
@@ -648,7 +626,6 @@ export type Database = {
   'atlas.ingestions': AtlasIngestions
   'atlas.event_files': AtlasEventFiles
   'atlas.ingestion_targets': AtlasIngestionTargets
-  'memories.entries': MemoriesEntries
   torghut_symbols: TorghutSymbols
   'terminals.sessions': TerminalSessions
   'jangar_github.events': JangarGithubEvents

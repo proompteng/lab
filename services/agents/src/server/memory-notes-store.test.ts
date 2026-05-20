@@ -10,8 +10,8 @@ import {
 } from 'kysely'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import type { Database } from '../db'
-import { createPostgresMemoriesStore } from '../memories-store'
+import type { AgentsDatabase } from './db'
+import { createPostgresMemoriesStore } from './memory-notes-store'
 
 type SqlCall = { sql: string; params: readonly unknown[] }
 
@@ -104,7 +104,7 @@ const makeFakeDb = (options: FakeDbOptions = {}) => {
     async destroy() {}
   }
 
-  const db = new Kysely<Database>({
+  const db = new Kysely<AgentsDatabase>({
     dialect: {
       createAdapter: () => new PostgresAdapter(),
       createDriver: () => new TestDriver(),

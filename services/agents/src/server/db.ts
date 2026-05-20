@@ -68,6 +68,28 @@ type MemoryResources = {
   updated_at: Generated<Timestamp>
 }
 
+type MemoryEntries = {
+  id: Generated<string>
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+  execution_id: string | null
+  task_name: string
+  task_description: string | null
+  repository_ref: Generated<string>
+  repository_commit: string | null
+  repository_path: string | null
+  content: string
+  summary: string
+  metadata: JsonValue
+  tags: string[]
+  source: string
+  embedding: unknown
+  encoder_model: string
+  encoder_version: string | null
+  last_accessed_at: Timestamp | null
+  next_review_at: Timestamp | null
+}
+
 type OrchestrationRuns = {
   id: Generated<string>
   orchestration_name: string
@@ -204,6 +226,7 @@ export type AgentsDatabase = {
   agent_run_idempotency_keys: AgentRunIdempotencyKeys
   agent_run_rerun_submissions: AgentRunRerunSubmissions
   memory_resources: MemoryResources
+  'memories.entries': MemoryEntries
   orchestration_runs: OrchestrationRuns
   audit_events: AuditEvents
   'agents_control_plane.resources_current': AgentsControlPlaneResourcesCurrent

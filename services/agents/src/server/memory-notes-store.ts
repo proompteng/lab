@@ -1,50 +1,19 @@
 import { sql } from 'kysely'
 
-import { resolveStoreDb, type Db } from '~/server/db'
-import { requestEmbedding } from '~/server/embedding-client'
-import { ensureMigrations } from '~/server/kysely-migrations'
+import type {
+  AgentsMemoryNoteRecord as MemoryRecord,
+  AgentsMemoryNotesStats as MemoriesStats,
+  AgentsMemoryNotesStatsInput as MemoriesStatsInput,
+  AgentsPersistMemoryNoteInput as PersistMemoryInput,
+  AgentsRetrieveMemoryNotesInput as RetrieveMemoryInput,
+} from '@proompteng/agent-contracts/memory-client'
+
+import { resolveStoreDb, type Db } from './db'
+import { requestEmbedding } from './embedding-client'
+import { ensureMigrations } from './kysely-migrations'
 import { resolveEmbeddingConfig, resolveMemoriesIvfflatProbes } from './memory-config'
 
-export type MemoryRecord = {
-  id: string
-  namespace: string
-  content: string
-  summary: string | null
-  tags: string[]
-  metadata: Record<string, unknown>
-  createdAt: string
-  distance?: number
-}
-
-export type PersistMemoryInput = {
-  namespace?: string
-  content: string
-  summary?: string | null
-  tags?: string[]
-  metadata?: Record<string, unknown>
-}
-
-export type RetrieveMemoryInput = {
-  namespace?: string
-  query: string
-  limit?: number
-}
-
-export type MemoriesStatsInput = {
-  namespace?: string
-  days?: number
-  topNamespaces?: number
-}
-
-export type MemoriesStats = {
-  range: {
-    days: number
-    from: string
-    to: string
-  }
-  byDay: { day: string; count: number }[]
-  topNamespaces: { namespace: string; count: number }[]
-}
+export type { MemoriesStats, MemoriesStatsInput, MemoryRecord, PersistMemoryInput, RetrieveMemoryInput }
 
 export type MemoriesStore = {
   persist: (input: PersistMemoryInput) => Promise<MemoryRecord>
@@ -131,9 +100,10 @@ const embedText = async (text: string): Promise<number[]> => {
 export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOptions = {}): MemoriesStore => {
   const resolved = resolveStoreDb(options)
   if (!resolved.db) {
-    throw new Error('DATABASE_URL is required for MCP memories storage')
+    throw new Error('DATABASE_URL is required for Agents memory notes storage')
   }
   const db = resolved.db
+  const closeDb = resolved.shared ? async () => undefined : () => db.destroy()
   let schemaReady: Promise<void> | null = null
   const expectedEmbeddingDimension = resolveEmbeddingConfig(process.env).dimension
   const embed = options.embedText ?? embedText
@@ -206,7 +176,7 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
       namespace: resolvedNamespace,
     }
     const metadataJson = JSON.stringify(resolvedMetadata)
-    const source = 'memories.mcp'
+    const source = 'agents.memory-notes'
 
     const row = await db
       .insertInto('memories.entries')
@@ -318,7 +288,7 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
   }
 
   const close: MemoriesStore['close'] = async () => {
-    await db.destroy()
+    await closeDb()
   }
 
   const count: MemoriesStore['count'] = async (input = {}) => {

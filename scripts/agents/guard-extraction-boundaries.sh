@@ -1007,6 +1007,30 @@ fail_if_matches \
   "from 'pg'|kube\\.get\\('secret'|memory_(events|kv|embeddings)|connectionString" \
   "${ROOT_DIR}/services/jangar/src/server/memory-provider.ts"
 
+fail_if_path_exists \
+  "Jangar must not retain the Agents memory note store or local memory HTTP parser after Agents owns memory notes" \
+  "${ROOT_DIR}/services/jangar/src/server/memories-store.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/memories-http.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/memories.ts" \
+  "${ROOT_DIR}/services/jangar/src/data/memories.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20260418_embedding_dimension_4096.ts"
+
+fail_if_matches \
+  "Jangar memory compatibility routes and MCP must use the Agents memory service boundary instead of DB-backed memory tables" \
+  'createPostgresMemoriesStore|memories\.entries|MemoriesLive|~/server/memories|from .*/memories-store|from .*/memories-http' \
+  "${ROOT_DIR}/services/jangar/src/routes/api/memories.ts" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/memories/count.ts" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/memories/stats.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/mcp.ts"
+
+require_matches \
+  "Agents service must own memory note persistence, retrieval, count, and stats endpoints" \
+  '/v1/memory-notes|createPostgresMemoriesStore|memories\.entries' \
+  "${ROOT_DIR}/services/agents/src/server/control-plane.ts" \
+  "${ROOT_DIR}/services/agents/src/server/v1/memory-notes.ts" \
+  "${ROOT_DIR}/services/agents/src/server/memory-notes-store.ts" \
+  "${ROOT_DIR}/services/agents/src/server/migrations/20260521_agents_memory_notes.ts"
+
 fail_if_matches \
   "Jangar must call the Agents service boundary instead of importing Agents package internals" \
   '@proompteng/agents' \

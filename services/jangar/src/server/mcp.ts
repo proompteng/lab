@@ -1,8 +1,14 @@
 import { Effect, Layer, ManagedRuntime } from 'effect'
 
+import {
+  MAX_MEMORY_NOTE_CONTENT_CHARS,
+  MAX_MEMORY_NOTE_QUERY_CHARS,
+  MAX_MEMORY_NOTE_SUMMARY_CHARS,
+} from '@proompteng/agent-contracts/memory-client'
+
 import { Atlas, AtlasLive } from './atlas'
 import { parseAtlasCodeSearchInput, parseAtlasIndexInput, parseAtlasSearchInput } from './atlas-http'
-import { Memories, MemoriesLive } from './memories'
+import { MemoryNotes, MemoryNotesLive } from './memory-notes'
 
 type JsonRpcId = string | number | null
 
@@ -69,7 +75,7 @@ const toolsListResult = {
   tools: [
     {
       name: 'persist_memory',
-      description: 'Persist a memory record to Postgres (pgvector embedding for semantic retrieval).',
+      description: 'Persist a memory record through the Agents memory service.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -85,8 +91,7 @@ const toolsListResult = {
     },
     {
       name: 'retrieve_memory',
-      description:
-        'Retrieve relevant memories from Postgres using semantic search (OpenAI embeddings + pgvector cosine distance).',
+      description: 'Retrieve relevant memories through the Agents memory service.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -219,9 +224,9 @@ const toolError = (id: JsonRpcId, message: string, data?: unknown): JsonRpcRespo
 const invalidParams = (id: JsonRpcId, message: string, data?: unknown): JsonRpcResponse =>
   asJsonRpcError(id, { code: -32602, message, data })
 
-const MAX_CONTENT_CHARS = 50_000
-const MAX_QUERY_CHARS = 10_000
-const MAX_SUMMARY_CHARS = 5_000
+const MAX_CONTENT_CHARS = MAX_MEMORY_NOTE_CONTENT_CHARS
+const MAX_QUERY_CHARS = MAX_MEMORY_NOTE_QUERY_CHARS
+const MAX_SUMMARY_CHARS = MAX_MEMORY_NOTE_SUMMARY_CHARS
 
 const buildConfigResource = (request: Request) => {
   const endpoint = new URL(request.url).toString()
@@ -309,7 +314,7 @@ const handleJsonRpcMessageEffect = (request: Request, raw: unknown) =>
           return asJsonRpcError(id, parsed)
         }
 
-        const memories = yield* Memories
+        const memories = yield* MemoryNotes
         const atlas = yield* Atlas
         const baseUrl = new URL(request.url)
         const toolName = normalizeToolName(parsed.name)
@@ -548,7 +553,7 @@ export const handleMcpRequestEffect = (request: Request) =>
     return jsonResponse(response, withMcpSessionHeaders(request))
   })
 
-const handlerRuntime = ManagedRuntime.make(Layer.mergeAll(MemoriesLive, AtlasLive))
+const handlerRuntime = ManagedRuntime.make(Layer.mergeAll(MemoryNotesLive, AtlasLive))
 
 export const handleMcpRequest = (request: Request): Promise<Response> =>
   handlerRuntime.runPromise(handleMcpRequestEffect(request))

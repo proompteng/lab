@@ -15,7 +15,6 @@ import * as jangarGithubWriteActionsAuditContextMigration from '~/server/migrati
 import * as jangarGithubWorktreeRefreshStateMigration from '~/server/migrations/20260304_jangar_github_worktree_refresh_state'
 import * as torghutSimulationControlPlaneMigration from '~/server/migrations/20260312_torghut_simulation_control_plane'
 import * as torghutSimulationControlPlaneV2Migration from '~/server/migrations/20260312_torghut_simulation_control_plane_v2'
-import * as embeddingDimension4096Migration from '~/server/migrations/20260418_embedding_dimension_4096'
 import * as torghutQuantMetricsLatestAccountWindowIndexMigration from '~/server/migrations/20260505_torghut_quant_metrics_latest_account_window_index'
 import * as torghutQuantPipelineHealthAccountWindowAsofIndexMigration from '~/server/migrations/20260505_torghut_quant_pipeline_health_account_window_asof_index'
 import * as torghutQuantPipelineHealthWindowIndexMigration from '~/server/migrations/20260505_torghut_quant_pipeline_health_window_index'
@@ -47,7 +46,6 @@ const migrations: MigrationMap = {
   '20260304_jangar_github_worktree_refresh_state': jangarGithubWorktreeRefreshStateMigration,
   '20260312_torghut_simulation_control_plane': torghutSimulationControlPlaneMigration,
   '20260312_torghut_simulation_control_plane_v2': torghutSimulationControlPlaneV2Migration,
-  '20260418_embedding_dimension_4096': embeddingDimension4096Migration,
   '20260505_torghut_quant_metrics_latest_account_window_index': torghutQuantMetricsLatestAccountWindowIndexMigration,
   '20260505_torghut_quant_pipeline_health_account_window_asof_index':
     torghutQuantPipelineHealthAccountWindowAsofIndexMigration,

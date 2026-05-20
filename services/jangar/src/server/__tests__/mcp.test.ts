@@ -1,18 +1,19 @@
 import { Effect, pipe } from 'effect'
 import { describe, expect, it } from 'vitest'
 
+import type { AgentsMemoryNoteRecord } from '@proompteng/agent-contracts/memory-client'
+
 import { Atlas, type AtlasService } from '../atlas'
+import { MemoryNotes, type MemoryNotesService } from '../memory-notes'
 import { handleMcpRequestEffect } from '../mcp'
-import { Memories, type MemoriesService } from '../memories'
-import type { MemoryRecord } from '../memories-store'
 
-const makeService = (): { service: MemoriesService; saved: MemoryRecord[] } => {
-  const saved: MemoryRecord[] = []
+const makeService = (): { service: MemoryNotesService; saved: AgentsMemoryNoteRecord[] } => {
+  const saved: AgentsMemoryNoteRecord[] = []
 
-  const service: MemoriesService = {
+  const service: MemoryNotesService = {
     persist: ({ namespace, content, summary, tags }) =>
       Effect.sync(() => {
-        const record: MemoryRecord = {
+        const record: AgentsMemoryNoteRecord = {
           id: `mem-${saved.length + 1}`,
           namespace: namespace ?? 'default',
           content,
@@ -79,7 +80,7 @@ const makeAtlasService = (): AtlasService => {
   }
 }
 
-const post = async (service: MemoriesService, body: unknown, headers: Record<string, string> = {}) => {
+const post = async (service: MemoryNotesService, body: unknown, headers: Record<string, string> = {}) => {
   const request = new Request('http://localhost/mcp', {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...headers },
@@ -89,7 +90,7 @@ const post = async (service: MemoriesService, body: unknown, headers: Record<str
   const response = await Effect.runPromise(
     pipe(
       handleMcpRequestEffect(request),
-      Effect.provideService(Memories, service),
+      Effect.provideService(MemoryNotes, service),
       Effect.provideService(Atlas, makeAtlasService()),
     ),
   )
@@ -190,7 +191,7 @@ describe('Memories MCP handler', () => {
   })
 
   it('returns JSON-RPC tool errors when the underlying service fails', async () => {
-    const failing: MemoriesService = {
+    const failing: MemoryNotesService = {
       persist: () => Effect.fail(new Error('persist failed')),
       retrieve: () => Effect.fail(new Error('retrieve failed')),
       count: () => Effect.fail(new Error('count failed')),
@@ -219,7 +220,7 @@ describe('Memories MCP handler', () => {
   })
 
   it('handles batches with mixed successes and failures', async () => {
-    const failing: MemoriesService = {
+    const failing: MemoryNotesService = {
       persist: () => Effect.fail(new Error('persist failed')),
       retrieve: () => Effect.fail(new Error('retrieve failed')),
       count: () => Effect.fail(new Error('count failed')),

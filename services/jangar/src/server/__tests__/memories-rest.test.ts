@@ -2,16 +2,16 @@ import { Effect, pipe } from 'effect'
 import { describe, expect, it } from 'vitest'
 
 import { getMemoriesHandlerEffect, postMemoriesHandlerEffect } from '~/routes/api/memories'
-import { Memories, type MemoriesService } from '~/server/memories'
-import type { MemoryRecord } from '~/server/memories-store'
+import { MemoryNotes, type MemoryNotesService } from '~/server/memory-notes'
+import type { AgentsMemoryNoteRecord } from '@proompteng/agent-contracts/memory-client'
 
-const makeService = (): { service: MemoriesService; saved: MemoryRecord[] } => {
-  const saved: MemoryRecord[] = []
+const makeService = (): { service: MemoryNotesService; saved: AgentsMemoryNoteRecord[] } => {
+  const saved: AgentsMemoryNoteRecord[] = []
 
-  const service: MemoriesService = {
+  const service: MemoryNotesService = {
     persist: ({ namespace, content, summary, tags }) =>
       Effect.sync(() => {
-        const record: MemoryRecord = {
+        const record: AgentsMemoryNoteRecord = {
           id: `mem-${saved.length + 1}`,
           namespace: namespace ?? 'default',
           content,
@@ -47,8 +47,8 @@ const makeService = (): { service: MemoriesService; saved: MemoryRecord[] } => {
   return { service, saved }
 }
 
-const run = <T>(effect: Effect.Effect<T, unknown, Memories>, service: MemoriesService) =>
-  Effect.runPromise(pipe(effect, Effect.provideService(Memories, service)))
+const run = <T>(effect: Effect.Effect<T, unknown, MemoryNotes>, service: MemoryNotesService) =>
+  Effect.runPromise(pipe(effect, Effect.provideService(MemoryNotes, service)))
 
 describe('memories REST handlers', () => {
   it('persists memories via POST', async () => {
@@ -115,19 +115,19 @@ describe('memories REST handlers', () => {
     expect(json.error).toBe('Query is required.')
   })
 
-  it('returns 503 when the memories service fails with missing DATABASE_URL', async () => {
-    const failing: MemoriesService = {
-      persist: () => Effect.fail(new Error('DATABASE_URL is required for MCP memories storage')),
-      retrieve: () => Effect.fail(new Error('DATABASE_URL is required for MCP memories storage')),
-      count: () => Effect.fail(new Error('DATABASE_URL is required for MCP memories storage')),
-      stats: () => Effect.fail(new Error('DATABASE_URL is required for MCP memories storage')),
+  it('returns 503 when the Agents memory service is unavailable', async () => {
+    const failing: MemoryNotesService = {
+      persist: () => Effect.fail(new Error('Agents service unavailable')),
+      retrieve: () => Effect.fail(new Error('Agents service unavailable')),
+      count: () => Effect.fail(new Error('Agents service unavailable')),
+      stats: () => Effect.fail(new Error('Agents service unavailable')),
     }
 
     const request = new Request('http://localhost/api/memories?query=test')
     const response = await run(getMemoriesHandlerEffect(request), failing)
-    expect(response.status).toBe(503)
+    expect(response.status).toBe(500)
 
     const json = await response.json()
-    expect(json.error).toContain('DATABASE_URL is required')
+    expect(json.error).toContain('Agents service unavailable')
   })
 })

@@ -16,7 +16,18 @@ import {
 } from './agents-http'
 import { fetchExecutionTrustFromAgentsService } from './execution-trust-client'
 import { submitOrchestrationRunToAgentsService } from './orchestration-runs-client'
-import { fetchMemoryResourceFromAgentsService, submitMemoryOperationToAgentsService } from './memory-client'
+import {
+  countMemoryNotesFromAgentsService,
+  fetchMemoryNotesStatsFromAgentsService,
+  fetchMemoryResourceFromAgentsService,
+  MAX_MEMORY_NOTE_CONTENT_CHARS,
+  MAX_MEMORY_NOTE_SUMMARY_CHARS,
+  parsePersistMemoryNoteInput,
+  parseRetrieveMemoryNotesInput,
+  persistMemoryNoteToAgentsService,
+  retrieveMemoryNotesFromAgentsService,
+  submitMemoryOperationToAgentsService,
+} from './memory-client'
 import { submitSwarmRequirementSignalToAgentsService } from './signals-client'
 import { fetchStageTargetResourceFromAgentsService, fetchSwarmResourcesFromAgentsService } from './swarm-read-client'
 
@@ -545,6 +556,125 @@ describe('agents typed service clients', () => {
         memoryRef: 'research-memory',
         namespace: 'agents',
       },
+    })
+  })
+
+  it('parses memory note payloads for the Agents-owned note API', () => {
+    const persist = parsePersistMemoryNoteInput({
+      namespace: '  project-x  ',
+      content: '  hello world  ',
+      summary: '  short  ',
+      tags: [' tag-1 ', '', 123],
+    })
+    expect(persist).toEqual({
+      ok: true,
+      value: {
+        namespace: 'project-x',
+        content: 'hello world',
+        summary: 'short',
+        tags: ['tag-1'],
+        metadata: undefined,
+      },
+    })
+
+    const missingContent = parsePersistMemoryNoteInput({ namespace: 'default' })
+    expect(missingContent).toEqual({ ok: false, message: 'Content is required.' })
+
+    const tooLarge = parsePersistMemoryNoteInput({ content: 'x'.repeat(MAX_MEMORY_NOTE_CONTENT_CHARS + 1) })
+    expect(tooLarge.ok).toBe(false)
+    if (!tooLarge.ok) expect(tooLarge.message).toContain(String(MAX_MEMORY_NOTE_CONTENT_CHARS))
+
+    const summaryTooLarge = parsePersistMemoryNoteInput({
+      content: 'hello',
+      summary: 'x'.repeat(MAX_MEMORY_NOTE_SUMMARY_CHARS + 1),
+    })
+    expect(summaryTooLarge.ok).toBe(false)
+    if (!summaryTooLarge.ok) expect(summaryTooLarge.message).toContain(String(MAX_MEMORY_NOTE_SUMMARY_CHARS))
+
+    const retrieve = parseRetrieveMemoryNotesInput({ namespace: '  demo ', query: '  find me  ', limit: '75' })
+    expect(retrieve).toEqual({
+      ok: true,
+      value: {
+        namespace: 'demo',
+        query: 'find me',
+        limit: 50,
+      },
+    })
+    expect(parseRetrieveMemoryNotesInput({ namespace: 'demo' })).toEqual({ ok: false, message: 'Query is required.' })
+  })
+
+  it('uses Agents-owned memory note endpoints for note persistence, retrieval, count, and stats', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            memory: {
+              id: 'mem-1',
+              namespace: 'demo',
+              content: 'hello world',
+              summary: 'hello',
+              tags: ['demo'],
+              metadata: {},
+              createdAt: '2026-05-20T00:00:00.000Z',
+            },
+          }),
+          { headers: { 'content-type': 'application/json' }, status: 201 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true, memories: [] }), {
+          headers: { 'content-type': 'application/json' },
+          status: 200,
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true, count: 3 }), {
+          headers: { 'content-type': 'application/json' },
+          status: 200,
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            range: { days: 7, from: '2026-05-14', to: '2026-05-20' },
+            byDay: [],
+            topNamespaces: [],
+          }),
+          { headers: { 'content-type': 'application/json' }, status: 200 },
+        ),
+      )
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+
+    await persistMemoryNoteToAgentsService(
+      { namespace: 'demo', content: 'hello world', summary: 'hello', tags: ['demo'] },
+      { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
+    )
+    await retrieveMemoryNotesFromAgentsService(
+      { namespace: 'demo', query: 'hello', limit: 12 },
+      { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
+    )
+    await countMemoryNotesFromAgentsService({ namespace: 'demo' }, { AGENTS_SERVICE_BASE_URL: 'http://agents.test' })
+    await fetchMemoryNotesStatsFromAgentsService(
+      { namespace: 'demo', days: 7, topNamespaces: 3 },
+      { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
+    )
+
+    const calls = fetchMock.mock.calls as unknown as [URL, RequestInit][]
+    expect(calls.map(([url]) => url.toString())).toEqual([
+      'http://agents.test/v1/memory-notes',
+      'http://agents.test/v1/memory-notes?query=hello&limit=12&namespace=demo',
+      'http://agents.test/v1/memory-notes/count?namespace=demo',
+      'http://agents.test/v1/memory-notes/stats?namespace=demo&days=7&topNamespaces=3',
+    ])
+    expect(calls.map(([, init]) => init.method)).toEqual(['POST', 'GET', 'GET', 'GET'])
+    expect(JSON.parse(String(calls[0]?.[1].body))).toEqual({
+      namespace: 'demo',
+      content: 'hello world',
+      summary: 'hello',
+      tags: ['demo'],
     })
   })
 
