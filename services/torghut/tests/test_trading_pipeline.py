@@ -1337,6 +1337,9 @@ class TestTradingPipeline(TestCase):
         candidate_id: str = "cand-1",
         capital_stage: str = "0.10x canary",
         strategy_family: str = "demo",
+        post_cost_expectancy_bps: Decimal = Decimal("2.5"),
+        avg_abs_slippage_bps: Decimal = Decimal("1.0"),
+        slippage_budget_bps: Decimal = Decimal("5.0"),
     ) -> None:
         evidence_at = datetime.now(timezone.utc)
         with self.session_local() as session:
@@ -1355,6 +1358,9 @@ class TestTradingPipeline(TestCase):
                     continuity_ok=True,
                     drift_ok=True,
                     dependency_quorum_decision="allow",
+                    post_cost_expectancy_bps=str(post_cost_expectancy_bps),
+                    avg_abs_slippage_bps=str(avg_abs_slippage_bps),
+                    slippage_budget_bps=str(slippage_budget_bps),
                     capital_stage=capital_stage,
                 )
             )
@@ -4965,6 +4971,9 @@ class TestTradingPipeline(TestCase):
                         continuity_ok=True,
                         drift_ok=True,
                         dependency_quorum_decision="allow",
+                        post_cost_expectancy_bps="2.5",
+                        avg_abs_slippage_bps="1.0",
+                        slippage_budget_bps="5.0",
                         capital_stage="0.10x canary",
                     )
                 )
