@@ -574,7 +574,7 @@ def _load_latest_certificate_evidence(
             continue
         latest_windows[row.hypothesis_id] = row
 
-    latest_promotions: dict[str, StrategyPromotionDecision] = {}
+    latest_promotions: dict[str, list[StrategyPromotionDecision]] = {}
     promotion_rows = session.execute(
         select(StrategyPromotionDecision)
         .where(
@@ -584,14 +584,19 @@ def _load_latest_certificate_evidence(
         .order_by(StrategyPromotionDecision.created_at.desc())
     ).scalars()
     for row in promotion_rows:
-        if row.hypothesis_id in latest_promotions:
-            continue
-        latest_promotions[row.hypothesis_id] = row
+        latest_promotions.setdefault(row.hypothesis_id, []).append(row)
 
     evidence: list[dict[str, object]] = []
     for hypothesis_id in normalized_ids:
         metric_window = latest_windows.get(hypothesis_id)
-        promotion_decision = latest_promotions.get(hypothesis_id)
+        promotion_decision = None
+        for decision in latest_promotions.get(hypothesis_id, []):
+            if metric_window is None or _promotion_decision_matches_metric_window(
+                decision,
+                metric_window=metric_window,
+            ):
+                promotion_decision = decision
+                break
         evidence.append(
             {
                 "hypothesis_id": hypothesis_id,
@@ -600,6 +605,28 @@ def _load_latest_certificate_evidence(
             }
         )
     return evidence
+
+
+def _promotion_decision_matches_metric_window(
+    promotion_decision: StrategyPromotionDecision,
+    *,
+    metric_window: StrategyHypothesisMetricWindow,
+) -> bool:
+    if _safe_text(promotion_decision.run_id) != _safe_text(metric_window.run_id):
+        return False
+    if _safe_text(promotion_decision.hypothesis_id) != _safe_text(
+        metric_window.hypothesis_id
+    ):
+        return False
+    if _safe_text(promotion_decision.candidate_id) != _safe_text(
+        metric_window.candidate_id
+    ):
+        return False
+    if _safe_text(promotion_decision.promotion_target) != _safe_text(
+        metric_window.observed_stage
+    ):
+        return False
+    return True
 
 
 def _window_evidence_issued_at(
@@ -979,7 +1006,9 @@ def _evaluate_certificate_candidates(
                 reasons.append("hypothesis_window_dependency_quorum_not_allow")
             reasons.extend(_metric_window_activity_reason_codes(metric_window))
 
-        if promotion_decision is not None:
+        if promotion_decision is None:
+            reasons.append("promotion_decision_evidence_missing")
+        else:
             promotion_decision_id = str(promotion_decision.id)
             if candidate_id is None:
                 candidate_id = promotion_decision.candidate_id
