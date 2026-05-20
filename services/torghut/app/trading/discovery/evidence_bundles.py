@@ -172,6 +172,38 @@ def _order_type_ablation_metrics(source: Mapping[str, Any]) -> dict[str, Any]:
     return metrics
 
 
+def _artifact_refs_from_scorecard(scorecard: Mapping[str, Any]) -> tuple[str, ...]:
+    refs: list[str] = []
+    for key in (
+        "route_tca_artifact_ref",
+        "order_type_execution_artifact_ref",
+        "market_limit_order_mix_artifact_ref",
+        "order_type_ablation_artifact_ref",
+        "market_impact_stress_artifact_ref",
+        "delay_adjusted_depth_stress_artifact_ref",
+    ):
+        ref = _string(scorecard.get(key))
+        if ref:
+            refs.append(ref)
+    for key in (
+        "route_tca_artifact_refs",
+        "order_type_execution_artifact_refs",
+        "market_limit_order_mix_artifact_refs",
+        "order_type_ablation_artifact_refs",
+    ):
+        raw_refs = scorecard.get(key)
+        if isinstance(raw_refs, str):
+            ref = _string(raw_refs)
+            if ref:
+                refs.append(ref)
+            continue
+        for raw_ref in cast(Sequence[Any], raw_refs or ()):
+            ref = _string(raw_ref)
+            if ref:
+                refs.append(ref)
+    return tuple(dict.fromkeys(refs))
+
+
 def _p10(values: Sequence[Decimal]) -> Decimal:
     if not values:
         return Decimal("0")
@@ -649,6 +681,14 @@ def evidence_bundle_from_frontier_candidate(
         "promotable": False,
         "blockers": ["scheduler_v3_parity_missing", "shadow_validation_missing"],
     }
+    replay_artifact_refs = tuple(
+        dict.fromkeys(
+            [
+                result_path,
+                *_artifact_refs_from_scorecard(scorecard),
+            ]
+        )
+    )
     return CandidateEvidenceBundle(
         schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
         evidence_bundle_id=evidence_bundle_id_for_payload(payload_seed),
@@ -659,7 +699,7 @@ def evidence_bundle_from_frontier_candidate(
             {"candidate_spec_id": candidate_spec_id, "scorecard": scorecard}
         ),
         code_commit=code_commit,
-        replay_artifact_refs=(result_path,),
+        replay_artifact_refs=replay_artifact_refs,
         objective_scorecard=scorecard,
         fold_metrics=tuple(
             cast(Sequence[Mapping[str, Any]], candidate.get("fold_metrics") or ())

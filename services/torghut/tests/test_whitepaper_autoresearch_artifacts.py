@@ -536,6 +536,13 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
             bundle.objective_scorecard["limit_fill_probability_sample_count"],
             30,
         )
+        self.assertEqual(
+            bundle.replay_artifact_refs,
+            (
+                "/tmp/order-type-ablation-replay.json",
+                "/tmp/order-type-ablation.json",
+            ),
+        )
         self.assertNotIn("route_tca_artifact_ref", bundle.objective_scorecard)
         self.assertNotIn(
             "price_improvement_evidence_present", bundle.objective_scorecard
