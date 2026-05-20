@@ -185,6 +185,42 @@ describe('orchestration runs v1 API', () => {
     expect(store.close).toHaveBeenCalled()
   })
 
+  it('rejects orchestration submissions without an idempotency key before opening storage', async () => {
+    const store = createStore()
+    const response = await postOrchestrationRunsHandler(
+      request(
+        {
+          orchestrationRef: { name: 'demo-orchestration' },
+          namespace: 'agents',
+        },
+        { 'idempotency-key': '' },
+      ),
+      { storeFactory: () => store, kubeClient: createKube() },
+    )
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({ ok: false, error: 'Idempotency-Key header is required' })
+    expect(store.createOrchestrationRun).not.toHaveBeenCalled()
+    expect(store.close).not.toHaveBeenCalled()
+  })
+
+  it('rejects malformed JSON before opening storage', async () => {
+    const store = createStore()
+    const response = await postOrchestrationRunsHandler(
+      new Request('http://agents.local/v1/orchestration-runs', {
+        body: '{',
+        headers: { 'content-type': 'application/json', 'idempotency-key': 'delivery-1' },
+        method: 'POST',
+      }),
+      { storeFactory: () => store, kubeClient: createKube() },
+    )
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({ ok: false })
+    expect(store.createOrchestrationRun).not.toHaveBeenCalled()
+    expect(store.close).not.toHaveBeenCalled()
+  })
+
   it('provides submit dependencies through an Effect service layer', async () => {
     const store = createStore()
     const kube = createKube()

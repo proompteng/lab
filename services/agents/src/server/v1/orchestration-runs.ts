@@ -1,4 +1,4 @@
-import { Context, Effect, Layer } from 'effect'
+import { Context, Data, Effect, Layer } from 'effect'
 
 import { errorResponse, okResponse, parseJsonBody, requireIdempotencyKey } from '../http'
 import { asRecord, asString, normalizeNamespace } from '../primitives'
@@ -12,7 +12,7 @@ import {
   OrchestrationSubmitStorageError,
   type OrchestrationRunSubmitStore,
   type SubmitOrchestrationRunDeps,
-  submitOrchestrationRun,
+  submitOrchestrationRunEffect,
 } from './orchestration-submit'
 
 export type OrchestrationRunsApiStore = OrchestrationRunSubmitStore & {
@@ -39,6 +39,11 @@ export class OrchestrationRunListStoreService extends Context.Tag('agents/Orches
   OrchestrationRunListStoreServiceDefinition
 >() {}
 
+export class OrchestrationRunRequestError extends Data.TaggedError('OrchestrationRunRequestError')<{
+  readonly message: string
+  readonly status: 400 | 409 | 503
+}> {}
+
 type OrchestrationRunPayload = {
   orchestrationRef: { name: string }
   namespace: string
@@ -60,7 +65,9 @@ const normalizeStringMap = (value: Record<string, unknown> | null): Record<strin
 const parseOrchestrationRunPayload = (payload: Record<string, unknown>): OrchestrationRunPayload => {
   const orchestrationRef = asRecord(payload.orchestrationRef)
   const name = asString(orchestrationRef?.name)
-  if (!name) throw new Error('orchestrationRef.name is required')
+  if (!name) {
+    throw new OrchestrationRunRequestError({ message: 'orchestrationRef.name is required', status: 400 })
+  }
   const namespace = normalizeNamespace(asString(payload.namespace))
   const parameters = normalizeStringMap(asRecord(payload.parameters))
   const policy = asRecord(payload.policy) ?? undefined
@@ -122,16 +129,71 @@ export const getOrchestrationRunsHandler = async (request: Request, deps: Orches
   return errorResponse(describeOrchestrationSubmitError(result.left), 503)
 }
 
-export const postOrchestrationRunsHandler = async (request: Request, deps: OrchestrationRunsApiDependencies) => {
-  const leaderResponse = deps.requireLeaderForMutation?.()
-  if (leaderResponse) return leaderResponse
+const parseOrchestrationJsonBodyEffect = (request: Request) =>
+  Effect.tryPromise({
+    try: () => parseJsonBody(request),
+    catch: (cause) =>
+      new OrchestrationRunRequestError({
+        message: cause instanceof Error ? cause.message : String(cause),
+        status: 400,
+      }),
+  })
 
-  try {
-    const deliveryId = requireIdempotencyKey(request)
-    const payload = await parseJsonBody(request)
-    const parsed = parseOrchestrationRunPayload(payload)
+const requireIdempotencyKeyEffect = (request: Request) =>
+  Effect.try({
+    try: () => requireIdempotencyKey(request),
+    catch: (cause) =>
+      new OrchestrationRunRequestError({
+        message: cause instanceof Error ? cause.message : String(cause),
+        status: 400,
+      }),
+  })
 
-    const result = await submitOrchestrationRun(
+const parseOrchestrationRunPayloadEffect = (payload: Record<string, unknown>) =>
+  Effect.try({
+    try: () => parseOrchestrationRunPayload(payload),
+    catch: (cause) =>
+      cause instanceof OrchestrationRunRequestError
+        ? cause
+        : new OrchestrationRunRequestError({
+            message: cause instanceof Error ? cause.message : String(cause),
+            status: 400,
+          }),
+  })
+
+const requireLeaderForMutationEffect = (deps: OrchestrationRunsApiDependencies) =>
+  Effect.sync(() => deps.requireLeaderForMutation?.() ?? null)
+
+const orchestrationPostErrorResponse = (error: unknown) => {
+  const message = describeOrchestrationSubmitError(error)
+  if (error instanceof OrchestrationRunRequestError) {
+    return errorResponse(error.message, error.status)
+  }
+  if (error instanceof OrchestrationSubmitNotFoundError) {
+    return errorResponse(message, 404)
+  }
+  if (error instanceof OrchestrationSubmitStorageError) {
+    return errorResponse(message, 503)
+  }
+  if (error instanceof OrchestrationSubmitPolicyDeniedError) {
+    return errorResponse(message, 403)
+  }
+  if (error instanceof OrchestrationSubmitKubeError) return errorResponse(message, 502)
+  return errorResponse(message, 400)
+}
+
+export const postOrchestrationRunsEffect = (
+  request: Request,
+  deps: OrchestrationRunsApiDependencies,
+): Effect.Effect<Response, unknown> =>
+  Effect.gen(function* () {
+    const leaderResponse = yield* requireLeaderForMutationEffect(deps)
+    if (leaderResponse) return leaderResponse
+
+    const deliveryId = yield* requireIdempotencyKeyEffect(request)
+    const payload = yield* parseOrchestrationJsonBodyEffect(request)
+    const parsed = yield* parseOrchestrationRunPayloadEffect(payload)
+    const result = yield* submitOrchestrationRunEffect(
       {
         deliveryId,
         orchestrationRef: parsed.orchestrationRef,
@@ -152,18 +214,16 @@ export const postOrchestrationRunsHandler = async (request: Request, deps: Orche
     }
 
     return okResponse({ ok: true, orchestrationRun: result.orchestrationRun, resource: result.resource }, 201)
-  } catch (error) {
-    const message = describeOrchestrationSubmitError(error)
-    if (error instanceof OrchestrationSubmitNotFoundError) {
-      return errorResponse(message, 404)
-    }
-    if (error instanceof OrchestrationSubmitStorageError) {
-      return errorResponse(message, 503)
-    }
-    if (error instanceof OrchestrationSubmitPolicyDeniedError) {
-      return errorResponse(message, 403)
-    }
-    if (error instanceof OrchestrationSubmitKubeError) return errorResponse(message, 502)
-    return errorResponse(message, 400)
-  }
+  })
+
+export const postOrchestrationRunsHandler = async (request: Request, deps: OrchestrationRunsApiDependencies) => {
+  return Effect.runPromise(
+    postOrchestrationRunsEffect(request, deps).pipe(
+      Effect.catchAll((error) => Effect.succeed(orchestrationPostErrorResponse(error))),
+    ),
+  )
+}
+
+export const __test__ = {
+  parseOrchestrationRunPayload,
 }
