@@ -59,6 +59,17 @@ describe('Agents control-plane image layout', () => {
     expect(dockerfileTarget('controller')).toContain('AGENTS_SERVER_PROFILE=agents-controllers')
   })
 
+  it('installs runtime helper CLIs from cx-tools rather than service-local scripts', () => {
+    const content = dockerfile()
+
+    expect(content).toContain(
+      'ln -sf /app/packages/cx-tools/dist/codex-nats-publish.js /usr/local/bin/codex-nats-publish',
+    )
+    expect(content).toContain('ln -sf /app/packages/cx-tools/dist/codex-nats-soak.js /usr/local/bin/codex-nats-soak')
+    expect(content).not.toContain('services/agents/scripts/codex/codex-nats-publish.ts')
+    expect(content).not.toContain('services/agents/scripts/codex/codex-nats-soak.ts')
+  })
+
   it('keeps runtime source imports independent of test-only path aliases', () => {
     const aliasedImports = listProductionSources(sourceRoot).flatMap((path) => {
       const content = readFileSync(path, 'utf8')

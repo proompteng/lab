@@ -67,8 +67,6 @@ jobs:
             cp -R packages/cx-tools "$PRUNE_DIR/full/packages/cx-tools"
             cp -R packages/cx-tools "$PRUNE_DIR/json/packages/cx-tools"
           fi
-          mkdir -p "$PRUNE_DIR/full/services/agents/scripts"
-          cp -R services/agents/scripts/codex "$PRUNE_DIR/full/services/agents/scripts/codex"
           echo "context=$PRUNE_DIR" >> "$GITHUB_OUTPUT"
 
       - name: Prebuild jangar output (pruned context)

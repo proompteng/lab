@@ -3,6 +3,8 @@
   "version": "0.0.0",
   "private": true,
   "bin": {
+    "codex-nats-publish": "./dist/codex-nats-publish.js",
+    "codex-nats-soak": "./dist/codex-nats-soak.js",
     "cx-codex-run": "./dist/cx-codex-run.js",
     "cx-workflow-cancel": "./dist/cx-workflow-cancel.js",
     "cx-workflow-query": "./dist/cx-workflow-query.js",
@@ -11,7 +13,7 @@
   },
   "type": "module",
   "scripts": {
-    "build": "bun build src/cli/cx-codex-run.ts src/cli/cx-workflow-start.ts src/cli/cx-workflow-cancel.ts src/cli/cx-workflow-query.ts src/cli/cx-workflow-signal.ts --outdir dist --target node --sourcemap=none --minify",
+    "build": "bun build src/cli/codex-nats-publish.ts src/cli/codex-nats-soak.ts src/cli/cx-codex-run.ts src/cli/cx-workflow-start.ts src/cli/cx-workflow-cancel.ts src/cli/cx-workflow-query.ts src/cli/cx-workflow-signal.ts --outdir dist --target node --sourcemap=none --minify",
     "lint": "bun run lint:oxlint || true",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
     "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."

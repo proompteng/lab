@@ -471,11 +471,11 @@ fail_if_matches \
 fail_if_matches \
   "Agents Codex NATS publisher must emit AgentRun-native identity only, without workflow-shaped compatibility fields" \
   'workflow_uid|workflow_name|workflow_namespace|workflowUid|workflowName|workflowNamespace|workflow_stage|workflow_step|workflowStage|workflowStep|WORKFLOW_UID|WORKFLOW_NAME|WORKFLOW_NAMESPACE|WORKFLOW_STAGE|WORKFLOW_STEP' \
-  "${ROOT_DIR}/services/agents/scripts/codex/codex-nats-publish.ts"
+  "${ROOT_DIR}/packages/cx-tools/src/cli/codex-nats-publish.ts"
 
 fail_if_matches \
-  "Jangar images must not source Codex NATS helpers from services/jangar after Agents owns helper scripts" \
-  'services/jangar/scripts/codex-nats-(publish|soak)\.ts' \
+  "Jangar images must not source Codex NATS helpers from service-local scripts after shared runtime tooling owns helper binaries" \
+  'services/(jangar|agents)/scripts/[^[:space:]]*codex-nats-(publish|soak)\.ts|services/agents/scripts/codex' \
   "${ROOT_DIR}/services/jangar/Dockerfile" \
   "${ROOT_DIR}/.github/workflows/jangar-build-push.yaml" \
   "${ROOT_DIR}/packages/scripts/src/jangar/build-image.ts" \

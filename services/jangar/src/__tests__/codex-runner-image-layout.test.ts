@@ -9,9 +9,9 @@ describe('codex runner image layout', () => {
       /FROM \$\{BUN_BASE_IMAGE\}:\$\{BUN_VERSION\} AS control-plane[\s\S]*?FROM tools AS runtime/,
     )?.[0]
     const runtimeStage = dockerfile.match(/FROM tools AS runtime[\s\S]*$/)?.[0]
-    const helperCopyLines = [
-      'COPY --from=jangar-build /app/services/agents/scripts/codex/codex-nats-publish.ts /usr/local/bin/codex-nats-publish',
-      'COPY --from=jangar-build /app/services/agents/scripts/codex/codex-nats-soak.ts /usr/local/bin/codex-nats-soak',
+    const helperSymlinkLines = [
+      'ln -sf /app/packages/cx-tools/dist/codex-nats-publish.js /usr/local/bin/codex-nats-publish',
+      'ln -sf /app/packages/cx-tools/dist/codex-nats-soak.js /usr/local/bin/codex-nats-soak',
     ]
 
     expect(controlPlaneStage).toBeDefined()
@@ -26,10 +26,12 @@ describe('codex runner image layout', () => {
       'COPY --from=jangar-build /app/services/jangar/src/server/runtime-tooling-config.ts ./src/server/runtime-tooling-config.ts',
     )
     expect(runtimeStage).not.toContain('control-plane-runtime-proof-surface.ts')
-    for (const line of helperCopyLines) {
+    for (const line of helperSymlinkLines) {
       expect(controlPlaneStage).toContain(line)
       expect(runtimeStage).toContain(line)
     }
+    expect(dockerfile).not.toContain('/app/services/agents/scripts/codex/codex-nats-publish.ts')
+    expect(dockerfile).not.toContain('/app/services/agents/scripts/codex/codex-nats-soak.ts')
     expect(dockerfile).not.toContain('/app/services/jangar/scripts/codex-nats-publish.ts')
     expect(dockerfile).not.toContain('/app/services/jangar/scripts/codex-nats-soak.ts')
     expect(runtimeStage).not.toContain('COPY --from=jangar-build /app/services/jangar/scripts/codex ./scripts/codex')
