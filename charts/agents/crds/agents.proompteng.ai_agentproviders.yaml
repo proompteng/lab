@@ -60,6 +60,17 @@ spec:
                 additionalProperties:
                   type: string
                 type: object
+              health:
+                properties:
+                  capacityFailurePolicy:
+                    description: |-
+                      CapacityFailurePolicy controls ProviderCapacityExhausted propagation.
+                      "degrade" keeps shared providers Ready while marking Degraded. "block" also marks Ready=False.
+                    enum:
+                    - degrade
+                    - block
+                    type: string
+                type: object
               inputFiles:
                 items:
                   properties:

@@ -30,7 +30,7 @@ const createReconcilers = (setStatus: SetStatus) =>
   })
 
 describe('agents controller resource reconcilers', () => {
-  it('marks a provider not ready after a recent capacity failure', async () => {
+  it('degrades a shared provider after a recent capacity failure without blocking new runs by default', async () => {
     const setStatus = createSetStatus()
     const { reconcileAgentProvider } = createReconcilers(setStatus)
     const provider = {
@@ -54,6 +54,51 @@ describe('agents controller resource reconcilers', () => {
 
     const status = lastStatus(setStatus)
     expect(status.observedGeneration).toBe(7)
+    expect(status.conditions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'Ready',
+          status: 'True',
+          reason: 'ValidSpec',
+        }),
+        expect.objectContaining({
+          type: 'Degraded',
+          status: 'True',
+          reason: PROVIDER_CAPACITY_EXHAUSTED_REASON,
+          message: expect.stringContaining('latest failed AgentRun run-capacity'),
+        }),
+      ]),
+    )
+  })
+
+  it('marks a provider not ready after a recent capacity failure when capacity policy is block', async () => {
+    const setStatus = createSetStatus()
+    const { reconcileAgentProvider } = createReconcilers(setStatus)
+    const provider = {
+      metadata: { name: 'torghut-market-context', namespace: 'agents', generation: 7 },
+      spec: {
+        binary: '/usr/local/bin/agent-runner',
+        health: { capacityFailurePolicy: 'block' },
+      },
+    }
+    const agents = [
+      { metadata: { name: 'torghut-news-agent' }, spec: { providerRef: { name: 'torghut-market-context' } } },
+    ]
+    const runs = [
+      {
+        metadata: { name: 'run-capacity', creationTimestamp: '2026-05-18T13:55:00.000Z' },
+        spec: { agentRef: { name: 'torghut-news-agent' } },
+        status: {
+          phase: 'Failed',
+          reason: PROVIDER_CAPACITY_EXHAUSTED_REASON,
+          message: 'provider capacity exhausted: Quota exceeded. Check your plan and billing details.',
+        },
+      },
+    ]
+
+    await reconcileAgentProvider({ get: vi.fn() }, provider, agents, runs)
+
+    const status = lastStatus(setStatus)
     expect(status.conditions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

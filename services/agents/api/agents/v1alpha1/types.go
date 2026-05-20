@@ -311,16 +311,24 @@ type AgentProvider struct {
 }
 
 type AgentProviderSpec struct {
-	Binary          string            `json:"binary"`
-	ArgsTemplate    []string          `json:"argsTemplate,omitempty"`
-	EnvTemplate     map[string]string `json:"envTemplate,omitempty"`
-	SecretEnv       []SecretEnvVar    `json:"secretEnv,omitempty"`
-	InputFiles      []InputFile       `json:"inputFiles,omitempty"`
-	OutputArtifacts []Artifact        `json:"outputArtifacts,omitempty"`
+	Binary          string                   `json:"binary"`
+	ArgsTemplate    []string                 `json:"argsTemplate,omitempty"`
+	EnvTemplate     map[string]string        `json:"envTemplate,omitempty"`
+	SecretEnv       []SecretEnvVar           `json:"secretEnv,omitempty"`
+	InputFiles      []InputFile              `json:"inputFiles,omitempty"`
+	OutputArtifacts []Artifact               `json:"outputArtifacts,omitempty"`
+	Health          *AgentProviderHealthSpec `json:"health,omitempty"`
 	// Adapter is the normalized runner contract consumed by agents-codex-runner.
 	// Existing binary/argsTemplate/envTemplate fields remain valid for exec-style providers.
 	// +kubebuilder:pruning:PreserveUnknownFields
 	Adapter map[string]apiextensionsv1.JSON `json:"adapter,omitempty"`
+}
+
+type AgentProviderHealthSpec struct {
+	// CapacityFailurePolicy controls ProviderCapacityExhausted propagation.
+	// "degrade" keeps shared providers Ready while marking Degraded. "block" also marks Ready=False.
+	// +kubebuilder:validation:Enum=degrade;block
+	CapacityFailurePolicy string `json:"capacityFailurePolicy,omitempty"`
 }
 
 type InputFile struct {
