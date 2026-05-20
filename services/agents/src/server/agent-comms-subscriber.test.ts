@@ -71,7 +71,7 @@ describe('agent comms subscriber consume', () => {
     const abortController = new AbortController()
     const config = { pullBatchSize: 2, pullExpiresMs: 0 } as Parameters<typeof __test__.consumeStream>[3]
 
-    const subject = 'workflow.agents.demo.abc.agent.codex.message'
+    const subject = 'agentrun.agents.demo.abc.agent.codex.message'
     const msgA = createMessage({ content: 'hello' }, subject)
     const msgB = createMessage({ content: 'world' }, subject)
 
@@ -99,7 +99,7 @@ describe('agent comms subscriber consume', () => {
     const abortController = new AbortController()
     const config = { pullBatchSize: 1, pullExpiresMs: 0 } as Parameters<typeof __test__.consumeStream>[3]
 
-    const subject = 'workflow.agents.demo.abc.agent.codex.message'
+    const subject = 'agentrun.agents.demo.abc.agent.codex.message'
     const badMsg = createMessage({ role: 'assistant' }, subject)
     const goodMsg = createMessage({ content: 'ok' }, subject)
 
@@ -111,7 +111,7 @@ describe('agent comms subscriber consume', () => {
     expect(insertMessages).toHaveBeenCalledTimes(1)
   })
 
-  it('normalizes current workflow subject families for Agents visibility', () => {
+  it('normalizes Agents-owned subject families for Agents visibility', () => {
     const agentRun = __test__.normalizePayload(
       JSON.stringify({
         content: 'agentrun update',
@@ -123,12 +123,10 @@ describe('agent comms subscriber consume', () => {
       }),
       'agentrun.agents.demo.abc.agent.codex.status',
     )
-    const native = __test__.normalizePayload(JSON.stringify({ content: 'native update' }), 'workflow.general.status')
-    const agents = __test__.normalizePayload(
-      JSON.stringify({ content: 'agents update' }),
-      'agents.workflow.general.status',
+    const agentsAgentRun = __test__.normalizePayload(
+      JSON.stringify({ content: 'agents agentrun update' }),
+      'agents.agentrun.agents.demo.abc.agent.codex.status',
     )
-    const argo = __test__.normalizePayload(JSON.stringify({ content: 'argo update' }), 'argo.workflow.general.status')
     const agentsMessages = __test__.normalizePayload(
       JSON.stringify({ content: 'stored update' }),
       'agents.agent_messages.general.status',
@@ -139,15 +137,19 @@ describe('agent comms subscriber consume', () => {
     expect(agentRun?.workflowUid).toBe('abc')
     expect(agentRun?.stage).toBe('implementation')
     expect(agentRun?.attrs?.runtime).toBe('agents_comms')
-    expect(native?.channel).toBe('general')
-    expect(native?.kind).toBe('status')
-    expect(native?.attrs?.runtime).toBe('native')
-    expect(agents?.channel).toBe('general')
-    expect(agents?.attrs?.runtime).toBe('native')
-    expect(argo?.channel).toBe('general')
-    expect(argo?.attrs?.runtime).toBe('argo')
+    expect(agentsAgentRun?.workflowName).toBe('demo')
+    expect(agentsAgentRun?.attrs?.runtime).toBe('agents_comms')
     expect(agentsMessages?.channel).toBe('general')
     expect(agentsMessages?.attrs?.runtime).toBe('agents_comms')
+    expect(
+      __test__.normalizePayload(JSON.stringify({ content: 'native update' }), 'workflow.general.status'),
+    ).toBeNull()
+    expect(
+      __test__.normalizePayload(JSON.stringify({ content: 'agents update' }), 'agents.workflow.general.status'),
+    ).toBeNull()
+    expect(
+      __test__.normalizePayload(JSON.stringify({ content: 'argo update' }), 'argo.workflow.general.status'),
+    ).toBeNull()
     expect(
       __test__.normalizePayload(
         JSON.stringify({ content: 'legacy stored update' }),
@@ -169,7 +171,7 @@ describe('agent comms subscriber consume', () => {
           swarmHumanName: 'Marco Silva',
         },
       }),
-      'workflow.general.run-started',
+      'agents.agent_messages.general.run-started',
     )
 
     expect(message?.agentId).toBe('Unknown')

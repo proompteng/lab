@@ -99,12 +99,9 @@ const parseSubject = (subject: string) => {
   const prefix = (() => {
     if (parts[0] === 'agentrun') return { offset: 1, runtime: 'agents_comms' }
     if (parts[0] === 'agents' && parts[1] === 'agentrun') return { offset: 2, runtime: 'agents_comms' }
-    if (parts[0] === 'workflow') return { offset: 1, runtime: 'native' }
-    if (parts[0] === 'agents' && parts[1] === 'workflow') return { offset: 2, runtime: 'native' }
     if (parts[0] === 'agents' && parts[1] === 'agent_messages') {
       return { offset: 2, runtime: 'agents_comms' }
     }
-    if (parts[0] === 'argo' && parts[1] === 'workflow') return { offset: 2, runtime: 'argo' }
     return null
   })()
   if (!prefix) return null

@@ -37,11 +37,6 @@ describe('Agents integrations config', () => {
     expect(featureFlags.endpoint).toBeNull()
     expect(featureFlags.timeoutMs).toBe(500)
     expect(agentComms.disabled).toBe(false)
-    expect(agentComms.filterSubjects).toEqual([
-      'workflow.>',
-      'agents.workflow.>',
-      'agents.agent_messages.>',
-      'argo.workflow.>',
-    ])
+    expect(agentComms.filterSubjects).toEqual(['agentrun.>', 'agents.agentrun.>', 'agents.agent_messages.>'])
   })
 })

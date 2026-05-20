@@ -158,8 +158,8 @@ fail_if_matches \
   "${ROOT_DIR}/services/agents/Dockerfile.codex-runner"
 
 fail_if_matches \
-  "Agents runtime subscribers must not consume legacy workflow_comms agent-message subjects" \
-  'workflow_comms\.agent_messages|legacy_workflow_comms' \
+  "Agents runtime subscribers must not consume legacy workflow, Argo workflow, or workflow_comms agent-message subjects" \
+  'workflow_comms\.agent_messages|legacy_workflow_comms|workflow\.>|agents\.workflow\.>|argo\.workflow|parts\[[0-9]+\] === .workflow.|parts\[[0-9]+\] === .argo.' \
   "${ROOT_DIR}/services/agents/src/server/agent-comms-subscriber.ts" \
   "${ROOT_DIR}/services/agents/src/server/integrations-config.ts" \
   "${ROOT_DIR}/charts/agents" \
