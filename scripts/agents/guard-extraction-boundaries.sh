@@ -139,6 +139,16 @@ if matches_multiline 'kubernetesCRD:\n\s+enabled:\s*false' "${TRAEFIK_VALUES}"; 
   exit 1
 fi
 
+require_matches \
+  "Traefik wildcard certificate reflection must allow the Agents namespace for the direct Agents API IngressRoute TLS secret" \
+  'reflection-allowed-namespaces:.*(^|[^a-z0-9-])agents([^a-z0-9-]|$)' \
+  "${ROOT_DIR}/argocd/applications/traefik/k8s-proompteng-ai-certificate.yaml"
+
+require_matches \
+  "Traefik wildcard certificate auto-reflection must target the Agents namespace for the direct Agents API IngressRoute TLS secret" \
+  'reflection-auto-namespaces:.*(^|[^a-z0-9-])agents([^a-z0-9-]|$)' \
+  "${ROOT_DIR}/argocd/applications/traefik/k8s-proompteng-ai-certificate.yaml"
+
 fail_if_matches \
   "services/agents must not import or package Jangar-local runner paths" \
   'services/jangar|/app/services/jangar|codex-implement' \
