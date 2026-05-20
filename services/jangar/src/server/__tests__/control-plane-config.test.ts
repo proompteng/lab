@@ -55,23 +55,19 @@ describe('control-plane-config', () => {
     ).toBe(false)
   })
 
-  it('parses status settings and keeps rollout lists unique', () => {
+  it('parses Jangar-owned status settings and leaves generic Agents runtime evidence to Agents', () => {
     expect(
       resolveControlPlaneStatusConfig({
         JANGAR_CONTROL_PLANE_EXECUTION_TRUST_SWARMS: 'jangar-control-plane,torghut-quant,jangar-control-plane',
-        JANGAR_CONTROL_PLANE_ROLLOUT_DEPLOYMENTS: 'agents,agents-controllers,agents',
         JANGAR_CONTROL_PLANE_STATUS_CACHE_TTL_MS: '10000',
         JANGAR_CONTROL_PLANE_STATUS_CACHE_MAX_ENTRIES: '64',
         JANGAR_TORGHUT_STATUS_TIMEOUT_MS: '6500',
-        JANGAR_WORKFLOWS_WINDOW_MINUTES: '45',
       }),
     ).toMatchObject({
       executionTrustSwarms: ['jangar-control-plane', 'torghut-quant'],
-      rolloutDeployments: ['agents', 'agents-controllers'],
       statusCacheTtlMs: 10000,
       statusCacheMaxEntries: 64,
       torghutStatusTimeoutMs: 6500,
-      workflowsWindowMinutes: 45,
     })
   })
 

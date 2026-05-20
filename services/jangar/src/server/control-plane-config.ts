@@ -12,17 +12,9 @@ const DEFAULT_WATCH_WINDOW_MINUTES = 15
 const DEFAULT_WATCH_STREAM_LIMIT = 20
 const DEFAULT_WATCH_RESTART_DEGRADE_THRESHOLD = 2
 const MAX_RECORDED_STREAMS = 200
-const DEFAULT_WORKFLOWS_WINDOW_MINUTES = 15
-const MIN_WINDOW_MINUTES = 1
 const MAX_WINDOW_MINUTES = 24 * 60
 const DEFAULT_EXECUTION_TRUST_SWARMS = ['jangar-control-plane', 'torghut-quant']
 const DEFAULT_EXECUTION_TRUST_SUMMARY_LIMIT = 20
-const DEFAULT_WORKFLOW_SWARMS = ['jangar-control-plane']
-const DEFAULT_ROLLOUT_DEPLOYMENTS = ['agents', 'agents-controllers']
-const DEFAULT_WATCH_RELIABILITY_BLOCK_ERRORS = 6
-const DEFAULT_WATCH_RELIABILITY_BLOCK_RESTARTS = 3
-const DEFAULT_WORKFLOWS_WARNING_BACKOFF_THRESHOLD = 2
-const DEFAULT_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD = 3
 const DEFAULT_TORGHUT_STATUS_TIMEOUT_MS = 15000
 const DEFAULT_STATUS_CACHE_TTL_MS = 0
 const DEFAULT_STATUS_CACHE_MAX_ENTRIES = 32
@@ -101,13 +93,6 @@ export type ControlPlaneStatusConfig = {
   executionTrustSummaryLimit: number
   torghutStatusUrl: string | null
   torghutStatusTimeoutMs: number
-  workflowsWindowMinutes: number
-  workflowsSwarms: string[]
-  watchReliabilityBlockErrors: number
-  watchReliabilityBlockRestarts: number
-  rolloutDeployments: string[]
-  workflowsWarningBackoffThreshold: number
-  workflowsDegradedBackoffThreshold: number
   statusCacheTtlMs: number
   statusCacheMaxEntries: number
 }
@@ -212,15 +197,6 @@ export const resolveControlPlaneWatchReliabilityConfig = (
 
 export const resolveControlPlaneStatusConfig = (env: EnvSource = process.env): ControlPlaneStatusConfig => {
   const executionTrustSwarms = uniqueStrings(parseStringList(env.JANGAR_CONTROL_PLANE_EXECUTION_TRUST_SWARMS))
-  const workflowsSwarms = uniqueStrings(parseStringList(env.JANGAR_WORKFLOWS_SWARMS))
-  const legacyWorkflowSwarms = uniqueStrings(parseStringList(env.JANGAR_WORKFLOW_SWARMS))
-  const rolloutDeployments = uniqueStrings(parseStringList(env.JANGAR_CONTROL_PLANE_ROLLOUT_DEPLOYMENTS))
-
-  const workflowsWarningBackoffThreshold = parsePositiveInt(
-    env.JANGAR_WORKFLOWS_WARNING_BACKOFF_THRESHOLD,
-    DEFAULT_WORKFLOWS_WARNING_BACKOFF_THRESHOLD,
-    1,
-  )
 
   return {
     executionTrustSwarms: executionTrustSwarms.length > 0 ? executionTrustSwarms : [...DEFAULT_EXECUTION_TRUST_SWARMS],
@@ -236,35 +212,6 @@ export const resolveControlPlaneStatusConfig = (env: EnvSource = process.env): C
       DEFAULT_TORGHUT_STATUS_TIMEOUT_MS,
       100,
       30_000,
-    ),
-    workflowsWindowMinutes: parsePositiveInt(
-      env.JANGAR_WORKFLOWS_WINDOW_MINUTES ?? env.JANGAR_WORKFLOW_WINDOW_MINUTES,
-      DEFAULT_WORKFLOWS_WINDOW_MINUTES,
-      MIN_WINDOW_MINUTES,
-      MAX_WINDOW_MINUTES,
-    ),
-    workflowsSwarms:
-      workflowsSwarms.length > 0
-        ? workflowsSwarms
-        : legacyWorkflowSwarms.length > 0
-          ? legacyWorkflowSwarms
-          : [...DEFAULT_WORKFLOW_SWARMS],
-    watchReliabilityBlockErrors: parsePositiveInt(
-      env.JANGAR_CONTROL_PLANE_WATCH_RELIABILITY_BLOCK_ERRORS,
-      DEFAULT_WATCH_RELIABILITY_BLOCK_ERRORS,
-      1,
-    ),
-    watchReliabilityBlockRestarts: parsePositiveInt(
-      env.JANGAR_CONTROL_PLANE_WATCH_RELIABILITY_BLOCK_RESTARTS,
-      DEFAULT_WATCH_RELIABILITY_BLOCK_RESTARTS,
-      1,
-    ),
-    rolloutDeployments: rolloutDeployments.length > 0 ? rolloutDeployments : [...DEFAULT_ROLLOUT_DEPLOYMENTS],
-    workflowsWarningBackoffThreshold,
-    workflowsDegradedBackoffThreshold: parsePositiveInt(
-      env.JANGAR_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD,
-      DEFAULT_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD,
-      workflowsWarningBackoffThreshold,
     ),
     statusCacheTtlMs: parsePositiveInt(
       env.JANGAR_CONTROL_PLANE_STATUS_CACHE_TTL_MS,

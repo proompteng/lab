@@ -26,6 +26,7 @@ import {
   collectRepairScheduleAttempts,
   type RepairScheduleAttemptCollection,
 } from '~/server/control-plane-repair-warrant-exchange'
+import { resolveRepairScheduleEvidenceNamespaces } from '~/server/control-plane-repair-schedule-evidence'
 import { buildRouteStabilityEscrow } from '~/server/control-plane-route-stability-escrow'
 import { buildStageClearancePackets } from '~/server/control-plane-stage-clearance'
 import { buildStageCreditLedger, isStageCreditLedgerEnabled } from '~/server/control-plane-stage-credit-ledger'
@@ -36,7 +37,6 @@ import type {
   DatabaseStatus,
 } from '~/server/control-plane-status-types'
 import type { TorghutConsumerEvidenceStatus } from '~/server/control-plane-torghut-consumer-evidence'
-import { resolveWorkflowNamespaces } from '~/server/control-plane-workflows'
 import type { KubeGateway } from '~/server/kube-gateway'
 
 export type RepairScheduleAttemptResolver = (input: {
@@ -75,7 +75,7 @@ const normalizeMessage = (value: unknown) => (value instanceof Error ? value.mes
 export const buildControlPlaneMaterialActionArtifacts = async (input: ControlPlaneMaterialActionArtifactsInput) => {
   const repairScheduleAttempts = await (input.resolveRepairScheduleAttempts ?? collectRepairScheduleAttempts)({
     now: input.now,
-    namespaces: resolveWorkflowNamespaces(input.namespace),
+    namespaces: resolveRepairScheduleEvidenceNamespaces(input.namespace),
     kube: input.kube,
   }).catch(
     (error: unknown): RepairScheduleAttemptCollection => ({

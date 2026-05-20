@@ -110,6 +110,16 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/agents-service-client.ts" \
   "${ROOT_DIR}/services/jangar/src"
 
+fail_if_path_exists \
+  "Jangar must not retain generic Agents runtime evidence collectors after Agents owns workflow and rollout status" \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-workflows.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-rollout-health.ts"
+
+fail_if_matches \
+  "Jangar config must not carry generic Agents runtime evidence knobs after Agents owns workflow and rollout status" \
+  'JANGAR_CONTROL_PLANE_ROLLOUT_DEPLOYMENTS|JANGAR_WORKFLOWS_WINDOW_MINUTES|JANGAR_WORKFLOWS_WARNING_BACKOFF_THRESHOLD|JANGAR_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD|workflowsWindowMinutes|rolloutDeployments|workflowsWarningBackoffThreshold|workflowsDegradedBackoffThreshold' \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-config.ts"
+
 require_matches \
   "Agents GitOps kustomization must include the canonical agents.k8s.proompteng.ai IngressRoute" \
   'ingressroute-agents-api\.yaml' \
