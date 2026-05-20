@@ -403,6 +403,82 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             "config/trading/hypotheses/h-pairs-01.json",
         )
 
+    def test_runtime_window_targets_from_registry_imports_all_hypotheses(
+        self,
+    ) -> None:
+        hypothesis_dir = self.tmp_dir / "hypotheses"
+        family_dir = self.tmp_dir / "families"
+        hypothesis_dir.mkdir()
+        family_dir.mkdir()
+        (family_dir / "intraday_tsmom_v2.yaml").write_text(
+            "\n".join(
+                [
+                    "family_id: intraday_tsmom_v2",
+                    "runtime_harness:",
+                    "  family: intraday_tsmom_consistent",
+                    "  strategy_name: intraday-tsmom-profit-v3",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        (hypothesis_dir / "h-tsmom-01.json").write_text(
+            json.dumps(
+                {
+                    "hypothesis_id": "H-TSMOM-01",
+                    "strategy_family": "stale_family",
+                    "strategy_id": "intraday_tsmom_v2@research",
+                    "candidate_id": "spec-83161ae16d17828eabcc58cc",
+                    "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (hypothesis_dir / "h-micro-01.json").write_text(
+            json.dumps(
+                {
+                    "hypothesis_id": "H-MICRO-01",
+                    "strategy_family": "microstructure_breakout",
+                    "strategy_id": "microbar_volume_continuation_long_top2_chip_v1@paper",
+                    "candidate_id": "chip-paper-microbar-composite@execution-proof",
+                    "dataset_snapshot_ref": "torghut-chip-full-day-20260505-4c330ce9-r1",
+                }
+            ),
+            encoding="utf-8",
+        )
+        args = SimpleNamespace(
+            runtime_window_targets_from_registry=True,
+            runtime_window_hypothesis_dir=str(hypothesis_dir),
+            runtime_window_family_dir=str(family_dir),
+            runtime_window_target=[],
+            runtime_window_hypothesis_id="",
+            runtime_window_candidate_id="",
+            runtime_window_observed_stage="paper",
+            runtime_window_strategy_family="",
+            runtime_window_source_dsn_env="SIM_DB_DSN",
+            runtime_window_strategy_name="",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_dataset_snapshot_ref="",
+            runtime_window_source_manifest_ref="",
+            runtime_window_source_kind="paper_runtime_observed",
+        )
+
+        targets = renewal._runtime_window_targets(args)
+
+        self.assertEqual(
+            [target.hypothesis_id for target in targets],
+            ["H-MICRO-01", "H-TSMOM-01"],
+        )
+        by_id = {target.hypothesis_id: target for target in targets}
+        self.assertEqual(
+            by_id["H-TSMOM-01"].strategy_name,
+            "intraday-tsmom-profit-v3",
+        )
+        self.assertEqual(
+            by_id["H-MICRO-01"].strategy_name,
+            "microbar-volume-continuation-long-top2-chip-v1",
+        )
+        self.assertEqual(by_id["H-MICRO-01"].source_dsn_env, "SIM_DB_DSN")
+
     def test_runtime_window_target_rejects_invalid_specs(self) -> None:
         invalid_specs = [
             "{}",

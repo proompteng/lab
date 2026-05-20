@@ -50,6 +50,24 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--runtime-window-import", action="store_true")
     parser.add_argument(
+        "--runtime-window-targets-from-registry",
+        action="store_true",
+        help=(
+            "Import runtime windows for every hypothesis manifest that can be "
+            "mapped to a runtime strategy. Explicit --runtime-window-target "
+            "entries remain supported and take precedence on duplicate "
+            "hypothesis_id values."
+        ),
+    )
+    parser.add_argument(
+        "--runtime-window-hypothesis-dir",
+        default="config/trading/hypotheses",
+    )
+    parser.add_argument(
+        "--runtime-window-family-dir",
+        default="config/trading/families",
+    )
+    parser.add_argument(
         "--runtime-window-target",
         action="append",
         default=[],
@@ -237,11 +255,109 @@ def _parse_runtime_window_target_spec(spec: str) -> dict[str, str]:
     return parsed
 
 
+def _read_json_mapping(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return _as_dict(payload)
+
+
+def _runtime_family_harnesses(family_dir: str) -> dict[str, dict[str, str]]:
+    root = Path(family_dir)
+    if not root.exists():
+        return {}
+    harnesses: dict[str, dict[str, str]] = {}
+    for path in sorted(root.glob("*.yaml")):
+        try:
+            payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        data = _as_dict(payload)
+        family_id = _as_text(data.get("family_id")) or path.stem
+        harness = _as_dict(data.get("runtime_harness"))
+        family = _as_text(harness.get("family"))
+        strategy_name = _as_text(harness.get("strategy_name"))
+        if family and strategy_name:
+            harnesses[family_id] = {
+                "strategy_family": family,
+                "strategy_name": strategy_name,
+            }
+    return harnesses
+
+
+def _strategy_name_from_strategy_id(strategy_id: str) -> str | None:
+    base = strategy_id.split("@", 1)[0].strip()
+    return base.replace("_", "-") if base else None
+
+
+def _registry_runtime_window_targets(
+    args: argparse.Namespace,
+) -> list[RuntimeWindowImportTarget]:
+    if not bool(getattr(args, "runtime_window_targets_from_registry", False)):
+        return []
+    hypothesis_dir = Path(str(getattr(args, "runtime_window_hypothesis_dir", "")))
+    if not hypothesis_dir.exists():
+        raise RuntimeError(f"runtime_window_hypothesis_dir_missing:{hypothesis_dir}")
+    family_harnesses = _runtime_family_harnesses(
+        str(getattr(args, "runtime_window_family_dir", ""))
+    )
+    targets: list[RuntimeWindowImportTarget] = []
+    for path in sorted(hypothesis_dir.glob("*.json")):
+        manifest = _read_json_mapping(path)
+        hypothesis_id = _as_text(manifest.get("hypothesis_id"))
+        candidate_id = _as_text(manifest.get("candidate_id"))
+        strategy_family = _as_text(manifest.get("strategy_family"))
+        strategy_id = _as_text(manifest.get("strategy_id"))
+        strategy_name = _as_text(manifest.get("strategy_name"))
+        if strategy_id:
+            family_harness = family_harnesses.get(strategy_id.split("@", 1)[0])
+            if family_harness:
+                strategy_family = family_harness["strategy_family"]
+                strategy_name = family_harness["strategy_name"]
+        strategy_name = strategy_name or (
+            _strategy_name_from_strategy_id(strategy_id) if strategy_id else None
+        )
+        if not hypothesis_id or not candidate_id or not strategy_family or not strategy_name:
+            continue
+        targets.append(
+            RuntimeWindowImportTarget(
+                hypothesis_id=hypothesis_id,
+                candidate_id=candidate_id,
+                observed_stage=str(
+                    getattr(args, "runtime_window_observed_stage", "") or "paper"
+                ).strip()
+                or "paper",
+                strategy_family=strategy_family,
+                source_dsn_env=str(
+                    getattr(args, "runtime_window_source_dsn_env", "") or "DB_DSN"
+                ).strip()
+                or "DB_DSN",
+                strategy_name=strategy_name,
+                account_label=str(
+                    getattr(args, "runtime_window_account_label", "") or "TORGHUT_SIM"
+                ).strip()
+                or "TORGHUT_SIM",
+                dataset_snapshot_ref=_as_text(manifest.get("dataset_snapshot_ref"))
+                or "",
+                source_manifest_ref=str(path),
+                source_kind=str(
+                    getattr(args, "runtime_window_source_kind", "")
+                    or "paper_runtime_observed"
+                ).strip()
+                or "paper_runtime_observed",
+                delay_adjusted_depth_stress_report_ref="",
+            )
+        )
+    return targets
+
+
 def _runtime_window_targets(
     args: argparse.Namespace,
 ) -> list[RuntimeWindowImportTarget]:
     specs = [str(item) for item in getattr(args, "runtime_window_target", []) or []]
-    if not specs:
+    registry_targets = _registry_runtime_window_targets(args)
+    if not specs and not registry_targets:
         specs = [""]
     targets: list[RuntimeWindowImportTarget] = []
     for spec in specs:
@@ -287,6 +403,12 @@ def _runtime_window_targets(
                 ),
             )
         )
+    seen_hypothesis_ids = {target.hypothesis_id for target in targets}
+    for target in registry_targets:
+        if target.hypothesis_id in seen_hypothesis_ids:
+            continue
+        targets.append(target)
+        seen_hypothesis_ids.add(target.hypothesis_id)
     return targets
 
 
