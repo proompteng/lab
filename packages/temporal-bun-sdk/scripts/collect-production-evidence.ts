@@ -457,11 +457,29 @@ const requiredLoadScenarios = [
 
 const productionUsageDefinitions = [
   {
+    id: 'agents',
+    role: 'Agents controller Temporal runtime owner',
+    sourceRefs: [
+      'services/agents/src/server/agents-controller/index.ts',
+      'services/agents/src/server/agents-controller/temporal-runtime.ts',
+      'services/agents/package.json',
+    ],
+    deploymentRefs: ['argocd/applications/agents/values.yaml', 'charts/agents/templates/deployment-controllers.yaml'],
+    observabilityRefs: ['charts/agents/templates/deployment-controllers.yaml'],
+    requiredFragments: [
+      ['services/agents/src/server/agents-controller/index.ts', '@proompteng/temporal-bun-sdk'],
+      ['services/agents/src/server/agents-controller/index.ts', 'createTemporalClient'],
+      ['services/agents/src/server/agents-controller/temporal-runtime.ts', '@proompteng/temporal-bun-sdk'],
+      ['services/agents/package.json', '@proompteng/temporal-bun-sdk'],
+      ['argocd/applications/agents/values.yaml', 'registry.ide-newton.ts.net/lab/agents-controller'],
+      ['charts/agents/templates/deployment-controllers.yaml', 'AGENTS_SERVER_PROFILE'],
+    ],
+  },
+  {
     id: 'jangar',
-    role: 'production control-plane client and worker entrypoint',
+    role: 'Jangar domain Temporal client and worker entrypoint',
     sourceRefs: [
       'services/jangar/src/worker.ts',
-      'services/jangar/src/server/agents-controller/temporal-runtime.ts',
       'services/jangar/src/server/bumba.ts',
       'services/jangar/package.json',
     ],
@@ -470,7 +488,6 @@ const productionUsageDefinitions = [
     requiredFragments: [
       ['services/jangar/src/worker.ts', '@proompteng/temporal-bun-sdk/worker'],
       ['services/jangar/src/worker.ts', 'createWorker'],
-      ['services/jangar/src/server/agents-controller/temporal-runtime.ts', '@proompteng/temporal-bun-sdk'],
       ['services/jangar/package.json', '@proompteng/temporal-bun-sdk'],
       ['argocd/applications/jangar/deployment.yaml', 'TEMPORAL_METRICS_EXPORTER'],
       ['argocd/applications/jangar/alloy-configmap.yaml', 'loki.process "jangar"'],
