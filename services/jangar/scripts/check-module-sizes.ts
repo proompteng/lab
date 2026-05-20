@@ -17,7 +17,6 @@ const LEGACY_LINE_CAPS: Record<string, number> = {
   'src/server/torghut-whitepapers.ts': 1328,
   'src/server/agents-controller/workflow-reconciler.ts': 1191,
   'src/server/agents-controller/agent-run-reconciler.ts': 1191,
-  'src/server/agentctl-grpc.ts': 1171,
   'src/server/terminals.ts': 1029,
   'src/routes/github/pulls/$owner/$repo/$number.tsx': 1028,
   'src/server/db.ts': 1017,

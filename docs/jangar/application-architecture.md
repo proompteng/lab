@@ -14,7 +14,7 @@ Jangar now uses explicit runtime profiles instead of implicit global startup.
 
 - `http-server`
   - serves the Vite client bundle and HTTP/API surface
-  - starts `agentComms`, `controlPlaneCache`, `torghutQuantRuntime`, and `agentctlGrpc`
+  - starts the Jangar-owned domain integrations, including `torghutQuantRuntime` and the whitepaper finalize consumer
 - `vite-dev-api`
   - serves only the Bun API surface for local Vite development
   - starts the same background integrations as the production API profile
@@ -37,7 +37,6 @@ The cleanup program moved the highest-risk application boundaries behind explici
   - `services/jangar/src/server/integrations-config.ts`
   - `services/jangar/src/server/memory-config.ts`
   - `services/jangar/src/server/torghut-config.ts`
-  - `services/jangar/src/server/agentctl-grpc-config.ts`
   - `services/jangar/src/server/terminals-config.ts`
   - `services/jangar/src/server/github-review-config.ts`
   - `services/jangar/src/server/metrics-config.ts`

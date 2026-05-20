@@ -4,8 +4,6 @@ type EnvSource = Record<string, string | undefined>
 
 const DEFAULT_PYTHON_BIN = 'python3'
 const DEFAULT_WORKTREE = '/workspace/lab'
-const DEFAULT_GRPC_PORT = 50051
-const DEFAULT_GRPC_HEALTH_TIMEOUT_MS = 750
 const DEFAULT_HTTP_TIMEOUT_MS = 2_000
 
 const normalizeNonEmpty = (value: string | undefined | null) => {
@@ -52,15 +50,6 @@ export type RuntimeAdmissionConfig = {
   pythonBin: string
   runtimeImage: string
   pathEntries: string[]
-}
-
-export type GrpcRuntimeConfig = {
-  enabledRaw: string
-  enabled: boolean
-  host: string
-  port: string
-  address: string | null
-  healthTimeoutMs: number
 }
 
 export type TerminalRuntimeConfig = {
@@ -113,15 +102,6 @@ export const resolveRuntimeAdmissionConfig = (env: EnvSource = process.env): Run
     normalizeNonEmpty(env.IMAGE_REF) ??
     'runtime:local',
   pathEntries: (env.PATH ?? '').split(':').filter((entry) => entry.length > 0),
-})
-
-export const resolveGrpcRuntimeConfig = (env: EnvSource = process.env): GrpcRuntimeConfig => ({
-  enabledRaw: normalizeNonEmpty(env.JANGAR_GRPC_ENABLED) ?? '',
-  enabled: parseBoolean(env.JANGAR_GRPC_ENABLED, false),
-  host: normalizeNonEmpty(env.JANGAR_GRPC_HOST) ?? '127.0.0.1',
-  port: normalizeNonEmpty(env.JANGAR_GRPC_PORT) ?? String(DEFAULT_GRPC_PORT),
-  address: normalizeNonEmpty(env.JANGAR_GRPC_ADDRESS),
-  healthTimeoutMs: parsePositiveInt(env.JANGAR_GRPC_HEALTH_TIMEOUT_MS, DEFAULT_GRPC_HEALTH_TIMEOUT_MS),
 })
 
 export const resolveTerminalRuntimeConfig = (env: EnvSource = process.env): TerminalRuntimeConfig => ({
@@ -203,7 +183,6 @@ export const resolveCodexNatsHelperPathCandidatesFromConfig = (
 
 export const validateRuntimeToolingConfig = (env: EnvSource = process.env) => {
   resolveRuntimeAdmissionConfig(env)
-  resolveGrpcRuntimeConfig(env)
   resolveTerminalRuntimeConfig(env)
   resolveCodexClientConfig(env)
   resolveGitLockRecoveryConfig(env)

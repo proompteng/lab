@@ -283,6 +283,26 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/tsconfig.oxlint.json" \
   "${ROOT_DIR}/services/jangar/vitest.config.ts"
 
+fail_if_path_exists \
+  "Jangar must not copy or embed the Agents agentctl proto after Agents owns the gRPC surface" \
+  "${ROOT_DIR}/services/jangar/scripts/copy-agentctl-proto.ts"
+
+fail_if_matches \
+  "Jangar build paths must not copy services/agents/agentctl or require embedded agentctl protos" \
+  'services/agents/agentctl|copy-agentctl-proto|copy:grpc-proto|agentctl\.proto' \
+  "${ROOT_DIR}/.github/workflows/jangar-build-push.yaml" \
+  "${ROOT_DIR}/packages/scripts/src/jangar" \
+  "${ROOT_DIR}/services/jangar/package.json" \
+  "${ROOT_DIR}/services/jangar/Dockerfile" \
+  "${ROOT_DIR}/services/jangar/scripts"
+
+fail_if_matches \
+  "Jangar runtime/docs must not advertise Jangar-owned agentctl gRPC after Agents owns the service" \
+  'agentctlGrpc|agentctl gRPC|JANGAR_GRPC|AgentctlService|agentctl talks to Jangar|agentctl-grpc' \
+  "${ROOT_DIR}/services/jangar/README.md" \
+  "${ROOT_DIR}/docs/jangar/application-architecture.md" \
+  "${ROOT_DIR}/services/jangar/src/server"
+
 fail_if_matches \
   "Jangar runtime must not expose removed Agents controller profiles" \
   'AGENTS_SERVER_PROFILE|agents-control-plane|agents-controllers' \

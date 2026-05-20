@@ -58,11 +58,6 @@ const createPrunedContext = async (): Promise<{ dir: string; cleanup: () => void
     if (existsSync(skillsSource)) {
       cpSync(skillsSource, resolve(dir, 'skills'), { recursive: true })
     }
-    const agentctlSource = resolve(repoRoot, 'services/agents/agentctl')
-    if (existsSync(agentctlSource)) {
-      cpSync(agentctlSource, resolve(dir, 'full/services/agents/agentctl'), { recursive: true })
-      cpSync(agentctlSource, resolve(dir, 'json/services/agents/agentctl'), { recursive: true })
-    }
     const cxToolsSource = resolve(repoRoot, 'packages/cx-tools')
     if (existsSync(cxToolsSource)) {
       cpSync(cxToolsSource, resolve(dir, 'full/packages/cx-tools'), { recursive: true })
@@ -74,11 +69,10 @@ const createPrunedContext = async (): Promise<{ dir: string; cleanup: () => void
     if (process.env.JANGAR_USE_PREBUILT_OUTPUT?.trim().toLowerCase() === 'true') {
       const outputSource = resolve(repoRoot, 'services/jangar/.output')
       const outputEntry = resolve(outputSource, 'server/index.mjs')
-      const outputProto = resolve(outputSource, 'server/proto/proompteng/agents/v1/agentctl.proto')
-      if (existsSync(outputEntry) && existsSync(outputProto)) {
+      if (existsSync(outputEntry)) {
         cpSync(outputSource, resolve(dir, 'full/services/jangar/.output'), { recursive: true })
       } else if (existsSync(outputSource)) {
-        console.warn('Skipping prebuilt .output: missing services/jangar/.output/server/index.mjs or agentctl.proto')
+        console.warn('Skipping prebuilt .output: missing services/jangar/.output/server/index.mjs')
       }
     }
     return { dir, cleanup }

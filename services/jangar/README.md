@@ -752,51 +752,11 @@ manifest contract in `packages/scripts/src/jangar/manifest-contract.ts`.
 - Usage totals are emitted only when the request includes `stream_options: { include_usage: true }`. The final SSE chunk (empty `choices` array) carries the normalized OpenAI-style `usage`, even when a turn ends with an upstream error or client abort.
 - Server-side Effect services follow `Context.Tag + Layer` patterns; see `src/server/effect-services.md`.
 
-## agentctl gRPC
+## agentctl
 
-`agentctl` talks to Jangar over gRPC (`AgentctlService`). The gRPC server is disabled by default.
-
-Enable locally:
-
-```bash
-export JANGAR_GRPC_ENABLED=1
-export JANGAR_GRPC_HOST=127.0.0.1
-export JANGAR_GRPC_PORT=50051
-```
-
-Port-forward a deployed Jangar instance (gRPC service is cluster-only):
-
-```bash
-kubectl -n <namespace> port-forward svc/<release-name>-grpc 50051:50051
-```
-
-Optional auth (shared token):
-
-```bash
-export JANGAR_GRPC_TOKEN=... # server-side
-export AGENTCTL_TOKEN=...    # client-side
-```
-
-Control-plane status:
-
-```bash
-agentctl status
-agentctl status --output json
-```
-
-Environment variables:
-
-- `JANGAR_GRPC_ENABLED` (default: off)
-- `JANGAR_GRPC_HOST` (default: `127.0.0.1`)
-- `JANGAR_GRPC_PORT` (default: `50051`)
-- `JANGAR_GRPC_ADDRESS` (optional override for `host:port`)
-- `JANGAR_GRPC_TOKEN` (optional shared token)
-
-Control-plane status endpoint behavior (`/api/agents/control-plane/status`) is deliberate:
-
-- `JANGAR_GRPC_ENABLED` uses a strict boolean parser (`true/false`, `1/0`, `yes/no`, `on/off`, case-insensitive, no whitespace).
-- invalid `JANGAR_GRPC_ENABLED`, `JANGAR_GRPC_PORT`, or malformed `JANGAR_GRPC_ADDRESS` values return `grpc.status = degraded` with explanatory messages.
-- an empty/unset `JANGAR_GRPC_ENABLED` disables gRPC (`disabled` status) and does not perform socket checks.
+`agentctl` is owned by the Agents service and targets the Agents API. Jangar no longer starts the CLI transport server
+or embeds the Agents protobuf bundle in its application build. Use `docs/agents/agentctl.md` for operator commands and
+Agents service connection settings.
 
 ## Terminal backend
 
