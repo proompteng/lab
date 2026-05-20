@@ -6,6 +6,7 @@ import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from threading import Lock
 from typing import Any, cast
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -103,6 +104,20 @@ def _safe_int(value: object) -> int:
         except ValueError:
             return 0
     return 0
+
+
+def _safe_decimal(value: object) -> Decimal | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, Decimal):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return Decimal(text)
+    except (InvalidOperation, ValueError):
+        return None
 
 
 def _safe_bool(value: object) -> bool | None:
@@ -434,18 +449,25 @@ def build_hypothesis_runtime_summary(
     *,
     state: object,
     market_context_status: Mapping[str, Any],
+    tca_summary: Mapping[str, Any] | None = None,
+    dependency_quorum: Any | None = None,
+    feature_readiness: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
     registry = load_hypothesis_registry()
-    dependency_quorum = resolve_hypothesis_dependency_quorum(registry)
+    if dependency_quorum is None:
+        dependency_quorum = resolve_hypothesis_dependency_quorum(registry)
     items = compile_hypothesis_runtime_statuses(
         registry=registry,
         state=state,
-        tca_summary=build_tca_gate_inputs(
+        tca_summary=tca_summary
+        if tca_summary is not None
+        else build_tca_gate_inputs(
             session=session,
             account_label=settings.trading_account_label,
         ),
         market_context_status=market_context_status,
         jangar_dependency_quorum=dependency_quorum,
+        feature_readiness=feature_readiness,
         market_session_open=cast(
             bool | None, getattr(state, "market_session_open", None)
         ),
@@ -616,6 +638,34 @@ def _certificate_capital_stage(
     return min(ranked_stages, key=_stage_rank)
 
 
+def _metric_window_activity_reason_codes(
+    metric_window: StrategyHypothesisMetricWindow,
+) -> list[str]:
+    reasons: list[str] = []
+    if _safe_int(metric_window.market_session_count) <= 0:
+        reasons.append("hypothesis_window_market_sessions_missing")
+    if _safe_int(metric_window.decision_count) <= 0:
+        reasons.append("hypothesis_window_decisions_missing")
+    if _safe_int(metric_window.trade_count) <= 0:
+        reasons.append("hypothesis_window_trades_missing")
+    if _safe_int(metric_window.order_count) <= 0:
+        reasons.append("hypothesis_window_orders_missing")
+
+    expectancy_bps = _safe_decimal(metric_window.post_cost_expectancy_bps)
+    if expectancy_bps is None or expectancy_bps <= 0:
+        reasons.append("hypothesis_window_post_cost_expectancy_non_positive")
+
+    avg_abs_slippage_bps = _safe_decimal(metric_window.avg_abs_slippage_bps)
+    slippage_budget_bps = _safe_decimal(metric_window.slippage_budget_bps)
+    if (
+        avg_abs_slippage_bps is not None
+        and slippage_budget_bps is not None
+        and avg_abs_slippage_bps > slippage_budget_bps
+    ):
+        reasons.append("hypothesis_window_slippage_budget_exceeded")
+    return reasons
+
+
 def _merge_runtime_certificate_evidence(
     items: Sequence[Mapping[str, Any]],
     *,
@@ -660,6 +710,51 @@ def _merge_runtime_certificate_evidence(
             merged.append(updated)
             continue
         if _safe_text(metric_window.dependency_quorum_decision) != "allow":
+            merged.append(updated)
+            continue
+        activity_reason_codes = _metric_window_activity_reason_codes(metric_window)
+        if activity_reason_codes:
+            observed = (
+                dict(cast(Mapping[str, Any], updated.get("observed")))
+                if isinstance(updated.get("observed"), Mapping)
+                else {}
+            )
+            observed.update(
+                {
+                    "runtime_window_certificate_rejected": True,
+                    "runtime_window_rejection_reasons": activity_reason_codes,
+                    "metric_window_id": str(metric_window.id),
+                    "promotion_decision_id": str(promotion_decision.id),
+                    "metric_window_market_session_count": metric_window.market_session_count,
+                    "metric_window_decision_count": metric_window.decision_count,
+                    "metric_window_trade_count": metric_window.trade_count,
+                    "metric_window_order_count": metric_window.order_count,
+                    "metric_window_avg_abs_slippage_bps": metric_window.avg_abs_slippage_bps,
+                    "metric_window_post_cost_expectancy_bps": metric_window.post_cost_expectancy_bps,
+                }
+            )
+            prior_reasons = [
+                str(reason).strip()
+                for reason in cast(Sequence[object], updated.get("reasons") or [])
+                if str(reason).strip()
+            ]
+            updated["reasons"] = _normalize_reason_codes(
+                [*prior_reasons, *activity_reason_codes]
+            )
+            updated["informational_reasons"] = sorted(
+                {
+                    *[
+                        str(reason)
+                        for reason in cast(
+                            Sequence[object],
+                            updated.get("informational_reasons") or [],
+                        )
+                        if str(reason).strip()
+                    ],
+                    "runtime_window_certificate_rejected",
+                }
+            )
+            updated["observed"] = observed
             merged.append(updated)
             continue
 
@@ -882,6 +977,7 @@ def _evaluate_certificate_candidates(
                 reasons.append("hypothesis_window_drift_failed")
             if _safe_text(metric_window.dependency_quorum_decision) != "allow":
                 reasons.append("hypothesis_window_dependency_quorum_not_allow")
+            reasons.extend(_metric_window_activity_reason_codes(metric_window))
 
         if promotion_decision is not None:
             promotion_decision_id = str(promotion_decision.id)

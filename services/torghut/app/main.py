@@ -104,12 +104,10 @@ from .trading.forecast_runtime import forecast_status_from_empirical_jobs
 from .trading.freshness_carry import build_freshness_carry_ledger
 from .trading.hypotheses import (
     JangarDependencyQuorumStatus,
-    compile_hypothesis_runtime_statuses,
     hypothesis_registry_requires_dependency_capability,
     load_jangar_dependency_quorum,
     load_hypothesis_registry,
     resolve_hypothesis_dependency_quorum,
-    summarize_hypothesis_runtime_statuses,
     validate_hypothesis_registry_from_settings,
 )
 from .trading.jangar_continuity import load_jangar_route_continuity_packet
@@ -149,6 +147,7 @@ from .trading.source_serving_repair_receipt import (
     build_source_serving_repair_receipt_ledger,
 )
 from .trading.submission_council import (
+    build_hypothesis_runtime_summary,
     build_live_submission_gate_payload,
     build_shadow_first_toggle_parity,
     load_quant_evidence_status,
@@ -5228,24 +5227,20 @@ def _build_hypothesis_runtime_payload(
     resolved_feature_readiness = feature_readiness or _load_clickhouse_ta_status(
         scheduler
     )
-    items = compile_hypothesis_runtime_statuses(
-        registry=registry,
-        state=scheduler.state,
-        tca_summary=tca_summary,
-        market_context_status=market_context_status,
-        jangar_dependency_quorum=dependency_quorum,
-        feature_readiness=resolved_feature_readiness,
-        market_session_open=cast(
-            bool | None,
-            getattr(scheduler.state, "market_session_open", None),
-        ),
-        route_symbol_filter_enabled=settings.trading_pipeline_mode == "simple",
+    with SessionLocal() as session:
+        summary_with_items = build_hypothesis_runtime_summary(
+            session,
+            state=scheduler.state,
+            tca_summary=tca_summary,
+            market_context_status=market_context_status,
+            dependency_quorum=dependency_quorum,
+            feature_readiness=resolved_feature_readiness,
+        )
+    items = list(
+        cast(Sequence[Mapping[str, Any]], summary_with_items.get("items") or [])
     )
-    summary = summarize_hypothesis_runtime_statuses(
-        items,
-        registry=registry,
-        dependency_quorum=dependency_quorum,
-    )
+    summary = dict(summary_with_items)
+    summary.pop("items", None)
     return (
         {
             "registry_loaded": registry.loaded,
