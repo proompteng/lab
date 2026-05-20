@@ -329,6 +329,65 @@ describe('scheduled AgentRun templates', () => {
     }
   })
 
+  it('runs the live Argo smoke as a deterministic app-server canary without OpenAI quota', () => {
+    const values = readYamlObjects('argocd/applications/agents/values.yaml')[0]
+    const hooks = objectAt(values, 'argocdHooks')
+    const postSync = objectAt(hooks, 'postSync')
+    const smoke = objectAt(hooks, 'smoke')
+    const smokeRun = objectAt(smoke, 'agentRun') as Record<string, unknown>
+    const smokeRunSpec = objectAt(smokeRun, 'spec')
+    const provider = readYamlObjects('argocd/applications/agents/codex-spark-smoke-agentprovider.yaml').find(
+      (manifest) => objectAt(manifest, 'kind') === 'AgentProvider',
+    )
+    const providerSpec = objectAt(provider, 'spec')
+    const adapter = objectAt(providerSpec, 'adapter')
+    const codex = objectAt(adapter, 'codex')
+    const envTemplate = objectAt(providerSpec, 'envTemplate')
+
+    expect(objectAt(postSync, 'enabled')).toBe(true)
+    expect(objectAt(adapter, 'type')).toBe('codex-app-server')
+    expect(objectAt(codex, 'binaryPath')).toBe('/usr/local/bin/agents-fake-codex-app-server')
+    expect(objectAt(codex, 'model')).toBe('agents-fake-codex-app-server')
+    expect(objectAt(codex, 'effort')).toBe('low')
+    expect(objectAt(codex, 'cwd')).toBeUndefined()
+    expect(objectAt(envTemplate, 'AGENTS_FAKE_CODEX_APP_SERVER_ARTIFACT')).toBe('/workspace/.agentrun/smoke/result.md')
+    expect(JSON.stringify(provider)).not.toContain('gpt-5.5')
+    expect(objectAt(smokeRunSpec, 'vcsRef')).toBeUndefined()
+    expect(objectAt(smokeRunSpec, 'vcsPolicy')).toBeUndefined()
+    expect(objectAt(smokeRunSpec, 'secrets')).toEqual(['codex-auth'])
+  })
+
+  it('keeps checked-in workflow AgentRuns runnable with explicit steps', () => {
+    const provider = readYamlObjects('argocd/applications/agents/agents-primitives-agentprovider.yaml').find(
+      (manifest) => objectAt(manifest, 'kind') === 'AgentProvider',
+    )
+    const providerSpec = objectAt(provider, 'spec')
+    const adapter = objectAt(providerSpec, 'adapter')
+    const codex = objectAt(adapter, 'codex')
+    const envTemplate = objectAt(providerSpec, 'envTemplate')
+    const agentRun = readYamlObjects('argocd/applications/agents/agents-primitives-agentrun.yaml').find(
+      (manifest) => objectAt(manifest, 'kind') === 'AgentRun',
+    )
+    const spec = objectAt(agentRun, 'spec')
+    const workflow = objectAt(spec, 'workflow')
+    const steps = objectAt(workflow, 'steps')
+
+    expect(objectAt(objectAt(spec, 'runtime'), 'type')).toBe('workflow')
+    expect(Array.isArray(steps)).toBe(true)
+    expect(steps).toEqual([
+      {
+        name: 'implementation',
+        timeoutSeconds: 600,
+        parameters: { stage: 'implementation' },
+      },
+    ])
+    expect(objectAt(codex, 'binaryPath')).toBe('/usr/local/bin/agents-fake-codex-app-server')
+    expect(objectAt(codex, 'model')).toBe('agents-fake-codex-app-server')
+    expect(objectAt(codex, 'cwd')).toBeUndefined()
+    expect(objectAt(envTemplate, 'AGENTS_FAKE_CODEX_APP_SERVER_ARTIFACT')).toBe('/workspace/lab/.agents-runner.log')
+    expect(JSON.stringify(provider)).not.toContain('gpt-5.5')
+  })
+
   it('configures default runner resource requests for swarm jobs', () => {
     const values = readYamlObjects('argocd/applications/agents/values.yaml')[0]
     const controller = objectAt(values, 'controller')

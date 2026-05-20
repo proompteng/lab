@@ -35,7 +35,7 @@ argocdHooks:
     tag: 1.30.11
     digest: sha256:aff9e683cf3950861a806b89404c5d5b4f8d6d4ab527c6da567df71b4cd4f970
   postSync:
-    enabled: false
+    enabled: true
   smoke:
     agentRun:
       apiVersion: agents.proompteng.ai/v1alpha1
@@ -48,12 +48,13 @@ argocdHooks:
         implementationSpecRef:
           name: codex-spark-smoke-implspec
         goal:
-          objective: Verify Codex goal support, provider startup, and the promoted runner image without external side effects.
+          objective: Verify Codex app-server runner protocol, status, artifact collection, and the promoted runner image without external side effects.
           tokenBudget: 8000
         runtime:
           type: workflow
           config:
             serviceAccountName: agents-sa
+            backoffLimit: 0
         ttlSecondsAfterFinished: 1800
         workflow:
           steps:
@@ -64,18 +65,12 @@ argocdHooks:
         parameters:
           repository: proompteng/lab
           base: main
-          head: codex/swarm-smoke
+          head: codex/agents-smoke
           issueNumber: swarm-codex-smoke
           issueTitle: Codex Spark smoke validation
-          objective: verify codex auth.json startup, provider startup, and the promoted runner image without VCS or external side
-            effects
-        vcsRef:
-          name: github
-        vcsPolicy:
-          required: true
-          mode: read-write
+          objective: verify deterministic app-server runner protocol and the promoted runner image without VCS or external model
+            calls
         secrets:
-          - github-token
           - codex-auth
 controllers:
   enabled: true

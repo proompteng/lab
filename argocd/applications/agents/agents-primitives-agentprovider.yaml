@@ -8,18 +8,20 @@ spec:
   adapter:
     type: codex-app-server
     codex:
-      model: gpt-5.5
+      binaryPath: /usr/local/bin/agents-fake-codex-app-server
+      model: agents-fake-codex-app-server
       effort: low
       sandbox: danger-full-access
       approval: never
-      cwd: /workspace/lab
       prompt: |-
         Write `/workspace/lab/.agents-runner.log` with exactly this single line, then respond with `OK`:
         agent run repo={{ inputs.repository }} base={{ inputs.base }} head={{ inputs.head }} stage={{ inputs.stage }}
       threadConfig:
         mcp_servers: {}
+        web_search: off
   argsTemplate: []
   envTemplate:
+    AGENTS_FAKE_CODEX_APP_SERVER_ARTIFACT: /workspace/lab/.agents-runner.log
     AGENT_RUN_STAGE: "{{parameters.stage}}"
   inputFiles:
     - path: /workspace/agent/prompt.json
