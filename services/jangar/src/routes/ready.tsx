@@ -171,6 +171,56 @@ const buildBusinessEvidence = (
 
 const readyPathFreshUntil = (now: Date) => new Date(now.getTime() + 60_000).toISOString()
 
+type AgentsDependencyStatus = 'healthy' | 'degraded' | 'unavailable'
+
+type AgentsDependencySummary = {
+  status: AgentsDependencyStatus
+  ready: boolean
+  service_available: boolean
+  http_ready: boolean
+  http_status: number
+  control_plane_available: boolean
+  control_plane_http_status: number
+  controller_ready: boolean
+  agentrun_ingestion_ready: boolean
+  reason_codes: string[]
+  error: string | null
+  control_plane_error: string | null
+}
+
+const buildAgentsDependencySummary = (input: {
+  agentsReady: Awaited<ReturnType<typeof getAgentsReadySnapshot>>
+  agentsControlPlaneStatus: Awaited<ReturnType<typeof getAgentsControlPlaneStatusSnapshot>>
+  controllersOk: boolean
+  agentsControllerHealthy: boolean
+}): AgentsDependencySummary => {
+  const ready =
+    input.agentsReady.available &&
+    input.agentsReady.httpReady &&
+    input.agentsControlPlaneStatus.available &&
+    input.controllersOk
+  const status: AgentsDependencyStatus = !input.agentsReady.available
+    ? 'unavailable'
+    : ready && input.agentsReady.status === 'ok' && input.agentsControllerHealthy
+      ? 'healthy'
+      : 'degraded'
+
+  return {
+    status,
+    ready,
+    service_available: input.agentsReady.available,
+    http_ready: input.agentsReady.httpReady,
+    http_status: input.agentsReady.httpStatus,
+    control_plane_available: input.agentsControlPlaneStatus.available,
+    control_plane_http_status: input.agentsControlPlaneStatus.httpStatus,
+    controller_ready: input.controllersOk,
+    agentrun_ingestion_ready: input.agentsControllerHealthy,
+    reason_codes: input.agentsReady.reasonCodes,
+    error: input.agentsReady.error,
+    control_plane_error: input.agentsControlPlaneStatus.error,
+  }
+}
+
 const buildReadyPathSourceServingExchange = (now: Date, namespace: string): SourceServingContractVerdictExchange => ({
   mode: 'observe',
   design_artifact:
@@ -309,9 +359,14 @@ export const getReadyHandler = async () => {
   const servingPassportReady =
     servingPassport !== undefined && servingPassport.decision !== 'block' && servingPassport.decision !== 'hold'
   const memoryProviderReady = memoryProvider.status !== 'blocked'
-  const ready = controllersOk && agentsReady.httpReady && memoryProviderReady && agentsControlPlaneStatus.available
-  const status =
-    ready && agentsReady.status === 'ok' && agentsControllerHealthy && servingPassportReady ? 'ok' : 'degraded'
+  const agentsDependency = buildAgentsDependencySummary({
+    agentsReady,
+    agentsControlPlaneStatus,
+    controllersOk,
+    agentsControllerHealthy,
+  })
+  const ready = memoryProviderReady
+  const status = ready && servingPassportReady && agentsDependency.status === 'healthy' ? 'ok' : 'degraded'
   const readyPathRolloutHealth = agentsStatus.rollout_health
   const readyPathSourceServingExchange = buildReadyPathSourceServingExchange(now, primaryNamespace)
   const readyPathAgentRunIngestion = agentsStatus.agentrun_ingestion
@@ -414,6 +469,7 @@ export const getReadyHandler = async () => {
       http_status: agentsControlPlaneStatus.httpStatus,
       error: agentsControlPlaneStatus.error,
     },
+    agents_dependency: agentsDependency,
     watch_reliability: agentsStatus.watch_reliability,
     agentrun_ingestion: readyPathAgentRunIngestion,
     control_plane_controller_witness: readyPathControllerWitness,

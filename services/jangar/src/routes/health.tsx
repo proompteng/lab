@@ -14,18 +14,49 @@ type AgentsHealthPayload = {
   agentsController?: AgentsHealthController
 }
 
+type AgentsDependencyHealth = {
+  status: 'healthy' | 'degraded' | 'unavailable'
+  ready: boolean
+  http_status: number
+  error: string | null
+  controller: AgentsHealthController
+}
+
 const unavailableAgentsController = (): AgentsHealthController => ({
   enabled: true,
   crdsReady: false,
 })
 
+const buildAgentsDependencyHealth = (input: {
+  ok: boolean
+  status: number
+  error?: string
+  controller: AgentsHealthController
+}): AgentsDependencyHealth => {
+  const ready = input.ok && (input.controller.enabled ? input.controller.crdsReady !== false : true)
+  return {
+    status: !input.ok ? 'unavailable' : ready ? 'healthy' : 'degraded',
+    ready,
+    http_status: input.status,
+    error: input.ok ? null : (input.error ?? `Agents service returned HTTP ${input.status}`),
+    controller: input.controller,
+  }
+}
+
 export const getHealthHandler = async () => {
   const agentsHealth = await fetchAgentsServiceJson<AgentsHealthPayload>('/health')
   const agentsController = agentsHealth.body?.agentsController ?? unavailableAgentsController()
-  const ready = agentsHealth.ok && (agentsController.enabled ? agentsController.crdsReady !== false : true)
+  const agentsError = agentsHealth.ok ? undefined : (agentsHealth.error ?? undefined)
+  const agentsDependency = buildAgentsDependencyHealth({
+    ok: agentsHealth.ok,
+    status: agentsHealth.status,
+    error: agentsError,
+    controller: agentsController,
+  })
   const body = JSON.stringify({
-    status: ready ? 'ok' : 'degraded',
+    status: 'ok',
     service: resolveRuntimeServiceName(),
+    agents_dependency: agentsDependency,
     agentsService: agentsHealth.ok
       ? agentsHealth.body
       : {
@@ -37,7 +68,7 @@ export const getHealthHandler = async () => {
   })
 
   return new Response(body, {
-    status: ready ? 200 : 503,
+    status: 200,
     headers: {
       'content-type': 'application/json',
       'content-length': Buffer.byteLength(body).toString(),

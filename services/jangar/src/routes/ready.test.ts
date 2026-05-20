@@ -509,6 +509,12 @@ describe('getReadyHandler', () => {
     expect(response.status).toBe(200)
     const body = await response.json()
     expect(body.status).toBe('ok')
+    expect(body.agents_dependency).toMatchObject({
+      status: 'healthy',
+      ready: true,
+      service_available: true,
+      control_plane_available: true,
+    })
     expect(body.memory_provider).toMatchObject({
       status: 'healthy',
     })
@@ -995,6 +1001,11 @@ describe('getReadyHandler', () => {
     expect(response.status).toBe(200)
     const body = await response.json()
     expect(body.status).toBe('degraded')
+    expect(body.agents_dependency).toMatchObject({
+      status: 'degraded',
+      ready: true,
+      agentrun_ingestion_ready: false,
+    })
   })
 
   it('returns 200 with degraded status when the active controller is still adopting backlog', async () => {
@@ -1063,7 +1074,7 @@ describe('getReadyHandler', () => {
     expect(body.status).toBe('ok')
   })
 
-  it('returns 503 when leader election is required but standby has not observed a healthy lease attempt', async () => {
+  it('reports degraded Agents dependency when standby has not observed a healthy lease attempt', async () => {
     agentsControlPlaneClientMocks.getAgentsReadySnapshot.mockResolvedValue(
       buildAgentsReadySnapshot({
         status: 'degraded',
@@ -1083,9 +1094,15 @@ describe('getReadyHandler', () => {
 
     const response = await getReadyHandler()
 
-    expect(response.status).toBe(503)
+    expect(response.status).toBe(200)
     const body = await response.json()
     expect(body.status).toBe('degraded')
+    expect(body.agents_dependency).toMatchObject({
+      status: 'degraded',
+      ready: false,
+      http_ready: false,
+      service_available: true,
+    })
   })
 
   it('returns 200 when execution trust is healthy', async () => {
