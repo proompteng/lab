@@ -4,17 +4,23 @@ metadata:
   name: agents-primitives-codex
   namespace: agents
 spec:
-  binary: /bin/sh
+  binary: /usr/local/bin/agent-runner
   adapter:
-    type: exec
-  argsTemplate:
-    - -c
-    - >-
-        mkdir -p /workspace/lab &&
-        echo "agent run repo={{parameters.repository}} base={{parameters.base}} head={{parameters.head}} stage={{parameters.stage}}" |
-        tee /workspace/lab/.agents-runner.log
+    type: codex-app-server
+    codex:
+      model: gpt-5.5
+      effort: low
+      sandbox: danger-full-access
+      approval: never
+      cwd: /workspace/lab
+      prompt: |-
+        Write `/workspace/lab/.agents-runner.log` with exactly this single line, then respond with `OK`:
+        agent run repo={{ inputs.repository }} base={{ inputs.base }} head={{ inputs.head }} stage={{ inputs.stage }}
+      threadConfig:
+        mcp_servers: {}
+  argsTemplate: []
   envTemplate:
-    WORKFLOW_STAGE: "{{parameters.stage}}"
+    AGENT_RUN_STAGE: "{{parameters.stage}}"
   inputFiles:
     - path: /workspace/agent/prompt.json
       content: "{{agent.config.payloads.promptJson}}"

@@ -18,7 +18,6 @@ spec:
   argsTemplate: []
   envTemplate:
     CODEX_LOG_LEVEL: info
-    NATS_URL: nats://nats.nats.svc.cluster.local:4222
   inputFiles:
     - path: /root/.codex/config.toml
       content: |-

@@ -3,129 +3,44 @@ kind: AgentProvider
 metadata:
   name: codex-spark-smoke
 spec:
-  binary: /bin/bash
+  binary: /usr/local/bin/agent-runner
   adapter:
-    type: exec
-  argsTemplate:
-    - -lc
-    - |-
-      set -euo pipefail
-      PROMPT_FILE="$(mktemp /tmp/codex-smoke-prompt.XXXXXX.txt)"
-      EVENT_FILE="/workspace/run.json"
-      DEFAULT_CONFIG="/root/.codex/config.toml"
-      PRIMARY_MODEL="${CODEX_MODEL:-gpt-5.5}"
-      FALLBACK_MODEL="${CODEX_MODEL_FALLBACKS:-}"
-      LOG_PATH="/workspace/.agentrun/smoke/codex-exec.log"
+    type: codex-app-server
+    codex:
+      model: gpt-5.5
+      effort: xhigh
+      sandbox: danger-full-access
+      approval: never
+      cwd: /workspace/lab
+      prompt: |-
+        Execute a read-only Codex app-server runner smoke validation.
 
-      python3 - "$EVENT_FILE" "$PROMPT_FILE" <<'PY'
-      import json
-      import sys
-      from pathlib import Path
+        Requirements:
+        - Do not modify repository state, branches, commits, pull requests, issues, or cluster resources.
+        - Use the mounted Codex config/auth exactly as provided.
+        - Verify the configured provider, model, auth secret, app-server runner, and runner image can start successfully.
+        - Write `/workspace/.agentrun/smoke/result.md` with:
+          - startup status
+          - resolved repository/base/head
+          - resolved stage
+          - one-line confirmation that no repo or external side effects were performed
+        - Keep the run short and deterministic.
+        - After the file is written, stop immediately and respond with exactly `OK`.
 
-      event_path = Path(sys.argv[1])
-      prompt_path = Path(sys.argv[2])
-      payload = json.loads(event_path.read_text(encoding='utf-8'))
-      params = payload.get('parameters') or {}
-
-      def read_value(key: str) -> str:
-        value = payload.get(key)
-        if isinstance(value, str) and value.strip():
-          return value.strip()
-        value = params.get(key)
-        if isinstance(value, str) and value.strip():
-          return value.strip()
-        return ''
-
-      repository = read_value('repository')
-      base = read_value('base')
-      head = read_value('head')
-      stage = read_value('stage')
-      objective = read_value('objective')
-
-      prompt = f"""Execute a read-only Codex runtime smoke validation.
-
-      Requirements:
-      - Do not modify repository state, branches, commits, pull requests, issues, or cluster resources.
-      - Use the mounted Codex config/auth exactly as provided.
-      - Verify the configured provider, model, auth secret, and runner image can start successfully.
-      - Write `/workspace/.agentrun/smoke/result.md` with:
-        - startup status
-        - resolved repository/base/head
-        - resolved stage
-        - one-line confirmation that no repo or external side effects were performed
-      - Keep the run short and deterministic.
-      - After the file is written, stop immediately and respond with exactly `OK`.
-
-      Resolved inputs:
-      - repository: {repository}
-      - base: {base}
-      - head: {head}
-      - stage: {stage}
-      - objective: {objective}
-      """
-
-      prompt_path.write_text(prompt, encoding='utf-8')
-      PY
-
-      mkdir -p /workspace/.agentrun/smoke
-      export HOME=/root
-
-      rewrite_config() {
-        local model="$1"
-        local config_file
-        config_file="$(mktemp /tmp/codex-smoke-config.XXXXXX.toml)"
-        python3 - "$DEFAULT_CONFIG" "$config_file" "$model" <<'PY'
-      from pathlib import Path
-      import sys
-
-      source = Path(sys.argv[1]).read_text(encoding='utf-8').splitlines()
-      target = Path(sys.argv[2])
-      model = sys.argv[3]
-      replaced = False
-      lines = []
-      for line in source:
-        if line.strip().startswith('model = '):
-          lines.append(f'model = "{model}"')
-          replaced = True
-        else:
-          lines.append(line)
-      if not replaced:
-        lines.insert(0, f'model = "{model}"')
-      target.write_text('\n'.join(lines) + '\n', encoding='utf-8')
-      PY
-        printf '%s\n' "$config_file"
-      }
-
-      can_fallback() {
-        grep -Eiq 'usage limit|quota|insufficient_quota|unknown model|model is not supported|not supported when using codex|model unavailable' "$LOG_PATH"
-      }
-
-      run_smoke() {
-        local model="$1"
-        local config_file
-        config_file="$(rewrite_config "$model")"
-        export CODEX_CONFIG="$config_file"
-        if codex exec --skip-git-repo-check -C /workspace < "$PROMPT_FILE" >"$LOG_PATH" 2>&1; then
-          rm -f "$config_file"
-          return 0
-        fi
-        local exit_code=$?
-        cat "$LOG_PATH" >&2 || true
-        rm -f "$config_file"
-        return "$exit_code"
-      }
-
-      if ! run_smoke "$PRIMARY_MODEL"; then
-        if [ -n "$FALLBACK_MODEL" ] && can_fallback; then
-          run_smoke "$FALLBACK_MODEL"
-        else
-          exit 1
-        fi
-      fi
-      test -s /workspace/.agentrun/smoke/result.md
+        Resolved inputs:
+        - repository: {{ inputs.repository }}
+        - base: {{ inputs.base }}
+        - head: {{ inputs.head }}
+        - stage: {{ inputs.stage }}
+        - objective: {{ inputs.objective }}
+      goal:
+        objective: Validate the Codex app-server Agents runner can start, run one read-only turn, and write the smoke artifact.
+      threadConfig:
+        mcp_servers: {}
+        web_search: live
+  argsTemplate: []
   envTemplate:
     CODEX_LOG_LEVEL: info
-    NATS_URL: nats://nats.nats.svc.cluster.local:4222
     HOME: /root
     CODEX_CONFIG: /root/.codex/config.toml
     CODEX_DISABLE_RESUME: "1"
@@ -165,6 +80,8 @@ spec:
         [projects."/root"]
         trust_level = "trusted"
   outputArtifacts:
+    - name: smoke-result
+      path: /workspace/.agentrun/smoke/result.md
     - name: runner-log
       path: /workspace/.agent/runner.log
     - name: runner-status

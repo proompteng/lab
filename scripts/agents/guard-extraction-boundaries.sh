@@ -384,6 +384,26 @@ fail_if_matches \
   "${ROOT_DIR}/charts/agents/examples/agentprovider-native-workflow.yaml"
 
 fail_if_matches \
+  "Generic Agents app-server providers and prompt must not depend on legacy codex-nats-publish progress plumbing" \
+  'codex-nats-publish|NATS_URL|NATS_USER|NATS_PASSWORD' \
+  "${ROOT_DIR}/argocd/applications/agents/codex-agentprovider.yaml" \
+  "${ROOT_DIR}/argocd/applications/agents/codex-spark-agentprovider.yaml" \
+  "${ROOT_DIR}/argocd/applications/agents/codex-spark-smoke-agentprovider.yaml" \
+  "${ROOT_DIR}/argocd/applications/agents/graf-codex-agentprovider.yaml" \
+  "${ROOT_DIR}/argocd/applications/agents/agents-primitives-agentprovider.yaml" \
+  "${ROOT_DIR}/argocd/applications/agents/codex-agent-system-prompt-configmap.yaml" \
+  "${ROOT_DIR}/charts/agents/examples/agentprovider-native-workflow.yaml" \
+  "${ROOT_DIR}/charts/agents/examples/agentprovider-sample.yaml" \
+  "${ROOT_DIR}/charts/agents/examples/agentprovider-smoke.yaml"
+
+fail_if_matches \
+  "Generic Agents smoke providers must use the Codex app-server runner rather than shelling through legacy exec" \
+  'type:\s*exec|binary:\s*/bin/(sh|bash)|codex exec' \
+  "${ROOT_DIR}/argocd/applications/agents/agents-primitives-agentprovider.yaml" \
+  "${ROOT_DIR}/argocd/applications/agents/codex-spark-smoke-agentprovider.yaml" \
+  "${ROOT_DIR}/charts/agents/examples/agentprovider-smoke.yaml"
+
+fail_if_matches \
   "Agents Graf provider must not preserve legacy AutoResearch or Argo workflow artifact defaults" \
   'AUTO_RESEARCH_|AGENTS_ARTIFACTS_BUCKET:\s*argo-workflows' \
   "${ROOT_DIR}/argocd/applications/agents/graf-codex-agentprovider.yaml"

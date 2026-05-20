@@ -355,6 +355,16 @@ const createRunSpecConfigMap = async (
   return configName
 }
 
+const isAgentRunnerBinary = (binary: string | null) =>
+  !binary || binary === '/usr/local/bin/agent-runner' || binary.endsWith('/agent-runner')
+
+const resolveProviderAdapterType = (providerSpec: Record<string, unknown>): 'codex-app-server' | 'exec' => {
+  const explicitType = asString(readNested(providerSpec, ['adapter', 'type']))
+  if (explicitType === 'exec') return 'exec'
+  if (explicitType === 'codex-app-server') return 'codex-app-server'
+  return isAgentRunnerBinary(asString(providerSpec.binary)) ? 'codex-app-server' : 'exec'
+}
+
 const buildAgentRunnerSpec = (
   runSpec: Record<string, unknown>,
   parameters: Record<string, string>,
@@ -366,7 +376,7 @@ const buildAgentRunnerSpec = (
   const binary = asString(providerSpec.binary)
   const outputArtifacts = Array.isArray(providerSpec.outputArtifacts) ? providerSpec.outputArtifacts : []
   const defaultAdapter =
-    binary && binary !== '/usr/local/bin/agent-runner' && !binary.endsWith('/agent-runner')
+    resolveProviderAdapterType(providerSpec) === 'exec'
       ? {
           type: 'exec',
           exec: {
@@ -496,11 +506,11 @@ export const submitJobRun = async (
     env.push(...vcsRuntime.env)
   }
 
-  // Allow the controller to inject NATS user/pass for runner pods without requiring every AgentRun
-  // to carry credentials. This is used by codex tooling like `codex-nats-publish`.
   const runnerDefaults = resolveAgentRunnerDefaultsConfig(process.env)
   const runnerNatsAuthSecretName = runnerDefaults.natsAuthSecretName
-  if (runnerNatsAuthSecretName) {
+  // Legacy exec providers may still invoke codex-nats-publish. The app-server runner records
+  // progress through the Agents runner contract and should not receive NATS credentials.
+  if (runnerNatsAuthSecretName && resolveProviderAdapterType(providerSpec) === 'exec') {
     const alreadyHasUser = env.some((item) => item.name === 'NATS_USER')
     const alreadyHasPass = env.some((item) => item.name === 'NATS_PASSWORD')
     if (!alreadyHasUser || !alreadyHasPass) {
