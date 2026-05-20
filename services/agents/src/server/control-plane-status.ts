@@ -3,6 +3,12 @@ import { Context, Data, Effect, Layer } from 'effect'
 import { assessAgentRunIngestion, getAgentsControllerHealth, type AgentsControllerHealth } from './agents-controller'
 import type { GrpcStatus } from './control-plane-grpc'
 import { resolveGrpcStatus } from './control-plane-grpc'
+import {
+  createControlPlaneRuntimeEvidenceService,
+  type ControlPlaneRuntimeEvidence,
+  type ControlPlaneRolloutHealth,
+  type WorkflowsReliabilityStatus,
+} from './control-plane-runtime-evidence'
 import { getLeaderElectionStatus, type LeaderElectionStatus } from './leader-election'
 import { getOrchestrationControllerHealth } from './orchestration-controller'
 import { resolveRuntimeServiceName } from './runtime-identity'
@@ -119,20 +125,14 @@ export type AgentsControlPlaneStatus = {
     recent_failed_jobs: number
     backoff_limit_exceeded_jobs: number
     window_minutes: number
-    top_failure_reasons: unknown[]
-    data_confidence: 'unknown'
+    top_failure_reasons: WorkflowsReliabilityStatus['top_failure_reasons']
+    data_confidence: WorkflowsReliabilityStatus['data_confidence']
     collection_errors: number
     collected_namespaces: number
     target_namespaces: number
     message: string
   }
-  rollout_health: {
-    status: 'unknown'
-    observed_deployments: number
-    degraded_deployments: number
-    deployments: unknown[]
-    message: string
-  }
+  rollout_health: ControlPlaneRolloutHealth
   namespaces: Array<{
     namespace: string
     status: 'healthy' | 'degraded'
@@ -151,6 +151,7 @@ export type BuildAgentsControlPlaneStatusInput = {
   service?: string
   now?: Date
   env?: EnvSource
+  runtimeEvidence?: ControlPlaneRuntimeEvidence
 }
 
 export type GetAgentsControlPlaneStatusInput = Omit<BuildAgentsControlPlaneStatusInput, 'grpc'> & {
@@ -166,6 +167,11 @@ export type AgentsControlPlaneStatusDependencies = {
   getOrchestrationControllerHealth?: () => ControllerHealthSnapshot
   getSupportingControllerHealth?: () => ControllerHealthSnapshot
   assessAgentRunIngestion?: typeof assessAgentRunIngestion
+  collectRuntimeEvidence?: (input: {
+    namespace: string
+    now: Date
+    env: EnvSource
+  }) => Effect.Effect<ControlPlaneRuntimeEvidence, AgentsControlPlaneStatusError>
 }
 
 export type AgentsControlPlaneStatusService = {
@@ -179,7 +185,7 @@ export class AgentsControlPlaneStatusApi extends Context.Tag('AgentsControlPlane
   AgentsControlPlaneStatusService
 >() {}
 
-const genericCollectionUnavailableMessage = 'runtime collection is not yet emitted by the generic Agents control plane'
+const runtimeEvidenceUnavailableMessage = 'runtime evidence collection is not available'
 
 const buildAuthority = (namespace: string, now: Date, message: string): HeartbeatAuthoritySource => ({
   mode: 'local',
@@ -297,6 +303,27 @@ const buildAgentRunIngestionStatus = (
   }
 }
 
+const unknownWorkflows = (): WorkflowsReliabilityStatus => ({
+  active_job_runs: 0,
+  recent_failed_jobs: 0,
+  backoff_limit_exceeded_jobs: 0,
+  window_minutes: 0,
+  top_failure_reasons: [],
+  data_confidence: 'unknown',
+  collection_errors: 0,
+  collected_namespaces: 0,
+  target_namespaces: 1,
+  message: runtimeEvidenceUnavailableMessage,
+})
+
+const unknownRolloutHealth = (): ControlPlaneRolloutHealth => ({
+  status: 'unknown',
+  observed_deployments: 0,
+  degraded_deployments: 0,
+  deployments: [],
+  message: runtimeEvidenceUnavailableMessage,
+})
+
 const buildDegradedComponents = (input: {
   controllers: ControllerStatus[]
   runtimeAdapters: RuntimeAdapterStatus[]
@@ -320,6 +347,7 @@ export const buildAgentsControlPlaneStatus = (
   const now = input.now ?? deps.now?.() ?? new Date()
   const env = input.env ?? deps.env ?? process.env
   const namespace = input.namespace
+  const runtimeEvidence = input.runtimeEvidence
   const agentsHealth = (deps.getAgentsControllerHealth ?? getAgentsControllerHealth)()
   const controllers = [
     buildControllerStatus('agents-controller', agentsHealth, namespace, now),
@@ -381,25 +409,8 @@ export const buildAgentsControlPlaneStatus = (
     recovery_warrants: [],
     runtime_proof_cells: [],
     projection_watermarks: [],
-    workflows: {
-      active_job_runs: 0,
-      recent_failed_jobs: 0,
-      backoff_limit_exceeded_jobs: 0,
-      window_minutes: 0,
-      top_failure_reasons: [],
-      data_confidence: 'unknown',
-      collection_errors: 0,
-      collected_namespaces: 0,
-      target_namespaces: 1,
-      message: genericCollectionUnavailableMessage,
-    },
-    rollout_health: {
-      status: 'unknown',
-      observed_deployments: 0,
-      degraded_deployments: 0,
-      deployments: [],
-      message: genericCollectionUnavailableMessage,
-    },
+    workflows: runtimeEvidence?.workflows ?? unknownWorkflows(),
+    rollout_health: runtimeEvidence?.rolloutHealth ?? unknownRolloutHealth(),
     namespaces: [
       {
         namespace,
@@ -427,9 +438,26 @@ export const createAgentsControlPlaneStatusService = (
           try: () => (deps.resolveGrpcStatus ?? resolveGrpcStatus)(),
           catch: toStatusError('resolveGrpcStatus'),
         }))
+      const env = input.env ?? deps.env ?? process.env
+      const now = input.now ?? deps.now?.() ?? new Date()
+      const collectRuntimeEvidence =
+        deps.collectRuntimeEvidence ??
+        ((collectInput: { namespace: string; now: Date; env: EnvSource }) =>
+          createControlPlaneRuntimeEvidenceService({ env })
+            .collect(collectInput)
+            .pipe(
+              Effect.mapError(
+                (error) =>
+                  new AgentsControlPlaneStatusError({
+                    operation: error.operation,
+                    message: error.message,
+                  }),
+              ),
+            ))
+      const runtimeEvidence = yield* collectRuntimeEvidence({ namespace: input.namespace, now, env })
 
       return yield* Effect.try({
-        try: () => buildAgentsControlPlaneStatus({ ...input, grpc }, deps),
+        try: () => buildAgentsControlPlaneStatus({ ...input, grpc, now, env, runtimeEvidence }, deps),
         catch: toStatusError('buildControlPlaneStatus'),
       })
     }),

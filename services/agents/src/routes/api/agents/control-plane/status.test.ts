@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
+import { Effect } from 'effect'
 
 import type { AgentsControlPlaneStatusDependencies } from '../../../../server/control-plane-status'
 import type { GrpcStatus } from '../../../../server/control-plane-grpc'
+import type { ControlPlaneRuntimeEvidence } from '../../../../server/control-plane-runtime-evidence'
 import { buildControlPlaneStatusResponse } from './status'
 
 const grpc: GrpcStatus = {
@@ -18,6 +20,28 @@ const healthyController = {
   crdsReady: true,
   missingCrds: [],
   lastCheckedAt: '2026-05-19T11:58:00.000Z',
+}
+
+const runtimeEvidence: ControlPlaneRuntimeEvidence = {
+  workflows: {
+    active_job_runs: 2,
+    recent_failed_jobs: 0,
+    backoff_limit_exceeded_jobs: 0,
+    window_minutes: 60,
+    top_failure_reasons: [],
+    data_confidence: 'high',
+    collection_errors: 0,
+    collected_namespaces: 1,
+    target_namespaces: 1,
+    message: '1 namespace(s) collected for AgentRun job evidence',
+  },
+  rolloutHealth: {
+    status: 'healthy',
+    observed_deployments: 2,
+    degraded_deployments: 0,
+    deployments: [],
+    message: '2 configured deployment(s) healthy',
+  },
 }
 
 const deps: AgentsControlPlaneStatusDependencies = {
@@ -49,6 +73,7 @@ const deps: AgentsControlPlaneStatusDependencies = {
     message: 'AgentRun ingestion healthy',
     dispatchPaused: false,
   }),
+  collectRuntimeEvidence: () => Effect.succeed(runtimeEvidence),
 }
 
 describe('control-plane status route', () => {
@@ -65,6 +90,8 @@ describe('control-plane status route', () => {
       generated_at: '2026-05-19T12:00:00.000Z',
       controllers: expect.arrayContaining([expect.objectContaining({ name: 'agents-controller' })]),
       agentrun_ingestion: { namespace: 'workflow' },
+      workflows: { active_job_runs: 2, data_confidence: 'high' },
+      rollout_health: { status: 'healthy', observed_deployments: 2 },
       namespaces: expect.arrayContaining([expect.objectContaining({ namespace: 'workflow', status: 'healthy' })]),
     })
   })
