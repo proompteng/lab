@@ -1,5 +1,12 @@
 import { createHash } from 'node:crypto'
 
+import { fetchJobResourcesFromAgentsService } from '@proompteng/agent-contracts/agent-jobs-client'
+import {
+  SWARM_ADMISSION_ANNOTATION_RUNTIME_DIGEST,
+  SWARM_NAME_LABEL,
+  SWARM_STAGE_LABEL,
+} from '@proompteng/agent-contracts/swarm-contracts'
+
 import type {
   ActionSloBudget,
   ActionSloBudgetActionClass,
@@ -14,7 +21,6 @@ import type {
   RepairWarrantSuppressedCandidate,
   SourceRolloutTruthExchange,
 } from '~/server/control-plane-status-types'
-import { fetchJobResourcesFromAgentsService } from '@proompteng/agent-contracts/agent-jobs-client'
 import type { ControlPlaneRolloutHealth, ControlPlaneWatchReliability } from '~/server/control-plane-status-types'
 import { asRecord, asString } from '~/server/primitives-http'
 import {
@@ -39,9 +45,7 @@ const DEFAULT_FRESHNESS_MS = 60_000
 const SCHEDULE_DEBT_WINDOW_MINUTES = 4 * 60
 const SCHEDULE_DEBT_ERROR_MARGIN = 2
 const SCHEDULE_LABEL = 'schedules.proompteng.ai/schedule'
-const SWARM_NAME_LABEL = 'swarm.proompteng.ai/name'
-const SWARM_STAGE_LABEL = 'swarm.proompteng.ai/stage'
-const RUNTIME_DIGEST_ANNOTATION = 'swarm.proompteng.ai/runtime-kit-set-digest'
+const RUNTIME_DIGEST_ANNOTATION = SWARM_ADMISSION_ANNOTATION_RUNTIME_DIGEST
 const SOURCE_HEAD_ANNOTATION = 'jangar.proompteng.ai/source-head-sha'
 const GITOPS_REVISION_ANNOTATION = 'jangar.proompteng.ai/gitops-revision'
 

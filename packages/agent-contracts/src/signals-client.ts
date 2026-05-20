@@ -1,9 +1,15 @@
 import { postAgentsJson, type AgentsServiceJsonResult, type EnvSource } from './agents-http'
+import {
+  SWARM_REQUIREMENT_LABEL_CHANNEL,
+  SWARM_REQUIREMENT_LABEL_FROM,
+  SWARM_REQUIREMENT_LABEL_TO,
+  SWARM_REQUIREMENT_LABEL_TYPE,
+} from './swarm-contracts'
 
-export const SWARM_REQUIREMENT_SIGNAL_LABEL_TYPE = 'swarm.proompteng.ai/type'
-export const SWARM_REQUIREMENT_SIGNAL_LABEL_TO = 'swarm.proompteng.ai/to'
-export const SWARM_REQUIREMENT_SIGNAL_LABEL_FROM = 'swarm.proompteng.ai/from'
-export const SWARM_REQUIREMENT_SIGNAL_LABEL_CHANNEL = 'swarm.proompteng.ai/requirement-channel'
+export const SWARM_REQUIREMENT_SIGNAL_LABEL_TYPE = SWARM_REQUIREMENT_LABEL_TYPE
+export const SWARM_REQUIREMENT_SIGNAL_LABEL_TO = SWARM_REQUIREMENT_LABEL_TO
+export const SWARM_REQUIREMENT_SIGNAL_LABEL_FROM = SWARM_REQUIREMENT_LABEL_FROM
+export const SWARM_REQUIREMENT_SIGNAL_LABEL_CHANNEL = SWARM_REQUIREMENT_LABEL_CHANNEL
 
 export type AgentsSwarmRequirementSignalSubmitInput = {
   deliveryId: string

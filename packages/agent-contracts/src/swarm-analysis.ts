@@ -1,22 +1,18 @@
+import {
+  SWARM_STAGE_LABEL,
+  SWARM_STAGE_CADENCE_KEY,
+  SWARM_STAGE_LAST_RUN_KEY,
+  SWARM_STAGE_NAMES,
+  type SwarmStageName,
+  type SwarmStageTargetRef,
+} from './swarm-contracts'
 import { type AgentsStageTargetResourceGetInput, fetchStageTargetResourceFromAgentsService } from './swarm-read-client'
 
-export const STAGE_NAMES = ['discover', 'plan', 'implement', 'verify'] as const
-export type StageName = (typeof STAGE_NAMES)[number]
-export type StageTargetRef = { kind: 'AgentRun' | 'OrchestrationRun'; name: string; namespace: string }
-
-export const STAGE_CADENCE_KEY: Record<StageName, string> = {
-  discover: 'discoverEvery',
-  plan: 'planEvery',
-  implement: 'implementEvery',
-  verify: 'verifyEvery',
-}
-
-export const STAGE_LAST_RUN_KEY: Record<StageName, string> = {
-  discover: 'lastDiscoverAt',
-  plan: 'lastPlanAt',
-  implement: 'lastImplementAt',
-  verify: 'lastVerifyAt',
-}
+export const STAGE_NAMES = SWARM_STAGE_NAMES
+export type StageName = SwarmStageName
+export type StageTargetRef = SwarmStageTargetRef
+export const STAGE_CADENCE_KEY = SWARM_STAGE_CADENCE_KEY
+export const STAGE_LAST_RUN_KEY = SWARM_STAGE_LAST_RUN_KEY
 
 const STAGE_HOURLY_STAGGER_OFFSET: Record<StageName, number> = {
   discover: 0,
@@ -134,7 +130,7 @@ export const collectStaleStageSignals = (
     const cadenceMs = parseDurationToMs(stageConfig.every)
     if (cadenceMs === null || cadenceMs <= 0) continue
     const stageRuns = runs.filter(
-      (run) => asString(readNested(run, ['metadata', 'labels', 'swarm.proompteng.ai/stage'])) === stageConfig.stage,
+      (run) => asString(readNested(run, ['metadata', 'labels', SWARM_STAGE_LABEL])) === stageConfig.stage,
     )
     const latestRunTime = sortByMostRecentRun(stageRuns).at(0)
     const fromRuns = parseTimeOrNull(getRunTimestamp(latestRunTime ?? {}))

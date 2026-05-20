@@ -711,6 +711,21 @@ require_matches \
   "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-swarm-analysis.ts" \
   "${ROOT_DIR}/packages/agent-contracts/package.json"
 
+fail_if_path_exists \
+  "Jangar must not own generic Swarm CRD annotation constants after agent-contracts owns the shared contract" \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-swarm-annotations.ts"
+
+fail_if_matches \
+  "Jangar must import generic Swarm CRD contract keys from @proompteng/agent-contracts/swarm-contracts instead of redefining them locally" \
+  'const SWARM_(NAME|STAGE|REQUIREMENT|SCHEDULE|MISSION|ADMISSION|EVIDENCE|MATERIAL).*swarm\.proompteng\.ai|export const SWARM_(NAME|STAGE|REQUIREMENT|SCHEDULE|MISSION|ADMISSION|EVIDENCE|MATERIAL).*swarm\.proompteng\.ai' \
+  "${ROOT_DIR}/services/jangar/src/server"
+
+require_matches \
+  "Agent contracts must own generic Swarm CRD labels and annotations for domain consumers" \
+  'SWARM_STAGE_CLEARANCE_ANNOTATION_PACKET_ID|SWARM_REQUIREMENT_LABEL_ID|SWARM_SCHEDULE_ANNOTATION_WORKER_ID' \
+  "${ROOT_DIR}/packages/agent-contracts/src/swarm-contracts.ts" \
+  "${ROOT_DIR}/packages/agent-contracts/package.json"
+
 fail_if_matches \
   "Jangar execution trust must consume the Agents execution-trust API instead of listing and evaluating Swarms locally" \
   'fetchSwarmResourcesFromAgentsService|listSwarmsFromAgentsService|toExecutionTrustSwarmResources|SWARM_STAGE_NAMES|stageStates' \

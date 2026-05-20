@@ -1,8 +1,13 @@
-import { asString, readNested } from '~/server/primitives-http'
-import { STAGE_NAMES, type StageName } from '~/server/supporting-primitives-swarm-config'
+import {
+  SWARM_NAME_LABEL,
+  SWARM_STAGE_LABEL,
+  SWARM_STAGE_NAMES,
+  type SwarmStageName,
+} from '@proompteng/agent-contracts/swarm-contracts'
 
-const SWARM_STAGE_LABEL = 'swarm.proompteng.ai/stage'
-const SWARM_NAME_LABEL = 'swarm.proompteng.ai/name'
+import { asString, readNested } from '~/server/primitives-http'
+
+type StageName = SwarmStageName
 
 export const resolveSwarmScheduleStage = (schedule: Record<string, unknown>): StageName | null => {
   if (!asString(readNested(schedule, ['metadata', 'labels', SWARM_NAME_LABEL]))) return null
@@ -10,5 +15,5 @@ export const resolveSwarmScheduleStage = (schedule: Record<string, unknown>): St
     ?.trim()
     .toLowerCase()
   if (!stage) return null
-  return STAGE_NAMES.find((candidate) => candidate === stage) ?? null
+  return SWARM_STAGE_NAMES.find((candidate) => candidate === stage) ?? null
 }

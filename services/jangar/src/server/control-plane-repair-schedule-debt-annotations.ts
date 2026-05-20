@@ -1,3 +1,8 @@
+import {
+  SWARM_ADMISSION_ANNOTATION_PRODUCER_REVISION,
+  SWARM_ADMISSION_ANNOTATION_RUNTIME_DIGEST,
+} from '@proompteng/agent-contracts/swarm-contracts'
+
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 
 export const SCHEDULE_DEBT_ANNOTATION_LANE = 'jangar.proompteng.ai/schedule-debt-lane'
@@ -5,8 +10,8 @@ export const SCHEDULE_DEBT_ANNOTATION_SOURCE_REF = 'jangar.proompteng.ai/schedul
 export const SCHEDULE_DEBT_ANNOTATION_IMAGE_REF = 'jangar.proompteng.ai/schedule-debt-image-ref'
 export const SCHEDULE_DEBT_ANNOTATION_OBJECTIVE_REF = 'jangar.proompteng.ai/schedule-debt-objective-ref'
 
-const RUNTIME_DIGEST_ANNOTATION = 'swarm.proompteng.ai/runtime-kit-set-digest'
-const ADMISSION_PRODUCER_REVISION_ANNOTATION = 'swarm.proompteng.ai/admission-producer-revision'
+const RUNTIME_DIGEST_ANNOTATION = SWARM_ADMISSION_ANNOTATION_RUNTIME_DIGEST
+const ADMISSION_PRODUCER_REVISION_ANNOTATION = SWARM_ADMISSION_ANNOTATION_PRODUCER_REVISION
 
 const normalizeNonEmpty = (value: string | undefined | null) => {
   const normalized = value?.trim()

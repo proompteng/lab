@@ -1,9 +1,3 @@
-import type {
-  MaterialEvidenceRepairTicketClass,
-  MaterialEvidenceSettlementDecision,
-  MaterialEvidenceSettlementMode,
-} from '~/server/control-plane-status-types'
-import { asRecord, asString } from '~/server/primitives-http'
 import {
   SWARM_MATERIAL_EVIDENCE_ANNOTATION_BUSINESS_STATE,
   SWARM_MATERIAL_EVIDENCE_ANNOTATION_DECISION,
@@ -16,7 +10,14 @@ import {
   SWARM_MATERIAL_EVIDENCE_ANNOTATION_SELECTED_TICKET,
   SWARM_MATERIAL_EVIDENCE_ANNOTATION_SELECTED_VALUE_GATE,
   SWARM_MATERIAL_EVIDENCE_ANNOTATION_SETTLEMENT_ID,
-} from '~/server/supporting-primitives-swarm-annotations'
+} from '@proompteng/agent-contracts/swarm-contracts'
+
+import type {
+  MaterialEvidenceRepairTicketClass,
+  MaterialEvidenceSettlementDecision,
+  MaterialEvidenceSettlementMode,
+} from '~/server/control-plane-status-types'
+import { asRecord, asString } from '~/server/primitives-http'
 
 export type MaterialEvidenceSettlementTrace = {
   settlementId: string

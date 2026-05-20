@@ -1,6 +1,12 @@
 import { createHash } from 'node:crypto'
 import process from 'node:process'
 
+import {
+  SWARM_STAGE_CLEARANCE_ANNOTATION_ACTION_CLASS,
+  SWARM_STAGE_CREDIT_ANNOTATION_ACTION_CLASS,
+  SWARM_STAGE_LABEL,
+} from '@proompteng/agent-contracts/swarm-contracts'
+
 import type {
   ActionSloBudgetActionClass,
   RepairBidAdmissionState,
@@ -299,16 +305,13 @@ const resolveStageAndAction = (resource: TerminalDebtAgentRun | TerminalDebtJob 
   const { labels, annotations } = labelsAndAnnotations(resource)
   const parameters = 'spec' in resource && 'parameters' in resource.spec ? resource.spec.parameters : {}
   const stage = normalizeStage(
-    parameters.stage ??
-      parameters.swarmStage ??
-      labels['swarm.proompteng.ai/stage'] ??
-      annotations['swarm.proompteng.ai/stage'],
+    parameters.stage ?? parameters.swarmStage ?? labels[SWARM_STAGE_LABEL] ?? annotations[SWARM_STAGE_LABEL],
   )
   const actionClass = normalizeActionClass(
     parameters.swarmStageClearanceActionClass ??
       parameters.swarmActionClass ??
-      annotations['swarm.proompteng.ai/stage-clearance-action-class'] ??
-      annotations['swarm.proompteng.ai/stage-credit-action-class'],
+      annotations[SWARM_STAGE_CLEARANCE_ANNOTATION_ACTION_CLASS] ??
+      annotations[SWARM_STAGE_CREDIT_ANNOTATION_ACTION_CLASS],
   )
 
   return {

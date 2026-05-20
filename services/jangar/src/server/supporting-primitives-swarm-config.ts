@@ -1,18 +1,53 @@
+import {
+  SWARM_ADMISSION_ANNOTATION_DECISION,
+  SWARM_ADMISSION_ANNOTATION_PASSPORT_ID,
+  SWARM_ADMISSION_ANNOTATION_PRODUCER_REVISION,
+  SWARM_ADMISSION_ANNOTATION_PROOF_CELLS,
+  SWARM_ADMISSION_ANNOTATION_RECOVERY_DIGEST,
+  SWARM_ADMISSION_ANNOTATION_RUNTIME_ADMISSION_DESIGN_REF,
+  SWARM_ADMISSION_ANNOTATION_RUNTIME_DIGEST,
+  SWARM_ADMISSION_ANNOTATION_RUNTIME_KITS,
+  SWARM_ADMISSION_ANNOTATION_RUNTIME_PROOF_DESIGN_REF,
+  SWARM_ADMISSION_ANNOTATION_WARRANT_ID,
+  SWARM_ADMISSION_ANNOTATION_WARRANT_STATUS,
+  SWARM_AGENT_WORKER_ID_LABEL,
+  SWARM_MISSION_ANNOTATION_BUSINESS_METRIC,
+  SWARM_MISSION_ANNOTATION_HANDOFF_FIELDS,
+  SWARM_MISSION_ANNOTATION_LEDGER_REF,
+  SWARM_MISSION_ANNOTATION_SOURCE_DESIGN,
+  SWARM_MISSION_ANNOTATION_VALIDATION_CONTRACT,
+  SWARM_MISSION_ANNOTATION_VALUE_GATES,
+  SWARM_REQUIREMENT_ANNOTATION_SIGNAL,
+  SWARM_REQUIREMENT_LABEL_ATTEMPT,
+  SWARM_REQUIREMENT_LABEL_CHANNEL,
+  SWARM_REQUIREMENT_LABEL_FROM,
+  SWARM_REQUIREMENT_LABEL_ID,
+  SWARM_REQUIREMENT_LABEL_TO,
+  SWARM_REQUIREMENT_LABEL_TYPE,
+  SWARM_SCHEDULE_ANNOTATION_HUMAN_NAME,
+  SWARM_SCHEDULE_ANNOTATION_IDENTITY,
+  SWARM_SCHEDULE_ANNOTATION_NATS_CHANNEL,
+  SWARM_SCHEDULE_ANNOTATION_NATS_SUBJECT_PREFIX,
+  SWARM_SCHEDULE_ANNOTATION_NATS_URL,
+  SWARM_SCHEDULE_ANNOTATION_OWNER_CHANNEL,
+  SWARM_SCHEDULE_ANNOTATION_ROLE,
+  SWARM_SCHEDULE_ANNOTATION_WORKER_ID,
+  SWARM_STAGE_CADENCE_KEY,
+  SWARM_STAGE_LAST_RUN_KEY,
+  SWARM_STAGE_NAMES,
+  type SwarmStageName,
+  type SwarmStageTargetRef,
+} from '@proompteng/agent-contracts/swarm-contracts'
+
 import type { AdmissionPassportStatus, RecoveryWarrantStatus } from '~/server/control-plane-status-types'
 import { asRecord, asString } from '~/server/primitives-http'
 import { resolveSupportingPrimitivesConfig } from '~/server/supporting-primitives-config'
 import { hashNameSuffix } from '~/server/supporting-primitives-naming'
 
-export const STAGE_NAMES = ['discover', 'plan', 'implement', 'verify'] as const
-export type StageName = (typeof STAGE_NAMES)[number]
-export type StageTargetRef = { kind: 'AgentRun' | 'OrchestrationRun'; name: string; namespace: string }
-
-export const STAGE_CADENCE_KEY: Record<StageName, string> = {
-  discover: 'discoverEvery',
-  plan: 'planEvery',
-  implement: 'implementEvery',
-  verify: 'verifyEvery',
-}
+export const STAGE_NAMES = SWARM_STAGE_NAMES
+export type StageName = SwarmStageName
+export type StageTargetRef = SwarmStageTargetRef
+export const STAGE_CADENCE_KEY = SWARM_STAGE_CADENCE_KEY
 
 type SwarmPersonaRole = 'architect' | 'engineer' | 'deployer'
 
@@ -23,12 +58,7 @@ const STAGE_PERSONA_ROLE: Record<StageName, SwarmPersonaRole> = {
   verify: 'deployer',
 }
 
-export const STAGE_LAST_RUN_KEY: Record<StageName, string> = {
-  discover: 'lastDiscoverAt',
-  plan: 'lastPlanAt',
-  implement: 'lastImplementAt',
-  verify: 'lastVerifyAt',
-}
+export const STAGE_LAST_RUN_KEY = SWARM_STAGE_LAST_RUN_KEY
 
 const STAGE_HOURLY_STAGGER_OFFSET: Record<StageName, number> = {
   discover: 0,
@@ -40,44 +70,10 @@ const STAGE_HOURLY_STAGGER_OFFSET: Record<StageName, number> = {
 export const SWARM_REQUIREMENT_MAX_DISPATCH_PER_RECONCILE = resolveSupportingPrimitivesConfig(
   process.env,
 ).swarmRequirementMaxDispatchPerReconcile
-export const SWARM_REQUIREMENT_LABEL_TYPE = 'swarm.proompteng.ai/type'
-export const SWARM_REQUIREMENT_LABEL_TO = 'swarm.proompteng.ai/to'
-export const SWARM_REQUIREMENT_LABEL_FROM = 'swarm.proompteng.ai/from'
-export const SWARM_REQUIREMENT_LABEL_ID = 'swarm.proompteng.ai/requirement-id'
-export const SWARM_REQUIREMENT_LABEL_ATTEMPT = 'swarm.proompteng.ai/requirement-attempt'
-export const SWARM_REQUIREMENT_LABEL_CHANNEL = 'swarm.proompteng.ai/requirement-channel'
-export const SWARM_REQUIREMENT_ANNOTATION_SIGNAL = 'swarm.proompteng.ai/requirement-signal'
-export const SWARM_AGENT_WORKER_ID_LABEL = 'swarm.proompteng.ai/worker-id'
-export const SWARM_SCHEDULE_ANNOTATION_WORKER_ID = 'swarm.proompteng.ai/worker-id'
-export const SWARM_SCHEDULE_ANNOTATION_IDENTITY = 'swarm.proompteng.ai/agent-identity'
-export const SWARM_SCHEDULE_ANNOTATION_ROLE = 'swarm.proompteng.ai/agent-role'
-export const SWARM_SCHEDULE_ANNOTATION_OWNER_CHANNEL = 'swarm.proompteng.ai/owner-channel'
-export const SWARM_SCHEDULE_ANNOTATION_NATS_URL = 'swarm.proompteng.ai/nats-url'
-export const SWARM_SCHEDULE_ANNOTATION_NATS_SUBJECT_PREFIX = 'swarm.proompteng.ai/nats-subject-prefix'
-export const SWARM_SCHEDULE_ANNOTATION_NATS_CHANNEL = 'swarm.proompteng.ai/nats-channel'
-export const SWARM_SCHEDULE_ANNOTATION_HUMAN_NAME = 'swarm.proompteng.ai/human-name'
-export const SWARM_MISSION_ANNOTATION_LEDGER_REF = 'swarm.proompteng.ai/mission-ledger-ref'
-export const SWARM_MISSION_ANNOTATION_BUSINESS_METRIC = 'swarm.proompteng.ai/business-metric'
-export const SWARM_MISSION_ANNOTATION_VALIDATION_CONTRACT = 'swarm.proompteng.ai/validation-contract'
-export const SWARM_MISSION_ANNOTATION_VALUE_GATES = 'swarm.proompteng.ai/value-gates'
-export const SWARM_MISSION_ANNOTATION_HANDOFF_FIELDS = 'swarm.proompteng.ai/handoff-fields'
-export const SWARM_MISSION_ANNOTATION_SOURCE_DESIGN = 'swarm.proompteng.ai/source-design'
 export const SWARM_RUNTIME_ADMISSION_DESIGN_REF =
   'docs/agents/designs/61-jangar-runtime-kits-and-admission-passports-contract-2026-03-20.md'
 export const SWARM_RUNTIME_PROOF_DESIGN_REF =
   'docs/agents/designs/65-jangar-recovery-warrants-and-runtime-proof-cells-contract-2026-03-21.md'
-export const SWARM_ADMISSION_ANNOTATION_RUNTIME_ADMISSION_DESIGN_REF =
-  'swarm.proompteng.ai/runtime-admission-design-ref'
-export const SWARM_ADMISSION_ANNOTATION_RUNTIME_PROOF_DESIGN_REF = 'swarm.proompteng.ai/runtime-proof-design-ref'
-export const SWARM_ADMISSION_ANNOTATION_PASSPORT_ID = 'swarm.proompteng.ai/admission-passport-id'
-export const SWARM_ADMISSION_ANNOTATION_DECISION = 'swarm.proompteng.ai/admission-decision'
-export const SWARM_ADMISSION_ANNOTATION_RECOVERY_DIGEST = 'swarm.proompteng.ai/recovery-case-set-digest'
-export const SWARM_ADMISSION_ANNOTATION_RUNTIME_DIGEST = 'swarm.proompteng.ai/runtime-kit-set-digest'
-export const SWARM_ADMISSION_ANNOTATION_RUNTIME_KITS = 'swarm.proompteng.ai/required-runtime-kits'
-export const SWARM_ADMISSION_ANNOTATION_PRODUCER_REVISION = 'swarm.proompteng.ai/admission-producer-revision'
-export const SWARM_ADMISSION_ANNOTATION_WARRANT_ID = 'swarm.proompteng.ai/recovery-warrant-id'
-export const SWARM_ADMISSION_ANNOTATION_WARRANT_STATUS = 'swarm.proompteng.ai/recovery-warrant-status'
-export const SWARM_ADMISSION_ANNOTATION_PROOF_CELLS = 'swarm.proompteng.ai/required-proof-cells'
 export const buildSwarmAdmissionTrace = (
   passport: AdmissionPassportStatus | null,
   warrant: RecoveryWarrantStatus | null = null,

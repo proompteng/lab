@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto'
 
+import { SWARM_STAGE_LABEL } from '@proompteng/agent-contracts/swarm-contracts'
+
 import type {
   ActionSloBudgetActionClass,
   ControlPlaneControllerWitnessQuorum,
@@ -143,7 +145,7 @@ const eventMatchesStage = (event: FailureDomainEvent, stage: StageClearanceStage
     event.message,
     event.involvedObject.name,
     event.metadata.name,
-    event.metadata.labels?.['swarm.proompteng.ai/stage'],
+    event.metadata.labels?.[SWARM_STAGE_LABEL],
   ]
     .filter(Boolean)
     .join(' ')

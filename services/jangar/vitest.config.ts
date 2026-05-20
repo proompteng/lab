@@ -52,6 +52,9 @@ const agentContractsSignalsClientSource = fileURLToPath(
 const agentContractsSwarmAnalysisSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/swarm-analysis.ts', import.meta.url),
 )
+const agentContractsSwarmContractsSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/swarm-contracts.ts', import.meta.url),
+)
 const agentContractsSwarmMaterialReentrySource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/swarm-material-reentry.ts', import.meta.url),
 )
@@ -97,6 +100,7 @@ export default defineConfig({
       '@proompteng/agent-contracts/policy-validation': agentContractsPolicyValidationSource,
       '@proompteng/agent-contracts/signals-client': agentContractsSignalsClientSource,
       '@proompteng/agent-contracts/swarm-analysis': agentContractsSwarmAnalysisSource,
+      '@proompteng/agent-contracts/swarm-contracts': agentContractsSwarmContractsSource,
       '@proompteng/agent-contracts/swarm-material-reentry': agentContractsSwarmMaterialReentrySource,
       '@proompteng/agent-contracts/swarm-read-client': agentContractsSwarmReadClientSource,
       '@proompteng/codex': codexStub,
@@ -136,6 +140,7 @@ export default defineConfig({
       '@proompteng/agent-contracts/policy-validation': agentContractsPolicyValidationSource,
       '@proompteng/agent-contracts/signals-client': agentContractsSignalsClientSource,
       '@proompteng/agent-contracts/swarm-analysis': agentContractsSwarmAnalysisSource,
+      '@proompteng/agent-contracts/swarm-contracts': agentContractsSwarmContractsSource,
       '@proompteng/agent-contracts/swarm-material-reentry': agentContractsSwarmMaterialReentrySource,
       '@proompteng/agent-contracts/swarm-read-client': agentContractsSwarmReadClientSource,
       '@proompteng/codex': codexStub,

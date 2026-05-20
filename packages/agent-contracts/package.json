@@ -90,6 +90,10 @@
       "types": "./dist/swarm-analysis.d.ts",
       "default": "./dist/swarm-analysis.js"
     },
+    "./swarm-contracts": {
+      "types": "./dist/swarm-contracts.d.ts",
+      "default": "./dist/swarm-contracts.js"
+    },
     "./swarm-material-reentry": {
       "types": "./dist/swarm-material-reentry.d.ts",
       "default": "./dist/swarm-material-reentry.js"
