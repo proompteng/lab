@@ -50,7 +50,7 @@ import {
   uniqueStrings,
 } from '~/server/control-plane-torghut-evidence-normalizers'
 import { normalizeRepairBidSettlementLot } from '~/server/control-plane-torghut-repair-bid-settlement'
-import { asRecord } from '~/server/primitives-http'
+import { asRecord } from '@proompteng/agent-contracts/json'
 
 export type { TorghutConsumerEvidenceStatus } from '~/server/control-plane-status-types'
 

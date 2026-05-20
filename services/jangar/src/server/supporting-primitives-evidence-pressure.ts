@@ -9,7 +9,7 @@ import {
 } from '@proompteng/agent-contracts/swarm-contracts'
 
 import type { ActionSloBudgetActionClass, EvidencePressureDecision } from '~/server/control-plane-status-types'
-import { asRecord, asString } from '~/server/primitives-http'
+import { asRecord, asString } from '@proompteng/agent-contracts/json'
 
 export type EvidencePressureTrace = {
   ledgerId: string

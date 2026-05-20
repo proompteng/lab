@@ -5,7 +5,7 @@ import {
   normalizeReason,
   stringList,
 } from '~/server/control-plane-torghut-evidence-normalizers'
-import { asRecord } from '~/server/primitives-http'
+import { asRecord } from '@proompteng/agent-contracts/json'
 
 export const ALPHA_READINESS_SETTLEMENT_CONVEYOR_REF_SCHEMA_VERSION =
   'torghut.alpha-readiness-settlement-conveyor-ref.v1'

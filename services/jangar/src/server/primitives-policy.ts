@@ -17,7 +17,7 @@ import {
   type PolicySubject,
 } from '@proompteng/agent-contracts/policy-validation'
 
-import { asRecord } from '~/server/primitives-http'
+import { asRecord } from '@proompteng/agent-contracts/json'
 
 export type { PolicyChecks, PolicyResourceGetter, PolicySubject }
 export { extractAllowedServiceAccounts, extractApprovalPolicies, extractRequiredSecrets, extractRuntimeServiceAccount }

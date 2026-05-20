@@ -4,7 +4,7 @@ import { posix as pathPosix } from 'node:path'
 import { getDb } from '~/server/db'
 import { ensureMigrations } from '~/server/kysely-migrations'
 import { createKubernetesClient } from '~/server/primitives-kube'
-import { stableJsonStringifyForHash } from '~/server/stable-json-hash'
+import { stableJsonStringifyForHash } from '@proompteng/agent-contracts/json'
 import { resolveTorghutSimulationStorageConfig } from './torghut-config'
 
 type JsonRecord = Record<string, unknown>

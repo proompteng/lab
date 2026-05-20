@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { stableJsonStringifyForHash } from '~/server/stable-json-hash'
+import { stableJsonStringifyForHash } from '@proompteng/agent-contracts/json'
 
 type FakeState = {
   runs: Map<string, Record<string, unknown>>

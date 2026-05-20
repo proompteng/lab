@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 
 import { createGitHubClient } from '~/server/github-client'
-import { asRecord, asString, readNested } from '~/server/primitives-http'
+import { asRecord, asString, readNested } from '@proompteng/agent-contracts/json'
 import { resolveWhitepaperControlConfig, resolveWhitepaperGitHubConfig } from '~/server/whitepaper-config'
 
 const WHITEPAPER_RUN_ID_PREFIX = 'wp-'

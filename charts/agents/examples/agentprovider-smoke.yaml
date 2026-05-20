@@ -7,9 +7,18 @@ spec:
   adapter:
     type: codex-app-server
     codex:
+      binaryPath: /usr/local/bin/agents-fake-codex-app-server
+      model: agents-fake-codex-app-server
       effort: low
       sandbox: danger-full-access
       approval: never
       prompt: |-
         This is a Helm chart smoke AgentProvider. Confirm the stage value is `{{ inputs.stage }}` and respond with `OK`.
+      threadConfig:
+        mcp_servers: {}
+        web_search: off
   argsTemplate: []
+  envTemplate:
+    CODEX_MODEL: agents-fake-codex-app-server
+    CODEX_DISABLE_RESUME: "1"
+    CODEX_MAX_SESSION_ATTEMPTS: "1"

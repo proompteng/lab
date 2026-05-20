@@ -14,7 +14,7 @@ controller, CRD, or runner lifecycle.
 
 - Agents controller: `services/agents/src/server/agents-controller`
 - Orchestration controller: `services/agents/src/server/orchestration-controller.ts`
-- Runtime entrypoint: `services/agents/scripts/agent-runner.ts`
+- Runtime entrypoint: `services/agents/scripts/codex/agent-runner.ts`
 - CRD Go types: `services/agents/api/agents`
 
 ## CRDs
@@ -146,7 +146,7 @@ The unified entrypoint must exist in every runtime image used for agent executio
 
 ## Observability
 
-- Enforce `WORKFLOW_*` and `AGENT_*` env vars for traceability.
+- Enforce `AGENT_RUN_*` and `AGENTS_*` env vars for traceability.
 
 ## Security
 

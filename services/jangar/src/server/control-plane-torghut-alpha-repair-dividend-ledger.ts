@@ -5,7 +5,7 @@ import {
   normalizeReason,
   stringList,
 } from '~/server/control-plane-torghut-evidence-normalizers'
-import { asRecord } from '~/server/primitives-http'
+import { asRecord } from '@proompteng/agent-contracts/json'
 
 export const ALPHA_REPAIR_DIVIDEND_LEDGER_REF_SCHEMA_VERSION = 'torghut.alpha-repair-dividend-ledger-ref.v1'
 

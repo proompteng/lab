@@ -1,5 +1,5 @@
 import { resolveControlPlaneStatusConfig } from '~/server/control-plane-config'
-import { asRecord } from '~/server/primitives-http'
+import { asRecord } from '@proompteng/agent-contracts/json'
 import type { EmpiricalDependencyStatus, EmpiricalServicesStatus } from './control-plane-status-types'
 
 const requestJson = async (url: string, timeoutMs: number): Promise<Record<string, unknown> | null> => {

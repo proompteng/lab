@@ -17,7 +17,7 @@ import type {
   MaterialEvidenceSettlementDecision,
   MaterialEvidenceSettlementMode,
 } from '~/server/control-plane-status-types'
-import { asRecord, asString } from '~/server/primitives-http'
+import { asRecord, asString } from '@proompteng/agent-contracts/json'
 
 export type MaterialEvidenceSettlementTrace = {
   settlementId: string
