@@ -236,6 +236,7 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('Agents v1 AgentRuns dependency contract must live in the dedicated dependency module')
     expect(content).toContain('Agents v1 AgentRuns dependency module must not import the HTTP handler')
     expect(content).toContain('AgentRun submit/read/runtime modules must not import dependency types')
+    expect(content).toContain('Agents v1 AgentRun submit module must not act as a compatibility barrel')
     expect(content).toContain(
       'Agents v1 control-plane status HTTP edge must run the typed Effect program instead of a broad try/catch wrapper',
     )

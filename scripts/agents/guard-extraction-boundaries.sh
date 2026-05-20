@@ -865,6 +865,11 @@ fail_if_matches \
   "${ROOT_DIR}/services/agents/src/server/v1/runtime.ts"
 
 fail_if_matches \
+  "Agents v1 AgentRun submit module must not act as a compatibility barrel for store or error internals" \
+  "export[[:space:]]+(type[[:space:]]+)?\\{[^;]+from ['\"]\\.\\/agent-run-(store|errors)['\"]" \
+  "${ROOT_DIR}/services/agents/src/server/v1/agent-run-submit.ts"
+
+fail_if_matches \
   "Agents v1 control-plane status HTTP edge must run the typed Effect program instead of a broad try/catch wrapper" \
   'try \{|catch \(error\)|getAgentsControlPlaneStatus\(' \
   "${ROOT_DIR}/services/agents/src/server/v1/control-plane-status.ts"

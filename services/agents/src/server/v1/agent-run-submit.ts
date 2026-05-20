@@ -33,23 +33,6 @@ import { AgentRunStoreService, makeAgentRunStoreService } from './agent-run-stor
 import { type AgentRunPayload, type WorkflowStepPayload, parseGoal, parseOptionalNumber } from './agent-runs-payload'
 import { buildDeliveryIdLabels } from './delivery-labels'
 
-export {
-  AgentRunAdmissionRejectedError,
-  AgentRunConflictError,
-  AgentRunForbiddenError,
-  AgentRunInvalidPayloadError,
-  AgentRunKubeError,
-  AgentRunNotFoundError,
-  AgentRunPolicyDeniedError,
-  AgentRunStorageError,
-  agentRunSubmitDetails,
-  agentRunSubmitStatus,
-  describeAgentRunSubmitError,
-} from './agent-run-errors'
-export type { AgentRunSubmitError, AgentRunSubmitSuccess } from './agent-run-errors'
-export { AgentRunStoreService, makeAgentRunStoreLayer, makeAgentRunStoreService } from './agent-run-store'
-export type { AgentRunsApiStore } from './agent-run-store'
-
 type AgentRunQueueDepthRecorder = NonNullable<AgentRunsApiDependencies['recordAgentQueueDepth']>
 type AgentRunAuditContextResolver = NonNullable<AgentRunsApiDependencies['resolveAuditContextFromRequest']>
 type AgentRunRepositoryResolver = NonNullable<AgentRunsApiDependencies['resolveRepositoryFromParameters']>
