@@ -1,13 +1,13 @@
 import type { AgentsServiceJsonResult, EnvSource } from './agents-service-client'
 import {
-  fetchControlPlaneResourceFromAgentsService,
-  fetchControlPlaneResourcesFromAgentsService,
-  type AgentsControlPlaneResourceListOptions,
-  type AgentsControlPlaneResourceResult,
-  type AgentsControlPlaneResourcesResult,
-} from './control-plane-resource-transport'
+  fetchAgentsNamedResource,
+  fetchAgentsResourceList,
+  type AgentsResourceListOptions,
+  type AgentsResourceResult,
+  type AgentsResourcesResult,
+} from './agents-resource-endpoints'
 
-export type AgentsSwarmResourceListInput = AgentsControlPlaneResourceListOptions
+export type AgentsSwarmResourceListInput = AgentsResourceListOptions
 
 export type AgentsStageTargetResourceGetInput = {
   kind: 'AgentRun' | 'OrchestrationRun'
@@ -15,16 +15,19 @@ export type AgentsStageTargetResourceGetInput = {
   namespace?: string | null
 }
 
-export type { AgentsControlPlaneResourceResult, AgentsControlPlaneResourcesResult }
+export type { AgentsResourceResult, AgentsResourcesResult }
 
 export const fetchSwarmResourcesFromAgentsService = async (
   input: AgentsSwarmResourceListInput = {},
   env: EnvSource = process.env,
-): Promise<AgentsServiceJsonResult<AgentsControlPlaneResourcesResult>> =>
-  fetchControlPlaneResourcesFromAgentsService({ kind: 'Swarm', ...input }, env)
+): Promise<AgentsServiceJsonResult<AgentsResourcesResult>> =>
+  fetchAgentsResourceList('/v1/swarms/resources', input, env)
 
 export const fetchStageTargetResourceFromAgentsService = async (
   input: AgentsStageTargetResourceGetInput,
   env: EnvSource = process.env,
-): Promise<AgentsServiceJsonResult<AgentsControlPlaneResourceResult>> =>
-  fetchControlPlaneResourceFromAgentsService(input, env)
+): Promise<AgentsServiceJsonResult<AgentsResourceResult>> => {
+  const { kind, ...resourceInput } = input
+  const path = kind === 'AgentRun' ? '/v1/agent-runs/resources' : '/v1/orchestration-runs/resources'
+  return fetchAgentsNamedResource(path, resourceInput, env)
+}

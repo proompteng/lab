@@ -78,7 +78,7 @@ describe('signals-client', () => {
 
     expect(result.ok).toBe(true)
     expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(fetchMock.mock.calls[0]?.[0].toString()).toBe('http://agents.test/api/agents/control-plane/resource')
+    expect(fetchMock.mock.calls[0]?.[0].toString()).toBe('http://agents.test/v1/signals/resources')
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
       method: 'POST',
       headers: {

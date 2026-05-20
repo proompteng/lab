@@ -1,8 +1,5 @@
 import type { AgentsServiceJsonResult, EnvSource } from './agents-service-client'
-import {
-  submitControlPlaneResourceToAgentsService,
-  type AgentsControlPlaneResourceResult,
-} from './control-plane-resource-transport'
+import { submitAgentsResource, type AgentsResourceResult } from './agents-resource-endpoints'
 
 export const SWARM_REQUIREMENT_SIGNAL_LABEL_TYPE = 'swarm.proompteng.ai/type'
 export const SWARM_REQUIREMENT_SIGNAL_LABEL_TO = 'swarm.proompteng.ai/to'
@@ -23,7 +20,7 @@ export type AgentsSwarmRequirementSignalSubmitInput = {
   annotations?: Record<string, string>
 }
 
-export type { AgentsControlPlaneResourceResult }
+export type { AgentsResourceResult }
 
 const normalizeLabelValue = (value: string) =>
   value
@@ -67,8 +64,9 @@ export const buildSwarmRequirementSignalResource = (
 export const submitSwarmRequirementSignalToAgentsService = async (
   input: AgentsSwarmRequirementSignalSubmitInput,
   env: EnvSource = process.env,
-): Promise<AgentsServiceJsonResult<AgentsControlPlaneResourceResult>> =>
-  submitControlPlaneResourceToAgentsService(
+): Promise<AgentsServiceJsonResult<AgentsResourceResult>> =>
+  submitAgentsResource(
+    '/v1/signals/resources',
     {
       deliveryId: input.deliveryId,
       resource: buildSwarmRequirementSignalResource(input),

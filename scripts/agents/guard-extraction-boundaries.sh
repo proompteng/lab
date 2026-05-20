@@ -743,6 +743,20 @@ fail_if_matches \
   'fetchControlPlaneResourceFromAgentsService|fetchControlPlaneResourcesFromAgentsService|submitControlPlaneResourceToAgentsService' \
   "${ROOT_DIR}/services/jangar/src/server"
 
+fail_if_path_exists \
+  "Agent contracts must not retain the internal generic kind-string control-plane resource transport" \
+  "${ROOT_DIR}/packages/agent-contracts/src/control-plane-resource-transport.ts"
+
+fail_if_matches \
+  "Agent contracts must consume typed v1 resource endpoints instead of generic /api/agents/control-plane resource selectors" \
+  '/api/agents/control-plane/resource|/api/agents/control-plane/resources' \
+  "${ROOT_DIR}/packages/agent-contracts/src/agents-resource-endpoints.ts" \
+  "${ROOT_DIR}/packages/agent-contracts/src/agent-jobs-client.ts" \
+  "${ROOT_DIR}/packages/agent-contracts/src/memory-client.ts" \
+  "${ROOT_DIR}/packages/agent-contracts/src/policy-reference-client.ts" \
+  "${ROOT_DIR}/packages/agent-contracts/src/signals-client.ts" \
+  "${ROOT_DIR}/packages/agent-contracts/src/swarm-read-client.ts"
+
 fail_if_matches \
   "AgentRun resource consumers must use the dedicated /v1/agent-runs/resources contract instead of generic control-plane kind selectors" \
   '/api/agents/control-plane/resource|/api/agents/control-plane/resources|kind=AgentRun' \

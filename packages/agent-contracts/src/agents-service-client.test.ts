@@ -10,14 +10,9 @@ import {
   submitAgentMessagesToAgentsService,
   submitOrchestrationRunToAgentsService,
 } from './agents-service-client'
-import {
-  fetchControlPlaneResourceFromAgentsService,
-  fetchControlPlaneResourcesFromAgentsService,
-  submitControlPlaneResourceToAgentsService,
-} from './control-plane-resource-transport'
 import { fetchMemoryResourceFromAgentsService } from './memory-client'
 import { submitSwarmRequirementSignalToAgentsService } from './signals-client'
-import { fetchSwarmResourcesFromAgentsService } from './swarm-read-client'
+import { fetchStageTargetResourceFromAgentsService, fetchSwarmResourcesFromAgentsService } from './swarm-read-client'
 
 const originalFetch = globalThis.fetch
 const getHeader = (headers: RequestInit['headers'], name: string) =>
@@ -249,49 +244,6 @@ describe('agents-service-client', () => {
     })
   })
 
-  it('lists generic control-plane resources through the Agents service boundary', async () => {
-    const fetchMock = vi.fn(async () => {
-      return new Response(
-        JSON.stringify({
-          ok: true,
-          kind: 'Swarm',
-          namespace: 'agents',
-          total: 1,
-          items: [{ kind: 'Swarm', metadata: { name: 'platform-control-plane' }, status: { phase: 'Ready' } }],
-        }),
-        {
-          headers: { 'content-type': 'application/json' },
-          status: 200,
-        },
-      )
-    })
-    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
-
-    const result = await fetchControlPlaneResourcesFromAgentsService(
-      { kind: 'Swarm', namespace: 'agents', limit: 100 },
-      { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
-    )
-
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-    const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
-    expect(url.toString()).toBe(
-      'http://agents.test/api/agents/control-plane/resources?kind=Swarm&namespace=agents&limit=100',
-    )
-    expect(init.method).toBe('GET')
-    expect(getHeader(init.headers, 'x-agents-client')).toBe('agent-contracts')
-    expect(result).toEqual({
-      ok: true,
-      status: 200,
-      body: {
-        ok: true,
-        kind: 'Swarm',
-        namespace: 'agents',
-        total: 1,
-        items: [{ kind: 'Swarm', metadata: { name: 'platform-control-plane' }, status: { phase: 'Ready' } }],
-      },
-    })
-  })
-
   it('exposes typed Swarm list and Memory get helpers for domain consumers', async () => {
     const fetchMock = vi
       .fn()
@@ -329,10 +281,10 @@ describe('agents-service-client', () => {
     )
 
     expect((fetchMock.mock.calls[0] as unknown as [URL, RequestInit])[0].toString()).toBe(
-      'http://agents.test/api/agents/control-plane/resources?kind=Swarm&namespace=agents&limit=500',
+      'http://agents.test/v1/swarms/resources?namespace=agents&limit=500',
     )
     expect((fetchMock.mock.calls[1] as unknown as [URL, RequestInit])[0].toString()).toBe(
-      'http://agents.test/api/agents/control-plane/resource?kind=Memory&name=research-memory&namespace=agents',
+      'http://agents.test/v1/memories/resources?name=research-memory&namespace=agents',
     )
   })
 
@@ -398,7 +350,7 @@ describe('agents-service-client', () => {
     })
   })
 
-  it('gets individual control-plane resources through the Agents service boundary', async () => {
+  it('gets orchestration-run stage target resources through the typed v1 boundary', async () => {
     const fetchMock = vi.fn(async () => {
       return new Response(
         JSON.stringify({
@@ -415,16 +367,14 @@ describe('agents-service-client', () => {
     })
     globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
 
-    const result = await fetchControlPlaneResourceFromAgentsService(
+    const result = await fetchStageTargetResourceFromAgentsService(
       { kind: 'OrchestrationRun', name: 'swarm-plan', namespace: 'agents' },
       { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
     )
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
-    expect(url.toString()).toBe(
-      'http://agents.test/api/agents/control-plane/resource?kind=OrchestrationRun&name=swarm-plan&namespace=agents',
-    )
+    expect(url.toString()).toBe('http://agents.test/v1/orchestration-runs/resources?name=swarm-plan&namespace=agents')
     expect(init.method).toBe('GET')
     expect(getHeader(init.headers, 'x-agents-client')).toBe('agent-contracts')
     expect(result).toEqual({
@@ -435,62 +385,6 @@ describe('agents-service-client', () => {
         kind: 'OrchestrationRun',
         namespace: 'agents',
         resource: { kind: 'OrchestrationRun', metadata: { name: 'swarm-plan' } },
-      },
-    })
-  })
-
-  it('submits raw control-plane resources through the Agents service boundary', async () => {
-    const fetchMock = vi.fn(async () => {
-      return new Response(
-        JSON.stringify({
-          ok: true,
-          kind: 'Signal',
-          namespace: 'agents',
-          resource: { kind: 'Signal', metadata: { name: 'material-reentry-signal' } },
-        }),
-        {
-          headers: { 'content-type': 'application/json' },
-          status: 201,
-        },
-      )
-    })
-    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
-
-    const result = await submitControlPlaneResourceToAgentsService(
-      {
-        deliveryId: 'signal-delivery',
-        resource: {
-          apiVersion: 'signals.proompteng.ai/v1alpha1',
-          kind: 'Signal',
-          metadata: { name: 'material-reentry-signal', namespace: 'agents' },
-          spec: { channel: 'agentrun.general.requirement' },
-        },
-      },
-      { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
-    )
-
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-    const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
-    expect(url.toString()).toBe('http://agents.test/api/agents/control-plane/resource')
-    expect(init.method).toBe('POST')
-    expect(init.headers).toMatchObject({
-      accept: 'application/json',
-      'content-type': 'application/json',
-      'idempotency-key': 'signal-delivery',
-      'x-agents-client': 'agent-contracts',
-    })
-    expect(JSON.parse(init.body as string)).toMatchObject({
-      kind: 'Signal',
-      metadata: { name: 'material-reentry-signal', namespace: 'agents' },
-    })
-    expect(result).toEqual({
-      ok: true,
-      status: 201,
-      body: {
-        ok: true,
-        kind: 'Signal',
-        namespace: 'agents',
-        resource: { kind: 'Signal', metadata: { name: 'material-reentry-signal' } },
       },
     })
   })
@@ -529,7 +423,7 @@ describe('agents-service-client', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
-    expect(url.toString()).toBe('http://agents.test/api/agents/control-plane/resource')
+    expect(url.toString()).toBe('http://agents.test/v1/signals/resources')
     expect(init.method).toBe('POST')
     expect(getHeader(init.headers, 'idempotency-key')).toBe('signal-delivery')
     expect(result.ok).toBe(true)

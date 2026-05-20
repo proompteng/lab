@@ -1,14 +1,14 @@
 import type { AgentsServiceJsonResult, EnvSource } from './agents-service-client'
 import {
-  fetchControlPlaneResourceFromAgentsService,
-  type AgentsControlPlaneResourceResult,
-  type AgentsNamedControlPlaneResourceInput,
-} from './control-plane-resource-transport'
+  fetchAgentsNamedResource,
+  type AgentsNamedResourceInput,
+  type AgentsResourceResult,
+} from './agents-resource-endpoints'
 
-export type { AgentsControlPlaneResourceResult, AgentsNamedControlPlaneResourceInput }
+export type { AgentsNamedResourceInput, AgentsResourceResult }
 
 export const fetchMemoryResourceFromAgentsService = async (
-  input: AgentsNamedControlPlaneResourceInput,
+  input: AgentsNamedResourceInput,
   env: EnvSource = process.env,
-): Promise<AgentsServiceJsonResult<AgentsControlPlaneResourceResult>> =>
-  fetchControlPlaneResourceFromAgentsService({ kind: 'Memory', ...input }, env)
+): Promise<AgentsServiceJsonResult<AgentsResourceResult>> =>
+  fetchAgentsNamedResource('/v1/memories/resources', input, env)

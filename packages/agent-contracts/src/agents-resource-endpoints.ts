@@ -6,7 +6,7 @@ import {
   type EnvSource,
 } from './agents-service-client'
 
-export type AgentsControlPlaneResourceListOptions = {
+export type AgentsResourceListOptions = {
   namespace?: string | null
   limit?: number | null
   labelSelector?: string | null
@@ -14,11 +14,7 @@ export type AgentsControlPlaneResourceListOptions = {
   runtime?: string | null
 }
 
-export type AgentsControlPlaneResourceListInput = AgentsControlPlaneResourceListOptions & {
-  kind: string
-}
-
-export type AgentsControlPlaneResourcesResult = {
+export type AgentsResourcesResult = {
   ok: boolean
   kind?: string | null
   namespace?: string | null
@@ -26,27 +22,21 @@ export type AgentsControlPlaneResourcesResult = {
   items: Record<string, unknown>[]
 }
 
-export type AgentsControlPlaneResourceGetInput = {
-  kind: string
-  name: string
-  namespace?: string | null
-}
-
-export type AgentsControlPlaneResourceResult = {
+export type AgentsResourceResult = {
   ok: boolean
   kind?: string | null
   namespace?: string | null
   resource?: Record<string, unknown> | null
 }
 
-export type AgentsControlPlaneResourceSubmitInput = {
-  deliveryId: string
-  resource: Record<string, unknown>
-}
-
-export type AgentsNamedControlPlaneResourceInput = {
+export type AgentsNamedResourceInput = {
   name: string
   namespace?: string | null
+}
+
+export type AgentsResourceSubmitInput = {
+  deliveryId: string
+  resource: Record<string, unknown>
 }
 
 const getErrorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
@@ -59,41 +49,48 @@ const getBodyError = (body: Record<string, unknown> | null) => {
   return typeof error === 'string' && error.trim().length > 0 ? error : null
 }
 
-export const fetchControlPlaneResourcesFromAgentsService = async (
-  input: AgentsControlPlaneResourceListInput,
-  env: EnvSource = process.env,
-): Promise<AgentsServiceJsonResult<AgentsControlPlaneResourcesResult>> => {
-  const params = new URLSearchParams({ kind: input.kind })
+const appendListParams = (targetUrl: URL, input: AgentsResourceListOptions) => {
   const namespace = input.namespace?.trim()
-  if (namespace) params.set('namespace', namespace)
+  if (namespace) targetUrl.searchParams.set('namespace', namespace)
   const labelSelector = input.labelSelector?.trim()
-  if (labelSelector) params.set('labelSelector', labelSelector)
+  if (labelSelector) targetUrl.searchParams.set('labelSelector', labelSelector)
   const phase = input.phase?.trim()
-  if (phase) params.set('phase', phase)
+  if (phase) targetUrl.searchParams.set('phase', phase)
   const runtime = input.runtime?.trim()
-  if (runtime) params.set('runtime', runtime)
-  if (input.limit && input.limit > 0) params.set('limit', String(Math.trunc(input.limit)))
-
-  return fetchAgentsServiceJson<AgentsControlPlaneResourcesResult>(`/api/agents/control-plane/resources?${params}`, env)
+  if (runtime) targetUrl.searchParams.set('runtime', runtime)
+  if (input.limit && input.limit > 0) targetUrl.searchParams.set('limit', String(Math.trunc(input.limit)))
 }
 
-export const fetchControlPlaneResourceFromAgentsService = async (
-  input: AgentsControlPlaneResourceGetInput,
+const servicePath = (targetUrl: URL) => `${targetUrl.pathname}${targetUrl.search}`
+
+export const fetchAgentsResourceList = async (
+  path: string,
+  input: AgentsResourceListOptions = {},
   env: EnvSource = process.env,
-): Promise<AgentsServiceJsonResult<AgentsControlPlaneResourceResult>> => {
-  const params = new URLSearchParams({ kind: input.kind, name: input.name })
+): Promise<AgentsServiceJsonResult<AgentsResourcesResult>> => {
+  const targetUrl = new URL(path, `${resolveAgentsServiceBaseUrl(env)}/`)
+  appendListParams(targetUrl, input)
+  return fetchAgentsServiceJson<AgentsResourcesResult>(servicePath(targetUrl), env)
+}
+
+export const fetchAgentsNamedResource = async (
+  path: string,
+  input: AgentsNamedResourceInput,
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<AgentsResourceResult>> => {
+  const targetUrl = new URL(path, `${resolveAgentsServiceBaseUrl(env)}/`)
+  targetUrl.searchParams.set('name', input.name)
   const namespace = input.namespace?.trim()
-  if (namespace) params.set('namespace', namespace)
-
-  return fetchAgentsServiceJson<AgentsControlPlaneResourceResult>(`/api/agents/control-plane/resource?${params}`, env)
+  if (namespace) targetUrl.searchParams.set('namespace', namespace)
+  return fetchAgentsServiceJson<AgentsResourceResult>(servicePath(targetUrl), env)
 }
 
-export const submitControlPlaneResourceToAgentsService = async (
-  input: AgentsControlPlaneResourceSubmitInput,
+export const submitAgentsResource = async (
+  path: string,
+  input: AgentsResourceSubmitInput,
   env: EnvSource = process.env,
-): Promise<AgentsServiceJsonResult<AgentsControlPlaneResourceResult>> => {
-  const baseUrl = resolveAgentsServiceBaseUrl(env)
-  const targetUrl = new URL('/api/agents/control-plane/resource', `${baseUrl}/`)
+): Promise<AgentsServiceJsonResult<AgentsResourceResult>> => {
+  const targetUrl = new URL(path, `${resolveAgentsServiceBaseUrl(env)}/`)
 
   try {
     const upstream = await fetch(targetUrl, {
@@ -106,7 +103,7 @@ export const submitControlPlaneResourceToAgentsService = async (
       },
       method: 'POST',
     })
-    const body = (await readJsonBody(upstream)) as AgentsControlPlaneResourceResult | null
+    const body = (await readJsonBody(upstream)) as AgentsResourceResult | null
     if (upstream.ok && body !== null) {
       return {
         ok: true,

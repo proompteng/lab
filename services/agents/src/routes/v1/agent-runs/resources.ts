@@ -1,7 +1,6 @@
 import { createFileRoute, type AgentsServerRouteArgs } from '../../../server/server-route'
 
-import { patchPrimitiveResourceMetadata } from '../../api/agents/control-plane/resource'
-import { listPrimitiveResources } from '../../api/agents/control-plane/resources'
+import { listFixedKindResources, patchFixedKindResourceMetadata } from '../resource-route-helpers'
 
 export const Route = createFileRoute('/v1/agent-runs/resources')({
   server: {
@@ -12,40 +11,10 @@ export const Route = createFileRoute('/v1/agent-runs/resources')({
   },
 })
 
-const toAgentRunResourcesUrl = (request: Request) => {
-  const incoming = new URL(request.url)
-  const target = new URL('/api/agents/control-plane/resources', incoming.origin)
-  for (const [key, value] of incoming.searchParams) {
-    if (key !== 'kind') target.searchParams.append(key, value)
-  }
-  target.searchParams.set('kind', 'AgentRun')
-  return target
-}
-
-const toAgentRunResourcePatchUrl = (request: Request) => {
-  const incoming = new URL(request.url)
-  const target = new URL('/api/agents/control-plane/resource', incoming.origin)
-  for (const [key, value] of incoming.searchParams) {
-    if (key !== 'kind') target.searchParams.append(key, value)
-  }
-  target.searchParams.set('kind', 'AgentRun')
-  return target
-}
-
-export const listAgentRunResources = (request: Request, deps: Parameters<typeof listPrimitiveResources>[1] = {}) =>
-  listPrimitiveResources(new Request(toAgentRunResourcesUrl(request), { headers: request.headers }), deps)
+export const listAgentRunResources = (request: Request, deps: Parameters<typeof listFixedKindResources>[2] = {}) =>
+  listFixedKindResources('AgentRun', request, deps)
 
 export const patchAgentRunResourceAnnotations = async (
   request: Request,
-  deps: Parameters<typeof patchPrimitiveResourceMetadata>[1] = {},
-) => {
-  const body = await request.text()
-  return patchPrimitiveResourceMetadata(
-    new Request(toAgentRunResourcePatchUrl(request), {
-      body,
-      headers: request.headers,
-      method: 'PATCH',
-    }),
-    deps,
-  )
-}
+  deps: Parameters<typeof patchFixedKindResourceMetadata>[2] = {},
+) => patchFixedKindResourceMetadata('AgentRun', request, deps)

@@ -96,6 +96,10 @@ describe('agents extraction boundary guard', () => {
       'JANGAR_MIGRATIONS|JANGAR_GRPC_|JANGAR_CONTROL_PLANE_CACHE_ENABLED|JANGAR_AGENTS_CONTROLLER_AUTH_SECRET',
     )
     expect(content).toContain('legacy generic Agents /api/control-plane API compatibility aliases')
+    expect(content).toContain('internal generic kind-string control-plane resource transport')
+    expect(content).toContain(
+      'typed v1 resource endpoints instead of generic /api/agents/control-plane resource selectors',
+    )
     expect(content).toContain('generic Agents browser control-plane route ownership')
     expect(content).toContain('generic Agents browser control-plane components')
     expect(content).toContain('services/jangar/src/components/agents-control-plane.tsx')

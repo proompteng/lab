@@ -1,16 +1,15 @@
 import type { AgentsServiceJsonResult, EnvSource } from './agents-service-client'
 import {
-  fetchControlPlaneResourcesFromAgentsService,
-  type AgentsControlPlaneResourceListOptions,
-  type AgentsControlPlaneResourcesResult,
-} from './control-plane-resource-transport'
+  fetchAgentsResourceList,
+  type AgentsResourceListOptions,
+  type AgentsResourcesResult,
+} from './agents-resource-endpoints'
 
-export type AgentsJobResourceListInput = AgentsControlPlaneResourceListOptions
+export type AgentsJobResourceListInput = AgentsResourceListOptions
 
-export type { AgentsControlPlaneResourcesResult }
+export type { AgentsResourcesResult }
 
 export const fetchJobResourcesFromAgentsService = async (
   input: AgentsJobResourceListInput = {},
   env: EnvSource = process.env,
-): Promise<AgentsServiceJsonResult<AgentsControlPlaneResourcesResult>> =>
-  fetchControlPlaneResourcesFromAgentsService({ kind: 'Job', ...input }, env)
+): Promise<AgentsServiceJsonResult<AgentsResourcesResult>> => fetchAgentsResourceList('/v1/jobs/resources', input, env)

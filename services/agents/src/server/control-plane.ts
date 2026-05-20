@@ -52,9 +52,24 @@ const routeSources: RouteSourceSpec[] = [
     load: () => import('../routes/v1/agent-runs/resources'),
   },
   {
+    file: 'src/routes/v1/approval-policies/resources.ts',
+    sourceUrl: new URL('../routes/v1/approval-policies/resources.ts', import.meta.url),
+    load: () => import('../routes/v1/approval-policies/resources'),
+  },
+  {
+    file: 'src/routes/v1/budgets/resources.ts',
+    sourceUrl: new URL('../routes/v1/budgets/resources.ts', import.meta.url),
+    load: () => import('../routes/v1/budgets/resources'),
+  },
+  {
     file: 'src/routes/v1/memories.ts',
     sourceUrl: new URL('../routes/v1/memories.ts', import.meta.url),
     load: () => import('../routes/v1/memories'),
+  },
+  {
+    file: 'src/routes/v1/memories/resources.ts',
+    sourceUrl: new URL('../routes/v1/memories/resources.ts', import.meta.url),
+    load: () => import('../routes/v1/memories/resources'),
   },
   {
     file: 'src/routes/v1/memories/$id.ts',
@@ -85,6 +100,31 @@ const routeSources: RouteSourceSpec[] = [
     file: 'src/routes/v1/orchestration-runs/$id.ts',
     sourceUrl: new URL('../routes/v1/orchestration-runs/$id.ts', import.meta.url),
     load: () => import('../routes/v1/orchestration-runs/$id'),
+  },
+  {
+    file: 'src/routes/v1/orchestration-runs/resources.ts',
+    sourceUrl: new URL('../routes/v1/orchestration-runs/resources.ts', import.meta.url),
+    load: () => import('../routes/v1/orchestration-runs/resources'),
+  },
+  {
+    file: 'src/routes/v1/jobs/resources.ts',
+    sourceUrl: new URL('../routes/v1/jobs/resources.ts', import.meta.url),
+    load: () => import('../routes/v1/jobs/resources'),
+  },
+  {
+    file: 'src/routes/v1/secret-bindings/resources.ts',
+    sourceUrl: new URL('../routes/v1/secret-bindings/resources.ts', import.meta.url),
+    load: () => import('../routes/v1/secret-bindings/resources'),
+  },
+  {
+    file: 'src/routes/v1/signals/resources.ts',
+    sourceUrl: new URL('../routes/v1/signals/resources.ts', import.meta.url),
+    load: () => import('../routes/v1/signals/resources'),
+  },
+  {
+    file: 'src/routes/v1/swarms/resources.ts',
+    sourceUrl: new URL('../routes/v1/swarms/resources.ts', import.meta.url),
+    load: () => import('../routes/v1/swarms/resources'),
   },
   {
     file: 'src/routes/v1/agent-runs/$id.ts',

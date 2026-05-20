@@ -1,26 +1,26 @@
 import type { AgentsServiceJsonResult, EnvSource } from './agents-service-client'
 import {
-  fetchControlPlaneResourceFromAgentsService,
-  type AgentsControlPlaneResourceResult,
-  type AgentsNamedControlPlaneResourceInput,
-} from './control-plane-resource-transport'
+  fetchAgentsNamedResource,
+  type AgentsNamedResourceInput,
+  type AgentsResourceResult,
+} from './agents-resource-endpoints'
 
-export type { AgentsControlPlaneResourceResult, AgentsNamedControlPlaneResourceInput }
+export type { AgentsNamedResourceInput, AgentsResourceResult }
 
 export const fetchApprovalPolicyResourceFromAgentsService = async (
-  input: AgentsNamedControlPlaneResourceInput,
+  input: AgentsNamedResourceInput,
   env: EnvSource = process.env,
-): Promise<AgentsServiceJsonResult<AgentsControlPlaneResourceResult>> =>
-  fetchControlPlaneResourceFromAgentsService({ kind: 'ApprovalPolicy', ...input }, env)
+): Promise<AgentsServiceJsonResult<AgentsResourceResult>> =>
+  fetchAgentsNamedResource('/v1/approval-policies/resources', input, env)
 
 export const fetchBudgetResourceFromAgentsService = async (
-  input: AgentsNamedControlPlaneResourceInput,
+  input: AgentsNamedResourceInput,
   env: EnvSource = process.env,
-): Promise<AgentsServiceJsonResult<AgentsControlPlaneResourceResult>> =>
-  fetchControlPlaneResourceFromAgentsService({ kind: 'Budget', ...input }, env)
+): Promise<AgentsServiceJsonResult<AgentsResourceResult>> =>
+  fetchAgentsNamedResource('/v1/budgets/resources', input, env)
 
 export const fetchSecretBindingResourceFromAgentsService = async (
-  input: AgentsNamedControlPlaneResourceInput,
+  input: AgentsNamedResourceInput,
   env: EnvSource = process.env,
-): Promise<AgentsServiceJsonResult<AgentsControlPlaneResourceResult>> =>
-  fetchControlPlaneResourceFromAgentsService({ kind: 'SecretBinding', ...input }, env)
+): Promise<AgentsServiceJsonResult<AgentsResourceResult>> =>
+  fetchAgentsNamedResource('/v1/secret-bindings/resources', input, env)
