@@ -22,6 +22,9 @@ const agentContractsMessageArtifactsSource = fileURLToPath(
 const agentContractsRunCallbacksSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/agent-run-callbacks.ts', import.meta.url),
 )
+const agentContractsCodexOrchestrationParametersSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/codex-orchestration-parameters.ts', import.meta.url),
+)
 const agentContractsTorghutMarketContextAgentRunSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/torghut-market-context-agentrun.ts', import.meta.url),
 )
@@ -36,6 +39,7 @@ export default defineConfig({
       '@proompteng/agent-contracts/agent-message-artifacts': agentContractsMessageArtifactsSource,
       '@proompteng/agent-contracts/agent-run-callbacks': agentContractsRunCallbacksSource,
       '@proompteng/agent-contracts/agents-service-client': agentContractsServiceClientSource,
+      '@proompteng/agent-contracts/codex-orchestration-parameters': agentContractsCodexOrchestrationParametersSource,
       '@proompteng/agent-contracts/control-plane-status': agentContractsControlPlaneStatusSource,
       '@proompteng/agent-contracts/torghut-market-context-agentrun': agentContractsTorghutMarketContextAgentRunSource,
       '@proompteng/codex': codexStub,
@@ -59,6 +63,7 @@ export default defineConfig({
       '@proompteng/agent-contracts/agent-message-artifacts': agentContractsMessageArtifactsSource,
       '@proompteng/agent-contracts/agent-run-callbacks': agentContractsRunCallbacksSource,
       '@proompteng/agent-contracts/agents-service-client': agentContractsServiceClientSource,
+      '@proompteng/agent-contracts/codex-orchestration-parameters': agentContractsCodexOrchestrationParametersSource,
       '@proompteng/agent-contracts/control-plane-status': agentContractsControlPlaneStatusSource,
       '@proompteng/agent-contracts/torghut-market-context-agentrun': agentContractsTorghutMarketContextAgentRunSource,
       '@proompteng/codex': codexStub,

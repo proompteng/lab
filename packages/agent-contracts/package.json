@@ -26,6 +26,10 @@
       "types": "./dist/agent-run-callbacks.d.ts",
       "default": "./dist/agent-run-callbacks.js"
     },
+    "./codex-orchestration-parameters": {
+      "types": "./dist/codex-orchestration-parameters.d.ts",
+      "default": "./dist/codex-orchestration-parameters.js"
+    },
     "./control-plane-status": {
       "types": "./dist/control-plane-status.d.ts",
       "default": "./dist/control-plane-status.js"
@@ -37,7 +41,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "bunx vitest run ./src/agents-service-client.test.ts ./src/agents-ready.test.ts ./src/agent-message-artifacts.test.ts ./src/agent-run-callbacks.test.ts ./src/torghut-market-context-agentrun.test.ts",
+    "test": "bunx vitest run ./src/agents-service-client.test.ts ./src/agents-ready.test.ts ./src/agent-message-artifacts.test.ts ./src/agent-run-callbacks.test.ts ./src/codex-orchestration-parameters.test.ts ./src/torghut-market-context-agentrun.test.ts",
     "tsc": "tsc --noEmit -p tsconfig.json",
     "lint": "bunx oxfmt --check src",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
