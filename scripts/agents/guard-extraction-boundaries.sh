@@ -531,6 +531,16 @@ fail_if_matches \
   "${ROOT_DIR}/services/agents/src/server"
 
 fail_if_matches \
+  "Agents runtime must not expose workflow-shaped agent-message identity fields after AgentRun owns the public contract" \
+  'workflowUid|workflow_uid|workflowName|workflow_name|workflowNamespace|workflow_namespace|workflowStage|workflow_stage|workflowStep|workflow_step' \
+  "${ROOT_DIR}/services/agents/src/server/agent-messages-api.ts" \
+  "${ROOT_DIR}/services/agents/src/server/agent-messages-store.ts" \
+  "${ROOT_DIR}/services/agents/src/server/agent-comms-subscriber.ts" \
+  "${ROOT_DIR}/services/agents/src/server/codex-callbacks.ts" \
+  "${ROOT_DIR}/services/agents/src/routes/api/agents/events.ts" \
+  "${ROOT_DIR}/services/agents/src/server/db.ts"
+
+fail_if_matches \
   "Agents GitOps must not ship the old sample Argo WorkflowTemplate schedule bridge" \
   'agents-primitives-echo|kind: WorkflowTemplate|codex-workflow' \
   "${ROOT_DIR}/argocd/applications/agents"

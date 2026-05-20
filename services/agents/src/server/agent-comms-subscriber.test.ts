@@ -158,18 +158,15 @@ describe('agent comms subscriber consume', () => {
     ).toBeNull()
   })
 
-  it('prefers canonical agent run identity over legacy workflow aliases', () => {
+  it('ignores legacy workflow payload identity and uses Agents subject identity', () => {
     const message = __test__.normalizePayload(
       JSON.stringify({
         content: 'canonical update',
-        agent_run_name: 'agent-run',
-        agent_run_namespace: 'agents',
-        agent_run_uid: 'agent-run-uid',
         workflow_name: 'legacy-workflow',
         workflow_namespace: 'legacy',
         workflow_uid: 'legacy-uid',
       }),
-      'agentrun.legacy.subject.subject-uid.agent.codex.status',
+      'agentrun.agents.agent-run.agent-run-uid.agent.codex.status',
     )
 
     expect(message?.agentRunName).toBe('agent-run')

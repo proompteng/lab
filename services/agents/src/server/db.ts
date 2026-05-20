@@ -102,9 +102,9 @@ type AgentsControlPlaneResourcesCurrent = {
 
 type AgentsCommsAgentMessage = {
   id: Generated<string>
-  workflow_uid: string | null
-  workflow_name: string | null
-  workflow_namespace: string | null
+  agent_run_uid: string | null
+  agent_run_name: string | null
+  agent_run_namespace: string | null
   run_id: string | null
   step_id: string | null
   agent_id: string | null

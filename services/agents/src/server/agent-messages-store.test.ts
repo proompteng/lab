@@ -20,9 +20,9 @@ vi.mock('~/server/kysely-migrations', () => ({
 type SqlCall = { sql: string; params: readonly unknown[] }
 
 const baseMessage = {
-  workflow_uid: null,
-  workflow_name: null,
-  workflow_namespace: null,
+  agent_run_uid: null,
+  agent_run_name: null,
+  agent_run_namespace: null,
   run_id: null,
   step_id: null,
   agent_id: 'agent',

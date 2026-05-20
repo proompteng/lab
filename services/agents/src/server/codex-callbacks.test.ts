@@ -62,17 +62,17 @@ describe('Codex callback ingestion', () => {
     })
   })
 
-  it('accepts Argo run-complete payload envelopes', async () => {
+  it('accepts AgentRun metadata callback envelopes', async () => {
     const store = createStore()
     const response = await postCodexCallbackHandler(
       'run-complete',
       new Request('http://agents.local/api/agents/codex/run-complete', {
         body: JSON.stringify({
           data: {
-            metadata: { name: 'workflow-2', namespace: 'froussard', uid: 'uid-2' },
+            metadata: { name: 'agent-run-2', namespace: 'agents', uid: 'agent-run-uid-2' },
             status: { phase: 'Succeeded', finishedAt: '2026-05-19T12:00:00.000Z' },
             stage: 'judge',
-            artifacts: [{ name: 'implementation-log', key: 'workflow-2/log.txt' }],
+            artifacts: [{ name: 'implementation-log', key: 'agent-run-2/log.txt' }],
           },
         }),
         headers: { 'content-type': 'application/json' },
@@ -86,10 +86,10 @@ describe('Codex callback ingestion', () => {
       ok: true,
       callback: {
         kind: 'run-complete',
-        agentRunName: 'workflow-2',
-        agentRunNamespace: 'froussard',
-        agentRunUid: 'uid-2',
-        runId: 'uid-2',
+        agentRunName: 'agent-run-2',
+        agentRunNamespace: 'agents',
+        agentRunUid: 'agent-run-uid-2',
+        runId: 'agent-run-uid-2',
       },
       inserted: [{ kind: 'codex.run-complete', content: 'Codex run completed with phase Succeeded' }],
       skipped: false,
@@ -97,7 +97,7 @@ describe('Codex callback ingestion', () => {
     expect(store.insertMessages).toHaveBeenCalledTimes(1)
   })
 
-  it('rejects callbacks without workflow identity', async () => {
+  it('rejects callbacks without AgentRun identity', async () => {
     const response = await postCodexCallbackHandler(
       'notify',
       new Request('http://agents.local/api/agents/codex/notify', {

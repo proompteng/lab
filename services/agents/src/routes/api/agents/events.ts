@@ -62,7 +62,7 @@ const safeJsonStringify = (value: unknown) => {
 }
 
 const getPayloadAgentRunUid = (payload: Record<string, unknown>) => {
-  const value = payload.agentRunUid ?? payload.agent_run_uid ?? payload.workflowUid ?? payload.workflow_uid
+  const value = payload.agentRunUid ?? payload.agent_run_uid
   return typeof value === 'string' && value.trim().length > 0 ? value : null
 }
 
@@ -102,7 +102,7 @@ const looksLikeTransientDbBlip = (message: string) => {
 export const getAgentEvents = async (request: Request) => {
   const url = new URL(request.url)
   const runId = url.searchParams.get('runId')?.trim() || null
-  const agentRunUid = url.searchParams.get('agentRunUid')?.trim() || url.searchParams.get('workflowUid')?.trim() || null
+  const agentRunUid = url.searchParams.get('agentRunUid')?.trim() || null
   const channel = url.searchParams.get('channel')?.trim() || null
   const limit = normalizeLimit(url.searchParams.get('limit'))
 

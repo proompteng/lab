@@ -128,28 +128,10 @@ export const buildCodexCallbackMessage = (
   const data = readCallbackData(payload)
   const metadata = readRecordField(data, 'metadata')
   const status = readRecordField(data, 'status')
-  const agentRunName = firstString(
-    data.agentRunName,
-    data.agent_run_name,
-    data.workflowName,
-    data.workflow_name,
-    metadata.name,
-  )
-  const agentRunNamespace = firstString(
-    data.agentRunNamespace,
-    data.agent_run_namespace,
-    data.workflowNamespace,
-    data.workflow_namespace,
-    metadata.namespace,
-  )
-  const agentRunUid = firstString(
-    data.agentRunUid,
-    data.agent_run_uid,
-    data.workflowUid,
-    data.workflow_uid,
-    metadata.uid,
-  )
-  const stage = firstString(data.stage, data.workflowStage, data.workflow_stage)
+  const agentRunName = firstString(data.agentRunName, data.agent_run_name, metadata.name)
+  const agentRunNamespace = firstString(data.agentRunNamespace, data.agent_run_namespace, metadata.namespace)
+  const agentRunUid = firstString(data.agentRunUid, data.agent_run_uid, metadata.uid)
+  const stage = firstString(data.stage, data.agentRunStage, data.agent_run_stage)
   const runId =
     firstString(data.runId, data.run_id, data.agentRunId, data.agent_run_id, agentRunUid, agentRunName) ?? null
   const timestamp =

@@ -94,7 +94,7 @@ const countRows = async (db: Db, where: { runId?: string | null; agentRunUid?: s
   if (runId) {
     query = query.where('run_id', '=', runId)
   } else if (agentRunUid) {
-    query = query.where('workflow_uid', '=', agentRunUid)
+    query = query.where('agent_run_uid', '=', agentRunUid)
   } else {
     return 0
   }
@@ -105,9 +105,9 @@ const countRows = async (db: Db, where: { runId?: string | null; agentRunUid?: s
 
 const mapRow = (row: {
   id: string
-  workflow_uid: string | null
-  workflow_name: string | null
-  workflow_namespace: string | null
+  agent_run_uid: string | null
+  agent_run_name: string | null
+  agent_run_namespace: string | null
   run_id: string | null
   step_id: string | null
   agent_id: string | null
@@ -122,9 +122,9 @@ const mapRow = (row: {
   created_at: string | Date
 }): AgentMessageRecord => ({
   id: row.id,
-  agentRunUid: row.workflow_uid,
-  agentRunName: row.workflow_name,
-  agentRunNamespace: row.workflow_namespace,
+  agentRunUid: row.agent_run_uid,
+  agentRunName: row.agent_run_name,
+  agentRunNamespace: row.agent_run_namespace,
   runId: row.run_id,
   stepId: row.step_id,
   agentId: row.agent_id,
@@ -180,9 +180,9 @@ export const createAgentMessagesStore = (options: AgentMessagesStoreOptions = {}
     await ensureReady()
     const normalized = messages
       .map((message) => ({
-        workflow_uid: message.agentRunUid,
-        workflow_name: message.agentRunName,
-        workflow_namespace: message.agentRunNamespace,
+        agent_run_uid: message.agentRunUid,
+        agent_run_name: message.agentRunName,
+        agent_run_namespace: message.agentRunNamespace,
         run_id: message.runId,
         step_id: message.stepId,
         agent_id: message.agentId,
@@ -229,13 +229,13 @@ export const createAgentMessagesStore = (options: AgentMessagesStoreOptions = {}
     if (identifiers && identifiers.length > 0) {
       query = query.where((eb) =>
         eb.or(
-          identifiers.map((identifier) => eb.or([eb('run_id', '=', identifier), eb('workflow_uid', '=', identifier)])),
+          identifiers.map((identifier) => eb.or([eb('run_id', '=', identifier), eb('agent_run_uid', '=', identifier)])),
         ),
       )
     } else if (runId) {
       query = query.where('run_id', '=', runId)
     } else if (agentRunUid) {
-      query = query.where('workflow_uid', '=', agentRunUid)
+      query = query.where('agent_run_uid', '=', agentRunUid)
     }
 
     if (channel) {

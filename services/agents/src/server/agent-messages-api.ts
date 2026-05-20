@@ -104,15 +104,9 @@ const parseMessage = (value: unknown, index: number): AgentMessageInput => {
   }
 
   return {
-    agentRunUid: readNullableString(
-      record.agentRunUid ?? record.agent_run_uid ?? record.workflowUid ?? record.workflow_uid,
-    ),
-    agentRunName: readNullableString(
-      record.agentRunName ?? record.agent_run_name ?? record.workflowName ?? record.workflow_name,
-    ),
-    agentRunNamespace: readNullableString(
-      record.agentRunNamespace ?? record.agent_run_namespace ?? record.workflowNamespace ?? record.workflow_namespace,
-    ),
+    agentRunUid: readNullableString(record.agentRunUid ?? record.agent_run_uid),
+    agentRunName: readNullableString(record.agentRunName ?? record.agent_run_name),
+    agentRunNamespace: readNullableString(record.agentRunNamespace ?? record.agent_run_namespace),
     runId: readNullableString(record.runId ?? record.run_id),
     stepId: readNullableString(record.stepId ?? record.step_id),
     agentId: readNullableString(record.agentId ?? record.agent_id),
@@ -131,9 +125,7 @@ const parseSkipIfExisting = (value: unknown): AgentMessagesSkipIfExisting | unde
   const record = asRecord(value)
   if (!record) return undefined
   const runId = readNullableString(record.runId ?? record.run_id)
-  const agentRunUid = readNullableString(
-    record.agentRunUid ?? record.agent_run_uid ?? record.workflowUid ?? record.workflow_uid,
-  )
+  const agentRunUid = readNullableString(record.agentRunUid ?? record.agent_run_uid)
   if (!runId && !agentRunUid) return undefined
   return { runId, agentRunUid }
 }

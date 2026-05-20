@@ -156,36 +156,21 @@ const normalizePayload = (raw: string, subject: string): AgentMessageInput | nul
     payload.run_id ?? payload.runId ?? payload.runID ?? payload.agent_run_id ?? payload.agentRunId,
   )
   const agentRunUid =
-    coerceNonEmptyString(payload.agent_run_uid ?? payload.agentRunUid ?? payload.workflow_uid ?? payload.workflowUid) ??
-    subjectInfo?.agentRunUid ??
-    null
+    coerceNonEmptyString(payload.agent_run_uid ?? payload.agentRunUid) ?? subjectInfo?.agentRunUid ?? null
   const agentRunName =
-    coerceNonEmptyString(
-      payload.agent_run_name ?? payload.agentRunName ?? payload.workflow_name ?? payload.workflowName,
-    ) ??
-    subjectInfo?.agentRunName ??
-    null
+    coerceNonEmptyString(payload.agent_run_name ?? payload.agentRunName) ?? subjectInfo?.agentRunName ?? null
   const agentRunNamespace =
-    coerceNonEmptyString(
-      payload.agent_run_namespace ??
-        payload.agentRunNamespace ??
-        payload.workflow_namespace ??
-        payload.workflowNamespace,
-    ) ??
+    coerceNonEmptyString(payload.agent_run_namespace ?? payload.agentRunNamespace) ??
     subjectInfo?.agentRunNamespace ??
     null
-  const stepId = coerceNonEmptyString(
-    payload.step_id ?? payload.stepId ?? payload.workflow_step ?? payload.workflowStep ?? payload.agent_run_step,
-  )
+  const stepId = coerceNonEmptyString(payload.step_id ?? payload.stepId ?? payload.agent_run_step)
   const payloadAgentId = coerceNonEmptyString(payload.agent_id ?? payload.agentId)
   const agentId =
     payloadAgentId && payloadAgentId.toLowerCase() !== 'unknown'
       ? payloadAgentId
       : (subjectInfo?.agentId ?? payloadAgentId ?? null)
   const channel = coerceNonEmptyString(payload.channel) ?? subjectInfo?.channel ?? null
-  const stage = coerceNonEmptyString(
-    payload.stage ?? payload.workflow_stage ?? payload.workflowStage ?? payload.agent_run_stage,
-  )
+  const stage = coerceNonEmptyString(payload.stage ?? payload.agent_run_stage)
 
   const runtime =
     coerceNonEmptyString(payload.runtime ?? payload.runtime_type ?? payload.runtimeType) ?? subjectInfo?.runtime ?? null
