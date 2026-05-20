@@ -249,9 +249,9 @@ OrchestrationRun. Jangar consumes that status projection for domain stage-cleara
 `JANGAR_RUNTIME_ADMISSION_STATUS_TIMEOUT_MS`. Stage-clearance hold mode requires the full status projection because
 `/ready` does not carry clearance packets.
 
-Binary runtime-kit components must be executable, not just present on disk. The source Codex NATS helpers and the
-installed `/usr/local/bin/codex-nats-*` wrappers both satisfy that command-path contract; a non-executable helper keeps
-the collaboration kit blocked with `runtime_kit_component_missing:*` evidence.
+Binary runtime-kit components must be executable, not just present on disk. Shared Codex NATS helpers are resolved from
+`packages/cx-tools`, `$PATH`, or the installed `/usr/local/bin/codex-nats-*` wrappers; a non-executable helper keeps the
+collaboration kit blocked with `runtime_kit_component_missing:*` evidence.
 
 Degraded authority or degraded runtime-kit evidence keeps the serving passport non-blocking (`degrade`) but moves
 launch-capable swarm passports to `hold`. Missing required runtime-kit evidence still moves launch-capable passports to

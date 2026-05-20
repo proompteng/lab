@@ -29,25 +29,19 @@ describe('agent-run-callbacks', () => {
 
   it('does not treat non-AgentRun resource metadata as AgentRun identity', () => {
     const parsed = parseAgentRunRunCompletePayload({
-      apiVersion: 'argoproj.io/v1alpha1',
-      kind: 'Workflow',
+      apiVersion: 'batch/v1',
+      kind: 'Job',
       metadata: {
-        name: 'legacy-workflow',
-        namespace: 'argo',
-        uid: 'workflow-uid',
+        name: 'non-agentrun-job',
+        namespace: 'agents',
+        uid: 'job-uid',
       },
-      workflowName: 'legacy-workflow',
-      workflowNamespace: 'argo',
-      workflowUid: 'workflow-uid',
       status: { phase: 'Succeeded' },
     })
 
     expect(parsed.agentRunName).toBe('')
     expect(parsed.agentRunNamespace).toBeNull()
     expect(parsed.agentRunUid).toBeNull()
-    expect(parsed.runCompletePayload).not.toHaveProperty('workflowName')
-    expect(parsed.runCompletePayload).not.toHaveProperty('workflowNamespace')
-    expect(parsed.runCompletePayload).not.toHaveProperty('workflowUid')
   })
 
   it('resolves GitHub metadata from encoded run-complete parameters', () => {
@@ -102,8 +96,6 @@ describe('agent-run-callbacks', () => {
       agent_run_id: 'run-456',
       agent_run_name: 'agentrun-456',
       agent_run_namespace: 'agents',
-      workflow_name: 'retired-workflow',
-      workflow_uid: 'retired-workflow-uid',
       last_assistant_message: 'opened PR',
     })
 
@@ -116,11 +108,9 @@ describe('agent-run-callbacks', () => {
         agent_run_name: 'agentrun-456',
       }),
     )
-    expect(parsed.notifyPayload).not.toHaveProperty('workflow_name')
-    expect(parsed.notifyPayload).not.toHaveProperty('workflow_uid')
   })
 
-  it('strips legacy workflow identity keys from stored run-complete payloads', () => {
+  it('stores AgentRun-native run-complete payload identity without compatibility cleanup', () => {
     const parsed = parseAgentRunRunCompletePayload({
       apiVersion: 'agents.proompteng.ai/v1alpha1',
       kind: 'AgentRun',
@@ -129,16 +119,15 @@ describe('agent-run-callbacks', () => {
         namespace: 'agents',
         uid: 'uid-789',
       },
-      workflowName: 'retired-workflow',
-      workflowNamespace: 'argo',
-      workflowUid: 'retired-workflow-uid',
-      workflowStage: 'legacy-stage',
-      workflowStep: 'legacy-step',
       agentRunId: 'run-789',
       status: { phase: 'Succeeded' },
     })
 
     expect(parsed.agentRunName).toBe('agentrun-789')
-    expect(JSON.stringify(parsed.runCompletePayload)).not.toContain('workflow')
+    expect(parsed.runCompletePayload).toMatchObject({
+      apiVersion: 'agents.proompteng.ai/v1alpha1',
+      kind: 'AgentRun',
+      agentRunId: 'run-789',
+    })
   })
 })

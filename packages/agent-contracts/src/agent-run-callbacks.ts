@@ -301,27 +301,6 @@ const readRecordField = (value: unknown) => {
   return {}
 }
 
-const LEGACY_WORKFLOW_IDENTITY_KEYS = new Set([
-  'workflowName',
-  'workflow_name',
-  'workflowNamespace',
-  'workflow_namespace',
-  'workflowUid',
-  'workflow_uid',
-  'workflowStage',
-  'workflow_stage',
-  'workflowStep',
-  'workflow_step',
-])
-
-const stripLegacyWorkflowIdentityFields = (value: Record<string, unknown>) => {
-  const next = { ...value }
-  for (const key of LEGACY_WORKFLOW_IDENTITY_KEYS) {
-    delete next[key]
-  }
-  return next
-}
-
 const isAgentRunResourcePayload = (data: Record<string, unknown>) =>
   firstNonEmptyString(data.kind) === 'AgentRun' ||
   (firstNonEmptyString(data.apiVersion)?.startsWith('agents.proompteng.ai/') ?? false)
@@ -355,9 +334,7 @@ const readArtifacts = (data: Record<string, unknown>): AgentRunCallbackArtifact[
 
 export const parseAgentRunRunCompletePayload = (payload: Record<string, unknown>): ParsedAgentRunRunCompletePayload => {
   const rawData = payload.data ?? payload
-  const data = stripLegacyWorkflowIdentityFields(
-    typeof rawData === 'string' ? parseJsonRecord(rawData) : isRecord(rawData) ? rawData : {},
-  )
+  const data = typeof rawData === 'string' ? parseJsonRecord(rawData) : isRecord(rawData) ? rawData : {}
   const metadataRecord = readRecordField(data.metadata)
   const rawStatus = readRecordField(data.status)
   const argumentsRecord = readRecordField(data.arguments)
@@ -480,9 +457,7 @@ export const parseAgentRunRunCompletePayload = (payload: Record<string, unknown>
 
 export const parseAgentRunNotifyPayload = (payload: Record<string, unknown>): ParsedAgentRunNotifyPayload => {
   const rawData = payload.data ?? payload
-  const data = stripLegacyWorkflowIdentityFields(
-    typeof rawData === 'string' ? parseJsonRecord(rawData) : isRecord(rawData) ? rawData : {},
-  )
+  const data = typeof rawData === 'string' ? parseJsonRecord(rawData) : isRecord(rawData) ? rawData : {}
   const runId = firstNonEmptyString(data.runId, data.run_id, data.agentRunId, data.agent_run_id)
   const agentRunName = firstNonEmptyString(data.agentRunName, data.agent_run_name)
   const agentRunNamespace = firstNonEmptyString(data.agentRunNamespace, data.agent_run_namespace)

@@ -490,6 +490,7 @@ export const buildRuntimeAdmissionSnapshot = (input: RuntimeAdmissionInput = {})
   const runtimeProofSurface = buildRuntimeProofSurface({
     runtimeKits,
     admissionPassports,
+    imageExpectedRef: 'JANGAR_RUNTIME_IMAGE',
   })
 
   return {

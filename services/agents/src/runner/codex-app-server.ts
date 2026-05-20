@@ -10,7 +10,7 @@ import {
   type StreamDelta,
   type Turn,
 } from '@proompteng/codex'
-import { Context, Data, Effect, Layer, ManagedRuntime } from 'effect'
+import { Cause, Context, Data, Effect, Exit, Layer, ManagedRuntime, Option } from 'effect'
 
 import { ensureFileDirectory } from '../../scripts/codex/lib/fs'
 
@@ -123,6 +123,12 @@ export class CodexRunnerArtifactError extends Data.TaggedError('CodexRunnerArtif
   readonly cause: unknown
 }> {}
 
+export class CodexRunnerLogError extends Data.TaggedError('CodexRunnerLogError')<{
+  readonly operation: 'open-log'
+  readonly path?: string
+  readonly cause: unknown
+}> {}
+
 export type CodexRunnerError =
   | CodexRunnerInputError
   | CodexRunnerWorkspaceError
@@ -131,6 +137,7 @@ export type CodexRunnerError =
   | CodexRunnerCancellationError
   | CodexRunnerStatusError
   | CodexRunnerArtifactError
+  | CodexRunnerLogError
 
 export type CodexAppServerClientFactoryService = {
   create: (options: CodexAppServerOptions) => Effect.Effect<CodexAppServerRunnerClient, CodexRunnerClientError>
@@ -197,8 +204,21 @@ const describeRunnerError = (error: unknown) => {
   if (error instanceof CodexRunnerArtifactError) {
     return `${error._tag}: ${error.operation}: ${toErrorMessage(error.cause)}`
   }
+  if (error instanceof CodexRunnerLogError) {
+    return `${error._tag}: ${error.operation}${error.path ? ` ${error.path}` : ''}: ${toErrorMessage(error.cause)}`
+  }
   return toErrorMessage(error)
 }
+
+const isCodexRunnerError = (error: unknown): error is CodexRunnerError =>
+  error instanceof CodexRunnerInputError ||
+  error instanceof CodexRunnerWorkspaceError ||
+  error instanceof CodexRunnerClientError ||
+  error instanceof CodexRunnerTurnError ||
+  error instanceof CodexRunnerCancellationError ||
+  error instanceof CodexRunnerStatusError ||
+  error instanceof CodexRunnerArtifactError ||
+  error instanceof CodexRunnerLogError
 
 const describeAbortReason = (reason: unknown): string | undefined => {
   if (typeof reason === 'string') return reason
@@ -254,6 +274,9 @@ const throwIfCancelled = (signal: AbortSignal | undefined, threadId?: string, tu
   }
 }
 
+const throwIfCancelledEffect = (signal: AbortSignal | undefined, threadId?: string, turnId?: string) =>
+  signal?.aborted ? Effect.fail(cancellationErrorFor(signal, threadId, turnId)) : Effect.void
+
 const createCancellationWaiter = (
   signal: AbortSignal | undefined,
   getThreadId: () => string | undefined,
@@ -308,6 +331,13 @@ const loadRunPayload = async (spec: AgentRunnerSpec): Promise<AgentRunPayload> =
   }
   return readJsonFile(payloadPath)
 }
+
+const loadRunPayloadEffect = (spec: AgentRunnerSpec) =>
+  Effect.tryPromise({
+    try: () => loadRunPayload(spec),
+    catch: (cause) =>
+      cause instanceof CodexRunnerInputError ? cause : new CodexRunnerInputError({ operation: 'load-payload', cause }),
+  })
 
 const pathExists = async (path: string): Promise<boolean> => {
   try {
@@ -570,6 +600,23 @@ const prepareCodexCwd = async (
   await mkdir(cwd, { recursive: true })
 }
 
+const prepareCodexCwdEffect = (
+  adapter: CodexAppServerAdapterConfig,
+  runPayload: AgentRunPayload,
+  runner: CommandRunner,
+) =>
+  Effect.tryPromise({
+    try: () => prepareCodexCwd(adapter, runPayload, runner),
+    catch: (cause) =>
+      cause instanceof CodexRunnerWorkspaceError
+        ? cause
+        : new CodexRunnerWorkspaceError({
+            operation: 'prepare-cwd',
+            cwd: nonEmptyString(adapter.cwd) ?? undefined,
+            cause,
+          }),
+  })
+
 export const resolveCodexBinaryPath = (
   adapter: CodexAppServerAdapterConfig,
   env: Record<string, string | undefined> = process.env,
@@ -670,6 +717,12 @@ const openLog = async (logPath: string | undefined) => {
   return createWriteStream(logPath, { flags: 'a' })
 }
 
+const openLogEffect = (logPath: string | undefined) =>
+  Effect.tryPromise({
+    try: () => openLog(logPath),
+    catch: (cause) => new CodexRunnerLogError({ operation: 'open-log', path: logPath, cause }),
+  })
+
 const writeDelta = (delta: StreamDelta, logStream: ReturnType<typeof createWriteStream> | null) => {
   const line = `${JSON.stringify({ ts: new Date().toISOString(), event: delta })}\n`
   logStream?.write(line)
@@ -710,34 +763,126 @@ const interruptAppServerTurn = async (
   }
 }
 
-export const runCodexAppServerAdapter = async (
-  spec: AgentRunnerSpec,
-  adapter: CodexAppServerAdapterConfig,
-  options: RunCodexAppServerAdapterOptions = {},
-): Promise<number> => {
-  const now = options.now ?? (() => new Date())
-  const startedAt = timestampUtc(now)
-  const statusPath = spec.artifacts?.statusPath
-  const logPath = spec.artifacts?.logPath
+const createRunnerClientEffect = (
+  clientOptions: CodexAppServerOptions,
+  factory: RunCodexAppServerAdapterOptions['createClient'],
+) =>
+  Effect.tryPromise({
+    try: () => createRunnerClient(clientOptions, factory),
+    catch: (cause) =>
+      cause instanceof CodexRunnerClientError
+        ? cause
+        : new CodexRunnerClientError({ operation: 'create-client', cause }),
+  })
 
-  let threadId: string | undefined
-  let turnId: string | undefined
-  let finalTurn: Turn | null = null
-  let exitCode = 1
-  let errorMessage: string | undefined
-  let caughtError: unknown
-  let outputArtifacts = renderOutputArtifacts(spec.providerSpec?.outputArtifacts, buildTemplateContext(spec))
-  let client: CodexAppServerRunnerClient | null = null
-  let logStream: Awaited<ReturnType<typeof openLog>> = null
+const startTurnStreamEffect = (
+  client: CodexAppServerRunnerClient,
+  prompt: string,
+  turnOptions: CodexAppServerTurnOptions,
+) =>
+  Effect.tryPromise({
+    try: () => client.runTurnStream(prompt, turnOptions),
+    catch: (cause) => new CodexRunnerTurnError({ operation: 'start-turn', cause }),
+  })
 
-  try {
-    throwIfCancelled(options.abortSignal)
-    const runPayload = await loadRunPayload(spec)
-    outputArtifacts = renderOutputArtifacts(spec.providerSpec?.outputArtifacts, {
+const consumeTurnStreamEffect = ({
+  stream,
+  signal,
+  threadId,
+  turnId,
+  logStream,
+}: {
+  stream: AsyncGenerator<StreamDelta, Turn | null, void>
+  signal?: AbortSignal
+  threadId: string
+  turnId: string
+  logStream: ReturnType<typeof createWriteStream> | null
+}) =>
+  Effect.tryPromise({
+    try: async () => {
+      const iterator = stream[Symbol.asyncIterator]()
+      const cancellationWaiter = createCancellationWaiter(
+        signal,
+        () => threadId,
+        () => turnId,
+      )
+      try {
+        while (true) {
+          throwIfCancelled(signal, threadId, turnId)
+          const nextDelta = iterator.next().catch((cause) => {
+            throw new CodexRunnerTurnError({ operation: 'stream-turn', threadId, turnId, cause })
+          })
+          const { value, done } = cancellationWaiter
+            ? await Promise.race([nextDelta, cancellationWaiter.promise])
+            : await nextDelta
+          if (done) {
+            return value ?? null
+          }
+          writeDelta(value, logStream)
+        }
+      } finally {
+        cancellationWaiter?.cleanup()
+      }
+    },
+    catch: (cause) =>
+      isCodexRunnerError(cause)
+        ? cause
+        : new CodexRunnerTurnError({ operation: 'stream-turn', threadId, turnId, cause }),
+  })
+
+const uploadOutputArtifactsEffect = (
+  artifacts: AgentProviderOutputArtifact[],
+  uploadArtifacts: typeof uploadOutputArtifacts,
+) =>
+  Effect.tryPromise({
+    try: () => uploadArtifacts(artifacts),
+    catch: (cause) =>
+      cause instanceof CodexRunnerArtifactError
+        ? cause
+        : new CodexRunnerArtifactError({ operation: 'upload-output-artifacts', cause }),
+  })
+
+const runCodexEffectPromise = async <A>(effect: Effect.Effect<A, CodexRunnerError>) => {
+  const exit = await Effect.runPromiseExit(effect)
+  if (Exit.isSuccess(exit)) {
+    return exit.value
+  }
+  const failure = Cause.failureOption(exit.cause)
+  if (Option.isSome(failure)) {
+    throw failure.value
+  }
+  throw Cause.squash(exit.cause)
+}
+
+type CodexAppServerAdapterState = {
+  threadId?: string
+  turnId?: string
+  finalTurn: Turn | null
+  outputArtifacts: AgentProviderOutputArtifact[]
+  client: CodexAppServerRunnerClient | null
+  logStream: Awaited<ReturnType<typeof openLog>>
+}
+
+export const runCodexAppServerAdapterEffect = ({
+  spec,
+  adapter,
+  options,
+  state,
+}: {
+  spec: AgentRunnerSpec
+  adapter: CodexAppServerAdapterConfig
+  options: RunCodexAppServerAdapterOptions
+  state: CodexAppServerAdapterState
+}) =>
+  Effect.gen(function* () {
+    yield* throwIfCancelledEffect(options.abortSignal)
+    const runPayload = yield* loadRunPayloadEffect(spec)
+    state.outputArtifacts = renderOutputArtifacts(spec.providerSpec?.outputArtifacts, {
       ...buildTemplateContext(spec),
       run: runPayload,
     })
-    throwIfCancelled(options.abortSignal)
+    yield* throwIfCancelledEffect(options.abortSignal)
+
     const prompt = resolvePrompt(spec, adapter, runPayload)
     const baseInstructions =
       renderOptionalTemplate(adapter.baseInstructions, spec, runPayload) ?? nonEmptyString(runPayload.systemPrompt)
@@ -757,10 +902,11 @@ export const runCodexAppServerAdapter = async (
       persistExtendedHistory: adapter.persistExtendedHistory,
       bootstrapTimeoutMs: adapter.bootstrapTimeoutMs,
     }
-    await prepareCodexCwd(adapter, runPayload, options.runCommand ?? runDefaultCommand)
-    throwIfCancelled(options.abortSignal)
-    client = await createRunnerClient(clientOptions, options.createClient)
-    logStream = await openLog(logPath)
+
+    yield* prepareCodexCwdEffect(adapter, runPayload, options.runCommand ?? runDefaultCommand)
+    yield* throwIfCancelledEffect(options.abortSignal)
+    state.client = yield* createRunnerClientEffect(clientOptions, options.createClient)
+    state.logStream = yield* openLogEffect(spec.artifacts?.logPath)
 
     const turnOptions: CodexAppServerTurnOptions = {
       model: adapter.model,
@@ -771,53 +917,58 @@ export const runCodexAppServerAdapter = async (
       developerInstructions,
       goal,
     }
-    throwIfCancelled(options.abortSignal)
-    const response = await client.runTurnStream(prompt, turnOptions).catch((cause) => {
-      throw new CodexRunnerTurnError({ operation: 'start-turn', cause })
+    yield* throwIfCancelledEffect(options.abortSignal)
+    const response = yield* startTurnStreamEffect(state.client, prompt, turnOptions)
+    state.threadId = response.threadId
+    state.turnId = response.turnId
+    state.finalTurn = yield* consumeTurnStreamEffect({
+      stream: response.stream,
+      signal: options.abortSignal,
+      threadId: response.threadId,
+      turnId: response.turnId,
+      logStream: state.logStream,
     })
-    threadId = response.threadId
-    turnId = response.turnId
 
-    const iterator = response.stream[Symbol.asyncIterator]()
-    const cancellationWaiter = createCancellationWaiter(
-      options.abortSignal,
-      () => threadId,
-      () => turnId,
-    )
-    try {
-      while (true) {
-        throwIfCancelled(options.abortSignal, threadId, turnId)
-        const nextDelta = iterator.next().catch((cause) => {
-          throw new CodexRunnerTurnError({ operation: 'stream-turn', threadId, turnId, cause })
-        })
-        const { value, done } = cancellationWaiter
-          ? await Promise.race([nextDelta, cancellationWaiter.promise])
-          : await nextDelta
-        if (done) {
-          finalTurn = value ?? null
-          break
-        }
-        writeDelta(value, logStream)
-      }
-    } finally {
-      cancellationWaiter?.cleanup()
-    }
-    const terminalError = terminalErrorForTurn(finalTurn, threadId, turnId)
+    const terminalError = terminalErrorForTurn(state.finalTurn, state.threadId, state.turnId)
     if (terminalError) {
-      throw terminalError
+      yield* Effect.fail(terminalError)
     }
-    try {
-      outputArtifacts = await (options.uploadArtifacts ?? uploadOutputArtifacts)(outputArtifacts)
-    } catch (cause) {
-      throw new CodexRunnerArtifactError({ operation: 'upload-output-artifacts', cause })
-    }
-    exitCode = 0
+
+    state.outputArtifacts = yield* uploadOutputArtifactsEffect(
+      state.outputArtifacts,
+      options.uploadArtifacts ?? uploadOutputArtifacts,
+    )
+    return 0
+  })
+
+export const runCodexAppServerAdapter = async (
+  spec: AgentRunnerSpec,
+  adapter: CodexAppServerAdapterConfig,
+  options: RunCodexAppServerAdapterOptions = {},
+): Promise<number> => {
+  const now = options.now ?? (() => new Date())
+  const startedAt = timestampUtc(now)
+  const statusPath = spec.artifacts?.statusPath
+  const logPath = spec.artifacts?.logPath
+
+  let exitCode = 1
+  let errorMessage: string | undefined
+  let caughtError: unknown
+  const state: CodexAppServerAdapterState = {
+    finalTurn: null,
+    outputArtifacts: renderOutputArtifacts(spec.providerSpec?.outputArtifacts, buildTemplateContext(spec)),
+    client: null,
+    logStream: null,
+  }
+
+  try {
+    exitCode = await runCodexEffectPromise(runCodexAppServerAdapterEffect({ spec, adapter, options, state }))
   } catch (error) {
     let runnerError = error
     if (error instanceof CodexRunnerCancellationError) {
       if (options.abortSignal?.aborted) {
         try {
-          await interruptAppServerTurn(client, error, threadId, turnId)
+          await interruptAppServerTurn(state.client, error, state.threadId, state.turnId)
         } catch (interruptError) {
           runnerError = interruptError
         }
@@ -830,13 +981,13 @@ export const runCodexAppServerAdapter = async (
     errorMessage = describeRunnerError(runnerError)
   } finally {
     await new Promise<void>((resolve) => {
-      if (!logStream) {
+      if (!state.logStream) {
         resolve()
         return
       }
-      logStream.end(resolve)
+      state.logStream.end(resolve)
     })
-    client?.stop?.()
+    state.client?.stop?.()
 
     const runnerStatus: CodexAppServerRunnerStatus = {
       provider: spec.provider,
@@ -845,17 +996,19 @@ export const runCodexAppServerAdapter = async (
       status: exitCode === 0 ? 'succeeded' : exitCode === 130 ? 'cancelled' : 'failed',
       startedAt,
       finishedAt: timestampUtc(now),
-      ...(threadId ? { threadId } : {}),
-      ...(turnId ? { turnId } : {}),
-      ...(finalTurn?.status ? { turnStatus: finalTurn.status } : {}),
-      ...(finalTurn && finalTurn.status !== 'completed' ? { turnError: describeTurnError(finalTurn) } : {}),
+      ...(state.threadId ? { threadId: state.threadId } : {}),
+      ...(state.turnId ? { turnId: state.turnId } : {}),
+      ...(state.finalTurn?.status ? { turnStatus: state.finalTurn.status } : {}),
+      ...(state.finalTurn && state.finalTurn.status !== 'completed'
+        ? { turnError: describeTurnError(state.finalTurn) }
+        : {}),
       ...(adapter.model ? { model: adapter.model } : {}),
       ...(adapter.effort ? { effort: adapter.effort } : {}),
       ...(adapter.cwd !== undefined ? { cwd: adapter.cwd } : {}),
       artifacts: {
         statusPath,
         logPath,
-        ...(outputArtifacts.length > 0 ? { outputArtifacts } : {}),
+        ...(state.outputArtifacts.length > 0 ? { outputArtifacts: state.outputArtifacts } : {}),
       },
       ...(errorMessage ? { error: errorMessage } : {}),
     }

@@ -12,12 +12,12 @@ describe('control-plane repair schedule evidence', () => {
     ).toEqual(['agents', 'agents-ci'])
   })
 
-  it('keeps legacy workflow namespace env as a compatibility fallback only', () => {
+  it('does not read legacy workflow namespace env aliases', () => {
     expect(
       resolveRepairScheduleEvidenceNamespaces('agents', {
         JANGAR_WORKFLOW_RELIABILITY_NAMESPACES: 'agents,agents-legacy',
       }),
-    ).toEqual(['agents', 'agents-legacy'])
+    ).toEqual(['agents'])
   })
 
   it('falls back to the requested namespace plus agents when the namespace setting is invalid', () => {

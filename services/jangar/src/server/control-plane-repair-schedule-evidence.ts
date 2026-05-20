@@ -2,7 +2,6 @@ import { parseNamespaceScopeEnv } from '~/server/namespace-scope'
 
 const DEFAULT_REPAIR_SCHEDULE_EVIDENCE_NAMESPACES = ['agents']
 const REPAIR_SCHEDULE_EVIDENCE_NAMESPACES_ENV = 'JANGAR_REPAIR_SCHEDULE_EVIDENCE_NAMESPACES'
-const LEGACY_WORKFLOW_RELIABILITY_NAMESPACES_ENV = 'JANGAR_WORKFLOW_RELIABILITY_NAMESPACES'
 
 const normalizeMessage = (value: unknown) => (value instanceof Error ? value.message : String(value))
 
@@ -22,15 +21,11 @@ export const resolveRepairScheduleEvidenceNamespaces = (
   env: Record<string, string | undefined> = process.env,
 ) => {
   const fallback = uniqueStrings([namespace, ...DEFAULT_REPAIR_SCHEDULE_EVIDENCE_NAMESPACES])
-  const envName =
-    env[REPAIR_SCHEDULE_EVIDENCE_NAMESPACES_ENV] !== undefined
-      ? REPAIR_SCHEDULE_EVIDENCE_NAMESPACES_ENV
-      : LEGACY_WORKFLOW_RELIABILITY_NAMESPACES_ENV
 
   try {
     return uniqueStrings(
       parseNamespaceScopeEnv(
-        envName,
+        REPAIR_SCHEDULE_EVIDENCE_NAMESPACES_ENV,
         {
           fallback,
           label: 'repair schedule evidence',
@@ -39,7 +34,7 @@ export const resolveRepairScheduleEvidenceNamespaces = (
       ),
     )
   } catch (error) {
-    console.warn(`[jangar] failed to parse ${envName}: ${normalizeMessage(error)}`)
+    console.warn(`[jangar] failed to parse ${REPAIR_SCHEDULE_EVIDENCE_NAMESPACES_ENV}: ${normalizeMessage(error)}`)
     return fallback
   }
 }

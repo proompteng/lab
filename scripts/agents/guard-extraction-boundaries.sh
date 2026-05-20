@@ -188,19 +188,13 @@ fail_if_matches \
   "${ROOT_DIR}/packages/agent-contracts/src/agent-messages-client.ts"
 
 fail_if_matches \
-  "AgentRun callback contracts must not expose legacy workflow-shaped identity parsing outside the contract sanitizer" \
-  'removeWorkflowIdentityFields' \
-  "${ROOT_DIR}/services/jangar/src/server/codex-judge.ts" \
+  "AgentRun callback contracts must not expose legacy workflow-shaped identity parsing" \
+  'removeWorkflowIdentityFields|stripLegacyWorkflowIdentityFields|LEGACY_WORKFLOW_IDENTITY_KEYS|workflowUid|workflow_uid|workflowName|workflow_name|workflowNamespace|workflow_namespace|workflowStep|workflow_step|workflowStage|workflow_stage' \
   "${ROOT_DIR}/packages/agent-contracts/src/agent-run-callbacks.ts"
 
 fail_if_matches \
   "AgentRun callback contracts must not export legacy workflow-shaped identity cleanup" \
   'export\s+(const|function)\s+stripLegacyWorkflowIdentityFields|export\s+const\s+LEGACY_WORKFLOW_IDENTITY_KEYS' \
-  "${ROOT_DIR}/packages/agent-contracts/src/agent-run-callbacks.ts"
-
-require_matches \
-  "AgentRun callback contracts must sanitize legacy workflow-shaped identity fields before domain persistence" \
-  'stripLegacyWorkflowIdentityFields' \
   "${ROOT_DIR}/packages/agent-contracts/src/agent-run-callbacks.ts"
 
 fail_if_path_exists \
@@ -461,6 +455,11 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-config.ts" \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-material-reentry-clearinghouse.ts" \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-material-reentry-alpha-closure.ts"
+
+fail_if_matches \
+  "Jangar repair schedule evidence must not fall back to retired workflow reliability namespace env names" \
+  'JANGAR_WORKFLOW_RELIABILITY_NAMESPACES' \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-repair-schedule-evidence.ts"
 
 fail_if_matches \
   "Jangar must not create or type the retired workflow_comms agent-message store after Agents owns agent-message storage" \

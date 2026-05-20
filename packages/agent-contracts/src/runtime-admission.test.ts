@@ -71,6 +71,12 @@ describe('runtime admission proof surface', () => {
     expect(surface.runtimeProofCells).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
+          proof_kind: 'image_digest',
+          proof_subject: 'collaboration:image',
+          expected_ref: 'RUNTIME_IMAGE',
+          status: 'healthy',
+        }),
+        expect.objectContaining({
           proof_kind: 'helper_asset',
           proof_subject: 'binary:codex-nats-publish',
           status: 'missing',

@@ -229,9 +229,11 @@ const buildRuntimeProofCell = (input: {
 const buildRuntimeProofCellsForWarrant = ({
   recoveryWarrantId,
   runtimeKits,
+  imageExpectedRef,
 }: {
   recoveryWarrantId: string
   runtimeKits: RuntimeKitStatus[]
+  imageExpectedRef: string
 }) =>
   runtimeKits.flatMap((kit) => {
     const imageRef = kit.image_ref.trim()
@@ -240,7 +242,7 @@ const buildRuntimeProofCellsForWarrant = ({
       kit,
       proofKind: 'image_digest',
       proofSubject: `${kit.kit_class}:image`,
-      expectedRef: 'JANGAR_RUNTIME_IMAGE',
+      expectedRef: imageExpectedRef,
       observedRef: imageRef.length > 0 ? imageRef : null,
       artifactRef: imageRef.length > 0 ? imageRef : null,
       contentHash: imageRef.length > 0 ? shortDigest(hashText(imageRef)) : null,
@@ -451,9 +453,11 @@ const buildProjectionWatermark = ({
 export const buildRuntimeProofSurface = ({
   runtimeKits,
   admissionPassports,
+  imageExpectedRef = 'RUNTIME_IMAGE',
 }: {
   runtimeKits: RuntimeKitStatus[]
   admissionPassports: AdmissionPassportStatus[]
+  imageExpectedRef?: string
 }) => {
   const runtimeKitById = new Map(runtimeKits.map((kit) => [kit.runtime_kit_id, kit]))
   const recoveryWarrants: RecoveryWarrantStatus[] = []
@@ -470,6 +474,7 @@ export const buildRuntimeProofSurface = ({
       const proofCells = buildRuntimeProofCellsForWarrant({
         recoveryWarrantId,
         runtimeKits: requiredRuntimeKits,
+        imageExpectedRef,
       })
       const projectionWatermarkIds = projectionConsumerKeysForWarrant(executionClass).map((consumerKey) =>
         buildProjectionWatermarkId({
