@@ -1,15 +1,30 @@
-import type { AgentsServiceJsonResult, EnvSource } from './agents-service-client'
 import {
-  fetchAgentsResourceList,
-  type AgentsResourceListOptions,
-  type AgentsResourcesResult,
-} from './agents-resource-endpoints'
+  appendAgentsListParams,
+  buildAgentsServiceUrl,
+  fetchAgentsJson,
+  servicePath,
+  type AgentsResourceListInput,
+  type AgentsServiceJsonResult,
+  type EnvSource,
+} from './agents-http'
 
-export type AgentsJobResourceListInput = AgentsResourceListOptions
+export type AgentsJobResourceListInput = AgentsResourceListInput
 
-export type { AgentsResourcesResult }
+export type AgentsJobResource = Record<string, unknown>
+
+export type AgentsJobResourcesResult = {
+  ok: boolean
+  kind?: 'Job' | string | null
+  namespace?: string | null
+  total?: number | null
+  items: AgentsJobResource[]
+}
 
 export const fetchJobResourcesFromAgentsService = async (
   input: AgentsJobResourceListInput = {},
   env: EnvSource = process.env,
-): Promise<AgentsServiceJsonResult<AgentsResourcesResult>> => fetchAgentsResourceList('/v1/jobs/resources', input, env)
+): Promise<AgentsServiceJsonResult<AgentsJobResourcesResult>> => {
+  const targetUrl = buildAgentsServiceUrl('/v1/jobs/resources', env)
+  appendAgentsListParams(targetUrl, input)
+  return fetchAgentsJson<AgentsJobResourcesResult>(servicePath(targetUrl), env)
+}

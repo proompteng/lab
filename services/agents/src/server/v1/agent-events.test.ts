@@ -97,4 +97,41 @@ describe('getAgentEvents', () => {
 
     await reader.cancel()
   })
+
+  it('accepts AgentRun name and namespace as the event stream identity', async () => {
+    const createdAt = new Date().toISOString()
+    listMessagesMock.mockResolvedValueOnce([
+      {
+        id: 'msg-1',
+        agentRunUid: null,
+        agentRunName: 'demo',
+        agentRunNamespace: 'agents',
+        runId: null,
+        stepId: null,
+        agentId: 'agent-1',
+        role: 'assistant',
+        kind: 'status',
+        timestamp: createdAt,
+        channel: null,
+        stage: 'status',
+        content: 'hello by name',
+        attrs: {},
+        dedupeKey: null,
+        createdAt,
+      },
+    ])
+
+    const request = new Request('http://localhost/v1/agent-events?agentRunName=demo&agentRunNamespace=agents&limit=1')
+    const response = await getAgentEvents(request)
+
+    expect(response.status).toBe(200)
+    expect(listMessagesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentRunName: 'demo',
+        agentRunNamespace: 'agents',
+      }),
+    )
+
+    await response.body?.cancel()
+  })
 })

@@ -42,6 +42,8 @@ export class AgentMessagesPublisher extends Context.Tag('AgentMessagesPublisher'
 export type AgentMessagesSkipIfExisting = {
   runId?: string | null
   agentRunUid?: string | null
+  agentRunName?: string | null
+  agentRunNamespace?: string | null
 }
 
 export type IngestAgentMessagesInput = {
@@ -126,8 +128,10 @@ const parseSkipIfExisting = (value: unknown): AgentMessagesSkipIfExisting | unde
   if (!record) return undefined
   const runId = readNullableString(record.runId ?? record.run_id)
   const agentRunUid = readNullableString(record.agentRunUid ?? record.agent_run_uid)
-  if (!runId && !agentRunUid) return undefined
-  return { runId, agentRunUid }
+  const agentRunName = readNullableString(record.agentRunName ?? record.agent_run_name)
+  const agentRunNamespace = readNullableString(record.agentRunNamespace ?? record.agent_run_namespace)
+  if (!runId && !agentRunUid && !agentRunName) return undefined
+  return { runId, agentRunUid, agentRunName, agentRunNamespace }
 }
 
 export const parseAgentMessagesIngestPayload = (payload: Record<string, unknown>): IngestAgentMessagesInput => {

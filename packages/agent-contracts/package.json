@@ -69,7 +69,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "bunx vitest run ./src/agents-service-client.test.ts ./src/agents-ready.test.ts ./src/agent-message-artifacts.test.ts ./src/agent-run-callbacks.test.ts ./src/codex-orchestration-parameters.test.ts ./src/signals-client.test.ts",
+    "test": "bunx vitest run ./src/agents-clients.test.ts ./src/agents-ready.test.ts ./src/agent-message-artifacts.test.ts ./src/agent-run-callbacks.test.ts ./src/codex-orchestration-parameters.test.ts ./src/signals-client.test.ts",
     "tsc": "tsc --noEmit -p tsconfig.json",
     "lint": "bunx oxfmt --check src",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",

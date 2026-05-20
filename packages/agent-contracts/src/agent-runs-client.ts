@@ -1,33 +1,55 @@
 import {
-  resolveAgentsServiceBaseUrl,
-  resolveAgentsServiceClientName,
+  appendAgentsListParams,
+  buildAgentsServiceUrl,
+  fetchAgentsJson,
+  patchAgentsJson,
+  postAgentsJson,
+  servicePath,
+  type AgentsResourceListInput,
   type AgentsServiceJsonResult,
   type EnvSource,
-} from './agents-service-client'
+} from './agents-http'
 
-export { fetchAgentRunsFromAgentsService, submitAgentRunToAgentsService } from './agents-service-client'
-export type {
-  AgentsAgentRunListInput,
-  AgentsAgentRunListItem,
-  AgentsAgentRunListResult,
-  AgentsAgentRunSubmitInput,
-  AgentsServiceJsonResult,
-} from './agents-service-client'
+export type { AgentsServiceJsonResult } from './agents-http'
 
-export type AgentsAgentRunResourceListInput = {
-  namespace?: string | null
-  limit?: number | null
-  labelSelector?: string | null
-  phase?: string | null
-  runtime?: string | null
+export type AgentsAgentRunSubmitInput = {
+  deliveryId: string
+  payload: Record<string, unknown>
+  dryRun?: string | null
 }
+
+export type AgentsAgentRunListItem = {
+  id: string
+  agentName: string
+  deliveryId: string
+  provider: string
+  status: string
+  externalRunId: string | null
+  payload: Record<string, unknown>
+  createdAt?: string | null
+  updatedAt?: string | null
+}
+
+export type AgentsAgentRunListInput = {
+  agentName?: string | null
+  statuses?: string[] | null
+  limit?: number | null
+}
+
+export type AgentsAgentRunListResult = {
+  ok: boolean
+  runs: AgentsAgentRunListItem[]
+}
+
+export type AgentsAgentRunResource = Record<string, unknown>
+export type AgentsAgentRunResourceListInput = AgentsResourceListInput
 
 export type AgentsAgentRunResourcesResult = {
   ok: boolean
   kind?: 'AgentRun' | string | null
   namespace?: string | null
   total?: number | null
-  items: Record<string, unknown>[]
+  items: AgentsAgentRunResource[]
 }
 
 export type AgentsAgentRunAnnotationsPatchInput = {
@@ -36,104 +58,55 @@ export type AgentsAgentRunAnnotationsPatchInput = {
   annotations: Record<string, string | null>
 }
 
-const getErrorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
+export const submitAgentRunToAgentsService = async (
+  input: AgentsAgentRunSubmitInput,
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<Record<string, unknown>>> => {
+  const targetUrl = buildAgentsServiceUrl('/v1/agent-runs', env)
+  if (input.dryRun != null) {
+    targetUrl.searchParams.set('dryRun', input.dryRun)
+  }
+  return postAgentsJson<Record<string, unknown>>(servicePath(targetUrl), input.payload, {
+    env,
+    idempotencyKey: input.deliveryId,
+  })
+}
 
-const readJsonBody = async (response: Response): Promise<Record<string, unknown> | null> =>
-  response.json().catch(() => null) as Promise<Record<string, unknown> | null>
+export const fetchAgentRunsFromAgentsService = async (
+  input: AgentsAgentRunListInput,
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<AgentsAgentRunListResult>> => {
+  const params = new URLSearchParams()
+  const agentName = input.agentName?.trim()
+  if (agentName) params.set('agentName', agentName)
+  const statuses = (input.statuses ?? []).map((status) => status.trim()).filter((status) => status.length > 0)
+  if (statuses.length > 0) params.set('status', statuses.join(','))
+  if (input.limit && input.limit > 0) params.set('limit', String(Math.trunc(input.limit)))
 
-const getBodyError = (body: Record<string, unknown> | null) => {
-  const error = body?.error
-  return typeof error === 'string' && error.trim().length > 0 ? error : null
+  const suffix = params.size > 0 ? `?${params.toString()}` : ''
+  return fetchAgentsJson<AgentsAgentRunListResult>(`/v1/agent-runs${suffix}`, env)
 }
 
 export const fetchAgentRunResourcesFromAgentsService = async (
   input: AgentsAgentRunResourceListInput = {},
   env: EnvSource = process.env,
 ): Promise<AgentsServiceJsonResult<AgentsAgentRunResourcesResult>> => {
-  const baseUrl = resolveAgentsServiceBaseUrl(env)
-  const targetUrl = new URL('/v1/agent-runs/resources', `${baseUrl}/`)
-  const namespace = input.namespace?.trim()
-  if (namespace) targetUrl.searchParams.set('namespace', namespace)
-  const labelSelector = input.labelSelector?.trim()
-  if (labelSelector) targetUrl.searchParams.set('labelSelector', labelSelector)
-  const phase = input.phase?.trim()
-  if (phase) targetUrl.searchParams.set('phase', phase)
-  const runtime = input.runtime?.trim()
-  if (runtime) targetUrl.searchParams.set('runtime', runtime)
-  if (input.limit && input.limit > 0) targetUrl.searchParams.set('limit', String(Math.trunc(input.limit)))
-
-  try {
-    const upstream = await fetch(targetUrl, {
-      headers: {
-        accept: 'application/json',
-        'x-agents-client': resolveAgentsServiceClientName(env),
-      },
-      method: 'GET',
-    })
-    const body = (await readJsonBody(upstream)) as AgentsAgentRunResourcesResult | null
-    if (upstream.ok && body !== null) {
-      return {
-        ok: true,
-        status: upstream.status,
-        body,
-      }
-    }
-    return {
-      ok: false,
-      status: upstream.status,
-      body,
-      error: getBodyError(body) ?? upstream.statusText ?? `Agents service returned HTTP ${upstream.status}`,
-    }
-  } catch (error) {
-    return {
-      ok: false,
-      status: 0,
-      body: null,
-      error: getErrorMessage(error),
-    }
-  }
+  const targetUrl = buildAgentsServiceUrl('/v1/agent-runs/resources', env)
+  appendAgentsListParams(targetUrl, input)
+  return fetchAgentsJson<AgentsAgentRunResourcesResult>(servicePath(targetUrl), env)
 }
 
 export const patchAgentRunAnnotationsViaAgentsService = async (
   input: AgentsAgentRunAnnotationsPatchInput,
   env: EnvSource = process.env,
 ): Promise<AgentsServiceJsonResult<Record<string, unknown>>> => {
-  const baseUrl = resolveAgentsServiceBaseUrl(env)
-  const targetUrl = new URL('/v1/agent-runs/resources', `${baseUrl}/`)
+  const targetUrl = buildAgentsServiceUrl('/v1/agent-runs/resources', env)
   targetUrl.searchParams.set('name', input.name)
   targetUrl.searchParams.set('namespace', input.namespace)
 
-  try {
-    const upstream = await fetch(targetUrl, {
-      body: JSON.stringify({ metadata: { annotations: input.annotations } }),
-      headers: {
-        accept: 'application/json',
-        'content-type': 'application/json',
-        'x-agents-client': resolveAgentsServiceClientName(env),
-      },
-      method: 'PATCH',
-    })
-    const body = await readJsonBody(upstream)
-    if (upstream.ok && body !== null) {
-      return {
-        ok: true,
-        status: upstream.status,
-        body,
-      }
-    }
-
-    return {
-      ok: false,
-      status: upstream.status,
-      body,
-      error: getBodyError(body) ?? upstream.statusText ?? `Agents service returned HTTP ${upstream.status}`,
-    }
-  } catch (error) {
-    return {
-      ok: false,
-      status: 0,
-      body: null,
-      error: getErrorMessage(error),
-    }
-  }
+  return patchAgentsJson<Record<string, unknown>>(
+    servicePath(targetUrl),
+    { metadata: { annotations: input.annotations } },
+    { env },
+  )
 }

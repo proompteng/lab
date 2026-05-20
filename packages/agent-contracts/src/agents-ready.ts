@@ -3,7 +3,7 @@ import {
   type AgentRunIngestionStatus,
   type AgentsControlPlaneStatus,
 } from './control-plane-status'
-import { fetchAgentsServiceJson } from './agents-service-client'
+import { fetchAgentsJson } from './agents-http'
 
 export type AgentsControllerHealthSnapshot = {
   enabled: boolean
@@ -353,7 +353,7 @@ export const buildAgentsReadySnapshot = (input: {
 }
 
 export const getAgentsReadySnapshot = async (): Promise<AgentsReadySnapshot> => {
-  const result = await fetchAgentsServiceJson<AgentsReadyPayload>('/ready')
+  const result = await fetchAgentsJson<AgentsReadyPayload>('/ready')
   return buildAgentsReadySnapshot({
     payload: result.body,
     httpStatus: result.status,
@@ -364,7 +364,7 @@ export const getAgentsReadySnapshot = async (): Promise<AgentsReadySnapshot> => 
 export const getAgentsControlPlaneStatusSnapshot = async (
   namespace = 'agents',
 ): Promise<AgentsControlPlaneStatusSnapshot> => {
-  const result = await fetchAgentsServiceJson<AgentsControlPlaneStatus>(
+  const result = await fetchAgentsJson<AgentsControlPlaneStatus>(
     `/v1/control-plane/status?namespace=${encodeURIComponent(namespace)}`,
   )
   const error = result.ok ? null : (result.error ?? `Agents service returned HTTP ${result.status}`)

@@ -801,10 +801,11 @@ describe('codex judge guardrails', () => {
     expect(parsed.agentRunNamespace).toBe('agents')
   })
 
-  it('strips workflow-shaped identity from artifact fallback notify payloads', async () => {
+  it('receives workflow-shaped identity stripping from the shared callback contract', async () => {
     const privateApi = await requirePrivate()
 
-    const payload = privateApi.removeWorkflowIdentityFields({
+    const parsed = privateApi.parseNotifyPayload({
+      agent_run_id: 'run-current',
       workflow_name: 'legacy-workflow',
       workflow_namespace: 'legacy',
       workflow_uid: 'legacy-uid',
@@ -814,9 +815,7 @@ describe('codex judge guardrails', () => {
       repository: 'proompteng/lab',
     })
 
-    expect(payload).toEqual({
-      agent_run_name: 'agentrun-current',
-      repository: 'proompteng/lab',
-    })
+    expect(parsed.notifyPayload).toMatchObject({ agent_run_name: 'agentrun-current', repository: 'proompteng/lab' })
+    expect(JSON.stringify(parsed.notifyPayload)).not.toContain('workflow')
   })
 })

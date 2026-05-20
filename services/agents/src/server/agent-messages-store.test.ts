@@ -133,4 +133,41 @@ describe('agent messages store', () => {
     expect(messages.map((message) => message.content)).toEqual(['first new event', 'second new event'])
     expect(calls.at(-1)?.sql.toLowerCase()).toContain('order by "created_at" asc')
   })
+
+  it('filters history by AgentRun name and namespace', async () => {
+    const { db, calls } = makeFakeDb([row('msg-1', '2026-05-06T21:34:00.000Z', 'agent run named event')])
+    const store = createAgentMessagesStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+    })
+
+    await store.listMessages({
+      agentRunName: 'agent-run-1',
+      agentRunNamespace: 'agents',
+      limit: 3,
+    })
+
+    const sql = calls.at(-1)?.sql.toLowerCase() ?? ''
+    expect(sql).toContain('"agent_run_name" =')
+    expect(sql).toContain('"agent_run_namespace" =')
+  })
+
+  it('checks existing messages by AgentRun name and namespace', async () => {
+    const { db, calls } = makeFakeDb([{ count: '1' }])
+    const store = createAgentMessagesStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+    })
+
+    await expect(
+      store.hasMessages({
+        agentRunName: 'agent-run-1',
+        agentRunNamespace: 'agents',
+      }),
+    ).resolves.toBe(true)
+
+    const sql = calls.at(-1)?.sql.toLowerCase() ?? ''
+    expect(sql).toContain('"agent_run_name" =')
+    expect(sql).toContain('"agent_run_namespace" =')
+  })
 })

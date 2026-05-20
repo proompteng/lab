@@ -122,15 +122,6 @@ const normalizeOptionalString = (value: unknown) => {
 
 const parseRunCompletePayload = parseAgentRunRunCompletePayload
 const parseNotifyPayload = parseAgentRunNotifyPayload
-const removeWorkflowIdentityFields = (payload: Record<string, unknown>) => {
-  const next = { ...payload }
-  delete next.workflow_name
-  delete next.workflow_namespace
-  delete next.workflow_uid
-  delete next.workflow_stage
-  delete next.workflow_step
-  return next
-}
 
 const parseRepositoryParts = (repository: string) => {
   const [owner, repo] = repository.split('/')
@@ -1165,9 +1156,10 @@ const applyArtifactFallback = async (run: CodexRunRecord, artifacts: ResolvedArt
   const resolvedCommitSha = await resolveCommitSha(run, commitSha)
 
   if (!hasLogExcerpt(logExcerpt) && !prompt && !sessionId && !resolvedCommitSha) return
+  const existingNotifyPayload = isRecord(run.notifyPayload) ? parseNotifyPayload(run.notifyPayload).notifyPayload : {}
 
   const fallbackPayload = {
-    ...(isRecord(run.notifyPayload) ? removeWorkflowIdentityFields(run.notifyPayload) : {}),
+    ...existingNotifyPayload,
     agent_run_name: run.agentRunName,
     agent_run_namespace: run.agentRunNamespace,
     repository,
@@ -1928,7 +1920,6 @@ export const __private = {
   normalizeBranchRef,
   parseNotifyPayload,
   parseRunCompletePayload,
-  removeWorkflowIdentityFields,
   resolveCiContext,
   processRerunQueue,
   writeMemories,

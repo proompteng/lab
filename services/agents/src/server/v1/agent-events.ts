@@ -94,11 +94,13 @@ export const getAgentEvents = async (request: Request) => {
   const url = new URL(request.url)
   const runId = url.searchParams.get('runId')?.trim() || null
   const agentRunUid = url.searchParams.get('agentRunUid')?.trim() || null
+  const agentRunName = url.searchParams.get('agentRunName')?.trim() || null
+  const agentRunNamespace = url.searchParams.get('agentRunNamespace')?.trim() || null
   const channel = url.searchParams.get('channel')?.trim() || null
   const limit = normalizeLimit(url.searchParams.get('limit'))
 
-  if (!runId && !agentRunUid && !channel) {
-    return jsonResponse({ ok: false, error: 'runId, agentRunUid, or channel is required' }, 400)
+  if (!runId && !agentRunUid && !agentRunName && !channel) {
+    return jsonResponse({ ok: false, error: 'runId, agentRunUid, agentRunName, or channel is required' }, 400)
   }
 
   void import('../agent-comms-subscriber')
@@ -110,6 +112,7 @@ export const getAgentEvents = async (request: Request) => {
   const identifiers = new Set<string>()
   if (runId) identifiers.add(runId)
   if (agentRunUid) identifiers.add(agentRunUid)
+  if (agentRunName) identifiers.add(agentRunName)
   if (runId && !agentRunUid) {
     try {
       const resolved = await resolveAgentRunUid(runId)
@@ -137,6 +140,8 @@ export const getAgentEvents = async (request: Request) => {
     const listOnce = () =>
       store.listMessages({
         identifiers: identifiers.size > 0 ? Array.from(identifiers) : undefined,
+        agentRunName,
+        agentRunNamespace,
         channel,
         limit,
       })
@@ -271,9 +276,11 @@ export const getAgentEvents = async (request: Request) => {
             if (identifiers.size > 0) {
               const matchesIdentifier =
                 (record.runId && identifiers.has(record.runId)) ||
-                (record.agentRunUid && identifiers.has(record.agentRunUid))
+                (record.agentRunUid && identifiers.has(record.agentRunUid)) ||
+                (record.agentRunName && identifiers.has(record.agentRunName))
               if (!matchesIdentifier) continue
             }
+            if (agentRunName && agentRunNamespace && record.agentRunNamespace !== agentRunNamespace) continue
             if (channel && record.channel !== channel) continue
             pushRecord(record)
           }

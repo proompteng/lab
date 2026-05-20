@@ -1,15 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { fetchAgentRunResourcesFromAgentsService, patchAgentRunAnnotationsViaAgentsService } from './agent-runs-client'
-import {
-  fetchAgentRunsFromAgentsService,
-  fetchAgentsHealthFromAgentsService,
-  fetchAgentsServiceJson,
-  resolveAgentsServiceBaseUrl,
-  submitAgentRunToAgentsService,
-  submitAgentMessagesToAgentsService,
-  submitOrchestrationRunToAgentsService,
-} from './agents-service-client'
+import { fetchAgentRunsFromAgentsService, submitAgentRunToAgentsService } from './agent-runs-client'
+import { submitAgentMessagesToAgentsService } from './agent-messages-client'
+import { fetchAgentsHealthFromAgentsService } from './agents-health-client'
+import { fetchAgentsJson, resolveAgentsServiceBaseUrl } from './agents-http'
+import { submitOrchestrationRunToAgentsService } from './orchestration-runs-client'
 import { fetchMemoryResourceFromAgentsService, submitMemoryOperationToAgentsService } from './memory-client'
 import { submitSwarmRequirementSignalToAgentsService } from './signals-client'
 import { fetchStageTargetResourceFromAgentsService, fetchSwarmResourcesFromAgentsService } from './swarm-read-client'
@@ -18,7 +14,7 @@ const originalFetch = globalThis.fetch
 const getHeader = (headers: RequestInit['headers'], name: string) =>
   headers instanceof Headers ? headers.get(name) : ((headers as Record<string, string> | undefined)?.[name] ?? null)
 
-describe('agents-service-client', () => {
+describe('agents typed service clients', () => {
   afterEach(() => {
     globalThis.fetch = originalFetch
   })
@@ -40,7 +36,7 @@ describe('agents-service-client', () => {
     })
     globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
 
-    const result = await fetchAgentsServiceJson<{ status: string }>('/health', {
+    const result = await fetchAgentsJson<{ status: string }>('/health', {
       AGENTS_SERVICE_BASE_URL: 'http://agents.test',
     })
 
@@ -556,7 +552,7 @@ describe('agents-service-client', () => {
 
     const result = await submitAgentMessagesToAgentsService(
       {
-        skipIfExisting: { runId: 'run-1' },
+        skipIfExisting: { agentRunName: 'agent-run-1', agentRunNamespace: 'agents', runId: 'run-1' },
         messages: [
           {
             agentRunUid: 'agent-run-uid-1',
@@ -597,7 +593,7 @@ describe('agents-service-client', () => {
     expect(getHeader(init.headers, 'x-agents-client')).toBe('agent-contracts')
     expect(typeof init.body).toBe('string')
     expect(JSON.parse(init.body as string)).toMatchObject({
-      skipIfExisting: { runId: 'run-1' },
+      skipIfExisting: { agentRunName: 'agent-run-1', agentRunNamespace: 'agents', runId: 'run-1' },
       messages: [{ runId: 'run-1', content: 'hello' }],
     })
     expect(result).toEqual({ inserted: 1, messages: [{ id: 'msg-1' }], skipped: false })

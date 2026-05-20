@@ -40,7 +40,12 @@ export type AgentMessageInput = {
 }
 
 export type AgentMessagesStore = {
-  hasMessages: (input: { runId?: string | null; agentRunUid?: string | null }) => Promise<boolean>
+  hasMessages: (input: {
+    runId?: string | null
+    agentRunUid?: string | null
+    agentRunName?: string | null
+    agentRunNamespace?: string | null
+  }) => Promise<boolean>
   insertMessages: (messages: AgentMessageInput[]) => Promise<AgentMessageRecord[]>
   listMessages: (input: ListAgentMessagesInput) => Promise<AgentMessageRecord[]>
   close: () => Promise<void>
@@ -88,13 +93,26 @@ const ensureSchema = async (db: Db) => {
   await ensureMigrations(db)
 }
 
-const countRows = async (db: Db, where: { runId?: string | null; agentRunUid?: string | null }) => {
-  const { runId, agentRunUid } = where
+const countRows = async (
+  db: Db,
+  where: {
+    runId?: string | null
+    agentRunUid?: string | null
+    agentRunName?: string | null
+    agentRunNamespace?: string | null
+  },
+) => {
+  const { runId, agentRunUid, agentRunName, agentRunNamespace } = where
   let query = db.selectFrom(`${SCHEMA}.${TABLE}`).select(sql<number>`count(*)`.as('count'))
   if (runId) {
     query = query.where('run_id', '=', runId)
   } else if (agentRunUid) {
     query = query.where('agent_run_uid', '=', agentRunUid)
+  } else if (agentRunName) {
+    query = query.where('agent_run_name', '=', agentRunName)
+    if (agentRunNamespace) {
+      query = query.where('agent_run_namespace', '=', agentRunNamespace)
+    }
   } else {
     return 0
   }
@@ -143,6 +161,8 @@ export type ListAgentMessagesInput = {
   identifiers?: string[]
   runId?: string | null
   agentRunUid?: string | null
+  agentRunName?: string | null
+  agentRunNamespace?: string | null
   channel?: string | null
   since?: string | null
   limit?: number
@@ -163,14 +183,24 @@ export const createAgentMessagesStore = (options: AgentMessagesStoreOptions = {}
     await schemaReady
   }
 
-  const hasMessages = async ({ runId, agentRunUid }: { runId?: string | null; agentRunUid?: string | null }) => {
+  const hasMessages = async (input: {
+    runId?: string | null
+    agentRunUid?: string | null
+    agentRunName?: string | null
+    agentRunNamespace?: string | null
+  }) => {
     await ensureReady()
+    const { runId, agentRunUid, agentRunName, agentRunNamespace } = input
     if (runId) {
       const count = await countRows(db, { runId })
       if (count > 0) return true
     }
     if (agentRunUid) {
       const count = await countRows(db, { agentRunUid })
+      if (count > 0) return true
+    }
+    if (agentRunName) {
+      const count = await countRows(db, { agentRunName, agentRunNamespace })
       if (count > 0) return true
     }
     return false
@@ -222,20 +252,31 @@ export const createAgentMessagesStore = (options: AgentMessagesStoreOptions = {}
 
   const listMessages = async (input: ListAgentMessagesInput): Promise<AgentMessageRecord[]> => {
     await ensureReady()
-    const { identifiers, runId, agentRunUid, channel, since } = input
+    const { identifiers, runId, agentRunUid, agentRunName, agentRunNamespace, channel, since } = input
     const limit = normalizeLimit(input.limit)
     let query = db.selectFrom(`${SCHEMA}.${TABLE}`).selectAll()
 
     if (identifiers && identifiers.length > 0) {
       query = query.where((eb) =>
         eb.or(
-          identifiers.map((identifier) => eb.or([eb('run_id', '=', identifier), eb('agent_run_uid', '=', identifier)])),
+          identifiers.map((identifier) =>
+            eb.or([
+              eb('run_id', '=', identifier),
+              eb('agent_run_uid', '=', identifier),
+              eb('agent_run_name', '=', identifier),
+            ]),
+          ),
         ),
       )
     } else if (runId) {
       query = query.where('run_id', '=', runId)
     } else if (agentRunUid) {
       query = query.where('agent_run_uid', '=', agentRunUid)
+    } else if (agentRunName) {
+      query = query.where('agent_run_name', '=', agentRunName)
+      if (agentRunNamespace) {
+        query = query.where('agent_run_namespace', '=', agentRunNamespace)
+      }
     }
 
     if (channel) {

@@ -184,8 +184,14 @@ fail_if_matches \
   "${ROOT_DIR}/packages/agent-contracts/src/agents-service-client.ts"
 
 fail_if_matches \
-  "AgentRun callback contracts must not export legacy workflow-shaped identity cleanup or parsing" \
-  'removeLegacyWorkflowIdentityFields|workflowUid|workflow_uid|workflowName|workflow_name|workflowNamespace|workflow_namespace|workflowStep|workflow_step|workflowStage|workflow_stage' \
+  "AgentRun callback contracts must not expose legacy workflow-shaped identity parsing outside the contract sanitizer" \
+  'removeWorkflowIdentityFields' \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge.ts" \
+  "${ROOT_DIR}/packages/agent-contracts/src/agent-run-callbacks.ts"
+
+require_matches \
+  "AgentRun callback contracts must sanitize legacy workflow-shaped identity fields before domain persistence" \
+  'stripLegacyWorkflowIdentityFields' \
   "${ROOT_DIR}/packages/agent-contracts/src/agent-run-callbacks.ts"
 
 fail_if_path_exists \
@@ -1001,13 +1007,13 @@ fail_if_matches \
 fail_if_matches_including_tests \
   "Agents service and contract tests must not use Jangar whitepaper fixtures for generic control-plane APIs" \
   'whitepaper-run|app=whitepaper|jangar\.proompteng\.ai/whitepaper' \
-  "${ROOT_DIR}/packages/agent-contracts/src/agents-service-client.test.ts" \
+  "${ROOT_DIR}/packages/agent-contracts/src/agents-clients.test.ts" \
   "${ROOT_DIR}/services/agents/src/routes/api/agents/control-plane/resource-cache.test.ts"
 
 fail_if_matches_including_tests \
   "Agents service and contract tests must use domain-neutral fixtures at the generic Agents boundary" \
   'Jangar|jangar|Torghut|torghut|whitepaper|registry\.example/jangar|marco-silva-jangar' \
-  "${ROOT_DIR}/packages/agent-contracts/src/agents-service-client.test.ts" \
+  "${ROOT_DIR}/packages/agent-contracts/src/agents-clients.test.ts" \
   "${ROOT_DIR}/packages/agent-contracts/src/signals-client.test.ts" \
   "${ROOT_DIR}/services/agents/src/routes/v1/agent-runs.test.ts" \
   "${ROOT_DIR}/services/agents/src/routes/v1/agent-runs/resources.test.ts" \

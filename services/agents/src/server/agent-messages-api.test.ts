@@ -54,10 +54,19 @@ describe('agent messages ingest API', () => {
           dedupe_key: 'run-1:1',
         },
       ],
-      skip_if_existing: { run_id: 'run-1' },
+      skip_if_existing: {
+        agent_run_name: 'agent-run-1',
+        agent_run_namespace: 'agents',
+        run_id: 'run-1',
+      },
     })
 
-    expect(parsed.skipIfExisting).toEqual({ runId: 'run-1', agentRunUid: null })
+    expect(parsed.skipIfExisting).toEqual({
+      agentRunName: 'agent-run-1',
+      agentRunNamespace: 'agents',
+      agentRunUid: null,
+      runId: 'run-1',
+    })
     expect(parsed.messages[0]).toMatchObject({
       agentRunUid: 'agent-run-uid',
       runId: 'run-1',
@@ -132,5 +141,39 @@ describe('agent messages ingest API', () => {
     expect(result).toEqual({ inserted: [], skipped: true })
     expect(store.insertMessages).not.toHaveBeenCalled()
     expect(store.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('checks existing messages by AgentRun name and namespace', async () => {
+    const store = createStore({ hasMessages: vi.fn(async () => true) })
+
+    const result = await Effect.runPromise(
+      ingestAgentMessagesEffect({
+        skipIfExisting: { agentRunName: 'agent-run-1', agentRunNamespace: 'agents' },
+        messages: [
+          {
+            agentRunUid: null,
+            agentRunName: 'agent-run-1',
+            agentRunNamespace: 'agents',
+            runId: null,
+            stepId: null,
+            agentId: null,
+            role: 'assistant',
+            kind: 'message',
+            timestamp: '2026-05-19T12:00:00.000Z',
+            channel: null,
+            stage: null,
+            content: 'hello',
+            attrs: {},
+            dedupeKey: 'agent-run-1:1',
+          },
+        ],
+      }).pipe(Effect.provide(createStoreLayer(store))),
+    )
+
+    expect(store.hasMessages).toHaveBeenCalledWith({
+      agentRunName: 'agent-run-1',
+      agentRunNamespace: 'agents',
+    })
+    expect(result).toEqual({ inserted: [], skipped: true })
   })
 })
