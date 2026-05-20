@@ -128,7 +128,7 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('JANGAR_CODEX_RERUN_ORCHESTRATION|JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION')
     expect(content).toContain('Jangar Codex judge must not own AgentRun rerun queue after Agents rerun API extraction')
     expect(content).toContain('rerunOrchestrationName|rerunOrchestrationNamespace')
-    expect(content).toContain('agent-runs/\\$id/(reruns|callbacks)')
+    expect(content).toContain('agent-runs/[$]id/(reruns|callbacks)')
     expect(content).toContain('legacy generic runner image aliases')
     expect(content).toContain('AGENTS_AGENT_IMAGE|JANGAR_AGENT_RUNNER_IMAGE|JANGAR_AGENT_IMAGE')
     expect(content).toContain('runner-level NATS auth for legacy exec progress helpers')

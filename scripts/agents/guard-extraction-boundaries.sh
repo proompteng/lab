@@ -612,7 +612,7 @@ fail_if_matches \
 
 require_matches \
   "Agents service must own AgentRun rerun and callback v1 route registration" \
-  'agent-runs/\$id/(reruns|callbacks)' \
+  'agent-runs/[$]id/(reruns|callbacks)' \
   "${ROOT_DIR}/services/agents/src/server/control-plane.ts" \
   "${ROOT_DIR}/services/agents/package.json"
 
