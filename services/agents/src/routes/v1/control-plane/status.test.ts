@@ -132,8 +132,8 @@ describe('control-plane status route', () => {
     const payload = await response.json()
     expect(payload).toMatchObject({
       service: 'agents',
-      runtime_kits: [],
-      admission_passports: [],
+      runtime_kits: expect.arrayContaining([expect.objectContaining({ kit_class: 'serving' })]),
+      admission_passports: expect.arrayContaining([expect.objectContaining({ consumer_class: 'serving' })]),
       controllers: expect.arrayContaining([expect.objectContaining({ name: 'agents-controller' })]),
       database: expect.any(Object),
     })

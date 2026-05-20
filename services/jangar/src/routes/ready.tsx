@@ -7,6 +7,7 @@ import {
   getAgentsReadySnapshot,
   uniqueStrings,
 } from '@proompteng/agent-contracts/agents-ready'
+import { findAdmissionPassport } from '@proompteng/agent-contracts/runtime-admission'
 
 import type {
   ControlPlaneControllerWitnessQuorum,
@@ -16,7 +17,6 @@ import type {
 } from '~/server/control-plane-status-types'
 import { resolveRuntimeServiceName } from '~/server/runtime-identity'
 import { buildControllerIngestionSettlement } from '~/server/control-plane-controller-ingestion-settlement'
-import { buildRuntimeAdmissionSnapshot, findAdmissionPassport } from '~/server/control-plane-runtime-admission'
 import {
   buildEvidencePressureLedger,
   isEvidencePressureLedgerEnabled,
@@ -262,10 +262,14 @@ export const getReadyHandler = async () => {
   })
   const businessEvidence = buildBusinessEvidence(torghutConsumerEvidence.status, repairBidAdmission)
   const memoryProvider = getMemoryProviderHealth()
-  const runtimeAdmission = buildRuntimeAdmissionSnapshot({
-    now,
-    executionTrust: trust,
-  })
+  const runtimeAdmission = {
+    runtimeKits: agentsStatus.runtime_kits,
+    admissionPassports: agentsStatus.admission_passports,
+    servingPassportId: agentsStatus.serving_passport_id,
+    recoveryWarrants: agentsStatus.recovery_warrants,
+    runtimeProofCells: agentsStatus.runtime_proof_cells,
+    projectionWatermarks: agentsStatus.projection_watermarks,
+  }
   const evidencePressureLedger = isEvidencePressureLedgerEnabled()
     ? buildEvidencePressureLedger({
         now,

@@ -523,6 +523,23 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/db.ts" \
   "${ROOT_DIR}/services/jangar/src/server/migrations/20251229_workflow_comms_agent_messages.ts"
 
+fail_if_path_exists \
+  "Jangar must not retain retired Agents/Codex tombstone migration source files after migration ownership moved to services/agents" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20251229_codex_judge_run_metadata.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20251229_codex_judge_timeouts.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20251229_codex_rerun_submissions.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20251229_workflow_comms_agent_messages.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20251230_codex_judge_webhook_indexes.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20260105_codex_judge_iterations.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20260111_jangar_primitives.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20260111_jangar_primitives_indexes.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20260205_agents_control_plane_cache.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20260208_jangar_agentrun_idempotency.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20260220_remove_prompt_tuning.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20260308_agents_control_plane_component_heartbeats.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20260520_codex_judge_agentrun_columns.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20260520_drop_codex_rerun_submissions.ts"
+
 fail_if_matches \
   "Agents Codex NATS publisher must emit AgentRun-native identity only, without workflow-shaped compatibility fields" \
   'workflow_uid|workflow_name|workflow_namespace|workflowUid|workflowName|workflowNamespace|workflow_stage|workflow_step|workflowStage|workflowStep|WORKFLOW_UID|WORKFLOW_NAME|WORKFLOW_NAMESPACE|WORKFLOW_STAGE|WORKFLOW_STEP' \
@@ -563,7 +580,16 @@ fail_if_matches \
 
 fail_if_path_exists \
   "Jangar must not own the generic runtime proof-surface reducer after agent-contracts owns runtime admission contracts" \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-runtime-admission.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/__tests__/control-plane-runtime-admission.test.ts" \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-runtime-proof-surface.ts"
+
+fail_if_matches \
+  "Jangar ready must consume runtime-admission proof fields from the Agents service, not build them locally" \
+  'buildRuntimeAdmissionSnapshot|~/server/control-plane-runtime-admission|JANGAR_RUNTIME_IMAGE|JANGAR_IMAGE' \
+  "${ROOT_DIR}/services/jangar/src/routes/ready.tsx" \
+  "${ROOT_DIR}/services/jangar/src/server/runtime-tooling-config.ts" \
+  "${ROOT_DIR}/services/jangar/Dockerfile"
 
 fail_if_matches \
   "Jangar control-plane status shim must not redefine generic runtime admission status types" \
@@ -985,6 +1011,11 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/routes/ready.tsx"
 
 fail_if_matches \
+  "Jangar metrics must not retain Agents controller, AgentRun admission, or kube-watch instruments after extraction" \
+  'recordAgent(QueueDepth|RateLimitRejection|Concurrency|RunOutcome|RunResyncAdoptions|RunUntouchedBacklog|RunUntouchedOldestAgeSeconds)|recordReconcileDurationMs|recordKubeWatch(Event|Error|Restart)|jangar_agent(run|s)|jangar_kube_watch' \
+  "${ROOT_DIR}/services/jangar/src/server/metrics.ts"
+
+fail_if_matches \
   "Jangar whitepaper finalizer must not use AGENTS_NAMESPACE as a namespace alias after Agents owns its runtime env" \
   'AGENTS_NAMESPACE' \
   "${ROOT_DIR}/services/jangar/src/server/whitepaper-finalize-consumer.ts"
@@ -1267,6 +1298,8 @@ fail_if_matches \
 
 fail_if_path_exists \
   "Jangar must not retain copied Agents kube watch helpers" \
+  "${ROOT_DIR}/services/jangar/src/server/kubernetes-watch-client.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/__tests__/kubernetes-watch-client.test.ts" \
   "${ROOT_DIR}/services/jangar/src/server/kube-watch.ts" \
   "${ROOT_DIR}/services/jangar/src/server/primitives-watch.ts"
 

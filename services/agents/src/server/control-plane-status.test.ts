@@ -197,6 +197,25 @@ describe('buildAgentsControlPlaneStatus', () => {
       status: 'healthy',
       observed_deployments: 2,
     })
+    expect(status.runtime_kits).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kit_class: 'serving',
+          subject_ref: 'agents:/v1/control-plane/status',
+          decision: 'healthy',
+        }),
+      ]),
+    )
+    expect(status.admission_passports).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          consumer_class: 'serving',
+          decision: 'allow',
+        }),
+      ]),
+    )
+    expect(status.serving_passport_id).toEqual(expect.stringContaining('passport:serving:'))
+    expect(status.runtime_proof_cells.length).toBeGreaterThan(0)
     expect(status.namespaces).toEqual([{ namespace: 'agents', status: 'healthy', degraded_components: [] }])
     expect(status).not.toHaveProperty('torghut_consumer_evidence')
     expect(status).not.toHaveProperty('dependency_quorum')

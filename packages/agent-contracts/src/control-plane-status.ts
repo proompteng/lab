@@ -1,3 +1,11 @@
+import type {
+  AdmissionPassportStatus,
+  ProjectionWatermarkStatus,
+  RecoveryWarrantStatus,
+  RuntimeKitStatus,
+  RuntimeProofCellStatus,
+} from './runtime-admission'
+
 export type ComponentStatus = 'healthy' | 'degraded' | 'disabled' | 'unknown'
 
 export type HeartbeatAuthoritySource = {
@@ -213,12 +221,12 @@ export type AgentsControlPlaneStatus = {
   watch_reliability: ControlPlaneWatchReliability
   agentrun_ingestion: AgentRunIngestionStatus
   control_plane_controller_witness: ControlPlaneControllerWitnessQuorum
-  runtime_kits: unknown[]
-  admission_passports: unknown[]
+  runtime_kits: RuntimeKitStatus[]
+  admission_passports: AdmissionPassportStatus[]
   serving_passport_id: string | null
-  recovery_warrants: unknown[]
-  runtime_proof_cells: unknown[]
-  projection_watermarks: unknown[]
+  recovery_warrants: RecoveryWarrantStatus[]
+  runtime_proof_cells: RuntimeProofCellStatus[]
+  projection_watermarks: ProjectionWatermarkStatus[]
   workflows: WorkflowsReliabilityStatus
   rollout_health: ControlPlaneRolloutHealth
   namespaces: NamespaceStatus[]

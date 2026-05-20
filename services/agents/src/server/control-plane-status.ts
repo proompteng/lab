@@ -2,6 +2,7 @@ import { Context, Data, Effect, Layer } from 'effect'
 
 import { buildControllerWitnessQuorum } from '@proompteng/agent-contracts/controller-witness'
 import { assessAgentRunIngestion, getAgentsControllerHealth, type AgentsControllerHealth } from './agents-controller'
+import { buildRuntimeAdmissionSnapshot } from './control-plane-runtime-admission'
 import type { GrpcStatus } from './control-plane-grpc'
 import { resolveGrpcStatus } from './control-plane-grpc'
 import {
@@ -329,6 +330,9 @@ export const buildAgentsControlPlaneStatus = (
     agentRunIngestion,
     watchReliability,
   })
+  const runtimeAdmission = buildRuntimeAdmissionSnapshot({
+    now,
+  })
 
   return {
     service: input.service ?? resolveRuntimeServiceName(),
@@ -341,12 +345,12 @@ export const buildAgentsControlPlaneStatus = (
     watch_reliability: watchReliability,
     agentrun_ingestion: agentRunIngestion,
     control_plane_controller_witness: controllerWitness,
-    runtime_kits: [],
-    admission_passports: [],
-    serving_passport_id: null,
-    recovery_warrants: [],
-    runtime_proof_cells: [],
-    projection_watermarks: [],
+    runtime_kits: runtimeAdmission.runtimeKits,
+    admission_passports: runtimeAdmission.admissionPassports,
+    serving_passport_id: runtimeAdmission.servingPassportId,
+    recovery_warrants: runtimeAdmission.recoveryWarrants,
+    runtime_proof_cells: runtimeAdmission.runtimeProofCells,
+    projection_watermarks: runtimeAdmission.projectionWatermarks,
     workflows: runtimeEvidence?.workflows ?? unknownWorkflows(),
     rollout_health: rolloutHealth,
     namespaces: [

@@ -11,44 +11,22 @@ describe('migration registration', () => {
       .filter((name) => name.endsWith('.ts'))
       .map((name) => name.replace(/\.ts$/, ''))
       .sort()
+    const expectedRegisteredMigrations = [...migrationFiles, ...__test__.getRetiredMigrationNames()].sort()
 
-    expect(__test__.getRegisteredMigrations()).toEqual(migrationFiles)
+    expect(__test__.getRegisteredMigrations()).toEqual(expectedRegisteredMigrations)
   })
 
-  it('keeps Agents-owned historical migrations as no-op tombstones', () => {
-    const tombstoneMigrationFiles = [
-      '20251229_codex_judge_run_metadata',
-      '20251229_codex_judge_timeouts',
-      '20251229_codex_rerun_submissions',
-      '20251229_workflow_comms_agent_messages',
-      '20251230_codex_judge_webhook_indexes',
-      '20260105_codex_judge_iterations',
-      '20260111_jangar_primitives',
-      '20260111_jangar_primitives_indexes',
-      '20260205_agents_control_plane_cache',
-      '20260208_jangar_agentrun_idempotency',
-      '20260220_remove_prompt_tuning',
-      '20260308_agents_control_plane_component_heartbeats',
-      '20260520_codex_judge_agentrun_columns',
-      '20260520_drop_codex_rerun_submissions',
-    ]
-    const ddlPatterns = [
-      /\bsql`/i,
-      /\bcreate\s+(schema|table|index|unique\s+index)\b/i,
-      /\balter\s+table\b/i,
-      /\binsert\s+into\b/i,
-      /\bdelete\s+from\b/i,
-      /\bdrop\s+(schema|table|index)\b/i,
-    ]
+  it('keeps Agents-owned historical migrations registered only as central tombstones', () => {
+    const migrationDir = new URL('../migrations', import.meta.url)
+    const migrationFiles = new Set(
+      readdirSync(fileURLToPath(migrationDir))
+        .filter((name) => name.endsWith('.ts'))
+        .map((name) => name.replace(/\.ts$/, '')),
+    )
 
-    for (const name of tombstoneMigrationFiles) {
+    for (const name of __test__.getRetiredMigrationNames()) {
       expect(__test__.getRegisteredMigrations()).toContain(name)
-      const migrationPath = new URL(`../migrations/${name}.ts`, import.meta.url)
-      const content = readFileSync(fileURLToPath(migrationPath), 'utf8')
-
-      for (const pattern of ddlPatterns) {
-        expect(content).not.toMatch(pattern)
-      }
+      expect(migrationFiles).not.toContain(name)
     }
   })
 
@@ -109,14 +87,9 @@ describe('migration registration', () => {
     expect(normalized).toContain('on torghut_control_plane.quant_metrics_latest(account, "window")')
   })
 
-  it('keeps the Codex judge AgentRun column migration registered as an Agents backfill handoff', () => {
-    const migrationPath = new URL('../migrations/20260520_codex_judge_agentrun_columns.ts', import.meta.url)
-    const normalized = readFileSync(fileURLToPath(migrationPath), 'utf8').toLowerCase().replace(/\s+/g, ' ')
-
+  it('keeps the Codex judge AgentRun column migration registered as a retired Agents backfill handoff', () => {
     expect(__test__.getRegisteredMigrations()).toContain('20260520_codex_judge_agentrun_columns')
-    expect(normalized).toContain('projection backfill')
-    expect(normalized).not.toContain('rename column')
-    expect(normalized).not.toContain('create unique index')
+    expect(__test__.getRetiredMigrationNames()).toContain('20260520_codex_judge_agentrun_columns')
   })
 })
 

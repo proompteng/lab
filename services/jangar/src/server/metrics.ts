@@ -21,14 +21,6 @@ type JangarMetrics = {
   githubReviewsSubmitted: Counter
   githubMergeAttempts: Counter
   githubMergeFailures: Counter
-  agentQueueDepth: Histogram
-  agentRateLimitRejections: Counter
-  agentConcurrency: Histogram
-  agentRunOutcomes: Counter
-  agentRunResyncAdoptions: Counter
-  agentRunUntouchedBacklog: Histogram
-  agentRunUntouchedOldestAgeSeconds: Histogram
-  reconcileDurationMs: Histogram
   torghutQuantFrames: Counter
   torghutQuantStaleFrames: Counter
   torghutQuantComputeErrors: Counter
@@ -39,9 +31,6 @@ type JangarMetrics = {
   torghutMarketContextBatchRunDurationMs: Histogram
   torghutMarketContextBatchRunSymbols: Histogram
   torghutMarketContextBatchFreshnessLagSeconds: Histogram
-  kubeWatchEvents: Counter
-  kubeWatchErrors: Counter
-  kubeWatchRestarts: Counter
 }
 
 type MetricsState = {
@@ -56,7 +45,7 @@ type MetricsState = {
   initError?: string | null
 }
 
-type SseStream = 'chat' | 'agent-events' | 'control-plane' | 'torghut-quant' | 'torghut-decision'
+type SseStream = 'chat' | 'torghut-quant' | 'torghut-decision'
 
 type MetricsAttributes = Record<string, string>
 
@@ -148,58 +137,6 @@ export const recordGithubMergeFailure = () => {
   recordCounter(metricsState.metrics?.githubMergeFailures, 1)
 }
 
-export const recordAgentQueueDepth = (depth: number, attributes?: MetricsAttributes) => {
-  if (!metricsState.enabled) return
-  if (Number.isFinite(depth)) {
-    recordHistogram(metricsState.metrics?.agentQueueDepth, depth, attributes)
-  }
-}
-
-export const recordAgentRateLimitRejection = (scope: string, attributes?: MetricsAttributes) => {
-  if (!metricsState.enabled) return
-  recordCounter(metricsState.metrics?.agentRateLimitRejections, 1, { scope, ...attributes })
-}
-
-export const recordAgentConcurrency = (count: number, attributes?: MetricsAttributes) => {
-  if (!metricsState.enabled) return
-  if (Number.isFinite(count)) {
-    recordHistogram(metricsState.metrics?.agentConcurrency, count, attributes)
-  }
-}
-
-export const recordAgentRunOutcome = (outcome: string, attributes?: MetricsAttributes) => {
-  if (!metricsState.enabled) return
-  recordCounter(metricsState.metrics?.agentRunOutcomes, 1, { outcome, ...attributes })
-}
-
-export const recordAgentRunResyncAdoptions = (count: number, attributes?: MetricsAttributes) => {
-  if (!metricsState.enabled) return
-  if (Number.isFinite(count) && count > 0) {
-    recordCounter(metricsState.metrics?.agentRunResyncAdoptions, count, attributes)
-  }
-}
-
-export const recordAgentRunUntouchedBacklog = (count: number, attributes?: MetricsAttributes) => {
-  if (!metricsState.enabled) return
-  if (Number.isFinite(count) && count >= 0) {
-    recordHistogram(metricsState.metrics?.agentRunUntouchedBacklog, count, attributes)
-  }
-}
-
-export const recordAgentRunUntouchedOldestAgeSeconds = (ageSeconds: number, attributes?: MetricsAttributes) => {
-  if (!metricsState.enabled) return
-  if (Number.isFinite(ageSeconds) && ageSeconds >= 0) {
-    recordHistogram(metricsState.metrics?.agentRunUntouchedOldestAgeSeconds, ageSeconds, attributes)
-  }
-}
-
-export const recordReconcileDurationMs = (durationMs: number, attributes?: MetricsAttributes) => {
-  if (!metricsState.enabled) return
-  if (Number.isFinite(durationMs) && durationMs >= 0) {
-    recordHistogram(metricsState.metrics?.reconcileDurationMs, durationMs, attributes)
-  }
-}
-
 export const recordTorghutQuantFrame = (window: string, freshnessSeconds: number, maxStalenessSeconds: number) => {
   if (!metricsState.enabled) return
   recordCounter(metricsState.metrics?.torghutQuantFrames, 1, { window })
@@ -285,33 +222,6 @@ export const recordTorghutMarketContextBatchFreshnessLagSeconds = (
   if (Number.isFinite(lagSeconds) && lagSeconds >= 0) {
     recordHistogram(metricsState.metrics?.torghutMarketContextBatchFreshnessLagSeconds, lagSeconds, params)
   }
-}
-
-export const recordKubeWatchEvent = (params: { resource: string; namespace: string; type: string }) => {
-  if (!metricsState.enabled) return
-  recordCounter(metricsState.metrics?.kubeWatchEvents, 1, {
-    resource: normalizeWatchLabel(params.resource),
-    namespace: normalizeWatchLabel(params.namespace),
-    event_type: normalizeWatchLabel(params.type),
-  })
-}
-
-export const recordKubeWatchError = (params: { resource: string; namespace: string; reason: string }) => {
-  if (!metricsState.enabled) return
-  recordCounter(metricsState.metrics?.kubeWatchErrors, 1, {
-    resource: normalizeWatchLabel(params.resource),
-    namespace: normalizeWatchLabel(params.namespace),
-    reason: normalizeWatchLabel(params.reason),
-  })
-}
-
-export const recordKubeWatchRestart = (params: { resource: string; namespace: string; reason: string }) => {
-  if (!metricsState.enabled) return
-  recordCounter(metricsState.metrics?.kubeWatchRestarts, 1, {
-    resource: normalizeWatchLabel(params.resource),
-    namespace: normalizeWatchLabel(params.namespace),
-    reason: normalizeWatchLabel(params.reason),
-  })
 }
 
 const sanitizePrometheusName = (name: string) => name.replace(/[^A-Za-z0-9_:]/g, '_')
@@ -501,32 +411,6 @@ const createMetricsState = (): MetricsState => {
       githubMergeFailures: meter.createCounter('jangar_github_merge_failures_total', {
         description: 'Count of GitHub merge attempts that failed.',
       }),
-      agentQueueDepth: meter.createHistogram('jangar_agents_queue_depth', {
-        description: 'Observed queue depth for AgentRun admission control.',
-      }),
-      agentRateLimitRejections: meter.createCounter('jangar_agents_rate_limit_rejections_total', {
-        description: 'Count of AgentRun submissions rejected due to rate limits.',
-      }),
-      agentConcurrency: meter.createHistogram('jangar_agents_active_concurrency', {
-        description: 'Observed active AgentRun concurrency.',
-      }),
-      agentRunOutcomes: meter.createCounter('jangar_agent_run_outcomes_total', {
-        description: 'Count of AgentRun terminal outcomes by phase.',
-      }),
-      agentRunResyncAdoptions: meter.createCounter('jangar_agentrun_resync_adoptions_total', {
-        description: 'Count of AgentRuns adopted for reconciliation by controller resync sweeps.',
-      }),
-      agentRunUntouchedBacklog: meter.createHistogram('jangar_agentrun_untouched_backlog', {
-        description: 'Observed count of untouched AgentRuns detected by the controller.',
-      }),
-      agentRunUntouchedOldestAgeSeconds: meter.createHistogram('jangar_agentrun_untouched_oldest_age_seconds', {
-        description: 'Observed age in seconds of the oldest untouched AgentRun.',
-        unit: 's',
-      }),
-      reconcileDurationMs: meter.createHistogram('jangar_reconcile_duration_ms', {
-        description: 'Time spent reconciling agents controller resources.',
-        unit: 'ms',
-      }),
       torghutQuantFrames: meter.createCounter('jangar_torghut_quant_frames_total', {
         description: 'Count of torghut quant control-plane frames computed (per window).',
       }),
@@ -566,15 +450,6 @@ const createMetricsState = (): MetricsState => {
           unit: 's',
         },
       ),
-      kubeWatchEvents: meter.createCounter('jangar_kube_watch_events_total', {
-        description: 'Count of Kubernetes watch events observed by resource/namespace/type.',
-      }),
-      kubeWatchErrors: meter.createCounter('jangar_kube_watch_errors_total', {
-        description: 'Count of Kubernetes watch processing errors by resource/namespace/reason.',
-      }),
-      kubeWatchRestarts: meter.createCounter('jangar_kube_watch_restarts_total', {
-        description: 'Count of Kubernetes watch restarts by resource/namespace/reason.',
-      }),
     }
 
     let shuttingDown = false

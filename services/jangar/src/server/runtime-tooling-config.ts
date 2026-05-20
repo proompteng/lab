@@ -1,9 +1,5 @@
-import { join } from 'node:path'
-
 type EnvSource = Record<string, string | undefined>
 
-const DEFAULT_PYTHON_BIN = 'python3'
-const DEFAULT_WORKTREE = '/workspace/lab'
 const DEFAULT_HTTP_TIMEOUT_MS = 2_000
 
 const normalizeNonEmpty = (value: string | undefined | null) => {
@@ -42,14 +38,6 @@ const parseOptionalJsonRecord = (value: string | undefined) => {
   } catch {
     return {}
   }
-}
-
-export type RuntimeAdmissionConfig = {
-  worktree: string
-  natsUrl: string
-  pythonBin: string
-  runtimeImage: string
-  pathEntries: string[]
 }
 
 export type TerminalRuntimeConfig = {
@@ -91,18 +79,6 @@ export type MockCodexConfig = {
   enabled: boolean
   scenario: string
 }
-
-export const resolveRuntimeAdmissionConfig = (env: EnvSource = process.env): RuntimeAdmissionConfig => ({
-  worktree: normalizeNonEmpty(env.WORKTREE) ?? (process.cwd().trim() || DEFAULT_WORKTREE),
-  natsUrl: normalizeNonEmpty(env.NATS_URL) ?? normalizeNonEmpty(env.natsUrl) ?? '',
-  pythonBin: normalizeNonEmpty(env.PYTHON_BIN) ?? normalizeNonEmpty(env.PYTHON) ?? DEFAULT_PYTHON_BIN,
-  runtimeImage:
-    normalizeNonEmpty(env.JANGAR_RUNTIME_IMAGE) ??
-    normalizeNonEmpty(env.JANGAR_IMAGE) ??
-    normalizeNonEmpty(env.IMAGE_REF) ??
-    'runtime:local',
-  pathEntries: (env.PATH ?? '').split(':').filter((entry) => entry.length > 0),
-})
 
 export const resolveTerminalRuntimeConfig = (env: EnvSource = process.env): TerminalRuntimeConfig => ({
   scriptBin: normalizeNonEmpty(env.SCRIPT_BIN),
@@ -170,22 +146,7 @@ export const resolveMockCodexConfig = (env: EnvSource = process.env): MockCodexC
   }
 }
 
-export const resolveCodexNatsHelperPathCandidatesFromConfig = (
-  config: RuntimeAdmissionConfig,
-  command: 'codex-nats-publish' | 'codex-nats-soak',
-  cwd = process.cwd(),
-) => [
-  ...config.pathEntries.map((entry) => join(entry, command)),
-  join(cwd, 'packages', 'cx-tools', 'dist', `${command}.js`),
-  join(cwd, 'packages', 'cx-tools', 'src', 'cli', `${command}.ts`),
-  join(cwd, 'scripts', `${command}.ts`),
-  join(config.worktree, 'packages', 'cx-tools', 'dist', `${command}.js`),
-  join(config.worktree, 'packages', 'cx-tools', 'src', 'cli', `${command}.ts`),
-  join('/usr/local/bin', command),
-]
-
 export const validateRuntimeToolingConfig = (env: EnvSource = process.env) => {
-  resolveRuntimeAdmissionConfig(env)
   resolveTerminalRuntimeConfig(env)
   resolveCodexClientConfig(env)
   resolveGitLockRecoveryConfig(env)

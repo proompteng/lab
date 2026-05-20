@@ -10,14 +10,15 @@ import type {
   AdmissionPassportDecision,
   AdmissionPassportStatus,
   AdmissionPassportSubjectStatus,
-  ProjectionWatermarkStatus,
-  RecoveryWarrantStatus,
+  RuntimeAdmissionSnapshot,
   RuntimeKitComponentStatus,
   RuntimeKitDecision,
   RuntimeKitStatus,
-  RuntimeProofCellStatus,
 } from '@proompteng/agent-contracts/runtime-admission'
-import { resolveCodexNatsHelperPathCandidatesFromConfig, resolveRuntimeAdmissionConfig } from './runtime-tooling-config'
+import {
+  resolveCodexNatsHelperPathCandidatesFromConfig,
+  resolveRuntimeAdmissionConfig,
+} from './runtime-admission-config'
 
 const DEFAULT_WORKTREE = '/workspace/lab'
 const PRODUCER_REVISION = '2026-03-21-runtime-admission-shadow-v1'
@@ -25,15 +26,6 @@ const WORKSPACE_CONTRACT_VERSION = '2026-03-20-runtime-kit-shadow-v1'
 const RUNTIME_FRESHNESS_MS = 5 * 60 * 1000
 
 const COLLABORATION_CONSUMERS: AdmissionPassportConsumerClass[] = ['swarm_plan', 'swarm_implement', 'swarm_verify']
-
-export type RuntimeAdmissionSnapshot = {
-  runtimeKits: RuntimeKitStatus[]
-  admissionPassports: AdmissionPassportStatus[]
-  servingPassportId: string | null
-  recoveryWarrants: RecoveryWarrantStatus[]
-  runtimeProofCells: RuntimeProofCellStatus[]
-  projectionWatermarks: ProjectionWatermarkStatus[]
-}
 
 type RuntimeAdmissionInput = {
   now?: Date
@@ -379,14 +371,6 @@ export const resolveAdmissionPassportConsumerClass = (
   return 'swarm_plan'
 }
 
-export const findAdmissionPassport = ({
-  admissionPassports,
-  consumerClass,
-}: {
-  admissionPassports: AdmissionPassportStatus[]
-  consumerClass: AdmissionPassportConsumerClass
-}) => admissionPassports.find((passport) => passport.consumer_class === consumerClass)
-
 export const buildRuntimeAdmissionSnapshot = (input: RuntimeAdmissionInput = {}): RuntimeAdmissionSnapshot => {
   const now = input.now ?? new Date()
   const runtimeConfig = resolveRuntimeAdmissionConfig(process.env)
@@ -408,7 +392,7 @@ export const buildRuntimeAdmissionSnapshot = (input: RuntimeAdmissionInput = {})
   const servingKit = buildRuntimeKit({
     now,
     kitClass: 'serving',
-    subjectRef: 'jangar:/ready',
+    subjectRef: 'agents:/v1/control-plane/status',
     imageRef,
     components: [
       buildRuntimeKitComponent({
@@ -424,7 +408,7 @@ export const buildRuntimeAdmissionSnapshot = (input: RuntimeAdmissionInput = {})
   const collaborationKit = buildRuntimeKit({
     now,
     kitClass: 'collaboration',
-    subjectRef: 'jangar:codex:nats-collaboration',
+    subjectRef: 'agents:codex:nats-collaboration',
     imageRef,
     components: [
       buildRuntimeKitComponent({
@@ -490,7 +474,7 @@ export const buildRuntimeAdmissionSnapshot = (input: RuntimeAdmissionInput = {})
   const runtimeProofSurface = buildRuntimeProofSurface({
     runtimeKits,
     admissionPassports,
-    imageExpectedRef: 'JANGAR_RUNTIME_IMAGE',
+    imageExpectedRef: 'AGENTS_RUNTIME_IMAGE',
   })
 
   return {

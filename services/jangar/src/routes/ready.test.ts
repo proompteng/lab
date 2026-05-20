@@ -20,11 +20,6 @@ const controlPlaneStatusMocks = vi.hoisted(() => ({
   buildExecutionTrust: vi.fn(),
 }))
 
-const runtimeAdmissionMocks = vi.hoisted(() => ({
-  buildRuntimeAdmissionSnapshot: vi.fn(),
-  findAdmissionPassport: vi.fn(),
-}))
-
 const memoryProviderHealthMocks = vi.hoisted(() => ({
   getMemoryProviderHealth: vi.fn(),
 }))
@@ -59,7 +54,6 @@ vi.mock('~/server/control-plane-execution-trust', async () => {
     buildExecutionTrust: controlPlaneStatusMocks.buildExecutionTrust,
   }
 })
-vi.mock('~/server/control-plane-runtime-admission', () => runtimeAdmissionMocks)
 
 const buildRuntimeKit = (overrides: Record<string, unknown> = {}) => ({
   runtime_kit_id: 'runtime-kit:serving:1',
@@ -290,6 +284,9 @@ const buildAgentsReadySnapshot = (overrides: Record<string, unknown> = {}) => {
 
 const buildAgentsControlPlaneStatusSnapshot = (overrides: Record<string, unknown> = {}) => {
   const namespace = (overrides.namespace as string | undefined) ?? 'agents'
+  const runtimeAdmission =
+    (overrides.runtimeAdmission as ReturnType<typeof buildRuntimeAdmissionSnapshot> | undefined) ??
+    buildRuntimeAdmissionSnapshot()
   const agentRunIngestion =
     (overrides.agentrun_ingestion as Record<string, unknown> | undefined) ??
     ({
@@ -406,12 +403,12 @@ const buildAgentsControlPlaneStatusSnapshot = (overrides: Record<string, unknown
       witnesses: [],
       rollback_target: 'use Agents controller logs and AgentRun status conditions for controller ingestion proof',
     },
-    runtime_kits: [],
-    admission_passports: [],
-    serving_passport_id: null,
-    recovery_warrants: [],
-    runtime_proof_cells: [],
-    projection_watermarks: [],
+    runtime_kits: runtimeAdmission.runtimeKits,
+    admission_passports: runtimeAdmission.admissionPassports,
+    serving_passport_id: runtimeAdmission.servingPassportId,
+    recovery_warrants: runtimeAdmission.recoveryWarrants,
+    runtime_proof_cells: runtimeAdmission.runtimeProofCells,
+    projection_watermarks: runtimeAdmission.projectionWatermarks,
     workflows: {
       active_job_runs: 0,
       recent_failed_jobs: 0,
@@ -450,8 +447,6 @@ describe('getReadyHandler', () => {
     globalThis.fetch = originalFetch
     vi.clearAllMocks()
     controlPlaneStatusMocks.buildExecutionTrust.mockReset()
-    runtimeAdmissionMocks.buildRuntimeAdmissionSnapshot.mockReset()
-    runtimeAdmissionMocks.findAdmissionPassport.mockReset()
     controlPlaneStatusMocks.buildExecutionTrust.mockResolvedValue({
       executionTrust: {
         status: 'healthy',
@@ -463,10 +458,6 @@ describe('getReadyHandler', () => {
       swarms: [],
       stages: [],
     })
-    runtimeAdmissionMocks.buildRuntimeAdmissionSnapshot.mockReturnValue(buildRuntimeAdmissionSnapshot())
-    runtimeAdmissionMocks.findAdmissionPassport.mockImplementation(({ admissionPassports, consumerClass }) =>
-      admissionPassports.find((passport: { consumer_class?: string }) => passport.consumer_class === consumerClass),
-    )
     memoryProviderHealthMocks.getMemoryProviderHealth.mockReturnValue({
       status: 'healthy',
       reason: 'memory embeddings configured for an explicit OpenAI-compatible endpoint',
@@ -570,7 +561,6 @@ describe('getReadyHandler', () => {
     })
     expect(body.schemaVersion).toBeUndefined()
     expect(controlPlaneStatusMocks.buildExecutionTrust).toHaveBeenCalled()
-    expect(runtimeAdmissionMocks.buildRuntimeAdmissionSnapshot).toHaveBeenCalled()
   })
 
   it('projects Torghut revenue-repair business evidence and material evidence settlement at the ready boundary', async () => {
@@ -926,30 +916,32 @@ describe('getReadyHandler', () => {
   })
 
   it('returns 200 and exposes a serving passport when only collaboration runtime debt is blocked', async () => {
-    runtimeAdmissionMocks.buildRuntimeAdmissionSnapshot.mockReturnValue(
-      buildRuntimeAdmissionSnapshot({
-        runtimeKits: [
-          buildRuntimeKit(),
-          buildRuntimeKit({
-            runtime_kit_id: 'runtime-kit:collaboration:2',
-            kit_class: 'collaboration',
-            subject_ref: 'jangar:codex:nats-collaboration',
-            component_digest: 'digest-collaboration-2',
-            decision: 'blocked',
-            reason_codes: ['runtime_kit_component_missing:codex_nats_publish'],
-          }),
-        ],
-        admissionPassports: [
-          buildAdmissionPassport(),
-          buildAdmissionPassport({
-            admission_passport_id: 'passport:swarm_implement:2',
-            consumer_class: 'swarm_implement',
-            runtime_kit_set_digest: 'runtime-2',
-            decision: 'block',
-            reason_codes: ['runtime_kit_component_missing:codex_nats_publish'],
-            required_runtime_kits: ['runtime-kit:collaboration:2'],
-          }),
-        ],
+    agentsControlPlaneClientMocks.getAgentsControlPlaneStatusSnapshot.mockResolvedValue(
+      buildAgentsControlPlaneStatusSnapshot({
+        runtimeAdmission: buildRuntimeAdmissionSnapshot({
+          runtimeKits: [
+            buildRuntimeKit(),
+            buildRuntimeKit({
+              runtime_kit_id: 'runtime-kit:collaboration:2',
+              kit_class: 'collaboration',
+              subject_ref: 'agents:codex:nats-collaboration',
+              component_digest: 'digest-collaboration-2',
+              decision: 'blocked',
+              reason_codes: ['runtime_kit_component_missing:codex_nats_publish'],
+            }),
+          ],
+          admissionPassports: [
+            buildAdmissionPassport(),
+            buildAdmissionPassport({
+              admission_passport_id: 'passport:swarm_implement:2',
+              consumer_class: 'swarm_implement',
+              runtime_kit_set_digest: 'runtime-2',
+              decision: 'block',
+              reason_codes: ['runtime_kit_component_missing:codex_nats_publish'],
+              required_runtime_kits: ['runtime-kit:collaboration:2'],
+            }),
+          ],
+        }),
       }),
     )
 
@@ -1164,16 +1156,18 @@ describe('getReadyHandler', () => {
   })
 
   it('returns 200 with degraded status when execution trust is blocked', async () => {
-    runtimeAdmissionMocks.buildRuntimeAdmissionSnapshot.mockReturnValue(
-      buildRuntimeAdmissionSnapshot({
-        admissionPassports: [
-          buildAdmissionPassport({
-            admission_passport_id: 'passport:serving:blocked',
-            decision: 'block',
-            reason_codes: ['execution_trust_blocked'],
-          }),
-        ],
-        servingPassportId: 'passport:serving:blocked',
+    agentsControlPlaneClientMocks.getAgentsControlPlaneStatusSnapshot.mockResolvedValue(
+      buildAgentsControlPlaneStatusSnapshot({
+        runtimeAdmission: buildRuntimeAdmissionSnapshot({
+          admissionPassports: [
+            buildAdmissionPassport({
+              admission_passport_id: 'passport:serving:blocked',
+              decision: 'block',
+              reason_codes: ['execution_trust_blocked'],
+            }),
+          ],
+          servingPassportId: 'passport:serving:blocked',
+        }),
       }),
     )
     controlPlaneStatusMocks.buildExecutionTrust.mockResolvedValue({
@@ -1209,16 +1203,18 @@ describe('getReadyHandler', () => {
   })
 
   it('returns 200 with degraded status when the serving passport is blocked', async () => {
-    runtimeAdmissionMocks.buildRuntimeAdmissionSnapshot.mockReturnValue(
-      buildRuntimeAdmissionSnapshot({
-        admissionPassports: [
-          buildAdmissionPassport({
-            admission_passport_id: 'passport:serving:2',
-            decision: 'block',
-            reason_codes: ['runtime_kit_component_missing:serving_runtime_binary'],
-          }),
-        ],
-        servingPassportId: 'passport:serving:2',
+    agentsControlPlaneClientMocks.getAgentsControlPlaneStatusSnapshot.mockResolvedValue(
+      buildAgentsControlPlaneStatusSnapshot({
+        runtimeAdmission: buildRuntimeAdmissionSnapshot({
+          admissionPassports: [
+            buildAdmissionPassport({
+              admission_passport_id: 'passport:serving:2',
+              decision: 'block',
+              reason_codes: ['runtime_kit_component_missing:serving_runtime_binary'],
+            }),
+          ],
+          servingPassportId: 'passport:serving:2',
+        }),
       }),
     )
 
@@ -1233,16 +1229,18 @@ describe('getReadyHandler', () => {
   })
 
   it('returns 200 with degraded status when any watched namespace reports blocked execution trust', async () => {
-    runtimeAdmissionMocks.buildRuntimeAdmissionSnapshot.mockReturnValue(
-      buildRuntimeAdmissionSnapshot({
-        admissionPassports: [
-          buildAdmissionPassport({
-            admission_passport_id: 'passport:serving:blocked',
-            decision: 'block',
-            reason_codes: ['execution_trust_blocked'],
-          }),
-        ],
-        servingPassportId: 'passport:serving:blocked',
+    agentsControlPlaneClientMocks.getAgentsControlPlaneStatusSnapshot.mockResolvedValue(
+      buildAgentsControlPlaneStatusSnapshot({
+        runtimeAdmission: buildRuntimeAdmissionSnapshot({
+          admissionPassports: [
+            buildAdmissionPassport({
+              admission_passport_id: 'passport:serving:blocked',
+              decision: 'block',
+              reason_codes: ['execution_trust_blocked'],
+            }),
+          ],
+          servingPassportId: 'passport:serving:blocked',
+        }),
       }),
     )
     agentsControlPlaneClientMocks.getAgentsReadySnapshot.mockResolvedValue(
@@ -1318,16 +1316,18 @@ describe('getReadyHandler', () => {
   })
 
   it('returns 200 with degraded status when execution trust evaluation fails', async () => {
-    runtimeAdmissionMocks.buildRuntimeAdmissionSnapshot.mockReturnValue(
-      buildRuntimeAdmissionSnapshot({
-        admissionPassports: [
-          buildAdmissionPassport({
-            admission_passport_id: 'passport:serving:unknown',
-            decision: 'block',
-            reason_codes: ['execution_trust_unknown'],
-          }),
-        ],
-        servingPassportId: 'passport:serving:unknown',
+    agentsControlPlaneClientMocks.getAgentsControlPlaneStatusSnapshot.mockResolvedValue(
+      buildAgentsControlPlaneStatusSnapshot({
+        runtimeAdmission: buildRuntimeAdmissionSnapshot({
+          admissionPassports: [
+            buildAdmissionPassport({
+              admission_passport_id: 'passport:serving:unknown',
+              decision: 'block',
+              reason_codes: ['execution_trust_unknown'],
+            }),
+          ],
+          servingPassportId: 'passport:serving:unknown',
+        }),
       }),
     )
     controlPlaneStatusMocks.buildExecutionTrust.mockRejectedValue(new Error('trust fetch failed'))

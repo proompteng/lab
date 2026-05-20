@@ -295,8 +295,8 @@ Deploy verification also consumes the runtime-admission projection. After Argo, 
 `packages/scripts/src/jangar/verify-deployment.ts` reads
 `/v1/control-plane/status?namespace=agents` through the Kubernetes service proxy and requires the configured
 passport consumers (`serving`, `swarm_plan`, `swarm_implement`, and `swarm_verify` by default) to be `allow`, fresh,
-backed by present runtime kits, and running on the same image digest as the promoted deployment. The deployment manifest
-sets `JANGAR_RUNTIME_IMAGE` to the promoted tag and digest so runtime-kit `image_ref` can be compared directly. Emergency
+backed by present runtime kits, and running on the same image digest as the promoted deployment. The Agents deployment
+manifest sets `AGENTS_RUNTIME_IMAGE` to the promoted tag and digest so runtime-kit `image_ref` can be compared directly. Emergency
 rollback for the verifier gate is `--skip-admission-passport-verification` or
 `JANGAR_VERIFY_ADMISSION_PASSPORTS=false`; keep the status projection enabled for forensics.
 

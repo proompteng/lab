@@ -58,6 +58,14 @@ export type AdmissionPassportStatus = {
   producer_revision: string
 }
 
+export const findAdmissionPassport = ({
+  admissionPassports,
+  consumerClass,
+}: {
+  admissionPassports: AdmissionPassportStatus[]
+  consumerClass: AdmissionPassportConsumerClass
+}) => admissionPassports.find((passport) => passport.consumer_class === consumerClass)
+
 export type RecoveryWarrantExecutionClass = 'serving' | 'collaboration' | 'discover' | 'plan' | 'implement' | 'verify'
 
 export type RecoveryWarrantStatusValue = 'draft' | 'active' | 'sealed' | 'superseded' | 'broken' | 'quarantined'
@@ -122,6 +130,15 @@ export type RecoveryWarrantStatus = {
   sealed_at: string | null
   superseded_at: string | null
   reason_codes: string[]
+}
+
+export type RuntimeAdmissionSnapshot = {
+  runtimeKits: RuntimeKitStatus[]
+  admissionPassports: AdmissionPassportStatus[]
+  servingPassportId: string | null
+  recoveryWarrants: RecoveryWarrantStatus[]
+  runtimeProofCells: RuntimeProofCellStatus[]
+  projectionWatermarks: ProjectionWatermarkStatus[]
 }
 
 const IMAGE_DIGEST_PATTERN = /sha256:[a-f0-9]{64}/i

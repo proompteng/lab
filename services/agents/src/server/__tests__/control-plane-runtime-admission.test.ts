@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { buildRuntimeAdmissionSnapshot } from '~/server/control-plane-runtime-admission'
-import { resolveRuntimeAdmissionConfig } from '~/server/runtime-tooling-config'
+import { buildRuntimeAdmissionSnapshot } from '../control-plane-runtime-admission'
+import { resolveRuntimeAdmissionConfig } from '../runtime-admission-config'
 
 const REPO_ROOT = fileURLToPath(new URL('../../../../../', import.meta.url))
 
@@ -36,12 +36,12 @@ describe('buildRuntimeAdmissionSnapshot', () => {
     resetEnv()
   })
 
-  it('uses the deployed Jangar image as the runtime image fallback', () => {
-    delete process.env.JANGAR_RUNTIME_IMAGE
+  it('uses the deployed Agents image as the runtime image fallback', () => {
+    delete process.env.AGENTS_RUNTIME_IMAGE
     delete process.env.IMAGE_REF
-    process.env.JANGAR_IMAGE = 'registry.example.com/lab/jangar-control-plane:abc123@sha256:'.concat('a'.repeat(64))
+    process.env.AGENTS_IMAGE = 'registry.example.com/lab/agents-control-plane:abc123@sha256:'.concat('a'.repeat(64))
 
-    expect(resolveRuntimeAdmissionConfig().runtimeImage).toBe(process.env.JANGAR_IMAGE)
+    expect(resolveRuntimeAdmissionConfig().runtimeImage).toBe(process.env.AGENTS_IMAGE)
   })
 
   it('accepts NATS_URL and NATS helper runtime components for collaboration admission', async () => {
@@ -62,7 +62,7 @@ describe('buildRuntimeAdmissionSnapshot', () => {
     const collaborationKit = snapshot.runtimeKits.find((kit) => kit.kit_class === 'collaboration')
     expect(collaborationKit).toBeDefined()
     expect(collaborationKit?.decision).toBe('healthy')
-    expect(collaborationKit?.subject_ref).toBe('jangar:codex:nats-collaboration')
+    expect(collaborationKit?.subject_ref).toBe('agents:codex:nats-collaboration')
     expect(collaborationKit?.reason_codes).not.toContain('runtime_kit_component_missing:nats_url')
 
     expect(collaborationKit?.components).toEqual(

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 describe('codex runner image layout', () => {
-  it('keeps runtime admission dependencies but excludes legacy Codex runner payloads from the Jangar app image', () => {
+  it('keeps shared runtime tools but excludes Agents runtime-admission and legacy Codex runner payloads from the Jangar image', () => {
     const dockerfile = readFileSync(new URL('../../Dockerfile', import.meta.url), 'utf8')
     const controlPlaneStage = dockerfile.match(
       /FROM \$\{BUN_BASE_IMAGE\}:\$\{BUN_VERSION\} AS control-plane[\s\S]*?FROM tools AS runtime/,
@@ -17,14 +17,12 @@ describe('codex runner image layout', () => {
     expect(controlPlaneStage).toBeDefined()
     expect(runtimeStage).toBeDefined()
     expect(runtimeStage).toContain(
-      'COPY --from=jangar-build /app/services/jangar/src/server/control-plane-runtime-admission.ts ./src/server/control-plane-runtime-admission.ts',
-    )
-    expect(runtimeStage).toContain(
       'COPY --from=agent-contracts-build /app/packages/agent-contracts/dist /app/packages/agent-contracts/dist',
     )
     expect(runtimeStage).toContain(
       'COPY --from=jangar-build /app/services/jangar/src/server/runtime-tooling-config.ts ./src/server/runtime-tooling-config.ts',
     )
+    expect(runtimeStage).not.toContain('control-plane-runtime-admission.ts')
     expect(runtimeStage).not.toContain('control-plane-runtime-proof-surface.ts')
     for (const line of helperSymlinkLines) {
       expect(controlPlaneStage).toContain(line)
