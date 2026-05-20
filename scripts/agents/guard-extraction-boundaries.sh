@@ -984,6 +984,11 @@ fail_if_matches \
   "${ROOT_DIR}/apps/froussard/src"
 
 fail_if_matches \
+  "Froussard Codex prompts must not tell AgentRuns to use Jangar-local helper scripts or legacy progress publishers" \
+  'services/jangar/scripts/codex|codex-nats-publish' \
+  "${ROOT_DIR}/apps/froussard/src/codex.ts"
+
+fail_if_matches \
   "Graf must consume Agents AgentRuns directly, not legacy Argo workflow compatibility names" \
   'argoWorkflowName|argoPollTimeoutSeconds|SubmitArgoWorkflow|CompletedArgoWorkflow|submitArgoWorkflow|waitForArgoWorkflow|workflowNamePrefix|ARGO_WORKFLOW_|ARGO_SERVICE_ACCOUNT_TOKEN_PATH|autoResearch\.argoWorkflow' \
   "${ROOT_DIR}/services/graf/src/main/kotlin" \
