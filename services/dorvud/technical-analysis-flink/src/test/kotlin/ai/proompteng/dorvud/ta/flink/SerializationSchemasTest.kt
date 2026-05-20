@@ -19,6 +19,7 @@ import java.io.ObjectOutputStream
 import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -150,6 +151,27 @@ class SerializationSchemasTest {
     assertTrue(schema.contains("options_contract_bars_1s"))
     assertTrue(schema.contains("options_contract_features"))
     assertTrue(schema.contains("options_surface_features"))
+  }
+
+  @Test
+  fun `options clickhouse bootstrap excludes equity tables`() {
+    val schema =
+      javaClass
+        .classLoader
+        ?.getResourceAsStream("ta-schema.sql")
+        ?.bufferedReader()
+        ?.readText()
+        ?.trim()
+    assertNotNull(schema)
+
+    val statements = optionsClickhouseSchemaStatements(schema)
+
+    assertTrue(statements.any { it.contains("CREATE DATABASE IF NOT EXISTS torghut") })
+    assertTrue(statements.any { it.contains("options_contract_bars_1s") })
+    assertTrue(statements.any { it.contains("options_contract_features") })
+    assertTrue(statements.any { it.contains("options_surface_features") })
+    assertFalse(statements.any { it.contains("ta_microbars") })
+    assertFalse(statements.any { it.contains("ta_signals") })
   }
 
   @Test
