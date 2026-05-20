@@ -736,6 +736,32 @@ describe('codex judge guardrails', () => {
     expect(parsed.workflowUid).toBe('uid-123')
   })
 
+  it('ignores legacy workflow identity when AgentRun run-complete identity is present', async () => {
+    const privateApi = await requirePrivate()
+
+    const parsed = privateApi.parseRunCompletePayload({
+      apiVersion: 'agents.proompteng.ai/v1alpha1',
+      kind: 'AgentRun',
+      metadata: {
+        name: 'agentrun-current',
+        namespace: 'agents',
+        uid: 'uid-current',
+      },
+      agent_run_id: 'run-current',
+      agent_run_name: 'agentrun-current',
+      agent_run_namespace: 'agents',
+      agent_run_uid: 'uid-current',
+      workflowName: 'legacy-workflow',
+      workflowNamespace: 'legacy',
+      workflowUid: 'legacy-uid',
+      status: { phase: 'Succeeded' },
+    })
+
+    expect(parsed.workflowName).toBe('agentrun-current')
+    expect(parsed.workflowNamespace).toBe('agents')
+    expect(parsed.workflowUid).toBe('uid-current')
+  })
+
   it('parses AgentRun notify identity without requiring legacy workflow fields', async () => {
     const privateApi = await requirePrivate()
 
@@ -757,5 +783,21 @@ describe('codex judge guardrails', () => {
         agent_run_name: 'agentrun-456',
       }),
     )
+  })
+
+  it('ignores legacy workflow identity when AgentRun notify identity is present', async () => {
+    const privateApi = await requirePrivate()
+
+    const parsed = privateApi.parseNotifyPayload({
+      agent_run_id: 'run-789',
+      agent_run_name: 'agentrun-789',
+      agent_run_namespace: 'agents',
+      workflow_name: 'legacy-workflow',
+      workflow_namespace: 'legacy',
+      last_assistant_message: 'opened PR',
+    })
+
+    expect(parsed.workflowName).toBe('agentrun-789')
+    expect(parsed.workflowNamespace).toBe('agents')
   })
 })

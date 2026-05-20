@@ -196,9 +196,6 @@ const RunCompletePayloadSchema = S.Struct({
   agent_run_namespace: S.optional(S.String),
   agentRunUid: S.optional(S.String),
   agent_run_uid: S.optional(S.String),
-  workflowName: S.optional(S.String),
-  workflowNamespace: S.optional(S.String),
-  workflowUid: S.optional(S.String),
   repository: S.optional(S.String),
   issueNumber: S.optional(S.Union(S.String, S.Number)),
   branch: S.optional(S.String),
@@ -571,28 +568,9 @@ const parseRunCompletePayload = (payload: Record<string, unknown>) => {
     data.agent_run_uid,
     agentRunMetadataName ? metadataRecord.uid : null,
   )
-  const workflowName = firstNonEmptyString(
-    decodedPayload.workflowName,
-    data.workflowName,
-    data.workflow_name,
-    agentRunName,
-    runId,
-    metadataRecord.name,
-  )
-  const workflowNamespace = firstNonEmptyString(
-    decodedPayload.workflowNamespace,
-    data.workflowNamespace,
-    data.workflow_namespace,
-    agentRunNamespace,
-    metadataRecord.namespace,
-  )
-  const workflowUid = firstNonEmptyString(
-    decodedPayload.workflowUid,
-    data.workflowUid,
-    data.workflow_uid,
-    agentRunUid,
-    metadataRecord.uid,
-  )
+  const workflowName = firstNonEmptyString(agentRunName, runId, metadataRecord.name)
+  const workflowNamespace = firstNonEmptyString(agentRunNamespace, metadataRecord.namespace)
+  const workflowUid = firstNonEmptyString(agentRunUid, metadataRecord.uid)
 
   return {
     repository,
@@ -635,8 +613,8 @@ const parseNotifyPayload = (payload: Record<string, unknown>) => {
   const runId = firstNonEmptyString(data.runId, data.run_id, data.agentRunId, data.agent_run_id)
   const agentRunName = firstNonEmptyString(data.agentRunName, data.agent_run_name)
   const agentRunNamespace = firstNonEmptyString(data.agentRunNamespace, data.agent_run_namespace)
-  const workflowName = firstNonEmptyString(data.workflow_name, data.workflowName, agentRunName, runId) ?? ''
-  const workflowNamespace = firstNonEmptyString(data.workflow_namespace, data.workflowNamespace, agentRunNamespace)
+  const workflowName = firstNonEmptyString(agentRunName, runId) ?? ''
+  const workflowNamespace = agentRunNamespace ?? null
   const repository = normalizeRepo(data.repository)
   const issueNumber = Number(data.issue_number ?? data.issueNumber ?? 0)
   const branch =
@@ -2624,14 +2602,24 @@ const parseRerunPayload = (payload: Record<string, unknown>) => {
   const attempt = Number.parseInt(String(attemptRaw ?? ''), 10)
   const prompt = typeof payload.prompt === 'string' ? payload.prompt.trim() : ''
   const runId = typeof payload.run_id === 'string' ? payload.run_id.trim() : ''
-  const workflowName = typeof payload.workflow_name === 'string' ? payload.workflow_name.trim() : ''
-  const workflowNamespace = typeof payload.workflow_namespace === 'string' ? payload.workflow_namespace.trim() : ''
-  const resolvedWorkflowNamespace = workflowNamespace || config.workflowNamespace || null
+  const agentRunName =
+    typeof payload.agent_run_name === 'string'
+      ? payload.agent_run_name.trim()
+      : typeof payload.agentRunName === 'string'
+        ? payload.agentRunName.trim()
+        : ''
+  const agentRunNamespace =
+    typeof payload.agent_run_namespace === 'string'
+      ? payload.agent_run_namespace.trim()
+      : typeof payload.agentRunNamespace === 'string'
+        ? payload.agentRunNamespace.trim()
+        : ''
+  const resolvedWorkflowNamespace = agentRunNamespace || config.workflowNamespace || null
   const deliveryId =
     typeof payload.delivery_id === 'string'
       ? payload.delivery_id.trim()
-      : workflowName && Number.isFinite(attempt)
-        ? `${workflowName}:${attempt}`
+      : agentRunName && Number.isFinite(attempt)
+        ? `${agentRunName}:${attempt}`
         : `rerun-${Date.now()}`
 
   if (!repository || !Number.isFinite(issueNumber) || !Number.isFinite(attempt) || !prompt) {
@@ -2644,7 +2632,7 @@ const parseRerunPayload = (payload: Record<string, unknown>) => {
     attempt,
     prompt,
     runId: runId || null,
-    workflowName: workflowName || null,
+    workflowName: agentRunName || null,
     workflowNamespace: resolvedWorkflowNamespace,
     deliveryId,
   }
@@ -2685,7 +2673,7 @@ export const handleNotify = async (payload: Record<string, unknown>) => {
   await ensureStoreReady()
   const parsed = parseNotifyPayload(payload)
   if (!parsed.workflowName && !parsed.runId) {
-    throw new Error('notify payload missing AgentRun or workflow identity')
+    throw new Error('notify payload missing AgentRun identity')
   }
 
   const run = await store.attachNotify({
