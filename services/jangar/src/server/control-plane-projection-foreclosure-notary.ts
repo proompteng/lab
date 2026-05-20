@@ -19,7 +19,6 @@ import {
   type ProjectionForeclosureMarketContextProjection,
   type ProjectionForeclosureNotaryInput,
 } from '~/server/control-plane-projection-foreclosure-evidence'
-import type { KubeGatewayAgentRun, KubeGatewayJob } from '~/server/kube-gateway'
 
 export {
   collectProjectionForeclosureEvidence,
@@ -75,16 +74,6 @@ const TERMINAL_STATUSES = new Set([
   'canceled',
   'timed_out',
   'timeout',
-])
-
-const ACTIVE_LIVE_PHASES = new Set([
-  'pending',
-  'queued',
-  'running',
-  'started',
-  'submitted',
-  'in_progress',
-  'progressing',
 ])
 
 const hashJson = (value: unknown, length = 16) =>
@@ -164,58 +153,6 @@ const authorityBudgetSeconds = (payload: JsonRecord) => {
   return Math.max(DEFAULT_AUTHORITY_BUDGET_SECONDS, timeoutSeconds, scheduleSeconds * 2)
 }
 
-const liveAgentRunRef = (agentRun: KubeGatewayAgentRun) =>
-  `agentrun:${agentRun.metadata.namespace ?? 'unknown'}:${agentRun.metadata.name}`
-
-const liveJobRef = (job: KubeGatewayJob) => `job:${job.metadata.namespace ?? 'unknown'}:${job.metadata.name}`
-
-const liveAgentRunActive = (agentRun: KubeGatewayAgentRun) =>
-  ACTIVE_LIVE_PHASES.has(normalizeStatus(agentRun.status.phase))
-
-const liveJobActive = (job: KubeGatewayJob) => (job.status.active ?? 0) > 0
-
-const payloadStringValues = (payload: JsonRecord, keys: string[]) =>
-  uniqueStrings(
-    keys.flatMap((key) => {
-      const direct = payload[key]
-      const spec = asRecord(payload.spec)[key]
-      const parameters = asRecord(payload.parameters)[key]
-      return [direct, spec, parameters].map((value) => (typeof value === 'string' ? value : null))
-    }),
-  )
-
-const agentRunProjectionCandidates = (projection: ProjectionForeclosureAgentRunProjection) =>
-  uniqueStrings([
-    projection.external_run_id,
-    projection.delivery_id,
-    projection.agent_name,
-    ...payloadStringValues(projection.payload, [
-      'name',
-      'agentRunName',
-      'agent_run_name',
-      'agentRun',
-      'jobName',
-      'job_name',
-      'runName',
-      'run_name',
-    ]),
-  ])
-
-const findLiveAgentRunAuthority = (
-  projection: ProjectionForeclosureAgentRunProjection,
-  liveAgentRuns: KubeGatewayAgentRun[],
-) => {
-  const candidates = new Set(agentRunProjectionCandidates(projection))
-  return (
-    liveAgentRuns.find((agentRun) => candidates.has(agentRun.metadata.name) && liveAgentRunActive(agentRun)) ?? null
-  )
-}
-
-const findLiveJobAuthority = (projection: ProjectionForeclosureAgentRunProjection, liveJobs: KubeGatewayJob[]) => {
-  const candidates = new Set(agentRunProjectionCandidates(projection))
-  return liveJobs.find((job) => candidates.has(job.metadata.name) && liveJobActive(job)) ?? null
-}
-
 const claimId = (claimClass: ProjectionForeclosureClaimClass, parts: unknown[]) =>
   `projection-claim:${claimClass}:${hashJson(parts, 14)}`
 
@@ -241,10 +178,10 @@ const classifyAgentRunProjection = (
   const observedDate = parseDate(observedAt) ?? input.now
   const budgetSeconds = authorityBudgetSeconds(projection.payload)
   const freshUntil = addSeconds(observedDate, budgetSeconds)
-  const liveAgentRun = findLiveAgentRunAuthority(projection, input.liveAgentRuns)
-  const liveJob = findLiveJobAuthority(projection, input.liveJobs)
-  const liveAuthorityRef = liveAgentRun ? liveAgentRunRef(liveAgentRun) : liveJob ? liveJobRef(liveJob) : null
   const projectionRef = `agent_runs:${projection.id}`
+  const agentsAuthorityRef = projection.external_run_id
+    ? `agents-service-agentrun:${projection.external_run_id}`
+    : `agents-service-agent-run-record:${projection.id}`
 
   if (TERMINAL_STATUSES.has(status)) {
     return buildClaim({
@@ -256,46 +193,20 @@ const classifyAgentRunProjection = (
       observed_at: observedAt,
       last_heartbeat_at: projection.updated_at,
       fresh_until: null,
-      live_authority_ref: liveAuthorityRef,
+      live_authority_ref: agentsAuthorityRef,
       projection_ref: projectionRef,
       authority_state: 'terminal_audit',
-      reason_codes: ['agentrun_projection_terminal_audit'],
+      reason_codes: ['agents_service_agentrun_projection_terminal_audit'],
       value_gates: ['failed_agentrun_rate', 'handoff_evidence_quality'],
     })
   }
 
-  if (liveAuthorityRef) {
-    const liveObservedAt =
-      liveAgentRun?.status.startedAt ??
-      liveAgentRun?.metadata.creationTimestamp ??
-      liveJob?.status.startTime ??
-      observedAt
-    const liveDate = parseDate(liveObservedAt) ?? observedDate
-    const liveFreshUntil = addSeconds(liveDate, budgetSeconds)
-    const authorityState: ProjectionForeclosureAuthorityState =
-      liveFreshUntil.getTime() >= input.now.getTime() ? 'authoritative' : 'grace'
-    return buildClaim({
-      claim_class: 'agentrun_execution',
-      source_ref: projectionRef,
-      source_owner: projection.agent_name,
-      lane: normalizeStatus(projection.agent_name),
-      status,
-      observed_at: observedAt,
-      last_heartbeat_at: projection.updated_at,
-      fresh_until: liveFreshUntil.toISOString(),
-      live_authority_ref: liveAuthorityRef,
-      projection_ref: projectionRef,
-      authority_state: authorityState,
-      reason_codes:
-        authorityState === 'authoritative'
-          ? ['agentrun_live_authority_current']
-          : ['agentrun_live_authority_grace_budget_exceeded'],
-      value_gates: ['failed_agentrun_rate', 'ready_status_truth'],
-    })
-  }
-
   const authorityState: ProjectionForeclosureAuthorityState =
-    ACTIVE_PROJECTION_STATUSES.has(status) && freshUntil.getTime() < input.now.getTime() ? 'stale_foreclosed' : 'grace'
+    ACTIVE_PROJECTION_STATUSES.has(status) && freshUntil.getTime() >= input.now.getTime()
+      ? 'authoritative'
+      : ACTIVE_PROJECTION_STATUSES.has(status)
+        ? 'stale_foreclosed'
+        : 'grace'
 
   return buildClaim({
     claim_class: 'agentrun_execution',
@@ -306,13 +217,15 @@ const classifyAgentRunProjection = (
     observed_at: observedAt,
     last_heartbeat_at: projection.updated_at,
     fresh_until: freshUntil.toISOString(),
-    live_authority_ref: null,
+    live_authority_ref: agentsAuthorityRef,
     projection_ref: projectionRef,
     authority_state: authorityState,
     reason_codes:
-      authorityState === 'stale_foreclosed'
-        ? ['agentrun_projection_not_renewed', 'live_agentrun_authority_missing']
-        : ['agentrun_projection_inside_grace_budget', 'live_agentrun_authority_missing'],
+      authorityState === 'authoritative'
+        ? ['agents_service_agentrun_projection_current']
+        : authorityState === 'stale_foreclosed'
+          ? ['agents_service_agentrun_projection_not_renewed']
+          : ['agents_service_agentrun_projection_inside_grace_budget'],
     value_gates: ['failed_agentrun_rate', 'ready_status_truth', 'manual_intervention_count'],
   })
 }

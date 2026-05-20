@@ -5,7 +5,6 @@ import type {
 } from '~/data/agents-control-plane'
 import { fetchAgentRunsFromAgentsService } from '~/server/agents-service-client'
 import { getDb } from '~/server/db'
-import type { KubeGateway, KubeGatewayAgentRun, KubeGatewayJob } from '~/server/kube-gateway'
 
 export type JsonRecord = Record<string, unknown>
 
@@ -36,8 +35,6 @@ export type ProjectionForeclosureMarketContextProjection = {
 export type ProjectionForeclosureEvidence = {
   agentRunProjections: ProjectionForeclosureAgentRunProjection[]
   marketContextProjections: ProjectionForeclosureMarketContextProjection[]
-  liveAgentRuns: KubeGatewayAgentRun[]
-  liveJobs: KubeGatewayJob[]
   collectionErrors: string[]
 }
 
@@ -73,8 +70,6 @@ const ACTIVE_PROJECTION_STATUS_QUERY_VALUES = [
 export const emptyProjectionForeclosureEvidence = (): ProjectionForeclosureEvidence => ({
   agentRunProjections: [],
   marketContextProjections: [],
-  liveAgentRuns: [],
-  liveJobs: [],
   collectionErrors: [],
 })
 
@@ -88,10 +83,7 @@ export const isProjectionForeclosureConsumptionEnabled = (env: NodeJS.ProcessEnv
   return normalized === '1' || normalized === 'true' || normalized === 'on' || normalized === 'yes'
 }
 
-export const collectProjectionForeclosureEvidence = async (input: {
-  namespace: string
-  kube: KubeGateway
-}): Promise<ProjectionForeclosureEvidence> => {
+export const collectProjectionForeclosureEvidence = async (): Promise<ProjectionForeclosureEvidence> => {
   const evidence = emptyProjectionForeclosureEvidence()
   const db = getDb()
 
@@ -159,26 +151,7 @@ export const collectProjectionForeclosureEvidence = async (input: {
     }
   }
 
-  const [liveAgentRuns, liveJobs] = await Promise.all([
-    collectItems(() => input.kube.listAgentRuns(input.namespace), 'AgentRun live authority'),
-    collectItems(() => input.kube.listJobs(input.namespace), 'Job live authority'),
-  ])
-
-  evidence.liveAgentRuns = liveAgentRuns.items
-  evidence.liveJobs = liveJobs.items
-  evidence.collectionErrors.push(
-    ...[liveAgentRuns.error, liveJobs.error].filter((error): error is string => Boolean(error)),
-  )
-
   return evidence
-}
-
-const collectItems = async <T>(run: () => Promise<T[]>, label: string) => {
-  try {
-    return { items: await run(), error: null as string | null }
-  } catch (error) {
-    return { items: [] as T[], error: `${label} collection failed: ${normalizeMessage(error)}` }
-  }
 }
 
 const normalizeMessage = (value: unknown) => (value instanceof Error ? value.message : String(value))

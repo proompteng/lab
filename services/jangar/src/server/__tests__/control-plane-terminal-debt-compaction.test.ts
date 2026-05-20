@@ -10,9 +10,11 @@ import type {
 import {
   buildTerminalDebtCompactionLedger,
   TERMINAL_DEBT_COMPACTION_DESIGN_ARTIFACT,
+  type TerminalDebtAgentRun,
+  type TerminalDebtJob,
+  type TerminalDebtPod,
 } from '~/server/control-plane-terminal-debt-compaction'
 import type { ControlPlaneWatchReliability } from '~/server/control-plane-status-types'
-import type { KubeGatewayAgentRun, KubeGatewayJob, KubeGatewayPod } from '~/server/kube-gateway'
 
 const now = new Date('2026-05-13T12:00:00.000Z')
 
@@ -84,7 +86,7 @@ const torghutConsumerEvidence = {
   receipt_id: 'torghut-consumer-evidence:current',
 } as TorghutConsumerEvidenceStatus
 
-const baseAgentRun = (overrides: Partial<KubeGatewayAgentRun> = {}): KubeGatewayAgentRun => ({
+const baseAgentRun = (overrides: Partial<TerminalDebtAgentRun> = {}): TerminalDebtAgentRun => ({
   metadata: {
     name: 'jangar-control-plane-plan-failed',
     namespace: 'agents',
@@ -126,7 +128,7 @@ const baseAgentRun = (overrides: Partial<KubeGatewayAgentRun> = {}): KubeGateway
   ...overrides,
 })
 
-const baseJob = (overrides: Partial<KubeGatewayJob> = {}): KubeGatewayJob => ({
+const baseJob = (overrides: Partial<TerminalDebtJob> = {}): TerminalDebtJob => ({
   metadata: {
     name: 'jangar-control-plane-plan-job',
     namespace: 'agents',
@@ -158,7 +160,7 @@ const baseJob = (overrides: Partial<KubeGatewayJob> = {}): KubeGatewayJob => ({
   ...overrides,
 })
 
-const basePod = (overrides: Partial<KubeGatewayPod> = {}): KubeGatewayPod => ({
+const basePod = (overrides: Partial<TerminalDebtPod> = {}): TerminalDebtPod => ({
   metadata: {
     name: 'jangar-control-plane-plan-pod',
     namespace: 'agents',

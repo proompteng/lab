@@ -37,19 +37,16 @@ import type {
   DatabaseStatus,
 } from '~/server/control-plane-status-types'
 import type { TorghutConsumerEvidenceStatus } from '~/server/control-plane-torghut-consumer-evidence'
-import type { KubeGateway } from '~/server/kube-gateway'
 
 export type RepairScheduleAttemptResolver = (input: {
   now: Date
   namespaces: string[]
-  kube: KubeGateway
 }) => Promise<RepairScheduleAttemptCollection>
 
 export type ControlPlaneMaterialActionArtifactsInput = {
   now: Date
   namespace: string
   service: string
-  kube: KubeGateway
   agentRunIngestion: AgentRunIngestionStatus
   admissionPassports: AdmissionPassportStatus[]
   dependencyQuorum: DependencyQuorumStatus
@@ -76,7 +73,6 @@ export const buildControlPlaneMaterialActionArtifacts = async (input: ControlPla
   const repairScheduleAttempts = await (input.resolveRepairScheduleAttempts ?? collectRepairScheduleAttempts)({
     now: input.now,
     namespaces: resolveRepairScheduleEvidenceNamespaces(input.namespace),
-    kube: input.kube,
   }).catch(
     (error: unknown): RepairScheduleAttemptCollection => ({
       attempts: [],

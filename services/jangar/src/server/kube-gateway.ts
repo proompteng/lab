@@ -1,11 +1,5 @@
 import { type V1Lease } from '@kubernetes/client-node'
 
-import {
-  fetchAgentRunResourcesFromAgentsService,
-  type AgentsAgentRunResourceListInput,
-  fetchControlPlaneResourcesFromAgentsService,
-  type AgentsControlPlaneResourceListInput,
-} from '~/server/agents-service-client'
 import { asRecord, asString } from '~/server/primitives-http'
 import { createKubernetesClient, type KubernetesClient } from '~/server/primitives-kube'
 
@@ -24,14 +18,6 @@ export class KubeGatewayError extends Error {
   }
 }
 
-export type KubeGatewayCondition = {
-  type: string | null
-  status: string | null
-  reason: string | null
-  lastTransitionTime: string | null
-  message?: string | null
-}
-
 export type KubeGatewayMetadata = {
   name: string
   namespace: string | null
@@ -40,65 +26,6 @@ export type KubeGatewayMetadata = {
   annotations?: Record<string, string>
   creationTimestamp: string | null
   deletionTimestamp?: string | null
-}
-
-export type KubeGatewayJob = {
-  metadata: KubeGatewayMetadata
-  status: {
-    active: number | null
-    failed: number | null
-    startTime: string | null
-    completionTime: string | null
-    conditions: KubeGatewayCondition[]
-  }
-}
-
-export type KubeGatewayAgentRun = {
-  metadata: KubeGatewayMetadata
-  spec: {
-    parameters: Record<string, string>
-    agentRefName: string | null
-    implementationSpecRefName: string | null
-    runtimeType: string | null
-  }
-  status: {
-    phase: string | null
-    reason: string | null
-    message: string | null
-    startedAt: string | null
-    finishedAt: string | null
-    conditions: KubeGatewayCondition[]
-  }
-}
-
-export type KubeGatewayContainerState = {
-  waiting?: {
-    reason: string | null
-    message: string | null
-  }
-  terminated?: {
-    reason: string | null
-    message: string | null
-    exitCode: number | null
-  }
-  running?: boolean
-}
-
-export type KubeGatewayContainerStatus = {
-  name: string
-  image: string | null
-  image_id?: string | null
-  ready: boolean
-  state: KubeGatewayContainerState
-}
-
-export type KubeGatewayPod = {
-  metadata: KubeGatewayMetadata
-  status: {
-    phase: string | null
-    conditions: KubeGatewayCondition[]
-    containerStatuses: KubeGatewayContainerStatus[]
-  }
 }
 
 export type KubeGatewayEvent = {
@@ -116,15 +43,7 @@ export type KubeGatewayEvent = {
   }
 }
 
-export type KubeGatewaySwarm = {
-  metadata: KubeGatewayMetadata
-  status: Record<string, unknown>
-}
-
 export type KubeGateway = {
-  listAgentRuns: (namespace: string, labelSelector?: string) => Promise<KubeGatewayAgentRun[]>
-  listJobs: (namespace: string, labelSelector?: string) => Promise<KubeGatewayJob[]>
-  listPods: (namespace: string, labelSelector?: string) => Promise<KubeGatewayPod[]>
   listEvents: (namespace: string, fieldSelector?: string) => Promise<KubeGatewayEvent[]>
   listNamespaces: () => Promise<string[]>
   listCustomResourceDefinitions: () => Promise<string[]>
@@ -132,18 +51,6 @@ export type KubeGateway = {
   createLease: (namespace: string, lease: V1Lease) => Promise<V1Lease>
   replaceLease: (namespace: string, lease: V1Lease) => Promise<V1Lease>
   serviceExists: (namespace: string, name: string) => Promise<boolean>
-  listSwarms: (namespace: string) => Promise<KubeGatewaySwarm[]>
-}
-
-type AgentRunResourceLister = (
-  input: AgentsAgentRunResourceListInput,
-) => ReturnType<typeof fetchAgentRunResourcesFromAgentsService>
-
-type KubeGatewayDeps = {
-  listAgentRunResources?: AgentRunResourceLister
-  listControlPlaneResources?: (
-    input: AgentsControlPlaneResourceListInput,
-  ) => ReturnType<typeof fetchControlPlaneResourcesFromAgentsService>
 }
 
 const normalizeMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
@@ -192,30 +99,6 @@ const parseMetadata = (value: unknown): KubeGatewayMetadata | null => {
   return metadata
 }
 
-const parseCondition = (value: unknown): KubeGatewayCondition | null => {
-  const record = asRecord(value)
-  if (!record) return null
-
-  const message = asString(record.message)
-  const condition: KubeGatewayCondition = {
-    type: asString(record.type),
-    status: asString(record.status),
-    reason: asString(record.reason),
-    lastTransitionTime: asString(record.lastTransitionTime),
-  }
-
-  if (message !== null) {
-    condition.message = message
-  }
-
-  return condition
-}
-
-const parseConditions = (value: unknown) =>
-  (Array.isArray(value) ? value : [])
-    .map((entry) => parseCondition(entry))
-    .filter((entry): entry is KubeGatewayCondition => entry !== null)
-
 const parseListItems = (payload: unknown, context: string) => {
   const record = asRecord(payload)
   if (!record || !Array.isArray(record.items)) {
@@ -241,60 +124,6 @@ const parseItemNames = (items: Record<string, unknown>[]) =>
     .map((item) => parseMetadata(item.metadata)?.name ?? asString(asRecord(item.metadata)?.name))
     .filter((entry): entry is string => Boolean(entry))
 
-const parseContainerState = (value: unknown): KubeGatewayContainerState => {
-  const record = asRecord(value) ?? {}
-  const waiting = asRecord(record.waiting)
-  const terminated = asRecord(record.terminated)
-  const state: KubeGatewayContainerState = {}
-
-  if (waiting) {
-    state.waiting = {
-      reason: asString(waiting.reason),
-      message: asString(waiting.message),
-    }
-  }
-  if (terminated) {
-    state.terminated = {
-      reason: asString(terminated.reason),
-      message: asString(terminated.message),
-      exitCode: asNonNegativeInteger(terminated.exitCode),
-    }
-  }
-  if (asRecord(record.running)) {
-    state.running = true
-  }
-
-  return state
-}
-
-const parseContainerStatuses = (value: unknown) =>
-  (Array.isArray(value) ? value : [])
-    .map((entry): KubeGatewayContainerStatus | null => {
-      const record = asRecord(entry)
-      const name = asString(record?.name)
-      if (!record || !name) return null
-
-      return {
-        name,
-        image: asString(record.image),
-        image_id: asString(record.imageID),
-        ready: record.ready === true,
-        state: parseContainerState(record.state),
-      }
-    })
-    .filter((entry): entry is KubeGatewayContainerStatus => entry !== null)
-
-const parseStringMap = (value: unknown) => {
-  const record = asRecord(value)
-  if (!record) return {}
-
-  return Object.fromEntries(
-    Object.entries(record)
-      .map(([key, candidate]) => [key, asString(candidate)] as const)
-      .filter((entry): entry is [string, string] => entry[1] !== null),
-  )
-}
-
 const parseInvolvedObject = (value: unknown) => {
   const record = asRecord(value) ?? {}
   return {
@@ -312,107 +141,7 @@ const withLeaseNamespace = (namespace: string, lease: V1Lease) => ({
   },
 })
 
-const parseAgentRunResource = (item: Record<string, unknown>): KubeGatewayAgentRun | null => {
-  const metadata = parseMetadata(item.metadata)
-  if (!metadata) return null
-
-  const spec = asRecord(item.spec) ?? {}
-  const status = asRecord(item.status) ?? {}
-  const agentRef = asRecord(spec.agentRef)
-  const implementationSpecRef = asRecord(spec.implementationSpecRef)
-  const runtime = asRecord(spec.runtime)
-
-  return {
-    metadata,
-    spec: {
-      parameters: parseStringMap(spec.parameters),
-      agentRefName: asString(agentRef?.name),
-      implementationSpecRefName: asString(implementationSpecRef?.name),
-      runtimeType: asString(runtime?.type),
-    },
-    status: {
-      phase: asString(status.phase),
-      reason: asString(status.reason),
-      message: asString(status.message),
-      startedAt: asString(status.startedAt),
-      finishedAt: asString(status.finishedAt),
-      conditions: parseConditions(status.conditions),
-    },
-  }
-}
-
-export const createKubeGateway = (
-  client: KubernetesClient = createKubernetesClient(),
-  deps: KubeGatewayDeps = {},
-): KubeGateway => ({
-  listAgentRuns: async (namespace, labelSelector) =>
-    wrapTransport('agents service agentruns list failed', async () => {
-      const listAgentRunResources = deps.listAgentRunResources ?? fetchAgentRunResourcesFromAgentsService
-      const result = await listAgentRunResources({ namespace, labelSelector })
-      if (!result.ok) {
-        throw new Error(result.error ?? `Agents service returned HTTP ${result.status}`)
-      }
-      const items = parseListItems(result.body, 'agents service agentruns list')
-      return items
-        .map((item) => parseAgentRunResource(item))
-        .filter((entry): entry is KubeGatewayAgentRun => entry !== null)
-    }),
-  listJobs: async (namespace, labelSelector) =>
-    wrapTransport('agents service jobs list failed', async () => {
-      const listControlPlaneResources = deps.listControlPlaneResources ?? fetchControlPlaneResourcesFromAgentsService
-      const result = await listControlPlaneResources({ kind: 'Job', namespace, labelSelector })
-      if (!result.ok) {
-        throw new Error(result.error ?? `Agents service returned HTTP ${result.status}`)
-      }
-      const items = parseListItems(result.body, 'agents service jobs list')
-
-      return items
-        .map((item): KubeGatewayJob | null => {
-          const metadata = parseMetadata(item.metadata)
-          if (!metadata) return null
-
-          const status = asRecord(item.status) ?? {}
-
-          return {
-            metadata,
-            status: {
-              active: asNonNegativeInteger(status.active),
-              failed: asNonNegativeInteger(status.failed),
-              startTime: asString(status.startTime),
-              completionTime: asString(status.completionTime),
-              conditions: parseConditions(status.conditions),
-            },
-          }
-        })
-        .filter((entry): entry is KubeGatewayJob => entry !== null)
-    }),
-  listPods: async (namespace, labelSelector) =>
-    wrapTransport('agents service pods list failed', async () => {
-      const listControlPlaneResources = deps.listControlPlaneResources ?? fetchControlPlaneResourcesFromAgentsService
-      const result = await listControlPlaneResources({ kind: 'Pod', namespace, labelSelector })
-      if (!result.ok) {
-        throw new Error(result.error ?? `Agents service returned HTTP ${result.status}`)
-      }
-      const items = parseListItems(result.body, 'agents service pods list')
-
-      return items
-        .map((item): KubeGatewayPod | null => {
-          const metadata = parseMetadata(item.metadata)
-          if (!metadata) return null
-
-          const status = asRecord(item.status) ?? {}
-
-          return {
-            metadata,
-            status: {
-              phase: asString(status.phase),
-              conditions: parseConditions(status.conditions),
-              containerStatuses: parseContainerStatuses(status.containerStatuses),
-            },
-          }
-        })
-        .filter((entry): entry is KubeGatewayPod => entry !== null)
-    }),
+export const createKubeGateway = (client: KubernetesClient = createKubernetesClient()): KubeGateway => ({
   listEvents: async (namespace, fieldSelector) =>
     wrapTransport('kube events list failed', async () => {
       const items = parseListItems(await client.listEvents(namespace, fieldSelector), 'kube events list')
@@ -467,26 +196,5 @@ export const createKubeGateway = (
     wrapTransport('kube service get failed', async () => {
       const service = await client.get('service', name, namespace)
       return service !== null
-    }),
-  listSwarms: async (namespace) =>
-    wrapTransport('agents service swarms list failed', async () => {
-      const listControlPlaneResources = deps.listControlPlaneResources ?? fetchControlPlaneResourcesFromAgentsService
-      const result = await listControlPlaneResources({ kind: 'Swarm', namespace })
-      if (!result.ok) {
-        throw new Error(result.error ?? `Agents service returned HTTP ${result.status}`)
-      }
-      const items = parseListItems(result.body, 'agents service swarms list')
-
-      return items
-        .map((item): KubeGatewaySwarm | null => {
-          const metadata = parseMetadata(item.metadata)
-          if (!metadata) return null
-
-          return {
-            metadata,
-            status: asRecord(item.status) ?? {},
-          }
-        })
-        .filter((entry): entry is KubeGatewaySwarm => entry !== null)
     }),
 })

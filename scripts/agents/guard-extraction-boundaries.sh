@@ -135,6 +135,11 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/kube-gateway.ts"
 
 fail_if_matches \
+  "Jangar kube gateway must not expose generic Agents AgentRun/Job/Pod/Swarm listers or DTOs after Agents owns runtime evidence" \
+  'list(AgentRuns|Jobs|Pods|Swarms)|KubeGateway(AgentRun|Job|Pod|Swarm|Container|Condition)' \
+  "${ROOT_DIR}/services/jangar/src/server/kube-gateway.ts"
+
+fail_if_matches \
   "Jangar must not fetch generic Agents Deployment resources after Agents owns rollout health" \
   "kind: 'Deployment'|kind: \"Deployment\"" \
   "${ROOT_DIR}/services/jangar/src/server/kube-gateway.ts"

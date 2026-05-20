@@ -20,13 +20,6 @@ import type {
 } from '~/data/agents-control-plane'
 import type { ReadyTruthArbiter } from '~/data/agents-control-plane'
 import type { ControlPlaneControllerWitnessQuorum } from '~/data/agents-control-plane'
-import type {
-  KubeGateway,
-  KubeGatewayAgentRun,
-  KubeGatewayCondition,
-  KubeGatewayJob,
-  KubeGatewayPod,
-} from '~/server/kube-gateway'
 import type { ControlPlaneWatchReliability } from '~/server/control-plane-status-types'
 
 export const TERMINAL_DEBT_COMPACTION_DESIGN_ARTIFACT =
@@ -73,10 +66,86 @@ const TERMINAL_FAILURE_PHASES = new Set(['failed', 'error', 'errored', 'cancelle
 const TERMINAL_SUCCESS_PHASES = new Set(['succeeded', 'completed', 'complete'])
 
 export type TerminalDebtCompactionEvidence = {
-  agentRuns: KubeGatewayAgentRun[]
-  jobs: KubeGatewayJob[]
-  pods: KubeGatewayPod[]
+  agentRuns: TerminalDebtAgentRun[]
+  jobs: TerminalDebtJob[]
+  pods: TerminalDebtPod[]
   collectionErrors: string[]
+}
+
+export type TerminalDebtCondition = {
+  type: string | null
+  status: string | null
+  reason: string | null
+  lastTransitionTime: string | null
+  message?: string | null
+}
+
+export type TerminalDebtMetadata = {
+  name: string
+  namespace: string | null
+  generation: number | null
+  labels: Record<string, string>
+  annotations?: Record<string, string>
+  creationTimestamp: string | null
+}
+
+export type TerminalDebtAgentRun = {
+  metadata: TerminalDebtMetadata
+  spec: {
+    parameters: Record<string, string>
+    agentRefName: string | null
+    implementationSpecRefName: string | null
+    runtimeType: string | null
+  }
+  status: {
+    phase: string | null
+    reason: string | null
+    message: string | null
+    startedAt: string | null
+    finishedAt: string | null
+    conditions: TerminalDebtCondition[]
+  }
+}
+
+export type TerminalDebtJob = {
+  metadata: TerminalDebtMetadata
+  status: {
+    active: number | null
+    failed: number | null
+    startTime: string | null
+    completionTime: string | null
+    conditions: TerminalDebtCondition[]
+  }
+}
+
+export type TerminalDebtContainerState = {
+  waiting?: {
+    reason: string | null
+    message: string | null
+  }
+  terminated?: {
+    reason: string | null
+    message: string | null
+    exitCode: number | null
+  }
+  running?: boolean
+}
+
+export type TerminalDebtContainerStatus = {
+  name: string
+  image: string | null
+  image_id?: string | null
+  ready: boolean
+  state: TerminalDebtContainerState
+}
+
+export type TerminalDebtPod = {
+  metadata: TerminalDebtMetadata
+  status: {
+    phase: string | null
+    conditions: TerminalDebtCondition[]
+    containerStatuses: TerminalDebtContainerStatus[]
+  }
 }
 
 export type TerminalDebtCompactionInput = TerminalDebtCompactionEvidence & {
@@ -106,11 +175,6 @@ type TerminalDebtItem = {
   valueGates: string[]
 }
 
-type CollectionResult<T> = {
-  items: T[]
-  error: string | null
-}
-
 export const emptyTerminalDebtEvidence = (): TerminalDebtCompactionEvidence => ({
   agentRuns: [],
   jobs: [],
@@ -127,33 +191,6 @@ export const resolveTerminalDebtCompactionMode = (env: NodeJS.ProcessEnv = proce
 export const isTerminalDebtCompactionEnabled = (env: NodeJS.ProcessEnv = process.env) => {
   const normalized = env.JANGAR_TERMINAL_DEBT_COMPACTION_ENABLED?.trim().toLowerCase()
   return !(normalized === '0' || normalized === 'false' || normalized === 'off' || normalized === 'no')
-}
-
-export const collectTerminalDebtEvidence = async (input: {
-  namespace: string
-  kube: KubeGateway
-}): Promise<TerminalDebtCompactionEvidence> => {
-  const [agentRuns, jobs, pods] = await Promise.all([
-    collectItems(() => input.kube.listAgentRuns(input.namespace), 'AgentRun'),
-    collectItems(() => input.kube.listJobs(input.namespace), 'Job'),
-    collectItems(() => input.kube.listPods(input.namespace), 'Pod'),
-  ])
-
-  return {
-    agentRuns: agentRuns.items,
-    jobs: jobs.items,
-    pods: pods.items,
-    collectionErrors: [agentRuns.error, jobs.error, pods.error].filter((error): error is string => error !== null),
-  }
-}
-
-const collectItems = async <T>(run: () => Promise<T[]>, label: string): Promise<CollectionResult<T>> => {
-  try {
-    return { items: await run(), error: null }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return { items: [], error: `${label} terminal debt collection failed: ${message}` }
-  }
 }
 
 const hashJson = (value: unknown, length = 16) =>
@@ -214,10 +251,10 @@ const defaultActionClassForStage = (stage: StageClearanceStage | 'unknown'): Act
   return 'unknown'
 }
 
-const conditionReasons = (conditions: KubeGatewayCondition[]) =>
+const conditionReasons = (conditions: TerminalDebtCondition[]) =>
   uniqueReasons(conditions.flatMap((condition) => [condition.reason, condition.message]))
 
-const terminalConditionAt = (conditions: KubeGatewayCondition[]) => {
+const terminalConditionAt = (conditions: TerminalDebtCondition[]) => {
   const timestamps = conditions
     .filter(
       (condition) => condition.type === 'Succeeded' || condition.type === 'Complete' || condition.type === 'Failed',
@@ -253,12 +290,12 @@ const toWindowDates = (input: { now: Date; observedAt: Date | null; activeWindow
   }
 }
 
-const labelsAndAnnotations = (resource: KubeGatewayAgentRun | KubeGatewayJob | KubeGatewayPod) => ({
+const labelsAndAnnotations = (resource: TerminalDebtAgentRun | TerminalDebtJob | TerminalDebtPod) => ({
   labels: resource.metadata.labels ?? {},
   annotations: resource.metadata.annotations ?? {},
 })
 
-const resolveStageAndAction = (resource: KubeGatewayAgentRun | KubeGatewayJob | KubeGatewayPod) => {
+const resolveStageAndAction = (resource: TerminalDebtAgentRun | TerminalDebtJob | TerminalDebtPod) => {
   const { labels, annotations } = labelsAndAnnotations(resource)
   const parameters = 'spec' in resource && 'parameters' in resource.spec ? resource.spec.parameters : {}
   const stage = normalizeStage(
@@ -280,12 +317,12 @@ const resolveStageAndAction = (resource: KubeGatewayAgentRun | KubeGatewayJob | 
   }
 }
 
-const agentRunRef = (agentRun: KubeGatewayAgentRun) =>
+const agentRunRef = (agentRun: TerminalDebtAgentRun) =>
   `agentrun:${agentRun.metadata.namespace ?? 'unknown'}:${agentRun.metadata.name}`
 
-const jobRef = (job: KubeGatewayJob) => `job:${job.metadata.namespace ?? 'unknown'}:${job.metadata.name}`
+const jobRef = (job: TerminalDebtJob) => `job:${job.metadata.namespace ?? 'unknown'}:${job.metadata.name}`
 
-const podRef = (pod: KubeGatewayPod) => `pod:${pod.metadata.namespace ?? 'unknown'}:${pod.metadata.name}`
+const podRef = (pod: TerminalDebtPod) => `pod:${pod.metadata.namespace ?? 'unknown'}:${pod.metadata.name}`
 
 const agentRunItems = (input: TerminalDebtCompactionInput, activeWindowMs: number): TerminalDebtItem[] =>
   input.agentRuns.flatMap((agentRun) => {
@@ -325,7 +362,7 @@ const agentRunItems = (input: TerminalDebtCompactionInput, activeWindowMs: numbe
     ]
   })
 
-const isFailedJob = (job: KubeGatewayJob) =>
+const isFailedJob = (job: TerminalDebtJob) =>
   (job.status.failed ?? 0) > 0 ||
   job.status.conditions.some((condition) => condition.type === 'Failed' && condition.status === 'True')
 
@@ -360,7 +397,7 @@ const jobItems = (input: TerminalDebtCompactionInput, activeWindowMs: number): T
     ]
   })
 
-const failedContainerReasons = (pod: KubeGatewayPod) =>
+const failedContainerReasons = (pod: TerminalDebtPod) =>
   uniqueReasons(
     pod.status.containerStatuses.flatMap((container) => [
       container.state.terminated?.reason,
@@ -371,7 +408,7 @@ const failedContainerReasons = (pod: KubeGatewayPod) =>
     ]),
   )
 
-const isFailedPod = (pod: KubeGatewayPod) =>
+const isFailedPod = (pod: TerminalDebtPod) =>
   normalizeReason(pod.status.phase ?? '') === 'failed' ||
   pod.status.containerStatuses.some((container) => {
     const exitCode = container.state.terminated?.exitCode

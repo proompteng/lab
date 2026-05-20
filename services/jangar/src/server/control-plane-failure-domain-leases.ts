@@ -15,7 +15,6 @@ import type {
   DatabaseStatus,
   DeploymentRolloutStatus,
 } from '~/server/control-plane-status-types'
-import type { KubeGateway, KubeGatewayEvent, KubeGatewayPod } from '~/server/kube-gateway'
 
 export const FAILURE_DOMAIN_LEASES_DESIGN_ARTIFACT =
   'docs/agents/designs/75-jangar-failure-domain-leases-and-database-routability-holdbacks-2026-05-05.md'
@@ -37,9 +36,72 @@ export type FailureDomainRouteProbe = {
 }
 
 export type FailureDomainKubernetesEvidence = {
-  pods: KubeGatewayPod[]
-  events: KubeGatewayEvent[]
+  pods: FailureDomainPod[]
+  events: FailureDomainEvent[]
   collection_errors: string[]
+}
+
+export type FailureDomainCondition = {
+  type: string | null
+  status: string | null
+  reason: string | null
+  lastTransitionTime: string | null
+  message?: string | null
+}
+
+export type FailureDomainMetadata = {
+  name: string
+  namespace: string | null
+  generation: number | null
+  labels: Record<string, string>
+  annotations?: Record<string, string>
+  creationTimestamp: string | null
+  deletionTimestamp?: string | null
+}
+
+export type FailureDomainContainerState = {
+  waiting?: {
+    reason: string | null
+    message: string | null
+  }
+  terminated?: {
+    reason: string | null
+    message: string | null
+    exitCode: number | null
+  }
+  running?: boolean
+}
+
+export type FailureDomainContainerStatus = {
+  name: string
+  image: string | null
+  image_id?: string | null
+  ready: boolean
+  state: FailureDomainContainerState
+}
+
+export type FailureDomainPod = {
+  metadata: FailureDomainMetadata
+  status: {
+    phase: string | null
+    conditions: FailureDomainCondition[]
+    containerStatuses: FailureDomainContainerStatus[]
+  }
+}
+
+export type FailureDomainEvent = {
+  metadata: FailureDomainMetadata
+  type: string | null
+  reason: string | null
+  message: string | null
+  firstTimestamp: string | null
+  lastTimestamp: string | null
+  eventTime: string | null
+  involvedObject: {
+    kind: string | null
+    name: string | null
+    namespace: string | null
+  }
 }
 
 export type FailureDomainLeaseSetInput = {
@@ -58,13 +120,6 @@ export type FailureDomainRouteProbeInput = {
   now: Date
   namespace: string
   service: string
-  env?: Record<string, string | undefined>
-}
-
-export type FailureDomainKubernetesEvidenceInput = {
-  namespace: string
-  service: string
-  kube: KubeGateway
   env?: Record<string, string | undefined>
 }
 
@@ -159,7 +214,7 @@ const conditionIsTrue = (condition: { status: string | null }) => normalizeText(
 
 const hasDatabaseNameToken = (name: string) => /(^|[-_.])(db|database|postgres|postgresql)($|[-_.])/.test(name)
 
-const isDatabasePod = (pod: KubeGatewayPod) => {
+const isDatabasePod = (pod: FailureDomainPod) => {
   const name = normalizeText(pod.metadata.name)
   const labels = pod.metadata.labels
   return (
@@ -173,20 +228,21 @@ const isDatabasePod = (pod: KubeGatewayPod) => {
   )
 }
 
-const podHasDisruptionTarget = (pod: KubeGatewayPod) =>
+const podHasDisruptionTarget = (pod: FailureDomainPod) =>
   pod.status.conditions.some((condition) => condition.type === 'DisruptionTarget' && conditionIsTrue(condition))
 
-const podReadyCondition = (pod: KubeGatewayPod) =>
+const podReadyCondition = (pod: FailureDomainPod) =>
   pod.status.conditions.find((condition) => condition.type === 'Ready') ?? null
 
-const podHasReadyContainer = (pod: KubeGatewayPod) => pod.status.containerStatuses.some((container) => container.ready)
+const podHasReadyContainer = (pod: FailureDomainPod) =>
+  pod.status.containerStatuses.some((container) => container.ready)
 
-const podEvidenceRef = (pod: KubeGatewayPod) => `pod:${pod.metadata.namespace ?? 'unknown'}:${pod.metadata.name}`
+const podEvidenceRef = (pod: FailureDomainPod) => `pod:${pod.metadata.namespace ?? 'unknown'}:${pod.metadata.name}`
 
-const eventEvidenceRef = (event: KubeGatewayEvent) =>
+const eventEvidenceRef = (event: FailureDomainEvent) =>
   `event:${event.metadata.namespace ?? 'unknown'}:${event.metadata.name}`
 
-const hasDatabasePodSplitReadiness = (pod: KubeGatewayPod) => {
+const hasDatabasePodSplitReadiness = (pod: FailureDomainPod) => {
   const readyCondition = podReadyCondition(pod)
   return Boolean(pod.metadata.deletionTimestamp) || podHasDisruptionTarget(pod) || readyCondition?.status === 'False'
 }
@@ -306,7 +362,7 @@ const buildRouteLease = (input: FailureDomainLeaseSetInput): FailureDomainLease 
   })
 }
 
-const isImagePullContainer = (pod: KubeGatewayPod) =>
+const isImagePullContainer = (pod: FailureDomainPod) =>
   pod.status.containerStatuses.some((container) => {
     const reason = container.state.waiting?.reason
     const message = normalizeText(container.state.waiting?.message)
@@ -318,7 +374,7 @@ const isImagePullContainer = (pod: KubeGatewayPod) =>
     )
   })
 
-const isImagePullEvent = (event: KubeGatewayEvent) => {
+const isImagePullEvent = (event: FailureDomainEvent) => {
   const reason = event.reason ?? ''
   const message = normalizeText(event.message)
   return (
@@ -428,7 +484,7 @@ const buildRolloutLease = (input: FailureDomainLeaseSetInput): FailureDomainLeas
   })
 }
 
-const isConfigMapMissingEvent = (event: KubeGatewayEvent) => {
+const isConfigMapMissingEvent = (event: FailureDomainEvent) => {
   const reason = normalizeText(event.reason)
   const message = normalizeText(event.message)
   return (
@@ -437,7 +493,7 @@ const isConfigMapMissingEvent = (event: KubeGatewayEvent) => {
   )
 }
 
-const hasMountConflict = (event: KubeGatewayEvent) => {
+const hasMountConflict = (event: FailureDomainEvent) => {
   const message = normalizeText(event.message)
   return message.includes('mountvolume') && (message.includes('already exists') || message.includes('multi-attach'))
 }
@@ -744,37 +800,4 @@ export const resolveFailureDomainRouteProbe = async (
   } finally {
     clearTimeout(timeout)
   }
-}
-
-export const collectFailureDomainKubernetesEvidence = async ({
-  namespace,
-  kube,
-  env = process.env,
-}: FailureDomainKubernetesEvidenceInput): Promise<FailureDomainKubernetesEvidence> => {
-  const configuredNamespaces = (normalizeNonEmpty(env.JANGAR_FAILURE_DOMAIN_EVIDENCE_NAMESPACES) ?? '')
-    .split(',')
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0)
-  const namespaces = uniqueStrings([
-    namespace,
-    normalizeNonEmpty(env.JANGAR_CONTROL_PLANE_ROUTE_NAMESPACE) ?? DEFAULT_APP_NAMESPACE,
-    ...configuredNamespaces,
-  ])
-  const evidence = emptyFailureDomainKubernetesEvidence()
-
-  for (const currentNamespace of namespaces) {
-    try {
-      evidence.pods.push(...(await kube.listPods(currentNamespace)))
-    } catch (error) {
-      evidence.collection_errors.push(`${currentNamespace}: pods: ${normalizeErrorMessage(error)}`)
-    }
-
-    try {
-      evidence.events.push(...(await kube.listEvents(currentNamespace)))
-    } catch (error) {
-      evidence.collection_errors.push(`${currentNamespace}: events: ${normalizeErrorMessage(error)}`)
-    }
-  }
-
-  return evidence
 }

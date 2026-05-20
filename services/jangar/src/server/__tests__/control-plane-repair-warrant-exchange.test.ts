@@ -10,8 +10,8 @@ import {
   buildScheduleDebtWindow,
   collectRepairScheduleAttempts,
   type RepairScheduleAttemptEvidence,
+  type RepairScheduleJob,
 } from '~/server/control-plane-repair-warrant-exchange'
-import type { KubeGateway, KubeGatewayJob } from '~/server/kube-gateway'
 import type { ControlPlaneRolloutHealth, ControlPlaneWatchReliability } from '~/server/control-plane-status-types'
 
 const now = new Date('2026-05-07T14:30:00.000Z')
@@ -137,12 +137,9 @@ const attempt = (
   ...overrides,
 })
 
-const kubeWithJobs = (jobs: KubeGatewayJob[]): KubeGateway =>
-  ({
-    listJobs: async () => jobs,
-  }) as unknown as KubeGateway
+const listScheduleJobs = (jobs: RepairScheduleJob[]) => async () => jobs
 
-const scheduledJob = (overrides: Partial<KubeGatewayJob> = {}): KubeGatewayJob => ({
+const scheduledJob = (overrides: Partial<RepairScheduleJob> = {}): RepairScheduleJob => ({
   metadata: {
     name: 'hourly-jangar-plan-retry',
     namespace: 'agents',
@@ -246,7 +243,7 @@ describe('repair warrant exchange', () => {
     const collection = await collectRepairScheduleAttempts({
       now,
       namespaces: ['agents'],
-      kube: kubeWithJobs([scheduledJob()]),
+      listScheduleJobs: listScheduleJobs([scheduledJob()]),
     })
     const debt = buildScheduleDebtWindow({
       now,
@@ -269,7 +266,7 @@ describe('repair warrant exchange', () => {
     const collection = await collectRepairScheduleAttempts({
       now,
       namespaces: ['agents'],
-      kube: kubeWithJobs([
+      listScheduleJobs: listScheduleJobs([
         scheduledJob({
           status: {
             active: 1,
@@ -310,7 +307,7 @@ describe('repair warrant exchange', () => {
     const collection = await collectRepairScheduleAttempts({
       now,
       namespaces: ['agents'],
-      kube: kubeWithJobs([
+      listScheduleJobs: listScheduleJobs([
         scheduledJob({
           status: {
             active: 0,

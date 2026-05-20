@@ -1,5 +1,5 @@
 import { resolveControlPlaneStatusConfig } from '~/server/control-plane-config'
-import { createKubeGateway, type KubeGateway } from '~/server/kube-gateway'
+import { fetchControlPlaneResourcesFromAgentsService } from '~/server/agents-service-client'
 import { asRecord, asString } from '~/server/primitives-http'
 import type { ExecutionTrustStage, ExecutionTrustStatus, ExecutionTrustSwarm } from '~/data/agents-control-plane'
 
@@ -28,11 +28,24 @@ export type ExecutionTrustSnapshot = {
   stages: ExecutionTrustStage[]
 }
 
+export type ExecutionTrustSwarmResource = {
+  metadata: {
+    name: string
+    namespace: string | null
+    generation: number | null
+    labels: Record<string, string>
+    creationTimestamp: string | null
+  }
+  status: Record<string, unknown>
+}
+
+export type ExecutionTrustSwarmLister = (namespace: string) => Promise<ExecutionTrustSwarmResource[]>
+
 export type ExecutionTrustInput = {
   namespace: string
   now: Date
   swarms: string[]
-  kube?: KubeGateway
+  listSwarms?: ExecutionTrustSwarmLister
   summaryLimit?: number
 }
 
@@ -82,6 +95,71 @@ const resolveExecutionTrustSwarms = () => resolveControlPlaneStatusConfig(proces
 
 export const resolveExecutionTrustSummaryLimit = () =>
   resolveControlPlaneStatusConfig(process.env).executionTrustSummaryLimit
+
+const asNonNegativeInteger = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.floor(value))
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value, 10)
+    return Number.isFinite(parsed) ? Math.max(0, parsed) : null
+  }
+  return null
+}
+
+const parseStringMap = (value: unknown) => {
+  const record = asRecord(value)
+  if (!record) return {}
+
+  return Object.fromEntries(
+    Object.entries(record)
+      .map(([key, candidate]) => [key, asString(candidate)] as const)
+      .filter((entry): entry is [string, string] => entry[1] !== null),
+  )
+}
+
+const parseMetadata = (value: unknown): ExecutionTrustSwarmResource['metadata'] | null => {
+  const record = asRecord(value)
+  const name = asString(record?.name)
+  if (!record || !name) return null
+
+  return {
+    name,
+    namespace: asString(record.namespace),
+    generation: asNonNegativeInteger(record.generation),
+    labels: parseStringMap(record.labels),
+    creationTimestamp: asString(record.creationTimestamp),
+  }
+}
+
+const parseListItems = (payload: unknown, context: string) => {
+  const record = asRecord(payload)
+  if (!record || !Array.isArray(record.items)) {
+    throw new Error(`${context} returned invalid list payload`)
+  }
+
+  return record.items.filter((item): item is Record<string, unknown> => {
+    return item !== null && typeof item === 'object' && !Array.isArray(item)
+  })
+}
+
+const listSwarmsFromAgentsService: ExecutionTrustSwarmLister = async (namespace) => {
+  const result = await fetchControlPlaneResourcesFromAgentsService({ kind: 'Swarm', namespace, limit: 500 })
+  if (!result.ok) {
+    throw new Error(`Agents service Swarm resource list failed (${result.status}): ${result.error ?? 'unknown error'}`)
+  }
+  const items = parseListItems(result.body, 'agents service swarms list')
+
+  return items
+    .map((item): ExecutionTrustSwarmResource | null => {
+      const metadata = parseMetadata(item.metadata)
+      if (!metadata) return null
+
+      return {
+        metadata,
+        status: asRecord(item.status) ?? {},
+      }
+    })
+    .filter((entry): entry is ExecutionTrustSwarmResource => entry !== null)
+}
 
 const asExecutionTrustClass = (value: unknown): 'degraded' | 'blocked' | 'unknown' =>
   value === 'degraded' || value === 'blocked' || value === 'unknown' ? value : 'unknown'
@@ -260,7 +338,7 @@ export const buildExecutionTrust = async ({
   namespace,
   now,
   swarms,
-  kube = createKubeGateway(),
+  listSwarms = listSwarmsFromAgentsService,
   summaryLimit = DEFAULT_EXECUTION_TRUST_SUMMARY_LIMIT,
 }: ExecutionTrustInput): Promise<ExecutionTrustSnapshot> => {
   const nowMs = now.getTime()
@@ -271,9 +349,9 @@ export const buildExecutionTrust = async ({
     blockingWindows: [] as ExecutionTrustBlock[],
   }
 
-  let resources: Awaited<ReturnType<KubeGateway['listSwarms']>> = []
+  let resources: ExecutionTrustSwarmResource[] = []
   try {
-    resources = await kube.listSwarms(namespace)
+    resources = await listSwarms(namespace)
   } catch (error) {
     return {
       executionTrust: {

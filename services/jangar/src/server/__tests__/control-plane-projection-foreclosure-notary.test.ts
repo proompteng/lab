@@ -11,7 +11,6 @@ import {
   type ProjectionForeclosureAgentRunProjection,
   type ProjectionForeclosureMarketContextProjection,
 } from '~/server/control-plane-projection-foreclosure-notary'
-import type { KubeGatewayAgentRun } from '~/server/kube-gateway'
 
 const now = new Date('2026-05-13T12:00:00.000Z')
 
@@ -126,32 +125,6 @@ const marketContextProjection = (
   ...overrides,
 })
 
-const liveAgentRun = (overrides: Partial<KubeGatewayAgentRun> = {}): KubeGatewayAgentRun => ({
-  metadata: {
-    name: 'jangar-control-plane-implement-live',
-    namespace: 'agents',
-    generation: 1,
-    labels: {},
-    annotations: {},
-    creationTimestamp: '2026-05-13T11:00:00.000Z',
-  },
-  spec: {
-    parameters: {},
-    agentRefName: 'jangar-control-plane',
-    implementationSpecRefName: null,
-    runtimeType: 'codex',
-  },
-  status: {
-    phase: 'Running',
-    reason: null,
-    message: null,
-    startedAt: '2026-05-13T11:00:00.000Z',
-    finishedAt: null,
-    conditions: [],
-  },
-  ...overrides,
-})
-
 const buildNotary = (overrides: Partial<Parameters<typeof buildProjectionForeclosureNotary>[0]> = {}) =>
   buildProjectionForeclosureNotary({
     now,
@@ -163,8 +136,6 @@ const buildNotary = (overrides: Partial<Parameters<typeof buildProjectionForeclo
     torghutConsumerEvidence: torghutEvidence(),
     agentRunProjections: [],
     marketContextProjections: [],
-    liveAgentRuns: [],
-    liveJobs: [],
     collectionErrors: [],
     ...overrides,
   })
@@ -180,9 +151,9 @@ describe('buildProjectionForeclosureNotary', () => {
     expect(notary.decision).toBe('observe_only')
     expect(claim).toMatchObject({
       authority_state: 'stale_foreclosed',
-      live_authority_ref: null,
+      live_authority_ref: 'agents-service-agentrun:jangar-control-plane-implement-old',
       projection_ref: 'agent_runs:00000000-0000-0000-0000-000000000001',
-      reason_codes: expect.arrayContaining(['agentrun_projection_not_renewed', 'live_agentrun_authority_missing']),
+      reason_codes: ['agents_service_agentrun_projection_not_renewed'],
     })
     expect(notary.foreclosure_receipts).toEqual(
       expect.arrayContaining([
@@ -202,15 +173,14 @@ describe('buildProjectionForeclosureNotary', () => {
           payload: { timeoutSeconds: 86_400 },
         }),
       ],
-      liveAgentRuns: [liveAgentRun()],
     })
     const claim = notary.claims.find((entry) => entry.claim_class === 'agentrun_execution')
 
     expect(notary.decision).toBe('allow')
     expect(claim).toMatchObject({
       authority_state: 'authoritative',
-      live_authority_ref: 'agentrun:agents:jangar-control-plane-implement-live',
-      reason_codes: ['agentrun_live_authority_current'],
+      live_authority_ref: 'agents-service-agentrun:jangar-control-plane-implement-live',
+      reason_codes: ['agents_service_agentrun_projection_current'],
     })
   })
 

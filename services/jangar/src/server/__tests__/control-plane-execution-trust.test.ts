@@ -1,26 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { buildExecutionTrust } from '~/server/control-plane-execution-trust'
-import type { KubeGateway, KubeGatewaySwarm } from '~/server/kube-gateway'
+import { buildExecutionTrust, type ExecutionTrustSwarmResource } from '~/server/control-plane-execution-trust'
 
-const createTestKubeGateway = (overrides: Partial<KubeGateway> = {}): KubeGateway => ({
-  listAgentRuns: vi.fn(async () => []),
-  listJobs: vi.fn(async () => []),
-  listPods: vi.fn(async () => []),
-  listEvents: vi.fn(async () => []),
-  listNamespaces: vi.fn(async () => []),
-  listCustomResourceDefinitions: vi.fn(async () => []),
-  getLease: vi.fn(async () => null),
-  createLease: vi.fn(async () => {
-    throw new Error('not implemented in test gateway')
-  }),
-  replaceLease: vi.fn(async () => {
-    throw new Error('not implemented in test gateway')
-  }),
-  serviceExists: vi.fn(async () => true),
-  listSwarms: vi.fn(async () => []),
-  ...overrides,
-})
+const createTestSwarmLister = (swarms: ExecutionTrustSwarmResource[] = []) => vi.fn(async () => swarms)
 
 const buildExecutionTrustSwarmResource = (
   options: {
@@ -33,7 +15,7 @@ const buildExecutionTrustSwarmResource = (
     requirementsLastSeen?: string | null
     stageStates?: Record<string, Record<string, string | number | boolean>>
   } = {},
-): KubeGatewaySwarm => ({
+): ExecutionTrustSwarmResource => ({
   metadata: {
     name: 'jangar-control-plane',
     namespace: 'agents',
@@ -95,32 +77,30 @@ describe('control-plane execution trust', () => {
   })
 
   it('marks blocked trust when a tracked swarm has an active non-recovery freeze', async () => {
-    const kubeGateway = createTestKubeGateway({
-      listSwarms: vi.fn(async () => [
-        buildExecutionTrustSwarmResource({
-          phase: 'Frozen',
-          freezeReason: 'ConsecutiveFailures',
-          freezeUntil: '2026-01-20T00:40:00Z',
-          requirementsPending: 2,
-          requirementsLastSeen: '2026-01-20T00:00:00Z',
-          stageStates: {
-            discover: {
-              phase: 'Frozen',
-              healthy: false,
-              cadence: '1m',
-              lastRunTime: '2026-01-20T00:00:00Z',
-              consecutiveFailures: 1,
-            },
+    const listSwarms = createTestSwarmLister([
+      buildExecutionTrustSwarmResource({
+        phase: 'Frozen',
+        freezeReason: 'ConsecutiveFailures',
+        freezeUntil: '2026-01-20T00:40:00Z',
+        requirementsPending: 2,
+        requirementsLastSeen: '2026-01-20T00:00:00Z',
+        stageStates: {
+          discover: {
+            phase: 'Frozen',
+            healthy: false,
+            cadence: '1m',
+            lastRunTime: '2026-01-20T00:00:00Z',
+            consecutiveFailures: 1,
           },
-        }),
-      ]),
-    })
+        },
+      }),
+    ])
 
     const snapshot = await buildExecutionTrust({
       namespace: 'agents',
       now: new Date('2026-01-20T00:20:00Z'),
       swarms: ['jangar-control-plane'],
-      kube: kubeGateway,
+      listSwarms,
       summaryLimit: 20,
     })
 
@@ -132,32 +112,30 @@ describe('control-plane execution trust', () => {
   })
 
   it('degrades instead of blocking during active stale-stage recovery freezes', async () => {
-    const kubeGateway = createTestKubeGateway({
-      listSwarms: vi.fn(async () => [
-        buildExecutionTrustSwarmResource({
-          phase: 'Frozen',
-          freezeReason: 'StageStaleness',
-          freezeUntil: '2026-01-20T00:40:00Z',
-          requirementsPending: 2,
-          requirementsLastSeen: '2026-01-20T00:00:00Z',
-          stageStates: {
-            discover: {
-              phase: 'Frozen',
-              healthy: false,
-              cadence: '1m',
-              lastRunTime: '2026-01-20T00:00:00Z',
-              consecutiveFailures: 0,
-            },
+    const listSwarms = createTestSwarmLister([
+      buildExecutionTrustSwarmResource({
+        phase: 'Frozen',
+        freezeReason: 'StageStaleness',
+        freezeUntil: '2026-01-20T00:40:00Z',
+        requirementsPending: 2,
+        requirementsLastSeen: '2026-01-20T00:00:00Z',
+        stageStates: {
+          discover: {
+            phase: 'Frozen',
+            healthy: false,
+            cadence: '1m',
+            lastRunTime: '2026-01-20T00:00:00Z',
+            consecutiveFailures: 0,
           },
-        }),
-      ]),
-    })
+        },
+      }),
+    ])
 
     const snapshot = await buildExecutionTrust({
       namespace: 'agents',
       now: new Date('2026-01-20T00:20:00Z'),
       swarms: ['jangar-control-plane'],
-      kube: kubeGateway,
+      listSwarms,
       summaryLimit: 20,
     })
 
@@ -181,57 +159,55 @@ describe('control-plane execution trust', () => {
   })
 
   it('ignores inactive NotFrozen freeze records with future timestamps', async () => {
-    const kubeGateway = createTestKubeGateway({
-      listSwarms: vi.fn(async () => [
-        buildExecutionTrustSwarmResource({
-          phase: 'Frozen',
-          freezeReason: 'NotFrozen',
-          freezeUntil: '2026-01-20T00:40:00Z',
-          requirementsPending: 0,
-          requirementsLastSeen: '2026-01-20T00:19:00Z',
-          stageStates: {
-            discover: {
-              phase: 'Frozen',
-              healthy: true,
-              fresh: true,
-              cadence: '1m',
-              recentSuccessAt: '2026-01-20T00:19:00Z',
-              consecutiveFailures: 0,
-            },
-            plan: {
-              phase: 'Frozen',
-              healthy: true,
-              fresh: true,
-              cadence: '1m',
-              recentSuccessAt: '2026-01-20T00:19:00Z',
-              consecutiveFailures: 0,
-            },
-            implement: {
-              phase: 'Frozen',
-              healthy: true,
-              fresh: true,
-              cadence: '1m',
-              recentSuccessAt: '2026-01-20T00:19:00Z',
-              consecutiveFailures: 0,
-            },
-            verify: {
-              phase: 'Frozen',
-              healthy: true,
-              fresh: true,
-              cadence: '1m',
-              recentSuccessAt: '2026-01-20T00:19:00Z',
-              consecutiveFailures: 0,
-            },
+    const listSwarms = createTestSwarmLister([
+      buildExecutionTrustSwarmResource({
+        phase: 'Frozen',
+        freezeReason: 'NotFrozen',
+        freezeUntil: '2026-01-20T00:40:00Z',
+        requirementsPending: 0,
+        requirementsLastSeen: '2026-01-20T00:19:00Z',
+        stageStates: {
+          discover: {
+            phase: 'Frozen',
+            healthy: true,
+            fresh: true,
+            cadence: '1m',
+            recentSuccessAt: '2026-01-20T00:19:00Z',
+            consecutiveFailures: 0,
           },
-        }),
-      ]),
-    })
+          plan: {
+            phase: 'Frozen',
+            healthy: true,
+            fresh: true,
+            cadence: '1m',
+            recentSuccessAt: '2026-01-20T00:19:00Z',
+            consecutiveFailures: 0,
+          },
+          implement: {
+            phase: 'Frozen',
+            healthy: true,
+            fresh: true,
+            cadence: '1m',
+            recentSuccessAt: '2026-01-20T00:19:00Z',
+            consecutiveFailures: 0,
+          },
+          verify: {
+            phase: 'Frozen',
+            healthy: true,
+            fresh: true,
+            cadence: '1m',
+            recentSuccessAt: '2026-01-20T00:19:00Z',
+            consecutiveFailures: 0,
+          },
+        },
+      }),
+    ])
 
     const snapshot = await buildExecutionTrust({
       namespace: 'agents',
       now: new Date('2026-01-20T00:20:00Z'),
       swarms: ['jangar-control-plane'],
-      kube: kubeGateway,
+      listSwarms,
       summaryLimit: 20,
     })
 
@@ -251,59 +227,57 @@ describe('control-plane execution trust', () => {
   it('uses recent stage successes when schedule lastRunTime is stale', async () => {
     const recentSuccessAt = '2026-01-20T02:30:00Z'
     const staleRunAt = '2026-01-20T00:00:00Z'
-    const kubeGateway = createTestKubeGateway({
-      listSwarms: vi.fn(async () => [
-        buildExecutionTrustSwarmResource({
-          phase: 'Active',
-          requirementsPending: 0,
-          requirementsLastSeen: staleRunAt,
-          stageStates: {
-            discover: {
-              phase: 'Active',
-              healthy: false,
-              fresh: false,
-              cadence: '1h',
-              lastRunTime: staleRunAt,
-              recentSuccessAt,
-              consecutiveFailures: 0,
-            },
-            plan: {
-              phase: 'Active',
-              healthy: false,
-              fresh: false,
-              cadence: '1h',
-              lastRunTime: staleRunAt,
-              recentSuccessAt,
-              consecutiveFailures: 0,
-            },
-            implement: {
-              phase: 'Active',
-              healthy: false,
-              fresh: false,
-              cadence: '1h',
-              lastRunTime: staleRunAt,
-              recentSuccessAt,
-              consecutiveFailures: 0,
-            },
-            verify: {
-              phase: 'Active',
-              healthy: false,
-              fresh: false,
-              cadence: '1h',
-              lastRunTime: staleRunAt,
-              recentSuccessAt,
-              consecutiveFailures: 0,
-            },
+    const listSwarms = createTestSwarmLister([
+      buildExecutionTrustSwarmResource({
+        phase: 'Active',
+        requirementsPending: 0,
+        requirementsLastSeen: staleRunAt,
+        stageStates: {
+          discover: {
+            phase: 'Active',
+            healthy: false,
+            fresh: false,
+            cadence: '1h',
+            lastRunTime: staleRunAt,
+            recentSuccessAt,
+            consecutiveFailures: 0,
           },
-        }),
-      ]),
-    })
+          plan: {
+            phase: 'Active',
+            healthy: false,
+            fresh: false,
+            cadence: '1h',
+            lastRunTime: staleRunAt,
+            recentSuccessAt,
+            consecutiveFailures: 0,
+          },
+          implement: {
+            phase: 'Active',
+            healthy: false,
+            fresh: false,
+            cadence: '1h',
+            lastRunTime: staleRunAt,
+            recentSuccessAt,
+            consecutiveFailures: 0,
+          },
+          verify: {
+            phase: 'Active',
+            healthy: false,
+            fresh: false,
+            cadence: '1h',
+            lastRunTime: staleRunAt,
+            recentSuccessAt,
+            consecutiveFailures: 0,
+          },
+        },
+      }),
+    ])
 
     const snapshot = await buildExecutionTrust({
       namespace: 'agents',
       now: new Date('2026-01-20T03:00:00Z'),
       swarms: ['jangar-control-plane'],
-      kube: kubeGateway,
+      listSwarms,
       summaryLimit: 20,
     })
 
@@ -314,20 +288,18 @@ describe('control-plane execution trust', () => {
   })
 
   it('prefers status observed generation over metadata generation', async () => {
-    const kubeGateway = createTestKubeGateway({
-      listSwarms: vi.fn(async () => [
-        buildExecutionTrustSwarmResource({
-          metadataGeneration: 9,
-          observedGeneration: 4,
-        }),
-      ]),
-    })
+    const listSwarms = createTestSwarmLister([
+      buildExecutionTrustSwarmResource({
+        metadataGeneration: 9,
+        observedGeneration: 4,
+      }),
+    ])
 
     const snapshot = await buildExecutionTrust({
       namespace: 'agents',
       now: new Date('2026-01-20T00:20:00Z'),
       swarms: ['jangar-control-plane'],
-      kube: kubeGateway,
+      listSwarms,
       summaryLimit: 20,
     })
 

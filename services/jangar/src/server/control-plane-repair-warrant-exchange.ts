@@ -14,8 +14,8 @@ import type {
   RepairWarrantSuppressedCandidate,
   SourceRolloutTruthExchange,
 } from '~/data/agents-control-plane'
+import { fetchControlPlaneResourcesFromAgentsService } from '~/server/agents-service-client'
 import type { ControlPlaneRolloutHealth, ControlPlaneWatchReliability } from '~/server/control-plane-status-types'
-import type { KubeGateway, KubeGatewayCondition, KubeGatewayJob } from '~/server/kube-gateway'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 
 export const REPAIR_WARRANT_EXCHANGE_DESIGN_ARTIFACT =
@@ -54,10 +54,38 @@ export type RepairScheduleAttemptCollection = {
   collectionErrors: string[]
 }
 
+export type RepairScheduleJobCondition = {
+  type: string | null
+  status: string | null
+  reason: string | null
+  lastTransitionTime: string | null
+  message?: string | null
+}
+
+export type RepairScheduleJob = {
+  metadata: {
+    name: string
+    namespace: string | null
+    generation: number | null
+    labels: Record<string, string>
+    annotations?: Record<string, string>
+    creationTimestamp: string | null
+  }
+  status: {
+    active: number | null
+    failed: number | null
+    startTime: string | null
+    completionTime: string | null
+    conditions: RepairScheduleJobCondition[]
+  }
+}
+
+export type RepairScheduleJobLister = (namespace: string) => Promise<RepairScheduleJob[]>
+
 export type RepairScheduleAttemptCollectionInput = {
   now: Date
   namespaces: string[]
-  kube: KubeGateway
+  listScheduleJobs?: RepairScheduleJobLister
 }
 
 export type RepairWarrantExchangeInput = {
@@ -169,17 +197,98 @@ const minIsoTimestamp = (values: Array<string | null | undefined>, fallback: str
   return valid.length > 0 ? new Date(valid[0] ?? Date.parse(fallback)).toISOString() : fallback
 }
 
-const conditionIsTrue = (condition: KubeGatewayCondition, type: string) =>
+const asNonNegativeInteger = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.floor(value))
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value, 10)
+    return Number.isFinite(parsed) ? Math.max(0, parsed) : null
+  }
+  return null
+}
+
+const parseStringMap = (value: unknown) => {
+  const record = asRecord(value)
+  if (!record) return {}
+  return Object.fromEntries(
+    Object.entries(record)
+      .map(([key, candidate]) => [key, asString(candidate)] as const)
+      .filter((entry): entry is [string, string] => entry[1] !== null),
+  )
+}
+
+const parseCondition = (value: unknown): RepairScheduleJobCondition | null => {
+  const record = asRecord(value)
+  if (!record) return null
+  const message = asString(record.message)
+  const condition: RepairScheduleJobCondition = {
+    type: asString(record.type),
+    status: asString(record.status),
+    reason: asString(record.reason),
+    lastTransitionTime: asString(record.lastTransitionTime),
+  }
+  if (message !== null) condition.message = message
+  return condition
+}
+
+const parseConditions = (value: unknown) =>
+  (Array.isArray(value) ? value : [])
+    .map((entry) => parseCondition(entry))
+    .filter((entry): entry is RepairScheduleJobCondition => entry !== null)
+
+const parseScheduleJobs = (payload: unknown): RepairScheduleJob[] => {
+  const record = asRecord(payload)
+  const items = Array.isArray(record?.items) ? record.items : []
+  return items
+    .map((item): RepairScheduleJob | null => {
+      const itemRecord = asRecord(item)
+      const metadata = asRecord(itemRecord?.metadata)
+      const name = asString(metadata?.name)
+      if (!itemRecord || !metadata || !name) return null
+      const status = asRecord(itemRecord.status) ?? {}
+      return {
+        metadata: {
+          name,
+          namespace: asString(metadata.namespace),
+          generation: asNonNegativeInteger(metadata.generation),
+          labels: parseStringMap(metadata.labels),
+          annotations: parseStringMap(metadata.annotations),
+          creationTimestamp: asString(metadata.creationTimestamp),
+        },
+        status: {
+          active: asNonNegativeInteger(status.active),
+          failed: asNonNegativeInteger(status.failed),
+          startTime: asString(status.startTime),
+          completionTime: asString(status.completionTime),
+          conditions: parseConditions(status.conditions),
+        },
+      }
+    })
+    .filter((entry): entry is RepairScheduleJob => entry !== null)
+}
+
+const listScheduleJobsFromAgentsService: RepairScheduleJobLister = async (namespace) => {
+  const result = await fetchControlPlaneResourcesFromAgentsService({
+    kind: 'Job',
+    namespace,
+    labelSelector: SCHEDULE_LABEL,
+  })
+  if (!result.ok) {
+    throw new Error(result.error ?? `Agents service returned HTTP ${result.status}`)
+  }
+  return parseScheduleJobs(result.body)
+}
+
+const conditionIsTrue = (condition: RepairScheduleJobCondition, type: string) =>
   condition.type === type && condition.status === 'True'
 
-const latestConditionTime = (conditions: KubeGatewayCondition[]) => {
+const latestConditionTime = (conditions: RepairScheduleJobCondition[]) => {
   const times = conditions
     .map((condition) => parseIsoMs(condition.lastTransitionTime))
     .filter((value): value is number => value !== null)
   return times.length > 0 ? Math.max(...times) : null
 }
 
-const jobResult = (job: KubeGatewayJob): RepairWarrantScheduleDebtAttemptResult => {
+const jobResult = (job: RepairScheduleJob): RepairWarrantScheduleDebtAttemptResult => {
   if (job.status.conditions.some((condition) => conditionIsTrue(condition, 'Complete'))) return 'success'
   if (job.status.conditions.some((condition) => conditionIsTrue(condition, 'Failed'))) return 'error'
   if (job.status.conditions.some((condition) => conditionIsTrue(condition, 'FailureTarget'))) return 'error'
@@ -189,7 +298,7 @@ const jobResult = (job: KubeGatewayJob): RepairWarrantScheduleDebtAttemptResult 
   return 'unknown'
 }
 
-const jobObservedAt = (job: KubeGatewayJob, now: Date) => {
+const jobObservedAt = (job: RepairScheduleJob, now: Date) => {
   const timestamp =
     parseIsoMs(job.status.completionTime) ??
     latestConditionTime(job.status.conditions) ??
@@ -199,7 +308,7 @@ const jobObservedAt = (job: KubeGatewayJob, now: Date) => {
   return new Date(timestamp).toISOString()
 }
 
-const jobReasonCodes = (job: KubeGatewayJob, result: RepairWarrantScheduleDebtAttemptResult) => {
+const jobReasonCodes = (job: RepairScheduleJob, result: RepairWarrantScheduleDebtAttemptResult) => {
   const reasons = job.status.conditions
     .map((condition) => normalizeNonEmpty(condition.reason))
     .filter((reason): reason is string => Boolean(reason))
@@ -212,7 +321,7 @@ const jobReasonCodes = (job: KubeGatewayJob, result: RepairWarrantScheduleDebtAt
 }
 
 const readMetadataValue = (
-  job: KubeGatewayJob,
+  job: RepairScheduleJob,
   annotationKey: string,
   labelKey: string | null = null,
 ): string | null => {
@@ -221,7 +330,7 @@ const readMetadataValue = (
   return normalizeNonEmpty(annotations[annotationKey]) ?? (labelKey ? normalizeNonEmpty(labels[labelKey]) : null)
 }
 
-const jobLane = (job: KubeGatewayJob) => {
+const jobLane = (job: RepairScheduleJob) => {
   const annotationLane = readMetadataValue(job, SCHEDULE_DEBT_ANNOTATION_LANE)
   if (annotationLane) return annotationLane
   const schedule = normalizeNonEmpty(job.metadata.labels[SCHEDULE_LABEL])
@@ -232,7 +341,7 @@ const jobLane = (job: KubeGatewayJob) => {
   return job.metadata.name
 }
 
-const jobObjectiveRef = (job: KubeGatewayJob) => {
+const jobObjectiveRef = (job: RepairScheduleJob) => {
   const explicit = readMetadataValue(job, SCHEDULE_DEBT_ANNOTATION_OBJECTIVE_REF)
   if (explicit) return explicit
   const swarm = normalizeNonEmpty(job.metadata.labels[SWARM_NAME_LABEL])
@@ -244,15 +353,16 @@ const jobObjectiveRef = (job: KubeGatewayJob) => {
 export const collectRepairScheduleAttempts = async ({
   now,
   namespaces,
-  kube,
+  listScheduleJobs: inputListScheduleJobs,
 }: RepairScheduleAttemptCollectionInput): Promise<RepairScheduleAttemptCollection> => {
   const attempts: RepairScheduleAttemptEvidence[] = []
   const collectionErrors: string[] = []
   const uniqueNamespaces = uniqueStrings(namespaces.length > 0 ? namespaces : ['agents'])
+  const listScheduleJobs = inputListScheduleJobs ?? listScheduleJobsFromAgentsService
 
   for (const namespace of uniqueNamespaces) {
     try {
-      const jobs = await kube.listJobs(namespace, SCHEDULE_LABEL)
+      const jobs = await listScheduleJobs(namespace)
       attempts.push(
         ...jobs.map((job) => {
           const result = jobResult(job)
