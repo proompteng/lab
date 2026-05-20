@@ -10,10 +10,6 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
-    "./agents-service-client": {
-      "types": "./dist/agents-service-client.d.ts",
-      "default": "./dist/agents-service-client.js"
-    },
     "./agents-health-client": {
       "types": "./dist/agents-health-client.d.ts",
       "default": "./dist/agents-health-client.js"

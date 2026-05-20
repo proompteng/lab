@@ -10,9 +10,6 @@ const jsdomEnvSetup = fileURLToPath(new URL('./src/test-utils/vitest-jsdom-env.t
 const agentContractsControlPlaneStatusSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/control-plane-status.ts', import.meta.url),
 )
-const agentContractsServiceClientSource = fileURLToPath(
-  new URL('../../packages/agent-contracts/src/agents-service-client.ts', import.meta.url),
-)
 const agentContractsHealthClientSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/agents-health-client.ts', import.meta.url),
 )
@@ -62,7 +59,6 @@ export default defineConfig({
       '@proompteng/agent-contracts/agents-ready': agentContractsReadySource,
       '@proompteng/agent-contracts/agent-message-artifacts': agentContractsMessageArtifactsSource,
       '@proompteng/agent-contracts/agent-run-callbacks': agentContractsRunCallbacksSource,
-      '@proompteng/agent-contracts/agents-service-client': agentContractsServiceClientSource,
       '@proompteng/agent-contracts/agents-health-client': agentContractsHealthClientSource,
       '@proompteng/agent-contracts/agent-runs-client': agentContractsAgentRunsClientSource,
       '@proompteng/agent-contracts/agent-messages-client': agentContractsAgentMessagesClientSource,
@@ -94,7 +90,6 @@ export default defineConfig({
       '@proompteng/agent-contracts/agents-ready': agentContractsReadySource,
       '@proompteng/agent-contracts/agent-message-artifacts': agentContractsMessageArtifactsSource,
       '@proompteng/agent-contracts/agent-run-callbacks': agentContractsRunCallbacksSource,
-      '@proompteng/agent-contracts/agents-service-client': agentContractsServiceClientSource,
       '@proompteng/agent-contracts/agents-health-client': agentContractsHealthClientSource,
       '@proompteng/agent-contracts/agent-runs-client': agentContractsAgentRunsClientSource,
       '@proompteng/agent-contracts/agent-messages-client': agentContractsAgentMessagesClientSource,

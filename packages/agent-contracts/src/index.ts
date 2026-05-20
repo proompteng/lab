@@ -1,4 +1,3 @@
-export type * from './agents-service-client'
 export type * from './agents-health-client'
 export type * from './agent-runs-client'
 export type * from './agent-messages-client'

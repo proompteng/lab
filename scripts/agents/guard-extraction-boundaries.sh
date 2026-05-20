@@ -739,7 +739,7 @@ fail_if_matches \
 
 fail_if_matches \
   "Agent contracts must not expose the broad control-plane-resources-client package subpath after resource clients are split" \
-  'control-plane-resources-client' \
+  '"\./control-plane-resources-client"|"\./agents-service-client"' \
   "${ROOT_DIR}/packages/agent-contracts/package.json" \
   "${ROOT_DIR}/packages/agent-contracts/src/index.ts"
 
