@@ -65,6 +65,7 @@
     "./routes/v1/agent-runs/resources": "./src/routes/v1/agent-runs/resources.ts",
     "./routes/v1/agent-events": "./src/routes/v1/agent-events.ts",
     "./routes/v1/agent-messages": "./src/routes/v1/agent-messages.ts",
+    "./routes/v1/implementation-sources/webhooks/$provider": "./src/routes/v1/implementation-sources/webhooks/$provider.ts",
     "./routes/v1/approval-policies/resources": "./src/routes/v1/approval-policies/resources.ts",
     "./routes/v1/budgets/resources": "./src/routes/v1/budgets/resources.ts",
     "./routes/v1/control-plane/events": "./src/routes/v1/control-plane/events.ts",
@@ -86,11 +87,6 @@
     "./routes/v1/secret-bindings/resources": "./src/routes/v1/secret-bindings/resources.ts",
     "./routes/v1/signals/resources": "./src/routes/v1/signals/resources.ts",
     "./routes/v1/swarms/resources": "./src/routes/v1/swarms/resources.ts",
-    "./routes/api/agents/messages": "./src/routes/api/agents/messages.ts",
-    "./routes/api/agents/implementation-sources/webhooks/$provider": "./src/routes/api/agents/implementation-sources/webhooks/$provider.ts",
-    "./routes/api/agents/control-plane/resource": "./src/routes/api/agents/control-plane/resource.ts",
-    "./routes/api/agents/control-plane/resources": "./src/routes/api/agents/control-plane/resources.ts",
-    "./routes/api/agents/control-plane/status": "./src/routes/api/agents/control-plane/status.ts",
     "./runner/*": "./src/runner/*.ts"
   },
   "scripts": {

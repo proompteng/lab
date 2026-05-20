@@ -91,6 +91,9 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('JANGAR_CODEX_RERUN_ORCHESTRATION|JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION')
     expect(content).toContain('legacy generic runner image aliases')
     expect(content).toContain('AGENTS_AGENT_IMAGE|JANGAR_AGENT_RUNNER_IMAGE|JANGAR_AGENT_IMAGE')
+    expect(content).toContain('runner-level NATS auth for legacy exec progress helpers')
+    expect(content).toContain('live AgentProvider spec.secretEnv before the live CRD schema catches up')
+    expect(content).toContain('Argo CD Application reads after control-plane extraction')
     expect(content).toContain('Agents chart design docs must not advertise retired Jangar-managed chart env names')
     expect(content).toContain(
       'JANGAR_MIGRATIONS|JANGAR_GRPC_|JANGAR_CONTROL_PLANE_CACHE_ENABLED|JANGAR_AGENTS_CONTROLLER_AUTH_SECRET',
@@ -117,6 +120,7 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('agents-service-client')
     expect(content).toContain('dedicated /v1/agent-runs/resources contract')
     expect(content).toContain('v1 status and message APIs instead of web-internal /api/agents paths')
+    expect(content).toContain('legacy /api/agents routes or route registrations')
     expect(content).toContain('domain-neutral')
     expect(content).toContain('Jangar/Torghut market-context AgentRun builders')
     expect(content).toContain('AGENTS_RUNTIME_SERVICE|AGENTS_GITOPS_REVISION|AGENTS_RUNTIME_IMAGE|AGENTS_IMAGE')

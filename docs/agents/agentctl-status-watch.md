@@ -129,7 +129,7 @@ $ agentctl status watch --output json
 
 ### HTTP SSE endpoint
 
-- `GET /api/agents/control-plane/status/stream`
+- `GET /v1/control-plane/stream`
 - Query parameters:
   - `namespace` (optional)
   - `heartbeat` (duration, optional)

@@ -725,6 +725,25 @@ fail_if_matches \
   'JANGAR_AGENT_RUNNER_IMAGE|JANGAR_AGENT_IMAGE' \
   "${ROOT_DIR}/charts/agents/templates/validation.yaml"
 
+fail_if_matches \
+  "Agents controller must not inject runner-level NATS auth for legacy exec progress helpers" \
+  'AGENTS_AGENT_RUNNER_NATS_AUTH_' \
+  "${ROOT_DIR}/argocd/applications/agents/values.yaml" \
+  "${ROOT_DIR}/charts/agents/values.yaml" \
+  "${ROOT_DIR}/services/agents/src/server/agents-controller/runtime-config.ts" \
+  "${ROOT_DIR}/services/agents/src/server/agents-controller/job-runtime.ts"
+
+fail_if_matches \
+  "Agents GitOps must not require live AgentProvider spec.secretEnv before the live CRD schema catches up" \
+  '^  secretEnv:' \
+  "${ROOT_DIR}/argocd/applications/agents/graf-codex-agentprovider.yaml"
+
+fail_if_matches \
+  "Agents RBAC must not grant Argo CD Application reads after control-plane extraction" \
+  'argoproj\.io' \
+  "${ROOT_DIR}/argocd/applications/agents/values.yaml" \
+  "${ROOT_DIR}/charts/agents/values.yaml"
+
 fail_if_path_exists \
   "Jangar must not retain Agents controller runtime config after the controller extraction" \
   "${ROOT_DIR}/services/jangar/src/server/controller-runtime-config.ts"
@@ -822,10 +841,22 @@ fail_if_matches \
   "Downstream Agents clients must use v1 status and message APIs instead of web-internal /api/agents paths" \
   '/api/agents/(messages|control-plane/status)' \
   "${ROOT_DIR}/packages/agent-contracts/src" \
-  "${ROOT_DIR}/services/jangar/src"
+  "${ROOT_DIR}/services/jangar/src" \
+  "${ROOT_DIR}/packages/scripts/src"
+
+fail_if_matches_including_tests \
+  "Agents service must not retain legacy /api/agents routes or route registrations after the v1 boundary cut" \
+  '/api/agents|routes/api/agents' \
+  "${ROOT_DIR}/services/agents/src" \
+  "${ROOT_DIR}/services/agents/package.json"
 
 fail_if_path_exists \
-  "Agents v1 public event/log/summary/stream APIs must not retain legacy /api/agents route files after the public boundary cut" \
+  "Agents v1 public APIs must not retain legacy /api/agents route files after the public boundary cut" \
+  "${ROOT_DIR}/services/agents/src/routes/api/agents/messages.ts" \
+  "${ROOT_DIR}/services/agents/src/routes/api/agents/implementation-sources/webhooks/\$provider.ts" \
+  "${ROOT_DIR}/services/agents/src/routes/api/agents/control-plane/resource.ts" \
+  "${ROOT_DIR}/services/agents/src/routes/api/agents/control-plane/resources.ts" \
+  "${ROOT_DIR}/services/agents/src/routes/api/agents/control-plane/status.ts" \
   "${ROOT_DIR}/services/agents/src/routes/api/agents/events.ts" \
   "${ROOT_DIR}/services/agents/src/routes/api/agents/control-plane/events.ts" \
   "${ROOT_DIR}/services/agents/src/routes/api/agents/control-plane/logs.ts" \

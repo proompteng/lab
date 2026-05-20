@@ -3,7 +3,7 @@
 ## Extraction status
 
 The generic Agents primitive browser surface described here moved out of Jangar with the Agents platform extraction.
-Jangar no longer owns the generic `/control-plane` route tree, `/api/agents/control-plane` resource APIs, or reusable
+Jangar no longer owns the generic `/control-plane` route tree, Agents `/v1` resource APIs, or reusable
 Agents primitive browser components. Keep this document as historical design context only; production ownership now
 lives in `services/agents` and `charts/agents`, while Jangar consumes Agents state through the Agents service boundary
 for domain readiness and Torghut-specific views.
@@ -78,15 +78,15 @@ All routes live under `/agents-control-plane` and use the same namespace + label
 
 ### Existing endpoints (reuse)
 
-- `GET /api/agents/control-plane/resources?kind=<Kind>&namespace=<ns>`
+- `GET /v1/<resource>/resources?namespace=<ns>`
   - Optional: `labelSelector`, `phase`, `runtime`, `limit`.
-- `GET /api/agents/control-plane/resource?kind=<Kind>&name=<name>&namespace=<ns>`
-- `GET /api/agents/control-plane/events?kind=<Kind>&name=<name>&namespace=<ns>&uid=<uid>`
-- `GET /api/agents/control-plane/stream?namespace=<ns>` (SSE resource updates)
-- `GET http://agents.agents.svc.cluster.local/api/agents/control-plane/summary?namespace=<ns>`
+- `GET /v1/<resource>/resources?name=<name>&namespace=<ns>`
+- `GET /v1/control-plane/events?kind=<Kind>&name=<name>&namespace=<ns>&uid=<uid>`
+- `GET /v1/control-plane/stream?namespace=<ns>` (SSE resource updates)
+- `GET http://agents.agents.svc.cluster.local/v1/control-plane/summary?namespace=<ns>`
 
 These endpoints are sufficient for list/detail/event rendering as long as each primitive kind is registered in the
-control-plane kind resolver and resource map.
+Agents typed resource map.
 
 ### Additions for new primitives
 

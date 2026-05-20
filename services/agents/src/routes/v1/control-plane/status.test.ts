@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { Effect } from 'effect'
 
-import type { AgentsControlPlaneStatusDependencies } from '../../../../server/control-plane-status'
-import type { GrpcStatus } from '../../../../server/control-plane-grpc'
-import type { ControlPlaneRuntimeEvidence } from '../../../../server/control-plane-runtime-evidence'
-import type { ControlPlaneWatchReliability } from '../../../../server/control-plane-status-contract'
+import type { AgentsControlPlaneStatusDependencies } from '../../../server/control-plane-status'
+import type { GrpcStatus } from '../../../server/control-plane-grpc'
+import type { ControlPlaneRuntimeEvidence } from '../../../server/control-plane-runtime-evidence'
+import type { ControlPlaneWatchReliability } from '../../../server/control-plane-status-contract'
 import { buildControlPlaneStatusResponse } from './status'
 
 const grpc: GrpcStatus = {
@@ -100,7 +100,7 @@ const deps: AgentsControlPlaneStatusDependencies = {
 describe('control-plane status route', () => {
   it('serves the Agents-owned generic status contract', async () => {
     const response = await buildControlPlaneStatusResponse(
-      new Request('http://agents.test/api/agents/control-plane/status?namespace=platform'),
+      new Request('http://agents.test/v1/control-plane/status?namespace=platform'),
       deps,
     )
 
@@ -124,7 +124,7 @@ describe('control-plane status route', () => {
 
   it('ignores legacy projection parameters and serves the full Agents-owned contract', async () => {
     const response = await buildControlPlaneStatusResponse(
-      new Request('http://agents.test/api/agents/control-plane/status?namespace=agents&view=schedule-runner'),
+      new Request('http://agents.test/v1/control-plane/status?namespace=agents&view=schedule-runner'),
       deps,
     )
 

@@ -92,14 +92,19 @@ describe('agents controller job-runtime module', () => {
       {
         metadata: { name: 'codex' },
         spec: {
-          secretEnv: [
-            {
-              name: 'CODEX_GRAF_BEARER_TOKEN',
-              secretName: 'graf-api',
-              key: 'bearer-tokens',
-              optional: true,
+          adapter: {
+            type: 'codex-app-server',
+            codex: {
+              secretEnv: [
+                {
+                  name: 'CODEX_GRAF_BEARER_TOKEN',
+                  secretName: 'graf-api',
+                  key: 'bearer-tokens',
+                  optional: true,
+                },
+              ],
             },
-          ],
+          },
           outputArtifacts: [
             {
               name: 'codex-artifact',
@@ -137,7 +142,7 @@ describe('agents controller job-runtime module', () => {
       schemaVersion: 'agents.proompteng.ai/runner/v1',
       provider: 'codex',
       inputs: { stage: 'research' },
-      adapter: { type: 'codex-app-server' },
+      adapter: { type: 'codex-app-server', codex: {} },
       providerSpec: {
         outputArtifacts: [
           {

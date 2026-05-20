@@ -15,6 +15,21 @@ spec:
       threadConfig:
         mcp_servers: {}
         web_search: live
+      secretEnv:
+        - name: CODEX_GRAF_BEARER_TOKEN
+          secretName: graf-api
+          key: bearer-tokens
+          optional: true
+        - name: AGENTS_ARTIFACTS_ACCESS_KEY_ID
+          secretName: observability-minio-creds
+          key: accesskey
+        - name: AGENTS_ARTIFACTS_SECRET_ACCESS_KEY
+          secretName: observability-minio-creds
+          key: secretkey
+        - name: GITHUB_TOKEN
+          secretName: github-token
+          key: token
+          optional: true
   argsTemplate: []
   envTemplate:
     CODEX_LOG_LEVEL: info
@@ -22,21 +37,6 @@ spec:
     AGENTS_ARTIFACTS_ENDPOINT: http://observability-minio.minio.svc.cluster.local:9000
     AGENTS_ARTIFACTS_BUCKET: agents-artifacts
     AGENTS_ARTIFACTS_SECURE: "false"
-  secretEnv:
-    - name: CODEX_GRAF_BEARER_TOKEN
-      secretName: graf-api
-      key: bearer-tokens
-      optional: true
-    - name: AGENTS_ARTIFACTS_ACCESS_KEY_ID
-      secretName: observability-minio-creds
-      key: accesskey
-    - name: AGENTS_ARTIFACTS_SECRET_ACCESS_KEY
-      secretName: observability-minio-creds
-      key: secretkey
-    - name: GITHUB_TOKEN
-      secretName: github-token
-      key: token
-      optional: true
   inputFiles:
     - path: /root/.codex/config.toml
       content: |-

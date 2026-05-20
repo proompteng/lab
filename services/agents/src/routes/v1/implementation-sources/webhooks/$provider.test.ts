@@ -10,8 +10,8 @@ const webhookMocks = vi.hoisted(() => ({
   ),
 }))
 
-vi.mock('../../../../../server/leader-election', () => leaderElectionMocks)
-vi.mock('../../../../../server/implementation-source-webhooks', () => webhookMocks)
+vi.mock('../../../../server/leader-election', () => leaderElectionMocks)
+vi.mock('../../../../server/implementation-source-webhooks', () => webhookMocks)
 
 import { Route } from './$provider'
 
@@ -30,7 +30,7 @@ describe('implementation source webhook route', () => {
 
     const response = await postHandler!({
       params: { provider: 'github' },
-      request: new Request('http://agents.test/api/agents/implementation-sources/webhooks/github', { method: 'POST' }),
+      request: new Request('http://agents.test/v1/implementation-sources/webhooks/github', { method: 'POST' }),
     } as never)
 
     expect(response.status).toBe(503)
@@ -39,7 +39,7 @@ describe('implementation source webhook route', () => {
 
   it('delegates provider webhook ingestion to the Agents handler', async () => {
     expect(postHandler).toBeDefined()
-    const request = new Request('http://agents.test/api/agents/implementation-sources/webhooks/github', {
+    const request = new Request('http://agents.test/v1/implementation-sources/webhooks/github', {
       body: '{}',
       method: 'POST',
     })

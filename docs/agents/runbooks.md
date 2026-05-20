@@ -123,23 +123,23 @@ Ensure the `agentrun-workflow-smoke.yaml` workload image includes `agent-runner`
 Confirm the workflow adapter is healthy and no Argo Workflows are required:
 
 ```bash
-curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.runtime_adapters'
-curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.workflows'
-curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.agentrun_ingestion'
-curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.execution_trust'
-curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.runtime_kits'
-curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.admission_passports'
-curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.failure_domain_leases'
-curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.negative_evidence_router'
-curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.action_slo_budgets'
-curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.torghut_action_slo_budgets'
-curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.torghut_consumer_evidence | {evidence_clock_arbiter_id,evidence_clock_custody_status,evidence_clock_custody_ref}'
-curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.ready_action_exchange'
-curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.action_custody_receipts[] | {action_class,decision,blocking_debt_classes,receipt_id}'
-curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.dependency_verdict_exchange | {status,torghut_route_warrant_ref,repair_only_action_classes,held_action_classes,blocked_action_classes}'
-curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.source_serving_contract_verdict_exchange | {status,source_sha,serving_build_commit,missing_contracts,held_action_classes,blocked_action_classes}'
-curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.stage_clearance_packets[] | {stage,action_class,decision,packet_id,fresh_until}'
-curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.consumer_evidence_leases.action_leases[] | {action_class,decision,fresh_until,grace_until,reason_codes}'
+curl -fsS http://localhost:8080/v1/control-plane/status?namespace=agents | jq '.runtime_adapters'
+curl -fsS http://localhost:8080/v1/control-plane/status?namespace=agents | jq '.workflows'
+curl -fsS http://localhost:8080/v1/control-plane/status?namespace=agents | jq '.agentrun_ingestion'
+curl -fsS http://localhost:8080/v1/control-plane/status?namespace=agents | jq '.execution_trust'
+curl -fsS http://localhost:8080/v1/control-plane/status?namespace=agents | jq '.runtime_kits'
+curl -fsS http://localhost:8080/v1/control-plane/status?namespace=agents | jq '.admission_passports'
+curl -fsS http://localhost:8080/v1/control-plane/status?namespace=agents | jq '.failure_domain_leases'
+curl -fsS http://localhost:8080/v1/control-plane/status?namespace=agents | jq '.negative_evidence_router'
+curl -fsS http://localhost:8080/v1/control-plane/status?namespace=agents | jq '.action_slo_budgets'
+curl -fsS http://localhost:8080/v1/control-plane/status?namespace=agents | jq '.torghut_action_slo_budgets'
+curl -fsS http://localhost:8080/v1/control-plane/status?namespace=agents | jq '.torghut_consumer_evidence | {evidence_clock_arbiter_id,evidence_clock_custody_status,evidence_clock_custody_ref}'
+curl -fsS http://localhost:8080/v1/control-plane/status?namespace=agents | jq '.ready_action_exchange'
+curl -fsS http://localhost:8080/v1/control-plane/status?namespace=agents | jq '.action_custody_receipts[] | {action_class,decision,blocking_debt_classes,receipt_id}'
+curl -fsS http://localhost:8080/v1/control-plane/status?namespace=agents | jq '.dependency_verdict_exchange | {status,torghut_route_warrant_ref,repair_only_action_classes,held_action_classes,blocked_action_classes}'
+curl -fsS http://localhost:8080/v1/control-plane/status?namespace=agents | jq '.source_serving_contract_verdict_exchange | {status,source_sha,serving_build_commit,missing_contracts,held_action_classes,blocked_action_classes}'
+curl -fsS http://localhost:8080/v1/control-plane/status?namespace=agents | jq '.stage_clearance_packets[] | {stage,action_class,decision,packet_id,fresh_until}'
+curl -fsS http://localhost:8080/v1/control-plane/status?namespace=agents | jq '.consumer_evidence_leases.action_leases[] | {action_class,decision,fresh_until,grace_until,reason_codes}'
 curl -fsS http://localhost:8080/ready | jq '{status, serving_passport_id, runtime_kits, admission_passports}'
 kubectl api-resources --api-group=argoproj.io --no-headers || true
 kubectl -n agents get workflows.argoproj.io 2>/dev/null || true
@@ -228,7 +228,7 @@ Expected outcomes:
   `JANGAR_STAGE_CREDIT_LEDGER_MODE=observe`, then `JANGAR_STAGE_CREDIT_LEDGER_ENABLED=false` only if the payload itself
   is breaking status generation.
 - `evidence_pressure_ledger` cites design doc 188 and prices the proof transport path before stage credit is spent.
-  It is observe-only by default and appears on both `/ready` and `/api/agents/control-plane/status`. Watch 429s,
+  It is observe-only by default and appears on both `/ready` and `/v1/control-plane/status`. Watch 429s,
   controller replica splits, metrics-sink failures, GitHub missing-ref suppressions, database proof gaps, and Torghut
   freshness debt become pressure sources with TTLs. Use `watch_backoff_policy.state`, `scheduler_handoff`, and
   `deployer_handoff` to explain whether `dispatch_normal`, `deploy_widen`, or `merge_ready` is held by evidence
@@ -284,9 +284,9 @@ exchange, runtime passports, and Torghut proof-floor/notional gates.
 If a cross-swarm stage refuses launch before NATS collaboration initialization, verify the passport debt first:
 
 ```bash
-curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | \
+curl -fsS http://localhost:8080/v1/control-plane/status?namespace=agents | \
   jq '.admission_passports[] | select(.consumer_class=="swarm_implement")'
-curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | \
+curl -fsS http://localhost:8080/v1/control-plane/status?namespace=agents | \
   jq '.runtime_kits[] | select(.kit_class=="collaboration")'
 ```
 

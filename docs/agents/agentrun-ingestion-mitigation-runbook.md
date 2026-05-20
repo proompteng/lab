@@ -26,7 +26,7 @@ The JSON report includes:
 - controller deployment image
 - leader identity / leader pod
 - `/ready` probe result
-- Agents controller ingestion status from `/api/agents/control-plane/status`
+- Agents controller ingestion status from `/v1/control-plane/status`
 
 ## Backfill
 
@@ -50,7 +50,7 @@ Confirm the controller is reporting healthy ingestion and watch activity:
 
 ```bash
 kubectl get --raw \
-  '/api/v1/namespaces/agents/pods/<leader-pod>:8080/proxy/api/agents/control-plane/status?namespace=agents'
+  '/api/v1/namespaces/agents/pods/<leader-pod>:8080/proxy/v1/control-plane/status?namespace=agents'
 ```
 
 Expected:

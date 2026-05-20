@@ -445,7 +445,7 @@ Options:
   --status-service-name <name>       Deprecated alias for --control-plane-service-name
   --status-service-port <port>       Deprecated alias for --control-plane-service-port
   --control-plane-status-namespace <name>
-                                      Namespace passed to /api/agents/control-plane/status (default: agents)
+                                      Namespace passed to /v1/control-plane/status (default: agents)
   --admission-passport-consumers <csv>
                                       Required passport consumers (default: ${defaultAdmissionPassportConsumers.join(',')})
   --skip-admission-passport-verification
@@ -675,7 +675,7 @@ const buildControlPlaneStatusProxyPath = (options: {
 }) =>
   `/api/v1/namespaces/${options.controlPlaneServiceNamespace}/services/${options.controlPlaneServiceName}:${
     options.controlPlaneServicePort
-  }/proxy/api/agents/control-plane/status?namespace=${encodeURIComponent(options.controlPlaneStatusNamespace)}`
+  }/proxy/v1/control-plane/status?namespace=${encodeURIComponent(options.controlPlaneStatusNamespace)}`
 
 const readControlPlaneStatus = async (options: ResolvedOptions): Promise<ControlPlaneStatusPayload> => {
   const status = await runCommand('kubectl', [

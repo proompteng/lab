@@ -1,9 +1,9 @@
 import { Effect, Layer } from 'effect'
 import { describe, expect, it, vi } from 'vitest'
 
-import { AgentMessagesPublisher, AgentMessagesStoreFactory } from '../../../server/agent-messages-api'
-import type { AgentMessageInput, AgentMessagesStore } from '../../../server/agent-messages-store'
-import { postAgentMessagesHandler } from './messages'
+import { AgentMessagesPublisher, AgentMessagesStoreFactory } from '../../server/agent-messages-api'
+import type { AgentMessageInput, AgentMessagesStore } from '../../server/agent-messages-store'
+import { postAgentMessagesHandler } from '../../server/v1/agent-messages'
 
 const createStore = (overrides: Partial<AgentMessagesStore> = {}): AgentMessagesStore => ({
   close: vi.fn(async () => {}),
@@ -35,7 +35,7 @@ describe('agent messages route', () => {
   it('returns inserted messages from the injected store', async () => {
     const store = createStore()
     const response = await postAgentMessagesHandler(
-      new Request('http://agents.local/api/agents/messages', {
+      new Request('http://agents.local/v1/agent-messages', {
         body: JSON.stringify({
           messages: [
             {
@@ -58,7 +58,7 @@ describe('agent messages route', () => {
 
   it('maps invalid payloads to HTTP 400', async () => {
     const response = await postAgentMessagesHandler(
-      new Request('http://agents.local/api/agents/messages', {
+      new Request('http://agents.local/v1/agent-messages', {
         body: JSON.stringify({ messages: [{ runId: 'run-1' }] }),
         headers: { 'content-type': 'application/json' },
         method: 'POST',

@@ -264,7 +264,7 @@ describe('verify-deployment', () => {
         controlPlaneServicePort: '80',
         controlPlaneStatusNamespace: 'agents',
       }),
-    ).toBe('/api/v1/namespaces/agents/services/agents:80/proxy/api/agents/control-plane/status?namespace=agents')
+    ).toBe('/api/v1/namespaces/agents/services/agents:80/proxy/v1/control-plane/status?namespace=agents')
   })
 
   it('rejects unknown admission passport consumers', () => {

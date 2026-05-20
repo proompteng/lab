@@ -62,6 +62,11 @@ const routeSources: RouteSourceSpec[] = [
     load: () => import('../routes/v1/agent-events'),
   },
   {
+    file: 'src/routes/v1/implementation-sources/webhooks/$provider.ts',
+    sourceUrl: new URL('../routes/v1/implementation-sources/webhooks/$provider.ts', import.meta.url),
+    load: () => import('../routes/v1/implementation-sources/webhooks/$provider'),
+  },
+  {
     file: 'src/routes/v1/approval-policies/resources.ts',
     sourceUrl: new URL('../routes/v1/approval-policies/resources.ts', import.meta.url),
     load: () => import('../routes/v1/approval-policies/resources'),
@@ -170,31 +175,6 @@ const routeSources: RouteSourceSpec[] = [
     file: 'src/routes/v1/runs/$id.ts',
     sourceUrl: new URL('../routes/v1/runs/$id.ts', import.meta.url),
     load: () => import('../routes/v1/runs/$id'),
-  },
-  {
-    file: 'src/routes/api/agents/messages.ts',
-    sourceUrl: new URL('../routes/api/agents/messages.ts', import.meta.url),
-    load: () => import('../routes/api/agents/messages'),
-  },
-  {
-    file: 'src/routes/api/agents/implementation-sources/webhooks/$provider.ts',
-    sourceUrl: new URL('../routes/api/agents/implementation-sources/webhooks/$provider.ts', import.meta.url),
-    load: () => import('../routes/api/agents/implementation-sources/webhooks/$provider'),
-  },
-  {
-    file: 'src/routes/api/agents/control-plane/resource.ts',
-    sourceUrl: new URL('../routes/api/agents/control-plane/resource.ts', import.meta.url),
-    load: () => import('../routes/api/agents/control-plane/resource'),
-  },
-  {
-    file: 'src/routes/api/agents/control-plane/resources.ts',
-    sourceUrl: new URL('../routes/api/agents/control-plane/resources.ts', import.meta.url),
-    load: () => import('../routes/api/agents/control-plane/resources'),
-  },
-  {
-    file: 'src/routes/api/agents/control-plane/status.ts',
-    sourceUrl: new URL('../routes/api/agents/control-plane/status.ts', import.meta.url),
-    load: () => import('../routes/api/agents/control-plane/status'),
   },
 ]
 

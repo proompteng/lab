@@ -9,14 +9,7 @@ import { resolveParam, resolveParameters, resolveRunGoal } from './run-utils'
 import { buildRuntimeRef } from './runtime-resources'
 import type { SystemPromptRef } from './system-prompt'
 import { renderTemplate } from './template-hash'
-import {
-  buildAuthSecretPath,
-  collectBlockedSecrets,
-  type EnvVar,
-  resolveAuthSecretConfig,
-  secretHasKey,
-  type VcsResolution,
-} from './vcs-context'
+import { buildAuthSecretPath, type EnvVar, resolveAuthSecretConfig, type VcsResolution } from './vcs-context'
 import { resolveAgentRunnerDefaultsConfig } from './runtime-config'
 
 const MIN_RUNNER_JOB_TTL_SECONDS = 30
@@ -142,8 +135,17 @@ const buildJobResources = (workload: Record<string, unknown>) => {
   }
 }
 
+const resolveProviderSecretEnv = (providerSpec: Record<string, unknown>) => {
+  if (Array.isArray(providerSpec.secretEnv)) return providerSpec.secretEnv
+  const adapter = asRecord(providerSpec.adapter) ?? {}
+  const adapterSecretEnv = adapter.secretEnv
+  if (Array.isArray(adapterSecretEnv)) return adapterSecretEnv
+  const codexAdapter = asRecord(adapter.codex) ?? {}
+  return Array.isArray(codexAdapter.secretEnv) ? codexAdapter.secretEnv : []
+}
+
 const buildProviderSecretEnv = (providerSpec: Record<string, unknown>): EnvVar[] => {
-  const secretEnv = Array.isArray(providerSpec.secretEnv) ? providerSpec.secretEnv : []
+  const secretEnv = resolveProviderSecretEnv(providerSpec)
   return secretEnv
     .map((entry): EnvVar | null => {
       const record = asRecord(entry)
@@ -365,6 +367,17 @@ const resolveProviderAdapterType = (providerSpec: Record<string, unknown>): 'cod
   return isAgentRunnerBinary(asString(providerSpec.binary)) ? 'codex-app-server' : 'exec'
 }
 
+const sanitizeProviderAdapterForRunner = (adapter: Record<string, unknown>) => {
+  const { secretEnv: _secretEnv, codex, ...rest } = adapter
+  const codexRecord = asRecord(codex)
+  if (!codexRecord) return rest
+  const { secretEnv: _codexSecretEnv, ...codexRest } = codexRecord
+  return {
+    ...rest,
+    codex: codexRest,
+  }
+}
+
 const buildAgentRunnerSpec = (
   runSpec: Record<string, unknown>,
   parameters: Record<string, string>,
@@ -388,7 +401,7 @@ const buildAgentRunnerSpec = (
           },
         }
       : { type: 'codex-app-server' }
-  const adapter = explicitAdapter ?? defaultAdapter
+  const adapter = explicitAdapter ? sanitizeProviderAdapterForRunner(explicitAdapter) : defaultAdapter
 
   return {
     schemaVersion: 'agents.proompteng.ai/runner/v1',
@@ -504,55 +517,6 @@ export const submitJobRun = async (
   }
   if (vcsRuntime?.env?.length) {
     env.push(...vcsRuntime.env)
-  }
-
-  const runnerDefaults = resolveAgentRunnerDefaultsConfig(process.env)
-  const runnerNatsAuthSecretName = runnerDefaults.natsAuthSecretName
-  // Legacy exec providers may still invoke codex-nats-publish. The app-server runner records
-  // progress through the Agents runner contract and should not receive NATS credentials.
-  if (runnerNatsAuthSecretName && resolveProviderAdapterType(providerSpec) === 'exec') {
-    const alreadyHasUser = env.some((item) => item.name === 'NATS_USER')
-    const alreadyHasPass = env.some((item) => item.name === 'NATS_PASSWORD')
-    if (!alreadyHasUser || !alreadyHasPass) {
-      const usernameKey = runnerDefaults.natsAuthUsernameKey
-      const passwordKey = runnerDefaults.natsAuthPasswordKey
-
-      const security = asRecord(readNested(agent, ['spec', 'security'])) ?? {}
-      const allowedSecrets = parseStringList(security.allowedSecrets)
-      const blocked = collectBlockedSecrets([runnerNatsAuthSecretName])
-      const allowlisted = allowedSecrets.length === 0 || allowedSecrets.includes(runnerNatsAuthSecretName)
-
-      // Only inject if:
-      // - secret isn't blocked by controller policy
-      // - Agent allowlist allows it (or no allowlist is configured)
-      // - secret exists and has both keys (avoid CreateContainerConfigError on missing secrets/keys)
-      if (blocked.length === 0 && allowlisted) {
-        const secret = await kube.get('secret', runnerNatsAuthSecretName, namespace)
-        if (
-          secret &&
-          secretHasKey(secret, usernameKey) &&
-          secretHasKey(secret, passwordKey) &&
-          (!alreadyHasUser || !alreadyHasPass)
-        ) {
-          if (!alreadyHasUser) {
-            env.push({
-              name: 'NATS_USER',
-              valueFrom: {
-                secretKeyRef: { name: runnerNatsAuthSecretName, key: usernameKey },
-              },
-            })
-          }
-          if (!alreadyHasPass) {
-            env.push({
-              name: 'NATS_PASSWORD',
-              valueFrom: {
-                secretKeyRef: { name: runnerNatsAuthSecretName, key: passwordKey },
-              },
-            })
-          }
-        }
-      }
-    }
   }
 
   const runSpec = buildRunSpec(

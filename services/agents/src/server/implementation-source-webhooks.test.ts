@@ -98,7 +98,7 @@ describe('ImplementationSource webhook handler', () => {
     const signature = createHmac('sha256', secretValue).update(rawBody, 'utf8').digest('hex')
     const response = await postImplementationSourceWebhookHandler(
       'github',
-      new Request('http://localhost/api/agents/implementation-sources/webhooks/github', {
+      new Request('http://localhost/v1/implementation-sources/webhooks/github', {
         method: 'POST',
         headers: {
           'x-github-event': 'issues',
@@ -174,7 +174,7 @@ describe('ImplementationSource webhook handler', () => {
 
     const response = await postImplementationSourceWebhookHandler(
       'github',
-      new Request('http://localhost/api/agents/implementation-sources/webhooks/github', {
+      new Request('http://localhost/v1/implementation-sources/webhooks/github', {
         method: 'POST',
         headers,
         body: rawBody,
@@ -187,7 +187,7 @@ describe('ImplementationSource webhook handler', () => {
 
     const duplicate = await postImplementationSourceWebhookHandler(
       'github',
-      new Request('http://localhost/api/agents/implementation-sources/webhooks/github', {
+      new Request('http://localhost/v1/implementation-sources/webhooks/github', {
         method: 'POST',
         headers,
         body: rawBody,
@@ -241,7 +241,7 @@ describe('ImplementationSource webhook handler', () => {
     const signature = createHmac('sha256', secretValue).update(rawBody, 'utf8').digest('hex')
     const response = await postImplementationSourceWebhookHandler(
       'linear',
-      new Request('http://localhost/api/agents/implementation-sources/webhooks/linear', {
+      new Request('http://localhost/v1/implementation-sources/webhooks/linear', {
         method: 'POST',
         headers: {
           'linear-event': 'issue',
@@ -311,7 +311,7 @@ describe('ImplementationSource webhook handler', () => {
     const signature = createHmac('sha256', secretValue).update(rawBody, 'utf8').digest('hex')
     const response = await postImplementationSourceWebhookHandler(
       'github',
-      new Request('http://localhost/api/agents/implementation-sources/webhooks/github', {
+      new Request('http://localhost/v1/implementation-sources/webhooks/github', {
         method: 'POST',
         headers: {
           'x-github-event': 'issues',

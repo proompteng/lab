@@ -86,11 +86,6 @@ controllers:
     digest: sha256:a065a1e35846afea7445bbaf79accacf66c37a7da3301139eb241b1f73163a9f
   autoscaling:
     enabled: false
-  env:
-    vars:
-      AGENTS_AGENT_RUNNER_NATS_AUTH_SECRET_NAME: nats-agents-credentials
-      AGENTS_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY: username
-      AGENTS_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY: password
 swarm:
   enabled: true
 resources:
@@ -158,14 +153,6 @@ rbac:
         - apps
       resources:
         - deployments
-      verbs:
-        - get
-        - list
-        - watch
-    - apiGroups:
-        - argoproj.io
-      resources:
-        - applications
       verbs:
         - get
         - list

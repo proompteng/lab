@@ -58,11 +58,11 @@ describe('Agents HTTP runtime', () => {
   it('registers OPTIONS server route handlers', async () => {
     const runtime = await createAgentsHttpRuntime({
       routeSources: {
-        './routes/api/agents/messages.ts':
-          "export const Route = createFileRoute('/api/agents/messages')({ server: { handlers: { OPTIONS: handler } } })",
+        './routes/v1/agent-messages.ts':
+          "export const Route = createFileRoute('/v1/agent-messages')({ server: { handlers: { OPTIONS: handler } } })",
       },
       routeModules: {
-        './routes/api/agents/messages.ts': async () => ({
+        './routes/v1/agent-messages.ts': async () => ({
           Route: {
             options: {
               server: {
@@ -77,7 +77,7 @@ describe('Agents HTTP runtime', () => {
     })
 
     const response = await runtime.handleRequest(
-      new Request('http://agents.local/api/agents/messages', { method: 'OPTIONS' }),
+      new Request('http://agents.local/v1/agent-messages', { method: 'OPTIONS' }),
     )
 
     expect(response.status).toBe(200)

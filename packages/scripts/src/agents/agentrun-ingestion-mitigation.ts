@@ -541,7 +541,7 @@ const collectControllerEvidence = async (
       namespace,
       leaderPodName,
       effectivePort,
-      `/api/agents/control-plane/status?namespace=${encodeURIComponent(namespace)}`,
+      `/v1/control-plane/status?namespace=${encodeURIComponent(namespace)}`,
     )
     proxy.controlPlaneStatus = controlPlaneStatus.body ? parseJsonOrNull(controlPlaneStatus.body) : null
   }

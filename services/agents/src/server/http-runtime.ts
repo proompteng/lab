@@ -123,8 +123,7 @@ const shouldServeClientPath = (pathname: string, serverRouteRoots: ReadonlySet<s
   return firstSegment === null || !serverRouteRoots.has(firstSegment)
 }
 
-const isCorsManagedPath = (pathname: string) =>
-  pathname === '/api/agents' || pathname.startsWith('/api/agents/') || pathname === '/v1' || pathname.startsWith('/v1/')
+const isCorsManagedPath = (pathname: string) => pathname === '/v1' || pathname.startsWith('/v1/')
 
 const resolveCorsAllowedOrigins = () => {
   const configured = process.env.AGENTS_CORS_ALLOWED_ORIGINS
