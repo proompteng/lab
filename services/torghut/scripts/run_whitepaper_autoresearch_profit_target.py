@@ -8,12 +8,14 @@ import hashlib
 import json
 import os
 import signal
+import socket
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Mapping, Sequence, cast
+from urllib.parse import urlparse
 
 from sqlalchemy import select
 
@@ -91,6 +93,9 @@ _DEFAULT_PORTFOLIO_PROFIT_PROGRAM = Path(
     "config/trading/research-programs/portfolio-profit-autoresearch-500-v1.yaml"
 )
 _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC = 8
+_DEFAULT_CLICKHOUSE_HTTP_URL = (
+    "http://torghut-clickhouse.torghut.svc.cluster.local:8123"
+)
 _MAX_PERSISTED_FEEDBACK_EVIDENCE_BUNDLES = 512
 _MAX_PERSISTED_FEEDBACK_EVIDENCE_EPOCHS = 12
 _PROGRAM_SOURCE_DEFAULT_CONFIDENCE = "0.70"
@@ -151,6 +156,14 @@ def _default_strategy_config_path() -> Path:
     if configured:
         return Path(configured)
     return Path("argocd/applications/torghut/strategy-configmap.yaml")
+
+
+def _default_clickhouse_http_url() -> str:
+    return (
+        os.environ.get("CLICKHOUSE_HTTP_URL")
+        or os.environ.get("TA_CLICKHOUSE_URL")
+        or _DEFAULT_CLICKHOUSE_HTTP_URL
+    )
 
 
 def _parse_args() -> argparse.Namespace:
@@ -246,14 +259,23 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--clickhouse-http-url",
-        default="http://torghut-clickhouse.torghut.svc.cluster.local:8123",
+        default=_default_clickhouse_http_url(),
     )
-    parser.add_argument("--clickhouse-username", default="torghut")
+    parser.add_argument(
+        "--clickhouse-username",
+        default=os.environ.get(
+            "TA_CLICKHOUSE_USERNAME",
+            os.environ.get("CLICKHOUSE_USERNAME", "torghut"),
+        ),
+    )
     parser.add_argument("--clickhouse-password", default="")
     parser.add_argument(
         "--clickhouse-password-env",
-        default="",
-        help="Environment variable that contains the ClickHouse password; ignored when --clickhouse-password is set.",
+        default=os.environ.get("TA_CLICKHOUSE_PASSWORD_ENV", "TA_CLICKHOUSE_PASSWORD"),
+        help=(
+            "Environment variable that contains the ClickHouse password; ignored when "
+            "--clickhouse-password is set."
+        ),
     )
     parser.add_argument("--start-equity", default="31590.02")
     parser.add_argument("--chunk-minutes", type=int, default=10)
@@ -932,9 +954,47 @@ def _resolved_clickhouse_password(args: argparse.Namespace) -> str:
     if direct_password:
         return direct_password
     password_env = str(getattr(args, "clickhouse_password_env", "") or "").strip()
-    if not password_env:
+    if password_env:
+        password = os.environ.get(password_env, "")
+        if password:
+            return password
+    return os.environ.get("CLICKHOUSE_PASSWORD", "")
+
+
+def _clickhouse_host_requires_dns_preflight(url: str) -> bool:
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    return host.endswith(".svc") or host.endswith(".svc.cluster.local")
+
+
+def _clickhouse_endpoint_preflight_failure(args: argparse.Namespace) -> str:
+    if str(getattr(args, "replay_mode", "") or "") != "real":
         return ""
-    return os.environ.get(password_env, "")
+    if bool(getattr(args, "selection_only", False)):
+        return ""
+    url = str(getattr(args, "clickhouse_http_url", "") or "").strip()
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    if not host:
+        return (
+            "clickhouse_endpoint_invalid_url:"
+            f"url={url or '<empty>'}; set TA_CLICKHOUSE_URL, CLICKHOUSE_HTTP_URL, "
+            "or pass --clickhouse-http-url to a reachable ClickHouse HTTP endpoint"
+        )
+    if not _clickhouse_host_requires_dns_preflight(url):
+        return ""
+    port = parsed.port or (443 if parsed.scheme == "https" else 8123)
+    try:
+        socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError as exc:
+        return (
+            "clickhouse_endpoint_unreachable:"
+            f"host={host};port={port};error={exc}; "
+            "the default Kubernetes service DNS is only reachable in-cluster. "
+            "Run from a cluster pod, set TA_CLICKHOUSE_URL or CLICKHOUSE_HTTP_URL, "
+            "or pass --clickhouse-http-url to a local port-forward/HTTP endpoint."
+        )
+    return ""
 
 
 def _candidate_universe_symbols_from_args(args: argparse.Namespace) -> tuple[str, ...]:
@@ -7082,6 +7142,11 @@ def run_whitepaper_autoresearch_profit_target(
         }
     )
     try:
+        clickhouse_preflight_failure = _clickhouse_endpoint_preflight_failure(
+            replay_args
+        )
+        if clickhouse_preflight_failure:
+            raise RuntimeError(clickhouse_preflight_failure)
         replay_result = _run_replay_with_optional_timeout(
             args=replay_args,
             output_dir=output_dir,

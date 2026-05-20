@@ -29,7 +29,9 @@ from scripts.local_intraday_tsmom_replay import (
     _apply_order_preferences,
     _build_near_miss,
     _decision_exit_reason,
+    _decision_market_order_spread_bps_max,
     _decision_position_owner,
+    _decision_spread_bps,
     _fetch_chunk,
     _flatten_positions,
     _http_query,
@@ -47,6 +49,7 @@ from scripts.local_intraday_tsmom_replay import (
     _should_replace_pending_order,
     _signal_mid_jump_bps,
     _signal_spread_bps,
+    _kubectl_clickhouse_query,
     main as replay_main,
     run_replay,
 )
@@ -84,6 +87,52 @@ class TestLocalIntradayTsmomReplay(TestCase):
         self.assertEqual(
             _decision_position_owner(decision, force_position_isolation=True),
             "candidate-strategy-1",
+        )
+
+    def test_kubectl_clickhouse_query_validates_target_and_reports_failure(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(RuntimeError, "clickhouse_kubectl_url_invalid"):
+            _kubectl_clickhouse_query(
+                url="kubectl://galactic-lan/torghut",
+                username="torghut",
+                password="secret",
+                query="SELECT 1",
+            )
+
+        with patch(
+            "scripts.local_intraday_tsmom_replay.subprocess.run",
+            return_value=Namespace(returncode=1, stdout="", stderr="denied"),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError, "clickhouse_kubectl_query_failed: denied"
+            ):
+                _kubectl_clickhouse_query(
+                    url="kubectl://galactic-lan/torghut/clickhouse-0",
+                    username="torghut",
+                    password="secret",
+                    query="SELECT 1",
+                )
+
+    def test_execution_spread_helpers_fall_back_on_invalid_payloads(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="candidate-strategy-1",
+            symbol="META",
+            event_ts=datetime(2026, 3, 27, 17, 30, 3, tzinfo=timezone.utc),
+            timeframe="1Sec",
+            action="buy",
+            qty=Decimal("1"),
+            order_type="market",
+            time_in_force="day",
+            params={
+                "market_order_spread_bps_max": "not-a-decimal",
+                "execution_features": {"spread_bps": "not-a-decimal"},
+            },
+        )
+
+        self.assertEqual(_decision_market_order_spread_bps_max(decision), Decimal("12"))
+        self.assertIsNone(
+            _decision_spread_bps(decision, price=Decimal("0"), spread=Decimal("1"))
         )
 
     def test_load_strategies_rejects_invalid_configmap_shapes(self) -> None:

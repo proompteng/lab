@@ -198,6 +198,33 @@ class TestStrategyAutoresearch(TestCase):
         )
         self.assertIsNone(args.shadow_validation_artifact)
 
+    def test_parse_args_prefers_clickhouse_http_url_env(self) -> None:
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "TA_CLICKHOUSE_URL": "jdbc:clickhouse://clickhouse/torghut",
+                    "CLICKHOUSE_HTTP_URL": "http://127.0.0.1:8123",
+                    "TA_CLICKHOUSE_USERNAME": "reader",
+                },
+            ),
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "run_strategy_autoresearch_loop.py",
+                    "--program",
+                    "program.yaml",
+                    "--output-dir",
+                    "/tmp/out",
+                ],
+            ),
+        ):
+            args = runner._parse_args()
+
+        self.assertEqual(args.clickhouse_http_url, "http://127.0.0.1:8123")
+        self.assertEqual(args.clickhouse_username, "reader")
+
     def test_program_defaults_include_mlx_contract(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

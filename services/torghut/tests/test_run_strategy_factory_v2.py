@@ -262,6 +262,32 @@ class TestRunStrategyFactoryV2(TestCase):
         assert fallback is not None
         self.assertEqual(fallback["family_template_id"], "strict-family")
 
+    def test_parse_args_prefers_clickhouse_http_url_env(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            with (
+                patch.dict(
+                    "os.environ",
+                    {
+                        "TA_CLICKHOUSE_URL": "jdbc:clickhouse://clickhouse/torghut",
+                        "CLICKHOUSE_HTTP_URL": "http://127.0.0.1:8123",
+                        "TA_CLICKHOUSE_USERNAME": "reader",
+                    },
+                ),
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "run_strategy_factory_v2.py",
+                        "--output-dir",
+                        tmpdir,
+                    ],
+                ),
+            ):
+                parsed = runner._parse_args()
+
+        self.assertEqual(parsed.clickhouse_http_url, "http://127.0.0.1:8123")
+        self.assertEqual(parsed.clickhouse_username, "reader")
+
     def test_load_source_experiment_specs_applies_filters(self) -> None:
         with Session(self.engine) as session:
             session.add_all(

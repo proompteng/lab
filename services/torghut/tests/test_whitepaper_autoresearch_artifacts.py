@@ -347,8 +347,8 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
                     "positive_day_ratio": "0.8",
                     "best_day_share": "0.2",
                     "max_drawdown": "0",
+                    "trading_day_count": "1",
                     "avg_filled_notional_per_day": "350000",
-                    "avg_liquidity_notional_per_day": "900000",
                     "daily_net": {"2026-02-23": "123"},
                     "daily_filled_notional": {"2026-02-23": "350000"},
                     "daily_liquidity_notional": {"2026-02-23": "900000"},
@@ -368,6 +368,10 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
         self.assertEqual(
             bundle.objective_scorecard["market_impact_stress_net_pnl_per_day"],
             "88",
+        )
+        self.assertEqual(
+            bundle.objective_scorecard["avg_liquidity_notional_per_day"],
+            "900000",
         )
         self.assertTrue(bundle.objective_scorecard["market_impact_stress_passed"])
         self.assertEqual(

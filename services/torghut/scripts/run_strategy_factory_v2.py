@@ -32,6 +32,19 @@ from scripts.search_consistent_profitability_frontier import (
 )
 
 
+_DEFAULT_CLICKHOUSE_HTTP_URL = (
+    "http://torghut-clickhouse.torghut.svc.cluster.local:8123"
+)
+
+
+def _default_clickhouse_http_url() -> str:
+    return (
+        os.environ.get("CLICKHOUSE_HTTP_URL")
+        or os.environ.get("TA_CLICKHOUSE_URL")
+        or _DEFAULT_CLICKHOUSE_HTTP_URL
+    )
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run strategy-factory v2 from mirrored experiment specs.",
@@ -69,9 +82,15 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--clickhouse-http-url",
-        default="http://torghut-clickhouse.torghut.svc.cluster.local:8123",
+        default=_default_clickhouse_http_url(),
     )
-    parser.add_argument("--clickhouse-username", default="torghut")
+    parser.add_argument(
+        "--clickhouse-username",
+        default=os.environ.get(
+            "TA_CLICKHOUSE_USERNAME",
+            os.environ.get("CLICKHOUSE_USERNAME", "torghut"),
+        ),
+    )
     parser.add_argument("--clickhouse-password", default="")
     parser.add_argument(
         "--clickhouse-password-env",

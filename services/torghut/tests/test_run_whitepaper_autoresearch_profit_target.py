@@ -423,6 +423,92 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(args.symbols.split(","), _CHIP_UNIVERSE)
         self.assertEqual(args.feedback_evidence_jsonl, [])
 
+    def test_parse_args_uses_reachable_clickhouse_env_defaults(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            with (
+                patch.dict(
+                    "os.environ",
+                    {
+                        "TA_CLICKHOUSE_URL": "http://127.0.0.1:8123",
+                        "TA_CLICKHOUSE_USERNAME": "reader",
+                    },
+                ),
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "run_whitepaper_autoresearch_profit_target.py",
+                        "--output-dir",
+                        tmpdir,
+                    ],
+                ),
+            ):
+                args = runner._parse_args()
+
+        self.assertEqual(args.clickhouse_http_url, "http://127.0.0.1:8123")
+        self.assertEqual(args.clickhouse_username, "reader")
+        self.assertEqual(args.clickhouse_password_env, "TA_CLICKHOUSE_PASSWORD")
+
+    def test_parse_args_prefers_explicit_clickhouse_http_url_over_ta_jdbc(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            with (
+                patch.dict(
+                    "os.environ",
+                    {
+                        "TA_CLICKHOUSE_URL": "jdbc:clickhouse://clickhouse/torghut",
+                        "CLICKHOUSE_HTTP_URL": "http://127.0.0.1:8123",
+                    },
+                ),
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "run_whitepaper_autoresearch_profit_target.py",
+                        "--output-dir",
+                        tmpdir,
+                    ],
+                ),
+            ):
+                args = runner._parse_args()
+
+        self.assertEqual(args.clickhouse_http_url, "http://127.0.0.1:8123")
+
+    def test_clickhouse_preflight_fails_fast_for_unresolved_in_cluster_dns(
+        self,
+    ) -> None:
+        args = Namespace(
+            replay_mode="real",
+            selection_only=False,
+            clickhouse_http_url="http://torghut-clickhouse.torghut.svc.cluster.local:8123",
+        )
+
+        with patch(
+            "scripts.run_whitepaper_autoresearch_profit_target.socket.getaddrinfo",
+            side_effect=runner.socket.gaierror("not known"),
+        ):
+            failure = runner._clickhouse_endpoint_preflight_failure(args)
+
+        self.assertIn("clickhouse_endpoint_unreachable", failure)
+        self.assertIn("TA_CLICKHOUSE_URL", failure)
+        self.assertIn("--clickhouse-http-url", failure)
+
+    def test_clickhouse_preflight_skips_explicit_non_cluster_endpoint(self) -> None:
+        args = Namespace(
+            replay_mode="real",
+            selection_only=False,
+            clickhouse_http_url="http://127.0.0.1:8123",
+        )
+
+        with patch(
+            "scripts.run_whitepaper_autoresearch_profit_target.socket.getaddrinfo",
+            side_effect=AssertionError("non-cluster endpoints are replay-checked"),
+        ):
+            failure = runner._clickhouse_endpoint_preflight_failure(args)
+
+        self.assertEqual(failure, "")
+
     def test_workflow_template_surfaces_feedback_and_fails_closed_on_stale_tape(
         self,
     ) -> None:

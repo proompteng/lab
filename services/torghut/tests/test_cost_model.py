@@ -9,6 +9,7 @@ from app.trading.costs import (
     CostModelInputs,
     OrderIntent,
     TransactionCostModel,
+    participation_power,
 )
 
 
@@ -92,6 +93,17 @@ class TestTransactionCostModel(TestCase):
 
         self.assertFalse(estimate.capacity_ok)
         self.assertIn("participation_exceeds_max", estimate.warnings)
+
+    def test_participation_power_handles_boundary_exponents(self) -> None:
+        self.assertEqual(
+            participation_power(Decimal("0"), Decimal("0.5")), Decimal("0")
+        )
+        self.assertEqual(
+            participation_power(Decimal("0.25"), Decimal("0.5")), Decimal("0.5")
+        )
+        self.assertEqual(
+            participation_power(Decimal("0.25"), Decimal("0")), Decimal("1")
+        )
 
 
 class TestBacktestEvaluation(TestCase):
