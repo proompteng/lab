@@ -268,6 +268,91 @@ def _mapping_sequence(value: Any) -> tuple[dict[str, Any], ...]:
     return tuple(resolved)
 
 
+def _source_claims_by_id(spec: CandidateSpec) -> dict[str, dict[str, Any]]:
+    claims = _mapping_sequence(spec.feature_contract.get("source_claims"))
+    return {str(claim.get("claim_id") or ""): claim for claim in claims}
+
+
+def _claim_type(claim: Mapping[str, Any] | None) -> str:
+    if not claim:
+        return ""
+    return str(claim.get("claim_type") or "").strip().lower()
+
+
+def _claim_haystack(*claims: Mapping[str, Any] | None) -> str:
+    chunks: list[str] = []
+    for claim in claims:
+        if not claim:
+            continue
+        chunks.extend(
+            [
+                str(claim.get("claim_id") or ""),
+                str(claim.get("claim_type") or ""),
+                str(claim.get("claim_text") or ""),
+                " ".join(_sequence_strings(claim.get("data_requirements"))),
+                str(claim.get("asset_scope") or ""),
+                str(claim.get("horizon_scope") or ""),
+            ]
+        )
+    return " ".join(chunks).lower()
+
+
+def _is_simulation_reality_gap_validation_relation(
+    relation: Mapping[str, Any], spec: CandidateSpec
+) -> bool:
+    if str(relation.get("relation_type") or "").strip().lower() != "invalidates":
+        return False
+    claims_by_id = _source_claims_by_id(spec)
+    source_claim = claims_by_id.get(str(relation.get("source_claim_id") or ""))
+    target_claim = claims_by_id.get(str(relation.get("target_claim_id") or ""))
+    source_type = _claim_type(source_claim)
+    target_type = _claim_type(target_claim)
+    if source_type not in {
+        "execution_assumption",
+        "market_regime",
+        "risk_constraint",
+        "validation_requirement",
+    }:
+        return False
+    if target_type not in {
+        "feature_recipe",
+        "normalization_rule",
+        "signal_mechanism",
+    }:
+        return False
+    haystack = " ".join(
+        (
+            _claim_haystack(source_claim, target_claim),
+            str(relation.get("relation_id") or ""),
+            str(relation.get("rationale") or ""),
+            " ".join(
+                str(item)
+                for item in spec.parameter_space.get("mechanism_overlay_ids", [])
+            ),
+        )
+    ).lower()
+    return any(
+        token in haystack
+        for token in (
+            "reality gap",
+            "simulation reality",
+            "sim-to-live",
+            "simulation-to-live",
+            "simulation parity",
+            "simulation_parity",
+            "synthetic lob",
+            "lob simulation",
+            "limit-order-book simulation",
+            "limit order book simulation",
+            "fill outcomes",
+            "fill_outcomes",
+            "adverse-selection",
+            "adverse selection",
+            "simulation_reality_gap_implementation_risk",
+        )
+    )
+
+
 def _blockers_for_spec(
     spec: CandidateSpec,
     *,
@@ -277,6 +362,11 @@ def _blockers_for_spec(
     blockers: list[CandidateCompilationBlocker] = []
     claim_relation_blockers = _mapping_sequence(
         spec.feature_contract.get("claim_relation_blockers")
+    )
+    claim_relation_blockers = tuple(
+        relation
+        for relation in claim_relation_blockers
+        if not _is_simulation_reality_gap_validation_relation(relation, spec)
     )
     if claim_relation_blockers:
         blockers.append(

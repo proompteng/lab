@@ -3378,6 +3378,72 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
 
     if has_any(
         (
+            "reality gap",
+            "simulation reality",
+            "sim-to-live",
+            "simulation-to-live",
+            "simulation parity",
+            "simulation_parity",
+            "synthetic lob",
+            "lob simulation",
+            "limit-order-book simulation",
+            "limit order book simulation",
+            "fill outcomes",
+            "fill_outcomes",
+            "adverse-selection",
+            "adverse selection",
+            "adverse_selection_stress",
+        )
+    ):
+        overlay_ids.append("simulation_reality_gap_implementation_risk")
+        overlay_contracts.append(
+            {
+                "overlay_id": "simulation_reality_gap_implementation_risk",
+                "required_evidence": [
+                    "simulation_live_parity_metrics",
+                    "lob_event_stream",
+                    "fill_outcomes",
+                    "route_tca",
+                    "live_paper_parity",
+                    "adverse_selection_stress",
+                    "replay_harness_implementation_trace",
+                ],
+                "rank_metric": (
+                    "post_cost_net_pnl_after_simulation_reality_gap_stress"
+                ),
+                "evidence_policy": (
+                    "synthetic_lob_fillability_requires_live_paper_parity"
+                ),
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_simulation_live_parity_metrics": True,
+                "required_lob_event_stream": True,
+                "required_fill_outcome_evidence": True,
+                "required_replay_harness_implementation_trace": True,
+                "required_min_simulation_parity_sample_count": "120",
+                "required_max_simulation_live_fill_error_bps": "8",
+                "required_max_adverse_selection_error_bps": "8",
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_simulation_live_parity_metrics": True,
+                "requires_lob_event_stream": True,
+                "requires_fill_outcomes": True,
+                "requires_route_tca": True,
+                "requires_live_paper_parity": True,
+                "requires_adverse_selection_stress": True,
+                "requires_replay_harness_implementation_trace": True,
+                "requires_implementation_uncertainty_stability": True,
+                "rejects_synthetic_lob_fillability_as_capital_gate": True,
+                "rejects_simulated_fillability_without_route_tca": True,
+            }
+        )
+
+    if has_any(
+        (
             "intraday volume",
             "volume forecasting",
             "volume forecast",

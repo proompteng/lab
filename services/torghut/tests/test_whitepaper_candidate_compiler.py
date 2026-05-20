@@ -1372,3 +1372,94 @@ class TestWhitepaperCandidateCompiler(TestCase):
             compilation.blockers[0].detail["claim_relation_blockers"][0]["relation_id"],
             "rel-invalidates-flow",
         )
+
+    def test_reality_gap_invalidates_relation_stays_executable_as_validation_contract(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-arxiv-2603.24137",
+            claims=[
+                {
+                    "claim_id": "lob-simulation-benchmark-parity",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Limit-order-book simulation can expose stylized fillability "
+                        "and adverse-selection mechanisms only when calibrated "
+                        "against real event streams and fill outcomes."
+                    ),
+                    "asset_scope": "intraday_microstructure",
+                    "horizon_scope": "simulation_validation",
+                    "expected_direction": "neutral",
+                    "data_requirements": [
+                        "lob_event_stream",
+                        "fill_outcomes",
+                        "simulation_parity",
+                    ],
+                    "confidence": "0.76",
+                },
+                {
+                    "claim_id": "sim-to-live-reality-gap-validation",
+                    "claim_type": "risk_constraint",
+                    "claim_text": (
+                        "LOB simulation reality gaps require explicit parity metrics "
+                        "before simulated fillability or adverse-selection estimates "
+                        "can affect capital gates."
+                    ),
+                    "asset_scope": "intraday_microstructure",
+                    "horizon_scope": "simulation_validation",
+                    "expected_direction": "neutral",
+                    "data_requirements": [
+                        "simulation_parity",
+                        "live_paper_parity",
+                        "adverse_selection_stress",
+                        "route_tca",
+                    ],
+                    "confidence": "0.77",
+                },
+            ],
+            relations=[
+                {
+                    "relation_id": "lob-sim-reality-gap-blocks-synthetic-proof",
+                    "relation_type": "invalidates",
+                    "source_claim_id": "sim-to-live-reality-gap-validation",
+                    "target_claim_id": "lob-simulation-benchmark-parity",
+                }
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        self.assertEqual(
+            len(compilation.candidate_specs),
+            _expected_portfolio_target_candidate_count(),
+        )
+        self.assertTrue(compilation.executable_specs)
+        self.assertFalse(
+            [
+                blocker
+                for blocker in compilation.blockers
+                if blocker.reason == "contradictory_claim_relation"
+            ]
+        )
+        self.assertTrue(
+            any(
+                "simulation_reality_gap_implementation_risk"
+                in spec.parameter_space.get("mechanism_overlay_ids", [])
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.hard_vetoes.get("required_simulation_live_parity_metrics")
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract.get(
+                    "rejects_synthetic_lob_fillability_as_capital_gate"
+                )
+                for spec in compilation.executable_specs
+            )
+        )

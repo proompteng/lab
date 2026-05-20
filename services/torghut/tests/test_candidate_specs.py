@@ -247,6 +247,67 @@ class TestCandidateSpecs(TestCase):
             "post_cost_nonlinear_impact",
         )
 
+    def test_lob_simulation_reality_gap_claim_adds_implementation_risk_overlay(
+        self,
+    ) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-lob-simulation-reality-gap",
+            claims=[
+                {
+                    "claim_id": "lob-simulation-benchmark-parity",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Limit order book simulation can expose stylized fillability "
+                        "and adverse-selection mechanisms only when calibrated against "
+                        "real LOB event streams and fill outcomes."
+                    ),
+                    "data_requirements": [
+                        "lob_event_stream",
+                        "fill_outcomes",
+                        "simulation_parity",
+                    ],
+                    "confidence": "0.82",
+                },
+                {
+                    "claim_id": "sim-to-live-reality-gap-validation",
+                    "claim_type": "risk_constraint",
+                    "claim_text": (
+                        "Simulation reality gaps require explicit live-paper parity "
+                        "metrics before simulated fillability can affect capital gates."
+                    ),
+                    "data_requirements": [
+                        "simulation_parity",
+                        "live_paper_parity",
+                        "adverse_selection_stress",
+                        "route_tca",
+                    ],
+                    "confidence": "0.80",
+                },
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+
+        self.assertIn(
+            "simulation_reality_gap_implementation_risk",
+            specs[0].parameter_space["mechanism_overlay_ids"],
+        )
+        self.assertTrue(specs[0].hard_vetoes["required_simulation_live_parity_metrics"])
+        self.assertEqual(
+            specs[0].hard_vetoes["required_min_simulation_parity_sample_count"],
+            "120",
+        )
+        self.assertTrue(
+            specs[0].promotion_contract[
+                "rejects_synthetic_lob_fillability_as_capital_gate"
+            ]
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["requires_implementation_uncertainty_stability"]
+        )
+
     def test_market_limit_execution_claim_adds_candidate_local_policy(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-market-limit-execution",
