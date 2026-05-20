@@ -69,7 +69,7 @@ The control-plane status surface is now composed from collector modules instead 
 - `services/jangar/src/server/control-plane-empirical-services.ts`
 
 Generic Agents workflow reliability and rollout-health evidence is owned by `services/agents` and consumed through the
-Agents control-plane status/resource APIs. Jangar keeps only domain interpretation modules for Torghut/Jangar readiness
+Agents `/v1` status and typed resource APIs. Jangar keeps only domain interpretation modules for Torghut/Jangar readiness
 and repair evidence.
 
 Module size is also guarded in CI:
@@ -155,8 +155,8 @@ These ownership lanes are the operational review boundaries for Jangar changes.
   - `services/jangar/src/server/*config.ts`
   - `services/jangar/src/server/kube-*.ts`
   - `services/jangar/src/server/primitives-*.ts`
-- Domain readiness and Agents service client logic
-  - `services/jangar/src/server/agents-service-client.ts`
+- Domain readiness and typed Agents service consumers
+  - `@proompteng/agent-contracts/*-client` imports in `services/jangar/src/server/**`
   - `services/jangar/src/server/leader-election.ts`
   - `services/jangar/src/server/control-plane-*.ts`
 - Agents-owned platform surfaces

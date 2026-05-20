@@ -281,82 +281,6 @@ const githubPullThreadsResponse = {
     },
   ],
 }
-const controlPlaneImplementationSpecResponse = {
-  resource: {
-    apiVersion: 'agents.proompteng.ai/v1alpha1',
-    kind: 'ImplementationSpec',
-    metadata: {
-      name: 'ship-trading-ui',
-      namespace: 'agents',
-      uid: 'spec-1',
-      creationTimestamp: '2024-01-01T00:00:00.000Z',
-      generation: 3,
-    },
-    spec: {
-      summary: 'Ship trading UI',
-      description: 'Deliver the production trading operator flow.',
-      text: 'Implement the remaining Jangar operator route cleanup.',
-      acceptanceCriteria: ['Loader-backed spec page', 'Behavior coverage for trading'],
-      contract: {
-        requiredKeys: ['repository', 'issueNumber', 'head'],
-      },
-    },
-  },
-  namespace: 'agents',
-}
-const controlPlaneAgentsResponse = {
-  items: [
-    {
-      apiVersion: 'agents.proompteng.ai/v1alpha1',
-      kind: 'Agent',
-      metadata: {
-        name: 'codex-operator',
-        namespace: 'agents',
-      },
-      spec: {
-        providerRef: {
-          name: 'codex',
-        },
-      },
-    },
-  ],
-  total: 1,
-  namespace: 'agents',
-}
-const controlPlaneAgentRunsResponse = {
-  items: [
-    {
-      apiVersion: 'agents.proompteng.ai/v1alpha1',
-      kind: 'AgentRun',
-      metadata: {
-        name: 'run-1',
-        namespace: 'agents',
-      },
-      spec: {
-        agentRef: {
-          name: 'codex-operator',
-        },
-        implementationSpecRef: {
-          name: 'ship-trading-ui',
-        },
-        runtime: {
-          type: 'workflow',
-        },
-      },
-      status: {
-        phase: 'Running',
-        conditions: [
-          {
-            type: 'Ready',
-            status: 'True',
-          },
-        ],
-      },
-    },
-  ],
-  total: 1,
-  namespace: 'agents',
-}
 const tradingStrategiesResponse = {
   ok: true,
   items: [
@@ -521,9 +445,6 @@ test.beforeEach(async ({ page }) => {
       githubPullJudgeRunsResponseValue,
       githubPullRefreshFilesResponseValue,
       githubPullThreadsResponseValue,
-      controlPlaneImplementationSpecResponseValue,
-      controlPlaneAgentsResponseValue,
-      controlPlaneAgentRunsResponseValue,
       tradingStrategiesResponseValue,
       tradingSummaryResponseValue,
       tradingExecutionsResponseValue,
@@ -574,18 +495,6 @@ test.beforeEach(async ({ page }) => {
           return jsonResponse(githubPullRefreshFilesResponseValue)
         if (pathname === '/api/github/pulls/proompteng/lab/42/threads')
           return jsonResponse(githubPullThreadsResponseValue)
-        if (pathname === '/api/agents/control-plane/resource') {
-          const kind = resolvedUrl.searchParams.get('kind')
-          const name = resolvedUrl.searchParams.get('name')
-          if (kind === 'ImplementationSpec' && name === 'ship-trading-ui') {
-            return jsonResponse(controlPlaneImplementationSpecResponseValue)
-          }
-        }
-        if (pathname === '/api/agents/control-plane/resources') {
-          const kind = resolvedUrl.searchParams.get('kind')
-          if (kind === 'Agent') return jsonResponse(controlPlaneAgentsResponseValue)
-          if (kind === 'AgentRun') return jsonResponse(controlPlaneAgentRunsResponseValue)
-        }
         if (pathname === '/api/torghut/trading/strategies') return jsonResponse(tradingStrategiesResponseValue)
         if (pathname === '/api/torghut/trading/summary') return jsonResponse(tradingSummaryResponseValue)
         if (pathname === '/api/torghut/trading/executions') return jsonResponse(tradingExecutionsResponseValue)
@@ -611,9 +520,6 @@ test.beforeEach(async ({ page }) => {
       githubPullJudgeRunsResponseValue: githubPullJudgeRunsResponse,
       githubPullRefreshFilesResponseValue: githubPullRefreshFilesResponse,
       githubPullThreadsResponseValue: githubPullThreadsResponse,
-      controlPlaneImplementationSpecResponseValue: controlPlaneImplementationSpecResponse,
-      controlPlaneAgentsResponseValue: controlPlaneAgentsResponse,
-      controlPlaneAgentRunsResponseValue: controlPlaneAgentRunsResponse,
       tradingStrategiesResponseValue: tradingStrategiesResponse,
       tradingSummaryResponseValue: tradingSummaryResponse,
       tradingExecutionsResponseValue: tradingExecutionsResponse,

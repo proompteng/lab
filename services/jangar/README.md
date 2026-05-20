@@ -243,7 +243,7 @@ rollback for the proof layer only is `JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT=fal
 active.
 
 Agents-owned schedule reconciliation verifies the stamped passport and sealed warrant against the current
-`/api/agents/control-plane/status?namespace=<schedule namespace>` response before creating the AgentRun or
+`/v1/control-plane/status?namespace=<schedule namespace>` response before creating the AgentRun or
 OrchestrationRun. Jangar consumes that status projection for domain stage-clearance decisions through
 `JANGAR_RUNTIME_ADMISSION_STATUS_URL`; the timeout defaults to `15000` ms via
 `JANGAR_RUNTIME_ADMISSION_STATUS_TIMEOUT_MS`. Stage-clearance hold mode requires the full status projection because
@@ -273,7 +273,7 @@ Admitted schedules and requirement runs carry these trace fields in annotations 
 - `swarmRequiredProofCells`
 
 The runtime-admission compiler also emits Phase 0 recovery-warrant evidence from the same passport snapshot.
-`/ready` and `/api/agents/control-plane/status` include shadow `recovery_warrants`, `runtime_proof_cells`, and
+`/ready` and `/v1/control-plane/status` include shadow `recovery_warrants`, `runtime_proof_cells`, and
 `projection_watermarks`. A missing required helper or config value becomes a broken warrant with a missing proof cell,
 and the launcher gate now consumes that sealed warrant truth before creating work. Warrant, epoch, proof-cell, and
 deploy-verification watermark ids stay stable across ordinary freshness refreshes; they change only when the underlying
@@ -281,7 +281,7 @@ passport, runtime-kit digest, proof content, or decision changes. Rollback for l
 `JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT=false` while keeping `runtime_kits`, `admission_passports`, and proof-surface
 projection intact.
 
-`/api/agents/control-plane/status` also emits observe-mode rollout proof from
+`/v1/control-plane/status` also emits observe-mode rollout proof from
 `docs/agents/designs/191-jangar-rollout-proof-passports-and-runner-capacity-futures-2026-05-13.md`. The
 `rollout_proof_passport` joins source rollout truth, source-serving verdicts, database status, controller witness,
 rollout health, and ready truth into one source-to-serving status. Missing source CI, manifest digest, or registry
@@ -293,7 +293,7 @@ not change scheduler behavior; rollback is to ignore these status fields or keep
 
 Deploy verification also consumes the runtime-admission projection. After Argo, rollout, and image digest checks pass,
 `packages/scripts/src/jangar/verify-deployment.ts` reads
-`/api/agents/control-plane/status?namespace=agents` through the Kubernetes service proxy and requires the configured
+`/v1/control-plane/status?namespace=agents` through the Kubernetes service proxy and requires the configured
 passport consumers (`serving`, `swarm_plan`, `swarm_implement`, and `swarm_verify` by default) to be `allow`, fresh,
 backed by present runtime kits, and running on the same image digest as the promoted deployment. The deployment manifest
 sets `JANGAR_RUNTIME_IMAGE` to the promoted tag and digest so runtime-kit `image_ref` can be compared directly. Emergency
@@ -587,8 +587,8 @@ controller self-report is missing or Torghut evidence is repair-only with `max_n
 Validation:
 
 ```bash
-curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.ready_action_exchange'
-curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.action_custody_receipts[] | {action_class,decision,blocking_debt_classes,receipt_id}'
+curl -fsS http://agents.agents.svc.cluster.local/v1/control-plane/status?namespace=agents | jq '.ready_action_exchange'
+curl -fsS http://agents.agents.svc.cluster.local/v1/control-plane/status?namespace=agents | jq '.action_custody_receipts[] | {action_class,decision,blocking_debt_classes,receipt_id}'
 ```
 
 Rollback: ignore `ready_action_exchange` and `action_custody_receipts` consumers, or remove the projection. Existing
@@ -597,7 +597,7 @@ proof-floor/notional gates remain the fallback safety boundary.
 
 ## Material gate digest
 
-`/ready` and `/api/agents/control-plane/status` emit the observe-mode `material_gate_digest` from
+`/ready` and `/v1/control-plane/status` emit the observe-mode `material_gate_digest` from
 `docs/agents/designs/198-jangar-material-gate-digest-and-alpha-closure-carry-2026-05-14.md`. The digest is the bounded
 material-readiness proof for launchers and deployers: serving readiness can remain `ok`, while material actions carry
 their own `allow`, `hold`, `deny`, or `block` decision.
@@ -613,7 +613,7 @@ Validation:
 
 ```bash
 curl -fsS http://localhost:8080/ready | jq '.material_gate_digest'
-curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.material_gate_digest'
+curl -fsS http://agents.agents.svc.cluster.local/v1/control-plane/status?namespace=agents | jq '.material_gate_digest'
 curl -fsS http://torghut.torghut.svc.cluster.local/trading/consumer-evidence | jq '.alpha_repair_closure_board'
 ```
 
@@ -623,7 +623,7 @@ repair-only or the repair queue is non-empty.
 
 ## Verify trust foreclosure board
 
-`/ready` and `/api/agents/control-plane/status` emit the observe-mode `verify_trust_foreclosure_board` from
+`/ready` and `/v1/control-plane/status` emit the observe-mode `verify_trust_foreclosure_board` from
 `docs/agents/designs/201-jangar-verify-trust-foreclosure-and-alpha-repair-reentry-2026-05-14.md`. The board keeps
 serving readiness separate from material authority: serving can be `ok` while plan, verify, source rollout, or Torghut
 no-delta debt holds or denies material actions.
@@ -645,7 +645,7 @@ Validation:
 
 ```bash
 curl -fsS http://localhost:8080/ready | jq '.verify_trust_foreclosure_board'
-curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.verify_trust_foreclosure_board.alpha_repair_reentry_admission'
+curl -fsS http://agents.agents.svc.cluster.local/v1/control-plane/status?namespace=agents | jq '.verify_trust_foreclosure_board.alpha_repair_reentry_admission'
 curl -fsS http://torghut.torghut.svc.cluster.local/trading/consumer-evidence | jq '.no_delta_repair_reentry_auction'
 curl -fsS http://torghut.torghut.svc.cluster.local/trading/consumer-evidence | jq '.alpha_repair_closure_board'
 ```
@@ -656,7 +656,7 @@ safety authorities.
 
 ## Controller-ingestion settlement
 
-`/api/agents/control-plane/status` emits the observe-mode `controller_ingestion_settlement` from
+`/v1/control-plane/status` emits the observe-mode `controller_ingestion_settlement` from
 `docs/agents/designs/205-jangar-controller-ingestion-settlement-and-verification-carry-cutover-2026-05-14.md`. The
 settlement joins controller witness quorum, AgentRun ingestion, database and rollout health, execution trust,
 source-serving verdicts, verify-trust foreclosure, repair-slot escrow, and Torghut no-delta carry evidence into one
@@ -671,7 +671,7 @@ nonzero notional stays `block`.
 Validation:
 
 ```bash
-curl -fsS 'http://localhost:8080/api/agents/control-plane/status?namespace=agents' | jq '.controller_ingestion_settlement'
+curl -fsS 'http://agents.agents.svc.cluster.local/v1/control-plane/status?namespace=agents' | jq '.controller_ingestion_settlement'
 curl -fsS http://torghut.torghut.svc.cluster.local/trading/revenue-repair | jq '.no_delta_repair_reentry_auction'
 ```
 
@@ -681,7 +681,7 @@ boundary. No database migration or scheduler enforcement is introduced by this p
 
 ## Material evidence settlement spine
 
-`/ready` and `/api/agents/control-plane/status` should next emit the observe-mode
+`/ready` and `/v1/control-plane/status` should next emit the observe-mode
 `material_evidence_settlement_spine` from
 `docs/agents/designs/206-jangar-material-evidence-settlement-spine-and-repair-dispatch-budget-2026-05-14.md`. The
 spine is the compact settlement layer over serving readiness, material readiness, Torghut revenue-repair topline
@@ -693,7 +693,7 @@ Validation:
 
 ```bash
 curl -fsS http://localhost:8080/ready | jq '.material_evidence_settlement_spine'
-curl -fsS 'http://localhost:8080/api/agents/control-plane/status?namespace=agents' | jq '.material_evidence_settlement_spine'
+curl -fsS 'http://agents.agents.svc.cluster.local/v1/control-plane/status?namespace=agents' | jq '.material_evidence_settlement_spine'
 curl -fsS http://torghut.torghut.svc.cluster.local/trading/revenue-repair | jq '{business_state,top_repair_queue_item,repair_queue}'
 ```
 
@@ -708,7 +708,7 @@ requires Jangar to expose typed Torghut custody evidence from the non-recursive 
 Jangar requests `/trading/consumer-evidence?view=summary` when the configured Torghut status URL points at the
 consumer-evidence route, so readiness gets the compact status, receipt, route-profit, and canary fields without
 pulling the full operator ledger payload through the control-plane hot path.
-When Torghut imports Jangar carry for that route, it calls `/api/agents/control-plane/status` with
+When Torghut imports Jangar carry for that route, it calls `/v1/control-plane/status` with
 `x-torghut-consumer-evidence-mode: omit`; Jangar then computes the local control-plane status without fetching Torghut
 consumer evidence, which prevents a Torghut -> Jangar -> Torghut status loop.
 When Torghut reports an evidence-clock arbiter but does not publish a `required_jangar_custody_ref`, control-plane
@@ -815,7 +815,7 @@ AgentRun ingestion and controller reconciliation are owned by `services/agents`.
 Jangar reads the Agents service status surface and does not configure controller
 resync, adoption, or debug loops directly.
 
-Execution trust is now a mandatory part of `/api/agents/control-plane/status` and `/ready`.
+Execution trust is now a mandatory part of `/v1/control-plane/status` and `/ready`.
 Tracked swarm selection and response fan-out remain configurable via:
 
 - `JANGAR_CONTROL_PLANE_EXECUTION_TRUST_SWARMS` (optional comma list; default: `jangar-control-plane,torghut-quant`)
@@ -830,10 +830,10 @@ Rollout safety now also uses gate thresholds for watch stability and empirical j
 - `JANGAR_CONTROL_PLANE_WATCH_RELIABILITY_BLOCK_RESTARTS` (optional; default: `3`)
   - Blocks dependency quorum when any observed watch stream restarts cross this threshold in the latest reliability window.
 - `empirical_jobs` hard gate:
-  - `status` is now a hard block when `/api/agents/control-plane/status` reports `empirical_services.jobs.status === degraded`.
+  - `status` is now a hard block when `/v1/control-plane/status` reports `empirical_services.jobs.status === degraded`.
   - Forecast and LEAN degradation remain observable but do not block rollout.
 
-Failure-domain lease shadow synthesis is exposed on `/api/agents/control-plane/status` as
+Failure-domain lease shadow synthesis is exposed on `/v1/control-plane/status` as
 `failure_domain_leases`:
 
 - `mode` is `shadow`; the lease set is advisory and does not block AgentRun admission by itself.
@@ -861,7 +861,8 @@ degraded execution trust remains visible in the response body while the pod stay
 
 ## Control-plane cache freshness behavior
 
-When cache reads are enabled for `/api/agents/control-plane/resource` and `/api/agents/control-plane/resources`, responses may include a `cache` object:
+When cache reads are enabled for typed Agents `/v1/<resource>/resources` endpoints, responses may include a `cache`
+object:
 
 - `source: "control-plane-cache"`
 - `stale`: `true` when row age is above `JANGAR_CONTROL_PLANE_CACHE_STALE_SECONDS`

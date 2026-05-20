@@ -116,7 +116,7 @@ describe('agents extraction boundary guard', () => {
     )
     expect(content).toContain('WorkflowCommsAgentMessage|workflow_agent_messages_')
     expect(content).toContain('AgentRun callback contracts must not export legacy workflow-shaped identity cleanup')
-    expect(content).toContain('removeLegacyWorkflowIdentityFields')
+    expect(content).toContain('stripLegacyWorkflowIdentityFields')
     expect(content).toContain('goalObjective|goalTokenBudget')
     expect(content).toContain('argo\\.workflows\\.completions')
     expect(content).toContain('Jangar must not expose legacy Codex notify/run-complete callback routes')

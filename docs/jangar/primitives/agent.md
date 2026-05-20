@@ -6,14 +6,16 @@ The `Agent` primitive represents a provider-agnostic intent to run an agent work
 user-facing API from any specific runtime (native workflow runtime, Temporal, custom jobs, etc.) and provides a stable
 contract for long-horizon agent execution.
 
-Jangar is the control plane for all `Agent` resources. All creation, update, and deletion flows
-must pass through Jangar.
+The Agents service is the control plane for all `Agent`, `AgentRun`, `AgentProvider`, and `ImplementationSpec`
+resources. Jangar may create or inspect these resources through the Agents `/v1` API, but it must not own the generic
+controller, CRD, or runner lifecycle.
 
 ## Grounding in the current codebase
 
-- Agents controller: `services/jangar/src/server/agents-controller.ts`
-- Orchestration controller: `services/jangar/src/server/orchestration-controller.ts`
-- Runtime entrypoint: `services/jangar/scripts/agent-runner.ts`
+- Agents controller: `services/agents/src/server/agents-controller`
+- Orchestration controller: `services/agents/src/server/orchestration-controller.ts`
+- Runtime entrypoint: `services/agents/scripts/agent-runner.ts`
+- CRD Go types: `services/agents/api/agents`
 
 ## CRDs
 
@@ -26,7 +28,7 @@ apiVersion: agents.proompteng.ai/v1alpha1
 kind: Agent
 metadata:
   name: codex-implementation
-  namespace: jangar
+  namespace: agents
 spec:
   providerRef:
     name: codex
@@ -55,7 +57,7 @@ apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
   name: codex-implementation-20260105-001
-  namespace: jangar
+  namespace: agents
 spec:
   agentRef:
     name: codex-implementation
@@ -73,14 +75,14 @@ spec:
 Defines how to invoke a provider’s CLI without baking provider-specific logic into workflows.
 
 AgentProvider is cluster-scoped at the composite level. The claim (`AgentProvider`) is namespaced
-and should be created in a control-plane namespace (e.g. `jangar`) and treated as global.
+and should be created in a control-plane namespace (usually `agents`) and treated as global.
 
 ```yaml
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentProvider
 metadata:
   name: codex
-  namespace: jangar
+  namespace: agents
 spec:
   binary: /usr/local/bin/codex
   argsTemplate:
@@ -92,7 +94,7 @@ spec:
     - --head
     - '{{inputs.head}}'
   envTemplate:
-    WORKFLOW_STAGE: '{{inputs.stage}}'
+    AGENTS_STAGE: '{{inputs.stage}}'
   inputFiles:
     - path: /workspace/agent/prompt.json
       content: '{{payloads.promptJson}}'
@@ -119,15 +121,14 @@ The unified entrypoint must exist in every runtime image used for agent executio
 - Codex runtime image must include:
   - `/usr/local/bin/agent-runner`
   - `/usr/local/bin/codex`
-- Jangar runtime image must include:
-  - `/usr/local/bin/agent-runner`
-  - provider CLI binaries for any in-cluster agent execution it coordinates
+- Agents runner images must include `/usr/local/bin/agent-runner` and any provider binaries required by the normalized
+  `AgentProvider.spec.adapter`.
 
 ## Provider decoupling rules
 
 - `Agent` and `AgentRun` expose provider-agnostic fields only.
 - Provider-specific fields live under `spec.runtime.<provider>` or `spec.provider.<provider>`.
-- The Jangar controller binds runtime providers at reconciliation time based on the selected runtime profile.
+- The Agents controller binds runtime providers at reconciliation time based on the selected runtime profile.
 
 ## Native runtime (default)
 

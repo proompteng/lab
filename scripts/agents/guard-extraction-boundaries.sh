@@ -181,12 +181,17 @@ fail_if_matches \
 fail_if_matches \
   "Agent message client contracts must use AgentRun-native identity fields, not workflow-shaped compatibility fields" \
   'workflowUid|workflow_uid|workflowName|workflow_name|workflowNamespace|workflow_namespace|workflowStep|workflow_step|workflowStage|workflow_stage' \
-  "${ROOT_DIR}/packages/agent-contracts/src/agents-service-client.ts"
+  "${ROOT_DIR}/packages/agent-contracts/src/agent-messages-client.ts"
 
 fail_if_matches \
   "AgentRun callback contracts must not expose legacy workflow-shaped identity parsing outside the contract sanitizer" \
   'removeWorkflowIdentityFields' \
   "${ROOT_DIR}/services/jangar/src/server/codex-judge.ts" \
+  "${ROOT_DIR}/packages/agent-contracts/src/agent-run-callbacks.ts"
+
+fail_if_matches \
+  "AgentRun callback contracts must not export legacy workflow-shaped identity cleanup" \
+  'export\s+(const|function)\s+stripLegacyWorkflowIdentityFields|export\s+const\s+LEGACY_WORKFLOW_IDENTITY_KEYS' \
   "${ROOT_DIR}/packages/agent-contracts/src/agent-run-callbacks.ts"
 
 require_matches \
@@ -856,6 +861,30 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src" \
   "${ROOT_DIR}/services/jangar/README.md" \
   "${ROOT_DIR}/packages/scripts/src/jangar"
+
+fail_if_matches \
+  "Active Jangar runtime docs and tests must use Agents /v1 service APIs instead of retired same-origin /api/agents routes" \
+  '/api/agents/(messages|control-plane/(status|resource|resources|events|logs|stream|summary))' \
+  "${ROOT_DIR}/services/jangar/src" \
+  "${ROOT_DIR}/services/jangar/tests" \
+  "${ROOT_DIR}/services/jangar/README.md" \
+  "${ROOT_DIR}/docs/jangar/application-architecture.md" \
+  "${ROOT_DIR}/docs/jangar/agents-control-plane-new-primitives.md" \
+  "${ROOT_DIR}/docs/jangar/agents-control-plane-log-viewer.md"
+
+fail_if_matches \
+  "Active NATS agent communication docs must use Agents-owned AgentRun subjects and storage" \
+  'workflow_comms\.agent_messages|workflow\.<workflow_|workflow\.general|WORKFLOW_NAME|WORKFLOW_UID|WORKFLOW_NAMESPACE|jangar-agent-comms|JANGAR_AGENT_COMMS_' \
+  "${ROOT_DIR}/docs/nats-agent-communications.md" \
+  "${ROOT_DIR}/docs/nats-agent-communications-plan.md" \
+  "${ROOT_DIR}/docs/jangar/runbooks/swarm-end-to-end-runbook.md"
+
+fail_if_matches \
+  "Generic Agents primitive docs must point at services/agents ownership, not Jangar controllers" \
+  'Jangar is the control plane for all `(Agent|Memory)`|services/jangar/src/server/(agents-controller|orchestration-controller)|services/jangar/scripts/agent-runner|namespace: jangar|WORKFLOW_STAGE' \
+  "${ROOT_DIR}/docs/jangar/primitives/agent.md" \
+  "${ROOT_DIR}/docs/jangar/primitives/memory.md" \
+  "${ROOT_DIR}/docs/jangar/primitives/orchestration.md"
 
 fail_if_matches \
   "Jangar must consume typed Agents client helpers instead of raw kind-string control-plane resource helpers" \

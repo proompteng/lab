@@ -2,17 +2,17 @@
 
 ## Purpose
 
-The Orchestration primitive represents a composable workflow definition and execution that coordinates
-multiple steps (agent runs, tool invocations, memory operations) over long horizons. It is provider-agnostic
-and implemented by the Jangar native workflow runtime by default, with optional adapters for external
-workflow engines.
+The Orchestration primitive represents a composable workflow definition and execution that coordinates multiple steps
+(agent runs, tool invocations, memory operations) over long horizons. It is provider-agnostic and owned by the Agents
+service runtime by default, with optional adapters for external workflow engines.
 
-Jangar is the control plane for orchestration resources.
+The Agents service is the control plane for orchestration resources. Jangar consumes orchestration state through the
+Agents `/v1` APIs for domain readiness and UI needs.
 
 ## Grounding in the current platform
 
-- Native runtime: `services/jangar/src/server/orchestration-controller.ts`
-- Agent execution runtime: `services/jangar/src/server/agents-controller.ts`
+- Native runtime: `services/agents/src/server/orchestration-controller.ts`
+- Agent execution runtime: `services/agents/src/server/agents-controller`
 
 ## CRDs
 
@@ -25,7 +25,7 @@ apiVersion: orchestration.proompteng.ai/v1alpha1
 kind: Orchestration
 metadata:
   name: codex-autonomous
-  namespace: jangar
+  namespace: agents
 spec:
   entrypoint: main
   steps:
@@ -67,7 +67,7 @@ apiVersion: orchestration.proompteng.ai/v1alpha1
 kind: OrchestrationRun
 metadata:
   name: codex-autonomous-20260105-001
-  namespace: jangar
+  namespace: agents
 spec:
   orchestrationRef:
     name: codex-autonomous
@@ -88,13 +88,13 @@ Each step is an atomic unit with:
 ## Provider decoupling rules
 
 - `Orchestration` is runtime-agnostic.
-- Provider binding happens at reconciliation via the Jangar runtime router.
+- Provider binding happens at reconciliation via the Agents runtime router.
 - Provider-specific overrides may be introduced later.
 
 ## Native runtime (default)
 
 - `Orchestration` defines the DAG and step contracts.
-- `OrchestrationRun` coordinates step execution through Jangar.
+- `OrchestrationRun` coordinates step execution through Agents.
 - Steps create `AgentRun` and `ToolRun` resources and track their status.
 
 ## Optional adapters (future)
@@ -122,4 +122,4 @@ Each step is an atomic unit with:
 ## Idempotency
 
 - OrchestrationRun is idempotent via `deliveryId` (if present)
-- Jangar owns retries and de-duplication for orchestration creation
+- Agents owns retries and de-duplication for orchestration creation

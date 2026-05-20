@@ -25,7 +25,8 @@ flowchart LR
 
 ## Channel Communication Contract
 
-All workers publish durable progress to NATS and Jangar subscribes those messages into `workflow_comms.agent_messages`.
+All workers publish durable progress to NATS and the Agents service subscribes those messages into
+`agents_comms.agent_messages`.
 Each stage must do three actions:
 
 1. Read recent NATS context with `codex-nats-soak`.
@@ -98,7 +99,7 @@ Expected:
 
 - `agents` app is `Synced` and `Healthy`.
 - `nats` app is `Synced` and `Healthy`.
-- `stream/agent-comms` and `consumer/jangar-agent-comms` exist.
+- `stream/agent-comms` and `consumer/agents-agent-comms` exist.
 - `jangar-control-plane` and `torghut-quant` swarms are `Active` and `Ready=True`.
 - All stage schedules are `Active`.
 
