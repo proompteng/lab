@@ -1,7 +1,12 @@
 import { resolveRuntimeServiceName } from './runtime-identity'
 import { resolveControlPlaneCacheConfig } from './controller-runtime-config'
 import { isRuntimeTestEnv } from './control-plane-cache-config'
-import { createControlPlaneCacheStore } from './control-plane-cache-store'
+import {
+  createControlPlaneCacheStore,
+  type ControlPlaneCacheKey,
+  type ControlPlaneCacheStore,
+  type UpsertControlPlaneCacheResourceInput,
+} from './control-plane-cache-store'
 import { createKubernetesClient, RESOURCE_MAP } from './kube-types'
 import { startResourceWatch } from './kube-watch'
 import { asRecord, asString, readNested } from './primitives'
@@ -16,8 +21,30 @@ type CacheKind =
   | 'VersionControlProvider'
 
 type CacheResource = { kind: CacheKind; resource: string }
+type CacheResourceVersionMap = Map<string, string>
+type CacheWriteOperation =
+  | {
+      type: 'delete'
+      key: ControlPlaneCacheKey
+      attempts: number
+    }
+  | {
+      type: 'upsert'
+      input: UpsertControlPlaneCacheResourceInput
+      attempts: number
+    }
+
+type CacheWriterOptions = {
+  store: ControlPlaneCacheStore
+  logPrefix: string
+  maxPendingWrites: number
+  retryDelayMs?: number
+  maxRetries?: number
+}
 
 const DEFAULT_CLUSTER_ID = 'default'
+const DEFAULT_WRITE_RETRY_DELAY_MS = 2_000
+const DEFAULT_MAX_WRITE_RETRIES = 10
 
 const CACHE_RESOURCES: CacheResource[] = [
   { kind: 'Agent', resource: RESOURCE_MAP.Agent },
@@ -30,6 +57,8 @@ const CACHE_RESOURCES: CacheResource[] = [
 
 let started = false
 let watchHandles: Array<{ stop: () => void }> = []
+let resyncHandles: Array<{ stop: () => void }> = []
+let cacheWriters: Array<{ stop: () => void }> = []
 
 const getLogPrefix = () => `[${resolveRuntimeServiceName()}][control-plane-cache]`
 
@@ -41,6 +70,132 @@ const shouldStart = () => {
 const parseNamespaces = () => resolveControlPlaneCacheConfig().namespaces
 
 const resolveClusterId = () => resolveControlPlaneCacheConfig().clusterId || DEFAULT_CLUSTER_ID
+
+const cacheResourceVersionKey = (namespace: string, resource: string) => `${namespace}/${resource}`
+
+const cacheWriteKey = (key: ControlPlaneCacheKey) => `${key.cluster}/${key.kind}/${key.namespace}/${key.name}`
+
+const getOperationKey = (operation: CacheWriteOperation) =>
+  operation.type === 'delete' ? cacheWriteKey(operation.key) : cacheWriteKey(operation.input.key)
+
+const getOperationResourceKey = (operation: CacheWriteOperation) =>
+  operation.type === 'delete' ? operation.key : operation.input.key
+
+const createControlPlaneCacheWriter = ({
+  store,
+  logPrefix,
+  maxPendingWrites,
+  retryDelayMs = DEFAULT_WRITE_RETRY_DELAY_MS,
+  maxRetries = DEFAULT_MAX_WRITE_RETRIES,
+}: CacheWriterOptions) => {
+  const pending = new Map<string, CacheWriteOperation>()
+  let stopped = false
+  let draining = false
+  let retryTimer: NodeJS.Timeout | null = null
+
+  const scheduleDrain = (delayMs = 0) => {
+    if (stopped) return
+    if (retryTimer) clearTimeout(retryTimer)
+    retryTimer = setTimeout(
+      () => {
+        retryTimer = null
+        drain()
+      },
+      Math.max(0, delayMs),
+    )
+  }
+
+  const requeueAfterFailure = (operation: CacheWriteOperation, error: unknown) => {
+    const key = getOperationKey(operation)
+    const resourceKey = getOperationResourceKey(operation)
+    const message = error instanceof Error ? error.message : String(error)
+    if (operation.attempts >= maxRetries) {
+      console.warn(`${logPrefix} write dropped after retries`, {
+        kind: resourceKey.kind,
+        namespace: resourceKey.namespace,
+        name: resourceKey.name,
+        error: message,
+      })
+      return
+    }
+
+    console.warn(`${logPrefix} write failed`, {
+      kind: resourceKey.kind,
+      namespace: resourceKey.namespace,
+      name: resourceKey.name,
+      attempt: operation.attempts + 1,
+      error: message,
+    })
+
+    if (!pending.has(key)) {
+      pending.set(key, { ...operation, attempts: operation.attempts + 1 } as CacheWriteOperation)
+    }
+    scheduleDrain(retryDelayMs)
+  }
+
+  const drain = () => {
+    if (stopped || draining) return
+    draining = true
+    void (async () => {
+      try {
+        while (!stopped && pending.size > 0) {
+          const next = pending.entries().next().value as [string, CacheWriteOperation] | undefined
+          if (!next) return
+          const [key, operation] = next
+          pending.delete(key)
+
+          try {
+            if (operation.type === 'delete') {
+              await store.markDeleted(operation.key)
+            } else {
+              await store.upsertResource(operation.input)
+            }
+          } catch (error) {
+            requeueAfterFailure(operation, error)
+            return
+          }
+        }
+      } finally {
+        draining = false
+        if (!stopped && pending.size > 0 && !retryTimer) {
+          scheduleDrain()
+        }
+      }
+    })()
+  }
+
+  const enqueue = (operation: CacheWriteOperation) => {
+    if (stopped) return
+    const key = getOperationKey(operation)
+    if (pending.has(key)) pending.delete(key)
+    pending.set(key, operation)
+
+    if (pending.size > maxPendingWrites) {
+      const oldestKey = pending.keys().next().value as string | undefined
+      if (oldestKey) {
+        pending.delete(oldestKey)
+        console.warn(`${logPrefix} write queue dropped oldest pending resource`, {
+          pending: pending.size,
+          maxPendingWrites,
+        })
+      }
+    }
+
+    if (!retryTimer) drain()
+  }
+
+  return {
+    enqueueDelete: (key: ControlPlaneCacheKey) => enqueue({ type: 'delete', key, attempts: 0 }),
+    enqueueUpsert: (input: UpsertControlPlaneCacheResourceInput) => enqueue({ type: 'upsert', input, attempts: 0 }),
+    pendingSize: () => pending.size,
+    stop: () => {
+      stopped = true
+      pending.clear()
+      if (retryTimer) clearTimeout(retryTimer)
+      retryTimer = null
+    },
+  }
+}
 
 const toSummary = (resource: Record<string, unknown>) => ({
   apiVersion: asString(resource.apiVersion) ?? null,
@@ -114,15 +269,20 @@ const extractFields = (resourceKind: CacheKind, summary: ReturnType<typeof toSum
   }
 }
 
-const listOnce = async (namespace: string, store: ReturnType<typeof createControlPlaneCacheStore>) => {
+const listOnce = async (namespace: string, store: ControlPlaneCacheStore) => {
   const kube = createKubernetesClient()
   const cluster = resolveClusterId()
+  const resourceVersions: CacheResourceVersionMap = new Map()
 
   for (const entry of CACHE_RESOURCES) {
-    const syncStartedAt = await store.getDbNow()
     try {
+      const syncStartedAt = await store.getDbNow()
       const list = await kube.list(entry.resource, namespace)
       const items = Array.isArray(list.items) ? list.items : []
+      const resourceVersion = asString(readNested(list, ['metadata', 'resourceVersion']))
+      if (resourceVersion) {
+        resourceVersions.set(cacheResourceVersionKey(namespace, entry.resource), resourceVersion)
+      }
       for (const item of items) {
         const summary = toSummary(asRecord(item) ?? {})
         const metadata = asRecord(summary.metadata) ?? {}
@@ -164,16 +324,30 @@ const listOnce = async (namespace: string, store: ReturnType<typeof createContro
       console.warn(`${getLogPrefix()} list failed`, { kind: entry.kind, namespace, error })
     }
   }
+
+  return resourceVersions
 }
 
-const startNamespaceWatches = (namespace: string, store: ReturnType<typeof createControlPlaneCacheStore>) => {
+const startNamespaceWatches = (
+  namespace: string,
+  store: ControlPlaneCacheStore,
+  resourceVersions: CacheResourceVersionMap,
+) => {
+  const writer = createControlPlaneCacheWriter({
+    store,
+    logPrefix: getLogPrefix(),
+    maxPendingWrites: resolveControlPlaneCacheConfig().maxPendingWrites,
+  })
+  cacheWriters.push(writer)
+
   for (const entry of CACHE_RESOURCES) {
     watchHandles.push(
       startResourceWatch({
         resource: entry.resource,
         namespace,
+        resourceVersion: resourceVersions.get(cacheResourceVersionKey(namespace, entry.resource)),
         logPrefix: getLogPrefix(),
-        onEvent: async (event) => {
+        onEvent: (event) => {
           const payload = asRecord(event.object) ?? {}
           const summary = toSummary(payload)
           const metadata = asRecord(summary.metadata) ?? {}
@@ -183,13 +357,13 @@ const startNamespaceWatches = (namespace: string, store: ReturnType<typeof creat
 
           const key = { cluster: resolveClusterId(), kind: entry.kind, namespace: resourceNamespace, name }
           if (event.type === 'DELETED') {
-            await store.markDeleted(key)
+            writer.enqueueDelete(key)
             return
           }
 
           const fingerprint = buildResourceFingerprint(summary)
           const fields = extractFields(entry.kind, summary)
-          await store.upsertResource({
+          writer.enqueueUpsert({
             key,
             uid: fields.uid,
             apiVersion: fields.apiVersion,
@@ -219,6 +393,30 @@ const startNamespaceWatches = (namespace: string, store: ReturnType<typeof creat
   }
 }
 
+const scheduleNamespaceResync = (namespace: string, store: ControlPlaneCacheStore) => {
+  const intervalMs = resolveControlPlaneCacheConfig().resyncSeconds * 1000
+  let stopped = false
+  let timer: NodeJS.Timeout | null = null
+
+  const schedule = () => {
+    if (stopped) return
+    timer = setTimeout(() => {
+      timer = null
+      void listOnce(namespace, store).finally(schedule)
+    }, intervalMs)
+    timer.unref?.()
+  }
+
+  schedule()
+  resyncHandles.push({
+    stop: () => {
+      stopped = true
+      if (timer) clearTimeout(timer)
+      timer = null
+    },
+  })
+}
+
 export const startControlPlaneCache = async () => {
   if (started || !shouldStart()) return
   started = true
@@ -230,8 +428,9 @@ export const startControlPlaneCache = async () => {
 
     const namespaces = parseNamespaces()
     for (const namespace of namespaces) {
-      await listOnce(namespace, store)
-      startNamespaceWatches(namespace, store)
+      const resourceVersions = await listOnce(namespace, store)
+      startNamespaceWatches(namespace, store, resourceVersions)
+      scheduleNamespaceResync(namespace, store)
     }
   } catch (error) {
     console.warn(`${getLogPrefix()} failed to start`, error)
@@ -252,11 +451,21 @@ export const stopControlPlaneCache = () => {
   for (const handle of watchHandles) {
     handle.stop()
   }
+  for (const handle of resyncHandles) {
+    handle.stop()
+  }
+  for (const writer of cacheWriters) {
+    writer.stop()
+  }
   watchHandles = []
+  resyncHandles = []
+  cacheWriters = []
   started = false
 }
 
 export const __test__ = {
+  createControlPlaneCacheWriter,
   extractFields,
+  listOnce,
   resolveResourceUpdatedAt,
 }

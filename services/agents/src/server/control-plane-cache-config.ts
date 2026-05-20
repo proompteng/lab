@@ -26,7 +26,7 @@ export const resolveControlPlaneCacheFreshnessConfig = (
   maxAgeSeconds: parsePositiveIntEnv(readAgentsEnv(env, 'AGENTS_CONTROL_PLANE_CACHE_STALE_SECONDS'), 120, {
     minimum: 0,
   }),
-  allowStale: parseBooleanEnv(readAgentsEnv(env, 'AGENTS_CONTROL_PLANE_CACHE_ALLOW_STALE'), true),
+  allowStale: parseBooleanEnv(readAgentsEnv(env, 'AGENTS_CONTROL_PLANE_CACHE_ALLOW_STALE'), false),
 })
 
 export const __private = {
