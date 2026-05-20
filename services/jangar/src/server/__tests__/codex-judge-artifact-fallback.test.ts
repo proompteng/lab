@@ -177,7 +177,7 @@ afterEach(() => {
 })
 
 describe('codex-judge artifact fallback', () => {
-  it('uses workflow output filenames for fallback keys', async () => {
+  it('uses runner output filenames for fallback keys', async () => {
     const { buildFallbackArtifactEntries } = await requirePrivate()
     const artifacts = buildFallbackArtifactEntries('agentrun-1', 'jangar-artifacts')
     const byName = new Map(artifacts.map((artifact) => [artifact.name, artifact]))

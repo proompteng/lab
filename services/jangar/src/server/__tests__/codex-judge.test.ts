@@ -800,4 +800,23 @@ describe('codex judge guardrails', () => {
     expect(parsed.agentRunName).toBe('agentrun-789')
     expect(parsed.agentRunNamespace).toBe('agents')
   })
+
+  it('strips workflow-shaped identity from artifact fallback notify payloads', async () => {
+    const privateApi = await requirePrivate()
+
+    const payload = privateApi.removeWorkflowIdentityFields({
+      workflow_name: 'legacy-workflow',
+      workflow_namespace: 'legacy',
+      workflow_uid: 'legacy-uid',
+      workflow_stage: 'legacy-stage',
+      workflow_step: 'legacy-step',
+      agent_run_name: 'agentrun-current',
+      repository: 'proompteng/lab',
+    })
+
+    expect(payload).toEqual({
+      agent_run_name: 'agentrun-current',
+      repository: 'proompteng/lab',
+    })
+  })
 })

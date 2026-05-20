@@ -44,14 +44,14 @@ describe('codex-judge-config', () => {
     })
   })
 
-  it('keeps the old workflow namespace env as a compatibility fallback only', () => {
+  it('ignores the old workflow namespace env after Codex judge moved to AgentRun-native callbacks', () => {
     delete process.env.AGENTS_CODEX_AGENT_RUN_NAMESPACE
     process.env.JANGAR_CODEX_WORKFLOW_NAMESPACE = 'legacy'
 
     expect(loadCodexJudgeConfig()).toMatchObject({
-      agentRunNamespace: 'legacy',
-      rerunOrchestrationNamespace: 'legacy',
-      systemImprovementOrchestrationNamespace: 'legacy',
+      agentRunNamespace: null,
+      rerunOrchestrationNamespace: 'jangar',
+      systemImprovementOrchestrationNamespace: 'jangar',
     })
   })
 

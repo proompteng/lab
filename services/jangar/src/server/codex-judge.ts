@@ -1713,6 +1713,16 @@ const resolveCommitSha = async (run: CodexRunRecord, fallbackCommitSha: string |
   return null
 }
 
+const removeWorkflowIdentityFields = (payload: Record<string, unknown>) => {
+  const next = { ...payload }
+  delete next.workflow_name
+  delete next.workflow_namespace
+  delete next.workflow_uid
+  delete next.workflow_stage
+  delete next.workflow_step
+  return next
+}
+
 const applyArtifactFallback = async (run: CodexRunRecord, artifacts: ResolvedArtifact[]) => {
   if (!run.agentRunName) return
 
@@ -1752,9 +1762,9 @@ const applyArtifactFallback = async (run: CodexRunRecord, artifacts: ResolvedArt
   if (!hasLogExcerpt(logExcerpt) && !prompt && !sessionId && !resolvedCommitSha) return
 
   const fallbackPayload = {
-    ...(isRecord(run.notifyPayload) ? run.notifyPayload : {}),
-    workflow_name: run.agentRunName,
-    workflow_namespace: run.agentRunNamespace,
+    ...(isRecord(run.notifyPayload) ? removeWorkflowIdentityFields(run.notifyPayload) : {}),
+    agent_run_name: run.agentRunName,
+    agent_run_namespace: run.agentRunNamespace,
     repository,
     issue_number: issueNumber,
     head_branch: run.branch,
@@ -2513,6 +2523,7 @@ export const __private = {
   normalizeBranchRef,
   parseNotifyPayload,
   parseRunCompletePayload,
+  removeWorkflowIdentityFields,
   resolveCiContext,
   processRerunQueue,
   writeMemories,

@@ -61,8 +61,7 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
   const artifactBucket =
     (process.env.JANGAR_CODEX_ARTIFACT_BUCKET ?? process.env.ARTIFACT_BUCKET ?? 'jangar-artifacts').trim() ||
     'jangar-artifacts'
-  const agentRunNamespace =
-    (process.env.AGENTS_CODEX_AGENT_RUN_NAMESPACE ?? process.env.JANGAR_CODEX_WORKFLOW_NAMESPACE ?? '').trim() || null
+  const agentRunNamespace = (process.env.AGENTS_CODEX_AGENT_RUN_NAMESPACE ?? '').trim() || null
   const discordBotToken = (process.env.DISCORD_BOT_TOKEN ?? '').trim() || null
   const discordChannelId = (process.env.DISCORD_SUCCESS_CHANNEL_ID ?? '').trim() || null
   const discordApiBaseUrl = (process.env.DISCORD_API_BASE_URL ?? DEFAULT_DISCORD_API_BASE).trim()
