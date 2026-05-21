@@ -182,6 +182,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             replay_tape_manifest=None,
             replay_tape_preview_top_k=0,
             replay_tape_preview_min_rows=2,
+            materialize_replay_tape=False,
             min_daily_net_pnl=None,
             persist_results=False,
         )
@@ -3995,6 +3996,118 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertTrue(aapl_row["pre_fast_replay_preview_selected_for_replay"])
         self.assertFalse(aapl_row["selected_for_replay"])
         self.assertEqual(aapl_row["selection_reason"], "fast_replay_preview_filtered")
+
+    def test_materialize_replay_tape_writes_run_artifacts_and_updates_args(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output_dir = root / "epoch"
+            output_dir.mkdir()
+            strategy_configmap = root / "strategy-configmap.yaml"
+            strategy_configmap.write_text("{}", encoding="utf-8")
+            args = self._args(output_dir)
+            args.strategy_configmap = strategy_configmap
+            args.replay_mode = "real"
+            args.materialize_replay_tape = True
+            args.symbols = "NVDA"
+            rows = [
+                SignalEnvelope(
+                    event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
+                    symbol="NVDA",
+                    timeframe="1Sec",
+                    seq=1,
+                    source="ta",
+                    payload={"price": Decimal("100"), "spread": Decimal("0.01")},
+                ),
+                SignalEnvelope(
+                    event_ts=datetime(2026, 2, 23, 15, 31, tzinfo=timezone.utc),
+                    symbol="NVDA",
+                    timeframe="1Sec",
+                    seq=2,
+                    source="ta",
+                    payload={"price": Decimal("101"), "spread": Decimal("0.01")},
+                ),
+            ]
+
+            with patch.object(
+                runner.replay_mod, "_iter_signal_rows", return_value=rows
+            ):
+                updated_args, receipt = runner._maybe_materialize_epoch_replay_tape(
+                    args=args,
+                    output_dir=output_dir,
+                    epoch_id="epoch-materialized",
+                )
+            tape = runner.load_replay_tape(updated_args.replay_tape_path)
+            self.assertIsNotNone(receipt)
+            assert receipt is not None
+            self.assertEqual(
+                updated_args.replay_tape_path, output_dir / "replay-tape.jsonl"
+            )
+            self.assertEqual(
+                updated_args.replay_tape_manifest,
+                output_dir / "replay-tape.jsonl.manifest.json",
+            )
+            self.assertEqual(receipt["status"], "materialized")
+            self.assertEqual(receipt["row_count"], 2)
+            self.assertEqual(receipt["row_symbols"], ["NVDA"])
+            self.assertTrue((output_dir / "replay-tape-receipt.json").exists())
+            self.assertEqual(tape.manifest.dataset_snapshot_ref, "epoch-materialized")
+            self.assertEqual(tape.manifest.row_count, 2)
+
+    def test_materialize_replay_tape_skips_provided_tape_and_fails_closed(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output_dir = root / "epoch"
+            output_dir.mkdir()
+            args = self._args(output_dir)
+            args.materialize_replay_tape = True
+            args.replay_tape_path = root / "provided-tape.jsonl"
+
+            updated_args, receipt = runner._maybe_materialize_epoch_replay_tape(
+                args=args,
+                output_dir=output_dir,
+                epoch_id="epoch-skip",
+            )
+
+            self.assertIs(updated_args, args)
+            self.assertIsNone(receipt)
+
+            args.replay_tape_path = None
+            args.replay_mode = "synthetic"
+            with self.assertRaisesRegex(
+                ValueError, "replay_tape_materialization_requires_real_replay"
+            ):
+                runner._maybe_materialize_epoch_replay_tape(
+                    args=args,
+                    output_dir=output_dir,
+                    epoch_id="epoch-synthetic",
+                )
+
+            args.replay_mode = "real"
+            args.selection_only = True
+            with self.assertRaisesRegex(
+                ValueError, "replay_tape_materialization_requires_replay_execution"
+            ):
+                runner._maybe_materialize_epoch_replay_tape(
+                    args=args,
+                    output_dir=output_dir,
+                    epoch_id="epoch-selection-only",
+                )
+
+            args.selection_only = False
+            args.full_window_start_date = ""
+            with self.assertRaisesRegex(
+                ValueError,
+                "replay_tape_materialization_requires_full_window_start_date",
+            ):
+                runner._maybe_materialize_epoch_replay_tape(
+                    args=args,
+                    output_dir=output_dir,
+                    epoch_id="epoch-missing-window",
+                )
 
     def test_replay_tape_preview_error_paths_and_fallback_selection(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -8058,6 +8171,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     str(Path(tmpdir) / "tape.jsonl"),
                     "--replay-tape-manifest",
                     str(Path(tmpdir) / "tape.manifest.json"),
+                    "--materialize-replay-tape",
                     "--selection-only",
                     "--no-persist-results",
                 ],
@@ -8086,6 +8200,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(
             parsed.replay_tape_manifest, Path(tmpdir) / "tape.manifest.json"
         )
+        self.assertTrue(parsed.materialize_replay_tape)
         self.assertTrue(parsed.selection_only)
         self.assertEqual(parsed.max_worst_day_loss, "999999999")
         self.assertEqual(parsed.max_drawdown, "999999999")
