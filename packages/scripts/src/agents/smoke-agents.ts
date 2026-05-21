@@ -242,21 +242,21 @@ export const buildHelmArgs = ({
     helmArgs.push('--set', `runner.image.repository=${runnerImageRepository}`)
   }
   if (imageTag) {
-    helmArgs.push('--set', `image.tag=${imageTag}`)
-    helmArgs.push('--set', `controlPlane.image.tag=${controlPlaneImageTag ?? imageTag}`)
-    helmArgs.push('--set', `controllers.image.tag=${controllersImageTag ?? imageTag}`)
+    helmArgs.push('--set-string', `image.tag=${imageTag}`)
+    helmArgs.push('--set-string', `controlPlane.image.tag=${controlPlaneImageTag ?? imageTag}`)
+    helmArgs.push('--set-string', `controllers.image.tag=${controllersImageTag ?? imageTag}`)
     if (runnerImageRepository) {
-      helmArgs.push('--set', `runner.image.tag=${runnerImageTag ?? imageTag}`)
+      helmArgs.push('--set-string', `runner.image.tag=${runnerImageTag ?? imageTag}`)
     }
   } else {
     if (controlPlaneImageTag) {
-      helmArgs.push('--set', `controlPlane.image.tag=${controlPlaneImageTag}`)
+      helmArgs.push('--set-string', `controlPlane.image.tag=${controlPlaneImageTag}`)
     }
     if (controllersImageTag) {
-      helmArgs.push('--set', `controllers.image.tag=${controllersImageTag}`)
+      helmArgs.push('--set-string', `controllers.image.tag=${controllersImageTag}`)
     }
     if (runnerImageTag) {
-      helmArgs.push('--set', `runner.image.tag=${runnerImageTag}`)
+      helmArgs.push('--set-string', `runner.image.tag=${runnerImageTag}`)
     }
   }
   if (imageDigestSet) {
