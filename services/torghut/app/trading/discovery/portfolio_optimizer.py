@@ -15,6 +15,7 @@ from app.trading.discovery.portfolio_candidates import (
     PortfolioCandidateSpec,
     portfolio_candidate_id_for_payload,
 )
+from app.trading.discovery.objectives import deployable_lower_bound_net_pnl_per_day
 from app.trading.discovery.profit_target_oracle import evaluate_profit_target_oracle
 from app.trading.discovery.profit_target_oracle import ProfitTargetOraclePolicy
 
@@ -1335,8 +1336,14 @@ def _portfolio_scorecard(
 
 
 def _sleeve_score(bundle: CandidateEvidenceBundle) -> Decimal:
+    scorecard = _scorecard(bundle)
+    deployable_lower_bound = deployable_lower_bound_net_pnl_per_day(scorecard)
     return (
-        _net_per_day(bundle)
+        (
+            deployable_lower_bound
+            if deployable_lower_bound is not None
+            else _net_per_day(bundle)
+        )
         + (_active_ratio(bundle) * Decimal("300"))
         + (_positive_ratio(bundle) * Decimal("150"))
         - (_worst_day_loss(bundle) * Decimal("0.50"))
@@ -1374,6 +1381,10 @@ def _portfolio_selection_key(
         _scorecard_decimal(scorecard, "active_day_ratio"),
         _scorecard_decimal(scorecard, "positive_day_ratio"),
         _scorecard_decimal(scorecard, "min_daily_net_pnl"),
+        (
+            deployable_lower_bound_net_pnl_per_day(scorecard)
+            or _scorecard_decimal(scorecard, "net_pnl_per_day")
+        ),
         Decimal(1 if bool(scorecard.get("market_impact_stress_passed")) else 0),
         _scorecard_decimal(scorecard, "market_impact_stress_net_pnl_per_day"),
         -_scorecard_decimal(scorecard, "market_impact_stress_cost_bps"),
@@ -1415,6 +1426,7 @@ def _portfolio_selection_key(
 
 def _empty_selection_key() -> tuple[Decimal, ...]:
     return (
+        Decimal("0"),
         Decimal("0"),
         Decimal("0"),
         Decimal("0"),

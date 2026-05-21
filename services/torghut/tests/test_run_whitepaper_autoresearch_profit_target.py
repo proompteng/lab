@@ -1628,6 +1628,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                         "double_oos_pass_rate": "1",
                         "double_oos_net_pnl_per_day": "500",
                         "double_oos_cost_shock_net_pnl_per_day": "500",
+                        "implementation_uncertainty_stability_passed": True,
+                        "implementation_uncertainty_lower_net_pnl_per_day": "500",
                         **scorecard,
                     },
                 },
@@ -1679,7 +1681,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(model["feedback_matched_spec_count"], 3)
         self.assertEqual(
             row_by_spec[string_veto_spec.candidate_spec_id]["feedback_replay_target"],
-            -665.0,
+            -727.5,
         )
         self.assertEqual(
             row_by_spec[string_veto_spec.candidate_spec_id]["features"][
@@ -3681,7 +3683,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             self.assertEqual(
                 pre_replay_model_payload["row_count"], payload["candidate_spec_count"]
             )
-            self.assertEqual(model_payload["schema_version"], "torghut.mlx-ranker.v1")
+            self.assertEqual(model_payload["schema_version"], "torghut.mlx-ranker.v2")
             self.assertEqual(
                 model_payload["row_count"], payload["candidate_spec_count"]
             )
@@ -6299,6 +6301,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
     ) -> None:
         weak_spec = self._candidate_spec("spec-weak-probation")
         close_spec = self._candidate_spec("spec-close-probation")
+        raw_only_spec = self._candidate_spec("spec-raw-only-probation")
         weak_evidence = runner.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-weak-probation",
@@ -6310,6 +6313,15 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             replay_artifact_refs=("weak-probation.json",),
             objective_scorecard={
                 "net_pnl_per_day": "125",
+                "market_impact_stress_passed": True,
+                "market_impact_stress_net_pnl_per_day": "125",
+                "delay_adjusted_depth_stress_passed": True,
+                "delay_adjusted_depth_stress_net_pnl_per_day": "125",
+                "double_oos_passed": True,
+                "double_oos_net_pnl_per_day": "125",
+                "double_oos_cost_shock_net_pnl_per_day": "125",
+                "implementation_uncertainty_stability_passed": True,
+                "implementation_uncertainty_lower_net_pnl_per_day": "125",
                 "target_met": False,
                 "oracle_passed": False,
                 "active_day_ratio": "1",
@@ -6340,7 +6352,15 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             replay_artifact_refs=("close-probation.json",),
             objective_scorecard={
                 "net_pnl_per_day": "480",
+                "market_impact_stress_passed": True,
                 "market_impact_stress_net_pnl_per_day": "460",
+                "delay_adjusted_depth_stress_passed": True,
+                "delay_adjusted_depth_stress_net_pnl_per_day": "450",
+                "double_oos_passed": True,
+                "double_oos_net_pnl_per_day": "440",
+                "double_oos_cost_shock_net_pnl_per_day": "440",
+                "implementation_uncertainty_stability_passed": True,
+                "implementation_uncertainty_lower_net_pnl_per_day": "430",
                 "target_met": False,
                 "oracle_passed": False,
                 "active_day_ratio": "0.82",
@@ -6363,12 +6383,42 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             null_comparator={},
             promotion_readiness={},
         )
+        raw_only_evidence = runner.CandidateEvidenceBundle(
+            schema_version="torghut.candidate-evidence-bundle.v1",
+            evidence_bundle_id="ev-raw-only-probation",
+            candidate_id="cand-raw-only-probation",
+            candidate_spec_id=raw_only_spec.candidate_spec_id,
+            dataset_snapshot_id="snapshot-raw-only-probation",
+            feature_spec_hash="hash-raw-only-probation",
+            code_commit="commit-test",
+            replay_artifact_refs=("raw-only-probation.json",),
+            objective_scorecard={
+                "net_pnl_per_day": "900",
+                "target_met": False,
+                "oracle_passed": False,
+                "active_day_ratio": "1",
+                "positive_day_ratio": "1",
+                "best_day_share": "0.10",
+                "worst_day_loss": "0",
+                "trade_decision_count": 20,
+                "orders_submitted_count": 20,
+                "trade_count": 20,
+                "profit_target_oracle": {
+                    "blockers": ["deployable_lower_bound_proof_missing"],
+                },
+            },
+            fold_metrics=(),
+            stress_metrics=(),
+            cost_calibration={"status": "provisional", "source": "paper_runtime"},
+            null_comparator={},
+            promotion_readiness={},
+        )
 
         board = runner._candidate_board_payload(
             epoch_id="epoch-paper-probation-economics",
             output_dir=Path("/tmp/epoch-paper-probation-economics"),
             target=Decimal("500"),
-            candidate_specs=(weak_spec, close_spec),
+            candidate_specs=(weak_spec, close_spec, raw_only_spec),
             candidate_selection={
                 "rows": [
                     {
@@ -6377,6 +6427,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     },
                     {
                         "candidate_spec_id": close_spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                    },
+                    {
+                        "candidate_spec_id": raw_only_spec.candidate_spec_id,
                         "selected_for_replay": True,
                     },
                 ]
@@ -6392,9 +6446,14 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     "rank": 2,
                     "proposal_score": "8.0",
                 },
+                {
+                    "candidate_spec_id": raw_only_spec.candidate_spec_id,
+                    "rank": 3,
+                    "proposal_score": "7.0",
+                },
             ),
             proposal_rows=(),
-            evidence_bundles=(weak_evidence, close_evidence),
+            evidence_bundles=(weak_evidence, close_evidence, raw_only_evidence),
             portfolio=None,
             promotion_readiness={"promotable": False},
             runtime_closure={},
@@ -6407,9 +6466,13 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "closest_lower_bound_economics_below_target",
         )
         self.assertEqual(
-            probation_candidate["probation_lower_bound_net_pnl_per_day"], "460"
+            probation_candidate["probation_lower_bound_net_pnl_per_day"], "430"
         )
-        self.assertEqual(probation_candidate["probation_target_shortfall"], "40")
+        self.assertEqual(probation_candidate["probation_target_shortfall"], "70")
+        self.assertEqual(
+            probation_candidate["deployable_lower_bound_missing_count"],
+            0,
+        )
         self.assertFalse(probation_candidate["final_promotion_allowed"])
 
     def test_candidate_board_runtime_window_plan_dedupes_and_blocks_incomplete_targets(
@@ -6848,12 +6911,13 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(exit_code, 2)
         self.assertEqual(summary["status"], "no_profit_target_candidate")
         self.assertEqual(
-            summary["status_reason"], "portfolio_candidate_failed_profit_target_oracle"
+            summary["status_reason"], "portfolio_optimizer_produced_no_candidate"
         )
         self.assertFalse(summary["oracle_candidate_found"])
-        self.assertIn(
-            "portfolio_post_cost_net_pnl_per_day_failed",
-            summary["profit_target_oracle"]["blockers"],
+        self.assertIsNone(summary["profit_target_oracle"])
+        self.assertEqual(
+            summary["promotion_readiness"]["status"],
+            "no_candidate",
         )
         self.assertEqual(
             remediation["schema_version"],
@@ -7269,7 +7333,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 backend_preference="numpy-fallback",
             )
 
-        self.assertEqual(model_payload["schema_version"], "torghut.mlx-ranker.v1")
+        self.assertEqual(model_payload["schema_version"], "torghut.mlx-ranker.v2")
         self.assertEqual(model_payload["backend"], "numpy-fallback")
         self.assertIn("rank_bucket_lift", model_payload)
         self.assertIn(model_payload["model_status"], {"active", "demoted_to_heuristic"})

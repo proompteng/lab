@@ -66,6 +66,20 @@ def _template() -> FamilyTemplate:
     )
 
 
+def _proof_metrics(net_pnl_per_day: str) -> dict[str, object]:
+    return {
+        "market_impact_stress_passed": True,
+        "market_impact_stress_net_pnl_per_day": net_pnl_per_day,
+        "delay_adjusted_depth_stress_passed": True,
+        "delay_adjusted_depth_stress_net_pnl_per_day": net_pnl_per_day,
+        "double_oos_passed": True,
+        "double_oos_net_pnl_per_day": net_pnl_per_day,
+        "double_oos_cost_shock_net_pnl_per_day": net_pnl_per_day,
+        "implementation_uncertainty_stability_passed": True,
+        "implementation_uncertainty_lower_net_pnl_per_day": net_pnl_per_day,
+    }
+
+
 def _program() -> StrategyAutoresearchProgram:
     return StrategyAutoresearchProgram(
         program_id="program-1",
@@ -126,6 +140,7 @@ class TestMlxAutoresearch(TestCase):
         target = _candidate_target(
             {
                 "net_pnl_per_day": "500",
+                **_proof_metrics("500"),
                 "active_day_ratio": "1",
                 "positive_day_ratio": "1",
                 "avg_filled_notional_per_day": "250000",
@@ -134,6 +149,45 @@ class TestMlxAutoresearch(TestCase):
         )
 
         self.assertEqual(target, 525.0)
+
+    def test_candidate_target_prefers_deployable_lower_bound_over_raw_net(
+        self,
+    ) -> None:
+        optimistic = _candidate_target(
+            {
+                "net_pnl_per_day": "1500",
+                **_proof_metrics("220"),
+                "active_day_ratio": "1",
+                "positive_day_ratio": "1",
+                "avg_filled_notional_per_day": "300000",
+                "required_min_daily_notional": "250000",
+                "best_day_share": "0.10",
+            }
+        )
+        robust = _candidate_target(
+            {
+                "net_pnl_per_day": "620",
+                **_proof_metrics("580"),
+                "active_day_ratio": "1",
+                "positive_day_ratio": "1",
+                "avg_filled_notional_per_day": "300000",
+                "required_min_daily_notional": "250000",
+                "best_day_share": "0.10",
+            }
+        )
+        raw_only = _candidate_target(
+            {
+                "net_pnl_per_day": "2500",
+                "active_day_ratio": "1",
+                "positive_day_ratio": "1",
+                "avg_filled_notional_per_day": "300000",
+                "required_min_daily_notional": "250000",
+                "best_day_share": "0.10",
+            }
+        )
+
+        self.assertLess(optimistic, robust)
+        self.assertLess(raw_only, robust)
 
     def test_descriptor_inference_covers_side_rank_and_universe_fallbacks(
         self,
@@ -341,7 +395,9 @@ class TestMlxAutoresearch(TestCase):
                 "requires_cross_sectional_features": True,
                 "requires_quote_quality_gate": True,
                 "net_pnl_per_day": "600",
+                **_proof_metrics("600"),
                 "active_day_ratio": "1.0",
+                "positive_day_ratio": "1.0",
                 "best_day_share": "0.2",
                 "hard_vetoes": [],
             },
@@ -354,7 +410,9 @@ class TestMlxAutoresearch(TestCase):
                 "requires_cross_sectional_features": False,
                 "requires_quote_quality_gate": False,
                 "net_pnl_per_day": "-50",
+                **_proof_metrics("-50"),
                 "active_day_ratio": "0.2",
+                "positive_day_ratio": "0.2",
                 "best_day_share": "0.8",
                 "hard_vetoes": ["bad"],
             },
@@ -486,13 +544,17 @@ class TestMlxAutoresearch(TestCase):
                     **shared_history,
                     "candidate_id": "aaa-weak",
                     "net_pnl_per_day": "-75",
+                    **_proof_metrics("-75"),
                     "active_day_ratio": "0.4",
+                    "positive_day_ratio": "0.2",
                 },
                 {
                     **shared_history,
                     "candidate_id": "zzz-strong",
                     "net_pnl_per_day": "650",
+                    **_proof_metrics("650"),
                     "active_day_ratio": "1.0",
+                    "positive_day_ratio": "1.0",
                 },
             ],
             policy=ProposalModelPolicy(
@@ -768,7 +830,9 @@ class TestMlxAutoresearch(TestCase):
                 {
                     "candidate_id": "cand-a",
                     "net_pnl_per_day": "-25",
+                    **_proof_metrics("-25"),
                     "active_day_ratio": "0.60",
+                    "positive_day_ratio": "0.20",
                     "objective_met": False,
                     "promotion_status": "blocked_pending_runtime_parity",
                     "status": "discard",
@@ -776,7 +840,9 @@ class TestMlxAutoresearch(TestCase):
                 {
                     "candidate_id": "cand-b",
                     "net_pnl_per_day": "410",
+                    **_proof_metrics("410"),
                     "active_day_ratio": "0.95",
+                    "positive_day_ratio": "0.80",
                     "objective_met": True,
                     "promotion_status": "blocked_pending_runtime_parity",
                     "status": "keep",

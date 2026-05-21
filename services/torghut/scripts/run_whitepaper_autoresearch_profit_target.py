@@ -61,6 +61,11 @@ from app.trading.discovery.mlx_training_data import (
     rank_training_rows_with_lift_policy,
     train_mlx_ranker,
 )
+from app.trading.discovery.objectives import (
+    deployable_lower_bound_missing_count,
+    deployable_lower_bound_net_pnl_per_day,
+    deployable_proof_failed_gate_count,
+)
 from app.trading.discovery.portfolio_optimizer import (
     PortfolioCandidateSpec,
     optimize_portfolio_candidate,
@@ -8027,18 +8032,15 @@ def _candidate_board_net_pnl(row: Mapping[str, Any]) -> Decimal:
 
 
 def _candidate_board_lower_bound_net_pnl(row: Mapping[str, Any]) -> Decimal:
-    values = [
-        _decimal(row.get(key))
-        for key in (
-            "net_pnl_per_day",
-            "market_impact_stress_net_pnl_per_day",
-            "delay_adjusted_depth_stress_net_pnl_per_day",
-            "double_oos_cost_shock_net_pnl_per_day",
-            "double_oos_net_pnl_per_day",
-        )
-        if _string(row.get(key))
-    ]
-    return min(values) if values else Decimal("0")
+    lower_bound = deployable_lower_bound_net_pnl_per_day(row)
+    if lower_bound is None:
+        return Decimal("0")
+    if (
+        deployable_lower_bound_missing_count(row) > 0
+        or deployable_proof_failed_gate_count(row) > 0
+    ):
+        return Decimal("0")
+    return lower_bound
 
 
 def _candidate_board_best_executed_candidate(
@@ -8125,6 +8127,8 @@ def _candidate_board_paper_probation_candidate(
     candidates.sort(key=rank, reverse=True)
     candidate = dict(candidates[0])
     lower_bound = _candidate_board_lower_bound_net_pnl(candidate)
+    deployable_missing_count = deployable_lower_bound_missing_count(candidate)
+    deployable_failed_gate_count = deployable_proof_failed_gate_count(candidate)
     final_promotion_blockers = [
         _string(blocker)
         for blocker in cast(Sequence[Any], candidate.get("blockers") or ())
@@ -8147,6 +8151,8 @@ def _candidate_board_paper_probation_candidate(
             "selected_by": "candidate_board_paper_probation_candidate",
             "probation_lower_bound_net_pnl_per_day": str(lower_bound),
             "probation_target_shortfall": str(max(target - lower_bound, Decimal("0"))),
+            "deployable_lower_bound_missing_count": deployable_missing_count,
+            "deployable_lower_bound_failed_gate_count": deployable_failed_gate_count,
             "promotion_allowed": False,
             "promotion_gate": "existing_runtime_governance_fail_closed",
             "final_promotion_authorized": False,
@@ -8527,11 +8533,23 @@ def _candidate_board_payload(
                 or _candidate_board_decimal_field(
                     scorecard, "portfolio_post_cost_net_pnl_per_day"
                 ),
+                "market_impact_stress_passed": _boolish(
+                    scorecard.get("market_impact_stress_passed")
+                ),
                 "market_impact_stress_net_pnl_per_day": _candidate_board_decimal_field(
                     scorecard, "market_impact_stress_net_pnl_per_day"
                 ),
+                "delay_adjusted_depth_stress_passed": _boolish(
+                    scorecard.get("delay_adjusted_depth_stress_passed")
+                ),
                 "delay_adjusted_depth_stress_net_pnl_per_day": _candidate_board_decimal_field(
                     scorecard, "delay_adjusted_depth_stress_net_pnl_per_day"
+                ),
+                "implementation_uncertainty_stability_passed": _boolish(
+                    scorecard.get("implementation_uncertainty_stability_passed")
+                ),
+                "implementation_uncertainty_lower_net_pnl_per_day": _candidate_board_decimal_field(
+                    scorecard, "implementation_uncertainty_lower_net_pnl_per_day"
                 ),
                 "trading_day_count": _candidate_board_int_field(
                     scorecard, "trading_day_count"

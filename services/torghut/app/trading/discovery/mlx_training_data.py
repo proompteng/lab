@@ -11,8 +11,13 @@ from typing import Any, Mapping, Sequence, cast
 from app.trading.discovery.candidate_specs import CandidateSpec
 from app.trading.discovery.capital_budget import estimate_capital_budget
 from app.trading.discovery.evidence_bundles import CandidateEvidenceBundle
+from app.trading.discovery.objectives import (
+    deployable_lower_bound_missing_count,
+    deployable_lower_bound_net_pnl_per_day,
+    deployable_proof_failed_gate_count,
+)
 
-MLX_RANKER_SCHEMA_VERSION = "torghut.mlx-ranker.v1"
+MLX_RANKER_SCHEMA_VERSION = "torghut.mlx-ranker.v2"
 
 
 def _stable_hash(payload: Mapping[str, Any]) -> str:
@@ -374,6 +379,39 @@ def _proof_target_shortfall(
     return max(0.0, target_net_pnl_per_day - min(observed))
 
 
+def _deployable_lower_bound_net_pnl_per_day(scorecard: Mapping[str, Any]) -> float:
+    value = deployable_lower_bound_net_pnl_per_day(scorecard)
+    return float(value) if value is not None else 0.0
+
+
+def _deployable_lower_bound_missing_count(scorecard: Mapping[str, Any]) -> float:
+    return float(deployable_lower_bound_missing_count(scorecard))
+
+
+def _deployable_lower_bound_failed_gate_count(scorecard: Mapping[str, Any]) -> float:
+    return float(deployable_proof_failed_gate_count(scorecard))
+
+
+def _deployable_lower_bound_target_shortfall(
+    scorecard: Mapping[str, Any], *, target_net_pnl_per_day: float
+) -> float:
+    if not scorecard:
+        return 0.0
+    return max(
+        0.0,
+        target_net_pnl_per_day - _deployable_lower_bound_net_pnl_per_day(scorecard),
+    )
+
+
+def _deployable_lower_bound_proof_penalty(scorecard: Mapping[str, Any]) -> float:
+    if not scorecard:
+        return 0.0
+    return (
+        _deployable_lower_bound_missing_count(scorecard) * 1_000.0
+        + _deployable_lower_bound_failed_gate_count(scorecard) * 1_000.0
+    )
+
+
 def _historical_proof_penalty(
     scorecard: Mapping[str, Any],
     *,
@@ -574,6 +612,12 @@ def build_mlx_training_rows(
             "history_double_oos_net_pnl_per_day",
             "history_double_oos_cost_shock_net_pnl_per_day",
             "history_double_oos_target_shortfall",
+            "history_implementation_uncertainty_stability_passed",
+            "history_implementation_uncertainty_lower_net_pnl_per_day",
+            "history_deployable_lower_bound_net_pnl_per_day",
+            "history_deployable_lower_bound_target_shortfall",
+            "history_deployable_lower_bound_missing_count",
+            "history_deployable_lower_bound_failed_gate_count",
         )
         capital_features = candidate_spec_capital_features(spec)
         params = _params(spec)
@@ -624,6 +668,24 @@ def build_mlx_training_rows(
         historical_proof_penalty = _historical_proof_penalty(
             scorecard,
             target_net_pnl_per_day=target_net_pnl_per_day,
+        )
+        deployable_lower_bound_net_pnl_per_day = (
+            _deployable_lower_bound_net_pnl_per_day(scorecard)
+        )
+        deployable_lower_bound_target_shortfall = (
+            _deployable_lower_bound_target_shortfall(
+                scorecard,
+                target_net_pnl_per_day=target_net_pnl_per_day,
+            )
+        )
+        deployable_lower_bound_missing_count = _deployable_lower_bound_missing_count(
+            scorecard
+        )
+        deployable_lower_bound_failed_gate_count = (
+            _deployable_lower_bound_failed_gate_count(scorecard)
+        )
+        deployable_lower_bound_proof_penalty = _deployable_lower_bound_proof_penalty(
+            scorecard
         )
         post_cost_efficiency_penalty = _post_cost_efficiency_penalty(scorecard)
         selection_mode = params.get("selection_mode")
@@ -727,9 +789,17 @@ def build_mlx_training_rows(
             _float(scorecard.get("double_oos_net_pnl_per_day")),
             _float(scorecard.get("double_oos_cost_shock_net_pnl_per_day")),
             double_oos_target_shortfall,
+            _truthy_feature(
+                scorecard.get("implementation_uncertainty_stability_passed")
+            ),
+            _float(scorecard.get("implementation_uncertainty_lower_net_pnl_per_day")),
+            deployable_lower_bound_net_pnl_per_day,
+            deployable_lower_bound_target_shortfall,
+            deployable_lower_bound_missing_count,
+            deployable_lower_bound_failed_gate_count,
         )
         target = (
-            _float(scorecard.get("net_pnl_per_day"))
+            deployable_lower_bound_net_pnl_per_day
             + (_float(scorecard.get("active_day_ratio")) * 100.0)
             + (_float(scorecard.get("positive_day_ratio")) * 100.0)
             - (_float(scorecard.get("negative_day_count")) * 100.0)
@@ -743,6 +813,8 @@ def build_mlx_training_rows(
                 )
                 * 0.10
             )
+            - (deployable_lower_bound_target_shortfall * 0.25)
+            - deployable_lower_bound_proof_penalty
             - observed_replay_penalty
             - post_cost_efficiency_penalty
             - historical_proof_penalty
@@ -834,6 +906,7 @@ def train_mlx_ranker(
     weights_list = tuple(float(item) for item in cast(Sequence[Any], weights.tolist()))
     bias_value = _scalar_float(bias)
     model_seed = {
+        "schema_version": MLX_RANKER_SCHEMA_VERSION,
         "feature_names": list(feature_names),
         "weights": list(weights_list),
         "bias": bias_value,
@@ -842,7 +915,7 @@ def train_mlx_ranker(
     }
     return MlxRankerModel(
         schema_version=MLX_RANKER_SCHEMA_VERSION,
-        model_id=f"mlx-ranker-v1-{_stable_hash(model_seed)[:16]}",
+        model_id=f"mlx-ranker-v2-{_stable_hash(model_seed)[:16]}",
         backend=backend,
         feature_names=feature_names,
         feature_means=feature_means,

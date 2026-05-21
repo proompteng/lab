@@ -52,6 +52,11 @@ from app.trading.discovery.mlx_snapshot import (
     write_mlx_signal_bundle,
     write_mlx_snapshot_manifest,
 )
+from app.trading.discovery.objectives import (
+    deployable_lower_bound_missing_count,
+    deployable_lower_bound_net_pnl_per_day,
+    deployable_proof_failed_gate_count,
+)
 from app.trading.discovery.promotion_contract import (
     blocked_research_candidate_promotion_readiness,
     summary_promotion_readiness,
@@ -763,6 +768,7 @@ def _history_record(
     ranking = _mapping(candidate_payload.get("ranking"))
     replay_config = _mapping(candidate_payload.get("replay_config"))
     promotion_readiness = _promotion_readiness_payload(family_plan=family_plan)
+    deployable_lower_bound = deployable_lower_bound_net_pnl_per_day(scorecard)
     return {
         "runner_run_id": runner_run_id,
         "experiment_index": experiment_index,
@@ -791,6 +797,40 @@ def _history_record(
         "normalization_regime": _string(candidate_payload.get("normalization_regime")),
         "net_pnl_per_day": _string(
             scorecard.get("net_pnl_per_day") or full_window.get("net_per_day")
+        ),
+        "deployable_lower_bound_net_pnl_per_day": (
+            str(deployable_lower_bound) if deployable_lower_bound is not None else ""
+        ),
+        "deployable_lower_bound_missing_count": deployable_lower_bound_missing_count(
+            scorecard
+        ),
+        "deployable_lower_bound_failed_gate_count": (
+            deployable_proof_failed_gate_count(scorecard)
+        ),
+        "market_impact_stress_passed": bool(
+            scorecard.get("market_impact_stress_passed")
+        ),
+        "market_impact_stress_net_pnl_per_day": _string(
+            scorecard.get("market_impact_stress_net_pnl_per_day")
+        ),
+        "delay_adjusted_depth_stress_passed": bool(
+            scorecard.get("delay_adjusted_depth_stress_passed")
+        ),
+        "delay_adjusted_depth_stress_net_pnl_per_day": _string(
+            scorecard.get("delay_adjusted_depth_stress_net_pnl_per_day")
+        ),
+        "double_oos_passed": bool(scorecard.get("double_oos_passed")),
+        "double_oos_net_pnl_per_day": _string(
+            scorecard.get("double_oos_net_pnl_per_day")
+        ),
+        "double_oos_cost_shock_net_pnl_per_day": _string(
+            scorecard.get("double_oos_cost_shock_net_pnl_per_day")
+        ),
+        "implementation_uncertainty_stability_passed": bool(
+            scorecard.get("implementation_uncertainty_stability_passed")
+        ),
+        "implementation_uncertainty_lower_net_pnl_per_day": _string(
+            scorecard.get("implementation_uncertainty_lower_net_pnl_per_day")
         ),
         "active_day_ratio": _string(scorecard.get("active_day_ratio")),
         "positive_day_ratio": _string(scorecard.get("positive_day_ratio")),
@@ -949,6 +989,11 @@ def _best_history_record(history: list[dict[str, Any]]) -> dict[str, Any] | None
             item["status"] != "keep",
             bool(item["hard_vetoes"]),
             int(item["pareto_tier"]),
+            -float(
+                item.get("deployable_lower_bound_net_pnl_per_day")
+                or item["net_pnl_per_day"]
+                or "0"
+            ),
             -float(item["net_pnl_per_day"] or "0"),
             -float(item["active_day_ratio"] or "0"),
         ),
