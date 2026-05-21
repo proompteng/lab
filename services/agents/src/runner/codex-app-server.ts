@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
 import { chmod, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -80,7 +81,7 @@ type CommandResult = {
 type CommandRunner = (command: string, args: string[], options?: { cwd?: string }) => Promise<CommandResult>
 
 export class CodexRunnerInputError extends Data.TaggedError('CodexRunnerInputError')<{
-  readonly operation: 'load-payload' | 'resolve-prompt'
+  readonly operation: 'load-payload' | 'resolve-prompt' | 'validate-adapter' | 'load-system-prompt'
   readonly path?: string
   readonly cause: unknown
 }> {}
@@ -650,22 +651,117 @@ const resolvePrompt = (
   const adapterPrompt = renderOptionalTemplate(adapter.prompt, spec, runPayload)
   if (adapterPrompt) return adapterPrompt
 
-  const candidates = [
-    runPayload.prompt,
-    readNested(runPayload, ['parameters', 'prompt']),
-    readNested(runPayload, ['implementation', 'text']),
-    readNested(runPayload, ['implementation', 'summary']),
-    runPayload.issueBody,
-    readNested(runPayload, ['event', 'body']),
-  ]
+  throw new CodexRunnerInputError({
+    operation: 'resolve-prompt',
+    cause: new Error('codex app-server adapter requires normalized adapter.codex.prompt in agent-runner.json'),
+  })
+}
 
-  for (const candidate of candidates) {
-    const text = nonEmptyString(candidate)
-    if (text) return text
+const resolvePromptEffect = (
+  spec: AgentRunnerSpec,
+  adapter: CodexAppServerAdapterConfig,
+  runPayload: AgentRunPayload,
+) =>
+  Effect.try({
+    try: () => resolvePrompt(spec, adapter, runPayload),
+    catch: (cause) =>
+      cause instanceof CodexRunnerInputError
+        ? cause
+        : new CodexRunnerInputError({ operation: 'resolve-prompt', cause }),
+  })
+
+const sha256Hex = (value: string) => createHash('sha256').update(value).digest('hex')
+
+const resolveSystemPromptPath = (adapter: CodexAppServerAdapterConfig) =>
+  nonEmptyString(adapter.systemPromptPath) ?? nonEmptyString(process.env.CODEX_SYSTEM_PROMPT_PATH)
+
+const resolveExpectedSystemPromptHash = (adapter: CodexAppServerAdapterConfig) =>
+  nonEmptyString(adapter.systemPromptExpectedHash) ?? nonEmptyString(process.env.CODEX_SYSTEM_PROMPT_EXPECTED_HASH)
+
+const isSystemPromptRequired = (adapter: CodexAppServerAdapterConfig) =>
+  Boolean(resolveSystemPromptPath(adapter)) ||
+  nonEmptyString(process.env.CODEX_SYSTEM_PROMPT_REQUIRED)?.toLowerCase() === 'true'
+
+const assertSystemPromptHash = (contents: string, adapter: CodexAppServerAdapterConfig, source: string) => {
+  const expectedHash = resolveExpectedSystemPromptHash(adapter)
+  if (expectedHash && sha256Hex(contents) !== expectedHash) {
+    throw new Error(`system prompt hash mismatch for ${source}`)
+  }
+}
+
+const readSystemPromptInstructions = async (
+  adapter: CodexAppServerAdapterConfig,
+  spec: AgentRunnerSpec,
+  runPayload: AgentRunPayload,
+): Promise<string | null> => {
+  const rendered = renderOptionalTemplate(adapter.baseInstructions, spec, runPayload)
+  if (rendered) {
+    assertSystemPromptHash(rendered, adapter, 'adapter.baseInstructions')
+    return rendered
   }
 
-  return JSON.stringify(runPayload, null, 2)
+  const systemPromptPath = resolveSystemPromptPath(adapter)
+  if (systemPromptPath) {
+    try {
+      const contents = await readFile(systemPromptPath, 'utf8')
+      assertSystemPromptHash(contents, adapter, systemPromptPath)
+      const prompt = nonEmptyString(contents)
+      if (prompt) return prompt
+      if (isSystemPromptRequired(adapter)) {
+        throw new Error(`system prompt file ${systemPromptPath} is empty`)
+      }
+      return null
+    } catch (cause) {
+      throw new CodexRunnerInputError({ operation: 'load-system-prompt', path: systemPromptPath, cause })
+    }
+  }
+
+  const inlinePrompt = nonEmptyString(runPayload.systemPrompt)
+  if (inlinePrompt) {
+    assertSystemPromptHash(inlinePrompt, adapter, 'run.json systemPrompt')
+    return inlinePrompt
+  }
+  if (isSystemPromptRequired(adapter)) {
+    throw new CodexRunnerInputError({
+      operation: 'load-system-prompt',
+      cause: new Error('CODEX_SYSTEM_PROMPT_REQUIRED is true but no system prompt path or inline prompt was provided'),
+    })
+  }
+  return null
 }
+
+const readSystemPromptInstructionsEffect = (
+  adapter: CodexAppServerAdapterConfig,
+  spec: AgentRunnerSpec,
+  runPayload: AgentRunPayload,
+) =>
+  Effect.tryPromise({
+    try: () => readSystemPromptInstructions(adapter, spec, runPayload),
+    catch: (cause) =>
+      cause instanceof CodexRunnerInputError
+        ? cause
+        : new CodexRunnerInputError({ operation: 'load-system-prompt', cause }),
+  })
+
+const validateCodexAdapter = (adapter: CodexAppServerAdapterConfig) => {
+  if (adapter.approval && adapter.approval !== 'never') {
+    throw new CodexRunnerInputError({
+      operation: 'validate-adapter',
+      cause: new Error(
+        `codex app-server runner currently supports approval=never only; adapter requested approval=${adapter.approval}`,
+      ),
+    })
+  }
+}
+
+const validateCodexAdapterEffect = (adapter: CodexAppServerAdapterConfig) =>
+  Effect.try({
+    try: () => validateCodexAdapter(adapter),
+    catch: (cause) =>
+      cause instanceof CodexRunnerInputError
+        ? cause
+        : new CodexRunnerInputError({ operation: 'validate-adapter', cause }),
+  })
 
 const normalizeGoal = (value: unknown): AgentRunnerGoal | null => {
   if (typeof value === 'string') {
@@ -876,6 +972,7 @@ export const runCodexAppServerAdapterEffect = ({
 }) =>
   Effect.gen(function* () {
     yield* throwIfCancelledEffect(options.abortSignal)
+    yield* validateCodexAdapterEffect(adapter)
     const runPayload = yield* loadRunPayloadEffect(spec)
     state.outputArtifacts = renderOutputArtifacts(spec.providerSpec?.outputArtifacts, {
       ...buildTemplateContext(spec),
@@ -883,9 +980,8 @@ export const runCodexAppServerAdapterEffect = ({
     })
     yield* throwIfCancelledEffect(options.abortSignal)
 
-    const prompt = resolvePrompt(spec, adapter, runPayload)
-    const baseInstructions =
-      renderOptionalTemplate(adapter.baseInstructions, spec, runPayload) ?? nonEmptyString(runPayload.systemPrompt)
+    const prompt = yield* resolvePromptEffect(spec, adapter, runPayload)
+    const baseInstructions = yield* readSystemPromptInstructionsEffect(adapter, spec, runPayload)
     const developerInstructions = renderOptionalTemplate(adapter.developerInstructions, spec, runPayload)
     const goal = mergeGoals(normalizeGoal(runPayload.goal), spec.goal, adapter.goal)
 

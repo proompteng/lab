@@ -27,6 +27,8 @@ import type {
   ThreadGoalSetResponse,
   ThreadGoalStatus,
   ThreadItem,
+  ThreadResumeParams,
+  ThreadResumeResponse,
   ThreadStartParams,
   ThreadStartResponse,
   ThreadTokenUsageUpdatedNotification,
@@ -50,6 +52,7 @@ type PendingRequest = {
 type JsonRpcRequestMethod =
   | 'initialize'
   | 'thread/start'
+  | 'thread/resume'
   | 'thread/goal/set'
   | 'thread/goal/get'
   | 'thread/goal/clear'
@@ -426,6 +429,7 @@ export class CodexAppServerClient {
   private approval: AskForApproval
   private defaultModel: string
   private defaultEffort: ReasoningEffort
+  private cwd: string | undefined
   private threadConfig: { [key in string]?: JsonValue } | null
   private experimentalRawEvents: boolean
   private persistExtendedHistory: boolean
@@ -450,6 +454,7 @@ export class CodexAppServerClient {
     this.approval = normalizeApprovalPolicy(approval)
     this.defaultModel = defaultModel
     this.defaultEffort = defaultEffort
+    this.cwd = cwd
     this.threadConfig = threadConfig === undefined ? { mcp_servers: {}, web_search: 'live' } : threadConfig
     this.experimentalRawEvents = experimentalRawEvents
     this.persistExtendedHistory = persistExtendedHistory
@@ -613,7 +618,7 @@ export class CodexAppServerClient {
       const threadParams: ThreadStartParams = {
         model: turnOptions.model ?? this.defaultModel,
         modelProvider: null,
-        cwd: turnOptions.cwd ?? null,
+        cwd: turnOptions.cwd ?? this.cwd ?? null,
         approvalPolicy: this.approval,
         sandbox: this.sandbox,
         config: this.threadConfig,
@@ -627,6 +632,30 @@ export class CodexAppServerClient {
 
       const threadResp = (await this.request<ThreadStartResponse>('thread/start', threadParams)) as ThreadStartResponse
       activeThreadId = threadResp.thread.id
+    } else {
+      const resumeParams: ThreadResumeParams = {
+        threadId: activeThreadId,
+        model: turnOptions.model ?? this.defaultModel,
+        modelProvider: null,
+        serviceTier: null,
+        cwd: turnOptions.cwd ?? this.cwd ?? null,
+        approvalPolicy: this.approval,
+        approvalsReviewer: null,
+        sandbox: this.sandbox,
+        permissions: null,
+        config: this.threadConfig,
+        baseInstructions: turnOptions.baseInstructions ?? null,
+        developerInstructions: turnOptions.developerInstructions ?? null,
+        personality: turnOptions.personality ?? null,
+        excludeTurns: true,
+        persistExtendedHistory: this.persistExtendedHistory,
+      }
+
+      const threadResp = (await this.request<ThreadResumeResponse>(
+        'thread/resume',
+        resumeParams,
+      )) as ThreadResumeResponse
+      activeThreadId = threadResp.thread.id
     }
 
     if (turnOptions.goal) {
@@ -636,7 +665,7 @@ export class CodexAppServerClient {
     const turnParams: TurnStartParams = {
       threadId: activeThreadId,
       input: [{ type: 'text', text: prompt, text_elements: [] }],
-      cwd: turnOptions.cwd ?? null,
+      cwd: turnOptions.cwd ?? this.cwd ?? null,
       approvalPolicy: this.approval,
       sandboxPolicy: toSandboxPolicy(this.sandbox),
       model: turnOptions.model ?? this.defaultModel,

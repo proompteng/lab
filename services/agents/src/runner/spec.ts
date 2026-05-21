@@ -51,6 +51,8 @@ export type CodexAppServerAdapterConfig = {
   developerInstructions?: string
   prompt?: string
   goal?: AgentRunnerGoal
+  systemPromptPath?: string
+  systemPromptExpectedHash?: string
 }
 
 export type AgentRunnerAdapter =

@@ -536,8 +536,15 @@ describe('getReadyHandler', () => {
         status: 'allow',
       },
     })
-    expect(body.serving_recovery_warrant_id).toBe('recovery-warrant:serving:1')
-    expect(body.serving_runtime_proof_cells_healthy).toBe(true)
+    expect(body).not.toHaveProperty('agentsController')
+    expect(body).not.toHaveProperty('leaderElection')
+    expect(body).not.toHaveProperty('runtime_kits')
+    expect(body).not.toHaveProperty('admission_passports')
+    expect(body).not.toHaveProperty('recovery_warrants')
+    expect(body).not.toHaveProperty('runtime_proof_cells')
+    expect(body).not.toHaveProperty('projection_watermarks')
+    expect(body).not.toHaveProperty('serving_recovery_warrant_id')
+    expect(body).not.toHaveProperty('serving_runtime_proof_cells_healthy')
   }, 30_000)
 
   it('keeps Jangar domain gates when Agents runtime env leaks into Jangar', async () => {
@@ -953,16 +960,11 @@ describe('getReadyHandler', () => {
     const body = await response.json()
     expect(body.status).toBe('ok')
     expect(body.serving_passport_id).toBe('passport:serving:1')
-    expect(body.serving_recovery_warrant_id).toBe('recovery-warrant:serving:1')
-    expect(body.serving_runtime_proof_cells_healthy).toBe(true)
-    expect(body.runtime_kits).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          kit_class: 'collaboration',
-          decision: 'blocked',
-        }),
-      ]),
-    )
+    expect(body).not.toHaveProperty('runtime_kits')
+    expect(body).not.toHaveProperty('admission_passports')
+    expect(body).not.toHaveProperty('recovery_warrants')
+    expect(body).not.toHaveProperty('runtime_proof_cells')
+    expect(body).not.toHaveProperty('projection_watermarks')
   })
 
   it('returns 200 with degraded status when AgentRun ingestion is degraded', async () => {
@@ -1041,10 +1043,11 @@ describe('getReadyHandler', () => {
     expect(response.status).toBe(200)
     const body = await response.json()
     expect(body.status).toBe('degraded')
-    expect(body.agentsController).toMatchObject({
-      started: false,
-      crdsReady: true,
+    expect(body.agents_dependency).toMatchObject({
+      status: 'degraded',
+      agentrun_ingestion_ready: false,
     })
+    expect(body).not.toHaveProperty('agentsController')
   })
 
   it('returns 200 when leader election is required but this instance is a healthy standby', async () => {

@@ -36,17 +36,17 @@ describe('health route', () => {
     const response = await Route.options.server.handlers.GET()
 
     expect(response.status).toBe(200)
-    await expect(response.json()).resolves.toMatchObject({
+    const body = await response.json()
+    expect(body).toMatchObject({
       status: 'ok',
       service: 'jangar',
       agents_dependency: {
         status: 'healthy',
         ready: true,
       },
-      agentsService: {
-        service: 'agents',
-      },
     })
+    expect(body).not.toHaveProperty('agentsService')
+    expect(body).not.toHaveProperty('agentsController')
   })
 
   it('keeps Jangar service identity without Agents runtime env', async () => {
@@ -54,18 +54,17 @@ describe('health route', () => {
     const response = await Route.options.server.handlers.GET()
 
     expect(response.status).toBe(200)
-    await expect(response.json()).resolves.toMatchObject({
+    const body = await response.json()
+    expect(body).toMatchObject({
       status: 'ok',
       service: 'jangar',
       agents_dependency: {
         status: 'healthy',
         ready: true,
       },
-      agentsController: {
-        enabled: true,
-        crdsReady: true,
-      },
     })
+    expect(body).not.toHaveProperty('agentsService')
+    expect(body).not.toHaveProperty('agentsController')
   })
 
   it('reports Agents dependency unavailability without failing Jangar health', async () => {
@@ -77,7 +76,8 @@ describe('health route', () => {
     const response = await Route.options.server.handlers.GET()
 
     expect(response.status).toBe(200)
-    await expect(response.json()).resolves.toMatchObject({
+    const body = await response.json()
+    expect(body).toMatchObject({
       status: 'ok',
       service: 'jangar',
       agents_dependency: {
@@ -85,15 +85,8 @@ describe('health route', () => {
         ready: false,
         error: 'connect ECONNREFUSED',
       },
-      agentsService: {
-        status: 'unavailable',
-        error: 'connect ECONNREFUSED',
-        httpStatus: 0,
-      },
-      agentsController: {
-        enabled: true,
-        crdsReady: false,
-      },
     })
+    expect(body).not.toHaveProperty('agentsService')
+    expect(body).not.toHaveProperty('agentsController')
   })
 })

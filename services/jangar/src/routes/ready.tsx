@@ -241,7 +241,6 @@ export const Route = createFileRoute('/ready')({
 export const getReadyHandler = async () => {
   const now = new Date()
   const agentsReady = await getAgentsReadySnapshot()
-  const leaderElection = agentsReady.leaderElection
   const agentsController = agentsReady.agentsController
   const orchestrationController = agentsReady.orchestrationController
   const supportingController = agentsReady.supportingController
@@ -266,8 +265,6 @@ export const getReadyHandler = async () => {
     runtimeKits: agentsStatus.runtime_kits,
     admissionPassports: agentsStatus.admission_passports,
     servingPassportId: agentsStatus.serving_passport_id,
-    recoveryWarrants: agentsStatus.recovery_warrants,
-    runtimeProofCells: agentsStatus.runtime_proof_cells,
     projectionWatermarks: agentsStatus.projection_watermarks,
   }
   const evidencePressureLedger = isEvidencePressureLedgerEnabled()
@@ -292,19 +289,7 @@ export const getReadyHandler = async () => {
     admissionPassports: runtimeAdmission.admissionPassports,
     consumerClass: 'serving',
   })
-  const recoveryWarrants = runtimeAdmission.recoveryWarrants ?? []
-  const runtimeProofCells = runtimeAdmission.runtimeProofCells ?? []
   const projectionWatermarks = runtimeAdmission.projectionWatermarks ?? []
-  const servingRecoveryWarrant =
-    recoveryWarrants.find((warrant) => warrant.execution_class === 'serving' && warrant.status !== 'superseded') ?? null
-  const servingRuntimeProofCells = servingRecoveryWarrant
-    ? runtimeProofCells.filter((cell) =>
-        servingRecoveryWarrant.required_proof_cell_ids.includes(cell.runtime_proof_cell_id),
-      )
-    : []
-  const servingRuntimeProofCellsHealthy =
-    servingRecoveryWarrant !== null &&
-    servingRuntimeProofCells.every((cell) => !cell.required || cell.status === 'healthy')
 
   const controllersOk =
     isControllerHealthReady(agentsController) &&
@@ -415,21 +400,7 @@ export const getReadyHandler = async () => {
   const body = JSON.stringify({
     status,
     service: resolveRuntimeServiceName(),
-    leaderElection,
-    agentsController,
-    orchestrationController,
-    supportingController,
-    agents_control_plane_status: {
-      available: agentsControlPlaneStatus.available,
-      http_status: agentsControlPlaneStatus.httpStatus,
-      error: agentsControlPlaneStatus.error,
-    },
     agents_dependency: agentsDependency,
-    watch_reliability: agentsStatus.watch_reliability,
-    agentrun_ingestion: readyPathAgentRunIngestion,
-    control_plane_controller_witness: readyPathControllerWitness,
-    database: readyPathDatabase,
-    rollout_health: readyPathRolloutHealth,
     execution_trust: trust,
     ...businessEvidence,
     torghut_consumer_evidence: torghutConsumerEvidence.status,
@@ -442,14 +413,7 @@ export const getReadyHandler = async () => {
     repair_slot_escrow: repairSlotEscrow,
     evidence_pressure_ledger: evidencePressureLedger,
     memory_provider: memoryProvider,
-    runtime_kits: runtimeAdmission.runtimeKits,
-    admission_passports: runtimeAdmission.admissionPassports,
     serving_passport_id: runtimeAdmission.servingPassportId,
-    recovery_warrants: recoveryWarrants,
-    runtime_proof_cells: runtimeProofCells,
-    projection_watermarks: projectionWatermarks,
-    serving_recovery_warrant_id: servingRecoveryWarrant?.recovery_warrant_id ?? null,
-    serving_runtime_proof_cells_healthy: servingRuntimeProofCellsHealthy,
   })
 
   const headers: Record<string, string> = {

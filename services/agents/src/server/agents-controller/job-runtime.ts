@@ -378,12 +378,113 @@ const sanitizeProviderAdapterForRunner = (adapter: Record<string, unknown>) => {
   }
 }
 
+const DEFAULT_CODEX_APP_SERVER_MODEL = 'gpt-5.5'
+const DEFAULT_CODEX_APP_SERVER_EFFORT = 'high'
+const DEFAULT_CODEX_APP_SERVER_SANDBOX = 'danger-full-access'
+const DEFAULT_CODEX_APP_SERVER_APPROVAL = 'never'
+const DEFAULT_CODEX_APP_SERVER_THREAD_CONFIG = { mcp_servers: {}, web_search: 'live' }
+
+const compactRecord = (record: Record<string, unknown>) =>
+  Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined))
+
+const buildRunnerTemplateContext = (runSpec: Record<string, unknown>, parameters: Record<string, string>) => ({
+  ...runSpec,
+  run: runSpec,
+  parameters,
+  inputs: parameters,
+})
+
+const renderOptionalString = (value: unknown, context: Record<string, unknown>) => {
+  const text = asString(value)
+  if (text == null) return undefined
+  return renderTemplate(text, context)
+}
+
+const renderOptionalStringArray = (value: unknown, context: Record<string, unknown>) => {
+  if (!Array.isArray(value)) return undefined
+  return value.map((entry) => renderTemplate(String(entry), context))
+}
+
+const copyBoolean = (value: unknown) => (typeof value === 'boolean' ? value : undefined)
+
+const resolveCodexThreadConfig = (value: unknown) => {
+  if (value === null) return null
+  return asRecord(value) ?? DEFAULT_CODEX_APP_SERVER_THREAD_CONFIG
+}
+
+const resolveCodexPrompt = (
+  codex: Record<string, unknown>,
+  runSpec: Record<string, unknown>,
+  context: Record<string, unknown>,
+) => {
+  const renderedPrompt = renderOptionalString(codex.prompt, context)?.trim()
+  if (renderedPrompt) return renderedPrompt
+
+  const candidates = [
+    runSpec.prompt,
+    readNested(runSpec, ['implementation', 'text']),
+    readNested(runSpec, ['implementation', 'summary']),
+    runSpec.issueBody,
+    readNested(runSpec, ['event', 'body']),
+  ]
+  for (const candidate of candidates) {
+    const text = asString(candidate)?.trim()
+    if (text) return text
+  }
+  return JSON.stringify(runSpec, null, 2)
+}
+
+const buildCodexAppServerAdapterForRunner = (
+  runSpec: Record<string, unknown>,
+  parameters: Record<string, string>,
+  providerSpec: Record<string, unknown>,
+  options: {
+    systemPromptPath?: string
+    systemPromptExpectedHash?: string | null
+  } = {},
+) => {
+  const explicitAdapter = asRecord(providerSpec.adapter) ?? {}
+  const codex = asRecord(explicitAdapter.codex) ?? {}
+  const context = buildRunnerTemplateContext(runSpec, parameters)
+  const inlineBaseInstructions = asString(runSpec.systemPrompt)
+  const renderedBaseInstructions = renderOptionalString(codex.baseInstructions, context)
+  const bootstrapTimeoutMs = parseOptionalNumber(codex.bootstrapTimeoutMs)
+
+  return {
+    type: 'codex-app-server',
+    codex: compactRecord({
+      binaryPath: renderOptionalString(codex.binaryPath, context),
+      cliConfigOverrides: renderOptionalStringArray(codex.cliConfigOverrides, context),
+      cwd: renderOptionalString(codex.cwd, context),
+      model: renderOptionalString(codex.model, context) ?? DEFAULT_CODEX_APP_SERVER_MODEL,
+      effort: renderOptionalString(codex.effort, context) ?? DEFAULT_CODEX_APP_SERVER_EFFORT,
+      sandbox: renderOptionalString(codex.sandbox, context) ?? DEFAULT_CODEX_APP_SERVER_SANDBOX,
+      approval: renderOptionalString(codex.approval, context) ?? DEFAULT_CODEX_APP_SERVER_APPROVAL,
+      threadId: renderOptionalString(codex.threadId, context),
+      threadConfig: resolveCodexThreadConfig(codex.threadConfig),
+      experimentalRawEvents: copyBoolean(codex.experimentalRawEvents),
+      persistExtendedHistory: copyBoolean(codex.persistExtendedHistory),
+      bootstrapTimeoutMs,
+      baseInstructions: renderedBaseInstructions ?? inlineBaseInstructions,
+      developerInstructions: renderOptionalString(codex.developerInstructions, context),
+      prompt: resolveCodexPrompt(codex, runSpec, context),
+      goal: asRecord(codex.goal) ?? undefined,
+      systemPromptPath: options.systemPromptPath,
+      systemPromptExpectedHash: options.systemPromptExpectedHash ?? undefined,
+    }),
+  }
+}
+
 const buildAgentRunnerSpec = (
   runSpec: Record<string, unknown>,
   parameters: Record<string, string>,
   providerName: string,
   logRetentionSeconds: number,
   providerSpec: Record<string, unknown>,
+  options: {
+    systemPromptPath?: string
+    systemPromptExpectedHash?: string | null
+  } = {},
 ) => {
   const explicitAdapter = asRecord(providerSpec.adapter)
   const binary = asString(providerSpec.binary)
@@ -400,8 +501,13 @@ const buildAgentRunnerSpec = (
             ...(Array.isArray(providerSpec.outputArtifacts) ? { outputArtifacts: providerSpec.outputArtifacts } : {}),
           },
         }
-      : { type: 'codex-app-server' }
-  const adapter = explicitAdapter ? sanitizeProviderAdapterForRunner(explicitAdapter) : defaultAdapter
+      : buildCodexAppServerAdapterForRunner(runSpec, parameters, providerSpec, options)
+  const adapter =
+    resolveProviderAdapterType(providerSpec) === 'codex-app-server'
+      ? buildCodexAppServerAdapterForRunner(runSpec, parameters, providerSpec, options)
+      : explicitAdapter
+        ? sanitizeProviderAdapterForRunner(explicitAdapter)
+        : defaultAdapter
 
   return {
     schemaVersion: 'agents.proompteng.ai/runner/v1',
@@ -602,7 +708,10 @@ export const submitJobRun = async (
     return 0
   })()
   const agentRunnerSpec = providerName
-    ? buildAgentRunnerSpec(runSpec, parameters, providerName, logRetentionSeconds, providerSpec)
+    ? buildAgentRunnerSpec(runSpec, parameters, providerName, logRetentionSeconds, providerSpec, {
+        ...(options.systemPromptRef ? { systemPromptPath: '/workspace/.codex/system-prompt.txt' } : {}),
+        systemPromptExpectedHash: options.systemPromptHash,
+      })
     : null
   const serviceAccount = resolveRunnerServiceAccount(runtimeConfig)
   const runnerDefaultsConfig = resolveAgentRunnerDefaultsConfig(process.env)

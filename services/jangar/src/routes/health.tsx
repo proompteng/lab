@@ -8,20 +8,17 @@ import { resolveRuntimeServiceName } from '~/server/runtime-identity'
 
 export const getHealthHandler = async () => {
   const agentsHealth = await fetchAgentsHealthFromAgentsService()
-  const agentsDependency = buildAgentsDependencyHealth(agentsHealth)
-  const agentsController = agentsDependency.controller
+  const agentsDependencyHealth = buildAgentsDependencyHealth(agentsHealth)
+  const agentsDependency = {
+    status: agentsDependencyHealth.status,
+    ready: agentsDependencyHealth.ready,
+    http_status: agentsDependencyHealth.http_status,
+    error: agentsDependencyHealth.error,
+  }
   const body = JSON.stringify({
     status: 'ok',
     service: resolveRuntimeServiceName(),
     agents_dependency: agentsDependency,
-    agentsService: agentsHealth.ok
-      ? agentsHealth.body
-      : {
-          status: 'unavailable',
-          error: agentsHealth.error,
-          httpStatus: agentsHealth.status,
-        },
-    agentsController,
   })
 
   return new Response(body, {

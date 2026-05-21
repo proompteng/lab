@@ -826,6 +826,16 @@ fail_if_matches \
   'type AgentsDependencyHealth|const buildAgentsDependencyHealth|const unavailableAgentsController' \
   "${ROOT_DIR}/services/jangar/src/routes/health.tsx"
 
+fail_if_matches \
+  "Jangar /health must not re-emit raw Agents service health payloads after Agents owns runtime health" \
+  'agentsService|agentsController' \
+  "${ROOT_DIR}/services/jangar/src/routes/health.tsx"
+
+fail_if_matches \
+  "Jangar /ready must not re-emit raw Agents runtime ownership fields after Agents owns control-plane status" \
+  'leaderElection,|agents_control_plane_status:|watch_reliability: agentsStatus|agentrun_ingestion: readyPathAgentRunIngestion|control_plane_controller_witness: readyPathControllerWitness|rollout_health: readyPathRolloutHealth|runtime_kits: runtimeAdmission|admission_passports: runtimeAdmission|recovery_warrants: recoveryWarrants|runtime_proof_cells: runtimeProofCells|projection_watermarks: projectionWatermarks|serving_recovery_warrant_id:|serving_runtime_proof_cells_healthy:' \
+  "${ROOT_DIR}/services/jangar/src/routes/ready.tsx"
+
 require_matches \
   "Shared agent-contracts must own the Agents dependency summary classifier for domain consumers" \
   'buildAgentsDependencySummary' \

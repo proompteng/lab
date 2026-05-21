@@ -1660,7 +1660,18 @@ describe('agents controller reconcileAgentRun', () => {
     const payloads = (agentRunnerSpec.payloads ?? {}) as Record<string, unknown>
     expect(agentRunnerSpec.schemaVersion).toBe('agents.proompteng.ai/runner/v1')
     expect(agentRunnerSpec.provider).toBe('provider-1')
-    expect(agentRunnerSpec.adapter).toEqual({ type: 'codex-app-server' })
+    expect(agentRunnerSpec.adapter).toMatchObject({
+      type: 'codex-app-server',
+      codex: {
+        model: 'gpt-5.5',
+        effort: 'high',
+        sandbox: 'danger-full-access',
+        approval: 'never',
+        threadConfig: { mcp_servers: {}, web_search: 'live' },
+        baseInstructions: 'default-agent-prompt',
+        prompt: 'demo',
+      },
+    })
     expect(payloads.eventFilePath).toBe('/workspace/run.json')
     expect(payloads).not.toHaveProperty('eventBodyPath')
 
@@ -1828,7 +1839,19 @@ describe('agents controller reconcileAgentRun', () => {
     const runJson = JSON.parse(
       String((specConfigMap?.data as Record<string, unknown>)?.['run.json'] ?? '{}'),
     ) as Record<string, unknown>
+    const runnerJson = JSON.parse(
+      String((specConfigMap?.data as Record<string, unknown>)?.['agent-runner.json'] ?? '{}'),
+    ) as Record<string, unknown>
     expect(runJson.systemPrompt).toBe('from-agent')
+    expect(runnerJson).toMatchObject({
+      adapter: {
+        type: 'codex-app-server',
+        codex: {
+          baseInstructions: 'from-agent',
+          prompt: 'demo',
+        },
+      },
+    })
 
     const status = getLastStatus(kube)
     expect(status.systemPromptHash).toBe(createHash('sha256').update('from-agent').digest('hex'))
@@ -1956,10 +1979,23 @@ describe('agents controller reconcileAgentRun', () => {
     const runJson = JSON.parse(
       String((specConfigMap?.data as Record<string, unknown>)?.['run.json'] ?? '{}'),
     ) as Record<string, unknown>
+    const runnerJson = JSON.parse(
+      String((specConfigMap?.data as Record<string, unknown>)?.['agent-runner.json'] ?? '{}'),
+    ) as Record<string, unknown>
     expect(runJson.systemPrompt).toBeUndefined()
 
     const status = getLastStatus(kube)
     expect(status.systemPromptHash).toBe(createHash('sha256').update('prompt-from-configmap').digest('hex'))
+    expect(runnerJson).toMatchObject({
+      adapter: {
+        type: 'codex-app-server',
+        codex: {
+          systemPromptPath: '/workspace/.codex/system-prompt.txt',
+          systemPromptExpectedHash: createHash('sha256').update('prompt-from-configmap').digest('hex'),
+          prompt: 'demo',
+        },
+      },
+    })
 
     const podSpec = (job?.spec as Record<string, unknown> | undefined)?.template as Record<string, unknown> | undefined
     const podSpecSpec = (podSpec?.spec as Record<string, unknown> | undefined) ?? {}

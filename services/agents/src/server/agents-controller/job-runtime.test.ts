@@ -144,7 +144,17 @@ describe('agents controller job-runtime module', () => {
       schemaVersion: 'agents.proompteng.ai/runner/v1',
       provider: 'codex',
       inputs: { stage: 'research' },
-      adapter: { type: 'codex-app-server', codex: {} },
+      adapter: {
+        type: 'codex-app-server',
+        codex: {
+          model: 'gpt-5.5',
+          effort: 'high',
+          sandbox: 'danger-full-access',
+          approval: 'never',
+          threadConfig: { mcp_servers: {}, web_search: 'live' },
+          prompt: 'Run summary',
+        },
+      },
       providerSpec: {
         outputArtifacts: [
           {
