@@ -288,7 +288,11 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             ),
             patch(
                 "scripts.import_hypothesis_runtime_windows._query_timestamps",
-                return_value=([], [], []),
+                return_value=(
+                    [datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
+                    [datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+                    [],
+                ),
             ),
             patch(
                 "scripts.import_hypothesis_runtime_windows.build_regular_session_buckets",
@@ -327,6 +331,79 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 "intraday-tsmom-v1",
             ],
         )
+
+    def test_main_skips_persist_when_source_activity_is_empty(self) -> None:
+        args = SimpleNamespace(
+            run_id="run-empty",
+            candidate_id="cand-empty",
+            hypothesis_id="H-CONT-01",
+            observed_stage="paper",
+            strategy_family="",
+            source_dsn="postgresql://example",
+            source_dsn_env="DB_DSN",
+            strategy_name="intraday-tsmom-profit-v2",
+            account_label="TORGHUT_SIM",
+            window_start="2026-03-06T14:30:00Z",
+            window_end="2026-03-06T15:00:00Z",
+            bucket_minutes=30,
+            sample_minutes=5,
+            source_manifest_ref="",
+            source_kind="simulation_paper_runtime",
+            artifact_ref=[],
+            dataset_snapshot_ref="runtime-empty-snapshot",
+            dependency_quorum_decision="allow",
+            continuity_ok="true",
+            drift_ok="true",
+            json=False,
+        )
+        manifest = SimpleNamespace(
+            strategy_family="intraday_continuation",
+            strategy_id="intraday_tsmom_v1@paper",
+            max_allowed_slippage_bps=Decimal("12"),
+        )
+
+        with (
+            patch(
+                "scripts.import_hypothesis_runtime_windows._parse_args",
+                return_value=args,
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows.resolve_hypothesis_manifest",
+                return_value=(
+                    SimpleNamespace(path="config/trading/hypotheses/h-cont-01.json"),
+                    manifest,
+                ),
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows._query_timestamps",
+                return_value=([], [], []),
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows.build_regular_session_buckets",
+            ) as build_buckets,
+            patch(
+                "scripts.import_hypothesis_runtime_windows.persist_observed_runtime_windows",
+            ) as persist_windows,
+            patch(
+                "scripts.import_hypothesis_runtime_windows.SessionLocal",
+            ) as session_local,
+            patch("builtins.print") as print_mock,
+        ):
+            exit_code = main()
+
+        self.assertEqual(exit_code, 0)
+        build_buckets.assert_not_called()
+        persist_windows.assert_not_called()
+        session_local.assert_not_called()
+        summary = print_mock.call_args.args[0]
+        self.assertEqual(summary["status"], "skipped")
+        self.assertEqual(summary["proof_status"], "blocked")
+        self.assertEqual(summary["decision_count"], 0)
+        self.assertEqual(
+            summary["proof_blockers"][0]["blocker"],
+            "runtime_window_source_activity_missing",
+        )
+        self.assertFalse(summary["runtime_observation"]["authoritative"])
 
     def test_main_attaches_delay_adjusted_depth_report_to_runtime_payload(
         self,
@@ -382,7 +459,11 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 ),
                 patch(
                     "scripts.import_hypothesis_runtime_windows._query_timestamps",
-                    return_value=([], [], []),
+                    return_value=(
+                        [datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
+                        [datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+                        [],
+                    ),
                 ),
                 patch(
                     "scripts.import_hypothesis_runtime_windows.build_regular_session_buckets",

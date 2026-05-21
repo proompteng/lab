@@ -606,7 +606,14 @@ def persist_observed_runtime_windows(
         if observed_stage == "paper"
         else "live_runtime_observed"
     )
-    sorted_buckets = sorted(buckets, key=lambda item: item.window_ended_at)
+    raw_buckets = sorted(buckets, key=lambda item: item.window_ended_at)
+    sorted_buckets = [
+        bucket
+        for bucket in raw_buckets
+        if bucket.decision_count > 0 or bucket.trade_count > 0 or bucket.order_count > 0
+    ]
+    raw_window_count = len(raw_buckets)
+    skipped_zero_activity_window_count = raw_window_count - len(sorted_buckets)
     inserted = len(sorted_buckets)
     total_session_samples = sum(
         bucket.market_session_count for bucket in sorted_buckets
@@ -659,7 +666,10 @@ def persist_observed_runtime_windows(
     )
     latest_observation_at = max(
         (bucket.window_ended_at for bucket in sorted_buckets),
-        default=datetime.now(timezone.utc),
+        default=max(
+            (bucket.window_ended_at for bucket in raw_buckets),
+            default=datetime.now(timezone.utc),
+        ),
     )
     promotion_blocking_reasons = list(
         dict.fromkeys(
@@ -736,7 +746,9 @@ def persist_observed_runtime_windows(
             payload_json={
                 "imported": True,
                 "observed_stage": observed_stage,
+                "raw_window_count": raw_window_count,
                 "window_count": inserted,
+                "skipped_zero_activity_window_count": skipped_zero_activity_window_count,
                 "market_session_samples": total_session_samples,
                 "decision_count": total_decision_count,
                 "trade_count": total_trade_count,
@@ -760,7 +772,9 @@ def persist_observed_runtime_windows(
             payload_json={
                 "imported": True,
                 "observed_stage": observed_stage,
+                "raw_window_count": raw_window_count,
                 "window_count": inserted,
+                "skipped_zero_activity_window_count": skipped_zero_activity_window_count,
                 "market_session_samples": total_session_samples,
                 "decision_count": total_decision_count,
                 "trade_count": total_trade_count,
@@ -781,7 +795,9 @@ def persist_observed_runtime_windows(
         "candidate_id": candidate_id,
         "hypothesis_id": hypothesis_id,
         "observed_stage": observed_stage,
+        "raw_window_count": raw_window_count,
         "window_count": inserted,
+        "skipped_zero_activity_window_count": skipped_zero_activity_window_count,
         "market_session_samples": total_session_samples,
         "decision_count": total_decision_count,
         "trade_count": total_trade_count,

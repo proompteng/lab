@@ -289,6 +289,58 @@ class TestRuntimeWindowImport(TestCase):
             decision.reason_summary, "runtime_evidence_thresholds_satisfied"
         )
 
+    def test_persist_observed_runtime_windows_skips_idle_buckets(self) -> None:
+        buckets = build_observed_runtime_buckets(
+            bucket_ranges=[
+                (
+                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    40,
+                ),
+                (
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 30, tzinfo=timezone.utc),
+                    40,
+                ),
+            ],
+            decision_times=[datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
+            execution_times=[datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+            tca_rows=[
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("4"),
+                    "post_cost_expectancy_bps": Decimal("8"),
+                }
+            ],
+            continuity_ok=True,
+            drift_ok=True,
+            dependency_quorum_decision="allow",
+        )
+
+        with self.session_local() as session:
+            summary = persist_observed_runtime_windows(
+                session=session,
+                run_id="import-live-skip-idle",
+                candidate_id="cand-1",
+                hypothesis_id="H-CONT-01",
+                observed_stage="live",
+                strategy_family="intraday_continuation",
+                source_manifest_ref="config/trading/hypotheses/h-cont-01.json",
+                buckets=buckets,
+            )
+            session.commit()
+            windows = session.execute(select(StrategyHypothesisMetricWindow)).scalars().all()
+            decision = session.execute(select(StrategyPromotionDecision)).scalar_one()
+
+        self.assertEqual(summary["raw_window_count"], 2)
+        self.assertEqual(summary["window_count"], 1)
+        self.assertEqual(summary["skipped_zero_activity_window_count"], 1)
+        self.assertEqual(summary["market_session_samples"], 40)
+        self.assertEqual(len(windows), 1)
+        self.assertEqual(windows[0].decision_count, 1)
+        self.assertEqual(decision.payload_json["raw_window_count"], 2)
+        self.assertEqual(decision.payload_json["skipped_zero_activity_window_count"], 1)
+
     def test_persist_observed_runtime_windows_blocks_h_micro_without_delay_depth_stress(
         self,
     ) -> None:
@@ -491,12 +543,20 @@ class TestRuntimeWindowImport(TestCase):
             )
             session.commit()
             decision = session.execute(select(StrategyPromotionDecision)).scalar_one()
+            windows = session.execute(select(StrategyHypothesisMetricWindow)).scalars().all()
 
-        self.assertEqual(summary["market_session_samples"], 80)
+        self.assertEqual(summary["raw_window_count"], 2)
+        self.assertEqual(summary["window_count"], 0)
+        self.assertEqual(summary["skipped_zero_activity_window_count"], 2)
+        self.assertEqual(summary["market_session_samples"], 0)
         self.assertEqual(summary["decision_count"], 0)
         self.assertEqual(summary["trade_count"], 0)
         self.assertEqual(summary["order_count"], 0)
         self.assertEqual(summary["promotion_allowed"], False)
+        self.assertIn(
+            "runtime_window_evidence_missing",
+            summary["promotion_blocking_reasons"],
+        )
         self.assertIn(
             "runtime_decision_count_zero",
             summary["promotion_blocking_reasons"],
@@ -511,6 +571,9 @@ class TestRuntimeWindowImport(TestCase):
         )
         self.assertEqual(decision.allowed, False)
         self.assertEqual(decision.payload_json["decision_count"], 0)
+        self.assertEqual(decision.payload_json["raw_window_count"], 2)
+        self.assertEqual(decision.payload_json["skipped_zero_activity_window_count"], 2)
+        self.assertEqual(windows, [])
 
     def test_persist_observed_runtime_windows_rejects_weak_paper_receipt(
         self,
@@ -582,7 +645,10 @@ class TestRuntimeWindowImport(TestCase):
             session.commit()
             decision = session.execute(select(StrategyPromotionDecision)).scalar_one()
 
-        self.assertEqual(summary["market_session_samples"], 36)
+        self.assertEqual(summary["raw_window_count"], 3)
+        self.assertEqual(summary["window_count"], 2)
+        self.assertEqual(summary["skipped_zero_activity_window_count"], 1)
+        self.assertEqual(summary["market_session_samples"], 21)
         self.assertEqual(summary["promotion_allowed"], False)
         self.assertIn(
             "sample_count_below_canary_minimum",

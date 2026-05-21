@@ -1026,6 +1026,12 @@ def _run_runtime_window_import_target(
         )
     result = subprocess.run(command, check=True, capture_output=True, text=True)
     payload = json.loads(result.stdout)
+    payload_proof_blockers = [
+        blocker
+        for blocker in payload.get("proof_blockers", [])
+        if isinstance(blocker, Mapping)
+    ]
+    proof_blockers.extend(payload_proof_blockers)
     return {
         "status": "ok",
         "command": " ".join(command[:2] + ["..."]),
