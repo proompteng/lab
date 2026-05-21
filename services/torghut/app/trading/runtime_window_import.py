@@ -18,6 +18,7 @@ from ..models import (
     StrategyHypothesisMetricWindow,
     StrategyHypothesisVersion,
     StrategyPromotionDecision,
+    StrategyRuntimeLedgerBucket,
     VNextDatasetSnapshot,
 )
 from .hypotheses import (
@@ -33,7 +34,6 @@ PROMOTION_GRADE_POST_COST_BASES = frozenset(
     {
         "realized_strategy_pnl",
         "realized_strategy_pnl_after_explicit_costs",
-        "simulation_report_net_pnl",
     }
 )
 LIVE_PROMOTION_GRADE_POST_COST_BASES = frozenset(
@@ -67,6 +67,7 @@ class _NormalizedTcaRow:
     post_cost_expectancy_bps: Decimal | None
     post_cost_expectancy_basis: str
     post_cost_promotion_eligible: bool
+    runtime_ledger_bucket: dict[str, Any]
 
 
 def _utc(dt: datetime) -> datetime:
@@ -587,6 +588,7 @@ def build_observed_runtime_buckets(
                     basis=basis,
                     explicit_value=row.get("post_cost_promotion_eligible"),
                 ),
+                runtime_ledger_bucket=_mapping(row.get("runtime_ledger_bucket")),
             )
         )
 
@@ -628,6 +630,9 @@ def build_observed_runtime_buckets(
                 Counter(row.post_cost_expectancy_basis for row in bucket_tca).items()
             )
         )
+        runtime_ledger_buckets = [
+            row.runtime_ledger_bucket for row in bucket_tca if row.runtime_ledger_bucket
+        ]
         if slippage_values:
             avg_abs_slippage_bps = sum(slippage_values) / Decimal(len(slippage_values))
         else:
@@ -665,10 +670,25 @@ def build_observed_runtime_buckets(
                     "slippage_sample_count": len(slippage_values),
                     "post_cost_promotion_sample_count": len(promotion_post_cost_values),
                     "post_cost_basis_counts": basis_counts,
+                    "runtime_ledger_buckets": runtime_ledger_buckets,
                 },
             )
         )
     return buckets
+
+
+def _runtime_ledger_bucket_payloads(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+    raw_payloads = payload.get("runtime_ledger_buckets")
+    if isinstance(raw_payloads, Sequence) and not isinstance(
+        raw_payloads, (str, bytes, bytearray)
+    ):
+        return [
+            _mapping(item)
+            for item in cast(Sequence[object], raw_payloads)
+            if _mapping(item)
+        ]
+    single_payload = _mapping(payload.get("runtime_ledger_bucket"))
+    return [single_payload] if single_payload else []
 
 
 def persist_observed_runtime_windows(
@@ -786,6 +806,13 @@ def persist_observed_runtime_windows(
             StrategyPromotionDecision.run_id == run_id,
             StrategyPromotionDecision.hypothesis_id == hypothesis_id,
             StrategyPromotionDecision.promotion_target == observed_stage,
+        )
+    )
+    session.execute(
+        delete(StrategyRuntimeLedgerBucket).where(
+            StrategyRuntimeLedgerBucket.run_id == run_id,
+            StrategyRuntimeLedgerBucket.hypothesis_id == hypothesis_id,
+            StrategyRuntimeLedgerBucket.observed_stage == observed_stage,
         )
     )
 
@@ -921,6 +948,84 @@ def persist_observed_runtime_windows(
                 },
             )
         )
+        for ledger_payload in _runtime_ledger_bucket_payloads(bucket.payload_json):
+            bucket_started_at = (
+                _parse_observation_datetime(ledger_payload.get("bucket_started_at"))
+                or bucket.window_started_at
+            )
+            bucket_ended_at = (
+                _parse_observation_datetime(ledger_payload.get("bucket_ended_at"))
+                or bucket.window_ended_at
+            )
+            session.add(
+                StrategyRuntimeLedgerBucket(
+                    run_id=run_id,
+                    candidate_id=candidate_id,
+                    hypothesis_id=hypothesis_id,
+                    observed_stage=observed_stage,
+                    bucket_started_at=bucket_started_at,
+                    bucket_ended_at=bucket_ended_at,
+                    account_label=_text(ledger_payload.get("account_label"))
+                    or _text(runtime_payload.get("account_label")),
+                    runtime_strategy_name=_text(ledger_payload.get("strategy_id"))
+                    or _text(runtime_payload.get("strategy_name")),
+                    strategy_family=manifest.strategy_family,
+                    fill_count=_observation_int(ledger_payload.get("fill_count")),
+                    decision_count=_observation_int(
+                        ledger_payload.get("decision_count")
+                    ),
+                    submitted_order_count=_observation_int(
+                        ledger_payload.get("submitted_order_count")
+                    ),
+                    cancelled_order_count=_observation_int(
+                        ledger_payload.get("cancelled_order_count")
+                    ),
+                    rejected_order_count=_observation_int(
+                        ledger_payload.get("rejected_order_count")
+                    ),
+                    unfilled_order_count=_observation_int(
+                        ledger_payload.get("unfilled_order_count")
+                    ),
+                    closed_trade_count=_observation_int(
+                        ledger_payload.get("closed_trade_count")
+                    ),
+                    open_position_count=_observation_int(
+                        ledger_payload.get("open_position_count")
+                    ),
+                    filled_notional=_observation_decimal(
+                        ledger_payload.get("filled_notional")
+                    ),
+                    gross_strategy_pnl=_observation_decimal(
+                        ledger_payload.get("gross_strategy_pnl")
+                    ),
+                    cost_amount=_observation_decimal(ledger_payload.get("cost_amount")),
+                    net_strategy_pnl_after_costs=_observation_decimal(
+                        ledger_payload.get("net_strategy_pnl_after_costs")
+                    ),
+                    post_cost_expectancy_bps=_optional_decimal(
+                        ledger_payload.get("post_cost_expectancy_bps")
+                    ),
+                    ledger_schema_version=_text(
+                        ledger_payload.get("ledger_schema_version")
+                    )
+                    or "unknown",
+                    pnl_basis=_text(ledger_payload.get("pnl_basis")) or "unknown",
+                    execution_policy_hash_counts=_mapping(
+                        ledger_payload.get("execution_policy_hash_counts")
+                    )
+                    or None,
+                    cost_model_hash_counts=_mapping(
+                        ledger_payload.get("cost_model_hash_counts")
+                    )
+                    or None,
+                    lineage_hash_counts=_mapping(
+                        ledger_payload.get("lineage_hash_counts")
+                    )
+                    or None,
+                    blockers_json=_string_list(ledger_payload.get("blockers")),
+                    payload_json=ledger_payload,
+                )
+            )
 
     final_capital_stage = _capital_stage_for_runtime_import(
         observed_stage=observed_stage,

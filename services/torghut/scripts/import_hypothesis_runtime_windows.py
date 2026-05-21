@@ -197,7 +197,9 @@ def _build_realized_strategy_pnl_rows(
         if not symbol or not isinstance(computed_at, datetime):
             continue
         event_times.append(computed_at)
-        decision_id = _first_text(row, "decision_id", "trade_decision_id", "decision_hash")
+        decision_id = _first_text(
+            row, "decision_id", "trade_decision_id", "decision_hash"
+        )
         order_id = _first_text(
             row,
             "order_id",
@@ -240,7 +242,9 @@ def _build_realized_strategy_pnl_rows(
         if decision_id is not None:
             ledger_rows.append({**common_ledger_fields, "event_type": "decision"})
         if order_id is not None:
-            ledger_rows.append({**common_ledger_fields, "event_type": "order_submitted"})
+            ledger_rows.append(
+                {**common_ledger_fields, "event_type": "order_submitted"}
+            )
         if price is None or price <= 0 or signed_qty == 0:
             continue
         cost_amount = _first_decimal(
@@ -312,6 +316,39 @@ def _build_realized_strategy_pnl_rows(
                 "runtime_ledger_blockers": bucket.blockers,
                 "runtime_ledger_cost_basis_counts": bucket.cost_basis_counts,
                 "runtime_ledger_pnl_basis": bucket.pnl_basis,
+                "runtime_ledger_bucket": {
+                    "bucket_started_at": bucket.bucket_started_at.isoformat(),
+                    "bucket_ended_at": bucket.bucket_ended_at.isoformat(),
+                    "account_label": bucket.account_label,
+                    "strategy_id": bucket.strategy_id,
+                    "symbol": bucket.symbol,
+                    "fill_count": bucket.fill_count,
+                    "decision_count": bucket.decision_count,
+                    "submitted_order_count": bucket.submitted_order_count,
+                    "cancelled_order_count": bucket.cancelled_order_count,
+                    "rejected_order_count": bucket.rejected_order_count,
+                    "unfilled_order_count": bucket.unfilled_order_count,
+                    "closed_trade_count": bucket.closed_trade_count,
+                    "open_position_count": bucket.open_position_count,
+                    "filled_notional": str(bucket.filled_notional),
+                    "gross_strategy_pnl": str(bucket.gross_strategy_pnl),
+                    "cost_amount": str(bucket.cost_amount),
+                    "net_strategy_pnl_after_costs": str(
+                        bucket.net_strategy_pnl_after_costs
+                    ),
+                    "post_cost_expectancy_bps": (
+                        str(bucket.post_cost_expectancy_bps)
+                        if bucket.post_cost_expectancy_bps is not None
+                        else None
+                    ),
+                    "cost_basis_counts": bucket.cost_basis_counts,
+                    "execution_policy_hash_counts": bucket.execution_policy_hash_counts,
+                    "cost_model_hash_counts": bucket.cost_model_hash_counts,
+                    "lineage_hash_counts": bucket.lineage_hash_counts,
+                    "blockers": bucket.blockers,
+                    "ledger_schema_version": bucket.ledger_schema_version,
+                    "pnl_basis": bucket.pnl_basis,
+                },
             }
         )
     return realized_rows
@@ -630,7 +667,8 @@ def main() -> int:
                 "computed_at": executions[-1] if executions else window_end,
                 "post_cost_expectancy_bps": report_post_cost_expectancy_bps,
                 "post_cost_expectancy_basis": POST_COST_BASIS_SIMULATION_REPORT,
-                "post_cost_promotion_eligible": True,
+                "post_cost_promotion_eligible": False,
+                "promotion_blocker": "simulation_report_not_runtime_ledger_proof",
             }
         )
     bucket_ranges = build_regular_session_buckets(

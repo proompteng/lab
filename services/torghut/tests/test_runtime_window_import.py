@@ -15,6 +15,7 @@ from app.models import (
     StrategyHypothesisMetricWindow,
     StrategyHypothesisVersion,
     StrategyPromotionDecision,
+    StrategyRuntimeLedgerBucket,
     VNextDatasetSnapshot,
 )
 from app.trading.runtime_window_import import (
@@ -89,6 +90,39 @@ class TestRuntimeWindowImport(TestCase):
         self.assertEqual(buckets[0].decision_alignment_ratio, Decimal("1"))
         self.assertEqual(buckets[0].avg_abs_slippage_bps, Decimal("0"))
         self.assertEqual(buckets[0].post_cost_promotion_sample_count, 0)
+
+    def test_build_observed_runtime_buckets_quarantines_simulation_report_pnl(
+        self,
+    ) -> None:
+        buckets = build_observed_runtime_buckets(
+            bucket_ranges=[
+                (
+                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    6,
+                )
+            ],
+            decision_times=[datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
+            execution_times=[datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+            tca_rows=[
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("4"),
+                    "post_cost_expectancy_bps": Decimal("50"),
+                    **_simulation_report_pnl_basis(),
+                }
+            ],
+            continuity_ok=True,
+            drift_ok=True,
+            dependency_quorum_decision="allow",
+        )
+
+        self.assertEqual(buckets[0].post_cost_expectancy_bps, Decimal("0"))
+        self.assertEqual(buckets[0].post_cost_promotion_sample_count, 0)
+        self.assertEqual(
+            buckets[0].post_cost_basis_counts,
+            {"simulation_report_net_pnl": 1},
+        )
 
     def test_runtime_observation_parsers_handle_edge_inputs(self) -> None:
         parsed = _parse_observation_datetime(
@@ -205,6 +239,27 @@ class TestRuntimeWindowImport(TestCase):
                     "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
                     "abs_slippage_bps": Decimal("4"),
                     "post_cost_expectancy_bps": Decimal("3"),
+                    "runtime_ledger_bucket": {
+                        "bucket_started_at": "2026-03-06T14:35:00+00:00",
+                        "bucket_ended_at": "2026-03-06T14:36:00+00:00",
+                        "account_label": "paper",
+                        "strategy_id": "intraday_tsmom_v1@paper",
+                        "fill_count": 2,
+                        "decision_count": 2,
+                        "submitted_order_count": 2,
+                        "closed_trade_count": 1,
+                        "filled_notional": "200",
+                        "gross_strategy_pnl": "1",
+                        "cost_amount": "0.10",
+                        "net_strategy_pnl_after_costs": "0.90",
+                        "post_cost_expectancy_bps": "45",
+                        "ledger_schema_version": "torghut.exact_replay_ledger.v1",
+                        "pnl_basis": "realized_strategy_pnl_after_explicit_costs",
+                        "execution_policy_hash_counts": {"policy-sha": 2},
+                        "cost_model_hash_counts": {"cost-sha": 2},
+                        "lineage_hash_counts": {"lineage-sha": 2},
+                        "blockers": [],
+                    },
                     **_runtime_pnl_basis(),
                 },
                 {
@@ -250,6 +305,9 @@ class TestRuntimeWindowImport(TestCase):
             decisions = (
                 session.execute(select(StrategyPromotionDecision)).scalars().all()
             )
+            ledger_buckets = (
+                session.execute(select(StrategyRuntimeLedgerBucket)).scalars().all()
+            )
             datasets = session.execute(select(VNextDatasetSnapshot)).scalars().all()
 
         self.assertEqual(len(hypotheses), 1)
@@ -257,7 +315,17 @@ class TestRuntimeWindowImport(TestCase):
         self.assertEqual(len(windows), 2)
         self.assertEqual(len(allocations), 1)
         self.assertEqual(len(decisions), 1)
+        self.assertEqual(len(ledger_buckets), 1)
         self.assertEqual(len(datasets), 1)
+        self.assertEqual(
+            ledger_buckets[0].pnl_basis,
+            "realized_strategy_pnl_after_explicit_costs",
+        )
+        self.assertEqual(ledger_buckets[0].filled_notional, Decimal("200"))
+        self.assertEqual(
+            ledger_buckets[0].lineage_hash_counts,
+            {"lineage-sha": 2},
+        )
         self.assertEqual(datasets[0].candidate_id, "cand-1")
         self.assertEqual(datasets[0].artifact_ref, "torghut-runtime-window-cand-1")
         self.assertEqual(datasets[0].source, "live_runtime_observed")
