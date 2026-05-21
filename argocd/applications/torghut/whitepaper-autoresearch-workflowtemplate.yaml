@@ -255,6 +255,9 @@ spec:
               SCRIPT_ARGS+=(--replay-tape-manifest "{{inputs.parameters.replayTapeManifest}}")
             fi
             if [ "{{inputs.parameters.replayTapePreviewTopK}}" != "0" ]; then
+              if [ -z "{{inputs.parameters.replayTapePath}}" ]; then
+                SCRIPT_ARGS+=(--materialize-replay-tape)
+              fi
               SCRIPT_ARGS+=(--replay-tape-preview-top-k "{{inputs.parameters.replayTapePreviewTopK}}")
               SCRIPT_ARGS+=(--replay-tape-preview-min-rows "{{inputs.parameters.replayTapePreviewMinRows}}")
             fi

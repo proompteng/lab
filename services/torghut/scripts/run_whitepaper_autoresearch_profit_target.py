@@ -70,6 +70,8 @@ from app.trading.discovery.profit_target_oracle import (
     evaluate_profit_target_oracle,
 )
 from app.trading.discovery.replay_tape import (
+    build_source_query_digest,
+    materialize_signal_tape,
     load_replay_tape,
     slice_tape_by_symbols,
     slice_tape_by_window,
@@ -94,6 +96,7 @@ from app.whitepapers.claim_compiler import (
 )
 
 import scripts.run_strategy_factory_v2 as strategy_factory_runner
+import scripts.local_intraday_tsmom_replay as replay_mod
 
 
 _DEFAULT_CHIP_UNIVERSE_CSV = ",".join(LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE)
@@ -408,6 +411,14 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=2,
         help="Minimum manifest-verified tape rows required to score a candidate in preview narrowing.",
+    )
+    parser.add_argument(
+        "--materialize-replay-tape",
+        action="store_true",
+        help=(
+            "Fetch the resolved full-window signal rows once, write a run-scoped "
+            "manifest-verified replay tape, and use it for preview narrowing and exact replay."
+        ),
     )
     parser.add_argument(
         "--collect-train-gate-diagnostics",
@@ -5839,6 +5850,112 @@ def _apply_fast_replay_preview_narrowing(
     return narrowed_specs, updated_selection
 
 
+def _maybe_materialize_epoch_replay_tape(
+    *,
+    args: argparse.Namespace,
+    output_dir: Path,
+    epoch_id: str,
+) -> tuple[argparse.Namespace, dict[str, Any] | None]:
+    if not bool(getattr(args, "materialize_replay_tape", False)):
+        return args, None
+    if getattr(args, "replay_tape_path", None) is not None:
+        return args, None
+    if str(getattr(args, "replay_mode", "") or "") != "real":
+        raise ValueError("replay_tape_materialization_requires_real_replay")
+    if bool(getattr(args, "selection_only", False)):
+        raise ValueError("replay_tape_materialization_requires_replay_execution")
+
+    start_date = _materialized_replay_tape_date_arg(args, "full_window_start_date")
+    end_date = _materialized_replay_tape_date_arg(args, "full_window_end_date")
+    symbols = _candidate_universe_symbols_from_args(args)
+    tape_path = output_dir / "replay-tape.jsonl"
+    manifest_path = output_dir / "replay-tape.jsonl.manifest.json"
+    config = replay_mod.ReplayConfig(
+        strategy_configmap_path=_resolve_existing_path(args.strategy_configmap),
+        clickhouse_http_url=str(getattr(args, "clickhouse_http_url", "")),
+        clickhouse_username=(_string(getattr(args, "clickhouse_username", "")) or None),
+        clickhouse_password=(_string(getattr(args, "clickhouse_password", "")) or None),
+        start_date=start_date,
+        end_date=end_date,
+        chunk_minutes=max(1, int(getattr(args, "chunk_minutes", 10) or 10)),
+        flatten_eod=True,
+        start_equity=Decimal(str(getattr(args, "start_equity", "31590.02"))),
+        symbols=symbols,
+    )
+    rows = tuple(replay_mod._iter_signal_rows(config))
+    source_query_digest = _materialized_replay_tape_source_query_digest(
+        args=args,
+        symbols=symbols,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    manifest = materialize_signal_tape(
+        rows=rows,
+        tape_path=tape_path,
+        manifest_path=manifest_path,
+        dataset_snapshot_ref=epoch_id,
+        symbols=symbols,
+        start_date=start_date,
+        end_date=end_date,
+        source_query_digest=source_query_digest,
+    )
+    receipt_path = output_dir / "replay-tape-receipt.json"
+    receipt = {
+        "schema_version": "torghut.whitepaper-autoresearch-replay-tape-receipt.v1",
+        "status": "materialized",
+        "tape_path": str(tape_path),
+        "manifest_path": str(manifest_path),
+        "receipt_path": str(receipt_path),
+        "dataset_snapshot_ref": manifest.dataset_snapshot_ref,
+        "row_count": manifest.row_count,
+        "trading_day_count": manifest.trading_day_count,
+        "row_symbols": list(manifest.row_symbols),
+        "content_sha256": manifest.content_sha256,
+        "source_query_digest": manifest.source_query_digest,
+    }
+    _write_json(receipt_path, receipt)
+    updated_args = argparse.Namespace(
+        **{
+            **vars(args),
+            "replay_tape_path": tape_path,
+            "replay_tape_manifest": manifest_path,
+        }
+    )
+    return updated_args, receipt
+
+
+def _materialized_replay_tape_date_arg(
+    args: argparse.Namespace,
+    key: str,
+) -> date:
+    value = str(getattr(args, key, "") or "").strip()
+    if not value:
+        raise ValueError(f"replay_tape_materialization_requires_{key}")
+    return date.fromisoformat(value)
+
+
+def _materialized_replay_tape_source_query_digest(
+    *,
+    args: argparse.Namespace,
+    symbols: Sequence[str],
+    start_date: date,
+    end_date: date,
+) -> str:
+    return build_source_query_digest(
+        {
+            "query_family": "torghut.ta_signals_pt1s_with_microbars",
+            "clickhouse_http_url": str(getattr(args, "clickhouse_http_url", "")),
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "chunk_minutes": max(1, int(getattr(args, "chunk_minutes", 10) or 10)),
+            "symbols": list(symbols),
+            "source": "ta",
+            "window_size": "PT1S",
+            "join": "torghut.ta_microbars",
+        }
+    )
+
+
 def _fast_replay_preview_date_arg(args: argparse.Namespace, key: str) -> date:
     value = str(getattr(args, key, "") or "").strip()
     if not value:
@@ -8852,6 +8969,26 @@ def run_whitepaper_autoresearch_profit_target(
             output_dir / "selected-candidate-specs.jsonl"
         ),
     }
+    materialized_replay_tape_receipt: dict[str, Any] | None = None
+    try:
+        args, materialized_replay_tape_receipt = _maybe_materialize_epoch_replay_tape(
+            args=args,
+            output_dir=output_dir,
+            epoch_id=epoch_id,
+        )
+    except Exception as exc:
+        return _write_failure_summary(
+            output_dir=output_dir,
+            epoch_id=epoch_id,
+            status="replay_tape_materialization_failed",
+            reason=str(exc),
+            started_at=started_at,
+        )
+    if materialized_replay_tape_receipt is not None:
+        candidate_selection = {
+            **candidate_selection,
+            "replay_tape_materialization": materialized_replay_tape_receipt,
+        }
     try:
         replay_candidate_specs, candidate_selection = (
             _apply_fast_replay_preview_narrowing(
@@ -9355,6 +9492,7 @@ def run_whitepaper_autoresearch_profit_target(
         ],
         "replay_incomplete": replay_result.incomplete,
         "replay_failure_reasons": replay_failure_reasons,
+        "replay_tape_materialization": materialized_replay_tape_receipt,
         "pre_replay_proposal_score_count": len(pre_replay_proposal_rows),
         "proposal_score_count": len(proposal_rows),
         "portfolio_candidate_count": len(portfolio_rows),
@@ -9410,6 +9548,21 @@ def run_whitepaper_autoresearch_profit_target(
             if candidate_search_remediation is not None
             else None,
             "profitability_search_goal": str(profitability_goal_path),
+            "replay_tape": (
+                materialized_replay_tape_receipt.get("tape_path")
+                if materialized_replay_tape_receipt is not None
+                else None
+            ),
+            "replay_tape_manifest": (
+                materialized_replay_tape_receipt.get("manifest_path")
+                if materialized_replay_tape_receipt is not None
+                else None
+            ),
+            "replay_tape_receipt": (
+                materialized_replay_tape_receipt.get("receipt_path")
+                if materialized_replay_tape_receipt is not None
+                else None
+            ),
             "summary": str(output_dir / "summary.json"),
             "diagnostics_notebook": str(
                 output_dir / "whitepaper-autoresearch-diagnostics.ipynb"
@@ -9459,6 +9612,13 @@ def run_whitepaper_autoresearch_profit_target(
             ),
             "replay_tape_preview_min_rows": int(
                 getattr(args, "replay_tape_preview_min_rows", 2) or 2
+            ),
+            "materialize_replay_tape": bool(
+                getattr(args, "materialize_replay_tape", False)
+            ),
+            "replay_tape_path": str(getattr(args, "replay_tape_path", "") or ""),
+            "replay_tape_manifest": str(
+                getattr(args, "replay_tape_manifest", "") or ""
             ),
             "source_jsonl": [str(path) for path in getattr(args, "source_jsonl", [])],
         }
