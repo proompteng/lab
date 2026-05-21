@@ -527,6 +527,67 @@ def _extract_runtime_summary(
     return hypothesis_summary, items
 
 
+def _refresh_runtime_summary_totals(
+    summary: Mapping[str, Any],
+    runtime_items: Sequence[Mapping[str, Any]],
+) -> dict[str, object]:
+    state_totals: dict[str, int] = {}
+    reason_totals: dict[str, int] = {}
+    informational_reason_totals: dict[str, int] = {}
+    capital_stage_totals: dict[str, int] = {}
+    capital_multiplier_by_hypothesis: dict[str, str] = {}
+    promotion_eligible_total = 0
+    rollback_required_total = 0
+
+    for item in runtime_items:
+        state = str(item.get("state") or "unknown")
+        state_totals[state] = state_totals.get(state, 0) + 1
+
+        capital_stage = str(item.get("capital_stage") or "shadow")
+        capital_stage_totals[capital_stage] = (
+            capital_stage_totals.get(capital_stage, 0) + 1
+        )
+
+        hypothesis_id = str(item.get("hypothesis_id") or "unknown")
+        capital_multiplier_by_hypothesis[hypothesis_id] = str(
+            item.get("capital_multiplier") or "0"
+        )
+
+        if bool(item.get("promotion_eligible")):
+            promotion_eligible_total += 1
+        if bool(item.get("rollback_required")):
+            rollback_required_total += 1
+
+        for reason in cast(Sequence[object], item.get("reasons") or []):
+            reason_code = str(reason).strip()
+            if reason_code:
+                reason_totals[reason_code] = reason_totals.get(reason_code, 0) + 1
+        for reason in cast(Sequence[object], item.get("informational_reasons") or []):
+            reason_code = str(reason).strip()
+            if reason_code:
+                informational_reason_totals[reason_code] = (
+                    informational_reason_totals.get(reason_code, 0) + 1
+                )
+
+    refreshed = dict(summary)
+    refreshed.update(
+        {
+            "hypotheses_total": len(runtime_items),
+            "state_totals": dict(sorted(state_totals.items())),
+            "reason_totals": dict(sorted(reason_totals.items())),
+            "informational_reason_totals": dict(
+                sorted(informational_reason_totals.items())
+            ),
+            "capital_stage_totals": dict(sorted(capital_stage_totals.items())),
+            "capital_multiplier_by_hypothesis": capital_multiplier_by_hypothesis,
+            "promotion_eligible_total": promotion_eligible_total,
+            "rollback_required_total": rollback_required_total,
+            "items": list(runtime_items),
+        }
+    )
+    return refreshed
+
+
 def build_submission_gate_market_context_status(state: object) -> dict[str, object]:
     return {
         "last_symbol": getattr(state, "last_market_context_symbol", None),
@@ -786,7 +847,71 @@ def _merge_runtime_certificate_evidence(
             continue
 
         capital_stage = _certificate_capital_stage(metric_window, promotion_decision)
-        if capital_stage is None or _stage_rank(capital_stage) <= _stage_rank("shadow"):
+        if capital_stage is None:
+            merged.append(updated)
+            continue
+        if _stage_rank(capital_stage) <= _stage_rank("shadow"):
+            if _safe_text(getattr(metric_window, "observed_stage", None)) != "paper":
+                merged.append(updated)
+                continue
+            issued_at = _window_evidence_issued_at(metric_window)
+            candidate_id = (
+                _safe_text(metric_window.candidate_id)
+                or _safe_text(promotion_decision.candidate_id)
+                or _safe_text(updated.get("candidate_id"))
+            )
+            observed = (
+                dict(cast(Mapping[str, Any], updated.get("observed")))
+                if isinstance(updated.get("observed"), Mapping)
+                else {}
+            )
+            observed.update(
+                {
+                    "runtime_window_certificate_readiness_applied": True,
+                    "runtime_window_prior_reasons": list(
+                        cast(Sequence[object], updated.get("reasons") or [])
+                    ),
+                    "metric_window_id": str(metric_window.id),
+                    "promotion_decision_id": str(promotion_decision.id),
+                    "metric_window_issued_at": issued_at.isoformat()
+                    if issued_at is not None
+                    else None,
+                    "metric_window_market_session_count": metric_window.market_session_count,
+                    "metric_window_decision_count": metric_window.decision_count,
+                    "metric_window_trade_count": metric_window.trade_count,
+                    "metric_window_order_count": metric_window.order_count,
+                    "metric_window_avg_abs_slippage_bps": metric_window.avg_abs_slippage_bps,
+                    "metric_window_post_cost_expectancy_bps": metric_window.post_cost_expectancy_bps,
+                }
+            )
+            if candidate_id is not None:
+                updated["candidate_id"] = candidate_id
+            updated.update(
+                {
+                    "state": "shadow",
+                    "capital_stage": capital_stage or "shadow",
+                    "capital_multiplier": "0",
+                    "promotion_eligible": True,
+                    "rollback_required": False,
+                    "reasons": [],
+                    "informational_reasons": sorted(
+                        {
+                            *[
+                                str(reason)
+                                for reason in cast(
+                                    Sequence[object],
+                                    updated.get("informational_reasons") or [],
+                                )
+                                if str(reason).strip()
+                            ],
+                            "runtime_window_certificate_readiness_applied",
+                        }
+                    ),
+                    "promotion_decision_id": str(promotion_decision.id),
+                    "metric_window_id": str(metric_window.id),
+                    "observed": observed,
+                }
+            )
             merged.append(updated)
             continue
 
@@ -1521,7 +1646,6 @@ def build_live_submission_gate_payload(
         str(dependency_quorum_payload.get("decision") or "").strip().lower()
         or "unknown"
     )
-    promotion_eligible_total = _safe_int(summary.get("promotion_eligible_total"))
     empirical_ready = (
         bool(empirical_jobs_status.get("ready"))
         if isinstance(empirical_jobs_status, Mapping)
@@ -1545,7 +1669,6 @@ def build_live_submission_gate_payload(
     drift_live_promotion_eligible = bool(
         getattr(state, "drift_live_promotion_eligible", False)
     )
-    active_capital_stage = resolve_active_capital_stage(summary)
     critical_toggle_parity = build_shadow_first_toggle_parity()
     critical_toggle_mismatches = list(
         cast(list[str], critical_toggle_parity.get("mismatches") or [])
@@ -1574,6 +1697,41 @@ def build_live_submission_gate_payload(
     )
     now = datetime.now(timezone.utc)
     registry = load_hypothesis_registry()
+    evidence_rows = (
+        [dict(item) for item in promotion_certificate_evidence]
+        if promotion_certificate_evidence is not None
+        else _load_latest_certificate_evidence(
+            session,
+            hypothesis_ids=[item.hypothesis_id for item in registry.items],
+        )
+        if session is not None
+        else []
+    )
+    readiness_evidence_rows: list[Mapping[str, object]] = []
+    for row in evidence_rows:
+        metric_window = cast(
+            StrategyHypothesisMetricWindow | None, row.get("metric_window")
+        )
+        promotion_decision = cast(
+            StrategyPromotionDecision | None, row.get("promotion_decision")
+        )
+        if metric_window is None or promotion_decision is None:
+            continue
+        if _safe_text(getattr(metric_window, "observed_stage", None)) != "paper":
+            continue
+        if _certificate_capital_stage(metric_window, promotion_decision) != "shadow":
+            continue
+        readiness_evidence_rows.append(row)
+    if runtime_items and readiness_evidence_rows:
+        runtime_items = _merge_runtime_certificate_evidence(
+            runtime_items,
+            evidence=readiness_evidence_rows,
+            now=now,
+            max_age_seconds=max_age_seconds,
+        )
+        summary = _refresh_runtime_summary_totals(summary, runtime_items)
+    promotion_eligible_total = _safe_int(summary.get("promotion_eligible_total"))
+    active_capital_stage = resolve_active_capital_stage(summary)
     segment_summary = _segment_summary(
         state=state,
         runtime_items=runtime_items,
@@ -1682,16 +1840,6 @@ def build_live_submission_gate_payload(
     if quant_required and not quant_ready:
         blocked_reasons.extend(quant_blocking_reasons or [quant_reason])
 
-    evidence_rows = (
-        [dict(item) for item in promotion_certificate_evidence]
-        if promotion_certificate_evidence is not None
-        else _load_latest_certificate_evidence(
-            session,
-            hypothesis_ids=[item.hypothesis_id for item in registry.items],
-        )
-        if session is not None
-        else []
-    )
     evaluated_tuples, valid_candidates = _evaluate_certificate_candidates(
         evidence=evidence_rows,
         segment_summary=segment_summary,
