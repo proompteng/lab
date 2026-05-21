@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from scripts.import_hypothesis_runtime_windows import (
     EXECUTION_ELIGIBLE_DECISION_STATUSES,
-    POST_COST_BASIS_REALIZED_STRATEGY_PNL,
+    POST_COST_BASIS_RUNTIME_LEDGER,
     POST_COST_BASIS_SIMULATION_REPORT,
     POST_COST_BASIS_TCA_PROXY,
     _build_realized_strategy_pnl_rows,
@@ -217,7 +217,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
                     "symbol": "AAPL",
                     "side": "buy",
-                    "filled_qty": Decimal("2"),
+                    "filled_qty": Decimal("1"),
                     "avg_fill_price": Decimal("100"),
                     "shortfall_notional": Decimal("0.20"),
                 },
@@ -243,14 +243,32 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(
             rows[0]["post_cost_expectancy_basis"],
-            POST_COST_BASIS_REALIZED_STRATEGY_PNL,
+            POST_COST_BASIS_RUNTIME_LEDGER,
         )
         self.assertEqual(rows[0]["post_cost_promotion_eligible"], True)
-        self.assertEqual(rows[0]["realized_net_pnl"], Decimal("0.80"))
+        self.assertEqual(rows[0]["realized_net_pnl"], Decimal("0.70"))
         self.assertEqual(
             rows[0]["post_cost_expectancy_bps"],
-            Decimal("39.80099502487562189054726368"),
+            Decimal("34.82587064676616915422885572"),
         )
+
+    def test_build_realized_strategy_pnl_rows_returns_empty_without_event_times(
+        self,
+    ) -> None:
+        rows = _build_realized_strategy_pnl_rows(
+            [
+                {
+                    "computed_at": None,
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("100"),
+                    "shortfall_notional": Decimal("0.20"),
+                }
+            ]
+        )
+
+        self.assertEqual(rows, [])
 
     def test_query_timestamps_filters_to_execution_eligible_decisions(self) -> None:
         cursor = _FakeCursor()

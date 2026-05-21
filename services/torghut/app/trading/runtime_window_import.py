@@ -30,7 +30,14 @@ US_EQUITIES_REGULAR_TIMEZONE = "America/New_York"
 US_EQUITIES_REGULAR_OPEN = time(hour=9, minute=30)
 US_EQUITIES_REGULAR_CLOSE = time(hour=16, minute=0)
 PROMOTION_GRADE_POST_COST_BASES = frozenset(
-    {"realized_strategy_pnl", "simulation_report_net_pnl"}
+    {
+        "realized_strategy_pnl",
+        "realized_strategy_pnl_after_explicit_costs",
+        "simulation_report_net_pnl",
+    }
+)
+LIVE_PROMOTION_GRADE_POST_COST_BASES = frozenset(
+    {"realized_strategy_pnl_after_explicit_costs"}
 )
 
 
@@ -404,12 +411,14 @@ def _capital_multiplier_for_stage(stage: str) -> str:
 
 def _runtime_promotion_blocking_reasons(
     *,
+    observed_stage: str,
     inserted: int,
     total_session_samples: int,
     total_decision_count: int,
     total_trade_count: int,
     total_order_count: int,
     total_post_cost_promotion_sample_count: int,
+    total_post_cost_basis_counts: Mapping[str, int],
     average_slippage: Decimal,
     average_post_cost: Decimal,
     latest_three_budget_ok: bool,
@@ -433,6 +442,15 @@ def _runtime_promotion_blocking_reasons(
         reasons.append("recent_slippage_budget_exceeded")
     if total_post_cost_promotion_sample_count <= 0:
         reasons.append("post_cost_pnl_basis_missing")
+    if (
+        observed_stage == "live"
+        and sum(
+            total_post_cost_basis_counts.get(basis, 0)
+            for basis in LIVE_PROMOTION_GRADE_POST_COST_BASES
+        )
+        <= 0
+    ):
+        reasons.append("runtime_ledger_pnl_basis_missing")
     if average_post_cost <= Decimal("0"):
         reasons.append("post_cost_expectancy_non_positive")
     elif average_post_cost < manifest.expected_gross_edge_bps:
@@ -799,12 +817,14 @@ def persist_observed_runtime_windows(
         else Decimal("0")
     )
     promotion_blocking_reasons = _runtime_promotion_blocking_reasons(
+        observed_stage=observed_stage,
         inserted=inserted,
         total_session_samples=total_session_samples,
         total_decision_count=total_decision_count,
         total_trade_count=total_trade_count,
         total_order_count=total_order_count,
         total_post_cost_promotion_sample_count=total_post_cost_promotion_sample_count,
+        total_post_cost_basis_counts=total_post_cost_basis_counts,
         average_slippage=average_slippage,
         average_post_cost=average_post_cost,
         latest_three_budget_ok=latest_three_budget_ok,

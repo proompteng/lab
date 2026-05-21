@@ -32,7 +32,14 @@ from app.trading.runtime_window_import import (
 
 def _runtime_pnl_basis() -> dict[str, object]:
     return {
-        "post_cost_expectancy_basis": "realized_strategy_pnl",
+        "post_cost_expectancy_basis": "realized_strategy_pnl_after_explicit_costs",
+        "post_cost_promotion_eligible": True,
+    }
+
+
+def _simulation_report_pnl_basis() -> dict[str, object]:
+    return {
+        "post_cost_expectancy_basis": "simulation_report_net_pnl",
         "post_cost_promotion_eligible": True,
     }
 
@@ -340,6 +347,70 @@ class TestRuntimeWindowImport(TestCase):
         self.assertEqual(decision.allowed, True)
         self.assertEqual(
             decision.reason_summary, "runtime_evidence_thresholds_satisfied"
+        )
+
+    def test_persist_observed_runtime_windows_blocks_live_simulation_report_pnl(
+        self,
+    ) -> None:
+        buckets = build_observed_runtime_buckets(
+            bucket_ranges=[
+                (
+                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    40,
+                ),
+                (
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 30, tzinfo=timezone.utc),
+                    40,
+                ),
+            ],
+            decision_times=[
+                datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                datetime(2026, 3, 6, 15, 5, tzinfo=timezone.utc),
+            ],
+            execution_times=[
+                datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                datetime(2026, 3, 6, 15, 6, tzinfo=timezone.utc),
+            ],
+            tca_rows=[
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("4"),
+                    "post_cost_expectancy_bps": Decimal("8"),
+                    **_simulation_report_pnl_basis(),
+                },
+                {
+                    "computed_at": datetime(2026, 3, 6, 15, 6, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("5"),
+                    "post_cost_expectancy_bps": Decimal("8"),
+                    **_simulation_report_pnl_basis(),
+                },
+            ],
+            continuity_ok=True,
+            drift_ok=True,
+            dependency_quorum_decision="allow",
+        )
+
+        with self.session_local() as session:
+            summary = persist_observed_runtime_windows(
+                session=session,
+                run_id="import-live-simulation-report-pnl",
+                candidate_id="cand-sim-report",
+                hypothesis_id="H-CONT-01",
+                observed_stage="live",
+                strategy_family="intraday_continuation",
+                source_manifest_ref="config/trading/hypotheses/h-cont-01.json",
+                buckets=buckets,
+            )
+
+        self.assertEqual(summary["promotion_allowed"], False)
+        self.assertEqual(
+            summary["post_cost_basis_counts"], {"simulation_report_net_pnl": 2}
+        )
+        self.assertIn(
+            "runtime_ledger_pnl_basis_missing",
+            summary["promotion_blocking_reasons"],
         )
 
     def test_persist_observed_runtime_windows_blocks_tca_proxy_expectancy(self) -> None:
