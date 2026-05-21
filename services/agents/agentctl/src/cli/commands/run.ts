@@ -29,6 +29,7 @@ import {
   waitForRunCompletion,
   waitForRunCompletionKube,
 } from '../../runtime'
+import { normalizeKubernetesLabelValue } from '../../../../src/kubernetes-labels'
 import { TransportService } from '../../transport'
 import { AgentctlContext } from '../context'
 import { asAgentctlError } from '../errors'
@@ -143,7 +144,7 @@ const submitRunKube = async (
       generateName: `${input.agent}-`,
       namespace,
       labels: {
-        'agents.proompteng.ai/delivery-id': deliveryId,
+        'agents.proompteng.ai/delivery-id': normalizeKubernetesLabelValue(deliveryId),
       },
     },
     spec: buildRunSpec(input),

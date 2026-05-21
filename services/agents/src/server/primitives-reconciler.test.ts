@@ -8,7 +8,7 @@ const kubeWatchMocks = vi.hoisted(() => ({
   startResourceWatch: vi.fn(() => ({ stop: vi.fn() })),
 }))
 
-import { startPrimitivesReconciler, stopPrimitivesReconciler } from './primitives-reconciler'
+import { __test, startPrimitivesReconciler, stopPrimitivesReconciler } from './primitives-reconciler'
 
 vi.mock('./feature-flags', () => featureFlagsMocks)
 vi.mock('./kube-watch', () => kubeWatchMocks)
@@ -144,5 +144,33 @@ describe('primitives reconciler', () => {
         process.env.VITEST_WORKER_ID = previousVitestWorkerId
       }
     }
+  })
+
+  it('prefers raw AgentRun idempotency fields over normalized delivery labels', () => {
+    expect(
+      __test.resolveDeliveryId({
+        metadata: {
+          labels: {
+            'agents.proompteng.ai/delivery-id': 'domain-request-with-spaces-and-slashes-a7c31d4acb3e',
+          },
+        },
+        spec: {
+          idempotencyKey: 'domain/request:with spaces and slashes',
+        },
+      }),
+    ).toBe('domain/request:with spaces and slashes')
+
+    expect(
+      __test.resolveDeliveryId({
+        metadata: {
+          labels: {
+            'agents.proompteng.ai/delivery-id': 'orchestration-request-with-spaces-a305b',
+          },
+        },
+        spec: {
+          deliveryId: 'orchestration/request with spaces',
+        },
+      }),
+    ).toBe('orchestration/request with spaces')
   })
 })

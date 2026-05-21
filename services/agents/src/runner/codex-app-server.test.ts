@@ -326,6 +326,44 @@ describe('codex app-server runner adapter', () => {
     expect(turnOptions[0]).toMatchObject({ baseInstructions: 'mounted system prompt' })
   })
 
+  it('preserves inline system prompt bytes before validating the controller hash', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
+    const runPath = join(dir, 'run.json')
+    const baseInstructions = 'system instructions with newline\n'
+    await writeFile(
+      runPath,
+      `${JSON.stringify({ implementation: { text: 'run' }, systemPrompt: baseInstructions })}\n`,
+      'utf8',
+    )
+
+    const turnOptions: CodexAppServerTurnOptions[] = []
+    await runCodexAppServerAdapter(
+      {
+        provider: 'codex-runner',
+        payloads: { eventFilePath: runPath },
+      },
+      {
+        prompt: NORMALIZED_PROMPT,
+        baseInstructions,
+        systemPromptExpectedHash: createHash('sha256').update(baseInstructions).digest('hex'),
+      },
+      {
+        createClient: () => ({
+          runTurnStream: async (_prompt, options) => {
+            turnOptions.push(options ?? {})
+            return {
+              stream: makeStream(),
+              turnId: 'turn-1',
+              threadId: 'thread-1',
+            }
+          },
+        }),
+      },
+    )
+
+    expect(turnOptions[0]).toMatchObject({ baseInstructions })
+  })
+
   it('rejects unsupported app-server approval modes before starting Codex', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
     const runPath = join(dir, 'run.json')

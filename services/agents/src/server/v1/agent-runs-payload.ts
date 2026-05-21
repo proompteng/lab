@@ -34,6 +34,26 @@ export type WorkflowStepPayload = {
   workload?: Record<string, unknown>
   retries?: number
   retryBackoffSeconds?: number
+  timeoutSeconds?: number
+  loop?: WorkflowLoopPayload
+}
+
+export type WorkflowLoopPayload = {
+  maxIterations: number
+  condition?: {
+    type?: string
+    expression?: string
+    source?: {
+      type?: string
+      path?: string
+      onMissing?: string
+      onInvalid?: string
+    }
+  }
+  state?: {
+    required?: boolean
+    volumeNames?: string[]
+  }
 }
 
 export const parseOptionalNumber = (value: unknown): number | undefined => {

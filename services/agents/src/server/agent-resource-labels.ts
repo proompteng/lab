@@ -1,4 +1,5 @@
 import { asRecord, asString, readNested } from './primitives'
+import { normalizeKubernetesLabelValue } from '../kubernetes-labels'
 
 export const AGENTS_RESOURCE_LABELS = {
   deliveryId: {
@@ -20,7 +21,7 @@ type AgentsResourceLabel = keyof typeof AGENTS_RESOURCE_LABELS
 const buildCompatibleLabel = (label: AgentsResourceLabel, value: string): Record<string, string> => {
   const keys = AGENTS_RESOURCE_LABELS[label]
   return {
-    [keys.canonical]: value,
+    [keys.canonical]: normalizeKubernetesLabelValue(value),
   }
 }
 

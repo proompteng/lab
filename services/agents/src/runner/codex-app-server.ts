@@ -443,6 +443,11 @@ const nonEmptyString = (value: unknown): string | null => {
   return text ? text : null
 }
 
+const nonBlankStringPreserve = (value: unknown): string | null => {
+  const text = asString(value)
+  return text && text.trim() ? text : null
+}
+
 const isSafeRepositorySlug = (repository: string) => /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)
 
 const isSafeGitRef = (ref: string) =>
@@ -640,7 +645,7 @@ const renderOptionalTemplate = (
     ...buildTemplateContext(spec),
     run: runPayload,
   })
-  return nonEmptyString(rendered)
+  return nonBlankStringPreserve(rendered)
 }
 
 const resolvePrompt = (
@@ -705,7 +710,7 @@ const readSystemPromptInstructions = async (
     try {
       const contents = await readFile(systemPromptPath, 'utf8')
       assertSystemPromptHash(contents, adapter, systemPromptPath)
-      const prompt = nonEmptyString(contents)
+      const prompt = nonBlankStringPreserve(contents)
       if (prompt) return prompt
       if (isSystemPromptRequired(adapter)) {
         throw new Error(`system prompt file ${systemPromptPath} is empty`)
@@ -716,7 +721,7 @@ const readSystemPromptInstructions = async (
     }
   }
 
-  const inlinePrompt = nonEmptyString(runPayload.systemPrompt)
+  const inlinePrompt = nonBlankStringPreserve(runPayload.systemPrompt)
   if (inlinePrompt) {
     assertSystemPromptHash(inlinePrompt, adapter, 'run.json systemPrompt')
     return inlinePrompt

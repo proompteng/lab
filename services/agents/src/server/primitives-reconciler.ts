@@ -128,9 +128,9 @@ const extractOrchestrationRunStatus = (resource: Record<string, unknown>): Orche
 
 const resolveDeliveryId = (resource: Record<string, unknown>) => {
   return (
-    readDeliveryIdLabel(resource) ??
-    asString(readNested(resource, ['spec', 'deliveryId'])) ??
     asString(readNested(resource, ['spec', 'idempotencyKey'])) ??
+    asString(readNested(resource, ['spec', 'deliveryId'])) ??
+    readDeliveryIdLabel(resource) ??
     null
   )
 }
@@ -391,4 +391,8 @@ export const getPrimitivesReconcilerHealth = (): PrimitivesReconcilerHealthState
     started,
     namespaces: reconcilerState.namespaces ?? config.namespaces,
   }
+}
+
+export const __test = {
+  resolveDeliveryId,
 }

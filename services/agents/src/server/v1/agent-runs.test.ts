@@ -315,6 +315,128 @@ describe('AgentRun v1 API', () => {
     )
   })
 
+  it('preserves workflow timeout and loop fields submitted through the Agents API', async () => {
+    const store = createStoreMock()
+    const kube = createKubeMock()
+
+    const response = await postAgentRunsHandler(
+      buildRequest({
+        agentRef: { name: 'demo-agent' },
+        namespace: 'agents',
+        implementationSpecRef: { name: 'demo-impl' },
+        runtime: { type: 'workflow', config: {} },
+        workflow: {
+          steps: [
+            {
+              name: 'plan',
+              timeoutSeconds: 120,
+              retries: 2,
+              retryBackoffSeconds: 15,
+              loop: {
+                maxIterations: 3,
+                condition: {
+                  type: 'cel',
+                  expression: 'state.done == true',
+                  source: {
+                    type: 'file',
+                    path: '/workspace/state.json',
+                    onMissing: 'stop',
+                    onInvalid: 'fail',
+                  },
+                },
+                state: {
+                  required: true,
+                  volumeNames: ['workflow-state'],
+                },
+              },
+            },
+          ],
+        },
+      }),
+      {
+        storeFactory: () => store,
+        kubeClient: kube,
+        validatePolicies: vi.fn(async () => {}),
+      },
+    )
+
+    expect(response.status).toBe(201)
+    expect(kube.apply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        spec: expect.objectContaining({
+          workflow: {
+            steps: [
+              expect.objectContaining({
+                name: 'plan',
+                timeoutSeconds: 120,
+                retries: 2,
+                retryBackoffSeconds: 15,
+                loop: {
+                  maxIterations: 3,
+                  condition: {
+                    type: 'cel',
+                    expression: 'state.done == true',
+                    source: {
+                      type: 'file',
+                      path: '/workspace/state.json',
+                      onMissing: 'stop',
+                      onInvalid: 'fail',
+                    },
+                  },
+                  state: {
+                    required: true,
+                    volumeNames: ['workflow-state'],
+                  },
+                },
+              }),
+            ],
+          },
+        }),
+      }),
+    )
+  })
+
+  it('keeps raw idempotency in storage and spec while normalizing the Kubernetes delivery label', async () => {
+    const store = createStoreMock()
+    const kube = createKubeMock()
+    const request = new Request('http://agents.local/v1/agent-runs', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'idempotency-key': 'domain/request:with spaces and slashes',
+      },
+      body: JSON.stringify({
+        agentRef: { name: 'demo-agent' },
+        namespace: 'agents',
+        implementation: { text: 'Implement the requested change.' },
+        runtime: { type: 'job', config: {} },
+      }),
+    })
+
+    const response = await postAgentRunsHandler(request, {
+      storeFactory: () => store,
+      kubeClient: kube,
+      validatePolicies: vi.fn(async () => {}),
+    })
+
+    expect(response.status).toBe(201)
+    expect(store.reserveAgentRunIdempotencyKey).toHaveBeenCalledWith(
+      expect.objectContaining({ idempotencyKey: 'domain/request:with spaces and slashes' }),
+    )
+    expect(kube.apply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          labels: {
+            'agents.proompteng.ai/delivery-id': 'domain-request-with-spaces-and-slashes-a7c31d4acb3e',
+          },
+        }),
+        spec: expect.objectContaining({
+          idempotencyKey: 'domain/request:with spaces and slashes',
+        }),
+      }),
+    )
+  })
+
   it('rejects AgentRun prompt overrides in the extracted API package', async () => {
     const store = createStoreMock()
     const kube = createKubeMock()
