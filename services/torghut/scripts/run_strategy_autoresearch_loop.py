@@ -399,6 +399,7 @@ def _frontier_candidate_budget(
         family_plan.frontier_top_n,
         family_plan.keep_top_candidates,
         family_plan.symbol_prune_candidates + 1,
+        family_plan.loss_repair_candidates + 1,
     )
     return max(minimum_budget, replay_budget_max_candidates_per_frontier_run)
 
@@ -548,6 +549,8 @@ def _frontier_args(
         symbol_prune_iterations=family_plan.symbol_prune_iterations,
         symbol_prune_candidates=family_plan.symbol_prune_candidates,
         symbol_prune_min_universe_size=family_plan.symbol_prune_min_universe_size,
+        loss_repair_iterations=family_plan.loss_repair_iterations,
+        loss_repair_candidates=family_plan.loss_repair_candidates,
     )
 
 

@@ -14,9 +14,9 @@ import tempfile
 from collections import Counter, deque
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, cast
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeAlias, cast
 from unittest.mock import patch
 
 import yaml
@@ -65,6 +65,49 @@ from scripts.search_profitability_frontier import (
 
 _LOCAL_ONLY_OVERRIDE_KEYS = frozenset({"normalization_regime"})
 _SECOND_OOS_WINDOW_ID = "second_oos"
+_LOSS_REPAIR_TRIGGER_REASONS = frozenset(
+    {
+        "train_worst_day_loss_above_screen",
+        "worst_day_loss_above_max",
+        "max_drawdown_above_max",
+        "daily_net_below_min",
+        "gross_exposure_pct_equity_above_max",
+        "min_cash_below_min",
+    }
+)
+_LOSS_REPAIR_TRIGGER_SUFFIXES = (
+    "_worst_day_loss_above_max",
+    "_max_drawdown_above_max",
+)
+_LOSS_REPAIR_BPS_FLOORS = {
+    "long_stop_loss_bps": Decimal("4"),
+    "short_stop_loss_bps": Decimal("4"),
+    "long_trailing_stop_drawdown_bps": Decimal("3"),
+    "short_trailing_stop_drawdown_bps": Decimal("3"),
+    "negative_exit_loss_bps": Decimal("4"),
+    "max_session_negative_exit_bps": Decimal("4"),
+}
+_LOSS_REPAIR_EXIT_LIMIT_KEYS = (
+    "max_stop_loss_exits_per_session",
+    "max_negative_exits_per_session",
+)
+_LOSS_REPAIR_LOCKOUT_KEYS = (
+    "stop_loss_lockout_seconds",
+    "negative_exit_lockout_seconds",
+)
+_LOSS_REPAIR_PARAM_EXPOSURE_KEYS = ("max_gross_exposure_pct_equity",)
+_LOSS_REPAIR_STRATEGY_EXPOSURE_KEYS = (
+    "max_notional_per_trade",
+    "max_position_pct_equity",
+)
+_WorklistItem: TypeAlias = tuple[
+    dict[str, Any],
+    dict[str, Any],
+    int,
+    str | None,
+    str | None,
+    str | None,
+]
 
 
 @dataclass(frozen=True)
@@ -483,6 +526,21 @@ def _parse_args() -> argparse.Namespace:
         help="Do not prune below this many symbols in the candidate universe.",
     )
     parser.add_argument(
+        "--loss-repair-iterations",
+        type=int,
+        default=0,
+        help=(
+            "Generate bounded child candidates that tighten loss controls and exposure "
+            "after drawdown or worst-day-loss vetoes."
+        ),
+    )
+    parser.add_argument(
+        "--loss-repair-candidates",
+        type=int,
+        default=1,
+        help="How many loss/drawdown repair children to branch on per failed candidate.",
+    )
+    parser.add_argument(
         "--train-screening",
         dest="train_screening",
         action="store_true",
@@ -806,12 +864,19 @@ def _iter_initial_worklist_candidates(
     parameter_grid: Mapping[str, Iterable[Any]],
     override_candidates: Iterable[Mapping[str, Any]],
     seed_candidates: Iterable[tuple[Mapping[str, Any], Mapping[str, Any]]] = (),
-) -> Iterator[tuple[dict[str, Any], dict[str, Any], int, str | None, str | None]]:
+) -> Iterator[_WorklistItem]:
     for params_candidate, override_candidate in seed_candidates:
-        yield (dict(params_candidate), dict(override_candidate), 0, None, None)
+        yield (dict(params_candidate), dict(override_candidate), 0, None, None, None)
     for override_candidate in override_candidates:
         for params_candidate in _iter_parameter_candidates(parameter_grid):
-            yield (dict(params_candidate), dict(override_candidate), 0, None, None)
+            yield (
+                dict(params_candidate),
+                dict(override_candidate),
+                0,
+                None,
+                None,
+                None,
+            )
 
 
 def _candidate_symbols(
@@ -2432,6 +2497,230 @@ def _generate_symbol_prune_children(
     return children
 
 
+def _strategy_item_from_configmap(
+    *,
+    configmap_payload: Mapping[str, Any],
+    strategy_name: str,
+) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
+    data = configmap_payload.get("data")
+    if not isinstance(data, Mapping):
+        return {}, {}
+    strategies_yaml = data.get("strategies.yaml")
+    if not isinstance(strategies_yaml, str):
+        return {}, {}
+    catalog = yaml.safe_load(strategies_yaml)
+    if not isinstance(catalog, Mapping):
+        return {}, {}
+    strategies = catalog.get("strategies")
+    if not isinstance(strategies, list):
+        return {}, {}
+    for item in strategies:
+        if not isinstance(item, Mapping):
+            continue
+        if str(item.get("name") or "").strip() != strategy_name:
+            continue
+        params = item.get("params")
+        return item, params if isinstance(params, Mapping) else {}
+    return {}, {}
+
+
+def _decimal_or_none(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return Decimal(text)
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _decimal_payload(value: Decimal) -> str:
+    text = format(value.normalize(), "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _tightened_bps(value: Any, *, floor: Decimal) -> str | None:
+    current = _decimal_or_none(value)
+    if current is None or current <= 0:
+        return None
+    tightened = max(floor, (current * Decimal("0.75")).quantize(Decimal("0.01")))
+    if tightened >= current:
+        return None
+    return _decimal_payload(tightened)
+
+
+def _reduced_exposure(value: Any) -> str | None:
+    current = _decimal_or_none(value)
+    if current is None or current <= 0:
+        return None
+    reduced = (current * Decimal("0.75")).quantize(Decimal("0.000001"))
+    if reduced <= 0 or reduced >= current:
+        return None
+    return _decimal_payload(reduced)
+
+
+def _loss_repair_trigger_reason(
+    *,
+    hard_vetoes: Sequence[Any],
+    full_window_summary: Mapping[str, Any],
+) -> str | None:
+    for raw_reason in hard_vetoes:
+        reason = str(raw_reason)
+        if reason in _LOSS_REPAIR_TRIGGER_REASONS:
+            return reason
+        if reason.endswith(_LOSS_REPAIR_TRIGGER_SUFFIXES):
+            return reason
+    try:
+        daily_net_below_min_count = int(
+            full_window_summary.get("daily_net_below_min_count") or 0
+        )
+    except (TypeError, ValueError):
+        daily_net_below_min_count = 0
+    if daily_net_below_min_count > 0:
+        return "daily_net_below_min"
+    return None
+
+
+def _apply_loss_control_tightening(
+    *,
+    params: dict[str, Any],
+    strategy_params: Mapping[str, Any],
+) -> bool:
+    changed = False
+    for key, floor in _LOSS_REPAIR_BPS_FLOORS.items():
+        if key not in params and key not in strategy_params:
+            continue
+        tightened = _tightened_bps(
+            params.get(key, strategy_params.get(key)), floor=floor
+        )
+        if tightened is not None:
+            params[key] = tightened
+            changed = True
+
+    for key in _LOSS_REPAIR_EXIT_LIMIT_KEYS:
+        if key not in params and key not in strategy_params:
+            continue
+        current = _decimal_or_none(params.get(key, strategy_params.get(key)))
+        if current is None or current <= 1:
+            continue
+        params[key] = "1"
+        changed = True
+
+    for key in _LOSS_REPAIR_LOCKOUT_KEYS:
+        if key not in params and key not in strategy_params:
+            continue
+        current = _decimal_or_none(params.get(key, strategy_params.get(key)))
+        if current is None or current < 0:
+            continue
+        repaired = min(
+            Decimal("14400"),
+            max(Decimal("1800"), current * Decimal("2")),
+        ).quantize(Decimal("1"))
+        if repaired > current:
+            params[key] = _decimal_payload(repaired)
+            changed = True
+    return changed
+
+
+def _apply_exposure_clamp(
+    *,
+    params: dict[str, Any],
+    overrides: dict[str, Any],
+    strategy_item: Mapping[str, Any],
+    strategy_params: Mapping[str, Any],
+) -> bool:
+    changed = False
+    for key in _LOSS_REPAIR_PARAM_EXPOSURE_KEYS:
+        if key not in params and key not in strategy_params:
+            continue
+        reduced = _reduced_exposure(params.get(key, strategy_params.get(key)))
+        if reduced is not None:
+            params[key] = reduced
+            changed = True
+
+    for key in _LOSS_REPAIR_STRATEGY_EXPOSURE_KEYS:
+        if key not in overrides and key not in strategy_item:
+            continue
+        reduced = _reduced_exposure(overrides.get(key, strategy_item.get(key)))
+        if reduced is not None:
+            overrides[key] = reduced
+            changed = True
+    return changed
+
+
+def _generate_loss_repair_children(
+    *,
+    params_candidate: Mapping[str, Any],
+    strategy_overrides: Mapping[str, Any],
+    candidate_configmap: Mapping[str, Any],
+    strategy_name: str,
+    hard_vetoes: Sequence[Any],
+    full_window_summary: Mapping[str, Any],
+    branch_count: int,
+) -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
+    trigger_reason = _loss_repair_trigger_reason(
+        hard_vetoes=hard_vetoes,
+        full_window_summary=full_window_summary,
+    )
+    if trigger_reason is None:
+        return []
+
+    strategy_item, strategy_params = _strategy_item_from_configmap(
+        configmap_payload=candidate_configmap,
+        strategy_name=strategy_name,
+    )
+    parent_key = _candidate_search_key(
+        params_candidate=params_candidate,
+        strategy_overrides=strategy_overrides,
+    )
+    children: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+    seen: set[str] = {parent_key}
+
+    def add_child(label: str, *, tighten_losses: bool, clamp_exposure: bool) -> None:
+        if len(children) >= max(1, branch_count):
+            return
+        next_params = dict(params_candidate)
+        next_overrides = dict(strategy_overrides)
+        changed = False
+        if tighten_losses:
+            changed = (
+                _apply_loss_control_tightening(
+                    params=next_params,
+                    strategy_params=strategy_params,
+                )
+                or changed
+            )
+        if clamp_exposure:
+            changed = (
+                _apply_exposure_clamp(
+                    params=next_params,
+                    overrides=next_overrides,
+                    strategy_item=strategy_item,
+                    strategy_params=strategy_params,
+                )
+                or changed
+            )
+        if not changed:
+            return
+        child_key = _candidate_search_key(
+            params_candidate=next_params,
+            strategy_overrides=next_overrides,
+        )
+        if child_key in seen:
+            return
+        seen.add(child_key)
+        children.append((f"{label}:{trigger_reason}", next_params, next_overrides))
+
+    add_child("loss_controls_and_exposure", tighten_losses=True, clamp_exposure=True)
+    add_child("loss_controls", tighten_losses=True, clamp_exposure=False)
+    add_child("exposure_clamp", tighten_losses=False, clamp_exposure=True)
+    return children
+
+
 def _rank_scored_candidates(scored: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not scored:
         return []
@@ -2864,9 +3153,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
             seed_candidates=seed_candidates,
         )
         initial_candidates_exhausted = False
-        worklist: deque[
-            tuple[dict[str, Any], dict[str, Any], int, str | None, str | None]
-        ] = deque()
+        worklist: deque[_WorklistItem] = deque()
         seen_candidate_keys: set[str] = set()
         cache_context: contextlib.AbstractContextManager[None]
         cache_context = (
@@ -2892,6 +3179,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     override_candidate,
                     prune_iteration,
                     pruned_symbol,
+                    loss_repair_reason,
                     parent_candidate_id,
                 ) = worklist.popleft()
                 candidate_key = _candidate_search_key(
@@ -3190,6 +3478,8 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                 }
                 if pruned_symbol is not None:
                     candidate_payload["pruned_symbol"] = pruned_symbol
+                if loss_repair_reason is not None:
+                    candidate_payload["loss_repair_reason"] = loss_repair_reason
                 if parent_candidate_id is not None:
                     candidate_payload["parent_candidate_id"] = parent_candidate_id
                 symbol_contributions = _symbol_contributions_from_replay_payload(
@@ -3625,6 +3915,35 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                                 next_override,
                                 prune_iteration + 1,
                                 removed_symbol,
+                                None,
+                                str(candidate_payload["candidate_id"]),
+                            )
+                        )
+                if prune_iteration < max(
+                    0, int(getattr(args, "loss_repair_iterations", 0))
+                ):
+                    for (
+                        repair_reason,
+                        next_params,
+                        next_override,
+                    ) in _generate_loss_repair_children(
+                        params_candidate=params_candidate,
+                        strategy_overrides=override_candidate,
+                        candidate_configmap=candidate_configmap,
+                        strategy_name=strategy_name,
+                        hard_vetoes=hard_vetoes,
+                        full_window_summary=full_window_summary,
+                        branch_count=max(
+                            1, int(getattr(args, "loss_repair_candidates", 1))
+                        ),
+                    ):
+                        worklist.append(
+                            (
+                                next_params,
+                                next_override,
+                                prune_iteration + 1,
+                                None,
+                                repair_reason,
                                 str(candidate_payload["candidate_id"]),
                             )
                         )
