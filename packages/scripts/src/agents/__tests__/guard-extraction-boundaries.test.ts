@@ -224,7 +224,7 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('retired GitHub issue Codex Kafka bridge')
     expect(content).toContain('github\\.issues\\.codex\\.tasks')
     expect(content).toContain('KAFKA_CODEX_TOPIC_STRUCTURED')
-    expect(content).toContain('CodexTaskSchema|toCodexTaskProto')
+    expect(content).toContain('CodexTaskSchema|CodexTaskMessage|CodexTaskStage|toCodexTaskProto')
     expect(content).toContain('github-webhook-codex-judge-topic.yaml')
     expect(content).toContain('github\\.webhook\\.codex\\.judge')
     expect(content).toContain('KAFKA_CODEX_JUDGE_TOPIC')

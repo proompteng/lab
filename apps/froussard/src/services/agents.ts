@@ -4,7 +4,7 @@ import {
   type AgentsServiceJsonResult,
 } from '@proompteng/agent-contracts/agent-runs-client'
 
-import type { CodexTaskMessage } from '@/codex'
+import type { GithubIssueAgentRunRequest } from '@/codex'
 import type { AppConfig } from '@/config'
 
 export type FroussardAgentsConfig = AppConfig['agents']
@@ -18,22 +18,22 @@ const optionalString = (value: string | undefined | null) => {
   return normalized && normalized.length > 0 ? normalized : undefined
 }
 
-const issueExternalId = (message: CodexTaskMessage) => `${message.repository}#${message.issueNumber}`
+const issueExternalId = (request: GithubIssueAgentRunRequest) => `${request.repository}#${request.issueNumber}`
 
 export const buildGithubIssueAgentRunPayload = (
   config: FroussardAgentsConfig,
-  message: CodexTaskMessage,
+  request: GithubIssueAgentRunRequest,
   deliveryId: string,
 ): Record<string, unknown> => ({
   namespace: config.namespace,
   agentRef: { name: config.agentName },
   implementation: {
-    summary: message.issueTitle || `Implement ${issueExternalId(message)}`,
-    text: message.prompt,
+    summary: request.issueTitle || `Implement ${issueExternalId(request)}`,
+    text: request.prompt,
     source: {
       provider: 'github',
-      externalId: issueExternalId(message),
-      ...(optionalString(message.issueUrl) ? { url: message.issueUrl } : {}),
+      externalId: issueExternalId(request),
+      ...(optionalString(request.issueUrl) ? { url: request.issueUrl } : {}),
     },
     contract: {
       requiredKeys: ['repository', 'issueNumber', 'base', 'head', 'stage'],
@@ -41,14 +41,14 @@ export const buildGithubIssueAgentRunPayload = (
     metadata: {
       stage: 'implementation',
       deliveryId,
-      sender: message.sender,
-      issuedAt: message.issuedAt,
-      ...(message.metadataVersion != null ? { metadataVersion: message.metadataVersion } : {}),
-      ...(message.iterations ? { iterations: message.iterations } : {}),
+      sender: request.sender,
+      issuedAt: request.issuedAt,
+      ...(request.metadataVersion != null ? { metadataVersion: request.metadataVersion } : {}),
+      ...(request.iterations ? { iterations: request.iterations } : {}),
     },
   },
   goal: {
-    objective: message.prompt,
+    objective: request.prompt,
     tokenBudget: config.goalTokenBudget,
   },
   runtime: {
@@ -58,19 +58,19 @@ export const buildGithubIssueAgentRunPayload = (
     },
   },
   parameters: {
-    repository: message.repository,
-    issueNumber: String(message.issueNumber),
-    issue_number: String(message.issueNumber),
-    base: message.base,
-    head: message.head,
+    repository: request.repository,
+    issueNumber: String(request.issueNumber),
+    issue_number: String(request.issueNumber),
+    base: request.base,
+    head: request.head,
     stage: 'implementation',
     deliveryId,
-    codexPrompt: message.prompt,
-    codex_prompt: message.prompt,
-    issueTitle: message.issueTitle,
-    issueBody: message.issueBody,
-    ...(optionalString(message.issueUrl) ? { issueUrl: message.issueUrl } : {}),
-    ...(message.metadataVersion != null ? { metadataVersion: String(message.metadataVersion) } : {}),
+    codexPrompt: request.prompt,
+    codex_prompt: request.prompt,
+    issueTitle: request.issueTitle,
+    issueBody: request.issueBody,
+    ...(optionalString(request.issueUrl) ? { issueUrl: request.issueUrl } : {}),
+    ...(request.metadataVersion != null ? { metadataVersion: String(request.metadataVersion) } : {}),
   },
   secrets: config.secrets,
   policy: {

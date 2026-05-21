@@ -1,6 +1,6 @@
 import { Schema } from 'effect'
 
-import { buildCodexBranchName, buildCodexPrompt, type CodexTaskMessage, normalizeLogin } from '@/codex'
+import { buildCodexBranchName, buildCodexPrompt, type GithubIssueAgentRunRequest, normalizeLogin } from '@/codex'
 import { parseCodexIssueMetadata } from '@/codex/issue-metadata'
 import type { ImplementationCommand } from '@/codex/workflow-machine'
 import { selectReactionRepository } from '@/codex-workflow'
@@ -188,7 +188,7 @@ export const handleIssueOpened = async (params: BaseIssueParams): Promise<Workfl
     issueUrl,
   })
 
-  const codexMessage: CodexTaskMessage = {
+  const agentRunRequest: GithubIssueAgentRunRequest = {
     stage: 'implementation',
     prompt,
     repository: repositoryFullName,
@@ -209,7 +209,7 @@ export const handleIssueOpened = async (params: BaseIssueParams): Promise<Workfl
     key: `issue-${issueNumber}-implementation`,
     agentRun: {
       deliveryId,
-      payload: buildGithubIssueAgentRunPayload(config.agents, codexMessage, deliveryId),
+      payload: buildGithubIssueAgentRunPayload(config.agents, agentRunRequest, deliveryId),
     },
   } as ImplementationCommand
 
@@ -326,7 +326,7 @@ export const handleIssueCommentCreated = async (params: BaseIssueParams): Promis
     issueUrl,
   })
 
-  const codexMessage: CodexTaskMessage = {
+  const agentRunRequest: GithubIssueAgentRunRequest = {
     stage: 'implementation',
     prompt,
     repository: repositoryFullName,
@@ -347,7 +347,7 @@ export const handleIssueCommentCreated = async (params: BaseIssueParams): Promis
     key: `issue-${issueNumber}-implementation`,
     agentRun: {
       deliveryId,
-      payload: buildGithubIssueAgentRunPayload(config.agents, codexMessage, deliveryId),
+      payload: buildGithubIssueAgentRunPayload(config.agents, agentRunRequest, deliveryId),
     },
   } as ImplementationCommand
 

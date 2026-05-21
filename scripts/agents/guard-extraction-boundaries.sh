@@ -752,7 +752,7 @@ fail_if_path_exists \
 
 fail_if_matches \
   "Froussard runtime must submit implementation runs directly to Agents instead of publishing the retired Codex task topic" \
-  'github\.issues\.codex\.tasks|github\.webhook\.codex\.judge|KAFKA_CODEX_TOPIC_STRUCTURED|KAFKA_CODEX_JUDGE_TOPIC|CodexTaskSchema|toCodexTaskProto|codexJudge' \
+  'github\.issues\.codex\.tasks|github\.webhook\.codex\.judge|KAFKA_CODEX_TOPIC_STRUCTURED|KAFKA_CODEX_JUDGE_TOPIC|CodexTaskSchema|CodexTaskMessage|CodexTaskStage|toCodexTaskProto|codexJudge' \
   "${ROOT_DIR}/apps/froussard/src/codex" \
   "${ROOT_DIR}/apps/froussard/src/config.ts" \
   "${ROOT_DIR}/apps/froussard/src/index.ts" \
