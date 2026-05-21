@@ -1,8 +1,5 @@
-import type { AgentsControllerHealthSnapshot } from '@proompteng/agent-contracts/agents-ready'
-import {
-  isControlPlaneHeartbeatFresh,
-  type ControlPlaneHeartbeatRow,
-} from '@proompteng/agent-contracts/control-plane-status'
+import type { AgentsControllerHealthSnapshot } from '@proompteng/agent-contracts'
+import { isControlPlaneHeartbeatFresh, type ControlPlaneHeartbeatRow } from '@proompteng/agent-contracts'
 import type { ControllerStatus, RuntimeAdapterStatus } from '~/server/control-plane-status-types'
 
 type ControllerHealth = AgentsControllerHealthSnapshot

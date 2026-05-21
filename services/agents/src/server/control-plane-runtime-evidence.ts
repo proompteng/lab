@@ -4,7 +4,7 @@ import type {
   ControlPlaneRolloutHealth,
   DeploymentRolloutStatus,
   WorkflowsReliabilityStatus,
-} from '@proompteng/agent-contracts/control-plane-status'
+} from '@proompteng/agent-contracts'
 
 import {
   createKubeGateway,
@@ -20,7 +20,7 @@ export type {
   DeploymentRolloutStatus,
   WorkflowFailureReason,
   WorkflowsReliabilityStatus,
-} from '@proompteng/agent-contracts/control-plane-status'
+} from '@proompteng/agent-contracts'
 
 export type ControlPlaneRuntimeEvidence = {
   workflows: WorkflowsReliabilityStatus

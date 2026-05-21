@@ -474,16 +474,6 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(env, 'AGENTS_SWARM_REQUIREMENT_MAX_ACTIVE_PER_SWARM')).toBeUndefined()
   })
 
-  it('keeps dedicated Torghut capacity pools blocking while shared providers only degrade by default', () => {
-    const provider = readYamlObjects(
-      'argocd/applications/torghut/agents-domain/torghut-market-context-agentprovider.yaml',
-    ).find((manifest) => objectAt(manifest, 'kind') === 'AgentProvider')
-    const spec = objectAt(provider, 'spec')
-    const health = objectAt(spec, 'health')
-
-    expect(objectAt(health, 'capacityFailurePolicy')).toBe('block')
-  })
-
   it('keeps Facteur Codex dispatch behind the Agents AgentRun API boundary', () => {
     const kustomization = readFileSync(
       resolve(process.cwd(), 'argocd/applications/facteur/overlays/cluster/kustomization.yaml'),

@@ -8,12 +8,8 @@ import type {
   DatabaseStatus,
   DeploymentRolloutStatus,
   WorkflowsReliabilityStatus,
-} from '@proompteng/agent-contracts/control-plane-status'
-import type {
-  ExecutionTrustStage,
-  ExecutionTrustStatus,
-  ExecutionTrustSwarm,
-} from '@proompteng/agent-contracts/execution-trust'
+} from '@proompteng/agent-contracts'
+import type { ExecutionTrustStage, ExecutionTrustStatus, ExecutionTrustSwarm } from '@proompteng/agent-contracts'
 import type {
   AdmissionPassportConsumerClass,
   AdmissionPassportDecision,
@@ -33,7 +29,7 @@ import type {
   RuntimeProofCellStatus,
   RuntimeProofCellStatusValue,
   RuntimeProofKind,
-} from '@proompteng/agent-contracts/runtime-admission'
+} from '@proompteng/agent-contracts'
 
 export type {
   AgentRunIngestionStatus,
@@ -55,12 +51,8 @@ export type {
   WorkflowDataConfidence,
   WorkflowFailureReason,
   WorkflowsReliabilityStatus,
-} from '@proompteng/agent-contracts/control-plane-status'
-export type {
-  ExecutionTrustStage,
-  ExecutionTrustStatus,
-  ExecutionTrustSwarm,
-} from '@proompteng/agent-contracts/execution-trust'
+} from '@proompteng/agent-contracts'
+export type { ExecutionTrustStage, ExecutionTrustStatus, ExecutionTrustSwarm } from '@proompteng/agent-contracts'
 export type {
   AdmissionPassportConsumerClass,
   AdmissionPassportDecision,
@@ -80,7 +72,7 @@ export type {
   RuntimeProofCellStatus,
   RuntimeProofCellStatusValue,
   RuntimeProofKind,
-} from '@proompteng/agent-contracts/runtime-admission'
+} from '@proompteng/agent-contracts'
 
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}

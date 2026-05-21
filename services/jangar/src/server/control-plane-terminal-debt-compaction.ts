@@ -5,7 +5,7 @@ import {
   SWARM_STAGE_CLEARANCE_ANNOTATION_ACTION_CLASS,
   SWARM_STAGE_CREDIT_ANNOTATION_ACTION_CLASS,
   SWARM_STAGE_LABEL,
-} from '@proompteng/agent-contracts/swarm-contracts'
+} from '@proompteng/agent-contracts'
 
 import type {
   ActionSloBudgetActionClass,

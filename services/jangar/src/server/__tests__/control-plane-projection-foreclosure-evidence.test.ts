@@ -4,7 +4,7 @@ const projectionAuthorityClientMocks = vi.hoisted(() => ({
   fetchAgentRunProjectionAuthorityFromAgentsService: vi.fn(),
 }))
 
-vi.mock('@proompteng/agent-contracts/agent-run-projection-authority-client', () => projectionAuthorityClientMocks)
+vi.mock('@proompteng/agent-contracts', () => projectionAuthorityClientMocks)
 
 vi.mock('~/server/db', () => ({
   getDb: () => null,

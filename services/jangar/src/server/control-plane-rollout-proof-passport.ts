@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 
-import { SWARM_STAGE_LABEL } from '@proompteng/agent-contracts/swarm-contracts'
+import { SWARM_STAGE_LABEL } from '@proompteng/agent-contracts'
 
 import type {
   ActionSloBudgetActionClass,

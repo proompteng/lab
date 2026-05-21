@@ -1,4 +1,4 @@
-import { submitAgentRunToAgentsService } from '@proompteng/agent-contracts/agent-runs-client'
+import { submitAgentRunToAgentsService } from '@proompteng/agent-contracts'
 
 export type TorghutMarketContextProviderDomain = 'fundamentals' | 'news'
 export type TorghutMarketContextSnapshotState = 'missing' | 'stale' | 'fresh'

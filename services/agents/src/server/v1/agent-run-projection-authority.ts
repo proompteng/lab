@@ -5,7 +5,7 @@ import type {
   AgentsAgentRunProjectionAuthorityResult,
   AgentsProjectionAuthorityState,
   AgentsProjectionValueGate,
-} from '@proompteng/agent-contracts/agent-run-projection-authority-client'
+} from '@proompteng/agent-contracts'
 import { Context, Data, Effect, Layer } from 'effect'
 
 import { errorResponse, okResponse } from '../http'

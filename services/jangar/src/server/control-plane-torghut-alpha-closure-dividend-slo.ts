@@ -6,7 +6,7 @@ import {
   stringList,
   stringValues,
 } from '~/server/control-plane-torghut-evidence-normalizers'
-import { asRecord } from '@proompteng/agent-contracts/json'
+import { asRecord } from '@proompteng/agent-contracts'
 
 export const ALPHA_CLOSURE_DIVIDEND_SLO_SCHEMA_VERSION = 'torghut.alpha-closure-dividend-slo.v1'
 

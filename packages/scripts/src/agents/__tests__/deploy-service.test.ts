@@ -228,13 +228,13 @@ runner:
       __private.resolveDatabaseSecretRequirement({
         database: {
           secretRef: {
-            name: 'agents-db-next-app',
+            name: 'agents-db-app',
           },
         },
       }),
     ).toEqual({
       namespace: 'agents',
-      name: 'agents-db-next-app',
+      name: 'agents-db-app',
     })
 
     expect(
@@ -242,7 +242,7 @@ runner:
         database: {
           url: 'postgresql://agents:pw@postgres/agents',
           secretRef: {
-            name: 'agents-db-next-app',
+            name: 'agents-db-app',
           },
         },
       }),

@@ -33,12 +33,12 @@ the exact filesystem state produced by iteration `N`.
 ## Current State
 
 - `AgentRun` supports `workflow.steps[]` with retries/timeouts:
-  - API types: `services/jangar/api/agents/v1alpha1/types.go`
+  - API types: `services/agents/api/agents/v1alpha1/types.go`
   - CRD: `charts/agents/crds/agents.proompteng.ai_agentruns.yaml`
 - Controller runs workflow steps in-order and submits one Job for the active step attempt:
-  - `services/jangar/src/server/agents-controller/workflow-reconciler.ts`
+  - `services/agents/src/server/agents-controller/workflow-reconciler.ts`
 - Workload volumes support `pvc`, `emptyDir`, and `secret`:
-  - `services/jangar/src/server/agents-controller/job-runtime.ts`
+  - `services/agents/src/server/agents-controller/job-runtime.ts`
 - No loop API exists today.
 
 ## Terminology
@@ -237,7 +237,7 @@ Iteration history can grow quickly, so status is bounded.
 
 Controller limits (proposed):
 
-- `JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOP_STATUS_HISTORY_LIMIT` (default `50` per step).
+- `AGENTS_CONTROLLER_WORKFLOW_LOOP_STATUS_HISTORY_LIMIT` (default `50` per step).
 
 Compaction rules:
 
@@ -249,7 +249,7 @@ Compaction rules:
 ## Validation Rules (proposed)
 
 - `loop.maxIterations >= 1`.
-- `loop.maxIterations <= JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOP_MAX_ITERATIONS` (default `20`).
+- `loop.maxIterations <= AGENTS_CONTROLLER_WORKFLOW_LOOP_MAX_ITERATIONS` (default `20`).
 - `loop.state.volumeNames` must be unique.
 - `loop.state.volumeNames[*]` must resolve to existing workload volume names.
 - If `loop.state.required=true`, at least one listed volume must be mutable persistent storage (`type=pvc`).
@@ -271,23 +271,23 @@ Compaction rules:
 ### CRD + API types
 
 - Add loop fields to Go API:
-  - `services/jangar/api/agents/v1alpha1/types.go`
+  - `services/agents/api/agents/v1alpha1/types.go`
 - Regenerate CRD:
   - `charts/agents/crds/agents.proompteng.ai_agentruns.yaml`
 
 ### Controller runtime
 
 - Parse and validate loop spec:
-  - `services/jangar/src/server/agents-controller/workflow.ts`
+  - `services/agents/src/server/agents-controller/workflow.ts`
 - Reconcile iterations and condition evaluation:
-  - `services/jangar/src/server/agents-controller/workflow-reconciler.ts`
+  - `services/agents/src/server/agents-controller/workflow-reconciler.ts`
 - Persist iteration metadata and compaction counters in step status.
 
 ### Env/config additions (proposed)
 
-- `JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED` (default `false` for phased rollout).
-- `JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOP_MAX_ITERATIONS` (default `20`).
-- `JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOP_STATUS_HISTORY_LIMIT` (default `50`).
+- `AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED` (default `false` for phased rollout).
+- `AGENTS_CONTROLLER_WORKFLOW_LOOP_MAX_ITERATIONS` (default `20`).
+- `AGENTS_CONTROLLER_WORKFLOW_LOOP_STATUS_HISTORY_LIMIT` (default `50`).
 
 ## Rollout Plan
 
@@ -371,7 +371,7 @@ kubectl -n agents get job -l agents.proompteng.ai/agent-run=codex-workflow-loop-
 
 ## References
 
-- AgentRun workflow schema: `services/jangar/api/agents/v1alpha1/types.go`
-- Workflow reconciler: `services/jangar/src/server/agents-controller/workflow-reconciler.ts`
-- Job volume mounting: `services/jangar/src/server/agents-controller/job-runtime.ts`
+- AgentRun workflow schema: `services/agents/api/agents/v1alpha1/types.go`
+- Workflow reconciler: `services/agents/src/server/agents-controller/workflow-reconciler.ts`
+- Job volume mounting: `services/agents/src/server/agents-controller/job-runtime.ts`
 - Workspace PVC primitive: `charts/agents/crds/workspaces.proompteng.ai_workspaces.yaml`

@@ -1,41 +1,78 @@
-export type * from './agents-health-client'
-export type * from './agent-runs-client'
-export type * from './agent-run-projection-authority-client'
-export type * from './agent-run-terminal-events-client'
-export type * from './agent-messages-client'
-export type * from './agent-jobs-client'
-export type * from './agents-ready'
-export type * from './agent-message-artifacts'
-export type * from './agent-run-reruns-client'
-export type * from './codex-orchestration-parameters'
-export type * from './codex-runs-client'
-export type * from './control-plane-status'
+export * from './agents-health-client'
+export * from './agent-runs-client'
+export * from './agent-run-projection-authority-client'
+export * from './agent-run-terminal-events-client'
+export * from './agent-messages-client'
+export * from './agent-jobs-client'
+export * from './agents-ready'
+export * from './agent-message-artifacts'
+export * from './agent-run-reruns-client'
+export * from './agents-http'
+export * from './codex-orchestration-parameters'
+export * from './codex-runs-client'
+export * from './control-plane-status'
 export {
+  asRecord,
+  asString,
   canonicalizeForJsonHash,
   errorResponse,
   normalizeNamespace,
   okResponse,
   parseJsonBody,
+  readNested,
   requireIdempotencyKey,
   stableJsonStringifyForHash,
   type JsonRecord,
 } from './json'
 export * from './controller-witness'
-export type * from './execution-trust'
-export type * from './execution-trust-client'
-export type * from './memory-client'
-export type * from './orchestration-runs-client'
+export * from './execution-trust'
+export * from './execution-trust-client'
+export * from './memory-client'
+export * from './orchestration-runs-client'
 export * from './policy-validation'
-export type * from './policy-reference-client'
+export * from './policy-reference-client'
 export * from './runtime-admission'
-export type * from './signals-client'
-export * from './supporting-primitives-evidence-pressure'
-export * from './supporting-primitives-material-evidence-trace'
-export { makeName } from './supporting-primitives-naming'
-export * from './supporting-primitives-requirement-bridge'
-export * from './supporting-primitives-schedule-identity'
-export type * from './supporting-primitives-status'
-export * from './swarm-analysis'
+export * from './signals-client'
+export {
+  ACTIVE_PHASES,
+  cadenceToCron,
+  clampUtf8,
+  collectRecentFailureRuns,
+  collectStaleStageSignals,
+  countConsecutiveBlockingFailures,
+  countConsecutiveFailures,
+  countConsecutiveProviderCapacityFailures,
+  countIdempotencyDuplicates,
+  DEFAULT_SWARM_REQUIREMENT_SCOPE_FIELD_LIMIT,
+  deriveStageStaggerMinute,
+  filterRunsAfterTime,
+  getRunTimestamp,
+  hashNameSuffix,
+  isIdempotencyDuplicateRun,
+  isNatsChannel,
+  isProviderCapacityFailureRun,
+  makeGenerateName,
+  makeHashedName,
+  makeRequirementObjective,
+  normalizeParameterMap,
+  parseDurationToMs,
+  parseTimeOrNull,
+  PROVIDER_CAPACITY_EXHAUSTED_REASON,
+  requirementIdForSignal,
+  resolveConsecutiveFailureFreezeReason,
+  resolveLatestActiveRunTime,
+  resolveLatestSuccessfulRunTime,
+  resolveStageEvery,
+  resolveStageTargetRef,
+  resolveStageTargetResource,
+  sortByMostRecentRun,
+  STAGE_CADENCE_KEY,
+  STAGE_LAST_RUN_KEY,
+  STAGE_NAMES,
+  stringifyUnknown,
+  TERMINAL_FAILURE_PHASES,
+  TERMINAL_SUCCESS_PHASES,
+} from './swarm-analysis'
+export type { StageName, StageTargetRef } from './swarm-analysis'
 export * from './swarm-contracts'
-export * from './swarm-material-reentry'
-export type * from './swarm-read-client'
+export * from './swarm-read-client'

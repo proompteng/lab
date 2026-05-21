@@ -9,7 +9,7 @@ import {
   stringList,
   stringValues,
 } from '~/server/control-plane-torghut-evidence-normalizers'
-import { asRecord } from '@proompteng/agent-contracts/json'
+import { asRecord } from '@proompteng/agent-contracts'
 
 const ALPHA_READINESS_STRIKE_LEDGER_SCHEMA_VERSION = 'torghut.alpha-readiness-strike-ledger.v1'
 

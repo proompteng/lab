@@ -6,7 +6,7 @@ import type {
   AgentsMemoryNotesStatsInput as MemoriesStatsInput,
   AgentsPersistMemoryNoteInput as PersistMemoryInput,
   AgentsRetrieveMemoryNotesInput as RetrieveMemoryInput,
-} from '@proompteng/agent-contracts/memory-client'
+} from '@proompteng/agent-contracts'
 
 import { resolveStoreDb, type Db } from './db'
 import { requestEmbedding } from './embedding-client'

@@ -82,6 +82,7 @@ export const parseDurationToMs = (raw: string) => {
   const amount = Number(match[1])
   if (!Number.isFinite(amount) || amount <= 0) return null
   const unit = match[2]
+  if (!unit) return null
   if (unit.startsWith('s')) return amount * 1000
   if (unit.startsWith('m')) return amount * 60 * 1000
   if (unit.startsWith('h')) return amount * 60 * 60 * 1000

@@ -75,19 +75,22 @@ describe('agents controller resource reconcilers', () => {
     const setStatus = createSetStatus()
     const { reconcileAgentProvider } = createReconcilers(setStatus)
     const provider = {
-      metadata: { name: 'torghut-market-context', namespace: 'agents', generation: 7 },
+      metadata: { name: 'dedicated-capacity-provider', namespace: 'agents', generation: 7 },
       spec: {
         binary: '/usr/local/bin/agent-runner',
         health: { capacityFailurePolicy: 'block' },
       },
     }
     const agents = [
-      { metadata: { name: 'torghut-news-agent' }, spec: { providerRef: { name: 'torghut-market-context' } } },
+      {
+        metadata: { name: 'dedicated-capacity-agent' },
+        spec: { providerRef: { name: 'dedicated-capacity-provider' } },
+      },
     ]
     const runs = [
       {
         metadata: { name: 'run-capacity', creationTimestamp: '2026-05-18T13:55:00.000Z' },
-        spec: { agentRef: { name: 'torghut-news-agent' } },
+        spec: { agentRef: { name: 'dedicated-capacity-agent' } },
         status: {
           phase: 'Failed',
           reason: PROVIDER_CAPACITY_EXHAUSTED_REASON,

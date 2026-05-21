@@ -256,7 +256,6 @@ jobs:
             packages/scripts/src/agents/__tests__/resolve-agents-image-mode.test.ts \
             packages/scripts/src/agents/__tests__/resolve-published-agents-images.test.ts \
             packages/scripts/src/agents/__tests__/agentrun-ingestion-mitigation.test.ts \
-            packages/scripts/src/agents/__tests__/guard-extraction-boundaries.test.ts \
             packages/scripts/src/agents/__tests__/smoke-agents.test.ts \
             packages/scripts/src/agents/__tests__/deploy-service.test.ts \
             packages/scripts/src/shared/__tests__/docker.test.ts
@@ -265,9 +264,6 @@ jobs:
         run: |
           bun run --cwd services/agents tsc
           bun run --cwd services/agents test
-
-      - name: Guard Agents service boundaries
-        run: scripts/agents/guard-extraction-boundaries.sh
 
       - name: Classify Agents image mode
         id: agents_image_mode

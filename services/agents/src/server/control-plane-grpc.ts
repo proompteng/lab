@@ -1,10 +1,10 @@
 import { connect } from 'node:net'
 
-import type { GrpcStatus } from '@proompteng/agent-contracts/control-plane-status'
+import type { GrpcStatus } from '@proompteng/agent-contracts'
 
 import { resolveAgentctlGrpcConfig } from './agentctl-grpc-config'
 
-export type { GrpcStatus } from '@proompteng/agent-contracts/control-plane-status'
+export type { GrpcStatus } from '@proompteng/agent-contracts'
 
 const DEFAULT_GRPC_PORT = 50051
 const DEFAULT_GRPC_HEALTH_TIMEOUT_MS = 750

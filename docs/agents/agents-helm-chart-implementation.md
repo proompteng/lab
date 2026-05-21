@@ -77,7 +77,7 @@ graph TD
     TNetpol["NetworkPolicy/agents-tailscale-ingress (ingress allowlist)"]
     DashCM["ConfigMap/agents-dashboard (Grafana dashboard JSON)"]
 
-    DbSecret["Secret/agents-db-next-app (DATABASE_URL)"]
+    DbSecret["Secret/agents-db-app (DATABASE_URL)"]
     TokenEnv["Secret/agents-github-token-env (envFrom)"]
 
     RunSpecCM["ConfigMap/<run>-spec-step-<n>-attempt-<n> (created by controller)"]

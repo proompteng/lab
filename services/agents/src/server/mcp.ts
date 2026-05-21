@@ -9,7 +9,7 @@ import {
   type AgentsMemoryNoteRecord,
   type AgentsPersistMemoryNoteInput,
   type AgentsRetrieveMemoryNotesInput,
-} from '@proompteng/agent-contracts/memory-client'
+} from '@proompteng/agent-contracts'
 
 import { createPostgresMemoriesStore, type MemoriesStore } from './memory-notes-store'
 

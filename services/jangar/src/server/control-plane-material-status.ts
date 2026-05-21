@@ -17,7 +17,7 @@ import type {
 } from '~/server/control-plane-failure-domain-leases'
 import { buildNegativeEvidenceRouterStatus } from '~/server/control-plane-negative-evidence-router'
 import type { ProjectionForeclosureEvidence } from '~/server/control-plane-projection-foreclosure-notary'
-import type { RuntimeAdmissionSnapshot } from '@proompteng/agent-contracts/runtime-admission'
+import type { RuntimeAdmissionSnapshot } from '@proompteng/agent-contracts'
 import {
   buildSourceRolloutTruthExchange,
   type SourceRolloutTruthEnvironment,

@@ -1,8 +1,8 @@
 import { Context, Data, Effect, Layer } from 'effect'
 
-import { buildControlPlaneControllerIngestionSettlement } from '@proompteng/agent-contracts/control-plane-status'
-import type { ExecutionTrustStatus } from '@proompteng/agent-contracts/execution-trust'
-import { buildControllerWitnessQuorum } from '@proompteng/agent-contracts/controller-witness'
+import { buildControlPlaneControllerIngestionSettlement } from '@proompteng/agent-contracts'
+import type { ExecutionTrustStatus } from '@proompteng/agent-contracts'
+import { buildControllerWitnessQuorum } from '@proompteng/agent-contracts'
 import { assessAgentRunIngestion, getAgentsControllerHealth, type AgentsControllerHealth } from './agents-controller'
 import { buildRuntimeAdmissionSnapshot } from './control-plane-runtime-admission'
 import type { GrpcStatus } from './control-plane-grpc'

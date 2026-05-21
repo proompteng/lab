@@ -137,7 +137,6 @@ Run these before changing prompt schema or runtime behavior:
 scripts/agents/validate-agents.sh
 bun run --filter @proompteng/agents test
 bun run --filter @proompteng/agents tsc
-bash scripts/agents/guard-extraction-boundaries.sh
 mise exec helm@3 -- helm lint charts/agents
 mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents >/tmp/agents.yaml
 ```

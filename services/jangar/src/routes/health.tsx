@@ -1,9 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import {
-  buildAgentsDependencyHealth,
-  fetchAgentsHealthFromAgentsService,
-} from '@proompteng/agent-contracts/agents-health-client'
+import { buildAgentsDependencyHealth, fetchAgentsHealthFromAgentsService } from '@proompteng/agent-contracts'
 import { resolveRuntimeServiceName } from '~/server/runtime-identity'
 
 export const getHealthHandler = async () => {

@@ -2,7 +2,7 @@ import {
   submitAgentRunToAgentsService,
   type AgentsAgentRunSubmitInput,
   type AgentsServiceJsonResult,
-} from '@proompteng/agent-contracts/agent-runs-client'
+} from '@proompteng/agent-contracts'
 
 import type { GithubIssueAgentRunRequest } from '@/codex'
 import type { AppConfig } from '@/config'

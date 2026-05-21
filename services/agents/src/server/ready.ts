@@ -1,4 +1,4 @@
-import type { AgentRunIngestionStatus } from '@proompteng/agent-contracts/control-plane-status'
+import type { AgentRunIngestionStatus } from '@proompteng/agent-contracts'
 
 export type AgentRunIngestionHealth = {
   namespace: string

@@ -1,7 +1,7 @@
 import { Effect, pipe } from 'effect'
 import { describe, expect, it } from 'vitest'
 
-import type { AgentsMemoryNoteRecord } from '@proompteng/agent-contracts/memory-client'
+import type { AgentsMemoryNoteRecord } from '@proompteng/agent-contracts'
 
 import { handleMcpRequestEffect, MemoryNotesMcp, type MemoryNotesMcpService } from './mcp'
 

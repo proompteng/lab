@@ -11,7 +11,7 @@ import {
   type PolicyResourceGetter,
   type PolicyResourceKind,
   type PolicySubject,
-} from '@proompteng/agent-contracts/policy-validation'
+} from '@proompteng/agent-contracts'
 
 import { type KubernetesClient, RESOURCE_MAP } from './kube-types'
 

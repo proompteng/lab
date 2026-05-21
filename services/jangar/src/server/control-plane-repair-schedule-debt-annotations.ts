@@ -1,9 +1,9 @@
 import {
   SWARM_ADMISSION_ANNOTATION_PRODUCER_REVISION,
   SWARM_ADMISSION_ANNOTATION_RUNTIME_DIGEST,
-} from '@proompteng/agent-contracts/swarm-contracts'
+} from '@proompteng/agent-contracts'
 
-import { asRecord, asString, readNested } from '@proompteng/agent-contracts/json'
+import { asRecord, asString, readNested } from '@proompteng/agent-contracts'
 
 export const SCHEDULE_DEBT_ANNOTATION_LANE = 'jangar.proompteng.ai/schedule-debt-lane'
 export const SCHEDULE_DEBT_ANNOTATION_SOURCE_REF = 'jangar.proompteng.ai/schedule-debt-source-ref'

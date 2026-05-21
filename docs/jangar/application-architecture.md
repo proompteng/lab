@@ -155,7 +155,7 @@ These ownership lanes are the operational review boundaries for Jangar changes.
   - `services/jangar/src/server/kube-*.ts`
   - `services/jangar/src/server/primitives-*.ts`
 - Domain readiness and typed Agents service consumers
-  - `@proompteng/agent-contracts/*-client` imports in `services/jangar/src/server/**`
+  - root `@proompteng/agent-contracts` imports in `services/jangar/src/server/**`
   - `services/jangar/src/server/torghut-simulation-mutation-gate.ts`
   - `services/jangar/src/server/control-plane-*.ts`
 - Agents-owned platform surfaces

@@ -6,7 +6,7 @@ import {
   type AgentsMemoryOperation,
   type AgentsMemoryOperationResult,
   type AgentsServiceJsonResult,
-} from '@proompteng/agent-contracts/memory-client'
+} from '@proompteng/agent-contracts'
 
 import { resolveEmbeddingConfig } from './memory-config'
 

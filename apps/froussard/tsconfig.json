@@ -15,7 +15,8 @@
     "verbatimModuleSyntax": true,
     "noEmit": true,
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@proompteng/agent-contracts": ["../../packages/agent-contracts/src/index.ts"]
     },
 
     // Best practices

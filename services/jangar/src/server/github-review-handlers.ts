@@ -1,4 +1,4 @@
-import { fetchCodexRunsByPrFromAgentsService } from '@proompteng/agent-contracts/codex-runs-client'
+import { fetchCodexRunsByPrFromAgentsService } from '@proompteng/agent-contracts'
 
 import {
   mergePullRequest,

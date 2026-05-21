@@ -6,7 +6,7 @@ import type {
 import {
   fetchAgentRunProjectionAuthorityFromAgentsService,
   type AgentsAgentRunProjectionAuthorityClaim,
-} from '@proompteng/agent-contracts/agent-run-projection-authority-client'
+} from '@proompteng/agent-contracts'
 import { getDb } from '~/server/db'
 
 export type JsonRecord = Record<string, unknown>

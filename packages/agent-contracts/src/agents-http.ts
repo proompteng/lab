@@ -44,7 +44,7 @@ type AgentsJsonRequestOptions = {
 
 export type AgentsHttpMethod = 'GET' | 'POST' | 'PATCH'
 
-export type AgentsFetch = (input: URL | RequestInfo, init?: RequestInit) => Promise<Response>
+export type AgentsFetch = (input: URL | string, init?: RequestInit) => Promise<Response>
 
 export type AgentsJsonEffectRequest = {
   path: string

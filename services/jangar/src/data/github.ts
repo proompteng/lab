@@ -1,4 +1,4 @@
-import type { CodexRunRecord } from '@proompteng/agent-contracts/codex-runs-client'
+import type { CodexRunRecord } from '@proompteng/agent-contracts'
 
 export type GithubCheckRun = {
   id: string

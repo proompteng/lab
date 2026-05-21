@@ -3,7 +3,7 @@ import {
   fetchAgentRunTerminalEventsFromAgentsService,
   type AgentsAgentRunTerminalEvent,
   type AgentsAgentRunTerminalEventAckInput,
-} from '@proompteng/agent-contracts/agent-run-terminal-events-client'
+} from '@proompteng/agent-contracts'
 import { resolveWhitepaperControlConfig } from '~/server/whitepaper-config'
 import { maybeFinalizeWhitepaperRun, type WhitepaperFinalizeTerminalStatusInput } from '~/server/whitepaper-finalize'
 

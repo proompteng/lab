@@ -79,7 +79,7 @@ Create the namespace and database Secret:
 ```bash
 kubectl create namespace agents
 
-kubectl -n agents create secret generic agents-db-next-app \
+kubectl -n agents create secret generic agents-db-app \
   --from-literal=url='postgresql://USER:PASSWORD@HOST:5432/agents?sslmode=require'
 ```
 
@@ -107,7 +107,7 @@ imagePolicy:
 
 database:
   secretRef:
-    name: agents-db-next-app
+    name: agents-db-app
     key: url
 
 controller:
@@ -274,7 +274,7 @@ Use an existing Secret for production:
 ```yaml
 database:
   secretRef:
-    name: agents-db-next-app
+    name: agents-db-app
     key: url
   caSecret:
     name: agents-db-ca
@@ -392,7 +392,7 @@ Helm cannot safely read live Secret or ConfigMap payloads during template render
 rolloutChecksums:
   enabled: true
   secrets:
-    - name: agents-db-next-app
+    - name: agents-db-app
       namespace: agents
       checksum: d34db33fd34db33fd34db33fd34db33fd34db33fd34db33fd34db33fd34db33f
 ```
@@ -400,7 +400,7 @@ rolloutChecksums:
 Generate a stable Secret payload hash:
 
 ```bash
-kubectl -n agents get secret agents-db-next-app -o json |
+kubectl -n agents get secret agents-db-app -o json |
   jq -cS '{data: .data, binaryData: .binaryData}' |
   sha256sum | awk '{print $1}'
 ```
@@ -475,7 +475,7 @@ Check database connectivity and migrations first:
 
 ```bash
 kubectl -n agents logs deploy/agents --tail=200
-kubectl -n agents get secret agents-db-next-app -o jsonpath='{.data.url}' | base64 -d
+kubectl -n agents get secret agents-db-app -o jsonpath='{.data.url}' | base64 -d
 ```
 
 Common causes:

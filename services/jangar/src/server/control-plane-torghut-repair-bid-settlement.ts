@@ -7,7 +7,7 @@ import {
   stringList,
   stringValues,
 } from '~/server/control-plane-torghut-evidence-normalizers'
-import { asRecord } from '@proompteng/agent-contracts/json'
+import { asRecord } from '@proompteng/agent-contracts'
 
 export const normalizeRepairBidSettlementLot = (value: unknown): TorghutRepairBidSettlementLot | null => {
   const lot = asRecord(value)

@@ -1,7 +1,7 @@
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
-  name: agents-db-next
+  name: agents-db
   namespace: agents
   annotations:
     argocd.argoproj.io/sync-wave: "-5"
@@ -26,5 +26,5 @@ spec:
       reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "pgadmin"
       reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
       reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "pgadmin"
-# CNPG emits application credentials in `agents-db-next-app` (uri, user, password, host, port, dbname).
+# CNPG emits application credentials in `agents-db-app` (uri, user, password, host, port, dbname).
 # The chart and generic Memory resource consume that generated secret directly after the Agents-owned DB cutover.

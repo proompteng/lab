@@ -6,7 +6,7 @@ import {
   stringValues,
   uniqueStrings,
 } from '~/server/control-plane-torghut-evidence-normalizers'
-import { asRecord } from '@proompteng/agent-contracts/json'
+import { asRecord } from '@proompteng/agent-contracts'
 
 const FRESHNESS_CARRY_LEDGER_SCHEMA_VERSION = 'torghut.freshness-carry-ledger.v1'
 

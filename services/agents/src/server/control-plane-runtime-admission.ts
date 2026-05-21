@@ -3,8 +3,8 @@ import { accessSync, constants, existsSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import process from 'node:process'
 
-import type { ExecutionTrustStatus } from '@proompteng/agent-contracts/execution-trust'
-import { buildRuntimeProofSurface } from '@proompteng/agent-contracts/runtime-admission'
+import type { ExecutionTrustStatus } from '@proompteng/agent-contracts'
+import { buildRuntimeProofSurface } from '@proompteng/agent-contracts'
 import type {
   AdmissionPassportConsumerClass,
   AdmissionPassportDecision,
@@ -14,7 +14,7 @@ import type {
   RuntimeKitComponentStatus,
   RuntimeKitDecision,
   RuntimeKitStatus,
-} from '@proompteng/agent-contracts/runtime-admission'
+} from '@proompteng/agent-contracts'
 import {
   resolveCodexNatsHelperPathCandidatesFromConfig,
   resolveRuntimeAdmissionConfig,
