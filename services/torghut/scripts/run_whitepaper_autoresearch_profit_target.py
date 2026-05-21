@@ -8026,6 +8026,21 @@ def _candidate_board_net_pnl(row: Mapping[str, Any]) -> Decimal:
     return _decimal(row.get("net_pnl_per_day"))
 
 
+def _candidate_board_lower_bound_net_pnl(row: Mapping[str, Any]) -> Decimal:
+    values = [
+        _decimal(row.get(key))
+        for key in (
+            "net_pnl_per_day",
+            "market_impact_stress_net_pnl_per_day",
+            "delay_adjusted_depth_stress_net_pnl_per_day",
+            "double_oos_cost_shock_net_pnl_per_day",
+            "double_oos_net_pnl_per_day",
+        )
+        if _string(row.get(key))
+    ]
+    return min(values) if values else Decimal("0")
+
+
 def _candidate_board_best_executed_candidate(
     rows: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any] | None:
@@ -8067,6 +8082,80 @@ def _candidate_board_closest_promotion_candidate(
         reverse=True,
     )
     return replayed_rows[0]
+
+
+def _candidate_board_paper_probation_candidate(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    target: Decimal,
+) -> dict[str, Any] | None:
+    candidates = [
+        dict(row)
+        for row in rows
+        if bool(row.get("has_replay_evidence"))
+        and not bool(row.get("oracle_passed"))
+        and _candidate_board_activity_count(row) > 0
+        and _string(row.get("candidate_id"))
+        and _string(row.get("hypothesis_id"))
+        and _string(row.get("runtime_family"))
+        and _string(row.get("runtime_strategy_name"))
+    ]
+    if not candidates:
+        return None
+
+    def rank(row: Mapping[str, Any]) -> tuple[Any, ...]:
+        lower_bound = _candidate_board_lower_bound_net_pnl(row)
+        target_shortfall = max(target - lower_bound, Decimal("0"))
+        return (
+            lower_bound > 0,
+            _candidate_board_int_field(row, "filled_order_count") > 0,
+            _candidate_board_int_field(row, "submitted_order_count") > 0,
+            -target_shortfall,
+            lower_bound,
+            _decimal(row.get("active_day_ratio")),
+            _decimal(row.get("positive_day_ratio")),
+            -_decimal(row.get("best_day_share"), default="1"),
+            -_decimal(row.get("worst_day_loss")),
+            -_candidate_board_oracle_blocker_count(row),
+            _candidate_board_activity_count(row),
+            -_rank_sort_value(row.get("rank")),
+            _string(row.get("candidate_spec_id")),
+        )
+
+    candidates.sort(key=rank, reverse=True)
+    candidate = dict(candidates[0])
+    lower_bound = _candidate_board_lower_bound_net_pnl(candidate)
+    final_promotion_blockers = [
+        _string(blocker)
+        for blocker in cast(Sequence[Any], candidate.get("blockers") or ())
+        if _string(blocker)
+    ]
+    if not final_promotion_blockers:
+        final_promotion_blockers.append("final_promotion_requires_runtime_governance")
+    candidate.update(
+        {
+            "candidate_selection": "oracle_recommended_paper_probation",
+            "paper_probation_tier": "paper_probation",
+            "paper_probation_authorized": True,
+            "probation_allowed": True,
+            "paper_probation_authorization_scope": "evidence_collection_only",
+            "evidence_collection_stage": "paper",
+            "probation_reason": "runtime_evidence_collection_only",
+            "selection_reason": "target_met_but_oracle_blocked"
+            if bool(candidate.get("target_met"))
+            else "closest_lower_bound_economics_below_target",
+            "selected_by": "candidate_board_paper_probation_candidate",
+            "probation_lower_bound_net_pnl_per_day": str(lower_bound),
+            "probation_target_shortfall": str(max(target - lower_bound, Decimal("0"))),
+            "promotion_allowed": False,
+            "promotion_gate": "existing_runtime_governance_fail_closed",
+            "final_promotion_authorized": False,
+            "final_promotion_allowed": False,
+            "promotion_blockers": list(dict.fromkeys(final_promotion_blockers)),
+            "final_promotion_blockers": list(dict.fromkeys(final_promotion_blockers)),
+        }
+    )
+    return candidate
 
 
 def _candidate_board_status_digest(rows: Sequence[Mapping[str, Any]]) -> str:
@@ -8264,35 +8353,65 @@ def _candidate_board_runtime_window_import_plan(
         if dedupe_key in seen_keys:
             continue
         seen_keys.add(dedupe_key)
-        targets.append(
-            {
-                "candidate_spec_id": candidate_spec_id,
-                "candidate_id": candidate_id,
-                "hypothesis_id": hypothesis_id,
-                "observed_stage": "paper",
-                "strategy_family": strategy_family,
-                "strategy_name": strategy_name,
-                "source_kind": "paper_runtime_observed",
-                "source_manifest_ref": _candidate_board_hypothesis_manifest_ref(
-                    hypothesis_id
-                ),
-                "dataset_snapshot_ref": _string(row.get("dataset_snapshot_id")),
-                "artifact_refs": [
-                    _string(ref)
-                    for ref in cast(
-                        Sequence[Any], row.get("replay_artifact_refs") or ()
-                    )
-                    if _string(ref)
-                ],
-                "candidate_blockers": [
-                    _string(blocker)
-                    for blocker in cast(Sequence[Any], row.get("blockers") or ())
-                    if _string(blocker)
-                ],
-                "handoff": "runtime_window_import_only",
-                "promotion_gate": "existing_runtime_governance_fail_closed",
-            }
-        )
+        target = {
+            "candidate_spec_id": candidate_spec_id,
+            "candidate_id": candidate_id,
+            "hypothesis_id": hypothesis_id,
+            "observed_stage": "paper",
+            "strategy_family": strategy_family,
+            "strategy_name": strategy_name,
+            "source_kind": "paper_runtime_observed",
+            "source_manifest_ref": _candidate_board_hypothesis_manifest_ref(
+                hypothesis_id
+            ),
+            "dataset_snapshot_ref": _string(row.get("dataset_snapshot_id")),
+            "artifact_refs": [
+                _string(ref)
+                for ref in cast(Sequence[Any], row.get("replay_artifact_refs") or ())
+                if _string(ref)
+            ],
+            "candidate_blockers": [
+                _string(blocker)
+                for blocker in cast(Sequence[Any], row.get("blockers") or ())
+                if _string(blocker)
+            ],
+            "handoff": "runtime_window_import_only",
+            "promotion_gate": "existing_runtime_governance_fail_closed",
+        }
+        if bool(row.get("paper_probation_authorized")):
+            target.update(
+                {
+                    "candidate_selection": _string(row.get("candidate_selection")),
+                    "paper_probation_authorized": True,
+                    "paper_probation_authorization_scope": _string(
+                        row.get("paper_probation_authorization_scope")
+                    ),
+                    "evidence_collection_stage": _string(
+                        row.get("evidence_collection_stage")
+                    ),
+                    "probation_allowed": bool(row.get("probation_allowed")),
+                    "probation_reason": _string(row.get("probation_reason")),
+                    "selection_reason": _string(row.get("selection_reason")),
+                    "selected_by": _string(row.get("selected_by")),
+                    "probation_lower_bound_net_pnl_per_day": _string(
+                        row.get("probation_lower_bound_net_pnl_per_day")
+                    ),
+                    "probation_target_shortfall": _string(
+                        row.get("probation_target_shortfall")
+                    ),
+                    "promotion_allowed": False,
+                    "final_promotion_authorized": False,
+                    "final_promotion_allowed": False,
+                    "final_promotion_blockers": [
+                        _string(blocker)
+                        for blocker in cast(
+                            Sequence[Any], row.get("final_promotion_blockers") or ()
+                        )
+                        if _string(blocker)
+                    ],
+                }
+            )
+        targets.append(target)
 
     return {
         "schema_version": "torghut.runtime-window-import-plan.v1",
@@ -8479,6 +8598,21 @@ def _candidate_board_payload(
                 "double_oos_cost_shock_net_pnl_per_day": _candidate_board_decimal_field(
                     scorecard, "double_oos_cost_shock_net_pnl_per_day"
                 ),
+                "active_day_ratio": _candidate_board_decimal_field(
+                    scorecard, "active_day_ratio"
+                ),
+                "positive_day_ratio": _candidate_board_decimal_field(
+                    scorecard, "positive_day_ratio"
+                ),
+                "best_day_share": _candidate_board_decimal_field(
+                    scorecard, "best_day_share"
+                ),
+                "worst_day_loss": _candidate_board_decimal_field(
+                    scorecard, "worst_day_loss"
+                ),
+                "avg_filled_notional_per_day": _candidate_board_decimal_field(
+                    scorecard, "avg_filled_notional_per_day"
+                ),
                 "market_impact_proof": market_impact_proof,
                 "regime_specialist_validation": regime_specialist_validation,
                 "rejected_signal_outcome_learning": rejected_signal_summary,
@@ -8501,12 +8635,9 @@ def _candidate_board_payload(
     best_research_candidate = rows[0] if rows else None
     best_executed_candidate = _candidate_board_best_executed_candidate(rows)
     closest_promotion_candidate = _candidate_board_closest_promotion_candidate(rows)
-    paper_probation_candidate = (
-        closest_promotion_candidate
-        if closest_promotion_candidate is not None
-        and bool(closest_promotion_candidate.get("target_met"))
-        and not bool(closest_promotion_candidate.get("oracle_passed"))
-        else None
+    paper_probation_candidate = _candidate_board_paper_probation_candidate(
+        rows,
+        target=target,
     )
     promotion_ready = _boolish(promotion_readiness.get("promotable"))
     promotion_subject = _candidate_board_portfolio_promotion_subject(
