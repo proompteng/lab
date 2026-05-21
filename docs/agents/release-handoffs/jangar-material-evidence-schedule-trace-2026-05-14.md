@@ -53,7 +53,7 @@ Required local validation for this source change:
 - `bun run --cwd services/jangar test -- src/server/__tests__/supporting-primitives-controller.test.ts -t "material evidence"`
 - `bun run --cwd services/jangar test -- src/server/__tests__/supporting-primitives-controller.test.ts -t "builds schedule runner command"`
 - `bun run --cwd services/jangar check:module-sizes`
-- `bunx oxfmt --check services/jangar/src/server/supporting-primitives-schedule-runner.ts services/jangar/src/server/supporting-primitives-stage-clearance.ts services/jangar/src/server/supporting-primitives-material-evidence-trace.ts services/jangar/src/server/supporting-primitives-stage-clearance-status.ts services/jangar/src/server/__tests__/supporting-primitives-controller.test.ts docs/agents/designs/206-jangar-material-evidence-settlement-spine-and-repair-dispatch-budget-2026-05-14.md docs/agents/release-handoffs/jangar-material-evidence-schedule-trace-2026-05-14.md`
+- `bunx oxfmt --check services/jangar/src/server/supporting-primitives-schedule-runner.ts services/jangar/src/server/supporting-primitives-stage-clearance.ts packages/agent-contracts/src/supporting-primitives-material-evidence-trace.ts services/jangar/src/server/supporting-primitives-stage-clearance-status.ts services/jangar/src/server/__tests__/supporting-primitives-controller.test.ts docs/agents/designs/206-jangar-material-evidence-settlement-spine-and-repair-dispatch-budget-2026-05-14.md docs/agents/release-handoffs/jangar-material-evidence-schedule-trace-2026-05-14.md`
 
 ## Risks and rollback
 

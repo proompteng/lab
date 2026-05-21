@@ -100,6 +100,16 @@ describe('agents extraction boundary guard', () => {
       'Jangar memory provider must use Agents memory operation APIs instead of Agents-owned Secrets or DB tables',
     )
     expect(content).toContain(
+      'Jangar must not retain the Agents memory note store or local memory HTTP parser after Agents owns memory notes',
+    )
+    expect(content).toContain('Jangar must not expose generic memory compatibility routes')
+    expect(content).toContain('Jangar MCP must not expose generic memory tools')
+    expect(content).toContain(
+      'Agents service must own memory note persistence, retrieval, count, stats, and MCP endpoints',
+    )
+    expect(content).toContain('Memories CLI helpers must not target Jangar memory compatibility APIs')
+    expect(content).toContain('Memories CLI helpers must target the Agents memory note API')
+    expect(content).toContain(
       'Shared Argo Workflows GitOps must not retain generic Agents WorkflowTemplate or Argo completion ingestion manifests',
     )
     expect(content).toContain('Shared Argo Workflows GitOps must not retain the retired Codex Docker privileged policy')
@@ -120,11 +130,19 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('Agents docs must not retain the domain-specific Torghut/Jangar swarm e2e runbook')
     expect(content).toContain('reflection-(allowed|auto)-namespaces')
     expect(content).toContain('jangar-db-ca')
-    expect(content).toContain('AGENTS_CODEX_RERUN_ORCHESTRATION')
+    expect(content).toContain('rerunOrchestration: codex-rerun')
+    expect(content).toContain('rerunOrchestrationNamespace: agents')
+    expect(content).toContain('Jangar deployment must not configure Agents-owned Codex rerun orchestration')
+    expect(content).toContain('Jangar docs must not present Agents-owned Codex rerun env as Jangar judge configuration')
     expect(content).toContain('AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION')
     expect(content).toContain('JANGAR_CODEX_RERUN_ORCHESTRATION|JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION')
+    expect(content).toContain('Jangar Codex judge must not own AgentRun rerun queue after Agents rerun API extraction')
+    expect(content).toContain('rerunOrchestrationName|rerunOrchestrationNamespace')
+    expect(content).toContain('agent-runs/[$]id/(reruns|callbacks)')
     expect(content).toContain('legacy generic runner image aliases')
     expect(content).toContain('AGENTS_AGENT_IMAGE|JANGAR_AGENT_RUNNER_IMAGE|JANGAR_AGENT_IMAGE')
+    expect(content).toContain('AGENTS_CONTROLLER_* instead of the extracted double-prefixed')
+    expect(content).toContain('AGENTS_AGENTS_CONTROLLER')
     expect(content).toContain('runner-level NATS auth for legacy exec progress helpers')
     expect(content).toContain('live AgentProvider spec.secretEnv before the live CRD schema catches up')
     expect(content).toContain('Argo CD Application reads after control-plane extraction')
@@ -154,6 +172,35 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('broad control-plane-resources-client module')
     expect(content).toContain('broad control-plane-resources-client package subpath')
     expect(content).toContain('agents-service-client')
+    expect(content).toContain('Jangar must not own generic supporting-primitives helper contracts')
+    expect(content).toContain('supporting-primitives-evidence-pressure.ts')
+    expect(content).toContain('supporting-primitives-(evidence-pressure|material-evidence-trace|naming')
+    expect(content).toContain('Jangar must not expose generic memory compatibility routes')
+    expect(content).toContain('Jangar UI and route tree must not link to generic memory compatibility pages or APIs')
+    expect(content).toContain(
+      'Jangar must not expose generic Codex projection compatibility routes after Agents owns Codex projections',
+    )
+    expect(content).toContain(
+      'Jangar app shell must not advertise generic Codex projection pages after Agents owns them',
+    )
+    expect(content).toContain('services/jangar/src/data/codex.ts')
+    expect(content).toContain('services/jangar/src/server/codex-rerun-forwarding.ts')
+    expect(content).toContain('services/jangar/src/routes/api/github/pulls/\\$owner/\\$repo/\\$number/judge-runs.tsx')
+    expect(content).toContain(
+      '/codex/(runs|search)|/api/codex/(github-events|issues|rerun|runs)|/api/github/pulls/.*judge-runs',
+    )
+    expect(content).toContain('codex-judge-store')
+    expect(content).toContain('canonical Codex run projection v1 route registration')
+    expect(content).toContain('codex/runs/(by-id|by-pr)')
+    expect(content).toContain(
+      'Jangar must not own the generic Codex judge evaluator/store after Agents owns Codex projections',
+    )
+    expect(content).toContain('Jangar GitOps must not own generic Codex GitHub event projection ingestion')
+    expect(content).toContain('Jangar GitOps must not configure retired CI event stream flags')
+    expect(content).toContain('Agents GitOps must own Codex GitHub event projection ingestion')
+    expect(content).toContain('github\\.webhook\\.events')
+    expect(content).toContain('Agents GitOps must not consume the retired Froussard Codex judge topic')
+    expect(content).toContain('Active GitHub/Codex docs must not describe the retired Froussard Codex judge topic')
     expect(content).toContain('dedicated /v1/agent-runs/resources contract')
     expect(content).toContain('v1 status and message APIs instead of web-internal /api/agents paths')
     expect(content).toContain('legacy /api/agents routes or route registrations')
@@ -175,12 +222,18 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('getRunByWorkflow|selectCodexJudgeRunByWorkflow')
     expect(content).toContain('updateArtifactsFromWorkflow|workflowTag')
     expect(content).toContain('retired GitHub issue Codex Kafka bridge')
-    expect(content).toContain(
-      'github\\.issues\\.codex\\.tasks|KAFKA_CODEX_TOPIC_STRUCTURED|CodexTaskSchema|toCodexTaskProto',
-    )
+    expect(content).toContain('github\\.issues\\.codex\\.tasks')
+    expect(content).toContain('KAFKA_CODEX_TOPIC_STRUCTURED')
+    expect(content).toContain('CodexTaskSchema|CodexTaskMessage|CodexTaskStage|toCodexTaskProto')
+    expect(content).toContain('github-webhook-codex-judge-topic.yaml')
+    expect(content).toContain('github\\.webhook\\.codex\\.judge')
+    expect(content).toContain('KAFKA_CODEX_JUDGE_TOPIC')
+    expect(content).toContain('services/jangar/src/server/proto/codex_task_pb.ts')
     expect(content).toContain('/agent-runs/github-issues|codex_listener|codex-listen|froussardpb|CodexTask')
     expect(content).toContain('Jangar Codex judge current schema and queries must use AgentRun-native physical columns')
     expect(content).toContain('workflow_name|workflow_uid|workflow_namespace|codex_judge_runs_workflow')
+    expect(content).toContain('Jangar migrations must not create or mutate the retired Codex judge schema')
+    expect(content).toContain("sql\\\\.ref\\\\('codex_judge\\\\.")
     expect(content).toContain('workflow-shaped agent-message identity fields')
     expect(content).toContain('Agents implementation contracts must not normalize workflow-shaped stage aliases')
     expect(content).toContain('Torghut AgentRun producers must use Agents naming and service defaults')
@@ -194,5 +247,20 @@ describe('agents extraction boundary guard', () => {
     )
     expect(content).toContain('agents-control-plane runtime profile')
     expect(content).toContain('agents-controllers runtime profile')
+    expect(content).toContain(
+      'Agents v1 AgentRuns HTTP edge must not act as a compatibility barrel for submit/store internals',
+    )
+    expect(content).toContain('Agents v1 AgentRuns dependency contract must live in the dedicated dependency module')
+    expect(content).toContain('Agents v1 AgentRuns dependency module must not import the HTTP handler')
+    expect(content).toContain('AgentRun submit/read/runtime modules must not import dependency types')
+    expect(content).toContain('Agents v1 AgentRun submit module must not act as a compatibility barrel')
+    expect(content).toContain(
+      'Agents v1 control-plane status HTTP edge must run the typed Effect program instead of a broad try/catch wrapper',
+    )
+    expect(content).toContain('getAgentsControlPlaneStatusEffect|makeAgentsControlPlaneStatusLayer|Effect\\.either')
+    expect(content).toContain(
+      'Agents-owned controller-ingestion settlement must stay domain-neutral and avoid Jangar/Torghut evidence types',
+    )
+    expect(content).toContain('TorghutConsumerEvidenceStatus|torghut_|jangar\\.')
   })
 })

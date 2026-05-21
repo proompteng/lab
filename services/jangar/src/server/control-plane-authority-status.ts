@@ -1,5 +1,8 @@
 import type { AgentsControllerHealthSnapshot } from '@proompteng/agent-contracts/agents-ready'
-import { isHeartbeatFresh, type ControlPlaneHeartbeatRow } from '~/server/control-plane-heartbeat-store'
+import {
+  isControlPlaneHeartbeatFresh,
+  type ControlPlaneHeartbeatRow,
+} from '@proompteng/agent-contracts/control-plane-status'
 import type { ControllerStatus, RuntimeAdapterStatus } from '~/server/control-plane-status-types'
 
 type ControllerHealth = AgentsControllerHealthSnapshot
@@ -25,7 +28,7 @@ const buildAuthorityFromHeartbeat = (input: {
   }
 
   const observedAt = input.row.observed_at ? new Date(input.row.observed_at).toISOString() : null
-  const fresh = isHeartbeatFresh(input.row, input.now)
+  const fresh = isControlPlaneHeartbeatFresh(input.row, input.now)
   const baseMessage = input.row.message?.trim() || ''
 
   return {

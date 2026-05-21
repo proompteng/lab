@@ -213,7 +213,7 @@ const rateLimitSchedule = (() => {
   return Schedule.whileInput<unknown>(shouldRetryRateLimit)(normalized)
 })()
 
-const buildHeaders = (token: string | null, userAgent = 'jangar-codex-judge') => {
+const buildHeaders = (token: string | null, userAgent = 'jangar-github-client') => {
   const headers: Record<string, string> = {
     'user-agent': userAgent,
     accept: 'application/vnd.github+json',

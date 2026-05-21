@@ -11,37 +11,32 @@ describe('migration registration', () => {
       .filter((name) => name.endsWith('.ts'))
       .map((name) => name.replace(/\.ts$/, ''))
       .sort()
+    const expectedRegisteredMigrations = [...migrationFiles, ...__test__.getRetiredMigrationNames()].sort()
 
-    expect(__test__.getRegisteredMigrations()).toEqual(migrationFiles)
+    expect(__test__.getRegisteredMigrations()).toEqual(expectedRegisteredMigrations)
   })
 
-  it('keeps Agents-owned historical migrations as no-op tombstones', () => {
-    const tombstoneMigrationFiles = [
-      '20251229_workflow_comms_agent_messages',
-      '20260111_jangar_primitives',
-      '20260111_jangar_primitives_indexes',
-      '20260205_agents_control_plane_cache',
-      '20260208_jangar_agentrun_idempotency',
-      '20260308_agents_control_plane_component_heartbeats',
-    ]
-    const ddlPatterns = [
-      /\bsql`/i,
-      /\bcreate\s+(schema|table|index|unique\s+index)\b/i,
-      /\balter\s+table\b/i,
-      /\binsert\s+into\b/i,
-      /\bdelete\s+from\b/i,
-      /\bdrop\s+(schema|table|index)\b/i,
-    ]
+  it('keeps Agents-owned historical migrations registered only as central tombstones', () => {
+    const migrationDir = new URL('../migrations', import.meta.url)
+    const migrationFiles = new Set(
+      readdirSync(fileURLToPath(migrationDir))
+        .filter((name) => name.endsWith('.ts'))
+        .map((name) => name.replace(/\.ts$/, '')),
+    )
 
-    for (const name of tombstoneMigrationFiles) {
+    for (const name of __test__.getRetiredMigrationNames()) {
       expect(__test__.getRegisteredMigrations()).toContain(name)
-      const migrationPath = new URL(`../migrations/${name}.ts`, import.meta.url)
-      const content = readFileSync(fileURLToPath(migrationPath), 'utf8')
-
-      for (const pattern of ddlPatterns) {
-        expect(content).not.toMatch(pattern)
-      }
+      expect(migrationFiles).not.toContain(name)
     }
+  })
+
+  it('does not create the retired Codex judge schema from Jangar bootstrap migrations', () => {
+    const migrationPath = new URL('../migrations/20251228_init.ts', import.meta.url)
+    const normalized = readFileSync(fileURLToPath(migrationPath), 'utf8').toLowerCase()
+
+    expect(normalized).not.toContain('create schema if not exists codex_judge')
+    expect(normalized).not.toContain("sql.ref('codex_judge.")
+    expect(normalized).not.toContain('references codex_judge.')
   })
 
   it('keeps the Torghut quant pipeline health account/window index registered', () => {
@@ -92,15 +87,9 @@ describe('migration registration', () => {
     expect(normalized).toContain('on torghut_control_plane.quant_metrics_latest(account, "window")')
   })
 
-  it('keeps the Codex judge AgentRun column rename migration registered', () => {
-    const migrationPath = new URL('../migrations/20260520_codex_judge_agentrun_columns.ts', import.meta.url)
-    const normalized = readFileSync(fileURLToPath(migrationPath), 'utf8').toLowerCase().replace(/\s+/g, ' ')
-
-    expect(normalized).toContain('rename column workflow_name to agent_run_name')
-    expect(normalized).toContain('rename column workflow_uid to agent_run_uid')
-    expect(normalized).toContain('rename column workflow_namespace to agent_run_namespace')
-    expect(normalized).toContain('create unique index if not exists codex_judge_runs_agent_run_uid_idx')
-    expect(normalized).toContain('create unique index if not exists codex_judge_runs_agent_run_name_idx')
+  it('keeps the Codex judge AgentRun column migration registered as a retired Agents backfill handoff', () => {
+    expect(__test__.getRegisteredMigrations()).toContain('20260520_codex_judge_agentrun_columns')
+    expect(__test__.getRetiredMigrationNames()).toContain('20260520_codex_judge_agentrun_columns')
   })
 })
 

@@ -81,6 +81,40 @@ const respondToThreadStart = async (child: FakeChildProcess, threadId: string) =
   })
 }
 
+const respondToThreadResume = async (
+  child: FakeChildProcess,
+  threadId: string,
+  inspect?: (request: JsonRpcRequest) => void,
+) => {
+  const request = await nextRequest(child)
+  expect(request.method).toBe('thread/resume')
+  inspect?.(request)
+  writeLine(child, {
+    id: request.id,
+    result: {
+      thread: {
+        id: threadId,
+        preview: '',
+        modelProvider: 'test',
+        createdAt: 0,
+        path: '',
+        turns: [],
+      },
+      model: 'gpt-5.5',
+      modelProvider: 'openai',
+      serviceTier: null,
+      cwd: '/workspace/lab',
+      instructionSources: [],
+      approvalPolicy: 'never',
+      approvalsReviewer: { type: 'none' },
+      sandbox: { type: 'dangerFullAccess' },
+      permissionProfile: null,
+      activePermissionProfile: null,
+      reasoningEffort: 'high',
+    },
+  })
+}
+
 const respondToTurnStart = async (
   child: FakeChildProcess,
   turnId: string,
@@ -197,6 +231,45 @@ describe('CodexAppServerClient v2 notifications', () => {
     })
 
     await expect(runPromise).rejects.toThrow('thread/goal/set requires experimentalApi capability (code -32600)')
+    client.stop()
+  })
+
+  it('resumes existing threads with current runtime config before starting a turn', async () => {
+    const { child, client } = setupClient({
+      cwd: '/workspace/lab',
+      approval: 'never',
+      sandbox: 'danger-full-access',
+      defaultModel: 'gpt-5.5',
+      defaultEffort: 'high',
+      threadConfig: { mcp_servers: {}, web_search: 'live' },
+      persistExtendedHistory: true,
+    })
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const runPromise = client.runTurnStream('hello', {
+      threadId: 'thread-existing',
+      baseInstructions: 'system prompt',
+      developerInstructions: 'developer prompt',
+    })
+    await respondToThreadResume(child, 'thread-existing', (request) => {
+      expect(request.params).toMatchObject({
+        threadId: 'thread-existing',
+        model: 'gpt-5.5',
+        cwd: '/workspace/lab',
+        approvalPolicy: 'never',
+        sandbox: 'danger-full-access',
+        config: { mcp_servers: {}, web_search: 'live' },
+        baseInstructions: 'system prompt',
+        developerInstructions: 'developer prompt',
+        excludeTurns: true,
+        persistExtendedHistory: true,
+      })
+    })
+    await respondToTurnStart(child, 'turn-1')
+    const { threadId } = await runPromise
+
+    expect(threadId).toBe('thread-existing')
     client.stop()
   })
 

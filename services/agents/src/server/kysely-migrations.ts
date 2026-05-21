@@ -1,4 +1,4 @@
-import { type Migration, type MigrationProvider, Migrator } from 'kysely'
+import { type Migration, type MigrationProvider, Migrator, sql } from 'kysely'
 
 import type { Db } from './db'
 import { resolveAgentsMigrationsConfig } from './migrations-config'
@@ -10,8 +10,14 @@ import * as agentsWorkflowCommsAgentMessagesMigration from './migrations/2026021
 import * as agentsCommsAgentMessagesMigration from './migrations/20260519_agents_comms_agent_messages'
 import * as agentsCommsAgentRunIdentityMigration from './migrations/20260520_agents_comms_agent_run_identity'
 import * as agentsCommsAgentRunNameLookupMigration from './migrations/20260520_agents_comms_agent_run_name_lookup'
+import * as agentsAgentRunRerunSubmissionsMigration from './migrations/20260520_agents_agentrun_rerun_submissions'
+import * as agentsCodexRunProjectionMigration from './migrations/20260520_agents_codex_run_projection'
+import * as agentsCodexLegacyBackfillMigration from './migrations/20260521_agents_codex_legacy_backfill'
+import * as agentsMemoryNotesMigration from './migrations/20260521_agents_memory_notes'
 
 type MigrationMap = Record<string, Migration>
+
+const REQUIRED_EXTENSIONS = ['vector', 'pgcrypto'] as const
 
 class StaticMigrationProvider implements MigrationProvider {
   constructor(private readonly migrations: MigrationMap) {}
@@ -28,6 +34,10 @@ const migrations: MigrationMap = {
   '20260208_agents_agentrun_idempotency': agentsAgentRunIdempotencyMigration,
   '20260212_agents_workflow_comms_agent_messages': agentsWorkflowCommsAgentMessagesMigration,
   '20260519_agents_comms_agent_messages': agentsCommsAgentMessagesMigration,
+  '20260520_agents_agentrun_rerun_submissions': agentsAgentRunRerunSubmissionsMigration,
+  '20260520_agents_codex_run_projection': agentsCodexRunProjectionMigration,
+  '20260521_agents_codex_legacy_backfill': agentsCodexLegacyBackfillMigration,
+  '20260521_agents_memory_notes': agentsMemoryNotesMigration,
   '20260520_agents_comms_agent_run_identity': agentsCommsAgentRunIdentityMigration,
   '20260520_agents_comms_agent_run_name_lookup': agentsCommsAgentRunNameLookupMigration,
 }
@@ -44,7 +54,25 @@ const resolveMigrationsMode = () => resolveAgentsMigrationsConfig(process.env).m
 
 const resolveAllowUnorderedMigrations = () => resolveAgentsMigrationsConfig(process.env).allowUnorderedMigrations
 
+const ensureExtensions = async (db: Db) => {
+  const { rows: extensionRows } = await sql<{ extname: string }>`
+    SELECT extname FROM pg_extension WHERE extname IN ('vector', 'pgcrypto')
+  `.execute(db)
+
+  const installed = new Set(extensionRows.map((row) => row.extname))
+  const missing = REQUIRED_EXTENSIONS.filter((ext) => !installed.has(ext))
+  if (missing.length > 0) {
+    throw new Error(
+      `missing required Postgres extensions: ${missing.join(', ')}. ` +
+        'Install them as a privileged user (e.g. `CREATE EXTENSION vector; CREATE EXTENSION pgcrypto;`) ' +
+        'or configure CNPG bootstrap.initdb.postInitApplicationSQL to create them at cluster init.',
+    )
+  }
+}
+
 const runMigrations = async (db: Db) => {
+  await ensureExtensions(db)
+
   const migrator = new Migrator({
     db,
     provider: migrationProvider,

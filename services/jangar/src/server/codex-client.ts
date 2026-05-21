@@ -7,14 +7,19 @@ import { resolveCodexClientConfig } from './runtime-tooling-config'
 type Factory = (options?: { defaultModel?: string }) => CodexAppServerClient
 type JsonValue = number | string | boolean | JsonValue[] | { [key: string]: JsonValue | undefined } | null
 
-const resolveMcpUrl = () => resolveCodexClientConfig(process.env).mcpUrl
+const resolveAgentsMcpUrl = () => resolveCodexClientConfig(process.env).agentsMcpUrl
+
+const resolveAtlasMcpUrl = () => resolveCodexClientConfig(process.env).atlasMcpUrl
 
 const resolveCodexBinary = () => resolveCodexClientConfig(process.env).binaryPath
 
 const buildMcpServers = () => {
   const servers: Record<string, { [key: string]: JsonValue | undefined }> = {
     memories: {
-      url: resolveMcpUrl(),
+      url: resolveAgentsMcpUrl(),
+    },
+    atlas: {
+      url: resolveAtlasMcpUrl(),
     },
   }
   if (process.env.ALPACA_API_KEY && process.env.ALPACA_SECRET_KEY) {

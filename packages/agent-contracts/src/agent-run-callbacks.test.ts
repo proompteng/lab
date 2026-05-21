@@ -96,12 +96,14 @@ describe('agent-run-callbacks', () => {
       agent_run_id: 'run-456',
       agent_run_name: 'agentrun-456',
       agent_run_namespace: 'agents',
+      pr_url: 'https://github.com/proompteng/lab/pull/7299',
       last_assistant_message: 'opened PR',
     })
 
     expect(parsed.runId).toBe('run-456')
     expect(parsed.agentRunName).toBe('agentrun-456')
     expect(parsed.agentRunNamespace).toBe('agents')
+    expect(parsed.prNumber).toBe(7299)
     expect(parsed.notifyPayload).toEqual(
       expect.objectContaining({
         agent_run_id: 'run-456',

@@ -13,9 +13,8 @@ import {
   type PolicyChecks,
   validatePolicies,
 } from '../primitives-policy'
-import type { EnvSource } from '../runtime-env'
 
-import type { AgentRunsApiDependencies } from './agent-runs'
+import type { AgentRunRuntimeConfigOptions, AgentRunsApiDependencies } from './agent-runs-dependencies'
 import {
   AgentRunAdmissionRejectedError,
   AgentRunConflictError,
@@ -31,25 +30,14 @@ import {
   toErrorMessage,
 } from './agent-run-errors'
 import { AgentRunStoreService, makeAgentRunStoreService } from './agent-run-store'
-import { type AgentRunPayload, type WorkflowStepPayload, parseGoal, parseOptionalNumber } from './agent-runs-payload'
+import {
+  type AgentRunPayload,
+  type WorkflowLoopPayload,
+  type WorkflowStepPayload,
+  parseGoal,
+  parseOptionalNumber,
+} from './agent-runs-payload'
 import { buildDeliveryIdLabels } from './delivery-labels'
-
-export {
-  AgentRunAdmissionRejectedError,
-  AgentRunConflictError,
-  AgentRunForbiddenError,
-  AgentRunInvalidPayloadError,
-  AgentRunKubeError,
-  AgentRunNotFoundError,
-  AgentRunPolicyDeniedError,
-  AgentRunStorageError,
-  agentRunSubmitDetails,
-  agentRunSubmitStatus,
-  describeAgentRunSubmitError,
-} from './agent-run-errors'
-export type { AgentRunSubmitError, AgentRunSubmitSuccess } from './agent-run-errors'
-export { AgentRunStoreService, makeAgentRunStoreLayer, makeAgentRunStoreService } from './agent-run-store'
-export type { AgentRunsApiStore } from './agent-run-store'
 
 type AgentRunQueueDepthRecorder = NonNullable<AgentRunsApiDependencies['recordAgentQueueDepth']>
 type AgentRunAuditContextResolver = NonNullable<AgentRunsApiDependencies['resolveAuditContextFromRequest']>
@@ -142,11 +130,6 @@ export type AgentRunSubmissionConfig = {
     readonly perRepo: number
     readonly cluster: number
   }
-}
-
-export type AgentRunRuntimeConfigOptions = {
-  readonly env?: EnvSource
-  readonly now?: () => number
 }
 
 type AgentRunRuntimeConfigServiceDefinition = {
@@ -370,6 +353,69 @@ const parseWorkflowStepNumber = (value: unknown, path: string): number | undefin
   return Math.trunc(parsed)
 }
 
+const compactRecord = <T extends Record<string, unknown>>(record: T): T =>
+  Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined)) as T
+
+const parsePositiveWorkflowStepNumber = (value: unknown, path: string): number | undefined => {
+  const parsed = parseWorkflowStepNumber(value, path)
+  if (parsed !== undefined && parsed < 1) {
+    throw new Error(`${path} must be >= 1`)
+  }
+  return parsed
+}
+
+const parseWorkflowLoop = (value: unknown, path: string): WorkflowLoopPayload | undefined => {
+  if (value == null) return undefined
+  const loop = asRecord(value)
+  if (!loop) {
+    throw new Error(`${path} must be an object`)
+  }
+  const maxIterations = parsePositiveWorkflowStepNumber(loop.maxIterations, `${path}.maxIterations`)
+  if (maxIterations === undefined) {
+    throw new Error(`${path}.maxIterations is required`)
+  }
+  const conditionRaw = asRecord(loop.condition)
+  const sourceRaw = asRecord(conditionRaw?.source)
+  const stateRaw = asRecord(loop.state)
+  const volumeNamesRaw = stateRaw?.volumeNames
+  if (volumeNamesRaw != null && !Array.isArray(volumeNamesRaw)) {
+    throw new Error(`${path}.state.volumeNames must be an array`)
+  }
+  const volumeNames = Array.isArray(volumeNamesRaw)
+    ? volumeNamesRaw.filter((item): item is string => typeof item === 'string')
+    : undefined
+
+  return {
+    maxIterations,
+    ...(conditionRaw
+      ? {
+          condition: compactRecord({
+            type: asString(conditionRaw.type) ?? undefined,
+            expression: asString(conditionRaw.expression) ?? undefined,
+            ...(sourceRaw
+              ? {
+                  source: compactRecord({
+                    type: asString(sourceRaw.type) ?? undefined,
+                    path: asString(sourceRaw.path) ?? undefined,
+                    onMissing: asString(sourceRaw.onMissing) ?? undefined,
+                    onInvalid: asString(sourceRaw.onInvalid) ?? undefined,
+                  }),
+                }
+              : {}),
+          }),
+        }
+      : {}),
+    ...(stateRaw
+      ? {
+          state: compactRecord({
+            required: stateRaw.required === true,
+            ...(volumeNames ? { volumeNames } : {}),
+          }),
+        }
+      : {}),
+  }
+}
+
 const parseWorkflowSteps = (value: Record<string, unknown> | null): WorkflowStepPayload[] | undefined => {
   if (!value) return undefined
   const rawSteps = value.steps
@@ -415,6 +461,8 @@ const parseWorkflowSteps = (value: Record<string, unknown> | null): WorkflowStep
         step.retryBackoffSeconds,
         `workflow.steps[${index}].retryBackoffSeconds`,
       ),
+      timeoutSeconds: parseWorkflowStepNumber(step.timeoutSeconds, `workflow.steps[${index}].timeoutSeconds`),
+      loop: parseWorkflowLoop(step.loop, `workflow.steps[${index}].loop`),
     }
   })
 }
@@ -792,6 +840,8 @@ export const createAgentRunResource = (
             workload: step.workload ?? undefined,
             retries: step.retries ?? undefined,
             retryBackoffSeconds: step.retryBackoffSeconds ?? undefined,
+            timeoutSeconds: step.timeoutSeconds ?? undefined,
+            loop: step.loop ?? undefined,
           })),
         }
       : undefined,

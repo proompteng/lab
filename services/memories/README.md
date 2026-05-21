@@ -1,8 +1,8 @@
 # memories
 
-This directory hosts Bun CLI helpers for saving and retrieving memories via Jangar's REST endpoint.
+This directory hosts Bun CLI helpers for saving and retrieving memories through the Agents memory note API.
 
-Note: this service is intended for local/dev agents. Production deployments should use Jangar directly (`services/jangar`).
+Note: this service is intended for local/dev agents. Production deployments should use the Agents service directly (`services/agents`).
 
 ## Setup
 
@@ -10,20 +10,20 @@ Note: this service is intended for local/dev agents. Production deployments shou
 bun install
 ```
 
-### Jangar endpoint
+### Agents endpoint
 
 By default the helpers auto-detect runtime and use the REST endpoints:
 
-- `POST /api/memories`
-- `GET /api/memories`
+- `POST /v1/memory-notes`
+- `GET /v1/memory-notes`
 
 Default base URL selection:
 
-- In Kubernetes namespace `jangar`: `http://jangar`
-- In any other Kubernetes namespace: `http://jangar.jangar.svc.cluster.local`
-- Outside Kubernetes: `http://jangar.ide-newton.ts.net`
+- In Kubernetes namespace `agents`: `http://agents`
+- In any other Kubernetes namespace: `http://agents.agents.svc.cluster.local`
+- Outside Kubernetes: `https://agents.k8s.proompteng.ai`
 
-Override the base URL by setting `MEMORIES_JANGAR_URL` (or `JANGAR_BASE_URL` / `MEMORIES_BASE_URL`).
+Override the base URL by setting `MEMORIES_AGENTS_URL` (or `AGENTS_SERVICE_BASE_URL` / `MEMORIES_BASE_URL`).
 For debugging Kubernetes auto-detection, you can set `MEMORIES_K8S_NAMESPACE`.
 
 ## Scripts
@@ -39,7 +39,7 @@ bun run save-memory --task-name "describe repo" --content "we changed X" \
 - `--task-name` – namespace to store under (required).
 - `--summary` – short overview (defaults to the first 300 characters of content).
 - `--tags` – comma-separated list.
-- Other flags are ignored by the REST endpoint and will emit a warning when supplied.
+- Other flags are ignored by the Agents memory note endpoint and will emit a warning when supplied.
 
 ### Retrieve memories
 
@@ -50,7 +50,7 @@ bun run retrieve-memory --query "what did we build" --limit 5
 - `--query` or `--query-file` – the prompt used to search the memory store.
 - `--task-name` – optional namespace filter. If omitted, searches across all namespaces.
 - `--limit` – up to how many matches to return (defaults to `5`).
-- `--repository-ref`, `--source`, `--tags` are ignored by the REST endpoint and will emit a warning when supplied.
+- `--repository-ref`, `--source`, `--tags` are ignored by the Agents memory note endpoint and will emit a warning when supplied.
 
 ## Testing
 
@@ -60,4 +60,4 @@ bun test tests
 
 ## Database schema
 
-Jangar handles embeddings + storage internally. Apply `schemas/embeddings/memories.sql` only if you are provisioning a new Jangar database.
+Agents handles embeddings and storage internally through the Agents-owned `memories.entries` table and migrations.

@@ -90,6 +90,14 @@ const normalizeNumber = (value: unknown) => {
   return 0
 }
 
+const parsePullRequestNumberFromUrl = (value: string | null) => {
+  if (!value) return 0
+  const match = value.match(/\/pull\/(\d+)(?:$|[/?#])/)
+  if (!match?.[1]) return 0
+  const parsed = Number(match[1])
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
 const normalizeOptionalString = (value: unknown) => {
   if (typeof value !== 'string') return null
   const trimmed = value.trim()
@@ -472,8 +480,9 @@ export const parseAgentRunNotifyPayload = (payload: Record<string, unknown>): Pa
         : ''
   const prompt = typeof data.prompt === 'string' ? data.prompt : null
   const prNumberRaw = data.pr_number ?? data.prNumber
-  const prNumber = typeof prNumberRaw === 'number' ? prNumberRaw : Number(prNumberRaw ?? 0)
   const prUrl = typeof data.pr_url === 'string' ? data.pr_url : typeof data.prUrl === 'string' ? data.prUrl : null
+  const prNumber =
+    (typeof prNumberRaw === 'number' ? prNumberRaw : Number(prNumberRaw ?? 0)) || parsePullRequestNumberFromUrl(prUrl)
   const headSha =
     typeof data.head_sha === 'string' ? data.head_sha : typeof data.headSha === 'string' ? data.headSha : null
   const stage = typeof data.stage === 'string' ? data.stage : null

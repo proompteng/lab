@@ -10,6 +10,8 @@ import * as grpc from '@grpc/grpc-js'
 import { fromJSON } from '@grpc/proto-loader'
 import * as protobuf from 'protobufjs'
 import YAML from 'yaml'
+
+import { normalizeKubernetesLabelValue } from '../../src/kubernetes-labels'
 import { EMBEDDED_AGENTCTL_PROTO } from './embedded-proto'
 import { createKubectlBackend, type KubeBackend } from './kube/backend'
 import { PACKAGE_VERSION } from './version'
@@ -2275,7 +2277,7 @@ const _main = async () => {
               generateName: `${options.agent}-`,
               namespace,
               labels: {
-                'agents.proompteng.ai/delivery-id': deliveryId,
+                'agents.proompteng.ai/delivery-id': normalizeKubernetesLabelValue(deliveryId),
               },
             },
             spec: runSpec,

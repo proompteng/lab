@@ -38,7 +38,7 @@ cleanup.
 - `runner.image.repository`, `runner.image.tag`, `runner.image.digest` map to `AGENTS_AGENT_RUNNER_IMAGE`.
 - `controller.jobTtlSecondsAfterFinished` maps to `AGENTS_AGENT_RUNNER_JOB_TTL_SECONDS`.
 - AgentRun retention is controlled separately by `spec.ttlSecondsAfterFinished` and
-  `AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS`.
+  `AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS`.
 
 ## Validation
 
@@ -128,10 +128,10 @@ Common mappings:
 - `controller.concurrency.*` → `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_{NAMESPACE,AGENT,CLUSTER}`
 - `controller.queue.*` → `JANGAR_AGENTS_CONTROLLER_QUEUE_{NAMESPACE,REPO,CLUSTER}`
 - `controller.rate.*` → `JANGAR_AGENTS_CONTROLLER_RATE_{WINDOW_SECONDS,NAMESPACE,REPO,CLUSTER}`
-- `controller.agentRunRetentionSeconds` → `AGENTS_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS`
+- `controller.agentRunRetentionSeconds` → `AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS`
 - `controller.admissionPolicy.*` → `JANGAR_AGENTS_CONTROLLER_{LABELS_REQUIRED,LABELS_ALLOWED,LABELS_DENIED,IMAGES_ALLOWED,IMAGES_DENIED,BLOCKED_SECRETS}`
 - `controller.vcsProviders.*` → `JANGAR_AGENTS_CONTROLLER_VCS_{PROVIDERS_ENABLED,DEPRECATED_TOKEN_TYPES,PR_RATE_LIMITS}`
-- `controller.authSecret.*` → `AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_{NAME,KEY,MOUNT_PATH}`
+- `controller.authSecret.*` → `AGENTS_CONTROLLER_AUTH_SECRET_{NAME,KEY,MOUNT_PATH}`
 - `orchestrationController.*` → `JANGAR_ORCHESTRATION_CONTROLLER_{ENABLED,NAMESPACES}`
 - `supportingController.*` → `JANGAR_SUPPORTING_CONTROLLER_{ENABLED,NAMESPACES}`
 - `grpc.*` → `AGENTS_GRPC_{ENABLED,HOST,PORT}` (unless overridden via `env.vars`)

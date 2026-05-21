@@ -5,7 +5,6 @@ const MAX_NEW_FILE_LINES = 800
 
 const LEGACY_LINE_CAPS: Record<string, number> = {
   'src/server/control-plane-status-types.ts': 2980,
-  'src/server/codex-judge.ts': 2729,
   'src/server/atlas-store.ts': 2219,
   'src/server/orchestration-controller.ts': 2140,
   'src/server/chat-completion-encoder.ts': 2076,
@@ -14,7 +13,6 @@ const LEGACY_LINE_CAPS: Record<string, number> = {
   'src/server/torghut-simulation-control-plane.ts': 1741,
   'src/server/chat.ts': 1537,
   'src/server/github-review-store.ts': 1459,
-  'src/server/codex-judge-store.ts': 1329,
   'src/server/torghut-whitepapers.ts': 1328,
   'src/server/agents-controller/workflow-reconciler.ts': 1191,
   'src/server/agents-controller/agent-run-reconciler.ts': 1191,

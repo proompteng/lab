@@ -39,6 +39,25 @@ type AgentRunIdempotencyKeys = {
   updated_at: Generated<Timestamp>
 }
 
+type AgentRunRerunSubmissions = {
+  id: Generated<string>
+  parent_ref: string
+  parent_agent_run_id: string | null
+  parent_agent_run_name: string | null
+  parent_agent_run_namespace: string | null
+  attempt: number
+  delivery_id: string
+  status: string
+  submission_attempt: number
+  response_status: number | null
+  error: string | null
+  request_payload: JsonValue
+  response_payload: JsonValue | null
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+  submitted_at: Timestamp | null
+}
+
 type MemoryResources = {
   id: Generated<string>
   memory_name: string
@@ -47,6 +66,28 @@ type MemoryResources = {
   connection_secret: JsonValue | null
   created_at: Generated<Timestamp>
   updated_at: Generated<Timestamp>
+}
+
+type MemoryEntries = {
+  id: Generated<string>
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+  execution_id: string | null
+  task_name: string
+  task_description: string | null
+  repository_ref: Generated<string>
+  repository_commit: string | null
+  repository_path: string | null
+  content: string
+  summary: string
+  metadata: JsonValue
+  tags: string[]
+  source: string
+  embedding: unknown
+  encoder_model: string
+  encoder_version: string | null
+  last_accessed_at: Timestamp | null
+  next_review_at: Timestamp | null
 }
 
 type OrchestrationRuns = {
@@ -119,14 +160,80 @@ type AgentsCommsAgentMessage = {
   created_at: Generated<Timestamp>
 }
 
+type AgentsCodexRun = {
+  id: Generated<string>
+  repository: string
+  issue_number: number
+  branch: string
+  attempt: number
+  agent_run_name: string
+  agent_run_uid: string | null
+  agent_run_namespace: string | null
+  turn_id: string | null
+  thread_id: string | null
+  stage: string | null
+  status: string
+  phase: string | null
+  iteration: number | null
+  iteration_cycle: number | null
+  prompt: string | null
+  next_prompt: string | null
+  commit_sha: string | null
+  pr_number: number | null
+  pr_url: string | null
+  pr_state: string | null
+  pr_merged: boolean | null
+  ci_status: string | null
+  ci_url: string | null
+  ci_status_updated_at: Timestamp | null
+  review_status: string | null
+  review_summary: JsonValue
+  review_status_updated_at: Timestamp | null
+  notify_payload: JsonValue | null
+  run_complete_payload: JsonValue | null
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+  started_at: Timestamp | null
+  finished_at: Timestamp | null
+}
+
+type AgentsCodexArtifact = {
+  id: Generated<string>
+  run_id: string
+  name: string
+  key: string
+  bucket: string | null
+  url: string | null
+  metadata: JsonValue
+  created_at: Generated<Timestamp>
+}
+
+type AgentsCodexEvaluation = {
+  id: Generated<string>
+  run_id: string
+  decision: string
+  confidence: number | null
+  reasons: JsonValue
+  missing_items: JsonValue
+  suggested_fixes: JsonValue
+  next_prompt: string | null
+  system_suggestions: JsonValue
+  created_at: Generated<Timestamp>
+}
+
 export type AgentsDatabase = {
   agent_runs: AgentRuns
   agent_run_idempotency_keys: AgentRunIdempotencyKeys
+  agent_run_rerun_submissions: AgentRunRerunSubmissions
   memory_resources: MemoryResources
+  'memories.entries': MemoryEntries
   orchestration_runs: OrchestrationRuns
   audit_events: AuditEvents
   'agents_control_plane.resources_current': AgentsControlPlaneResourcesCurrent
   'agents_comms.agent_messages': AgentsCommsAgentMessage
+  'agents_codex.runs': AgentsCodexRun
+  'agents_codex.artifacts': AgentsCodexArtifact
+  'agents_codex.evaluations': AgentsCodexEvaluation
 }
 
 let db: Db | null | undefined

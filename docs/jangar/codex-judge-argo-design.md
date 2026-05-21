@@ -123,10 +123,9 @@ sequenceDiagram
   GH->>FR: Issue event
   FR->>A: submit AgentRun through Agents
   A->>C: run Codex exec
-  C-->>W: notify(JSON)
-  W->>J: POST /api/codex/notify (enrichment)
+  C-->>A: runner status/log/artifact events
   A->>KC: completion event
-  KC->>J: run-complete
+  KC->>A: callback/projection update
   J->>CI: wait for status
   CI-->>J: success/failure
   J->>PR: wait for Codex review + resolved threads
@@ -340,6 +339,6 @@ stateDiagram-v2
 
 - Prompt template location: `apps/froussard/src/codex.ts` (`buildImplementationPrompt`).
 - Max attempts: 3 (configurable); backoff: exponential (5m, 15m, 45m) with max cap 60m.
-- CI integration: Froussard filters GitHub webhook events Jangar needs (CI + PR review signals) into a dedicated Kafka
-  topic (`github.webhook.codex.judge`); Jangar consumes that topic and updates run state (no polling in Jangar, gated by
-  `JANGAR_CI_EVENT_STREAM_ENABLED`).
+- CI integration: Froussard publishes raw GitHub webhook payloads to `github.webhook.events`; Agents consumes that topic
+  at `/v1/codex/github-events` and updates Codex run projection state. Jangar reads the projection through Agents APIs
+  instead of owning the Kafka consumer or Codex judge store.

@@ -183,6 +183,15 @@ describe('buildAgentsControlPlaneStatus', () => {
       ]),
     })
     expect(status.control_plane_controller_witness.quorum_id).toMatch(/^controller-witness:/)
+    expect(status.controller_ingestion_settlement).toMatchObject({
+      schema_version: 'agents.controller-ingestion-settlement.v1',
+      decision: 'hold',
+      controller_witness_ref: status.control_plane_controller_witness.quorum_id,
+      execution_trust_status: 'healthy',
+      database_status: 'unknown',
+      rollout_health_status: 'healthy',
+    })
+    expect(JSON.stringify(status.controller_ingestion_settlement)).not.toMatch(/torghut|jangar/i)
     expect(status.watch_reliability).toMatchObject({
       status: 'healthy',
       observed_streams: 1,
@@ -197,6 +206,25 @@ describe('buildAgentsControlPlaneStatus', () => {
       status: 'healthy',
       observed_deployments: 2,
     })
+    expect(status.runtime_kits).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kit_class: 'serving',
+          subject_ref: 'agents:/v1/control-plane/status',
+          decision: 'healthy',
+        }),
+      ]),
+    )
+    expect(status.admission_passports).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          consumer_class: 'serving',
+          decision: 'allow',
+        }),
+      ]),
+    )
+    expect(status.serving_passport_id).toEqual(expect.stringContaining('passport:serving:'))
+    expect(status.runtime_proof_cells.length).toBeGreaterThan(0)
     expect(status.namespaces).toEqual([{ namespace: 'agents', status: 'healthy', degraded_components: [] }])
     expect(status).not.toHaveProperty('torghut_consumer_evidence')
     expect(status).not.toHaveProperty('dependency_quorum')

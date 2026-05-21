@@ -12,14 +12,35 @@ const agentContractsAgentRunProjectionAuthorityClientSource = fileURLToPath(
 const agentContractsAgentRunTerminalEventsClientSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/agent-run-terminal-events-client.ts', import.meta.url),
 )
+const agentContractsRunCallbacksSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/agent-run-callbacks.ts', import.meta.url),
+)
+const agentContractsRunCallbacksClientSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/agent-run-callbacks-client.ts', import.meta.url),
+)
+const agentContractsRunRerunsClientSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/agent-run-reruns-client.ts', import.meta.url),
+)
+const agentContractsCodexOrchestrationParametersSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/codex-orchestration-parameters.ts', import.meta.url),
+)
 const agentContractsExecutionTrustSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/execution-trust.ts', import.meta.url),
+)
+const agentContractsRuntimeAdmissionSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/runtime-admission.ts', import.meta.url),
+)
+const agentContractsControlPlaneStatusSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/control-plane-status.ts', import.meta.url),
 )
 const agentContractsControllerWitnessSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/controller-witness.ts', import.meta.url),
 )
 const agentContractsSwarmMaterialReentrySource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/swarm-material-reentry.ts', import.meta.url),
+)
+const agentContractsMemoryClientSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/memory-client.ts', import.meta.url),
 )
 const codexSource = fileURLToPath(new URL('../../packages/codex/src/index.ts', import.meta.url))
 const otelApiSource = fileURLToPath(new URL('../../packages/otel/src/api.ts', import.meta.url))
@@ -32,10 +53,17 @@ export default defineConfig({
       '@': root,
       '@proompteng/agent-contracts/agent-run-projection-authority-client':
         agentContractsAgentRunProjectionAuthorityClientSource,
+      '@proompteng/agent-contracts/agent-run-callbacks': agentContractsRunCallbacksSource,
+      '@proompteng/agent-contracts/agent-run-callbacks-client': agentContractsRunCallbacksClientSource,
+      '@proompteng/agent-contracts/agent-run-reruns-client': agentContractsRunRerunsClientSource,
       '@proompteng/agent-contracts/agent-run-terminal-events-client': agentContractsAgentRunTerminalEventsClientSource,
       '@proompteng/agent-contracts/controller-witness': agentContractsControllerWitnessSource,
+      '@proompteng/agent-contracts/control-plane-status': agentContractsControlPlaneStatusSource,
+      '@proompteng/agent-contracts/codex-orchestration-parameters': agentContractsCodexOrchestrationParametersSource,
       '@proompteng/agent-contracts/execution-trust': agentContractsExecutionTrustSource,
+      '@proompteng/agent-contracts/memory-client': agentContractsMemoryClientSource,
       '@proompteng/agent-contracts/policy-validation': agentContractsPolicyValidationSource,
+      '@proompteng/agent-contracts/runtime-admission': agentContractsRuntimeAdmissionSource,
       '@proompteng/agent-contracts/swarm-material-reentry': agentContractsSwarmMaterialReentrySource,
       '@proompteng/codex': codexSource,
       '@proompteng/otel/api': otelApiSource,
@@ -49,10 +77,17 @@ export default defineConfig({
       '@': root,
       '@proompteng/agent-contracts/agent-run-projection-authority-client':
         agentContractsAgentRunProjectionAuthorityClientSource,
+      '@proompteng/agent-contracts/agent-run-callbacks': agentContractsRunCallbacksSource,
+      '@proompteng/agent-contracts/agent-run-callbacks-client': agentContractsRunCallbacksClientSource,
+      '@proompteng/agent-contracts/agent-run-reruns-client': agentContractsRunRerunsClientSource,
       '@proompteng/agent-contracts/agent-run-terminal-events-client': agentContractsAgentRunTerminalEventsClientSource,
       '@proompteng/agent-contracts/controller-witness': agentContractsControllerWitnessSource,
+      '@proompteng/agent-contracts/control-plane-status': agentContractsControlPlaneStatusSource,
+      '@proompteng/agent-contracts/codex-orchestration-parameters': agentContractsCodexOrchestrationParametersSource,
       '@proompteng/agent-contracts/execution-trust': agentContractsExecutionTrustSource,
+      '@proompteng/agent-contracts/memory-client': agentContractsMemoryClientSource,
       '@proompteng/agent-contracts/policy-validation': agentContractsPolicyValidationSource,
+      '@proompteng/agent-contracts/runtime-admission': agentContractsRuntimeAdmissionSource,
       '@proompteng/agent-contracts/swarm-material-reentry': agentContractsSwarmMaterialReentrySource,
       '@proompteng/codex': codexSource,
       '@proompteng/otel/api': otelApiSource,

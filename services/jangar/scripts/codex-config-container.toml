@@ -48,6 +48,9 @@ responses_websocket_response_processed = true
 workspace_dependencies = true
 
 [mcp_servers.memories]
+url = "http://agents.agents.svc.cluster.local/mcp"
+
+[mcp_servers.atlas]
 url = "http://127.0.0.1:8080/mcp"
 
 [mcp_servers.alpaca]

@@ -31,6 +31,10 @@ runner:
     repository: registry.ide-newton.ts.net/lab/agents-codex-runner
     tag: 9a8523b8
     digest: sha256:ec989b42cbe87bf15eed4ef84ecee3ee6dd515a8bb83517d8e11681ce6bbd649
+agentRuntime:
+  native:
+    rerunOrchestration: codex-rerun
+    rerunOrchestrationNamespace: agents
 argocdHooks:
   enabled: true
   image:
@@ -181,7 +185,7 @@ env:
     AGENTS_GITHUB_REPOS_ALLOWED: proompteng/lab
     AGENTS_DB_POOL_MAX: "4"
     AGENTS_MEMORY_DB_POOL_MAX: "2"
-    AGENTS_AGENTS_CONTROLLER_REPO_CONCURRENCY_OVERRIDES: "{}"
+    AGENTS_CONTROLLER_REPO_CONCURRENCY_OVERRIDES: "{}"
     OPENAI_API_BASE_URL: http://saigak.saigak.svc.cluster.local:11434/v1
     OPENAI_EMBEDDING_API_BASE_URL: http://saigak.saigak.svc.cluster.local:11434/v1
     OPENAI_EMBEDDING_MODEL: qwen3-embedding-saigak:8b

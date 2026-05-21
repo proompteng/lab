@@ -13,7 +13,7 @@ describe('Agents controller runtime config', () => {
       AGENTS_AGENT_RUNNER_IMAGE: 'registry.example/agents-runner:next',
       AGENTS_AGENT_RUNNER_JOB_TTL_SECONDS: '900',
       AGENTS_AGENTRUN_ARTIFACTS_MAX: '7',
-      AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_NAME: 'agents-auth',
+      AGENTS_CONTROLLER_AUTH_SECRET_NAME: 'agents-auth',
     }
 
     expect(resolveAgentRunnerDefaultsConfig(env).defaultRunnerImage).toBe('registry.example/agents-runner:next')

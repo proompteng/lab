@@ -140,10 +140,7 @@ function AlertDialogDestructive() {
               <IconTrash />
             </AlertDialogMedia>
             <AlertDialogTitle>Delete chat?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently delete this chat conversation. View <a href="/memories">Settings</a> delete any
-              memories saved during this chat.
-            </AlertDialogDescription>
+            <AlertDialogDescription>This will permanently delete this chat conversation.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel variant="ghost">Cancel</AlertDialogCancel>

@@ -1,3 +1,5 @@
+import { fetchCodexRunsByPrFromAgentsService } from '@proompteng/agent-contracts/codex-runs-client'
+
 import {
   mergePullRequest,
   recordPullDeploymentAction,
@@ -282,6 +284,7 @@ export const getPullHandler = async (
   _request: Request,
   params: { owner: string; repo: string; number: string },
   createStore = createGithubReviewStore,
+  codexRunsClient = fetchCodexRunsByPrFromAgentsService,
 ) => {
   const prNumber = parseNumberParam(params.number)
   if (!prNumber) {
@@ -300,6 +303,7 @@ export const getPullHandler = async (
     if (!result.pull) {
       return jsonResponse({ ok: false, error: 'Pull request not found' }, 404)
     }
+    const judgeRunsResult = await codexRunsClient({ repository, prNumber }).catch(() => null)
 
     return jsonResponse({
       ok: true,
@@ -307,6 +311,7 @@ export const getPullHandler = async (
       review: result.review,
       checks: result.checks,
       issueComments: result.issueComments,
+      judgeRuns: judgeRunsResult?.ok ? judgeRunsResult.body.runs : [],
       capabilities: {
         reviewsWriteEnabled: config.reviewsWriteEnabled,
         mergeWriteEnabled: config.mergeWriteEnabled,

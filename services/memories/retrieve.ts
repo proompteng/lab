@@ -1,4 +1,4 @@
-import { getFlagValue, parseCliFlags, parseCommaList, resolveJangarBaseUrl } from './cli'
+import { getFlagValue, parseCliFlags, parseCommaList, resolveAgentsBaseUrl } from './cli'
 
 type MemoryRecord = {
   id: string
@@ -50,11 +50,11 @@ const ignoredFlags: Array<[string, string | undefined]> = [
 const ignored = ignoredFlags.filter(([, value]) => value)
 if (ignored.length > 0) {
   const names = ignored.map(([name]) => `--${name}`).join(', ')
-  console.warn(`Ignoring unused flags for Jangar REST: ${names}`)
+  console.warn(`Ignoring unused flags for Agents memory note API: ${names}`)
 }
 
-const baseUrl = resolveJangarBaseUrl()
-const endpoint = new URL('/api/memories', baseUrl)
+const baseUrl = resolveAgentsBaseUrl()
+const endpoint = new URL('/v1/memory-notes', baseUrl)
 endpoint.searchParams.set('query', queryText)
 if (taskName) {
   endpoint.searchParams.set('namespace', taskName)
@@ -68,7 +68,7 @@ const response = await fetch(endpoint.toString(), {
 
 if (!response.ok) {
   const body = await response.text()
-  throw new Error(`Jangar memory retrieve failed (${response.status}): ${body}`)
+  throw new Error(`Agents memory retrieve failed (${response.status}): ${body}`)
 }
 
 const payload = (await response.json()) as { ok?: boolean; memories?: MemoryRecord[] }

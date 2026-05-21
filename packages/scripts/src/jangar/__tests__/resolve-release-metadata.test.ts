@@ -78,6 +78,24 @@ describe('resolve-release-metadata', () => {
     expect(dddToBfDocsOnlyFiles.some((filePath) => __private.isBuildTriggerPath(filePath))).toBe(false)
   })
 
+  it('does not block Jangar promotion for Agents Codex runtime-only package changes', () => {
+    const decision = __private.evaluateWorkflowRunStaleness({
+      sourceSha: ddd07d2f,
+      mainHead: bf889391,
+      isAncestor: true,
+      changedMainFiles: [
+        'packages/codex/src/app-server-client.ts',
+        'skills/agent-harness/SKILL.md',
+        'argocd/applications/agents/values.yaml',
+      ],
+    })
+
+    expect(decision).toEqual({
+      promote: true,
+      reason: 'newer-main-non-jangar-only',
+    })
+  })
+
   it('regression from git history fixture: blocks f22a8cbc promotion when newer main has jangar changes', () => {
     const decision = __private.evaluateWorkflowRunStaleness({
       sourceSha: f22a8cbc,

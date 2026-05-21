@@ -29,4 +29,13 @@ describe('Codex Argo manifests', () => {
     expect(kustomization).not.toContain('workflow-completions')
     expect(kustomization).not.toContain('argo-workflows-completions-topic.yaml')
   })
+
+  it('does not ship the retired Codex judge Kafka topic after Agents owns projections', async () => {
+    const kustomization = await readRepoFile('argocd/applications/froussard/kustomization.yaml')
+    const service = await readRepoFile('argocd/applications/froussard/knative-service.yaml')
+
+    expect(kustomization).not.toContain('github-webhook-codex-judge-topic.yaml')
+    expect(service).not.toContain('KAFKA_CODEX_JUDGE_TOPIC')
+    expect(service).not.toContain('github.webhook.codex.judge')
+  })
 })

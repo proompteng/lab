@@ -50,9 +50,6 @@ test.beforeEach(async ({ page }) => {
         const resolvedUrl = new URL(rawUrl, window.location.origin)
         const pathname = resolvedUrl.pathname
 
-        if (pathname === '/api/memories/count') return jsonResponse({ ok: true, count: 0 })
-        if (pathname === '/api/memories') return jsonResponse({ ok: true, memories: [] })
-
         if (pathname === '/api/search') {
           recordCall(pathname, resolvedUrl.toString())
           const limitRaw = resolvedUrl.searchParams.get('limit') ?? '0'

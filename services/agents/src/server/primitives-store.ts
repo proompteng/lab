@@ -44,6 +44,25 @@ export type AgentRunIdempotencyRecord = {
   updatedAt: Timestamp
 }
 
+export type AgentRunRerunSubmissionRecord = {
+  id: string
+  parentRef: string
+  parentAgentRunId: string | null
+  parentAgentRunName: string | null
+  parentAgentRunNamespace: string | null
+  attempt: number
+  deliveryId: string
+  status: string
+  submissionAttempt: number
+  responseStatus: number | null
+  error: string | null
+  requestPayload: Record<string, unknown>
+  responsePayload: Record<string, unknown> | null
+  createdAt: Timestamp
+  updatedAt: Timestamp
+  submittedAt: Timestamp | null
+}
+
 export type MemoryResourceRecord = {
   id: string
   memoryName: string
@@ -125,6 +144,25 @@ export type MarkAgentRunIdempotencyInput = {
   terminalAt?: Timestamp | null
 }
 
+export type EnqueueAgentRunRerunSubmissionInput = {
+  parentRef: string
+  parentAgentRunId?: string | null
+  parentAgentRunName?: string | null
+  parentAgentRunNamespace?: string | null
+  attempt: number
+  deliveryId: string
+  requestPayload: Record<string, unknown>
+}
+
+export type UpdateAgentRunRerunSubmissionInput = {
+  id: string
+  status: string
+  responseStatus?: number | null
+  error?: string | null
+  responsePayload?: Record<string, unknown> | null
+  submittedAt?: Timestamp | null
+}
+
 export type PrimitivesStore = {
   ready: Promise<void>
   close: () => Promise<void>
@@ -162,6 +200,17 @@ export type PrimitivesStore = {
   markAgentRunIdempotencyKeyTerminal: (input: MarkAgentRunIdempotencyInput) => Promise<AgentRunIdempotencyRecord | null>
   deleteAgentRunIdempotencyKey: (input: ReserveAgentRunIdempotencyInput) => Promise<boolean>
   pruneAgentRunIdempotencyKeys: (retentionDays: number) => Promise<number>
+  enqueueAgentRunRerunSubmission: (
+    input: EnqueueAgentRunRerunSubmissionInput,
+  ) => Promise<{ submission: AgentRunRerunSubmissionRecord; created: boolean }>
+  claimAgentRunRerunSubmission: (input: {
+    parentRef: string
+    attempt: number
+    deliveryId: string
+  }) => Promise<{ submission: AgentRunRerunSubmissionRecord; shouldSubmit: boolean } | null>
+  updateAgentRunRerunSubmission: (
+    input: UpdateAgentRunRerunSubmissionInput,
+  ) => Promise<AgentRunRerunSubmissionRecord | null>
   getRunById: (
     id: string,
   ) => Promise<{ kind: 'agent' | 'orchestration'; record: AgentRunRecord | OrchestrationRunRecord } | null>
@@ -258,6 +307,42 @@ const toAgentRunIdempotencyRecord = (row: {
   terminalAt: row.terminal_at,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
+})
+
+const toAgentRunRerunSubmissionRecord = (row: {
+  id: string
+  parent_ref: string
+  parent_agent_run_id: string | null
+  parent_agent_run_name: string | null
+  parent_agent_run_namespace: string | null
+  attempt: number
+  delivery_id: string
+  status: string
+  submission_attempt: number
+  response_status: number | null
+  error: string | null
+  request_payload: Record<string, unknown>
+  response_payload: Record<string, unknown> | null
+  created_at: Timestamp
+  updated_at: Timestamp
+  submitted_at: Timestamp | null
+}): AgentRunRerunSubmissionRecord => ({
+  id: row.id,
+  parentRef: row.parent_ref,
+  parentAgentRunId: row.parent_agent_run_id,
+  parentAgentRunName: row.parent_agent_run_name,
+  parentAgentRunNamespace: row.parent_agent_run_namespace,
+  attempt: row.attempt,
+  deliveryId: row.delivery_id,
+  status: row.status,
+  submissionAttempt: row.submission_attempt,
+  responseStatus: row.response_status,
+  error: row.error,
+  requestPayload: row.request_payload ?? {},
+  responsePayload: row.response_payload ?? null,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+  submittedAt: row.submitted_at,
 })
 
 const toAuditEventRecord = (row: {
@@ -677,6 +762,99 @@ export const createPrimitivesStore = (options: PrimitivesStoreOptions = {}): Pri
     return result.rows[0]?.deleted ?? 0
   }
 
+  const enqueueAgentRunRerunSubmission: PrimitivesStore['enqueueAgentRunRerunSubmission'] = async (input) => {
+    await ready
+    const requestPayloadJson = JSON.stringify(input.requestPayload ?? {})
+    const inserted = await db
+      .insertInto('agent_run_rerun_submissions')
+      .values({
+        parent_ref: input.parentRef,
+        parent_agent_run_id: input.parentAgentRunId ?? null,
+        parent_agent_run_name: input.parentAgentRunName ?? null,
+        parent_agent_run_namespace: input.parentAgentRunNamespace ?? null,
+        attempt: input.attempt,
+        delivery_id: input.deliveryId,
+        status: 'queued',
+        submission_attempt: 0,
+        request_payload: sql`${requestPayloadJson}::jsonb`,
+      })
+      .onConflict((oc) => oc.columns(['parent_ref', 'attempt']).doNothing())
+      .returningAll()
+      .executeTakeFirst()
+
+    if (inserted) {
+      return { submission: toAgentRunRerunSubmissionRecord(inserted), created: true }
+    }
+
+    const existing = await db
+      .selectFrom('agent_run_rerun_submissions')
+      .selectAll()
+      .where('parent_ref', '=', input.parentRef)
+      .where('attempt', '=', input.attempt)
+      .executeTakeFirst()
+
+    if (!existing) {
+      throw new Error('failed to resolve AgentRun rerun submission after conflict')
+    }
+
+    return { submission: toAgentRunRerunSubmissionRecord(existing), created: false }
+  }
+
+  const claimAgentRunRerunSubmission: PrimitivesStore['claimAgentRunRerunSubmission'] = async (input) => {
+    await ready
+    const updated = await db
+      .updateTable('agent_run_rerun_submissions')
+      .set({
+        status: 'pending',
+        submission_attempt: sql`submission_attempt + 1`,
+        response_status: null,
+        error: null,
+        updated_at: sql`now()`,
+      })
+      .where('parent_ref', '=', input.parentRef)
+      .where('attempt', '=', input.attempt)
+      .where('status', 'in', ['failed', 'pending', 'queued'])
+      .returningAll()
+      .executeTakeFirst()
+
+    if (updated) {
+      return { submission: toAgentRunRerunSubmissionRecord(updated), shouldSubmit: true }
+    }
+
+    const existing = await db
+      .selectFrom('agent_run_rerun_submissions')
+      .selectAll()
+      .where('delivery_id', '=', input.deliveryId)
+      .executeTakeFirst()
+
+    return existing ? { submission: toAgentRunRerunSubmissionRecord(existing), shouldSubmit: false } : null
+  }
+
+  const updateAgentRunRerunSubmission: PrimitivesStore['updateAgentRunRerunSubmission'] = async (input) => {
+    await ready
+    const responsePayloadJson =
+      input.responsePayload === undefined ? undefined : JSON.stringify(input.responsePayload ?? {})
+    const update: Record<string, unknown> = {
+      status: input.status,
+      updated_at: sql`now()`,
+    }
+    if (input.responseStatus !== undefined) update.response_status = input.responseStatus
+    if (input.error !== undefined) update.error = input.error
+    if (input.responsePayload !== undefined) {
+      update.response_payload = input.responsePayload === null ? null : sql`${responsePayloadJson}::jsonb`
+    }
+    if (input.submittedAt !== undefined) update.submitted_at = input.submittedAt
+
+    const row = await db
+      .updateTable('agent_run_rerun_submissions')
+      .set(update)
+      .where('id', '=', input.id)
+      .returningAll()
+      .executeTakeFirst()
+
+    return row ? toAgentRunRerunSubmissionRecord(row) : null
+  }
+
   const getRunById: PrimitivesStore['getRunById'] = async (id) => {
     await ready
     const agentRun = await db.selectFrom('agent_runs').selectAll().where('id', '=', id).executeTakeFirst()
@@ -717,6 +895,9 @@ export const createPrimitivesStore = (options: PrimitivesStoreOptions = {}): Pri
     markAgentRunIdempotencyKeyTerminal,
     deleteAgentRunIdempotencyKey,
     pruneAgentRunIdempotencyKeys,
+    enqueueAgentRunRerunSubmission,
+    claimAgentRunRerunSubmission,
+    updateAgentRunRerunSubmission,
     getRunById,
   }
 }

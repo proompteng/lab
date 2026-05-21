@@ -4,7 +4,7 @@ import { errorResponse, okResponse } from '../http'
 import { createKubernetesClient, type KubernetesClient, RESOURCE_MAP } from '../kube-types'
 import { asRecord, asString, normalizeNamespace, readNested } from '../primitives'
 
-import { type AgentRunRecord } from './agent-runs'
+import type { AgentRunRecord } from './agent-run-store'
 
 type Timestamp = string | Date
 

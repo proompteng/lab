@@ -108,9 +108,9 @@ If any gate fails, the system must record why and either rerun or escalate to `n
 The autonomous run depends on these environment variables already present in the Jangar deployment:
 
 - GitHub: `GITHUB_TOKEN`, `JANGAR_GITHUB_REPOS_ALLOWED`, `JANGAR_GITHUB_REVIEWS_WRITE`, `JANGAR_GITHUB_MERGE_WRITE`, `JANGAR_GITHUB_MERGE_FORCE`
-- Codex judge: `JANGAR_CI_EVENT_STREAM_ENABLED`, `JANGAR_CI_MAX_WAIT_MS`, `JANGAR_REVIEW_MAX_WAIT_MS`, `JANGAR_CODEX_MAX_ATTEMPTS`, `JANGAR_CODEX_BACKOFF_SCHEDULE_MS`, `JANGAR_CODEX_REVIEWERS`, `AGENTS_CODEX_RERUN_ORCHESTRATION`, `AGENTS_CODEX_RERUN_ORCHESTRATION_NAMESPACE`, `AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION`, `AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE`
+- Codex judge compatibility: `JANGAR_CI_MAX_WAIT_MS`, `JANGAR_REVIEW_MAX_WAIT_MS`, `JANGAR_CODEX_MAX_ATTEMPTS`, `JANGAR_CODEX_BACKOFF_SCHEDULE_MS`, `JANGAR_CODEX_REVIEWERS`, `AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION`, `AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE`. GitHub event ingestion is owned by Agents at `/v1/codex/github-events`.
+- Agents reruns: `agentRuntime.native.rerunOrchestration` and `agentRuntime.native.rerunOrchestrationNamespace` in the Agents Helm values.
 - Argo artifacts: `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_SECURE`
-- Facteur reruns: `FACTEUR_INTERNAL_URL`
 - Infra: `DATABASE_URL`, `JANGAR_REDIS_URL`, `NATS_URL`, `NATS_USER`, `NATS_PASSWORD`
 
 Required guarantee: the workflow image has `git` and the repo checkout at `${CODEX_CWD}`.
@@ -236,9 +236,12 @@ The workflow must emit the following artifacts on every run, regardless of succe
 
 If any artifact is missing, Jangar must fall back to available artifacts and still persist the run.
 
-## 9) Payload Contracts (Notify + Run-Complete)
+## 9) Historical Payload Contracts (Notify + Run-Complete)
 
-### 9.1 Notify Payload (POST /api/codex/notify)
+The Jangar callback endpoints described in this section were part of the retired Argo workflow bridge. The current
+runtime emits status, logs, artifacts, callbacks, and Codex projection state through Agents-owned AgentRun APIs.
+
+### 9.1 Notify Payload (retired Jangar callback)
 
 Minimum fields required to attach enrichment:
 
@@ -275,7 +278,7 @@ When a run is launched from a Huly-backed cross-swarm requirement, `hulyArtifact
 `hulyArtifacts.releaseNote` carry the reusable handoff text that release and owner flows can repost without scraping
 chat or mission documents.
 
-### 9.2 Run-Complete Payload (POST /api/codex/run-complete)
+### 9.2 Run-Complete Payload (retired Jangar callback)
 
 Minimum fields required to create the run:
 
@@ -338,11 +341,11 @@ CREATE TABLE jangar_github.pr_worktrees (
 
 ## 13) API Changes
 
-### 13.1 Judge Runs by PR
+### 13.1 Linked AgentRun/Codex Projection by PR
 
-`GET /api/github/pulls/:owner/:repo/:number/judge-runs`
+`GET /api/github/pulls/:owner/:repo/:number`
 
-- Returns all `codex_judge.runs` for the PR.
+- Includes linked Codex runs from the Agents projection API. Generic Codex run search belongs to Agents.
 
 ### 13.2 Checks Grouped by Commit
 
@@ -435,8 +438,8 @@ These items are **required** and must be pinned in workflow parameters or config
 - **Parameter schema**: repository, issue number, base, head, prompt, commit SHA, workflow namespace, workflow UID.
 - **Pre-merge test commands**: exact commands and working directories.
 - **Post-deploy test commands**: exact integration + end-to-end commands and working directories.
-- **Notify payload schema**: exact JSON contract for `/api/codex/notify`.
-- **Run-complete payload schema**: exact JSON contract for `/api/codex/run-complete`.
+- **Notify payload schema**: exact JSON contract for the retired Jangar notify callback.
+- **Run-complete payload schema**: exact JSON contract for the retired Jangar run-complete callback.
 - **Rollback policy**: what is rolled back, how, and the decision signals.
 - **Rerun policy**: maximum attempts and when to escalate to `needs_human`.
 
@@ -449,7 +452,7 @@ Before starting implementation, the workflow must validate:
 - `base` and `head` refs resolve locally or can be fetched.
 - Required environment variables are present (GitHub token, DB URL, MinIO, Argo).
 - Artifacts can be uploaded to the configured bucket.
-- Jangar endpoints `/api/codex/notify` and `/api/codex/run-complete` are reachable.
+- Agents-owned AgentRun callback, status, log, and artifact APIs are reachable.
 
 ## 17) Success Criteria
 

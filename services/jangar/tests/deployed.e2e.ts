@@ -206,7 +206,7 @@ test.describe('deployed jangar e2e', () => {
 
   test('navigation and terminals entry', async ({ page }) => {
     await page.goto('/')
-    await expect(page.getByRole('heading', { name: 'Memories', level: 1 })).toBeVisible()
+    await expect(page.getByText('PR reviews')).toBeVisible()
     await expect(page.getByRole('link', { name: 'Terminals' })).toBeVisible()
     await page.getByRole('link', { name: 'Terminals' }).click()
     await expect(page).toHaveURL(/\/terminals\/?$/)

@@ -10,8 +10,6 @@ export const up = async (db: Kysely<Database>) => {
   const embeddingDimension = resolveEmbeddingDimension()
 
   await sql`CREATE SCHEMA IF NOT EXISTS atlas;`.execute(db)
-  await sql`CREATE SCHEMA IF NOT EXISTS memories;`.execute(db)
-  await sql`CREATE SCHEMA IF NOT EXISTS codex_judge;`.execute(db)
 
   await sql`
     CREATE TABLE IF NOT EXISTS ${sql.ref('atlas.repositories')} (
@@ -213,123 +211,12 @@ export const up = async (db: Kysely<Database>) => {
   `.execute(db)
 
   await sql`
-    CREATE TABLE IF NOT EXISTS ${sql.ref('memories.entries')} (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      execution_id UUID NULL,
-      task_name TEXT NOT NULL,
-      task_description TEXT,
-      repository_ref TEXT NOT NULL DEFAULT 'main',
-      repository_commit TEXT,
-      repository_path TEXT,
-      content TEXT NOT NULL,
-      summary TEXT NOT NULL,
-      metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
-      tags TEXT[] NOT NULL DEFAULT '{}'::TEXT[],
-      source TEXT NOT NULL,
-      embedding vector(${sql.raw(String(embeddingDimension))}) NOT NULL,
-      encoder_model TEXT NOT NULL,
-      encoder_version TEXT,
-      last_accessed_at TIMESTAMPTZ,
-      next_review_at TIMESTAMPTZ
-    );
-  `.execute(db)
-
-  await sql`
-    CREATE TABLE IF NOT EXISTS ${sql.ref('codex_judge.runs')} (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      repository TEXT NOT NULL,
-      issue_number BIGINT NOT NULL,
-      branch TEXT NOT NULL,
-      attempt INT NOT NULL,
-      agent_run_name TEXT NOT NULL,
-      agent_run_uid TEXT,
-      agent_run_namespace TEXT,
-      stage TEXT,
-      status TEXT NOT NULL,
-      phase TEXT,
-      prompt TEXT,
-      next_prompt TEXT,
-      commit_sha TEXT,
-      pr_number INT,
-      pr_url TEXT,
-      ci_status TEXT,
-      ci_url TEXT,
-      review_status TEXT,
-      review_summary JSONB NOT NULL DEFAULT '{}'::JSONB,
-      notify_payload JSONB,
-      run_complete_payload JSONB,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      started_at TIMESTAMPTZ,
-      finished_at TIMESTAMPTZ
-    );
-  `.execute(db)
-
-  await sql`
-    CREATE TABLE IF NOT EXISTS ${sql.ref('codex_judge.artifacts')} (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      run_id UUID NOT NULL REFERENCES codex_judge.runs(id) ON DELETE CASCADE,
-      name TEXT NOT NULL,
-      key TEXT NOT NULL,
-      bucket TEXT,
-      url TEXT,
-      metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-  `.execute(db)
-
-  await sql`
-    CREATE TABLE IF NOT EXISTS ${sql.ref('codex_judge.evaluations')} (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      run_id UUID NOT NULL REFERENCES codex_judge.runs(id) ON DELETE CASCADE,
-      decision TEXT NOT NULL,
-      confidence DOUBLE PRECISION,
-      reasons JSONB NOT NULL DEFAULT '{}'::JSONB,
-      missing_items JSONB NOT NULL DEFAULT '{}'::JSONB,
-      suggested_fixes JSONB NOT NULL DEFAULT '{}'::JSONB,
-      next_prompt TEXT,
-      prompt_tuning JSONB NOT NULL DEFAULT '{}'::JSONB,
-      system_suggestions JSONB NOT NULL DEFAULT '{}'::JSONB,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-  `.execute(db)
-
-  await sql`
-    CREATE TABLE IF NOT EXISTS ${sql.ref('codex_judge.prompt_tuning')} (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      run_id UUID NOT NULL REFERENCES codex_judge.runs(id) ON DELETE CASCADE,
-      pr_url TEXT NOT NULL,
-      status TEXT NOT NULL,
-      metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-  `.execute(db)
-
-  await sql`
     CREATE TABLE IF NOT EXISTS torghut_symbols (
       symbol TEXT PRIMARY KEY,
       enabled BOOLEAN NOT NULL DEFAULT true,
       asset_class TEXT NOT NULL DEFAULT 'equity',
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
-  `.execute(db)
-
-  await sql`
-    CREATE UNIQUE INDEX IF NOT EXISTS codex_judge_runs_agent_run_uid_idx
-    ON ${sql.ref('codex_judge.runs')} (agent_run_uid)
-    WHERE agent_run_uid IS NOT NULL;
-  `.execute(db)
-
-  await sql`
-    CREATE UNIQUE INDEX IF NOT EXISTS codex_judge_runs_agent_run_name_idx
-    ON ${sql.ref('codex_judge.runs')} (agent_run_name, agent_run_namespace);
-  `.execute(db)
-
-  await sql`
-    CREATE UNIQUE INDEX IF NOT EXISTS codex_judge_artifacts_run_name_idx
-    ON ${sql.ref('codex_judge.artifacts')} (run_id, name);
   `.execute(db)
 
   await sql`
@@ -405,33 +292,6 @@ export const up = async (db: Kysely<Database>) => {
     CREATE INDEX IF NOT EXISTS atlas_file_edges_to_idx
     ON ${sql.ref('atlas.file_edges')} (to_file_version_id, kind);
   `.execute(db)
-
-  await sql`
-    CREATE INDEX IF NOT EXISTS memories_entries_task_name_idx
-    ON ${sql.ref('memories.entries')} (task_name);
-  `.execute(db)
-
-  await sql`
-    CREATE INDEX IF NOT EXISTS memories_entries_tags_idx
-    ON ${sql.ref('memories.entries')} USING GIN (tags);
-  `.execute(db)
-
-  await sql`
-    CREATE INDEX IF NOT EXISTS memories_entries_metadata_idx
-    ON ${sql.ref('memories.entries')} USING GIN (metadata JSONB_PATH_OPS);
-  `.execute(db)
-
-  await sql`
-    CREATE INDEX IF NOT EXISTS memories_entries_encoder_idx
-    ON ${sql.ref('memories.entries')} (encoder_model, encoder_version);
-  `.execute(db)
-
-  await createPgvectorAnnIndexIfSupported(
-    db,
-    embeddingDimension,
-    'CREATE INDEX IF NOT EXISTS memories_entries_embedding_idx ON memories.entries USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);',
-    'memories.entries',
-  )
 
   await sql`
     CREATE INDEX IF NOT EXISTS torghut_symbols_enabled_idx

@@ -58,7 +58,6 @@ export interface AppConfig {
     clientId: string
     topics: {
       raw: string
-      codexJudge: string
       discordCommands: string
     }
   }
@@ -174,7 +173,6 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
       clientId: env.KAFKA_CLIENT_ID ?? 'froussard-webhook-producer',
       topics: {
         raw: requireEnv(env, 'KAFKA_TOPIC'),
-        codexJudge: requireEnv(env, 'KAFKA_CODEX_JUDGE_TOPIC'),
         discordCommands: requireEnv(env, 'KAFKA_DISCORD_COMMAND_TOPIC'),
       },
     },

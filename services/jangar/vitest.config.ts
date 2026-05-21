@@ -53,6 +53,24 @@ const agentContractsRuntimeAdmissionSource = fileURLToPath(
 const agentContractsSignalsClientSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/signals-client.ts', import.meta.url),
 )
+const agentContractsSupportingPrimitivesEvidencePressureSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/supporting-primitives-evidence-pressure.ts', import.meta.url),
+)
+const agentContractsSupportingPrimitivesMaterialEvidenceTraceSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/supporting-primitives-material-evidence-trace.ts', import.meta.url),
+)
+const agentContractsSupportingPrimitivesNamingSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/supporting-primitives-naming.ts', import.meta.url),
+)
+const agentContractsSupportingPrimitivesRequirementBridgeSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/supporting-primitives-requirement-bridge.ts', import.meta.url),
+)
+const agentContractsSupportingPrimitivesScheduleIdentitySource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/supporting-primitives-schedule-identity.ts', import.meta.url),
+)
+const agentContractsSupportingPrimitivesStatusSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/supporting-primitives-status.ts', import.meta.url),
+)
 const agentContractsSwarmAnalysisSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/swarm-analysis.ts', import.meta.url),
 )
@@ -74,8 +92,14 @@ const agentContractsMessageArtifactsSource = fileURLToPath(
 const agentContractsRunCallbacksSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/agent-run-callbacks.ts', import.meta.url),
 )
+const agentContractsRunRerunsClientSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/agent-run-reruns-client.ts', import.meta.url),
+)
 const agentContractsCodexOrchestrationParametersSource = fileURLToPath(
   new URL('../../packages/agent-contracts/src/codex-orchestration-parameters.ts', import.meta.url),
+)
+const agentContractsCodexRunsClientSource = fileURLToPath(
+  new URL('../../packages/agent-contracts/src/codex-runs-client.ts', import.meta.url),
 )
 const discordSource = fileURLToPath(new URL('../../packages/discord/src/index.ts', import.meta.url))
 
@@ -87,6 +111,7 @@ export default defineConfig({
       '@proompteng/agent-contracts/agents-ready': agentContractsReadySource,
       '@proompteng/agent-contracts/agent-message-artifacts': agentContractsMessageArtifactsSource,
       '@proompteng/agent-contracts/agent-run-callbacks': agentContractsRunCallbacksSource,
+      '@proompteng/agent-contracts/agent-run-reruns-client': agentContractsRunRerunsClientSource,
       '@proompteng/agent-contracts/agents-health-client': agentContractsHealthClientSource,
       '@proompteng/agent-contracts/agent-runs-client': agentContractsAgentRunsClientSource,
       '@proompteng/agent-contracts/agent-run-projection-authority-client':
@@ -95,6 +120,7 @@ export default defineConfig({
       '@proompteng/agent-contracts/agent-messages-client': agentContractsAgentMessagesClientSource,
       '@proompteng/agent-contracts/agent-jobs-client': agentContractsAgentJobsClientSource,
       '@proompteng/agent-contracts/codex-orchestration-parameters': agentContractsCodexOrchestrationParametersSource,
+      '@proompteng/agent-contracts/codex-runs-client': agentContractsCodexRunsClientSource,
       '@proompteng/agent-contracts/control-plane-status': agentContractsControlPlaneStatusSource,
       '@proompteng/agent-contracts/json': agentContractsJsonSource,
       '@proompteng/agent-contracts/execution-trust': agentContractsExecutionTrustSource,
@@ -105,6 +131,16 @@ export default defineConfig({
       '@proompteng/agent-contracts/policy-validation': agentContractsPolicyValidationSource,
       '@proompteng/agent-contracts/runtime-admission': agentContractsRuntimeAdmissionSource,
       '@proompteng/agent-contracts/signals-client': agentContractsSignalsClientSource,
+      '@proompteng/agent-contracts/supporting-primitives-evidence-pressure':
+        agentContractsSupportingPrimitivesEvidencePressureSource,
+      '@proompteng/agent-contracts/supporting-primitives-material-evidence-trace':
+        agentContractsSupportingPrimitivesMaterialEvidenceTraceSource,
+      '@proompteng/agent-contracts/supporting-primitives-naming': agentContractsSupportingPrimitivesNamingSource,
+      '@proompteng/agent-contracts/supporting-primitives-requirement-bridge':
+        agentContractsSupportingPrimitivesRequirementBridgeSource,
+      '@proompteng/agent-contracts/supporting-primitives-schedule-identity':
+        agentContractsSupportingPrimitivesScheduleIdentitySource,
+      '@proompteng/agent-contracts/supporting-primitives-status': agentContractsSupportingPrimitivesStatusSource,
       '@proompteng/agent-contracts/swarm-analysis': agentContractsSwarmAnalysisSource,
       '@proompteng/agent-contracts/swarm-contracts': agentContractsSwarmContractsSource,
       '@proompteng/agent-contracts/swarm-material-reentry': agentContractsSwarmMaterialReentrySource,
@@ -129,6 +165,7 @@ export default defineConfig({
       '@proompteng/agent-contracts/agents-ready': agentContractsReadySource,
       '@proompteng/agent-contracts/agent-message-artifacts': agentContractsMessageArtifactsSource,
       '@proompteng/agent-contracts/agent-run-callbacks': agentContractsRunCallbacksSource,
+      '@proompteng/agent-contracts/agent-run-reruns-client': agentContractsRunRerunsClientSource,
       '@proompteng/agent-contracts/agents-health-client': agentContractsHealthClientSource,
       '@proompteng/agent-contracts/agent-runs-client': agentContractsAgentRunsClientSource,
       '@proompteng/agent-contracts/agent-run-projection-authority-client':
@@ -137,6 +174,7 @@ export default defineConfig({
       '@proompteng/agent-contracts/agent-messages-client': agentContractsAgentMessagesClientSource,
       '@proompteng/agent-contracts/agent-jobs-client': agentContractsAgentJobsClientSource,
       '@proompteng/agent-contracts/codex-orchestration-parameters': agentContractsCodexOrchestrationParametersSource,
+      '@proompteng/agent-contracts/codex-runs-client': agentContractsCodexRunsClientSource,
       '@proompteng/agent-contracts/control-plane-status': agentContractsControlPlaneStatusSource,
       '@proompteng/agent-contracts/json': agentContractsJsonSource,
       '@proompteng/agent-contracts/execution-trust': agentContractsExecutionTrustSource,
@@ -147,6 +185,16 @@ export default defineConfig({
       '@proompteng/agent-contracts/policy-validation': agentContractsPolicyValidationSource,
       '@proompteng/agent-contracts/runtime-admission': agentContractsRuntimeAdmissionSource,
       '@proompteng/agent-contracts/signals-client': agentContractsSignalsClientSource,
+      '@proompteng/agent-contracts/supporting-primitives-evidence-pressure':
+        agentContractsSupportingPrimitivesEvidencePressureSource,
+      '@proompteng/agent-contracts/supporting-primitives-material-evidence-trace':
+        agentContractsSupportingPrimitivesMaterialEvidenceTraceSource,
+      '@proompteng/agent-contracts/supporting-primitives-naming': agentContractsSupportingPrimitivesNamingSource,
+      '@proompteng/agent-contracts/supporting-primitives-requirement-bridge':
+        agentContractsSupportingPrimitivesRequirementBridgeSource,
+      '@proompteng/agent-contracts/supporting-primitives-schedule-identity':
+        agentContractsSupportingPrimitivesScheduleIdentitySource,
+      '@proompteng/agent-contracts/supporting-primitives-status': agentContractsSupportingPrimitivesStatusSource,
       '@proompteng/agent-contracts/swarm-analysis': agentContractsSwarmAnalysisSource,
       '@proompteng/agent-contracts/swarm-contracts': agentContractsSwarmContractsSource,
       '@proompteng/agent-contracts/swarm-material-reentry': agentContractsSwarmMaterialReentrySource,

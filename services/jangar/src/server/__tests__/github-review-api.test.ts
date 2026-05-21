@@ -101,12 +101,18 @@ describe('github review api routes', () => {
         number: '1',
       },
       () => store as never,
+      vi.fn(async () => ({
+        ok: true as const,
+        status: 200,
+        body: { ok: true as const, runs: [{ id: 'run-1' }] },
+      })) as never,
     )
 
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toMatchObject({
       ok: true,
       pull: { repository: 'proompteng/lab', number: 1 },
+      judgeRuns: [{ id: 'run-1' }],
     })
   })
 

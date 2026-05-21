@@ -24,6 +24,15 @@ describe('Agents resource labels', () => {
     })
   })
 
+  it('normalizes arbitrary delivery ids into Kubernetes-safe label values', () => {
+    const labels = buildDeliveryIdLabels('domain/request:with/slashes and spaces that is far too long for a label')
+    const value = labels[AGENTS_RESOURCE_LABELS.deliveryId.canonical]
+
+    expect(value).toMatch(/^[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$/)
+    expect(value.length).toBeLessThanOrEqual(63)
+    expect(value).toContain('-')
+  })
+
   it('reads canonical labels only', () => {
     expect(
       readDeliveryIdLabel({

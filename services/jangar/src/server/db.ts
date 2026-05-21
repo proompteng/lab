@@ -176,28 +176,6 @@ type AtlasIngestionTargets = {
   kind: string
 }
 
-type MemoriesEntries = {
-  id: Generated<string>
-  created_at: Generated<Timestamp>
-  updated_at: Generated<Timestamp>
-  execution_id: string | null
-  task_name: string
-  task_description: string | null
-  repository_ref: Generated<string>
-  repository_commit: string | null
-  repository_path: string | null
-  content: string
-  summary: string
-  metadata: JsonValue
-  tags: string[]
-  source: string
-  embedding: unknown
-  encoder_model: string
-  encoder_version: string | null
-  last_accessed_at: Timestamp | null
-  next_review_at: Timestamp | null
-}
-
 type TorghutSymbols = {
   symbol: string
   enabled: Generated<boolean>
@@ -386,79 +364,6 @@ type JangarGithubWriteActions = {
   response: JsonValue | null
   success: boolean
   error: string | null
-}
-
-type CodexJudgeRuns = {
-  id: Generated<string>
-  repository: string
-  issue_number: number
-  branch: string
-  attempt: number
-  agent_run_name: string
-  agent_run_uid: string | null
-  agent_run_namespace: string | null
-  turn_id: string | null
-  thread_id: string | null
-  stage: string | null
-  status: string
-  phase: string | null
-  iteration: number | null
-  iteration_cycle: number | null
-  prompt: string | null
-  next_prompt: string | null
-  commit_sha: string | null
-  pr_number: number | null
-  pr_url: string | null
-  ci_status: string | null
-  ci_url: string | null
-  ci_status_updated_at: Timestamp | null
-  review_status: string | null
-  review_summary: JsonValue
-  review_status_updated_at: Timestamp | null
-  notify_payload: JsonValue | null
-  run_complete_payload: JsonValue | null
-  created_at: Generated<Timestamp>
-  updated_at: Generated<Timestamp>
-  started_at: Timestamp | null
-  finished_at: Timestamp | null
-}
-
-type CodexJudgeArtifacts = {
-  id: Generated<string>
-  run_id: string
-  name: string
-  key: string
-  bucket: string | null
-  url: string | null
-  metadata: JsonValue
-  created_at: Generated<Timestamp>
-}
-
-type CodexJudgeEvaluations = {
-  id: Generated<string>
-  run_id: string
-  decision: string
-  confidence: number | null
-  reasons: JsonValue
-  missing_items: JsonValue
-  suggested_fixes: JsonValue
-  next_prompt: string | null
-  system_suggestions: JsonValue
-  created_at: Generated<Timestamp>
-}
-
-type CodexJudgeRerunSubmissions = {
-  id: Generated<string>
-  parent_run_id: string
-  attempt: number
-  delivery_id: string
-  status: string
-  submission_attempt: Generated<number>
-  response_status: number | null
-  error: string | null
-  created_at: Generated<Timestamp>
-  updated_at: Generated<Timestamp>
-  submitted_at: Timestamp | null
 }
 
 type TorghutQuantMetricsLatest = {
@@ -721,7 +626,6 @@ export type Database = {
   'atlas.ingestions': AtlasIngestions
   'atlas.event_files': AtlasEventFiles
   'atlas.ingestion_targets': AtlasIngestionTargets
-  'memories.entries': MemoriesEntries
   torghut_symbols: TorghutSymbols
   'terminals.sessions': TerminalSessions
   'jangar_github.events': JangarGithubEvents
@@ -749,10 +653,6 @@ export type Database = {
   torghut_market_context_runs: TorghutMarketContextRuns
   torghut_market_context_run_events: TorghutMarketContextRunEvents
   torghut_market_context_evidence: TorghutMarketContextEvidence
-  'codex_judge.runs': CodexJudgeRuns
-  'codex_judge.artifacts': CodexJudgeArtifacts
-  'codex_judge.evaluations': CodexJudgeEvaluations
-  'codex_judge.rerun_submissions': CodexJudgeRerunSubmissions
 }
 
 let db: Db | null | undefined

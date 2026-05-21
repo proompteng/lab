@@ -1,12 +1,10 @@
 import { createFileRoute, type AgentsServerRouteArgs } from '../../server/server-route'
+import type { AgentRunsApiDependencies } from '../../server/v1/agent-runs-dependencies'
 import {
   getAgentRunsHandler as getAgentRunsApiHandler,
   postAgentRunsHandler as postAgentRunsApiHandler,
-  type AgentRunsApiDependencies,
 } from '../../server/v1/agent-runs'
 import { resolveAgentRunsApiDependencies, runtimeDependencyErrorResponse } from '../../server/v1/runtime'
-
-export type { AgentRunsApiDependencies } from '../../server/v1/agent-runs'
 
 export const Route = createFileRoute('/v1/agent-runs')({
   server: {

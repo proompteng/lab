@@ -170,6 +170,62 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src"
 
 fail_if_path_exists \
+  "Jangar must not expose generic Codex projection compatibility routes after Agents owns Codex projections" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/codex/github-events.tsx" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/codex/runs.tsx" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/codex/runs/list.tsx" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/codex/runs/recent.tsx" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/codex/issues.tsx" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/codex/rerun.tsx" \
+  "${ROOT_DIR}/services/jangar/src/routes/codex/runs.tsx" \
+  "${ROOT_DIR}/services/jangar/src/routes/codex/search.tsx" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/github/pulls/\$owner/\$repo/\$number/judge-runs.tsx" \
+  "${ROOT_DIR}/services/jangar/src/data/codex.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/codex-rerun-forwarding.ts"
+
+fail_if_matches \
+  "Jangar app shell must not advertise generic Codex projection pages after Agents owns them" \
+  '/codex/(runs|search)|/api/codex/(github-events|issues|rerun|runs)|/api/github/pulls/.*judge-runs' \
+  "${ROOT_DIR}/services/jangar/src/routeTree.gen.ts" \
+  "${ROOT_DIR}/services/jangar/src/components/app-sidebar.tsx" \
+  "${ROOT_DIR}/services/jangar/src/components/app-shell.tsx"
+
+require_matches \
+  "Agents service must own canonical Codex run projection v1 route registration" \
+  '/v1/codex/(runs|issues|github-events)|src/routes/v1/codex/(runs|issues|github-events)|codex/runs/(by-id|by-pr)' \
+  "${ROOT_DIR}/services/agents/src/server/control-plane.ts" \
+  "${ROOT_DIR}/services/agents/package.json"
+
+fail_if_path_exists \
+  "Jangar must not own the generic Codex judge evaluator/store after Agents owns Codex projections" \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge-store.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge-run-rows.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge-artifacts.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge-gates.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge-config.ts"
+
+fail_if_path_exists \
+  "Jangar GitOps must not own generic Codex GitHub event projection ingestion after Agents owns Codex projections" \
+  "${ROOT_DIR}/argocd/applications/jangar/codex-github-events-kafkasource.yaml"
+
+fail_if_matches \
+  "Jangar GitOps must not configure retired CI event stream flags after Agents owns Codex GitHub event ingestion" \
+  'JANGAR_CI_EVENT_STREAM' \
+  "${ROOT_DIR}/argocd/applications/jangar/deployment.yaml"
+
+require_matches \
+  "Agents GitOps must own Codex GitHub event projection ingestion through the Agents service and raw GitHub topic" \
+  '/v1/codex/github-events|name: agents-codex-github-events|namespace: agents|github\.webhook\.events' \
+  "${ROOT_DIR}/argocd/applications/agents/codex-github-events-kafkasource.yaml" \
+  "${ROOT_DIR}/argocd/applications/agents/kustomization.yaml"
+
+fail_if_matches \
+  "Agents GitOps must not consume the retired Froussard Codex judge topic after raw GitHub event ingestion moved to Agents" \
+  'github\.webhook\.codex\.judge|KAFKA_CODEX_JUDGE_TOPIC|github-webhook-codex-judge-topic' \
+  "${ROOT_DIR}/argocd/applications/agents"
+
+fail_if_path_exists \
   "Jangar must not own generic Agents readiness/status verdict normalization after agent-contracts owns it" \
   "${ROOT_DIR}/services/jangar/src/server/agents-control-plane-client.ts"
 
@@ -232,7 +288,9 @@ fail_if_path_exists \
 
 fail_if_path_exists \
   "Jangar must not infer generic AgentRun ingestion readiness after Agents owns /ready ingestion assessment" \
-  "${ROOT_DIR}/services/jangar/src/server/control-plane-serving-process-status.ts"
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-serving-process-status.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-agentrun-ingestion.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/__tests__/supporting-primitives-agentrun-ingestion.test.ts"
 
 fail_if_path_exists \
   "Jangar must not own generic Agents watch reliability after Agents owns watch status evidence" \
@@ -250,7 +308,7 @@ fail_if_matches \
 
 fail_if_matches \
   "Jangar config must not carry generic Agents runtime evidence knobs after Agents owns workflow and rollout status" \
-  'JANGAR_CONTROL_PLANE_ROLLOUT_DEPLOYMENTS|JANGAR_WORKFLOWS_WINDOW_MINUTES|JANGAR_WORKFLOWS_WARNING_BACKOFF_THRESHOLD|JANGAR_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD|workflowsWindowMinutes|rolloutDeployments|workflowsWarningBackoffThreshold|workflowsDegradedBackoffThreshold' \
+  'JANGAR_CONTROL_PLANE_CACHE_|JANGAR_CONTROL_PLANE_HEARTBEAT_|JANGAR_CONTROL_PLANE_ROLLOUT_DEPLOYMENTS|JANGAR_WORKFLOWS_WINDOW_MINUTES|JANGAR_WORKFLOWS_WARNING_BACKOFF_THRESHOLD|JANGAR_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD|resolveControlPlaneCache|resolveControlPlaneHeartbeat|workflowsWindowMinutes|rolloutDeployments|workflowsWarningBackoffThreshold|workflowsDegradedBackoffThreshold' \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-config.ts"
 
 fail_if_path_exists \
@@ -389,6 +447,11 @@ fail_if_matches \
   "${ROOT_DIR}/services/agents/Dockerfile.codex-runner"
 
 fail_if_matches \
+  "services/agents must not read retired Codex judge storage after Agents owns Codex projections" \
+  'codex_judge' \
+  "${ROOT_DIR}/services/agents/src/server"
+
+fail_if_matches \
   "Agents runtime subscribers must not consume legacy workflow, Argo workflow, or workflow_comms agent-message subjects" \
   'workflow_comms\.agent_messages|legacy_workflow_comms|workflow\.>|agents\.workflow\.>|argo\.workflow|agents\.agentrun\.>|agents\.agent_messages\.>|parts\[[0-9]+\] === .workflow.|parts\[[0-9]+\] === .argo.' \
   "${ROOT_DIR}/services/agents/src/server/agent-comms-subscriber.ts" \
@@ -452,9 +515,25 @@ fail_if_matches \
   "Domain AgentRun swarm producers must use AgentRun-native NATS subject prefixes" \
   'natsSubjectPrefix:\s*workflow|subjectPrefix:\s*workflow|workflow\.general\.requirement' \
   "${ROOT_DIR}/argocd/applications/torghut/agents-domain" \
-  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-config.ts" \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-material-reentry-clearinghouse.ts" \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-material-reentry-alpha-closure.ts"
+
+fail_if_path_exists \
+  "Jangar must not own retired supporting-primitives scheduler/runtime shims after Agents owns runtime admission" \
+  "${ROOT_DIR}/packages/agent-contracts/src/supporting-primitives-config.ts" \
+  "${ROOT_DIR}/packages/agent-contracts/src/supporting-primitives-config.test.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-config.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-swarm-config.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-stage-clearance.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-stage-clearance-status.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/__tests__/supporting-primitives-config.test.ts"
+
+fail_if_matches_including_tests \
+  "Active Jangar runtime surfaces must not advertise retired supporting-primitives scheduler env gates after Agents owns runtime admission" \
+  'JANGAR_STAGE_CLEARANCE_ENFORCEMENT|JANGAR_STAGE_CLEARANCE_HOLD_STAGES|JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT|JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT|JANGAR_RUNTIME_ADMISSION_STATUS_|JANGAR_SWARM_NATS_' \
+  "${ROOT_DIR}/argocd/applications/jangar" \
+  "${ROOT_DIR}/services/jangar/README.md" \
+  "${ROOT_DIR}/services/jangar/src"
 
 fail_if_matches \
   "Jangar repair schedule evidence must not fall back to retired workflow reliability namespace env names" \
@@ -466,6 +545,23 @@ fail_if_matches \
   'workflow_comms\.agent_messages|WorkflowCommsAgentMessage|workflow_agent_messages_' \
   "${ROOT_DIR}/services/jangar/src/server/db.ts" \
   "${ROOT_DIR}/services/jangar/src/server/migrations/20251229_workflow_comms_agent_messages.ts"
+
+fail_if_path_exists \
+  "Jangar must not retain retired Agents/Codex tombstone migration source files after migration ownership moved to services/agents" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20251229_codex_judge_run_metadata.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20251229_codex_judge_timeouts.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20251229_codex_rerun_submissions.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20251229_workflow_comms_agent_messages.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20251230_codex_judge_webhook_indexes.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20260105_codex_judge_iterations.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20260111_jangar_primitives.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20260111_jangar_primitives_indexes.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20260205_agents_control_plane_cache.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20260208_jangar_agentrun_idempotency.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20260220_remove_prompt_tuning.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20260308_agents_control_plane_component_heartbeats.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20260520_codex_judge_agentrun_columns.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20260520_drop_codex_rerun_submissions.ts"
 
 fail_if_matches \
   "Agents Codex NATS publisher must emit AgentRun-native identity only, without workflow-shaped compatibility fields" \
@@ -500,14 +596,44 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/codex-judge-run-rows.ts" \
   "${ROOT_DIR}/services/jangar/src/server/migrations/20251228_init.ts"
 
+fail_if_matches \
+  "Jangar migrations must not create or mutate the retired Codex judge schema after Agents owns Codex projections" \
+  "CREATE SCHEMA IF NOT EXISTS codex_judge|sql\\.ref\\('codex_judge\\.|REFERENCES codex_judge\\.|ALTER TABLE codex_judge\\.|DROP TABLE IF EXISTS .*codex_judge\\.|CREATE (UNIQUE )?INDEX IF NOT EXISTS codex_judge" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations"
+
 fail_if_path_exists \
   "Jangar must not own the generic runtime proof-surface reducer after agent-contracts owns runtime admission contracts" \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-runtime-admission.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/__tests__/control-plane-runtime-admission.test.ts" \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-runtime-proof-surface.ts"
+
+fail_if_matches \
+  "Jangar ready must consume runtime-admission proof fields from the Agents service, not build them locally" \
+  'buildRuntimeAdmissionSnapshot|~/server/control-plane-runtime-admission|JANGAR_RUNTIME_IMAGE' \
+  "${ROOT_DIR}/services/jangar/src/routes/ready.tsx" \
+  "${ROOT_DIR}/services/jangar/src/server/runtime-tooling-config.ts" \
+  "${ROOT_DIR}/services/jangar/Dockerfile" \
+  "${ROOT_DIR}/packages/scripts/src/jangar/update-manifests.ts" \
+  "${ROOT_DIR}/argocd/applications/jangar"
+
+fail_if_matches \
+  "Jangar GitOps must not configure the local Codex harness after Agents owns Codex runner execution" \
+  'CODEX_BINARY|CODEX_CWD|JANGAR_CODEX_REVIEWERS|JANGAR_CODEX_MAX_ATTEMPTS|JANGAR_CODEX_BACKOFF_SCHEDULE_MS' \
+  "${ROOT_DIR}/argocd/applications/jangar"
 
 fail_if_matches \
   "Jangar control-plane status shim must not redefine generic runtime admission status types" \
   'export type (RuntimeKit|AdmissionPassport|RecoveryWarrant|RuntimeProofCell|ProjectionWatermark)' \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-status-types.ts"
+
+fail_if_matches \
+  "Jangar control-plane status types must not recreate a composite Agents-plus-domain status compatibility wrapper" \
+  'AgentsControlPlaneStatus|export type ControlPlaneStatus|normalizeControlPlaneStatusPayload|buildControlPlaneStatusFallbacks|generic-agents-status' \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-status-types.ts"
+
+fail_if_path_exists \
+  "Jangar must not keep tests for the retired generic Agents status compatibility normalizer" \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-status-types.test.ts"
 
 fail_if_matches \
   "Agents controller must not derive runner goals from deprecated AgentRun parameter aliases" \
@@ -555,9 +681,24 @@ fail_if_matches \
   "${ROOT_DIR}/argocd/applications/jangar"
 
 require_matches \
-  "Jangar domain consumer must configure Agents-owned Codex rerun orchestration with AGENTS_* env names" \
+  "Agents runtime must configure the Codex rerun orchestration in the Agents Helm values" \
+  'rerunOrchestration: codex-rerun' \
+  "${ROOT_DIR}/argocd/applications/agents/values.yaml"
+
+require_matches \
+  "Agents runtime must configure the Codex rerun orchestration namespace in the Agents Helm values" \
+  'rerunOrchestrationNamespace: agents' \
+  "${ROOT_DIR}/argocd/applications/agents/values.yaml"
+
+fail_if_matches \
+  "Jangar deployment must not configure Agents-owned Codex rerun orchestration after rerun API extraction" \
   'AGENTS_CODEX_RERUN_ORCHESTRATION' \
   "${ROOT_DIR}/argocd/applications/jangar/deployment.yaml"
+
+fail_if_matches \
+  "Jangar docs must not present Agents-owned Codex rerun env as Jangar judge configuration" \
+  'AGENTS_CODEX_RERUN_ORCHESTRATION' \
+  "${ROOT_DIR}/docs/jangar/autonomous-codex-end-to-end-design.md"
 
 require_matches \
   "Jangar domain consumer must configure Agents-owned system-improvement orchestration with AGENTS_* env names" \
@@ -587,11 +728,26 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/server/codex-judge.ts" \
   "${ROOT_DIR}/services/jangar/src/server/codex-judge-config.ts"
 
+fail_if_matches \
+  "Jangar Codex judge must not own AgentRun rerun queue after Agents rerun API extraction" \
+  'processRerunQueue|handleRerunRequest|claimRerunSubmission|enqueueRerunSubmission|listRerunSubmissions|updateRerunSubmission|AGENTS_CODEX_RERUN_ORCHESTRATION|rerunOrchestrationName|rerunOrchestrationNamespace' \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge-config.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/codex-judge-store.ts"
+
+require_matches \
+  "Agents service must own AgentRun rerun and callback v1 route registration" \
+  'agent-runs/[$]id/(reruns|callbacks)' \
+  "${ROOT_DIR}/services/agents/src/server/control-plane.ts" \
+  "${ROOT_DIR}/services/agents/package.json"
+
 fail_if_path_exists \
   "Froussard/Facteur must not recreate the retired GitHub issue Codex Kafka bridge" \
+  "${ROOT_DIR}/argocd/applications/froussard/github-webhook-codex-judge-topic.yaml" \
   "${ROOT_DIR}/argocd/applications/froussard/github-issues-codex-tasks-topic.yaml" \
   "${ROOT_DIR}/argocd/applications/facteur/overlays/cluster/facteur-codex-kafkasource.yaml" \
   "${ROOT_DIR}/proto/proompteng/froussard/v1/codex_task.proto" \
+  "${ROOT_DIR}/services/jangar/src/server/proto/codex_task_pb.ts" \
   "${ROOT_DIR}/apps/froussard/src/webhooks/github/payloads.ts" \
   "${ROOT_DIR}/services/facteur/cmd/facteur/codex_echo.go" \
   "${ROOT_DIR}/services/facteur/internal/codex/listener.go" \
@@ -601,7 +757,7 @@ fail_if_path_exists \
 
 fail_if_matches \
   "Froussard runtime must submit implementation runs directly to Agents instead of publishing the retired Codex task topic" \
-  'github\.issues\.codex\.tasks|KAFKA_CODEX_TOPIC_STRUCTURED|CodexTaskSchema|toCodexTaskProto' \
+  'github\.issues\.codex\.tasks|github\.webhook\.codex\.judge|KAFKA_CODEX_TOPIC_STRUCTURED|KAFKA_CODEX_JUDGE_TOPIC|CodexTaskSchema|CodexTaskMessage|CodexTaskStage|toCodexTaskProto|codexJudge' \
   "${ROOT_DIR}/apps/froussard/src/codex" \
   "${ROOT_DIR}/apps/froussard/src/config.ts" \
   "${ROOT_DIR}/apps/froussard/src/index.ts" \
@@ -700,6 +856,16 @@ fail_if_matches \
   'type AgentsDependencyHealth|const buildAgentsDependencyHealth|const unavailableAgentsController' \
   "${ROOT_DIR}/services/jangar/src/routes/health.tsx"
 
+fail_if_matches \
+  "Jangar /health must not re-emit raw Agents service health payloads after Agents owns runtime health" \
+  'agentsService|agentsController' \
+  "${ROOT_DIR}/services/jangar/src/routes/health.tsx"
+
+fail_if_matches \
+  "Jangar /ready must not re-emit raw Agents runtime ownership fields after Agents owns control-plane status" \
+  'leaderElection,|agents_control_plane_status:|watch_reliability: agentsStatus|agentrun_ingestion: readyPathAgentRunIngestion|control_plane_controller_witness: readyPathControllerWitness|rollout_health: readyPathRolloutHealth|runtime_kits: runtimeAdmission|admission_passports: runtimeAdmission|recovery_warrants: recoveryWarrants|runtime_proof_cells: runtimeProofCells|projection_watermarks: projectionWatermarks|serving_recovery_warrant_id:|serving_runtime_proof_cells_healthy:' \
+  "${ROOT_DIR}/services/jangar/src/routes/ready.tsx"
+
 require_matches \
   "Shared agent-contracts must own the Agents dependency summary classifier for domain consumers" \
   'buildAgentsDependencySummary' \
@@ -709,6 +875,55 @@ require_matches \
   "Shared agent-contracts must own the Agents dependency health classifier for domain consumers" \
   'buildAgentsDependencyHealth' \
   "${ROOT_DIR}/packages/agent-contracts/src/agents-health-client.ts"
+
+if matches_multiline "export[[:space:]]+(type[[:space:]]+)?\\{[^;]+from ['\"]\\.\\/agent-run" \
+  "${ROOT_DIR}/services/agents/src/server/v1/agent-runs.ts"; then
+  echo "Agents extraction boundary violation: Agents v1 AgentRuns HTTP edge must not act as a compatibility barrel for submit/store internals." >&2
+  exit 1
+fi
+
+fail_if_matches \
+  "Agents v1 AgentRuns HTTP edge must not own the dependency contract after dependency injection moved to a dedicated module" \
+  'export type AgentRunsApiDependencies' \
+  "${ROOT_DIR}/services/agents/src/server/v1/agent-runs.ts"
+
+require_matches \
+  "Agents v1 AgentRuns dependency contract must live in the dedicated dependency module" \
+  'export type AgentRunsApiDependencies' \
+  "${ROOT_DIR}/services/agents/src/server/v1/agent-runs-dependencies.ts"
+
+fail_if_matches \
+  "Agents v1 AgentRuns dependency module must not import the HTTP handler or submit implementation" \
+  "from ['\"]\\.\\/(agent-runs|agent-run-submit)['\"]" \
+  "${ROOT_DIR}/services/agents/src/server/v1/agent-runs-dependencies.ts"
+
+fail_if_matches \
+  "AgentRun submit/read/runtime modules must not import dependency types from the AgentRuns HTTP handler" \
+  "from ['\"]\\.\\/agent-runs['\"]" \
+  "${ROOT_DIR}/services/agents/src/server/v1/agent-run-submit.ts" \
+  "${ROOT_DIR}/services/agents/src/server/v1/run-read.ts" \
+  "${ROOT_DIR}/services/agents/src/server/v1/runtime.ts"
+
+fail_if_matches \
+  "Agents v1 AgentRun submit module must not act as a compatibility barrel for store or error internals" \
+  "export[[:space:]]+(type[[:space:]]+)?\\{[^;]+from ['\"]\\.\\/agent-run-(store|errors)['\"]" \
+  "${ROOT_DIR}/services/agents/src/server/v1/agent-run-submit.ts"
+
+fail_if_matches \
+  "Agents v1 control-plane status HTTP edge must run the typed Effect program instead of a broad try/catch wrapper" \
+  'try \{|catch \(error\)|getAgentsControlPlaneStatus\(' \
+  "${ROOT_DIR}/services/agents/src/server/v1/control-plane-status.ts"
+
+require_matches \
+  "Agents v1 control-plane status HTTP edge must provide the typed status service layer" \
+  'getAgentsControlPlaneStatusEffect|makeAgentsControlPlaneStatusLayer|Effect\.either' \
+  "${ROOT_DIR}/services/agents/src/server/v1/control-plane-status.ts"
+
+fail_if_matches \
+  "Agents-owned controller-ingestion settlement must stay domain-neutral and avoid Jangar/Torghut evidence types" \
+  'TorghutConsumerEvidenceStatus|torghut_|jangar\.|~\/server\/control-plane-status-types' \
+  "${ROOT_DIR}/packages/agent-contracts/src/control-plane-status.ts" \
+  "${ROOT_DIR}/services/agents/src/server/control-plane-status.ts"
 
 fail_if_matches \
   "Agents v1 resource-read API must use typed Effect errors instead of ad hoc string-matched storage/kube errors" \
@@ -745,21 +960,23 @@ fail_if_matches \
   'RESOURCE_MAP|agentruns\.agents\.proompteng\.ai|swarms\.swarm\.proompteng\.ai' \
   "${ROOT_DIR}/services/jangar/src/server/kube-gateway.ts"
 
-fail_if_matches \
-  "Jangar swarm analysis must read AgentRun and OrchestrationRun targets through the Agents service boundary" \
-  'createKubernetesClient|RESOURCE_MAP\.(AgentRun|OrchestrationRun)|agents\.proompteng\.ai/v1alpha1|orchestration\.proompteng\.ai/v1alpha1' \
+fail_if_path_exists \
+  "Jangar must not retain generic Swarm run analysis after agent-contracts owns the shared implementation" \
   "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-swarm-analysis.ts"
 
-fail_if_matches \
-  "Jangar must not retain generic Swarm run analysis after agent-contracts owns the shared implementation" \
-  'TERMINAL_SUCCESS_PHASES = new Set|countConsecutive|fetchStageTargetResourceFromAgentsService|PROVIDER_CAPACITY_EXHAUSTED_REASON|readNested|sortByMostRecentRun|collectStaleStageSignals|stageStates' \
-  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-swarm-analysis.ts"
+fail_if_path_exists \
+  "Jangar must not own generic supporting-primitives helper contracts after agent-contracts owns them" \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-evidence-pressure.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-material-evidence-trace.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-naming.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-requirement-bridge.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-schedule-identity.ts"
 
 require_matches \
-  "Jangar swarm analysis must be a compatibility wrapper around the agent-contracts implementation" \
-  'swarm-analysis' \
-  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-swarm-analysis.ts" \
-  "${ROOT_DIR}/packages/agent-contracts/package.json"
+  "Agent contracts must own generic supporting-primitives helper contracts" \
+  'supporting-primitives-(evidence-pressure|material-evidence-trace|naming|requirement-bridge|schedule-identity|status)' \
+  "${ROOT_DIR}/packages/agent-contracts/package.json" \
+  "${ROOT_DIR}/packages/agent-contracts/src"
 
 fail_if_path_exists \
   "Jangar must not own generic Swarm CRD annotation constants after agent-contracts owns the shared contract" \
@@ -832,6 +1049,64 @@ fail_if_matches \
   "from 'pg'|kube\\.get\\('secret'|memory_(events|kv|embeddings)|connectionString" \
   "${ROOT_DIR}/services/jangar/src/server/memory-provider.ts"
 
+fail_if_path_exists \
+  "Jangar must not retain the Agents memory note store or local memory HTTP parser after Agents owns memory notes" \
+  "${ROOT_DIR}/services/jangar/src/server/memories-store.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/memories-http.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/memories.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/memory-notes.ts" \
+  "${ROOT_DIR}/services/jangar/src/data/memories.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/migrations/20260418_embedding_dimension_4096.ts"
+
+fail_if_path_exists \
+  "Jangar must not expose generic memory compatibility routes after Agents owns memory note APIs" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/memories.ts" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/memories/count.ts" \
+  "${ROOT_DIR}/services/jangar/src/routes/api/memories/stats.ts" \
+  "${ROOT_DIR}/services/jangar/src/routes/memories.tsx" \
+  "${ROOT_DIR}/services/jangar/src/server/__tests__/memories-rest.test.ts"
+
+fail_if_matches \
+  "Jangar UI and route tree must not link to generic memory compatibility pages or APIs" \
+  '/api/memories|/memories' \
+  "${ROOT_DIR}/services/jangar/src/routeTree.gen.ts" \
+  "${ROOT_DIR}/services/jangar/src/components/app-sidebar.tsx" \
+  "${ROOT_DIR}/services/jangar/src/components/app-shell.tsx" \
+  "${ROOT_DIR}/services/jangar/src/routes/index.tsx"
+
+fail_if_matches \
+  "Jangar MCP must not expose generic memory tools after Agents owns the memory MCP endpoint" \
+  'persist_memory|retrieve_memory|MemoryNotes|memory-notes|memories://config|Memories MCP|createPostgresMemoriesStore|memories\.entries|MemoriesLive|~/server/memories|from .*/memories-store|from .*/memories-http' \
+  "${ROOT_DIR}/services/jangar/src/server/mcp.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/__tests__/mcp.test.ts"
+
+require_matches \
+  "Agents service must own memory note persistence, retrieval, count, stats, and MCP endpoints" \
+  '/v1/memory-notes|/mcp|persist_memory|retrieve_memory|createPostgresMemoriesStore|memories\.entries' \
+  "${ROOT_DIR}/services/agents/src/server/control-plane.ts" \
+  "${ROOT_DIR}/services/agents/src/server/mcp.ts" \
+  "${ROOT_DIR}/services/agents/src/server/v1/memory-notes.ts" \
+  "${ROOT_DIR}/services/agents/src/server/memory-notes-store.ts" \
+  "${ROOT_DIR}/services/agents/src/server/migrations/20260521_agents_memory_notes.ts"
+
+fail_if_matches \
+  "Memories CLI helpers must not target Jangar memory compatibility APIs after Agents owns memory notes" \
+  'resolveJangarBaseUrl|MEMORIES_JANGAR_URL|JANGAR_BASE_URL|/api/memories|jangar\.jangar|Jangar' \
+  "${ROOT_DIR}/services/memories/cli.ts" \
+  "${ROOT_DIR}/services/memories/save.ts" \
+  "${ROOT_DIR}/services/memories/retrieve.ts" \
+  "${ROOT_DIR}/services/memories/README.md" \
+  "${ROOT_DIR}/services/memories/tests/cli.test.ts"
+
+require_matches \
+  "Memories CLI helpers must target the Agents memory note API" \
+  '/v1/memory-notes|MEMORIES_AGENTS_URL|AGENTS_SERVICE_BASE_URL|agents\.agents\.svc\.cluster\.local' \
+  "${ROOT_DIR}/services/memories/cli.ts" \
+  "${ROOT_DIR}/services/memories/save.ts" \
+  "${ROOT_DIR}/services/memories/retrieve.ts" \
+  "${ROOT_DIR}/services/memories/README.md" \
+  "${ROOT_DIR}/services/memories/tests/cli.test.ts"
+
 fail_if_matches \
   "Jangar must call the Agents service boundary instead of importing Agents package internals" \
   '@proompteng/agents' \
@@ -894,6 +1169,11 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/src/routes/ready.tsx"
 
 fail_if_matches \
+  "Jangar metrics must not retain Agents controller, AgentRun admission, or kube-watch instruments after extraction" \
+  'recordAgent(QueueDepth|RateLimitRejection|Concurrency|RunOutcome|RunResyncAdoptions|RunUntouchedBacklog|RunUntouchedOldestAgeSeconds)|recordReconcileDurationMs|recordKubeWatch(Event|Error|Restart)|jangar_agent(run|s)|jangar_kube_watch' \
+  "${ROOT_DIR}/services/jangar/src/server/metrics.ts"
+
+fail_if_matches \
   "Jangar whitepaper finalizer must not use AGENTS_NAMESPACE as a namespace alias after Agents owns its runtime env" \
   'AGENTS_NAMESPACE' \
   "${ROOT_DIR}/services/jangar/src/server/whitepaper-finalize-consumer.ts"
@@ -912,6 +1192,16 @@ fail_if_matches \
   "${ROOT_DIR}/services/jangar/playwright.config.ts" \
   "${ROOT_DIR}/services/jangar/scripts/openwebui-e2e.sh" \
   "${ROOT_DIR}/argocd/applications/jangar"
+
+fail_if_matches \
+  "Jangar deploy verification must use canonical AGENTS_VERIFY_CONTROL_PLANE_* env names, not deprecated JANGAR aliases" \
+  'JANGAR_VERIFY_STATUS_SERVICE_|JANGAR_VERIFY_CONTROL_PLANE_STATUS_NAMESPACE' \
+  "${ROOT_DIR}/packages/scripts/src/jangar/verify-deployment.ts"
+
+fail_if_matches \
+  "Jangar release promotion gating must not treat Agents Codex runtime or skill-only changes as Jangar build triggers" \
+  'packages/codex/|skills/' \
+  "${ROOT_DIR}/packages/scripts/src/jangar/resolve-release-metadata.ts"
 
 fail_if_matches \
   "Jangar docs must not advertise removed Agents controller runtime config" \
@@ -933,6 +1223,12 @@ fail_if_matches \
   "Current Agents system-prompt docs must describe the Agents app-server runner, not legacy shell Codex runtime" \
   'codex exec|services/jangar/api/agents|services/jangar/scripts/codex|services/jangar/src/server/agents-controller|jangar-db-app|JANGAR_|/app/services/jangar|codex-implement' \
   "${ROOT_DIR}/docs/agents/designs/custom-system-prompt-agent-runs.md"
+
+fail_if_matches \
+  "Current Agents operator docs must use AGENTS_* controller/runtime env names instead of retired Jangar Agents env names" \
+  'JANGAR_AGENTS_CONTROLLER_|JANGAR_AGENT_RUNNER_|JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK|JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT|JANGAR_STAGE_CLEARANCE_ENFORCEMENT' \
+  "${ROOT_DIR}/docs/agents/agentrun-workflow-loop-launch-guide.md" \
+  "${ROOT_DIR}/docs/agents/runbooks.md"
 
 fail_if_matches \
   "Agents chart design docs must not advertise retired Jangar-managed chart env names" \
@@ -969,6 +1265,24 @@ fail_if_matches \
   "${ROOT_DIR}/services/agents/src/server/agents-controller/job-runtime.ts" \
   "${ROOT_DIR}/services/agents/src/server/agents-controller/agent-run-reconciler.ts" \
   "${ROOT_DIR}/services/agents/src/server/agents-controller/workflow-reconciler.ts"
+
+fail_if_matches \
+  "Agents runtime, chart, and docs must use AGENTS_CONTROLLER_* instead of the extracted double-prefixed AGENTS_AGENTS_CONTROLLER_* names" \
+  'AGENTS_AGENTS_CONTROLLER' \
+  "${ROOT_DIR}/services/agents" \
+  "${ROOT_DIR}/charts/agents" \
+  "${ROOT_DIR}/argocd/applications/agents" \
+  "${ROOT_DIR}/docs/agents" \
+  "${ROOT_DIR}/packages/scripts/src/agents"
+
+fail_if_matches \
+  "ImplementationSource webhook runtime settings must use AGENTS_IMPLEMENTATION_SOURCE_WEBHOOK_* instead of generic controller webhook names" \
+  'AGENTS_CONTROLLER_WEBHOOK_' \
+  "${ROOT_DIR}/services/agents" \
+  "${ROOT_DIR}/charts/agents" \
+  "${ROOT_DIR}/argocd/applications/agents" \
+  "${ROOT_DIR}/docs/agents" \
+  "${ROOT_DIR}/packages/scripts/src/agents"
 
 fail_if_matches \
   "Agents chart validation must not special-case Jangar runner image aliases after the chart rejects all non-canonical JANGAR_* env names" \
@@ -1176,6 +1490,8 @@ fail_if_matches \
 
 fail_if_path_exists \
   "Jangar must not retain copied Agents kube watch helpers" \
+  "${ROOT_DIR}/services/jangar/src/server/kubernetes-watch-client.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/__tests__/kubernetes-watch-client.test.ts" \
   "${ROOT_DIR}/services/jangar/src/server/kube-watch.ts" \
   "${ROOT_DIR}/services/jangar/src/server/primitives-watch.ts"
 
@@ -1183,9 +1499,13 @@ fail_if_matches \
   "Jangar must not create or write Agents-owned control-plane database tables" \
   'agents_control_plane|agent_run_idempotency_keys|CREATE TABLE IF NOT EXISTS agent_runs|CREATE TABLE IF NOT EXISTS orchestration_runs|CREATE TABLE IF NOT EXISTS memory_resources' \
   "${ROOT_DIR}/services/jangar/src/server/db.ts" \
-  "${ROOT_DIR}/services/jangar/src/server/control-plane-heartbeat-store.ts" \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-clearance-market.ts" \
   "${ROOT_DIR}/services/jangar/src/server/migrations"
+
+fail_if_path_exists \
+  "Jangar must not retain an Agents-owned control-plane heartbeat store after heartbeat contracts moved to agent-contracts" \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-heartbeat-store.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/__tests__/control-plane-heartbeat-store.test.ts"
 
 fail_if_matches \
   "Jangar database typing must not reintroduce Agents-owned table contracts after migration ownership moved to services/agents" \
@@ -1324,6 +1644,14 @@ fail_if_matches \
   "${ROOT_DIR}/argocd/applications/kafka/kustomization.yaml" \
   "${ROOT_DIR}/docs/runbooks/codex-pipeline-observability.md" \
   "${ROOT_DIR}/docs/kafka-topics.md"
+
+fail_if_matches \
+  "Active GitHub/Codex docs must not describe the retired Froussard Codex judge topic as current runtime" \
+  'github\.webhook\.codex\.judge|github-webhook-codex-judge|KAFKA_CODEX_JUDGE_TOPIC' \
+  "${ROOT_DIR}/docs/kafka-topics.md" \
+  "${ROOT_DIR}/docs/jangar/github-pr-review-in-app.md" \
+  "${ROOT_DIR}/docs/jangar/codex-judge-argo-design.md" \
+  "${ROOT_DIR}/docs/jangar/codex-judge-argo-implementation.md"
 
 fail_if_matches \
   "Active Jangar docs must not describe the retired Argo workflow completion bridge as current runtime" \

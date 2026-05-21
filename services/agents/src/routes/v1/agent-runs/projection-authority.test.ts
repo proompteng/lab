@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { AgentRunsApiStore } from '../../../server/v1/agent-runs'
+import type { AgentRunsApiStore } from '../../../server/v1/agent-run-store'
 import { configureAgentsV1Runtime, resetAgentsV1RuntimeForTests } from '../../../server/v1/runtime'
 
 import { getAgentRunProjectionAuthorityHandler } from './projection-authority'

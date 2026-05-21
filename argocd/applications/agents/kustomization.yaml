@@ -19,6 +19,7 @@ resources:
   - codex-agent-system-prompt-configmap.yaml
   - codex-versioncontrolprovider.yaml
   - codex-orchestrations.yaml
+  - codex-github-events-kafkasource.yaml
   - sample-approvalpolicy.yaml
   - sample-budget.yaml
   - sample-signal.yaml

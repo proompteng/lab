@@ -188,129 +188,16 @@ bun --cwd services/jangar run start:worker
 - Incident recovery command (includes unversioned running workflows):
   `bun run packages/scripts/src/jangar/sync-temporal-routing.ts --task-queue jangar --deployment-name jangar-deployment --migrate-stale-running --migrate-unversioned-running`
 
-## Swarm runtime admission
+## Agents-owned runtime admission
 
-The control-plane status payload exposes shadow `stage_clearance_packets` for the freeze-aware launch-governor
-contract in `docs/agents/designs/184-jangar-stage-clearance-packets-and-freeze-aware-launch-governor-2026-05-12.md`.
-Each packet binds a swarm stage and action class to the current execution-trust, controller-witness,
-source-rollout-truth, material-action, route-stability, failure-domain, workflow, and Torghut evidence refs. In the
-initial shadow phase this projection does not change scheduler behavior; it gives engineer, verify, and deployer
-handoffs packet IDs and reason codes before the scheduler starts enforcing held normal launches.
+Agents now owns schedule reconciliation, AgentRun creation, runtime admission, runner status, and the
+`/v1/control-plane/status` projection. Jangar should consume that Agents API for domain decisions; it no longer starts a
+supporting-primitives scheduler/controller path, validates scheduler admission env, or injects launch-capable
+Schedule/ConfigMap/CronJob resources.
 
-Schedule-runner pods read the same status payload before launch and, in
-`JANGAR_STAGE_CLEARANCE_ENFORCEMENT=shadow` mode, stamp scheduled `discover`, `plan`, `implement`, and `verify` runs
-with `swarm.proompteng.ai/stage-clearance-packet-id`, the packet decision, action class, freshness timestamp, required
-repair action, and the matching `swarmStageClearance*` parameters. Missing or stale packets are logged in shadow mode
-but do not block the run. The packet reducer consumes failure-domain holdback decisions as launch debt, so missing
-lease authority such as `database.lease_missing` holds normal dispatch even when no concrete expired lease row is
-available to cite.
-
-The first hold rollout is scoped with `JANGAR_STAGE_CLEARANCE_ENFORCEMENT=hold` and
-`JANGAR_STAGE_CLEARANCE_HOLD_STAGES=implement,verify`. The supporting-primitives controller now reads the current
-packet before writing launch-capable `implement` or `verify` schedules; a non-`allow`, missing, stale, or zero-budget
-packet deletes the generated Schedule/ConfigMap/CronJob path and records `StageClearanceBlocked` instead of letting a
-CronJob fail at fire time. Cross-swarm requirement dispatch uses the same `implement` packet, keeps held requirements
-pending, and stamps admitted requirement runs with packet id, decision, reason codes, and required repair action.
-The Swarm CR status keeps the requirement-bridge counters, admission/stage-clearance evidence, pause reason, and
-template error field in the CRD schema. When a previously missing implement template is restored, the controller writes
-an empty `requirements.error` so Kubernetes merge-patch status updates replace the stale operator-facing error instead
-of preserving it from an older reconcile.
-Rollback for packet lookup is `JANGAR_STAGE_CLEARANCE_ENFORCEMENT=disabled`; rollback for hold-only behavior is
-`JANGAR_STAGE_CLEARANCE_ENFORCEMENT=shadow` or removing the stage from `JANGAR_STAGE_CLEARANCE_HOLD_STAGES`.
-
-The supporting-primitives controller enforces stage admission passports before it creates launch-capable swarm work.
-With `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=true` (the production default), discover/plan schedules use the
-`swarm_plan` passport, implement schedules and cross-swarm requirements use `swarm_implement`, and verify schedules use
-`swarm_verify`. A blocked or held passport deletes the matching schedule plus generated runner ConfigMap/CronJob
-resources and prevents requirement dispatch instead of allowing repeated opaque job retries. A hard-blocked
-`swarm_implement` passport also marks the matching requirement Signal `Rejected` with the passport refusal, so the
-requirement fails once with typed runtime-admission evidence. Held passports and unavailable admission snapshots stay
-pending so they can dispatch after the runtime kit or admission projection recovers.
-
-Schedule reconciliation also re-checks the current stage passport before it writes runner ConfigMaps or CronJobs.
-This keeps pre-existing schedules from launching with stale allowed passport annotations after the collaboration runtime
-kit moves to `hold` or `block`.
-If the admission snapshot cannot be compiled, launch admission fails closed as `RuntimeAdmissionUnavailable`, deletes the
-matching runner resources, and records the unavailable passport state in swarm status instead of leaving stale CronJobs
-armed.
-When runtime proof enforcement is enabled with `JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT=true` (the production default),
-the same launch gate also requires the stage recovery warrant (`discover`, `plan`, `implement`, or `verify`) to be
-`sealed`, cite the same runtime-kit digest and producer revision as the current passport, and be backed by present,
-required, fresh, healthy runtime proof cells. A broken, incomplete, or stale-parity warrant records
-`RuntimeProofSurfaceBlocked`, deletes schedule runner resources, and prevents requirement dispatch. Broken or
-quarantined implement warrants reject the matching requirement Signal once with typed proof-surface evidence. Emergency
-rollback for the proof layer only is `JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT=false`; the passport admission gate remains
-active.
-
-Agents-owned schedule reconciliation verifies the stamped passport and sealed warrant against the current
-`/v1/control-plane/status?namespace=<schedule namespace>` response before creating the AgentRun or
-OrchestrationRun. Jangar consumes that status projection for domain stage-clearance decisions through
-`JANGAR_RUNTIME_ADMISSION_STATUS_URL`; the timeout defaults to `15000` ms via
-`JANGAR_RUNTIME_ADMISSION_STATUS_TIMEOUT_MS`. Stage-clearance hold mode requires the full status projection because
-`/ready` does not carry clearance packets.
-
-Binary runtime-kit components must be executable, not just present on disk. Shared Codex NATS helpers are resolved from
-`packages/cx-tools`, `$PATH`, or the installed `/usr/local/bin/codex-nats-*` wrappers; a non-executable helper keeps the
-collaboration kit blocked with `runtime_kit_component_missing:*` evidence.
-
-Degraded authority or degraded runtime-kit evidence keeps the serving passport non-blocking (`degrade`) but moves
-launch-capable swarm passports to `hold`. Missing required runtime-kit evidence still moves launch-capable passports to
-`block`. The supporting-primitives controller treats both `hold` and `block` as non-admitted decisions for discover,
-plan, implement, verify, and cross-swarm requirement launches.
-
-Admitted schedules and requirement runs carry these trace fields in annotations and run parameters:
-
-- `swarmRuntimeAdmissionDesignRef`
-- `swarmRuntimeProofDesignRef`
-- `swarmAdmissionPassportId`
-- `swarmAdmissionDecision`
-- `swarmRecoveryCaseSetDigest`
-- `swarmRuntimeKitSetDigest`
-- `swarmRequiredRuntimeKits`
-- `swarmAdmissionProducerRevision`
-- `swarmRecoveryWarrantId`
-- `swarmRecoveryWarrantStatus`
-- `swarmRequiredProofCells`
-
-The runtime-admission compiler also emits Phase 0 recovery-warrant evidence from the same passport snapshot.
-`/ready` and `/v1/control-plane/status` include shadow `recovery_warrants`, `runtime_proof_cells`, and
-`projection_watermarks`. A missing required helper or config value becomes a broken warrant with a missing proof cell,
-and the launcher gate now consumes that sealed warrant truth before creating work. Warrant, epoch, proof-cell, and
-deploy-verification watermark ids stay stable across ordinary freshness refreshes; they change only when the underlying
-passport, runtime-kit digest, proof content, or decision changes. Rollback for launcher proof enforcement is to set
-`JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT=false` while keeping `runtime_kits`, `admission_passports`, and proof-surface
-projection intact.
-
-`/v1/control-plane/status` also emits observe-mode rollout proof from
-`docs/agents/designs/191-jangar-rollout-proof-passports-and-runner-capacity-futures-2026-05-13.md`. The
-`rollout_proof_passport` joins source rollout truth, source-serving verdicts, database status, controller witness,
-rollout health, and ready truth into one source-to-serving status. Missing source CI, manifest digest, or registry
-digest proof marks the passport `collecting` and holds material launch evidence while serving readiness can remain
-`ok`; stale or contradictory proof blocks material launch evidence. `runner_capacity_futures` classify each normal
-swarm dispatch lane from recent scheduling events, workflow timeouts, runtime adapter health, stage credit, and the
-passport image-digest state. `stage_launch_tickets` bind the passport and capacity future for handoff. This slice does
-not change scheduler behavior; rollback is to ignore these status fields or keep downstream consumers in observe mode.
-
-Deploy verification also consumes the runtime-admission projection. After Argo, rollout, and image digest checks pass,
-`packages/scripts/src/jangar/verify-deployment.ts` reads
-`/v1/control-plane/status?namespace=agents` through the Kubernetes service proxy and requires the configured
-passport consumers (`serving`, `swarm_plan`, `swarm_implement`, and `swarm_verify` by default) to be `allow`, fresh,
-backed by present runtime kits, and running on the same image digest as the promoted deployment. The deployment manifest
-sets `JANGAR_RUNTIME_IMAGE` to the promoted tag and digest so runtime-kit `image_ref` can be compared directly. Emergency
-rollback for the verifier gate is `--skip-admission-passport-verification` or
-`JANGAR_VERIFY_ADMISSION_PASSPORTS=false`; keep the status projection enabled for forensics.
-
-By default, deploy verification also checks the recovery-warrant proof surface from the same status payload. For each
-configured passport consumer, the verifier requires the deploy-relevant warrant (`serving`, `plan`, `implement`, or
-`verify`) to be `sealed`, cite the same passport/runtime-kit digest, match the promoted image digest, have fresh healthy
-required proof cells, and expose a fresh `deploy_verification` projection watermark that cites the same passport.
-Superseded warrants must report zero active backlog seats before the rollout is marked safe. Emergency rollback for this
-proof-surface gate is `--skip-runtime-proof-verification` or `JANGAR_VERIFY_RUNTIME_PROOF_SURFACE=false`; skipping
-admission passport verification also skips the proof-surface gate because both gates consume the same status projection.
-
-Rollback: set `JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT=false` to return launch behavior to passport-only enforcement, or
-set `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=false` on the control-plane runtime to return launch behavior to the
-previous advisory-only passport mode while keeping status and `/ready` passport/proof projection visible for forensics.
+Historical stage-clearance, passport, and proof-surface design notes remain under `docs/agents/designs/` for audit
+context. Active rollout and verifier behavior must be changed in `services/agents`, `charts/agents`, or the Agents
+GitOps app, then consumed from Jangar through the typed Agents clients.
 
 ## Account-scoped quant witness
 
@@ -377,17 +264,16 @@ repair-only when the selected repair lot is zero-notional and cites a live warra
 and deployer handoffs one `ledger_id` plus evidence refs instead of requiring operators to reconcile status sections by
 hand.
 
-When stage-clearance enforcement is in hold mode, scheduler reconciliation and fire-time schedule-runner admission also
-consume `clearance_market_ledger.stage_admission`. A non-`allow` stage admission blocks the launch even when the lower
-level stage-clearance packet is `allow`, deletes the stale schedule runner resources, and reports the clearance ledger
-id plus selected repair lot in `Schedule.status.stageClearance`. Launched AgentRuns are stamped with
+Agents-owned schedule reconciliation consumes `clearance_market_ledger.stage_admission` when it evaluates runtime
+admission. A non-`allow` stage admission blocks the launch in Agents before an AgentRun is created and reports the
+clearance ledger id plus selected repair lot through Agents status/events. Launched AgentRuns are stamped with
 `swarmClearanceMarketLedgerId`, `swarmClearanceMarketStageAdmissionId`, `swarmClearanceMarketStageDecision`, and
 `swarmClearanceMarketSelectedRepairLotRef` so deployer handoffs can trace the exact market admission used.
 
 Rollback: set `JANGAR_CLEARANCE_MARKET_ENABLED=false` to remove the ledger from the status payload. Existing
 stage-clearance packets, material-action verdicts, runtime-admission passports, repair warrants, and source-rollout
-truth remain the fallback authority. For scheduler admission only, set `JANGAR_STAGE_CLEARANCE_ENFORCEMENT=shadow` to
-stop blocking launches while preserving the stamped evidence.
+truth remain the fallback authority. Scheduler admission rollback lives in the Agents controller/runtime admission
+configuration, not in the Jangar deployment.
 
 Control-plane status also emits `stage_credit_ledger` from
 `docs/agents/designs/187-jangar-stage-credit-ledger-and-runner-slot-futures-2026-05-13.md`. The ledger is an
@@ -767,26 +653,18 @@ Jangar terminals are intended to run against a dedicated terminal backend deploy
 - Terminal backend: set `JANGAR_TERMINAL_BACKEND_ID` (unique per pod) for session metadata and routing diagnostics.
 - Optional: tune `JANGAR_TERMINAL_BUFFER_BYTES` (output replay buffer) and `JANGAR_TERMINAL_IDLE_TIMEOUT_MS` (auto-terminate idle sessions).
 
-## MCP (memories)
+## MCP
 
-The memories MCP endpoint is available at `POST /mcp` (see `services/jangar/src/routes/mcp.ts`). The Codex app-server is configured to use it via `threadConfig.mcp_servers.memories` (see `services/jangar/src/server/codex-client.ts`).
+Jangar exposes the Atlas MCP endpoint at `POST /mcp` (see `services/jangar/src/routes/mcp.ts`). The Codex app-server registers this endpoint as `threadConfig.mcp_servers.atlas` and registers Agents-owned memory tools through `threadConfig.mcp_servers.memories` (see `services/jangar/src/server/codex-client.ts`).
 
-The MCP server provides:
+The Jangar MCP server provides Atlas indexing/search tools only:
 
-- `persist_memory`: stores `{ namespace, content, summary?, tags? }` plus an OpenAI embedding in Postgres (pgvector).
-- `retrieve_memory`: semantic search over stored memories (cosine distance) for a namespace.
+- `atlas_index`: records repository file-version metadata for Atlas enrichment.
+- `atlas_search`: searches Atlas enrichments.
+- `atlas_code_search`: searches code chunks with file and line pointers.
+- `atlas_stats`: returns Atlas table counts and ingestion stats.
 
-Storage details:
-
-- Table is `memories.entries` (auto-created on first use; see `schemas/embeddings/memories.sql`) and requires `pgvector` + `pgcrypto` extensions.
-- No table migrations are performed; the store expects the current schema only. If `OPENAI_EMBEDDING_DIMENSION` does not match the existing `memories.entries.embedding` column dimension, MCP calls will fail with a schema mismatch error.
-
-## REST (memories)
-
-Jangar also exposes JSON endpoints that mirror the MCP memory inputs:
-
-- `POST /api/memories` with `{ namespace?, content, summary?, tags? }` to persist a memory.
-- `GET /api/memories?query=...&namespace=...&limit=...` to retrieve matches.
+Generic memory note persistence, retrieval, count, stats, and MCP tools are owned by the Agents service at `/v1/memory-notes*` and `/mcp`.
 
 ## Environment
 
@@ -800,8 +678,10 @@ Jangar also exposes JSON endpoints that mirror the MCP memory inputs:
 - `JANGAR_OPENWEBUI_RICH_RENDER_ENABLED` (optional; enables OpenWebUI text-plus-links detail rendering in the standard SSE transcript)
 - `JANGAR_OPENWEBUI_EXTERNAL_BASE_URL` (optional; browser-reachable Jangar origin used to build signed `/api/openwebui/rich-ui/render/$renderId` links)
 - `JANGAR_OPENWEBUI_RENDER_SIGNING_SECRET` (optional; required with the external base URL to sign OpenWebUI detail links)
-- `JANGAR_MCP_URL` (optional; defaults to `http://127.0.0.1:$PORT/mcp`)
-- `DATABASE_URL` (required to use MCP memories tools)
+- `AGENTS_MCP_URL` (optional; defaults to `http://agents.agents.svc.cluster.local/mcp`)
+- `JANGAR_ATLAS_MCP_URL` (optional; defaults to `http://127.0.0.1:$PORT/mcp`)
+- `JANGAR_MCP_URL` (deprecated alias for `JANGAR_ATLAS_MCP_URL`)
+- `DATABASE_URL` (required for Atlas storage)
 - `PGSSLMODE` (optional; defaults to `require`; Jangar does not support `sslrootcert` URL params for Bun’s Postgres client)
 
 Control-plane cache freshness (API read path):

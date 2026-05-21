@@ -32,6 +32,11 @@ type ControlPlaneRuntimeOptions = {
 
 const routeSources: RouteSourceSpec[] = [
   {
+    file: 'src/routes/mcp.ts',
+    sourceUrl: new URL('../routes/mcp.ts', import.meta.url),
+    load: () => import('../routes/mcp'),
+  },
+  {
     file: 'src/routes/v1/agents.ts',
     sourceUrl: new URL('../routes/v1/agents.ts', import.meta.url),
     load: () => import('../routes/v1/agents'),
@@ -77,6 +82,41 @@ const routeSources: RouteSourceSpec[] = [
     load: () => import('../routes/v1/agent-events'),
   },
   {
+    file: 'src/routes/v1/codex/runs.ts',
+    sourceUrl: new URL('../routes/v1/codex/runs.ts', import.meta.url),
+    load: () => import('../routes/v1/codex/runs'),
+  },
+  {
+    file: 'src/routes/v1/codex/runs/list.ts',
+    sourceUrl: new URL('../routes/v1/codex/runs/list.ts', import.meta.url),
+    load: () => import('../routes/v1/codex/runs/list'),
+  },
+  {
+    file: 'src/routes/v1/codex/runs/by-id.ts',
+    sourceUrl: new URL('../routes/v1/codex/runs/by-id.ts', import.meta.url),
+    load: () => import('../routes/v1/codex/runs/by-id'),
+  },
+  {
+    file: 'src/routes/v1/codex/runs/by-pr.ts',
+    sourceUrl: new URL('../routes/v1/codex/runs/by-pr.ts', import.meta.url),
+    load: () => import('../routes/v1/codex/runs/by-pr'),
+  },
+  {
+    file: 'src/routes/v1/codex/runs/recent.ts',
+    sourceUrl: new URL('../routes/v1/codex/runs/recent.ts', import.meta.url),
+    load: () => import('../routes/v1/codex/runs/recent'),
+  },
+  {
+    file: 'src/routes/v1/codex/issues.ts',
+    sourceUrl: new URL('../routes/v1/codex/issues.ts', import.meta.url),
+    load: () => import('../routes/v1/codex/issues'),
+  },
+  {
+    file: 'src/routes/v1/codex/github-events.ts',
+    sourceUrl: new URL('../routes/v1/codex/github-events.ts', import.meta.url),
+    load: () => import('../routes/v1/codex/github-events'),
+  },
+  {
     file: 'src/routes/v1/implementation-sources/webhooks/$provider.ts',
     sourceUrl: new URL('../routes/v1/implementation-sources/webhooks/$provider.ts', import.meta.url),
     load: () => import('../routes/v1/implementation-sources/webhooks/$provider'),
@@ -115,6 +155,21 @@ const routeSources: RouteSourceSpec[] = [
     file: 'src/routes/v1/memory-operations.ts',
     sourceUrl: new URL('../routes/v1/memory-operations.ts', import.meta.url),
     load: () => import('../routes/v1/memory-operations'),
+  },
+  {
+    file: 'src/routes/v1/memory-notes.ts',
+    sourceUrl: new URL('../routes/v1/memory-notes.ts', import.meta.url),
+    load: () => import('../routes/v1/memory-notes'),
+  },
+  {
+    file: 'src/routes/v1/memory-notes/count.ts',
+    sourceUrl: new URL('../routes/v1/memory-notes/count.ts', import.meta.url),
+    load: () => import('../routes/v1/memory-notes/count'),
+  },
+  {
+    file: 'src/routes/v1/memory-notes/stats.ts',
+    sourceUrl: new URL('../routes/v1/memory-notes/stats.ts', import.meta.url),
+    load: () => import('../routes/v1/memory-notes/stats'),
   },
   {
     file: 'src/routes/v1/orchestrations.ts',
@@ -197,6 +252,16 @@ const routeSources: RouteSourceSpec[] = [
     load: () => import('../routes/v1/agent-runs/$id'),
   },
   {
+    file: 'src/routes/v1/agent-runs/$id/callbacks.ts',
+    sourceUrl: new URL('../routes/v1/agent-runs/$id/callbacks.ts', import.meta.url),
+    load: () => import('../routes/v1/agent-runs/$id/callbacks'),
+  },
+  {
+    file: 'src/routes/v1/agent-runs/$id/reruns.ts',
+    sourceUrl: new URL('../routes/v1/agent-runs/$id/reruns.ts', import.meta.url),
+    load: () => import('../routes/v1/agent-runs/$id/reruns'),
+  },
+  {
     file: 'src/routes/v1/runs/$id.ts',
     sourceUrl: new URL('../routes/v1/runs/$id.ts', import.meta.url),
     load: () => import('../routes/v1/runs/$id'),
@@ -260,6 +325,17 @@ const configureRuntimeDependencies = () => {
       recordAgentQueueDepth,
       resolveAuditContextFromRequest,
       resolveRepositoryFromParameters: (params) => resolveRepositoryFromParameters(params) ?? undefined,
+      validatePolicies,
+    },
+    agentRunCallbacks: {
+      storeFactory: createPrimitivesStore,
+      requireLeaderForMutation: requireLeaderForMutationHttp,
+    },
+    agentRunReruns: {
+      storeFactory: createPrimitivesStore,
+      kubeClientFactory: createKubernetesClient,
+      requireLeaderForMutation: requireLeaderForMutationHttp,
+      resolveRepositoryFromParameters,
       validatePolicies,
     },
     memories: {

@@ -1185,22 +1185,18 @@ export const main = async (cliOptions?: CliOptions) => {
     controlPlaneServiceNamespace:
       parsed.controlPlaneServiceNamespace ??
       process.env.AGENTS_VERIFY_CONTROL_PLANE_SERVICE_NAMESPACE ??
-      process.env.JANGAR_VERIFY_STATUS_SERVICE_NAMESPACE ??
       defaultControlPlaneServiceNamespace,
     controlPlaneServiceName:
       parsed.controlPlaneServiceName ??
       process.env.AGENTS_VERIFY_CONTROL_PLANE_SERVICE_NAME ??
-      process.env.JANGAR_VERIFY_STATUS_SERVICE_NAME ??
       defaultControlPlaneServiceName,
     controlPlaneServicePort:
       parsed.controlPlaneServicePort ??
       process.env.AGENTS_VERIFY_CONTROL_PLANE_SERVICE_PORT ??
-      process.env.JANGAR_VERIFY_STATUS_SERVICE_PORT ??
       defaultControlPlaneServicePort,
     controlPlaneStatusNamespace:
       parsed.controlPlaneStatusNamespace ??
       process.env.AGENTS_VERIFY_CONTROL_PLANE_STATUS_NAMESPACE ??
-      process.env.JANGAR_VERIFY_CONTROL_PLANE_STATUS_NAMESPACE ??
       defaultControlPlaneStatusNamespace,
     admissionPassportConsumers: parsed.admissionPassportConsumers ??
       parseAdmissionPassportConsumers(process.env.JANGAR_VERIFY_ADMISSION_PASSPORT_CONSUMERS) ?? [

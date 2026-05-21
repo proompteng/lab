@@ -10,7 +10,6 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ReadyRouteImport } from './routes/ready'
-import { Route as MemoriesRouteImport } from './routes/memories'
 import { Route as McpRouteImport } from './routes/mcp'
 import { Route as HealthRouteImport } from './routes/health'
 import { Route as IndexRouteImport } from './routes/index'
@@ -24,15 +23,12 @@ import { Route as TorghutControlPlaneRouteImport } from './routes/torghut/contro
 import { Route as TorghutChartsRouteImport } from './routes/torghut/charts'
 import { Route as TerminalsSessionIdRouteImport } from './routes/terminals/$sessionId'
 import { Route as GithubPullsRouteImport } from './routes/github/pulls'
-import { Route as CodexSearchRouteImport } from './routes/codex/search'
-import { Route as CodexRunsRouteImport } from './routes/codex/runs'
 import { Route as AtlasSearchRouteImport } from './routes/atlas/search'
 import { Route as AtlasIndexedRouteImport } from './routes/atlas/indexed'
 import { Route as AtlasEnrichRouteImport } from './routes/atlas/enrich'
 import { Route as ApiTerminalsRouteImport } from './routes/api/terminals'
 import { Route as ApiSearchRouteImport } from './routes/api/search'
 import { Route as ApiModelsRouteImport } from './routes/api/models'
-import { Route as ApiMemoriesRouteImport } from './routes/api/memories'
 import { Route as ApiHealthRouteImport } from './routes/api/health'
 import { Route as ApiEnrichRouteImport } from './routes/api/enrich'
 import { Route as ApiCodeSearchRouteImport } from './routes/api/code-search'
@@ -48,14 +44,8 @@ import { Route as LibraryWhitepapersRunIdRouteImport } from './routes/library/wh
 import { Route as ApiWhitepapersSearchRouteImport } from './routes/api/whitepapers/search'
 import { Route as ApiTorghutSymbolsRouteImport } from './routes/api/torghut/symbols'
 import { Route as ApiTerminalsSessionIdRouteImport } from './routes/api/terminals/$sessionId'
-import { Route as ApiMemoriesStatsRouteImport } from './routes/api/memories/stats'
-import { Route as ApiMemoriesCountRouteImport } from './routes/api/memories/count'
 import { Route as ApiGithubPullsRouteImport } from './routes/api/github/pulls'
 import { Route as ApiGithubIssuesRouteImport } from './routes/api/github/issues'
-import { Route as ApiCodexRunsRouteImport } from './routes/api/codex/runs'
-import { Route as ApiCodexRerunRouteImport } from './routes/api/codex/rerun'
-import { Route as ApiCodexIssuesRouteImport } from './routes/api/codex/issues'
-import { Route as ApiCodexGithubEventsRouteImport } from './routes/api/codex/github-events'
 import { Route as ApiAtlasPathsRouteImport } from './routes/api/atlas/paths'
 import { Route as ApiAtlasIndexedRouteImport } from './routes/api/atlas/indexed'
 import { Route as ApiAtlasFileRouteImport } from './routes/api/atlas/file'
@@ -88,8 +78,6 @@ import { Route as ApiTerminalsSessionIdStreamRouteImport } from './routes/api/te
 import { Route as ApiTerminalsSessionIdResizeRouteImport } from './routes/api/terminals/$sessionId/resize'
 import { Route as ApiTerminalsSessionIdInputRouteImport } from './routes/api/terminals/$sessionId/input'
 import { Route as ApiTerminalsSessionIdDeleteRouteImport } from './routes/api/terminals/$sessionId/delete'
-import { Route as ApiCodexRunsRecentRouteImport } from './routes/api/codex/runs/recent'
-import { Route as ApiCodexRunsListRouteImport } from './routes/api/codex/runs/list'
 import { Route as GithubPullsOwnerRepoNumberRouteImport } from './routes/github/pulls/$owner/$repo/$number'
 import { Route as ApiTorghutSimulationRunsIdRouteImport } from './routes/api/torghut/simulation/runs/$id'
 import { Route as ApiTorghutSimulationCampaignsIdRouteImport } from './routes/api/torghut/simulation/campaigns/$id'
@@ -115,7 +103,6 @@ import { Route as ApiGithubPullsOwnerRepoNumberThreadsRouteImport } from './rout
 import { Route as ApiGithubPullsOwnerRepoNumberReviewRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/review'
 import { Route as ApiGithubPullsOwnerRepoNumberRefreshFilesRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/refresh-files'
 import { Route as ApiGithubPullsOwnerRepoNumberMergeRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/merge'
-import { Route as ApiGithubPullsOwnerRepoNumberJudgeRunsRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/judge-runs'
 import { Route as ApiGithubPullsOwnerRepoNumberFilesRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/files'
 import { Route as ApiGithubPullsOwnerRepoNumberDeploymentRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/deployment'
 import { Route as ApiGithubPullsOwnerRepoNumberChecksRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/checks'
@@ -124,11 +111,6 @@ import { Route as ApiGithubPullsOwnerRepoNumberThreadsThreadIdResolveRouteImport
 const ReadyRoute = ReadyRouteImport.update({
   id: '/ready',
   path: '/ready',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MemoriesRoute = MemoriesRouteImport.update({
-  id: '/memories',
-  path: '/memories',
   getParentRoute: () => rootRouteImport,
 } as any)
 const McpRoute = McpRouteImport.update({
@@ -196,16 +178,6 @@ const GithubPullsRoute = GithubPullsRouteImport.update({
   path: '/github/pulls',
   getParentRoute: () => rootRouteImport,
 } as any)
-const CodexSearchRoute = CodexSearchRouteImport.update({
-  id: '/codex/search',
-  path: '/codex/search',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const CodexRunsRoute = CodexRunsRouteImport.update({
-  id: '/codex/runs',
-  path: '/codex/runs',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const AtlasSearchRoute = AtlasSearchRouteImport.update({
   id: '/atlas/search',
   path: '/atlas/search',
@@ -234,11 +206,6 @@ const ApiSearchRoute = ApiSearchRouteImport.update({
 const ApiModelsRoute = ApiModelsRouteImport.update({
   id: '/api/models',
   path: '/api/models',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiMemoriesRoute = ApiMemoriesRouteImport.update({
-  id: '/api/memories',
-  path: '/api/memories',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiHealthRoute = ApiHealthRouteImport.update({
@@ -319,16 +286,6 @@ const ApiTerminalsSessionIdRoute = ApiTerminalsSessionIdRouteImport.update({
   path: '/$sessionId',
   getParentRoute: () => ApiTerminalsRoute,
 } as any)
-const ApiMemoriesStatsRoute = ApiMemoriesStatsRouteImport.update({
-  id: '/stats',
-  path: '/stats',
-  getParentRoute: () => ApiMemoriesRoute,
-} as any)
-const ApiMemoriesCountRoute = ApiMemoriesCountRouteImport.update({
-  id: '/count',
-  path: '/count',
-  getParentRoute: () => ApiMemoriesRoute,
-} as any)
 const ApiGithubPullsRoute = ApiGithubPullsRouteImport.update({
   id: '/api/github/pulls',
   path: '/api/github/pulls',
@@ -337,26 +294,6 @@ const ApiGithubPullsRoute = ApiGithubPullsRouteImport.update({
 const ApiGithubIssuesRoute = ApiGithubIssuesRouteImport.update({
   id: '/api/github/issues',
   path: '/api/github/issues',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiCodexRunsRoute = ApiCodexRunsRouteImport.update({
-  id: '/api/codex/runs',
-  path: '/api/codex/runs',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiCodexRerunRoute = ApiCodexRerunRouteImport.update({
-  id: '/api/codex/rerun',
-  path: '/api/codex/rerun',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiCodexIssuesRoute = ApiCodexIssuesRouteImport.update({
-  id: '/api/codex/issues',
-  path: '/api/codex/issues',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiCodexGithubEventsRoute = ApiCodexGithubEventsRouteImport.update({
-  id: '/api/codex/github-events',
-  path: '/api/codex/github-events',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAtlasPathsRoute = ApiAtlasPathsRouteImport.update({
@@ -539,16 +476,6 @@ const ApiTerminalsSessionIdDeleteRoute =
     path: '/delete',
     getParentRoute: () => ApiTerminalsSessionIdRoute,
   } as any)
-const ApiCodexRunsRecentRoute = ApiCodexRunsRecentRouteImport.update({
-  id: '/recent',
-  path: '/recent',
-  getParentRoute: () => ApiCodexRunsRoute,
-} as any)
-const ApiCodexRunsListRoute = ApiCodexRunsListRouteImport.update({
-  id: '/list',
-  path: '/list',
-  getParentRoute: () => ApiCodexRunsRoute,
-} as any)
 const GithubPullsOwnerRepoNumberRoute =
   GithubPullsOwnerRepoNumberRouteImport.update({
     id: '/$owner/$repo/$number',
@@ -699,12 +626,6 @@ const ApiGithubPullsOwnerRepoNumberMergeRoute =
     path: '/merge',
     getParentRoute: () => ApiGithubPullsOwnerRepoNumberRoute,
   } as any)
-const ApiGithubPullsOwnerRepoNumberJudgeRunsRoute =
-  ApiGithubPullsOwnerRepoNumberJudgeRunsRouteImport.update({
-    id: '/judge-runs',
-    path: '/judge-runs',
-    getParentRoute: () => ApiGithubPullsOwnerRepoNumberRoute,
-  } as any)
 const ApiGithubPullsOwnerRepoNumberFilesRoute =
   ApiGithubPullsOwnerRepoNumberFilesRouteImport.update({
     id: '/files',
@@ -734,20 +655,16 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/health': typeof HealthRoute
   '/mcp': typeof McpRoute
-  '/memories': typeof MemoriesRoute
   '/ready': typeof ReadyRoute
   '/api/code-search': typeof ApiCodeSearchRoute
   '/api/enrich': typeof ApiEnrichRoute
   '/api/health': typeof ApiHealthRoute
-  '/api/memories': typeof ApiMemoriesRouteWithChildren
   '/api/models': typeof ApiModelsRoute
   '/api/search': typeof ApiSearchRoute
   '/api/terminals': typeof ApiTerminalsRouteWithChildren
   '/atlas/enrich': typeof AtlasEnrichRoute
   '/atlas/indexed': typeof AtlasIndexedRoute
   '/atlas/search': typeof AtlasSearchRoute
-  '/codex/runs': typeof CodexRunsRoute
-  '/codex/search': typeof CodexSearchRoute
   '/github/pulls': typeof GithubPullsRouteWithChildren
   '/terminals/$sessionId': typeof TerminalsSessionIdRouteWithChildren
   '/torghut/charts': typeof TorghutChartsRoute
@@ -762,14 +679,8 @@ export interface FileRoutesByFullPath {
   '/api/atlas/file': typeof ApiAtlasFileRoute
   '/api/atlas/indexed': typeof ApiAtlasIndexedRoute
   '/api/atlas/paths': typeof ApiAtlasPathsRoute
-  '/api/codex/github-events': typeof ApiCodexGithubEventsRoute
-  '/api/codex/issues': typeof ApiCodexIssuesRoute
-  '/api/codex/rerun': typeof ApiCodexRerunRoute
-  '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
   '/api/github/issues': typeof ApiGithubIssuesRoute
   '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
-  '/api/memories/count': typeof ApiMemoriesCountRoute
-  '/api/memories/stats': typeof ApiMemoriesStatsRoute
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/api/whitepapers/search': typeof ApiWhitepapersSearchRoute
@@ -782,8 +693,6 @@ export interface FileRoutesByFullPath {
   '/github/pulls/': typeof GithubPullsIndexRoute
   '/library/whitepapers/': typeof LibraryWhitepapersIndexRoute
   '/terminals/$sessionId/': typeof TerminalsSessionIdIndexRoute
-  '/api/codex/runs/list': typeof ApiCodexRunsListRoute
-  '/api/codex/runs/recent': typeof ApiCodexRunsRecentRoute
   '/api/terminals/$sessionId/delete': typeof ApiTerminalsSessionIdDeleteRoute
   '/api/terminals/$sessionId/input': typeof ApiTerminalsSessionIdInputRoute
   '/api/terminals/$sessionId/resize': typeof ApiTerminalsSessionIdResizeRoute
@@ -835,7 +744,6 @@ export interface FileRoutesByFullPath {
   '/api/github/pulls/$owner/$repo/$number/checks': typeof ApiGithubPullsOwnerRepoNumberChecksRoute
   '/api/github/pulls/$owner/$repo/$number/deployment': typeof ApiGithubPullsOwnerRepoNumberDeploymentRoute
   '/api/github/pulls/$owner/$repo/$number/files': typeof ApiGithubPullsOwnerRepoNumberFilesRoute
-  '/api/github/pulls/$owner/$repo/$number/judge-runs': typeof ApiGithubPullsOwnerRepoNumberJudgeRunsRoute
   '/api/github/pulls/$owner/$repo/$number/merge': typeof ApiGithubPullsOwnerRepoNumberMergeRoute
   '/api/github/pulls/$owner/$repo/$number/refresh-files': typeof ApiGithubPullsOwnerRepoNumberRefreshFilesRoute
   '/api/github/pulls/$owner/$repo/$number/review': typeof ApiGithubPullsOwnerRepoNumberReviewRoute
@@ -847,20 +755,16 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/health': typeof HealthRoute
   '/mcp': typeof McpRoute
-  '/memories': typeof MemoriesRoute
   '/ready': typeof ReadyRoute
   '/api/code-search': typeof ApiCodeSearchRoute
   '/api/enrich': typeof ApiEnrichRoute
   '/api/health': typeof ApiHealthRoute
-  '/api/memories': typeof ApiMemoriesRouteWithChildren
   '/api/models': typeof ApiModelsRoute
   '/api/search': typeof ApiSearchRoute
   '/api/terminals': typeof ApiTerminalsRouteWithChildren
   '/atlas/enrich': typeof AtlasEnrichRoute
   '/atlas/indexed': typeof AtlasIndexedRoute
   '/atlas/search': typeof AtlasSearchRoute
-  '/codex/runs': typeof CodexRunsRoute
-  '/codex/search': typeof CodexSearchRoute
   '/torghut/charts': typeof TorghutChartsRoute
   '/torghut/control-plane': typeof TorghutControlPlaneRouteWithChildren
   '/torghut/symbols': typeof TorghutSymbolsRoute
@@ -873,14 +777,8 @@ export interface FileRoutesByTo {
   '/api/atlas/file': typeof ApiAtlasFileRoute
   '/api/atlas/indexed': typeof ApiAtlasIndexedRoute
   '/api/atlas/paths': typeof ApiAtlasPathsRoute
-  '/api/codex/github-events': typeof ApiCodexGithubEventsRoute
-  '/api/codex/issues': typeof ApiCodexIssuesRoute
-  '/api/codex/rerun': typeof ApiCodexRerunRoute
-  '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
   '/api/github/issues': typeof ApiGithubIssuesRoute
   '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
-  '/api/memories/count': typeof ApiMemoriesCountRoute
-  '/api/memories/stats': typeof ApiMemoriesStatsRoute
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/api/whitepapers/search': typeof ApiWhitepapersSearchRoute
@@ -893,8 +791,6 @@ export interface FileRoutesByTo {
   '/github/pulls': typeof GithubPullsIndexRoute
   '/library/whitepapers': typeof LibraryWhitepapersIndexRoute
   '/terminals/$sessionId': typeof TerminalsSessionIdIndexRoute
-  '/api/codex/runs/list': typeof ApiCodexRunsListRoute
-  '/api/codex/runs/recent': typeof ApiCodexRunsRecentRoute
   '/api/terminals/$sessionId/delete': typeof ApiTerminalsSessionIdDeleteRoute
   '/api/terminals/$sessionId/input': typeof ApiTerminalsSessionIdInputRoute
   '/api/terminals/$sessionId/resize': typeof ApiTerminalsSessionIdResizeRoute
@@ -946,7 +842,6 @@ export interface FileRoutesByTo {
   '/api/github/pulls/$owner/$repo/$number/checks': typeof ApiGithubPullsOwnerRepoNumberChecksRoute
   '/api/github/pulls/$owner/$repo/$number/deployment': typeof ApiGithubPullsOwnerRepoNumberDeploymentRoute
   '/api/github/pulls/$owner/$repo/$number/files': typeof ApiGithubPullsOwnerRepoNumberFilesRoute
-  '/api/github/pulls/$owner/$repo/$number/judge-runs': typeof ApiGithubPullsOwnerRepoNumberJudgeRunsRoute
   '/api/github/pulls/$owner/$repo/$number/merge': typeof ApiGithubPullsOwnerRepoNumberMergeRoute
   '/api/github/pulls/$owner/$repo/$number/refresh-files': typeof ApiGithubPullsOwnerRepoNumberRefreshFilesRoute
   '/api/github/pulls/$owner/$repo/$number/review': typeof ApiGithubPullsOwnerRepoNumberReviewRoute
@@ -959,20 +854,16 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/health': typeof HealthRoute
   '/mcp': typeof McpRoute
-  '/memories': typeof MemoriesRoute
   '/ready': typeof ReadyRoute
   '/api/code-search': typeof ApiCodeSearchRoute
   '/api/enrich': typeof ApiEnrichRoute
   '/api/health': typeof ApiHealthRoute
-  '/api/memories': typeof ApiMemoriesRouteWithChildren
   '/api/models': typeof ApiModelsRoute
   '/api/search': typeof ApiSearchRoute
   '/api/terminals': typeof ApiTerminalsRouteWithChildren
   '/atlas/enrich': typeof AtlasEnrichRoute
   '/atlas/indexed': typeof AtlasIndexedRoute
   '/atlas/search': typeof AtlasSearchRoute
-  '/codex/runs': typeof CodexRunsRoute
-  '/codex/search': typeof CodexSearchRoute
   '/github/pulls': typeof GithubPullsRouteWithChildren
   '/terminals/$sessionId': typeof TerminalsSessionIdRouteWithChildren
   '/torghut/charts': typeof TorghutChartsRoute
@@ -987,14 +878,8 @@ export interface FileRoutesById {
   '/api/atlas/file': typeof ApiAtlasFileRoute
   '/api/atlas/indexed': typeof ApiAtlasIndexedRoute
   '/api/atlas/paths': typeof ApiAtlasPathsRoute
-  '/api/codex/github-events': typeof ApiCodexGithubEventsRoute
-  '/api/codex/issues': typeof ApiCodexIssuesRoute
-  '/api/codex/rerun': typeof ApiCodexRerunRoute
-  '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
   '/api/github/issues': typeof ApiGithubIssuesRoute
   '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
-  '/api/memories/count': typeof ApiMemoriesCountRoute
-  '/api/memories/stats': typeof ApiMemoriesStatsRoute
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/api/whitepapers/search': typeof ApiWhitepapersSearchRoute
@@ -1007,8 +892,6 @@ export interface FileRoutesById {
   '/github/pulls/': typeof GithubPullsIndexRoute
   '/library/whitepapers/': typeof LibraryWhitepapersIndexRoute
   '/terminals/$sessionId/': typeof TerminalsSessionIdIndexRoute
-  '/api/codex/runs/list': typeof ApiCodexRunsListRoute
-  '/api/codex/runs/recent': typeof ApiCodexRunsRecentRoute
   '/api/terminals/$sessionId/delete': typeof ApiTerminalsSessionIdDeleteRoute
   '/api/terminals/$sessionId/input': typeof ApiTerminalsSessionIdInputRoute
   '/api/terminals/$sessionId/resize': typeof ApiTerminalsSessionIdResizeRoute
@@ -1060,7 +943,6 @@ export interface FileRoutesById {
   '/api/github/pulls/$owner/$repo/$number/checks': typeof ApiGithubPullsOwnerRepoNumberChecksRoute
   '/api/github/pulls/$owner/$repo/$number/deployment': typeof ApiGithubPullsOwnerRepoNumberDeploymentRoute
   '/api/github/pulls/$owner/$repo/$number/files': typeof ApiGithubPullsOwnerRepoNumberFilesRoute
-  '/api/github/pulls/$owner/$repo/$number/judge-runs': typeof ApiGithubPullsOwnerRepoNumberJudgeRunsRoute
   '/api/github/pulls/$owner/$repo/$number/merge': typeof ApiGithubPullsOwnerRepoNumberMergeRoute
   '/api/github/pulls/$owner/$repo/$number/refresh-files': typeof ApiGithubPullsOwnerRepoNumberRefreshFilesRoute
   '/api/github/pulls/$owner/$repo/$number/review': typeof ApiGithubPullsOwnerRepoNumberReviewRoute
@@ -1074,20 +956,16 @@ export interface FileRouteTypes {
     | '/'
     | '/health'
     | '/mcp'
-    | '/memories'
     | '/ready'
     | '/api/code-search'
     | '/api/enrich'
     | '/api/health'
-    | '/api/memories'
     | '/api/models'
     | '/api/search'
     | '/api/terminals'
     | '/atlas/enrich'
     | '/atlas/indexed'
     | '/atlas/search'
-    | '/codex/runs'
-    | '/codex/search'
     | '/github/pulls'
     | '/terminals/$sessionId'
     | '/torghut/charts'
@@ -1102,14 +980,8 @@ export interface FileRouteTypes {
     | '/api/atlas/file'
     | '/api/atlas/indexed'
     | '/api/atlas/paths'
-    | '/api/codex/github-events'
-    | '/api/codex/issues'
-    | '/api/codex/rerun'
-    | '/api/codex/runs'
     | '/api/github/issues'
     | '/api/github/pulls'
-    | '/api/memories/count'
-    | '/api/memories/stats'
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
     | '/api/whitepapers/search'
@@ -1122,8 +994,6 @@ export interface FileRouteTypes {
     | '/github/pulls/'
     | '/library/whitepapers/'
     | '/terminals/$sessionId/'
-    | '/api/codex/runs/list'
-    | '/api/codex/runs/recent'
     | '/api/terminals/$sessionId/delete'
     | '/api/terminals/$sessionId/input'
     | '/api/terminals/$sessionId/resize'
@@ -1175,7 +1045,6 @@ export interface FileRouteTypes {
     | '/api/github/pulls/$owner/$repo/$number/checks'
     | '/api/github/pulls/$owner/$repo/$number/deployment'
     | '/api/github/pulls/$owner/$repo/$number/files'
-    | '/api/github/pulls/$owner/$repo/$number/judge-runs'
     | '/api/github/pulls/$owner/$repo/$number/merge'
     | '/api/github/pulls/$owner/$repo/$number/refresh-files'
     | '/api/github/pulls/$owner/$repo/$number/review'
@@ -1187,20 +1056,16 @@ export interface FileRouteTypes {
     | '/'
     | '/health'
     | '/mcp'
-    | '/memories'
     | '/ready'
     | '/api/code-search'
     | '/api/enrich'
     | '/api/health'
-    | '/api/memories'
     | '/api/models'
     | '/api/search'
     | '/api/terminals'
     | '/atlas/enrich'
     | '/atlas/indexed'
     | '/atlas/search'
-    | '/codex/runs'
-    | '/codex/search'
     | '/torghut/charts'
     | '/torghut/control-plane'
     | '/torghut/symbols'
@@ -1213,14 +1078,8 @@ export interface FileRouteTypes {
     | '/api/atlas/file'
     | '/api/atlas/indexed'
     | '/api/atlas/paths'
-    | '/api/codex/github-events'
-    | '/api/codex/issues'
-    | '/api/codex/rerun'
-    | '/api/codex/runs'
     | '/api/github/issues'
     | '/api/github/pulls'
-    | '/api/memories/count'
-    | '/api/memories/stats'
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
     | '/api/whitepapers/search'
@@ -1233,8 +1092,6 @@ export interface FileRouteTypes {
     | '/github/pulls'
     | '/library/whitepapers'
     | '/terminals/$sessionId'
-    | '/api/codex/runs/list'
-    | '/api/codex/runs/recent'
     | '/api/terminals/$sessionId/delete'
     | '/api/terminals/$sessionId/input'
     | '/api/terminals/$sessionId/resize'
@@ -1286,7 +1143,6 @@ export interface FileRouteTypes {
     | '/api/github/pulls/$owner/$repo/$number/checks'
     | '/api/github/pulls/$owner/$repo/$number/deployment'
     | '/api/github/pulls/$owner/$repo/$number/files'
-    | '/api/github/pulls/$owner/$repo/$number/judge-runs'
     | '/api/github/pulls/$owner/$repo/$number/merge'
     | '/api/github/pulls/$owner/$repo/$number/refresh-files'
     | '/api/github/pulls/$owner/$repo/$number/review'
@@ -1298,20 +1154,16 @@ export interface FileRouteTypes {
     | '/'
     | '/health'
     | '/mcp'
-    | '/memories'
     | '/ready'
     | '/api/code-search'
     | '/api/enrich'
     | '/api/health'
-    | '/api/memories'
     | '/api/models'
     | '/api/search'
     | '/api/terminals'
     | '/atlas/enrich'
     | '/atlas/indexed'
     | '/atlas/search'
-    | '/codex/runs'
-    | '/codex/search'
     | '/github/pulls'
     | '/terminals/$sessionId'
     | '/torghut/charts'
@@ -1326,14 +1178,8 @@ export interface FileRouteTypes {
     | '/api/atlas/file'
     | '/api/atlas/indexed'
     | '/api/atlas/paths'
-    | '/api/codex/github-events'
-    | '/api/codex/issues'
-    | '/api/codex/rerun'
-    | '/api/codex/runs'
     | '/api/github/issues'
     | '/api/github/pulls'
-    | '/api/memories/count'
-    | '/api/memories/stats'
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
     | '/api/whitepapers/search'
@@ -1346,8 +1192,6 @@ export interface FileRouteTypes {
     | '/github/pulls/'
     | '/library/whitepapers/'
     | '/terminals/$sessionId/'
-    | '/api/codex/runs/list'
-    | '/api/codex/runs/recent'
     | '/api/terminals/$sessionId/delete'
     | '/api/terminals/$sessionId/input'
     | '/api/terminals/$sessionId/resize'
@@ -1399,7 +1243,6 @@ export interface FileRouteTypes {
     | '/api/github/pulls/$owner/$repo/$number/checks'
     | '/api/github/pulls/$owner/$repo/$number/deployment'
     | '/api/github/pulls/$owner/$repo/$number/files'
-    | '/api/github/pulls/$owner/$repo/$number/judge-runs'
     | '/api/github/pulls/$owner/$repo/$number/merge'
     | '/api/github/pulls/$owner/$repo/$number/refresh-files'
     | '/api/github/pulls/$owner/$repo/$number/review'
@@ -1412,20 +1255,16 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   HealthRoute: typeof HealthRoute
   McpRoute: typeof McpRoute
-  MemoriesRoute: typeof MemoriesRoute
   ReadyRoute: typeof ReadyRoute
   ApiCodeSearchRoute: typeof ApiCodeSearchRoute
   ApiEnrichRoute: typeof ApiEnrichRoute
   ApiHealthRoute: typeof ApiHealthRoute
-  ApiMemoriesRoute: typeof ApiMemoriesRouteWithChildren
   ApiModelsRoute: typeof ApiModelsRoute
   ApiSearchRoute: typeof ApiSearchRoute
   ApiTerminalsRoute: typeof ApiTerminalsRouteWithChildren
   AtlasEnrichRoute: typeof AtlasEnrichRoute
   AtlasIndexedRoute: typeof AtlasIndexedRoute
   AtlasSearchRoute: typeof AtlasSearchRoute
-  CodexRunsRoute: typeof CodexRunsRoute
-  CodexSearchRoute: typeof CodexSearchRoute
   GithubPullsRoute: typeof GithubPullsRouteWithChildren
   TerminalsSessionIdRoute: typeof TerminalsSessionIdRouteWithChildren
   TorghutChartsRoute: typeof TorghutChartsRoute
@@ -1440,10 +1279,6 @@ export interface RootRouteChildren {
   ApiAtlasFileRoute: typeof ApiAtlasFileRoute
   ApiAtlasIndexedRoute: typeof ApiAtlasIndexedRoute
   ApiAtlasPathsRoute: typeof ApiAtlasPathsRoute
-  ApiCodexGithubEventsRoute: typeof ApiCodexGithubEventsRoute
-  ApiCodexIssuesRoute: typeof ApiCodexIssuesRoute
-  ApiCodexRerunRoute: typeof ApiCodexRerunRoute
-  ApiCodexRunsRoute: typeof ApiCodexRunsRouteWithChildren
   ApiGithubIssuesRoute: typeof ApiGithubIssuesRoute
   ApiGithubPullsRoute: typeof ApiGithubPullsRouteWithChildren
   ApiTorghutSymbolsRoute: typeof ApiTorghutSymbolsRouteWithChildren
@@ -1497,13 +1332,6 @@ declare module '@tanstack/react-router' {
       path: '/ready'
       fullPath: '/ready'
       preLoaderRoute: typeof ReadyRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/memories': {
-      id: '/memories'
-      path: '/memories'
-      fullPath: '/memories'
-      preLoaderRoute: typeof MemoriesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/mcp': {
@@ -1597,20 +1425,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof GithubPullsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/codex/search': {
-      id: '/codex/search'
-      path: '/codex/search'
-      fullPath: '/codex/search'
-      preLoaderRoute: typeof CodexSearchRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/codex/runs': {
-      id: '/codex/runs'
-      path: '/codex/runs'
-      fullPath: '/codex/runs'
-      preLoaderRoute: typeof CodexRunsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/atlas/search': {
       id: '/atlas/search'
       path: '/atlas/search'
@@ -1651,13 +1465,6 @@ declare module '@tanstack/react-router' {
       path: '/api/models'
       fullPath: '/api/models'
       preLoaderRoute: typeof ApiModelsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/memories': {
-      id: '/api/memories'
-      path: '/api/memories'
-      fullPath: '/api/memories'
-      preLoaderRoute: typeof ApiMemoriesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/health': {
@@ -1765,20 +1572,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiTerminalsSessionIdRouteImport
       parentRoute: typeof ApiTerminalsRoute
     }
-    '/api/memories/stats': {
-      id: '/api/memories/stats'
-      path: '/stats'
-      fullPath: '/api/memories/stats'
-      preLoaderRoute: typeof ApiMemoriesStatsRouteImport
-      parentRoute: typeof ApiMemoriesRoute
-    }
-    '/api/memories/count': {
-      id: '/api/memories/count'
-      path: '/count'
-      fullPath: '/api/memories/count'
-      preLoaderRoute: typeof ApiMemoriesCountRouteImport
-      parentRoute: typeof ApiMemoriesRoute
-    }
     '/api/github/pulls': {
       id: '/api/github/pulls'
       path: '/api/github/pulls'
@@ -1791,34 +1584,6 @@ declare module '@tanstack/react-router' {
       path: '/api/github/issues'
       fullPath: '/api/github/issues'
       preLoaderRoute: typeof ApiGithubIssuesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/codex/runs': {
-      id: '/api/codex/runs'
-      path: '/api/codex/runs'
-      fullPath: '/api/codex/runs'
-      preLoaderRoute: typeof ApiCodexRunsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/codex/rerun': {
-      id: '/api/codex/rerun'
-      path: '/api/codex/rerun'
-      fullPath: '/api/codex/rerun'
-      preLoaderRoute: typeof ApiCodexRerunRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/codex/issues': {
-      id: '/api/codex/issues'
-      path: '/api/codex/issues'
-      fullPath: '/api/codex/issues'
-      preLoaderRoute: typeof ApiCodexIssuesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/codex/github-events': {
-      id: '/api/codex/github-events'
-      path: '/api/codex/github-events'
-      fullPath: '/api/codex/github-events'
-      preLoaderRoute: typeof ApiCodexGithubEventsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/atlas/paths': {
@@ -2045,20 +1810,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiTerminalsSessionIdDeleteRouteImport
       parentRoute: typeof ApiTerminalsSessionIdRoute
     }
-    '/api/codex/runs/recent': {
-      id: '/api/codex/runs/recent'
-      path: '/recent'
-      fullPath: '/api/codex/runs/recent'
-      preLoaderRoute: typeof ApiCodexRunsRecentRouteImport
-      parentRoute: typeof ApiCodexRunsRoute
-    }
-    '/api/codex/runs/list': {
-      id: '/api/codex/runs/list'
-      path: '/list'
-      fullPath: '/api/codex/runs/list'
-      preLoaderRoute: typeof ApiCodexRunsListRouteImport
-      parentRoute: typeof ApiCodexRunsRoute
-    }
     '/github/pulls/$owner/$repo/$number': {
       id: '/github/pulls/$owner/$repo/$number'
       path: '/$owner/$repo/$number'
@@ -2234,13 +1985,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiGithubPullsOwnerRepoNumberMergeRouteImport
       parentRoute: typeof ApiGithubPullsOwnerRepoNumberRoute
     }
-    '/api/github/pulls/$owner/$repo/$number/judge-runs': {
-      id: '/api/github/pulls/$owner/$repo/$number/judge-runs'
-      path: '/judge-runs'
-      fullPath: '/api/github/pulls/$owner/$repo/$number/judge-runs'
-      preLoaderRoute: typeof ApiGithubPullsOwnerRepoNumberJudgeRunsRouteImport
-      parentRoute: typeof ApiGithubPullsOwnerRepoNumberRoute
-    }
     '/api/github/pulls/$owner/$repo/$number/files': {
       id: '/api/github/pulls/$owner/$repo/$number/files'
       path: '/files'
@@ -2271,20 +2015,6 @@ declare module '@tanstack/react-router' {
     }
   }
 }
-
-interface ApiMemoriesRouteChildren {
-  ApiMemoriesCountRoute: typeof ApiMemoriesCountRoute
-  ApiMemoriesStatsRoute: typeof ApiMemoriesStatsRoute
-}
-
-const ApiMemoriesRouteChildren: ApiMemoriesRouteChildren = {
-  ApiMemoriesCountRoute: ApiMemoriesCountRoute,
-  ApiMemoriesStatsRoute: ApiMemoriesStatsRoute,
-}
-
-const ApiMemoriesRouteWithChildren = ApiMemoriesRoute._addFileChildren(
-  ApiMemoriesRouteChildren,
-)
 
 interface ApiTerminalsSessionIdRouteChildren {
   ApiTerminalsSessionIdDeleteRoute: typeof ApiTerminalsSessionIdDeleteRoute
@@ -2359,20 +2089,6 @@ const TorghutControlPlaneRouteChildren: TorghutControlPlaneRouteChildren = {
 const TorghutControlPlaneRouteWithChildren =
   TorghutControlPlaneRoute._addFileChildren(TorghutControlPlaneRouteChildren)
 
-interface ApiCodexRunsRouteChildren {
-  ApiCodexRunsListRoute: typeof ApiCodexRunsListRoute
-  ApiCodexRunsRecentRoute: typeof ApiCodexRunsRecentRoute
-}
-
-const ApiCodexRunsRouteChildren: ApiCodexRunsRouteChildren = {
-  ApiCodexRunsListRoute: ApiCodexRunsListRoute,
-  ApiCodexRunsRecentRoute: ApiCodexRunsRecentRoute,
-}
-
-const ApiCodexRunsRouteWithChildren = ApiCodexRunsRoute._addFileChildren(
-  ApiCodexRunsRouteChildren,
-)
-
 interface ApiGithubPullsOwnerRepoNumberThreadsRouteChildren {
   ApiGithubPullsOwnerRepoNumberThreadsThreadIdResolveRoute: typeof ApiGithubPullsOwnerRepoNumberThreadsThreadIdResolveRoute
 }
@@ -2392,7 +2108,6 @@ interface ApiGithubPullsOwnerRepoNumberRouteChildren {
   ApiGithubPullsOwnerRepoNumberChecksRoute: typeof ApiGithubPullsOwnerRepoNumberChecksRoute
   ApiGithubPullsOwnerRepoNumberDeploymentRoute: typeof ApiGithubPullsOwnerRepoNumberDeploymentRoute
   ApiGithubPullsOwnerRepoNumberFilesRoute: typeof ApiGithubPullsOwnerRepoNumberFilesRoute
-  ApiGithubPullsOwnerRepoNumberJudgeRunsRoute: typeof ApiGithubPullsOwnerRepoNumberJudgeRunsRoute
   ApiGithubPullsOwnerRepoNumberMergeRoute: typeof ApiGithubPullsOwnerRepoNumberMergeRoute
   ApiGithubPullsOwnerRepoNumberRefreshFilesRoute: typeof ApiGithubPullsOwnerRepoNumberRefreshFilesRoute
   ApiGithubPullsOwnerRepoNumberReviewRoute: typeof ApiGithubPullsOwnerRepoNumberReviewRoute
@@ -2408,8 +2123,6 @@ const ApiGithubPullsOwnerRepoNumberRouteChildren: ApiGithubPullsOwnerRepoNumberR
       ApiGithubPullsOwnerRepoNumberDeploymentRoute,
     ApiGithubPullsOwnerRepoNumberFilesRoute:
       ApiGithubPullsOwnerRepoNumberFilesRoute,
-    ApiGithubPullsOwnerRepoNumberJudgeRunsRoute:
-      ApiGithubPullsOwnerRepoNumberJudgeRunsRoute,
     ApiGithubPullsOwnerRepoNumberMergeRoute:
       ApiGithubPullsOwnerRepoNumberMergeRoute,
     ApiGithubPullsOwnerRepoNumberRefreshFilesRoute:
@@ -2499,20 +2212,16 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   HealthRoute: HealthRoute,
   McpRoute: McpRoute,
-  MemoriesRoute: MemoriesRoute,
   ReadyRoute: ReadyRoute,
   ApiCodeSearchRoute: ApiCodeSearchRoute,
   ApiEnrichRoute: ApiEnrichRoute,
   ApiHealthRoute: ApiHealthRoute,
-  ApiMemoriesRoute: ApiMemoriesRouteWithChildren,
   ApiModelsRoute: ApiModelsRoute,
   ApiSearchRoute: ApiSearchRoute,
   ApiTerminalsRoute: ApiTerminalsRouteWithChildren,
   AtlasEnrichRoute: AtlasEnrichRoute,
   AtlasIndexedRoute: AtlasIndexedRoute,
   AtlasSearchRoute: AtlasSearchRoute,
-  CodexRunsRoute: CodexRunsRoute,
-  CodexSearchRoute: CodexSearchRoute,
   GithubPullsRoute: GithubPullsRouteWithChildren,
   TerminalsSessionIdRoute: TerminalsSessionIdRouteWithChildren,
   TorghutChartsRoute: TorghutChartsRoute,
@@ -2527,10 +2236,6 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAtlasFileRoute: ApiAtlasFileRoute,
   ApiAtlasIndexedRoute: ApiAtlasIndexedRoute,
   ApiAtlasPathsRoute: ApiAtlasPathsRoute,
-  ApiCodexGithubEventsRoute: ApiCodexGithubEventsRoute,
-  ApiCodexIssuesRoute: ApiCodexIssuesRoute,
-  ApiCodexRerunRoute: ApiCodexRerunRoute,
-  ApiCodexRunsRoute: ApiCodexRunsRouteWithChildren,
   ApiGithubIssuesRoute: ApiGithubIssuesRoute,
   ApiGithubPullsRoute: ApiGithubPullsRouteWithChildren,
   ApiTorghutSymbolsRoute: ApiTorghutSymbolsRouteWithChildren,

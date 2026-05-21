@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 export type Nullable<T> = T | null | undefined
 
-export type CodexTaskStage = 'implementation'
+export type GithubIssueAgentRunStage = 'implementation'
 
 export type CodexIterationsMode = 'fixed' | 'until' | 'budget' | 'adaptive'
 
@@ -114,8 +114,8 @@ export const buildCodexPrompt = (options: BuildCodexPromptOptions): string => {
   return buildImplementationPrompt(options)
 }
 
-export interface CodexTaskMessage {
-  stage: CodexTaskStage
+export interface GithubIssueAgentRunRequest {
+  stage: GithubIssueAgentRunStage
   prompt: string
   repository: string
   base: string

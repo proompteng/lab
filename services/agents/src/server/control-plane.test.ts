@@ -11,7 +11,7 @@ import { resetAgentsV1RuntimeForTests } from './v1/runtime'
 import { createAgentsControlPlaneRuntime } from './control-plane'
 
 const previousEnv = {
-  AGENTS_AGENTS_CONTROLLER_ENABLED: process.env.AGENTS_AGENTS_CONTROLLER_ENABLED,
+  AGENTS_CONTROLLER_ENABLED: process.env.AGENTS_CONTROLLER_ENABLED,
   AGENTS_PROMETHEUS_METRICS_ENABLED: process.env.AGENTS_PROMETHEUS_METRICS_ENABLED,
   AGENTS_MIGRATIONS: process.env.AGENTS_MIGRATIONS,
   DATABASE_URL: process.env.DATABASE_URL,
@@ -30,7 +30,7 @@ afterEach(() => {
 
 describe('Agents control-plane runtime', () => {
   it('serves health from the Agents runtime without Jangar route modules', async () => {
-    process.env.AGENTS_AGENTS_CONTROLLER_ENABLED = '0'
+    process.env.AGENTS_CONTROLLER_ENABLED = '0'
     const runtime = await createAgentsControlPlaneRuntime()
 
     const response = await runtime.handleHttpRequest(new Request('http://agents.test/health'))
@@ -41,7 +41,7 @@ describe('Agents control-plane runtime', () => {
   })
 
   it('serves v1 AgentRun routes through configured Agents dependencies', async () => {
-    process.env.AGENTS_AGENTS_CONTROLLER_ENABLED = '0'
+    process.env.AGENTS_CONTROLLER_ENABLED = '0'
     delete process.env.DATABASE_URL
     process.env.AGENTS_MIGRATIONS = 'skip'
     const runtime = await createAgentsControlPlaneRuntime()

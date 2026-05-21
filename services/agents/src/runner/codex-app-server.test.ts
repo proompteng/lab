@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -46,6 +47,8 @@ const deferred = <T = void>() => {
   return { promise, resolve, reject }
 }
 
+const NORMALIZED_PROMPT = 'run the normalized Codex adapter contract'
+
 describe('codex app-server runner adapter', () => {
   it('uses an absolute Codex binary path by default for Bun child-process spawning', () => {
     expect(resolveCodexBinaryPath({}, {})).toBe(DEFAULT_CODEX_BINARY_PATH)
@@ -75,8 +78,10 @@ describe('codex app-server runner adapter', () => {
 
     const createdClients: CodexAppServerOptions[] = []
     const turnOptions: CodexAppServerTurnOptions[] = []
+    const prompts: string[] = []
     const fakeClient: CodexAppServerRunnerClient = {
-      runTurnStream: async (_prompt, options) => {
+      runTurnStream: async (prompt, options) => {
+        prompts.push(prompt)
         turnOptions.push(options ?? {})
         return {
           stream: makeStream(),
@@ -116,6 +121,7 @@ describe('codex app-server runner adapter', () => {
         sandbox: 'danger-full-access',
         approval: 'never',
         cwd,
+        prompt: 'implement the feature',
         threadConfig: { web_search: 'live', mcp_servers: {} },
       },
       {
@@ -132,6 +138,7 @@ describe('codex app-server runner adapter', () => {
     )
 
     expect(exitCode).toBe(0)
+    expect(prompts).toEqual(['implement the feature'])
     expect(createdClients[0]).toMatchObject({
       binaryPath: DEFAULT_CODEX_BINARY_PATH,
       defaultModel: 'gpt-5.5',
@@ -240,7 +247,7 @@ describe('codex app-server runner adapter', () => {
           payloads: {},
           artifacts: { statusPath },
         },
-        {},
+        { prompt: NORMALIZED_PROMPT },
         {
           createClient: () => {
             throw new Error('client should not start')
@@ -255,6 +262,136 @@ describe('codex app-server runner adapter', () => {
       status: 'failed',
     })
     expect(String(status.error)).toContain('payloads.eventFilePath')
+  })
+
+  it('requires a normalized Codex prompt in the runner contract', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
+    const runPath = join(dir, 'run.json')
+    const statusPath = join(dir, 'status.json')
+    await writeFile(runPath, `${JSON.stringify({ implementation: { text: 'legacy prompt' } })}\n`, 'utf8')
+
+    await expect(
+      runCodexAppServerAdapter(
+        {
+          provider: 'codex-runner',
+          payloads: { eventFilePath: runPath },
+          artifacts: { statusPath },
+        },
+        {},
+        {
+          createClient: () => {
+            throw new Error('client should not start')
+          },
+        },
+      ),
+    ).rejects.toBeInstanceOf(CodexRunnerInputError)
+
+    const status = JSON.parse(await readFile(statusPath, 'utf8')) as Record<string, unknown>
+    expect(status).toMatchObject({ exitCode: 1, status: 'failed' })
+    expect(String(status.error)).toContain('adapter.codex.prompt')
+  })
+
+  it('reads and hash-checks mounted system prompts from the runner contract', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
+    const runPath = join(dir, 'run.json')
+    const systemPromptPath = join(dir, 'system-prompt.txt')
+    await writeFile(runPath, `${JSON.stringify({ implementation: { text: 'run' } })}\n`, 'utf8')
+    await writeFile(systemPromptPath, 'mounted system prompt', 'utf8')
+
+    const turnOptions: CodexAppServerTurnOptions[] = []
+    await runCodexAppServerAdapter(
+      {
+        provider: 'codex-runner',
+        payloads: { eventFilePath: runPath },
+      },
+      {
+        prompt: NORMALIZED_PROMPT,
+        systemPromptPath,
+        systemPromptExpectedHash: createHash('sha256').update('mounted system prompt').digest('hex'),
+      },
+      {
+        createClient: () => ({
+          runTurnStream: async (_prompt, options) => {
+            turnOptions.push(options ?? {})
+            return {
+              stream: makeStream(),
+              turnId: 'turn-1',
+              threadId: 'thread-1',
+            }
+          },
+        }),
+      },
+    )
+
+    expect(turnOptions[0]).toMatchObject({ baseInstructions: 'mounted system prompt' })
+  })
+
+  it('preserves inline system prompt bytes before validating the controller hash', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
+    const runPath = join(dir, 'run.json')
+    const baseInstructions = 'system instructions with newline\n'
+    await writeFile(
+      runPath,
+      `${JSON.stringify({ implementation: { text: 'run' }, systemPrompt: baseInstructions })}\n`,
+      'utf8',
+    )
+
+    const turnOptions: CodexAppServerTurnOptions[] = []
+    await runCodexAppServerAdapter(
+      {
+        provider: 'codex-runner',
+        payloads: { eventFilePath: runPath },
+      },
+      {
+        prompt: NORMALIZED_PROMPT,
+        baseInstructions,
+        systemPromptExpectedHash: createHash('sha256').update(baseInstructions).digest('hex'),
+      },
+      {
+        createClient: () => ({
+          runTurnStream: async (_prompt, options) => {
+            turnOptions.push(options ?? {})
+            return {
+              stream: makeStream(),
+              turnId: 'turn-1',
+              threadId: 'thread-1',
+            }
+          },
+        }),
+      },
+    )
+
+    expect(turnOptions[0]).toMatchObject({ baseInstructions })
+  })
+
+  it('rejects unsupported app-server approval modes before starting Codex', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
+    const runPath = join(dir, 'run.json')
+    const statusPath = join(dir, 'status.json')
+    await writeFile(runPath, `${JSON.stringify({ implementation: { text: 'run' } })}\n`, 'utf8')
+
+    const createClient = vi.fn(() => ({
+      runTurnStream: async () => ({
+        stream: makeStream(),
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+      }),
+    }))
+    await expect(
+      runCodexAppServerAdapter(
+        {
+          provider: 'codex-runner',
+          payloads: { eventFilePath: runPath },
+          artifacts: { statusPath },
+        },
+        { prompt: NORMALIZED_PROMPT, approval: 'on-request' },
+        { createClient },
+      ),
+    ).rejects.toBeInstanceOf(CodexRunnerInputError)
+
+    expect(createClient).not.toHaveBeenCalled()
+    const status = JSON.parse(await readFile(statusPath, 'utf8')) as Record<string, unknown>
+    expect(String(status.error)).toContain('approval=never only')
   })
 
   it('creates a non-VCS cwd before starting Codex app-server', async () => {
@@ -274,6 +411,7 @@ describe('codex app-server runner adapter', () => {
       },
       {
         cwd,
+        prompt: NORMALIZED_PROMPT,
       },
       {
         createClient: () => {
@@ -323,6 +461,7 @@ describe('codex app-server runner adapter', () => {
       },
       {
         cwd,
+        prompt: NORMALIZED_PROMPT,
       },
       {
         runCommand: async (command, args) => {
@@ -365,7 +504,7 @@ describe('codex app-server runner adapter', () => {
           payloads: { eventFilePath: runPath },
           artifacts: { statusPath },
         },
-        {},
+        { prompt: NORMALIZED_PROMPT },
         {
           createClient: () => {
             throw new Error('client should not start')
@@ -398,7 +537,7 @@ describe('codex app-server runner adapter', () => {
           payloads: { eventFilePath: runPath },
           artifacts: { statusPath },
         },
-        {},
+        { prompt: NORMALIZED_PROMPT },
         {
           createClient: () => {
             throw new Error('missing codex binary')
@@ -435,7 +574,7 @@ describe('codex app-server runner adapter', () => {
           payloads: { eventFilePath: runPath },
           artifacts: { statusPath },
         },
-        {},
+        { prompt: NORMALIZED_PROMPT },
         {
           createClient: () => ({
             runTurnStream: async () => ({
@@ -483,7 +622,7 @@ describe('codex app-server runner adapter', () => {
           payloads: { eventFilePath: runPath },
           artifacts: { statusPath },
         },
-        {},
+        { prompt: NORMALIZED_PROMPT },
         {
           createClient: () => ({
             runTurnStream: async () => ({
@@ -529,7 +668,7 @@ describe('codex app-server runner adapter', () => {
             outputArtifacts: [{ name: 'codex-artifact', path: '/workspace/artifact.json', key: 'runs/run-1.json' }],
           },
         },
-        {},
+        { prompt: NORMALIZED_PROMPT },
         {
           createClient: () => ({
             runTurnStream: async () => ({
@@ -576,7 +715,7 @@ describe('codex app-server runner adapter', () => {
           payloads: { eventFilePath: runPath },
           artifacts: { statusPath },
         },
-        {},
+        { prompt: NORMALIZED_PROMPT },
         {
           createClient: () => ({
             runTurnStream: async () => ({
@@ -624,7 +763,7 @@ describe('codex app-server runner adapter', () => {
         payloads: { eventFilePath: runPath },
         artifacts: { statusPath },
       },
-      {},
+      { prompt: NORMALIZED_PROMPT },
       {
         abortSignal: abortController.signal,
         createClient: () => ({
@@ -680,7 +819,7 @@ describe('codex app-server runner adapter', () => {
           payloads: { eventFilePath: runPath },
           artifacts: { statusPath },
         },
-        {},
+        { prompt: NORMALIZED_PROMPT },
         {
           abortSignal: abortController.signal,
           createClient,

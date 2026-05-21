@@ -85,9 +85,9 @@ export const normalizeLabelMap = (labels: Record<string, unknown>) => {
 }
 
 export const validateLabelPolicy = (labels: Record<string, string>) => {
-  const required = parseEnvStringList('AGENTS_AGENTS_CONTROLLER_LABELS_REQUIRED')
-  const allowed = parseEnvStringList('AGENTS_AGENTS_CONTROLLER_LABELS_ALLOWED')
-  const denied = parseEnvStringList('AGENTS_AGENTS_CONTROLLER_LABELS_DENIED')
+  const required = parseEnvStringList('AGENTS_CONTROLLER_LABELS_REQUIRED')
+  const allowed = parseEnvStringList('AGENTS_CONTROLLER_LABELS_ALLOWED')
+  const denied = parseEnvStringList('AGENTS_CONTROLLER_LABELS_DENIED')
 
   if (required.length > 0) {
     const missing = required.filter((key) => !labels[key])
@@ -127,8 +127,8 @@ export const validateLabelPolicy = (labels: Record<string, string>) => {
 }
 
 export const validateImagePolicy = (images: ImagePolicyCandidate[]) => {
-  const allowed = parseEnvStringList('AGENTS_AGENTS_CONTROLLER_IMAGES_ALLOWED')
-  const denied = parseEnvStringList('AGENTS_AGENTS_CONTROLLER_IMAGES_DENIED')
+  const allowed = parseEnvStringList('AGENTS_CONTROLLER_IMAGES_ALLOWED')
+  const denied = parseEnvStringList('AGENTS_CONTROLLER_IMAGES_DENIED')
   if (images.length === 0) return { ok: true as const }
 
   for (const entry of images) {
@@ -181,7 +181,7 @@ export const validateAutonomousCodexAuthSecret = (input: {
     return {
       ok: false as const,
       reason: 'MissingAuthSecretConfig',
-      message: 'autonomous Codex providers require AGENTS_AGENTS_CONTROLLER_AUTH_SECRET_* configuration',
+      message: 'autonomous Codex providers require AGENTS_CONTROLLER_AUTH_SECRET_* configuration',
     }
   }
   if (!input.secret) {

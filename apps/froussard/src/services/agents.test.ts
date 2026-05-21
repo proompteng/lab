@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { CodexTaskMessage } from '@/codex'
+import type { GithubIssueAgentRunRequest } from '@/codex'
 import { buildGithubIssueAgentRunPayload, makeAgentsServiceSubmitter, type FroussardAgentsConfig } from './agents'
 
 const { submitAgentRunToAgentsServiceMock } = vi.hoisted(() => ({
@@ -24,7 +24,7 @@ const config: FroussardAgentsConfig = {
   goalTokenBudget: 250_000,
 }
 
-const message: CodexTaskMessage = {
+const request: GithubIssueAgentRunRequest = {
   stage: 'implementation',
   prompt: 'Implement this issue',
   repository: 'owner/repo',
@@ -46,7 +46,7 @@ describe('agents service submissions', () => {
   })
 
   it('maps a GitHub issue implementation request into an Agents AgentRun payload', () => {
-    const payload = buildGithubIssueAgentRunPayload(config, message, 'delivery-42')
+    const payload = buildGithubIssueAgentRunPayload(config, request, 'delivery-42')
 
     expect(payload).toMatchObject({
       namespace: 'agents',

@@ -1,4 +1,4 @@
-import type { CodexRunRecord } from '@/data/codex'
+import type { CodexRunRecord } from '@proompteng/agent-contracts/codex-runs-client'
 
 export type GithubCheckRun = {
   id: string
@@ -165,6 +165,7 @@ export type GithubPullDetailResponse =
       review: GithubReviewSummary | null
       checks: GithubCheckSummary | null
       issueComments: GithubIssueComment[]
+      judgeRuns: CodexRunRecord[]
       capabilities: GithubCapabilities
     }
   | { ok: false; error: string }
@@ -328,30 +329,16 @@ export const refreshGithubPullFiles = async (owner: string, repo: string, number
   } as const
 }
 
-export const fetchGithubPullJudgeRuns = async (owner: string, repo: string, number: number) => {
-  const response = await fetch(`/api/github/pulls/${owner}/${repo}/${number}/judge-runs`)
-  const payload = (await response.json().catch(() => null)) as {
-    ok: boolean
-    runs?: CodexRunRecord[]
-    error?: string
-  } | null
-  if (!response.ok || !payload || !payload.ok) {
-    return { ok: false, error: payload?.error ?? 'Failed to load judge runs' } as const
-  }
-  return { ok: true, runs: payload.runs ?? [] } as const
-}
-
 export const loadGithubPullDetailPageData = async (owner: string, repo: string, number: number) => {
   const pullRes = await fetchGithubPull(owner, repo, number)
   if (!pullRes.ok) {
     return { ok: false as const, error: pullRes.error }
   }
 
-  const [filesRes, threadsRes, checksRes, judgeRes, deploymentEvidenceRes, auditsRes] = await Promise.all([
+  const [filesRes, threadsRes, checksRes, deploymentEvidenceRes, auditsRes] = await Promise.all([
     fetchGithubPullFiles(owner, repo, number),
     fetchGithubPullThreads(owner, repo, number),
     fetchGithubPullChecks(owner, repo, number),
-    fetchGithubPullJudgeRuns(owner, repo, number),
     fetchGithubPullDeploymentEvidenceSummary(owner, repo, number),
     fetchGithubPullWriteActions(owner, repo, number),
   ])
@@ -366,7 +353,7 @@ export const loadGithubPullDetailPageData = async (owner: string, repo: string, 
     threads: threadsRes.ok ? threadsRes.threads : [],
     files: filesRes.ok ? filesRes.files : [],
     checksByCommit: checksRes.ok ? checksRes.commits : [],
-    judgeRuns: judgeRes.ok ? judgeRes.runs : [],
+    judgeRuns: pullRes.judgeRuns,
     writeActions: auditsRes.ok ? auditsRes.audits : [],
     deploymentEvidence: deploymentEvidenceRes.ok
       ? deploymentEvidenceRes.deployment

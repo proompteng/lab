@@ -53,7 +53,7 @@ export const resolveLeaderElectionSettings = (env: EnvSource = process.env): Lea
     enabled: parseBooleanEnv(readAgentsEnv(env, 'AGENTS_LEADER_ELECTION_ENABLED'), DEFAULT_LEADER_ELECTION_ENABLED),
     required:
       !isRuntimeTestEnv(env) &&
-      (isControllerWorkloadFlagEnabled(readAgentsEnv(env, 'AGENTS_AGENTS_CONTROLLER_ENABLED'), true) ||
+      (isControllerWorkloadFlagEnabled(readAgentsEnv(env, 'AGENTS_CONTROLLER_ENABLED'), true) ||
         isControllerWorkloadFlagEnabled(readAgentsEnv(env, 'AGENTS_ORCHESTRATION_CONTROLLER_ENABLED'), true) ||
         isControllerWorkloadFlagEnabled(readAgentsEnv(env, 'AGENTS_SUPPORTING_CONTROLLER_ENABLED'), true) ||
         isControllerWorkloadFlagEnabled(readAgentsEnv(env, 'AGENTS_PRIMITIVES_RECONCILER'), true)),

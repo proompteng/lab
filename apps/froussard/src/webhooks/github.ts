@@ -24,14 +24,6 @@ import { publishKafkaMessage } from './utils'
 
 const ATLAS_ENRICH_PATH = '/api/enrich'
 const MAX_ATLAS_ERROR_DETAIL = 500
-const CODEX_JUDGE_EVENT_TYPES = new Set([
-  'check_run',
-  'check_suite',
-  'pull_request',
-  'pull_request_review',
-  'pull_request_review_comment',
-  'issue_comment',
-])
 
 export interface GithubWebhookDependencies {
   runtime: AppRuntime
@@ -100,16 +92,6 @@ const extractEventIdentifiers = (payload: unknown) => {
     commentId,
     discussionId,
   }
-}
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  Boolean(value) && typeof value === 'object' && !Array.isArray(value)
-
-const isPullRequestIssueComment = (payload: unknown) => {
-  if (!isRecord(payload)) return false
-  const issue = payload.issue
-  if (!isRecord(issue)) return false
-  return Boolean(issue.pull_request)
 }
 
 const extractRepositoryFromUrl = (repositoryUrl: string): string | undefined => {
@@ -213,32 +195,6 @@ const extractAtlasContext = (payload: unknown): { repository?: string; ref?: str
   )
 
   return { repository, ref, commit }
-}
-
-const buildCodexJudgePayload = (options: {
-  payload: unknown
-  deliveryId: string
-  eventName: string
-  actionValue?: string
-  senderLogin?: string
-  identifiers: ReturnType<typeof extractEventIdentifiers>
-}) => {
-  const context = extractAtlasContext(options.payload)
-  return {
-    deliveryId: options.deliveryId,
-    event: options.eventName,
-    action: options.actionValue ?? null,
-    repository: options.identifiers.repositoryFullName ?? context.repository ?? null,
-    sender: options.senderLogin ?? null,
-    receivedAt: new Date().toISOString(),
-    payload: options.payload,
-  }
-}
-
-const shouldPublishCodexJudgeEvent = (eventName: string, payload: unknown) => {
-  if (!CODEX_JUDGE_EVENT_TYPES.has(eventName)) return false
-  if (eventName === 'issue_comment' && !isPullRequestIssueComment(payload)) return false
-  return true
 }
 
 const buildAtlasPayload = (options: {
@@ -529,25 +485,6 @@ export const createGithubWebhookHandler = ({
             'atlas enrichment request failed',
           )
         })
-      }
-
-      if (shouldPublishCodexJudgeEvent(eventName, parsedPayload)) {
-        const codexJudgePayload = buildCodexJudgePayload({
-          payload: parsedPayload,
-          deliveryId,
-          eventName,
-          actionValue,
-          senderLogin,
-          identifiers,
-        })
-        await runtime.runPromise(
-          publishKafkaMessage({
-            topic: config.topics.codexJudge,
-            key: deliveryId,
-            value: JSON.stringify(codexJudgePayload),
-            headers,
-          }),
-        )
       }
 
       await runtime.runPromise(

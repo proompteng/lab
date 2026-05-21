@@ -8,6 +8,7 @@ import {
   createAgentMessagesStore,
 } from './agent-messages-store'
 import { asRecord, asString } from './primitives'
+import { classifyStorageFailure, toErrorMessage, type StorageFailureCauseCode } from './storage-error-classification'
 
 export class AgentMessagesInvalidPayloadError extends Data.TaggedError('AgentMessagesInvalidPayloadError')<{
   readonly message: string
@@ -16,7 +17,7 @@ export class AgentMessagesInvalidPayloadError extends Data.TaggedError('AgentMes
 export class AgentMessagesStorageError extends Data.TaggedError('AgentMessagesStorageError')<{
   readonly operation: string
   readonly message: string
-  readonly causeCode: 'missing-config' | 'transient-db' | 'unknown'
+  readonly causeCode: StorageFailureCauseCode
   readonly retryable: boolean
   readonly httpStatusCode: 500 | 503
 }> {}
@@ -53,29 +54,9 @@ export type IngestAgentMessagesInput = {
 
 const MAX_INGEST_BATCH_SIZE = 2_000
 
-const toErrorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
-
-const classifyStorageError = (message: string) => {
-  const normalized = message.toLowerCase()
-  if (normalized.includes('database_url')) {
-    return { causeCode: 'missing-config' as const, retryable: false, httpStatusCode: 503 as const }
-  }
-  if (
-    normalized.includes('econnrefused') ||
-    normalized.includes('connection terminated unexpectedly') ||
-    normalized.includes('server closed the connection unexpectedly') ||
-    normalized.includes('connection reset by peer') ||
-    normalized.includes('timeout') ||
-    normalized.includes('timed out')
-  ) {
-    return { causeCode: 'transient-db' as const, retryable: true, httpStatusCode: 503 as const }
-  }
-  return { causeCode: 'unknown' as const, retryable: false, httpStatusCode: 500 as const }
-}
-
 const storageError = (operation: string) => (error: unknown) => {
-  const message = toErrorMessage(error)
-  return new AgentMessagesStorageError({ operation, message, ...classifyStorageError(message) })
+  const classified = classifyStorageFailure(error)
+  return new AgentMessagesStorageError({ operation, ...classified })
 }
 
 const readNullableString = (value: unknown) => {
