@@ -78,6 +78,14 @@ spec:
         value: '5'
       - name: prefetchFullWindowRows
         value: 'true'
+      - name: replayTapePath
+        value: ''
+      - name: replayTapeManifest
+        value: ''
+      - name: replayTapePreviewTopK
+        value: '0'
+      - name: replayTapePreviewMinRows
+        value: '2'
       - name: allowStaleTape
         value: 'false'
       - name: persistResults
@@ -117,6 +125,10 @@ spec:
           - name: holdoutDays
           - name: secondOosDays
           - name: prefetchFullWindowRows
+          - name: replayTapePath
+          - name: replayTapeManifest
+          - name: replayTapePreviewTopK
+          - name: replayTapePreviewMinRows
           - name: allowStaleTape
           - name: persistResults
       container:
@@ -235,6 +247,16 @@ spec:
             fi
             if [ "{{inputs.parameters.prefetchFullWindowRows}}" = "true" ]; then
               SCRIPT_ARGS+=(--prefetch-full-window-rows)
+            fi
+            if [ -n "{{inputs.parameters.replayTapePath}}" ]; then
+              SCRIPT_ARGS+=(--replay-tape-path "{{inputs.parameters.replayTapePath}}")
+            fi
+            if [ -n "{{inputs.parameters.replayTapeManifest}}" ]; then
+              SCRIPT_ARGS+=(--replay-tape-manifest "{{inputs.parameters.replayTapeManifest}}")
+            fi
+            if [ "{{inputs.parameters.replayTapePreviewTopK}}" != "0" ]; then
+              SCRIPT_ARGS+=(--replay-tape-preview-top-k "{{inputs.parameters.replayTapePreviewTopK}}")
+              SCRIPT_ARGS+=(--replay-tape-preview-min-rows "{{inputs.parameters.replayTapePreviewMinRows}}")
             fi
             if [ "{{inputs.parameters.allowStaleTape}}" = "true" ]; then
               SCRIPT_ARGS+=(--allow-stale-tape)
