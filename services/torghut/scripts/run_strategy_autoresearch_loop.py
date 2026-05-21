@@ -59,6 +59,12 @@ from app.trading.discovery.promotion_contract import (
 from app.trading.discovery.portfolio_candidates import PortfolioCandidateSpec
 from app.trading.discovery.portfolio_optimizer import optimize_portfolio_candidate
 from app.trading.discovery.profit_target_oracle import ProfitTargetOraclePolicy
+from app.trading.discovery.replay_tape import (
+    ReplayTapeManifest,
+    build_source_query_digest,
+    default_manifest_path,
+    materialize_signal_tape,
+)
 from app.trading.discovery.runtime_closure import write_runtime_closure_bundle
 from app.trading.discovery.runtime_closure import RuntimeClosureExecutionContext
 import scripts.local_intraday_tsmom_replay as replay_mod
@@ -142,6 +148,26 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--expected-last-trading-day", default="")
     parser.add_argument("--allow-stale-tape", action="store_true")
     parser.add_argument("--prefetch-full-window-rows", action="store_true")
+    parser.add_argument(
+        "--replay-tape-path",
+        type=Path,
+        default=None,
+        help="Optional manifest-verified replay tape reused by each frontier run.",
+    )
+    parser.add_argument(
+        "--replay-tape-manifest",
+        type=Path,
+        default=None,
+        help="Optional manifest path for --replay-tape-path.",
+    )
+    parser.add_argument(
+        "--materialize-replay-tape",
+        action="store_true",
+        help=(
+            "Fetch the resolved full-window signal rows once, write a run-scoped "
+            "replay tape, and pass it into every exact frontier run."
+        ),
+    )
     parser.add_argument(
         "--max-frontier-runs",
         type=int,
@@ -343,6 +369,8 @@ def _snapshot_symbols(
 def _mlx_bundle_paths(run_root: Path) -> dict[str, str]:
     return {
         "signal_rows_jsonl": str(run_root / "mlx-snapshot-signals.jsonl"),
+        "replay_tape_jsonl": str(run_root / "replay-tape.jsonl"),
+        "replay_tape_manifest_json": str(run_root / "replay-tape.jsonl.manifest.json"),
         "descriptors_jsonl": str(run_root / "mlx-candidate-descriptors.jsonl"),
         "proposal_scores_jsonl": str(run_root / "mlx-proposal-scores.jsonl"),
         "history_jsonl": str(run_root / "history.jsonl"),
@@ -503,6 +531,17 @@ def _frontier_args(
         allow_stale_tape=bool(args.allow_stale_tape),
         family_template_dir=args.family_template_dir.resolve(),
         prefetch_full_window_rows=bool(args.prefetch_full_window_rows),
+        replay_tape_path=(
+            Path(replay_tape_path).resolve()
+            if (replay_tape_path := getattr(args, "replay_tape_path", None)) is not None
+            else None
+        ),
+        replay_tape_manifest=(
+            Path(replay_tape_manifest).resolve()
+            if (replay_tape_manifest := getattr(args, "replay_tape_manifest", None))
+            is not None
+            else None
+        ),
         top_n=top_n,
         max_candidates_to_evaluate=max_candidates_to_evaluate,
         json_output=json_output_path,
@@ -532,20 +571,16 @@ def _iso_date(value: str) -> date:
     return date.fromisoformat(value)
 
 
-def _maybe_write_signal_bundle(
+def _full_window_signal_config(
     *,
     args: argparse.Namespace,
     snapshot_symbols: tuple[str, ...],
-    bundle_paths: Mapping[str, str],
     full_window_start_date: str,
     full_window_end_date: str,
-    existing: MlxSignalBundleStats | None,
-) -> MlxSignalBundleStats | None:
-    if existing is not None:
-        return existing
+) -> replay_mod.ReplayConfig | None:
     if not full_window_start_date or not full_window_end_date or not snapshot_symbols:
-        return existing
-    signal_bundle_config = replay_mod.ReplayConfig(
+        return None
+    return replay_mod.ReplayConfig(
         strategy_configmap_path=args.strategy_configmap.resolve(),
         clickhouse_http_url=str(args.clickhouse_http_url),
         clickhouse_username=(str(args.clickhouse_username).strip() or None),
@@ -558,9 +593,144 @@ def _maybe_write_signal_bundle(
         symbols=snapshot_symbols,
         progress_log_interval_seconds=max(1, int(args.progress_log_seconds)),
     )
+
+
+def _replay_tape_source_query_digest(
+    *,
+    args: argparse.Namespace,
+    snapshot_symbols: tuple[str, ...],
+    full_window_start_date: str,
+    full_window_end_date: str,
+) -> str:
+    return build_source_query_digest(
+        {
+            "query_family": "torghut.autoresearch_full_window_pt1s",
+            "clickhouse_http_url": str(args.clickhouse_http_url),
+            "start_date": full_window_start_date,
+            "end_date": full_window_end_date,
+            "chunk_minutes": max(1, int(args.chunk_minutes)),
+            "symbols": list(snapshot_symbols),
+            "source": "ta",
+            "window_size": "PT1S",
+            "join": "torghut.ta_microbars",
+        }
+    )
+
+
+def _replay_tape_receipt(
+    *,
+    status: str,
+    tape_path: Path,
+    manifest_path: Path,
+    manifest: ReplayTapeManifest,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "torghut.autoresearch-replay-tape-receipt.v1",
+        "status": status,
+        "tape_path": str(tape_path),
+        "manifest_path": str(manifest_path),
+        "dataset_snapshot_ref": manifest.dataset_snapshot_ref,
+        "row_count": manifest.row_count,
+        "trading_day_count": manifest.trading_day_count,
+        "row_symbols": list(manifest.row_symbols),
+        "content_sha256": manifest.content_sha256,
+        "source_query_digest": manifest.source_query_digest,
+    }
+
+
+def _provided_replay_tape_receipt(
+    *,
+    tape_path: Path,
+    manifest_path: Path | None,
+) -> dict[str, Any] | None:
+    resolved_manifest_path = manifest_path or default_manifest_path(tape_path)
+    if not resolved_manifest_path.exists():
+        return None
+    manifest = ReplayTapeManifest.from_payload(
+        json.loads(resolved_manifest_path.read_text(encoding="utf-8"))
+    )
+    return _replay_tape_receipt(
+        status="provided",
+        tape_path=tape_path,
+        manifest_path=resolved_manifest_path,
+        manifest=manifest,
+    )
+
+
+def _maybe_write_signal_bundle(
+    *,
+    args: argparse.Namespace,
+    snapshot_symbols: tuple[str, ...],
+    bundle_paths: Mapping[str, str],
+    full_window_start_date: str,
+    full_window_end_date: str,
+    existing: MlxSignalBundleStats | None,
+) -> MlxSignalBundleStats | None:
+    if existing is not None:
+        return existing
+    signal_bundle_config = _full_window_signal_config(
+        args=args,
+        snapshot_symbols=snapshot_symbols,
+        full_window_start_date=full_window_start_date,
+        full_window_end_date=full_window_end_date,
+    )
+    if signal_bundle_config is None:
+        return existing
     return write_mlx_signal_bundle(
         Path(bundle_paths["signal_rows_jsonl"]),
         replay_mod._iter_signal_rows(signal_bundle_config),
+    )
+
+
+def _maybe_materialize_run_replay_tape(
+    *,
+    args: argparse.Namespace,
+    runner_run_id: str,
+    snapshot_symbols: tuple[str, ...],
+    bundle_paths: Mapping[str, str],
+    full_window_start_date: str,
+    full_window_end_date: str,
+    existing_signal_bundle: MlxSignalBundleStats | None,
+) -> tuple[MlxSignalBundleStats | None, dict[str, Any] | None]:
+    if not bool(getattr(args, "materialize_replay_tape", False)):
+        return existing_signal_bundle, None
+    if getattr(args, "replay_tape_path", None) is not None:
+        return existing_signal_bundle, None
+    signal_bundle_config = _full_window_signal_config(
+        args=args,
+        snapshot_symbols=snapshot_symbols,
+        full_window_start_date=full_window_start_date,
+        full_window_end_date=full_window_end_date,
+    )
+    if signal_bundle_config is None:
+        return existing_signal_bundle, None
+    rows = tuple(replay_mod._iter_signal_rows(signal_bundle_config))
+    tape_path = Path(bundle_paths["replay_tape_jsonl"])
+    manifest_path = Path(bundle_paths["replay_tape_manifest_json"])
+    manifest = materialize_signal_tape(
+        rows=rows,
+        tape_path=tape_path,
+        manifest_path=manifest_path,
+        dataset_snapshot_ref=runner_run_id,
+        symbols=snapshot_symbols,
+        start_date=_iso_date(full_window_start_date),
+        end_date=_iso_date(full_window_end_date),
+        source_query_digest=_replay_tape_source_query_digest(
+            args=args,
+            snapshot_symbols=snapshot_symbols,
+            full_window_start_date=full_window_start_date,
+            full_window_end_date=full_window_end_date,
+        ),
+    )
+    signal_bundle_stats = existing_signal_bundle or write_mlx_signal_bundle(
+        Path(bundle_paths["signal_rows_jsonl"]),
+        rows,
+    )
+    return signal_bundle_stats, _replay_tape_receipt(
+        status="materialized",
+        tape_path=tape_path,
+        manifest_path=manifest_path,
+        manifest=manifest,
     )
 
 
@@ -1384,6 +1554,24 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
     resolved_full_window_start_date = _string(args.full_window_start_date)
     resolved_full_window_end_date = _string(args.full_window_end_date)
     signal_bundle_stats: MlxSignalBundleStats | None = None
+    effective_replay_tape_path = (
+        Path(replay_tape_path).resolve()
+        if (replay_tape_path := getattr(args, "replay_tape_path", None)) is not None
+        else None
+    )
+    effective_replay_tape_manifest = (
+        Path(replay_tape_manifest).resolve()
+        if (replay_tape_manifest := getattr(args, "replay_tape_manifest", None))
+        is not None
+        else None
+    )
+    if effective_replay_tape_path is not None:
+        provided_receipt = _provided_replay_tape_receipt(
+            tape_path=effective_replay_tape_path,
+            manifest_path=effective_replay_tape_manifest,
+        )
+        if provided_receipt is not None:
+            tape_freshness_receipts.append(provided_receipt)
     closure_execution_context = RuntimeClosureExecutionContext(
         strategy_configmap_path=args.strategy_configmap.resolve(),
         clickhouse_http_url=str(args.clickhouse_http_url),
@@ -1445,6 +1633,23 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
         status="running",
         closure_execution_context=closure_execution_context,
     )
+    signal_bundle_stats, materialized_replay_tape_receipt = (
+        _maybe_materialize_run_replay_tape(
+            args=args,
+            runner_run_id=runner_run_id,
+            snapshot_symbols=snapshot_symbols,
+            bundle_paths=bundle_paths,
+            full_window_start_date=resolved_full_window_start_date,
+            full_window_end_date=resolved_full_window_end_date,
+            existing_signal_bundle=signal_bundle_stats,
+        )
+    )
+    if materialized_replay_tape_receipt is not None:
+        tape_freshness_receipts.append(materialized_replay_tape_receipt)
+        effective_replay_tape_path = Path(materialized_replay_tape_receipt["tape_path"])
+        effective_replay_tape_manifest = Path(
+            materialized_replay_tape_receipt["manifest_path"]
+        )
     signal_bundle_stats = _maybe_write_signal_bundle(
         args=args,
         snapshot_symbols=snapshot_symbols,
@@ -1452,6 +1657,13 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
         full_window_start_date=resolved_full_window_start_date,
         full_window_end_date=resolved_full_window_end_date,
         existing=signal_bundle_stats,
+    )
+    frontier_base_args = argparse.Namespace(
+        **{
+            **vars(args),
+            "replay_tape_path": effective_replay_tape_path,
+            "replay_tape_manifest": effective_replay_tape_manifest,
+        }
     )
     manifest = _refresh_manifest()
     _persist_run_outputs(
@@ -1560,7 +1772,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
             try:
                 frontier_payload = run_consistent_profitability_frontier(
                     _frontier_args(
-                        args=args,
+                        args=frontier_base_args,
                         program=program,
                         family_plan=current.family_plan,
                         sweep_config_path=sweep_config_path,

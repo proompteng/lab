@@ -376,6 +376,18 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--allow-stale-tape", action="store_true")
     parser.add_argument("--prefetch-full-window-rows", action="store_true")
     parser.add_argument(
+        "--replay-tape-path",
+        type=Path,
+        default=None,
+        help="Optional manifest-verified replay tape reused by real frontier runs.",
+    )
+    parser.add_argument(
+        "--replay-tape-manifest",
+        type=Path,
+        default=None,
+        help="Optional manifest path for --replay-tape-path.",
+    )
+    parser.add_argument(
         "--collect-train-gate-diagnostics",
         dest="collect_train_gate_diagnostics",
         action="store_true",
@@ -1389,6 +1401,8 @@ def _clickhouse_endpoint_preflight_failure(args: argparse.Namespace) -> str:
     if str(getattr(args, "replay_mode", "") or "") != "real":
         return ""
     if bool(getattr(args, "selection_only", False)):
+        return ""
+    if getattr(args, "replay_tape_path", None) is not None:
         return ""
     url = str(getattr(args, "clickhouse_http_url", "") or "").strip()
     parsed = urlparse(url)
@@ -5889,6 +5903,8 @@ def _run_real_replay(
         expected_last_trading_day=args.expected_last_trading_day,
         allow_stale_tape=args.allow_stale_tape,
         prefetch_full_window_rows=args.prefetch_full_window_rows,
+        replay_tape_path=getattr(args, "replay_tape_path", None),
+        replay_tape_manifest=getattr(args, "replay_tape_manifest", None),
         collect_train_gate_diagnostics=bool(
             getattr(args, "collect_train_gate_diagnostics", True)
         ),

@@ -172,6 +172,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             expected_last_trading_day="",
             allow_stale_tape=False,
             prefetch_full_window_rows=False,
+            replay_tape_path=None,
+            replay_tape_manifest=None,
             min_daily_net_pnl=None,
             persist_results=False,
         )
@@ -505,6 +507,22 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         with patch(
             "scripts.run_whitepaper_autoresearch_profit_target.socket.getaddrinfo",
             side_effect=AssertionError("non-cluster endpoints are replay-checked"),
+        ):
+            failure = runner._clickhouse_endpoint_preflight_failure(args)
+
+        self.assertEqual(failure, "")
+
+    def test_clickhouse_preflight_skips_when_replay_tape_is_supplied(self) -> None:
+        args = Namespace(
+            replay_mode="real",
+            selection_only=False,
+            replay_tape_path=Path("/tmp/replay-tape.jsonl"),
+            clickhouse_http_url="http://torghut-clickhouse.torghut.svc.cluster.local:8123",
+        )
+
+        with patch(
+            "scripts.run_whitepaper_autoresearch_profit_target.socket.getaddrinfo",
+            side_effect=AssertionError("replay tape should bypass DNS preflight"),
         ):
             failure = runner._clickhouse_endpoint_preflight_failure(args)
 
@@ -7758,6 +7776,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     "TORGHUT_CLICKHOUSE_PASSWORD",
                     "--max-total-frontier-candidates",
                     "7",
+                    "--replay-tape-path",
+                    str(Path(tmpdir) / "tape.jsonl"),
+                    "--replay-tape-manifest",
+                    str(Path(tmpdir) / "tape.manifest.json"),
                     "--selection-only",
                     "--no-persist-results",
                 ],
@@ -7782,6 +7804,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(parsed.real_replay_shard_size, 0)
         self.assertEqual(parsed.real_replay_shard_timeout_seconds, 0)
         self.assertEqual(parsed.real_replay_shard_workers, 1)
+        self.assertEqual(parsed.replay_tape_path, Path(tmpdir) / "tape.jsonl")
+        self.assertEqual(
+            parsed.replay_tape_manifest, Path(tmpdir) / "tape.manifest.json"
+        )
         self.assertTrue(parsed.selection_only)
         self.assertEqual(parsed.max_worst_day_loss, "999999999")
         self.assertEqual(parsed.max_drawdown, "999999999")
@@ -8059,11 +8085,18 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 ]
             }
             captured_symbols: list[str] = []
+            captured_replay_tapes: list[tuple[Path | None, Path | None]] = []
 
             def fake_run(
                 factory_args: Namespace, *, source_specs: object
             ) -> dict[str, object]:
                 captured_symbols.append(str(factory_args.symbols))
+                captured_replay_tapes.append(
+                    (
+                        factory_args.replay_tape_path,
+                        factory_args.replay_tape_manifest,
+                    )
+                )
                 return factory_payload
 
             with patch.object(
@@ -8079,13 +8112,20 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     family_template_dir=Path("config/trading/families"),
                     seed_sweep_dir=Path("config/trading"),
                 )
+                args = self._args(output_dir)
+                args.replay_tape_path = output_dir / "tape.jsonl"
+                args.replay_tape_manifest = output_dir / "tape.manifest.json"
                 result = runner._run_real_replay(
-                    self._args(output_dir),
+                    args,
                     output_dir=output_dir,
                     specs=compilation.executable_specs[:1],
                 )
 
         self.assertEqual(captured_symbols, [""])
+        self.assertEqual(
+            captured_replay_tapes,
+            [(output_dir / "tape.jsonl", output_dir / "tape.manifest.json")],
+        )
         self.assertEqual(len(result.evidence_bundles), 1)
 
     def test_real_replay_passes_global_frontier_candidate_budget(self) -> None:

@@ -110,6 +110,18 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--allow-stale-tape", action="store_true")
     parser.add_argument("--prefetch-full-window-rows", action="store_true")
     parser.add_argument(
+        "--replay-tape-path",
+        type=Path,
+        default=None,
+        help="Optional manifest-verified replay tape reused by each frontier run.",
+    )
+    parser.add_argument(
+        "--replay-tape-manifest",
+        type=Path,
+        default=None,
+        help="Optional manifest path for --replay-tape-path.",
+    )
+    parser.add_argument(
         "--collect-train-gate-diagnostics",
         action="store_true",
         help="Persist aggregate train-window gate diagnostics for each frontier candidate.",
@@ -447,6 +459,17 @@ def _frontier_args(
         allow_stale_tape=bool(args.allow_stale_tape),
         family_template_dir=args.family_template_dir,
         prefetch_full_window_rows=bool(args.prefetch_full_window_rows),
+        replay_tape_path=(
+            Path(replay_tape_path).resolve()
+            if (replay_tape_path := getattr(args, "replay_tape_path", None)) is not None
+            else None
+        ),
+        replay_tape_manifest=(
+            Path(replay_tape_manifest).resolve()
+            if (replay_tape_manifest := getattr(args, "replay_tape_manifest", None))
+            is not None
+            else None
+        ),
         collect_train_gate_diagnostics=bool(
             getattr(args, "collect_train_gate_diagnostics", False)
         ),
