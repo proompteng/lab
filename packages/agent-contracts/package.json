@@ -46,14 +46,6 @@
       "types": "./dist/agent-message-artifacts.d.ts",
       "default": "./dist/agent-message-artifacts.js"
     },
-    "./agent-run-callbacks": {
-      "types": "./dist/agent-run-callbacks.d.ts",
-      "default": "./dist/agent-run-callbacks.js"
-    },
-    "./agent-run-callbacks-client": {
-      "types": "./dist/agent-run-callbacks-client.d.ts",
-      "default": "./dist/agent-run-callbacks-client.js"
-    },
     "./codex-orchestration-parameters": {
       "types": "./dist/codex-orchestration-parameters.d.ts",
       "default": "./dist/codex-orchestration-parameters.js"
@@ -149,7 +141,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "bunx vitest run ./src/agents-clients.test.ts ./src/agents-ready.test.ts ./src/agent-message-artifacts.test.ts ./src/agent-run-callbacks.test.ts ./src/agent-run-callbacks-client.test.ts ./src/agent-run-projection-authority-client.test.ts ./src/agent-run-reruns-client.test.ts ./src/agent-run-terminal-events-client.test.ts ./src/codex-orchestration-parameters.test.ts ./src/codex-runs-client.test.ts ./src/control-plane-status.test.ts ./src/controller-witness.test.ts ./src/execution-trust.test.ts ./src/json.test.ts ./src/policy-validation.test.ts ./src/runtime-admission.test.ts ./src/signals-client.test.ts ./src/swarm-analysis.test.ts ./src/swarm-material-reentry.test.ts",
+    "test": "bunx vitest run ./src/agents-clients.test.ts ./src/agents-ready.test.ts ./src/agent-message-artifacts.test.ts ./src/agent-run-projection-authority-client.test.ts ./src/agent-run-reruns-client.test.ts ./src/agent-run-terminal-events-client.test.ts ./src/codex-orchestration-parameters.test.ts ./src/codex-runs-client.test.ts ./src/control-plane-status.test.ts ./src/controller-witness.test.ts ./src/execution-trust.test.ts ./src/json.test.ts ./src/policy-validation.test.ts ./src/runtime-admission.test.ts ./src/signals-client.test.ts ./src/swarm-analysis.test.ts ./src/swarm-material-reentry.test.ts",
     "tsc": "tsc --noEmit -p tsconfig.json",
     "lint": "bunx oxfmt --check src",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",

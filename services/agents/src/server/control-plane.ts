@@ -252,11 +252,6 @@ const routeSources: RouteSourceSpec[] = [
     load: () => import('../routes/v1/agent-runs/$id'),
   },
   {
-    file: 'src/routes/v1/agent-runs/$id/callbacks.ts',
-    sourceUrl: new URL('../routes/v1/agent-runs/$id/callbacks.ts', import.meta.url),
-    load: () => import('../routes/v1/agent-runs/$id/callbacks'),
-  },
-  {
     file: 'src/routes/v1/agent-runs/$id/reruns.ts',
     sourceUrl: new URL('../routes/v1/agent-runs/$id/reruns.ts', import.meta.url),
     load: () => import('../routes/v1/agent-runs/$id/reruns'),
@@ -326,10 +321,6 @@ const configureRuntimeDependencies = () => {
       resolveAuditContextFromRequest,
       resolveRepositoryFromParameters: (params) => resolveRepositoryFromParameters(params) ?? undefined,
       validatePolicies,
-    },
-    agentRunCallbacks: {
-      storeFactory: createPrimitivesStore,
-      requireLeaderForMutation: requireLeaderForMutationHttp,
     },
     agentRunReruns: {
       storeFactory: createPrimitivesStore,
