@@ -446,7 +446,6 @@ const buildCodexAppServerAdapterForRunner = (
   const explicitAdapter = asRecord(providerSpec.adapter) ?? {}
   const codex = asRecord(explicitAdapter.codex) ?? {}
   const context = buildRunnerTemplateContext(runSpec, parameters)
-  const inlineBaseInstructions = asString(runSpec.systemPrompt)
   const renderedBaseInstructions = renderOptionalString(codex.baseInstructions, context)
   const bootstrapTimeoutMs = parseOptionalNumber(codex.bootstrapTimeoutMs)
 
@@ -465,7 +464,7 @@ const buildCodexAppServerAdapterForRunner = (
       experimentalRawEvents: copyBoolean(codex.experimentalRawEvents),
       persistExtendedHistory: copyBoolean(codex.persistExtendedHistory),
       bootstrapTimeoutMs,
-      baseInstructions: renderedBaseInstructions ?? inlineBaseInstructions,
+      baseInstructions: renderedBaseInstructions,
       developerInstructions: renderOptionalString(codex.developerInstructions, context),
       prompt: resolveCodexPrompt(codex, runSpec, context),
       goal: asRecord(codex.goal) ?? undefined,

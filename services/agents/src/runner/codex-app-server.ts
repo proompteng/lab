@@ -689,8 +689,14 @@ const isSystemPromptRequired = (adapter: CodexAppServerAdapterConfig) =>
 
 const assertSystemPromptHash = (contents: string, adapter: CodexAppServerAdapterConfig, source: string) => {
   const expectedHash = resolveExpectedSystemPromptHash(adapter)
-  if (expectedHash && sha256Hex(contents) !== expectedHash) {
-    throw new Error(`system prompt hash mismatch for ${source}`)
+  const actualHash = sha256Hex(contents)
+  if (expectedHash && actualHash !== expectedHash) {
+    throw new Error(
+      `system prompt hash mismatch for ${source}: expected ${expectedHash}, actual ${actualHash}, bytes ${Buffer.byteLength(
+        contents,
+        'utf8',
+      )}`,
+    )
   }
 }
 

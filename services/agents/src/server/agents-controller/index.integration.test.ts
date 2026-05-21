@@ -1668,10 +1668,10 @@ describe('agents controller reconcileAgentRun', () => {
         sandbox: 'danger-full-access',
         approval: 'never',
         threadConfig: { mcp_servers: {}, web_search: 'live' },
-        baseInstructions: 'default-agent-prompt',
         prompt: 'demo',
       },
     })
+    expect((agentRunnerSpec.adapter as { codex?: Record<string, unknown> }).codex?.baseInstructions).toBeUndefined()
     expect(payloads.eventFilePath).toBe('/workspace/run.json')
     expect(payloads).not.toHaveProperty('eventBodyPath')
 
@@ -1847,11 +1847,11 @@ describe('agents controller reconcileAgentRun', () => {
       adapter: {
         type: 'codex-app-server',
         codex: {
-          baseInstructions: 'from-agent',
           prompt: 'demo',
         },
       },
     })
+    expect((runnerJson.adapter as { codex?: Record<string, unknown> }).codex?.baseInstructions).toBeUndefined()
 
     const status = getLastStatus(kube)
     expect(status.systemPromptHash).toBe(createHash('sha256').update('from-agent').digest('hex'))
