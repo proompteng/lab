@@ -510,9 +510,25 @@ fail_if_matches \
   "Domain AgentRun swarm producers must use AgentRun-native NATS subject prefixes" \
   'natsSubjectPrefix:\s*workflow|subjectPrefix:\s*workflow|workflow\.general\.requirement' \
   "${ROOT_DIR}/argocd/applications/torghut/agents-domain" \
-  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-config.ts" \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-material-reentry-clearinghouse.ts" \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-material-reentry-alpha-closure.ts"
+
+fail_if_path_exists \
+  "Jangar must not own retired supporting-primitives scheduler/runtime shims after Agents owns runtime admission" \
+  "${ROOT_DIR}/packages/agent-contracts/src/supporting-primitives-config.ts" \
+  "${ROOT_DIR}/packages/agent-contracts/src/supporting-primitives-config.test.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-config.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-swarm-config.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-stage-clearance.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/supporting-primitives-stage-clearance-status.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/__tests__/supporting-primitives-config.test.ts"
+
+fail_if_matches_including_tests \
+  "Active Jangar runtime surfaces must not advertise retired supporting-primitives scheduler env gates after Agents owns runtime admission" \
+  'JANGAR_STAGE_CLEARANCE_ENFORCEMENT|JANGAR_STAGE_CLEARANCE_HOLD_STAGES|JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT|JANGAR_SWARM_RUNTIME_PROOF_ENFORCEMENT|JANGAR_RUNTIME_ADMISSION_STATUS_|JANGAR_SWARM_NATS_' \
+  "${ROOT_DIR}/argocd/applications/jangar" \
+  "${ROOT_DIR}/services/jangar/README.md" \
+  "${ROOT_DIR}/services/jangar/src"
 
 fail_if_matches \
   "Jangar repair schedule evidence must not fall back to retired workflow reliability namespace env names" \
@@ -604,6 +620,15 @@ fail_if_matches \
   "Jangar control-plane status shim must not redefine generic runtime admission status types" \
   'export type (RuntimeKit|AdmissionPassport|RecoveryWarrant|RuntimeProofCell|ProjectionWatermark)' \
   "${ROOT_DIR}/services/jangar/src/server/control-plane-status-types.ts"
+
+fail_if_matches \
+  "Jangar control-plane status types must not recreate a composite Agents-plus-domain status compatibility wrapper" \
+  'AgentsControlPlaneStatus|export type ControlPlaneStatus|normalizeControlPlaneStatusPayload|buildControlPlaneStatusFallbacks|generic-agents-status' \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-status-types.ts"
+
+fail_if_path_exists \
+  "Jangar must not keep tests for the retired generic Agents status compatibility normalizer" \
+  "${ROOT_DIR}/services/jangar/src/server/control-plane-status-types.test.ts"
 
 fail_if_matches \
   "Agents controller must not derive runner goals from deprecated AgentRun parameter aliases" \

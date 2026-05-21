@@ -91,7 +91,7 @@ const stagePacket = (overrides: Partial<StageClearancePacket> = {}): StageCleara
   ttl_seconds: 120,
   reason_codes: [],
   required_repair_action: null,
-  rollback_target: 'JANGAR_STAGE_CLEARANCE_ENFORCEMENT=observe',
+  rollback_target: 'route schedule admission through Agents runtime admission in observe mode',
   ...overrides,
 })
 

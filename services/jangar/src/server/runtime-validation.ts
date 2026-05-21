@@ -9,7 +9,6 @@ import { resolveMetricsConfig } from './metrics-config'
 import { validateRuntimeEntryConfig } from './runtime-entry-config'
 import { validateRuntimeToolingConfig } from './runtime-tooling-config'
 import { validateMarketContextConfig } from './torghut-market-context-config'
-import { validateSupportingPrimitivesConfig } from './supporting-primitives-config'
 import { validateStorageConfig } from './storage-config'
 import { validateTerminalsConfig } from './terminals-config'
 import { validateTorghutConfig } from './torghut-config'
@@ -28,7 +27,6 @@ export const validateRuntimeProfileConfiguration = (
   validateMarketContextConfig(env)
   validateWhitepaperConfig(env)
   validateTerminalsConfig(env)
-  validateSupportingPrimitivesConfig(env)
   validateRuntimeEntryConfig(env)
   validateRuntimeToolingConfig(env)
   validateAtlasRuntimeConfig(env)

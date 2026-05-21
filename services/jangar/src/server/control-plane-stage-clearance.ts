@@ -559,8 +559,7 @@ const buildPacket = (
     ttl_seconds: PACKET_TTL_SECONDS,
     reason_codes: reasonCodes,
     required_repair_action: decision === 'allow' ? null : (requiredRepairActions[0] ?? 'inspect stage clearance debt'),
-    rollback_target:
-      'set JANGAR_STAGE_CLEARANCE_ENFORCEMENT=shadow and fall back to material action verdicts plus runtime admission passports',
+    rollback_target: 'route schedule admission through Agents runtime admission in observe mode',
   }
 }
 

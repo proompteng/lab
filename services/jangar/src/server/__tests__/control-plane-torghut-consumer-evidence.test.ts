@@ -870,8 +870,7 @@ describe('control-plane Torghut consumer evidence', () => {
       ttl_seconds: 120,
       reason_codes: ['torghut_max_notional_zero'],
       required_repair_action: 'close Torghut zero-notional repair blockers',
-      rollback_target:
-        'set JANGAR_STAGE_CLEARANCE_ENFORCEMENT=shadow and fall back to material action verdicts plus runtime admission passports',
+      rollback_target: 'route schedule admission through Agents runtime admission in observe mode',
     }
 
     const result = attachStageClearanceCustodyToTorghutEvidence(
