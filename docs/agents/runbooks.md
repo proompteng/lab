@@ -297,19 +297,14 @@ Expected outcomes:
 - the collaboration runtime kit points at the missing component through `reason_codes` and
   `components[].evidence_ref` (for example `runtime_kit_component_missing:codex_nats_publish` with the
   checked helper paths).
-- schedule-runner pods fail closed before creating AgentRuns when a launch-capable swarm runner manifest lacks its
-  passport stamp, when the current passport is not allowed or fresh, or when the current runtime-kit/proof evidence is
-  unhealthy. Stale template stamps are rehydrated from current status before AgentRun creation rather than treated as a
-  launch failure. Rehydrated launches also carry `swarmRuntimeAdmissionDesignRef` and `swarmRuntimeProofDesignRef` so
-  handoffs can prove the runtime contract that admitted the run. If this fire-time check itself is blocking emergency
-  recovery, set
-  `JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK=false` and keep `JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT=true` so the
-  controller still deletes newly blocked schedules.
-- stage-clearance packet stamping is shadow by default through `JANGAR_STAGE_CLEARANCE_ENFORCEMENT=shadow`. Use
-  `disabled` only to roll back packet lookup while keeping runtime-admission checks active; use `hold` only after
-  deployer evidence proves frozen normal launches carry current packet IDs and bounded repair launches remain available.
-- rollback is runtime-local: restore the missing helper/config/secret in the admitted image or revert the
-  change that introduced the incompatible runtime contract, then redeploy and re-check the same passport ids.
+- Agents-owned schedule reconciliation fails closed before creating AgentRuns when a launch-capable swarm runner manifest
+  lacks its passport stamp, when the current passport is not allowed or fresh, or when the current runtime-kit/proof
+  evidence is unhealthy. Stale template stamps are rehydrated from current status before AgentRun creation rather than
+  treated as a launch failure. Rehydrated launches also carry `swarmRuntimeAdmissionDesignRef` and
+  `swarmRuntimeProofDesignRef` so handoffs can prove the runtime contract that admitted the run.
+- stage-clearance packet stamping and hold behavior are configured in the Agents controller/runtime admission path, not
+  by Jangar deployment env. Roll back through the Agents GitOps values or by reverting the incompatible Agents runtime
+  admission change, then redeploy and re-check the same passport ids.
 
 Jangar deploy verification now checks the same passport surface after rollout digest checks:
 

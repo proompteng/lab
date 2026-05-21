@@ -1220,6 +1220,12 @@ fail_if_matches \
   "${ROOT_DIR}/docs/agents/designs/custom-system-prompt-agent-runs.md"
 
 fail_if_matches \
+  "Current Agents operator docs must use AGENTS_* controller/runtime env names instead of retired Jangar Agents env names" \
+  'JANGAR_AGENTS_CONTROLLER_|JANGAR_AGENT_RUNNER_|JANGAR_SCHEDULE_RUNNER_ADMISSION_CHECK|JANGAR_SWARM_RUNTIME_ADMISSION_ENFORCEMENT|JANGAR_STAGE_CLEARANCE_ENFORCEMENT' \
+  "${ROOT_DIR}/docs/agents/agentrun-workflow-loop-launch-guide.md" \
+  "${ROOT_DIR}/docs/agents/runbooks.md"
+
+fail_if_matches \
   "Agents chart design docs must not advertise retired Jangar-managed chart env names" \
   'JANGAR_MIGRATIONS|JANGAR_GRPC_|JANGAR_CONTROL_PLANE_CACHE_ENABLED|JANGAR_AGENTS_CONTROLLER_AUTH_SECRET' \
   "${ROOT_DIR}/docs/agents/agents-helm-chart-design.md" \

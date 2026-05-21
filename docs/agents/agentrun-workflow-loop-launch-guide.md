@@ -29,21 +29,21 @@ Loop execution is guarded by controller env vars.
 ```bash
 kubectl -n agents get deployment agents-controllers \
   -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}={.value}{"\n"}{end}' \
-  | rg 'JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED|JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOP_MAX_ITERATIONS'
+  | rg 'AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED|AGENTS_CONTROLLER_WORKFLOW_LOOP_MAX_ITERATIONS'
 ```
 
 Expected:
 
-- `JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED=true`
-- `JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOP_MAX_ITERATIONS=<limit>`
+- `AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED=true`
+- `AGENTS_CONTROLLER_WORKFLOW_LOOP_MAX_ITERATIONS=<limit>`
 
 Preferred enablement path is GitOps (set controller env vars in `argocd/applications/agents/values.yaml` and sync).
 For emergency/manual enablement:
 
 ```bash
 kubectl -n agents set env deployment/agents-controllers \
-  JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED=true \
-  JANGAR_AGENTS_CONTROLLER_WORKFLOW_LOOP_MAX_ITERATIONS=20
+  AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED=true \
+  AGENTS_CONTROLLER_WORKFLOW_LOOP_MAX_ITERATIONS=20
 kubectl -n agents rollout status deployment/agents-controllers
 ```
 
