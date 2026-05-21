@@ -155,12 +155,15 @@ _EVIDENCE_REFRESH_REASONS = {
     "hypothesis_window_evidence_missing",
     "hypothesis_window_evidence_stale",
     "required_feature_set_unavailable",
+    "runtime_ledger_proof_missing",
     "tca_evidence_stale",
 }
 _SAMPLE_REASONS = {"sample_count_below_canary_minimum", "route_universe_empty"}
 _EDGE_OR_COST_REASONS = {
     "post_cost_expectancy_below_manifest_threshold",
     "post_cost_expectancy_non_positive",
+    "runtime_ledger_expectancy_missing",
+    "runtime_ledger_stage_not_live",
     "slippage_budget_exceeded",
 }
 _DEPENDENCY_REASONS = {
@@ -270,8 +273,17 @@ def _ranked_candidate_dossiers(
                 "observed": {
                     "tca_order_count": observed.get("tca_order_count"),
                     "avg_abs_slippage_bps": observed.get("avg_abs_slippage_bps"),
-                    "post_cost_expectancy_bps_proxy": observed.get(
-                        "post_cost_expectancy_bps_proxy"
+                    "runtime_ledger_submitted_order_count": observed.get(
+                        "runtime_ledger_submitted_order_count"
+                    ),
+                    "runtime_ledger_post_cost_expectancy_bps": observed.get(
+                        "runtime_ledger_post_cost_expectancy_bps"
+                    ),
+                    "runtime_ledger_filled_notional": observed.get(
+                        "runtime_ledger_filled_notional"
+                    ),
+                    "runtime_ledger_net_strategy_pnl_after_costs": observed.get(
+                        "runtime_ledger_net_strategy_pnl_after_costs"
                     ),
                     "feature_batch_rows_total": observed.get(
                         "feature_batch_rows_total"
@@ -290,11 +302,12 @@ def _ranked_candidate_dossiers(
             }
         )
 
-    def sort_key(dossier: Mapping[str, object]) -> tuple[int, int, int, int, str]:
+    def sort_key(dossier: Mapping[str, object]) -> tuple[int, int, int, int, int, str]:
         observed = cast(Mapping[str, object], dossier.get("observed") or {})
         return (
             _candidate_blocker_rank(str(dossier.get("blocker_class") or "other")),
             -_CAPITAL_STAGE_RANK.get(str(dossier.get("capital_stage") or "shadow"), 0),
+            -(_optional_int(observed.get("runtime_ledger_submitted_order_count")) or 0),
             -(_optional_int(observed.get("tca_order_count")) or 0),
             -int(
                 bool(dossier.get("candidate_id")) and bool(dossier.get("strategy_id"))
@@ -612,12 +625,30 @@ class _TcaReadinessInputs:
     order_count: int
     avg_abs_slippage_bps: Decimal
     avg_realized_shortfall_bps: Decimal
-    post_cost_expectancy_bps_proxy: Decimal
     last_computed_at: datetime | None
     route_filter_applied: bool
     routeable_symbols: tuple[str, ...]
     route_excluded_symbol_count: int
     route_missing_symbol_count: int
+
+
+@dataclass(frozen=True)
+class _RuntimeLedgerReadinessInputs:
+    proof_present: bool
+    observed_stage: str | None
+    fill_count: int
+    submitted_order_count: int
+    closed_trade_count: int
+    open_position_count: int
+    filled_notional: Decimal
+    net_strategy_pnl_after_costs: Decimal
+    post_cost_expectancy_bps: Decimal | None
+    bucket_started_at: datetime | None
+    bucket_ended_at: datetime | None
+    blockers: tuple[str, ...]
+    execution_policy_hash_count: int
+    cost_model_hash_count: int
+    lineage_hash_count: int
 
 
 @dataclass(frozen=True)
@@ -726,7 +757,6 @@ def _resolve_tca_readiness_inputs(
         order_count=aggregate_order_count,
         avg_abs_slippage_bps=aggregate_avg_abs_slippage,
         avg_realized_shortfall_bps=aggregate_avg_realized_shortfall,
-        post_cost_expectancy_bps_proxy=-aggregate_avg_realized_shortfall,
         last_computed_at=aggregate_last_computed_at,
         route_filter_applied=False,
         routeable_symbols=(),
@@ -774,7 +804,6 @@ def _resolve_tca_readiness_inputs(
             order_count=0,
             avg_abs_slippage_bps=aggregate_avg_abs_slippage,
             avg_realized_shortfall_bps=aggregate_avg_realized_shortfall,
-            post_cost_expectancy_bps_proxy=-aggregate_avg_realized_shortfall,
             last_computed_at=aggregate_last_computed_at,
             route_filter_applied=True,
             routeable_symbols=(),
@@ -800,13 +829,146 @@ def _resolve_tca_readiness_inputs(
         order_count=route_order_count,
         avg_abs_slippage_bps=avg_abs_slippage,
         avg_realized_shortfall_bps=avg_realized_shortfall,
-        post_cost_expectancy_bps_proxy=-avg_realized_shortfall,
         last_computed_at=_latest_tca_timestamp(routeable_rows)
         or aggregate_last_computed_at,
         route_filter_applied=True,
         routeable_symbols=routeable_symbols,
         route_excluded_symbol_count=excluded_symbol_count,
         route_missing_symbol_count=missing_symbol_count,
+    )
+
+
+def _runtime_ledger_rows_for_hypothesis(
+    runtime_ledger_summary: Mapping[str, Any] | None,
+    *,
+    hypothesis_id: str,
+) -> list[Mapping[str, Any]]:
+    if not isinstance(runtime_ledger_summary, Mapping):
+        return []
+
+    rows: list[Mapping[str, Any]] = []
+    for key in ("by_hypothesis", "hypotheses"):
+        raw_by_hypothesis = runtime_ledger_summary.get(key)
+        if isinstance(raw_by_hypothesis, Mapping):
+            by_hypothesis = cast(Mapping[str, object], raw_by_hypothesis)
+            item: object = by_hypothesis.get(hypothesis_id)
+            if isinstance(item, Mapping):
+                rows.append(cast(Mapping[str, Any], item))
+
+    for key in ("items", "runtime_ledger_buckets", "buckets"):
+        raw_rows = runtime_ledger_summary.get(key)
+        for item in _sequence(raw_rows):
+            if not isinstance(item, Mapping):
+                continue
+            row = cast(Mapping[str, Any], item)
+            if str(row.get("hypothesis_id") or "").strip() == hypothesis_id:
+                rows.append(row)
+
+    if str(runtime_ledger_summary.get("hypothesis_id") or "").strip() == hypothesis_id:
+        rows.append(runtime_ledger_summary)
+    return rows
+
+
+def _runtime_ledger_latest_row(
+    rows: Sequence[Mapping[str, Any]],
+) -> Mapping[str, Any] | None:
+    latest: Mapping[str, Any] | None = None
+    latest_at: datetime | None = None
+    for row in rows:
+        row_at = (
+            _parse_iso8601(row.get("bucket_ended_at"))
+            or _parse_iso8601(row.get("window_ended_at"))
+            or _parse_iso8601(row.get("created_at"))
+        )
+        if latest is None or (
+            row_at is not None and (latest_at is None or row_at > latest_at)
+        ):
+            latest = row
+            latest_at = row_at
+    return latest
+
+
+def _hash_count(value: object) -> int:
+    if isinstance(value, Mapping):
+        mapping = cast(Mapping[object, object], value)
+        return sum(1 for key in mapping.keys() if str(key).strip())
+    return 0
+
+
+def _runtime_ledger_blockers(row: Mapping[str, Any]) -> tuple[str, ...]:
+    raw: object = (
+        row.get("blockers")
+        or row.get("blockers_json")
+        or row.get("runtime_ledger_blockers")
+        or []
+    )
+    blockers: list[str] = []
+    for item in _sequence(raw):
+        reason = str(item).strip()
+        if reason:
+            blockers.append(reason)
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for blocker in blockers:
+        if blocker in seen:
+            continue
+        seen.add(blocker)
+        deduped.append(blocker)
+    return tuple(deduped)
+
+
+def _resolve_runtime_ledger_readiness_inputs(
+    runtime_ledger_summary: Mapping[str, Any] | None,
+    *,
+    hypothesis_id: str,
+) -> _RuntimeLedgerReadinessInputs:
+    row = _runtime_ledger_latest_row(
+        _runtime_ledger_rows_for_hypothesis(
+            runtime_ledger_summary,
+            hypothesis_id=hypothesis_id,
+        )
+    )
+    if row is None:
+        return _RuntimeLedgerReadinessInputs(
+            proof_present=False,
+            observed_stage=None,
+            fill_count=0,
+            submitted_order_count=0,
+            closed_trade_count=0,
+            open_position_count=0,
+            filled_notional=Decimal("0"),
+            net_strategy_pnl_after_costs=Decimal("0"),
+            post_cost_expectancy_bps=None,
+            bucket_started_at=None,
+            bucket_ended_at=None,
+            blockers=("runtime_ledger_proof_missing",),
+            execution_policy_hash_count=0,
+            cost_model_hash_count=0,
+            lineage_hash_count=0,
+        )
+
+    return _RuntimeLedgerReadinessInputs(
+        proof_present=True,
+        observed_stage=str(row.get("observed_stage") or "").strip() or None,
+        fill_count=max(0, _optional_int(row.get("fill_count")) or 0),
+        submitted_order_count=max(
+            0, _optional_int(row.get("submitted_order_count")) or 0
+        ),
+        closed_trade_count=max(0, _optional_int(row.get("closed_trade_count")) or 0),
+        open_position_count=max(0, _optional_int(row.get("open_position_count")) or 0),
+        filled_notional=_coerce_decimal(row.get("filled_notional")),
+        net_strategy_pnl_after_costs=_coerce_decimal(
+            row.get("net_strategy_pnl_after_costs")
+        ),
+        post_cost_expectancy_bps=_optional_decimal(row.get("post_cost_expectancy_bps")),
+        bucket_started_at=_parse_iso8601(row.get("bucket_started_at")),
+        bucket_ended_at=_parse_iso8601(row.get("bucket_ended_at")),
+        blockers=_runtime_ledger_blockers(row),
+        execution_policy_hash_count=_hash_count(
+            row.get("execution_policy_hash_counts")
+        ),
+        cost_model_hash_count=_hash_count(row.get("cost_model_hash_counts")),
+        lineage_hash_count=_hash_count(row.get("lineage_hash_counts")),
     )
 
 
@@ -1133,6 +1295,7 @@ def compile_hypothesis_runtime_statuses(
     registry: HypothesisRegistryLoadResult,
     state: object,
     tca_summary: Mapping[str, Any],
+    runtime_ledger_summary: Mapping[str, Any] | None = None,
     market_context_status: Mapping[str, Any],
     jangar_dependency_quorum: JangarDependencyQuorumStatus,
     feature_readiness: Mapping[str, Any] | None = None,
@@ -1223,6 +1386,10 @@ def compile_hypothesis_runtime_statuses(
             tca_summary,
             max_allowed_slippage_bps=manifest.max_allowed_slippage_bps,
             route_symbol_filter_enabled=route_symbol_filter_enabled,
+        )
+        runtime_ledger_inputs = _resolve_runtime_ledger_readiness_inputs(
+            runtime_ledger_summary,
+            hypothesis_id=manifest.hypothesis_id,
         )
         tca_age_minutes: int | None = None
         if tca_inputs.last_computed_at is not None:
@@ -1396,22 +1563,45 @@ def compile_hypothesis_runtime_statuses(
             if tca_inputs.route_filter_applied and not tca_inputs.routeable_symbols:
                 reasons.append("route_universe_empty")
                 rollback_required = True
-            elif tca_inputs.order_count < manifest.min_sample_count_for_live_canary:
+            elif not runtime_ledger_inputs.proof_present:
+                reasons.append("runtime_ledger_proof_missing")
+            elif runtime_ledger_inputs.observed_stage != "live":
+                reasons.append("runtime_ledger_stage_not_live")
+            elif runtime_ledger_inputs.blockers:
+                reasons.extend(runtime_ledger_inputs.blockers)
+                rollback_required = bool(
+                    {
+                        "unclosed_position",
+                        "runtime_order_lifecycle_missing",
+                        "submitted_order_lifecycle_missing",
+                    }
+                    & set(runtime_ledger_inputs.blockers)
+                )
+            elif (
+                runtime_ledger_inputs.submitted_order_count
+                < manifest.min_sample_count_for_live_canary
+            ):
                 reasons.append("sample_count_below_canary_minimum")
             elif tca_inputs.avg_abs_slippage_bps > manifest.max_allowed_slippage_bps:
                 reasons.append("slippage_budget_exceeded")
                 rollback_required = True
-            elif tca_inputs.post_cost_expectancy_bps_proxy <= Decimal("0"):
+            elif runtime_ledger_inputs.post_cost_expectancy_bps is None:
+                reasons.append("runtime_ledger_expectancy_missing")
+                rollback_required = True
+            elif runtime_ledger_inputs.post_cost_expectancy_bps <= Decimal("0"):
                 reasons.append("post_cost_expectancy_non_positive")
                 rollback_required = True
             elif (
-                tca_inputs.post_cost_expectancy_bps_proxy
+                runtime_ledger_inputs.post_cost_expectancy_bps
                 < manifest.expected_gross_edge_bps
             ):
                 reasons.append("post_cost_expectancy_below_manifest_threshold")
             else:
                 promotion_eligible = True
-                if tca_inputs.order_count >= manifest.min_sample_count_for_scale_up:
+                if (
+                    runtime_ledger_inputs.submitted_order_count
+                    >= manifest.min_sample_count_for_scale_up
+                ):
                     if (
                         tca_inputs.avg_abs_slippage_bps
                         <= manifest.max_allowed_slippage_bps * Decimal("0.60")
@@ -1465,9 +1655,41 @@ def compile_hypothesis_runtime_statuses(
             "tca_age_minutes": tca_age_minutes,
             "market_session_open": market_session_open,
             "avg_abs_slippage_bps": _decimal_to_string(tca_inputs.avg_abs_slippage_bps),
-            "post_cost_expectancy_bps_proxy": _decimal_to_string(
-                tca_inputs.post_cost_expectancy_bps_proxy
+            "runtime_ledger_proof_present": runtime_ledger_inputs.proof_present,
+            "runtime_ledger_observed_stage": runtime_ledger_inputs.observed_stage,
+            "runtime_ledger_fill_count": runtime_ledger_inputs.fill_count,
+            "runtime_ledger_submitted_order_count": runtime_ledger_inputs.submitted_order_count,
+            "runtime_ledger_closed_trade_count": runtime_ledger_inputs.closed_trade_count,
+            "runtime_ledger_open_position_count": runtime_ledger_inputs.open_position_count,
+            "runtime_ledger_filled_notional": _decimal_to_string(
+                runtime_ledger_inputs.filled_notional
             ),
+            "runtime_ledger_net_strategy_pnl_after_costs": _decimal_to_string(
+                runtime_ledger_inputs.net_strategy_pnl_after_costs
+            ),
+            "runtime_ledger_post_cost_expectancy_bps": (
+                _decimal_to_string(runtime_ledger_inputs.post_cost_expectancy_bps)
+                if runtime_ledger_inputs.post_cost_expectancy_bps is not None
+                else None
+            ),
+            "runtime_ledger_bucket_started_at": (
+                runtime_ledger_inputs.bucket_started_at.isoformat()
+                if runtime_ledger_inputs.bucket_started_at is not None
+                else None
+            ),
+            "runtime_ledger_bucket_ended_at": (
+                runtime_ledger_inputs.bucket_ended_at.isoformat()
+                if runtime_ledger_inputs.bucket_ended_at is not None
+                else None
+            ),
+            "runtime_ledger_blockers": list(runtime_ledger_inputs.blockers),
+            "runtime_ledger_execution_policy_hash_count": (
+                runtime_ledger_inputs.execution_policy_hash_count
+            ),
+            "runtime_ledger_cost_model_hash_count": (
+                runtime_ledger_inputs.cost_model_hash_count
+            ),
+            "runtime_ledger_lineage_hash_count": runtime_ledger_inputs.lineage_hash_count,
         }
         if tca_inputs.route_filter_applied:
             observed.update(
@@ -1531,6 +1753,8 @@ def compile_hypothesis_runtime_statuses(
                     "max_avg_abs_slippage_bps": _decimal_to_string(
                         manifest.max_allowed_slippage_bps
                     ),
+                    "profitability_authority": "runtime_ledger",
+                    "sample_count_source": "runtime_ledger_submitted_order_count",
                 },
                 "dependency_quorum": jangar_dependency_quorum.as_payload(),
                 "lineage_ref": {

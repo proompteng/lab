@@ -21,12 +21,14 @@ from app.models import (
     Strategy,
     StrategyHypothesisMetricWindow,
     StrategyPromotionDecision,
+    StrategyRuntimeLedgerBucket,
     TradeDecision,
 )
 from app.trading.hypotheses import JangarDependencyQuorumStatus
 from app.trading.submission_council import (
     _QUANT_HEALTH_CACHE,
     _coerce_aware_datetime,
+    _load_latest_runtime_ledger_summary,
     _load_profit_promotion_table_counts,
     _merge_runtime_certificate_evidence,
     _metric_window_activity_reason_codes,
@@ -168,6 +170,137 @@ class TestSubmissionCouncil(TestCase):
             "status": "healthy",
             "source_url": "http://jangar.test/api/torghut/trading/control-plane/quant/health?account=paper&window=15m",
         }
+
+    def test_load_latest_runtime_ledger_summary_uses_latest_bucket_per_hypothesis(
+        self,
+    ) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        older = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
+        newer = datetime(2026, 3, 6, 15, 30, tzinfo=timezone.utc)
+
+        with session_local() as session:
+            self.assertEqual(
+                _load_latest_runtime_ledger_summary(session, hypothesis_ids=[]),
+                {"by_hypothesis": {}},
+            )
+            session.add_all(
+                [
+                    StrategyRuntimeLedgerBucket(
+                        run_id="ledger-old",
+                        candidate_id="cand-old",
+                        hypothesis_id="H-CONT-01",
+                        observed_stage="live",
+                        bucket_started_at=older,
+                        bucket_ended_at=older,
+                        account_label="paper",
+                        runtime_strategy_name="old-runtime",
+                        strategy_family="intraday_continuation",
+                        fill_count=20,
+                        decision_count=20,
+                        submitted_order_count=20,
+                        cancelled_order_count=1,
+                        rejected_order_count=0,
+                        unfilled_order_count=0,
+                        closed_trade_count=4,
+                        open_position_count=0,
+                        filled_notional=Decimal("1000"),
+                        gross_strategy_pnl=Decimal("12"),
+                        cost_amount=Decimal("2"),
+                        net_strategy_pnl_after_costs=Decimal("10"),
+                        post_cost_expectancy_bps=Decimal("5"),
+                        ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+                        pnl_basis="realized_strategy_pnl_after_explicit_costs",
+                        execution_policy_hash_counts={"old-policy": 1},
+                        cost_model_hash_counts={"old-cost": 1},
+                        lineage_hash_counts={"old-lineage": 1},
+                        blockers_json=[],
+                    ),
+                    StrategyRuntimeLedgerBucket(
+                        run_id="ledger-new",
+                        candidate_id="cand-new",
+                        hypothesis_id="H-CONT-01",
+                        observed_stage="live",
+                        bucket_started_at=newer,
+                        bucket_ended_at=newer,
+                        account_label="paper",
+                        runtime_strategy_name="new-runtime",
+                        strategy_family="intraday_continuation",
+                        fill_count=45,
+                        decision_count=45,
+                        submitted_order_count=45,
+                        cancelled_order_count=0,
+                        rejected_order_count=0,
+                        unfilled_order_count=0,
+                        closed_trade_count=8,
+                        open_position_count=0,
+                        filled_notional=Decimal("2000"),
+                        gross_strategy_pnl=Decimal("24"),
+                        cost_amount=Decimal("4"),
+                        net_strategy_pnl_after_costs=Decimal("20"),
+                        post_cost_expectancy_bps=Decimal("8"),
+                        ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+                        pnl_basis="realized_strategy_pnl_after_explicit_costs",
+                        execution_policy_hash_counts={"new-policy": 1},
+                        cost_model_hash_counts={"new-cost": 1},
+                        lineage_hash_counts={"new-lineage": 1},
+                        blockers_json=[],
+                    ),
+                    StrategyRuntimeLedgerBucket(
+                        run_id="ledger-rev",
+                        candidate_id="cand-rev",
+                        hypothesis_id="H-REV-01",
+                        observed_stage="live",
+                        bucket_started_at=newer,
+                        bucket_ended_at=newer,
+                        account_label="paper",
+                        runtime_strategy_name="rev-runtime",
+                        strategy_family="mean_reversion",
+                        fill_count=40,
+                        decision_count=40,
+                        submitted_order_count=40,
+                        cancelled_order_count=0,
+                        rejected_order_count=0,
+                        unfilled_order_count=0,
+                        closed_trade_count=7,
+                        open_position_count=0,
+                        filled_notional=Decimal("1500"),
+                        gross_strategy_pnl=Decimal("12"),
+                        cost_amount=Decimal("3"),
+                        net_strategy_pnl_after_costs=Decimal("9"),
+                        post_cost_expectancy_bps=None,
+                        ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+                        pnl_basis="realized_strategy_pnl_after_explicit_costs",
+                        execution_policy_hash_counts={},
+                        cost_model_hash_counts={},
+                        lineage_hash_counts={},
+                        blockers_json=[],
+                    ),
+                ]
+            )
+            session.commit()
+
+            summary = _load_latest_runtime_ledger_summary(
+                session,
+                hypothesis_ids=["", "H-CONT-01", "H-REV-01"],
+            )
+
+        by_hypothesis = summary["by_hypothesis"]
+        self.assertIsInstance(by_hypothesis, dict)
+        cont = by_hypothesis["H-CONT-01"]
+        rev = by_hypothesis["H-REV-01"]
+        self.assertEqual(cont["run_id"], "ledger-new")
+        self.assertEqual(cont["candidate_id"], "cand-new")
+        self.assertEqual(cont["submitted_order_count"], 45)
+        self.assertEqual(cont["post_cost_expectancy_bps"], "8.00000000")
+        self.assertEqual(cont["execution_policy_hash_counts"], {"new-policy": 1})
+        self.assertIsNone(rev["post_cost_expectancy_bps"])
 
     def test_metric_window_activity_rejects_tca_proxy_expectancy(self) -> None:
         metric_window = SimpleNamespace(
