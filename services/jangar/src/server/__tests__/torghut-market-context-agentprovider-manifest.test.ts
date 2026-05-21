@@ -44,13 +44,10 @@ describe('torghut market-context AgentProvider manifest', () => {
     expect(manifest).toContain('cron: "35 9-15/2 * * 1-5"')
   })
 
-  it('marks preopen probes as no-VCS batch tasks', async () => {
+  it('marks fundamentals preopen probes as no-VCS batch tasks', async () => {
     const manifest = await readFile(torghutAgentsDomainManifestPath('torghut-market-context-batch.yaml'), 'utf8')
 
-    for (const templateName of [
-      'torghut-market-context-fundamentals-preopen-probe-template',
-      'torghut-market-context-news-preopen-probe-template',
-    ]) {
+    for (const templateName of ['torghut-market-context-fundamentals-preopen-probe-template']) {
       const start = manifest.indexOf(`name: ${templateName}`)
       expect(start).toBeGreaterThanOrEqual(0)
       const nextDocument = manifest.indexOf('\n---', start)
@@ -58,6 +55,15 @@ describe('torghut market-context AgentProvider manifest', () => {
       expect(section).toContain('executionMode: batch_task')
       expect(section).toContain('provider: codex-spark')
     }
+  })
+
+  it('does not schedule news market-context jobs', async () => {
+    const manifest = await readFile(torghutAgentsDomainManifestPath('torghut-market-context-batch.yaml'), 'utf8')
+
+    expect(manifest).not.toMatch(/^  name: torghut-market-context-news-preopen-probe-template$/m)
+    expect(manifest).not.toMatch(/^  name: torghut-market-context-news-batch-template$/m)
+    expect(manifest).not.toMatch(/^  name: torghut-market-context-news-preopen-probe$/m)
+    expect(manifest).not.toMatch(/^  name: torghut-market-context-news-batch$/m)
   })
 
   it('uses a bearer token for lifecycle start/progress requests', async () => {

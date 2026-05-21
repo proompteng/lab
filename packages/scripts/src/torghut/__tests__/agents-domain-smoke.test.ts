@@ -91,8 +91,6 @@ describe('Agents domain scheduled AgentRun templates', () => {
     expect(scheduleTargets).toEqual([
       'torghut-market-context-fundamentals-batch-template',
       'torghut-market-context-fundamentals-preopen-probe-template',
-      'torghut-market-context-news-batch-template',
-      'torghut-market-context-news-preopen-probe-template',
     ])
   })
 
