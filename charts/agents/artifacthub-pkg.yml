@@ -1,4 +1,4 @@
-version: 0.9.21
+version: 0.9.22
 name: agents
 displayName: Agents Control Plane
 description: Minimal Agents control plane with CRDs and native workflow runtime.
