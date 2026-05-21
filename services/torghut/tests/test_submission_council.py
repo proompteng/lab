@@ -29,6 +29,7 @@ from app.trading.submission_council import (
     _coerce_aware_datetime,
     _load_profit_promotion_table_counts,
     _merge_runtime_certificate_evidence,
+    _refresh_runtime_summary_totals,
     build_hypothesis_runtime_summary,
     build_live_submission_gate_payload,
     load_quant_evidence_status,
@@ -111,25 +112,32 @@ class TestSubmissionCouncil(TestCase):
         )
         _QUANT_HEALTH_CACHE.clear()
 
-    def _metric_window(self, capital_stage: str = "0.10x canary") -> SimpleNamespace:
+    def _metric_window(
+        self,
+        capital_stage: str = "0.10x canary",
+        observed_stage: str | None = None,
+    ) -> SimpleNamespace:
         observed_at = datetime.now(timezone.utc)
-        return SimpleNamespace(
-            id="window-1",
-            candidate_id="cand-1",
-            capital_stage=capital_stage,
-            window_ended_at=observed_at,
-            created_at=observed_at,
-            market_session_count=3,
-            decision_count=42,
-            trade_count=42,
-            order_count=42,
-            avg_abs_slippage_bps="4.2",
-            slippage_budget_bps="12",
-            post_cost_expectancy_bps="8.5",
-            continuity_ok=True,
-            drift_ok=True,
-            dependency_quorum_decision="allow",
-        )
+        payload = {
+            "id": "window-1",
+            "candidate_id": "cand-1",
+            "capital_stage": capital_stage,
+            "window_ended_at": observed_at,
+            "created_at": observed_at,
+            "market_session_count": 3,
+            "decision_count": 42,
+            "trade_count": 42,
+            "order_count": 42,
+            "avg_abs_slippage_bps": "4.2",
+            "slippage_budget_bps": "12",
+            "post_cost_expectancy_bps": "8.5",
+            "continuity_ok": True,
+            "drift_ok": True,
+            "dependency_quorum_decision": "allow",
+        }
+        if observed_stage is not None:
+            payload["observed_stage"] = observed_stage
+        return SimpleNamespace(**payload)
 
     def _promotion_decision(
         self, capital_stage: str = "0.10x canary"
@@ -151,6 +159,48 @@ class TestSubmissionCouncil(TestCase):
             "status": "healthy",
             "source_url": "http://jangar.test/api/torghut/trading/control-plane/quant/health?account=paper&window=15m",
         }
+
+    def test_refresh_runtime_summary_totals_counts_reasons_and_rollback(self) -> None:
+        refreshed = _refresh_runtime_summary_totals(
+            {
+                "dependency_quorum": {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                }
+            },
+            [
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "state": "shadow",
+                    "capital_stage": "shadow",
+                    "capital_multiplier": "0",
+                    "promotion_eligible": False,
+                    "rollback_required": True,
+                    "reasons": ["drift_checks_missing", ""],
+                    "informational_reasons": ["runtime_window_certificate_rejected"],
+                },
+                {
+                    "hypothesis_id": "H-TSMOM-01",
+                    "state": "shadow",
+                    "capital_stage": "shadow",
+                    "capital_multiplier": "0",
+                    "promotion_eligible": True,
+                    "rollback_required": False,
+                    "reasons": [],
+                    "informational_reasons": [],
+                },
+            ],
+        )
+
+        self.assertEqual(refreshed["hypotheses_total"], 2)
+        self.assertEqual(refreshed["promotion_eligible_total"], 1)
+        self.assertEqual(refreshed["rollback_required_total"], 1)
+        self.assertEqual(refreshed["reason_totals"], {"drift_checks_missing": 1})
+        self.assertEqual(
+            refreshed["informational_reason_totals"],
+            {"runtime_window_certificate_rejected": 1},
+        )
 
     def test_runtime_certificate_merge_keeps_invalid_evidence_shadow(self) -> None:
         now = datetime.now(timezone.utc)
@@ -239,6 +289,13 @@ class TestSubmissionCouncil(TestCase):
                     "hypothesis_id": "H-CONT-01",
                     "metric_window": metric_window(capital_stage="observe"),
                     "promotion_decision": promotion(state="observe"),
+                }
+            ],
+            [
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "metric_window": metric_window(capital_stage="shadow"),
+                    "promotion_decision": promotion(state="shadow"),
                 }
             ],
         ]
@@ -370,6 +427,229 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(
             item["informational_reasons"],
             ["runtime_window_certificate_applied"],
+        )
+
+    def test_hypothesis_runtime_summary_counts_allowed_paper_runtime_readiness_without_capital_promotion(
+        self,
+    ) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        now = datetime.now(timezone.utc)
+        settings.trading_drift_live_promotion_max_evidence_age_seconds = 3600
+        registry = SimpleNamespace(
+            loaded=True,
+            path="test-registry",
+            errors=[],
+            items=[SimpleNamespace(hypothesis_id="H-CONT-01")],
+        )
+        runtime_items = [
+            {
+                "hypothesis_id": "H-CONT-01",
+                "candidate_id": None,
+                "strategy_id": "intraday_continuation",
+                "lane_id": "continuation",
+                "strategy_family": "intraday_continuation",
+                "state": "shadow",
+                "capital_stage": "shadow",
+                "capital_multiplier": "0",
+                "promotion_eligible": False,
+                "rollback_required": False,
+                "reasons": ["drift_checks_missing"],
+                "informational_reasons": [],
+                "observed": {},
+            }
+        ]
+
+        with session_local() as session:
+            session.add(
+                StrategyHypothesisMetricWindow(
+                    run_id="runtime-paper-proof-1",
+                    candidate_id="cand-runtime-paper",
+                    hypothesis_id="H-CONT-01",
+                    observed_stage="paper",
+                    window_started_at=now,
+                    window_ended_at=now,
+                    market_session_count=3,
+                    decision_count=42,
+                    trade_count=42,
+                    order_count=42,
+                    avg_abs_slippage_bps="4.2",
+                    slippage_budget_bps="12",
+                    post_cost_expectancy_bps="8.5",
+                    continuity_ok=True,
+                    drift_ok=True,
+                    dependency_quorum_decision="allow",
+                    capital_stage="shadow",
+                )
+            )
+            session.add(
+                StrategyPromotionDecision(
+                    run_id="runtime-paper-proof-1",
+                    candidate_id="cand-runtime-paper",
+                    hypothesis_id="H-CONT-01",
+                    promotion_target="paper",
+                    state="shadow",
+                    allowed=True,
+                    reason_summary="paper_runtime_evidence_thresholds_satisfied",
+                )
+            )
+            session.commit()
+
+            with (
+                patch(
+                    "app.trading.submission_council.load_hypothesis_registry",
+                    return_value=registry,
+                ),
+                patch(
+                    "app.trading.submission_council.resolve_hypothesis_dependency_quorum",
+                    return_value=JangarDependencyQuorumStatus(
+                        decision="allow",
+                        reasons=[],
+                        message="ready",
+                    ),
+                ),
+                patch(
+                    "app.trading.submission_council.compile_hypothesis_runtime_statuses",
+                    return_value=runtime_items,
+                ),
+                patch(
+                    "app.trading.submission_council.build_tca_gate_inputs",
+                    return_value={},
+                ),
+            ):
+                summary = build_hypothesis_runtime_summary(
+                    session,
+                    state=SimpleNamespace(market_session_open=True),
+                    market_context_status={"last_freshness_seconds": 10},
+                )
+
+            gate = build_live_submission_gate_payload(
+                SimpleNamespace(
+                    last_autonomy_promotion_eligible=True,
+                    last_autonomy_promotion_action="promote",
+                    drift_live_promotion_eligible=False,
+                    last_market_context_freshness_seconds=45,
+                ),
+                hypothesis_summary=summary,
+                empirical_jobs_status={"ready": True, "status": "healthy"},
+                quant_health_status=self._healthy_quant_status(),
+                promotion_certificate_evidence=[
+                    {
+                        "hypothesis_id": "H-CONT-01",
+                        "metric_window": self._metric_window(capital_stage="shadow"),
+                        "promotion_decision": self._promotion_decision(
+                            capital_stage="shadow"
+                        ),
+                    }
+                ],
+                session=session,
+            )
+
+        self.assertEqual(summary["promotion_eligible_total"], 1)
+        item = summary["items"][0]
+        self.assertTrue(item["promotion_eligible"])
+        self.assertEqual(item["candidate_id"], "cand-runtime-paper")
+        self.assertEqual(item["state"], "shadow")
+        self.assertEqual(item["capital_stage"], "shadow")
+        self.assertEqual(item["capital_multiplier"], "0")
+        self.assertEqual(item["reasons"], [])
+        self.assertEqual(
+            item["informational_reasons"],
+            ["runtime_window_certificate_readiness_applied"],
+        )
+        self.assertEqual(
+            item["observed"]["runtime_window_prior_reasons"],
+            ["drift_checks_missing"],
+        )
+        self.assertFalse(gate["allowed"])
+        self.assertNotIn(
+            "alpha_readiness_not_promotion_eligible",
+            gate["blocked_reasons"],
+        )
+        self.assertIn("promotion_certificate_shadow_only", gate["blocked_reasons"])
+        self.assertIn("alpha_hypothesis_shadow_only", gate["blocked_reasons"])
+
+        stale_summary = dict(summary)
+        stale_summary.update(
+            {
+                "items": runtime_items,
+                "promotion_eligible_total": 0,
+                "capital_stage_totals": {"shadow": 1},
+                "reason_totals": {"drift_checks_missing": 1},
+                "informational_reason_totals": {},
+            }
+        )
+        stale_gate = build_live_submission_gate_payload(
+            SimpleNamespace(
+                last_autonomy_promotion_eligible=True,
+                last_autonomy_promotion_action="promote",
+                drift_live_promotion_eligible=False,
+                last_market_context_freshness_seconds=45,
+            ),
+            hypothesis_summary=stale_summary,
+            empirical_jobs_status={"ready": True, "status": "healthy"},
+            quant_health_status=self._healthy_quant_status(),
+            promotion_certificate_evidence=[
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "metric_window": self._metric_window(
+                        capital_stage="shadow",
+                        observed_stage="paper",
+                    ),
+                    "promotion_decision": self._promotion_decision(
+                        capital_stage="shadow"
+                    ),
+                }
+            ],
+            session=session,
+        )
+
+        self.assertEqual(stale_gate["promotion_eligible_total"], 1)
+        self.assertNotIn(
+            "alpha_readiness_not_promotion_eligible",
+            stale_gate["blocked_reasons"],
+        )
+        self.assertIn(
+            "promotion_certificate_shadow_only",
+            stale_gate["blocked_reasons"],
+        )
+        self.assertIn("alpha_hypothesis_shadow_only", stale_gate["blocked_reasons"])
+
+        non_shadow_paper_gate = build_live_submission_gate_payload(
+            SimpleNamespace(
+                last_autonomy_promotion_eligible=True,
+                last_autonomy_promotion_action="promote",
+                drift_live_promotion_eligible=False,
+                last_market_context_freshness_seconds=45,
+            ),
+            hypothesis_summary=stale_summary,
+            empirical_jobs_status={"ready": True, "status": "healthy"},
+            quant_health_status=self._healthy_quant_status(),
+            promotion_certificate_evidence=[
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "metric_window": self._metric_window(
+                        capital_stage="0.10x canary",
+                        observed_stage="paper",
+                    ),
+                    "promotion_decision": self._promotion_decision(
+                        capital_stage="0.10x canary"
+                    ),
+                }
+            ],
+            session=session,
+        )
+
+        self.assertEqual(non_shadow_paper_gate["promotion_eligible_total"], 0)
+        self.assertIn(
+            "alpha_readiness_not_promotion_eligible",
+            non_shadow_paper_gate["blocked_reasons"],
         )
 
     def test_hypothesis_runtime_summary_rejects_unmatched_promotion_decision(
