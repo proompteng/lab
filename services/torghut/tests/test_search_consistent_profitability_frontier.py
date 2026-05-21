@@ -835,6 +835,8 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             symbol_prune_iterations=0,
             symbol_prune_candidates=1,
             symbol_prune_min_universe_size=2,
+            loss_repair_iterations=0,
+            loss_repair_candidates=1,
             train_screening=True,
             min_train_screen_net_per_day="0",
             min_train_screen_active_ratio="0.50",
@@ -1299,6 +1301,233 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(children[0][1]["universe_symbols"], ["NVDA", "MSFT"])
         self.assertEqual(children[1][0], "NVDA")
         self.assertEqual(children[1][1]["universe_symbols"], ["AVGO", "MSFT"])
+
+    def test_generate_loss_repair_children_tightens_controls_and_exposure(
+        self,
+    ) -> None:
+        configmap_payload = {
+            "data": {
+                "strategies.yaml": yaml.safe_dump(
+                    {
+                        "strategies": [
+                            {
+                                "name": "intraday-tsmom-profit-v3",
+                                "max_notional_per_trade": "20000",
+                                "max_position_pct_equity": "0.50",
+                                "params": {
+                                    "long_stop_loss_bps": "12",
+                                    "long_trailing_stop_drawdown_bps": "4",
+                                    "max_session_negative_exit_bps": "12",
+                                    "max_stop_loss_exits_per_session": "2",
+                                    "stop_loss_lockout_seconds": "1200",
+                                    "negative_exit_lockout_seconds": "900",
+                                    "max_gross_exposure_pct_equity": "1.0",
+                                },
+                            }
+                        ],
+                    },
+                    sort_keys=False,
+                )
+            }
+        }
+
+        children = frontier._generate_loss_repair_children(
+            params_candidate={},
+            strategy_overrides={},
+            candidate_configmap=configmap_payload,
+            strategy_name="intraday-tsmom-profit-v3",
+            hard_vetoes=["worst_day_loss_above_max"],
+            full_window_summary={},
+            branch_count=2,
+        )
+
+        self.assertEqual(
+            children[0][0], "loss_controls_and_exposure:worst_day_loss_above_max"
+        )
+        repaired_params = children[0][1]
+        repaired_overrides = children[0][2]
+        self.assertEqual(repaired_params["long_stop_loss_bps"], "9")
+        self.assertEqual(repaired_params["long_trailing_stop_drawdown_bps"], "3")
+        self.assertEqual(repaired_params["max_session_negative_exit_bps"], "9")
+        self.assertEqual(repaired_params["max_stop_loss_exits_per_session"], "1")
+        self.assertEqual(repaired_params["stop_loss_lockout_seconds"], "2400")
+        self.assertEqual(repaired_params["negative_exit_lockout_seconds"], "1800")
+        self.assertEqual(repaired_params["max_gross_exposure_pct_equity"], "0.75")
+        self.assertEqual(repaired_overrides["max_notional_per_trade"], "15000")
+        self.assertEqual(repaired_overrides["max_position_pct_equity"], "0.375")
+
+    def test_generate_loss_repair_children_ignores_non_loss_vetoes(self) -> None:
+        children = frontier._generate_loss_repair_children(
+            params_candidate={"entry_cooldown_seconds": "300"},
+            strategy_overrides={},
+            candidate_configmap={},
+            strategy_name="intraday-tsmom-profit-v3",
+            hard_vetoes=["active_day_ratio_below_min"],
+            full_window_summary={},
+            branch_count=2,
+        )
+
+        self.assertEqual(children, [])
+
+    def test_loss_repair_configmap_lookup_handles_invalid_shapes(self) -> None:
+        invalid_payloads = [
+            {"not_data": {}},
+            {"data": {"strategies.yaml": {"not": "yaml"}}},
+            {"data": {"strategies.yaml": "[]"}},
+            {"data": {"strategies.yaml": "strategies: {}\n"}},
+            {
+                "data": {
+                    "strategies.yaml": yaml.safe_dump(
+                        {
+                            "strategies": [
+                                "not-a-strategy",
+                                {"name": "other-strategy", "params": {"stop": "1"}},
+                            ]
+                        }
+                    )
+                }
+            },
+        ]
+
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload):
+                item, params = frontier._strategy_item_from_configmap(
+                    configmap_payload=payload,
+                    strategy_name="intraday-tsmom-profit-v3",
+                )
+                self.assertEqual(item, {})
+                self.assertEqual(params, {})
+
+    def test_loss_repair_decimal_helpers_reject_invalid_or_non_reducing_values(
+        self,
+    ) -> None:
+        self.assertIsNone(frontier._decimal_or_none(None))
+        self.assertIsNone(frontier._decimal_or_none(" "))
+        self.assertIsNone(frontier._decimal_or_none("not-a-decimal"))
+        self.assertIsNone(
+            frontier._tightened_bps("0", floor=Decimal("4")),
+        )
+        self.assertIsNone(
+            frontier._tightened_bps("4", floor=Decimal("4")),
+        )
+        self.assertIsNone(frontier._reduced_exposure("0"))
+        self.assertIsNone(frontier._reduced_exposure("0.0000001"))
+
+    def test_loss_repair_trigger_reason_accepts_suffix_and_daily_summary(
+        self,
+    ) -> None:
+        self.assertEqual(
+            frontier._loss_repair_trigger_reason(
+                hard_vetoes=["second_oos_worst_day_loss_above_max"],
+                full_window_summary={},
+            ),
+            "second_oos_worst_day_loss_above_max",
+        )
+        self.assertEqual(
+            frontier._loss_repair_trigger_reason(
+                hard_vetoes=[],
+                full_window_summary={"daily_net_below_min_count": "2"},
+            ),
+            "daily_net_below_min",
+        )
+        self.assertIsNone(
+            frontier._loss_repair_trigger_reason(
+                hard_vetoes=[],
+                full_window_summary={"daily_net_below_min_count": "bad"},
+            )
+        )
+
+    def test_loss_repair_tightening_skips_absent_or_non_reducible_controls(
+        self,
+    ) -> None:
+        params = {
+            "long_stop_loss_bps": "0",
+            "max_stop_loss_exits_per_session": "1",
+            "stop_loss_lockout_seconds": "-1",
+        }
+
+        changed = frontier._apply_loss_control_tightening(
+            params=params,
+            strategy_params={},
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(
+            params,
+            {
+                "long_stop_loss_bps": "0",
+                "max_stop_loss_exits_per_session": "1",
+                "stop_loss_lockout_seconds": "-1",
+            },
+        )
+
+    def test_loss_repair_exposure_clamp_skips_absent_exposure_controls(
+        self,
+    ) -> None:
+        params: dict[str, object] = {}
+        overrides: dict[str, object] = {}
+
+        changed = frontier._apply_exposure_clamp(
+            params=params,
+            overrides=overrides,
+            strategy_item={},
+            strategy_params={},
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(params, {})
+        self.assertEqual(overrides, {})
+
+    def test_generate_loss_repair_children_drops_noop_and_duplicate_children(
+        self,
+    ) -> None:
+        noop_children = frontier._generate_loss_repair_children(
+            params_candidate={},
+            strategy_overrides={},
+            candidate_configmap={
+                "data": {
+                    "strategies.yaml": yaml.safe_dump(
+                        {"strategies": [{"name": "intraday-tsmom-profit-v3"}]}
+                    )
+                }
+            },
+            strategy_name="intraday-tsmom-profit-v3",
+            hard_vetoes=["max_drawdown_above_max"],
+            full_window_summary={},
+            branch_count=3,
+        )
+        self.assertEqual(noop_children, [])
+
+        duplicate_children = frontier._generate_loss_repair_children(
+            params_candidate={},
+            strategy_overrides={},
+            candidate_configmap={
+                "data": {
+                    "strategies.yaml": yaml.safe_dump(
+                        {
+                            "strategies": [
+                                {
+                                    "name": "intraday-tsmom-profit-v3",
+                                    "params": {"long_stop_loss_bps": "12"},
+                                }
+                            ]
+                        }
+                    )
+                }
+            },
+            strategy_name="intraday-tsmom-profit-v3",
+            hard_vetoes=["max_drawdown_above_max"],
+            full_window_summary={},
+            branch_count=3,
+        )
+
+        self.assertEqual(len(duplicate_children), 1)
+        self.assertEqual(
+            duplicate_children[0][0],
+            "loss_controls_and_exposure:max_drawdown_above_max",
+        )
+        self.assertEqual(duplicate_children[0][1], {"long_stop_loss_bps": "9"})
+        self.assertEqual(duplicate_children[0][2], {})
 
     def test_consistency_penalty_rejects_lucky_strike_and_low_notional_profile(
         self,
@@ -2578,6 +2807,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             first_overrides,
             first_iteration,
             first_pruned_symbol,
+            first_loss_repair_reason,
             first_parent_id,
         ) = next(candidates)
         (
@@ -2585,6 +2815,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             second_overrides,
             second_iteration,
             second_pruned_symbol,
+            second_loss_repair_reason,
             second_parent_id,
         ) = next(candidates)
 
@@ -2602,6 +2833,8 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(second_iteration, 0)
         self.assertIsNone(first_pruned_symbol)
         self.assertIsNone(second_pruned_symbol)
+        self.assertIsNone(first_loss_repair_reason)
+        self.assertIsNone(second_loss_repair_reason)
         self.assertIsNone(first_parent_id)
         self.assertIsNone(second_parent_id)
 

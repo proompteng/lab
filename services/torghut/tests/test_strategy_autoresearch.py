@@ -524,6 +524,8 @@ class TestStrategyAutoresearch(TestCase):
             frontier_args.replay_tape_manifest,
             (root / "tape.manifest.json").resolve(),
         )
+        self.assertEqual(frontier_args.loss_repair_iterations, 1)
+        self.assertEqual(frontier_args.loss_repair_candidates, 1)
 
     def test_materialize_run_replay_tape_writes_bundle_and_receipt(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -766,6 +768,8 @@ class TestStrategyAutoresearch(TestCase):
                             "symbol_prune_iterations": 1,
                             "symbol_prune_candidates": 1,
                             "symbol_prune_min_universe_size": 2,
+                            "loss_repair_iterations": 1,
+                            "loss_repair_candidates": 1,
                             "parameter_mutations": {
                                 "max_entries_per_session": {
                                     "mode": "numeric_step",
@@ -1206,6 +1210,8 @@ class TestStrategyAutoresearch(TestCase):
             symbol_prune_iterations=1,
             symbol_prune_candidates=1,
             symbol_prune_min_universe_size=2,
+            loss_repair_iterations=1,
+            loss_repair_candidates=1,
             parameter_mutations={
                 "max_entries_per_session": MutationSpace(
                     mode="numeric_step",
@@ -1274,6 +1280,8 @@ class TestStrategyAutoresearch(TestCase):
             symbol_prune_iterations=0,
             symbol_prune_candidates=1,
             symbol_prune_min_universe_size=2,
+            loss_repair_iterations=0,
+            loss_repair_candidates=1,
             parameter_mutations={
                 "entry_cooldown_seconds": MutationSpace(
                     mode="numeric_step",

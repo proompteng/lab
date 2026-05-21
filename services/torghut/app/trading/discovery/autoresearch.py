@@ -326,6 +326,8 @@ class FamilyAutoresearchPlan:
     symbol_prune_iterations: int
     symbol_prune_candidates: int
     symbol_prune_min_universe_size: int
+    loss_repair_iterations: int
+    loss_repair_candidates: int
     parameter_mutations: Mapping[str, MutationSpace]
     strategy_override_mutations: Mapping[str, MutationSpace]
 
@@ -340,6 +342,8 @@ class FamilyAutoresearchPlan:
             'symbol_prune_iterations': self.symbol_prune_iterations,
             'symbol_prune_candidates': self.symbol_prune_candidates,
             'symbol_prune_min_universe_size': self.symbol_prune_min_universe_size,
+            'loss_repair_iterations': self.loss_repair_iterations,
+            'loss_repair_candidates': self.loss_repair_candidates,
             'parameter_mutations': {
                 key: value.to_payload() for key, value in self.parameter_mutations.items()
             },
@@ -686,6 +690,8 @@ def load_strategy_autoresearch_program(
                 symbol_prune_iterations=max(0, int(family_payload.get('symbol_prune_iterations', 0))),
                 symbol_prune_candidates=max(1, int(family_payload.get('symbol_prune_candidates', 1))),
                 symbol_prune_min_universe_size=max(1, int(family_payload.get('symbol_prune_min_universe_size', 2))),
+                loss_repair_iterations=max(0, int(family_payload.get('loss_repair_iterations', 0))),
+                loss_repair_candidates=max(1, int(family_payload.get('loss_repair_candidates', 1))),
                 parameter_mutations=parameter_mutations,
                 strategy_override_mutations=strategy_override_mutations,
             )
