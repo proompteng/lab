@@ -22,6 +22,7 @@ from app.db import get_session
 from app.main import (
     _ALPACA_HEALTH_STATE,
     _TRADING_DEPENDENCY_HEALTH_CACHE,
+    _build_hypothesis_runtime_payload,
     _assert_dspy_cutover_migration_guard,
     _build_live_submission_gate_payload,
     _build_route_image_proof_summary,
@@ -1957,30 +1958,66 @@ class TestTradingApi(TestCase):
         self,
     ) -> None:
         with self.session_local() as session:
-            session.add(
-                RejectedSignalOutcomeEvent(
-                    event_id="reject-event-1",
-                    source="quote_quality_gate",
-                    paper_source="paper-arxiv-2605.12151",
-                    paper_claim_id="rejection-event-outcome-labels",
-                    account_label="paper",
-                    symbol="AAPL",
-                    event_ts=datetime(2026, 5, 18, 14, 31, tzinfo=timezone.utc),
-                    timeframe="1Min",
-                    seq="42",
-                    reject_reason="missing_executable_quote",
-                    spread_bps=Decimal("55.5"),
-                    jump_bps=None,
-                    outcome_label_status="pending",
-                    counterfactual_required=True,
-                    required_outcome_fields_json=[
-                        "counterfactual_return",
-                        "route_tca",
-                        "post_cost_net_pnl",
-                        "executable_quote",
-                    ],
-                    event_payload_json={"event_id": "reject-event-1"},
-                )
+            required_fields = [
+                "counterfactual_return",
+                "route_tca",
+                "post_cost_net_pnl",
+                "executable_quote",
+            ]
+            session.add_all(
+                [
+                    RejectedSignalOutcomeEvent(
+                        event_id="reject-event-1",
+                        source="quote_quality_gate",
+                        paper_source="paper-arxiv-2605.12151",
+                        paper_claim_id="rejection-event-outcome-labels",
+                        account_label="paper",
+                        symbol="AAPL",
+                        event_ts=datetime(2026, 5, 18, 14, 31, tzinfo=timezone.utc),
+                        timeframe="1Min",
+                        seq="42",
+                        reject_reason="missing_executable_quote",
+                        spread_bps=Decimal("55.5"),
+                        jump_bps=None,
+                        outcome_label_status="pending",
+                        counterfactual_required=True,
+                        required_outcome_fields_json=required_fields,
+                        event_payload_json={"event_id": "reject-event-1"},
+                    ),
+                    RejectedSignalOutcomeEvent(
+                        event_id="reject-event-2",
+                        source="quote_quality_gate",
+                        paper_source="paper-arxiv-2605.12151",
+                        paper_claim_id="rejection-event-outcome-labels",
+                        account_label="paper",
+                        symbol="MSFT",
+                        event_ts=datetime(2026, 5, 18, 14, 32, tzinfo=timezone.utc),
+                        timeframe="1Min",
+                        seq="43",
+                        reject_reason="wide_spread",
+                        outcome_label_status="labeled",
+                        counterfactual_required=True,
+                        required_outcome_fields_json=required_fields,
+                        event_payload_json={"event_id": "reject-event-2"},
+                        outcome_payload_json={"post_cost_net_pnl": "1.25"},
+                    ),
+                    RejectedSignalOutcomeEvent(
+                        event_id="reject-event-3",
+                        source="quote_quality_gate",
+                        paper_source="paper-arxiv-2605.12151",
+                        paper_claim_id="rejection-event-outcome-labels",
+                        account_label="paper",
+                        symbol="NVDA",
+                        event_ts=datetime(2026, 5, 18, 14, 33, tzinfo=timezone.utc),
+                        timeframe="1Min",
+                        seq="44",
+                        reject_reason="missing_executable_quote",
+                        outcome_label_status="incomplete",
+                        counterfactual_required=True,
+                        required_outcome_fields_json=required_fields,
+                        event_payload_json={"event_id": "reject-event-3"},
+                    ),
+                ]
             )
             session.commit()
 
@@ -1994,13 +2031,19 @@ class TestTradingApi(TestCase):
             app.state.trading_scheduler = None
 
         self.assertEqual(outcome_learning["persistence_state"], "ok")
-        self.assertEqual(outcome_learning["events_total"], 1)
+        self.assertEqual(outcome_learning["events_total"], 3)
         self.assertEqual(outcome_learning["outcome_label_pending_total"], 1)
+        self.assertEqual(outcome_learning["labeled_count"], 1)
+        self.assertEqual(outcome_learning["incomplete_count"], 1)
+        self.assertEqual(
+            outcome_learning["outcome_label_status_total"],
+            {"incomplete": 1, "labeled": 1, "pending": 1},
+        )
         self.assertEqual(
             outcome_learning["reason_total"],
-            {"missing_executable_quote": 1},
+            {"missing_executable_quote": 2, "wide_spread": 1},
         )
-        self.assertEqual(outcome_learning["latest_event"]["event_id"], "reject-event-1")
+        self.assertEqual(outcome_learning["latest_event"]["event_id"], "reject-event-3")
         self.assertEqual(
             outcome_learning["blocking_reasons"],
             ["counterfactual_outcome_labels_pending"],
@@ -5770,6 +5813,101 @@ class TestTradingApi(TestCase):
                     del app.state.trading_scheduler
             else:
                 app.state.trading_scheduler = original_scheduler
+
+    def test_hypothesis_runtime_payload_uses_certificate_evidence_merge(self) -> None:
+        scheduler = TradingScheduler()
+        scheduler.state.last_market_context_freshness_seconds = 30
+        now = datetime.now(timezone.utc)
+        registry = SimpleNamespace(
+            loaded=True,
+            path="test-registry",
+            errors=[],
+            items=[SimpleNamespace(hypothesis_id="H-CONT-01")],
+        )
+        runtime_items = [
+            {
+                "hypothesis_id": "H-CONT-01",
+                "candidate_id": None,
+                "strategy_id": "intraday_continuation",
+                "lane_id": "continuation",
+                "strategy_family": "intraday_continuation",
+                "state": "shadow",
+                "capital_stage": "shadow",
+                "capital_multiplier": "0",
+                "promotion_eligible": False,
+                "rollback_required": False,
+                "reasons": ["drift_checks_missing"],
+                "informational_reasons": [],
+                "observed": {},
+            }
+        ]
+        dependency_quorum = JangarDependencyQuorumStatus(
+            decision="allow",
+            reasons=[],
+            message="ready",
+        )
+
+        with self.session_local() as session:
+            session.add(
+                StrategyHypothesisMetricWindow(
+                    run_id="status-runtime-proof",
+                    candidate_id="cand-status-runtime",
+                    hypothesis_id="H-CONT-01",
+                    observed_stage="paper",
+                    window_started_at=now,
+                    window_ended_at=now,
+                    market_session_count=3,
+                    decision_count=12,
+                    trade_count=12,
+                    order_count=12,
+                    avg_abs_slippage_bps="4.2",
+                    slippage_budget_bps="12",
+                    post_cost_expectancy_bps="8.5",
+                    continuity_ok=True,
+                    drift_ok=True,
+                    dependency_quorum_decision="allow",
+                    capital_stage="0.10x canary",
+                )
+            )
+            session.add(
+                StrategyPromotionDecision(
+                    run_id="status-runtime-proof",
+                    candidate_id="cand-status-runtime",
+                    hypothesis_id="H-CONT-01",
+                    promotion_target="paper",
+                    state="0.10x canary",
+                    allowed=True,
+                    reason_summary="runtime_evidence_thresholds_satisfied",
+                )
+            )
+            session.commit()
+
+        with (
+            patch("app.main.load_hypothesis_registry", return_value=registry),
+            patch(
+                "app.trading.submission_council.load_hypothesis_registry",
+                return_value=registry,
+            ),
+            patch(
+                "app.trading.submission_council.compile_hypothesis_runtime_statuses",
+                return_value=runtime_items,
+            ),
+        ):
+            payload, summary, _ = _build_hypothesis_runtime_payload(
+                scheduler,
+                tca_summary={},
+                market_context_status={"last_freshness_seconds": 10},
+                dependency_quorum=dependency_quorum,
+                feature_readiness={},
+            )
+
+        self.assertEqual(summary["promotion_eligible_total"], 1)
+        self.assertEqual(payload["summary"]["promotion_eligible_total"], 1)
+        item = payload["items"][0]
+        self.assertTrue(item["promotion_eligible"])
+        self.assertEqual(item["candidate_id"], "cand-status-runtime")
+        self.assertEqual(item["capital_stage"], "0.10x canary")
+        self.assertEqual(item["reasons"], [])
 
     def test_trading_status_exposes_rejection_and_market_context_controls(self) -> None:
         original_scheduler = getattr(app.state, "trading_scheduler", None)

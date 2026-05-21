@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any
 from unittest import TestCase
 
 from app.trading.profit_leases import (
@@ -47,7 +48,7 @@ def _current_empirical() -> dict[str, object]:
     }
 
 
-def _promotion_counts(count: int = 1) -> dict[str, int]:
+def _promotion_counts(count: int = 1) -> dict[str, Any]:
     return {
         "research_candidates": count,
         "research_promotions": count,
@@ -409,11 +410,21 @@ class TestProfitLeaseProjection(TestCase):
                 "autoresearch_portfolio_candidates": 1,
                 "autoresearch_portfolio_ready": 1,
                 "autoresearch_portfolio_blocked": 0,
+                "autoresearch_portfolio_ready_refs": [
+                    "portfolio_candidate_id:portfolio-current-ready",
+                    "candidate_spec_id:spec-current-ready",
+                    "source_candidate_id:spec-current-ready",
+                ],
             }
         )
 
         projection = build_profit_lease_projection(
-            runtime_items=[_runtime_item()],
+            runtime_items=[
+                _runtime_item(
+                    portfolio_candidate_id="portfolio-current-ready",
+                    candidate_spec_id="spec-current-ready",
+                )
+            ],
             quant_evidence=_healthy_quant(),
             empirical_jobs_status=_current_empirical(),
             dependency_quorum={"decision": "allow", "reasons": []},
@@ -438,11 +449,77 @@ class TestProfitLeaseProjection(TestCase):
         self.assertEqual(lease["capital_decision"], "paper_candidate")
         self.assertEqual(lease["proof_state"], "current")
         self.assertTrue(projection["torghut_capital"]["allowed"])
-        self.assertEqual(
-            promotion_source["source_ref"], "postgres:autoresearch_ledgers"
+        self.assertIn(
+            "portfolio_candidate_id:portfolio-current-ready",
+            promotion_source["source_ref"],
         )
         self.assertEqual(promotion_source["freshness_state"], "current")
         self.assertEqual(promotion_source["rows"], 7)
+
+    def test_autoresearch_ready_portfolio_does_not_unlock_unqualified_runtime_item(
+        self,
+    ) -> None:
+        counts = _promotion_counts(0)
+        counts.update(
+            {
+                "autoresearch_candidate_specs": 3,
+                "autoresearch_proposal_scores": 3,
+                "autoresearch_portfolio_candidates": 1,
+                "autoresearch_portfolio_ready": 1,
+                "autoresearch_portfolio_blocked": 0,
+                "autoresearch_portfolio_ready_refs": [
+                    "portfolio_candidate_id:portfolio-current-ready",
+                    "candidate_spec_id:spec-current-ready",
+                    "source_candidate_id:spec-current-ready",
+                    "hypothesis_id:H-PORT-READY",
+                ],
+            }
+        )
+
+        projection = build_profit_lease_projection(
+            runtime_items=[
+                _runtime_item(
+                    hypothesis_id="H-PORT-READY",
+                    lane_id="portfolio-ready",
+                    portfolio_candidate_id="portfolio-current-ready",
+                    candidate_spec_id="spec-current-ready",
+                ),
+                _runtime_item(
+                    hypothesis_id="H-UNRELATED",
+                    lane_id="unrelated",
+                    candidate_id="cand-unrelated",
+                ),
+            ],
+            quant_evidence=_healthy_quant(),
+            empirical_jobs_status=_current_empirical(),
+            dependency_quorum={"decision": "allow", "reasons": []},
+            rejection_summary={
+                "rejected": 1,
+                "blocked": 1,
+                "filled": 10,
+                "total": 12,
+            },
+            promotion_table_counts=counts,
+            data_readiness={"equity_ta_rows": 100, "equity_ta_symbols": 20},
+            now=datetime(2026, 5, 13, 12, 0, tzinfo=timezone.utc),
+        )
+
+        leases = {lease["hypothesis_id"]: lease for lease in projection["leases"]}
+        self.assertEqual(leases["H-PORT-READY"]["capital_decision"], "paper_candidate")
+        self.assertEqual(leases["H-UNRELATED"]["capital_decision"], "repair_only")
+        self.assertIn(
+            "autoresearch_portfolio_match_unverified",
+            leases["H-UNRELATED"]["blocking_reason_codes"],
+        )
+        promotion_sources = {
+            source["hypothesis_id"]: source
+            for source in projection["source_provenance"]
+            if source["source_class"] == "research_candidate"
+        }
+        self.assertEqual(
+            promotion_sources["H-PORT-READY"]["freshness_state"], "current"
+        )
+        self.assertEqual(promotion_sources["H-UNRELATED"]["freshness_state"], "blocked")
 
     def test_optional_quant_evidence_does_not_force_repair_lane(self) -> None:
         quant = _healthy_quant()

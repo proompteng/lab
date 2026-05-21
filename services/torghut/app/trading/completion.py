@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from ..models import (
     StrategyHypothesisMetricWindow,
+    StrategyPromotionDecision,
     VNextCompletionGateResult,
     VNextEmpiricalJobRun,
 )
@@ -112,7 +113,9 @@ def _safe_float(value: Any, *, default: float = 0.0) -> float:
     return default
 
 
-def _gate_policy_parameters(gate_definition: Mapping[str, Any] | None) -> dict[str, Any]:
+def _gate_policy_parameters(
+    gate_definition: Mapping[str, Any] | None,
+) -> dict[str, Any]:
     if gate_definition is None:
         return {}
     return _as_dict(gate_definition.get('policy_parameters'))
@@ -166,9 +169,7 @@ def _manifest_runtime_session_threshold(
     threshold = _policy_int(policy_parameters, fallback_key, default=default)
     manifests = _candidate_hypothesis_manifests(candidate_id=candidate_id, rows=rows)
     manifest_thresholds = [
-        int(value)
-        for manifest in manifests
-        if (value := getattr(manifest, manifest_attr, None)) is not None
+        int(value) for manifest in manifests if (value := getattr(manifest, manifest_attr, None)) is not None
     ]
     if manifest_thresholds:
         threshold = max(threshold, max(manifest_thresholds))
@@ -431,9 +432,7 @@ def _latest_completion_rows_filtered(
 
 
 def _latest_empirical_rows(session: Session) -> dict[str, VNextEmpiricalJobRun]:
-    rows = session.execute(
-        select(VNextEmpiricalJobRun).order_by(VNextEmpiricalJobRun.created_at.desc())
-    ).scalars()
+    rows = session.execute(select(VNextEmpiricalJobRun).order_by(VNextEmpiricalJobRun.created_at.desc())).scalars()
     latest: dict[str, VNextEmpiricalJobRun] = {}
     for row in rows:
         if row.job_type not in EMPIRICAL_JOB_TYPES or row.job_type in latest:
@@ -449,9 +448,9 @@ def _latest_hypothesis_windows(
     max_age_seconds: int | None = None,
 ) -> list[StrategyHypothesisMetricWindow]:
     rows = session.execute(
-        select(StrategyHypothesisMetricWindow).where(
-            StrategyHypothesisMetricWindow.observed_stage == observed_stage
-        ).order_by(
+        select(StrategyHypothesisMetricWindow)
+        .where(StrategyHypothesisMetricWindow.observed_stage == observed_stage)
+        .order_by(
             StrategyHypothesisMetricWindow.window_ended_at.desc().nullslast(),
             StrategyHypothesisMetricWindow.created_at.desc(),
         )
@@ -467,6 +466,102 @@ def _latest_hypothesis_windows(
         if measured_at >= cutoff:
             filtered.append(row)
     return filtered
+
+
+_PromotionDecisionKey = tuple[str, str, str, str]
+
+
+def _promotion_decision_key(
+    *,
+    run_id: object,
+    hypothesis_id: object,
+    candidate_id: object,
+    promotion_target: object,
+) -> _PromotionDecisionKey | None:
+    run_text = _as_text(run_id)
+    hypothesis_text = _as_text(hypothesis_id)
+    candidate_text = _as_text(candidate_id)
+    target_text = _as_text(promotion_target)
+    if run_text is None or hypothesis_text is None or candidate_text is None or target_text is None:
+        return None
+    return run_text, hypothesis_text, candidate_text, target_text
+
+
+def _promotion_decision_key_for_window(
+    row: StrategyHypothesisMetricWindow,
+) -> _PromotionDecisionKey | None:
+    return _promotion_decision_key(
+        run_id=row.run_id,
+        hypothesis_id=row.hypothesis_id,
+        candidate_id=row.candidate_id,
+        promotion_target=row.observed_stage,
+    )
+
+
+def _promotion_decision_key_for_decision(
+    row: StrategyPromotionDecision,
+) -> _PromotionDecisionKey | None:
+    return _promotion_decision_key(
+        run_id=row.run_id,
+        hypothesis_id=row.hypothesis_id,
+        candidate_id=row.candidate_id,
+        promotion_target=row.promotion_target,
+    )
+
+
+def _promotion_decision_keys_for_windows(
+    session: Session,
+    rows: Sequence[StrategyHypothesisMetricWindow],
+) -> tuple[set[_PromotionDecisionKey], set[_PromotionDecisionKey]]:
+    hypothesis_ids = sorted(
+        {hypothesis_id for row in rows if (hypothesis_id := _as_text(row.hypothesis_id)) is not None}
+    )
+    if not hypothesis_ids:
+        return set(), set()
+    decision_rows = session.execute(
+        select(StrategyPromotionDecision)
+        .where(StrategyPromotionDecision.hypothesis_id.in_(hypothesis_ids))
+        .order_by(StrategyPromotionDecision.created_at.desc())
+    ).scalars()
+    allowed: set[_PromotionDecisionKey] = set()
+    denied: set[_PromotionDecisionKey] = set()
+    for row in decision_rows:
+        key = _promotion_decision_key_for_decision(row)
+        if key is None:
+            continue
+        if bool(row.allowed):
+            allowed.add(key)
+        else:
+            denied.add(key)
+    return allowed, denied
+
+
+def _promotion_decision_blocked_reason(
+    rows: Sequence[StrategyHypothesisMetricWindow],
+    *,
+    allowed_keys: set[_PromotionDecisionKey],
+    denied_keys: set[_PromotionDecisionKey],
+) -> str | None:
+    if not rows:
+        return None
+    has_denied_match = False
+    for row in rows:
+        key = _promotion_decision_key_for_window(row)
+        if key is None:
+            continue
+        if key in allowed_keys:
+            return None
+        if key in denied_keys:
+            has_denied_match = True
+    return 'promotion_decision_not_allowed' if has_denied_match else 'promotion_decision_evidence_missing'
+
+
+def _windows_with_allowed_promotion_decisions(
+    rows: Sequence[StrategyHypothesisMetricWindow],
+    *,
+    allowed_keys: set[_PromotionDecisionKey],
+) -> list[StrategyHypothesisMetricWindow]:
+    return [row for row in rows if (key := _promotion_decision_key_for_window(row)) is not None and key in allowed_keys]
 
 
 def _window_gate_summary(
@@ -496,16 +591,14 @@ def _window_gate_summary(
     alignment_ratio = (weighted_alignment / total_weight) if total_weight > 0 else 0.0
     avg_slippage_bps = (weighted_slippage / total_weight) if total_weight > 0 else 0.0
     avg_expectancy_bps = (weighted_expectancy / total_weight) if total_weight > 0 else 0.0
-    latest_three_within_budget = all(
-        _safe_float(row.avg_abs_slippage_bps) <= _safe_float(row.slippage_budget_bps)
-        for row in latest_three
-    ) if latest_three else False
+    latest_three_within_budget = (
+        all(_safe_float(row.avg_abs_slippage_bps) <= _safe_float(row.slippage_budget_bps) for row in latest_three)
+        if latest_three
+        else False
+    )
     continuity_ok = all(bool(row.continuity_ok) for row in rows)
     drift_ok = all(bool(row.drift_ok) for row in rows)
-    dependency_allow = all(
-        (_as_text(row.dependency_quorum_decision) or 'unknown') == 'allow'
-        for row in rows
-    )
+    dependency_allow = all((_as_text(row.dependency_quorum_decision) or 'unknown') == 'allow' for row in rows)
     return {
         'market_session_count': total_sessions,
         'window_count': total_windows,
@@ -612,7 +705,10 @@ def _evaluate_paper_gate(
             'dataset_snapshot_ref': empirical_dataset_snapshot_ref,
             'candidate_id': empirical_candidate_id,
         }
-    if empirical_dataset_snapshot_ref is not None and full_day_row.dataset_snapshot_ref != empirical_dataset_snapshot_ref:
+    if (
+        empirical_dataset_snapshot_ref is not None
+        and full_day_row.dataset_snapshot_ref != empirical_dataset_snapshot_ref
+    ):
         return {
             'status': TRACE_STATUS_BLOCKED,
             'blocked_reason': 'full_day_dataset_snapshot_ref_mismatch',
@@ -702,6 +798,8 @@ def _evaluate_live_canary_gate(
     *,
     paper_gate: Mapping[str, Any],
     paper_rows: Sequence[StrategyHypothesisMetricWindow],
+    allowed_promotion_decision_keys: set[_PromotionDecisionKey],
+    denied_promotion_decision_keys: set[_PromotionDecisionKey],
     gate_definition: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     if paper_gate.get('status') != TRACE_STATUS_SATISFIED:
@@ -714,13 +812,31 @@ def _evaluate_live_canary_gate(
             'candidate_id': paper_gate.get('candidate_id'),
         }
     candidate_id = _as_text(paper_gate.get('candidate_id'))
-    qualifying = [
+    candidate_rows = [
         row
         for row in paper_rows
         if candidate_id is None or row.candidate_id == candidate_id
         if (_as_text(row.evidence_provenance) == 'paper_runtime_observed')
         and (_as_text(row.evidence_maturity) == 'empirically_validated')
     ]
+    promotion_decision_blocked_reason = _promotion_decision_blocked_reason(
+        candidate_rows,
+        allowed_keys=allowed_promotion_decision_keys,
+        denied_keys=denied_promotion_decision_keys,
+    )
+    if promotion_decision_blocked_reason is not None:
+        return {
+            'status': TRACE_STATUS_BLOCKED,
+            'blocked_reason': promotion_decision_blocked_reason,
+            'artifact_refs': cast(list[str], paper_gate.get('artifact_refs') or []),
+            'db_row_refs': {'hypothesis_metric_windows': [str(row.id) for row in candidate_rows]},
+            'dataset_snapshot_ref': paper_gate.get('dataset_snapshot_ref'),
+            'candidate_id': paper_gate.get('candidate_id'),
+        }
+    qualifying = _windows_with_allowed_promotion_decisions(
+        candidate_rows,
+        allowed_keys=allowed_promotion_decision_keys,
+    )
     summary = _window_gate_summary(qualifying)
     min_market_session_samples = _manifest_runtime_session_threshold(
         candidate_id=candidate_id,
@@ -759,6 +875,8 @@ def _evaluate_live_scale_gate(
     *,
     canary_gate: Mapping[str, Any],
     live_rows: Sequence[StrategyHypothesisMetricWindow],
+    allowed_promotion_decision_keys: set[_PromotionDecisionKey],
+    denied_promotion_decision_keys: set[_PromotionDecisionKey],
     gate_definition: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     if canary_gate.get('status') != TRACE_STATUS_SATISFIED:
@@ -771,13 +889,31 @@ def _evaluate_live_scale_gate(
             'candidate_id': canary_gate.get('candidate_id'),
         }
     candidate_id = _as_text(canary_gate.get('candidate_id'))
-    qualifying = [
+    candidate_rows = [
         row
         for row in live_rows
         if candidate_id is None or row.candidate_id == candidate_id
         if (_as_text(row.evidence_provenance) == 'live_runtime_observed')
         and (_as_text(row.evidence_maturity) == 'empirically_validated')
     ]
+    promotion_decision_blocked_reason = _promotion_decision_blocked_reason(
+        candidate_rows,
+        allowed_keys=allowed_promotion_decision_keys,
+        denied_keys=denied_promotion_decision_keys,
+    )
+    if promotion_decision_blocked_reason is not None:
+        return {
+            'status': TRACE_STATUS_BLOCKED,
+            'blocked_reason': promotion_decision_blocked_reason,
+            'artifact_refs': cast(list[str], canary_gate.get('artifact_refs') or []),
+            'db_row_refs': {'hypothesis_metric_windows': [str(row.id) for row in candidate_rows]},
+            'dataset_snapshot_ref': canary_gate.get('dataset_snapshot_ref'),
+            'candidate_id': canary_gate.get('candidate_id'),
+        }
+    qualifying = _windows_with_allowed_promotion_decisions(
+        candidate_rows,
+        allowed_keys=allowed_promotion_decision_keys,
+    )
     summary = _window_gate_summary(qualifying)
     min_market_session_samples = _manifest_runtime_session_threshold(
         candidate_id=candidate_id,
@@ -847,9 +983,7 @@ def build_doc29_completion_status(
     current_image_digest: str | None,
 ) -> dict[str, Any]:
     matrix = load_doc29_completion_matrix()
-    gate_definition_by_id = {
-        str(gate['gate_id']): gate for gate in cast(list[dict[str, Any]], matrix['gates'])
-    }
+    gate_definition_by_id = {str(gate['gate_id']): gate for gate in cast(list[dict[str, Any]], matrix['gates'])}
     latest_rows = _latest_completion_rows(session)
     empirical_jobs_status = build_empirical_jobs_status(
         session=session,
@@ -875,9 +1009,9 @@ def build_doc29_completion_status(
         session,
         observed_stage='paper',
         max_age_seconds=_safe_int(
-            _as_dict(
-                _as_dict(gate_definition_by_id.get(DOC29_LIVE_CANARY_GATE)).get('evidence_freshness_rule')
-            ).get('max_age_seconds'),
+            _as_dict(_as_dict(gate_definition_by_id.get(DOC29_LIVE_CANARY_GATE)).get('evidence_freshness_rule')).get(
+                'max_age_seconds'
+            ),
             default=0,
         ),
     )
@@ -885,11 +1019,19 @@ def build_doc29_completion_status(
         session,
         observed_stage='live',
         max_age_seconds=_safe_int(
-            _as_dict(
-                _as_dict(gate_definition_by_id.get(DOC29_LIVE_SCALE_GATE)).get('evidence_freshness_rule')
-            ).get('max_age_seconds'),
+            _as_dict(_as_dict(gate_definition_by_id.get(DOC29_LIVE_SCALE_GATE)).get('evidence_freshness_rule')).get(
+                'max_age_seconds'
+            ),
             default=0,
         ),
+    )
+    paper_allowed_promotion_decisions, paper_denied_promotion_decisions = _promotion_decision_keys_for_windows(
+        session,
+        paper_windows,
+    )
+    live_allowed_promotion_decisions, live_denied_promotion_decisions = _promotion_decision_keys_for_windows(
+        session,
+        live_windows,
     )
     gate_status_map: dict[str, dict[str, Any]] = {}
 
@@ -951,6 +1093,8 @@ def build_doc29_completion_status(
             canary = _evaluate_live_canary_gate(
                 paper_gate=derived_paper,
                 paper_rows=paper_windows,
+                allowed_promotion_decision_keys=paper_allowed_promotion_decisions,
+                denied_promotion_decision_keys=paper_denied_promotion_decisions,
                 gate_definition=gate_definition,
             )
             gate_status_map[gate_id] = {
@@ -983,11 +1127,15 @@ def build_doc29_completion_status(
                     gate_definition=gate_definition_by_id.get(DOC29_PAPER_GATE),
                 ),
                 paper_rows=paper_windows,
+                allowed_promotion_decision_keys=paper_allowed_promotion_decisions,
+                denied_promotion_decision_keys=paper_denied_promotion_decisions,
                 gate_definition=gate_definition_by_id.get(DOC29_LIVE_CANARY_GATE),
             )
             scale = _evaluate_live_scale_gate(
                 canary_gate=derived_canary,
                 live_rows=live_windows,
+                allowed_promotion_decision_keys=live_allowed_promotion_decisions,
+                denied_promotion_decision_keys=live_denied_promotion_decisions,
                 gate_definition=gate_definition,
             )
             gate_status_map[gate_id] = {

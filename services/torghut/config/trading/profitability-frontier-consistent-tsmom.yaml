@@ -17,6 +17,11 @@ consistency_constraints:
   max_negative_days: 2
   max_drawdown: '600'
   require_every_day_active: true
+order_type_ablation:
+  enabled: true
+  max_candidates: 1
+  min_sample_count: 60
+  max_opportunity_cost_bps: '8'
 strategy_overrides:
   universe_symbols:
     - ['NVDA', 'AAPL', 'AMZN', 'GOOGL', 'AVGO', 'AMD', 'ORCL', 'INTC']
@@ -43,3 +48,6 @@ parameters:
   min_cross_section_continuation_rank:
     - '0.60'
     - '0.70'
+  entry_order_type:
+    - market
+    - limit

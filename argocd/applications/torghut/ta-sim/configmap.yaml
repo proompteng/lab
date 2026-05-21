@@ -15,6 +15,7 @@ data:
   TA_BARS1M_TOPIC: "torghut.sim.bars.1m.v1"
   TA_MICROBARS_TOPIC: "torghut.sim.ta.bars.1s.v1"
   TA_SIGNALS_TOPIC: "torghut.sim.ta.signals.v1"
+  TA_STATUS_TOPIC: "torghut.sim.ta.status.v1"
   TA_GROUP_ID: "torghut-ta-sim-default"
   TA_CLIENT_ID: "torghut-ta-sim"
   TA_AUTO_OFFSET_RESET: "latest"

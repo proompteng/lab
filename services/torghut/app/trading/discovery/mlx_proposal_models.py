@@ -664,6 +664,8 @@ def rank_candidate_descriptors(
             float(bool(row.get("requires_prev_day_features"))),
             float(bool(row.get("requires_cross_sectional_features"))),
             float(bool(row.get("requires_quote_quality_gate"))),
+            1.0 if str(row.get("expected_fill_mode") or "") == "prefer_limit" else 0.0,
+            float(row.get("market_order_spread_bps_max") or 12),
         ]
         history_vectors.append(history_descriptor)
         history_targets.append(_candidate_target(row))

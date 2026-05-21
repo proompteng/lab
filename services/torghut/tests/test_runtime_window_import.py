@@ -408,6 +408,12 @@ class TestRuntimeWindowImport(TestCase):
                         "case_count": 1,
                         "generated_at": "2026-03-06T15:20:00+00:00",
                         "artifact_ref": "proof/h-micro-delay-depth.json",
+                        "latency_grid_ms": [50, 150, 250],
+                        "grid_max_stress_ms": 250,
+                        "worst_grid_fillable_notional_per_day": "450000",
+                        "worst_active_day_fillable_notional": "350000",
+                        "p10_active_day_fillable_notional": "325000",
+                        "tail_coverage_passed": True,
                     }
                 },
             )
@@ -416,7 +422,26 @@ class TestRuntimeWindowImport(TestCase):
 
         self.assertEqual(summary["promotion_allowed"], True)
         self.assertEqual(summary["promotion_blocking_reasons"], [])
+        self.assertEqual(
+            summary["delay_adjusted_depth_stress"],
+            {
+                "checks_total": 1,
+                "passed": True,
+                "checked_at": "2026-03-06T15:20:00+00:00",
+                "artifact_ref": "proof/h-micro-delay-depth.json",
+                "latency_grid_ms": ["50", "150", "250"],
+                "grid_max_stress_ms": "250",
+                "worst_grid_fillable_notional_per_day": "450000",
+                "worst_active_day_fillable_notional": "350000",
+                "p10_active_day_fillable_notional": "325000",
+                "tail_coverage_passed": True,
+            },
+        )
         self.assertEqual(decision.allowed, True)
+        self.assertEqual(
+            decision.payload_json["delay_adjusted_depth_stress"],
+            summary["delay_adjusted_depth_stress"],
+        )
 
     def test_persist_observed_runtime_windows_blocks_zero_activity_evidence(
         self,

@@ -28,12 +28,41 @@ def _executable_scorecard_fields(index: int | str = 0) -> dict[str, object]:
         "market_impact_stress_artifact_ref": f"/tmp/market-impact-stress-{index}.json",
         "market_impact_stress_model": "square_root",
         "market_impact_stress_cost_bps": "6",
+        "market_impact_liquidity_evidence_present": True,
         "market_impact_stress_net_pnl_per_day": "535",
+        "implementation_uncertainty_required": True,
+        "implementation_uncertainty_model": "impact_latency_cost_model_interval",
+        "implementation_uncertainty_model_count": 5,
+        "implementation_uncertainty_stability_passed": True,
+        "implementation_uncertainty_lower_net_pnl_per_day": "515",
+        "implementation_uncertainty_upper_net_pnl_per_day": "540",
+        "implementation_uncertainty_interval_width_per_day": "25",
+        "market_impact_stress_components": {
+            "square_root_cost_bps": "6",
+            "almgren_chriss_temporary_impact_bps": "4",
+            "almgren_chriss_permanent_impact_bps": "1",
+            "almgren_chriss_cost_bps": "5",
+            "selected_cost_bps": "6",
+            "selected_model": "square_root",
+            "source_marker": "realistic_market_impact_arxiv_2603_29086_2026",
+        },
+        "nonlinear_market_impact_stress_passed": True,
+        "nonlinear_market_impact_stress_model": "square_root",
+        "nonlinear_market_impact_stress_cost_bps": "6",
+        "nonlinear_market_impact_stress_net_pnl_per_day": "535",
+        "permanent_impact_decay_model": "exponential_decay_proxy",
         "delay_adjusted_depth_stress_passed": True,
         "delay_adjusted_depth_stress_artifact_ref": f"/tmp/delay-adjusted-depth-stress-{index}.json",
         "delay_adjusted_depth_stress_model": "latency_depth_haircut",
         "delay_adjusted_depth_stress_ms": "250",
+        "delay_adjusted_depth_latency_grid_ms": ["50", "150", "250"],
+        "delay_adjusted_depth_grid_max_stress_ms": "250",
+        "delay_adjusted_depth_liquidity_evidence_present": True,
+        "delay_adjusted_depth_liquidity_missing_day_count": 0,
         "delay_adjusted_depth_fillable_notional_per_day": "525000",
+        "delay_adjusted_depth_worst_active_day_fillable_notional": "525000",
+        "delay_adjusted_depth_p10_active_day_fillable_notional": "525000",
+        "delay_adjusted_depth_tail_coverage_passed": True,
         "delay_adjusted_depth_stress_net_pnl_per_day": "520",
         "double_oos_passed": True,
         "double_oos_artifact_ref": f"/tmp/double-oos-{index}.json",
@@ -450,11 +479,30 @@ class TestPortfolioOptimizer(TestCase):
         assert portfolio is not None
         self.assertEqual(
             portfolio.objective_scorecard["market_impact_stress_model"],
-            "portfolio_square_root_impact",
+            "portfolio_nonlinear_impact",
+        )
+        self.assertEqual(
+            portfolio.objective_scorecard["market_impact_stress_models"],
+            ["square_root"],
+        )
+        self.assertEqual(
+            portfolio.objective_scorecard["market_impact_stress_components"][
+                "max_selected_cost_bps"
+            ],
+            "6",
         )
         self.assertEqual(
             portfolio.objective_scorecard["market_impact_stress_net_pnl_per_day"],
             "575",
+        )
+        self.assertEqual(
+            portfolio.objective_scorecard[
+                "implementation_uncertainty_lower_net_pnl_per_day"
+            ],
+            "1030",
+        )
+        self.assertTrue(
+            portfolio.objective_scorecard["implementation_uncertainty_stability_passed"]
         )
         self.assertEqual(
             portfolio.objective_scorecard[
@@ -469,6 +517,155 @@ class TestPortfolioOptimizer(TestCase):
             "1050000",
         )
         self.assertTrue(portfolio.objective_scorecard["oracle_passed"])
+
+    def test_portfolio_oracle_rejects_implementation_uncertainty_lower_bound(
+        self,
+    ) -> None:
+        def bundle(candidate_id: str, symbol: str) -> CandidateEvidenceBundle:
+            return evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=f"spec-{candidate_id}",
+                candidate={
+                    "candidate_id": candidate_id,
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "300",
+                        "active_day_ratio": "1.0",
+                        "positive_day_ratio": "1.0",
+                        "worst_day_loss": "0",
+                        "max_drawdown": "0",
+                        "max_gross_exposure_pct_equity": "0.5",
+                        "min_cash": "5000",
+                        "negative_cash_observation_count": 0,
+                        "best_day_share": "0.2",
+                        "max_single_day_contribution_share": "0.2",
+                        "max_cluster_contribution_share": "0.34",
+                        "max_single_symbol_contribution_share": "0.25",
+                        "avg_filled_notional_per_day": "250000",
+                        "regime_slice_pass_rate": "0.55",
+                        "posterior_edge_lower": "0.01",
+                        "shadow_parity_status": "within_budget",
+                        "symbol_contribution_shares": {symbol: "1.0"},
+                        **_executable_scorecard_fields(candidate_id),
+                        "implementation_uncertainty_stability_passed": False,
+                        "implementation_uncertainty_lower_net_pnl_per_day": "245",
+                        "implementation_uncertainty_interval_width_per_day": "90",
+                    },
+                    "full_window": {
+                        "daily_net": {
+                            "2026-02-23": "300",
+                            "2026-02-24": "300",
+                            "2026-02-25": "300",
+                            "2026-02-26": "300",
+                        },
+                    },
+                },
+                dataset_snapshot_id="snapshot-implementation-uncertainty",
+                result_path=f"/tmp/{candidate_id}.json",
+            )
+
+        portfolio = optimize_portfolio_candidate(
+            evidence_bundles=[
+                bundle("implementation-risk-a", "AAPL"),
+                bundle("implementation-risk-b", "AMZN"),
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            oracle_policy=ProfitTargetOraclePolicy(
+                max_cluster_contribution_share=Decimal("0.50"),
+                max_single_symbol_contribution_share=Decimal("0.50"),
+                min_observed_trading_days=4,
+            ),
+            portfolio_size_min=2,
+            portfolio_size_max=2,
+        )
+
+        self.assertIsNotNone(portfolio)
+        assert portfolio is not None
+        self.assertFalse(portfolio.objective_scorecard["oracle_passed"])
+        self.assertEqual(
+            portfolio.objective_scorecard[
+                "implementation_uncertainty_lower_net_pnl_per_day"
+            ],
+            "490",
+        )
+        self.assertIn(
+            "implementation_uncertainty_lower_net_pnl_per_day_failed",
+            portfolio.objective_scorecard["profit_target_oracle"]["blockers"],
+        )
+
+    def test_portfolio_blocks_missing_sleeve_market_impact_liquidity_evidence(
+        self,
+    ) -> None:
+        def bundle(
+            candidate_id: str, liquidity_present: bool
+        ) -> CandidateEvidenceBundle:
+            return evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=f"spec-{candidate_id}",
+                candidate={
+                    "candidate_id": candidate_id,
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "300",
+                        "active_day_ratio": "1.0",
+                        "positive_day_ratio": "1.0",
+                        "worst_day_loss": "0",
+                        "max_drawdown": "0",
+                        "max_gross_exposure_pct_equity": "0.5",
+                        "min_cash": "5000",
+                        "negative_cash_observation_count": 0,
+                        "best_day_share": "0.2",
+                        "max_single_day_contribution_share": "0.2",
+                        "max_cluster_contribution_share": "0.34",
+                        "max_single_symbol_contribution_share": "0.25",
+                        "avg_filled_notional_per_day": "250000",
+                        "regime_slice_pass_rate": "0.55",
+                        "posterior_edge_lower": "0.01",
+                        "shadow_parity_status": "within_budget",
+                        "symbol_contribution_shares": {candidate_id: "1.0"},
+                        **_executable_scorecard_fields(candidate_id),
+                        "market_impact_liquidity_evidence_present": liquidity_present,
+                    },
+                    "full_window": {
+                        "daily_net": {
+                            "2026-02-23": "300",
+                            "2026-02-24": "300",
+                            "2026-02-25": "300",
+                            "2026-02-26": "300",
+                        },
+                        "daily_filled_notional": {
+                            "2026-02-23": "250000",
+                            "2026-02-24": "250000",
+                            "2026-02-25": "250000",
+                            "2026-02-26": "250000",
+                        },
+                    },
+                },
+                dataset_snapshot_id="snapshot-impact-liquidity",
+                result_path=f"/tmp/{candidate_id}.json",
+            )
+
+        portfolio = optimize_portfolio_candidate(
+            evidence_bundles=[
+                bundle("impact-liq-a", True),
+                bundle("impact-liq-b", False),
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            oracle_policy=ProfitTargetOraclePolicy(
+                max_cluster_contribution_share=Decimal("0.80"),
+                max_single_symbol_contribution_share=Decimal("0.80"),
+                min_observed_trading_days=4,
+            ),
+            portfolio_size_min=2,
+            portfolio_size_max=2,
+        )
+
+        self.assertIsNotNone(portfolio)
+        assert portfolio is not None
+        self.assertFalse(
+            portfolio.objective_scorecard["market_impact_liquidity_evidence_present"]
+        )
+        self.assertFalse(portfolio.objective_scorecard["oracle_passed"])
+        self.assertIn(
+            "market_impact_liquidity_evidence_present_failed",
+            portfolio.objective_scorecard["profit_target_oracle"]["blockers"],
+        )
 
     def test_portfolio_aggregates_double_oos_fold_metrics_into_oracle(
         self,
@@ -809,6 +1006,22 @@ class TestPortfolioOptimizer(TestCase):
         self.assertIsNotNone(portfolio)
         assert portfolio is not None
         self.assertEqual(portfolio.objective_scorecard["net_pnl_per_day"], "560")
+        self.assertFalse(portfolio.objective_scorecard["oracle_passed"])
+        self.assertEqual(
+            portfolio.objective_scorecard["validation_contract_pending_count"], 2
+        )
+        self.assertEqual(
+            portfolio.objective_scorecard["validation_live_paper_parity_pending_count"],
+            1,
+        )
+        self.assertIn(
+            "validation_contract_pending_count_failed",
+            portfolio.objective_scorecard["profit_target_oracle"]["blockers"],
+        )
+        self.assertIn(
+            "validation_live_paper_parity_pending_count_failed",
+            portfolio.objective_scorecard["profit_target_oracle"]["blockers"],
+        )
         self.assertEqual(
             {sleeve["candidate_id"] for sleeve in portfolio.sleeves},
             {"validation-pending-a", "validation-pending-b"},
@@ -1991,6 +2204,126 @@ class TestPortfolioOptimizer(TestCase):
             [
                 "portfolio_post_cost_net_pnl_per_day_failed",
             ],
+        )
+
+    def test_optimizer_prefers_lower_concentration_before_raw_pnl_when_blocked(
+        self,
+    ) -> None:
+        def bundle(
+            *,
+            candidate_id: str,
+            symbol: str,
+            cluster: str,
+            daily_net: tuple[str, str, str, str, str],
+        ) -> CandidateEvidenceBundle:
+            net_pnl = str(sum(Decimal(value) for value in daily_net) / Decimal("5"))
+            return evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=f"spec-{candidate_id}",
+                candidate={
+                    "candidate_id": candidate_id,
+                    "runtime_family": "microbar_cross_sectional_pairs",
+                    "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                    "family_template_id": "microbar_cross_sectional_pairs_v1",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": net_pnl,
+                        "active_day_ratio": "1.0",
+                        "positive_day_ratio": "1.0",
+                        "worst_day_loss": "0",
+                        "max_drawdown": "0",
+                        "best_day_share": "0.2",
+                        "avg_filled_notional_per_day": "350000",
+                        "regime_slice_pass_rate": "0.55",
+                        "posterior_edge_lower": "0.01",
+                        "shadow_parity_status": "within_budget",
+                        "correlation_cluster": cluster,
+                        "symbol_contribution_shares": {symbol: "1.0"},
+                        **_executable_scorecard_fields(candidate_id),
+                    },
+                    "full_window": {
+                        "daily_net": {
+                            "2026-02-23": daily_net[0],
+                            "2026-02-24": daily_net[1],
+                            "2026-02-25": daily_net[2],
+                            "2026-02-26": daily_net[3],
+                            "2026-02-27": daily_net[4],
+                        },
+                        "daily_filled_notional": {
+                            "2026-02-23": "350000",
+                            "2026-02-24": "350000",
+                            "2026-02-25": "350000",
+                            "2026-02-26": "350000",
+                            "2026-02-27": "350000",
+                        },
+                    },
+                },
+                dataset_snapshot_id="snapshot-concentration-first",
+                result_path=f"/tmp/{candidate_id}.json",
+            )
+
+        high_concentration_a = ("2000", "100", "100", "100", "100")
+        high_concentration_b = ("1600", "100", "1000", "1", "100")
+        high_concentration_c = ("1600", "1", "100", "1000", "100")
+        lower_concentration_a = ("430", "300", "300", "300", "300")
+        lower_concentration_b = ("420", "290", "370", "250", "300")
+        lower_concentration_c = ("420", "250", "300", "370", "290")
+        portfolio = optimize_portfolio_candidate(
+            evidence_bundles=[
+                bundle(
+                    candidate_id="cand-high-a",
+                    symbol="NVDA",
+                    cluster="high-a",
+                    daily_net=high_concentration_a,
+                ),
+                bundle(
+                    candidate_id="cand-high-b",
+                    symbol="AAPL",
+                    cluster="high-b",
+                    daily_net=high_concentration_b,
+                ),
+                bundle(
+                    candidate_id="cand-high-c",
+                    symbol="AMZN",
+                    cluster="high-c",
+                    daily_net=high_concentration_c,
+                ),
+                bundle(
+                    candidate_id="cand-balanced-a",
+                    symbol="GOOGL",
+                    cluster="balanced-a",
+                    daily_net=lower_concentration_a,
+                ),
+                bundle(
+                    candidate_id="cand-balanced-b",
+                    symbol="AMD",
+                    cluster="balanced-b",
+                    daily_net=lower_concentration_b,
+                ),
+                bundle(
+                    candidate_id="cand-balanced-c",
+                    symbol="ORCL",
+                    cluster="balanced-c",
+                    daily_net=lower_concentration_c,
+                ),
+            ],
+            target_net_pnl_per_day=Decimal("300"),
+            oracle_policy=ProfitTargetOraclePolicy(min_observed_trading_days=5),
+            portfolio_size_min=3,
+            portfolio_size_max=3,
+        )
+
+        self.assertIsNotNone(portfolio)
+        assert portfolio is not None
+        self.assertCountEqual(
+            portfolio.source_candidate_ids,
+            ("cand-balanced-a", "cand-balanced-b", "cand-balanced-c"),
+        )
+        self.assertLess(
+            Decimal(portfolio.objective_scorecard["best_day_share"]),
+            Decimal("0.30"),
+        )
+        self.assertIn(
+            "best_day_share_failed",
+            portfolio.objective_scorecard["profit_target_oracle"]["blockers"],
         )
 
     def test_optimizer_rejects_correlated_sleeves_before_minimum_size(

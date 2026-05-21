@@ -4,7 +4,13 @@ from decimal import Decimal
 from unittest import TestCase
 
 from app.trading.backtest import BacktestTrade, evaluate_trades
-from app.trading.costs import CostModelConfig, CostModelInputs, OrderIntent, TransactionCostModel
+from app.trading.costs import (
+    CostModelConfig,
+    CostModelInputs,
+    OrderIntent,
+    TransactionCostModel,
+    participation_power,
+)
 
 
 class TestTransactionCostModel(TestCase):
@@ -36,7 +42,8 @@ class TestTransactionCostModel(TestCase):
 
         self.assertGreater(estimate.spread_cost_bps, Decimal("0"))
         self.assertGreater(estimate.volatility_cost_bps, Decimal("0"))
-        self.assertGreater(estimate.impact_cost_bps, Decimal("0"))
+        self.assertEqual(estimate.participation_rate, Decimal("0.01"))
+        self.assertEqual(estimate.impact_cost_bps, Decimal("2.0"))
         self.assertEqual(
             estimate.total_cost_bps,
             estimate.spread_cost_bps
@@ -44,10 +51,36 @@ class TestTransactionCostModel(TestCase):
             + estimate.impact_cost_bps
             + estimate.commission_cost_bps,
         )
-        self.assertEqual(estimate.total_cost, (estimate.notional * estimate.total_cost_bps) / Decimal("10000"))
+        self.assertEqual(
+            estimate.total_cost,
+            (estimate.notional * estimate.total_cost_bps) / Decimal("10000"),
+        )
+
+    def test_linear_impact_exponent_remains_configurable(self) -> None:
+        model = TransactionCostModel(
+            CostModelConfig(
+                commission_bps=Decimal("0"),
+                impact_bps_at_full_participation=Decimal("20"),
+                impact_participation_exponent=Decimal("1"),
+            )
+        )
+        order = OrderIntent(
+            symbol="AAPL",
+            side="buy",
+            qty=Decimal("10"),
+            price=Decimal("100"),
+            order_type="market",
+        )
+        market = CostModelInputs(price=Decimal("100"), adv=Decimal("100000"))
+        estimate = model.estimate_costs(order, market)
+
+        self.assertEqual(estimate.participation_rate, Decimal("0.01"))
+        self.assertEqual(estimate.impact_cost_bps, Decimal("0.20"))
 
     def test_capacity_warning_on_high_participation(self) -> None:
-        model = TransactionCostModel(CostModelConfig(max_participation_rate=Decimal("0.05")))
+        model = TransactionCostModel(
+            CostModelConfig(max_participation_rate=Decimal("0.05"))
+        )
         order = OrderIntent(
             symbol="AAPL",
             side="buy",
@@ -60,6 +93,17 @@ class TestTransactionCostModel(TestCase):
 
         self.assertFalse(estimate.capacity_ok)
         self.assertIn("participation_exceeds_max", estimate.warnings)
+
+    def test_participation_power_handles_boundary_exponents(self) -> None:
+        self.assertEqual(
+            participation_power(Decimal("0"), Decimal("0.5")), Decimal("0")
+        )
+        self.assertEqual(
+            participation_power(Decimal("0.25"), Decimal("0.5")), Decimal("0.5")
+        )
+        self.assertEqual(
+            participation_power(Decimal("0.25"), Decimal("0")), Decimal("1")
+        )
 
 
 class TestBacktestEvaluation(TestCase):

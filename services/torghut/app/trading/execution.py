@@ -201,6 +201,7 @@ class OrderExecutor:
             execution_client=execution_client,
             decision=decision,
             decision_row=decision_row,
+            execution_policy_context=execution_policy_context,
         )
         if simulation_context is not None:
             submission_extra_params["simulation_context"] = simulation_context
@@ -1448,6 +1449,7 @@ def _resolve_submission_simulation_context(
     execution_client: Any,
     decision: StrategyDecision,
     decision_row: TradeDecision,
+    execution_policy_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     adapter_name = str(getattr(execution_client, "name", "") or "").strip().lower()
     if adapter_name != "simulation" and not simulation_context_enabled():
@@ -1466,11 +1468,62 @@ def _resolve_submission_simulation_context(
         rendered_price = str(simulated_fill_price)
         source_context_payload.setdefault("simulated_fill_price", rendered_price)
         source_context_payload.setdefault("arrival_price", rendered_price)
+    policy_simulation_context = _simulation_queue_context_from_execution_policy(
+        execution_policy_context
+    )
+    if policy_simulation_context:
+        if source_context_payload is None:
+            source_context_payload = {}
+        for key, value in policy_simulation_context.items():
+            source_context_payload.setdefault(key, value)
     return resolve_simulation_context(
         source=source_context_payload,
         decision_id=str(decision_row.id),
         decision_hash=decision_row.decision_hash,
     )
+
+
+def _simulation_queue_context_from_execution_policy(
+    execution_policy_context: Mapping[str, Any] | None
+) -> dict[str, Any]:
+    if not isinstance(execution_policy_context, Mapping):
+        return {}
+    microstructure = execution_policy_context.get("execution_microstructure")
+    if not isinstance(microstructure, Mapping):
+        return {}
+    microstructure_payload = cast(Mapping[str, Any], microstructure)
+    context: dict[str, Any] = {}
+    queue_context_keys = (
+        "depth_at_limit",
+        "limit_depth_qty",
+        "available_depth_qty",
+        "queue_ahead_qty",
+        "queue_position_qty",
+        "queue_fill_probability",
+        "fill_probability",
+        "passive_fill_probability",
+        "simulated_fill_ratio",
+        "fill_ratio",
+        "queue_fill_ratio",
+        "cancel_intensity",
+        "queue_cancel_intensity",
+        "market_order_intensity",
+        "opposing_market_order_intensity",
+    )
+    nested_context = microstructure_payload.get("simulation_context")
+    if isinstance(nested_context, Mapping):
+        nested_payload = cast(Mapping[str, Any], nested_context)
+        for key in queue_context_keys:
+            value = _nonnegative_decimal(nested_payload.get(key))
+            if value is not None:
+                context[key] = str(value)
+    for key in queue_context_keys:
+        value = _nonnegative_decimal(microstructure_payload.get(key))
+        if value is not None:
+            context.setdefault(key, str(value))
+    if context:
+        context.setdefault("queue_fill_model", "execution_policy_microstructure_v1")
+    return context
 
 
 def _resolve_decision_simulated_fill_price(
@@ -1495,6 +1548,16 @@ def _resolve_decision_simulated_fill_price(
         if value is not None:
             return value
     return None
+
+
+def _nonnegative_decimal(value: Any) -> Decimal | None:
+    try:
+        parsed = Decimal(str(value))
+    except (ArithmeticError, TypeError, ValueError):
+        return None
+    if parsed < 0:
+        return None
+    return parsed
 
 
 def _attach_execution_policy_context(execution: Execution, context: dict[str, Any]) -> None:

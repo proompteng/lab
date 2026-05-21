@@ -254,6 +254,18 @@ class SimulationExecutionAdapter:
             simulation_context=simulation_context,
         )
         qty_value = max(float(qty), 0.0)
+        filled_qty_value = _resolve_simulated_filled_qty(
+            requested_qty=qty_value,
+            simulation_context=simulation_context,
+        )
+        order_status = _simulated_order_status(
+            requested_qty=qty_value,
+            filled_qty=filled_qty_value,
+        )
+        trade_update_event = _simulated_trade_update_event(
+            requested_qty=qty_value,
+            filled_qty=filled_qty_value,
+        )
         order: dict[str, Any] = {
             'id': order_id,
             'client_order_id': client_order_id,
@@ -262,9 +274,9 @@ class SimulationExecutionAdapter:
             'type': order_type,
             'time_in_force': time_in_force,
             'qty': _float_to_order_text(qty_value),
-            'filled_qty': _float_to_order_text(qty_value),
-            'filled_avg_price': _float_to_order_text(fill_price),
-            'status': 'filled',
+            'filled_qty': _float_to_order_text(filled_qty_value),
+            'filled_avg_price': _float_to_order_text(fill_price) if filled_qty_value > 0 else None,
+            'status': order_status,
             'submitted_at': now.isoformat(),
             'updated_at': now.isoformat(),
             'alpaca_account_label': self._account_label,
@@ -288,8 +300,9 @@ class SimulationExecutionAdapter:
         self.last_idempotency_key = idempotency_key
         self._orders_by_id[order_id] = dict(order)
         self._order_id_by_client_id[client_order_id] = order_id
-        self._apply_fill_to_positions(order)
-        self._publish_trade_update(order, event_type='fill', event_ts=now)
+        if filled_qty_value > 0:
+            self._apply_fill_to_positions(order)
+        self._publish_trade_update(order, event_type=trade_update_event, event_ts=now)
         return dict(order)
 
     def cancel_order(self, order_id: str) -> bool:
@@ -1099,6 +1112,93 @@ def _resolve_simulated_fill_price(
             if value is not None:
                 return float(value)
     return 1.0
+
+
+def _resolve_simulated_filled_qty(
+    *,
+    requested_qty: float,
+    simulation_context: Mapping[str, Any] | None = None,
+) -> float:
+    qty = max(float(requested_qty), 0.0)
+    if qty <= 0:
+        return 0.0
+    if not isinstance(simulation_context, Mapping):
+        return qty
+    explicit_qty = _first_nonnegative_decimal(
+        simulation_context,
+        ('simulated_filled_qty', 'filled_qty', 'fill_qty', 'queue_filled_qty'),
+    )
+    if explicit_qty is not None:
+        return float(min(Decimal(str(qty)), explicit_qty))
+    ratios: list[Decimal] = []
+    explicit_ratio = _first_nonnegative_decimal(
+        simulation_context,
+        ('simulated_fill_ratio', 'fill_ratio', 'queue_fill_ratio'),
+    )
+    if explicit_ratio is not None:
+        ratios.append(explicit_ratio)
+    queue_fill_probability = _first_nonnegative_decimal(
+        simulation_context,
+        ('queue_fill_probability', 'fill_probability', 'passive_fill_probability'),
+    )
+    if queue_fill_probability is not None:
+        ratios.append(queue_fill_probability)
+    depth_at_limit = _first_nonnegative_decimal(
+        simulation_context,
+        ('depth_at_limit', 'limit_depth_qty', 'available_depth_qty'),
+    )
+    if depth_at_limit is not None:
+        queue_ahead_qty = _first_nonnegative_decimal(
+            simulation_context,
+            ('queue_ahead_qty', 'queue_position_qty'),
+        ) or Decimal('0')
+        fillable_qty = max(Decimal('0'), depth_at_limit - queue_ahead_qty)
+        ratios.append(fillable_qty / Decimal(str(qty)))
+    cancel_intensity = _first_nonnegative_decimal(
+        simulation_context,
+        ('cancel_intensity', 'queue_cancel_intensity'),
+    )
+    market_order_intensity = _first_nonnegative_decimal(
+        simulation_context,
+        ('market_order_intensity', 'opposing_market_order_intensity'),
+    )
+    if (
+        cancel_intensity is not None
+        and market_order_intensity is not None
+        and cancel_intensity + market_order_intensity > 0
+    ):
+        ratios.append(market_order_intensity / (market_order_intensity + cancel_intensity))
+    if not ratios:
+        return qty
+    fill_ratio = min(Decimal('1'), max(Decimal('0'), min(ratios)))
+    return float(Decimal(str(qty)) * fill_ratio)
+
+
+def _first_nonnegative_decimal(
+    payload: Mapping[str, Any],
+    keys: tuple[str, ...],
+) -> Decimal | None:
+    for key in keys:
+        value = _optional_decimal(payload.get(key))
+        if value is not None and value >= 0:
+            return value
+    return None
+
+
+def _simulated_order_status(*, requested_qty: float, filled_qty: float) -> str:
+    if requested_qty <= 0 or filled_qty <= 0:
+        return 'accepted'
+    if filled_qty >= requested_qty:
+        return 'filled'
+    return 'partially_filled'
+
+
+def _simulated_trade_update_event(*, requested_qty: float, filled_qty: float) -> str:
+    if requested_qty <= 0 or filled_qty <= 0:
+        return 'new'
+    if filled_qty >= requested_qty:
+        return 'fill'
+    return 'partial_fill'
 
 
 def _resolve_simulation_event_ts(

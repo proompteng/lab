@@ -98,11 +98,29 @@ research_sources:
     published_at: '2025-10-08'
     claims:
       - claim_id: one_second_price_flow_decay
+        claim_type: signal_mechanism
         summary: One-second price-flow shocks dissipate quickly and vary by interval.
         implication: Prefer bounded intraday windows and reject candidates that depend on one broad aggregate effect.
+        data_requirements:
+          - order_flow_imbalance
+          - price_flow_impact
+          - flow_impact_decay
+          - forecast_horizon
+        asset_scope: us_equities_intraday
+        horizon_scope: subminute_microstructure
+        expected_direction: positive
       - claim_id: news_liquidity_regime
+        claim_type: market_regime
         summary: Macroeconomic announcements reshape price impact, order flow impact, and volatility.
         implication: Require held-out replay and live shadow evidence before promotion.
+        data_requirements:
+          - macro_announcement_window
+          - realized_volatility
+          - spread_bps
+          - route_tca
+        asset_scope: us_equities_intraday
+        horizon_scope: macro_event_intraday
+        expected_direction: neutral
   - source_id: intraday_order_transition_2025
     title: 'Intraday order transition dynamics in high, medium, and low market cap stocks: A Markov chain approach'
     url: https://arxiv.org/abs/2502.07625
@@ -120,11 +138,29 @@ research_sources:
     published_at: '2025-12-08'
     claims:
       - claim_id: executed_trade_obi
+        claim_type: feature_recipe
         summary: OBI built from executed-trade parent orders has stronger directional association than broad unfiltered order flow.
         implication: Prefer recent executed-flow and quote-quality confirmation over raw aggregate imbalance.
+        data_requirements:
+          - parent_order_trade_linkage
+          - filtered_orderbook_imbalance
+          - order_lifetime_filter
+          - order_modification_count
+        asset_scope: limit_order_book_intraday
+        horizon_scope: short_horizon_returns
+        expected_direction: positive
       - claim_id: causal_filtration_ladder
+        claim_type: validation_requirement
         summary: Filtration can improve correlation without improving causal coherence.
         implication: Keep regime-sliced replay, excitation-like stress windows, and shadow validation as gates.
+        data_requirements:
+          - event_time_excitation
+          - route_tca
+          - walk_forward_replay
+          - live_paper_parity
+        asset_scope: limit_order_book_intraday
+        horizon_scope: short_horizon_returns
+        expected_direction: neutral
   - source_id: volume_imbalance_secret_2026
     title: 'Understanding the worst-kept secret of high-frequency trading'
     url: https://link.springer.com/article/10.1007/s00780-026-00585-9
@@ -397,6 +433,69 @@ research_sources:
       - claim_id: logistic_normal_execution_allocation
         summary: Logistic-normal allocation gives a trainable representation for mixed market/limit execution decisions.
         implication: Treat market/limit mix as an execution-policy feature, not as alpha, and require latency/fill stress before capital.
+  - source_id: retail_limit_orders_2025
+    title: 'Retail Limit Orders'
+    url: https://doi.org/10.1093/rof/rfaf049
+    published_at: '2025-10-07'
+    claims:
+      - claim_id: market_limit_order_type_ablation
+        claim_type: feature_recipe
+        claim_text: Market-versus-limit execution policies need replayed order-type ablations against matched route TCA, fill probability, and shortfall evidence.
+        data_requirements:
+          - order_type_ablation
+          - market_limit_order_mix
+          - limit_fill_probability
+          - route_tca
+          - execution_shortfall
+        asset_scope: us_equities_execution
+        horizon_scope: intraday_execution
+        expected_direction: neutral
+        summary: Market-versus-limit execution policies need replayed order-type ablations against matched route TCA, fill probability, and shortfall evidence.
+        implication: Block promotion for mixed market/limit candidates until order-type ablation artifacts prove the chosen order type beats the alternative after costs.
+      - claim_id: patient_limit_order_opportunity_cost
+        claim_type: risk_constraint
+        claim_text: Passive limit execution can improve price only when non-fill and adverse-selection opportunity costs stay inside the strategy edge budget.
+        data_requirements:
+          - opportunity_cost
+          - price_improvement
+          - fill_outcomes
+          - post_cost_net_pnl
+        asset_scope: us_equities_execution
+        horizon_scope: intraday_execution
+        expected_direction: neutral
+        summary: Passive limit execution can improve price only when non-fill and adverse-selection opportunity costs stay inside the strategy edge budget.
+        implication: Require opportunity-cost and price-improvement evidence before using patient limit-order behavior as promotion proof.
+  - source_id: retail_order_flow_segmentation_2026
+    title: 'Retail Order Flow Segmentation, Price Improvements, and Market Quality'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6414558
+    published_at: '2026-05-18'
+    claims:
+      - claim_id: retail_flow_segmentation_route_quality
+        claim_type: validation_requirement
+        claim_text: Broker and flow-segment execution quality can vary enough that route-level evidence must be separated from headline backtest results.
+        data_requirements:
+          - broker_route
+          - route_tca
+          - price_improvement
+          - execution_shortfall
+        asset_scope: us_equities_execution
+        horizon_scope: intraday_execution
+        expected_direction: neutral
+        summary: Broker and flow-segment execution quality can vary enough that route-level evidence must be separated from headline backtest results.
+        implication: Treat route price improvement and broker-route TCA as mandatory validation evidence for mixed market/limit execution sleeves.
+      - claim_id: broker_route_price_improvement_dispersion
+        claim_type: risk_constraint
+        claim_text: Price-improvement observations must be tied to the actual route and order type before counting toward promotion.
+        data_requirements:
+          - price_improvement
+          - route_tca
+          - market_limit_order_mix
+          - fill_outcomes
+        asset_scope: us_equities_execution
+        horizon_scope: intraday_execution
+        expected_direction: neutral
+        summary: Price-improvement observations must be tied to the actual route and order type before counting toward promotion.
+        implication: Fail closed when route TCA, price improvement, or fill-outcome artifacts are missing.
   - source_id: lobdiff_event_stream_prediction_2026
     title: 'Limit Order Book Event Stream Prediction with Diffusion Model'
     url: https://link.springer.com/article/10.1007/s41019-025-00328-4
@@ -546,9 +645,28 @@ research_sources:
     published_at: '2026-05-12'
     claims:
       - claim_id: rejection_event_outcome_labels
+        claim_type: signal_mechanism
+        claim_text: Algorithmically rejected trading events with realized outcome labels can turn skipped signal logs into counterfactual false-negative rescue examples for executable veto calibration.
+        asset_scope: us_equities_intraday
+        horizon_scope: rejected_event_learning
+        expected_direction: positive
+        data_requirements:
+          - rejected_signal_log
+          - outcome_labels
+          - executable_quote
         summary: Algorithmically rejected trading events with realized outcome labels can turn skipped signals into counterfactual learning examples.
         implication: Mine skipped-signal logs for outcome labels so vetoes can be calibrated against post-cost opportunity loss, not just pass/fail counts.
       - claim_id: counterfactual_reject_outcome_learning
+        claim_type: validation_requirement
+        claim_text: Rejected-event benchmarks should measure whether current vetoes discard profitable executable opportunities or correctly block bad fills.
+        asset_scope: us_equities_intraday
+        horizon_scope: rejected_event_learning
+        expected_direction: neutral
+        data_requirements:
+          - rejected_signal_log
+          - counterfactual_return
+          - route_tca
+          - post_cost_net_pnl
         summary: Rejected-event benchmarks measure whether vetoes discard profitable executable opportunities or correctly block bad fills.
         implication: Use rejected-event outcome slices to repair missing executable quote and routeability blockers before widening paper capital.
   - source_id: noisy_orderflow_privacy_kyle_lambda_2026
@@ -613,6 +731,34 @@ research_sources:
       - claim_id: sim_to_live_reality_gap_validation
         summary: LOB simulation reality gaps require explicit parity metrics before adverse-selection estimates can affect capital gates.
         implication: Keep synthetic replay out of promotion proof unless it is bound to live-paper parity and route/TCA receipts.
+  - source_id: implementation_risk_backtesting_2026
+    title: 'Implementation Risk in Portfolio Backtesting: A Previously Unquantified Source of Error'
+    url: https://arxiv.org/abs/2603.20319
+    published_at: '2026-03-24'
+    claims:
+      - claim_id: multi_engine_implementation_risk_replay
+        summary: The same logical strategy can produce divergent post-cost portfolio metrics across backtest implementations.
+        implication: Require multi-engine or multi-implementation replay before accepting post-cost PnL as promotion evidence.
+      - claim_id: transaction_cost_implementation_divergence
+        summary: Transaction-cost handling is the dominant implementation-divergence driver in the paper's benchmark.
+        implication: Promotion proof needs engine-sensitivity and implementation-uncertainty diagnostics under nonzero costs.
+      - claim_id: conclusion_stability_capital_gate
+        summary: A result is capital-gate quality only when the implementation-uncertainty lower bound and conclusion-stability check survive replay differences.
+        implication: Reject single-engine backtest proof and require lower-bound net PnL above the target across replay implementations.
+  - source_id: finrl_x_deployment_consistency_2026
+    title: 'FinRL-X: An AI-Native Modular Infrastructure for Quantitative Trading'
+    url: https://arxiv.org/abs/2603.21330
+    published_at: '2026-03-22'
+    claims:
+      - claim_id: weight_centric_unified_execution_protocol
+        summary: Data processing, strategy construction, backtesting, and broker execution should share one deployment-consistent protocol.
+        implication: Compile candidates with explicit signal-payload, order-sizing, and broker-execution semantic parity requirements.
+      - claim_id: replay_paper_live_semantic_parity_required
+        summary: Backtest-to-paper and paper-to-live gaps come from semantics that differ across the research and broker paths.
+        implication: Reject promotion when replay, paper, and live paths do not emit identical signal payloads, sizing decisions, and route constraints.
+      - claim_id: broker_execution_risk_overlay_parity
+        summary: Portfolio risk overlays and broker execution semantics must remain invariant across adapters.
+        implication: Adapter-only behavior drift blocks capital gates even if offline post-cost PnL is positive.
 families:
   - family_template_id: microstructure_continuation_matched_filter_v1
     seed_sweep_config: ../profitability-frontier-strict-daily-microstructure.yaml

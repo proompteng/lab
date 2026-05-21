@@ -119,6 +119,13 @@ class TestSubmissionCouncil(TestCase):
             capital_stage=capital_stage,
             window_ended_at=observed_at,
             created_at=observed_at,
+            market_session_count=3,
+            decision_count=42,
+            trade_count=42,
+            order_count=42,
+            avg_abs_slippage_bps="4.2",
+            slippage_budget_bps="12",
+            post_cost_expectancy_bps="8.5",
             continuity_ok=True,
             drift_ok=True,
             dependency_quorum_decision="allow",
@@ -174,6 +181,7 @@ class TestSubmissionCouncil(TestCase):
                 "trade_count": 42,
                 "order_count": 42,
                 "avg_abs_slippage_bps": "4.2",
+                "slippage_budget_bps": "12",
                 "post_cost_expectancy_bps": "8.5",
             }
             payload.update(overrides)
@@ -364,6 +372,135 @@ class TestSubmissionCouncil(TestCase):
             ["runtime_window_certificate_applied"],
         )
 
+    def test_hypothesis_runtime_summary_rejects_unmatched_promotion_decision(
+        self,
+    ) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        now = datetime.now(timezone.utc)
+        settings.trading_drift_live_promotion_max_evidence_age_seconds = 3600
+        registry = SimpleNamespace(
+            loaded=True,
+            path="test-registry",
+            errors=[],
+            items=[SimpleNamespace(hypothesis_id="H-CONT-01")],
+        )
+        runtime_items = [
+            {
+                "hypothesis_id": "H-CONT-01",
+                "candidate_id": None,
+                "strategy_id": "intraday_continuation",
+                "lane_id": "continuation",
+                "strategy_family": "intraday_continuation",
+                "state": "shadow",
+                "capital_stage": "shadow",
+                "capital_multiplier": "0",
+                "promotion_eligible": False,
+                "rollback_required": False,
+                "reasons": ["drift_checks_missing"],
+                "informational_reasons": [],
+                "observed": {},
+            }
+        ]
+
+        with session_local() as session:
+            session.add(
+                StrategyHypothesisMetricWindow(
+                    run_id="runtime-proof-current",
+                    candidate_id="cand-runtime-current",
+                    hypothesis_id="H-CONT-01",
+                    observed_stage="paper",
+                    window_started_at=now,
+                    window_ended_at=now,
+                    market_session_count=3,
+                    decision_count=42,
+                    trade_count=42,
+                    order_count=42,
+                    avg_abs_slippage_bps="4.2",
+                    slippage_budget_bps="12",
+                    post_cost_expectancy_bps="8.5",
+                    continuity_ok=True,
+                    drift_ok=True,
+                    dependency_quorum_decision="allow",
+                    capital_stage="0.10x canary",
+                )
+            )
+            session.add(
+                StrategyPromotionDecision(
+                    run_id="runtime-proof-old",
+                    candidate_id="cand-runtime-old",
+                    hypothesis_id="H-CONT-01",
+                    promotion_target="paper",
+                    state="0.10x canary",
+                    allowed=True,
+                    reason_summary="old_runtime_evidence_thresholds_satisfied",
+                )
+            )
+            session.commit()
+
+            with (
+                patch(
+                    "app.trading.submission_council.load_hypothesis_registry",
+                    return_value=registry,
+                ),
+                patch(
+                    "app.trading.submission_council.resolve_hypothesis_dependency_quorum",
+                    return_value=JangarDependencyQuorumStatus(
+                        decision="allow",
+                        reasons=[],
+                        message="ready",
+                    ),
+                ),
+                patch(
+                    "app.trading.submission_council.compile_hypothesis_runtime_statuses",
+                    return_value=runtime_items,
+                ),
+                patch(
+                    "app.trading.submission_council.build_tca_gate_inputs",
+                    return_value={},
+                ),
+            ):
+                result = build_hypothesis_runtime_summary(
+                    session,
+                    state=SimpleNamespace(market_session_open=True),
+                    market_context_status={"last_freshness_seconds": 10},
+                )
+
+            forced_item = dict(result["items"][0])
+            forced_item.update(
+                {
+                    "promotion_eligible": True,
+                    "capital_stage": "0.10x canary",
+                    "capital_multiplier": "0.10",
+                    "reasons": [],
+                }
+            )
+            forced_summary = dict(result)
+            forced_summary["promotion_eligible_total"] = 1
+            forced_summary["items"] = [forced_item]
+            gate = build_live_submission_gate_payload(
+                SimpleNamespace(market_session_open=True),
+                hypothesis_summary=forced_summary,
+                empirical_jobs_status={"ready": True},
+                dspy_runtime_status={"mode": "inactive"},
+                quant_health_status={"required": False, "ok": True},
+                session=session,
+            )
+
+        self.assertEqual(result["promotion_eligible_total"], 0)
+        item = result["items"][0]
+        self.assertFalse(item["promotion_eligible"])
+        self.assertEqual(item["capital_stage"], "shadow")
+        self.assertEqual(item["reasons"], ["drift_checks_missing"])
+        self.assertIn("promotion_decision_evidence_missing", gate["blocked_reasons"])
+        self.assertIn("promotion_certificate_missing", gate["blocked_reasons"])
+
     def test_hypothesis_runtime_summary_rejects_failed_runtime_proof(self) -> None:
         engine = create_engine(
             "sqlite+pysqlite:///:memory:",
@@ -468,6 +605,128 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(item["capital_stage"], "shadow")
         self.assertEqual(item["reasons"], ["drift_checks_missing"])
 
+    def test_hypothesis_runtime_summary_rejects_zero_activity_runtime_proof(
+        self,
+    ) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        now = datetime.now(timezone.utc)
+        settings.trading_drift_live_promotion_max_evidence_age_seconds = 3600
+        registry = SimpleNamespace(
+            loaded=True,
+            path="test-registry",
+            errors=[],
+            items=[SimpleNamespace(hypothesis_id="H-CONT-01")],
+        )
+        runtime_items = [
+            {
+                "hypothesis_id": "H-CONT-01",
+                "candidate_id": None,
+                "strategy_id": "intraday_continuation",
+                "lane_id": "continuation",
+                "strategy_family": "intraday_continuation",
+                "state": "shadow",
+                "capital_stage": "shadow",
+                "capital_multiplier": "0",
+                "promotion_eligible": False,
+                "rollback_required": False,
+                "reasons": ["drift_checks_missing"],
+                "informational_reasons": [],
+                "observed": {},
+            }
+        ]
+
+        with session_local() as session:
+            session.add(
+                StrategyHypothesisMetricWindow(
+                    run_id="runtime-proof-zero",
+                    candidate_id="cand-runtime-zero",
+                    hypothesis_id="H-CONT-01",
+                    observed_stage="paper",
+                    window_started_at=now,
+                    window_ended_at=now,
+                    market_session_count=3,
+                    decision_count=0,
+                    trade_count=0,
+                    order_count=0,
+                    avg_abs_slippage_bps="4.2",
+                    slippage_budget_bps="12",
+                    post_cost_expectancy_bps="8.5",
+                    continuity_ok=True,
+                    drift_ok=True,
+                    dependency_quorum_decision="allow",
+                    capital_stage="0.10x canary",
+                )
+            )
+            session.add(
+                StrategyPromotionDecision(
+                    run_id="runtime-proof-zero",
+                    candidate_id="cand-runtime-zero",
+                    hypothesis_id="H-CONT-01",
+                    promotion_target="paper",
+                    state="0.10x canary",
+                    allowed=True,
+                    reason_summary="runtime_evidence_thresholds_satisfied",
+                )
+            )
+            session.commit()
+
+            with (
+                patch(
+                    "app.trading.submission_council.load_hypothesis_registry",
+                    return_value=registry,
+                ),
+                patch(
+                    "app.trading.submission_council.resolve_hypothesis_dependency_quorum",
+                    return_value=JangarDependencyQuorumStatus(
+                        decision="allow",
+                        reasons=[],
+                        message="ready",
+                    ),
+                ),
+                patch(
+                    "app.trading.submission_council.compile_hypothesis_runtime_statuses",
+                    return_value=runtime_items,
+                ),
+                patch(
+                    "app.trading.submission_council.build_tca_gate_inputs",
+                    return_value={},
+                ),
+            ):
+                result = build_hypothesis_runtime_summary(
+                    session,
+                    state=SimpleNamespace(market_session_open=True),
+                    market_context_status={"last_freshness_seconds": 10},
+                )
+
+        self.assertEqual(result["promotion_eligible_total"], 0)
+        item = result["items"][0]
+        self.assertFalse(item["promotion_eligible"])
+        self.assertEqual(item["capital_stage"], "shadow")
+        self.assertEqual(
+            item["reasons"],
+            [
+                "drift_checks_missing",
+                "hypothesis_window_decisions_missing",
+                "hypothesis_window_trades_missing",
+                "hypothesis_window_orders_missing",
+            ],
+        )
+        self.assertEqual(
+            item["informational_reasons"],
+            ["runtime_window_certificate_rejected"],
+        )
+        self.assertTrue(item["observed"]["runtime_window_certificate_rejected"])
+        self.assertEqual(item["observed"]["metric_window_decision_count"], 0)
+        self.assertEqual(item["observed"]["metric_window_trade_count"], 0)
+        self.assertEqual(item["observed"]["metric_window_order_count"], 0)
+
     def test_coerce_aware_datetime_normalizes_runtime_status_values(self) -> None:
         self.assertEqual(
             _coerce_aware_datetime(datetime(2026, 5, 13, 20, 56, 16)),
@@ -566,6 +825,19 @@ class TestSubmissionCouncil(TestCase):
         session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
         with session_local() as session:
             session.add(
+                AutoresearchCandidateSpec(
+                    candidate_spec_id="spec-2",
+                    epoch_id="epoch-current",
+                    hypothesis_id="H-PORT-READY",
+                    candidate_kind="strategy",
+                    family_template_id="portfolio_ready_family",
+                    payload_json={},
+                    payload_hash="spec-2-hash",
+                    status="scored",
+                    blockers_json=[],
+                )
+            )
+            session.add(
                 AutoresearchPortfolioCandidate(
                     portfolio_candidate_id="portfolio-stale-ready",
                     epoch_id="epoch-stale",
@@ -653,6 +925,7 @@ class TestSubmissionCouncil(TestCase):
                         "market_impact_stress_artifact_ref": "s3://proof/current-ready-impact.json",
                         "market_impact_stress_model": "square_root",
                         "market_impact_stress_cost_bps": "6",
+                        "market_impact_liquidity_evidence_present": True,
                         "market_impact_stress_net_pnl_per_day": "535",
                         "delay_adjusted_depth_stress_passed": True,
                         "delay_adjusted_depth_stress_artifact_ref": (
@@ -660,7 +933,14 @@ class TestSubmissionCouncil(TestCase):
                         ),
                         "delay_adjusted_depth_stress_model": "latency_depth_haircut",
                         "delay_adjusted_depth_stress_ms": "250",
+                        "delay_adjusted_depth_liquidity_evidence_present": True,
+                        "delay_adjusted_depth_latency_grid_ms": ["50", "150", "250"],
+                        "delay_adjusted_depth_grid_max_stress_ms": "250",
                         "delay_adjusted_depth_fillable_notional_per_day": "300000",
+                        "delay_adjusted_depth_worst_grid_fillable_notional_per_day": "300000",
+                        "delay_adjusted_depth_worst_active_day_fillable_notional": "300000",
+                        "delay_adjusted_depth_p10_active_day_fillable_notional": "300000",
+                        "delay_adjusted_depth_tail_coverage_passed": True,
                         "delay_adjusted_depth_stress_net_pnl_per_day": "525",
                         "double_oos_passed": True,
                         "double_oos_artifact_ref": "s3://proof/current-ready-double-oos.json",
@@ -695,6 +975,15 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(counts["autoresearch_portfolio_candidates"], 3)
         self.assertEqual(counts["autoresearch_portfolio_ready"], 1)
         self.assertEqual(counts["autoresearch_portfolio_blocked"], 2)
+        self.assertEqual(
+            counts["autoresearch_portfolio_ready_refs"],
+            [
+                "candidate_spec_id:spec-2",
+                "hypothesis_id:H-PORT-READY",
+                "portfolio_candidate_id:portfolio-current-ready",
+                "source_candidate_id:spec-2",
+            ],
+        )
 
     def test_profit_lease_projection_uses_runtime_feature_and_persisted_decision_evidence(
         self,
@@ -807,6 +1096,206 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(equity_source["rows"], 9)
         self.assertEqual(rejection_source["rows"], 2)
         self.assertEqual(rejection_source["source_ref"], "postgres:trade_decisions:7d")
+
+    def test_profit_lease_projection_qualifies_runtime_items_with_ready_autoresearch_refs(
+        self,
+    ) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        with session_local() as session:
+            session.add_all(
+                [
+                    AutoresearchCandidateSpec(
+                        candidate_spec_id="spec-ready",
+                        epoch_id="epoch-current",
+                        hypothesis_id="H-CONT-01",
+                        candidate_kind="strategy",
+                        family_template_id="portfolio_ready_family",
+                        payload_json={},
+                        payload_hash="spec-ready-hash",
+                        status="scored",
+                        blockers_json=[],
+                    ),
+                    AutoresearchProposalScore(
+                        epoch_id="epoch-current",
+                        candidate_spec_id="spec-ready",
+                        model_id="mlx-ranker",
+                        backend="mlx",
+                        proposal_score=Decimal("11.0"),
+                        rank=1,
+                        selection_reason="exploitation",
+                        feature_hash="feature-hash",
+                        payload_json={},
+                    ),
+                    AutoresearchPortfolioCandidate(
+                        portfolio_candidate_id="portfolio-current-ready",
+                        epoch_id="epoch-current",
+                        source_candidate_ids_json=["spec-ready"],
+                        target_net_pnl_per_day=Decimal("500"),
+                        objective_scorecard_json={
+                            "net_pnl_per_day": "600",
+                            "trading_day_count": 20,
+                            "daily_net": {
+                                "2026-05-01": "600",
+                                "2026-05-02": "575",
+                                "2026-05-03": "610",
+                                "2026-05-04": "590",
+                                "2026-05-05": "620",
+                                "2026-05-06": "605",
+                                "2026-05-07": "615",
+                                "2026-05-08": "585",
+                                "2026-05-09": "595",
+                                "2026-05-10": "605",
+                                "2026-05-11": "600",
+                                "2026-05-12": "575",
+                                "2026-05-13": "610",
+                                "2026-05-14": "590",
+                                "2026-05-15": "620",
+                                "2026-05-16": "605",
+                                "2026-05-17": "615",
+                                "2026-05-18": "585",
+                                "2026-05-19": "595",
+                                "2026-05-20": "605",
+                            },
+                            "active_day_ratio": "1.0",
+                            "positive_day_ratio": "1.0",
+                            "best_day_share": "0.12",
+                            "max_single_day_contribution_share": "0.12",
+                            "max_cluster_contribution_share": "0.20",
+                            "max_single_symbol_contribution_share": "0.20",
+                            "worst_day_loss": "500",
+                            "max_drawdown": "1000",
+                            "max_gross_exposure_pct_equity": "0.5",
+                            "min_cash": "1000",
+                            "negative_cash_observation_count": 0,
+                            "avg_filled_notional_per_day": "300000",
+                            "regime_slice_pass_rate": "0.80",
+                            "posterior_edge_lower": "1",
+                            "shadow_parity_status": "within_budget",
+                            "executable_replay_passed": True,
+                            "executable_replay_artifact_ref": "s3://proof/current-ready.json",
+                            "executable_replay_order_count": 4,
+                            "executable_replay_account_buying_power": "31590",
+                            "executable_replay_max_notional_per_trade": "5000",
+                            "market_impact_stress_passed": True,
+                            "market_impact_stress_artifact_ref": "s3://proof/current-ready-impact.json",
+                            "market_impact_stress_model": "square_root",
+                            "market_impact_stress_cost_bps": "6",
+                            "market_impact_liquidity_evidence_present": True,
+                            "market_impact_stress_net_pnl_per_day": "535",
+                            "delay_adjusted_depth_stress_passed": True,
+                            "delay_adjusted_depth_stress_artifact_ref": (
+                                "s3://proof/current-ready-delay-depth.json"
+                            ),
+                            "delay_adjusted_depth_stress_model": "latency_depth_haircut",
+                            "delay_adjusted_depth_stress_ms": "250",
+                            "delay_adjusted_depth_liquidity_evidence_present": True,
+                            "delay_adjusted_depth_latency_grid_ms": [
+                                "50",
+                                "150",
+                                "250",
+                            ],
+                            "delay_adjusted_depth_grid_max_stress_ms": "250",
+                            "delay_adjusted_depth_fillable_notional_per_day": "300000",
+                            "delay_adjusted_depth_worst_grid_fillable_notional_per_day": "300000",
+                            "delay_adjusted_depth_worst_active_day_fillable_notional": "300000",
+                            "delay_adjusted_depth_p10_active_day_fillable_notional": "300000",
+                            "delay_adjusted_depth_tail_coverage_passed": True,
+                            "delay_adjusted_depth_stress_net_pnl_per_day": "525",
+                            "double_oos_passed": True,
+                            "double_oos_artifact_ref": "s3://proof/current-ready-double-oos.json",
+                            "double_oos_independent_window_count": 2,
+                            "double_oos_pass_rate": "1.00",
+                            "double_oos_net_pnl_per_day": "540",
+                            "double_oos_cost_shock_net_pnl_per_day": "515",
+                        },
+                        optimizer_report_json={"method": "current_optimizer"},
+                        payload_json={
+                            "portfolio_candidate_id": "portfolio-current-ready"
+                        },
+                        status="promotion_ready",
+                    ),
+                ]
+            )
+            session.commit()
+
+            result = build_live_submission_gate_payload(
+                SimpleNamespace(
+                    last_autonomy_promotion_eligible=True,
+                    last_autonomy_promotion_action="promote",
+                    drift_live_promotion_eligible=False,
+                    last_market_context_freshness_seconds=45,
+                    metrics=SimpleNamespace(
+                        feature_batch_rows_total=9,
+                        feature_null_rate={"price": 0.0},
+                        feature_staleness_ms_p95=250,
+                        feature_duplicate_ratio=0.0,
+                        decision_state_total={},
+                    ),
+                ),
+                hypothesis_summary={
+                    "summary": {
+                        "promotion_eligible_total": 2,
+                        "capital_stage_totals": {"shadow": 2},
+                        "dependency_quorum": {
+                            "decision": "allow",
+                            "reasons": [],
+                            "message": "ready",
+                        },
+                    },
+                    "items": [
+                        {
+                            "hypothesis_id": "H-CONT-01",
+                            "lane_id": "continuation",
+                            "strategy_family": "intraday_continuation",
+                            "promotion_eligible": True,
+                            "capital_stage": "shadow",
+                            "reasons": [],
+                        },
+                        {
+                            "hypothesis_id": "H-UNRELATED",
+                            "lane_id": "unrelated",
+                            "strategy_family": "intraday_continuation",
+                            "candidate_id": "cand-unrelated",
+                            "promotion_eligible": True,
+                            "capital_stage": "shadow",
+                            "reasons": [],
+                        },
+                    ],
+                },
+                empirical_jobs_status={"ready": True, "status": "healthy"},
+                quant_health_status=self._healthy_quant_status(),
+                session=session,
+                clickhouse_ta_status={
+                    "state": "current",
+                    "source_ref": "torghut.ta_signals",
+                    "signal_rows": 12,
+                    "symbol_count": 6,
+                },
+            )
+
+        projection = result["profit_lease_projection"]
+        promotion_sources = {
+            source["hypothesis_id"]: source
+            for source in projection["source_provenance"]
+            if source["source_class"] == "research_candidate"
+        }
+        self.assertEqual(promotion_sources["H-CONT-01"]["freshness_state"], "current")
+        self.assertIn(
+            "hypothesis_id:H-CONT-01",
+            promotion_sources["H-CONT-01"]["source_ref"],
+        )
+        self.assertEqual(promotion_sources["H-UNRELATED"]["freshness_state"], "blocked")
+        self.assertIn(
+            "autoresearch_portfolio_match_unverified",
+            promotion_sources["H-UNRELATED"]["blocking_reason_codes"],
+        )
 
     def test_profit_lease_projection_uses_clickhouse_ta_readiness_after_restart(
         self,

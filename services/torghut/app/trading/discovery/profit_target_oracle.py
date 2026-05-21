@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Mapping, cast
+from typing import Any, Mapping, Sequence, cast
 
 
 PROFIT_TARGET_ORACLE_SCHEMA_VERSION = "torghut.profit-target-oracle.v1"
@@ -12,12 +12,15 @@ _ACCEPTED_MARKET_IMPACT_STRESS_MODELS = frozenset(
     {
         "almgren_chriss",
         "almgren-chriss",
+        "almgren_chriss_proxy",
+        "almgren-chriss-proxy",
         "square_root",
         "square-root",
         "power_law",
         "power-law",
         "portfolio_square_root_impact",
         "portfolio_power_law_impact",
+        "portfolio_nonlinear_impact",
     }
 )
 _ACCEPTED_DELAY_ADJUSTED_DEPTH_STRESS_MODELS = frozenset(
@@ -59,13 +62,39 @@ class ProfitTargetOraclePolicy:
     require_executable_replay_notional_within_buying_power: bool = True
     require_market_impact_stress: bool = True
     min_market_impact_stress_cost_bps: Decimal = Decimal("1")
+    require_market_impact_liquidity_evidence: bool = True
     require_delay_adjusted_depth_stress: bool = True
+    require_delay_adjusted_depth_liquidity_evidence: bool = True
+    require_delay_adjusted_depth_latency_grid: bool = True
+    require_delay_adjusted_depth_tail_coverage: bool = True
     min_delay_adjusted_depth_stress_ms: Decimal = Decimal("50")
+    min_delay_adjusted_depth_grid_max_stress_ms: Decimal = Decimal("250")
     min_delay_adjusted_depth_fillable_notional_per_day: Decimal = Decimal("300000")
+    min_delay_adjusted_depth_tail_fillable_notional: Decimal = Decimal("300000")
+    require_implementation_uncertainty_stability: bool = False
+    min_implementation_uncertainty_model_count: int = 2
     require_double_oos: bool = True
     min_double_oos_independent_window_count: int = 2
     min_double_oos_pass_rate: Decimal = Decimal("1.00")
     max_missing_sleeve_daily_net_count: int = 0
+    max_validation_contract_pending_count: int = 0
+    max_validation_live_paper_parity_pending_count: int = 0
+    max_synthetic_evidence_not_promotion_proof_count: int = 0
+    require_rejected_signal_outcome_learning: bool = False
+    min_rejected_signal_outcome_label_count: int = 120
+    min_rejected_signal_reason_coverage: Decimal = Decimal("0.80")
+    max_rejected_signal_outcome_pending_ratio: Decimal = Decimal("0.05")
+    required_rejected_signal_counterfactual_fields: tuple[str, ...] = (
+        "counterfactual_return",
+        "route_tca",
+        "post_cost_net_pnl",
+        "executable_quote",
+    )
+    required_rejected_signal_outcome_persistence_state: str = "ok"
+    require_order_type_execution_quality: bool = False
+    min_order_type_ablation_sample_count: int = 60
+    max_order_type_opportunity_cost_bps: Decimal = Decimal("8")
+    max_market_order_spread_bps: Decimal = Decimal("8")
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -109,23 +138,56 @@ class ProfitTargetOraclePolicy:
             "min_market_impact_stress_cost_bps": str(
                 self.min_market_impact_stress_cost_bps
             ),
+            "require_market_impact_liquidity_evidence": self.require_market_impact_liquidity_evidence,
             "accepted_market_impact_stress_models": sorted(
                 _ACCEPTED_MARKET_IMPACT_STRESS_MODELS
             ),
             "require_delay_adjusted_depth_stress": self.require_delay_adjusted_depth_stress,
+            "require_delay_adjusted_depth_liquidity_evidence": self.require_delay_adjusted_depth_liquidity_evidence,
+            "require_delay_adjusted_depth_latency_grid": self.require_delay_adjusted_depth_latency_grid,
+            "require_delay_adjusted_depth_tail_coverage": self.require_delay_adjusted_depth_tail_coverage,
             "min_delay_adjusted_depth_stress_ms": str(
                 self.min_delay_adjusted_depth_stress_ms
+            ),
+            "min_delay_adjusted_depth_grid_max_stress_ms": str(
+                self.min_delay_adjusted_depth_grid_max_stress_ms
             ),
             "min_delay_adjusted_depth_fillable_notional_per_day": str(
                 self.min_delay_adjusted_depth_fillable_notional_per_day
             ),
+            "min_delay_adjusted_depth_tail_fillable_notional": str(
+                self.min_delay_adjusted_depth_tail_fillable_notional
+            ),
             "accepted_delay_adjusted_depth_stress_models": sorted(
                 _ACCEPTED_DELAY_ADJUSTED_DEPTH_STRESS_MODELS
             ),
+            "require_implementation_uncertainty_stability": self.require_implementation_uncertainty_stability,
+            "min_implementation_uncertainty_model_count": self.min_implementation_uncertainty_model_count,
             "require_double_oos": self.require_double_oos,
             "min_double_oos_independent_window_count": self.min_double_oos_independent_window_count,
             "min_double_oos_pass_rate": str(self.min_double_oos_pass_rate),
             "max_missing_sleeve_daily_net_count": self.max_missing_sleeve_daily_net_count,
+            "max_validation_contract_pending_count": self.max_validation_contract_pending_count,
+            "max_validation_live_paper_parity_pending_count": self.max_validation_live_paper_parity_pending_count,
+            "max_synthetic_evidence_not_promotion_proof_count": self.max_synthetic_evidence_not_promotion_proof_count,
+            "require_rejected_signal_outcome_learning": self.require_rejected_signal_outcome_learning,
+            "min_rejected_signal_outcome_label_count": self.min_rejected_signal_outcome_label_count,
+            "min_rejected_signal_reason_coverage": str(
+                self.min_rejected_signal_reason_coverage
+            ),
+            "max_rejected_signal_outcome_pending_ratio": str(
+                self.max_rejected_signal_outcome_pending_ratio
+            ),
+            "required_rejected_signal_counterfactual_fields": list(
+                self.required_rejected_signal_counterfactual_fields
+            ),
+            "required_rejected_signal_outcome_persistence_state": self.required_rejected_signal_outcome_persistence_state,
+            "require_order_type_execution_quality": self.require_order_type_execution_quality,
+            "min_order_type_ablation_sample_count": self.min_order_type_ablation_sample_count,
+            "max_order_type_opportunity_cost_bps": str(
+                self.max_order_type_opportunity_cost_bps
+            ),
+            "max_market_order_spread_bps": str(self.max_market_order_spread_bps),
         }
 
 
@@ -197,6 +259,94 @@ def _artifact_refs(scorecard: Mapping[str, Any], *keys: str) -> list[str]:
         if normalized:
             refs.append(normalized)
     return refs
+
+
+def _string_sequence(value: Any) -> list[str]:
+    if isinstance(value, (list, tuple)):
+        return [
+            normalized
+            for item in cast(Sequence[Any], value)
+            if (normalized := _string(item))
+        ]
+    raw_value = _string(value)
+    if not raw_value:
+        return []
+    if "," in raw_value:
+        return [item.strip() for item in raw_value.split(",") if item.strip()]
+    return [raw_value]
+
+
+def _requires_rejected_signal_outcome_learning(
+    scorecard: Mapping[str, Any], policy: ProfitTargetOraclePolicy
+) -> bool:
+    if policy.require_rejected_signal_outcome_learning:
+        return True
+    if _boolish(
+        scorecard.get("requires_rejected_signal_outcome_learning")
+        or scorecard.get("rejected_signal_outcome_learning_required")
+        or scorecard.get("requires_rejected_signal_outcome_calibration")
+        or scorecard.get("rejected_signal_outcome_calibration_required")
+    ):
+        return True
+    overlay_ids = set(
+        _string_sequence(
+            scorecard.get("mechanism_overlay_ids")
+            or scorecard.get("mechanism_overlays")
+            or scorecard.get("overlay_ids")
+        )
+    )
+    return "rejected_signal_outcome_calibration" in overlay_ids
+
+
+def _requires_order_type_execution_quality(
+    scorecard: Mapping[str, Any], policy: ProfitTargetOraclePolicy
+) -> bool:
+    if policy.require_order_type_execution_quality:
+        return True
+    if _boolish(
+        scorecard.get("requires_order_type_execution_quality")
+        or scorecard.get("order_type_execution_quality_required")
+        or scorecard.get("requires_order_type_ablation")
+        or scorecard.get("requires_market_limit_order_mix")
+        or scorecard.get("market_limit_order_mix_required")
+    ):
+        return True
+    overlay_ids = set(
+        _string_sequence(
+            scorecard.get("mechanism_overlay_ids")
+            or scorecard.get("mechanism_overlays")
+            or scorecard.get("overlay_ids")
+        )
+    )
+    return "mixed_market_limit_execution_policy" in overlay_ids
+
+
+def _requires_implementation_uncertainty_stability(
+    scorecard: Mapping[str, Any], policy: ProfitTargetOraclePolicy
+) -> bool:
+    if policy.require_implementation_uncertainty_stability:
+        return True
+    if _boolish(
+        scorecard.get("implementation_uncertainty_required")
+        or scorecard.get("requires_implementation_uncertainty_stability")
+        or scorecard.get("requires_implementation_risk_backtest_stability")
+    ):
+        return True
+    overlay_ids = set(
+        _string_sequence(
+            scorecard.get("mechanism_overlay_ids")
+            or scorecard.get("mechanism_overlays")
+            or scorecard.get("overlay_ids")
+        )
+    )
+    return bool(
+        {
+            "execution_reality_gap_stability",
+            "implementation_risk_backtest_stability",
+            "order_flow_impact_stability",
+        }
+        & overlay_ids
+    )
 
 
 def _start_equity(
@@ -391,6 +541,38 @@ def evaluate_profit_target_oracle(
             ),
             operator="lte",
             threshold=Decimal(max(0, policy.max_missing_sleeve_daily_net_count)),
+        ),
+        _numeric_check(
+            metric="validation_contract_pending_count",
+            observed=Decimal(
+                _nonnegative_int(scorecard.get("validation_contract_pending_count"))
+            ),
+            operator="lte",
+            threshold=Decimal(max(0, policy.max_validation_contract_pending_count)),
+        ),
+        _numeric_check(
+            metric="validation_live_paper_parity_pending_count",
+            observed=Decimal(
+                _nonnegative_int(
+                    scorecard.get("validation_live_paper_parity_pending_count")
+                )
+            ),
+            operator="lte",
+            threshold=Decimal(
+                max(0, policy.max_validation_live_paper_parity_pending_count)
+            ),
+        ),
+        _numeric_check(
+            metric="synthetic_evidence_not_promotion_proof_count",
+            observed=Decimal(
+                _nonnegative_int(
+                    scorecard.get("synthetic_evidence_not_promotion_proof_count")
+                )
+            ),
+            operator="lte",
+            threshold=Decimal(
+                max(0, policy.max_synthetic_evidence_not_promotion_proof_count)
+            ),
         ),
         _numeric_check(
             metric="best_day_share",
@@ -618,6 +800,25 @@ def evaluate_profit_target_oracle(
             else True,
         }
     )
+    market_impact_liquidity_evidence_present = _boolish(
+        scorecard.get("market_impact_liquidity_evidence_present")
+        or scorecard.get("liquidity_evidence_present")
+    )
+    checks.append(
+        {
+            "metric": "market_impact_liquidity_evidence_present",
+            "observed": str(market_impact_liquidity_evidence_present).lower(),
+            "operator": "eq",
+            "threshold": "true",
+            "source_marker": "realistic_market_impact_arxiv_2603_29086_2026",
+            "passed": market_impact_liquidity_evidence_present
+            if (
+                policy.require_market_impact_stress
+                and policy.require_market_impact_liquidity_evidence
+            )
+            else True,
+        }
+    )
     checks.append(
         {
             "metric": "market_impact_stress_model",
@@ -705,6 +906,131 @@ def evaluate_profit_target_oracle(
             else True,
         }
     )
+    delay_depth_liquidity_evidence_present = _boolish(
+        scorecard.get("delay_adjusted_depth_liquidity_evidence_present")
+        or scorecard.get("delay_depth_liquidity_evidence_present")
+        or scorecard.get("latency_depth_liquidity_evidence_present")
+    )
+    checks.append(
+        {
+            "metric": "delay_adjusted_depth_liquidity_evidence_present",
+            "observed": str(delay_depth_liquidity_evidence_present).lower(),
+            "operator": "eq",
+            "threshold": "true",
+            "source_marker": "market_depth_execution_delays_ssrn_6440898_2026",
+            "passed": delay_depth_liquidity_evidence_present
+            if (
+                policy.require_delay_adjusted_depth_stress
+                and policy.require_delay_adjusted_depth_liquidity_evidence
+            )
+            else True,
+        }
+    )
+    checks.append(
+        _numeric_check(
+            metric="delay_adjusted_depth_liquidity_missing_day_count",
+            observed=_decimal(
+                scorecard.get("delay_adjusted_depth_liquidity_missing_day_count")
+                or scorecard.get("delay_depth_liquidity_missing_day_count")
+                or scorecard.get("latency_depth_liquidity_missing_day_count")
+            ),
+            operator="lte",
+            threshold=Decimal("0")
+            if (
+                policy.require_delay_adjusted_depth_stress
+                and policy.require_delay_adjusted_depth_liquidity_evidence
+            )
+            else Decimal("999999999"),
+        )
+    )
+    delay_depth_latency_grid_ms = _string_sequence(
+        scorecard.get("delay_adjusted_depth_latency_grid_ms")
+        or scorecard.get("delay_depth_latency_grid_ms")
+        or scorecard.get("latency_depth_grid_ms")
+    )
+    required_latency_grid_ms = {"50", "150", "250"}
+    delay_depth_latency_grid_present = required_latency_grid_ms.issubset(
+        set(delay_depth_latency_grid_ms)
+    )
+    checks.append(
+        {
+            "metric": "delay_adjusted_depth_latency_grid_ms",
+            "observed": ",".join(delay_depth_latency_grid_ms),
+            "operator": "contains",
+            "threshold": sorted(required_latency_grid_ms),
+            "source_marker": "latency_execution_policy_arxiv_2504_00846_2025",
+            "passed": delay_depth_latency_grid_present
+            if (
+                policy.require_delay_adjusted_depth_stress
+                and policy.require_delay_adjusted_depth_latency_grid
+            )
+            else True,
+        }
+    )
+    checks.append(
+        _numeric_check(
+            metric="delay_adjusted_depth_grid_max_stress_ms",
+            observed=_decimal(
+                scorecard.get("delay_adjusted_depth_grid_max_stress_ms")
+                or scorecard.get("delay_depth_grid_max_stress_ms")
+                or scorecard.get("latency_depth_grid_max_stress_ms")
+            ),
+            operator="gte",
+            threshold=policy.min_delay_adjusted_depth_grid_max_stress_ms
+            if (
+                policy.require_delay_adjusted_depth_stress
+                and policy.require_delay_adjusted_depth_latency_grid
+            )
+            else Decimal("0"),
+        )
+    )
+    delay_depth_tail_coverage_passed = _boolish(
+        scorecard.get("delay_adjusted_depth_tail_coverage_passed")
+        or scorecard.get("delay_depth_tail_coverage_passed")
+        or scorecard.get("latency_depth_tail_coverage_passed")
+    )
+    checks.append(
+        {
+            "metric": "delay_adjusted_depth_tail_coverage_passed",
+            "observed": str(delay_depth_tail_coverage_passed).lower(),
+            "operator": "eq",
+            "threshold": "true",
+            "source_marker": "market_depth_execution_delays_ssrn_6440898_2026",
+            "passed": delay_depth_tail_coverage_passed
+            if (
+                policy.require_delay_adjusted_depth_stress
+                and policy.require_delay_adjusted_depth_tail_coverage
+            )
+            else True,
+        }
+    )
+    for metric_name, *keys in (
+        (
+            "delay_adjusted_depth_worst_active_day_fillable_notional",
+            "delay_adjusted_depth_worst_active_day_fillable_notional",
+            "delay_depth_worst_active_day_fillable_notional",
+            "latency_depth_worst_active_day_fillable_notional",
+        ),
+        (
+            "delay_adjusted_depth_p10_active_day_fillable_notional",
+            "delay_adjusted_depth_p10_active_day_fillable_notional",
+            "delay_depth_p10_active_day_fillable_notional",
+            "latency_depth_p10_active_day_fillable_notional",
+        ),
+    ):
+        checks.append(
+            _numeric_check(
+                metric=metric_name,
+                observed=max((_decimal(scorecard.get(key)) for key in keys)),
+                operator="gte",
+                threshold=policy.min_delay_adjusted_depth_tail_fillable_notional
+                if (
+                    policy.require_delay_adjusted_depth_stress
+                    and policy.require_delay_adjusted_depth_tail_coverage
+                )
+                else Decimal("0"),
+            )
+        )
     checks.append(
         {
             "metric": "delay_adjusted_depth_stress_model",
@@ -765,6 +1091,213 @@ def evaluate_profit_target_oracle(
             **delay_depth_net_check,
             "source_marker": "rl_market_limit_execution_arxiv_2507_06345_2026",
         }
+    )
+    require_implementation_uncertainty_stability = (
+        _requires_implementation_uncertainty_stability(scorecard, policy)
+    )
+    implementation_uncertainty_passed = _boolish(
+        scorecard.get("implementation_uncertainty_stability_passed")
+        or scorecard.get("implementation_risk_stability_passed")
+    )
+    implementation_uncertainty_model_count = _nonnegative_int(
+        scorecard.get("implementation_uncertainty_model_count")
+        or scorecard.get("implementation_risk_model_count")
+    )
+    implementation_uncertainty_lower_bound = _decimal(
+        scorecard.get("implementation_uncertainty_lower_net_pnl_per_day")
+        or scorecard.get("implementation_risk_lower_net_pnl_per_day")
+    )
+    checks.extend(
+        (
+            {
+                "metric": "implementation_uncertainty_stability_passed",
+                "observed": str(implementation_uncertainty_passed).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "implementation_risk_backtesting_arxiv_2603_20319_2026",
+                "passed": implementation_uncertainty_passed
+                if require_implementation_uncertainty_stability
+                else True,
+            },
+            _numeric_check(
+                metric="implementation_uncertainty_model_count",
+                observed=Decimal(implementation_uncertainty_model_count),
+                operator="gte",
+                threshold=Decimal(policy.min_implementation_uncertainty_model_count)
+                if require_implementation_uncertainty_stability
+                else Decimal("0"),
+            ),
+            {
+                **_numeric_check(
+                    metric="implementation_uncertainty_lower_net_pnl_per_day",
+                    observed=implementation_uncertainty_lower_bound,
+                    operator="gte",
+                    threshold=target_net_pnl_per_day,
+                ),
+                "source_marker": "lob_simulation_reality_gap_arxiv_2603_24137_2026",
+                "passed": implementation_uncertainty_lower_bound
+                >= target_net_pnl_per_day
+                if require_implementation_uncertainty_stability
+                else True,
+            },
+        )
+    )
+    require_order_type_execution_quality = _requires_order_type_execution_quality(
+        scorecard, policy
+    )
+    order_type_artifact_refs = _artifact_refs(
+        scorecard,
+        "order_type_ablation_artifact_ref",
+        "order_type_ablation_artifact_refs",
+    )
+    order_type_ablation_artifact_present = bool(order_type_artifact_refs)
+    order_type_ablation_passed = _boolish(
+        scorecard.get("order_type_ablation_passed")
+        or scorecard.get("market_limit_execution_policy_passed")
+    )
+    order_type_ablation_sample_count = _nonnegative_int(
+        scorecard.get("order_type_ablation_sample_count")
+        or scorecard.get("market_limit_order_mix_sample_count")
+        or scorecard.get("limit_fill_probability_sample_count")
+    )
+    market_limit_order_mix_evidence_present = _boolish(
+        scorecard.get("market_limit_order_mix_evidence_present")
+        or scorecard.get("market_limit_order_mix_present")
+    )
+    limit_fill_probability_evidence_present = _boolish(
+        scorecard.get("limit_fill_probability_evidence_present")
+        or scorecard.get("limit_fill_probability_present")
+    )
+    price_improvement_evidence_present = _boolish(
+        scorecard.get("price_improvement_evidence_present")
+        or scorecard.get("route_price_improvement_evidence_present")
+    )
+    opportunity_cost_evidence_present = _boolish(
+        scorecard.get("opportunity_cost_evidence_present")
+        or scorecard.get("order_type_opportunity_cost_evidence_present")
+    )
+    execution_shortfall_evidence_present = _boolish(
+        scorecard.get("execution_shortfall_evidence_present")
+        or scorecard.get("order_type_execution_shortfall_evidence_present")
+    )
+    route_tca_evidence_present = bool(
+        _artifact_refs(scorecard, "route_tca_artifact_ref", "route_tca_artifact_refs")
+    )
+    checks.extend(
+        (
+            {
+                "metric": "order_type_ablation_passed",
+                "observed": str(order_type_ablation_passed).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "retail_limit_orders_rof_rfaf049_2025",
+                "passed": order_type_ablation_passed
+                if require_order_type_execution_quality
+                else True,
+            },
+            {
+                "metric": "order_type_ablation_artifact_present",
+                "observed": str(order_type_ablation_artifact_present).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "retail_order_flow_segmentation_ssrn_6414558_2026",
+                "passed": order_type_ablation_artifact_present
+                if require_order_type_execution_quality
+                else True,
+            },
+            _numeric_check(
+                metric="order_type_ablation_sample_count",
+                observed=Decimal(order_type_ablation_sample_count),
+                operator="gte",
+                threshold=Decimal(policy.min_order_type_ablation_sample_count)
+                if require_order_type_execution_quality
+                else Decimal("0"),
+            ),
+            {
+                "metric": "market_limit_order_mix_evidence_present",
+                "observed": str(market_limit_order_mix_evidence_present).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "retail_limit_orders_rof_rfaf049_2025",
+                "passed": market_limit_order_mix_evidence_present
+                if require_order_type_execution_quality
+                else True,
+            },
+            {
+                "metric": "limit_fill_probability_evidence_present",
+                "observed": str(limit_fill_probability_evidence_present).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "rl_market_limit_execution_arxiv_2507_06345_2026",
+                "passed": limit_fill_probability_evidence_present
+                if require_order_type_execution_quality
+                else True,
+            },
+            {
+                "metric": "price_improvement_evidence_present",
+                "observed": str(price_improvement_evidence_present).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "retail_order_flow_segmentation_ssrn_6414558_2026",
+                "passed": price_improvement_evidence_present
+                if require_order_type_execution_quality
+                else True,
+            },
+            {
+                "metric": "opportunity_cost_evidence_present",
+                "observed": str(opportunity_cost_evidence_present).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "retail_limit_orders_rof_rfaf049_2025",
+                "passed": opportunity_cost_evidence_present
+                if require_order_type_execution_quality
+                else True,
+            },
+            {
+                "metric": "execution_shortfall_evidence_present",
+                "observed": str(execution_shortfall_evidence_present).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "retail_limit_orders_rof_rfaf049_2025",
+                "passed": execution_shortfall_evidence_present
+                if require_order_type_execution_quality
+                else True,
+            },
+            {
+                "metric": "route_tca_evidence_present",
+                "observed": str(route_tca_evidence_present).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "retail_order_flow_segmentation_ssrn_6414558_2026",
+                "passed": route_tca_evidence_present
+                if require_order_type_execution_quality
+                else True,
+            },
+            _numeric_check(
+                metric="order_type_opportunity_cost_bps",
+                observed=_decimal(
+                    scorecard.get("order_type_opportunity_cost_bps")
+                    or scorecard.get("market_limit_order_mix_opportunity_cost_bps"),
+                    default="999999",
+                ),
+                operator="lte",
+                threshold=policy.max_order_type_opportunity_cost_bps
+                if require_order_type_execution_quality
+                else Decimal("999999"),
+            ),
+            _numeric_check(
+                metric="market_order_spread_bps",
+                observed=_decimal(
+                    scorecard.get("market_order_spread_bps")
+                    or scorecard.get("market_limit_order_mix_market_spread_bps"),
+                    default="999999",
+                ),
+                operator="lte",
+                threshold=policy.max_market_order_spread_bps
+                if require_order_type_execution_quality
+                else Decimal("999999"),
+            ),
+        )
     )
     double_oos_artifact_refs = _artifact_refs(
         scorecard,
@@ -866,6 +1399,92 @@ def evaluate_profit_target_oracle(
             **double_oos_cost_shock_net_check,
             "source_marker": "double_oos_cost_sensitivity_arxiv_2602_10785_2026",
         }
+    )
+    require_rejected_signal_learning = _requires_rejected_signal_outcome_learning(
+        scorecard, policy
+    )
+    rejected_signal_labeled_count = _nonnegative_int(
+        scorecard.get("rejected_signal_outcome_labeled_count")
+        or scorecard.get("rejected_signal_outcome_label_count")
+        or scorecard.get("rejected_signal_outcome_labeled_event_count")
+    )
+    rejected_signal_pending_ratio = _decimal(
+        scorecard.get("rejected_signal_outcome_pending_ratio"), default="1"
+    )
+    rejected_signal_reason_coverage = _decimal(
+        scorecard.get("rejected_signal_reason_coverage")
+        or scorecard.get("rejected_signal_outcome_reason_coverage")
+    )
+    rejected_signal_persistence_state = _string(
+        scorecard.get("rejected_signal_outcome_persistence_state")
+        or scorecard.get("rejected_signal_persistence_state")
+    ).lower()
+    observed_counterfactual_fields = set(
+        _string_sequence(
+            scorecard.get("rejected_signal_counterfactual_fields")
+            or scorecard.get("rejected_signal_counterfactual_fields_present")
+            or scorecard.get("rejected_signal_outcome_counterfactual_fields")
+        )
+    )
+    if _boolish(scorecard.get("rejected_signal_counterfactual_fields_present")):
+        observed_counterfactual_fields.update(
+            policy.required_rejected_signal_counterfactual_fields
+        )
+    required_counterfactual_fields = set(
+        policy.required_rejected_signal_counterfactual_fields
+    )
+    checks.extend(
+        (
+            _numeric_check(
+                metric="rejected_signal_outcome_labeled_count",
+                observed=Decimal(rejected_signal_labeled_count),
+                operator="gte",
+                threshold=Decimal(policy.min_rejected_signal_outcome_label_count)
+                if require_rejected_signal_learning
+                else Decimal("0"),
+            ),
+            _numeric_check(
+                metric="rejected_signal_outcome_pending_ratio",
+                observed=rejected_signal_pending_ratio,
+                operator="lte",
+                threshold=policy.max_rejected_signal_outcome_pending_ratio
+                if require_rejected_signal_learning
+                else Decimal("1"),
+            ),
+            _numeric_check(
+                metric="rejected_signal_reason_coverage",
+                observed=rejected_signal_reason_coverage,
+                operator="gte",
+                threshold=policy.min_rejected_signal_reason_coverage
+                if require_rejected_signal_learning
+                else Decimal("0"),
+            ),
+            {
+                "metric": "rejected_signal_counterfactual_fields_present",
+                "observed": sorted(observed_counterfactual_fields),
+                "operator": "contains",
+                "threshold": sorted(required_counterfactual_fields),
+                "source_marker": "rejected_signal_outcome_calibration",
+                "passed": required_counterfactual_fields.issubset(
+                    observed_counterfactual_fields
+                )
+                if require_rejected_signal_learning
+                else True,
+            },
+            {
+                "metric": "rejected_signal_outcome_persistence_state",
+                "observed": rejected_signal_persistence_state,
+                "operator": "eq",
+                "threshold": policy.required_rejected_signal_outcome_persistence_state,
+                "source_marker": "rejected_signal_outcome_calibration",
+                "passed": (
+                    rejected_signal_persistence_state
+                    == policy.required_rejected_signal_outcome_persistence_state
+                )
+                if require_rejected_signal_learning
+                else True,
+            },
+        )
     )
     blockers = [
         f"{item['metric']}_failed" for item in checks if not bool(item["passed"])

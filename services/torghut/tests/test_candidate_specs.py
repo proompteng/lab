@@ -189,9 +189,13 @@ class TestCandidateSpecs(TestCase):
             hypothesis_cards=cards, target_net_pnl_per_day=Decimal("300")
         )
 
-        self.assertEqual(
+        self.assertIn(
+            "cluster_lob_event_clustering",
             specs[0].parameter_space["mechanism_overlay_ids"],
-            ["cluster_lob_event_clustering"],
+        )
+        self.assertIn(
+            "ofi_lob_continuation_response",
+            specs[0].parameter_space["mechanism_overlay_ids"],
         )
         self.assertEqual(
             specs[0].hard_vetoes["required_min_event_cluster_stability_score"],
@@ -241,6 +245,285 @@ class TestCandidateSpecs(TestCase):
         self.assertEqual(
             specs[0].promotion_contract["ranking_cost_model"],
             "post_cost_nonlinear_impact",
+        )
+
+    def test_lob_simulation_reality_gap_claim_adds_implementation_risk_overlay(
+        self,
+    ) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-lob-simulation-reality-gap",
+            claims=[
+                {
+                    "claim_id": "lob-simulation-benchmark-parity",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Limit order book simulation can expose stylized fillability "
+                        "and adverse-selection mechanisms only when calibrated against "
+                        "real LOB event streams and fill outcomes."
+                    ),
+                    "data_requirements": [
+                        "lob_event_stream",
+                        "fill_outcomes",
+                        "simulation_parity",
+                    ],
+                    "confidence": "0.82",
+                },
+                {
+                    "claim_id": "sim-to-live-reality-gap-validation",
+                    "claim_type": "risk_constraint",
+                    "claim_text": (
+                        "Simulation reality gaps require explicit live-paper parity "
+                        "metrics before simulated fillability can affect capital gates."
+                    ),
+                    "data_requirements": [
+                        "simulation_parity",
+                        "live_paper_parity",
+                        "adverse_selection_stress",
+                        "route_tca",
+                    ],
+                    "confidence": "0.80",
+                },
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+
+        self.assertIn(
+            "simulation_reality_gap_implementation_risk",
+            specs[0].parameter_space["mechanism_overlay_ids"],
+        )
+        self.assertTrue(specs[0].hard_vetoes["required_simulation_live_parity_metrics"])
+        self.assertEqual(
+            specs[0].hard_vetoes["required_min_simulation_parity_sample_count"],
+            "120",
+        )
+        self.assertTrue(
+            specs[0].promotion_contract[
+                "rejects_synthetic_lob_fillability_as_capital_gate"
+            ]
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["requires_implementation_uncertainty_stability"]
+        )
+
+    def test_implementation_risk_claim_adds_backtest_stability_overlay(
+        self,
+    ) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-implementation-risk-backtesting",
+            claims=[
+                {
+                    "claim_id": "implementation-risk-engine-sensitivity",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Implementation risk in portfolio backtesting creates engine "
+                        "sensitivity and implementation uncertainty intervals under "
+                        "nonzero transaction costs."
+                    ),
+                    "data_requirements": [
+                        "multi_engine_replay",
+                        "engine_sensitivity",
+                        "implementation_uncertainty_interval",
+                        "conclusion_stability",
+                        "transaction_cost_stress",
+                    ],
+                    "confidence": "0.80",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+
+        self.assertIn(
+            "implementation_risk_backtest_stability",
+            specs[0].parameter_space["mechanism_overlay_ids"],
+        )
+        self.assertTrue(specs[0].hard_vetoes["required_multi_engine_replay"])
+        self.assertEqual(
+            specs[0].hard_vetoes["required_min_implementation_uncertainty_model_count"],
+            "2",
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["rejects_single_engine_backtest_proof"]
+        )
+        self.assertTrue(
+            specs[0].promotion_contract[
+                "requires_implementation_risk_backtest_stability"
+            ]
+        )
+
+    def test_deployment_consistency_claim_adds_semantic_parity_overlay(
+        self,
+    ) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-finrl-x-deployment-consistency",
+            claims=[
+                {
+                    "claim_id": "weight-centric-unified-execution-protocol",
+                    "claim_type": "feature_recipe",
+                    "claim_text": (
+                        "FinRL-X uses a deployment-consistent weight-centric "
+                        "protocol so data processing, strategy construction, "
+                        "backtesting, and broker execution keep downstream "
+                        "execution semantics unchanged."
+                    ),
+                    "data_requirements": [
+                        "portfolio_weight_trace",
+                        "signal_payload_parity",
+                        "order_sizing_parity",
+                        "broker_execution_semantics",
+                    ],
+                    "confidence": "0.78",
+                },
+                {
+                    "claim_id": "replay-paper-live-semantic-parity-required",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Replay paper live semantic parity requires identical "
+                        "signal payloads, order sizing, route constraints, and "
+                        "portfolio risk overlays before promotion."
+                    ),
+                    "data_requirements": [
+                        "replay_paper_live_semantic_parity",
+                        "signal_payload_parity",
+                        "order_sizing_parity",
+                        "route_constraint_parity",
+                        "portfolio_risk_overlay_parity",
+                        "live_paper_parity",
+                    ],
+                    "confidence": "0.78",
+                },
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+
+        self.assertIn(
+            "replay_paper_live_semantic_parity",
+            specs[0].parameter_space["mechanism_overlay_ids"],
+        )
+        self.assertTrue(
+            specs[0].hard_vetoes["required_replay_paper_live_semantic_parity"]
+        )
+        self.assertTrue(specs[0].hard_vetoes["required_signal_payload_parity"])
+        self.assertEqual(
+            specs[0].hard_vetoes["required_adapter_behavior_drift_count"], "0"
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["rejects_adapter_only_execution_behavior"]
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["requires_broker_execution_semantics"]
+        )
+
+    def test_market_limit_execution_claim_adds_candidate_local_policy(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-market-limit-execution",
+            claims=[
+                {
+                    "claim_id": "mixed-market-limit-execution-policy",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Dynamic allocation between market and limit orders can improve "
+                        "execution revenue when spread, limit fill probability, order type "
+                        "ablation, price improvement, and opportunity cost are modeled."
+                    ),
+                    "data_requirements": [
+                        "market_limit_order_mix",
+                        "limit_fill_probability",
+                        "execution_shortfall",
+                        "order_type_ablation",
+                        "opportunity_cost",
+                        "price_improvement",
+                    ],
+                    "confidence": "0.74",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("300")
+        )
+
+        params = specs[0].strategy_overrides["params"]
+        self.assertEqual(params["entry_order_type"], "prefer_limit")
+        self.assertEqual(params["market_order_spread_bps_max"], "6")
+        self.assertIn(
+            "mixed_market_limit_execution_policy",
+            specs[0].parameter_space["mechanism_overlay_ids"],
+        )
+        self.assertTrue(specs[0].hard_vetoes["required_order_type_ablation_passed"])
+        self.assertEqual(
+            specs[0].hard_vetoes["required_min_order_type_ablation_sample_count"],
+            "60",
+        )
+        self.assertTrue(specs[0].hard_vetoes["required_price_improvement_evidence"])
+        self.assertTrue(specs[0].hard_vetoes["required_opportunity_cost_evidence"])
+        self.assertEqual(
+            specs[0].hard_vetoes["required_max_order_type_opportunity_cost_bps"],
+            "8",
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["requires_order_type_execution_quality"]
+        )
+        self.assertTrue(specs[0].promotion_contract["requires_order_type_ablation"])
+        self.assertTrue(specs[0].promotion_contract["requires_market_limit_order_mix"])
+
+    def test_intraday_volume_forecast_claim_adds_periodicity_capacity_contract(
+        self,
+    ) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-intraday-volume-forecast",
+            claims=[
+                {
+                    "claim_id": "intraday-volume-periodicity",
+                    "claim_type": "execution_assumption",
+                    "claim_text": (
+                        "Intraday volume forecasting and VWAP execution need "
+                        "u-shaped volume periodicity and clock-bucket capacity."
+                    ),
+                    "data_requirements": [
+                        "intraday_volume_forecast",
+                        "vwap",
+                        "route_tca",
+                    ],
+                    "confidence": "0.82",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+        first = specs[0]
+
+        self.assertIn(
+            "intraday_volume_periodicity_execution",
+            first.parameter_space["mechanism_overlay_ids"],
+        )
+        self.assertIn(
+            first.family_template_id,
+            {
+                "opening_drive_leader_reclaim_v1",
+                "late_day_continuation_v1",
+                "intraday_tsmom_v2",
+                "breakout_reclaim_v2",
+            },
+        )
+        self.assertTrue(first.hard_vetoes["required_intraday_volume_forecast"])
+        self.assertEqual(
+            first.hard_vetoes["required_min_volume_periodicity_capacity_ratio"],
+            "1.00",
+        )
+        self.assertTrue(first.promotion_contract["requires_clock_bucket_capacity"])
+        self.assertTrue(
+            first.promotion_contract["rejects_pooled_all_day_capacity_assumptions"]
         )
 
     def test_execution_delay_depth_claim_adds_delay_adjusted_stress_contract(
@@ -330,6 +613,165 @@ class TestCandidateSpecs(TestCase):
             specs[0].promotion_contract["rejects_ohlcv_only_promotion_evidence"]
         )
         self.assertTrue(specs[0].promotion_contract["requires_walk_forward_replay"])
+        self.assertEqual(
+            specs[0].hard_vetoes["required_min_ohlcv_falsification_trade_count"],
+            "120",
+        )
+        self.assertEqual(
+            specs[0].hard_vetoes["required_min_ohlcv_stable_split_pass_rate"],
+            "0.60",
+        )
+        self.assertTrue(specs[0].hard_vetoes["required_executable_quote_evidence"])
+        self.assertTrue(specs[0].promotion_contract["requires_minimum_trade_count"])
+        self.assertTrue(
+            specs[0].promotion_contract["rejects_naive_gross_ohlcv_backtests"]
+        )
+
+    def test_rejected_signal_claim_adds_counterfactual_outcome_contract(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-red-2400",
+            claims=[
+                {
+                    "claim_id": "rejection-event-outcome-labels",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Algorithmically rejected trading events with outcome labels "
+                        "turn rejected signal logs into counterfactual examples for "
+                        "veto calibration."
+                    ),
+                    "data_requirements": [
+                        "rejected_signal_log",
+                        "outcome_labels",
+                        "executable_quote",
+                    ],
+                    "confidence": "0.76",
+                },
+                {
+                    "claim_id": "counterfactual-reject-outcome-learning",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Rejected events require counterfactual return, route/TCA, "
+                        "and post-cost net PnL labels before relaxing vetoes."
+                    ),
+                    "data_requirements": [
+                        "rejected_signal_log",
+                        "counterfactual_return",
+                        "route_tca",
+                        "post_cost_net_pnl",
+                    ],
+                    "confidence": "0.76",
+                },
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("300")
+        )
+
+        self.assertIn(
+            "rejected_signal_outcome_calibration",
+            specs[0].parameter_space["mechanism_overlay_ids"],
+        )
+        self.assertEqual(
+            specs[0].hard_vetoes["required_min_rejected_signal_outcome_label_count"],
+            "120",
+        )
+        self.assertEqual(
+            specs[0].hard_vetoes["required_min_rejected_signal_reason_coverage"],
+            "0.80",
+        )
+        self.assertEqual(
+            specs[0].hard_vetoes["required_rejected_signal_outcome_persistence_state"],
+            "ok",
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["requires_rejected_signal_outcome_learning"]
+        )
+        self.assertTrue(
+            specs[0].promotion_contract[
+                "requires_rejected_signal_counterfactual_replay"
+            ]
+        )
+        self.assertTrue(
+            specs[0].promotion_contract[
+                "rejects_pending_rejected_signal_outcome_labels"
+            ]
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["rejects_unlabeled_reject_relaxation"]
+        )
+
+    def test_rejected_signal_claim_adds_false_negative_rescue_profiles(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-red-2400",
+            claims=[
+                {
+                    "claim_id": "rejection-event-outcome-labels",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Algorithmically rejected trading events with outcome labels "
+                        "turn skipped signal logs into counterfactual false-negative "
+                        "rescue examples for veto calibration."
+                    ),
+                    "data_requirements": [
+                        "rejected_signal_log",
+                        "outcome_labels",
+                        "executable_quote",
+                    ],
+                    "confidence": "0.76",
+                },
+                {
+                    "claim_id": "counterfactual-reject-outcome-learning",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Rejected events require counterfactual return, route/TCA, "
+                        "and post-cost net PnL labels before relaxing vetoes."
+                    ),
+                    "data_requirements": [
+                        "rejected_signal_log",
+                        "counterfactual_return",
+                        "route_tca",
+                        "post_cost_net_pnl",
+                    ],
+                    "confidence": "0.76",
+                },
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+        family_ids = {spec.family_template_id for spec in specs}
+        rescue_specs = [
+            spec
+            for spec in specs
+            if spec.strategy_overrides.get("params", {}).get("veto_relaxation_scope")
+            == "labeled_false_negative_only"
+        ]
+
+        self.assertEqual(
+            family_ids,
+            {
+                "microstructure_continuation_matched_filter_v1",
+                "microbar_cross_sectional_pairs_v1",
+                "opening_drive_leader_reclaim_v1",
+            },
+        )
+        self.assertTrue(rescue_specs)
+        self.assertTrue(
+            all(
+                spec.strategy_overrides["params"]["outcome_label_filter"]
+                == "profitable_after_costs"
+                for spec in rescue_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                Decimal(str(spec.strategy_overrides["max_notional_per_trade"]))
+                <= Decimal("30000")
+                for spec in rescue_specs
+            )
+        )
 
     def test_morning_momentum_claim_selects_opening_drive_family(self) -> None:
         cards = build_hypothesis_cards(
@@ -919,6 +1361,9 @@ class TestCandidateSpecs(TestCase):
                 "entry_minute_after_open": "not-a-decimal",
                 "exit_minute_after_open": "invalid",
                 "top_n": "2",
+                "gate_feature": "cross_section_positive_opening_window_return_from_prev_close_ratio",
+                "gate_min": "0.20",
+                "gate_max": "0.80",
             },
             "universe_symbols": ["NVDA", "AAPL"],
             "max_notional_per_trade": "90000",
@@ -939,8 +1384,28 @@ class TestCandidateSpecs(TestCase):
                 "consistency_guard_feedback_escape",
                 "turnover_coverage_feedback_escape",
                 "notional_throughput_feedback_escape",
+                "adverse_selection_feedback_escape",
                 "symbol_diversification_feedback_escape",
             ],
+        )
+        for next_profile in expanded:
+            self.assertNotIn("gate_feature", next_profile["params"])
+            self.assertNotIn("gate_min", next_profile["params"])
+            self.assertNotIn("gate_max", next_profile["params"])
+        notional = expanded[3]
+        self.assertGreaterEqual(
+            int(notional["params"]["max_entries_per_session"]),
+            10,
+        )
+        self.assertEqual(notional["params"]["entry_notional_max_multiplier"], "1.0")
+        adverse_selection = expanded[4]
+        self.assertEqual(
+            adverse_selection["params"]["feedback_remediation_profile"],
+            "adverse_selection_feedback_escape",
+        )
+        self.assertEqual(
+            adverse_selection["params"]["max_stop_loss_exits_per_session"],
+            "1",
         )
         diversified = expanded[-1]
         self.assertEqual(diversified["params"]["top_n"], "3")
@@ -1195,6 +1660,14 @@ class TestCandidateSpecs(TestCase):
         self.assertEqual(
             late_day.feature_contract["execution_profile"]["profile_id"],
             "late_day_continuation_v1:profile-1",
+        )
+        self.assertIn(
+            "macro_announcement_dvar_momentum",
+            late_day.parameter_space["mechanism_overlay_ids"],
+        )
+        self.assertTrue(late_day.hard_vetoes["required_event_non_event_holdout_replay"])
+        self.assertTrue(
+            late_day.promotion_contract["rejects_pooled_macro_and_non_macro_replay"]
         )
         params = late_day.strategy_overrides["params"]
         self.assertEqual(params["entry_start_minute_utc"], "1080")

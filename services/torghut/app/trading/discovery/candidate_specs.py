@@ -1167,6 +1167,129 @@ _FAMILY_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], ...]] = {
 
 _BASE_FAMILY_EXECUTION_PROFILES = _FAMILY_EXECUTION_PROFILES
 
+# RED-2400-style rejected-signal labels are most useful when they produce a
+# distinct replay surface instead of only attaching stricter validation gates to
+# the same weak profiles. These profiles stay on existing runtime features so a
+# replay can execute today, while tagging the intent as labeled false-negative
+# rescue for downstream feedback/ranking.
+_REJECTED_SIGNAL_FALSE_NEGATIVE_RESCUE_EXECUTION_PROFILES: dict[
+    str, tuple[dict[str, Any], ...]
+] = {
+    "microstructure_continuation_matched_filter_v1": (
+        {
+            "universe_symbols": list(
+                _PORTFOLIO_AI_ACCELERATOR_COVERAGE_UNIVERSE_PROFILE
+            ),
+            "max_position_pct_equity": "0.8",
+            "max_notional_per_trade": "25000",
+            "params": {
+                "signal_motif": "rejected_signal_false_negative_replay",
+                "outcome_label_filter": "profitable_after_costs",
+                "veto_relaxation_scope": "labeled_false_negative_only",
+                "min_cross_section_continuation_rank": "0.62",
+                "min_cross_section_opening_window_return_rank": "0.58",
+                "max_gross_exposure_pct_equity": "1.0",
+                "entry_notional_max_multiplier": "0.35",
+                "max_entries_per_session": "2",
+                "entry_cooldown_seconds": "900",
+                "leader_reclaim_start_minutes_since_open": "35",
+                "leader_reclaim_min_recent_imbalance_pressure": "0.08",
+                "leader_reclaim_min_recent_microprice_bias_bps": "0.16",
+                "leader_reclaim_min_recent_above_opening_window_close_ratio": "0.58",
+                "leader_reclaim_min_recent_above_vwap_w5m_ratio": "0.56",
+                "max_session_negative_exit_bps": "2",
+                "long_stop_loss_bps": "4",
+                "long_trailing_stop_activation_profit_bps": "5",
+                "long_trailing_stop_drawdown_bps": "2",
+            },
+        },
+        {
+            "universe_symbols": list(_PORTFOLIO_PLATFORM_COVERAGE_UNIVERSE_PROFILE),
+            "max_position_pct_equity": "0.8",
+            "max_notional_per_trade": "25000",
+            "params": {
+                "signal_motif": "rejected_signal_false_negative_replay",
+                "outcome_label_filter": "profitable_after_costs",
+                "veto_relaxation_scope": "labeled_false_negative_only",
+                "min_cross_section_continuation_rank": "0.54",
+                "min_cross_section_opening_window_return_rank": "0.48",
+                "max_gross_exposure_pct_equity": "1.0",
+                "entry_notional_max_multiplier": "0.35",
+                "max_entries_per_session": "2",
+                "entry_cooldown_seconds": "900",
+                "leader_reclaim_start_minutes_since_open": "25",
+                "leader_reclaim_min_recent_imbalance_pressure": "0.05",
+                "leader_reclaim_min_recent_microprice_bias_bps": "0.10",
+                "leader_reclaim_min_recent_above_opening_window_close_ratio": "0.52",
+                "leader_reclaim_min_recent_above_vwap_w5m_ratio": "0.50",
+                "max_session_negative_exit_bps": "2",
+                "long_stop_loss_bps": "4",
+                "long_trailing_stop_activation_profit_bps": "5",
+                "long_trailing_stop_drawdown_bps": "2",
+            },
+        },
+    ),
+    "opening_drive_leader_reclaim_v1": (
+        {
+            "universe_symbols": list(
+                _PORTFOLIO_AI_ACCELERATOR_COVERAGE_UNIVERSE_PROFILE
+            ),
+            "max_position_pct_equity": "0.8",
+            "max_notional_per_trade": "25000",
+            "params": {
+                "signal_motif": "rejected_signal_opening_drive_rescue",
+                "outcome_label_filter": "profitable_after_costs",
+                "veto_relaxation_scope": "labeled_false_negative_only",
+                "min_cross_section_continuation_rank": "0.60",
+                "min_cross_section_opening_window_return_rank": "0.56",
+                "max_gross_exposure_pct_equity": "1.0",
+                "entry_notional_max_multiplier": "0.35",
+                "max_entries_per_session": "2",
+                "entry_cooldown_seconds": "900",
+                "leader_reclaim_start_minutes_since_open": "20",
+                "leader_reclaim_min_recent_imbalance_pressure": "0.07",
+                "leader_reclaim_min_recent_microprice_bias_bps": "0.14",
+                "leader_reclaim_min_recent_above_opening_window_close_ratio": "0.56",
+                "leader_reclaim_min_recent_above_vwap_w5m_ratio": "0.54",
+                "max_session_negative_exit_bps": "2",
+                "long_stop_loss_bps": "4",
+                "long_trailing_stop_activation_profit_bps": "5",
+                "long_trailing_stop_drawdown_bps": "2",
+            },
+        },
+    ),
+    "microbar_cross_sectional_pairs_v1": (
+        {
+            "universe_symbols": list(_PORTFOLIO_PLATFORM_COVERAGE_UNIVERSE_PROFILE),
+            "normalization_regime": "market_neutral_gross_scaled",
+            "max_position_pct_equity": "0.8",
+            "max_notional_per_trade": "25000",
+            "params": {
+                "entry_minute_after_open": "60",
+                "exit_minute_after_open": "150",
+                "signal_motif": "rejected_signal_false_negative_replay",
+                "outcome_label_filter": "profitable_after_costs",
+                "veto_relaxation_scope": "labeled_false_negative_only",
+                "rank_feature": "cross_section_session_open_rank",
+                "selection_mode": "continuation",
+                "top_n": "1",
+                "min_cross_section_continuation_rank": "0.62",
+                "max_pair_legs": "1",
+                "max_gross_exposure_pct_equity": "1.0",
+                "max_entries_per_session": "2",
+                "entry_cooldown_seconds": "900",
+                "long_stop_loss_bps": "4",
+                "long_trailing_stop_activation_profit_bps": "5",
+                "long_trailing_stop_drawdown_bps": "2",
+                "max_hold_seconds": "2700",
+                "max_session_negative_exit_bps": "2",
+                "max_stop_loss_exits_per_session": "1",
+                "stop_loss_lockout_seconds": "2400",
+            },
+        },
+    ),
+}
+
 # These profiles broaden the portfolio-oracle research surface. They keep
 # notional and stop/session-loss controls tight while lowering entry thresholds
 # enough to test whether diversified sleeves can cover more trading days.
@@ -1388,6 +1511,7 @@ _PORTFOLIO_ORACLE_COVERAGE_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], .
             "max_position_pct_equity": "2.0",
             "max_notional_per_trade": "63180",
             "params": {
+                "signal_motif": "ofi_lob_response_continuation",
                 "min_cross_section_continuation_rank": "0.42",
                 "min_cross_section_opening_window_return_rank": "0.34",
                 "max_gross_exposure_pct_equity": "4.0",
@@ -1402,6 +1526,29 @@ _PORTFOLIO_ORACLE_COVERAGE_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], .
                 "max_session_negative_exit_bps": "3",
                 "long_stop_loss_bps": "4",
                 "long_trailing_stop_activation_profit_bps": "4",
+                "long_trailing_stop_drawdown_bps": "2",
+            },
+        },
+        {
+            "universe_symbols": list(_PORTFOLIO_PLATFORM_COVERAGE_UNIVERSE_PROFILE),
+            "max_position_pct_equity": "2.0",
+            "max_notional_per_trade": "63180",
+            "params": {
+                "signal_motif": "ofi_lob_response_continuation",
+                "min_cross_section_continuation_rank": "0.50",
+                "min_cross_section_opening_window_return_rank": "0.40",
+                "min_recent_imbalance_pressure": "0.03",
+                "min_recent_microprice_bias_bps": "0.08",
+                "min_recent_above_opening_window_close_ratio": "0.48",
+                "min_recent_above_vwap_w5m_ratio": "0.48",
+                "max_gross_exposure_pct_equity": "3.0",
+                "entry_notional_max_multiplier": "0.50",
+                "max_entries_per_session": "4",
+                "entry_cooldown_seconds": "300",
+                "max_hold_seconds": "900",
+                "max_session_negative_exit_bps": "3",
+                "long_stop_loss_bps": "5",
+                "long_trailing_stop_activation_profit_bps": "5",
                 "long_trailing_stop_drawdown_bps": "2",
             },
         },
@@ -1458,6 +1605,7 @@ _PORTFOLIO_ORACLE_COVERAGE_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], .
             "max_position_pct_equity": "2.0",
             "max_notional_per_trade": "63180",
             "params": {
+                "signal_motif": "opening_ofi_leader_reclaim_continuation",
                 "min_cross_section_continuation_rank": "0.42",
                 "min_cross_section_opening_window_return_rank": "0.38",
                 "max_gross_exposure_pct_equity": "3.0",
@@ -1472,6 +1620,31 @@ _PORTFOLIO_ORACLE_COVERAGE_EXECUTION_PROFILES: dict[str, tuple[dict[str, Any], .
                 "max_session_negative_exit_bps": "3",
                 "long_stop_loss_bps": "4",
                 "long_trailing_stop_activation_profit_bps": "4",
+                "long_trailing_stop_drawdown_bps": "2",
+            },
+        },
+        {
+            "universe_symbols": list(_PORTFOLIO_PLATFORM_COVERAGE_UNIVERSE_PROFILE),
+            "max_position_pct_equity": "2.0",
+            "max_notional_per_trade": "63180",
+            "params": {
+                "signal_motif": "opening_ofi_leader_reclaim_continuation",
+                "min_cross_section_continuation_rank": "0.50",
+                "min_cross_section_opening_window_return_rank": "0.40",
+                "max_gross_exposure_pct_equity": "3.0",
+                "entry_notional_max_multiplier": "0.50",
+                "max_entries_per_session": "4",
+                "entry_cooldown_seconds": "300",
+                "leader_reclaim_start_minutes_since_open": "10",
+                "leader_reclaim_min_recent_imbalance_pressure": "0.03",
+                "leader_reclaim_min_recent_microprice_bias_bps": "0.06",
+                "leader_reclaim_min_recent_above_opening_window_close_ratio": "0.48",
+                "leader_reclaim_min_recent_above_vwap_w5m_ratio": "0.46",
+                "min_recent_imbalance_pressure": "0.02",
+                "min_recent_microprice_bias_bps": "0.05",
+                "max_session_negative_exit_bps": "3",
+                "long_stop_loss_bps": "5",
+                "long_trailing_stop_activation_profit_bps": "5",
                 "long_trailing_stop_drawdown_bps": "2",
             },
         },
@@ -2411,11 +2584,22 @@ def _cash_constrain_profile(
     return profile
 
 
+def _drop_fragile_prev_close_positive_gate(params: dict[str, Any]) -> None:
+    if (
+        str(params.get("gate_feature") or "")
+        == "cross_section_positive_opening_window_return_from_prev_close_ratio"
+    ):
+        params.pop("gate_feature", None)
+        params.pop("gate_min", None)
+        params.pop("gate_max", None)
+
+
 def _daily_coverage_feedback_escape_profile(
     profile: Mapping[str, Any],
 ) -> dict[str, Any]:
     next_profile = json.loads(json.dumps(profile))
     params = _mapping(next_profile.get("params"))
+    _drop_fragile_prev_close_positive_gate(params)
     params["max_entries_per_session"] = str(
         max(2, min(4, _int_profile_param(params, "max_entries_per_session", default=2)))
     )
@@ -2453,6 +2637,7 @@ def _consistency_guard_feedback_escape_profile(
 ) -> dict[str, Any]:
     next_profile = json.loads(json.dumps(profile))
     params = _mapping(next_profile.get("params"))
+    _drop_fragile_prev_close_positive_gate(params)
     params["entry_cooldown_seconds"] = str(
         max(1200, _int_profile_param(params, "entry_cooldown_seconds", default=1200))
     )
@@ -2492,6 +2677,7 @@ def _turnover_coverage_feedback_escape_profile(
 ) -> dict[str, Any]:
     next_profile = json.loads(json.dumps(profile))
     params = _mapping(next_profile.get("params"))
+    _drop_fragile_prev_close_positive_gate(params)
     current_entries = _int_profile_param(params, "max_entries_per_session", default=3)
     params["max_entries_per_session"] = str(max(2, min(5, current_entries + 1)))
     params["max_concurrent_positions"] = str(
@@ -2529,8 +2715,10 @@ def _notional_throughput_feedback_escape_profile(
 ) -> dict[str, Any]:
     next_profile = json.loads(json.dumps(profile))
     params = _mapping(next_profile.get("params"))
+    _drop_fragile_prev_close_positive_gate(params)
     current_entries = _int_profile_param(params, "max_entries_per_session", default=4)
-    params["max_entries_per_session"] = str(max(8, min(12, current_entries + 6)))
+    params["max_entries_per_session"] = str(max(10, min(12, current_entries + 6)))
+    params["entry_notional_max_multiplier"] = "1.0"
     params["max_concurrent_positions"] = str(
         max(1, min(2, _profile_rank_count_floor(next_profile)))
     )
@@ -2632,11 +2820,153 @@ def _notional_throughput_feedback_escape_profile(
     )
 
 
+def _adverse_selection_feedback_escape_profile(
+    profile: Mapping[str, Any],
+) -> dict[str, Any]:
+    next_profile = json.loads(json.dumps(profile))
+    params = _mapping(next_profile.get("params"))
+    _drop_fragile_prev_close_positive_gate(params)
+    current_entries = _int_profile_param(params, "max_entries_per_session", default=4)
+    params["max_entries_per_session"] = str(max(10, min(12, current_entries + 6)))
+    params["entry_notional_max_multiplier"] = "1.0"
+    params["max_concurrent_positions"] = "1"
+    current_cooldown = _int_profile_param(params, "entry_cooldown_seconds", default=600)
+    params["entry_cooldown_seconds"] = str(max(600, min(1200, current_cooldown)))
+    current_hold_seconds = _int_profile_param(params, "max_hold_seconds", default=900)
+    params["max_hold_seconds"] = str(max(900, min(1800, current_hold_seconds)))
+    params["long_stop_loss_bps"] = str(
+        min(5, max(4, _int_profile_param(params, "long_stop_loss_bps", default=4)))
+    )
+    params["short_stop_loss_bps"] = str(
+        min(5, max(4, _int_profile_param(params, "short_stop_loss_bps", default=4)))
+    )
+    params["max_session_negative_exit_bps"] = str(
+        min(
+            4,
+            max(
+                2,
+                _int_profile_param(params, "max_session_negative_exit_bps", default=3),
+            ),
+        )
+    )
+    params["max_stop_loss_exits_per_session"] = "1"
+    params["stop_loss_lockout_seconds"] = str(
+        max(1800, _int_profile_param(params, "stop_loss_lockout_seconds", default=1800))
+    )
+    for key in (
+        "entry_minute_after_open",
+        "leader_reclaim_start_minutes_since_open",
+    ):
+        if key in params:
+            params[key] = str(
+                min(120, _int_profile_param(params, key, default=45) + 15)
+            )
+    if "entry_start_minute_utc" in params:
+        params["entry_start_minute_utc"] = str(
+            min(
+                1140,
+                _int_profile_param(params, "entry_start_minute_utc", default=840) + 15,
+            )
+        )
+    long_confirmation_steps = (
+        (
+            "min_cross_section_continuation_rank",
+            Decimal("0.08"),
+            Decimal("0.58"),
+            Decimal("0.92"),
+        ),
+        (
+            "min_cross_section_opening_window_return_rank",
+            Decimal("0.06"),
+            Decimal("0.52"),
+            Decimal("0.92"),
+        ),
+        (
+            "leader_reclaim_min_recent_imbalance_pressure",
+            Decimal("0.04"),
+            Decimal("0.04"),
+            Decimal("0.40"),
+        ),
+        (
+            "leader_reclaim_min_recent_microprice_bias_bps",
+            Decimal("0.12"),
+            Decimal("0.12"),
+            Decimal("0.80"),
+        ),
+        (
+            "min_recent_imbalance_pressure",
+            Decimal("0.04"),
+            Decimal("0.02"),
+            Decimal("0.40"),
+        ),
+        (
+            "min_recent_microprice_bias_bps",
+            Decimal("0.12"),
+            Decimal("0.10"),
+            Decimal("0.80"),
+        ),
+        (
+            "min_recent_above_opening_window_close_ratio",
+            Decimal("0.06"),
+            Decimal("0.58"),
+            Decimal("0.88"),
+        ),
+        (
+            "min_recent_above_vwap_w5m_ratio",
+            Decimal("0.06"),
+            Decimal("0.58"),
+            Decimal("0.88"),
+        ),
+    )
+    short_confirmation_steps = (
+        (
+            "max_recent_imbalance_pressure",
+            Decimal("-0.04"),
+            Decimal("-0.40"),
+            Decimal("-0.02"),
+        ),
+        (
+            "max_recent_microprice_bias_bps",
+            Decimal("-0.12"),
+            Decimal("-0.80"),
+            Decimal("-0.10"),
+        ),
+        (
+            "max_cross_section_continuation_rank",
+            Decimal("-0.06"),
+            Decimal("0.08"),
+            Decimal("0.55"),
+        ),
+    )
+    for key, delta, lower, upper in (
+        *long_confirmation_steps,
+        *short_confirmation_steps,
+    ):
+        if key not in params:
+            continue
+        params[key] = _clamped_profile_decimal(
+            params=params,
+            key=key,
+            default=Decimal(str(params[key])),
+            delta=delta,
+            lower=lower,
+            upper=upper,
+            places=Decimal("0.01"),
+        )
+    next_profile["params"] = params
+    return _cash_constrain_profile(
+        next_profile,
+        capital_profile="feedback_adverse_selection_cash_constrained_1x",
+        label="adverse_selection_feedback_escape",
+    )
+
+
 def _symbol_diversification_feedback_escape_profile(
     profile: Mapping[str, Any],
 ) -> dict[str, Any]:
     next_profile = json.loads(json.dumps(profile))
     params = _mapping(next_profile.get("params"))
+    _drop_fragile_prev_close_positive_gate(params)
     diversified_symbols: list[str] = []
     seen_symbols: set[str] = set()
     raw_symbols = next_profile.get("universe_symbols")
@@ -2724,6 +3054,7 @@ def _portfolio_feedback_escape_execution_profiles(
             _consistency_guard_feedback_escape_profile(profile),
             _turnover_coverage_feedback_escape_profile(profile),
             _notional_throughput_feedback_escape_profile(profile),
+            _adverse_selection_feedback_escape_profile(profile),
             _symbol_diversification_feedback_escape_profile(profile),
         ):
             key = _stable_hash(next_profile)
@@ -2786,6 +3117,26 @@ def _hypothesis_haystack(card: HypothesisCard) -> str:
             " ".join(card.source_claim_ids),
         ]
     ).lower()
+
+
+def _has_rejected_signal_outcome_calibration(card: HypothesisCard) -> bool:
+    haystack = _hypothesis_haystack(card)
+    return any(
+        token in haystack
+        for token in (
+            "rejected trading event",
+            "rejected event",
+            "rejected-event",
+            "rejected signal",
+            "rejected_signal",
+            "skipped signal",
+            "skipped-signal",
+            "counterfactual outcome",
+            "counterfactual return",
+            "outcome labels",
+            "outcome_labels",
+        )
+    )
 
 
 def _normalization_candidates_for_card(card: HypothesisCard) -> tuple[str, ...]:
@@ -2918,6 +3269,71 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
 
     if has_any(
         (
+            "market-versus-limit",
+            "market versus limit",
+            "market-vs-limit",
+            "market and limit orders",
+            "market limit order mix",
+            "market-versus-limit order mix",
+            "limit fill probability",
+            "execution shortfall",
+            "opportunity cost",
+            "order type ablation",
+            "price improvement",
+            "broker route quality",
+            "marketable limit",
+            "passive limit",
+            "patient limit order",
+            "dynamic allocation between market and limit",
+            "mixed-market-limit",
+            "mixed market limit",
+        )
+    ):
+        overlay_ids.append("mixed_market_limit_execution_policy")
+        overlay_contracts.append(
+            {
+                "overlay_id": "mixed_market_limit_execution_policy",
+                "required_evidence": [
+                    "market_limit_order_mix",
+                    "limit_fill_probability",
+                    "execution_shortfall",
+                    "order_type_ablation",
+                    "opportunity_cost",
+                    "price_improvement",
+                    "route_tca",
+                ],
+                "rank_metric": "post_cost_net_pnl_after_fill_adjusted_execution",
+                "evidence_policy": "market_limit_mix_requires_real_fill_evidence",
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_market_limit_order_mix_evidence": True,
+                "required_limit_fill_probability_evidence": True,
+                "required_order_type_ablation_passed": True,
+                "required_min_order_type_ablation_sample_count": "60",
+                "required_opportunity_cost_evidence": True,
+                "required_price_improvement_evidence": True,
+                "required_execution_shortfall_evidence": True,
+                "required_max_order_type_opportunity_cost_bps": "8",
+                "required_max_market_order_spread_bps": "8",
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_order_type_execution_quality": True,
+                "requires_order_type_ablation": True,
+                "requires_market_limit_order_mix": True,
+                "requires_limit_fill_probability": True,
+                "requires_execution_shortfall": True,
+                "requires_opportunity_cost": True,
+                "requires_price_improvement": True,
+                "execution_policy": "candidate_local_market_limit_mix",
+            }
+        )
+
+    if has_any(
+        (
             "nonlinear impact",
             "nonlinear_impact",
             "square-root",
@@ -2957,6 +3373,476 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
                 "requires_nonlinear_impact_curve": True,
                 "requires_impact_stress_replay": True,
                 "ranking_cost_model": "post_cost_nonlinear_impact",
+            }
+        )
+
+    if has_any(
+        (
+            "reality gap",
+            "simulation reality",
+            "sim-to-live",
+            "simulation-to-live",
+            "simulation parity",
+            "simulation_parity",
+            "synthetic lob",
+            "lob simulation",
+            "limit-order-book simulation",
+            "limit order book simulation",
+            "fill outcomes",
+            "fill_outcomes",
+            "adverse-selection",
+            "adverse selection",
+            "adverse_selection_stress",
+        )
+    ):
+        overlay_ids.append("simulation_reality_gap_implementation_risk")
+        overlay_contracts.append(
+            {
+                "overlay_id": "simulation_reality_gap_implementation_risk",
+                "required_evidence": [
+                    "simulation_live_parity_metrics",
+                    "lob_event_stream",
+                    "fill_outcomes",
+                    "route_tca",
+                    "live_paper_parity",
+                    "adverse_selection_stress",
+                    "replay_harness_implementation_trace",
+                ],
+                "rank_metric": (
+                    "post_cost_net_pnl_after_simulation_reality_gap_stress"
+                ),
+                "evidence_policy": (
+                    "synthetic_lob_fillability_requires_live_paper_parity"
+                ),
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_simulation_live_parity_metrics": True,
+                "required_lob_event_stream": True,
+                "required_fill_outcome_evidence": True,
+                "required_replay_harness_implementation_trace": True,
+                "required_min_simulation_parity_sample_count": "120",
+                "required_max_simulation_live_fill_error_bps": "8",
+                "required_max_adverse_selection_error_bps": "8",
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_simulation_live_parity_metrics": True,
+                "requires_lob_event_stream": True,
+                "requires_fill_outcomes": True,
+                "requires_route_tca": True,
+                "requires_live_paper_parity": True,
+                "requires_adverse_selection_stress": True,
+                "requires_replay_harness_implementation_trace": True,
+                "requires_implementation_uncertainty_stability": True,
+                "rejects_synthetic_lob_fillability_as_capital_gate": True,
+                "rejects_simulated_fillability_without_route_tca": True,
+            }
+        )
+
+    if has_any(
+        (
+            "implementation risk",
+            "implementation-risk",
+            "engine sensitivity",
+            "engine_sensitivity",
+            "implementation uncertainty",
+            "implementation_uncertainty_interval",
+            "conclusion stability",
+            "conclusion_stability",
+            "divergence amplification",
+            "divergence_amplification",
+            "multi-engine replay",
+            "multi_engine_replay",
+            "backtest engine",
+            "portfolio backtesting",
+        )
+    ):
+        overlay_ids.append("implementation_risk_backtest_stability")
+        overlay_contracts.append(
+            {
+                "overlay_id": "implementation_risk_backtest_stability",
+                "required_evidence": [
+                    "multi_engine_replay",
+                    "engine_sensitivity",
+                    "implementation_uncertainty_interval",
+                    "conclusion_stability",
+                    "transaction_cost_stress",
+                    "replay_harness_implementation_trace",
+                ],
+                "rank_metric": "implementation_uncertainty_lower_net_pnl_per_day",
+                "evidence_policy": (
+                    "promotion_requires_stable_conclusion_across_replay_engines"
+                ),
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_multi_engine_replay": True,
+                "required_min_implementation_uncertainty_model_count": "2",
+                "required_implementation_uncertainty_lower_bound_above_target": True,
+                "required_conclusion_stability_index": "1.00",
+                "required_replay_harness_implementation_trace": True,
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_implementation_uncertainty_stability": True,
+                "requires_implementation_risk_backtest_stability": True,
+                "requires_multi_engine_replay": True,
+                "requires_engine_sensitivity_report": True,
+                "requires_conclusion_stability": True,
+                "rejects_single_engine_backtest_proof": True,
+                "rejects_flat_cost_only_implementation_proof": True,
+            }
+        )
+
+    if has_any(
+        (
+            "finrl-x",
+            "finrl x",
+            "deployment-consistent",
+            "deployment consistent",
+            "deployment consistency",
+            "weight-centric",
+            "weight centric",
+            "broker execution",
+            "broker-integrated execution",
+            "backtesting and broker execution",
+            "data processing, strategy construction, backtesting",
+            "unified protocol",
+            "downstream execution semantics",
+            "replay paper live",
+            "replay-paper-live",
+            "signal payload parity",
+            "signal_payload_parity",
+            "order sizing parity",
+            "order_sizing_parity",
+            "route constraint parity",
+            "route_constraint_parity",
+            "broker_execution_semantics",
+            "portfolio risk overlay parity",
+            "portfolio_risk_overlay_parity",
+        )
+    ):
+        overlay_ids.append("replay_paper_live_semantic_parity")
+        overlay_contracts.append(
+            {
+                "overlay_id": "replay_paper_live_semantic_parity",
+                "required_evidence": [
+                    "signal_payload_parity",
+                    "order_sizing_parity",
+                    "route_constraint_parity",
+                    "broker_execution_semantics",
+                    "portfolio_weight_trace",
+                    "portfolio_risk_overlay_parity",
+                    "live_paper_parity",
+                    "replay_harness_implementation_trace",
+                ],
+                "rank_metric": "post_cost_net_pnl_after_semantic_parity",
+                "evidence_policy": (
+                    "promotion_requires_same_replay_paper_live_execution_semantics"
+                ),
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_replay_paper_live_semantic_parity": True,
+                "required_signal_payload_parity": True,
+                "required_order_sizing_parity": True,
+                "required_route_constraint_parity": True,
+                "required_broker_execution_semantics_trace": True,
+                "required_portfolio_risk_overlay_parity": True,
+                "required_replay_harness_implementation_trace": True,
+                "required_adapter_behavior_drift_count": "0",
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_replay_paper_live_semantic_parity": True,
+                "requires_signal_payload_parity": True,
+                "requires_order_sizing_parity": True,
+                "requires_route_constraint_parity": True,
+                "requires_broker_execution_semantics": True,
+                "requires_portfolio_risk_overlay_parity": True,
+                "requires_live_paper_parity": True,
+                "rejects_adapter_only_execution_behavior": True,
+                "rejects_backtest_only_strategy_protocol": True,
+            }
+        )
+
+    if has_any(
+        (
+            "intraday volume",
+            "volume forecasting",
+            "volume forecast",
+            "vwap",
+            "volume weighted average price",
+            "volume-weighted average price",
+            "u-shape",
+            "u shaped",
+            "u-shaped",
+            "volume periodicity",
+            "periodic volume",
+            "morning afternoon volume",
+            "execution schedule",
+        )
+    ):
+        overlay_ids.append("intraday_volume_periodicity_execution")
+        overlay_contracts.append(
+            {
+                "overlay_id": "intraday_volume_periodicity_execution",
+                "required_evidence": [
+                    "intraday_volume_forecast",
+                    "clock_bucket_vwap_tracking_error",
+                    "fillable_notional_by_clock_bucket",
+                    "route_tca",
+                ],
+                "rank_metric": "post_cost_net_pnl_after_volume_periodicity_capacity",
+                "evidence_policy": "capacity_must_follow_intraday_volume_profile",
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_intraday_volume_forecast": True,
+                "required_min_clock_bucket_capacity_sample_count": "60",
+                "required_max_vwap_tracking_error_bps": "12",
+                "required_min_volume_periodicity_capacity_ratio": "1.00",
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_intraday_volume_forecast": True,
+                "requires_clock_bucket_capacity": True,
+                "requires_vwap_tracking_error": True,
+                "requires_route_tca": True,
+                "rejects_pooled_all_day_capacity_assumptions": True,
+            }
+        )
+
+    if has_any(
+        (
+            "macro announcement",
+            "macro_announcement",
+            "macroeconomic announcement",
+            "macroeconomic news",
+            "macro news",
+            "public information",
+            "incremental information",
+            "dvar",
+            "difference in abnormal return variance",
+            "event/non-event",
+            "event non-event",
+        )
+    ):
+        overlay_ids.append("macro_announcement_dvar_momentum")
+        overlay_contracts.append(
+            {
+                "overlay_id": "macro_announcement_dvar_momentum",
+                "required_evidence": [
+                    "macro_announcement_calendar",
+                    "dvar_incremental_information",
+                    "event_non_event_holdout_replay",
+                    "relative_volume",
+                    "route_tca",
+                    "live_paper_parity",
+                ],
+                "rank_metric": "post_cost_net_pnl_after_macro_event_holdout",
+                "evidence_policy": "macro_momentum_requires_event_non_event_replay",
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_macro_announcement_calendar": True,
+                "required_dvar_incremental_information": True,
+                "required_event_non_event_holdout_replay": True,
+                "required_min_macro_event_window_count": "20",
+                "required_min_macro_non_event_holdout_count": "60",
+                "required_min_macro_event_split_pass_rate": "0.60",
+                "required_max_macro_event_best_day_share": "0.25",
+                "required_min_route_tca_sample_count": "60",
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_macro_announcement_calendar": True,
+                "requires_dvar_incremental_information": True,
+                "requires_event_non_event_holdout_replay": True,
+                "requires_relative_volume_confirmation": True,
+                "requires_route_tca": True,
+                "requires_live_paper_parity": True,
+                "rejects_pooled_macro_and_non_macro_replay": True,
+            }
+        )
+
+    if has_any(
+        (
+            "order-flow imbalance",
+            "order flow imbalance",
+            "order_flow_imbalance",
+            "ofi",
+            "ofi memory",
+            "ofi_memory",
+            "response-ratio",
+            "response ratio",
+            "lob response",
+            "lob_response",
+            "horizon-dependent",
+            "horizon dependent",
+        )
+    ):
+        overlay_ids.append("ofi_lob_continuation_response")
+        overlay_contracts.append(
+            {
+                "overlay_id": "ofi_lob_continuation_response",
+                "required_evidence": [
+                    "order_flow_imbalance",
+                    "microprice_bias",
+                    "forecast_horizon",
+                    "route_tca",
+                    "walk_forward_replay",
+                ],
+                "rank_metric": "post_cost_net_pnl_after_ofi_response_horizon",
+                "evidence_policy": "ofi_response_requires_executable_lob_or_quote_evidence",
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_min_ofi_response_sample_count": "120",
+                "required_min_ofi_response_stable_split_pass_rate": "0.60",
+                "required_max_ofi_response_best_split_share": "0.35",
+                "required_executable_quote_evidence": True,
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_ofi_response_horizon_selection": True,
+                "requires_executable_quote_evidence": True,
+                "requires_route_tca": True,
+                "rejects_ohlcv_only_ofi_proxies": True,
+            }
+        )
+
+    if has_any(
+        (
+            "order-flow filtration",
+            "order flow filtration",
+            "structural filters",
+            "structural filter",
+            "parent orders",
+            "parent order",
+            "parent_order",
+            "order lifetime",
+            "order_lifetime",
+            "modification count",
+            "modification timing",
+            "filtered obi",
+            "filtered orderbook imbalance",
+            "filtered_orderbook_imbalance",
+            "transient orders",
+        )
+    ):
+        overlay_ids.append("order_flow_filtration_parent_trade_obi")
+        overlay_contracts.append(
+            {
+                "overlay_id": "order_flow_filtration_parent_trade_obi",
+                "required_evidence": [
+                    "parent_order_trade_linkage",
+                    "order_lifetime_filter",
+                    "order_modification_count",
+                    "filtered_orderbook_imbalance",
+                    "route_tca",
+                    "walk_forward_replay",
+                ],
+                "rank_metric": "post_cost_net_pnl_after_filtered_parent_order_obi",
+                "evidence_policy": (
+                    "parent_trade_obi_requires_structural_order_filter_evidence"
+                ),
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_parent_order_trade_linkage": True,
+                "required_min_filtered_obi_sample_count": "120",
+                "required_min_filtered_obi_stable_split_pass_rate": "0.60",
+                "required_max_filtered_obi_best_split_share": "0.35",
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_parent_order_trade_linkage": True,
+                "requires_structural_order_flow_filters": True,
+                "requires_filtered_orderbook_imbalance_replay": True,
+                "rejects_unfiltered_obi_only_promotion": True,
+            }
+        )
+
+    if has_any(
+        (
+            "rejected trading event",
+            "rejected event",
+            "rejected-event",
+            "rejected signal",
+            "rejected_signal",
+            "skipped signal",
+            "skipped-signal",
+            "counterfactual training",
+            "counterfactual outcome",
+            "counterfactual return",
+            "outcome labels",
+            "outcome_labels",
+            "veto calibration",
+            "vetoes discard",
+            "discard profitable",
+        )
+    ):
+        overlay_ids.append("rejected_signal_outcome_calibration")
+        overlay_contracts.append(
+            {
+                "overlay_id": "rejected_signal_outcome_calibration",
+                "required_evidence": [
+                    "rejected_signal_log",
+                    "outcome_labels",
+                    "counterfactual_return",
+                    "route_tca",
+                    "post_cost_net_pnl",
+                    "executable_quote",
+                    "live_paper_parity",
+                ],
+                "rank_metric": "post_cost_net_pnl_after_rejected_signal_replay",
+                "evidence_policy": (
+                    "rejected_events_require_labeled_counterfactual_outcomes"
+                ),
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_min_rejected_signal_outcome_label_count": "120",
+                "required_min_rejected_signal_reason_coverage": "0.80",
+                "required_max_rejected_signal_outcome_pending_ratio": "0.05",
+                "required_rejected_signal_counterfactual_fields": [
+                    "counterfactual_return",
+                    "route_tca",
+                    "post_cost_net_pnl",
+                    "executable_quote",
+                ],
+                "required_rejected_signal_outcome_persistence_state": "ok",
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_rejected_signal_outcome_learning": True,
+                "requires_rejected_signal_outcome_labels": True,
+                "requires_rejected_signal_reason_coverage": True,
+                "requires_rejected_signal_counterfactual_replay": True,
+                "requires_counterfactual_executable_quote": True,
+                "requires_route_tca": True,
+                "requires_live_paper_parity": True,
+                "rejects_pending_rejected_signal_outcome_labels": True,
+                "rejects_unlabeled_reject_relaxation": True,
+                "promotion_impact": "repair_only_until_labeled",
             }
         )
 
@@ -3033,12 +3919,28 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
                 "evidence_policy": "ohlcv_only_is_falsification_not_promotion_proof",
             }
         )
+        hard_vetoes.update(
+            {
+                "required_min_ohlcv_falsification_trade_count": "120",
+                "required_min_ohlcv_walk_forward_split_count": "4",
+                "required_min_ohlcv_stable_split_pass_rate": "0.60",
+                "required_max_ohlcv_best_split_share": "0.35",
+                "required_min_route_tca_sample_count": "60",
+                "required_executable_quote_evidence": True,
+            }
+        )
         promotion_contract.update(
             {
                 "rejects_ohlcv_only_promotion_evidence": True,
                 "requires_walk_forward_replay": True,
                 "requires_executable_quote_evidence": True,
                 "requires_route_tca": True,
+                "requires_minimum_trade_count": True,
+                "requires_multi_year_stability_check": True,
+                "rejects_naive_gross_ohlcv_backtests": True,
+                "positive_control_policy": (
+                    "gap_continuation_only_until_post_cost_live_paper_proof"
+                ),
             }
         )
 
@@ -3054,6 +3956,27 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
         "hard_vetoes": hard_vetoes,
         "promotion_contract": promotion_contract,
     }
+
+
+def _apply_mechanism_overlay_strategy_params(
+    strategy_overrides: Mapping[str, Any],
+    mechanism_overlays: Mapping[str, Any],
+) -> dict[str, Any]:
+    overlay_ids = set(
+        _string_sequence(
+            _mapping(mechanism_overlays.get("parameter_space")).get(
+                "mechanism_overlay_ids"
+            )
+        )
+    )
+    if "mixed_market_limit_execution_policy" not in overlay_ids:
+        return dict(strategy_overrides)
+    next_overrides = dict(strategy_overrides)
+    params = _mapping(next_overrides.get("params"))
+    params.setdefault("entry_order_type", "prefer_limit")
+    params.setdefault("market_order_spread_bps_max", "6")
+    next_overrides["params"] = params
+    return next_overrides
 
 
 def _family_scores_for_hypothesis(
@@ -3108,6 +4031,10 @@ def _family_scores_for_hypothesis(
             "signed_order_flow",
             "core flow",
             "core_flow",
+            "filtered orderbook imbalance",
+            "filtered_orderbook_imbalance",
+            "parent order",
+            "parent_order",
         )
     ):
         bump("microbar_cross_sectional_pairs_v1", 5, "order_flow_or_lob_signal")
@@ -3115,6 +4042,44 @@ def _family_scores_for_hypothesis(
             "microstructure_continuation_matched_filter_v1",
             4,
             "order_flow_or_lob_signal",
+        )
+        bump(
+            "opening_drive_leader_reclaim_v1",
+            3,
+            "order_flow_or_lob_signal",
+        )
+    if has_any(
+        (
+            "rejected trading event",
+            "rejected event",
+            "rejected-event",
+            "rejected signal",
+            "rejected_signal",
+            "skipped signal",
+            "skipped-signal",
+            "counterfactual outcome",
+            "counterfactual return",
+            "outcome labels",
+            "outcome_labels",
+            "veto calibration",
+            "vetoes discard",
+            "discard profitable",
+        )
+    ):
+        bump(
+            "microstructure_continuation_matched_filter_v1",
+            6,
+            "rejected_signal_outcome_calibration",
+        )
+        bump(
+            "microbar_cross_sectional_pairs_v1",
+            4,
+            "rejected_signal_outcome_calibration",
+        )
+        bump(
+            "opening_drive_leader_reclaim_v1",
+            4,
+            "rejected_signal_outcome_calibration",
         )
     if has_any(
         (
@@ -3228,9 +4193,16 @@ def _family_scores_for_hypothesis(
             "ofi_memory",
             "response-ratio",
             "response ratio",
+            "macro news",
+            "macro-news",
+            "macroeconomic news",
+            "price-flow dynamics",
+            "price flow dynamics",
+            "flow impact",
+            "flow_impact",
         )
     ):
-        bump("intraday_tsmom_v2", 4, "volatility_or_regime_state")
+        bump("intraday_tsmom_v2", 6, "volatility_or_regime_state")
         bump("momentum_pullback_v1", 2, "volatility_or_regime_state")
         bump("opening_drive_leader_reclaim_v1", 2, "volatility_or_regime_state")
         bump(
@@ -3311,6 +4283,11 @@ def _family_scores_for_hypothesis(
         bump(
             "microstructure_continuation_matched_filter_v1",
             4,
+            "microprice_or_multi_level_order_book",
+        )
+        bump(
+            "opening_drive_leader_reclaim_v1",
+            3,
             "microprice_or_multi_level_order_book",
         )
         bump("breakout_reclaim_v2", 2, "microprice_or_multi_level_order_book")
@@ -3422,6 +4399,25 @@ def _family_scores_for_hypothesis(
     if has_any(("relative_volume", "relative volume", "turnover")):
         bump("intraday_tsmom_v2", 2, "relative_volume_or_turnover")
         bump("breakout_reclaim_v2", 2, "relative_volume_or_turnover")
+    if has_any(
+        (
+            "intraday volume",
+            "volume forecasting",
+            "volume forecast",
+            "volume periodicity",
+            "periodic volume",
+            "vwap",
+            "volume weighted average price",
+            "volume-weighted average price",
+            "u-shape",
+            "u shaped",
+            "u-shaped",
+        )
+    ):
+        bump("opening_drive_leader_reclaim_v1", 10, "volume_periodicity_execution")
+        bump("late_day_continuation_v1", 8, "volume_periodicity_execution")
+        bump("intraday_tsmom_v2", 7, "volume_periodicity_execution")
+        bump("breakout_reclaim_v2", 6, "volume_periodicity_execution")
 
     if not any(scores.values()):
         bump("microbar_cross_sectional_pairs_v1", 1, "default_executable_microbar")
@@ -3440,11 +4436,15 @@ def _families_for_hypothesis(
     card: HypothesisCard, *, target_net_pnl_per_day: Decimal = Decimal("300")
 ) -> tuple[tuple[str, int, tuple[str, ...]], ...]:
     scored = _family_scores_for_hypothesis(card)
-    family_limit = (
-        _PORTFOLIO_SLEEVE_FAMILY_TARGET
-        if target_net_pnl_per_day >= _PORTFOLIO_TARGET_NET_PNL_PER_DAY
-        else _MAX_FAMILIES_PER_HYPOTHESIS
-    )
+    rejected_signal_rescue = _has_rejected_signal_outcome_calibration(card)
+    if rejected_signal_rescue:
+        family_limit = _MAX_FAMILIES_PER_HYPOTHESIS
+    else:
+        family_limit = (
+            _PORTFOLIO_SLEEVE_FAMILY_TARGET
+            if target_net_pnl_per_day >= _PORTFOLIO_TARGET_NET_PNL_PER_DAY
+            else _MAX_FAMILIES_PER_HYPOTHESIS
+        )
     selected = list(scored[:family_limit])
     if family_limit <= _MAX_FAMILIES_PER_HYPOTHESIS:
         return tuple(selected)
@@ -3472,10 +4472,12 @@ def _execution_profile_index(
     family_template_id: str,
     family_rank: int,
     target_net_pnl_per_day: Decimal = Decimal("300"),
+    include_false_negative_rescue: bool = False,
 ) -> int:
     profiles = _execution_profiles_for_target(
         family_template_id=family_template_id,
         target_net_pnl_per_day=target_net_pnl_per_day,
+        include_false_negative_rescue=include_false_negative_rescue,
     )
     profile_count = len(profiles) if profiles else _DEFAULT_PROFILE_COUNT
     explicit_profile = card.implementation_constraints.get("execution_profile_index")
@@ -3503,10 +4505,12 @@ def _execution_profile_indexes(
     family_template_id: str,
     family_rank: int,
     target_net_pnl_per_day: Decimal = Decimal("300"),
+    include_false_negative_rescue: bool = False,
 ) -> tuple[int, ...]:
     profiles = _execution_profiles_for_target(
         family_template_id=family_template_id,
         target_net_pnl_per_day=target_net_pnl_per_day,
+        include_false_negative_rescue=include_false_negative_rescue,
     )
     profile_count = len(profiles) if profiles else _DEFAULT_PROFILE_COUNT
     explicit_profile = card.implementation_constraints.get("execution_profile_index")
@@ -3517,6 +4521,7 @@ def _execution_profile_indexes(
                 family_template_id=family_template_id,
                 family_rank=family_rank,
                 target_net_pnl_per_day=target_net_pnl_per_day,
+                include_false_negative_rescue=include_false_negative_rescue,
             ),
         )
     return tuple(range(profile_count))
@@ -3530,6 +4535,7 @@ def _execution_profiles_for_target(
     *,
     family_template_id: str,
     target_net_pnl_per_day: Decimal = Decimal("300"),
+    include_false_negative_rescue: bool = False,
 ) -> tuple[dict[str, Any], ...]:
     base_profiles = _BASE_FAMILY_EXECUTION_PROFILES.get(family_template_id, ())
     if target_net_pnl_per_day < _PORTFOLIO_TARGET_NET_PNL_PER_DAY:
@@ -3537,7 +4543,18 @@ def _execution_profiles_for_target(
     portfolio_profiles = _PORTFOLIO_ORACLE_COVERAGE_EXECUTION_PROFILES.get(
         family_template_id, ()
     )
-    exploratory_profiles = (*base_profiles, *portfolio_profiles)
+    rejected_signal_rescue_profiles = (
+        _REJECTED_SIGNAL_FALSE_NEGATIVE_RESCUE_EXECUTION_PROFILES.get(
+            family_template_id, ()
+        )
+        if include_false_negative_rescue
+        else ()
+    )
+    exploratory_profiles = (
+        *rejected_signal_rescue_profiles,
+        *base_profiles,
+        *portfolio_profiles,
+    )
     capital_constrained_profiles = _capital_constrained_execution_profiles(
         exploratory_profiles
     )
@@ -3556,10 +4573,12 @@ def _strategy_overrides_for_profile(
     family_template_id: str,
     profile_index: int,
     target_net_pnl_per_day: Decimal = Decimal("300"),
+    include_false_negative_rescue: bool = False,
 ) -> dict[str, Any]:
     profiles = _execution_profiles_for_target(
         family_template_id=family_template_id,
         target_net_pnl_per_day=target_net_pnl_per_day,
+        include_false_negative_rescue=include_false_negative_rescue,
     )
     if not profiles:
         return {
@@ -3654,6 +4673,7 @@ def compile_candidate_specs(
     specs: list[CandidateSpec] = []
     explicit_universe_symbols = _universe_symbol_override(universe_symbols)
     for card in hypothesis_cards:
+        include_false_negative_rescue = _has_rejected_signal_outcome_calibration(card)
         for family_rank, (
             family_template_id,
             family_score,
@@ -3670,6 +4690,7 @@ def compile_candidate_specs(
                 family_template_id=family_template_id,
                 family_rank=family_rank,
                 target_net_pnl_per_day=target_net_pnl_per_day,
+                include_false_negative_rescue=include_false_negative_rescue,
             ):
                 execution_profile_id = _execution_profile_id(
                     family_template_id=family_template_id,
@@ -3679,6 +4700,7 @@ def compile_candidate_specs(
                     family_template_id=family_template_id,
                     profile_index=execution_profile_index,
                     target_net_pnl_per_day=target_net_pnl_per_day,
+                    include_false_negative_rescue=include_false_negative_rescue,
                 )
                 if explicit_universe_symbols:
                     strategy_overrides = {
@@ -3778,6 +4800,10 @@ def compile_candidate_specs(
                         }
                     )
                 mechanism_overlays = _mechanism_overlays_for_card(card)
+                strategy_overrides = _apply_mechanism_overlay_strategy_params(
+                    strategy_overrides,
+                    mechanism_overlays,
+                )
                 feature_contract.update(
                     _mapping(mechanism_overlays.get("feature_contract"))
                 )

@@ -35,8 +35,10 @@ FEATURE_ALIASES = {
     "relative_volume": "turnover",
     "clustered_order_events": "order_flow_imbalance",
     "depth_proxy": "quote_quality",
+    "depth_state": "quote_quality",
     "execution_shortfall": "transaction_cost_stress",
     "order_arrival_clustering": "information_arrival_rate",
+    "order_arrival_intensity": "information_arrival_rate",
     "volatility_state": "realized_volatility",
     "spread_bps": "max_spread_bps",
     "executed_trade_obi": "order_flow_imbalance",
@@ -68,12 +70,18 @@ FEATURE_ALIASES = {
     "fill_outcomes": "transaction_cost_stress",
     "fill_side_vector": "order_flow_imbalance",
     "gamma_exposure": "realized_volatility",
+    "gap_velocity": "opening_drive_bps",
     "hazard_rate": "information_arrival_rate",
     "historical_replay": "transaction_cost_stress",
     "hurst_regime": "realized_volatility",
     "impact_lambda_estimate": "transaction_cost_stress",
     "informed_flow_score": "order_flow_imbalance",
     "ingestion_delay": "transaction_cost_stress",
+    "engine_sensitivity": "transaction_cost_stress",
+    "implementation_uncertainty_interval": "transaction_cost_stress",
+    "conclusion_stability": "transaction_cost_stress",
+    "divergence_amplification": "transaction_cost_stress",
+    "multi_engine_replay": "transaction_cost_stress",
     "inventory_path": "transaction_cost_stress",
     "kyle_lambda": "transaction_cost_stress",
     "latency_stress": "transaction_cost_stress",
@@ -83,6 +91,13 @@ FEATURE_ALIASES = {
     "liquidity_state_fragility": "quote_quality",
     "limit_fill_probability": "quote_quality",
     "live_paper_parity": "transaction_cost_stress",
+    "replay_paper_live_semantic_parity": "transaction_cost_stress",
+    "signal_payload_parity": "transaction_cost_stress",
+    "order_sizing_parity": "transaction_cost_stress",
+    "route_constraint_parity": "transaction_cost_stress",
+    "broker_execution_semantics": "transaction_cost_stress",
+    "portfolio_weight_trace": "turnover",
+    "portfolio_risk_overlay_parity": "volatility_shock_veto",
     "lob_event_stream": "order_flow_imbalance",
     "lob_diffusion_event_stream": "order_flow_imbalance",
     "logistic_normal_execution_policy": "transaction_cost_stress",
@@ -95,14 +110,23 @@ FEATURE_ALIASES = {
     "notional_tier": "turnover",
     "option_flow": "information_arrival_rate",
     "ofi_memory_state": "information_arrival_rate",
+    "opportunity_cost": "transaction_cost_stress",
+    "order_type_ablation": "transaction_cost_stress",
+    "order_lifetime_filter": "quote_quality",
+    "order_modification_count": "quote_quality",
     "order_flow_entropy": "realized_volatility",
     "orderbook_imbalance": "order_flow_imbalance",
     "orderbook_slope": "order_flow_imbalance",
     "outcome_labels": "transaction_cost_stress",
     "passive_buy_toxicity": "transaction_cost_stress",
+    "parent_order_trade_linkage": "order_flow_imbalance",
     "post_cost_net_pnl": "transaction_cost_stress",
     "portfolio_replay": "transaction_cost_stress",
     "price_improvement": "transaction_cost_stress",
+    "price_flow_impact": "order_flow_imbalance",
+    "flow_impact_decay": "information_arrival_rate",
+    "filtered_orderbook_imbalance": "order_flow_imbalance",
+    "event_time_excitation": "information_arrival_rate",
     "price_flow_covariance": "order_flow_imbalance",
     "portable_lob_feature_stability": "cross_section_continuation_breadth",
     "put_call_disparity": "realized_volatility",
@@ -116,6 +140,7 @@ FEATURE_ALIASES = {
     "simulation_parity": "transaction_cost_stress",
     "signed_order_flow": "order_flow_imbalance",
     "skip_step_sampling": "transaction_cost_stress",
+    "state_dependent_hawkes_intensity": "information_arrival_rate",
     "symbol_flow": "order_flow_imbalance",
     "nonlinear_impact_curve": "transaction_cost_stress",
     "synthetic_lob_fill_parity": "transaction_cost_stress",
@@ -192,17 +217,27 @@ def _load_family_template(
     return {str(key): item for key, item in cast(Mapping[Any, Any], payload).items()}
 
 
-def _family_feature_catalog(family_template_dir: Path | None) -> set[str]:
+def _family_template_catalog(
+    family_template_dir: Path | None,
+) -> dict[str, Mapping[str, Any]]:
     if family_template_dir is None or not family_template_dir.exists():
-        return set()
-    features: set[str] = set()
+        return {}
+    templates: dict[str, Mapping[str, Any]] = {}
     for path in family_template_dir.glob("*.yaml"):
         payload = yaml.safe_load(path.read_text(encoding="utf-8"))
         if not isinstance(payload, Mapping):
             continue
-        family_payload = {
+        templates[path.stem] = {
             str(key): item for key, item in cast(Mapping[Any, Any], payload).items()
         }
+    return templates
+
+
+def _family_feature_catalog_from_templates(
+    family_templates: Mapping[str, Mapping[str, Any]],
+) -> set[str]:
+    features: set[str] = set()
+    for family_payload in family_templates.values():
         features.update(_sequence_strings(family_payload.get("required_features")))
         features.update(_sequence_strings(family_payload.get("risk_controls")))
         liquidity = family_payload.get("liquidity_assumptions")
@@ -211,6 +246,28 @@ def _family_feature_catalog(family_template_dir: Path | None) -> set[str]:
         else:
             features.update(_sequence_strings(liquidity))
     return features
+
+
+def _family_feature_catalog(family_template_dir: Path | None) -> set[str]:
+    return _family_feature_catalog_from_templates(
+        _family_template_catalog(family_template_dir)
+    )
+
+
+def _seed_sweep_family_ids(seed_sweep_dir: Path | None) -> set[str]:
+    if seed_sweep_dir is None or not seed_sweep_dir.exists():
+        return set()
+    family_ids: set[str] = set()
+    for path in sorted(seed_sweep_dir.glob("profitability-frontier-*.yaml")):
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, Mapping):
+            continue
+        family_template_id = str(
+            cast(Mapping[Any, Any], payload).get("family_template_id") or ""
+        ).strip()
+        if family_template_id:
+            family_ids.add(family_template_id)
+    return family_ids
 
 
 def _seed_sweep_config_path(
@@ -255,15 +312,108 @@ def _mapping_sequence(value: Any) -> tuple[dict[str, Any], ...]:
     return tuple(resolved)
 
 
+def _source_claims_by_id(spec: CandidateSpec) -> dict[str, dict[str, Any]]:
+    claims = _mapping_sequence(spec.feature_contract.get("source_claims"))
+    return {str(claim.get("claim_id") or ""): claim for claim in claims}
+
+
+def _claim_type(claim: Mapping[str, Any] | None) -> str:
+    if not claim:
+        return ""
+    return str(claim.get("claim_type") or "").strip().lower()
+
+
+def _claim_haystack(*claims: Mapping[str, Any] | None) -> str:
+    chunks: list[str] = []
+    for claim in claims:
+        if not claim:
+            continue
+        chunks.extend(
+            [
+                str(claim.get("claim_id") or ""),
+                str(claim.get("claim_type") or ""),
+                str(claim.get("claim_text") or ""),
+                " ".join(_sequence_strings(claim.get("data_requirements"))),
+                str(claim.get("asset_scope") or ""),
+                str(claim.get("horizon_scope") or ""),
+            ]
+        )
+    return " ".join(chunks).lower()
+
+
+def _is_simulation_reality_gap_validation_relation(
+    relation: Mapping[str, Any], spec: CandidateSpec
+) -> bool:
+    if str(relation.get("relation_type") or "").strip().lower() != "invalidates":
+        return False
+    claims_by_id = _source_claims_by_id(spec)
+    source_claim = claims_by_id.get(str(relation.get("source_claim_id") or ""))
+    target_claim = claims_by_id.get(str(relation.get("target_claim_id") or ""))
+    source_type = _claim_type(source_claim)
+    target_type = _claim_type(target_claim)
+    if source_type not in {
+        "execution_assumption",
+        "market_regime",
+        "risk_constraint",
+        "validation_requirement",
+    }:
+        return False
+    if target_type not in {
+        "feature_recipe",
+        "normalization_rule",
+        "signal_mechanism",
+    }:
+        return False
+    haystack = " ".join(
+        (
+            _claim_haystack(source_claim, target_claim),
+            str(relation.get("relation_id") or ""),
+            str(relation.get("rationale") or ""),
+            " ".join(
+                str(item)
+                for item in spec.parameter_space.get("mechanism_overlay_ids", [])
+            ),
+        )
+    ).lower()
+    return any(
+        token in haystack
+        for token in (
+            "reality gap",
+            "simulation reality",
+            "sim-to-live",
+            "simulation-to-live",
+            "simulation parity",
+            "simulation_parity",
+            "synthetic lob",
+            "lob simulation",
+            "limit-order-book simulation",
+            "limit order book simulation",
+            "fill outcomes",
+            "fill_outcomes",
+            "adverse-selection",
+            "adverse selection",
+            "simulation_reality_gap_implementation_risk",
+        )
+    )
+
+
 def _blockers_for_spec(
     spec: CandidateSpec,
     *,
     family_template_dir: Path | None,
     seed_sweep_dir: Path | None,
+    family_templates: Mapping[str, Mapping[str, Any]] | None = None,
+    feature_catalog: set[str] | None = None,
+    seed_sweep_family_ids: set[str] | None = None,
 ) -> tuple[CandidateCompilationBlocker, ...]:
     blockers: list[CandidateCompilationBlocker] = []
     claim_relation_blockers = _mapping_sequence(
         spec.feature_contract.get("claim_relation_blockers")
+    )
+    claim_relation_blockers = tuple(
+        relation
+        for relation in claim_relation_blockers
+        if not _is_simulation_reality_gap_validation_relation(relation, spec)
     )
     if claim_relation_blockers:
         blockers.append(
@@ -293,8 +443,12 @@ def _blockers_for_spec(
             )
         )
 
-    family_template = _load_family_template(
-        spec.family_template_id, family_template_dir=family_template_dir
+    family_template = (
+        family_templates.get(spec.family_template_id, {})
+        if family_templates is not None
+        else _load_family_template(
+            spec.family_template_id, family_template_dir=family_template_dir
+        )
     )
     if family_template_dir is not None and not family_template:
         blockers.append(
@@ -313,13 +467,15 @@ def _blockers_for_spec(
                 detail={"family_template_id": spec.family_template_id},
             )
         )
-    if (
-        seed_sweep_dir is not None
-        and _seed_sweep_config_path(
+    seed_sweep_present = (
+        spec.family_template_id in seed_sweep_family_ids
+        if seed_sweep_family_ids is not None
+        else _seed_sweep_config_path(
             spec.family_template_id, seed_sweep_dir=seed_sweep_dir
         )
-        is None
-    ):
+        is not None
+    )
+    if seed_sweep_dir is not None and not seed_sweep_present:
         blockers.append(
             CandidateCompilationBlocker(
                 candidate_spec_id=spec.candidate_spec_id,
@@ -335,8 +491,12 @@ def _blockers_for_spec(
         FEATURE_ALIASES.get(feature, feature)
         for feature in _sequence_strings(spec.feature_contract.get("required_features"))
     }
-    feature_catalog = _family_feature_catalog(family_template_dir)
-    missing_features = sorted(required_features - feature_catalog)
+    resolved_feature_catalog = (
+        feature_catalog
+        if feature_catalog is not None
+        else _family_feature_catalog(family_template_dir)
+    )
+    missing_features = sorted(required_features - resolved_feature_catalog)
     if family_template_dir is not None and missing_features:
         blockers.append(
             CandidateCompilationBlocker(
@@ -389,11 +549,17 @@ def compile_whitepaper_candidate_specs(
     blockers: list[CandidateCompilationBlocker] = []
     executable_specs: list[CandidateSpec] = []
     blocked_specs: list[CandidateSpec] = []
+    family_templates = _family_template_catalog(family_template_dir)
+    feature_catalog = _family_feature_catalog_from_templates(family_templates)
+    seed_sweep_family_ids = _seed_sweep_family_ids(seed_sweep_dir)
     for spec in candidate_specs:
         spec_blockers = _blockers_for_spec(
             spec,
             family_template_dir=family_template_dir,
             seed_sweep_dir=seed_sweep_dir,
+            family_templates=family_templates,
+            feature_catalog=feature_catalog,
+            seed_sweep_family_ids=seed_sweep_family_ids,
         )
         blockers.extend(spec_blockers)
         if spec_blockers:

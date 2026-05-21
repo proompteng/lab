@@ -377,3 +377,43 @@ def test_all_receipts_must_settle_before_accepting_routeable_candidates() -> Non
     assert ledger["aggregate_state"] == "accepted"
     assert ledger["accepted_routeable_candidate_count"] == 1
     assert ledger["summary"]["accepted_lot_count"] == 7
+
+
+def test_blocked_autoresearch_portfolios_keep_promotion_repair_unsettled() -> None:
+    ledger = _ledger(
+        consumer_evidence_receipt={
+            "receipt_id": "torghut-consumer-evidence:autoresearch-blocked",
+            "fresh_until": "2026-05-08T12:33:00+00:00",
+            "forecast_registry_state": "ready",
+            "reason_codes": [],
+        },
+        quality_adjusted_profit_frontier={
+            "frontier_id": "quality-frontier:autoresearch-blocked",
+            "blocked_capital_surfaces": [
+                "autoresearch_portfolio_ready_empty",
+                "autoresearch_portfolio_candidates_blocked",
+            ],
+        },
+        live_submission_gate={
+            "allowed": True,
+            "reason": "ready",
+            "blocked_reasons": [],
+            "profit_lease_projection": {
+                "blocking_reason_codes": [
+                    "autoresearch_portfolio_ready_empty",
+                    "autoresearch_portfolio_candidates_blocked",
+                ],
+                "leases": [],
+            },
+        },
+    )
+
+    promotion_lot = _lot(ledger, "forecast_and_promotion_repair")
+
+    assert ledger["accepted_routeable_candidate_count"] == 0
+    assert promotion_lot["current_state"] == "missing"
+    assert "autoresearch_portfolio_ready_empty" in promotion_lot["blocking_reason_codes"]
+    assert (
+        "autoresearch_portfolio_candidates_blocked"
+        in promotion_lot["blocking_reason_codes"]
+    )

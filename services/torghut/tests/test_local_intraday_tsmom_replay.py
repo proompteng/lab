@@ -29,9 +29,12 @@ from scripts.local_intraday_tsmom_replay import (
     _apply_order_preferences,
     _build_near_miss,
     _decision_exit_reason,
+    _decision_market_order_spread_bps_max,
     _decision_position_owner,
+    _decision_spread_bps,
     _fetch_chunk,
     _flatten_positions,
+    _http_query,
     _init_funnel_stats,
     _insert_near_miss,
     _load_strategies,
@@ -46,6 +49,7 @@ from scripts.local_intraday_tsmom_replay import (
     _should_replace_pending_order,
     _signal_mid_jump_bps,
     _signal_spread_bps,
+    _kubectl_clickhouse_query,
     main as replay_main,
     run_replay,
 )
@@ -83,6 +87,52 @@ class TestLocalIntradayTsmomReplay(TestCase):
         self.assertEqual(
             _decision_position_owner(decision, force_position_isolation=True),
             "candidate-strategy-1",
+        )
+
+    def test_kubectl_clickhouse_query_validates_target_and_reports_failure(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(RuntimeError, "clickhouse_kubectl_url_invalid"):
+            _kubectl_clickhouse_query(
+                url="kubectl://galactic-lan/torghut",
+                username="torghut",
+                password="secret",
+                query="SELECT 1",
+            )
+
+        with patch(
+            "scripts.local_intraday_tsmom_replay.subprocess.run",
+            return_value=Namespace(returncode=1, stdout="", stderr="denied"),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError, "clickhouse_kubectl_query_failed: denied"
+            ):
+                _kubectl_clickhouse_query(
+                    url="kubectl://galactic-lan/torghut/clickhouse-0",
+                    username="torghut",
+                    password="secret",
+                    query="SELECT 1",
+                )
+
+    def test_execution_spread_helpers_fall_back_on_invalid_payloads(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="candidate-strategy-1",
+            symbol="META",
+            event_ts=datetime(2026, 3, 27, 17, 30, 3, tzinfo=timezone.utc),
+            timeframe="1Sec",
+            action="buy",
+            qty=Decimal("1"),
+            order_type="market",
+            time_in_force="day",
+            params={
+                "market_order_spread_bps_max": "not-a-decimal",
+                "execution_features": {"spread_bps": "not-a-decimal"},
+            },
+        )
+
+        self.assertEqual(_decision_market_order_spread_bps_max(decision), Decimal("12"))
+        self.assertIsNone(
+            _decision_spread_bps(decision, price=Decimal("0"), spread=Decimal("1"))
         )
 
     def test_load_strategies_rejects_invalid_configmap_shapes(self) -> None:
@@ -161,6 +211,46 @@ class TestLocalIntradayTsmomReplay(TestCase):
 
         self.assertEqual([row.symbol for row in rows], ["META"])
         self.assertIn("s.symbol IN ('META', 'NVDA')", captured_queries[0])
+
+    def test_http_query_supports_kubectl_clickhouse_transport(self) -> None:
+        completed = type(
+            "Completed",
+            (),
+            {
+                "returncode": 0,
+                "stdout": "2026-05-18\n",
+                "stderr": "",
+            },
+        )()
+
+        with patch(
+            "scripts.local_intraday_tsmom_replay.subprocess.run",
+            return_value=completed,
+        ) as run_mock:
+            output = _http_query(
+                url="kubectl://galactic-lan/torghut/chi-torghut-clickhouse-default-0-0-0",
+                username="torghut",
+                password="secret",
+                query="SELECT 1 FORMAT TSVRaw",
+            )
+
+        self.assertEqual(output, "2026-05-18\n")
+        cmd = run_mock.call_args.args[0]
+        self.assertEqual(
+            cmd[:7],
+            [
+                "kubectl",
+                "--context",
+                "galactic-lan",
+                "exec",
+                "-n",
+                "torghut",
+                "chi-torghut-clickhouse-default-0-0-0",
+            ],
+        )
+        self.assertIn("--user", cmd)
+        self.assertIn("torghut", cmd)
+        self.assertEqual(cmd[-2:], ["--query", "SELECT 1 FORMAT TSVRaw"])
 
     def _decision(
         self,
@@ -585,6 +675,121 @@ class TestLocalIntradayTsmomReplay(TestCase):
 
         self.assertEqual(updated.order_type, "market")
         self.assertIsNone(updated.limit_price)
+
+    def test_candidate_prefer_limit_converts_market_entry_when_global_default_false(
+        self,
+    ) -> None:
+        decision = StrategyDecision(
+            strategy_id="breakout-row-id",
+            symbol="META",
+            event_ts=datetime(2026, 3, 27, 19, 30, 0, tzinfo=timezone.utc),
+            timeframe="1Sec",
+            action="buy",
+            qty=Decimal("10"),
+            order_type="market",
+            time_in_force="day",
+            rationale="ordinary_entry",
+            params={"entry_order_type": "prefer_limit"},
+        )
+        signal = self._signal(bid="524.90", ask="525.10", price="525.00")
+
+        with patch(
+            "scripts.local_intraday_tsmom_replay.settings.trading_execution_prefer_limit",
+            False,
+        ):
+            updated = _apply_order_preferences(decision, signal)
+
+        self.assertEqual(updated.order_type, "limit")
+        self.assertEqual(updated.limit_price, Decimal("525.10"))
+
+    def test_strategy_params_can_drive_candidate_order_preference(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="breakout-row-id",
+            symbol="META",
+            event_ts=datetime(2026, 3, 27, 19, 30, 0, tzinfo=timezone.utc),
+            timeframe="1Sec",
+            action="buy",
+            qty=Decimal("10"),
+            order_type="market",
+            time_in_force="day",
+            rationale="ordinary_entry",
+            params={},
+        )
+        signal = self._signal(bid="524.90", ask="525.10", price="525.00")
+
+        with patch(
+            "scripts.local_intraday_tsmom_replay.settings.trading_execution_prefer_limit",
+            False,
+        ):
+            updated = _apply_order_preferences(
+                decision,
+                signal,
+                strategy_params={"entry_order_type": "prefer_limit"},
+            )
+
+        self.assertEqual(updated.order_type, "limit")
+        self.assertEqual(updated.limit_price, Decimal("525.10"))
+
+    def test_candidate_market_order_type_keeps_market_when_global_prefer_limit_true(
+        self,
+    ) -> None:
+        decision = StrategyDecision(
+            strategy_id="breakout-row-id",
+            symbol="META",
+            event_ts=datetime(2026, 3, 27, 19, 30, 0, tzinfo=timezone.utc),
+            timeframe="1Sec",
+            action="buy",
+            qty=Decimal("10"),
+            order_type="market",
+            time_in_force="day",
+            rationale="ordinary_entry",
+            params={"entry_order_type": "market"},
+        )
+        signal = self._signal(bid="524.90", ask="525.10", price="525.00")
+
+        with patch(
+            "scripts.local_intraday_tsmom_replay.settings.trading_execution_prefer_limit",
+            True,
+        ):
+            updated = _apply_order_preferences(decision, signal)
+
+        self.assertEqual(updated.order_type, "market")
+        self.assertIsNone(updated.limit_price)
+
+    def test_candidate_market_order_spread_cap_overrides_high_conviction_exception(
+        self,
+    ) -> None:
+        decision = StrategyDecision(
+            strategy_id="breakout-row-id",
+            symbol="META",
+            event_ts=datetime(2026, 3, 27, 19, 30, 0, tzinfo=timezone.utc),
+            timeframe="1Sec",
+            action="buy",
+            qty=Decimal("10"),
+            order_type="market",
+            time_in_force="day",
+            rationale="breakout_entry",
+            params={
+                "entry_order_type": "prefer_limit",
+                "market_order_spread_bps_max": "2",
+                "execution_features": {
+                    "spread_bps": Decimal("4"),
+                    "recent_microprice_bias_bps_avg": Decimal("0.20"),
+                    "cross_section_continuation_rank": Decimal("0.82"),
+                },
+                "strategy_runtime": {
+                    "source_strategy_runtime": [
+                        {"strategy_type": "breakout_continuation_long_v1"}
+                    ]
+                },
+            },
+        )
+        signal = self._signal(bid="524.90", ask="525.10", price="525.00")
+
+        updated = _apply_order_preferences(decision, signal)
+
+        self.assertEqual(updated.order_type, "limit")
+        self.assertEqual(updated.limit_price, Decimal("525.10"))
 
     def test_microbar_cross_sectional_short_entry_keeps_market_order(self) -> None:
         decision = StrategyDecision(
@@ -2386,3 +2591,96 @@ class TestLocalIntradayTsmomReplay(TestCase):
         self.assertEqual(
             payload["trace"][0]["block_reason"], "engine_runtime_filter_rejected"
         )
+
+    def test_run_replay_serializes_real_daily_liquidity_evidence(self) -> None:
+        strategy = Strategy(
+            name="observer",
+            description=None,
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="static",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=None,
+            max_notional_per_trade=None,
+        )
+        signal_one = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 17, 30, 0, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": Decimal("10.00"),
+                "imbalance_bid_px": Decimal("9.995"),
+                "imbalance_ask_px": Decimal("10.005"),
+                "imbalance_bid_sz": Decimal("50"),
+                "imbalance_ask_sz": Decimal("40"),
+                "microbar_volume": Decimal("100"),
+                "spread": Decimal("0.01"),
+            },
+        )
+        signal_two = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 17, 30, 1, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=2,
+            payload={
+                "price": Decimal("11.00"),
+                "imbalance_bid_px": Decimal("10.995"),
+                "imbalance_ask_px": Decimal("11.005"),
+                "imbalance_bid_sz": Decimal("20"),
+                "imbalance_ask_sz": Decimal("10"),
+                "microbar_volume": Decimal("200"),
+                "spread": Decimal("0.01"),
+            },
+        )
+
+        class _Engine:
+            def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+                _ = args
+                _ = kwargs
+
+            def observe_signal(self, signal: SignalEnvelope) -> None:
+                _ = signal
+
+            def evaluate(
+                self, signal: SignalEnvelope, strategies, *, equity, positions
+            ):  # type: ignore[no-untyped-def]
+                _ = signal
+                _ = strategies
+                _ = equity
+                _ = positions
+                return []
+
+            def consume_runtime_telemetry(self):  # type: ignore[no-untyped-def]
+                return type("Telemetry", (), {"traces": []})()
+
+        config = ReplayConfig(
+            strategy_configmap_path=Path("/tmp/strategies.yaml"),
+            clickhouse_http_url="http://example.invalid:8123",
+            clickhouse_username=None,
+            clickhouse_password=None,
+            start_date=datetime(2026, 3, 26, tzinfo=timezone.utc).date(),
+            end_date=datetime(2026, 3, 26, tzinfo=timezone.utc).date(),
+            chunk_minutes=10,
+            flatten_eod=True,
+            start_equity=Decimal("10000"),
+            capture_traces=True,
+        )
+
+        with (
+            patch(
+                "scripts.local_intraday_tsmom_replay._load_strategies",
+                return_value=[strategy],
+            ),
+            patch(
+                "scripts.local_intraday_tsmom_replay._iter_signal_rows",
+                return_value=iter([signal_one, signal_two]),
+            ),
+            patch("scripts.local_intraday_tsmom_replay.DecisionEngine", _Engine),
+        ):
+            payload = run_replay(config)
+
+        daily = payload["daily"]["2026-03-26"]
+        self.assertEqual(Decimal(daily["daily_adv_notional"]), Decimal("3200.00"))
+        self.assertEqual(Decimal(daily["depth_notional"]), Decimal("329.950"))
+        self.assertEqual(daily["liquidity_observation_count"], 2)

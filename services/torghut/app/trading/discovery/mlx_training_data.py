@@ -178,6 +178,21 @@ def _bool_feature(value: Any, expected: str) -> float:
     return 1.0 if str(value or "").strip().lower() == expected else 0.0
 
 
+def _truthy_feature(value: Any) -> float:
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+    normalized = str(value or "").strip().lower()
+    return 1.0 if normalized in {"1", "true", "yes", "pass", "passed"} else 0.0
+
+
+def _artifact_present(
+    scorecard: Mapping[str, Any], *, singular: str, plural: str
+) -> float:
+    if str(scorecard.get(singular) or "").strip():
+        return 1.0
+    return 1.0 if _sequence_length(scorecard.get(plural)) > 0.0 else 0.0
+
+
 def _hard_veto_count(scorecard: Mapping[str, Any]) -> float:
     raw_vetoes = scorecard.get("hard_vetoes") or scorecard.get("veto_reasons")
     if isinstance(raw_vetoes, str):
@@ -240,7 +255,17 @@ def candidate_spec_capital_features(spec: CandidateSpec) -> Mapping[str, float]:
         _float(params.get("max_entries_per_session")),
         1.0,
     )
+    entry_notional_multiplier = _positive_or_default(
+        _float(features.get("entry_notional_max_multiplier")),
+        1.0,
+    )
     features["inferred_universe_slot_floor"] = float(rank_count_floor)
+    features["configured_daily_notional_capacity"] = (
+        _float(features.get("max_notional_per_trade"))
+        * features["max_entries_per_session"]
+        * entry_notional_multiplier
+        * float(rank_count_floor)
+    )
     return features
 
 
@@ -250,6 +275,14 @@ def capital_budget_penalty(features: Mapping[str, float]) -> float:
         + max(0.0, _float(features.get("max_position_pct_equity")) - 1.0) * 35.0
         + max(0.0, _float(features.get("max_notional_pct_start_equity")) - 1.0) * 35.0
     )
+
+
+def configured_daily_notional_capacity_penalty(
+    *, configured_daily_notional_required_ratio: float
+) -> float:
+    if configured_daily_notional_required_ratio <= 0.0:
+        return 750.0
+    return max(0.0, 1.0 - configured_daily_notional_required_ratio) * 750.0
 
 
 def observed_capital_penalty(scorecard: Mapping[str, Any]) -> float:
@@ -302,6 +335,116 @@ def _observed_replay_viability_penalty(
         + notional_shortfall_ratio * 500.0
         + _float(scorecard.get("negative_day_count")) * 125.0
         + max(0.0, target_net_pnl_per_day - net_pnl_per_day) * 0.20
+    )
+
+
+def _net_pnl_per_100k_filled_notional(scorecard: Mapping[str, Any]) -> float:
+    avg_filled_notional_per_day = _float(scorecard.get("avg_filled_notional_per_day"))
+    if avg_filled_notional_per_day <= 0.0:
+        return 0.0
+    return (
+        _float(scorecard.get("net_pnl_per_day"))
+        / avg_filled_notional_per_day
+        * 100_000.0
+    )
+
+
+def _post_cost_efficiency_penalty(scorecard: Mapping[str, Any]) -> float:
+    if not scorecard:
+        return 0.0
+    avg_filled_notional_per_day = _float(scorecard.get("avg_filled_notional_per_day"))
+    if avg_filled_notional_per_day <= 0.0:
+        return 0.0
+    net_pnl_per_day = _float(scorecard.get("net_pnl_per_day"))
+    net_pnl_per_100k = _net_pnl_per_100k_filled_notional(scorecard)
+    if net_pnl_per_day <= 0.0:
+        return min(5_000.0, 250.0 + abs(net_pnl_per_100k) * 2.0)
+    return max(0.0, 1.0 - net_pnl_per_100k) * 25.0
+
+
+def _proof_target_shortfall(
+    scorecard: Mapping[str, Any],
+    *,
+    target_net_pnl_per_day: float,
+    keys: Sequence[str],
+) -> float:
+    observed = [_float(scorecard.get(key)) for key in keys if key in scorecard]
+    if not observed:
+        return target_net_pnl_per_day if scorecard else 0.0
+    return max(0.0, target_net_pnl_per_day - min(observed))
+
+
+def _historical_proof_penalty(
+    scorecard: Mapping[str, Any],
+    *,
+    target_net_pnl_per_day: float,
+) -> float:
+    if not scorecard:
+        return 0.0
+
+    market_impact_shortfall = _proof_target_shortfall(
+        scorecard,
+        target_net_pnl_per_day=target_net_pnl_per_day,
+        keys=("market_impact_stress_net_pnl_per_day",),
+    )
+    delay_depth_shortfall = _proof_target_shortfall(
+        scorecard,
+        target_net_pnl_per_day=target_net_pnl_per_day,
+        keys=("delay_adjusted_depth_stress_net_pnl_per_day",),
+    )
+    double_oos_shortfall = _proof_target_shortfall(
+        scorecard,
+        target_net_pnl_per_day=target_net_pnl_per_day,
+        keys=("double_oos_cost_shock_net_pnl_per_day", "double_oos_net_pnl_per_day"),
+    )
+    delay_fillable_notional = _float(
+        scorecard.get("delay_adjusted_depth_fillable_notional_per_day")
+    )
+
+    return (
+        (1.0 - _truthy_feature(scorecard.get("market_impact_stress_passed"))) * 500.0
+        + (
+            1.0
+            - _artifact_present(
+                scorecard,
+                singular="market_impact_stress_artifact_ref",
+                plural="market_impact_stress_artifact_refs",
+            )
+        )
+        * 250.0
+        + (
+            1.0
+            - _truthy_feature(scorecard.get("market_impact_liquidity_evidence_present"))
+        )
+        * 250.0
+        + market_impact_shortfall * 0.15
+        + (1.0 - _truthy_feature(scorecard.get("delay_adjusted_depth_stress_passed")))
+        * 500.0
+        + (
+            1.0
+            - _artifact_present(
+                scorecard,
+                singular="delay_adjusted_depth_stress_artifact_ref",
+                plural="delay_adjusted_depth_stress_artifact_refs",
+            )
+        )
+        * 250.0
+        + (500.0 if delay_fillable_notional <= 0.0 else 0.0)
+        + delay_depth_shortfall * 0.15
+        + (1.0 - _truthy_feature(scorecard.get("double_oos_passed"))) * 500.0
+        + (
+            1.0
+            - _artifact_present(
+                scorecard,
+                singular="double_oos_artifact_ref",
+                plural="double_oos_artifact_refs",
+            )
+        )
+        * 250.0
+        + max(0.0, 2.0 - _float(scorecard.get("double_oos_independent_window_count")))
+        * 250.0
+        + max(0.0, 1.0 - _float(scorecard.get("double_oos_pass_rate"))) * 500.0
+        + double_oos_shortfall * 0.15
     )
 
 
@@ -374,6 +517,8 @@ def build_mlx_training_rows(
             "trailing_activation_profit_bps",
             "trailing_drawdown_bps",
             "rank_count",
+            "entry_order_type_prefer_limit",
+            "market_order_spread_bps_max",
             "universe_size",
             "selection_mode_reversal",
             "selection_mode_continuation",
@@ -389,6 +534,8 @@ def build_mlx_training_rows(
             "configured_max_gross_exposure_pct_equity",
             "estimated_max_gross_exposure_pct_equity",
             "max_entries_per_session",
+            "configured_daily_notional_capacity",
+            "configured_daily_notional_required_ratio",
             "capital_budget_overage_ratio",
             "capital_feasible_flag",
             "history_net_pnl_per_day",
@@ -403,9 +550,30 @@ def build_mlx_training_rows(
             "history_max_drawdown",
             "history_avg_filled_notional_per_day",
             "history_avg_filled_notional_required_ratio",
+            "history_net_pnl_per_100k_filled_notional",
+            "history_post_cost_efficiency_penalty",
             "history_hard_veto_count",
             "history_daily_target_shortfall",
             "history_observed_replay_viability_penalty",
+            "history_market_impact_stress_passed",
+            "history_market_impact_stress_artifact_present",
+            "history_market_impact_stress_cost_bps",
+            "history_market_impact_liquidity_evidence_present",
+            "history_market_impact_stress_net_pnl_per_day",
+            "history_market_impact_target_shortfall",
+            "history_delay_adjusted_depth_stress_passed",
+            "history_delay_adjusted_depth_stress_artifact_present",
+            "history_delay_adjusted_depth_stress_ms",
+            "history_delay_adjusted_depth_fillable_notional_per_day",
+            "history_delay_adjusted_depth_stress_net_pnl_per_day",
+            "history_delay_adjusted_depth_target_shortfall",
+            "history_double_oos_passed",
+            "history_double_oos_artifact_present",
+            "history_double_oos_independent_window_count",
+            "history_double_oos_pass_rate",
+            "history_double_oos_net_pnl_per_day",
+            "history_double_oos_cost_shock_net_pnl_per_day",
+            "history_double_oos_target_shortfall",
         )
         capital_features = candidate_spec_capital_features(spec)
         params = _params(spec)
@@ -422,11 +590,42 @@ def build_mlx_training_rows(
             if required_min_daily_notional > 0.0
             else 0.0
         )
+        configured_daily_notional_capacity = _float(
+            capital_features.get("configured_daily_notional_capacity")
+        )
+        configured_daily_notional_required_ratio = (
+            configured_daily_notional_capacity / required_min_daily_notional
+            if required_min_daily_notional > 0.0
+            else 0.0
+        )
         observed_replay_penalty = _observed_replay_viability_penalty(
             scorecard,
             required_min_daily_notional=required_min_daily_notional,
             target_net_pnl_per_day=target_net_pnl_per_day,
         )
+        market_impact_target_shortfall = _proof_target_shortfall(
+            scorecard,
+            target_net_pnl_per_day=target_net_pnl_per_day,
+            keys=("market_impact_stress_net_pnl_per_day",),
+        )
+        delay_depth_target_shortfall = _proof_target_shortfall(
+            scorecard,
+            target_net_pnl_per_day=target_net_pnl_per_day,
+            keys=("delay_adjusted_depth_stress_net_pnl_per_day",),
+        )
+        double_oos_target_shortfall = _proof_target_shortfall(
+            scorecard,
+            target_net_pnl_per_day=target_net_pnl_per_day,
+            keys=(
+                "double_oos_cost_shock_net_pnl_per_day",
+                "double_oos_net_pnl_per_day",
+            ),
+        )
+        historical_proof_penalty = _historical_proof_penalty(
+            scorecard,
+            target_net_pnl_per_day=target_net_pnl_per_day,
+        )
+        post_cost_efficiency_penalty = _post_cost_efficiency_penalty(scorecard)
         selection_mode = params.get("selection_mode")
         signal_motif = params.get("signal_motif")
         stop_loss_bps = _float(
@@ -457,6 +656,8 @@ def build_mlx_training_rows(
                 _float(params.get("top_n") or params.get("rank_count")),
                 _positive_or_default(_float(params.get("max_pair_legs")), 1.0),
             ),
+            _bool_feature(params.get("entry_order_type"), "prefer_limit"),
+            _float(params.get("market_order_spread_bps_max") or 12),
             _strategy_universe_size(spec),
             _bool_feature(selection_mode, "reversal"),
             _bool_feature(selection_mode, "continuation"),
@@ -472,6 +673,8 @@ def build_mlx_training_rows(
             _float(capital_features.get("configured_max_gross_exposure_pct_equity")),
             _float(capital_features.get("estimated_max_gross_exposure_pct_equity")),
             _float(capital_features.get("max_entries_per_session")),
+            configured_daily_notional_capacity,
+            configured_daily_notional_required_ratio,
             _float(capital_features.get("capital_budget_overage_ratio")),
             _float(capital_features.get("capital_feasible_flag")),
             _float(scorecard.get("net_pnl_per_day")),
@@ -486,11 +689,44 @@ def build_mlx_training_rows(
             _float(scorecard.get("max_drawdown")),
             avg_filled_notional_per_day,
             avg_filled_notional_required_ratio,
+            _net_pnl_per_100k_filled_notional(scorecard),
+            post_cost_efficiency_penalty,
             _hard_veto_count(scorecard),
             _daily_target_shortfall(
                 scorecard, target_net_pnl_per_day=target_net_pnl_per_day
             ),
             observed_replay_penalty,
+            _truthy_feature(scorecard.get("market_impact_stress_passed")),
+            _artifact_present(
+                scorecard,
+                singular="market_impact_stress_artifact_ref",
+                plural="market_impact_stress_artifact_refs",
+            ),
+            _float(scorecard.get("market_impact_stress_cost_bps")),
+            _truthy_feature(scorecard.get("market_impact_liquidity_evidence_present")),
+            _float(scorecard.get("market_impact_stress_net_pnl_per_day")),
+            market_impact_target_shortfall,
+            _truthy_feature(scorecard.get("delay_adjusted_depth_stress_passed")),
+            _artifact_present(
+                scorecard,
+                singular="delay_adjusted_depth_stress_artifact_ref",
+                plural="delay_adjusted_depth_stress_artifact_refs",
+            ),
+            _float(scorecard.get("delay_adjusted_depth_stress_ms")),
+            _float(scorecard.get("delay_adjusted_depth_fillable_notional_per_day")),
+            _float(scorecard.get("delay_adjusted_depth_stress_net_pnl_per_day")),
+            delay_depth_target_shortfall,
+            _truthy_feature(scorecard.get("double_oos_passed")),
+            _artifact_present(
+                scorecard,
+                singular="double_oos_artifact_ref",
+                plural="double_oos_artifact_refs",
+            ),
+            _float(scorecard.get("double_oos_independent_window_count")),
+            _float(scorecard.get("double_oos_pass_rate")),
+            _float(scorecard.get("double_oos_net_pnl_per_day")),
+            _float(scorecard.get("double_oos_cost_shock_net_pnl_per_day")),
+            double_oos_target_shortfall,
         )
         target = (
             _float(scorecard.get("net_pnl_per_day"))
@@ -508,7 +744,12 @@ def build_mlx_training_rows(
                 * 0.10
             )
             - observed_replay_penalty
+            - post_cost_efficiency_penalty
+            - historical_proof_penalty
             - capital_budget_penalty(capital_features)
+            - configured_daily_notional_capacity_penalty(
+                configured_daily_notional_required_ratio=configured_daily_notional_required_ratio
+            )
             - observed_capital_penalty(scorecard)
         )
         rows.append(
@@ -549,7 +790,7 @@ def train_mlx_ranker(
     rows: Sequence[MlxTrainingRow],
     *,
     backend_preference: str = "mlx",
-    learning_rate: float = 0.05,
+    learning_rate: float = 0.01,
     steps: int = 256,
     l2_penalty: float = 0.001,
 ) -> MlxRankerModel:

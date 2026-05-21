@@ -8,12 +8,14 @@ import hashlib
 import json
 import os
 import signal
+import socket
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Mapping, Sequence, cast
+from urllib.parse import urlparse
 
 from sqlalchemy import select
 
@@ -23,6 +25,7 @@ from app.models import (
     AutoresearchEpoch,
     AutoresearchPortfolioCandidate,
     AutoresearchProposalScore,
+    RejectedSignalOutcomeEvent,
     WhitepaperAnalysisRun,
     VNextExperimentSpec,
 )
@@ -38,8 +41,10 @@ from app.trading.discovery.candidate_specs import (
     CandidateSpec,
 )
 from app.trading.discovery.candidate_specs import candidate_spec_id_for_payload
+from app.trading.discovery.candidate_specs import candidate_spec_from_payload
 from app.trading.discovery.evidence_bundles import (
     CandidateEvidenceBundle,
+    evidence_bundle_blockers,
     evidence_bundle_from_frontier_candidate,
     evidence_bundle_from_payload,
 )
@@ -90,9 +95,20 @@ _DEFAULT_PORTFOLIO_PROFIT_PROGRAM = Path(
     "config/trading/research-programs/portfolio-profit-autoresearch-500-v1.yaml"
 )
 _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC = 8
+_DEFAULT_CLICKHOUSE_HTTP_URL = (
+    "http://torghut-clickhouse.torghut.svc.cluster.local:8123"
+)
 _MAX_PERSISTED_FEEDBACK_EVIDENCE_BUNDLES = 512
 _MAX_PERSISTED_FEEDBACK_EVIDENCE_EPOCHS = 12
+_PORTFOLIO_FEEDBACK_STATUSES = frozenset({"blocked", "paper_probation", "target_met"})
+_REJECTED_SIGNAL_OUTCOME_REQUIRED_FIELDS = (
+    "counterfactual_return",
+    "route_tca",
+    "post_cost_net_pnl",
+    "executable_quote",
+)
 _PROGRAM_SOURCE_DEFAULT_CONFIDENCE = "0.70"
+_SECOND_OOS_WINDOW_ID = "second_oos"
 _RUNTIME_CLOSURE_PROOF_ORACLE_BLOCKERS = frozenset(
     {
         "shadow_parity_status_failed",
@@ -104,6 +120,7 @@ _RUNTIME_CLOSURE_PROOF_ORACLE_BLOCKERS = frozenset(
         "executable_replay_notional_within_buying_power_failed",
         "market_impact_stress_passed_failed",
         "market_impact_stress_artifact_present_failed",
+        "market_impact_liquidity_evidence_present_failed",
         "market_impact_stress_model_failed",
         "market_impact_stress_cost_bps_failed",
         "market_impact_stress_net_pnl_per_day_failed",
@@ -152,6 +169,14 @@ def _default_strategy_config_path() -> Path:
     return Path("argocd/applications/torghut/strategy-configmap.yaml")
 
 
+def _default_clickhouse_http_url() -> str:
+    return (
+        os.environ.get("CLICKHOUSE_HTTP_URL")
+        or os.environ.get("TA_CLICKHOUSE_URL")
+        or _DEFAULT_CLICKHOUSE_HTTP_URL
+    )
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run whitepaper autoresearch and assemble a portfolio candidate for a profit target.",
@@ -185,6 +210,17 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--candidate-specs",
+        action="append",
+        default=[],
+        type=Path,
+        help=(
+            "JSONL file of CandidateSpec payloads to replay directly. Use this "
+            "with a prior selected-candidate-specs.jsonl artifact to skip "
+            "whitepaper source compilation and pre-replay reselection."
+        ),
+    )
+    parser.add_argument(
         "--target-net-pnl-per-day", default=_DEFAULT_DAILY_PROFIT_TARGET
     )
     parser.add_argument("--max-candidates", type=int, default=64)
@@ -198,6 +234,15 @@ def _parse_args() -> argparse.Namespace:
             "Bounded slots for replaying candidates blocked only by prior "
             "feedback. These are diagnostic re-audits; capital blocks and final "
             "promotion/oracle gates still apply."
+        ),
+    )
+    parser.add_argument(
+        "--selection-only",
+        action="store_true",
+        help=(
+            "Stop after source, hypothesis, candidate-spec, feedback, MLX "
+            "pre-replay ranking, and candidate-selection artifacts are written. "
+            "No replay, portfolio optimization, persistence, or promotion proof is run."
         ),
     )
     parser.add_argument("--portfolio-size-min", type=int, default=2)
@@ -225,14 +270,23 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--clickhouse-http-url",
-        default="http://torghut-clickhouse.torghut.svc.cluster.local:8123",
+        default=_default_clickhouse_http_url(),
     )
-    parser.add_argument("--clickhouse-username", default="torghut")
+    parser.add_argument(
+        "--clickhouse-username",
+        default=os.environ.get(
+            "TA_CLICKHOUSE_USERNAME",
+            os.environ.get("CLICKHOUSE_USERNAME", "torghut"),
+        ),
+    )
     parser.add_argument("--clickhouse-password", default="")
     parser.add_argument(
         "--clickhouse-password-env",
-        default="",
-        help="Environment variable that contains the ClickHouse password; ignored when --clickhouse-password is set.",
+        default=os.environ.get("TA_CLICKHOUSE_PASSWORD_ENV", "TA_CLICKHOUSE_PASSWORD"),
+        help=(
+            "Environment variable that contains the ClickHouse password; ignored when "
+            "--clickhouse-password is set."
+        ),
     )
     parser.add_argument("--start-equity", default="31590.02")
     parser.add_argument("--chunk-minutes", type=int, default=10)
@@ -315,6 +369,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--train-days", type=int, default=6)
     parser.add_argument("--holdout-days", type=int, default=3)
+    parser.add_argument("--second-oos-days", type=int, default=2)
     parser.add_argument("--full-window-start-date", default="")
     parser.add_argument("--full-window-end-date", default="")
     parser.add_argument("--expected-last-trading-day", default="")
@@ -466,26 +521,36 @@ def _evidence_bundle_payloads_for_epoch_summary(
 
 
 def _candidate_spec_from_payload(payload: Mapping[str, Any]) -> CandidateSpec:
-    return CandidateSpec(
-        schema_version="torghut.candidate-spec.v1",
-        candidate_spec_id=_string(payload.get("candidate_spec_id")),
-        hypothesis_id=_string(payload.get("hypothesis_id")),
-        family_template_id=_string(payload.get("family_template_id")),
-        candidate_kind=cast(Any, _string(payload.get("candidate_kind")) or "sleeve"),
-        runtime_family=_string(payload.get("runtime_family")),
-        runtime_strategy_name=_string(payload.get("runtime_strategy_name")),
-        feature_contract=_mapping(payload.get("feature_contract")),
-        parameter_space=_mapping(payload.get("parameter_space")),
-        strategy_overrides=_mapping(payload.get("strategy_overrides")),
-        objective=_mapping(payload.get("objective")),
-        hard_vetoes=_mapping(payload.get("hard_vetoes")),
-        expected_failure_modes=tuple(
-            str(item)
-            for item in cast(Sequence[Any], payload.get("expected_failure_modes") or ())
-            if str(item).strip()
-        ),
-        promotion_contract=_mapping(payload.get("promotion_contract")),
-    )
+    return candidate_spec_from_payload(payload)
+
+
+def _load_candidate_specs_jsonl(paths: Sequence[Path]) -> tuple[CandidateSpec, ...]:
+    specs: list[CandidateSpec] = []
+    seen: set[str] = set()
+    for path in paths:
+        if not path.exists():
+            raise ValueError(f"candidate_specs_jsonl_missing:{path}")
+        for line_number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            if not line.strip():
+                continue
+            try:
+                payload = json.loads(line)
+                spec = _candidate_spec_from_payload(_mapping(payload))
+            except Exception as exc:
+                raise ValueError(
+                    f"candidate_specs_jsonl_invalid:{path}:{line_number}:{exc}"
+                ) from exc
+            if spec.candidate_spec_id in seen:
+                raise ValueError(
+                    f"candidate_specs_jsonl_duplicate_candidate_spec_id:{path}:{line_number}:{spec.candidate_spec_id}"
+                )
+            seen.add(spec.candidate_spec_id)
+            specs.append(spec)
+    if not specs:
+        raise ValueError("candidate_specs_jsonl_empty")
+    return tuple(specs)
 
 
 def _summary_scorecard_feedback_bundles_for_epoch(
@@ -569,6 +634,328 @@ def _summary_scorecard_feedback_bundles_for_epoch(
     return tuple(bundles), stats
 
 
+def _outcome_payload_has_complete_rejected_signal_fields(
+    payload: Mapping[str, Any],
+    required_fields: Sequence[Any],
+) -> bool:
+    required = tuple(_string(field) for field in required_fields if _string(field))
+    if not required:
+        required = _REJECTED_SIGNAL_OUTCOME_REQUIRED_FIELDS
+    for field in required:
+        if field not in payload:
+            return False
+        value = payload.get(field)
+        if value is None:
+            return False
+        if isinstance(value, str) and not value.strip():
+            return False
+        if isinstance(value, Mapping) and not value:
+            return False
+    return True
+
+
+def _rejected_signal_outcome_payload_to_feedback_bundle(
+    row: RejectedSignalOutcomeEvent,
+    *,
+    code_commit: str = "unknown",
+) -> CandidateEvidenceBundle | None:
+    outcome_payload = _mapping(row.outcome_payload_json)
+    if not outcome_payload:
+        return None
+    if not _outcome_payload_has_complete_rejected_signal_fields(
+        outcome_payload, cast(Sequence[Any], row.required_outcome_fields_json or ())
+    ):
+        return None
+
+    embedded_bundle = _mapping(outcome_payload.get("candidate_evidence_bundle_payload"))
+    if embedded_bundle:
+        return evidence_bundle_from_payload(embedded_bundle)
+    if (
+        _string(outcome_payload.get("schema_version"))
+        == "torghut.candidate-evidence-bundle.v1"
+    ):
+        return evidence_bundle_from_payload(outcome_payload)
+
+    event_payload = _mapping(row.event_payload_json)
+    scorecard = _mapping(outcome_payload.get("objective_scorecard"))
+    if not scorecard:
+        scorecard = {}
+    for key in (
+        "net_pnl_per_day",
+        "active_day_ratio",
+        "positive_day_ratio",
+        "best_day_share",
+        "max_drawdown",
+        "worst_day_loss",
+        "avg_filled_notional_per_day",
+        "market_impact_stress_net_pnl_per_day",
+        "delay_adjusted_depth_stress_net_pnl_per_day",
+        "counterfactual_return",
+        "route_tca",
+        "post_cost_net_pnl",
+        "executable_quote",
+    ):
+        if key in outcome_payload and key not in scorecard:
+            scorecard = {**scorecard, key: outcome_payload[key]}
+    scorecard = {
+        **scorecard,
+        "rejected_signal_event_id": row.event_id,
+        "rejected_signal_symbol": row.symbol,
+        "rejected_signal_reason": row.reject_reason,
+        "rejected_signal_outcome_label_status": row.outcome_label_status,
+    }
+
+    candidate_spec_id = _string(outcome_payload.get("candidate_spec_id")) or _string(
+        event_payload.get("candidate_spec_id")
+    )
+    family_template_id = _string(outcome_payload.get("family_template_id")) or _string(
+        event_payload.get("family_template_id")
+    )
+    runtime_family = _string(outcome_payload.get("runtime_family")) or _string(
+        event_payload.get("runtime_family")
+    )
+    runtime_strategy_name = _string(
+        outcome_payload.get("runtime_strategy_name")
+    ) or _string(event_payload.get("runtime_strategy_name"))
+    execution_signature = _string(
+        outcome_payload.get("execution_signature")
+    ) or _string(event_payload.get("execution_signature"))
+    feedback_shape_key = _string(outcome_payload.get("feedback_shape_key")) or _string(
+        event_payload.get("feedback_shape_key")
+    )
+    feedback_risk_profile_key = _string(
+        outcome_payload.get("feedback_risk_profile_key")
+    ) or _string(event_payload.get("feedback_risk_profile_key"))
+    if not (
+        candidate_spec_id
+        or family_template_id
+        or execution_signature
+        or feedback_shape_key
+        or feedback_risk_profile_key
+    ):
+        return None
+
+    candidate_id = (
+        _string(outcome_payload.get("candidate_id"))
+        or _string(event_payload.get("candidate_id"))
+        or f"rejected-signal-{row.event_id}"
+    )
+    candidate = {
+        "candidate_id": candidate_id,
+        "family_template_id": family_template_id,
+        "runtime_family": runtime_family,
+        "runtime_strategy_name": runtime_strategy_name,
+        "execution_signature": execution_signature,
+        "feedback_shape_key": feedback_shape_key,
+        "feedback_risk_profile_key": feedback_risk_profile_key,
+        "objective_scorecard": scorecard,
+        "hard_vetoes": outcome_payload.get("hard_vetoes")
+        or outcome_payload.get("veto_reasons")
+        or scorecard.get("hard_vetoes")
+        or scorecard.get("veto_reasons")
+        or (),
+        "promotion_readiness": _mapping(outcome_payload.get("promotion_readiness"))
+        or {
+            "stage": "research_candidate",
+            "status": "blocked_by_rejected_signal_counterfactual_feedback",
+            "promotable": False,
+            "blockers": [
+                "requires_full_replay_validation",
+                "requires_live_paper_parity",
+            ],
+        },
+    }
+    return evidence_bundle_from_frontier_candidate(
+        candidate_spec_id=candidate_spec_id,
+        candidate=candidate,
+        dataset_snapshot_id=f"rejected-signal-outcome:{row.event_id}",
+        result_path=f"db://rejected_signal_outcome_events/{row.event_id}",
+        code_commit=code_commit,
+    )
+
+
+def _ordered_unique_strings(values: Sequence[Any]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for value in values:
+        text = _string(value)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        unique.append(text)
+    return tuple(unique)
+
+
+def _portfolio_candidate_feedback_blockers(
+    *,
+    scorecard: Mapping[str, Any],
+    payload: Mapping[str, Any],
+) -> tuple[str, ...]:
+    blockers: list[Any] = list(_oracle_blockers(scorecard))
+    promotion_readiness = _mapping(payload.get("promotion_readiness"))
+    for source in (scorecard, promotion_readiness):
+        for key in ("hard_vetoes", "veto_reasons", "blockers"):
+            raw = source.get(key)
+            if isinstance(raw, Sequence) and not isinstance(raw, str):
+                blockers.extend(cast(Sequence[Any], raw))
+    return _ordered_unique_strings(blockers)
+
+
+def _portfolio_sleeve_feedback_metadata(
+    sleeve: Mapping[str, Any],
+) -> dict[str, Any]:
+    params = _mapping(sleeve.get("params"))
+    universe_symbols = [
+        symbol.upper()
+        for symbol in _string_list_from_value(sleeve.get("universe_symbols"))
+    ]
+    universe_key = ",".join(sorted(universe_symbols))
+    signal_key = "|".join(
+        part
+        for part in (
+            _string(params.get("signal_motif")) or _string(sleeve.get("signal")),
+            _string(params.get("selection_mode")),
+            _string(params.get("rank_feature")),
+        )
+        if part
+    )
+    family_template_id = _string(sleeve.get("family_template_id"))
+    runtime_family = _string(sleeve.get("runtime_family"))
+    runtime_strategy_name = _string(sleeve.get("runtime_strategy_name"))
+    execution_profile_id = _string(sleeve.get("execution_profile_id"))
+    risk_profile_payload = _feedback_risk_profile_key_payload(
+        family_template_id=family_template_id,
+        runtime_strategy_name=runtime_strategy_name,
+        execution_profile_id=execution_profile_id,
+        universe_key=universe_key,
+        signal_key=signal_key,
+    )
+    shape_payload = {
+        "family_template_id": family_template_id,
+        "runtime_family": runtime_family,
+        "runtime_strategy_name": runtime_strategy_name,
+        "execution_profile_id": execution_profile_id,
+        "universe_key": universe_key,
+        "signal_key": signal_key,
+        "capital_profile": _string(params.get("capital_profile")),
+        "entry_minute_after_open": _string(params.get("entry_minute_after_open")),
+        "exit_minute_after_open": _string(params.get("exit_minute_after_open")),
+        "entry_start_minute_utc": _string(params.get("entry_start_minute_utc")),
+        "entry_end_minute_utc": _string(params.get("entry_end_minute_utc")),
+        "max_entries_per_session": _string(params.get("max_entries_per_session")),
+        "max_concurrent_positions": _string(params.get("max_concurrent_positions")),
+        "top_n": _string(params.get("top_n")),
+        "max_pair_legs": _string(params.get("max_pair_legs")),
+        "long_stop_loss_bps": _string(params.get("long_stop_loss_bps")),
+        "short_stop_loss_bps": _string(params.get("short_stop_loss_bps")),
+        "max_session_negative_exit_bps": _string(
+            params.get("max_session_negative_exit_bps")
+        ),
+    }
+    metadata: dict[str, Any] = {
+        "family_template_id": family_template_id,
+        "runtime_family": runtime_family,
+        "runtime_strategy_name": runtime_strategy_name,
+        "execution_signature": _string(sleeve.get("execution_signature")),
+        "execution_profile_id": execution_profile_id,
+        "universe_key": universe_key,
+        "signal_key": signal_key,
+        "runtime_params": dict(params),
+        "universe_symbols": universe_symbols,
+    }
+    if any(_string(value) for value in risk_profile_payload.values()):
+        metadata["feedback_risk_profile_key"] = _stable_hash(risk_profile_payload)
+    if any(_string(value) for value in shape_payload.values()):
+        metadata["feedback_shape_key"] = _stable_hash(shape_payload)
+    return metadata
+
+
+def _portfolio_candidate_row_to_feedback_bundles(
+    row: AutoresearchPortfolioCandidate,
+    *,
+    code_commit: str = "unknown",
+) -> tuple[CandidateEvidenceBundle, ...]:
+    status = _string(row.status)
+    if status not in _PORTFOLIO_FEEDBACK_STATUSES:
+        return ()
+    payload = _mapping(row.payload_json)
+    scorecard = _mapping(row.objective_scorecard_json) or _mapping(
+        payload.get("objective_scorecard")
+    )
+    if not scorecard:
+        return ()
+    blockers = _portfolio_candidate_feedback_blockers(
+        scorecard=scorecard, payload=payload
+    )
+    sleeves = _list_of_mappings(payload.get("sleeves"))
+    if not sleeves:
+        sleeves = [
+            {"candidate_id": candidate_id, "candidate_spec_id": candidate_id}
+            for candidate_id in _string_list_from_value(row.source_candidate_ids_json)
+        ]
+    bundles: list[CandidateEvidenceBundle] = []
+    dataset_snapshot_id = (
+        f"autoresearch-portfolio-candidate:{row.epoch_id}:{row.portfolio_candidate_id}"
+    )
+    promotion_readiness = _mapping(payload.get("promotion_readiness")) or {
+        "stage": "research_portfolio",
+        "status": f"blocked_by_prior_portfolio_candidate:{status}",
+        "promotable": False,
+        "blockers": list(blockers),
+    }
+    for index, sleeve in enumerate(sleeves, start=1):
+        candidate_id = _string(sleeve.get("candidate_id")) or _string(
+            sleeve.get("candidate_spec_id")
+        )
+        candidate_spec_id = _string(sleeve.get("candidate_spec_id")) or candidate_id
+        if not candidate_spec_id:
+            continue
+        metadata = _portfolio_sleeve_feedback_metadata(sleeve)
+        sleeve_scorecard = {
+            **scorecard,
+            **metadata,
+            "candidate_id": candidate_id or candidate_spec_id,
+            "candidate_spec_id": candidate_spec_id,
+            "portfolio_candidate_id": row.portfolio_candidate_id,
+            "portfolio_epoch_id": row.epoch_id,
+            "portfolio_status": status,
+            "portfolio_target_net_pnl_per_day": str(row.target_net_pnl_per_day),
+            "portfolio_blockers": list(blockers),
+            "hard_vetoes": list(blockers),
+            "veto_reasons": list(blockers),
+            "sleeve_weight": _string(sleeve.get("weight")),
+            "sleeve_expected_net_pnl_per_day": _string(
+                sleeve.get("expected_net_pnl_per_day")
+            ),
+            "source_expected_net_pnl_per_day": _string(
+                sleeve.get("source_expected_net_pnl_per_day")
+            ),
+            "sleeve_risk_contribution": _string(sleeve.get("risk_contribution")),
+            "source_risk_contribution": _string(sleeve.get("source_risk_contribution")),
+            "correlation_cluster": _string(sleeve.get("correlation_cluster")),
+        }
+        candidate = {
+            "candidate_id": candidate_id or candidate_spec_id,
+            **metadata,
+            "objective_scorecard": sleeve_scorecard,
+            "hard_vetoes": blockers,
+            "promotion_readiness": promotion_readiness,
+        }
+        bundles.append(
+            evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=candidate_spec_id,
+                candidate=candidate,
+                dataset_snapshot_id=dataset_snapshot_id,
+                result_path=(
+                    f"db://autoresearch_portfolio_candidates/"
+                    f"{row.portfolio_candidate_id}/sleeves/{index}"
+                ),
+                code_commit=code_commit,
+            )
+        )
+    return tuple(bundles)
+
+
 def _load_recent_persisted_feedback_evidence_bundles(
     *,
     limit: int = _MAX_PERSISTED_FEEDBACK_EVIDENCE_BUNDLES,
@@ -586,6 +973,12 @@ def _load_recent_persisted_feedback_evidence_bundles(
         "legacy_summary_unmatched_scorecard_count": 0,
         "legacy_summary_bundle_count": 0,
         "legacy_summary_invalid_spec_count": 0,
+        "rejected_signal_outcome_scanned_count": 0,
+        "rejected_signal_outcome_bundle_count": 0,
+        "rejected_signal_outcome_invalid_count": 0,
+        "portfolio_candidate_scanned_count": 0,
+        "portfolio_candidate_bundle_count": 0,
+        "portfolio_candidate_invalid_count": 0,
     }
     try:
         with SessionLocal() as session:
@@ -613,18 +1006,87 @@ def _load_recent_persisted_feedback_evidence_bundles(
                 if epoch_ids
                 else []
             )
+            portfolio_candidate_rows = (
+                session.execute(
+                    select(AutoresearchPortfolioCandidate)
+                    .where(
+                        AutoresearchPortfolioCandidate.status.in_(
+                            sorted(_PORTFOLIO_FEEDBACK_STATUSES)
+                        )
+                    )
+                    .order_by(
+                        AutoresearchPortfolioCandidate.created_at.desc(),
+                        AutoresearchPortfolioCandidate.updated_at.desc(),
+                    )
+                    .limit(limit)
+                )
+                .scalars()
+                .all()
+            )
+            rejected_signal_outcome_rows = (
+                session.execute(
+                    select(RejectedSignalOutcomeEvent)
+                    .where(RejectedSignalOutcomeEvent.outcome_label_status == "labeled")
+                    .order_by(
+                        RejectedSignalOutcomeEvent.event_ts.desc(),
+                        RejectedSignalOutcomeEvent.created_at.desc(),
+                    )
+                    .limit(limit)
+                )
+                .scalars()
+                .all()
+            )
     except Exception as exc:
         manifest["status"] = "unavailable"
         manifest["error"] = str(exc)
         return (), manifest
 
     manifest["scanned_epoch_count"] = len(epochs)
+    manifest["rejected_signal_outcome_scanned_count"] = len(
+        rejected_signal_outcome_rows
+    )
+    manifest["portfolio_candidate_scanned_count"] = len(portfolio_candidate_rows)
     bundles: list[CandidateEvidenceBundle] = []
     invalid_payload_count = 0
+    rejected_signal_outcome_invalid_count = 0
+    rejected_signal_outcome_bundle_count = 0
+    portfolio_candidate_invalid_count = 0
+    portfolio_candidate_bundle_count = 0
     source_epoch_ids: list[str] = []
     legacy_source_epoch_ids: list[str] = []
+    rejected_signal_outcome_event_ids: list[str] = []
+    portfolio_candidate_ids: list[str] = []
     candidate_specs_by_epoch: dict[str, list[CandidateSpec]] = {}
     invalid_spec_count = 0
+    for row in rejected_signal_outcome_rows:
+        if len(bundles) >= limit:
+            break
+        try:
+            bundle = _rejected_signal_outcome_payload_to_feedback_bundle(row)
+        except Exception:
+            rejected_signal_outcome_invalid_count += 1
+            continue
+        if bundle is None:
+            rejected_signal_outcome_invalid_count += 1
+            continue
+        bundles.append(bundle)
+        rejected_signal_outcome_bundle_count += 1
+        rejected_signal_outcome_event_ids.append(row.event_id)
+    for row in portfolio_candidate_rows:
+        if len(bundles) >= limit:
+            break
+        try:
+            row_bundles = _portfolio_candidate_row_to_feedback_bundles(row)
+        except Exception:
+            portfolio_candidate_invalid_count += 1
+            continue
+        if not row_bundles:
+            portfolio_candidate_invalid_count += 1
+            continue
+        remaining = limit - len(bundles)
+        bundles.extend(row_bundles[:remaining])
+        portfolio_candidate_bundle_count += min(len(row_bundles), remaining)
+        portfolio_candidate_ids.append(row.portfolio_candidate_id)
     for row in spec_rows:
         try:
             spec = _candidate_spec_from_payload(_mapping(row.payload_json))
@@ -682,6 +1144,16 @@ def _load_recent_persisted_feedback_evidence_bundles(
         )
     )
     manifest["legacy_summary_invalid_spec_count"] = invalid_spec_count
+    manifest["rejected_signal_outcome_bundle_count"] = (
+        rejected_signal_outcome_bundle_count
+    )
+    manifest["rejected_signal_outcome_invalid_count"] = (
+        rejected_signal_outcome_invalid_count
+    )
+    manifest["rejected_signal_outcome_event_ids"] = rejected_signal_outcome_event_ids
+    manifest["portfolio_candidate_bundle_count"] = portfolio_candidate_bundle_count
+    manifest["portfolio_candidate_invalid_count"] = portfolio_candidate_invalid_count
+    manifest["portfolio_candidate_ids"] = portfolio_candidate_ids
     return deduped, manifest
 
 
@@ -900,9 +1372,47 @@ def _resolved_clickhouse_password(args: argparse.Namespace) -> str:
     if direct_password:
         return direct_password
     password_env = str(getattr(args, "clickhouse_password_env", "") or "").strip()
-    if not password_env:
+    if password_env:
+        password = os.environ.get(password_env, "")
+        if password:
+            return password
+    return os.environ.get("CLICKHOUSE_PASSWORD", "")
+
+
+def _clickhouse_host_requires_dns_preflight(url: str) -> bool:
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    return host.endswith(".svc") or host.endswith(".svc.cluster.local")
+
+
+def _clickhouse_endpoint_preflight_failure(args: argparse.Namespace) -> str:
+    if str(getattr(args, "replay_mode", "") or "") != "real":
         return ""
-    return os.environ.get(password_env, "")
+    if bool(getattr(args, "selection_only", False)):
+        return ""
+    url = str(getattr(args, "clickhouse_http_url", "") or "").strip()
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    if not host:
+        return (
+            "clickhouse_endpoint_invalid_url:"
+            f"url={url or '<empty>'}; set TA_CLICKHOUSE_URL, CLICKHOUSE_HTTP_URL, "
+            "or pass --clickhouse-http-url to a reachable ClickHouse HTTP endpoint"
+        )
+    if not _clickhouse_host_requires_dns_preflight(url):
+        return ""
+    port = parsed.port or (443 if parsed.scheme == "https" else 8123)
+    try:
+        socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError as exc:
+        return (
+            "clickhouse_endpoint_unreachable:"
+            f"host={host};port={port};error={exc}; "
+            "the default Kubernetes service DNS is only reachable in-cluster. "
+            "Run from a cluster pod, set TA_CLICKHOUSE_URL or CLICKHOUSE_HTTP_URL, "
+            "or pass --clickhouse-http-url to a local port-forward/HTTP endpoint."
+        )
+    return ""
 
 
 def _candidate_universe_symbols_from_args(args: argparse.Namespace) -> tuple[str, ...]:
@@ -1384,6 +1894,8 @@ def _persist_epoch_ledgers(
                     if _boolish(promotion_readiness.get("promotable"))
                     else "target_met"
                 )
+            elif _boolish(portfolio.objective_scorecard.get("target_met")):
+                portfolio_status = "paper_probation"
             session.add(
                 AutoresearchPortfolioCandidate(
                     portfolio_candidate_id=portfolio.portfolio_candidate_id,
@@ -1559,6 +2071,9 @@ def _candidate_quality_gate_failures(
             and replay_max_notional > replay_buying_power
         ):
             failures.append("executable_replay_notional_exceeds_buying_power")
+    for blocker in sorted(_oracle_blockers(scorecard)):
+        if blocker not in failures:
+            failures.append(blocker)
     return failures
 
 
@@ -1719,6 +2234,49 @@ def _best_false_negative_table(
     return rows[: max(0, limit)]
 
 
+def _recent_trading_days_shortfall(failure_reason: str) -> dict[str, int] | None:
+    marker = "insufficient_recent_trading_days:"
+    marker_index = failure_reason.find(marker)
+    if marker_index < 0:
+        return None
+    remainder = failure_reason[marker_index + len(marker) :]
+    token = remainder.splitlines()[0].split()[0] if remainder.strip() else ""
+    available_text, separator, required_text = token.partition("<")
+    if separator != "<":
+        return None
+    try:
+        available = int(available_text)
+        required = int(required_text)
+    except ValueError:
+        return None
+    return {
+        "available_recent_trading_days": available,
+        "required_recent_trading_days": required,
+        "missing_recent_trading_days": max(0, required - available),
+    }
+
+
+def _stale_tape_diagnostics(failure_reason: str) -> dict[str, str] | None:
+    marker = "stale_tape:"
+    marker_index = failure_reason.find(marker)
+    if marker_index < 0:
+        return None
+    remainder = failure_reason[marker_index + len(marker) :].splitlines()[0]
+    fields: dict[str, str] = {}
+    for token in remainder.split(":"):
+        key, separator, value = token.partition("=")
+        if separator == "=" and key and value:
+            fields[key] = value
+    expected = fields.get("expected_last_trading_day")
+    end_day = fields.get("end_day")
+    if not expected or not end_day:
+        return None
+    return {
+        "expected_last_trading_day": expected,
+        "available_end_day": end_day,
+    }
+
+
 def _candidate_search_remediation(
     *,
     failure_reason: str,
@@ -1733,6 +2291,9 @@ def _candidate_search_remediation(
     current_portfolio_size_min: int = 2,
     current_max_candidates: int = 64,
     current_max_total_frontier_candidates: int = 0,
+    current_train_days: int = 6,
+    current_holdout_days: int = 3,
+    current_second_oos_days: int = 2,
 ) -> dict[str, Any]:
     failure_counts: dict[str, int] = {}
     for row in _list_of_mappings(list(false_positive_table)):
@@ -1809,6 +2370,65 @@ def _candidate_search_remediation(
         >= observed_selection_budget["eligible_candidate_count"]
     )
     next_actions: list[dict[str, Any]] = []
+    recent_day_shortfall = _recent_trading_days_shortfall(failure_reason)
+    recent_day_diagnostics: dict[str, Any] | None = None
+    if recent_day_shortfall is not None:
+        recent_day_diagnostics = {
+            **recent_day_shortfall,
+            "required_window": {
+                "train_days": max(1, int(current_train_days)),
+                "holdout_days": max(1, int(current_holdout_days)),
+                "second_oos_days": max(0, int(current_second_oos_days)),
+            },
+            "clickhouse_recent_days_query": (
+                "SELECT toDate(event_ts) AS trading_day, count() AS rows, "
+                "min(event_ts) AS first_event_ts, max(event_ts) AS last_event_ts "
+                "FROM torghut.ta_signals WHERE source = 'ta' AND window_size = 'PT1S' "
+                "GROUP BY trading_day ORDER BY trading_day DESC LIMIT 20"
+            ),
+        }
+        next_actions.append(
+            {
+                "priority": 1,
+                "action": "inspect_or_backfill_recent_ta_signal_days",
+                "reason": (
+                    "real replay cannot build the requested train/holdout/double-OOS "
+                    "window from available TA PT1S signal days"
+                ),
+                "recent_trading_days": recent_day_diagnostics,
+                "recommended_operator_probe": recent_day_diagnostics[
+                    "clickhouse_recent_days_query"
+                ],
+                "recommended_archive_probe": (
+                    "python services/torghut/scripts/archive_recent_kafka_trading_days.py "
+                    "--archive-root $ARCHIVE_ROOT --scan-root $HISTORICAL_RUN_ROOT --json"
+                ),
+            }
+        )
+    stale_tape = _stale_tape_diagnostics(failure_reason)
+    if stale_tape is not None:
+        next_actions.append(
+            {
+                "priority": 1,
+                "action": "inspect_or_backfill_latest_ta_signal_day",
+                "reason": (
+                    "real replay freshness gate rejected the tape because the latest "
+                    "available TA day is older than the expected last trading day"
+                ),
+                "stale_tape": stale_tape,
+                "recommended_operator_probe": (
+                    "SELECT source, window_size, countDistinct(toDate(event_ts)) AS days, "
+                    "min(toDate(event_ts)) AS first_day, max(toDate(event_ts)) AS last_day, "
+                    "count() AS rows FROM torghut.ta_signals GROUP BY source, window_size "
+                    "ORDER BY days DESC, rows DESC"
+                ),
+                "diagnostic_replay_note": (
+                    "For a read-only stale-tape diagnostic replay, pass "
+                    "--expected-last-trading-day "
+                    f"{stale_tape['available_end_day']} instead of using live freshness proof."
+                ),
+            }
+        )
     if (
         observed_selection_budget["selected_count"] <= 0
         and observed_selection_budget["pre_replay_feedback_blocked_candidate_count"] > 0
@@ -1863,6 +2483,8 @@ def _candidate_search_remediation(
             "candidate_surface_exhausted": candidate_surface_exhausted,
             "replayable_candidate_surface_exhausted": replayable_candidate_surface_exhausted,
             "observed_selection_budget": observed_selection_budget,
+            "recent_trading_days": recent_day_diagnostics,
+            "stale_tape": stale_tape,
             "next_actions": next_actions,
         }
     if "TimeoutError:real_replay_timeout_seconds" in failure_reason:
@@ -1906,6 +2528,24 @@ def _candidate_search_remediation(
         "executable_replay_account_buying_power_missing",
         "executable_replay_max_notional_missing",
         "executable_replay_notional_exceeds_buying_power",
+        "market_impact_stress_passed_failed",
+        "market_impact_stress_artifact_present_failed",
+        "market_impact_liquidity_evidence_present_failed",
+        "market_impact_stress_model_failed",
+        "market_impact_stress_cost_bps_failed",
+        "market_impact_stress_net_pnl_per_day_failed",
+        "delay_adjusted_depth_stress_passed_failed",
+        "delay_adjusted_depth_stress_artifact_present_failed",
+        "delay_adjusted_depth_stress_model_failed",
+        "delay_adjusted_depth_stress_ms_failed",
+        "delay_adjusted_depth_fillable_notional_per_day_failed",
+        "delay_adjusted_depth_stress_net_pnl_per_day_failed",
+        "double_oos_passed_failed",
+        "double_oos_artifact_present_failed",
+        "double_oos_independent_window_count_failed",
+        "double_oos_pass_rate_failed",
+        "double_oos_net_pnl_per_day_failed",
+        "double_oos_cost_shock_net_pnl_per_day_failed",
     )
     proof_failure_counts = {
         reason: count
@@ -1920,11 +2560,11 @@ def _candidate_search_remediation(
     if proof_failure_counts:
         proof_action: dict[str, Any] = {
             "priority": 3 if not non_proof_failure_counts else 7,
-            "action": "complete_executable_replay_and_shadow_parity_evidence",
+            "action": "complete_runtime_closure_double_oos_and_shadow_evidence",
             "reason": (
-                "replayed candidates are missing promotion-closure evidence required by the oracle"
+                "replayed candidates are missing runtime-closure double-OOS, cost-stressed, executable replay, or shadow evidence required by the oracle"
                 if not non_proof_failure_counts
-                else "promotion-closure evidence is required, but current candidates still fail profit or risk gates"
+                else "runtime-closure double-OOS and promotion evidence is required, but current candidates still fail profit or risk gates"
             ),
             "blocking_failure_counts": proof_failure_counts,
             "required_scorecard_fields": [
@@ -1936,9 +2576,22 @@ def _candidate_search_remediation(
                 "executable_replay_max_notional_per_trade",
                 "market_impact_stress_passed",
                 "market_impact_stress_artifact_ref",
+                "market_impact_liquidity_evidence_present",
                 "market_impact_stress_model",
                 "market_impact_stress_cost_bps",
                 "market_impact_stress_net_pnl_per_day",
+                "delay_adjusted_depth_stress_passed",
+                "delay_adjusted_depth_stress_artifact_ref",
+                "delay_adjusted_depth_stress_model",
+                "delay_adjusted_depth_stress_ms",
+                "delay_adjusted_depth_fillable_notional_per_day",
+                "delay_adjusted_depth_stress_net_pnl_per_day",
+                "double_oos_passed",
+                "double_oos_artifact_ref",
+                "double_oos_independent_window_count",
+                "double_oos_pass_rate",
+                "double_oos_net_pnl_per_day",
+                "double_oos_cost_shock_net_pnl_per_day",
             ],
         }
         if non_proof_failure_counts:
@@ -2078,6 +2731,8 @@ def _candidate_search_remediation(
         "candidate_surface_exhausted": candidate_surface_exhausted,
         "replayable_candidate_surface_exhausted": replayable_candidate_surface_exhausted,
         "observed_selection_budget": observed_selection_budget,
+        "recent_trading_days": recent_day_diagnostics,
+        "stale_tape": stale_tape,
         "next_actions": next_actions,
     }
 
@@ -2175,11 +2830,44 @@ def _candidate_sleeve_goal_rows(
     portfolio: PortfolioCandidateSpec | None,
     limit: int = 16,
 ) -> list[dict[str, Any]]:
-    if portfolio is not None:
-        return [dict(sleeve) for sleeve in portfolio.sleeves[:limit]]
-
     spec_by_id = {spec.candidate_spec_id: spec for spec in candidate_specs}
     evidence_by_spec = {bundle.candidate_spec_id: bundle for bundle in evidence_bundles}
+    if portfolio is not None:
+        rows: list[dict[str, Any]] = []
+        for sleeve in portfolio.sleeves[:limit]:
+            row = dict(sleeve)
+            candidate_spec_id = _string(row.get("candidate_spec_id"))
+            spec = spec_by_id.get(candidate_spec_id)
+            evidence = evidence_by_spec.get(candidate_spec_id)
+            scorecard = evidence.objective_scorecard if evidence is not None else {}
+            if spec is not None:
+                row["family_template_id"] = spec.family_template_id
+                row["runtime_family"] = spec.runtime_family
+                row["runtime_strategy_name"] = spec.runtime_strategy_name
+                row["market_impact_proof"] = (
+                    _candidate_board_market_impact_proof_summary(scorecard)
+                )
+                row["regime_specialist_validation"] = (
+                    _candidate_board_regime_specialist_summary(spec, scorecard)
+                )
+                row["order_type_execution_quality"] = (
+                    _candidate_board_order_type_execution_quality_summary(
+                        spec, scorecard
+                    )
+                )
+            row["evidence_status"] = "replayed" if evidence is not None else "missing"
+            row["evidence_lineage"] = _candidate_board_evidence_lineage_summary(
+                evidence
+            )
+            row["replay_window_coverage"] = (
+                _candidate_board_replay_window_coverage_summary(scorecard)
+            )
+            row["replay_artifact_refs"] = (
+                list(evidence.replay_artifact_refs) if evidence is not None else []
+            )
+            rows.append(row)
+        return rows
+
     failure_by_spec = {
         _string(row.get("candidate_spec_id")): list(
             cast(Sequence[Any], row.get("failure_reasons") or ())
@@ -2195,6 +2883,15 @@ def _candidate_sleeve_goal_rows(
         spec = spec_by_id.get(candidate_spec_id)
         evidence = evidence_by_spec.get(candidate_spec_id)
         scorecard = evidence.objective_scorecard if evidence is not None else {}
+        order_type_summary = (
+            _candidate_board_order_type_execution_quality_summary(spec, scorecard)
+            if spec is not None
+            else {"required": False, "passed": True, "blockers": []}
+        )
+        evidence_lineage = _candidate_board_evidence_lineage_summary(evidence)
+        replay_window_coverage = _candidate_board_replay_window_coverage_summary(
+            scorecard
+        )
         rows.append(
             {
                 "candidate_spec_id": candidate_spec_id,
@@ -2212,6 +2909,12 @@ def _candidate_sleeve_goal_rows(
                 "net_pnl_per_day": _string(scorecard.get("net_pnl_per_day")),
                 "active_day_ratio": _string(scorecard.get("active_day_ratio")),
                 "positive_day_ratio": _string(scorecard.get("positive_day_ratio")),
+                "replay_artifact_refs": list(evidence.replay_artifact_refs)
+                if evidence is not None
+                else [],
+                "evidence_lineage": evidence_lineage,
+                "replay_window_coverage": replay_window_coverage,
+                "order_type_execution_quality": order_type_summary,
                 "failure_reasons": [
                     _string(item)
                     for item in failure_by_spec.get(candidate_spec_id, ())
@@ -2369,6 +3072,11 @@ def _profitability_next_epoch_plan(
     target: Decimal,
     remediation: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
+    direct_candidate_specs_artifacts = [
+        str(path)
+        for path in cast(Sequence[Path], getattr(args, "candidate_specs", ()) or ())
+        if str(path)
+    ]
     flags: dict[str, str] = {
         "--target-net-pnl-per-day": str(target),
         "--program": str(getattr(args, "program", _DEFAULT_PORTFOLIO_PROFIT_PROGRAM)),
@@ -2499,12 +3207,15 @@ def _profitability_next_epoch_plan(
         "--output-dir",
         "<next-epoch-output-dir>",
     ]
+    for path in direct_candidate_specs_artifacts:
+        argv.extend(["--candidate-specs", path])
     for key, value in flags.items():
         argv.extend([key, value])
     return {
         "entrypoint": "services/torghut/scripts/run_whitepaper_autoresearch_profit_target.py",
         "flags": flags,
         "argv": argv,
+        "direct_candidate_specs_artifacts": direct_candidate_specs_artifacts,
         "applied_recommended_flags": applied_recommended_flags,
         "rejected_recommended_flags": rejected_recommended_flags,
         "no_fast_path_policy": {
@@ -2655,14 +3366,15 @@ def _profitability_search_goal(
 def _pre_replay_candidate_score(spec: CandidateSpec) -> Decimal:
     family_score = {
         "microbar_cross_sectional_pairs_v1": Decimal("70"),
-        "microstructure_continuation_matched_filter_v1": Decimal("65"),
-        "opening_drive_leader_reclaim_v1": Decimal("63"),
+        "intraday_tsmom_v2": Decimal("68"),
+        "late_day_continuation_v1": Decimal("62"),
         "momentum_pullback_v1": Decimal("60"),
         "washout_rebound_v2": Decimal("55"),
+        "microstructure_continuation_matched_filter_v1": Decimal("53"),
+        "opening_drive_leader_reclaim_v1": Decimal("52"),
         "breakout_reclaim_v2": Decimal("50"),
         "end_of_day_reversal_v1": Decimal("48"),
         "mean_reversion_rebound_v1": Decimal("45"),
-        "late_day_continuation_v1": Decimal("45"),
     }.get(spec.family_template_id, Decimal("40"))
     required_features = spec.feature_contract.get("required_features")
     feature_count = (
@@ -2695,6 +3407,351 @@ def _candidate_spec_signal_key(spec: CandidateSpec) -> str:
             _string(params.get("rank_feature")),
         )
         if part
+    )
+
+
+def _candidate_spec_is_false_negative_rescue(spec: CandidateSpec) -> bool:
+    params = _mapping(spec.strategy_overrides.get("params"))
+    overlays = spec.parameter_space.get("mechanism_overlay_ids", ())
+    overlay_ids = set(_string_list_from_value(overlays))
+    return (
+        "rejected_signal_outcome_calibration" in overlay_ids
+        and _string(params.get("veto_relaxation_scope"))
+        == "labeled_false_negative_only"
+        and _string(params.get("outcome_label_filter")) == "profitable_after_costs"
+    )
+
+
+def _candidate_spec_requires_rejected_signal_outcome_learning(
+    spec: CandidateSpec,
+) -> bool:
+    overlays = spec.parameter_space.get("mechanism_overlay_ids", ())
+    overlay_ids = set(_string_list_from_value(overlays))
+    return (
+        "rejected_signal_outcome_calibration" in overlay_ids
+        or _boolish(
+            spec.promotion_contract.get("requires_rejected_signal_outcome_learning")
+        )
+        or "required_min_rejected_signal_outcome_label_count" in spec.hard_vetoes
+    )
+
+
+_LOSS_ADAPTIVE_FEEDBACK_REMEDIATION_PROFILES = frozenset(
+    {"adverse_selection_feedback_escape"}
+)
+
+
+def _candidate_spec_is_loss_adaptive_feedback_escape(spec: CandidateSpec) -> bool:
+    params = _mapping(spec.strategy_overrides.get("params"))
+    return (
+        _string(params.get("feedback_remediation_profile"))
+        in _LOSS_ADAPTIVE_FEEDBACK_REMEDIATION_PROFILES
+    )
+
+
+def _candidate_spec_active_loss_counter_tags(spec: CandidateSpec) -> set[str]:
+    params = _mapping(spec.strategy_overrides.get("params"))
+    profile = _string(params.get("feedback_remediation_profile"))
+    if profile == "daily_coverage_feedback_escape":
+        return {"daily_coverage_shortfall"}
+    if profile in {
+        "turnover_coverage_feedback_escape",
+        "notional_throughput_feedback_escape",
+    }:
+        return {"notional_throughput_shortfall"}
+    if profile == "consistency_guard_feedback_escape":
+        return {"loss_control_shortfall"}
+    if profile == "symbol_diversification_feedback_escape":
+        return {"symbol_concentration_shortfall"}
+    if profile == "adverse_selection_feedback_escape":
+        return {
+            "daily_coverage_shortfall",
+            "notional_throughput_shortfall",
+            "loss_control_shortfall",
+            "adverse_selection_shortfall",
+        }
+    return set()
+
+
+def _feedback_active_loss_counter_candidate_reasons(
+    scorecard: Mapping[str, Any],
+    *,
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
+) -> set[str]:
+    if not scorecard or _feedback_has_no_replay_activity(scorecard):
+        return set()
+    policy = oracle_policy or ProfitTargetOraclePolicy()
+    if (
+        _decimal(scorecard.get("max_gross_exposure_pct_equity"))
+        > policy.max_gross_exposure_pct_equity
+    ):
+        return set()
+    if _decimal(scorecard.get("min_cash")) < policy.min_cash:
+        return set()
+    if _decimal(scorecard.get("negative_cash_observation_count")) > Decimal(
+        max(0, policy.max_negative_cash_observation_count)
+    ):
+        return set()
+    if not (
+        _feedback_has_nonpositive_expected_value(scorecard)
+        or _feedback_daily_net_has_loss(scorecard)
+    ):
+        return set()
+    reasons = {"adverse_selection_shortfall"}
+    if (
+        _decimal(scorecard.get("active_day_ratio"), default="1")
+        < policy.min_active_day_ratio
+    ):
+        reasons.add("daily_coverage_shortfall")
+    if (
+        _decimal(scorecard.get("avg_filled_notional_per_day"))
+        < policy.min_avg_filled_notional_per_day
+    ):
+        reasons.add("notional_throughput_shortfall")
+    if (
+        _decimal(scorecard.get("positive_day_ratio"), default="1")
+        < policy.min_positive_day_ratio
+        or _decimal(scorecard.get("negative_day_count")) > Decimal("0")
+        or _decimal(scorecard.get("worst_day_loss")) > Decimal("0")
+        or _decimal(scorecard.get("max_drawdown")) > Decimal("0")
+    ):
+        reasons.add("loss_control_shortfall")
+    if (
+        _decimal(scorecard.get("max_single_symbol_contribution_share"), default="0")
+        > policy.max_single_symbol_contribution_share
+        or _decimal(scorecard.get("symbol_concentration_share"), default="0")
+        > policy.max_single_symbol_contribution_share
+        or _decimal(scorecard.get("max_cluster_contribution_share"), default="0")
+        > policy.max_cluster_contribution_share
+    ):
+        reasons.add("symbol_concentration_shortfall")
+    return reasons
+
+
+def _candidate_spec_matches_active_loss_counter_feedback(
+    spec: CandidateSpec,
+    scorecard: Mapping[str, Any],
+    *,
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
+) -> bool:
+    candidate_tags = _candidate_spec_active_loss_counter_tags(spec)
+    if not candidate_tags:
+        return False
+    feedback_reasons = _feedback_active_loss_counter_candidate_reasons(
+        scorecard, oracle_policy=oracle_policy
+    )
+    return bool(candidate_tags & feedback_reasons)
+
+
+def _feedback_consistency_repair_candidate_reasons(
+    scorecard: Mapping[str, Any],
+    *,
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
+) -> set[str]:
+    if (
+        not scorecard
+        or _feedback_has_no_replay_activity(scorecard)
+        or _feedback_has_nonpositive_expected_value(scorecard)
+    ):
+        return set()
+    policy = oracle_policy or ProfitTargetOraclePolicy()
+    if (
+        _decimal(scorecard.get("max_gross_exposure_pct_equity"))
+        > policy.max_gross_exposure_pct_equity
+    ):
+        return set()
+    if _decimal(scorecard.get("min_cash")) < policy.min_cash:
+        return set()
+    if _decimal(scorecard.get("negative_cash_observation_count")) > Decimal(
+        max(0, policy.max_negative_cash_observation_count)
+    ):
+        return set()
+    reasons: set[str] = set()
+    if (
+        _decimal(scorecard.get("active_day_ratio"), default="1")
+        < policy.min_active_day_ratio
+    ):
+        reasons.add("daily_coverage_shortfall")
+    if (
+        _decimal(scorecard.get("avg_filled_notional_per_day"))
+        < policy.min_avg_filled_notional_per_day
+    ):
+        reasons.add("notional_throughput_shortfall")
+    if (
+        _decimal(scorecard.get("positive_day_ratio"), default="1")
+        < policy.min_positive_day_ratio
+        or _decimal(scorecard.get("negative_day_count")) > Decimal("0")
+        or _decimal(scorecard.get("worst_day_loss")) > Decimal("0")
+        or _decimal(scorecard.get("max_drawdown")) > Decimal("0")
+        or _decimal(scorecard.get("min_daily_net_pnl")) < policy.min_daily_net_pnl
+    ):
+        reasons.add("loss_control_shortfall")
+    if (
+        _decimal(scorecard.get("best_day_share"), default="0")
+        > policy.max_best_day_share
+    ):
+        reasons.update({"daily_coverage_shortfall", "loss_control_shortfall"})
+    if (
+        _decimal(scorecard.get("max_single_symbol_contribution_share"), default="0")
+        > policy.max_single_symbol_contribution_share
+        or _decimal(scorecard.get("symbol_concentration_share"), default="0")
+        > policy.max_single_symbol_contribution_share
+        or _decimal(scorecard.get("max_cluster_contribution_share"), default="0")
+        > policy.max_cluster_contribution_share
+    ):
+        reasons.add("symbol_concentration_shortfall")
+    return reasons
+
+
+def _candidate_spec_matches_consistency_repair_feedback(
+    spec: CandidateSpec,
+    scorecard: Mapping[str, Any],
+    *,
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
+) -> bool:
+    candidate_tags = _candidate_spec_active_loss_counter_tags(spec)
+    if not candidate_tags:
+        return False
+    feedback_reasons = _feedback_consistency_repair_candidate_reasons(
+        scorecard, oracle_policy=oracle_policy
+    )
+    return bool(candidate_tags & feedback_reasons)
+
+
+def _active_loss_counter_proposal_score(
+    spec: CandidateSpec,
+    scorecard: Mapping[str, Any],
+    *,
+    raw_score: float,
+    target_score: float,
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
+) -> float:
+    policy = oracle_policy or ProfitTargetOraclePolicy()
+    candidate_tags = _candidate_spec_active_loss_counter_tags(spec)
+    feedback_reasons = _feedback_active_loss_counter_candidate_reasons(
+        scorecard,
+        oracle_policy=policy,
+    )
+    matched_tags = candidate_tags & feedback_reasons
+    params = _mapping(spec.strategy_overrides.get("params"))
+    remediation_profile = _string(params.get("feedback_remediation_profile"))
+    profile_bonus = {
+        "adverse_selection_feedback_escape": Decimal("160"),
+        "notional_throughput_feedback_escape": Decimal("110"),
+        "turnover_coverage_feedback_escape": Decimal("90"),
+        "daily_coverage_feedback_escape": Decimal("70"),
+        "consistency_guard_feedback_escape": Decimal("60"),
+        "symbol_diversification_feedback_escape": Decimal("40"),
+    }.get(remediation_profile, Decimal("0"))
+    capital_features = candidate_spec_capital_features(spec)
+    configured_daily_notional_capacity = _decimal(
+        capital_features.get("configured_daily_notional_capacity")
+    )
+    required_daily_notional = max(policy.min_avg_filled_notional_per_day, Decimal("1"))
+    capacity_ratio = min(
+        Decimal("2"),
+        configured_daily_notional_capacity / required_daily_notional,
+    )
+    loss_control_bonus = Decimal("0")
+    if _string(params.get("max_stop_loss_exits_per_session")) == "1":
+        loss_control_bonus += Decimal("20")
+    if _decimal(params.get("stop_loss_lockout_seconds")) >= Decimal("1800"):
+        loss_control_bonus += Decimal("20")
+    activity_count = max(
+        (_decimal(scorecard.get(key)) for key in _REPLAY_ACTIVITY_COUNT_KEYS),
+        default=Decimal("0"),
+    )
+    activity_bonus = min(activity_count, Decimal("100")) * Decimal("2")
+    avg_filled_notional_per_day = _decimal(scorecard.get("avg_filled_notional_per_day"))
+    activity_bonus += min(
+        Decimal("1"),
+        avg_filled_notional_per_day / required_daily_notional,
+    ) * Decimal("50")
+    activity_bonus += min(
+        Decimal("1"),
+        max(Decimal("0"), _decimal(scorecard.get("active_day_ratio"))),
+    ) * Decimal("50")
+    mlx_relative_signal = max(
+        Decimal("-250"),
+        min(Decimal("250"), Decimal(str(raw_score)) - Decimal(str(target_score))),
+    )
+    return float(
+        Decimal("-100000")
+        + _pre_replay_candidate_score(spec)
+        + (Decimal(len(matched_tags)) * Decimal("180"))
+        + profile_bonus
+        + (capacity_ratio * Decimal("40"))
+        + loss_control_bonus
+        + activity_bonus
+        + mlx_relative_signal
+    )
+
+
+def _consistency_repair_proposal_score(
+    spec: CandidateSpec,
+    scorecard: Mapping[str, Any],
+    *,
+    raw_score: float,
+    target_score: float,
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
+) -> float:
+    policy = oracle_policy or ProfitTargetOraclePolicy()
+    candidate_tags = _candidate_spec_active_loss_counter_tags(spec)
+    feedback_reasons = _feedback_consistency_repair_candidate_reasons(
+        scorecard,
+        oracle_policy=policy,
+    )
+    matched_tags = candidate_tags & feedback_reasons
+    params = _mapping(spec.strategy_overrides.get("params"))
+    remediation_profile = _string(params.get("feedback_remediation_profile"))
+    profile_bonus = {
+        "consistency_guard_feedback_escape": Decimal("180"),
+        "daily_coverage_feedback_escape": Decimal("150"),
+        "adverse_selection_feedback_escape": Decimal("130"),
+        "symbol_diversification_feedback_escape": Decimal("120"),
+        "notional_throughput_feedback_escape": Decimal("80"),
+        "turnover_coverage_feedback_escape": Decimal("70"),
+    }.get(remediation_profile, Decimal("40"))
+    positive_shortfall = max(
+        Decimal("0"),
+        policy.min_positive_day_ratio
+        - _decimal(scorecard.get("positive_day_ratio"), default="1"),
+    )
+    concentration_excess = max(
+        Decimal("0"),
+        _decimal(scorecard.get("best_day_share"), default="0")
+        - policy.max_best_day_share,
+        _decimal(scorecard.get("max_single_symbol_contribution_share"), default="0")
+        - policy.max_single_symbol_contribution_share,
+        _decimal(scorecard.get("symbol_concentration_share"), default="0")
+        - policy.max_single_symbol_contribution_share,
+        _decimal(scorecard.get("max_cluster_contribution_share"), default="0")
+        - policy.max_cluster_contribution_share,
+    )
+    mlx_relative_signal = max(
+        Decimal("-250"),
+        min(Decimal("250"), Decimal(str(raw_score)) - Decimal(str(target_score))),
+    )
+    return float(
+        Decimal("-50000")
+        + _pre_replay_candidate_score(spec)
+        + (Decimal(len(matched_tags)) * Decimal("120"))
+        + profile_bonus
+        + mlx_relative_signal
+        - (positive_shortfall * Decimal("80"))
+        - (concentration_excess * Decimal("80"))
+    )
+
+
+def _scorecard_is_false_negative_rescue_feedback(
+    scorecard: Mapping[str, Any],
+) -> bool:
+    signal_key = _string(scorecard.get("signal_key"))
+    if signal_key.startswith("rejected_signal_false_negative"):
+        return True
+    runtime_params = _mapping(scorecard.get("runtime_params"))
+    return _string(runtime_params.get("signal_motif")).startswith(
+        "rejected_signal_false_negative"
     )
 
 
@@ -2899,12 +3956,50 @@ def _feedback_daily_net_has_loss(scorecard: Mapping[str, Any]) -> bool:
     )
 
 
+_REPLAY_ACTIVITY_COUNT_KEYS = (
+    "decision_count",
+    "trade_decision_count",
+    "paper_decision_count",
+    "runtime_decision_count",
+    "orders_submitted_count",
+    "submitted_order_count",
+    "filled_count",
+    "fill_count",
+    "filled_order_count",
+)
+
+
+def _feedback_has_no_replay_activity(scorecard: Mapping[str, Any]) -> bool:
+    explicit_activity = False
+    for key in _REPLAY_ACTIVITY_COUNT_KEYS:
+        if key not in scorecard:
+            continue
+        explicit_activity = True
+        if _decimal(scorecard.get(key)) > Decimal("0"):
+            return False
+    if "avg_filled_notional_per_day" in scorecard:
+        explicit_activity = True
+        if _decimal(scorecard.get("avg_filled_notional_per_day")) > Decimal("0"):
+            return False
+    daily_filled_notional = scorecard.get("daily_filled_notional")
+    if isinstance(daily_filled_notional, Mapping):
+        explicit_activity = True
+        if any(
+            _decimal(value) > Decimal("0")
+            for value in cast(Mapping[Any, Any], daily_filled_notional).values()
+        ):
+            return False
+    return explicit_activity
+
+
 def _feedback_family_prior_has_hard_block(
     scorecard: Mapping[str, Any],
     *,
     oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> bool:
     policy = oracle_policy or ProfitTargetOraclePolicy()
+    if _feedback_has_no_replay_activity(scorecard):
+        return True
     oracle_blockers = _oracle_blockers(scorecard)
     if oracle_blockers & _FAMILY_PRIOR_HARD_BLOCK_ORACLE_BLOCKERS:
         return True
@@ -2929,6 +4024,8 @@ def _feedback_risk_profile_has_penalty(
     oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> bool:
     policy = oracle_policy or ProfitTargetOraclePolicy()
+    if _feedback_has_no_replay_activity(scorecard):
+        return True
     oracle_blockers = _oracle_blockers(scorecard)
     if oracle_blockers & _RISK_PROFILE_FEEDBACK_ORACLE_BLOCKERS:
         return True
@@ -2969,6 +4066,8 @@ def _feedback_risk_profile_has_terminal_block(
 ) -> bool:
     if not scorecard:
         return False
+    if _feedback_has_no_replay_activity(scorecard):
+        return True
     policy = oracle_policy or ProfitTargetOraclePolicy()
     if not _feedback_risk_profile_has_penalty(scorecard, oracle_policy=policy):
         return False
@@ -2991,6 +4090,8 @@ def _feedback_has_policy_penalty(
     *,
     oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> bool:
+    if _feedback_has_no_replay_activity(scorecard):
+        return True
     return _feedback_risk_profile_has_penalty(
         scorecard, oracle_policy=oracle_policy
     ) or _feedback_daily_net_has_loss(scorecard)
@@ -3002,6 +4103,8 @@ def _feedback_is_blocked(
     oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> bool:
     policy = oracle_policy or ProfitTargetOraclePolicy()
+    if _feedback_has_no_replay_activity(scorecard):
+        return True
     if _feedback_scorecard_has_hard_veto(scorecard):
         return True
     if (
@@ -3150,6 +4253,7 @@ def _pre_replay_proposal_model_and_rows(
     oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> tuple[Mapping[str, Any], list[dict[str, Any]]]:
     policy = oracle_policy or ProfitTargetOraclePolicy()
+    spec_by_id = {spec.candidate_spec_id: spec for spec in specs}
     spec_ids = {spec.candidate_spec_id for spec in specs}
     execution_signature_by_spec = {
         spec.candidate_spec_id: _candidate_spec_execution_signature(spec)
@@ -3353,6 +4457,10 @@ def _pre_replay_proposal_model_and_rows(
         has_policy_penalty = bundle is not None and _feedback_has_policy_penalty(
             bundle.objective_scorecard, oracle_policy=policy
         )
+        if bundle is not None and _feedback_has_no_replay_activity(
+            bundle.objective_scorecard
+        ):
+            return "pre_replay_mlx_no_activity_feedback_blocked"
         if source == "feedback_real_replay" and is_blocked:
             if bundle is not None and _feedback_has_nonpositive_expected_value(
                 bundle.objective_scorecard
@@ -3393,10 +4501,37 @@ def _pre_replay_proposal_model_and_rows(
             and bundle is not None
             and _feedback_has_nonpositive_expected_value(bundle.objective_scorecard)
         ):
+            spec = spec_by_id.get(candidate_spec_id)
+            if (
+                spec is not None
+                and _candidate_spec_is_false_negative_rescue(spec)
+                and _scorecard_is_false_negative_rescue_feedback(
+                    bundle.objective_scorecard
+                )
+            ):
+                return "pre_replay_mlx_false_negative_rescue_feedback_blocked"
+            if (
+                spec is not None
+                and _candidate_spec_matches_active_loss_counter_feedback(
+                    spec,
+                    bundle.objective_scorecard,
+                    oracle_policy=policy,
+                )
+            ):
+                return "pre_replay_mlx_active_loss_counter_candidate"
             return "pre_replay_mlx_family_feedback_blocked"
-        if source == "feedback_family_replay" and is_blocked:
-            return "pre_replay_mlx_family_feedback_penalized"
-        if source == "feedback_family_replay" and has_policy_penalty:
+        if (
+            source == "feedback_family_replay"
+            and bundle is not None
+            and (is_blocked or has_policy_penalty)
+        ):
+            spec = spec_by_id.get(candidate_spec_id)
+            if spec is not None and _candidate_spec_matches_consistency_repair_feedback(
+                spec,
+                bundle.objective_scorecard,
+                oracle_policy=policy,
+            ):
+                return "pre_replay_mlx_consistency_repair_candidate"
             return "pre_replay_mlx_family_feedback_penalized"
         return "pre_replay_mlx_rank"
 
@@ -3414,7 +4549,46 @@ def _pre_replay_proposal_model_and_rows(
             and bundle is not None
             and _feedback_has_nonpositive_expected_value(bundle.objective_scorecard)
         ):
+            spec = spec_by_id.get(candidate_spec_id)
+            if (
+                spec is not None
+                and _candidate_spec_matches_active_loss_counter_feedback(
+                    spec,
+                    bundle.objective_scorecard,
+                    oracle_policy=policy,
+                )
+            ):
+                return _active_loss_counter_proposal_score(
+                    spec,
+                    bundle.objective_scorecard,
+                    raw_score=raw_score,
+                    target_score=target_by_spec.get(candidate_spec_id, raw_score),
+                    oracle_policy=policy,
+                )
             return min(-1_000_000.0, target_by_spec.get(candidate_spec_id, raw_score))
+        if (
+            source == "feedback_family_replay"
+            and bundle is not None
+            and (
+                _feedback_is_blocked(bundle.objective_scorecard, oracle_policy=policy)
+                or _feedback_has_policy_penalty(
+                    bundle.objective_scorecard, oracle_policy=policy
+                )
+            )
+        ):
+            spec = spec_by_id.get(candidate_spec_id)
+            if spec is not None and _candidate_spec_matches_consistency_repair_feedback(
+                spec,
+                bundle.objective_scorecard,
+                oracle_policy=policy,
+            ):
+                return _consistency_repair_proposal_score(
+                    spec,
+                    bundle.objective_scorecard,
+                    raw_score=raw_score,
+                    target_score=target_by_spec.get(candidate_spec_id, raw_score),
+                    oracle_policy=policy,
+                )
         if (
             source == "feedback_shape_prior"
             and bundle is not None
@@ -3469,6 +4643,42 @@ def _pre_replay_proposal_model_and_rows(
             "feedback_match_scope": feedback_match_scope_by_spec.get(
                 item.candidate_spec_id
             ),
+            "active_loss_counter_tags": sorted(
+                _candidate_spec_active_loss_counter_tags(
+                    spec_by_id[item.candidate_spec_id]
+                )
+            )
+            if row_selection_reason(item.candidate_spec_id)
+            == "pre_replay_mlx_active_loss_counter_candidate"
+            else [],
+            "active_loss_counter_feedback_reasons": sorted(
+                _feedback_active_loss_counter_candidate_reasons(
+                    feedback_bundle_by_spec[item.candidate_spec_id].objective_scorecard,
+                    oracle_policy=policy,
+                )
+            )
+            if row_selection_reason(item.candidate_spec_id)
+            == "pre_replay_mlx_active_loss_counter_candidate"
+            and item.candidate_spec_id in feedback_bundle_by_spec
+            else [],
+            "consistency_repair_tags": sorted(
+                _candidate_spec_active_loss_counter_tags(
+                    spec_by_id[item.candidate_spec_id]
+                )
+            )
+            if row_selection_reason(item.candidate_spec_id)
+            == "pre_replay_mlx_consistency_repair_candidate"
+            else [],
+            "consistency_repair_feedback_reasons": sorted(
+                _feedback_consistency_repair_candidate_reasons(
+                    feedback_bundle_by_spec[item.candidate_spec_id].objective_scorecard,
+                    oracle_policy=policy,
+                )
+            )
+            if row_selection_reason(item.candidate_spec_id)
+            == "pre_replay_mlx_consistency_repair_candidate"
+            and item.candidate_spec_id in feedback_bundle_by_spec
+            else [],
             "feedback_evidence_context_count": len(feedback_evidence_bundles),
             "feature_hash": item.feature_hash,
             "features": feature_by_spec.get(item.candidate_spec_id, {}),
@@ -3549,6 +4759,8 @@ _PRE_REPLAY_FEEDBACK_BLOCK_REASONS = frozenset(
         "pre_replay_mlx_shape_feedback_blocked",
         "pre_replay_mlx_risk_profile_feedback_blocked",
         "pre_replay_mlx_family_feedback_blocked",
+        "pre_replay_mlx_false_negative_rescue_feedback_blocked",
+        "pre_replay_mlx_no_activity_feedback_blocked",
     }
 )
 _PRE_REPLAY_SELECTION_BLOCK_REASONS = frozenset(
@@ -3556,6 +4768,7 @@ _PRE_REPLAY_SELECTION_BLOCK_REASONS = frozenset(
         *_PRE_REPLAY_FEEDBACK_BLOCK_REASONS,
         "pre_replay_capital_budget_blocked",
         "pre_replay_mlx_synthetic_nonpositive_expected_value",
+        "pre_replay_synthetic_capacity_insufficient",
     }
 )
 
@@ -3618,6 +4831,19 @@ def _select_candidate_specs_for_replay(
         except (TypeError, ValueError):
             return 0
 
+    def proposal_selection_reason(candidate_spec_id: str) -> str:
+        return _string(
+            proposal_by_spec.get(candidate_spec_id, {}).get("selection_reason")
+        )
+
+    def proposal_feature(candidate_spec_id: str, key: str) -> Decimal:
+        features = _mapping(proposal_by_spec.get(candidate_spec_id, {}).get("features"))
+        return _decimal(features.get(key))
+
+    def proposal_has_feature(candidate_spec_id: str, key: str) -> bool:
+        features = _mapping(proposal_by_spec.get(candidate_spec_id, {}).get("features"))
+        return key in features
+
     def capital_blocked(spec: CandidateSpec) -> bool:
         features = capital_features_by_spec.get(spec.candidate_spec_id, {})
         oracle_policy = _mapping(
@@ -3637,6 +4863,11 @@ def _select_candidate_specs_for_replay(
         proposal = proposal_by_spec.get(spec.candidate_spec_id, {})
         selection_reason = _string(proposal.get("selection_reason"))
         if selection_reason in _PRE_REPLAY_FEEDBACK_BLOCK_REASONS:
+            if (
+                selection_reason == "pre_replay_mlx_family_feedback_blocked"
+                and _candidate_spec_is_false_negative_rescue(spec)
+            ):
+                return ""
             return selection_reason
         if capital_blocked(spec):
             return capital_block_reason
@@ -3649,6 +4880,14 @@ def _select_candidate_specs_for_replay(
             and proposal.get("proposal_score") is not None
             and score <= Decimal("0")
         ):
+            if proposal_has_feature(
+                spec.candidate_spec_id,
+                "configured_daily_notional_required_ratio",
+            ) and proposal_feature(
+                spec.candidate_spec_id,
+                "configured_daily_notional_required_ratio",
+            ) < Decimal("1"):
+                return "pre_replay_synthetic_capacity_insufficient"
             return "pre_replay_mlx_synthetic_nonpositive_expected_value"
         return ""
 
@@ -3728,6 +4967,8 @@ def _select_candidate_specs_for_replay(
         if is_feedback_block_reason(
             block_reason_by_spec.get(spec.candidate_spec_id, "")
         )
+        and block_reason_by_spec.get(spec.candidate_spec_id)
+        != "pre_replay_mlx_no_activity_feedback_blocked"
     ]
     rank_position_by_spec = {
         spec.candidate_spec_id: index for index, spec in enumerate(ordered, start=1)
@@ -3747,7 +4988,6 @@ def _select_candidate_specs_for_replay(
         + synthetic_prior_probe_capacity
         + feedback_block_reaudit_capacity,
     )
-    exploitation_count = min(max(0, int(top_k)), replay_budget, len(ordered_eligible))
 
     def spec_source_run_id(spec: CandidateSpec) -> str:
         return _string(spec.feature_contract.get("source_run_id")) or spec.hypothesis_id
@@ -3827,42 +5067,215 @@ def _select_candidate_specs_for_replay(
                     interleaved.append(segment[index])
         return interleaved
 
-    exploitation = take_diverse(
-        ordered_eligible,
-        count=exploitation_count,
+    active_loss_counter_candidates = [
+        spec
+        for spec in ordered_eligible
+        if proposal_selection_reason(spec.candidate_spec_id)
+        == "pre_replay_mlx_active_loss_counter_candidate"
+    ]
+    active_loss_counter_cap = 4
+    if replay_budget <= 4:
+        active_loss_counter_cap = max(1, replay_budget // 2)
+    active_loss_counter_count = min(
+        active_loss_counter_cap,
+        max(0, requested_exploration_slots),
+        replay_budget,
+        len(active_loss_counter_candidates),
+    )
+    active_loss_counter = take_diverse(
+        active_loss_counter_candidates,
+        count=active_loss_counter_count,
         selected_so_far=(),
+    )
+    active_loss_counter_ids = {spec.candidate_spec_id for spec in active_loss_counter}
+    consistency_repair_candidates = [
+        spec
+        for spec in ordered_eligible
+        if spec.candidate_spec_id not in active_loss_counter_ids
+        if proposal_selection_reason(spec.candidate_spec_id)
+        == "pre_replay_mlx_consistency_repair_candidate"
+    ]
+    consistency_repair_cap = 4
+    if replay_budget <= 4:
+        consistency_repair_cap = max(1, replay_budget // 2)
+    consistency_repair_count = min(
+        consistency_repair_cap,
+        max(0, requested_exploration_slots - len(active_loss_counter)),
+        replay_budget - len(active_loss_counter),
+        len(consistency_repair_candidates),
+    )
+    consistency_repair = take_diverse(
+        consistency_repair_candidates,
+        count=consistency_repair_count,
+        selected_so_far=active_loss_counter,
+    )
+    consistency_repair_ids = {spec.candidate_spec_id for spec in consistency_repair}
+
+    runtime_strategy_floor_priority = {
+        "intraday-tsmom-profit-v3": 0,
+        "late-day-continuation-long-v1": 1,
+        "microbar-cross-sectional-pairs-v1": 2,
+        "breakout-continuation-long-v1": 3,
+    }
+    runtime_strategy_representatives: dict[str, CandidateSpec] = {}
+    for spec in sorted(
+        ordered_eligible,
+        key=lambda item: (
+            runtime_strategy_floor_priority.get(item.runtime_strategy_name, 100),
+            rank_position_by_spec.get(item.candidate_spec_id, 10**6),
+            item.candidate_spec_id,
+        ),
+    ):
+        if spec.candidate_spec_id in active_loss_counter_ids | consistency_repair_ids:
+            continue
+        if spec.runtime_strategy_name not in runtime_strategy_representatives:
+            runtime_strategy_representatives[spec.runtime_strategy_name] = spec
+    runtime_strategy_floor = (
+        list(runtime_strategy_representatives.values())[
+            : min(4, replay_budget - len(active_loss_counter) - len(consistency_repair))
+        ]
+        if len(runtime_strategy_representatives) > 1
+        and replay_budget > len(active_loss_counter) + len(consistency_repair)
+        else []
+    )
+    runtime_strategy_floor_ids = {
+        spec.candidate_spec_id for spec in runtime_strategy_floor
+    }
+    false_negative_rescue_candidates = [
+        spec
+        for spec in ordered_eligible
+        if spec.candidate_spec_id not in runtime_strategy_floor_ids
+        if spec.candidate_spec_id not in active_loss_counter_ids
+        if spec.candidate_spec_id not in consistency_repair_ids
+        if _candidate_spec_is_false_negative_rescue(spec)
+    ]
+    false_negative_rescue_count = min(
+        3,
+        max(0, requested_exploration_slots - len(consistency_repair)),
+        replay_budget
+        - len(active_loss_counter)
+        - len(consistency_repair)
+        - len(runtime_strategy_floor),
+        len(false_negative_rescue_candidates),
+    )
+    false_negative_rescue_exploration = take_diverse(
+        false_negative_rescue_candidates,
+        count=false_negative_rescue_count,
+        selected_so_far=[
+            *active_loss_counter,
+            *consistency_repair,
+            *runtime_strategy_floor,
+        ],
+    )
+    false_negative_rescue_ids = {
+        spec.candidate_spec_id for spec in false_negative_rescue_exploration
+    }
+    exploitation_candidates = [
+        spec
+        for spec in ordered_eligible
+        if spec.candidate_spec_id
+        not in active_loss_counter_ids
+        | consistency_repair_ids
+        | runtime_strategy_floor_ids
+        | false_negative_rescue_ids
+    ]
+    exploitation_count = min(
+        max(0, int(top_k)),
+        replay_budget
+        - len(active_loss_counter)
+        - len(consistency_repair)
+        - len(runtime_strategy_floor)
+        - len(false_negative_rescue_exploration),
+        len(exploitation_candidates),
+    )
+    exploitation = take_diverse(
+        exploitation_candidates,
+        count=exploitation_count,
+        selected_so_far=[
+            *active_loss_counter,
+            *consistency_repair,
+            *runtime_strategy_floor,
+            *false_negative_rescue_exploration,
+        ],
     )
     remaining = [
         item
         for item in sorted(
-            ordered_eligible, key=lambda spec: diversity_key(spec, exploitation)
+            ordered_eligible,
+            key=lambda spec: diversity_key(
+                spec,
+                [
+                    *active_loss_counter,
+                    *consistency_repair,
+                    *runtime_strategy_floor,
+                    *false_negative_rescue_exploration,
+                    *exploitation,
+                ],
+            ),
         )
         if item.candidate_spec_id
-        not in {spec.candidate_spec_id for spec in exploitation}
+        not in {
+            spec.candidate_spec_id
+            for spec in (
+                *runtime_strategy_floor,
+                *active_loss_counter,
+                *consistency_repair,
+                *false_negative_rescue_exploration,
+                *exploitation,
+            )
+        }
     ]
     exploration_count = min(
         effective_exploration_slots,
-        replay_budget - len(exploitation),
+        replay_budget
+        - len(active_loss_counter)
+        - len(consistency_repair)
+        - len(runtime_strategy_floor)
+        - len(false_negative_rescue_exploration)
+        - len(exploitation),
         len(remaining),
     )
     exploration = take_diverse(
         remaining,
         count=exploration_count,
-        selected_so_far=exploitation,
+        selected_so_far=[
+            *runtime_strategy_floor,
+            *active_loss_counter,
+            *consistency_repair,
+            *false_negative_rescue_exploration,
+            *exploitation,
+        ],
     )
     synthetic_prior_probe_exploration_count = min(
         max(0, requested_exploration_slots - len(exploration)),
-        replay_budget - len(exploitation) - len(exploration),
+        replay_budget
+        - len(active_loss_counter)
+        - len(consistency_repair)
+        - len(runtime_strategy_floor)
+        - len(false_negative_rescue_exploration)
+        - len(exploitation)
+        - len(exploration),
         len(synthetic_prior_probe_candidates),
     )
     synthetic_prior_probe_exploration = take_diverse(
         synthetic_prior_probe_candidates,
         count=synthetic_prior_probe_exploration_count,
-        selected_so_far=[*exploitation, *exploration],
+        selected_so_far=[
+            *runtime_strategy_floor,
+            *active_loss_counter,
+            *consistency_repair,
+            *false_negative_rescue_exploration,
+            *exploitation,
+            *exploration,
+        ],
     )
     feedback_block_reaudit_count = min(
         requested_feedback_block_reaudit_slots,
         replay_budget
+        - len(active_loss_counter)
+        - len(consistency_repair)
+        - len(runtime_strategy_floor)
+        - len(false_negative_rescue_exploration)
         - len(exploitation)
         - len(exploration)
         - len(synthetic_prior_probe_exploration),
@@ -3872,15 +5285,31 @@ def _select_candidate_specs_for_replay(
         feedback_block_reaudit_candidates,
         count=feedback_block_reaudit_count,
         selected_so_far=[
+            *runtime_strategy_floor,
+            *active_loss_counter,
+            *consistency_repair,
+            *false_negative_rescue_exploration,
             *exploitation,
             *exploration,
             *synthetic_prior_probe_exploration,
         ],
     )
-    if len(exploitation) + len(exploration) < replay_budget:
+    if (
+        len(runtime_strategy_floor)
+        + len(active_loss_counter)
+        + len(consistency_repair)
+        + len(false_negative_rescue_exploration)
+        + len(exploitation)
+        + len(exploration)
+        < replay_budget
+    ):
         selected_ids = {
             item.candidate_spec_id
             for item in (
+                *runtime_strategy_floor,
+                *active_loss_counter,
+                *consistency_repair,
+                *false_negative_rescue_exploration,
                 *exploitation,
                 *exploration,
                 *synthetic_prior_probe_exploration,
@@ -3895,11 +5324,19 @@ def _select_candidate_specs_for_replay(
         backfill = take_diverse(
             backfill_candidates,
             count=replay_budget
+            - len(active_loss_counter)
+            - len(consistency_repair)
+            - len(runtime_strategy_floor)
+            - len(false_negative_rescue_exploration)
             - len(exploitation)
             - len(exploration)
             - len(synthetic_prior_probe_exploration)
             - len(feedback_block_reaudit),
             selected_so_far=[
+                *runtime_strategy_floor,
+                *active_loss_counter,
+                *consistency_repair,
+                *false_negative_rescue_exploration,
                 *exploitation,
                 *exploration,
                 *synthetic_prior_probe_exploration,
@@ -3908,9 +5345,26 @@ def _select_candidate_specs_for_replay(
         )
     else:
         backfill = []
-    selected_reason = {
-        item.candidate_spec_id: "exploitation" for item in exploitation
-    } | {item.candidate_spec_id: "exploration" for item in exploration}
+    selected_reason = (
+        {
+            item.candidate_spec_id: "active_loss_counter_candidate"
+            for item in active_loss_counter
+        }
+        | {
+            item.candidate_spec_id: "consistency_repair_candidate"
+            for item in consistency_repair
+        }
+        | {
+            item.candidate_spec_id: "runtime_strategy_floor"
+            for item in runtime_strategy_floor
+        }
+        | {
+            item.candidate_spec_id: "false_negative_rescue_exploration"
+            for item in false_negative_rescue_exploration
+        }
+        | {item.candidate_spec_id: "exploitation" for item in exploitation}
+        | {item.candidate_spec_id: "exploration" for item in exploration}
+    )
     selected_reason.update(
         {
             item.candidate_spec_id: "synthetic_prior_exploration"
@@ -3927,6 +5381,10 @@ def _select_candidate_specs_for_replay(
         {item.candidate_spec_id: "budget_backfill" for item in backfill}
     )
     selected = [
+        *active_loss_counter,
+        *consistency_repair,
+        *runtime_strategy_floor,
+        *false_negative_rescue_exploration,
         *exploitation,
         *exploration,
         *interleave_replay_segments(
@@ -4021,6 +5479,11 @@ def _select_candidate_specs_for_replay(
                         "entry_notional_max_multiplier"
                     ]
                 ),
+                "configured_daily_notional_capacity": str(
+                    capital_features_by_spec[spec.candidate_spec_id][
+                        "configured_daily_notional_capacity"
+                    ]
+                ),
                 "capital_budget_overage_ratio": str(
                     capital_features_by_spec[spec.candidate_spec_id][
                         "capital_budget_overage_ratio"
@@ -4058,6 +5521,9 @@ def _select_candidate_specs_for_replay(
             "feedback_block_reaudit_slots_requested": requested_feedback_block_reaudit_slots,
             "feedback_block_reaudit_slots_effective": feedback_block_reaudit_capacity,
             "feedback_block_reaudit_selected_count": len(feedback_block_reaudit),
+            "active_loss_counter_candidate_selected_count": len(active_loss_counter),
+            "consistency_repair_candidate_selected_count": len(consistency_repair),
+            "runtime_strategy_floor_selected_count": len(runtime_strategy_floor),
             "portfolio_size_min": max(1, int(portfolio_size_min)),
             "selected_count": len(selected),
             "compiled_candidate_count": len(specs),
@@ -4073,6 +5539,11 @@ def _select_candidate_specs_for_replay(
                 for reason in block_reason_by_spec.values()
                 if reason == "pre_replay_mlx_synthetic_nonpositive_expected_value"
             ),
+            "pre_replay_synthetic_capacity_insufficient_candidate_count": sum(
+                1
+                for reason in block_reason_by_spec.values()
+                if reason == "pre_replay_synthetic_capacity_insufficient"
+            ),
             "pre_replay_nonpositive_synthetic_exploration_count": len(
                 synthetic_prior_probe_exploration
             ),
@@ -4086,7 +5557,7 @@ def _select_candidate_specs_for_replay(
                 for candidate_spec_id in block_reason_by_spec
                 if candidate_spec_id not in selected_pre_replay_blocked_ids
             ),
-            "replay_order_policy": "quality_gated_diversity_pick_order_with_synthetic_prior_probe_and_feedback_reaudit",
+            "replay_order_policy": "quality_gated_diversity_pick_order_with_consistency_repair_synthetic_prior_probe_and_feedback_reaudit",
             "capital_feasible_candidate_count": sum(
                 1
                 for features in capital_features_by_spec.values()
@@ -4096,6 +5567,109 @@ def _select_candidate_specs_for_replay(
         },
         "proposal_score_confidence": model_confidence,
         "selected_candidate_spec_ids": [item.candidate_spec_id for item in selected],
+        "rows": rows,
+    }
+
+
+def _candidate_selection_for_direct_replay(
+    *,
+    specs: Sequence[CandidateSpec],
+    proposal_rows: Sequence[Mapping[str, Any]],
+    candidate_specs_paths: Sequence[Path],
+) -> dict[str, Any]:
+    proposal_by_spec = {
+        _string(row.get("candidate_spec_id")): row
+        for row in _list_of_mappings(list(proposal_rows))
+        if _string(row.get("candidate_spec_id"))
+    }
+    rows: list[dict[str, Any]] = []
+    for index, spec in enumerate(specs, start=1):
+        params = _mapping(spec.strategy_overrides.get("params"))
+        universe = spec.strategy_overrides.get("universe_symbols")
+        universe_key = (
+            ",".join(
+                sorted(_string(item).upper() for item in universe if _string(item))
+            )
+            if isinstance(universe, Sequence) and not isinstance(universe, str)
+            else ""
+        )
+        proposal = _mapping(proposal_by_spec.get(spec.candidate_spec_id))
+        rows.append(
+            {
+                "candidate_spec_id": spec.candidate_spec_id,
+                "family_template_id": spec.family_template_id,
+                "runtime_family": spec.runtime_family,
+                "runtime_strategy_name": spec.runtime_strategy_name,
+                "capital_profile": _string(params.get("capital_profile")) or None,
+                "feedback_remediation_profile": _string(
+                    params.get("feedback_remediation_profile")
+                )
+                or None,
+                "universe_key": universe_key,
+                "signal_key": "|".join(
+                    part
+                    for part in (
+                        _string(params.get("signal_motif")),
+                        _string(params.get("selection_mode")),
+                        _string(params.get("rank_feature")),
+                    )
+                    if part
+                ),
+                "execution_signature": _candidate_spec_execution_signature(spec),
+                "duplicate_of_candidate_spec_id": None,
+                "pre_replay_score": str(_pre_replay_candidate_score(spec)),
+                "proposal_score": proposal.get("proposal_score"),
+                "proposal_training_source": proposal.get("training_source")
+                or "direct_candidate_specs_handoff",
+                "rank": index,
+                "selected_for_replay": True,
+                "selection_reason": "direct_candidate_specs_handoff",
+                "replay_order": index,
+                "selection_hash": _stable_hash(
+                    {
+                        "candidate_spec_id": spec.candidate_spec_id,
+                        "source_paths": [str(path) for path in candidate_specs_paths],
+                        "replay_order": index,
+                    }
+                ),
+            }
+        )
+    return {
+        "schema_version": "torghut.whitepaper-autoresearch-selection.v1",
+        "selection_mode": "direct_candidate_specs_handoff",
+        "candidate_specs_artifacts": [str(path) for path in candidate_specs_paths],
+        "budget": {
+            "max_candidates": len(specs),
+            "top_k": len(specs),
+            "exploration_slots_requested": 0,
+            "exploration_slots_effective": 0,
+            "exploration_slots": 0,
+            "feedback_block_reaudit_slots_requested": 0,
+            "feedback_block_reaudit_slots_effective": 0,
+            "feedback_block_reaudit_selected_count": 0,
+            "portfolio_size_min": 1,
+            "selected_count": len(specs),
+            "compiled_candidate_count": len(specs),
+            "unique_execution_signature_count": len(
+                {_candidate_spec_execution_signature(spec) for spec in specs}
+            ),
+            "eligible_candidate_count": len(specs),
+            "replay_order_policy": "preserve_candidate_specs_jsonl_order",
+            "capital_feasible_candidate_count": sum(
+                1
+                for spec in specs
+                if Decimal(
+                    str(
+                        candidate_spec_capital_features(spec).get(
+                            "capital_feasible_flag", 0
+                        )
+                    )
+                )
+                >= Decimal("1")
+            ),
+        },
+        "proposal_score_confidence": _proposal_score_confidence(proposal_rows),
+        "selected_candidate_spec_ids": [spec.candidate_spec_id for spec in specs],
         "rows": rows,
     }
 
@@ -4269,6 +5843,29 @@ def _run_real_replay(
         )
         for spec in specs
     ]
+    max_total_candidates_to_evaluate = max(
+        1,
+        int(
+            getattr(args, "max_total_frontier_candidates", 0)
+            or getattr(args, "max_candidates", 1)
+        ),
+    )
+    max_candidates_to_evaluate = int(
+        getattr(
+            args,
+            "max_frontier_candidates_per_spec",
+            _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
+        )
+    )
+    if source_specs:
+        per_spec_total_cap = max(
+            1,
+            (max_total_candidates_to_evaluate + len(source_specs) - 1)
+            // len(source_specs),
+        )
+        max_candidates_to_evaluate = max(
+            1, min(max_candidates_to_evaluate, per_spec_total_cap)
+        )
     factory_args = argparse.Namespace(
         output_dir=output_dir / "strategy-factory",
         experiment_id=[],
@@ -4286,6 +5883,7 @@ def _run_real_replay(
         progress_log_seconds=args.progress_log_seconds,
         train_days=args.train_days,
         holdout_days=args.holdout_days,
+        second_oos_days=max(0, int(getattr(args, "second_oos_days", 0) or 0)),
         full_window_start_date=args.full_window_start_date,
         full_window_end_date=args.full_window_end_date,
         expected_last_trading_day=args.expected_last_trading_day,
@@ -4295,18 +5893,8 @@ def _run_real_replay(
             getattr(args, "collect_train_gate_diagnostics", True)
         ),
         top_n=args.top_k,
-        max_candidates_to_evaluate=getattr(
-            args,
-            "max_frontier_candidates_per_spec",
-            _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
-        ),
-        max_total_candidates_to_evaluate=max(
-            1,
-            int(
-                getattr(args, "max_total_frontier_candidates", 0)
-                or getattr(args, "max_candidates", 1)
-            ),
-        ),
+        max_candidates_to_evaluate=max_candidates_to_evaluate,
+        max_total_candidates_to_evaluate=max_total_candidates_to_evaluate,
         persist_results=args.persist_results,
     )
     factory_payload = (
@@ -4344,8 +5932,11 @@ def _real_replay_result_from_factory_payload(
         )
         dataset_snapshot_id = str(item.get("dataset_snapshot_id") or "")
         experiment_promotion_readiness = item.get("promotion_readiness")
+        replay_summary = _mapping(result_payload.get("summary"))
         for frontier_candidate in top:
             candidate = dict(frontier_candidate)
+            if replay_summary and "summary" not in candidate:
+                candidate["summary"] = replay_summary
             candidate_spec_id = experiment_spec_id or _string(
                 candidate.get("candidate_spec_id")
             )
@@ -4536,14 +6127,20 @@ def _build_real_replay_shards(
             or getattr(args, "max_candidates", 1)
         ),
     )
+    per_spec_total_frontier_cap = max(
+        1,
+        (configured_total_frontier_budget + len(ordered_specs) - 1)
+        // max(1, len(ordered_specs)),
+    )
     plans: list[_ReplayShardPlan] = []
     for shard_index, start in enumerate(
         range(0, len(ordered_specs), bounded_shard_size), start=1
     ):
         shard_specs = tuple(ordered_specs[start : start + bounded_shard_size])
-        shard_frontier_budget = min(
-            configured_total_frontier_budget,
-            max(1, len(shard_specs) * max_frontier_candidates_per_spec),
+        shard_frontier_budget = max(
+            1,
+            len(shard_specs)
+            * min(max_frontier_candidates_per_spec, per_spec_total_frontier_cap),
         )
         shard_args = argparse.Namespace(
             **{
@@ -5072,6 +6669,10 @@ def _runtime_report_int(value: Any, *, default: int = 0) -> int:
         return default
 
 
+def _runtime_report_source_markers(report: Mapping[str, Any]) -> list[str]:
+    return sorted(set(_string_list_from_value(report.get("source_markers"))))
+
+
 def _runtime_closure_start_equity(runtime_closure: Mapping[str, Any]) -> Decimal:
     replay_plan = _load_json_mapping_artifact(runtime_closure.get("replay_plan_path"))
     execution_context = _mapping(replay_plan.get("execution_context"))
@@ -5103,31 +6704,60 @@ def _runtime_closure_market_impact_stress_update(
     market_impact_report = _load_json_mapping_artifact(market_impact_report_path)
     if not market_impact_report:
         return {}
+    model = _string(
+        market_impact_report.get("model")
+        or market_impact_report.get("impact_model")
+        or market_impact_report.get("cost_model")
+    )
+    cost_bps = str(
+        _decimal(
+            market_impact_report.get("impact_cost_bps")
+            or market_impact_report.get("market_impact_cost_bps")
+            or market_impact_report.get("cost_shock_bps")
+        )
+    )
+    net_pnl_per_day = str(
+        _decimal(
+            market_impact_report.get("post_impact_net_pnl_per_day")
+            or market_impact_report.get("stressed_net_pnl_per_day")
+            or market_impact_report.get("net_pnl_per_day")
+        )
+    )
+    components = _mapping(market_impact_report.get("market_impact_stress_components"))
+    if not components and model and _decimal(cost_bps) > 0:
+        components = {
+            "selected_model": model,
+            "selected_cost_bps": cost_bps,
+            "source_marker": "realistic_market_impact_arxiv_2603_29086_2026",
+        }
     return {
         "market_impact_stress_passed": _boolish(
             market_impact_report.get("objective_met")
             or market_impact_report.get("passed")
         ),
         "market_impact_stress_artifact_ref": market_impact_report_path,
-        "market_impact_stress_model": _string(
-            market_impact_report.get("model")
-            or market_impact_report.get("impact_model")
-            or market_impact_report.get("cost_model")
+        "market_impact_stress_source_markers": _runtime_report_source_markers(
+            market_impact_report
         ),
-        "market_impact_stress_cost_bps": str(
-            _decimal(
-                market_impact_report.get("impact_cost_bps")
-                or market_impact_report.get("market_impact_cost_bps")
-                or market_impact_report.get("cost_shock_bps")
-            )
+        "market_impact_stress_model": model,
+        "market_impact_stress_cost_bps": cost_bps,
+        "market_impact_stress_components": components,
+        "nonlinear_market_impact_stress_passed": _boolish(
+            market_impact_report.get("objective_met")
+            or market_impact_report.get("passed")
         ),
-        "market_impact_stress_net_pnl_per_day": str(
-            _decimal(
-                market_impact_report.get("net_pnl_per_day")
-                or market_impact_report.get("post_impact_net_pnl_per_day")
-                or market_impact_report.get("stressed_net_pnl_per_day")
-            )
+        "nonlinear_market_impact_stress_model": model,
+        "nonlinear_market_impact_stress_cost_bps": cost_bps,
+        "nonlinear_market_impact_stress_net_pnl_per_day": net_pnl_per_day,
+        "permanent_impact_decay_model": _string(
+            market_impact_report.get("permanent_impact_decay_model")
+            or "exponential_decay_proxy"
         ),
+        "market_impact_liquidity_evidence_present": _boolish(
+            market_impact_report.get("liquidity_evidence_present")
+            or market_impact_report.get("market_impact_liquidity_evidence_present")
+        ),
+        "market_impact_stress_net_pnl_per_day": net_pnl_per_day,
     }
 
 
@@ -5145,6 +6775,21 @@ def _runtime_closure_delay_adjusted_depth_stress_update(
     checked_at = _string(
         delay_depth_report.get("generated_at") or delay_depth_report.get("checked_at")
     )
+    fillable_notional_per_day = _decimal(
+        delay_depth_report.get("fillable_notional_per_day")
+        or delay_depth_report.get("depth_fillable_notional_per_day")
+    )
+    stress_ms = _decimal(
+        delay_depth_report.get("stress_delay_ms") or delay_depth_report.get("delay_ms")
+    )
+    latency_grid = cast(
+        Sequence[Any],
+        delay_depth_report.get("latency_grid_ms")
+        or delay_depth_report.get("delay_grid_ms")
+        or (),
+    )
+    if not latency_grid and stress_ms > 0:
+        latency_grid = ("50", "150", "250")
     return {
         "delay_adjusted_depth_stress_checks_total": max(
             _runtime_report_int(delay_depth_report.get("stress_case_count")),
@@ -5156,21 +6801,43 @@ def _runtime_closure_delay_adjusted_depth_stress_update(
         ),
         "delay_adjusted_depth_stress_checked_at": checked_at,
         "delay_adjusted_depth_stress_artifact_ref": delay_depth_report_path,
+        "delay_adjusted_depth_stress_source_markers": _runtime_report_source_markers(
+            delay_depth_report
+        ),
         "delay_adjusted_depth_stress_report": dict(delay_depth_report),
         "delay_adjusted_depth_stress_model": _string(
             delay_depth_report.get("model") or delay_depth_report.get("stress_model")
         ),
-        "delay_adjusted_depth_stress_ms": str(
-            _decimal(
-                delay_depth_report.get("stress_delay_ms")
-                or delay_depth_report.get("delay_ms")
-            )
+        "delay_adjusted_depth_stress_ms": str(stress_ms),
+        "delay_adjusted_depth_latency_grid_ms": [str(item) for item in latency_grid],
+        "delay_adjusted_depth_grid_max_stress_ms": str(
+            max((_decimal(item) for item in latency_grid), default=stress_ms)
+        ),
+        "delay_adjusted_depth_liquidity_evidence_present": bool(
+            fillable_notional_per_day > 0
+        ),
+        "delay_adjusted_depth_liquidity_missing_day_count": _runtime_report_int(
+            delay_depth_report.get("missing_liquidity_day_count")
         ),
         "delay_adjusted_depth_fillable_notional_per_day": str(
+            fillable_notional_per_day
+        ),
+        "delay_adjusted_depth_worst_active_day_fillable_notional": str(
             _decimal(
-                delay_depth_report.get("fillable_notional_per_day")
-                or delay_depth_report.get("depth_fillable_notional_per_day")
+                delay_depth_report.get("worst_active_day_fillable_notional")
+                or fillable_notional_per_day
             )
+        ),
+        "delay_adjusted_depth_p10_active_day_fillable_notional": str(
+            _decimal(
+                delay_depth_report.get("p10_active_day_fillable_notional")
+                or fillable_notional_per_day
+            )
+        ),
+        "delay_adjusted_depth_tail_coverage_passed": _boolish(
+            delay_depth_report.get("tail_coverage_passed")
+            if "tail_coverage_passed" in delay_depth_report
+            else fillable_notional_per_day > 0
         ),
         "delay_adjusted_depth_stress_net_pnl_per_day": str(
             _decimal(
@@ -5197,6 +6864,7 @@ def _runtime_closure_double_oos_update(
             double_oos_report.get("objective_met") or double_oos_report.get("passed")
         ),
         "double_oos_artifact_ref": double_oos_report_path,
+        "double_oos_source_markers": _runtime_report_source_markers(double_oos_report),
         "double_oos_independent_window_count": max(
             _runtime_report_int(double_oos_report.get("independent_window_count")),
             _runtime_report_int(double_oos_report.get("window_count")),
@@ -5255,6 +6923,19 @@ def _runtime_closure_scorecard_update(
         runtime_closure
     )
     double_oos_update = _runtime_closure_double_oos_update(runtime_closure)
+    runtime_closure_source_markers = sorted(
+        set(
+            _string_list_from_value(
+                market_impact_update.get("market_impact_stress_source_markers")
+            )
+            + _string_list_from_value(
+                delay_depth_update.get("delay_adjusted_depth_stress_source_markers")
+            )
+            + _string_list_from_value(
+                double_oos_update.get("double_oos_source_markers")
+            )
+        )
+    )
     return {
         "runtime_closure_proof": {
             "status": _string(runtime_closure.get("status")) or "missing",
@@ -5292,6 +6973,7 @@ def _runtime_closure_scorecard_update(
         "executable_replay_max_notional_per_trade": str(
             _portfolio_executable_max_notional(portfolio)
         ),
+        "runtime_closure_source_markers": runtime_closure_source_markers,
         **market_impact_update,
         **delay_depth_update,
         **double_oos_update,
@@ -5399,6 +7081,590 @@ def _candidate_board_first_int_field(
         if value > 0:
             return value
     return 0
+
+
+def _candidate_board_rejected_signal_outcome_summary(
+    spec: CandidateSpec, scorecard: Mapping[str, Any]
+) -> dict[str, Any]:
+    required = _candidate_spec_requires_rejected_signal_outcome_learning(spec)
+    required_fields = tuple(
+        _string_list_from_value(
+            spec.hard_vetoes.get("required_rejected_signal_counterfactual_fields")
+        )
+        or (
+            "counterfactual_return",
+            "route_tca",
+            "post_cost_net_pnl",
+            "executable_quote",
+        )
+    )
+    observed_fields = set(
+        _string_list_from_value(
+            scorecard.get("rejected_signal_counterfactual_fields")
+            or scorecard.get("rejected_signal_outcome_counterfactual_fields")
+            or scorecard.get("rejected_signal_counterfactual_fields_present")
+        )
+    )
+    if _boolish(scorecard.get("rejected_signal_counterfactual_fields_present")):
+        observed_fields.update(required_fields)
+    min_label_count = _candidate_board_int_field(
+        spec.hard_vetoes, "required_min_rejected_signal_outcome_label_count"
+    )
+    if min_label_count <= 0:
+        min_label_count = 120
+    max_pending_ratio = _decimal(
+        spec.hard_vetoes.get("required_max_rejected_signal_outcome_pending_ratio"),
+        default="0.05",
+    )
+    min_reason_coverage = _decimal(
+        spec.hard_vetoes.get("required_min_rejected_signal_reason_coverage"),
+        default="0.80",
+    )
+    required_persistence_state = _string(
+        spec.hard_vetoes.get("required_rejected_signal_outcome_persistence_state")
+        or "ok"
+    ).lower()
+    label_count = _candidate_board_first_int_field(
+        scorecard,
+        (
+            "rejected_signal_outcome_labeled_count",
+            "rejected_signal_outcome_label_count",
+            "rejected_signal_outcome_labeled_event_count",
+        ),
+    )
+    pending_ratio = _decimal(
+        scorecard.get("rejected_signal_outcome_pending_ratio"), default="1"
+    )
+    reason_coverage = _decimal(
+        scorecard.get("rejected_signal_reason_coverage")
+        or scorecard.get("rejected_signal_outcome_reason_coverage")
+    )
+    persistence_state = _string(
+        scorecard.get("rejected_signal_outcome_persistence_state")
+        or scorecard.get("rejected_signal_persistence_state")
+    ).lower()
+    blockers: list[str] = []
+    if required:
+        if label_count < min_label_count:
+            blockers.append("rejected_signal_outcome_labeled_count_failed")
+        if pending_ratio > max_pending_ratio:
+            blockers.append("rejected_signal_outcome_pending_ratio_failed")
+        if reason_coverage < min_reason_coverage:
+            blockers.append("rejected_signal_reason_coverage_failed")
+        if not set(required_fields).issubset(observed_fields):
+            blockers.append("rejected_signal_counterfactual_fields_present_failed")
+        if persistence_state != required_persistence_state:
+            blockers.append("rejected_signal_outcome_persistence_state_failed")
+    return {
+        "required": required,
+        "passed": not blockers,
+        "blockers": blockers,
+        "labeled_count": label_count,
+        "min_labeled_count": min_label_count,
+        "pending_ratio": str(pending_ratio),
+        "max_pending_ratio": str(max_pending_ratio),
+        "reason_coverage": str(reason_coverage),
+        "min_reason_coverage": str(min_reason_coverage),
+        "persistence_state": persistence_state,
+        "required_persistence_state": required_persistence_state,
+        "counterfactual_fields": sorted(observed_fields),
+        "required_counterfactual_fields": list(required_fields),
+    }
+
+
+def _candidate_spec_requires_order_type_execution_quality(spec: CandidateSpec) -> bool:
+    overlay_ids = set(
+        _string_list_from_value(spec.parameter_space.get("mechanism_overlay_ids"))
+    )
+    return (
+        "mixed_market_limit_execution_policy" in overlay_ids
+        or _boolish(
+            spec.promotion_contract.get("requires_order_type_execution_quality")
+        )
+        or _boolish(spec.promotion_contract.get("requires_order_type_ablation"))
+        or _boolish(spec.promotion_contract.get("requires_market_limit_order_mix"))
+        or "required_order_type_ablation_passed" in spec.hard_vetoes
+        or "required_market_limit_order_mix_evidence" in spec.hard_vetoes
+    )
+
+
+def _candidate_board_order_type_execution_quality_summary(
+    spec: CandidateSpec, scorecard: Mapping[str, Any]
+) -> dict[str, Any]:
+    required = _candidate_spec_requires_order_type_execution_quality(spec)
+    min_sample_count = _candidate_board_int_field(
+        spec.hard_vetoes, "required_min_order_type_ablation_sample_count"
+    )
+    if min_sample_count <= 0:
+        min_sample_count = 60
+    max_opportunity_cost_bps = _decimal(
+        spec.hard_vetoes.get("required_max_order_type_opportunity_cost_bps"),
+        default="8",
+    )
+    max_market_order_spread_bps = _decimal(
+        spec.hard_vetoes.get("required_max_market_order_spread_bps"),
+        default="8",
+    )
+    order_type_ablation_passed = _boolish(
+        scorecard.get("order_type_ablation_passed")
+        or scorecard.get("market_limit_execution_policy_passed")
+    )
+    raw_artifact_refs = scorecard.get(
+        "order_type_ablation_artifact_refs"
+    ) or scorecard.get("order_type_ablation_artifact_ref")
+    artifact_refs = _string_list_from_value(raw_artifact_refs)
+    if not artifact_refs and _string(raw_artifact_refs):
+        artifact_refs = [_string(raw_artifact_refs)]
+    raw_execution_artifact_refs = (
+        scorecard.get("order_type_execution_artifact_refs")
+        or scorecard.get("market_limit_order_mix_artifact_refs")
+        or scorecard.get("order_type_execution_artifact_ref")
+        or scorecard.get("market_limit_order_mix_artifact_ref")
+    )
+    execution_artifact_refs = _string_list_from_value(raw_execution_artifact_refs)
+    if not execution_artifact_refs and _string(raw_execution_artifact_refs):
+        execution_artifact_refs = [_string(raw_execution_artifact_refs)]
+    sample_count = _candidate_board_first_int_field(
+        scorecard,
+        (
+            "order_type_ablation_sample_count",
+            "market_limit_order_mix_sample_count",
+            "limit_fill_probability_sample_count",
+        ),
+    )
+    opportunity_cost_bps = _decimal(
+        scorecard.get("order_type_opportunity_cost_bps")
+        or scorecard.get("market_limit_order_mix_opportunity_cost_bps"),
+        default="999999",
+    )
+    market_order_spread_bps = _decimal(
+        scorecard.get("market_order_spread_bps")
+        or scorecard.get("market_limit_order_mix_market_spread_bps"),
+        default="999999",
+    )
+    blockers: list[str] = []
+    if required:
+        if not order_type_ablation_passed:
+            blockers.append("order_type_ablation_passed_failed")
+        if not artifact_refs:
+            blockers.append("order_type_ablation_artifact_present_failed")
+        if sample_count < min_sample_count:
+            blockers.append("order_type_ablation_sample_count_failed")
+        if not _boolish(
+            scorecard.get("market_limit_order_mix_evidence_present")
+            or scorecard.get("market_limit_order_mix_present")
+        ):
+            blockers.append("market_limit_order_mix_evidence_present_failed")
+        if not _boolish(
+            scorecard.get("limit_fill_probability_evidence_present")
+            or scorecard.get("limit_fill_probability_present")
+        ):
+            blockers.append("limit_fill_probability_evidence_present_failed")
+        if not _boolish(
+            scorecard.get("price_improvement_evidence_present")
+            or scorecard.get("route_price_improvement_evidence_present")
+        ):
+            blockers.append("price_improvement_evidence_present_failed")
+        if not _boolish(
+            scorecard.get("opportunity_cost_evidence_present")
+            or scorecard.get("order_type_opportunity_cost_evidence_present")
+        ):
+            blockers.append("opportunity_cost_evidence_present_failed")
+        if not _boolish(
+            scorecard.get("execution_shortfall_evidence_present")
+            or scorecard.get("order_type_execution_shortfall_evidence_present")
+        ):
+            blockers.append("execution_shortfall_evidence_present_failed")
+        raw_route_tca_refs = scorecard.get("route_tca_artifact_refs") or scorecard.get(
+            "route_tca_artifact_ref"
+        )
+        route_tca_refs = _string_list_from_value(raw_route_tca_refs)
+        if not route_tca_refs and _string(raw_route_tca_refs):
+            route_tca_refs = [_string(raw_route_tca_refs)]
+        if not route_tca_refs:
+            blockers.append("route_tca_evidence_present_failed")
+        if opportunity_cost_bps > max_opportunity_cost_bps:
+            blockers.append("order_type_opportunity_cost_bps_failed")
+        if market_order_spread_bps > max_market_order_spread_bps:
+            blockers.append("market_order_spread_bps_failed")
+    return {
+        "required": required,
+        "passed": not blockers,
+        "blockers": blockers,
+        "artifact_refs": artifact_refs,
+        "execution_artifact_refs": execution_artifact_refs,
+        "route_tca_artifact_refs": route_tca_refs if required else [],
+        "sample_count": sample_count,
+        "min_sample_count": min_sample_count,
+        "opportunity_cost_bps": str(opportunity_cost_bps),
+        "max_opportunity_cost_bps": str(max_opportunity_cost_bps),
+        "market_order_spread_bps": str(market_order_spread_bps),
+        "max_market_order_spread_bps": str(max_market_order_spread_bps),
+    }
+
+
+def _candidate_board_scorecard_with_order_type_blockers(
+    spec: CandidateSpec,
+    scorecard: Mapping[str, Any],
+    *,
+    replay_artifact_refs: Sequence[Any] = (),
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    summary = _candidate_board_order_type_execution_quality_summary(spec, scorecard)
+    updated_scorecard = dict(scorecard)
+    blockers = [
+        _string(blocker)
+        for blocker in cast(Sequence[Any], summary.get("blockers") or ())
+        if _string(blocker)
+    ]
+    required_artifact_refs = tuple(
+        dict.fromkeys(
+            item
+            for item in (
+                *cast(Sequence[Any], summary.get("artifact_refs") or ()),
+                *cast(Sequence[Any], summary.get("execution_artifact_refs") or ()),
+                *cast(Sequence[Any], summary.get("route_tca_artifact_refs") or ()),
+            )
+            if _string(item)
+        )
+    )
+    available_artifact_refs = {
+        _string(item) for item in replay_artifact_refs if _string(item)
+    }
+    missing_artifact_refs = [
+        _string(item)
+        for item in required_artifact_refs
+        if _string(item) not in available_artifact_refs
+    ]
+    if bool(summary.get("required")) and missing_artifact_refs:
+        blockers.append("order_type_proof_artifact_ref_missing_from_bundle")
+        summary = {
+            **summary,
+            "passed": False,
+            "blockers": list(dict.fromkeys(blockers)),
+            "missing_replay_artifact_refs": missing_artifact_refs,
+            "replay_artifact_refs_checked": sorted(available_artifact_refs),
+        }
+    if blockers:
+        updated_scorecard["oracle_passed"] = False
+        oracle_payload = dict(_mapping(updated_scorecard.get("profit_target_oracle")))
+        oracle_blockers = [
+            _string(blocker)
+            for blocker in cast(Sequence[Any], oracle_payload.get("blockers") or ())
+            if _string(blocker)
+        ]
+        oracle_payload["blockers"] = list(dict.fromkeys([*oracle_blockers, *blockers]))
+        updated_scorecard["profit_target_oracle"] = oracle_payload
+    return updated_scorecard, summary
+
+
+def _candidate_board_scorecard_with_rejected_signal_blockers(
+    spec: CandidateSpec, scorecard: Mapping[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    summary = _candidate_board_rejected_signal_outcome_summary(spec, scorecard)
+    updated_scorecard = dict(scorecard)
+    blockers = [
+        _string(blocker)
+        for blocker in cast(Sequence[Any], summary.get("blockers") or ())
+        if _string(blocker)
+    ]
+    if blockers:
+        updated_scorecard["oracle_passed"] = False
+        oracle_payload = dict(_mapping(updated_scorecard.get("profit_target_oracle")))
+        oracle_blockers = [
+            _string(blocker)
+            for blocker in cast(Sequence[Any], oracle_payload.get("blockers") or ())
+            if _string(blocker)
+        ]
+        oracle_payload["blockers"] = list(dict.fromkeys([*oracle_blockers, *blockers]))
+        updated_scorecard["profit_target_oracle"] = oracle_payload
+    return updated_scorecard, summary
+
+
+def _candidate_board_evidence_lineage_summary(
+    evidence: CandidateEvidenceBundle | None,
+) -> dict[str, Any]:
+    if evidence is None:
+        return {
+            "present": False,
+            "passed": False,
+            "blockers": ["evidence_bundle_missing"],
+            "dataset_snapshot_id": "",
+            "feature_spec_hash": "",
+            "code_commit": "",
+            "replay_artifact_ref_count": 0,
+        }
+
+    blockers: list[str] = []
+    dataset_snapshot_id = _string(evidence.dataset_snapshot_id)
+    feature_spec_hash = _string(evidence.feature_spec_hash)
+    code_commit = _string(evidence.code_commit)
+    replay_artifact_refs = [
+        _string(item) for item in evidence.replay_artifact_refs if _string(item)
+    ]
+
+    if not dataset_snapshot_id:
+        blockers.append("dataset_snapshot_missing")
+    if not feature_spec_hash:
+        blockers.append("feature_spec_hash_missing")
+    if not code_commit or code_commit.lower() == "unknown":
+        blockers.append("code_commit_missing_or_unknown")
+    if not replay_artifact_refs:
+        blockers.append("replay_artifact_missing")
+
+    return {
+        "present": True,
+        "passed": not blockers,
+        "blockers": blockers,
+        "dataset_snapshot_id": dataset_snapshot_id,
+        "feature_spec_hash": feature_spec_hash,
+        "code_commit": code_commit,
+        "replay_artifact_ref_count": len(replay_artifact_refs),
+        "sample_replay_artifact_refs": replay_artifact_refs[:5],
+    }
+
+
+def _candidate_board_scorecard_with_lineage_blockers(
+    scorecard: Mapping[str, Any], evidence: CandidateEvidenceBundle | None
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    summary = _candidate_board_evidence_lineage_summary(evidence)
+    updated_scorecard = dict(scorecard)
+    blockers = [
+        _string(blocker)
+        for blocker in cast(Sequence[Any], summary.get("blockers") or ())
+        if _string(blocker)
+    ]
+    if blockers:
+        updated_scorecard["oracle_passed"] = False
+        oracle_payload = dict(_mapping(updated_scorecard.get("profit_target_oracle")))
+        oracle_blockers = [
+            _string(blocker)
+            for blocker in cast(Sequence[Any], oracle_payload.get("blockers") or ())
+            if _string(blocker)
+        ]
+        oracle_payload["blockers"] = list(dict.fromkeys([*oracle_blockers, *blockers]))
+        updated_scorecard["profit_target_oracle"] = oracle_payload
+    return updated_scorecard, summary
+
+
+def _candidate_board_replay_window_coverage_summary(
+    scorecard: Mapping[str, Any],
+) -> dict[str, Any]:
+    required = _boolish(scorecard.get("target_met")) or _boolish(
+        scorecard.get("oracle_passed")
+    )
+    replay_lineage = _mapping(scorecard.get("replay_lineage"))
+    coverage = _mapping(scorecard.get("replay_window_coverage"))
+    expected_windows = _string_list_from_value(
+        coverage.get("expected_windows") or replay_lineage.get("expected_windows")
+    )
+    present_windows = _string_list_from_value(
+        coverage.get("present_windows") or replay_lineage.get("present_windows")
+    )
+    missing_windows = _string_list_from_value(
+        coverage.get("missing_windows") or replay_lineage.get("missing_windows")
+    )
+    if (
+        _candidate_board_int_field(scorecard, "double_oos_independent_window_count")
+        >= 2
+        and _SECOND_OOS_WINDOW_ID not in expected_windows
+    ):
+        expected_windows.append(_SECOND_OOS_WINDOW_ID)
+    for required_window in ("train", "holdout", "full_window"):
+        if required_window not in expected_windows:
+            expected_windows.append(required_window)
+
+    blockers: list[str] = []
+    lineage_hash = _string(replay_lineage.get("lineage_hash"))
+    coverage_hash = _string(coverage.get("lineage_hash"))
+    if required:
+        if not replay_lineage:
+            blockers.append("replay_lineage_missing")
+        if not coverage:
+            blockers.append("replay_window_coverage_missing")
+        if not lineage_hash:
+            blockers.append("replay_lineage_hash_missing")
+        if not coverage_hash:
+            blockers.append("replay_window_coverage_hash_missing")
+        if lineage_hash and coverage_hash and lineage_hash != coverage_hash:
+            blockers.append("replay_lineage_hash_mismatch")
+        missing_required_windows = [
+            window_id
+            for window_id in expected_windows
+            if window_id not in present_windows or window_id in missing_windows
+        ]
+        if missing_required_windows:
+            blockers.append("replay_window_missing")
+    else:
+        missing_required_windows = []
+
+    return {
+        "required": required,
+        "passed": not blockers,
+        "blockers": blockers,
+        "lineage_hash": lineage_hash,
+        "coverage_hash": coverage_hash,
+        "expected_windows": expected_windows,
+        "present_windows": present_windows,
+        "missing_windows": missing_windows,
+        "missing_required_windows": missing_required_windows,
+    }
+
+
+def _candidate_board_market_impact_proof_summary(
+    scorecard: Mapping[str, Any],
+) -> dict[str, Any]:
+    components = _mapping(scorecard.get("market_impact_stress_components"))
+    source_marker = _string(components.get("source_marker"))
+    model = _string(
+        scorecard.get("nonlinear_market_impact_stress_model")
+        or scorecard.get("market_impact_stress_model")
+    )
+    artifact_ref = _string(
+        scorecard.get("market_impact_stress_artifact_ref")
+        or scorecard.get("impact_stress_artifact_ref")
+        or scorecard.get("cost_shock_artifact_ref")
+    )
+    cost_bps = _candidate_board_decimal_field(
+        scorecard, "nonlinear_market_impact_stress_cost_bps"
+    ) or _candidate_board_decimal_field(scorecard, "market_impact_stress_cost_bps")
+    net_pnl_per_day = _candidate_board_decimal_field(
+        scorecard, "nonlinear_market_impact_stress_net_pnl_per_day"
+    ) or _candidate_board_decimal_field(
+        scorecard, "market_impact_stress_net_pnl_per_day"
+    )
+    nonlinear_passed = _boolish(
+        scorecard.get("nonlinear_market_impact_stress_passed")
+        or scorecard.get("market_impact_stress_passed")
+    )
+    blockers: list[str] = []
+    if not artifact_ref:
+        blockers.append("market_impact_stress_artifact_missing")
+    if not model:
+        blockers.append("market_impact_stress_model_missing")
+    if not cost_bps or _decimal(cost_bps) <= 0:
+        blockers.append("market_impact_stress_cost_bps_missing")
+    if not net_pnl_per_day:
+        blockers.append("market_impact_stress_net_pnl_missing")
+    if not source_marker:
+        blockers.append("nonlinear_market_impact_components_missing")
+    if model and artifact_ref and cost_bps and not nonlinear_passed:
+        blockers.append("nonlinear_market_impact_stress_failed")
+    if not scorecard:
+        state = "not_replayed"
+    elif blockers:
+        state = "blocked"
+    else:
+        state = "passed"
+    return {
+        "state": state,
+        "passed": state == "passed",
+        "model": model,
+        "cost_bps": cost_bps,
+        "net_pnl_per_day": net_pnl_per_day,
+        "artifact_ref": artifact_ref,
+        "component_source_marker": source_marker,
+        "selected_component_model": _string(components.get("selected_model")),
+        "selected_component_cost_bps": _string(components.get("selected_cost_bps")),
+        "blockers": blockers,
+        "source_marker": "realistic_market_impact_arxiv_2603_29086_2026",
+    }
+
+
+def _candidate_board_regime_specialist_summary(
+    spec: CandidateSpec,
+    scorecard: Mapping[str, Any],
+) -> dict[str, Any]:
+    required_rate = _decimal(
+        spec.hard_vetoes.get("required_min_regime_slice_pass_rate")
+        or spec.promotion_contract.get("required_min_regime_slice_pass_rate")
+    )
+    observed_rate = _decimal(scorecard.get("regime_slice_pass_rate"))
+    source_claims = _list_of_mappings(spec.feature_contract.get("source_claims"))
+    regime_claim_ids = [
+        _string(claim.get("claim_id"))
+        for claim in source_claims
+        if _string(claim.get("claim_type"))
+        in {"market_regime", "validation_requirement", "risk_constraint"}
+    ]
+    blockers: list[str] = []
+    if scorecard and required_rate > 0 and "regime_slice_pass_rate" not in scorecard:
+        blockers.append("regime_slice_pass_rate_missing")
+    if scorecard and required_rate > 0 and observed_rate < required_rate:
+        blockers.append("regime_slice_pass_rate_below_specialist_threshold")
+    if not scorecard:
+        state = "not_replayed"
+    elif blockers:
+        state = "blocked"
+    else:
+        state = "passed"
+    return {
+        "state": state,
+        "passed": state == "passed",
+        "regime_slice_pass_rate": str(observed_rate) if scorecard else "",
+        "required_min_regime_slice_pass_rate": str(required_rate)
+        if required_rate > 0
+        else "",
+        "regime_claim_ids": [claim_id for claim_id in regime_claim_ids if claim_id],
+        "blockers": blockers,
+        "source_markers": [
+            "risk_sensitive_specialist_routing_arxiv_2604_10402_2026",
+            "validated_vvg_classifier_arxiv_2605_11423_2026",
+        ],
+    }
+
+
+def _candidate_board_scorecard_with_replay_window_blockers(
+    scorecard: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    summary = _candidate_board_replay_window_coverage_summary(scorecard)
+    updated_scorecard = dict(scorecard)
+    blockers = [
+        _string(blocker)
+        for blocker in cast(Sequence[Any], summary.get("blockers") or ())
+        if _string(blocker)
+    ]
+    if blockers:
+        updated_scorecard["oracle_passed"] = False
+        oracle_payload = dict(_mapping(updated_scorecard.get("profit_target_oracle")))
+        oracle_blockers = [
+            _string(blocker)
+            for blocker in cast(Sequence[Any], oracle_payload.get("blockers") or ())
+            if _string(blocker)
+        ]
+        oracle_payload["blockers"] = list(dict.fromkeys([*oracle_blockers, *blockers]))
+        updated_scorecard["profit_target_oracle"] = oracle_payload
+    return updated_scorecard, summary
+
+
+def _candidate_board_scorecard_with_evidence_blockers(
+    scorecard: Mapping[str, Any], evidence: CandidateEvidenceBundle | None
+) -> dict[str, Any]:
+    if evidence is None:
+        return dict(scorecard)
+    blockers = [
+        _string(blocker)
+        for blocker in (
+            *evidence_bundle_blockers(evidence),
+            *cast(
+                Sequence[Any],
+                evidence.promotion_readiness.get("blockers") or (),
+            ),
+        )
+        if _string(blocker)
+    ]
+    if not blockers:
+        return dict(scorecard)
+    updated_scorecard = dict(scorecard)
+    updated_scorecard["oracle_passed"] = False
+    oracle_payload = dict(_mapping(updated_scorecard.get("profit_target_oracle")))
+    oracle_blockers = [
+        _string(blocker)
+        for blocker in cast(Sequence[Any], oracle_payload.get("blockers") or ())
+        if _string(blocker)
+    ]
+    oracle_payload["blockers"] = list(dict.fromkeys([*oracle_blockers, *blockers]))
+    updated_scorecard["profit_target_oracle"] = oracle_payload
+    return updated_scorecard
 
 
 def _candidate_board_blockers(
@@ -5522,6 +7788,12 @@ def _candidate_board_status_digest(rows: Sequence[Mapping[str, Any]]) -> str:
             "target_met": bool(row.get("target_met")),
             "oracle_passed": bool(row.get("oracle_passed")),
             "activity_count": _candidate_board_activity_count(row),
+            "market_impact_proof_state": _string(
+                _mapping(row.get("market_impact_proof")).get("state")
+            ),
+            "regime_specialist_state": _string(
+                _mapping(row.get("regime_specialist_validation")).get("state")
+            ),
             "blockers": [
                 _string(blocker)
                 for blocker in cast(Sequence[Any], row.get("blockers") or ())
@@ -5531,6 +7803,111 @@ def _candidate_board_status_digest(rows: Sequence[Mapping[str, Any]]) -> str:
     ]
     encoded = json.dumps(digest_rows, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _candidate_board_double_oos_summary(
+    rows: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    replayed_rows = [row for row in rows if bool(row.get("has_replay_evidence"))]
+    artifact_rows = [
+        row
+        for row in replayed_rows
+        if bool(_string(row.get("double_oos_artifact_ref")))
+    ]
+    passed_rows = [row for row in replayed_rows if bool(row.get("double_oos_passed"))]
+    missing_artifact_rows = [
+        row
+        for row in replayed_rows
+        if not bool(_string(row.get("double_oos_artifact_ref")))
+    ]
+    independent_window_counts = [
+        _candidate_board_int_field(row, "double_oos_independent_window_count")
+        for row in replayed_rows
+    ]
+    blockers: list[str] = []
+    if replayed_rows and missing_artifact_rows:
+        blockers.append("double_oos_artifact_missing_for_replayed_candidates")
+    if replayed_rows and not passed_rows:
+        blockers.append("no_candidate_passed_double_oos")
+    return {
+        "replayed_candidate_count": len(replayed_rows),
+        "artifact_candidate_count": len(artifact_rows),
+        "passed_candidate_count": len(passed_rows),
+        "missing_artifact_candidate_count": len(missing_artifact_rows),
+        "max_independent_window_count": max(independent_window_counts, default=0),
+        "blockers": blockers,
+    }
+
+
+def _candidate_board_portfolio_promotion_subject(
+    *,
+    portfolio: PortfolioCandidateSpec | None,
+    portfolio_payload: Mapping[str, Any],
+    portfolio_scorecard: Mapping[str, Any],
+    promotion_readiness: Mapping[str, Any],
+    runtime_closure: Mapping[str, Any],
+    rows: Sequence[Mapping[str, Any]],
+) -> dict[str, Any] | None:
+    if portfolio is None:
+        return None
+    source_candidate_ids = [
+        _string(candidate_id)
+        for candidate_id in cast(Sequence[Any], portfolio.source_candidate_ids)
+        if _string(candidate_id)
+    ]
+    sleeve_candidate_spec_ids = [
+        _string(sleeve.get("candidate_spec_id"))
+        for sleeve in _list_of_mappings(portfolio_payload.get("sleeves"))
+        if _string(sleeve.get("candidate_spec_id"))
+    ]
+    readiness_blockers = [
+        _string(blocker)
+        for blocker in cast(Sequence[Any], promotion_readiness.get("blockers") or ())
+        if _string(blocker)
+    ]
+    blockers = list(
+        dict.fromkeys([*_oracle_blockers(portfolio_scorecard), *readiness_blockers])
+    )
+    return {
+        "type": "portfolio",
+        "portfolio_candidate_id": _string(
+            portfolio_payload.get("portfolio_candidate_id")
+        ),
+        "source_candidate_ids": source_candidate_ids,
+        "sleeve_candidate_spec_ids": sleeve_candidate_spec_ids,
+        "oracle_passed": _boolish(portfolio_scorecard.get("oracle_passed")),
+        "target_met": _boolish(portfolio_scorecard.get("target_met")),
+        "net_pnl_per_day": _candidate_board_decimal_field(
+            portfolio_scorecard, "net_pnl_per_day"
+        )
+        or _candidate_board_decimal_field(
+            portfolio_scorecard, "portfolio_post_cost_net_pnl_per_day"
+        ),
+        "market_impact_proof": _candidate_board_market_impact_proof_summary(
+            portfolio_scorecard
+        ),
+        "runtime_closure_status": _string(runtime_closure.get("status")),
+        "promotion_readiness_status": _string(promotion_readiness.get("status")),
+        "promotable": _boolish(promotion_readiness.get("promotable")),
+        "component_rows": [
+            {
+                "candidate_spec_id": _string(row.get("candidate_spec_id")),
+                "candidate_id": _string(row.get("candidate_id")),
+                "status": _string(row.get("status")),
+                "oracle_passed": _boolish(row.get("oracle_passed")),
+                "target_met": _boolish(row.get("target_met")),
+                "market_impact_proof_state": _string(
+                    _mapping(row.get("market_impact_proof")).get("state")
+                ),
+                "regime_specialist_state": _string(
+                    _mapping(row.get("regime_specialist_validation")).get("state")
+                ),
+            }
+            for row in rows
+            if _string(row.get("candidate_spec_id")) in set(sleeve_candidate_spec_ids)
+        ],
+        "blockers": blockers,
+    }
 
 
 def _candidate_board_payload(
@@ -5567,7 +7944,34 @@ def _candidate_board_payload(
         pre_replay = pre_replay_by_spec.get(spec.candidate_spec_id, {})
         proposal = proposal_by_spec.get(spec.candidate_spec_id, pre_replay)
         evidence = evidence_by_spec.get(spec.candidate_spec_id)
-        scorecard = dict(evidence.objective_scorecard) if evidence is not None else {}
+        raw_scorecard = (
+            dict(evidence.objective_scorecard) if evidence is not None else {}
+        )
+        scorecard = _candidate_board_scorecard_with_evidence_blockers(
+            raw_scorecard, evidence
+        )
+        scorecard, evidence_lineage = _candidate_board_scorecard_with_lineage_blockers(
+            scorecard, evidence
+        )
+        scorecard, replay_window_coverage = (
+            _candidate_board_scorecard_with_replay_window_blockers(scorecard)
+        )
+        market_impact_proof = _candidate_board_market_impact_proof_summary(scorecard)
+        regime_specialist_validation = _candidate_board_regime_specialist_summary(
+            spec, scorecard
+        )
+        scorecard, rejected_signal_summary = (
+            _candidate_board_scorecard_with_rejected_signal_blockers(spec, scorecard)
+        )
+        scorecard, order_type_summary = (
+            _candidate_board_scorecard_with_order_type_blockers(
+                spec,
+                scorecard,
+                replay_artifact_refs=evidence.replay_artifact_refs
+                if evidence is not None
+                else (),
+            )
+        )
         selected_for_replay = bool(selection.get("selected_for_replay"))
         in_best_portfolio = spec.candidate_spec_id in portfolio_sleeve_spec_ids
         blockers = _candidate_board_blockers(
@@ -5678,6 +8082,12 @@ def _candidate_board_payload(
                 "double_oos_cost_shock_net_pnl_per_day": _candidate_board_decimal_field(
                     scorecard, "double_oos_cost_shock_net_pnl_per_day"
                 ),
+                "market_impact_proof": market_impact_proof,
+                "regime_specialist_validation": regime_specialist_validation,
+                "rejected_signal_outcome_learning": rejected_signal_summary,
+                "order_type_execution_quality": order_type_summary,
+                "evidence_lineage": evidence_lineage,
+                "replay_window_coverage": replay_window_coverage,
                 "blockers": blockers,
                 "replay_artifact_refs": list(evidence.replay_artifact_refs)
                 if evidence is not None
@@ -5694,10 +8104,26 @@ def _candidate_board_payload(
     best_research_candidate = rows[0] if rows else None
     best_executed_candidate = _candidate_board_best_executed_candidate(rows)
     closest_promotion_candidate = _candidate_board_closest_promotion_candidate(rows)
+    paper_probation_candidate = (
+        closest_promotion_candidate
+        if closest_promotion_candidate is not None
+        and bool(closest_promotion_candidate.get("target_met"))
+        and not bool(closest_promotion_candidate.get("oracle_passed"))
+        else None
+    )
     promotion_ready = _boolish(promotion_readiness.get("promotable"))
+    promotion_subject = _candidate_board_portfolio_promotion_subject(
+        portfolio=portfolio,
+        portfolio_payload=portfolio_payload,
+        portfolio_scorecard=portfolio_scorecard,
+        promotion_readiness=promotion_readiness,
+        runtime_closure=runtime_closure,
+        rows=rows,
+    )
     promotion_candidate_found = (
+        promotion_ready and portfolio_oracle_passed and promotion_subject is not None
+    ) or (
         promotion_ready
-        and portfolio_oracle_passed
         and closest_promotion_candidate is not None
         and bool(closest_promotion_candidate.get("oracle_passed"))
     )
@@ -5714,6 +8140,9 @@ def _candidate_board_payload(
         "best_research_candidate": best_research_candidate,
         "best_executed_candidate": best_executed_candidate,
         "closest_promotion_candidate": closest_promotion_candidate,
+        "paper_probation_candidate": paper_probation_candidate,
+        "promotion_subject": promotion_subject,
+        "double_oos_summary": _candidate_board_double_oos_summary(rows),
         "best_portfolio_candidate_id": _string(
             portfolio_payload.get("portfolio_candidate_id")
         ),
@@ -5812,17 +8241,27 @@ def run_whitepaper_autoresearch_profit_target(
     output_dir.mkdir(parents=True, exist_ok=True)
     program = _load_epoch_program(args)
     objective = program.objective
-    try:
-        candidate_universe_symbols = _candidate_universe_symbols_for_compilation(args)
-    except ValueError as exc:
-        return _write_failure_summary(
-            output_dir=output_dir,
-            epoch_id=epoch_id,
-            status="invalid_universe",
-            reason=str(exc),
-            started_at=started_at,
-            extra={"symbols": str(getattr(args, "symbols", "") or "")},
-        )
+    candidate_specs_paths = tuple(
+        path.resolve()
+        for path in cast(Sequence[Path], getattr(args, "candidate_specs", ()) or ())
+    )
+    direct_candidate_specs_replay = bool(candidate_specs_paths)
+    if direct_candidate_specs_replay:
+        candidate_universe_symbols: tuple[str, ...] = ()
+    else:
+        try:
+            candidate_universe_symbols = _candidate_universe_symbols_for_compilation(
+                args
+            )
+        except ValueError as exc:
+            return _write_failure_summary(
+                output_dir=output_dir,
+                epoch_id=epoch_id,
+                status="invalid_universe",
+                reason=str(exc),
+                started_at=started_at,
+                extra={"symbols": str(getattr(args, "symbols", "") or "")},
+            )
     args = argparse.Namespace(
         **{
             **vars(args),
@@ -5942,48 +8381,82 @@ def run_whitepaper_autoresearch_profit_target(
     )
     target = _decimal(args.target_net_pnl_per_day, default=_DEFAULT_DAILY_PROFIT_TARGET)
     oracle_policy = _oracle_policy_from_args(args)
-    explicit_source_inputs = bool(
-        args.seed_recent_whitepapers
-        or getattr(args, "source_jsonl", [])
-        or getattr(args, "paper_run_id", [])
-    )
-    sources = (
-        list(_program_whitepaper_sources(program)) if not explicit_source_inputs else []
-    )
-    if args.seed_recent_whitepapers:
-        sources.extend(_program_whitepaper_sources(program))
-        sources.extend(RECENT_WHITEPAPER_SEEDS)
-    for source_jsonl in getattr(args, "source_jsonl", []):
-        sources.extend(sources_from_jsonl(source_jsonl))
-    sources.extend(_load_sources_from_db(args.paper_run_id))
-    sources = _dedupe_whitepaper_sources(sources)
-    if not sources:
-        return _write_failure_summary(
-            output_dir=output_dir,
-            epoch_id=epoch_id,
-            status="no_sources",
-            reason="no_whitepaper_sources",
-            started_at=started_at,
+    selection_only = bool(getattr(args, "selection_only", False))
+    if direct_candidate_specs_replay:
+        sources: list[WhitepaperResearchSource] = []
+        hypothesis_cards: list[HypothesisCard] = []
+        try:
+            candidate_specs = list(_load_candidate_specs_jsonl(candidate_specs_paths))
+        except ValueError as exc:
+            return _write_failure_summary(
+                output_dir=output_dir,
+                epoch_id=epoch_id,
+                status="invalid_candidate_specs",
+                reason=str(exc),
+                started_at=started_at,
+                extra={
+                    "candidate_specs": [str(path) for path in candidate_specs_paths]
+                },
+            )
+        candidate_compilation_blockers: tuple[CandidateCompilationBlocker, ...] = ()
+        candidate_compiler_report: dict[str, Any] = {
+            "schema_version": "torghut.whitepaper-candidate-compiler-report.v1",
+            "status": "loaded_candidate_specs_for_direct_replay",
+            "candidate_specs_artifacts": [str(path) for path in candidate_specs_paths],
+            "candidate_spec_count": len(candidate_specs),
+            "executable_spec_count": len(candidate_specs),
+            "blockers": [],
+        }
+    else:
+        explicit_source_inputs = bool(
+            args.seed_recent_whitepapers
+            or getattr(args, "source_jsonl", [])
+            or getattr(args, "paper_run_id", [])
         )
+        sources = (
+            list(_program_whitepaper_sources(program))
+            if not explicit_source_inputs
+            else []
+        )
+        if args.seed_recent_whitepapers:
+            sources.extend(_program_whitepaper_sources(program))
+            sources.extend(RECENT_WHITEPAPER_SEEDS)
+        for source_jsonl in getattr(args, "source_jsonl", []):
+            sources.extend(sources_from_jsonl(source_jsonl))
+        sources.extend(_load_sources_from_db(args.paper_run_id))
+        sources = _dedupe_whitepaper_sources(sources)
+        if not sources:
+            return _write_failure_summary(
+                output_dir=output_dir,
+                epoch_id=epoch_id,
+                status="no_sources",
+                reason="no_whitepaper_sources",
+                started_at=started_at,
+            )
 
-    hypothesis_cards: list[HypothesisCard] = compile_sources_to_hypothesis_cards(
-        sources
-    )
-    compilation = compile_whitepaper_candidate_specs(
-        hypothesis_cards=hypothesis_cards,
-        target_net_pnl_per_day=target,
-        family_template_dir=args.family_template_dir.resolve(),
-        seed_sweep_dir=args.seed_sweep_dir.resolve(),
-        universe_symbols=candidate_universe_symbols,
-    )
-    candidate_specs = list(compilation.executable_specs)
-    candidate_specs = _candidate_specs_with_oracle_policy(
-        candidate_specs, oracle_policy=oracle_policy
-    )
+        hypothesis_cards = compile_sources_to_hypothesis_cards(sources)
+        compilation = compile_whitepaper_candidate_specs(
+            hypothesis_cards=hypothesis_cards,
+            target_net_pnl_per_day=target,
+            family_template_dir=args.family_template_dir.resolve(),
+            seed_sweep_dir=args.seed_sweep_dir.resolve(),
+            universe_symbols=candidate_universe_symbols,
+        )
+        candidate_specs = list(compilation.executable_specs)
+        candidate_specs = _candidate_specs_with_oracle_policy(
+            candidate_specs, oracle_policy=oracle_policy
+        )
+        candidate_compilation_blockers = tuple(compilation.blockers)
+        candidate_compiler_report = compilation.to_payload()
     blocker_by_spec: dict[str, list[CandidateCompilationBlocker]] = {}
-    for blocker in compilation.blockers:
+    for blocker in candidate_compilation_blockers:
         blocker_by_spec.setdefault(blocker.candidate_spec_id, []).append(blocker)
-    if args.persist_results and args.replay_mode == "real":
+    if (
+        args.persist_results
+        and args.replay_mode == "real"
+        and not selection_only
+        and not direct_candidate_specs_replay
+    ):
         for source in sources:
             source_specs = [
                 spec
@@ -6015,7 +8488,9 @@ def run_whitepaper_autoresearch_profit_target(
         output_dir / "candidate-specs.jsonl",
         [spec.to_payload() for spec in candidate_specs],
     )
-    _write_json(output_dir / "candidate-compiler-report.json", compilation.to_payload())
+    _write_json(
+        output_dir / "candidate-compiler-report.json", candidate_compiler_report
+    )
 
     if not candidate_specs:
         return _write_failure_summary(
@@ -6031,7 +8506,8 @@ def run_whitepaper_autoresearch_profit_target(
             feedback_evidence_source_manifest,
         ) = _load_autoresearch_feedback_evidence_bundles(
             cast(Sequence[Path], getattr(args, "feedback_evidence_jsonl", ()) or ()),
-            include_persisted=bool(getattr(args, "persist_results", False)),
+            include_persisted=bool(getattr(args, "persist_results", False))
+            and not selection_only,
         )
     except ValueError as exc:
         return _write_failure_summary(
@@ -6055,17 +8531,27 @@ def run_whitepaper_autoresearch_profit_target(
         output_dir / "pre-replay-mlx-proposal-scores.jsonl",
         pre_replay_proposal_rows,
     )
-    replay_candidate_specs, candidate_selection = _select_candidate_specs_for_replay(
-        specs=candidate_specs,
-        proposal_rows=pre_replay_proposal_rows,
-        top_k=int(args.top_k),
-        exploration_slots=int(args.exploration_slots),
-        feedback_block_reaudit_slots=int(
-            getattr(args, "feedback_block_reaudit_slots", 0) or 0
-        ),
-        max_candidates=int(args.max_candidates),
-        portfolio_size_min=int(args.portfolio_size_min),
-    )
+    if direct_candidate_specs_replay:
+        replay_candidate_specs = list(candidate_specs)
+        candidate_selection = _candidate_selection_for_direct_replay(
+            specs=replay_candidate_specs,
+            proposal_rows=pre_replay_proposal_rows,
+            candidate_specs_paths=candidate_specs_paths,
+        )
+    else:
+        replay_candidate_specs, candidate_selection = (
+            _select_candidate_specs_for_replay(
+                specs=candidate_specs,
+                proposal_rows=pre_replay_proposal_rows,
+                top_k=int(args.top_k),
+                exploration_slots=int(args.exploration_slots),
+                feedback_block_reaudit_slots=int(
+                    getattr(args, "feedback_block_reaudit_slots", 0) or 0
+                ),
+                max_candidates=int(args.max_candidates),
+                portfolio_size_min=int(args.portfolio_size_min),
+            )
+        )
     candidate_selection = {
         **candidate_selection,
         "proposal_model": {
@@ -6077,8 +8563,97 @@ def run_whitepaper_autoresearch_profit_target(
         "proposal_scores_artifact": str(
             output_dir / "pre-replay-mlx-proposal-scores.jsonl"
         ),
+        "selected_candidate_specs_artifact": str(
+            output_dir / "selected-candidate-specs.jsonl"
+        ),
     }
     _write_json(output_dir / "candidate-selection-manifest.json", candidate_selection)
+    _write_jsonl(
+        output_dir / "selected-candidate-specs.jsonl",
+        [spec.to_payload() for spec in replay_candidate_specs],
+    )
+    if selection_only:
+        selected_candidate_spec_ids = [
+            spec.candidate_spec_id for spec in replay_candidate_specs
+        ]
+        summary = {
+            "status": "selection_only",
+            "status_reason": "pre_replay_selection_only",
+            "epoch_id": epoch_id,
+            "run_root": str(output_dir),
+            "started_at": started_at.isoformat(),
+            "completed_at": datetime.now(UTC).isoformat(),
+            "target_net_pnl_per_day": str(target),
+            "profit_target_oracle_policy": oracle_policy.to_payload(),
+            "source_count": len(sources),
+            "hypothesis_count": len(hypothesis_cards),
+            "candidate_spec_count": len(candidate_specs),
+            "candidate_compiler_blocker_count": len(candidate_compilation_blockers),
+            "feedback_evidence_bundle_count": len(feedback_evidence_bundles),
+            "pre_replay_proposal_score_count": len(pre_replay_proposal_rows),
+            "replay_candidate_spec_count": len(replay_candidate_specs),
+            "selected_candidate_spec_ids": selected_candidate_spec_ids,
+            "claim_count": sum(len(source.claims) for source in sources),
+            "oracle_candidate_found": False,
+            "profit_target_oracle": {
+                "status": "not_run",
+                "reason": "selection_only",
+                "target_met": False,
+                "blockers": [
+                    "real_replay_not_run",
+                    "portfolio_optimizer_not_run",
+                    "runtime_ledger_proof_missing",
+                ],
+            },
+            "promotion_readiness": {
+                "status": "selection_only_not_promotion_proof",
+                "promotable": False,
+                "blockers": [
+                    "real_replay_not_run",
+                    "portfolio_optimizer_not_run",
+                    "runtime_ledger_proof_missing",
+                    "live_paper_parity_missing",
+                ],
+            },
+            "runtime_closure": {
+                "status": "not_run",
+                "reason": "selection_only",
+            },
+            "artifacts": {
+                "epoch_manifest": str(output_dir / "epoch-manifest.json"),
+                "hypothesis_cards": str(output_dir / "hypothesis-cards.jsonl"),
+                "whitepaper_sources": str(output_dir / "whitepaper-sources.jsonl"),
+                "candidate_specs": str(output_dir / "candidate-specs.jsonl"),
+                "candidate_selection_manifest": str(
+                    output_dir / "candidate-selection-manifest.json"
+                ),
+                "selected_candidate_specs": str(
+                    output_dir / "selected-candidate-specs.jsonl"
+                ),
+                "pre_replay_proposal_scores": str(
+                    output_dir / "pre-replay-mlx-proposal-scores.jsonl"
+                ),
+                "pre_replay_proposal_model": str(
+                    output_dir / "pre-replay-mlx-ranker-model.json"
+                ),
+                "feedback_evidence_source_manifest": str(
+                    output_dir / "feedback-evidence-source-manifest.json"
+                ),
+                "candidate_compiler_report": str(
+                    output_dir / "candidate-compiler-report.json"
+                ),
+                "summary": str(output_dir / "summary.json"),
+                "diagnostics_notebook": str(
+                    output_dir / "whitepaper-autoresearch-diagnostics.ipynb"
+                ),
+            },
+        }
+        _write_json(output_dir / "summary.json", summary)
+        write_whitepaper_autoresearch_diagnostics_notebook(
+            output_dir / "whitepaper-autoresearch-diagnostics.ipynb",
+            summary=summary,
+        )
+        return summary
     selection_by_spec = {
         str(row.get("candidate_spec_id")): row
         for row in _list_of_mappings(candidate_selection.get("rows"))
@@ -6091,6 +8666,11 @@ def run_whitepaper_autoresearch_profit_target(
         }
     )
     try:
+        clickhouse_preflight_failure = _clickhouse_endpoint_preflight_failure(
+            replay_args
+        )
+        if clickhouse_preflight_failure:
+            raise RuntimeError(clickhouse_preflight_failure)
         replay_result = _run_replay_with_optional_timeout(
             args=replay_args,
             output_dir=output_dir,
@@ -6152,6 +8732,9 @@ def run_whitepaper_autoresearch_profit_target(
             current_max_total_frontier_candidates=int(
                 getattr(args, "max_total_frontier_candidates", 0) or 0
             ),
+            current_train_days=int(getattr(args, "train_days", 6) or 6),
+            current_holdout_days=int(getattr(args, "holdout_days", 3) or 3),
+            current_second_oos_days=int(getattr(args, "second_oos_days", 2) or 2),
         )
         remediation_path = output_dir / "candidate-search-remediation.json"
         _write_json(remediation_path, remediation)
@@ -6207,6 +8790,9 @@ def run_whitepaper_autoresearch_profit_target(
                     "profitability_search_goal": str(profitability_goal_path),
                     "candidate_selection_manifest": str(
                         output_dir / "candidate-selection-manifest.json"
+                    ),
+                    "selected_candidate_specs": str(
+                        output_dir / "selected-candidate-specs.jsonl"
                     ),
                     "feedback_evidence_source_manifest": str(
                         output_dir / "feedback-evidence-source-manifest.json"
@@ -6396,6 +8982,9 @@ def run_whitepaper_autoresearch_profit_target(
             current_max_total_frontier_candidates=int(
                 getattr(args, "max_total_frontier_candidates", 0) or 0
             ),
+            current_train_days=int(getattr(args, "train_days", 6) or 6),
+            current_holdout_days=int(getattr(args, "holdout_days", 3) or 3),
+            current_second_oos_days=int(getattr(args, "second_oos_days", 2) or 2),
         )
         _write_json(remediation_path, candidate_search_remediation)
     candidate_board = _candidate_board_payload(
@@ -6449,7 +9038,7 @@ def run_whitepaper_autoresearch_profit_target(
         "source_count": len(sources),
         "hypothesis_count": len(hypothesis_cards),
         "candidate_spec_count": len(candidate_specs),
-        "candidate_compiler_blocker_count": len(compilation.blockers),
+        "candidate_compiler_blocker_count": len(candidate_compilation_blockers),
         "evidence_bundle_count": len(replay_result.evidence_bundles),
         "candidate_evidence_bundle_payloads": _evidence_bundle_payloads_for_epoch_summary(
             replay_result.evidence_bundles
@@ -6459,6 +9048,9 @@ def run_whitepaper_autoresearch_profit_target(
             _MAX_PERSISTED_FEEDBACK_EVIDENCE_BUNDLES,
         ),
         "replay_candidate_spec_count": len(replay_candidate_specs),
+        "selected_candidate_spec_ids": [
+            spec.candidate_spec_id for spec in replay_candidate_specs
+        ],
         "replay_incomplete": replay_result.incomplete,
         "replay_failure_reasons": replay_failure_reasons,
         "pre_replay_proposal_score_count": len(pre_replay_proposal_rows),
@@ -6485,6 +9077,9 @@ def run_whitepaper_autoresearch_profit_target(
             "candidate_specs": str(output_dir / "candidate-specs.jsonl"),
             "candidate_selection_manifest": str(
                 output_dir / "candidate-selection-manifest.json"
+            ),
+            "selected_candidate_specs": str(
+                output_dir / "selected-candidate-specs.jsonl"
             ),
             "pre_replay_proposal_scores": str(
                 output_dir / "pre-replay-mlx-proposal-scores.jsonl"
@@ -6599,7 +9194,7 @@ def main() -> int:
     payload = run_whitepaper_autoresearch_profit_target(args)
     print(json.dumps(payload, indent=2, sort_keys=True))
     status = str(payload.get("status") or "")
-    if status == "ok":
+    if status in {"ok", "selection_only"}:
         return 0
     if status == "persistence_failed":
         return 1

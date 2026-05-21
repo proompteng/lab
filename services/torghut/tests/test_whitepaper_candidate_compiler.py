@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase
 
 import app.trading.discovery.candidate_specs as candidate_specs_module
+import app.trading.discovery.whitepaper_candidate_compiler as compiler_module
 from app.trading.discovery.hypothesis_cards import build_hypothesis_cards
 from app.trading.discovery.whitepaper_candidate_compiler import (
     compile_claim_payloads_to_whitepaper_experiments,
@@ -530,7 +531,40 @@ class TestWhitepaperCandidateCompiler(TestCase):
                 "microstructure_continuation_matched_filter_v1",
                 "microbar_cross_sectional_pairs_v1",
                 "intraday_tsmom_v2",
+                "opening_drive_leader_reclaim_v1",
             }.issubset(family_ids)
+        )
+        microstructure_or_opening_specs = [
+            spec
+            for spec in compilation.executable_specs
+            if spec.family_template_id
+            in {
+                "microstructure_continuation_matched_filter_v1",
+                "opening_drive_leader_reclaim_v1",
+            }
+        ]
+        self.assertTrue(
+            any(
+                spec.strategy_overrides.get("params", {}).get("signal_motif")
+                in {
+                    "ofi_lob_response_continuation",
+                    "opening_ofi_leader_reclaim_continuation",
+                }
+                for spec in microstructure_or_opening_specs
+            )
+        )
+        self.assertTrue(
+            any(
+                "ofi_lob_continuation_response"
+                in spec.parameter_space.get("mechanism_overlay_ids", [])
+                for spec in microstructure_or_opening_specs
+            )
+        )
+        self.assertTrue(
+            any(
+                spec.hard_vetoes.get("required_min_ofi_response_sample_count") == "120"
+                for spec in microstructure_or_opening_specs
+            )
         )
         self.assertFalse(
             [
@@ -543,6 +577,378 @@ class TestWhitepaperCandidateCompiler(TestCase):
             all(
                 spec.promotion_contract["synthetic_evidence_policy"]
                 == "validation_only_not_promotion_proof"
+                for spec in compilation.executable_specs
+            )
+        )
+
+    def test_order_flow_filtration_claims_require_parent_trade_obi_overlay(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-arxiv-2507-22712",
+            claims=[
+                {
+                    "claim_id": "parent-trade-filtered-obi",
+                    "claim_type": "feature_recipe",
+                    "claim_text": (
+                        "Order-flow filtration links parent orders, order lifetime, "
+                        "modification count, and filtered orderbook imbalance to "
+                        "short-horizon returns."
+                    ),
+                    "data_requirements": [
+                        "parent_order_trade_linkage",
+                        "filtered_orderbook_imbalance",
+                        "order_lifetime_filter",
+                        "order_modification_count",
+                    ],
+                    "confidence": "0.75",
+                },
+                {
+                    "claim_id": "filtered-obi-causal-validation",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Filtered OBI candidates require event-time excitation, route TCA, "
+                        "walk-forward replay, and live-paper parity before promotion."
+                    ),
+                    "data_requirements": [
+                        "event_time_excitation",
+                        "route_tca",
+                        "walk_forward_replay",
+                        "live_paper_parity",
+                    ],
+                    "confidence": "0.74",
+                },
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        self.assertTrue(compilation.executable_specs)
+        self.assertFalse(
+            [
+                blocker
+                for blocker in compilation.blockers
+                if blocker.reason == "required_features_missing_from_family_template"
+            ]
+        )
+        self.assertTrue(
+            any(
+                "order_flow_filtration_parent_trade_obi"
+                in spec.parameter_space.get("mechanism_overlay_ids", [])
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            any(
+                spec.hard_vetoes.get("required_parent_order_trade_linkage") is True
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract.get("rejects_unfiltered_obi_only_promotion")
+                for spec in compilation.executable_specs
+            )
+        )
+
+    def test_intraday_price_flow_macro_news_claims_compile_with_strict_replay_gates(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-arxiv-2508-06788",
+            claims=[
+                {
+                    "claim_id": "one-second-price-flow-impact-decay",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "One-second price-flow dynamics and order flow imbalance "
+                        "decay quickly and are horizon dependent."
+                    ),
+                    "data_requirements": [
+                        "order_flow_imbalance",
+                        "price_flow_impact",
+                        "flow_impact_decay",
+                        "forecast_horizon",
+                    ],
+                    "confidence": "0.74",
+                },
+                {
+                    "claim_id": "macro-news-price-flow-regime",
+                    "claim_type": "market_regime",
+                    "claim_text": (
+                        "Macroeconomic news changes price impact, flow impact, "
+                        "volatility, and liquidity regimes."
+                    ),
+                    "data_requirements": [
+                        "macro_announcement_window",
+                        "realized_volatility",
+                        "spread_bps",
+                        "route_tca",
+                    ],
+                    "confidence": "0.73",
+                },
+                {
+                    "claim_id": "macro-news-heldout-replay-required",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Macro-news and non-news windows require separate walk-forward "
+                        "replay, live-paper parity, and transaction-cost stress."
+                    ),
+                    "data_requirements": [
+                        "walk_forward_replay",
+                        "live_paper_parity",
+                        "transaction_cost_stress",
+                    ],
+                    "confidence": "0.73",
+                },
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        family_ids = {spec.family_template_id for spec in compilation.executable_specs}
+
+        self.assertTrue(compilation.executable_specs)
+        self.assertIn("intraday_tsmom_v2", family_ids)
+        self.assertIn("microstructure_continuation_matched_filter_v1", family_ids)
+        self.assertFalse(
+            [
+                blocker
+                for blocker in compilation.blockers
+                if blocker.reason == "required_features_missing_from_family_template"
+            ]
+        )
+        self.assertTrue(
+            any(
+                "macro_announcement_dvar_momentum"
+                in spec.parameter_space["mechanism_overlay_ids"]
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            any(
+                spec.hard_vetoes.get("required_event_non_event_holdout_replay")
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract.get("requires_live_paper_parity")
+                for spec in compilation.executable_specs
+            )
+        )
+
+    def test_red2400_rejected_outcome_claim_compiles_to_counterfactual_calibration_overlay(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-arxiv-2605.12151",
+            claims=[
+                {
+                    "claim_id": "rejection-event-outcome-labels",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Algorithmically rejected trading events with realized outcome "
+                        "labels can turn skipped-signal logs into counterfactual "
+                        "learning examples for veto calibration."
+                    ),
+                    "asset_scope": "intraday_execution",
+                    "horizon_scope": "rejected_event_learning",
+                    "expected_direction": "neutral",
+                    "data_requirements": [
+                        "rejected_signal_log",
+                        "outcome_labels",
+                        "executable_quote",
+                    ],
+                    "confidence": "0.76",
+                },
+                {
+                    "claim_id": "counterfactual-reject-outcome-learning",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Rejected-event benchmarks should measure whether current "
+                        "vetoes discard profitable, executable opportunities or "
+                        "correctly block bad fills."
+                    ),
+                    "asset_scope": "intraday_execution",
+                    "horizon_scope": "rejected_event_learning",
+                    "expected_direction": "neutral",
+                    "data_requirements": [
+                        "rejected_signal_log",
+                        "counterfactual_return",
+                        "route_tca",
+                        "post_cost_net_pnl",
+                    ],
+                    "confidence": "0.76",
+                },
+            ],
+            relations=[
+                {
+                    "relation_id": "rejected-outcome-labels-calibrate-vetoes",
+                    "relation_type": "requires_validation",
+                    "source_claim_id": "counterfactual-reject-outcome-learning",
+                    "target_claim_id": "rejection-event-outcome-labels",
+                }
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        family_ids = {spec.family_template_id for spec in compilation.executable_specs}
+
+        self.assertTrue(compilation.executable_specs)
+        self.assertTrue(
+            {
+                "microstructure_continuation_matched_filter_v1",
+                "microbar_cross_sectional_pairs_v1",
+                "opening_drive_leader_reclaim_v1",
+            }.issubset(family_ids)
+        )
+        self.assertNotIn("intraday_tsmom_v2", family_ids)
+        self.assertTrue(
+            any(
+                spec.strategy_overrides.get("params", {}).get("veto_relaxation_scope")
+                == "labeled_false_negative_only"
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            any(
+                "rejected_signal_outcome_calibration"
+                in spec.parameter_space.get("mechanism_overlay_ids", [])
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.hard_vetoes.get("required_min_rejected_signal_outcome_label_count")
+                == "120"
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract.get("requires_rejected_signal_outcome_learning")
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract.get(
+                    "rejects_pending_rejected_signal_outcome_labels"
+                )
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract.get("requires_live_paper_parity")
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract.get("promotion_impact")
+                == "repair_only_until_labeled"
+                for spec in compilation.executable_specs
+            )
+        )
+
+    def test_structural_ohlcv_falsification_claims_stay_executable_but_not_promotable(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-arxiv-2605-04004",
+            claims=[
+                {
+                    "claim_id": "gap-continuation-positive-control",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "A gap-continuation setup can be retained only as a positive-control "
+                        "hypothesis because it showed statistical strength but failed minimum "
+                        "sample requirements."
+                    ),
+                    "data_requirements": [
+                        "gap_velocity",
+                        "executable_quote",
+                        "walk_forward_replay",
+                    ],
+                    "confidence": "0.70",
+                    "expected_failure_modes": [
+                        "insufficient_trade_count",
+                        "fails_transaction_cost_stress",
+                    ],
+                },
+                {
+                    "claim_id": "ohlcv-only-intraday-falsification",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "OHLCV-only intraday momentum signals can fail under realistic "
+                        "execution constraints despite attractive naive backtests."
+                    ),
+                    "data_requirements": [
+                        "executable_quote",
+                        "route_tca",
+                        "walk_forward_replay",
+                    ],
+                    "confidence": "0.76",
+                },
+                {
+                    "claim_id": "walk-forward-cost-constraints-required",
+                    "claim_type": "risk_constraint",
+                    "claim_text": (
+                        "Walk-forward validation and market-microstructure cost constraints "
+                        "are required to falsify overfit intraday signals."
+                    ),
+                    "data_requirements": [
+                        "walk_forward_replay",
+                        "transaction_cost_stress",
+                        "live_paper_parity",
+                    ],
+                    "confidence": "0.75",
+                },
+            ],
+            relations=[
+                {
+                    "relation_id": "ohlcv-falsification-requires-live-paper-proof",
+                    "relation_type": "requires_validation",
+                    "source_claim_id": "walk-forward-cost-constraints-required",
+                    "target_claim_id": "ohlcv-only-intraday-falsification",
+                }
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        self.assertTrue(compilation.executable_specs)
+        self.assertFalse(
+            [
+                blocker
+                for blocker in compilation.blockers
+                if blocker.reason == "contradictory_claim_relation"
+            ]
+        )
+        self.assertTrue(
+            any(
+                "ohlcv_only_falsification"
+                in spec.parameter_space.get("mechanism_overlay_ids", [])
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            any(
+                spec.hard_vetoes.get("required_min_ohlcv_falsification_trade_count")
+                == "120"
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract.get("rejects_ohlcv_only_promotion_evidence")
                 for spec in compilation.executable_specs
             )
         )
@@ -696,6 +1102,19 @@ class TestWhitepaperCandidateCompiler(TestCase):
         self.assertTrue(
             all(
                 spec.objective["target_net_pnl_per_day"] == "300"
+                for spec in late_day_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                "macro_announcement_dvar_momentum"
+                in spec.parameter_space["mechanism_overlay_ids"]
+                for spec in late_day_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract.get("rejects_pooled_macro_and_non_macro_replay")
                 for spec in late_day_specs
             )
         )
@@ -903,6 +1322,121 @@ class TestWhitepaperCandidateCompiler(TestCase):
         )
         self.assertEqual(compilation.blockers[0].reason, "seed_sweep_missing")
 
+    def test_cached_catalog_helpers_skip_invalid_seed_rows(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            family_dir = root / "families"
+            seed_dir = root / "seeds"
+            family_dir.mkdir()
+            seed_dir.mkdir()
+            (family_dir / "cached_family.yaml").write_text(
+                "\n".join(
+                    [
+                        "required_features:",
+                        "  - order_flow_imbalance",
+                        "risk_controls:",
+                        "  - volatility_shock_veto",
+                        "liquidity_assumptions:",
+                        "  quote_quality: true",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (seed_dir / "profitability-frontier-invalid.yaml").write_text(
+                "- not-a-mapping\n",
+                encoding="utf-8",
+            )
+            (seed_dir / "profitability-frontier-valid.yaml").write_text(
+                "family_template_id: cached_family\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                compiler_module._family_feature_catalog(family_dir),
+                {"order_flow_imbalance", "volatility_shock_veto", "quote_quality"},
+            )
+            self.assertEqual(
+                compiler_module._seed_sweep_family_ids(seed_dir),
+                {"cached_family"},
+            )
+
+    def test_reality_gap_relation_helper_rejects_unrelated_claim_shapes(self) -> None:
+        spec = candidate_specs_module.CandidateSpec(
+            schema_version="torghut.candidate-spec.v1",
+            candidate_spec_id="spec-reality-gap-helper",
+            hypothesis_id="hyp-reality-gap-helper",
+            family_template_id="microstructure_continuation_matched_filter_v1",
+            candidate_kind="sleeve",
+            runtime_family="breakout_continuation_consistent",
+            runtime_strategy_name="breakout-continuation-long-v1",
+            feature_contract={
+                "source_claims": [
+                    {
+                        "claim_id": "feature-source",
+                        "claim_type": "feature_recipe",
+                        "claim_text": "LOB simulation feature recipe.",
+                    },
+                    {
+                        "claim_id": "risk-source",
+                        "claim_type": "risk_constraint",
+                        "claim_text": "Simulation reality gap requires fill outcomes.",
+                    },
+                    {
+                        "claim_id": "risk-target",
+                        "claim_type": "risk_constraint",
+                        "claim_text": "Capital sizing risk target.",
+                    },
+                    {
+                        "claim_id": "signal-target",
+                        "claim_type": "signal_mechanism",
+                        "claim_text": "LOB simulation signal target.",
+                    },
+                ]
+            },
+            parameter_space={"mechanism_overlay_ids": []},
+            strategy_overrides={},
+            objective={"target_net_pnl_per_day": "500"},
+            hard_vetoes={},
+            expected_failure_modes=(),
+            promotion_contract={},
+        )
+
+        self.assertEqual(compiler_module._claim_type(None), "")
+        self.assertIn(
+            "flow", compiler_module._claim_haystack(None, {"claim_text": "flow"})
+        )
+        self.assertFalse(
+            compiler_module._is_simulation_reality_gap_validation_relation(
+                {
+                    "relation_type": "supports",
+                    "source_claim_id": "risk-source",
+                    "target_claim_id": "signal-target",
+                },
+                spec,
+            )
+        )
+        self.assertFalse(
+            compiler_module._is_simulation_reality_gap_validation_relation(
+                {
+                    "relation_type": "invalidates",
+                    "source_claim_id": "feature-source",
+                    "target_claim_id": "signal-target",
+                },
+                spec,
+            )
+        )
+        self.assertFalse(
+            compiler_module._is_simulation_reality_gap_validation_relation(
+                {
+                    "relation_type": "invalidates",
+                    "source_claim_id": "risk-source",
+                    "target_claim_id": "risk-target",
+                },
+                spec,
+            )
+        )
+
     def test_contradictory_claim_relation_blocks_dependent_candidate_specs(
         self,
     ) -> None:
@@ -953,4 +1487,278 @@ class TestWhitepaperCandidateCompiler(TestCase):
         self.assertEqual(
             compilation.blockers[0].detail["claim_relation_blockers"][0]["relation_id"],
             "rel-invalidates-flow",
+        )
+
+    def test_reality_gap_invalidates_relation_stays_executable_as_validation_contract(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-arxiv-2603.24137",
+            claims=[
+                {
+                    "claim_id": "lob-simulation-benchmark-parity",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Limit-order-book simulation can expose stylized fillability "
+                        "and adverse-selection mechanisms only when calibrated "
+                        "against real event streams and fill outcomes."
+                    ),
+                    "asset_scope": "intraday_microstructure",
+                    "horizon_scope": "simulation_validation",
+                    "expected_direction": "neutral",
+                    "data_requirements": [
+                        "lob_event_stream",
+                        "fill_outcomes",
+                        "simulation_parity",
+                    ],
+                    "confidence": "0.76",
+                },
+                {
+                    "claim_id": "sim-to-live-reality-gap-validation",
+                    "claim_type": "risk_constraint",
+                    "claim_text": (
+                        "LOB simulation reality gaps require explicit parity metrics "
+                        "before simulated fillability or adverse-selection estimates "
+                        "can affect capital gates."
+                    ),
+                    "asset_scope": "intraday_microstructure",
+                    "horizon_scope": "simulation_validation",
+                    "expected_direction": "neutral",
+                    "data_requirements": [
+                        "simulation_parity",
+                        "live_paper_parity",
+                        "adverse_selection_stress",
+                        "route_tca",
+                    ],
+                    "confidence": "0.77",
+                },
+            ],
+            relations=[
+                {
+                    "relation_id": "lob-sim-reality-gap-blocks-synthetic-proof",
+                    "relation_type": "invalidates",
+                    "source_claim_id": "sim-to-live-reality-gap-validation",
+                    "target_claim_id": "lob-simulation-benchmark-parity",
+                }
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        self.assertEqual(
+            len(compilation.candidate_specs),
+            _expected_portfolio_target_candidate_count(),
+        )
+        self.assertTrue(compilation.executable_specs)
+        self.assertFalse(
+            [
+                blocker
+                for blocker in compilation.blockers
+                if blocker.reason == "contradictory_claim_relation"
+            ]
+        )
+        self.assertTrue(
+            any(
+                "simulation_reality_gap_implementation_risk"
+                in spec.parameter_space.get("mechanism_overlay_ids", [])
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.hard_vetoes.get("required_simulation_live_parity_metrics")
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract.get(
+                    "rejects_synthetic_lob_fillability_as_capital_gate"
+                )
+                for spec in compilation.executable_specs
+            )
+        )
+
+    def test_implementation_risk_claims_compile_to_backtest_stability_overlay(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-arxiv-2603.20319",
+            claims=[
+                {
+                    "claim_id": "multi-engine-implementation-risk-replay",
+                    "claim_type": "feature_recipe",
+                    "claim_text": (
+                        "Implementation risk in portfolio backtesting means the "
+                        "same logical strategy must be replayed across independent "
+                        "engines before post-cost net PnL can be promotion evidence."
+                    ),
+                    "asset_scope": "us_equities_portfolio",
+                    "horizon_scope": "portfolio_backtesting",
+                    "expected_direction": "neutral",
+                    "data_requirements": [
+                        "multi_engine_replay",
+                        "engine_sensitivity",
+                        "implementation_uncertainty_interval",
+                        "transaction_cost_stress",
+                    ],
+                    "confidence": "0.78",
+                },
+                {
+                    "claim_id": "conclusion-stability-capital-gate",
+                    "claim_type": "risk_constraint",
+                    "claim_text": (
+                        "A candidate should affect capital gates only when the "
+                        "implementation-uncertainty lower bound stays above target "
+                        "and conclusion stability agrees across replay implementations."
+                    ),
+                    "asset_scope": "us_equities_portfolio",
+                    "horizon_scope": "portfolio_backtesting",
+                    "expected_direction": "neutral",
+                    "data_requirements": [
+                        "implementation_uncertainty_interval",
+                        "conclusion_stability",
+                        "post_cost_net_pnl",
+                        "multi_engine_replay",
+                    ],
+                    "confidence": "0.80",
+                },
+            ],
+            relations=[
+                {
+                    "relation_id": (
+                        "implementation-uncertainty-requires-multi-engine-stability"
+                    ),
+                    "relation_type": "requires_validation",
+                    "source_claim_id": "conclusion-stability-capital-gate",
+                    "target_claim_id": "multi-engine-implementation-risk-replay",
+                }
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        self.assertTrue(compilation.executable_specs)
+        self.assertTrue(
+            any(
+                "implementation_risk_backtest_stability"
+                in spec.parameter_space.get("mechanism_overlay_ids", [])
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract.get("rejects_single_engine_backtest_proof")
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.hard_vetoes.get(
+                    "required_implementation_uncertainty_lower_bound_above_target"
+                )
+                for spec in compilation.executable_specs
+            )
+        )
+
+    def test_deployment_consistency_claims_compile_to_semantic_parity_overlay(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-arxiv-2603.21330",
+            claims=[
+                {
+                    "claim_id": "weight-centric-unified-execution-protocol",
+                    "claim_type": "feature_recipe",
+                    "claim_text": (
+                        "A deployment-consistent trading architecture keeps data "
+                        "processing, strategy construction, backtesting, and broker "
+                        "execution behind one weight-centric protocol."
+                    ),
+                    "asset_scope": "us_equities_portfolio",
+                    "horizon_scope": "research_to_live_deployment",
+                    "expected_direction": "neutral",
+                    "data_requirements": [
+                        "portfolio_weight_trace",
+                        "signal_payload_parity",
+                        "order_sizing_parity",
+                        "broker_execution_semantics",
+                    ],
+                    "confidence": "0.76",
+                },
+                {
+                    "claim_id": "replay-paper-live-semantic-parity-required",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Replay, paper, and live broker paths must use the same "
+                        "signal payloads, order sizing, route constraints, and "
+                        "execution semantics before post-cost PnL is promotion evidence."
+                    ),
+                    "asset_scope": "us_equities_portfolio",
+                    "horizon_scope": "research_to_live_deployment",
+                    "expected_direction": "neutral",
+                    "data_requirements": [
+                        "replay_paper_live_semantic_parity",
+                        "signal_payload_parity",
+                        "order_sizing_parity",
+                        "route_constraint_parity",
+                        "live_paper_parity",
+                    ],
+                    "confidence": "0.78",
+                },
+                {
+                    "claim_id": "broker-execution-risk-overlay-parity",
+                    "claim_type": "risk_constraint",
+                    "claim_text": (
+                        "Portfolio-level risk overlays and broker execution semantics "
+                        "must remain invariant between backtest, paper, and live adapters."
+                    ),
+                    "asset_scope": "us_equities_portfolio",
+                    "horizon_scope": "research_to_live_deployment",
+                    "expected_direction": "neutral",
+                    "data_requirements": [
+                        "portfolio_risk_overlay_parity",
+                        "broker_execution_semantics",
+                        "route_constraint_parity",
+                        "replay_harness_implementation_trace",
+                    ],
+                    "confidence": "0.78",
+                },
+            ],
+            relations=[
+                {
+                    "relation_id": (
+                        "deployment-consistency-requires-semantic-parity-proof"
+                    ),
+                    "relation_type": "requires_validation",
+                    "source_claim_id": "replay-paper-live-semantic-parity-required",
+                    "target_claim_id": "weight-centric-unified-execution-protocol",
+                }
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        self.assertTrue(compilation.executable_specs)
+        self.assertTrue(
+            all(
+                "replay_paper_live_semantic_parity"
+                in spec.parameter_space.get("mechanism_overlay_ids", [])
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.hard_vetoes.get("required_order_sizing_parity")
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract.get("rejects_adapter_only_execution_behavior")
+                for spec in compilation.executable_specs
+            )
         )

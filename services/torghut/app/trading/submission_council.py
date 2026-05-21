@@ -6,6 +6,7 @@ import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from threading import Lock
 from typing import Any, cast
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -103,6 +104,20 @@ def _safe_int(value: object) -> int:
         except ValueError:
             return 0
     return 0
+
+
+def _safe_decimal(value: object) -> Decimal | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, Decimal):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return Decimal(text)
+    except (InvalidOperation, ValueError):
+        return None
 
 
 def _safe_bool(value: object) -> bool | None:
@@ -434,18 +449,25 @@ def build_hypothesis_runtime_summary(
     *,
     state: object,
     market_context_status: Mapping[str, Any],
+    tca_summary: Mapping[str, Any] | None = None,
+    dependency_quorum: Any | None = None,
+    feature_readiness: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
     registry = load_hypothesis_registry()
-    dependency_quorum = resolve_hypothesis_dependency_quorum(registry)
+    if dependency_quorum is None:
+        dependency_quorum = resolve_hypothesis_dependency_quorum(registry)
     items = compile_hypothesis_runtime_statuses(
         registry=registry,
         state=state,
-        tca_summary=build_tca_gate_inputs(
+        tca_summary=tca_summary
+        if tca_summary is not None
+        else build_tca_gate_inputs(
             session=session,
             account_label=settings.trading_account_label,
         ),
         market_context_status=market_context_status,
         jangar_dependency_quorum=dependency_quorum,
+        feature_readiness=feature_readiness,
         market_session_open=cast(
             bool | None, getattr(state, "market_session_open", None)
         ),
@@ -552,7 +574,7 @@ def _load_latest_certificate_evidence(
             continue
         latest_windows[row.hypothesis_id] = row
 
-    latest_promotions: dict[str, StrategyPromotionDecision] = {}
+    latest_promotions: dict[str, list[StrategyPromotionDecision]] = {}
     promotion_rows = session.execute(
         select(StrategyPromotionDecision)
         .where(
@@ -562,14 +584,19 @@ def _load_latest_certificate_evidence(
         .order_by(StrategyPromotionDecision.created_at.desc())
     ).scalars()
     for row in promotion_rows:
-        if row.hypothesis_id in latest_promotions:
-            continue
-        latest_promotions[row.hypothesis_id] = row
+        latest_promotions.setdefault(row.hypothesis_id, []).append(row)
 
     evidence: list[dict[str, object]] = []
     for hypothesis_id in normalized_ids:
         metric_window = latest_windows.get(hypothesis_id)
-        promotion_decision = latest_promotions.get(hypothesis_id)
+        promotion_decision = None
+        for decision in latest_promotions.get(hypothesis_id, []):
+            if metric_window is None or _promotion_decision_matches_metric_window(
+                decision,
+                metric_window=metric_window,
+            ):
+                promotion_decision = decision
+                break
         evidence.append(
             {
                 "hypothesis_id": hypothesis_id,
@@ -578,6 +605,28 @@ def _load_latest_certificate_evidence(
             }
         )
     return evidence
+
+
+def _promotion_decision_matches_metric_window(
+    promotion_decision: StrategyPromotionDecision,
+    *,
+    metric_window: StrategyHypothesisMetricWindow,
+) -> bool:
+    if _safe_text(promotion_decision.run_id) != _safe_text(metric_window.run_id):
+        return False
+    if _safe_text(promotion_decision.hypothesis_id) != _safe_text(
+        metric_window.hypothesis_id
+    ):
+        return False
+    if _safe_text(promotion_decision.candidate_id) != _safe_text(
+        metric_window.candidate_id
+    ):
+        return False
+    if _safe_text(promotion_decision.promotion_target) != _safe_text(
+        metric_window.observed_stage
+    ):
+        return False
+    return True
 
 
 def _window_evidence_issued_at(
@@ -614,6 +663,34 @@ def _certificate_capital_stage(
     if not ranked_stages:
         return None
     return min(ranked_stages, key=_stage_rank)
+
+
+def _metric_window_activity_reason_codes(
+    metric_window: StrategyHypothesisMetricWindow,
+) -> list[str]:
+    reasons: list[str] = []
+    if _safe_int(metric_window.market_session_count) <= 0:
+        reasons.append("hypothesis_window_market_sessions_missing")
+    if _safe_int(metric_window.decision_count) <= 0:
+        reasons.append("hypothesis_window_decisions_missing")
+    if _safe_int(metric_window.trade_count) <= 0:
+        reasons.append("hypothesis_window_trades_missing")
+    if _safe_int(metric_window.order_count) <= 0:
+        reasons.append("hypothesis_window_orders_missing")
+
+    expectancy_bps = _safe_decimal(metric_window.post_cost_expectancy_bps)
+    if expectancy_bps is None or expectancy_bps <= 0:
+        reasons.append("hypothesis_window_post_cost_expectancy_non_positive")
+
+    avg_abs_slippage_bps = _safe_decimal(metric_window.avg_abs_slippage_bps)
+    slippage_budget_bps = _safe_decimal(metric_window.slippage_budget_bps)
+    if (
+        avg_abs_slippage_bps is not None
+        and slippage_budget_bps is not None
+        and avg_abs_slippage_bps > slippage_budget_bps
+    ):
+        reasons.append("hypothesis_window_slippage_budget_exceeded")
+    return reasons
 
 
 def _merge_runtime_certificate_evidence(
@@ -660,6 +737,51 @@ def _merge_runtime_certificate_evidence(
             merged.append(updated)
             continue
         if _safe_text(metric_window.dependency_quorum_decision) != "allow":
+            merged.append(updated)
+            continue
+        activity_reason_codes = _metric_window_activity_reason_codes(metric_window)
+        if activity_reason_codes:
+            observed = (
+                dict(cast(Mapping[str, Any], updated.get("observed")))
+                if isinstance(updated.get("observed"), Mapping)
+                else {}
+            )
+            observed.update(
+                {
+                    "runtime_window_certificate_rejected": True,
+                    "runtime_window_rejection_reasons": activity_reason_codes,
+                    "metric_window_id": str(metric_window.id),
+                    "promotion_decision_id": str(promotion_decision.id),
+                    "metric_window_market_session_count": metric_window.market_session_count,
+                    "metric_window_decision_count": metric_window.decision_count,
+                    "metric_window_trade_count": metric_window.trade_count,
+                    "metric_window_order_count": metric_window.order_count,
+                    "metric_window_avg_abs_slippage_bps": metric_window.avg_abs_slippage_bps,
+                    "metric_window_post_cost_expectancy_bps": metric_window.post_cost_expectancy_bps,
+                }
+            )
+            prior_reasons = [
+                str(reason).strip()
+                for reason in cast(Sequence[object], updated.get("reasons") or [])
+                if str(reason).strip()
+            ]
+            updated["reasons"] = _normalize_reason_codes(
+                [*prior_reasons, *activity_reason_codes]
+            )
+            updated["informational_reasons"] = sorted(
+                {
+                    *[
+                        str(reason)
+                        for reason in cast(
+                            Sequence[object],
+                            updated.get("informational_reasons") or [],
+                        )
+                        if str(reason).strip()
+                    ],
+                    "runtime_window_certificate_rejected",
+                }
+            )
+            updated["observed"] = observed
             merged.append(updated)
             continue
 
@@ -882,8 +1004,11 @@ def _evaluate_certificate_candidates(
                 reasons.append("hypothesis_window_drift_failed")
             if _safe_text(metric_window.dependency_quorum_decision) != "allow":
                 reasons.append("hypothesis_window_dependency_quorum_not_allow")
+            reasons.extend(_metric_window_activity_reason_codes(metric_window))
 
-        if promotion_decision is not None:
+        if promotion_decision is None:
+            reasons.append("promotion_decision_evidence_missing")
+        else:
             promotion_decision_id = str(promotion_decision.id)
             if candidate_id is None:
                 candidate_id = promotion_decision.candidate_id
@@ -1113,12 +1238,14 @@ def _attach_lineage_refs(
     return attached_rows
 
 
-def _load_profit_promotion_table_counts(session: Session) -> dict[str, int]:
+def _load_profit_promotion_table_counts(session: Session) -> dict[str, Any]:
     portfolio_rows = list(
         session.execute(select(AutoresearchPortfolioCandidate)).scalars()
     )
     current_oracle_ready = 0
     current_policy_blocked = 0
+    ready_refs: set[str] = set()
+    ready_source_candidate_ids: set[str] = set()
     for row in portfolio_rows:
         current_oracle_passed = _autoresearch_portfolio_current_oracle_passed(row)
         if (
@@ -1126,11 +1253,36 @@ def _load_profit_promotion_table_counts(session: Session) -> dict[str, int]:
             and current_oracle_passed
         ):
             current_oracle_ready += 1
+            if portfolio_candidate_id := _safe_text(row.portfolio_candidate_id):
+                ready_refs.add(f"portfolio_candidate_id:{portfolio_candidate_id}")
+            raw_source_candidate_ids = row.source_candidate_ids_json
+            if isinstance(raw_source_candidate_ids, Sequence) and not isinstance(
+                raw_source_candidate_ids, (str, bytes, bytearray)
+            ):
+                for raw_source_id in cast(Sequence[object], raw_source_candidate_ids):
+                    source_candidate_id = _safe_text(raw_source_id)
+                    if source_candidate_id is None:
+                        continue
+                    ready_source_candidate_ids.add(source_candidate_id)
+                    ready_refs.add(f"source_candidate_id:{source_candidate_id}")
+                    ready_refs.add(f"candidate_spec_id:{source_candidate_id}")
         if (
             row.status not in _AUTORESEARCH_PORTFOLIO_READY_STATUSES
             or not current_oracle_passed
         ):
             current_policy_blocked += 1
+
+    if ready_source_candidate_ids:
+        spec_rows = session.execute(
+            select(AutoresearchCandidateSpec).where(
+                AutoresearchCandidateSpec.candidate_spec_id.in_(
+                    sorted(ready_source_candidate_ids)
+                )
+            )
+        ).scalars()
+        for spec_row in spec_rows:
+            if hypothesis_id := _safe_text(spec_row.hypothesis_id):
+                ready_refs.add(f"hypothesis_id:{hypothesis_id}")
 
     return {
         "research_candidates": int(
@@ -1167,6 +1319,7 @@ def _load_profit_promotion_table_counts(session: Session) -> dict[str, int]:
         ),
         "autoresearch_portfolio_ready": current_oracle_ready,
         "autoresearch_portfolio_blocked": current_policy_blocked,
+        "autoresearch_portfolio_ready_refs": sorted(ready_refs),
     }
 
 

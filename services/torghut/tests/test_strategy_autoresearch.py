@@ -163,6 +163,229 @@ class TestStrategyAutoresearch(TestCase):
 
         self.assertIs(runner._runtime_closure_candidate(eligible), eligible)
 
+    def test_runtime_closure_subject_prefers_oracle_passed_portfolio(
+        self,
+    ) -> None:
+        single = {
+            "candidate_id": "single-1",
+            "objective_met": True,
+            "hard_vetoes": [],
+        }
+        portfolio = runner.PortfolioCandidateSpec(
+            schema_version="torghut.portfolio-candidate-spec.v1",
+            portfolio_candidate_id="port-1",
+            source_candidate_ids=("sleeve-1", "sleeve-2"),
+            target_net_pnl_per_day=Decimal("500"),
+            sleeves=(),
+            capital_budget={},
+            correlation_budget={},
+            drawdown_budget={},
+            evidence_refs=("bundle-1", "bundle-2"),
+            objective_scorecard={"target_met": True, "oracle_passed": True},
+            optimizer_report={"oracle_passed": True},
+        )
+
+        self.assertIs(
+            runner._runtime_closure_subject(
+                best_candidate=single,
+                portfolio=portfolio,
+            ),
+            portfolio,
+        )
+        readiness = runner._summary_promotion_readiness_for_outputs(
+            best_candidate=single,
+            portfolio=portfolio,
+            runtime_closure={
+                "status": "ready_for_promotion_review",
+                "next_required_steps": ["promotion_review"],
+                "promotion_prerequisites": {"allowed": True, "reasons": []},
+            },
+        )
+
+        self.assertEqual(readiness["candidate_id"], "port-1")
+        self.assertEqual(readiness["status"], "promotion_ready")
+        self.assertTrue(readiness["promotable"])
+        self.assertEqual(readiness["blockers"], [])
+
+    def test_runtime_closure_subject_keeps_blockers_for_denied_portfolio(
+        self,
+    ) -> None:
+        portfolio = runner.PortfolioCandidateSpec(
+            schema_version="torghut.portfolio-candidate-spec.v1",
+            portfolio_candidate_id="port-blocked",
+            source_candidate_ids=("sleeve-1", "sleeve-2"),
+            target_net_pnl_per_day=Decimal("500"),
+            sleeves=(),
+            capital_budget={},
+            correlation_budget={},
+            drawdown_budget={},
+            evidence_refs=("bundle-1", "bundle-2"),
+            objective_scorecard={"target_met": True, "oracle_passed": True},
+            optimizer_report={"oracle_passed": True},
+        )
+
+        readiness = runner._summary_promotion_readiness_for_outputs(
+            best_candidate=None,
+            portfolio=portfolio,
+            runtime_closure={
+                "status": "pending_runtime_parity",
+                "next_required_steps": [
+                    "scheduler_v3_parity_replay",
+                    "scheduler_v3_approval_replay",
+                    "live_shadow_validation",
+                ],
+                "promotion_prerequisites": {
+                    "allowed": False,
+                    "reasons": ["gate_report_missing"],
+                },
+            },
+        )
+
+        self.assertEqual(readiness["candidate_id"], "port-blocked")
+        self.assertFalse(readiness["promotable"])
+        self.assertEqual(readiness["status"], "blocked_pending_promotion_prerequisites")
+        self.assertEqual(
+            readiness["blockers"],
+            [
+                "scheduler_v3_parity_replay",
+                "scheduler_v3_approval_replay",
+                "live_shadow_validation",
+                "gate_report_missing",
+            ],
+        )
+
+    def test_persist_run_outputs_uses_oracle_passed_portfolio_for_runtime_closure(
+        self,
+    ) -> None:
+        class RuntimeSummary:
+            def to_payload(self) -> dict[str, object]:
+                return {
+                    "status": "ready_for_promotion_review",
+                    "candidate_id": "port-1",
+                    "portfolio_optimizer_evidence_path": "runtime-closure/promotion/portfolio-optimizer-evidence.json",
+                    "next_required_steps": ["promotion_review"],
+                    "promotion_prerequisites": {"allowed": True, "reasons": []},
+                    "rollback_readiness": {"ready": True},
+                }
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            program_path, family_dir = self._write_program_fixture(root)
+            program_payload = yaml.safe_load(program_path.read_text(encoding="utf-8"))
+            program = load_strategy_autoresearch_program(
+                program_path, family_dir=family_dir
+            )
+            run_root = root / "run"
+            run_root.mkdir()
+            manifest = runner.MlxSnapshotManifest(
+                snapshot_id="snap-1",
+                created_at="2026-05-20T00:00:00+00:00",
+                source_window_start="2026-05-01",
+                source_window_end="2026-05-15",
+                train_days=6,
+                holdout_days=3,
+                full_window_days=9,
+                symbols=("AMAT", "NVDA"),
+                bar_interval="1Sec",
+                quote_quality_policy_id="quote-quality-v1",
+                feature_set_id="torghut.mlx-autoresearch.v1",
+                cross_sectional_feature_flags={},
+                prior_day_feature_flags={},
+                tape_freshness_receipts=(),
+                row_counts={},
+                tensor_bundle_paths={},
+                manifest_hash="hash-1",
+            )
+            history = [
+                {
+                    "experiment_index": 0,
+                    "iteration": 0,
+                    "family_template_id": "breakout_reclaim_v2",
+                    "candidate_id": "single-1",
+                    "net_pnl_per_day": "620",
+                    "active_day_ratio": "0.85",
+                    "best_day_share": "0.30",
+                    "max_drawdown": "850",
+                    "status": "keep",
+                    "mutation_label": "seed",
+                    "hard_vetoes": [],
+                    "pareto_tier": 1,
+                    "proposal_score": 0.0,
+                    "proposal_rank": 0,
+                }
+            ]
+            portfolio = runner.PortfolioCandidateSpec(
+                schema_version="torghut.portfolio-candidate-spec.v1",
+                portfolio_candidate_id="port-1",
+                source_candidate_ids=("sleeve-1", "sleeve-2"),
+                target_net_pnl_per_day=Decimal("500"),
+                sleeves=(),
+                capital_budget={},
+                correlation_budget={},
+                drawdown_budget={},
+                evidence_refs=("bundle-1", "bundle-2"),
+                objective_scorecard={"target_met": True, "oracle_passed": True},
+                optimizer_report={"oracle_passed": True},
+            )
+            portfolio_outputs = {
+                "portfolio_candidates_path": str(
+                    run_root / "portfolio-candidates.jsonl"
+                ),
+                "candidate_evidence_bundles_path": str(
+                    run_root / "candidate-evidence-bundles.jsonl"
+                ),
+                "portfolio_optimizer_report_path": str(
+                    run_root / "portfolio-optimizer-report.json"
+                ),
+                "portfolio_candidate_count": 1,
+                "candidate_evidence_bundle_count": 2,
+                "portfolio_optimizer_report": {"oracle_passed": True},
+            }
+
+            with (
+                patch(
+                    "scripts.run_strategy_autoresearch_loop._write_portfolio_outputs",
+                    return_value=(portfolio, portfolio_outputs),
+                ),
+                patch(
+                    "scripts.run_strategy_autoresearch_loop.write_runtime_closure_bundle",
+                    return_value=RuntimeSummary(),
+                ) as write_runtime_closure,
+                patch(
+                    "scripts.run_strategy_autoresearch_loop.write_mlx_notebook_exports",
+                    return_value={},
+                ),
+                patch(
+                    "scripts.run_strategy_autoresearch_loop.write_autoresearch_notebooks",
+                    return_value=[],
+                ),
+            ):
+                summary = runner._persist_run_outputs(
+                    run_root=run_root,
+                    program=program,
+                    program_payload=program_payload,
+                    runner_run_id="strategy-autoresearch-test",
+                    program_id=program.program_id,
+                    frontier_runs=1,
+                    objective_met=True,
+                    history=history,
+                    manifest=manifest,
+                    descriptors=[],
+                    proposal_scores=[],
+                    worklist=[],
+                    status="ok",
+                )
+            promotion_readiness_file = json.loads(
+                Path(summary["promotion_readiness_path"]).read_text(encoding="utf-8")
+            )
+
+            runtime_kwargs = write_runtime_closure.call_args.kwargs
+            self.assertIs(runtime_kwargs["best_candidate"], portfolio)
+            self.assertEqual(summary["runtime_closure"]["candidate_id"], "port-1")
+            self.assertEqual(summary["promotion_readiness"]["candidate_id"], "port-1")
+            self.assertTrue(summary["promotion_readiness"]["promotable"])
+            self.assertEqual(promotion_readiness_file["candidate_id"], "port-1")
+
     def test_load_mutation_space_rejects_invalid_mode(self) -> None:
         with self.assertRaisesRegex(ValueError, "autoresearch_mutation_mode_invalid"):
             autoresearch._load_mutation_space({"mode": "bad-mode"})
@@ -198,6 +421,33 @@ class TestStrategyAutoresearch(TestCase):
         )
         self.assertIsNone(args.shadow_validation_artifact)
 
+    def test_parse_args_prefers_clickhouse_http_url_env(self) -> None:
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "TA_CLICKHOUSE_URL": "jdbc:clickhouse://clickhouse/torghut",
+                    "CLICKHOUSE_HTTP_URL": "http://127.0.0.1:8123",
+                    "TA_CLICKHOUSE_USERNAME": "reader",
+                },
+            ),
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "run_strategy_autoresearch_loop.py",
+                    "--program",
+                    "program.yaml",
+                    "--output-dir",
+                    "/tmp/out",
+                ],
+            ),
+        ):
+            args = runner._parse_args()
+
+        self.assertEqual(args.clickhouse_http_url, "http://127.0.0.1:8123")
+        self.assertEqual(args.clickhouse_username, "reader")
+
     def test_program_defaults_include_mlx_contract(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -219,6 +469,44 @@ class TestStrategyAutoresearch(TestCase):
         self.assertEqual(program.runtime_closure_policy.approval_window, "holdout")
         self.assertEqual(program.replay_budget.max_candidates_per_frontier_run, 96)
         self.assertTrue(program.ledger_policy["append_only"])
+
+    def test_frontier_args_forwards_second_oos_days(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            program_path, family_dir = self._write_program_fixture(root)
+            program = load_strategy_autoresearch_program(
+                program_path, family_dir=family_dir
+            )
+            args = Namespace(
+                strategy_configmap=root / "strategy-configmap.yaml",
+                family_template_dir=family_dir,
+                clickhouse_http_url="http://example.invalid:8123",
+                clickhouse_username="torghut",
+                clickhouse_password="secret",
+                start_equity="31590.02",
+                chunk_minutes=10,
+                symbols="",
+                progress_log_seconds=30,
+                train_days=6,
+                holdout_days=3,
+                second_oos_days=4,
+                full_window_start_date="",
+                full_window_end_date="",
+                expected_last_trading_day="",
+                allow_stale_tape=False,
+                prefetch_full_window_rows=False,
+                max_candidates_per_frontier_run=0,
+            )
+
+            frontier_args = runner._frontier_args(
+                args=args,
+                program=program,
+                family_plan=program.families[0],
+                sweep_config_path=root / "sweep.yaml",
+                json_output_path=root / "result.json",
+            )
+
+        self.assertEqual(frontier_args.second_oos_days, 4)
 
     def _write_program_fixture(self, root: Path) -> tuple[Path, Path]:
         family_dir = root / "families"

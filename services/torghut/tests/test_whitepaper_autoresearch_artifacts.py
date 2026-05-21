@@ -347,9 +347,28 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
                     "positive_day_ratio": "0.8",
                     "best_day_share": "0.2",
                     "max_drawdown": "0",
+                    "trading_day_count": "1",
+                    "avg_filled_notional_per_day": "350000",
                     "daily_net": {"2026-02-23": "123"},
                     "daily_filled_notional": {"2026-02-23": "350000"},
+                    "daily_liquidity_notional": {"2026-02-23": "900000"},
+                    "decision_count_by_order_type": {"market": 2, "limit": 3},
+                    "filled_count_by_order_type": {"market": 2, "limit": 2},
+                    "limit_fill_rate": "0.6667",
+                    "implementation_uncertainty_required": True,
+                    "implementation_uncertainty_model": "impact_latency_cost_model_interval",
+                    "implementation_uncertainty_model_count": 5,
+                    "implementation_uncertainty_stability_passed": False,
+                    "implementation_uncertainty_lower_net_pnl_per_day": "88",
+                    "implementation_uncertainty_upper_net_pnl_per_day": "120",
+                    "implementation_uncertainty_interval_width_per_day": "32",
+                    "implementation_uncertainty_scenarios": {
+                        "latency_depth_fillability": "88"
+                    },
                 },
+                "route_tca_artifact_ref": "/tmp/route-tca.json",
+                "order_type_execution_artifact_ref": "/tmp/order-type-execution.json",
+                "execution_shortfall_evidence_present": True,
             },
             dataset_snapshot_id="snap-fallback",
             result_path="/tmp/fallback.json",
@@ -358,8 +377,390 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
         self.assertEqual(bundle.candidate_id, "spec-fallback")
         self.assertEqual(bundle.objective_scorecard["net_pnl_per_day"], "123")
         self.assertIn("daily_filled_notional", bundle.objective_scorecard)
+        self.assertTrue(
+            bundle.objective_scorecard["nonlinear_market_impact_stress_missing"]
+        )
+        self.assertEqual(
+            bundle.objective_scorecard["avg_liquidity_notional_per_day"],
+            "900000",
+        )
+        self.assertFalse(bundle.objective_scorecard["market_impact_stress_passed"])
+        self.assertEqual(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_fillable_notional_per_day"
+            ],
+            "350000",
+        )
+        self.assertEqual(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_worst_active_day_fillable_notional"
+            ],
+            "350000",
+        )
+        self.assertEqual(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_p10_active_day_fillable_notional"
+            ],
+            "350000",
+        )
+        self.assertTrue(
+            bundle.objective_scorecard["delay_adjusted_depth_tail_coverage_passed"]
+        )
+        self.assertEqual(
+            bundle.objective_scorecard["delay_adjusted_depth_stress_net_pnl_per_day"],
+            "88",
+        )
+        self.assertTrue(
+            bundle.objective_scorecard["delay_adjusted_depth_stress_passed"]
+        )
+        self.assertEqual(
+            bundle.objective_scorecard["decision_count_by_order_type"],
+            {"market": 2, "limit": 3},
+        )
+        self.assertEqual(bundle.objective_scorecard["limit_fill_rate"], "0.6667")
+        self.assertEqual(
+            bundle.objective_scorecard["market_limit_order_mix_sample_count"],
+            5,
+        )
+        self.assertTrue(
+            bundle.objective_scorecard["implementation_uncertainty_required"]
+        )
+        self.assertEqual(
+            bundle.objective_scorecard["implementation_uncertainty_model_count"],
+            5,
+        )
+        self.assertIn(
+            "latency_depth_fillability",
+            bundle.objective_scorecard["implementation_uncertainty_scenarios"],
+        )
+        self.assertTrue(
+            bundle.objective_scorecard["market_limit_order_mix_evidence_present"]
+        )
+        self.assertEqual(
+            bundle.objective_scorecard["limit_fill_probability_sample_count"],
+            3,
+        )
+        self.assertTrue(
+            bundle.objective_scorecard["limit_fill_probability_evidence_present"]
+        )
+        self.assertEqual(
+            bundle.objective_scorecard["route_tca_artifact_ref"],
+            "/tmp/route-tca.json",
+        )
+        self.assertEqual(
+            bundle.objective_scorecard["order_type_execution_artifact_ref"],
+            "/tmp/order-type-execution.json",
+        )
+        self.assertTrue(
+            bundle.objective_scorecard["execution_shortfall_evidence_present"]
+        )
+        self.assertEqual(len(bundle.stress_metrics), 3)
+        self.assertEqual(
+            bundle.stress_metrics[2]["stress_type"], "implementation_uncertainty"
+        )
         with self.assertRaisesRegex(ValueError, "evidence_bundle_schema_invalid"):
             evidence_bundle_from_payload({"schema_version": "bad"})
+
+    def test_evidence_bundle_marks_order_type_execution_artifact_without_ablation(
+        self,
+    ) -> None:
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-order-type-execution",
+            candidate={
+                "candidate_id": "cand-order-type-execution",
+                "runtime_family": "microbar_cross_sectional_pairs",
+                "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                "family_template_id": "microbar_cross_sectional_pairs_v1",
+                "full_window": {
+                    "net_per_day": "123",
+                    "trading_day_count": "1",
+                    "avg_filled_notional_per_day": "350000",
+                    "daily_net": {"2026-02-23": "123"},
+                    "daily_filled_notional": {"2026-02-23": "350000"},
+                    "daily_liquidity_notional": {"2026-02-23": "900000"},
+                    "decision_count_by_order_type": {"market": 2, "limit": 3},
+                    "filled_count_by_order_type": {"market": 2, "limit": 2},
+                    "limit_fill_rate": "0.6667",
+                },
+            },
+            dataset_snapshot_id="snap-order-type-execution",
+            result_path="/tmp/order-type-execution-replay.json",
+        )
+
+        self.assertEqual(
+            bundle.objective_scorecard["order_type_execution_artifact_ref"],
+            "/tmp/order-type-execution-replay.json",
+        )
+        self.assertEqual(
+            bundle.objective_scorecard["market_limit_order_mix_artifact_ref"],
+            "/tmp/order-type-execution-replay.json",
+        )
+        self.assertNotIn("order_type_ablation_artifact_ref", bundle.objective_scorecard)
+        self.assertNotIn("order_type_ablation_passed", bundle.objective_scorecard)
+
+    def test_evidence_bundle_preserves_replay_lineage_and_window_coverage(
+        self,
+    ) -> None:
+        replay_lineage = {
+            "schema_version": "torghut.frontier-replay-lineage.v1",
+            "lineage_hash": "lineage-hash",
+            "expected_windows": ["train", "holdout", "full_window"],
+            "present_windows": ["train", "holdout", "full_window"],
+            "missing_windows": [],
+        }
+        replay_window_coverage = {
+            "schema_version": "torghut.replay-window-coverage.v1",
+            "lineage_hash": "lineage-hash",
+            "expected_windows": ["train", "holdout", "full_window"],
+            "present_windows": ["train", "holdout", "full_window"],
+            "missing_windows": [],
+            "window_count": 3,
+        }
+
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-replay-lineage",
+            candidate={
+                "candidate_id": "cand-replay-lineage",
+                "runtime_family": "microbar_cross_sectional_pairs",
+                "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                "family_template_id": "microbar_cross_sectional_pairs_v1",
+                "replay_lineage": replay_lineage,
+                "objective_scorecard": {
+                    "net_pnl_per_day": "640",
+                    "replay_window_coverage": replay_window_coverage,
+                },
+                "full_window": {
+                    "net_per_day": "640",
+                    "trading_day_count": "1",
+                    "daily_net": {"2026-02-23": "640"},
+                },
+            },
+            dataset_snapshot_id="snap-replay-lineage",
+            result_path="/tmp/replay-lineage.json",
+        )
+
+        self.assertEqual(bundle.objective_scorecard["replay_lineage"], replay_lineage)
+        self.assertEqual(
+            bundle.objective_scorecard["replay_window_coverage"],
+            replay_window_coverage,
+        )
+
+    def test_evidence_bundle_preserves_nested_order_type_ablation_artifact(
+        self,
+    ) -> None:
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-order-type-ablation",
+            candidate={
+                "candidate_id": "cand-order-type-ablation",
+                "runtime_family": "microbar_cross_sectional_pairs",
+                "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                "family_template_id": "microbar_cross_sectional_pairs_v1",
+                "full_window": {
+                    "net_per_day": "123",
+                    "trading_day_count": "1",
+                    "avg_filled_notional_per_day": "350000",
+                    "daily_net": {"2026-02-23": "123"},
+                    "daily_filled_notional": {"2026-02-23": "350000"},
+                    "daily_liquidity_notional": {"2026-02-23": "900000"},
+                    "decision_count_by_order_type": {"market": 2, "limit": 3},
+                    "filled_count_by_order_type": {"market": 2, "limit": 2},
+                    "limit_fill_rate": "0.6667",
+                },
+                "order_type_ablation": {
+                    "artifact_ref": "/tmp/order-type-ablation.json",
+                    "passed": True,
+                    "sample_count": 60,
+                    "selected_order_type": "limit",
+                    "opportunity_cost_bps": "4.5",
+                    "limit_sample_count": 30,
+                },
+            },
+            dataset_snapshot_id="snap-order-type-ablation",
+            result_path="/tmp/order-type-ablation-replay.json",
+        )
+
+        self.assertEqual(
+            bundle.objective_scorecard["order_type_ablation_artifact_ref"],
+            "/tmp/order-type-ablation.json",
+        )
+        self.assertTrue(bundle.objective_scorecard["order_type_ablation_passed"])
+        self.assertEqual(
+            bundle.objective_scorecard["order_type_ablation_sample_count"], 60
+        )
+        self.assertEqual(
+            bundle.objective_scorecard["order_type_ablation_selected_order_type"],
+            "limit",
+        )
+        self.assertEqual(
+            bundle.objective_scorecard["order_type_opportunity_cost_bps"],
+            "4.5",
+        )
+        self.assertTrue(
+            bundle.objective_scorecard["order_type_opportunity_cost_evidence_present"]
+        )
+        self.assertEqual(
+            bundle.objective_scorecard["limit_fill_probability_sample_count"],
+            30,
+        )
+        self.assertEqual(
+            bundle.replay_artifact_refs,
+            (
+                "/tmp/order-type-ablation-replay.json",
+                "/tmp/order-type-ablation.json",
+            ),
+        )
+        self.assertNotIn("route_tca_artifact_ref", bundle.objective_scorecard)
+        self.assertNotIn(
+            "price_improvement_evidence_present", bundle.objective_scorecard
+        )
+        self.assertNotIn(
+            "execution_shortfall_evidence_present", bundle.objective_scorecard
+        )
+
+    def test_evidence_bundle_fails_delay_depth_without_recorded_daily_liquidity(
+        self,
+    ) -> None:
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-missing-depth",
+            candidate={
+                "candidate_id": "cand-missing-depth",
+                "runtime_family": "microbar_cross_sectional_pairs",
+                "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                "family_template_id": "microbar_cross_sectional_pairs_v1",
+                "full_window": {
+                    "net_per_day": "700",
+                    "trading_day_count": "1",
+                    "avg_filled_notional_per_day": "350000",
+                    "daily_net": {"2026-02-23": "700"},
+                    "daily_filled_notional": {"2026-02-23": "350000"},
+                },
+            },
+            dataset_snapshot_id="snap-missing-depth",
+            result_path="/tmp/missing-depth.json",
+        )
+
+        self.assertFalse(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_liquidity_evidence_present"
+            ]
+        )
+        self.assertEqual(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_liquidity_missing_day_count"
+            ],
+            1,
+        )
+        self.assertEqual(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_fillable_notional_per_day"
+            ],
+            "0",
+        )
+        self.assertEqual(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_worst_active_day_fillable_notional"
+            ],
+            "0",
+        )
+        self.assertEqual(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_p10_active_day_fillable_notional"
+            ],
+            "0",
+        )
+        self.assertFalse(
+            bundle.objective_scorecard["delay_adjusted_depth_tail_coverage_passed"]
+        )
+        self.assertFalse(
+            bundle.objective_scorecard["delay_adjusted_depth_stress_passed"]
+        )
+
+    def test_evidence_bundle_uses_per_day_depth_not_average_liquidity(self) -> None:
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-thin-depth",
+            candidate={
+                "candidate_id": "cand-thin-depth",
+                "runtime_family": "microbar_cross_sectional_pairs",
+                "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                "family_template_id": "microbar_cross_sectional_pairs_v1",
+                "full_window": {
+                    "net_per_day": "800",
+                    "trading_day_count": "2",
+                    "avg_filled_notional_per_day": "400000",
+                    "daily_net": {
+                        "2026-02-23": "800",
+                        "2026-02-24": "800",
+                    },
+                    "daily_filled_notional": {
+                        "2026-02-23": "400000",
+                        "2026-02-24": "400000",
+                    },
+                    "daily_liquidity_notional": {
+                        "2026-02-23": "1000000",
+                        "2026-02-24": "200000",
+                    },
+                },
+            },
+            dataset_snapshot_id="snap-thin-depth",
+            result_path="/tmp/thin-depth.json",
+        )
+
+        self.assertTrue(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_liquidity_evidence_present"
+            ]
+        )
+        self.assertEqual(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_liquidity_missing_day_count"
+            ],
+            0,
+        )
+        self.assertEqual(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_fillable_notional_per_day"
+            ],
+            "295000.00",
+        )
+        self.assertEqual(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_worst_grid_fillable_notional_per_day"
+            ],
+            "275000.00",
+        )
+        self.assertEqual(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_worst_active_day_fillable_notional"
+            ],
+            "150000.00",
+        )
+        self.assertEqual(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_p10_active_day_fillable_notional"
+            ],
+            "150000.00",
+        )
+        self.assertTrue(
+            bundle.objective_scorecard["delay_adjusted_depth_tail_coverage_passed"]
+        )
+        self.assertEqual(
+            bundle.objective_scorecard["delay_adjusted_depth_fillable_ratio"],
+            "0.7375",
+        )
+        self.assertEqual(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_unfillable_notional_per_day"
+            ],
+            "105000.00",
+        )
+        self.assertEqual(
+            Decimal(
+                bundle.objective_scorecard[
+                    "delay_adjusted_depth_stress_net_pnl_per_day"
+                ]
+            ),
+            Decimal("560.5"),
+        )
 
     def test_mlx_ranker_covers_fallback_and_error_edges(self) -> None:
         rows = [

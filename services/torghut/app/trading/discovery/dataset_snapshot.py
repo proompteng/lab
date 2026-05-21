@@ -5,19 +5,20 @@ from __future__ import annotations
 import hashlib
 import http.client
 import json
+import subprocess
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
-from urllib import error, request
+from urllib import error, parse, request
 from typing import Any, Mapping, Sequence, cast
 from zoneinfo import ZoneInfo
 
-_NEW_YORK = ZoneInfo('America/New_York')
+_NEW_YORK = ZoneInfo("America/New_York")
 _REGULAR_CLOSE_ET = time(hour=16, minute=5)
 
 
 def _stable_hash(payload: Mapping[str, Any]) -> str:
-    encoded = json.dumps(payload, sort_keys=True, separators=(',', ':'))
-    return hashlib.sha256(encoded.encode('utf-8')).hexdigest()
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def _business_days(start_day: date, end_day: date) -> tuple[date, ...]:
@@ -65,7 +66,7 @@ def _query_scalar(
         url=clickhouse_http_url,
         username=clickhouse_username,
         password=clickhouse_password,
-        query=f'{query} FORMAT TSVRaw',
+        query=f"{query} FORMAT TSVRaw",
     ).strip()
 
 
@@ -76,21 +77,31 @@ def _http_query(
     password: str | None,
     query: str,
 ) -> str:
-    body = query.encode('utf-8')
+    if url.startswith("kubectl://"):
+        return _kubectl_clickhouse_query(
+            url=url,
+            username=username,
+            password=password,
+            query=query,
+        )
+    body = query.encode("utf-8")
     last_error: Exception | None = None
     for attempt in range(3):
-        req = request.Request(url=url.rstrip('/') + '/', data=body, method='POST')
+        req = request.Request(url=url.rstrip("/") + "/", data=body, method="POST")
         if username:
-            req.add_header('Authorization', 'Basic ' + _b64(f'{username}:{password or ""}'.encode('utf-8')))
+            req.add_header(
+                "Authorization",
+                "Basic " + _b64(f"{username}:{password or ''}".encode("utf-8")),
+            )
         try:
             with request.urlopen(req, timeout=120) as response:
-                return response.read().decode('utf-8')
+                return response.read().decode("utf-8")
         except error.HTTPError as exc:
-            payload = exc.read().decode('utf-8', errors='replace')
-            raise RuntimeError(f'clickhouse_http_error: {exc.code}: {payload}') from exc
+            payload = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"clickhouse_http_error: {exc.code}: {payload}") from exc
         except http.client.IncompleteRead as exc:
             if exc.partial:
-                return exc.partial.decode('utf-8', errors='replace')
+                return exc.partial.decode("utf-8", errors="replace")
             last_error = exc
         except Exception as exc:  # pragma: no cover - flaky transport retry path
             last_error = exc
@@ -98,14 +109,52 @@ def _http_query(
 
         sleep(0.5 * (attempt + 1))
     if last_error is None:
-        raise RuntimeError('clickhouse_http_query_failed')
-    raise RuntimeError(f'clickhouse_http_query_failed: {last_error}') from last_error
+        raise RuntimeError("clickhouse_http_query_failed")
+    raise RuntimeError(f"clickhouse_http_query_failed: {last_error}") from last_error
+
+
+def _kubectl_clickhouse_query(
+    *,
+    url: str,
+    username: str | None,
+    password: str | None,
+    query: str,
+) -> str:
+    target = parse.urlparse(url)
+    context = parse.unquote(target.netloc).strip()
+    parts = [parse.unquote(part) for part in target.path.split("/") if part]
+    if len(parts) != 2 or not context:
+        raise RuntimeError(
+            "clickhouse_kubectl_url_invalid: expected kubectl://<context>/<namespace>/<pod>"
+        )
+    namespace, pod = parts
+    command = [
+        "kubectl",
+        "--context",
+        context,
+        "exec",
+        "-n",
+        namespace,
+        pod,
+        "--",
+        "clickhouse-client",
+    ]
+    if username:
+        command.extend(["--user", username])
+    if password:
+        command.extend(["--password", password])
+    command.extend(["--query", query])
+    result = subprocess.run(command, check=False, capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        raise RuntimeError(f"clickhouse_kubectl_query_failed: {detail[:400]}")
+    return result.stdout
 
 
 def _b64(raw: bytes) -> str:
     import base64
 
-    return base64.b64encode(raw).decode('ascii')
+    return base64.b64encode(raw).decode("ascii")
 
 
 def _query_days(
@@ -124,19 +173,17 @@ def _query_days(
         clickhouse_username=clickhouse_username,
         clickhouse_password=clickhouse_password,
         query=(
-            'SELECT DISTINCT toDate(event_ts) AS trading_day '
-            f'FROM {table} '
+            "SELECT DISTINCT toDate(event_ts) AS trading_day "
+            f"FROM {table} "
             f"WHERE source = '{source}' "
             f"  AND window_size = '{window_size}' "
             f"  AND toDate(event_ts) >= toDate('{start_day.isoformat()}') "
             f"  AND toDate(event_ts) <= toDate('{end_day.isoformat()}') "
-            'ORDER BY trading_day ASC'
+            "ORDER BY trading_day ASC"
         ),
     )
     values = [
-        date.fromisoformat(line.strip())
-        for line in raw.splitlines()
-        if line.strip()
+        date.fromisoformat(line.strip()) for line in raw.splitlines() if line.strip()
     ]
     return tuple(values)
 
@@ -148,8 +195,8 @@ class DatasetWitness:
 
     def to_payload(self) -> dict[str, Any]:
         return {
-            'name': self.name,
-            'payload': dict(self.payload),
+            "name": self.name,
+            "payload": dict(self.payload),
         }
 
 
@@ -169,17 +216,17 @@ class DatasetSnapshotReceipt:
 
     def to_payload(self) -> dict[str, Any]:
         return {
-            'snapshot_id': self.snapshot_id,
-            'source': self.source,
-            'window_size': self.window_size,
-            'start_day': self.start_day.isoformat(),
-            'end_day': self.end_day.isoformat(),
-            'expected_last_trading_day': self.expected_last_trading_day.isoformat(),
-            'is_fresh': self.is_fresh,
-            'missing_days': [item.isoformat() for item in self.missing_days],
-            'row_count': self.row_count,
-            'stale_override_used': self.stale_override_used,
-            'witnesses': [item.to_payload() for item in self.witnesses],
+            "snapshot_id": self.snapshot_id,
+            "source": self.source,
+            "window_size": self.window_size,
+            "start_day": self.start_day.isoformat(),
+            "end_day": self.end_day.isoformat(),
+            "expected_last_trading_day": self.expected_last_trading_day.isoformat(),
+            "is_fresh": self.is_fresh,
+            "missing_days": [item.isoformat() for item in self.missing_days],
+            "row_count": self.row_count,
+            "stale_override_used": self.stale_override_used,
+            "witnesses": [item.to_payload() for item in self.witnesses],
         }
 
 
@@ -190,10 +237,10 @@ def build_dataset_snapshot_receipt(
     clickhouse_password: str | None,
     start_day: date,
     end_day: date,
-    source: str = 'ta',
-    window_size: str = 'PT1S',
-    signals_table: str = 'torghut.ta_signals',
-    microbars_table: str = 'torghut.ta_microbars',
+    source: str = "ta",
+    window_size: str = "PT1S",
+    signals_table: str = "torghut.ta_signals",
+    microbars_table: str = "torghut.ta_microbars",
     expected_last_trading_day: date | None = None,
     expected_trading_days: Sequence[date] | None = None,
     allow_stale_tape: bool = False,
@@ -213,7 +260,10 @@ def build_dataset_snapshot_receipt(
         start_day=start_day,
         end_day=end_day,
     )
-    expected_days = tuple(expected_trading_days or _business_days(start_day, min(end_day, resolved_expected_last_day)))
+    expected_days = tuple(
+        expected_trading_days
+        or _business_days(start_day, min(end_day, resolved_expected_last_day))
+    )
     observed_day_set = set(observed_days)
     missing_days = tuple(day for day in expected_days if day not in observed_day_set)
 
@@ -223,14 +273,14 @@ def build_dataset_snapshot_receipt(
             clickhouse_username=clickhouse_username,
             clickhouse_password=clickhouse_password,
             query=(
-                f'SELECT count() FROM {signals_table} '
+                f"SELECT count() FROM {signals_table} "
                 f"WHERE source = '{source}' "
                 f"  AND window_size = '{window_size}' "
                 f"  AND toDate(event_ts) >= toDate('{start_day.isoformat()}') "
                 f"  AND toDate(event_ts) <= toDate('{end_day.isoformat()}')"
             ),
         )
-        or '0'
+        or "0"
     )
     microbars_row_count = int(
         _query_scalar(
@@ -238,21 +288,21 @@ def build_dataset_snapshot_receipt(
             clickhouse_username=clickhouse_username,
             clickhouse_password=clickhouse_password,
             query=(
-                f'SELECT count() FROM {microbars_table} '
+                f"SELECT count() FROM {microbars_table} "
                 f"WHERE source = '{source}' "
                 f"  AND window_size = '{window_size}' "
                 f"  AND toDate(event_ts) >= toDate('{start_day.isoformat()}') "
                 f"  AND toDate(event_ts) <= toDate('{end_day.isoformat()}')"
             ),
         )
-        or '0'
+        or "0"
     )
     signals_max_ts = _query_scalar(
         clickhouse_http_url=clickhouse_http_url,
         clickhouse_username=clickhouse_username,
         clickhouse_password=clickhouse_password,
         query=(
-            f'SELECT toString(max(event_ts)) FROM {signals_table} '
+            f"SELECT toString(max(event_ts)) FROM {signals_table} "
             f"WHERE source = '{source}' "
             f"  AND window_size = '{window_size}'"
         ),
@@ -262,7 +312,7 @@ def build_dataset_snapshot_receipt(
         clickhouse_username=clickhouse_username,
         clickhouse_password=clickhouse_password,
         query=(
-            f'SELECT toString(max(event_ts)) FROM {microbars_table} '
+            f"SELECT toString(max(event_ts)) FROM {microbars_table} "
             f"WHERE source = '{source}' "
             f"  AND window_size = '{window_size}'"
         ),
@@ -272,7 +322,7 @@ def build_dataset_snapshot_receipt(
         clickhouse_username=clickhouse_username,
         clickhouse_password=clickhouse_password,
         query=(
-            f'SELECT toString(max(toDate(event_ts))) FROM {signals_table} '
+            f"SELECT toString(max(toDate(event_ts))) FROM {signals_table} "
             f"WHERE source = '{source}' "
             f"  AND window_size = '{window_size}'"
         ),
@@ -282,7 +332,7 @@ def build_dataset_snapshot_receipt(
         clickhouse_username=clickhouse_username,
         clickhouse_password=clickhouse_password,
         query=(
-            f'SELECT toString(max(toDate(event_ts))) FROM {microbars_table} '
+            f"SELECT toString(max(toDate(event_ts))) FROM {microbars_table} "
             f"WHERE source = '{source}' "
             f"  AND window_size = '{window_size}'"
         ),
@@ -299,18 +349,18 @@ def build_dataset_snapshot_receipt(
         latest_observed_day = max(latest_days)
     is_fresh = latest_observed_day >= resolved_expected_last_day
     witness_payload = {
-        'source': source,
-        'window_size': window_size,
-        'start_day': start_day.isoformat(),
-        'end_day': end_day.isoformat(),
-        'expected_last_trading_day': resolved_expected_last_day.isoformat(),
-        'latest_observed_day': latest_observed_day.isoformat(),
-        'row_count': signals_row_count,
-        'microbar_row_count': microbars_row_count,
-        'observed_days': [item.isoformat() for item in observed_days],
-        'missing_days': [item.isoformat() for item in missing_days],
+        "source": source,
+        "window_size": window_size,
+        "start_day": start_day.isoformat(),
+        "end_day": end_day.isoformat(),
+        "expected_last_trading_day": resolved_expected_last_day.isoformat(),
+        "latest_observed_day": latest_observed_day.isoformat(),
+        "row_count": signals_row_count,
+        "microbar_row_count": microbars_row_count,
+        "observed_days": [item.isoformat() for item in observed_days],
+        "missing_days": [item.isoformat() for item in missing_days],
     }
-    snapshot_id = f'snap-{_stable_hash(witness_payload)[:24]}'
+    snapshot_id = f"snap-{_stable_hash(witness_payload)[:24]}"
 
     return DatasetSnapshotReceipt(
         snapshot_id=snapshot_id,
@@ -325,22 +375,22 @@ def build_dataset_snapshot_receipt(
         stale_override_used=allow_stale_tape and not is_fresh,
         witnesses=(
             DatasetWitness(
-                name='ta_signals',
+                name="ta_signals",
                 payload={
-                    'table': signals_table,
-                    'latest_observed_day': latest_signals_day,
-                    'max_event_ts': signals_max_ts,
-                    'row_count': signals_row_count,
-                    'observed_days': [item.isoformat() for item in observed_days],
+                    "table": signals_table,
+                    "latest_observed_day": latest_signals_day,
+                    "max_event_ts": signals_max_ts,
+                    "row_count": signals_row_count,
+                    "observed_days": [item.isoformat() for item in observed_days],
                 },
             ),
             DatasetWitness(
-                name='ta_microbars',
+                name="ta_microbars",
                 payload={
-                    'table': microbars_table,
-                    'latest_observed_day': latest_microbars_day,
-                    'max_event_ts': microbars_max_ts,
-                    'row_count': microbars_row_count,
+                    "table": microbars_table,
+                    "latest_observed_day": latest_microbars_day,
+                    "max_event_ts": microbars_max_ts,
+                    "row_count": microbars_row_count,
                 },
             ),
         ),
@@ -355,14 +405,13 @@ def ensure_fresh_snapshot(
     if receipt.is_fresh or allow_stale_tape:
         return
     raise ValueError(
-        'stale_tape:'
-        f'expected_last_trading_day={receipt.expected_last_trading_day.isoformat()}:'
-        f'end_day={receipt.end_day.isoformat()}'
+        "stale_tape:"
+        f"expected_last_trading_day={receipt.expected_last_trading_day.isoformat()}:"
+        f"end_day={receipt.end_day.isoformat()}"
     )
 
 
 def witness_map(receipt: DatasetSnapshotReceipt) -> dict[str, Mapping[str, Any]]:
     return {
-        item.name: cast(Mapping[str, Any], item.payload)
-        for item in receipt.witnesses
+        item.name: cast(Mapping[str, Any], item.payload) for item in receipt.witnesses
     }

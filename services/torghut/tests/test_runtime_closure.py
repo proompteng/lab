@@ -231,6 +231,20 @@ class TestRuntimeClosure(TestCase):
             Decimal("0"),
         )
         self.assertEqual(
+            runtime_closure._daily_liquidity_notional(
+                {
+                    "daily": {
+                        "2026-03-20": {"daily_adv_notional": "3200.00"},
+                        "2026-03-21": {"depth_notional": "329.950"},
+                    }
+                }
+            ),
+            {
+                "2026-03-20": Decimal("3200.00"),
+                "2026-03-21": Decimal("329.950"),
+            },
+        )
+        self.assertEqual(
             runtime_closure._candidate_symbols(
                 best_candidate={"candidate_strategy_overrides": {}},
                 execution_context=context,
@@ -262,7 +276,21 @@ class TestRuntimeClosure(TestCase):
             runtime_closure.replay_mod, "run_replay", return_value={"status": "ok"}
         ) as mock_run:
             payload = runtime_closure._default_replay_executor(config)
-        self.assertEqual(payload, {"status": "ok"})
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(
+            payload["execution_realism_status"], "missing_required_evidence"
+        )
+        self.assertIn(
+            "lob_event_stream_evidence_missing",
+            payload["execution_realism_missing_evidence"],
+        )
+        self.assertIn(
+            "live_paper_parity_fill_error_evidence_missing",
+            payload["execution_realism_missing_evidence"],
+        )
+        self.assertEqual(
+            payload["execution_realism"]["status"], "missing_required_evidence"
+        )
         mock_run.assert_called_once_with(config)  # type: ignore[arg-type]
 
     def test_shadow_validation_artifact_helper_covers_invalid_schema_and_pending_status(
@@ -1220,46 +1248,86 @@ data:
                 "filled_count": 9,
                 "wins": 7,
                 "losses": 2,
+                "execution_realism": {
+                    "daily_lob_event_stream_count": {
+                        "2026-03-20": 40,
+                        "2026-03-21": 40,
+                        "2026-03-24": 40,
+                        "2026-03-25": 40,
+                        "2026-03-26": 40,
+                        "2026-03-27": 40,
+                        "2026-04-08": 40,
+                        "2026-04-09": 40,
+                    },
+                    "daily_fill_outcome_count": {
+                        "2026-03-20": 40,
+                        "2026-03-21": 40,
+                        "2026-03-24": 40,
+                        "2026-03-25": 40,
+                        "2026-03-26": 40,
+                        "2026-03-27": 40,
+                        "2026-04-08": 40,
+                        "2026-04-09": 40,
+                    },
+                    "lob_event_stream_event_count": 320,
+                    "fill_outcome_count": 320,
+                    "live_paper_parity_status": "within_budget",
+                    "live_paper_parity_sample_count": 160,
+                    "live_paper_parity_max_fill_error_bps": "3.5",
+                    "live_paper_parity_max_adverse_selection_error_bps": "4.0",
+                    "implementation_trace_ref": "s3://proof/runtime-implementation-trace.json",
+                    "lob_event_stream_artifact_ref": "s3://proof/lob-events.json",
+                    "fill_outcomes_artifact_ref": "s3://proof/fill-outcomes.json",
+                    "simulation_live_parity_artifact_ref": "s3://proof/live-parity.json",
+                },
                 "daily": {
                     "2026-03-20": {
                         "net_pnl": "1000",
                         "filled_count": 1,
                         "filled_notional": "300000",
+                        "adv_notional": "3000000",
                     },
                     "2026-03-21": {
                         "net_pnl": "800",
                         "filled_count": 1,
                         "filled_notional": "300000",
+                        "adv_notional": "3000000",
                     },
                     "2026-03-24": {
                         "net_pnl": "700",
                         "filled_count": 1,
                         "filled_notional": "300000",
+                        "adv_notional": "3000000",
                     },
                     "2026-03-25": {
                         "net_pnl": "900",
                         "filled_count": 1,
                         "filled_notional": "300000",
+                        "adv_notional": "3000000",
                     },
                     "2026-03-26": {
                         "net_pnl": "1100",
                         "filled_count": 1,
                         "filled_notional": "300000",
+                        "adv_notional": "3000000",
                     },
                     "2026-03-27": {
                         "net_pnl": "600",
                         "filled_count": 1,
                         "filled_notional": "300000",
+                        "adv_notional": "3000000",
                     },
                     "2026-04-08": {
                         "net_pnl": "500",
                         "filled_count": 1,
                         "filled_notional": "300000",
+                        "adv_notional": "3000000",
                     },
                     "2026-04-09": {
                         "net_pnl": "400",
                         "filled_count": 1,
                         "filled_notional": "300000",
+                        "adv_notional": "3000000",
                     },
                 },
             }
@@ -1325,11 +1393,37 @@ data:
             self.assertIn("checked_at", delay_depth_report)
             self.assertIn("report_id", delay_depth_report)
             self.assertGreater(Decimal(delay_depth_report["delay_depth_cost_bps"]), 0)
+            self.assertTrue(
+                delay_depth_report["lob_execution_realism_evidence_present"]
+            )
+            self.assertEqual(delay_depth_report["lob_event_stream_event_count"], 320)
+            self.assertEqual(delay_depth_report["fill_outcome_count"], 320)
+            self.assertEqual(
+                delay_depth_report["live_paper_parity_status"], "within_budget"
+            )
+            self.assertEqual(delay_depth_report["live_paper_parity_sample_count"], 160)
+            self.assertEqual(
+                delay_depth_report["daily"][0]["lob_event_stream_count"], 40
+            )
+            self.assertEqual(delay_depth_report["daily"][0]["fill_outcome_count"], 40)
             stress_metrics = json.loads(
                 Path(summary.stress_metrics_path).read_text(encoding="utf-8")
             )
             self.assertEqual(stress_metrics["schema_version"], "stress-metrics-v1")
             self.assertGreaterEqual(stress_metrics["count"], 4)
+            double_oos = json.loads(
+                Path(summary.double_oos_report_path).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                double_oos["schema_version"],
+                "torghut.double-oos-walkforward-report.v1",
+            )
+            self.assertEqual(double_oos["independent_window_count"], 2)
+            self.assertEqual(len(double_oos["fold_metrics"]), 2)
+            self.assertEqual(
+                double_oos["source_markers"][0],
+                "double_oos_walkforward_arxiv_2602_10785_2026",
+            )
 
             stage_manifest = json.loads(
                 Path(summary.profitability_stage_manifest_path).read_text(
@@ -1348,8 +1442,56 @@ data:
                 "stress_metrics",
                 stage_manifest["stages"]["validation"]["artifacts"],
             )
+            self.assertIn(
+                "double_oos_walkforward",
+                stage_manifest["stages"]["validation"]["artifacts"],
+            )
 
     def test_market_impact_stress_report_passes_only_after_square_root_cost(
+        self,
+    ) -> None:
+        report = runtime_closure._market_impact_stress_report(
+            runner_run_id="run-impact",
+            best_candidate={
+                "candidate_id": "cand-impact",
+                "runtime_family": "breakout_continuation_consistent",
+                "runtime_strategy_name": "breakout-continuation-long-v1",
+            },
+            approval_report={
+                "objective_met": True,
+                "summary": {
+                    "trading_day_count": 2,
+                    "net_pnl": "2400",
+                    "daily_net": {
+                        "2026-05-18": "1200",
+                        "2026-05-19": "1200",
+                    },
+                    "daily_filled_notional": {
+                        "2026-05-18": "300000",
+                        "2026-05-19": "300000",
+                    },
+                    "daily_liquidity_notional": {
+                        "2026-05-18": "3000000",
+                        "2026-05-19": "3000000",
+                    },
+                },
+                "scorecard": {"net_pnl_per_day": "1200"},
+            },
+            program=_program(),
+        )
+
+        self.assertTrue(report["objective_met"])
+        self.assertEqual(report["model"], "square_root")
+        self.assertTrue(report["liquidity_evidence_present"])
+        self.assertEqual(
+            report["liquidity_input_source"], "recorded_liquidity_notional"
+        )
+        self.assertGreater(Decimal(report["impact_cost_bps"]), Decimal("1"))
+        self.assertGreaterEqual(
+            Decimal(report["post_impact_net_pnl_per_day"]), Decimal("500")
+        )
+
+    def test_market_impact_stress_report_fails_without_real_liquidity_evidence(
         self,
     ) -> None:
         report = runtime_closure._market_impact_stress_report(
@@ -1378,11 +1520,11 @@ data:
             program=_program(),
         )
 
-        self.assertTrue(report["objective_met"])
-        self.assertEqual(report["model"], "square_root")
-        self.assertGreater(Decimal(report["impact_cost_bps"]), Decimal("1"))
-        self.assertGreaterEqual(
-            Decimal(report["post_impact_net_pnl_per_day"]), Decimal("500")
+        self.assertFalse(report["objective_met"])
+        self.assertFalse(report["liquidity_evidence_present"])
+        self.assertEqual(report["liquidity_input_source"], "synthetic_proxy")
+        self.assertIn(
+            "market_impact_stress_liquidity_evidence_missing", report["reasons"]
         )
 
     def test_delay_adjusted_depth_stress_report_blocks_no_delay_fill_assumption(
@@ -1417,10 +1559,418 @@ data:
         self.assertFalse(report["objective_met"])
         self.assertEqual(report["model"], "latency_depth_haircut")
         self.assertEqual(report["stress_delay_ms"], "250")
+        self.assertEqual(report["liquidity_input_source"], "missing_recorded_liquidity")
+        self.assertEqual(report["recorded_liquidity_day_count"], 0)
+        self.assertEqual(report["missing_liquidity_days"], 2)
+        self.assertEqual(report["unfillable_notional"], "600000")
+        self.assertEqual(report["fillable_notional_per_day"], "0")
+        self.assertEqual(report["worst_active_day_fillable_notional"], "0")
+        self.assertEqual(report["p10_active_day_fillable_notional"], "0")
+        self.assertFalse(report["tail_coverage_passed"])
+        self.assertEqual(report["post_delay_depth_net_pnl_per_day"], "0")
+        self.assertIn(
+            "delay_adjusted_depth_stress_liquidity_evidence_missing",
+            report["reasons"],
+        )
+        self.assertIn(
+            "delay_adjusted_depth_lob_event_stream_evidence_missing",
+            report["reasons"],
+        )
+        self.assertIn(
+            "delay_adjusted_depth_fill_outcome_evidence_missing",
+            report["reasons"],
+        )
+        self.assertIn(
+            "delay_adjusted_depth_live_paper_parity_evidence_missing",
+            report["reasons"],
+        )
+        self.assertIn(
+            "delay_adjusted_depth_live_paper_parity_sample_count_below_minimum",
+            report["reasons"],
+        )
+        self.assertIn("lob_execution_realism_evidence_missing", report["reasons"])
+        self.assertIn(
+            "delay_adjusted_depth_tail_fillable_notional_below_minimum",
+            report["reasons"],
+        )
+        self.assertTrue(all(row["fillable_notional"] == "0" for row in report["daily"]))
+
+    def test_delay_adjusted_depth_stress_rejects_aggregate_depth_without_lob_reality_evidence(
+        self,
+    ) -> None:
+        report = runtime_closure._delay_adjusted_depth_stress_report(
+            runner_run_id="run-depth-no-lob-proof",
+            best_candidate={
+                "candidate_id": "cand-depth-no-lob-proof",
+                "runtime_family": "microstructure_continuation",
+                "runtime_strategy_name": "microbar-volume-continuation-long-v1",
+            },
+            approval_report={
+                "objective_met": True,
+                "summary": {
+                    "trading_day_count": 2,
+                    "net_pnl": "1600",
+                    "daily_net": {
+                        "2026-05-18": "800",
+                        "2026-05-19": "800",
+                    },
+                    "daily_filled_notional": {
+                        "2026-05-18": "300000",
+                        "2026-05-19": "300000",
+                    },
+                    "daily_liquidity_notional": {
+                        "2026-05-18": "1200000",
+                        "2026-05-19": "1200000",
+                    },
+                },
+                "scorecard": {"net_pnl_per_day": "800"},
+            },
+            program=_program(),
+        )
+
+        self.assertFalse(report["objective_met"])
+        self.assertEqual(
+            report["liquidity_input_source"], "recorded_liquidity_notional"
+        )
+        self.assertFalse(report["lob_execution_realism_evidence_present"])
+        self.assertIn("lob_execution_realism_evidence_missing", report["reasons"])
+        self.assertIn(
+            "delay_adjusted_depth_lob_event_stream_evidence_missing",
+            report["reasons"],
+        )
+        self.assertIn(
+            "delay_adjusted_depth_fill_outcome_evidence_missing",
+            report["reasons"],
+        )
+
+    def test_delay_adjusted_depth_stress_rejects_candidate_metadata_as_runtime_evidence(
+        self,
+    ) -> None:
+        candidate_metadata = {
+            "lob_event_stream_event_count": 160,
+            "fill_outcome_count": 160,
+            "live_paper_parity_status": "within_budget",
+            "live_paper_parity_sample_count": 160,
+            "live_paper_parity_max_fill_error_bps": "4",
+            "live_paper_parity_max_adverse_selection_error_bps": "5",
+            "implementation_trace_ref": "s3://proof/runtime-implementation-trace.json",
+            "lob_event_stream_artifact_ref": "s3://proof/lob-events.json",
+            "fill_outcomes_artifact_ref": "s3://proof/fill-outcomes.json",
+            "simulation_live_parity_artifact_ref": "s3://proof/live-parity.json",
+        }
+        report = runtime_closure._delay_adjusted_depth_stress_report(
+            runner_run_id="run-depth-candidate-metadata",
+            best_candidate={
+                "candidate_id": "cand-depth-candidate-metadata",
+                "runtime_family": "microstructure_continuation",
+                "runtime_strategy_name": "microbar-volume-continuation-long-v1",
+                **candidate_metadata,
+            },
+            approval_report={
+                "objective_met": True,
+                "summary": {
+                    "trading_day_count": 2,
+                    "net_pnl": "1600",
+                    "daily_net": {
+                        "2026-05-18": "800",
+                        "2026-05-19": "800",
+                    },
+                    "daily_filled_notional": {
+                        "2026-05-18": "300000",
+                        "2026-05-19": "300000",
+                    },
+                    "daily_liquidity_notional": {
+                        "2026-05-18": "1200000",
+                        "2026-05-19": "1200000",
+                    },
+                },
+                "scorecard": {"net_pnl_per_day": "800", **candidate_metadata},
+            },
+            program=_program(),
+        )
+
+        self.assertFalse(report["objective_met"])
+        self.assertFalse(report["lob_execution_realism_evidence_present"])
+        self.assertEqual(report["lob_event_stream_event_count"], 0)
+        self.assertEqual(report["fill_outcome_count"], 0)
+        self.assertIn(
+            "delay_adjusted_depth_lob_event_stream_evidence_missing",
+            report["reasons"],
+        )
+        self.assertIn(
+            "delay_adjusted_depth_fill_outcome_evidence_missing",
+            report["reasons"],
+        )
+
+    def test_delay_adjusted_depth_stress_requires_explicit_parity_error_metrics(
+        self,
+    ) -> None:
+        report = runtime_closure._delay_adjusted_depth_stress_report(
+            runner_run_id="run-depth-missing-parity-errors",
+            best_candidate={
+                "candidate_id": "cand-depth-missing-parity-errors",
+                "runtime_family": "microstructure_continuation",
+                "runtime_strategy_name": "microbar-volume-continuation-long-v1",
+            },
+            approval_report={
+                "objective_met": True,
+                "summary": {
+                    "trading_day_count": 2,
+                    "net_pnl": "1600",
+                    "daily_net": {
+                        "2026-05-18": "800",
+                        "2026-05-19": "800",
+                    },
+                    "daily_filled_notional": {
+                        "2026-05-18": "300000",
+                        "2026-05-19": "300000",
+                    },
+                    "daily_liquidity_notional": {
+                        "2026-05-18": "1200000",
+                        "2026-05-19": "1200000",
+                    },
+                    "daily_lob_event_stream_count": {
+                        "2026-05-18": 80,
+                        "2026-05-19": 80,
+                    },
+                    "daily_fill_outcome_count": {
+                        "2026-05-18": 80,
+                        "2026-05-19": 80,
+                    },
+                    "lob_event_stream_event_count": 160,
+                    "fill_outcome_count": 160,
+                    "live_paper_parity_status": "within_budget",
+                    "live_paper_parity_sample_count": 160,
+                    "implementation_trace_ref": "s3://proof/runtime-implementation-trace.json",
+                    "lob_event_stream_artifact_ref": "s3://proof/lob-events.json",
+                    "fill_outcomes_artifact_ref": "s3://proof/fill-outcomes.json",
+                    "simulation_live_parity_artifact_ref": "s3://proof/live-parity.json",
+                },
+                "scorecard": {"net_pnl_per_day": "800"},
+            },
+            program=_program(),
+        )
+
+        self.assertFalse(report["objective_met"])
+        self.assertFalse(report["live_paper_parity_evidence_present"])
+        self.assertEqual(
+            report["execution_realism_status"], "missing_required_evidence"
+        )
+        self.assertEqual(report["live_paper_parity_max_fill_error_bps"], "")
+        self.assertIn(
+            "delay_adjusted_depth_live_paper_parity_fill_error_evidence_missing",
+            report["reasons"],
+        )
+        self.assertIn(
+            "delay_adjusted_depth_live_paper_parity_adverse_selection_error_evidence_missing",
+            report["reasons"],
+        )
+
+    def test_delay_adjusted_depth_stress_accepts_lob_reality_gap_evidence(
+        self,
+    ) -> None:
+        report = runtime_closure._delay_adjusted_depth_stress_report(
+            runner_run_id="run-depth-lob-proof",
+            best_candidate={
+                "candidate_id": "cand-depth-lob-proof",
+                "runtime_family": "microstructure_continuation",
+                "runtime_strategy_name": "microbar-volume-continuation-long-v1",
+            },
+            approval_report={
+                "objective_met": True,
+                "summary": {
+                    "trading_day_count": 2,
+                    "net_pnl": "1600",
+                    "daily_net": {
+                        "2026-05-18": "800",
+                        "2026-05-19": "800",
+                    },
+                    "daily_filled_notional": {
+                        "2026-05-18": "300000",
+                        "2026-05-19": "300000",
+                    },
+                    "daily_liquidity_notional": {
+                        "2026-05-18": "1200000",
+                        "2026-05-19": "1200000",
+                    },
+                    "daily_lob_event_stream_count": {
+                        "2026-05-18": 80,
+                        "2026-05-19": 80,
+                    },
+                    "daily_fill_outcome_count": {
+                        "2026-05-18": 80,
+                        "2026-05-19": 80,
+                    },
+                    "lob_event_stream_event_count": 160,
+                    "fill_outcome_count": 160,
+                    "live_paper_parity_status": "within_budget",
+                    "live_paper_parity_sample_count": 160,
+                    "live_paper_parity_max_fill_error_bps": "4",
+                    "live_paper_parity_max_adverse_selection_error_bps": "5",
+                    "implementation_trace_ref": "s3://proof/runtime-implementation-trace.json",
+                    "lob_event_stream_artifact_ref": "s3://proof/lob-events.json",
+                    "fill_outcomes_artifact_ref": "s3://proof/fill-outcomes.json",
+                    "simulation_live_parity_artifact_ref": "s3://proof/live-parity.json",
+                },
+                "scorecard": {"net_pnl_per_day": "800"},
+            },
+            program=_program(),
+        )
+
+        self.assertTrue(report["objective_met"])
+        self.assertTrue(report["lob_execution_realism_evidence_present"])
+        self.assertTrue(report["live_paper_parity_evidence_present"])
+        self.assertEqual(report["lob_event_stream_event_count"], 160)
+        self.assertEqual(report["fill_outcome_count"], 160)
+        self.assertEqual(report["daily"][0]["lob_event_stream_count"], 80)
+        self.assertEqual(report["daily"][0]["fill_outcome_count"], 80)
+        self.assertIn(
+            "lob_simulation_reality_gap_arxiv_2603_24137_2026",
+            report["source_markers"],
+        )
+
+    def test_delay_adjusted_depth_stress_scales_net_when_recorded_depth_is_thin(
+        self,
+    ) -> None:
+        report = runtime_closure._delay_adjusted_depth_stress_report(
+            runner_run_id="run-depth-thin",
+            best_candidate={
+                "candidate_id": "cand-depth-thin",
+                "runtime_family": "microstructure_continuation",
+                "runtime_strategy_name": "microbar-volume-continuation-long-v1",
+            },
+            approval_report={
+                "objective_met": True,
+                "summary": {
+                    "trading_day_count": 2,
+                    "net_pnl": "1600",
+                    "daily_net": {
+                        "2026-05-18": "800",
+                        "2026-05-19": "800",
+                    },
+                    "daily_filled_notional": {
+                        "2026-05-18": "400000",
+                        "2026-05-19": "400000",
+                    },
+                    "daily_liquidity_notional": {
+                        "2026-05-18": "200000",
+                        "2026-05-19": "200000",
+                    },
+                    "daily_lob_event_stream_count": {
+                        "2026-05-18": 80,
+                        "2026-05-19": 80,
+                    },
+                    "daily_fill_outcome_count": {
+                        "2026-05-18": 80,
+                        "2026-05-19": 80,
+                    },
+                    "lob_event_stream_event_count": 160,
+                    "fill_outcome_count": 160,
+                    "live_paper_parity_status": "within_budget",
+                    "live_paper_parity_sample_count": 160,
+                    "live_paper_parity_max_fill_error_bps": "4",
+                    "live_paper_parity_max_adverse_selection_error_bps": "5",
+                    "implementation_trace_ref": "s3://proof/runtime-implementation-trace.json",
+                    "lob_event_stream_artifact_ref": "s3://proof/lob-events.json",
+                    "fill_outcomes_artifact_ref": "s3://proof/fill-outcomes.json",
+                    "simulation_live_parity_artifact_ref": "s3://proof/live-parity.json",
+                },
+                "scorecard": {"net_pnl_per_day": "800"},
+            },
+            program=_program(),
+        )
+
+        self.assertFalse(report["objective_met"])
+        self.assertEqual(
+            report["liquidity_input_source"], "recorded_liquidity_notional"
+        )
+        self.assertEqual(report["recorded_liquidity_day_count"], 2)
+        self.assertEqual(report["missing_liquidity_days"], 0)
+        self.assertEqual(report["fillable_notional_per_day"], "150000")
+        self.assertEqual(report["unfillable_notional"], "500000")
+        self.assertEqual(report["daily"][0]["fillable_ratio"], "0.375")
+        self.assertTrue(report["lob_execution_realism_evidence_present"])
+        self.assertEqual(report["worst_active_day_fillable_notional"], "150000")
+        self.assertEqual(report["p10_active_day_fillable_notional"], "150000")
+        self.assertFalse(report["tail_coverage_passed"])
+        self.assertEqual(report["post_delay_depth_net_pnl_per_day"], "112.5")
         self.assertIn(
             "delay_adjusted_depth_fillable_notional_below_minimum",
             report["reasons"],
         )
+        self.assertIn(
+            "delay_adjusted_depth_tail_fillable_notional_below_minimum",
+            report["reasons"],
+        )
+        self.assertIn(
+            "delay_adjusted_depth_stress_net_pnl_below_target",
+            report["reasons"],
+        )
+
+    def test_double_oos_walkforward_report_fails_closed_on_missing_or_weak_windows(
+        self,
+    ) -> None:
+        self.assertEqual(
+            runtime_closure._runtime_replay_net_pnl_per_day(
+                {"summary": {"net_pnl": "1000", "trading_day_count": 2}}
+            ),
+            Decimal("500"),
+        )
+        self.assertEqual(
+            runtime_closure._runtime_replay_net_pnl_per_day(
+                {"summary": {"net_pnl": "1000", "trading_day_count": 0}}
+            ),
+            Decimal("0"),
+        )
+        weak_window = runtime_closure._double_oos_window_row(
+            window_id="approval",
+            report={
+                "objective_met": False,
+                "summary": {
+                    "net_pnl": "100",
+                    "trading_day_count": 0,
+                    "decision_count": 1,
+                    "filled_count": 1,
+                },
+            },
+            target_net_pnl_per_day=Decimal("500"),
+        )
+        self.assertFalse(weak_window["passed"])
+        self.assertEqual(
+            weak_window["reasons"],
+            [
+                "approval_objective_not_met",
+                "approval_net_pnl_below_target",
+                "approval_trading_days_missing",
+            ],
+        )
+
+        report = runtime_closure._double_oos_walkforward_report(
+            runner_run_id="run-double-oos",
+            best_candidate={
+                "candidate_id": "cand-double-oos",
+                "runtime_family": "breakout_continuation_consistent",
+                "runtime_strategy_name": "breakout-continuation-long-v1",
+            },
+            parity_report={
+                "objective_met": False,
+                "summary": {"net_pnl": "400", "trading_day_count": 2},
+            },
+            approval_report=None,
+            market_impact_report=None,
+            delay_depth_report=None,
+            program=_program(),
+        )
+
+        self.assertFalse(report["objective_met"])
+        self.assertEqual(report["independent_window_count"], 1)
+        self.assertIn(
+            "double_oos_independent_window_count_below_minimum", report["reasons"]
+        )
+        self.assertIn("double_oos_pass_rate_below_required", report["reasons"])
+        self.assertIn("double_oos_net_pnl_below_target", report["reasons"])
+        self.assertIn("market_impact_stress_missing", report["reasons"])
+        self.assertIn("delay_adjusted_depth_stress_missing", report["reasons"])
 
     def test_write_runtime_closure_bundle_keeps_pending_parity_when_execution_skipped(
         self,

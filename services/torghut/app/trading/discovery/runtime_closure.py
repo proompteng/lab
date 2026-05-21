@@ -35,7 +35,7 @@ from app.trading.discovery.objectives import (
 )
 from app.trading.discovery.portfolio_candidates import PortfolioCandidateSpec
 from app.trading.evidence_receipts import build_portfolio_proof_receipt
-from app.trading.costs import BPS_SCALE, CostModelConfig
+from app.trading.costs import BPS_SCALE, CostModelConfig, participation_power
 from app.trading.hypotheses import (
     hypothesis_registry_requires_dependency_capability,
     load_hypothesis_registry,
@@ -81,6 +81,17 @@ def _discover_runtime_root(source_path: Path) -> Path:
 
 
 _REPO_ROOT = _discover_runtime_root(Path(__file__))
+_MIN_SIMULATION_PARITY_SAMPLE_COUNT = 120
+_MAX_SIMULATION_LIVE_FILL_ERROR_BPS = Decimal("8")
+_MAX_ADVERSE_SELECTION_ERROR_BPS = Decimal("8")
+_EXECUTION_REALISM_PASS_STATUSES = frozenset(
+    {
+        "pass",
+        "passed",
+        "within_budget",
+        "within_tolerance",
+    }
+)
 
 
 def _string(value: Any) -> str:
@@ -144,10 +155,18 @@ def _decimal_string(value: Decimal) -> str:
     return rendered or "0"
 
 
-def _decimal_sqrt(value: Decimal) -> Decimal:
-    if value <= 0:
+def _optional_decimal_string(value: Any) -> str:
+    if value is None or _string(value) == "":
+        return ""
+    return _decimal_string(_decimal(value))
+
+
+def _p10(values: Sequence[Decimal]) -> Decimal:
+    if not values:
         return Decimal("0")
-    return value.sqrt()
+    ordered = sorted(values)
+    index = int((len(ordered) - 1) * 0.10)
+    return ordered[index]
 
 
 _MICROBAR_PORTFOLIO_SIGNAL_SETTINGS: dict[str, dict[str, str]] = {
@@ -377,6 +396,147 @@ def _daily_filled_notional(payload: Mapping[str, Any]) -> dict[str, Decimal]:
         item = _mapping(value)
         resolved[day] = Decimal(str(item.get("filled_notional", "0")))
     return resolved
+
+
+def _daily_liquidity_notional(payload: Mapping[str, Any]) -> dict[str, Decimal]:
+    daily_payload = _mapping(payload.get("daily"))
+    resolved: dict[str, Decimal] = {}
+    for day, value in daily_payload.items():
+        item = _mapping(value)
+        raw_value = (
+            item.get("adv_notional")
+            or item.get("daily_adv_notional")
+            or item.get("depth_notional")
+            or item.get("fillable_depth_notional")
+        )
+        if raw_value is not None:
+            resolved[day] = _decimal(raw_value)
+    return resolved
+
+
+def _runtime_execution_realism_summary(payload: Mapping[str, Any]) -> dict[str, Any]:
+    evidence = _mapping(payload.get("execution_realism"))
+
+    def _payload_value(name: str) -> object:
+        value = evidence.get(name)
+        return payload.get(name) if value is None else value
+
+    lob_event_stream_event_count = _int(
+        _payload_value("lob_event_stream_event_count")
+        or _payload_value("lob_event_stream_sample_count")
+    )
+    fill_outcome_count = _int(
+        _payload_value("fill_outcome_count")
+        or _payload_value("fill_outcome_sample_count")
+    )
+    live_paper_parity_sample_count = _int(
+        _payload_value("live_paper_parity_sample_count")
+        or _payload_value("simulation_live_parity_sample_count")
+    )
+    live_paper_parity_status = _string(
+        _payload_value("live_paper_parity_status")
+        or _payload_value("simulation_live_parity_status")
+    )
+    summary: dict[str, Any] = {
+        "daily_lob_event_stream_count": _mapping(
+            _payload_value("daily_lob_event_stream_count")
+        ),
+        "daily_fill_outcome_count": _mapping(
+            _payload_value("daily_fill_outcome_count")
+        ),
+        "lob_event_stream_event_count": lob_event_stream_event_count,
+        "lob_event_stream_sample_count": lob_event_stream_event_count,
+        "fill_outcome_count": fill_outcome_count,
+        "fill_outcome_sample_count": fill_outcome_count,
+        "live_paper_parity_status": live_paper_parity_status,
+        "simulation_live_parity_status": live_paper_parity_status,
+        "live_paper_parity_sample_count": live_paper_parity_sample_count,
+        "simulation_live_parity_sample_count": live_paper_parity_sample_count,
+        "live_paper_parity_max_fill_error_bps": _optional_decimal_string(
+            _payload_value("live_paper_parity_max_fill_error_bps")
+        ),
+        "live_paper_parity_max_adverse_selection_error_bps": _optional_decimal_string(
+            _payload_value("live_paper_parity_max_adverse_selection_error_bps")
+            or _payload_value("adverse_selection_error_bps")
+        ),
+        "implementation_trace_ref": _string(_payload_value("implementation_trace_ref")),
+        "lob_event_stream_artifact_ref": _string(
+            _payload_value("lob_event_stream_artifact_ref")
+        ),
+        "fill_outcomes_artifact_ref": _string(
+            _payload_value("fill_outcomes_artifact_ref")
+        ),
+        "simulation_live_parity_artifact_ref": _string(
+            _payload_value("simulation_live_parity_artifact_ref")
+        ),
+    }
+    missing_evidence = _execution_realism_missing_evidence(summary)
+    summary["execution_realism_status"] = (
+        "complete" if not missing_evidence else "missing_required_evidence"
+    )
+    summary["execution_realism_missing_evidence"] = list(missing_evidence)
+    return summary
+
+
+def _execution_realism_missing_evidence(summary: Mapping[str, Any]) -> tuple[str, ...]:
+    missing: list[str] = []
+    parity_status = _string(
+        summary.get("live_paper_parity_status")
+        or summary.get("simulation_live_parity_status")
+    )
+    parity_sample_count = max(
+        _int(summary.get("live_paper_parity_sample_count")),
+        _int(summary.get("simulation_live_parity_sample_count")),
+    )
+    if (
+        max(
+            _int(summary.get("lob_event_stream_event_count")),
+            _int(summary.get("lob_event_stream_sample_count")),
+        )
+        <= 0
+    ):
+        missing.append("lob_event_stream_evidence_missing")
+    if _string(summary.get("lob_event_stream_artifact_ref")) == "":
+        missing.append("lob_event_stream_artifact_ref_missing")
+    if (
+        max(
+            _int(summary.get("fill_outcome_count")),
+            _int(summary.get("fill_outcome_sample_count")),
+        )
+        <= 0
+    ):
+        missing.append("fill_outcome_evidence_missing")
+    if _string(summary.get("fill_outcomes_artifact_ref")) == "":
+        missing.append("fill_outcomes_artifact_ref_missing")
+    if parity_sample_count <= 0:
+        missing.append("live_paper_parity_evidence_missing")
+    if _string(summary.get("simulation_live_parity_artifact_ref")) == "":
+        missing.append("simulation_live_parity_artifact_ref_missing")
+    if parity_status not in _EXECUTION_REALISM_PASS_STATUSES:
+        missing.append("live_paper_parity_status_not_within_budget")
+    if parity_sample_count < _MIN_SIMULATION_PARITY_SAMPLE_COUNT:
+        missing.append("live_paper_parity_sample_count_below_minimum")
+    fill_error_bps = summary.get("live_paper_parity_max_fill_error_bps")
+    adverse_selection_error_bps = summary.get(
+        "live_paper_parity_max_adverse_selection_error_bps"
+    )
+    if _string(fill_error_bps) == "":
+        missing.append("live_paper_parity_fill_error_evidence_missing")
+    elif _decimal(fill_error_bps) > _MAX_SIMULATION_LIVE_FILL_ERROR_BPS:
+        missing.append("live_paper_parity_fill_error_above_maximum")
+    if _string(adverse_selection_error_bps) == "":
+        missing.append("live_paper_parity_adverse_selection_error_evidence_missing")
+    elif _decimal(adverse_selection_error_bps) > _MAX_ADVERSE_SELECTION_ERROR_BPS:
+        missing.append("live_paper_parity_adverse_selection_error_above_maximum")
+    if (
+        _string(
+            summary.get("implementation_trace_ref")
+            or summary.get("runtime_implementation_artifact_ref")
+        )
+        == ""
+    ):
+        missing.append("implementation_trace_evidence_missing")
+    return tuple(missing)
 
 
 def _max_drawdown_from_daily_net(daily_net: Mapping[str, Decimal]) -> Decimal:
@@ -1038,7 +1198,16 @@ def _materialize_candidate_configmap(
 
 
 def _default_replay_executor(config: replay_mod.ReplayConfig) -> dict[str, Any]:
-    return replay_mod.run_replay(config)
+    payload = dict(replay_mod.run_replay(config))
+    realism_summary = _runtime_execution_realism_summary(payload)
+    missing_evidence = list(realism_summary["execution_realism_missing_evidence"])
+    payload["execution_realism_status"] = realism_summary["execution_realism_status"]
+    payload["execution_realism_missing_evidence"] = missing_evidence
+    execution_realism = _mapping(payload.get("execution_realism"))
+    execution_realism["status"] = realism_summary["execution_realism_status"]
+    execution_realism["missing_evidence"] = missing_evidence
+    payload["execution_realism"] = execution_realism
+    return payload
 
 
 def _run_runtime_replay(
@@ -1190,6 +1359,11 @@ def _replay_analysis(
                 day: str(value)
                 for day, value in _daily_filled_notional(replay_payload).items()
             },
+            "daily_liquidity_notional": {
+                day: str(value)
+                for day, value in _daily_liquidity_notional(replay_payload).items()
+            },
+            **_runtime_execution_realism_summary(replay_payload),
         },
         "decomposition": decomposition_payload,
         "decomposition_error": decomposition_error or None,
@@ -1757,6 +1931,10 @@ def _market_impact_stress_report(
         day: _decimal(value)
         for day, value in _mapping(summary.get("daily_filled_notional")).items()
     }
+    daily_liquidity = {
+        day: _decimal(value)
+        for day, value in _mapping(summary.get("daily_liquidity_notional")).items()
+    }
     trading_days = max(_int(summary.get("trading_day_count")), len(daily_net))
     total_filled_notional = sum(daily_notional.values(), Decimal("0"))
     avg_filled_notional = (
@@ -1775,18 +1953,31 @@ def _market_impact_stress_report(
         else Decimal("0.1")
     )
     reference_adv = reference_notional / max_participation
-    daily_rows: list[dict[str, str]] = []
+    daily_rows: list[dict[str, Any]] = []
     total_impact_cost = Decimal("0")
     weighted_impact_bps_notional = Decimal("0")
+    missing_liquidity_days: list[str] = []
+    recorded_liquidity_days = 0
     for day in sorted(daily_net):
         notional = daily_notional.get(day, Decimal("0"))
+        liquidity_notional = daily_liquidity.get(day, Decimal("0"))
+        if notional > 0 and liquidity_notional > 0:
+            recorded_liquidity_days += 1
+            participation_denominator = liquidity_notional
+            liquidity_evidence_source = "recorded_liquidity_notional"
+        else:
+            participation_denominator = reference_adv
+            liquidity_evidence_source = "synthetic_proxy"
+            if notional > 0:
+                missing_liquidity_days.append(day)
         participation = (
-            min(Decimal("1"), notional / reference_adv)
-            if reference_adv > 0 and notional > 0
+            min(Decimal("1"), notional / participation_denominator)
+            if participation_denominator > 0 and notional > 0
             else Decimal("0")
         )
-        impact_bps = config.impact_bps_at_full_participation * _decimal_sqrt(
-            participation
+        impact_bps = config.impact_bps_at_full_participation * participation_power(
+            participation,
+            config.impact_participation_exponent,
         )
         impact_cost = (notional * impact_bps) / BPS_SCALE
         post_impact_net = daily_net[day] - impact_cost
@@ -1797,6 +1988,8 @@ def _market_impact_stress_report(
                 "day": day,
                 "net_pnl": _decimal_string(daily_net[day]),
                 "filled_notional": _decimal_string(notional),
+                "liquidity_notional": _decimal_string(liquidity_notional),
+                "liquidity_evidence_source": liquidity_evidence_source,
                 "participation_rate_proxy": _decimal_string(participation),
                 "impact_cost_bps": _decimal_string(impact_bps),
                 "impact_cost": _decimal_string(impact_cost),
@@ -1820,6 +2013,8 @@ def _market_impact_stress_report(
         reasons.append("market_impact_stress_trading_days_missing")
     if total_filled_notional <= 0:
         reasons.append("market_impact_stress_filled_notional_missing")
+    if missing_liquidity_days:
+        reasons.append("market_impact_stress_liquidity_evidence_missing")
     if impact_cost_bps <= 0:
         reasons.append("market_impact_stress_cost_bps_zero")
     if post_impact_net_pnl_per_day < program.objective.target_net_pnl_per_day:
@@ -1856,11 +2051,21 @@ def _market_impact_stress_report(
         "impact_cost": _decimal_string(total_impact_cost),
         "impact_cost_bps": _decimal_string(impact_cost_bps),
         "market_impact_cost_bps": _decimal_string(impact_cost_bps),
+        "liquidity_evidence_present": not missing_liquidity_days
+        and total_filled_notional > 0,
+        "liquidity_input_source": "recorded_liquidity_notional"
+        if recorded_liquidity_days
+        else "synthetic_proxy",
+        "recorded_liquidity_day_count": recorded_liquidity_days,
+        "missing_liquidity_days": missing_liquidity_days,
         "reference_notional": _decimal_string(reference_notional),
         "reference_adv_proxy": _decimal_string(reference_adv),
         "max_participation_rate": _decimal_string(max_participation),
         "impact_bps_at_full_participation": _decimal_string(
             config.impact_bps_at_full_participation
+        ),
+        "impact_participation_exponent": _decimal_string(
+            config.impact_participation_exponent
         ),
         "trading_day_count": trading_days,
         "total_filled_notional": _decimal_string(total_filled_notional),
@@ -1881,6 +2086,81 @@ def _delay_adjusted_depth_stress_report(
     report = _mapping(approval_report)
     summary = _mapping(report.get("summary"))
     scorecard = _mapping(report.get("scorecard"))
+    daily_lob_event_stream_count = _mapping(summary.get("daily_lob_event_stream_count"))
+    daily_fill_outcome_count = _mapping(summary.get("daily_fill_outcome_count"))
+    lob_event_stream_event_count = max(
+        _int(summary.get("lob_event_stream_event_count")),
+        _int(summary.get("lob_event_stream_sample_count")),
+    )
+    fill_outcome_count = max(
+        _int(summary.get("fill_outcome_count")),
+        _int(summary.get("fill_outcome_sample_count")),
+    )
+    live_paper_parity_sample_count = max(
+        _int(summary.get("live_paper_parity_sample_count")),
+        _int(summary.get("simulation_live_parity_sample_count")),
+    )
+    live_paper_parity_status = _string(
+        summary.get("live_paper_parity_status")
+        or summary.get("simulation_live_parity_status")
+    )
+    live_paper_parity_max_fill_error_bps_raw = summary.get(
+        "live_paper_parity_max_fill_error_bps"
+    ) or summary.get("simulation_live_fill_error_bps")
+    live_paper_parity_max_fill_error_bps = _decimal(
+        live_paper_parity_max_fill_error_bps_raw
+    )
+    live_paper_parity_max_adverse_selection_error_bps_raw = summary.get(
+        "live_paper_parity_max_adverse_selection_error_bps"
+    ) or summary.get("adverse_selection_error_bps")
+    live_paper_parity_max_adverse_selection_error_bps = _decimal(
+        live_paper_parity_max_adverse_selection_error_bps_raw
+    )
+    simulation_live_parity_status = _string(
+        summary.get("simulation_live_parity_status")
+    )
+    implementation_trace_ref = _string(
+        summary.get("implementation_trace_ref")
+        or summary.get("runtime_implementation_artifact_ref")
+    )
+    lob_event_stream_artifact_ref = _string(
+        summary.get("lob_event_stream_artifact_ref")
+    )
+    fill_outcomes_artifact_ref = _string(summary.get("fill_outcomes_artifact_ref"))
+    simulation_live_parity_artifact_ref = _string(
+        summary.get("simulation_live_parity_artifact_ref")
+    )
+    parity_status_ok = live_paper_parity_status in _EXECUTION_REALISM_PASS_STATUSES
+    lob_event_stream_evidence_present = lob_event_stream_event_count > 0
+    fill_outcome_evidence_present = fill_outcome_count > 0
+    live_paper_parity_evidence_present = (
+        live_paper_parity_sample_count >= _MIN_SIMULATION_PARITY_SAMPLE_COUNT
+        and parity_status_ok
+        and _string(live_paper_parity_max_fill_error_bps_raw) != ""
+        and _string(live_paper_parity_max_adverse_selection_error_bps_raw) != ""
+        and live_paper_parity_max_fill_error_bps <= _MAX_SIMULATION_LIVE_FILL_ERROR_BPS
+        and live_paper_parity_max_adverse_selection_error_bps
+        <= _MAX_ADVERSE_SELECTION_ERROR_BPS
+    )
+    execution_realism_missing_evidence = _execution_realism_missing_evidence(
+        {
+            "lob_event_stream_event_count": lob_event_stream_event_count,
+            "lob_event_stream_artifact_ref": lob_event_stream_artifact_ref,
+            "fill_outcome_count": fill_outcome_count,
+            "fill_outcomes_artifact_ref": fill_outcomes_artifact_ref,
+            "live_paper_parity_status": live_paper_parity_status,
+            "live_paper_parity_sample_count": live_paper_parity_sample_count,
+            "live_paper_parity_max_fill_error_bps": _optional_decimal_string(
+                live_paper_parity_max_fill_error_bps_raw
+            ),
+            "live_paper_parity_max_adverse_selection_error_bps": _optional_decimal_string(
+                live_paper_parity_max_adverse_selection_error_bps_raw
+            ),
+            "simulation_live_parity_artifact_ref": simulation_live_parity_artifact_ref,
+            "implementation_trace_ref": implementation_trace_ref,
+        }
+    )
+    lob_execution_realism_evidence_present = not execution_realism_missing_evidence
     daily_net = {
         day: _decimal(value)
         for day, value in _mapping(summary.get("daily_net")).items()
@@ -1888,6 +2168,10 @@ def _delay_adjusted_depth_stress_report(
     daily_notional = {
         day: _decimal(value)
         for day, value in _mapping(summary.get("daily_filled_notional")).items()
+    }
+    daily_liquidity = {
+        day: _decimal(value)
+        for day, value in _mapping(summary.get("daily_liquidity_notional")).items()
     }
     trading_days = max(_int(summary.get("trading_day_count")), len(daily_net))
     total_filled_notional = sum(daily_notional.values(), Decimal("0"))
@@ -1897,52 +2181,94 @@ def _delay_adjusted_depth_stress_report(
         else Decimal("0")
     )
     stress_delay_ms = Decimal("250")
+    latency_grid_ms = (Decimal("50"), Decimal("150"), Decimal("250"))
     depth_haircut_rate = min(
         Decimal("0.50"),
         max(Decimal("0.10"), stress_delay_ms / Decimal("1000")),
-    )
-    reference_notional = max(
-        program.objective.min_daily_notional,
-        avg_filled_notional,
-        Decimal("1"),
     )
     max_participation = (
         config.max_participation_rate
         if config.max_participation_rate > 0
         else Decimal("0.1")
     )
-    reference_adv = reference_notional / max_participation
-    daily_rows: list[dict[str, str]] = []
+    daily_rows: list[dict[str, Any]] = []
     total_delay_depth_cost = Decimal("0")
     total_fillable_notional = Decimal("0")
+    total_unfillable_notional = Decimal("0")
+    total_post_delay_depth_net_pnl = Decimal("0")
     weighted_delay_depth_bps_notional = Decimal("0")
+    recorded_liquidity_days = 0
+    missing_liquidity_days = 0
+    active_day_fillable_notional: list[Decimal] = []
     for day in sorted(daily_net):
         notional = daily_notional.get(day, Decimal("0"))
+        liquidity_notional = daily_liquidity.get(day, Decimal("0"))
+        if liquidity_notional > 0:
+            recorded_liquidity_days += 1
+        elif notional > 0:
+            missing_liquidity_days += 1
         participation = (
-            min(Decimal("1"), notional / reference_adv)
-            if reference_adv > 0 and notional > 0
+            min(Decimal("1"), notional / liquidity_notional)
+            if liquidity_notional > 0 and notional > 0
             else Decimal("0")
         )
-        fillable_notional = notional * (Decimal("1") - depth_haircut_rate)
+        fillable_notional = (
+            min(notional, liquidity_notional * (Decimal("1") - depth_haircut_rate))
+            if liquidity_notional > 0 and notional > 0
+            else Decimal("0")
+        )
+        latency_grid_fillable_notional = {
+            _decimal_string(grid_ms): _decimal_string(
+                min(
+                    notional,
+                    liquidity_notional
+                    * (
+                        Decimal("1")
+                        - min(
+                            Decimal("0.50"),
+                            max(Decimal("0.10"), grid_ms / Decimal("1000")),
+                        )
+                    ),
+                )
+                if liquidity_notional > 0 and notional > 0
+                else Decimal("0")
+            )
+            for grid_ms in latency_grid_ms
+        }
+        unfillable_notional = max(Decimal("0"), notional - fillable_notional)
+        fillable_ratio = fillable_notional / notional if notional > 0 else Decimal("1")
         delay_depth_cost_bps = max(
             Decimal("1"),
             config.impact_bps_at_full_participation
-            * _decimal_sqrt(participation)
+            * participation_power(
+                participation,
+                config.impact_participation_exponent,
+            )
             * depth_haircut_rate,
         )
-        delay_depth_cost = (notional * delay_depth_cost_bps) / BPS_SCALE
-        post_delay_depth_net = daily_net[day] - delay_depth_cost
+        delay_depth_cost = (fillable_notional * delay_depth_cost_bps) / BPS_SCALE
+        post_delay_depth_net = (daily_net[day] * fillable_ratio) - delay_depth_cost
         total_fillable_notional += fillable_notional
+        total_unfillable_notional += unfillable_notional
         total_delay_depth_cost += delay_depth_cost
+        total_post_delay_depth_net_pnl += post_delay_depth_net
         weighted_delay_depth_bps_notional += delay_depth_cost_bps * notional
+        if notional > 0:
+            active_day_fillable_notional.append(fillable_notional)
         daily_rows.append(
             {
                 "day": day,
                 "net_pnl": _decimal_string(daily_net[day]),
                 "filled_notional": _decimal_string(notional),
+                "liquidity_notional": _decimal_string(liquidity_notional),
+                "lob_event_stream_count": _int(daily_lob_event_stream_count.get(day)),
+                "fill_outcome_count": _int(daily_fill_outcome_count.get(day)),
                 "stress_delay_ms": _decimal_string(stress_delay_ms),
                 "depth_haircut_rate": _decimal_string(depth_haircut_rate),
+                "latency_grid_fillable_notional": latency_grid_fillable_notional,
                 "fillable_notional": _decimal_string(fillable_notional),
+                "unfillable_notional": _decimal_string(unfillable_notional),
+                "fillable_ratio": _decimal_string(fillable_ratio),
                 "participation_rate_proxy": _decimal_string(participation),
                 "delay_depth_cost_bps": _decimal_string(delay_depth_cost_bps),
                 "delay_depth_cost": _decimal_string(delay_depth_cost),
@@ -1960,21 +2286,82 @@ def _delay_adjusted_depth_stress_report(
         else Decimal("0")
     )
     net_pnl = _decimal(summary.get("net_pnl"))
-    post_delay_depth_net_pnl = net_pnl - total_delay_depth_cost
+    post_delay_depth_net_pnl = total_post_delay_depth_net_pnl
     post_delay_depth_net_pnl_per_day = (
         post_delay_depth_net_pnl / Decimal(trading_days)
         if trading_days > 0
         else Decimal("0")
+    )
+    worst_active_day_fillable_notional = (
+        min(active_day_fillable_notional)
+        if active_day_fillable_notional
+        else Decimal("0")
+    )
+    p10_active_day_fillable_notional = _p10(active_day_fillable_notional)
+    tail_coverage_passed = (
+        bool(active_day_fillable_notional)
+        and missing_liquidity_days == 0
+        and worst_active_day_fillable_notional >= program.objective.min_daily_notional
+        and p10_active_day_fillable_notional >= program.objective.min_daily_notional
     )
     reasons: list[str] = []
     if trading_days <= 0:
         reasons.append("delay_adjusted_depth_stress_trading_days_missing")
     if total_filled_notional <= 0:
         reasons.append("delay_adjusted_depth_stress_filled_notional_missing")
+    if missing_liquidity_days:
+        reasons.append("delay_adjusted_depth_stress_liquidity_evidence_missing")
+    if not lob_event_stream_evidence_present:
+        reasons.append("delay_adjusted_depth_lob_event_stream_evidence_missing")
+    if not fill_outcome_evidence_present:
+        reasons.append("delay_adjusted_depth_fill_outcome_evidence_missing")
+    if live_paper_parity_sample_count <= 0:
+        reasons.append("delay_adjusted_depth_live_paper_parity_evidence_missing")
+    if not parity_status_ok:
+        reasons.append(
+            "delay_adjusted_depth_live_paper_parity_status_not_within_budget"
+        )
+    if live_paper_parity_sample_count < _MIN_SIMULATION_PARITY_SAMPLE_COUNT:
+        reasons.append(
+            "delay_adjusted_depth_live_paper_parity_sample_count_below_minimum"
+        )
+    if _string(live_paper_parity_max_fill_error_bps_raw) == "":
+        reasons.append(
+            "delay_adjusted_depth_live_paper_parity_fill_error_evidence_missing"
+        )
+    elif live_paper_parity_max_fill_error_bps > _MAX_SIMULATION_LIVE_FILL_ERROR_BPS:
+        reasons.append(
+            "delay_adjusted_depth_live_paper_parity_fill_error_above_maximum"
+        )
+    if _string(live_paper_parity_max_adverse_selection_error_bps_raw) == "":
+        reasons.append(
+            "delay_adjusted_depth_live_paper_parity_adverse_selection_error_evidence_missing"
+        )
+    elif (
+        live_paper_parity_max_adverse_selection_error_bps
+        > _MAX_ADVERSE_SELECTION_ERROR_BPS
+    ):
+        reasons.append(
+            "delay_adjusted_depth_live_paper_parity_adverse_selection_error_above_maximum"
+        )
+    if lob_event_stream_artifact_ref == "":
+        reasons.append("delay_adjusted_depth_lob_event_stream_artifact_ref_missing")
+    if fill_outcomes_artifact_ref == "":
+        reasons.append("delay_adjusted_depth_fill_outcomes_artifact_ref_missing")
+    if simulation_live_parity_artifact_ref == "":
+        reasons.append(
+            "delay_adjusted_depth_simulation_live_parity_artifact_ref_missing"
+        )
+    if implementation_trace_ref == "":
+        reasons.append("implementation_trace_evidence_missing")
+    if not lob_execution_realism_evidence_present:
+        reasons.append("lob_execution_realism_evidence_missing")
     if delay_depth_cost_bps <= 0:
         reasons.append("delay_adjusted_depth_stress_cost_bps_zero")
     if fillable_notional_per_day < program.objective.min_daily_notional:
         reasons.append("delay_adjusted_depth_fillable_notional_below_minimum")
+    if not tail_coverage_passed:
+        reasons.append("delay_adjusted_depth_tail_fillable_notional_below_minimum")
     if post_delay_depth_net_pnl_per_day < program.objective.target_net_pnl_per_day:
         reasons.append("delay_adjusted_depth_stress_net_pnl_below_target")
     if not bool(report.get("objective_met")):
@@ -1996,6 +2383,7 @@ def _delay_adjusted_depth_stress_report(
         ),
         "model": "latency_depth_haircut",
         "source_markers": [
+            "lob_simulation_reality_gap_arxiv_2603_24137_2026",
             "market_depth_execution_delays_ssrn_6440898_2026",
             "latency_execution_policy_arxiv_2504_00846_2025",
             "rl_market_limit_execution_arxiv_2507_06345_2026",
@@ -2018,15 +2406,259 @@ def _delay_adjusted_depth_stress_report(
         "delay_depth_cost": _decimal_string(total_delay_depth_cost),
         "delay_depth_cost_bps": _decimal_string(delay_depth_cost_bps),
         "stress_delay_ms": _decimal_string(stress_delay_ms),
+        "latency_grid_ms": [
+            _decimal_string(stress_ms) for stress_ms in latency_grid_ms
+        ],
+        "delay_adjusted_depth_latency_grid_ms": [
+            _decimal_string(stress_ms) for stress_ms in latency_grid_ms
+        ],
+        "delay_adjusted_depth_grid_max_stress_ms": _decimal_string(
+            max(latency_grid_ms)
+        ),
         "depth_haircut_rate": _decimal_string(depth_haircut_rate),
-        "reference_notional": _decimal_string(reference_notional),
-        "reference_adv_proxy": _decimal_string(reference_adv),
+        "liquidity_input_source": "recorded_liquidity_notional"
+        if recorded_liquidity_days
+        else "missing_recorded_liquidity",
+        "execution_realism_status": "complete"
+        if not execution_realism_missing_evidence
+        else "missing_required_evidence",
+        "execution_realism_missing_evidence": list(execution_realism_missing_evidence),
+        "lob_execution_realism_evidence_present": lob_execution_realism_evidence_present,
+        "lob_event_stream_evidence_present": lob_event_stream_evidence_present,
+        "lob_event_stream_artifact_ref": lob_event_stream_artifact_ref,
+        "lob_event_stream_event_count": lob_event_stream_event_count,
+        "lob_event_stream_sample_count": lob_event_stream_event_count,
+        "fill_outcome_evidence_present": fill_outcome_evidence_present,
+        "fill_outcomes_artifact_ref": fill_outcomes_artifact_ref,
+        "fill_outcome_count": fill_outcome_count,
+        "fill_outcome_sample_count": fill_outcome_count,
+        "live_paper_parity_evidence_present": live_paper_parity_evidence_present,
+        "live_paper_parity_status": live_paper_parity_status,
+        "live_paper_parity_sample_count": live_paper_parity_sample_count,
+        "live_paper_parity_max_fill_error_bps": _optional_decimal_string(
+            live_paper_parity_max_fill_error_bps_raw
+        ),
+        "live_paper_parity_max_adverse_selection_error_bps": _optional_decimal_string(
+            live_paper_parity_max_adverse_selection_error_bps_raw
+        ),
+        "simulation_live_parity_sample_count": live_paper_parity_sample_count,
+        "simulation_live_parity_status": simulation_live_parity_status,
+        "simulation_live_parity_artifact_ref": simulation_live_parity_artifact_ref,
+        "implementation_trace_ref": implementation_trace_ref,
+        "recorded_liquidity_day_count": recorded_liquidity_days,
+        "missing_liquidity_days": missing_liquidity_days,
         "max_participation_rate": _decimal_string(max_participation),
+        "impact_participation_exponent": _decimal_string(
+            config.impact_participation_exponent
+        ),
         "trading_day_count": trading_days,
         "total_filled_notional": _decimal_string(total_filled_notional),
         "avg_filled_notional_per_day": _decimal_string(avg_filled_notional),
+        "unfillable_notional": _decimal_string(total_unfillable_notional),
         "fillable_notional_per_day": _decimal_string(fillable_notional_per_day),
+        "worst_active_day_fillable_notional": _decimal_string(
+            worst_active_day_fillable_notional
+        ),
+        "delay_adjusted_depth_worst_active_day_fillable_notional": _decimal_string(
+            worst_active_day_fillable_notional
+        ),
+        "p10_active_day_fillable_notional": _decimal_string(
+            p10_active_day_fillable_notional
+        ),
+        "delay_adjusted_depth_p10_active_day_fillable_notional": _decimal_string(
+            p10_active_day_fillable_notional
+        ),
+        "tail_coverage_passed": tail_coverage_passed,
+        "delay_adjusted_depth_tail_coverage_passed": tail_coverage_passed,
         "daily": daily_rows,
+    }
+
+
+def _runtime_replay_net_pnl_per_day(report: Mapping[str, Any]) -> Decimal:
+    scorecard = _mapping(report.get("scorecard"))
+    summary = _mapping(report.get("summary"))
+    explicit = _decimal(
+        scorecard.get("portfolio_post_cost_net_pnl_per_day")
+        or scorecard.get("net_pnl_per_day")
+        or summary.get("net_per_day"),
+        default="-999999999",
+    )
+    if explicit != Decimal("-999999999"):
+        return explicit
+    trading_days = _int(summary.get("trading_day_count"))
+    if trading_days <= 0:
+        return Decimal("0")
+    return _decimal(summary.get("net_pnl")) / Decimal(trading_days)
+
+
+def _double_oos_window_row(
+    *,
+    window_id: str,
+    report: Mapping[str, Any] | None,
+    target_net_pnl_per_day: Decimal,
+) -> dict[str, Any]:
+    if report is None:
+        return {
+            "window_id": window_id,
+            "source": "double_oos_walkforward_arxiv_2602_10785_2026",
+            "validation_type": "double_oos_walkforward",
+            "passed": False,
+            "status": "missing",
+            "net_pnl_per_day": "0",
+            "post_cost_net_pnl_per_day": "0",
+            "trading_day_count": 0,
+            "reasons": [f"{window_id}_replay_missing"],
+        }
+    summary = _mapping(report.get("summary"))
+    net_pnl_per_day = _runtime_replay_net_pnl_per_day(report)
+    reasons: list[str] = []
+    if not bool(report.get("objective_met")):
+        reasons.append(f"{window_id}_objective_not_met")
+    if net_pnl_per_day < target_net_pnl_per_day:
+        reasons.append(f"{window_id}_net_pnl_below_target")
+    if _int(summary.get("trading_day_count")) <= 0:
+        reasons.append(f"{window_id}_trading_days_missing")
+    passed = not reasons
+    return {
+        "window_id": window_id,
+        "source": "double_oos_walkforward_arxiv_2602_10785_2026",
+        "validation_type": "double_oos_walkforward",
+        "passed": passed,
+        "status": "pass" if passed else "fail",
+        "net_pnl_per_day": _decimal_string(net_pnl_per_day),
+        "post_cost_net_pnl_per_day": _decimal_string(net_pnl_per_day),
+        "trading_day_count": _int(summary.get("trading_day_count")),
+        "start_date": _string(summary.get("start_date")),
+        "end_date": _string(summary.get("end_date")),
+        "decision_count": _int(summary.get("decision_count")),
+        "filled_count": _int(summary.get("filled_count")),
+        "reasons": reasons,
+    }
+
+
+def _double_oos_cost_shock_net_pnl_per_day(
+    *,
+    double_oos_net_pnl_per_day: Decimal,
+    market_impact_report: Mapping[str, Any] | None,
+    delay_depth_report: Mapping[str, Any] | None,
+) -> Decimal:
+    stressed = [double_oos_net_pnl_per_day]
+    if market_impact_report is not None:
+        stressed.append(
+            _decimal(
+                market_impact_report.get("post_impact_net_pnl_per_day")
+                or market_impact_report.get("stressed_net_pnl_per_day")
+            )
+        )
+    if delay_depth_report is not None:
+        stressed.append(
+            _decimal(
+                delay_depth_report.get("post_delay_depth_net_pnl_per_day")
+                or delay_depth_report.get("stressed_net_pnl_per_day")
+            )
+        )
+    return min(stressed, default=Decimal("0"))
+
+
+def _double_oos_walkforward_report(
+    *,
+    runner_run_id: str,
+    best_candidate: Mapping[str, Any],
+    parity_report: Mapping[str, Any] | None,
+    approval_report: Mapping[str, Any] | None,
+    market_impact_report: Mapping[str, Any] | None,
+    delay_depth_report: Mapping[str, Any] | None,
+    program: StrategyAutoresearchProgram,
+) -> dict[str, Any]:
+    target = program.objective.target_net_pnl_per_day
+    windows = [
+        _double_oos_window_row(
+            window_id="parity",
+            report=parity_report,
+            target_net_pnl_per_day=target,
+        ),
+        _double_oos_window_row(
+            window_id="approval",
+            report=approval_report,
+            target_net_pnl_per_day=target,
+        ),
+    ]
+    observed_windows = [
+        row
+        for row in windows
+        if _int(row.get("trading_day_count")) > 0 and row.get("status") != "missing"
+    ]
+    passed_windows = [row for row in observed_windows if bool(row.get("passed"))]
+    independent_window_count = len(observed_windows)
+    pass_rate = (
+        Decimal(len(passed_windows)) / Decimal(independent_window_count)
+        if independent_window_count > 0
+        else Decimal("0")
+    )
+    double_oos_net = min(
+        (_decimal(row.get("post_cost_net_pnl_per_day")) for row in observed_windows),
+        default=Decimal("0"),
+    )
+    cost_shock_net = _double_oos_cost_shock_net_pnl_per_day(
+        double_oos_net_pnl_per_day=double_oos_net,
+        market_impact_report=market_impact_report,
+        delay_depth_report=delay_depth_report,
+    )
+    reasons: list[str] = []
+    if independent_window_count < 2:
+        reasons.append("double_oos_independent_window_count_below_minimum")
+    if pass_rate < Decimal("1"):
+        reasons.append("double_oos_pass_rate_below_required")
+    if double_oos_net < target:
+        reasons.append("double_oos_net_pnl_below_target")
+    if market_impact_report is None:
+        reasons.append("market_impact_stress_missing")
+    elif not bool(market_impact_report.get("objective_met")):
+        reasons.append("market_impact_stress_failed")
+    if delay_depth_report is None:
+        reasons.append("delay_adjusted_depth_stress_missing")
+    elif not bool(delay_depth_report.get("objective_met")):
+        reasons.append("delay_adjusted_depth_stress_failed")
+    if cost_shock_net < target:
+        reasons.append("double_oos_cost_shock_net_pnl_below_target")
+    objective_met = not reasons
+    generated_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    return {
+        "schema_version": "torghut.double-oos-walkforward-report.v1",
+        "run_id": runner_run_id,
+        "candidate_id": _string(best_candidate.get("candidate_id")),
+        "report_id": f"{runner_run_id}:{_string(best_candidate.get('candidate_id'))}:double-oos",
+        "generated_at": generated_at,
+        "checked_at": generated_at,
+        "runtime_family": _runtime_family(best_candidate),
+        "runtime_strategy_name": _runtime_strategy_name(best_candidate),
+        "runtime_strategy_names": list(
+            _portfolio_runtime_strategy_names(best_candidate)
+        ),
+        "source_markers": [
+            "double_oos_walkforward_arxiv_2602_10785_2026",
+            "double_oos_cost_sensitivity_arxiv_2602_10785_2026",
+            "realistic_market_impact_arxiv_2603_29086_2026",
+        ],
+        "objective_met": objective_met,
+        "passed": objective_met,
+        "reasons": reasons,
+        "target_net_pnl_per_day": _decimal_string(target),
+        "independent_window_count": independent_window_count,
+        "window_count": independent_window_count,
+        "fold_count": independent_window_count,
+        "pass_rate": _decimal_string(pass_rate),
+        "net_pnl_per_day": _decimal_string(double_oos_net),
+        "post_double_oos_net_pnl_per_day": _decimal_string(double_oos_net),
+        "cost_shock_net_pnl_per_day": _decimal_string(cost_shock_net),
+        "post_cost_shock_net_pnl_per_day": _decimal_string(cost_shock_net),
+        "market_impact_stress_passed": bool(
+            _mapping(market_impact_report).get("objective_met")
+        ),
+        "delay_adjusted_depth_stress_passed": bool(
+            _mapping(delay_depth_report).get("objective_met")
+        ),
+        "fold_metrics": windows,
     }
 
 
@@ -2047,6 +2679,20 @@ def _stress_metrics_payload(
                     "artifact_ref": market_impact_ref,
                     "day": _string(row_mapping.get("day")),
                     "passed": bool(market_impact_report.get("passed")),
+                    "participation_rate": _string(
+                        row_mapping.get("participation_rate_proxy")
+                    ),
+                    "impact_cost_bps": _string(row_mapping.get("impact_cost_bps")),
+                    "impact_cost": _string(row_mapping.get("impact_cost")),
+                    "post_impact_net_pnl": _string(
+                        row_mapping.get("post_impact_net_pnl")
+                    ),
+                    "liquidity_evidence_source": _string(
+                        row_mapping.get("liquidity_evidence_source")
+                    ),
+                    "liquidity_notional": _string(
+                        row_mapping.get("liquidity_notional")
+                    ),
                 }
             )
     if delay_depth_report is not None and delay_depth_ref:
@@ -2083,6 +2729,7 @@ def _profitability_stage_manifest(
     portfolio_proof_receipt_path: Path | None,
     market_impact_stress_report_path: Path | None,
     delay_adjusted_depth_stress_report_path: Path | None,
+    double_oos_report_path: Path | None,
     stress_metrics_path: Path | None,
     parity_replay_path: Path | None,
     approval_replay_path: Path | None,
@@ -2155,6 +2802,10 @@ def _profitability_stage_manifest(
         artifact_hashes[
             str(delay_adjusted_depth_stress_report_path.relative_to(root))
         ] = _sha256_path(delay_adjusted_depth_stress_report_path)
+    if double_oos_report_path is not None and double_oos_report_path.exists():
+        artifact_hashes[str(double_oos_report_path.relative_to(root))] = _sha256_path(
+            double_oos_report_path
+        )
     if stress_metrics_path is not None and stress_metrics_path.exists():
         artifact_hashes[str(stress_metrics_path.relative_to(root))] = _sha256_path(
             stress_metrics_path
@@ -2251,7 +2902,14 @@ def _profitability_stage_manifest(
             },
             "validation": {
                 "status": "pass"
-                if approval_replay_path is not None and approval_pass
+                if approval_replay_path is not None
+                and approval_pass
+                and market_impact_stress_report_path is not None
+                and market_impact_stress_report_path.exists()
+                and delay_adjusted_depth_stress_report_path is not None
+                and delay_adjusted_depth_stress_report_path.exists()
+                and double_oos_report_path is not None
+                and double_oos_report_path.exists()
                 else "fail",
                 "checks": [
                     {"check": "evaluation_report_present", "status": "pass"},
@@ -2283,6 +2941,13 @@ def _profitability_stage_manifest(
                         "status": "pass"
                         if delay_adjusted_depth_stress_report_path is not None
                         and delay_adjusted_depth_stress_report_path.exists()
+                        else "fail",
+                    },
+                    {
+                        "check": "double_oos_walkforward_present",
+                        "status": "pass"
+                        if double_oos_report_path is not None
+                        and double_oos_report_path.exists()
                         else "fail",
                     },
                     {
@@ -2333,6 +2998,18 @@ def _profitability_stage_manifest(
                         }
                         if delay_adjusted_depth_stress_report_path is not None
                         and delay_adjusted_depth_stress_report_path.exists()
+                        else {}
+                    ),
+                    **(
+                        {
+                            "double_oos_walkforward": _artifact(
+                                double_oos_report_path,
+                                stage="validation",
+                                check="double_oos_walkforward_present",
+                            )
+                        }
+                        if double_oos_report_path is not None
+                        and double_oos_report_path.exists()
                         else {}
                     ),
                     **(
@@ -2488,6 +3165,7 @@ class RuntimeClosureBundleSummary:
     portfolio_proof_receipt_path: str
     market_impact_stress_report_path: str
     delay_adjusted_depth_stress_report_path: str
+    double_oos_report_path: str
     stress_metrics_path: str
     profitability_stage_manifest_path: str
     promotion_prerequisites_path: str
@@ -2518,6 +3196,7 @@ class RuntimeClosureBundleSummary:
             "portfolio_proof_receipt_path": self.portfolio_proof_receipt_path,
             "market_impact_stress_report_path": self.market_impact_stress_report_path,
             "delay_adjusted_depth_stress_report_path": self.delay_adjusted_depth_stress_report_path,
+            "double_oos_report_path": self.double_oos_report_path,
             "stress_metrics_path": self.stress_metrics_path,
             "profitability_stage_manifest_path": self.profitability_stage_manifest_path,
             "promotion_prerequisites_path": self.promotion_prerequisites_path,
@@ -2561,6 +3240,7 @@ def write_runtime_closure_bundle(
             portfolio_proof_receipt_path="",
             market_impact_stress_report_path="",
             delay_adjusted_depth_stress_report_path="",
+            double_oos_report_path="",
             stress_metrics_path="",
             profitability_stage_manifest_path="",
             promotion_prerequisites_path="",
@@ -2614,6 +3294,7 @@ def write_runtime_closure_bundle(
     delay_adjusted_depth_stress_report_path = (
         closure_root / "backtest" / "delay-adjusted-depth-stress.json"
     )
+    double_oos_report_path = closure_root / "backtest" / "double-oos-walkforward.json"
     stress_metrics_path = closure_root / "promotion" / "stress-metrics.json"
 
     candidate_spec = _candidate_spec(
@@ -2713,6 +3394,7 @@ def write_runtime_closure_bundle(
 
     market_impact_stress_report: dict[str, Any] | None = None
     delay_adjusted_depth_stress_report: dict[str, Any] | None = None
+    double_oos_report: dict[str, Any] | None = None
     stress_metrics: dict[str, Any] | None = None
     if approval_report is not None:
         market_impact_stress_report = _market_impact_stress_report(
@@ -2743,6 +3425,17 @@ def write_runtime_closure_bundle(
             ),
         )
         _write_json(stress_metrics_path, stress_metrics)
+    if parity_report is not None or approval_report is not None:
+        double_oos_report = _double_oos_walkforward_report(
+            runner_run_id=runner_run_id,
+            best_candidate=best_candidate,
+            parity_report=parity_report,
+            approval_report=approval_report,
+            market_impact_report=market_impact_stress_report,
+            delay_depth_report=delay_adjusted_depth_stress_report,
+            program=program,
+        )
+        _write_json(double_oos_report_path, double_oos_report)
 
     shadow_plan = _shadow_validation_artifact(
         best_candidate=best_candidate,
@@ -2773,6 +3466,11 @@ def write_runtime_closure_bundle(
                     ),
                 )
                 if delay_adjusted_depth_stress_report is not None
+                else ()
+            ),
+            *(
+                (str(double_oos_report_path.relative_to(closure_root)),)
+                if double_oos_report is not None
                 else ()
             ),
             *(
@@ -2861,6 +3559,9 @@ def write_runtime_closure_bundle(
         delay_adjusted_depth_stress_report_path=delay_adjusted_depth_stress_report_path
         if delay_adjusted_depth_stress_report_path.exists()
         else None,
+        double_oos_report_path=double_oos_report_path
+        if double_oos_report_path.exists()
+        else None,
         stress_metrics_path=stress_metrics_path
         if stress_metrics_path.exists()
         else None,
@@ -2936,6 +3637,9 @@ def write_runtime_closure_bundle(
             delay_adjusted_depth_stress_report_path
         )
         if delay_adjusted_depth_stress_report_path.exists()
+        else "",
+        double_oos_report_path=str(double_oos_report_path)
+        if double_oos_report_path.exists()
         else "",
         stress_metrics_path=str(stress_metrics_path)
         if stress_metrics_path.exists()

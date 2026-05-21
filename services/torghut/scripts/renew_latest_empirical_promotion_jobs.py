@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
+import psycopg
 import yaml
 from sqlalchemy import select
 
@@ -31,6 +32,11 @@ from app.trading.empirical_manifest import (
 US_EQUITIES_TIMEZONE = "America/New_York"
 US_EQUITIES_OPEN = time(9, 30)
 US_EQUITIES_CLOSE = time(16, 0)
+EXECUTION_ELIGIBLE_DECISION_STATUSES = (
+    "submitted",
+    "filled",
+    "partially_filled",
+)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -49,6 +55,24 @@ def _parse_args() -> argparse.Namespace:
         "--run-id-prefix", default="sim-2026-05-05-chip-4c330ce9-r1-renew"
     )
     parser.add_argument("--runtime-window-import", action="store_true")
+    parser.add_argument(
+        "--runtime-window-targets-from-registry",
+        action="store_true",
+        help=(
+            "Import runtime windows for every hypothesis manifest that can be "
+            "mapped to a runtime strategy. Explicit --runtime-window-target "
+            "entries remain supported and take precedence on duplicate "
+            "hypothesis_id values."
+        ),
+    )
+    parser.add_argument(
+        "--runtime-window-hypothesis-dir",
+        default="config/trading/hypotheses",
+    )
+    parser.add_argument(
+        "--runtime-window-family-dir",
+        default="config/trading/families",
+    )
     parser.add_argument(
         "--runtime-window-target",
         action="append",
@@ -143,6 +167,56 @@ def _read_runtime_window_manifest(ref: str) -> dict[str, Any]:
     return _as_dict(payload)
 
 
+def _runtime_manifest_entry_requirements(
+    runtime_manifest: Mapping[str, Any],
+) -> dict[str, Any]:
+    return _as_dict(runtime_manifest.get("entry_requirements"))
+
+
+def _runtime_manifest_requires_delay_depth_stress(
+    runtime_manifest: Mapping[str, Any],
+) -> bool:
+    requirements = _runtime_manifest_entry_requirements(runtime_manifest)
+    return bool(requirements.get("require_delay_adjusted_depth_stress"))
+
+
+def _runtime_manifest_delay_depth_stress_report_ref(
+    *,
+    target: "RuntimeWindowImportTarget",
+    runtime_manifest: Mapping[str, Any],
+) -> str | None:
+    return (
+        _as_text(target.delay_adjusted_depth_stress_report_ref)
+        or _as_text(runtime_manifest.get("delay_adjusted_depth_stress_report_ref"))
+        or _as_text(runtime_manifest.get("delay_adjusted_depth_stress_report_path"))
+    )
+
+
+def _runtime_window_delay_depth_remediation(
+    *,
+    target: "RuntimeWindowImportTarget",
+    runtime_manifest: Mapping[str, Any],
+) -> dict[str, Any]:
+    requirements = _runtime_manifest_entry_requirements(runtime_manifest)
+    return {
+        "blocker": "delay_adjusted_depth_stress_report_ref_missing",
+        "hypothesis_id": target.hypothesis_id,
+        "strategy_name": target.strategy_name,
+        "source_manifest_ref": target.source_manifest_ref,
+        "required_by": "entry_requirements.require_delay_adjusted_depth_stress",
+        "min_checks": requirements.get("min_delay_adjusted_depth_stress_checks"),
+        "max_age_minutes": requirements.get(
+            "max_delay_adjusted_depth_stress_age_minutes"
+        ),
+        "remediation": (
+            "generate a fresh runtime-closure delay-adjusted-depth-stress.json "
+            "artifact for this candidate/window and pass it as "
+            "delay_adjusted_depth_stress_report_ref in the runtime-window target "
+            "or record it in the hypothesis manifest"
+        ),
+    }
+
+
 @dataclass(frozen=True)
 class RuntimeWindowImportTarget:
     hypothesis_id: str
@@ -187,11 +261,114 @@ def _parse_runtime_window_target_spec(spec: str) -> dict[str, str]:
     return parsed
 
 
+def _read_json_mapping(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return _as_dict(payload)
+
+
+def _runtime_family_harnesses(family_dir: str) -> dict[str, dict[str, str]]:
+    root = Path(family_dir)
+    if not root.exists():
+        return {}
+    harnesses: dict[str, dict[str, str]] = {}
+    for path in sorted(root.glob("*.yaml")):
+        try:
+            payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        data = _as_dict(payload)
+        family_id = _as_text(data.get("family_id")) or path.stem
+        harness = _as_dict(data.get("runtime_harness"))
+        family = _as_text(harness.get("family"))
+        strategy_name = _as_text(harness.get("strategy_name"))
+        if family and strategy_name:
+            harnesses[family_id] = {
+                "strategy_family": family,
+                "strategy_name": strategy_name,
+            }
+    return harnesses
+
+
+def _strategy_name_from_strategy_id(strategy_id: str) -> str | None:
+    base = strategy_id.split("@", 1)[0].strip()
+    return base.replace("_", "-") if base else None
+
+
+def _registry_runtime_window_targets(
+    args: argparse.Namespace,
+) -> list[RuntimeWindowImportTarget]:
+    if not bool(getattr(args, "runtime_window_targets_from_registry", False)):
+        return []
+    hypothesis_dir = Path(str(getattr(args, "runtime_window_hypothesis_dir", "")))
+    if not hypothesis_dir.exists():
+        raise RuntimeError(f"runtime_window_hypothesis_dir_missing:{hypothesis_dir}")
+    family_harnesses = _runtime_family_harnesses(
+        str(getattr(args, "runtime_window_family_dir", ""))
+    )
+    targets: list[RuntimeWindowImportTarget] = []
+    for path in sorted(hypothesis_dir.glob("*.json")):
+        manifest = _read_json_mapping(path)
+        hypothesis_id = _as_text(manifest.get("hypothesis_id"))
+        candidate_id = _as_text(manifest.get("candidate_id"))
+        strategy_family = _as_text(manifest.get("strategy_family"))
+        strategy_id = _as_text(manifest.get("strategy_id"))
+        strategy_name = _as_text(manifest.get("strategy_name"))
+        if strategy_id:
+            family_harness = family_harnesses.get(strategy_id.split("@", 1)[0])
+            if family_harness:
+                strategy_family = family_harness["strategy_family"]
+                strategy_name = family_harness["strategy_name"]
+        strategy_name = strategy_name or (
+            _strategy_name_from_strategy_id(strategy_id) if strategy_id else None
+        )
+        if (
+            not hypothesis_id
+            or not candidate_id
+            or not strategy_family
+            or not strategy_name
+        ):
+            continue
+        targets.append(
+            RuntimeWindowImportTarget(
+                hypothesis_id=hypothesis_id,
+                candidate_id=candidate_id,
+                observed_stage=str(
+                    getattr(args, "runtime_window_observed_stage", "") or "paper"
+                ).strip()
+                or "paper",
+                strategy_family=strategy_family,
+                source_dsn_env=str(
+                    getattr(args, "runtime_window_source_dsn_env", "") or "DB_DSN"
+                ).strip()
+                or "DB_DSN",
+                strategy_name=strategy_name,
+                account_label=str(
+                    getattr(args, "runtime_window_account_label", "") or "TORGHUT_SIM"
+                ).strip()
+                or "TORGHUT_SIM",
+                dataset_snapshot_ref=_as_text(manifest.get("dataset_snapshot_ref"))
+                or "",
+                source_manifest_ref=str(path),
+                source_kind=str(
+                    getattr(args, "runtime_window_source_kind", "")
+                    or "paper_runtime_observed"
+                ).strip()
+                or "paper_runtime_observed",
+                delay_adjusted_depth_stress_report_ref="",
+            )
+        )
+    return targets
+
+
 def _runtime_window_targets(
     args: argparse.Namespace,
 ) -> list[RuntimeWindowImportTarget]:
     specs = [str(item) for item in getattr(args, "runtime_window_target", []) or []]
-    if not specs:
+    registry_targets = _registry_runtime_window_targets(args)
+    if not specs and not registry_targets:
         specs = [""]
     targets: list[RuntimeWindowImportTarget] = []
     for spec in specs:
@@ -237,6 +414,12 @@ def _runtime_window_targets(
                 ),
             )
         )
+    seen_hypothesis_ids = {target.hypothesis_id for target in targets}
+    for target in registry_targets:
+        if target.hypothesis_id in seen_hypothesis_ids:
+            continue
+        targets.append(target)
+        seen_hypothesis_ids.add(target.hypothesis_id)
     return targets
 
 
@@ -249,6 +432,17 @@ def _latest_completed_regular_session(now: datetime) -> tuple[datetime, datetime
         or local_now.timetz().replace(tzinfo=None) < US_EQUITIES_CLOSE
     ):
         session_date -= timedelta(days=1)
+    while session_date.weekday() >= 5:
+        session_date -= timedelta(days=1)
+    start = datetime.combine(session_date, US_EQUITIES_OPEN, tzinfo=zone)
+    end = datetime.combine(session_date, US_EQUITIES_CLOSE, tzinfo=zone)
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+
+
+def _regular_session_for_timestamp(value: datetime) -> tuple[datetime, datetime]:
+    zone = ZoneInfo(US_EQUITIES_TIMEZONE)
+    local_value = value.astimezone(zone)
+    session_date = local_value.date()
     while session_date.weekday() >= 5:
         session_date -= timedelta(days=1)
     start = datetime.combine(session_date, US_EQUITIES_OPEN, tzinfo=zone)
@@ -270,6 +464,94 @@ def _runtime_window_bounds(
             raise RuntimeError("runtime_window_end_must_be_after_start")
         return start, end
     return _latest_completed_regular_session(now)
+
+
+def _explicit_runtime_window_bounds(
+    args: argparse.Namespace,
+) -> tuple[datetime, datetime] | None:
+    start_arg = str(getattr(args, "runtime_window_start", "") or "").strip()
+    end_arg = str(getattr(args, "runtime_window_end", "") or "").strip()
+    if bool(start_arg) != bool(end_arg):
+        raise RuntimeError("runtime_window_bounds_require_start_and_end")
+    if not start_arg or not end_arg:
+        return None
+    start = _parse_dt(start_arg)
+    end = _parse_dt(end_arg)
+    if end <= start:
+        raise RuntimeError("runtime_window_end_must_be_after_start")
+    return start, end
+
+
+def _source_strategy_name_candidates(
+    *,
+    target: RuntimeWindowImportTarget,
+    runtime_manifest: Mapping[str, Any],
+) -> list[str]:
+    candidates: list[str] = []
+    for raw in (
+        target.strategy_name,
+        _as_text(runtime_manifest.get("strategy_name")),
+        _as_text(runtime_manifest.get("strategy_id")),
+    ):
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        variants = [
+            text,
+            text.split("@", 1)[0],
+            text.replace("_", "-"),
+            text.split("@", 1)[0].replace("_", "-"),
+        ]
+        for variant in variants:
+            normalized = variant.strip()
+            if normalized and normalized not in candidates:
+                candidates.append(normalized)
+    return candidates
+
+
+def _latest_source_activity_window(
+    *,
+    target: RuntimeWindowImportTarget,
+    runtime_manifest: Mapping[str, Any],
+) -> tuple[datetime, datetime] | None:
+    dsn = os.getenv(target.source_dsn_env, "").strip()
+    if not dsn:
+        return None
+    strategy_names = _source_strategy_name_candidates(
+        target=target,
+        runtime_manifest=runtime_manifest,
+    )
+    if not strategy_names:
+        return None
+    with psycopg.connect(dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                select min(d.created_at), max(d.created_at)
+                from trade_decisions d
+                join strategies s on s.id = d.strategy_id
+                where s.name = any(%s)
+                  and d.alpaca_account_label = %s
+                  and d.status = any(%s)
+                """,
+                (
+                    strategy_names,
+                    target.account_label,
+                    list(EXECUTION_ELIGIBLE_DECISION_STATUSES),
+                ),
+            )
+            row = cur.fetchone()
+            earliest = row[0] if row else None
+            latest = row[1] if row else None
+    if earliest is None or latest is None:
+        return None
+    if earliest.tzinfo is None:
+        earliest = earliest.replace(tzinfo=timezone.utc)
+    if latest.tzinfo is None:
+        latest = latest.replace(tzinfo=timezone.utc)
+    window_start, _ = _regular_session_for_timestamp(earliest.astimezone(timezone.utc))
+    _, window_end = _regular_session_for_timestamp(latest.astimezone(timezone.utc))
+    return window_start, window_end
 
 
 def _latest_authoritative_rows(
@@ -396,7 +678,10 @@ def _run_runtime_window_import(
 ) -> dict[str, Any] | None:
     if not bool(getattr(args, "runtime_window_import", False)):
         return None
-    window_start, window_end = _runtime_window_bounds(args, now)
+    explicit_window = _explicit_runtime_window_bounds(args)
+    default_window_start, default_window_end = (
+        explicit_window or _runtime_window_bounds(args, now)
+    )
     imports: list[dict[str, Any]] = []
     for target in _runtime_window_targets(args):
         imports.append(
@@ -406,14 +691,23 @@ def _run_runtime_window_import(
                 manifest=manifest,
                 run_id=run_id,
                 manifest_path=manifest_path,
-                window_start=window_start,
-                window_end=window_end,
+                window_start=default_window_start,
+                window_end=default_window_end,
+                allow_source_activity_window=explicit_window is None,
             )
         )
     if len(imports) == 1:
         return imports[0]
+    proof_blockers = [
+        blocker
+        for item in imports
+        for blocker in item.get("proof_blockers", [])
+        if isinstance(blocker, Mapping)
+    ]
     return {
         "status": "ok",
+        "proof_status": "blocked" if proof_blockers else "ok",
+        "proof_blockers": proof_blockers,
         "target_count": len(imports),
         "imports": imports,
     }
@@ -428,8 +722,35 @@ def _run_runtime_window_import_target(
     manifest_path: Path,
     window_start: datetime,
     window_end: datetime,
+    allow_source_activity_window: bool = False,
 ) -> dict[str, Any]:
     runtime_manifest = _read_runtime_window_manifest(target.source_manifest_ref)
+    window_selection = "explicit_or_default"
+    if allow_source_activity_window:
+        source_activity_window = _latest_source_activity_window(
+            target=target,
+            runtime_manifest=runtime_manifest,
+        )
+        if source_activity_window is not None:
+            window_start, window_end = source_activity_window
+            window_selection = "source_execution_activity_span"
+        else:
+            window_selection = "latest_completed_regular_session_no_source_activity"
+    delay_depth_report_ref = _runtime_manifest_delay_depth_stress_report_ref(
+        target=target,
+        runtime_manifest=runtime_manifest,
+    )
+    proof_blockers: list[dict[str, Any]] = []
+    if (
+        _runtime_manifest_requires_delay_depth_stress(runtime_manifest)
+        and delay_depth_report_ref is None
+    ):
+        proof_blockers.append(
+            _runtime_window_delay_depth_remediation(
+                target=target,
+                runtime_manifest=runtime_manifest,
+            )
+        )
     candidate_id = (
         _as_text(target.candidate_id)
         or _as_text(runtime_manifest.get("candidate_id"))
@@ -485,11 +806,6 @@ def _run_runtime_window_import_target(
     )
     if dataset_snapshot_ref is not None:
         command.extend(["--dataset-snapshot-ref", dataset_snapshot_ref])
-    delay_depth_report_ref = (
-        _as_text(target.delay_adjusted_depth_stress_report_ref)
-        or _as_text(runtime_manifest.get("delay_adjusted_depth_stress_report_ref"))
-        or _as_text(runtime_manifest.get("delay_adjusted_depth_stress_report_path"))
-    )
     if delay_depth_report_ref is not None:
         command.extend(
             ["--delay-adjusted-depth-stress-report-ref", delay_depth_report_ref]
@@ -501,9 +817,12 @@ def _run_runtime_window_import_target(
         "command": " ".join(command[:2] + ["..."]),
         "window_start": _utc_iso(window_start),
         "window_end": _utc_iso(window_end),
+        "window_selection": window_selection,
         "hypothesis_id": target.hypothesis_id,
         "strategy_name": target.strategy_name,
         "account_label": target.account_label,
+        "proof_status": "blocked" if proof_blockers else "ok",
+        "proof_blockers": proof_blockers,
         "summary": payload,
     }
 

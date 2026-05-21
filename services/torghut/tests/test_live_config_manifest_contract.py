@@ -670,6 +670,52 @@ class TestLiveConfigManifestContract(TestCase):
                 f"{template.get('name')} pins ClickHouse to one architecture",
             )
 
+    def test_production_ta_clickhouse_sink_uses_batched_inserts(self) -> None:
+        manifest = _load_yaml_mapping("argocd/applications/torghut/ta/configmap.yaml")
+        data = manifest.get("data")
+        self.assertIsInstance(data, Mapping)
+
+        self.assertGreaterEqual(
+            int(str(cast(Mapping[str, object], data).get("TA_CLICKHOUSE_BATCH_SIZE"))),
+            1000,
+        )
+        self.assertGreaterEqual(
+            int(str(cast(Mapping[str, object], data).get("TA_CLICKHOUSE_FLUSH_MS"))),
+            5000,
+        )
+        self.assertEqual(
+            cast(Mapping[str, object], data).get("TA_CLICKHOUSE_SINK_PARALLELISM"),
+            "1",
+        )
+
+    def test_options_ta_uses_primary_clickhouse_auth_secret(self) -> None:
+        manifest = _load_yaml_mapping(
+            "argocd/applications/torghut-options/ta/flinkdeployment.yaml"
+        )
+        pod_template = cast(Mapping[str, object], manifest.get("spec", {})).get(
+            "podTemplate"
+        )
+        self.assertIsInstance(pod_template, Mapping)
+        pod_spec = cast(Mapping[str, object], pod_template).get("spec")
+        self.assertIsInstance(pod_spec, Mapping)
+        containers = cast(Mapping[str, object], pod_spec).get("containers")
+        self.assertIsInstance(containers, list)
+        self.assertTrue(containers)
+
+        env = {
+            item.get("name"): item
+            for item in cast(
+                list[Mapping[str, object]],
+                cast(Mapping[str, object], containers[0]).get("env", []),
+            )
+        }
+        clickhouse_password = cast(Mapping[str, object], env["TA_CLICKHOUSE_PASSWORD"])
+        value_from = cast(Mapping[str, object], clickhouse_password.get("valueFrom", {}))
+        self.assertEqual(
+            value_from.get("secretKeyRef"),
+            {"name": "torghut-clickhouse-auth", "key": "torghut_password"},
+        )
+
     def test_whitepaper_semantic_backfill_runs_on_arm_nodes(self) -> None:
         manifest = _load_yaml_mapping(
             "argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml"
@@ -764,24 +810,9 @@ class TestLiveConfigManifestContract(TestCase):
 
         args = "\n".join(str(item) for item in container.get("args", []))
         self.assertIn("scripts/renew_latest_empirical_promotion_jobs.py", args)
+        self.assertIn("--runtime-window-targets-from-registry", args)
         self.assertIn("--runtime-window-hypothesis-id H-TSMOM-01", args)
-        self.assertIn(
-            "--runtime-window-target hypothesis_id=H-TSMOM-01,"
-            "candidate_id=spec-83161ae16d17828eabcc58cc,"
-            "strategy_family=intraday_tsmom_consistent,"
-            "strategy_name=intraday-tsmom-profit-v3,"
-            "source_manifest_ref=config/trading/hypotheses/h-tsmom-01.json",
-            args,
-        )
-        self.assertIn(
-            "--runtime-window-target hypothesis_id=H-MICRO-01,"
-            "candidate_id=chip-paper-microbar-composite@execution-proof,"
-            "strategy_family=microstructure_breakout,"
-            "strategy_name=microbar-volume-continuation-long-top2-chip-v1,"
-            "source_manifest_ref=config/trading/hypotheses/h-micro-01.json,"
-            "dataset_snapshot_ref=torghut-chip-full-day-20260505-4c330ce9-r1",
-            args,
-        )
+        self.assertNotIn("--runtime-window-target hypothesis_id=", args)
         self.assertIn("--runtime-window-account-label TORGHUT_SIM", args)
         self.assertIn("--runtime-window-observed-stage paper", args)
         self.assertIn("--runtime-window-source-dsn-env SIM_DB_DSN", args)

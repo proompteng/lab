@@ -404,6 +404,8 @@ Inputs:
 --exploration-slots default 8
 --portfolio-size-min default 2
 --portfolio-size-max default 8
+--selection-only
+--candidate-specs repeatable selected CandidateSpec JSONL handoff for direct replay
 --train-days
 --holdout-days
 --full-window-start-date
@@ -420,6 +422,7 @@ summary.json
 epoch-manifest.json
 hypothesis-cards.jsonl
 candidate-specs.jsonl
+selected-candidate-specs.jsonl
 mlx-proposal-scores.jsonl
 candidate-evidence-bundles.jsonl
 portfolio-candidates.jsonl

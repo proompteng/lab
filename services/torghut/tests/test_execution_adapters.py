@@ -239,6 +239,90 @@ class TestExecutionAdapters(TestCase):
         self.assertEqual(payload.get('status'), 'filled')
         self.assertEqual(payload.get('filled_avg_price'), '197.34')
 
+    def test_simulation_adapter_haircuts_fill_by_queue_depth(self) -> None:
+        adapter = SimulationExecutionAdapter(
+            bootstrap_servers=None,
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+            topic='torghut.sim.trade-updates.v1',
+            account_label='paper',
+            simulation_run_id='sim-2026-02-27-01',
+            dataset_id='dataset-1',
+        )
+
+        payload = adapter.submit_order(
+            symbol='NVDA',
+            side='buy',
+            qty=10.0,
+            order_type='limit',
+            time_in_force='day',
+            limit_price=100.0,
+            extra_params={
+                'client_order_id': 'decision-queue-partial',
+                'simulation_context': {
+                    'depth_at_limit': '8',
+                    'queue_ahead_qty': '3',
+                    'queue_fill_probability': '0.75',
+                    'signal_event_ts': '2026-05-05T17:25:06+00:00',
+                },
+            },
+        )
+
+        self.assertEqual(payload.get('status'), 'partially_filled')
+        self.assertEqual(payload.get('filled_qty'), '5')
+        self.assertEqual(payload.get('filled_avg_price'), '100')
+        self.assertEqual(
+            adapter.list_positions(),
+            [
+                {
+                    'symbol': 'NVDA',
+                    'qty': '5',
+                    'side': 'long',
+                    'market_value': '500',
+                    'alpaca_account_label': 'paper',
+                }
+            ],
+        )
+
+    def test_simulation_adapter_keeps_zero_queue_fill_cancelable(self) -> None:
+        adapter = SimulationExecutionAdapter(
+            bootstrap_servers=None,
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+            topic='torghut.sim.trade-updates.v1',
+            account_label='paper',
+            simulation_run_id='sim-2026-02-27-01',
+            dataset_id='dataset-1',
+        )
+
+        payload = adapter.submit_order(
+            symbol='NVDA',
+            side='buy',
+            qty=10.0,
+            order_type='limit',
+            time_in_force='day',
+            limit_price=100.0,
+            extra_params={
+                'client_order_id': 'decision-queue-unfilled',
+                'simulation_context': {
+                    'depth_at_limit': '2',
+                    'queue_ahead_qty': '4',
+                    'signal_event_ts': '2026-05-05T17:25:06+00:00',
+                },
+            },
+        )
+
+        self.assertEqual(payload.get('status'), 'accepted')
+        self.assertEqual(payload.get('filled_qty'), '0')
+        self.assertIsNone(payload.get('filled_avg_price'))
+        self.assertEqual(adapter.list_positions(), [])
+        self.assertTrue(adapter.cancel_order(str(payload.get('id'))))
+        self.assertEqual(adapter.get_order(str(payload.get('id'))).get('status'), 'canceled')
+
     def test_simulation_adapter_tracks_synthetic_positions(self) -> None:
         adapter = SimulationExecutionAdapter(
             bootstrap_servers=None,

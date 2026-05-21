@@ -117,10 +117,46 @@ class TestMlxTrainingData(TestCase):
 
         self.assertEqual(features["max_entries_per_session"], 12.0)
         self.assertEqual(features["estimated_capital_slot_count"], 1.0)
+        self.assertEqual(features["configured_daily_notional_capacity"], 180000.0)
         self.assertLessEqual(
             features["estimated_max_gross_exposure_pct_equity"],
             1.0,
         )
+        self.assertEqual(features["capital_feasible_flag"], 1.0)
+
+    def test_candidate_capital_features_apply_entry_notional_multiplier_to_daily_capacity(
+        self,
+    ) -> None:
+        spec = CandidateSpec(
+            schema_version="torghut.candidate-spec.v1",
+            candidate_spec_id="spec-half-entry-notional",
+            hypothesis_id="H-HALF-ENTRY",
+            family_template_id="microbar_cross_sectional_pairs_v1",
+            candidate_kind="configuration",
+            runtime_family="microbar_cross_sectional_pairs",
+            runtime_strategy_name="microbar-cross-sectional-pairs-v1",
+            feature_contract={},
+            parameter_space={},
+            strategy_overrides={
+                "max_notional_per_trade": "30000",
+                "max_position_pct_equity": "0.50",
+                "params": {
+                    "entry_notional_max_multiplier": "0.5",
+                    "max_entries_per_session": "10",
+                    "max_concurrent_positions": "1",
+                    "top_n": "1",
+                },
+            },
+            objective={},
+            hard_vetoes={},
+            expected_failure_modes=(),
+            promotion_contract={},
+        )
+
+        features = candidate_spec_capital_features(spec)
+
+        self.assertEqual(features["entry_notional_max_multiplier"], 0.5)
+        self.assertEqual(features["configured_daily_notional_capacity"], 150000.0)
         self.assertEqual(features["capital_feasible_flag"], 1.0)
 
     def test_candidate_capital_features_infer_uncapped_universe_slots(self) -> None:
@@ -198,9 +234,27 @@ class TestMlxTrainingData(TestCase):
                 candidate={
                     "candidate_id": "cand-1",
                     "objective_scorecard": {
-                        "net_pnl_per_day": "275",
+                        "net_pnl_per_day": "3000",
                         "active_day_ratio": "1.0",
-                        "positive_day_ratio": "0.8",
+                        "positive_day_ratio": "1.0",
+                        "negative_day_count": 0,
+                        "best_day_share": "0.10",
+                        "worst_day_loss": "0",
+                        "max_drawdown": "0",
+                        "market_impact_stress_passed": True,
+                        "market_impact_stress_artifact_ref": "/tmp/impact.json",
+                        "market_impact_liquidity_evidence_present": True,
+                        "market_impact_stress_net_pnl_per_day": "3000",
+                        "delay_adjusted_depth_stress_passed": True,
+                        "delay_adjusted_depth_stress_artifact_ref": "/tmp/depth.json",
+                        "delay_adjusted_depth_fillable_notional_per_day": "300000",
+                        "delay_adjusted_depth_stress_net_pnl_per_day": "3000",
+                        "double_oos_passed": True,
+                        "double_oos_artifact_ref": "/tmp/oos.json",
+                        "double_oos_independent_window_count": 2,
+                        "double_oos_pass_rate": "1",
+                        "double_oos_net_pnl_per_day": "3000",
+                        "double_oos_cost_shock_net_pnl_per_day": "3000",
                     },
                 },
                 dataset_snapshot_id="snapshot-1",
@@ -209,13 +263,44 @@ class TestMlxTrainingData(TestCase):
         ]
 
         rows = build_mlx_training_rows(candidate_specs=specs, evidence_bundles=bundles)
-        model = train_mlx_ranker(rows, backend_preference="numpy-fallback", steps=4)
+        model = train_mlx_ranker(rows, backend_preference="numpy-fallback", steps=10)
         ranked = rank_training_rows(model=model, rows=rows)
 
         self.assertEqual(len(rows), len(specs))
         self.assertEqual(model.backend, "numpy-fallback")
         self.assertEqual(ranked[0].rank, 1)
         self.assertEqual(ranked[0].candidate_spec_id, evidenced_spec.candidate_spec_id)
+
+    def test_training_rows_encode_market_limit_execution_policy(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-market-limit-execution",
+            claims=[
+                {
+                    "claim_id": "mixed-market-limit-execution-policy",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Market and limit order mix with limit fill probability "
+                        "should control execution shortfall."
+                    ),
+                    "data_requirements": [
+                        "market_limit_order_mix",
+                        "limit_fill_probability",
+                        "execution_shortfall",
+                    ],
+                    "confidence": "0.74",
+                }
+            ],
+        )
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        rows = build_mlx_training_rows(candidate_specs=specs, evidence_bundles=[])
+        first_row = rows[0].to_payload()["features"]
+
+        self.assertEqual(first_row["entry_order_type_prefer_limit"], 1.0)
+        self.assertEqual(first_row["market_order_spread_bps_max"], 6.0)
 
     def test_negative_rank_bucket_lift_demotes_to_heuristic_order(self) -> None:
         rows = [
@@ -396,4 +481,311 @@ class TestMlxTrainingData(TestCase):
         self.assertLess(
             row_by_spec[flat.candidate_spec_id].target,
             row_by_spec[active.candidate_spec_id].target - 1000.0,
+        )
+
+    def test_training_rows_penalize_negative_post_cost_efficiency(self) -> None:
+        base_kwargs = {
+            "schema_version": "torghut.candidate-spec.v1",
+            "hypothesis_id": "H-COST-EFFICIENCY",
+            "family_template_id": "microbar_cross_sectional_pairs_v1",
+            "candidate_kind": "configuration",
+            "runtime_family": "microbar_cross_sectional_pairs",
+            "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+            "feature_contract": {},
+            "parameter_space": {},
+            "strategy_overrides": {
+                "max_notional_per_trade": "25000",
+                "max_position_pct_equity": "0.25",
+                "params": {
+                    "capital_profile": "feedback_daily_coverage_cash_constrained_1x",
+                    "max_entries_per_session": "2",
+                    "max_gross_exposure_pct_equity": "1.0",
+                },
+            },
+            "objective": {"target_net_pnl_per_day": "500"},
+            "hard_vetoes": {"required_min_daily_notional": "25000"},
+            "expected_failure_modes": (),
+            "promotion_contract": {},
+        }
+        cost_killed = CandidateSpec(candidate_spec_id="spec-cost-killed", **base_kwargs)
+        efficient = CandidateSpec(
+            candidate_spec_id="spec-efficient",
+            **{**base_kwargs, "hypothesis_id": "H-COST-EFFICIENT"},
+        )
+        bundles = [
+            evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=cost_killed.candidate_spec_id,
+                candidate={
+                    "candidate_id": "cand-cost-killed",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "-50",
+                        "active_day_ratio": "1",
+                        "positive_day_ratio": "0",
+                        "negative_day_count": 2,
+                        "avg_filled_notional_per_day": "25000",
+                        "hard_vetoes": [],
+                    },
+                },
+                dataset_snapshot_id="snapshot-cost-killed",
+                result_path="/tmp/cand-cost-killed.json",
+            ),
+            evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=efficient.candidate_spec_id,
+                candidate={
+                    "candidate_id": "cand-efficient",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "50",
+                        "active_day_ratio": "1",
+                        "positive_day_ratio": "1",
+                        "negative_day_count": 0,
+                        "avg_filled_notional_per_day": "25000",
+                        "hard_vetoes": [],
+                    },
+                },
+                dataset_snapshot_id="snapshot-efficient",
+                result_path="/tmp/cand-efficient.json",
+            ),
+        ]
+
+        rows = build_mlx_training_rows(
+            candidate_specs=[cost_killed, efficient],
+            evidence_bundles=bundles,
+        )
+        row_by_spec = {row.candidate_spec_id: row for row in rows}
+        cost_killed_features = row_by_spec[cost_killed.candidate_spec_id].to_payload()[
+            "features"
+        ]
+        efficient_features = row_by_spec[efficient.candidate_spec_id].to_payload()[
+            "features"
+        ]
+
+        self.assertEqual(
+            cost_killed_features["history_net_pnl_per_100k_filled_notional"],
+            -200.0,
+        )
+        self.assertGreater(
+            cost_killed_features["history_post_cost_efficiency_penalty"],
+            efficient_features["history_post_cost_efficiency_penalty"],
+        )
+        self.assertLess(
+            row_by_spec[cost_killed.candidate_spec_id].target,
+            row_by_spec[efficient.candidate_spec_id].target - 500.0,
+        )
+
+    def test_training_rows_penalize_configured_daily_notional_shortfall(self) -> None:
+        base_kwargs = {
+            "schema_version": "torghut.candidate-spec.v1",
+            "hypothesis_id": "H-CAPACITY",
+            "family_template_id": "breakout_reclaim_v2",
+            "candidate_kind": "configuration",
+            "runtime_family": "breakout_continuation_consistent",
+            "runtime_strategy_name": "breakout-continuation-long-v1",
+            "feature_contract": {},
+            "parameter_space": {},
+            "strategy_overrides": {
+                "max_position_pct_equity": "0.25",
+                "params": {
+                    "max_entries_per_session": "2",
+                    "top_n": "1",
+                    "max_gross_exposure_pct_equity": "1.0",
+                },
+            },
+            "objective": {"target_net_pnl_per_day": "500"},
+            "hard_vetoes": {"required_min_daily_notional": "300000"},
+            "expected_failure_modes": (),
+            "promotion_contract": {},
+        }
+        low_capacity = CandidateSpec(
+            candidate_spec_id="spec-low-capacity",
+            **{
+                **base_kwargs,
+                "strategy_overrides": {
+                    **base_kwargs["strategy_overrides"],
+                    "max_notional_per_trade": "10000",
+                },
+            },
+        )
+        full_capacity = CandidateSpec(
+            candidate_spec_id="spec-full-capacity",
+            **{
+                **base_kwargs,
+                "hypothesis_id": "H-CAPACITY-FULL",
+                "strategy_overrides": {
+                    **base_kwargs["strategy_overrides"],
+                    "max_notional_per_trade": "30000",
+                    "params": {
+                        **base_kwargs["strategy_overrides"]["params"],
+                        "max_entries_per_session": "10",
+                    },
+                },
+            },
+        )
+        bundles = [
+            evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=spec.candidate_spec_id,
+                candidate={
+                    "candidate_id": f"cand-{spec.candidate_spec_id}",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "25",
+                        "active_day_ratio": "1",
+                        "positive_day_ratio": "1",
+                        "negative_day_count": 0,
+                        "avg_filled_notional_per_day": "300000",
+                        "hard_vetoes": [],
+                    },
+                },
+                dataset_snapshot_id=f"snapshot-{spec.candidate_spec_id}",
+                result_path=f"/tmp/{spec.candidate_spec_id}.json",
+            )
+            for spec in (low_capacity, full_capacity)
+        ]
+
+        rows = build_mlx_training_rows(
+            candidate_specs=[low_capacity, full_capacity],
+            evidence_bundles=bundles,
+        )
+        row_by_spec = {row.candidate_spec_id: row for row in rows}
+        low_payload = row_by_spec[low_capacity.candidate_spec_id].to_payload()
+        full_payload = row_by_spec[full_capacity.candidate_spec_id].to_payload()
+
+        self.assertEqual(
+            low_payload["features"]["configured_daily_notional_required_ratio"],
+            20000.0 / 300000.0,
+        )
+        self.assertEqual(
+            full_payload["features"]["configured_daily_notional_required_ratio"],
+            1.0,
+        )
+        self.assertLess(
+            row_by_spec[low_capacity.candidate_spec_id].target,
+            row_by_spec[full_capacity.candidate_spec_id].target - 650.0,
+        )
+
+    def test_training_rows_penalize_missing_execution_proof_feedback(self) -> None:
+        base_kwargs = {
+            "schema_version": "torghut.candidate-spec.v1",
+            "hypothesis_id": "H-PROOF",
+            "family_template_id": "microstructure_continuation_matched_filter_v1",
+            "candidate_kind": "configuration",
+            "runtime_family": "intraday_tsmom_consistent",
+            "runtime_strategy_name": "intraday-tsmom-profit-v3",
+            "feature_contract": {},
+            "parameter_space": {},
+            "strategy_overrides": {
+                "max_notional_per_trade": "7500",
+                "max_position_pct_equity": "0.25",
+                "params": {
+                    "capital_profile": "initial_equity_cash_constrained_1x",
+                    "max_entries_per_session": "1",
+                    "max_gross_exposure_pct_equity": "1.0",
+                },
+            },
+            "objective": {"target_net_pnl_per_day": "500"},
+            "hard_vetoes": {"required_min_daily_notional": "300000"},
+            "expected_failure_modes": (),
+            "promotion_contract": {},
+        }
+        missing_proof = CandidateSpec(
+            candidate_spec_id="spec-missing-proof", **base_kwargs
+        )
+        passing_proof = CandidateSpec(
+            candidate_spec_id="spec-passing-proof",
+            **{**base_kwargs, "hypothesis_id": "H-PROOF-PASSING"},
+        )
+        shared_scorecard = {
+            "net_pnl_per_day": "520",
+            "active_day_ratio": "1",
+            "positive_day_ratio": "1",
+            "negative_day_count": 0,
+            "best_day_share": "0.20",
+            "worst_day_loss": "0",
+            "max_drawdown": "40",
+            "avg_filled_notional_per_day": "350000",
+            "hard_vetoes": [],
+        }
+        bundles = [
+            evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=missing_proof.candidate_spec_id,
+                candidate={
+                    "candidate_id": "cand-missing-proof",
+                    "objective_scorecard": {
+                        **shared_scorecard,
+                        "market_impact_stress_passed": False,
+                        "market_impact_liquidity_evidence_present": False,
+                        "market_impact_stress_net_pnl_per_day": "200",
+                        "delay_adjusted_depth_stress_passed": False,
+                        "delay_adjusted_depth_stress_net_pnl_per_day": "150",
+                        "delay_adjusted_depth_fillable_notional_per_day": "0",
+                        "double_oos_passed": False,
+                        "double_oos_independent_window_count": 0,
+                        "double_oos_pass_rate": "0",
+                        "double_oos_net_pnl_per_day": "100",
+                        "double_oos_cost_shock_net_pnl_per_day": "50",
+                    },
+                },
+                dataset_snapshot_id="snapshot-missing-proof",
+                result_path="/tmp/cand-missing-proof.json",
+            ),
+            evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=passing_proof.candidate_spec_id,
+                candidate={
+                    "candidate_id": "cand-passing-proof",
+                    "objective_scorecard": {
+                        **shared_scorecard,
+                        "market_impact_stress_passed": True,
+                        "market_impact_stress_artifact_ref": "/tmp/market-impact.json",
+                        "market_impact_stress_model": "almgren_chriss_proxy",
+                        "market_impact_stress_cost_bps": "6",
+                        "market_impact_stress_components": {
+                            "source_marker": "realistic_market_impact_arxiv_2603_29086_2026",
+                            "selected_model": "almgren_chriss_proxy",
+                            "selected_cost_bps": "6",
+                        },
+                        "nonlinear_market_impact_stress_passed": True,
+                        "nonlinear_market_impact_stress_model": "almgren_chriss_proxy",
+                        "nonlinear_market_impact_stress_cost_bps": "6",
+                        "nonlinear_market_impact_stress_net_pnl_per_day": "515",
+                        "market_impact_liquidity_evidence_present": True,
+                        "market_impact_stress_net_pnl_per_day": "515",
+                        "delay_adjusted_depth_stress_passed": True,
+                        "delay_adjusted_depth_stress_artifact_ref": "/tmp/depth.json",
+                        "delay_adjusted_depth_stress_ms": "250",
+                        "delay_adjusted_depth_fillable_notional_per_day": "525000",
+                        "delay_adjusted_depth_stress_net_pnl_per_day": "510",
+                        "double_oos_passed": True,
+                        "double_oos_artifact_ref": "/tmp/double-oos.json",
+                        "double_oos_independent_window_count": 2,
+                        "double_oos_pass_rate": "1",
+                        "double_oos_net_pnl_per_day": "515",
+                        "double_oos_cost_shock_net_pnl_per_day": "505",
+                    },
+                },
+                dataset_snapshot_id="snapshot-passing-proof",
+                result_path="/tmp/cand-passing-proof.json",
+            ),
+        ]
+
+        rows = build_mlx_training_rows(
+            candidate_specs=[missing_proof, passing_proof],
+            evidence_bundles=bundles,
+        )
+        row_by_spec = {row.candidate_spec_id: row for row in rows}
+        missing_payload = row_by_spec[missing_proof.candidate_spec_id].to_payload()
+        passing_payload = row_by_spec[passing_proof.candidate_spec_id].to_payload()
+
+        self.assertEqual(
+            missing_payload["features"]["history_market_impact_stress_passed"],
+            0.0,
+        )
+        self.assertEqual(
+            passing_payload["features"]["history_market_impact_stress_passed"],
+            1.0,
+        )
+        self.assertGreater(
+            missing_payload["features"]["history_double_oos_target_shortfall"],
+            passing_payload["features"]["history_double_oos_target_shortfall"],
+        )
+        self.assertLess(
+            row_by_spec[missing_proof.candidate_spec_id].target,
+            row_by_spec[passing_proof.candidate_spec_id].target - 2000.0,
         )

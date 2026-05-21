@@ -34,8 +34,7 @@ spec:
                     --output-dir /tmp/torghut-empirical-renewal \
                     --strategy-spec-ref intraday_tsmom_v2@research \
                     --runtime-window-import \
-                    --runtime-window-target hypothesis_id=H-TSMOM-01,candidate_id=spec-83161ae16d17828eabcc58cc,strategy_family=intraday_tsmom_consistent,strategy_name=intraday-tsmom-profit-v3,source_manifest_ref=config/trading/hypotheses/h-tsmom-01.json \
-                    --runtime-window-target hypothesis_id=H-MICRO-01,candidate_id=chip-paper-microbar-composite@execution-proof,strategy_family=microstructure_breakout,strategy_name=microbar-volume-continuation-long-top2-chip-v1,source_manifest_ref=config/trading/hypotheses/h-micro-01.json,dataset_snapshot_ref=torghut-chip-full-day-20260505-4c330ce9-r1 \
+                    --runtime-window-targets-from-registry \
                     --runtime-window-hypothesis-id H-TSMOM-01 \
                     --runtime-window-candidate-id spec-83161ae16d17828eabcc58cc \
                     --runtime-window-strategy-family intraday_tsmom_consistent \

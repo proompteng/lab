@@ -8,6 +8,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.models import (
+    AutoresearchCandidateSpec,
+    AutoresearchEpoch,
+    AutoresearchPortfolioCandidate,
+    AutoresearchProposalScore,
     Base,
     ResearchAttempt,
     ResearchCandidate,
@@ -20,6 +24,82 @@ from app.models import (
     ResearchValidationTest,
 )
 from app.trading.autonomy.evidence import evaluate_evidence_continuity
+
+
+def _passing_autoresearch_scorecard() -> dict[str, object]:
+    return {
+        "net_pnl_per_day": "600",
+        "trading_day_count": 20,
+        "daily_net": {
+            "2026-05-01": "600",
+            "2026-05-02": "575",
+            "2026-05-03": "610",
+            "2026-05-04": "590",
+            "2026-05-05": "620",
+            "2026-05-06": "605",
+            "2026-05-07": "615",
+            "2026-05-08": "585",
+            "2026-05-09": "595",
+            "2026-05-10": "605",
+            "2026-05-11": "600",
+            "2026-05-12": "575",
+            "2026-05-13": "610",
+            "2026-05-14": "590",
+            "2026-05-15": "620",
+            "2026-05-16": "605",
+            "2026-05-17": "615",
+            "2026-05-18": "585",
+            "2026-05-19": "595",
+            "2026-05-20": "605",
+        },
+        "active_day_ratio": "1.0",
+        "positive_day_ratio": "1.0",
+        "best_day_share": "0.12",
+        "max_single_day_contribution_share": "0.12",
+        "max_cluster_contribution_share": "0.20",
+        "max_single_symbol_contribution_share": "0.20",
+        "worst_day_loss": "500",
+        "max_drawdown": "1000",
+        "max_gross_exposure_pct_equity": "0.5",
+        "min_cash": "1000",
+        "negative_cash_observation_count": 0,
+        "avg_filled_notional_per_day": "300000",
+        "regime_slice_pass_rate": "0.80",
+        "posterior_edge_lower": "1",
+        "shadow_parity_status": "within_budget",
+        "executable_replay_passed": True,
+        "executable_replay_artifact_ref": "s3://proof/current-ready.json",
+        "executable_replay_order_count": 4,
+        "executable_replay_account_buying_power": "31590",
+        "executable_replay_max_notional_per_trade": "5000",
+        "market_impact_stress_passed": True,
+        "market_impact_stress_artifact_ref": "s3://proof/current-ready-impact.json",
+        "market_impact_stress_model": "square_root",
+        "market_impact_stress_cost_bps": "6",
+        "market_impact_liquidity_evidence_present": True,
+        "market_impact_stress_net_pnl_per_day": "535",
+        "delay_adjusted_depth_stress_passed": True,
+        "delay_adjusted_depth_stress_artifact_ref": (
+            "s3://proof/current-ready-delay-depth.json"
+        ),
+        "delay_adjusted_depth_stress_model": "latency_depth_haircut",
+        "delay_adjusted_depth_stress_ms": "250",
+        "delay_adjusted_depth_liquidity_evidence_present": True,
+        "delay_adjusted_depth_liquidity_missing_day_count": 0,
+        "delay_adjusted_depth_latency_grid_ms": ["50", "150", "250"],
+        "delay_adjusted_depth_grid_max_stress_ms": "250",
+        "delay_adjusted_depth_fillable_notional_per_day": "300000",
+        "delay_adjusted_depth_tail_coverage_passed": True,
+        "delay_adjusted_depth_worst_active_day_fillable_notional": "300000",
+        "delay_adjusted_depth_p10_active_day_fillable_notional": "300000",
+        "delay_adjusted_depth_stress_net_pnl_per_day": "525",
+        "double_oos_passed": True,
+        "double_oos_artifact_ref": "s3://proof/current-ready-double-oos.json",
+        "double_oos_independent_window_count": 2,
+        "double_oos_pass_rate": "1.00",
+        "double_oos_net_pnl_per_day": "540",
+        "double_oos_cost_shock_net_pnl_per_day": "515",
+    }
 
 
 class TestEvidenceContinuity(TestCase):
@@ -121,6 +201,223 @@ class TestEvidenceContinuity(TestCase):
 
         self.assertEqual(report.checked_runs, 0)
         self.assertEqual(report.failed_runs, 0)
+
+    def test_blocked_autoresearch_ledgers_fail_without_false_legacy_table_reasons(
+        self,
+    ) -> None:
+        now = datetime(2026, 5, 20, 0, 0, tzinfo=timezone.utc)
+        with self.session_factory() as session:
+            session.add(
+                AutoresearchEpoch(
+                    epoch_id="epoch-blocked",
+                    status="no_profit_target_candidate",
+                    target_net_pnl_per_day=Decimal("500"),
+                    paper_run_ids_json=[],
+                    snapshot_manifest_json={},
+                    runner_config_json={},
+                    summary_json={},
+                    started_at=now,
+                    completed_at=now,
+                )
+            )
+            session.add(
+                AutoresearchCandidateSpec(
+                    candidate_spec_id="spec-blocked",
+                    epoch_id="epoch-blocked",
+                    hypothesis_id="H-CONT-01",
+                    candidate_kind="sleeve",
+                    family_template_id="late_day_continuation_v1",
+                    payload_json={"candidate_spec_id": "spec-blocked"},
+                    payload_hash="hash-blocked",
+                    status="eligible",
+                    blockers_json=[],
+                )
+            )
+            session.add(
+                AutoresearchProposalScore(
+                    epoch_id="epoch-blocked",
+                    candidate_spec_id="spec-blocked",
+                    model_id="mlx-ranker",
+                    backend="mlx",
+                    proposal_score=Decimal("12.5"),
+                    rank=1,
+                    selection_reason="exploitation",
+                    feature_hash="feature-hash",
+                    payload_json={},
+                )
+            )
+            session.add(
+                AutoresearchPortfolioCandidate(
+                    portfolio_candidate_id="portfolio-blocked",
+                    epoch_id="epoch-blocked",
+                    source_candidate_ids_json=["spec-blocked"],
+                    target_net_pnl_per_day=Decimal("500"),
+                    objective_scorecard_json={
+                        "net_pnl_per_day": "9373",
+                        "active_day_ratio": "1.0",
+                        "positive_day_ratio": "0.50",
+                        "best_day_share": "1.0",
+                        "max_cluster_contribution_share": "1.0",
+                    },
+                    optimizer_report_json={"selected_count": 1},
+                    payload_json={"portfolio_candidate_id": "portfolio-blocked"},
+                    status="blocked",
+                )
+            )
+            session.commit()
+
+            report = evaluate_evidence_continuity(session, run_limit=5)
+
+        self.assertEqual(report.checked_runs, 1)
+        self.assertEqual(report.failed_runs, 1)
+        missing = set(report.missing_runs[0]["missing_tables"])
+        self.assertIn("autoresearch_portfolio_ready", missing)
+        self.assertIn("autoresearch_portfolio_candidates_blocked", missing)
+        self.assertNotIn("research_candidates", missing)
+        self.assertNotIn("research_promotions", missing)
+        self.assertEqual(
+            report.missing_runs[0]["counts"]["autoresearch_candidate_specs"], 1
+        )
+
+    def test_research_run_with_autoresearch_ledgers_reports_autoresearch_blockers(
+        self,
+    ) -> None:
+        now = datetime(2026, 5, 20, 0, 0, tzinfo=timezone.utc)
+        with self.session_factory() as session:
+            session.add(
+                ResearchRun(
+                    run_id="run-autoresearch",
+                    status="passed",
+                    discovery_mode="whitepaper_autoresearch_profit_target",
+                )
+            )
+            session.add(
+                AutoresearchEpoch(
+                    epoch_id="epoch-run-blocked",
+                    status="no_profit_target_candidate",
+                    target_net_pnl_per_day=Decimal("500"),
+                    paper_run_ids_json=["run-autoresearch"],
+                    snapshot_manifest_json={},
+                    runner_config_json={},
+                    summary_json={},
+                    started_at=now,
+                    completed_at=now,
+                )
+            )
+            session.add(
+                AutoresearchCandidateSpec(
+                    candidate_spec_id="spec-run-blocked",
+                    epoch_id="epoch-run-blocked",
+                    hypothesis_id="H-CONT-01",
+                    candidate_kind="sleeve",
+                    family_template_id="late_day_continuation_v1",
+                    payload_json={"candidate_spec_id": "spec-run-blocked"},
+                    payload_hash="hash-run-blocked",
+                    status="eligible",
+                    blockers_json=[],
+                )
+            )
+            session.add(
+                AutoresearchProposalScore(
+                    epoch_id="epoch-run-blocked",
+                    candidate_spec_id="spec-run-blocked",
+                    model_id="mlx-ranker",
+                    backend="mlx",
+                    proposal_score=Decimal("12.5"),
+                    rank=1,
+                    selection_reason="exploitation",
+                    feature_hash="feature-hash",
+                    payload_json={},
+                )
+            )
+            session.add(
+                AutoresearchPortfolioCandidate(
+                    portfolio_candidate_id="portfolio-run-blocked",
+                    epoch_id="epoch-run-blocked",
+                    source_candidate_ids_json=["spec-run-blocked"],
+                    target_net_pnl_per_day=Decimal("500"),
+                    objective_scorecard_json={"net_pnl_per_day": "450"},
+                    optimizer_report_json={"selected_count": 1},
+                    payload_json={"portfolio_candidate_id": "portfolio-run-blocked"},
+                    status="blocked",
+                )
+            )
+            session.commit()
+
+            report = evaluate_evidence_continuity(session, run_limit=5)
+
+        self.assertEqual(report.checked_runs, 1)
+        self.assertEqual(report.failed_runs, 1)
+        missing = set(report.missing_runs[0]["missing_tables"])
+        self.assertIn("autoresearch_portfolio_ready", missing)
+        self.assertNotIn("research_candidates", missing)
+        self.assertNotIn("research_fold_metrics", missing)
+        self.assertNotIn("research_promotions", missing)
+
+    def test_current_oracle_ready_autoresearch_portfolio_passes_without_legacy_rows(
+        self,
+    ) -> None:
+        now = datetime(2026, 5, 20, 0, 0, tzinfo=timezone.utc)
+        with self.session_factory() as session:
+            session.add(
+                AutoresearchEpoch(
+                    epoch_id="epoch-ready",
+                    status="target_met",
+                    target_net_pnl_per_day=Decimal("500"),
+                    paper_run_ids_json=[],
+                    snapshot_manifest_json={},
+                    runner_config_json={},
+                    summary_json={},
+                    started_at=now,
+                    completed_at=now,
+                )
+            )
+            session.add(
+                AutoresearchCandidateSpec(
+                    candidate_spec_id="spec-ready",
+                    epoch_id="epoch-ready",
+                    hypothesis_id="H-CONT-01",
+                    candidate_kind="sleeve",
+                    family_template_id="late_day_continuation_v1",
+                    payload_json={"candidate_spec_id": "spec-ready"},
+                    payload_hash="hash-ready",
+                    status="eligible",
+                    blockers_json=[],
+                )
+            )
+            session.add(
+                AutoresearchProposalScore(
+                    epoch_id="epoch-ready",
+                    candidate_spec_id="spec-ready",
+                    model_id="mlx-ranker",
+                    backend="mlx",
+                    proposal_score=Decimal("18.5"),
+                    rank=1,
+                    selection_reason="exploitation",
+                    feature_hash="feature-hash",
+                    payload_json={},
+                )
+            )
+            session.add(
+                AutoresearchPortfolioCandidate(
+                    portfolio_candidate_id="portfolio-ready",
+                    epoch_id="epoch-ready",
+                    source_candidate_ids_json=["spec-ready"],
+                    target_net_pnl_per_day=Decimal("500"),
+                    objective_scorecard_json=_passing_autoresearch_scorecard(),
+                    optimizer_report_json={"selected_count": 1},
+                    payload_json={"portfolio_candidate_id": "portfolio-ready"},
+                    status="promotion_ready",
+                )
+            )
+            session.commit()
+
+            report = evaluate_evidence_continuity(session, run_limit=5)
+
+        self.assertEqual(report.checked_runs, 1)
+        self.assertEqual(report.failed_runs, 0)
+        self.assertEqual(report.missing_runs, [])
+        self.assertTrue(report.to_payload()["ok"])
 
     def test_flags_missing_promotion_audit_bundle(self) -> None:
         now = datetime(2026, 2, 19, 0, 0, tzinfo=timezone.utc)
@@ -234,7 +531,10 @@ class TestEvidenceContinuity(TestCase):
                     approver_role="system",
                     decision_action="promote",
                     decision_rationale="promotion_allowed",
-                    evidence_bundle={"fold_metrics_count": 1, "stress_metrics_count": 1},
+                    evidence_bundle={
+                        "fold_metrics_count": 1,
+                        "stress_metrics_count": 1,
+                    },
                 )
             )
             session.commit()

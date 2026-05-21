@@ -49,6 +49,8 @@ class TestWhitepaperClaimCompiler(TestCase):
                 "seed-arxiv-2603-16365",
                 "seed-arxiv-2602-07085",
                 "seed-arxiv-2505-17388",
+                "seed-arxiv-2508-06788",
+                "seed-arxiv-2507-22712",
                 "seed-arxiv-2512-15720",
             }.issubset({source.run_id for source in RECENT_WHITEPAPER_SEEDS})
         )

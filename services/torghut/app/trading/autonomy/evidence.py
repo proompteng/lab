@@ -4,12 +4,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from decimal import Decimal
+from typing import Any, Mapping, cast
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from ...models import (
+    AutoresearchCandidateSpec,
+    AutoresearchEpoch,
+    AutoresearchPortfolioCandidate,
+    AutoresearchProposalScore,
     ResearchAttempt,
     ResearchCandidate,
     ResearchCostCalibration,
@@ -20,6 +25,17 @@ from ...models import (
     ResearchStressMetrics,
     ResearchValidationTest,
 )
+from ..discovery.profit_target_oracle import evaluate_profit_target_oracle
+
+
+_AUTORESEARCH_PORTFOLIO_READY_STATUSES = {
+    "paper_candidate",
+    "promotion_ready",
+    "ready_for_promotion",
+    "ready_for_promotion_review",
+    "accepted",
+    "promoted",
+}
 
 
 @dataclass(frozen=True)
@@ -39,6 +55,120 @@ class EvidenceContinuityCheckReport:
             "missing_runs": list(self.missing_runs),
             "ok": self.failed_runs == 0,
         }
+
+
+def _autoresearch_portfolio_current_oracle_passed(
+    row: AutoresearchPortfolioCandidate,
+) -> bool:
+    scorecard = row.objective_scorecard_json
+    if not isinstance(scorecard, Mapping):
+        return False
+    oracle = evaluate_profit_target_oracle(
+        cast(Mapping[str, Any], scorecard),
+        target_net_pnl_per_day=Decimal(row.target_net_pnl_per_day),
+    )
+    return bool(oracle.get("passed"))
+
+
+def _autoresearch_continuity_counts(session: Session) -> dict[str, int] | None:
+    portfolio_rows = list(
+        session.execute(select(AutoresearchPortfolioCandidate)).scalars()
+    )
+    counts = {
+        "autoresearch_epochs": int(
+            session.execute(select(func.count(AutoresearchEpoch.id))).scalar_one()
+        ),
+        "autoresearch_candidate_specs": int(
+            session.execute(
+                select(func.count(AutoresearchCandidateSpec.id))
+            ).scalar_one()
+        ),
+        "autoresearch_proposal_scores": int(
+            session.execute(select(func.count(AutoresearchProposalScore.id))).scalar_one()
+        ),
+        "autoresearch_portfolio_candidates": len(portfolio_rows),
+        "autoresearch_portfolio_ready": 0,
+        "autoresearch_portfolio_blocked": 0,
+    }
+    if not any(counts.values()):
+        return None
+
+    for row in portfolio_rows:
+        oracle_ready = (
+            row.status in _AUTORESEARCH_PORTFOLIO_READY_STATUSES
+            and _autoresearch_portfolio_current_oracle_passed(row)
+        )
+        if oracle_ready:
+            counts["autoresearch_portfolio_ready"] += 1
+        else:
+            counts["autoresearch_portfolio_blocked"] += 1
+    return counts
+
+
+def _autoresearch_missing_tables(counts: Mapping[str, int]) -> list[str]:
+    missing: list[str] = []
+    if counts["autoresearch_epochs"] <= 0:
+        missing.append("autoresearch_epochs")
+    if counts["autoresearch_candidate_specs"] <= 0:
+        missing.append("autoresearch_candidate_specs")
+    if counts["autoresearch_proposal_scores"] <= 0:
+        missing.append("autoresearch_proposal_scores")
+    if counts["autoresearch_portfolio_candidates"] <= 0:
+        missing.append("autoresearch_portfolio_candidates")
+    if counts["autoresearch_portfolio_ready"] <= 0:
+        missing.append("autoresearch_portfolio_ready")
+    if (
+        counts["autoresearch_portfolio_ready"] <= 0
+        and counts["autoresearch_portfolio_blocked"] > 0
+    ):
+        missing.append("autoresearch_portfolio_candidates_blocked")
+    return missing
+
+
+def _autoresearch_continuity_report(
+    session: Session,
+    *,
+    checked_at: datetime,
+    run_limit: int,
+) -> EvidenceContinuityCheckReport | None:
+    counts = _autoresearch_continuity_counts(session)
+    if counts is None:
+        return None
+
+    latest_epoch_ids = [
+        str(epoch_id)
+        for (epoch_id,) in session.execute(
+            select(AutoresearchEpoch.epoch_id)
+            .order_by(
+                AutoresearchEpoch.completed_at.desc().nullslast(),
+                AutoresearchEpoch.created_at.desc(),
+            )
+            .limit(max(1, int(run_limit)))
+        ).all()
+    ]
+    run_ids = latest_epoch_ids or ["autoresearch_ledgers"]
+    missing = _autoresearch_missing_tables(counts)
+
+    missing_runs = (
+        [
+            {
+                "run_id": run_ids[0],
+                "missing_tables": missing,
+                "counts": counts,
+                "discovery_mode": "whitepaper_autoresearch",
+                "source_ref": "postgres:autoresearch_ledgers",
+            }
+        ]
+        if missing
+        else []
+    )
+    return EvidenceContinuityCheckReport(
+        checked_at=checked_at,
+        run_ids=run_ids,
+        checked_runs=1,
+        failed_runs=len(missing_runs),
+        missing_runs=missing_runs,
+    )
 
 
 def evaluate_evidence_continuity(
@@ -62,6 +192,13 @@ def evaluate_evidence_continuity(
     )
     run_ids = [row.run_id for row in runs]
     if not run_ids:
+        autoresearch_report = _autoresearch_continuity_report(
+            session,
+            checked_at=checked_at,
+            run_limit=resolved_limit,
+        )
+        if autoresearch_report is not None:
+            return autoresearch_report
         return EvidenceContinuityCheckReport(
             checked_at=checked_at,
             run_ids=[],
@@ -251,6 +388,12 @@ def evaluate_evidence_continuity(
 
     missing_runs: list[dict[str, Any]] = []
     run_lookup = {row.run_id: row for row in runs}
+    autoresearch_counts = _autoresearch_continuity_counts(session)
+    autoresearch_missing = (
+        _autoresearch_missing_tables(autoresearch_counts)
+        if autoresearch_counts is not None
+        else []
+    )
     for run_id in run_ids:
         run = run_lookup[run_id]
         candidate_count = int(candidate_counts.get(run_id, 0) or 0)
@@ -268,16 +411,29 @@ def evaluate_evidence_continuity(
         discovery_mode = str(run.discovery_mode or '').strip()
         require_strategy_factory_chain = discovery_mode.startswith('strategy_factory')
         missing: list[str] = []
-        if candidate_count <= 0:
-            missing.append("research_candidates")
-        if fold_count <= 0:
-            missing.append("research_fold_metrics")
-        if stress_count <= 0:
-            missing.append("research_stress_metrics")
-        if promotion_count <= 0:
-            missing.append("research_promotions")
-        elif promotion_audit_count <= 0:
-            missing.append("promotion_decision_audit")
+        use_autoresearch_continuity = (
+            autoresearch_counts is not None
+            and candidate_count <= 0
+            and promotion_count <= 0
+            and (
+                discovery_mode.startswith("whitepaper_autoresearch")
+                or discovery_mode.startswith("portfolio_profit_autoresearch")
+                or bool(autoresearch_counts)
+            )
+        )
+        if use_autoresearch_continuity:
+            missing.extend(autoresearch_missing)
+        else:
+            if candidate_count <= 0:
+                missing.append("research_candidates")
+            if fold_count <= 0:
+                missing.append("research_fold_metrics")
+            if stress_count <= 0:
+                missing.append("research_stress_metrics")
+            if promotion_count <= 0:
+                missing.append("research_promotions")
+            elif promotion_audit_count <= 0:
+                missing.append("promotion_decision_audit")
         if require_strategy_factory_chain:
             if attempt_count <= 0:
                 missing.append("research_attempts")
@@ -295,6 +451,7 @@ def evaluate_evidence_continuity(
                     "run_id": run_id,
                     "missing_tables": missing,
                     "counts": {
+                        **(autoresearch_counts or {}),
                         "candidate_economic_validity_card": economic_validity_count,
                         "research_attempts": attempt_count,
                         "research_candidates": candidate_count,

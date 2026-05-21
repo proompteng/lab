@@ -1099,6 +1099,7 @@ def _build_impact_assumptions(
             "impact_bps_at_full_participation": str(
                 config.impact_bps_at_full_participation
             ),
+            "impact_participation_exponent": str(config.impact_participation_exponent),
         },
         "estimate": {
             "notional": str(estimate.notional),

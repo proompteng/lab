@@ -20,12 +20,27 @@ def _executable_scorecard_fields() -> dict[str, object]:
         "market_impact_stress_artifact_ref": "/tmp/market-impact-stress.json",
         "market_impact_stress_model": "square_root",
         "market_impact_stress_cost_bps": "6",
+        "market_impact_liquidity_evidence_present": True,
         "market_impact_stress_net_pnl_per_day": "535",
+        "implementation_uncertainty_required": True,
+        "implementation_uncertainty_model": "impact_latency_cost_model_interval",
+        "implementation_uncertainty_model_count": 5,
+        "implementation_uncertainty_stability_passed": True,
+        "implementation_uncertainty_lower_net_pnl_per_day": "515",
+        "implementation_uncertainty_upper_net_pnl_per_day": "540",
+        "implementation_uncertainty_interval_width_per_day": "25",
         "delay_adjusted_depth_stress_passed": True,
         "delay_adjusted_depth_stress_artifact_ref": "/tmp/delay-adjusted-depth-stress.json",
         "delay_adjusted_depth_stress_model": "latency_depth_haircut",
         "delay_adjusted_depth_stress_ms": "250",
+        "delay_adjusted_depth_latency_grid_ms": ["50", "150", "250"],
+        "delay_adjusted_depth_grid_max_stress_ms": "250",
+        "delay_adjusted_depth_liquidity_evidence_present": True,
+        "delay_adjusted_depth_liquidity_missing_day_count": 0,
         "delay_adjusted_depth_fillable_notional_per_day": "525000",
+        "delay_adjusted_depth_worst_active_day_fillable_notional": "525000",
+        "delay_adjusted_depth_p10_active_day_fillable_notional": "525000",
+        "delay_adjusted_depth_tail_coverage_passed": True,
         "delay_adjusted_depth_stress_net_pnl_per_day": "520",
         "double_oos_passed": True,
         "double_oos_artifact_ref": "/tmp/double-oos-report.json",
@@ -67,12 +82,251 @@ class TestProfitTargetOracle(TestCase):
         self.assertTrue(result["passed"])
         self.assertEqual(result["blockers"], [])
 
+    def test_profit_target_oracle_accepts_almgren_chriss_proxy_impact(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "market_impact_stress_model": "almgren_chriss_proxy",
+            "market_impact_stress_cost_bps": "150",
+            "market_impact_stress_net_pnl_per_day": "510",
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertTrue(result["passed"])
+        self.assertNotIn("market_impact_stress_model_failed", result["blockers"])
+
+    def test_profit_target_oracle_rejects_implementation_uncertainty_below_target(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "implementation_uncertainty_stability_passed": False,
+            "implementation_uncertainty_lower_net_pnl_per_day": "499.99",
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn(
+            "implementation_uncertainty_stability_passed_failed",
+            result["blockers"],
+        )
+        self.assertIn(
+            "implementation_uncertainty_lower_net_pnl_per_day_failed",
+            result["blockers"],
+        )
+
+    def test_profit_target_oracle_requires_rejected_signal_outcome_learning_when_declared(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "requires_rejected_signal_outcome_learning": True,
+            "rejected_signal_outcome_labeled_count": 119,
+            "rejected_signal_outcome_pending_ratio": "0.06",
+            "rejected_signal_reason_coverage": "0.79",
+            "rejected_signal_counterfactual_fields": [
+                "counterfactual_return",
+                "route_tca",
+                "post_cost_net_pnl",
+            ],
+            "rejected_signal_outcome_persistence_state": "stale",
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn(
+            "rejected_signal_outcome_labeled_count_failed", result["blockers"]
+        )
+        self.assertIn(
+            "rejected_signal_outcome_pending_ratio_failed", result["blockers"]
+        )
+        self.assertIn("rejected_signal_reason_coverage_failed", result["blockers"])
+        self.assertIn(
+            "rejected_signal_counterfactual_fields_present_failed",
+            result["blockers"],
+        )
+        self.assertIn(
+            "rejected_signal_outcome_persistence_state_failed", result["blockers"]
+        )
+
+    def test_profit_target_oracle_accepts_rejected_signal_outcome_learning_contract(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "mechanism_overlay_ids": ["rejected_signal_outcome_calibration"],
+            "rejected_signal_outcome_labeled_count": 120,
+            "rejected_signal_outcome_pending_ratio": "0.05",
+            "rejected_signal_reason_coverage": "0.80",
+            "rejected_signal_counterfactual_fields_present": True,
+            "rejected_signal_outcome_persistence_state": "ok",
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertTrue(result["passed"])
+
+    def test_profit_target_oracle_rejects_market_limit_policy_without_order_type_tca_evidence(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "mechanism_overlay_ids": ["mixed_market_limit_execution_policy"],
+            "order_type_ablation_sample_count": 59,
+            "order_type_opportunity_cost_bps": "9",
+            "market_order_spread_bps": "9",
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn("order_type_ablation_passed_failed", result["blockers"])
+        self.assertIn("order_type_ablation_artifact_present_failed", result["blockers"])
+        self.assertIn("order_type_ablation_sample_count_failed", result["blockers"])
+        self.assertIn(
+            "market_limit_order_mix_evidence_present_failed", result["blockers"]
+        )
+        self.assertIn(
+            "limit_fill_probability_evidence_present_failed", result["blockers"]
+        )
+        self.assertIn("price_improvement_evidence_present_failed", result["blockers"])
+        self.assertIn("opportunity_cost_evidence_present_failed", result["blockers"])
+        self.assertIn("execution_shortfall_evidence_present_failed", result["blockers"])
+        self.assertIn("route_tca_evidence_present_failed", result["blockers"])
+        self.assertIn("order_type_opportunity_cost_bps_failed", result["blockers"])
+        self.assertIn("market_order_spread_bps_failed", result["blockers"])
+
+    def test_profit_target_oracle_accepts_market_limit_policy_with_order_type_tca_evidence(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "requires_order_type_execution_quality": True,
+            "order_type_ablation_passed": True,
+            "order_type_ablation_artifact_ref": "/tmp/order-type-ablation.json",
+            "order_type_ablation_sample_count": 60,
+            "market_limit_order_mix_evidence_present": True,
+            "limit_fill_probability_evidence_present": True,
+            "price_improvement_evidence_present": True,
+            "opportunity_cost_evidence_present": True,
+            "execution_shortfall_evidence_present": True,
+            "route_tca_artifact_ref": "/tmp/route-tca.json",
+            "order_type_opportunity_cost_bps": "8",
+            "market_order_spread_bps": "8",
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertTrue(result["passed"])
+
+    def test_profit_target_oracle_rejects_route_tca_without_durable_artifact(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "requires_order_type_execution_quality": True,
+            "order_type_ablation_passed": True,
+            "order_type_ablation_artifact_ref": "/tmp/order-type-ablation.json",
+            "order_type_ablation_sample_count": 60,
+            "market_limit_order_mix_evidence_present": True,
+            "limit_fill_probability_evidence_present": True,
+            "price_improvement_evidence_present": True,
+            "opportunity_cost_evidence_present": True,
+            "execution_shortfall_evidence_present": True,
+            "route_tca_evidence_present": True,
+            "order_type_opportunity_cost_bps": "8",
+            "market_order_spread_bps": "8",
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn("route_tca_evidence_present_failed", result["blockers"])
+
+    def test_profit_target_oracle_rejects_route_tca_as_order_type_ablation_artifact(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "requires_order_type_execution_quality": True,
+            "order_type_ablation_passed": True,
+            "order_type_execution_artifact_ref": "/tmp/order-type-execution.json",
+            "order_type_ablation_sample_count": 60,
+            "market_limit_order_mix_evidence_present": True,
+            "limit_fill_probability_evidence_present": True,
+            "price_improvement_evidence_present": True,
+            "opportunity_cost_evidence_present": True,
+            "execution_shortfall_evidence_present": True,
+            "route_tca_artifact_ref": "/tmp/route-tca.json",
+            "order_type_opportunity_cost_bps": "8",
+            "market_order_spread_bps": "8",
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn("order_type_ablation_artifact_present_failed", result["blockers"])
+
+    def test_profit_target_oracle_rejects_pending_validation_contract_evidence(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "validation_contract_pending_count": 1,
+            "validation_live_paper_parity_pending_count": 1,
+            "synthetic_evidence_not_promotion_proof_count": 1,
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn("validation_contract_pending_count_failed", result["blockers"])
+        self.assertIn(
+            "validation_live_paper_parity_pending_count_failed",
+            result["blockers"],
+        )
+        self.assertIn(
+            "synthetic_evidence_not_promotion_proof_count_failed",
+            result["blockers"],
+        )
+
     def test_profit_target_oracle_rejects_missing_market_impact_stress(
         self,
     ) -> None:
         scorecard = _passing_scorecard()
         for key in tuple(scorecard):
-            if key.startswith("market_impact_stress"):
+            if key.startswith("market_impact"):
                 del scorecard[key]
 
         result = evaluate_profit_target_oracle(
@@ -88,6 +342,9 @@ class TestProfitTargetOracle(TestCase):
         self.assertIn("market_impact_stress_model_failed", result["blockers"])
         self.assertIn("market_impact_stress_cost_bps_failed", result["blockers"])
         self.assertIn("market_impact_stress_net_pnl_per_day_failed", result["blockers"])
+        self.assertIn(
+            "market_impact_liquidity_evidence_present_failed", result["blockers"]
+        )
 
     def test_profit_target_oracle_rejects_failed_market_impact_stress(
         self,
@@ -110,6 +367,24 @@ class TestProfitTargetOracle(TestCase):
         self.assertIn("market_impact_stress_model_failed", result["blockers"])
         self.assertIn("market_impact_stress_cost_bps_failed", result["blockers"])
         self.assertIn("market_impact_stress_net_pnl_per_day_failed", result["blockers"])
+
+    def test_profit_target_oracle_rejects_market_impact_proxy_liquidity(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "market_impact_liquidity_evidence_present": False,
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn(
+            "market_impact_liquidity_evidence_present_failed", result["blockers"]
+        )
 
     def test_profit_target_oracle_rejects_missing_delay_adjusted_depth_stress(
         self,
@@ -170,6 +445,64 @@ class TestProfitTargetOracle(TestCase):
         )
         self.assertIn(
             "delay_adjusted_depth_stress_net_pnl_per_day_failed",
+            result["blockers"],
+        )
+
+    def test_profit_target_oracle_rejects_missing_delay_depth_liquidity_evidence(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "delay_adjusted_depth_liquidity_evidence_present": False,
+            "delay_adjusted_depth_liquidity_missing_day_count": 1,
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn(
+            "delay_adjusted_depth_liquidity_evidence_present_failed",
+            result["blockers"],
+        )
+        self.assertIn(
+            "delay_adjusted_depth_liquidity_missing_day_count_failed",
+            result["blockers"],
+        )
+
+    def test_profit_target_oracle_rejects_missing_delay_depth_tail_grid(self) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "delay_adjusted_depth_latency_grid_ms": ["50"],
+            "delay_adjusted_depth_grid_max_stress_ms": "50",
+            "delay_adjusted_depth_tail_coverage_passed": False,
+            "delay_adjusted_depth_worst_active_day_fillable_notional": "250000",
+            "delay_adjusted_depth_p10_active_day_fillable_notional": "260000",
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn("delay_adjusted_depth_latency_grid_ms_failed", result["blockers"])
+        self.assertIn(
+            "delay_adjusted_depth_grid_max_stress_ms_failed",
+            result["blockers"],
+        )
+        self.assertIn(
+            "delay_adjusted_depth_tail_coverage_passed_failed",
+            result["blockers"],
+        )
+        self.assertIn(
+            "delay_adjusted_depth_worst_active_day_fillable_notional_failed",
+            result["blockers"],
+        )
+        self.assertIn(
+            "delay_adjusted_depth_p10_active_day_fillable_notional_failed",
             result["blockers"],
         )
 

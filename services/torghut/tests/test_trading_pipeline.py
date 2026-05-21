@@ -707,6 +707,18 @@ class FakePriceFetcher(PriceFetcher):
         )
 
 
+class TimelinePriceFetcher(PriceFetcher):
+    def __init__(self, snapshots: dict[datetime, MarketSnapshot]) -> None:
+        self.snapshots = snapshots
+
+    def fetch_price(self, signal: SignalEnvelope) -> Decimal | None:
+        snapshot = self.fetch_market_snapshot(signal)
+        return snapshot.price if snapshot is not None else None
+
+    def fetch_market_snapshot(self, signal: SignalEnvelope) -> MarketSnapshot | None:
+        return self.snapshots.get(signal.event_ts)
+
+
 class FakeCircuitBreaker:
     def __init__(self, open_state: bool = False) -> None:
         self.open_state = open_state
@@ -1017,6 +1029,7 @@ class TestTradingPipeline(TestCase):
         *,
         state: TradingState | None = None,
         session_factory: Callable[[], Session] | None = None,
+        price_fetcher: PriceFetcher | None = None,
     ) -> TradingPipeline:
         alpaca_client = FakeAlpacaClient()
         return TradingPipeline(
@@ -1032,7 +1045,7 @@ class TestTradingPipeline(TestCase):
             state=state or TradingState(),
             account_label="paper",
             session_factory=session_factory or self.session_local,
-            price_fetcher=FakePriceFetcher(Decimal("101.50")),
+            price_fetcher=price_fetcher or FakePriceFetcher(Decimal("101.50")),
         )
 
     def test_quote_quality_rejection_records_outcome_learning_event(self) -> None:
@@ -1176,6 +1189,128 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(rows[0].jump_bps, Decimal("4.5"))
         self.assertEqual(rows[0].event_payload_json["reject_reason"], "wide_spread")
 
+    def test_rejected_signal_outcome_labeler_labels_mature_complete_event(
+        self,
+    ) -> None:
+        event_ts = datetime(2026, 1, 1, 14, 31, tzinfo=timezone.utc)
+        followup_ts = event_ts + timedelta(minutes=5)
+        pipeline = self._build_rejected_outcome_pipeline(
+            price_fetcher=TimelinePriceFetcher(
+                {
+                    event_ts: MarketSnapshot(
+                        symbol="AAPL",
+                        as_of=event_ts,
+                        price=Decimal("100.00"),
+                        spread=Decimal("0.02"),
+                        source="test-entry",
+                        bid=Decimal("99.99"),
+                        ask=Decimal("100.01"),
+                    ),
+                    followup_ts: MarketSnapshot(
+                        symbol="AAPL",
+                        as_of=followup_ts,
+                        price=Decimal("101.00"),
+                        spread=Decimal("0.02"),
+                        source="test-followup",
+                        bid=Decimal("100.99"),
+                        ask=Decimal("101.01"),
+                    ),
+                }
+            )
+        )
+        with self.session_local() as session:
+            session.add(
+                RejectedSignalOutcomeEvent(
+                    event_id="reject-event-mature",
+                    source="quote_quality_gate",
+                    paper_source="ssrn-6607301",
+                    paper_claim_id="post-rejection-follow-up-sampling",
+                    account_label="paper",
+                    symbol="AAPL",
+                    event_ts=event_ts,
+                    timeframe="1Min",
+                    seq="42",
+                    reject_reason="missing_executable_quote",
+                    outcome_label_status="pending",
+                    counterfactual_required=True,
+                    required_outcome_fields_json=[
+                        "counterfactual_return",
+                        "route_tca",
+                        "post_cost_net_pnl",
+                        "executable_quote",
+                    ],
+                    event_payload_json={
+                        "event_id": "reject-event-mature",
+                        "candidate_spec_id": "spec-feedback",
+                        "family_template_id": "breakout_continuation_v1",
+                        "runtime_strategy_name": "breakout-continuation-long-v1",
+                        "signal_payload": {"price": "100.00"},
+                    },
+                    outcome_payload_json=None,
+                )
+            )
+            session.commit()
+
+        pipeline._label_mature_rejected_signal_outcome_events(
+            now=followup_ts + timedelta(seconds=1)
+        )
+
+        with self.session_local() as session:
+            row = session.execute(select(RejectedSignalOutcomeEvent)).scalar_one()
+
+        self.assertEqual(row.outcome_label_status, "labeled")
+        outcome = row.outcome_payload_json
+        self.assertEqual(outcome["counterfactual_return"], "0.01")
+        self.assertEqual(outcome["post_cost_net_pnl"], "0.99")
+        self.assertEqual(outcome["executable_quote"]["bid"], "99.99")
+        self.assertEqual(outcome["route_tca"]["horizon_seconds"], "300")
+        self.assertNotIn("promotion_readiness", outcome)
+        self.assertEqual(outcome["candidate_spec_id"], "spec-feedback")
+
+    def test_rejected_signal_outcome_labeler_keeps_missing_quote_pending(
+        self,
+    ) -> None:
+        event_ts = datetime(2026, 1, 1, 14, 31, tzinfo=timezone.utc)
+        pipeline = self._build_rejected_outcome_pipeline(
+            price_fetcher=FakePriceFetcher(Decimal("100.00"))
+        )
+        with self.session_local() as session:
+            session.add(
+                RejectedSignalOutcomeEvent(
+                    event_id="reject-event-incomplete",
+                    source="quote_quality_gate",
+                    paper_source="ssrn-6607301",
+                    paper_claim_id="post-rejection-follow-up-sampling",
+                    account_label="paper",
+                    symbol="AAPL",
+                    event_ts=event_ts,
+                    timeframe="1Min",
+                    seq="42",
+                    reject_reason="missing_executable_quote",
+                    outcome_label_status="pending",
+                    counterfactual_required=True,
+                    required_outcome_fields_json=[
+                        "counterfactual_return",
+                        "route_tca",
+                        "post_cost_net_pnl",
+                        "executable_quote",
+                    ],
+                    event_payload_json={"event_id": "reject-event-incomplete"},
+                    outcome_payload_json=None,
+                )
+            )
+            session.commit()
+
+        pipeline._label_mature_rejected_signal_outcome_events(
+            now=event_ts + timedelta(minutes=6)
+        )
+
+        with self.session_local() as session:
+            row = session.execute(select(RejectedSignalOutcomeEvent)).scalar_one()
+
+        self.assertEqual(row.outcome_label_status, "pending")
+        self.assertIsNone(row.outcome_payload_json)
+
     def test_rejected_signal_outcome_persistence_logs_and_continues_on_db_error(
         self,
     ) -> None:
@@ -1202,6 +1337,9 @@ class TestTradingPipeline(TestCase):
         candidate_id: str = "cand-1",
         capital_stage: str = "0.10x canary",
         strategy_family: str = "demo",
+        post_cost_expectancy_bps: Decimal = Decimal("2.5"),
+        avg_abs_slippage_bps: Decimal = Decimal("1.0"),
+        slippage_budget_bps: Decimal = Decimal("5.0"),
     ) -> None:
         evidence_at = datetime.now(timezone.utc)
         with self.session_local() as session:
@@ -1220,6 +1358,9 @@ class TestTradingPipeline(TestCase):
                     continuity_ok=True,
                     drift_ok=True,
                     dependency_quorum_decision="allow",
+                    post_cost_expectancy_bps=str(post_cost_expectancy_bps),
+                    avg_abs_slippage_bps=str(avg_abs_slippage_bps),
+                    slippage_budget_bps=str(slippage_budget_bps),
                     capital_stage=capital_stage,
                 )
             )
@@ -3693,6 +3834,64 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(pipeline.state.last_signal_continuity_state, "signals_present")
         self.assertFalse(bool(pipeline.state.last_signal_continuity_actionable))
 
+    def test_signal_batch_counts_feature_rows_when_quality_enforcement_disabled(
+        self,
+    ) -> None:
+        from app import config
+
+        original = config.settings.trading_feature_quality_enabled
+        config.settings.trading_feature_quality_enabled = False
+        try:
+            signal = SignalEnvelope(
+                event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+                ingest_ts=datetime(2026, 3, 26, 13, 30, 5, tzinfo=timezone.utc),
+                symbol="AAPL",
+                timeframe="1Min",
+                seq=1,
+                payload={
+                    "feature_schema_version": "3.0.0",
+                    "macd": {"macd": 1.2, "signal": 0.5},
+                    "rsi14": 25,
+                    "price": 100,
+                },
+            )
+            batch = SignalBatch(
+                signals=[_with_default_executable_quote(signal)],
+                cursor_at=signal.event_ts,
+                cursor_seq=signal.seq,
+                cursor_symbol=signal.symbol,
+                query_start=signal.event_ts - timedelta(seconds=10),
+                query_end=signal.event_ts,
+                signal_lag_seconds=4.9,
+            )
+            pipeline = TradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                ingestor=FakeIngestor([]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=FakeAlpacaClient(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="paper",
+                session_factory=self.session_local,
+            )
+            pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+
+            with self.session_local() as session:
+                prepared = pipeline._prepare_batch_for_decisions(
+                    session,
+                    batch,
+                    quality_signals=batch.signals,
+                )
+
+            self.assertTrue(prepared)
+            self.assertEqual(pipeline.state.metrics.feature_batch_rows_total, 1)
+        finally:
+            config.settings.trading_feature_quality_enabled = original
+
     def test_pipeline_blocks_cursor_on_non_staleness_feature_quality_failure(
         self,
     ) -> None:
@@ -4772,6 +4971,9 @@ class TestTradingPipeline(TestCase):
                         continuity_ok=True,
                         drift_ok=True,
                         dependency_quorum_decision="allow",
+                        post_cost_expectancy_bps="2.5",
+                        avg_abs_slippage_bps="1.0",
+                        slippage_budget_bps="5.0",
                         capital_stage="0.10x canary",
                     )
                 )

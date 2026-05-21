@@ -350,12 +350,7 @@ private fun ensureOptionsClickhouseSchema(config: OptionsTaConfig) {
     return
   }
 
-  val statements =
-    schemaSql
-      .splitToSequence(';')
-      .map { it.trim() }
-      .filter { it.isNotEmpty() }
-      .toList()
+  val statements = optionsClickhouseSchemaStatements(schemaSql)
 
   if (statements.isEmpty()) {
     logger.warn("ClickHouse schema SQL resource is empty; skipping schema init.")
@@ -386,6 +381,16 @@ private fun ensureOptionsClickhouseSchema(config: OptionsTaConfig) {
     }
   }
 }
+
+internal fun optionsClickhouseSchemaStatements(schemaSql: String): List<String> =
+  schemaSql
+    .splitToSequence(';')
+    .map { it.trim() }
+    .filter { it.isNotEmpty() }
+    .filter { statement ->
+      val normalized = statement.replace(Regex("\\s+"), " ").uppercase()
+      normalized.startsWith("CREATE DATABASE ") || normalized.contains("TORGHUT.OPTIONS_")
+    }.toList()
 
 private fun optionsClickhouseAdminUrl(url: String): String =
   try {

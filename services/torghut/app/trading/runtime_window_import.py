@@ -194,6 +194,85 @@ def _delay_adjusted_depth_stress_blocking_reasons(
     return list(dict.fromkeys(reasons))
 
 
+def _delay_adjusted_depth_stress_summary(
+    runtime_payload: Mapping[str, Any],
+) -> dict[str, object]:
+    raw_report = runtime_payload.get("delay_adjusted_depth_stress_report")
+    report: Mapping[str, Any]
+    if isinstance(raw_report, Mapping):
+        report = cast(Mapping[str, Any], raw_report)
+    else:
+        report = {}
+    check_count = max(
+        _observation_int(
+            runtime_payload.get("delay_adjusted_depth_stress_checks_total")
+        ),
+        _observation_int(runtime_payload.get("delay_depth_stress_checks_total")),
+        _observation_int(report.get("stress_case_count")),
+        _observation_int(report.get("case_count")),
+        _observation_int(report.get("trading_day_count")),
+    )
+    checked_at = (
+        _parse_observation_datetime(
+            runtime_payload.get("delay_adjusted_depth_stress_checked_at")
+        )
+        or _parse_observation_datetime(report.get("generated_at"))
+        or _parse_observation_datetime(report.get("checked_at"))
+    )
+    latency_grid_ms = _string_list(
+        runtime_payload.get("delay_adjusted_depth_latency_grid_ms")
+    ) or _string_list(report.get("delay_adjusted_depth_latency_grid_ms")) or _string_list(
+        report.get("latency_grid_ms")
+    )
+    return {
+        "checks_total": check_count,
+        "passed": _observation_bool(
+            runtime_payload.get("delay_adjusted_depth_stress_passed")
+            if runtime_payload.get("delay_adjusted_depth_stress_passed") is not None
+            else report.get("passed", report.get("ok"))
+        ),
+        "checked_at": checked_at.isoformat() if checked_at is not None else None,
+        "artifact_ref": _text(
+            runtime_payload.get("delay_adjusted_depth_stress_artifact_ref")
+        )
+        or _text(report.get("artifact_ref")),
+        "latency_grid_ms": latency_grid_ms,
+        "grid_max_stress_ms": _text(
+            runtime_payload.get("delay_adjusted_depth_grid_max_stress_ms")
+        )
+        or _text(report.get("delay_adjusted_depth_grid_max_stress_ms"))
+        or _text(report.get("grid_max_stress_ms")),
+        "worst_grid_fillable_notional_per_day": _text(
+            runtime_payload.get(
+                "delay_adjusted_depth_worst_grid_fillable_notional_per_day"
+            )
+        )
+        or _text(report.get("delay_adjusted_depth_worst_grid_fillable_notional_per_day"))
+        or _text(report.get("worst_grid_fillable_notional_per_day")),
+        "worst_active_day_fillable_notional": _text(
+            runtime_payload.get(
+                "delay_adjusted_depth_worst_active_day_fillable_notional"
+            )
+        )
+        or _text(report.get("delay_adjusted_depth_worst_active_day_fillable_notional"))
+        or _text(report.get("worst_active_day_fillable_notional")),
+        "p10_active_day_fillable_notional": _text(
+            runtime_payload.get("delay_adjusted_depth_p10_active_day_fillable_notional")
+        )
+        or _text(report.get("delay_adjusted_depth_p10_active_day_fillable_notional"))
+        or _text(report.get("p10_active_day_fillable_notional")),
+        "tail_coverage_passed": _observation_bool(
+            runtime_payload.get("delay_adjusted_depth_tail_coverage_passed")
+            if runtime_payload.get("delay_adjusted_depth_tail_coverage_passed")
+            is not None
+            else report.get(
+                "delay_adjusted_depth_tail_coverage_passed",
+                report.get("tail_coverage_passed"),
+            )
+        ),
+    }
+
+
 def _capital_stage_for_runtime_import(
     *,
     observed_stage: str,
@@ -460,6 +539,7 @@ def persist_observed_runtime_windows(
         )
 
     runtime_payload = dict(runtime_observation_payload or {})
+    delay_depth_stress_summary = _delay_adjusted_depth_stress_summary(runtime_payload)
     artifact_refs = _string_list(runtime_payload.get("artifact_refs"))
     dataset_snapshot_ref = _text(runtime_payload.get("dataset_snapshot_ref")) or next(
         (ref for ref in artifact_refs if ref), None
@@ -663,6 +743,7 @@ def persist_observed_runtime_windows(
                 "order_count": total_order_count,
                 "promotion_allowed": promotion_allowed,
                 "promotion_blocking_reasons": promotion_blocking_reasons,
+                "delay_adjusted_depth_stress": delay_depth_stress_summary,
                 "runtime_observation": runtime_payload,
             },
         )
@@ -689,6 +770,7 @@ def persist_observed_runtime_windows(
                 "latest_three_within_budget": latest_three_budget_ok,
                 "promotion_allowed": promotion_allowed,
                 "promotion_blocking_reasons": promotion_blocking_reasons,
+                "delay_adjusted_depth_stress": delay_depth_stress_summary,
                 "runtime_observation": runtime_payload,
             },
         )
@@ -710,6 +792,7 @@ def persist_observed_runtime_windows(
         "slippage_budget_bps": str(budget),
         "promotion_allowed": promotion_allowed,
         "promotion_blocking_reasons": promotion_blocking_reasons,
+        "delay_adjusted_depth_stress": delay_depth_stress_summary,
     }
 
 

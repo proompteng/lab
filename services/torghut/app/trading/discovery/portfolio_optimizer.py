@@ -358,10 +358,24 @@ def _executable_replay_max_notional(bundle: CandidateEvidenceBundle) -> Decimal:
 def _market_impact_stress_passed(bundle: CandidateEvidenceBundle) -> bool:
     scorecard = _scorecard(bundle)
     return _boolish(
-        scorecard.get("market_impact_stress_passed")
+        scorecard.get("nonlinear_market_impact_stress_passed")
+        or scorecard.get("market_impact_stress_passed")
         or scorecard.get("cost_shock_stress_passed")
-        or scorecard.get("nonlinear_market_impact_stress_passed")
     )
+
+
+def _market_impact_stress_model(bundle: CandidateEvidenceBundle) -> str:
+    scorecard = _scorecard(bundle)
+    return _string(
+        scorecard.get("nonlinear_market_impact_stress_model")
+        or scorecard.get("market_impact_stress_model")
+    )
+
+
+def _market_impact_stress_components(
+    bundle: CandidateEvidenceBundle,
+) -> Mapping[str, Any]:
+    return _mapping(_scorecard(bundle).get("market_impact_stress_components"))
 
 
 def _market_impact_stress_artifact_ref(bundle: CandidateEvidenceBundle) -> str:
@@ -391,12 +405,100 @@ def _market_impact_stress_cost_bps(bundle: CandidateEvidenceBundle) -> Decimal:
     )
 
 
+def _market_impact_liquidity_evidence_present(
+    bundle: CandidateEvidenceBundle,
+) -> bool:
+    scorecard = _scorecard(bundle)
+    return _boolish(
+        scorecard.get("market_impact_liquidity_evidence_present")
+        or scorecard.get("liquidity_evidence_present")
+    )
+
+
+def _implementation_uncertainty_required(bundle: CandidateEvidenceBundle) -> bool:
+    return _boolish(_scorecard(bundle).get("implementation_uncertainty_required"))
+
+
+def _implementation_uncertainty_stability_passed(
+    bundle: CandidateEvidenceBundle,
+) -> bool:
+    scorecard = _scorecard(bundle)
+    if not _implementation_uncertainty_required(bundle):
+        return True
+    return _boolish(scorecard.get("implementation_uncertainty_stability_passed"))
+
+
+def _implementation_uncertainty_model_count(bundle: CandidateEvidenceBundle) -> int:
+    return int(
+        _decimal(_scorecard(bundle).get("implementation_uncertainty_model_count"))
+    )
+
+
+def _implementation_uncertainty_lower_net_per_day(
+    bundle: CandidateEvidenceBundle,
+) -> Decimal:
+    return _decimal(
+        _scorecard(bundle).get("implementation_uncertainty_lower_net_pnl_per_day")
+    )
+
+
+def _implementation_uncertainty_upper_net_per_day(
+    bundle: CandidateEvidenceBundle,
+) -> Decimal:
+    return _decimal(
+        _scorecard(bundle).get("implementation_uncertainty_upper_net_pnl_per_day")
+    )
+
+
+def _implementation_uncertainty_interval_width_per_day(
+    bundle: CandidateEvidenceBundle,
+) -> Decimal:
+    return _decimal(
+        _scorecard(bundle).get("implementation_uncertainty_interval_width_per_day")
+    )
+
+
 def _delay_adjusted_depth_stress_passed(bundle: CandidateEvidenceBundle) -> bool:
     scorecard = _scorecard(bundle)
     return _boolish(
         scorecard.get("delay_adjusted_depth_stress_passed")
         or scorecard.get("delay_depth_stress_passed")
         or scorecard.get("latency_depth_stress_passed")
+    )
+
+
+def _delay_adjusted_depth_liquidity_evidence_present(
+    bundle: CandidateEvidenceBundle,
+) -> bool:
+    scorecard = _scorecard(bundle)
+    return _boolish(
+        scorecard.get("delay_adjusted_depth_liquidity_evidence_present")
+        or scorecard.get("delay_depth_liquidity_evidence_present")
+        or scorecard.get("latency_depth_liquidity_evidence_present")
+    )
+
+
+def _delay_adjusted_depth_liquidity_missing_day_count(
+    bundle: CandidateEvidenceBundle,
+) -> int:
+    scorecard = _scorecard(bundle)
+    return int(
+        _decimal(
+            scorecard.get("delay_adjusted_depth_liquidity_missing_day_count")
+            or scorecard.get("delay_depth_liquidity_missing_day_count")
+            or scorecard.get("latency_depth_liquidity_missing_day_count")
+        )
+    )
+
+
+def _delay_adjusted_depth_tail_coverage_passed(
+    bundle: CandidateEvidenceBundle,
+) -> bool:
+    scorecard = _scorecard(bundle)
+    return _boolish(
+        scorecard.get("delay_adjusted_depth_tail_coverage_passed")
+        or scorecard.get("delay_depth_tail_coverage_passed")
+        or scorecard.get("latency_depth_tail_coverage_passed")
     )
 
 
@@ -439,6 +541,28 @@ def _delay_adjusted_depth_fillable_notional_per_day(
         scorecard.get("delay_adjusted_depth_fillable_notional_per_day")
         or scorecard.get("delay_depth_stress_fillable_notional_per_day")
         or scorecard.get("latency_depth_fillable_notional_per_day")
+    )
+
+
+def _delay_adjusted_depth_worst_active_day_fillable_notional(
+    bundle: CandidateEvidenceBundle,
+) -> Decimal:
+    scorecard = _scorecard(bundle)
+    return _decimal(
+        scorecard.get("delay_adjusted_depth_worst_active_day_fillable_notional")
+        or scorecard.get("delay_depth_worst_active_day_fillable_notional")
+        or scorecard.get("latency_depth_worst_active_day_fillable_notional")
+    )
+
+
+def _delay_adjusted_depth_p10_active_day_fillable_notional(
+    bundle: CandidateEvidenceBundle,
+) -> Decimal:
+    scorecard = _scorecard(bundle)
+    return _decimal(
+        scorecard.get("delay_adjusted_depth_p10_active_day_fillable_notional")
+        or scorecard.get("delay_depth_p10_active_day_fillable_notional")
+        or scorecard.get("latency_depth_p10_active_day_fillable_notional")
     )
 
 
@@ -907,6 +1031,20 @@ def _portfolio_scorecard(
         ),
         Decimal("0"),
     )
+    delay_depth_worst_active_day_fillable_notional = sum(
+        (
+            _delay_adjusted_depth_worst_active_day_fillable_notional(bundle) * weight
+            for bundle, weight in zip(selected, weights, strict=True)
+        ),
+        Decimal("0"),
+    )
+    delay_depth_p10_active_day_fillable_notional = sum(
+        (
+            _delay_adjusted_depth_p10_active_day_fillable_notional(bundle) * weight
+            for bundle, weight in zip(selected, weights, strict=True)
+        ),
+        Decimal("0"),
+    )
     double_oos_artifact_refs = [
         ref for ref in (_double_oos_artifact_ref(bundle) for bundle in selected) if ref
     ]
@@ -932,6 +1070,70 @@ def _portfolio_scorecard(
         ),
         Decimal("0"),
     )
+    market_impact_models = sorted(
+        {
+            model
+            for model in (_market_impact_stress_model(bundle) for bundle in selected)
+            if model
+        }
+    )
+    market_impact_components_by_sleeve = {
+        bundle.candidate_id: dict(_market_impact_stress_components(bundle))
+        for bundle in selected
+        if _market_impact_stress_components(bundle)
+    }
+    market_impact_max_cost_bps = max(
+        (_market_impact_stress_cost_bps(bundle) for bundle in selected),
+        default=Decimal("0"),
+    )
+    implementation_uncertainty_required = any(
+        _implementation_uncertainty_required(bundle) for bundle in selected
+    )
+    implementation_uncertainty_model_count = sum(
+        _implementation_uncertainty_model_count(bundle) for bundle in selected
+    )
+    implementation_uncertainty_lower_net_pnl_per_day = sum(
+        (
+            _implementation_uncertainty_lower_net_per_day(bundle) * weight
+            for bundle, weight in zip(selected, weights, strict=True)
+        ),
+        Decimal("0"),
+    )
+    implementation_uncertainty_upper_net_pnl_per_day = sum(
+        (
+            _implementation_uncertainty_upper_net_per_day(bundle) * weight
+            for bundle, weight in zip(selected, weights, strict=True)
+        ),
+        Decimal("0"),
+    )
+    implementation_uncertainty_interval_width_per_day = sum(
+        (
+            _implementation_uncertainty_interval_width_per_day(bundle) * weight
+            for bundle, weight in zip(selected, weights, strict=True)
+        ),
+        Decimal("0"),
+    )
+    sleeve_promotion_blockers: dict[str, list[str]] = {}
+    promotion_contract_blockers: list[str] = []
+    promotion_contract_blocker_observations: list[str] = []
+    for bundle in selected:
+        blockers = [
+            str(blocker)
+            for blocker in (
+                *evidence_bundle_blockers(bundle),
+                *cast(
+                    Sequence[Any],
+                    bundle.promotion_readiness.get("blockers") or (),
+                ),
+            )
+            if str(blocker)
+        ]
+        if blockers:
+            unique_blockers = list(dict.fromkeys(blockers))
+            sleeve_promotion_blockers[bundle.candidate_id] = unique_blockers
+            promotion_contract_blocker_observations.extend(blockers)
+            promotion_contract_blockers.extend(unique_blockers)
+    promotion_contract_blockers = list(dict.fromkeys(promotion_contract_blockers))
     scorecard = {
         "net_pnl_per_day": str(net_per_day),
         "portfolio_post_cost_net_pnl_per_day": str(net_per_day),
@@ -997,18 +1199,73 @@ def _portfolio_scorecard(
         "market_impact_stress_artifact_ref": market_impact_artifact_refs[0]
         if market_impact_artifact_refs
         else "",
-        "market_impact_stress_model": "portfolio_square_root_impact",
-        "market_impact_stress_cost_bps": str(
-            max(
-                (_market_impact_stress_cost_bps(bundle) for bundle in selected),
-                default=Decimal("0"),
-            )
+        "market_impact_stress_model": "portfolio_nonlinear_impact",
+        "market_impact_stress_models": market_impact_models,
+        "market_impact_stress_cost_bps": str(market_impact_max_cost_bps),
+        "market_impact_stress_components": {
+            "selected_models": market_impact_models,
+            "max_selected_cost_bps": str(market_impact_max_cost_bps),
+            "sleeves": market_impact_components_by_sleeve,
+            "source_marker": "realistic_market_impact_arxiv_2603_29086_2026",
+        },
+        "nonlinear_market_impact_stress_passed": bool(selected)
+        and all(_market_impact_stress_passed(bundle) for bundle in selected),
+        "nonlinear_market_impact_stress_model": "portfolio_nonlinear_impact",
+        "nonlinear_market_impact_stress_cost_bps": str(market_impact_max_cost_bps),
+        "nonlinear_market_impact_stress_net_pnl_per_day": str(
+            market_impact_stress_net_pnl_per_day
+        ),
+        "market_impact_liquidity_evidence_present": bool(selected)
+        and all(
+            _market_impact_liquidity_evidence_present(bundle) for bundle in selected
         ),
         "market_impact_stress_net_pnl_per_day": str(
             market_impact_stress_net_pnl_per_day
         ),
+        "implementation_uncertainty_required": implementation_uncertainty_required,
+        "implementation_uncertainty_model": "portfolio_impact_latency_cost_interval",
+        "implementation_uncertainty_model_count": implementation_uncertainty_model_count,
+        "implementation_uncertainty_stability_passed": bool(selected)
+        and all(
+            _implementation_uncertainty_stability_passed(bundle) for bundle in selected
+        )
+        and (
+            not implementation_uncertainty_required
+            or implementation_uncertainty_lower_net_pnl_per_day
+            >= target_net_pnl_per_day
+        ),
+        "implementation_uncertainty_lower_net_pnl_per_day": str(
+            implementation_uncertainty_lower_net_pnl_per_day
+        ),
+        "implementation_uncertainty_upper_net_pnl_per_day": str(
+            implementation_uncertainty_upper_net_pnl_per_day
+        ),
+        "implementation_uncertainty_interval_width_per_day": str(
+            implementation_uncertainty_interval_width_per_day
+        ),
+        "implementation_uncertainty_target_net_pnl_per_day": str(
+            target_net_pnl_per_day
+        ),
+        "implementation_uncertainty_source_markers": [
+            "lob_simulation_reality_gap_arxiv_2603_24137_2026",
+            "order_flow_market_impact_volatility_arxiv_2601_23172_2026",
+            "implementation_risk_backtesting_arxiv_2603_20319_2026",
+        ],
         "delay_adjusted_depth_stress_passed": bool(selected)
         and all(_delay_adjusted_depth_stress_passed(bundle) for bundle in selected),
+        "delay_adjusted_depth_liquidity_evidence_present": bool(selected)
+        and all(
+            _delay_adjusted_depth_liquidity_evidence_present(bundle)
+            for bundle in selected
+        ),
+        "delay_adjusted_depth_liquidity_missing_day_count": sum(
+            _delay_adjusted_depth_liquidity_missing_day_count(bundle)
+            for bundle in selected
+        ),
+        "delay_adjusted_depth_tail_coverage_passed": bool(selected)
+        and all(
+            _delay_adjusted_depth_tail_coverage_passed(bundle) for bundle in selected
+        ),
         "delay_adjusted_depth_stress_artifact_refs": delay_depth_artifact_refs,
         "delay_adjusted_depth_stress_artifact_ref": delay_depth_artifact_refs[0]
         if delay_depth_artifact_refs
@@ -1020,8 +1277,16 @@ def _portfolio_scorecard(
                 default=Decimal("0"),
             )
         ),
+        "delay_adjusted_depth_latency_grid_ms": ["50", "150", "250"],
+        "delay_adjusted_depth_grid_max_stress_ms": "250",
         "delay_adjusted_depth_fillable_notional_per_day": str(
             delay_depth_fillable_notional_per_day
+        ),
+        "delay_adjusted_depth_worst_active_day_fillable_notional": str(
+            delay_depth_worst_active_day_fillable_notional
+        ),
+        "delay_adjusted_depth_p10_active_day_fillable_notional": str(
+            delay_depth_p10_active_day_fillable_notional
         ),
         "delay_adjusted_depth_stress_net_pnl_per_day": str(
             delay_depth_stress_net_pnl_per_day
@@ -1042,6 +1307,23 @@ def _portfolio_scorecard(
         "daily_filled_notional": {
             day: str(value) for day, value in sorted(daily_notional.items())
         },
+        "sleeve_promotion_readiness_blockers": sleeve_promotion_blockers,
+        "promotion_contract_blockers": promotion_contract_blockers,
+        "validation_contract_pending_count": sum(
+            1
+            for blocker in promotion_contract_blocker_observations
+            if blocker == "validation_contract_pending"
+        ),
+        "validation_live_paper_parity_pending_count": sum(
+            1
+            for blocker in promotion_contract_blocker_observations
+            if blocker == "validation_live_paper_parity_pending"
+        ),
+        "synthetic_evidence_not_promotion_proof_count": sum(
+            1
+            for blocker in promotion_contract_blocker_observations
+            if blocker == "synthetic_evidence_not_promotion_proof"
+        ),
     }
     scorecard["profit_target_oracle"] = evaluate_profit_target_oracle(
         scorecard,
@@ -1099,17 +1381,28 @@ def _portfolio_selection_key(
         _scorecard_decimal(scorecard, "delay_adjusted_depth_stress_net_pnl_per_day"),
         _scorecard_decimal(scorecard, "delay_adjusted_depth_fillable_notional_per_day"),
         -_scorecard_decimal(scorecard, "delay_adjusted_depth_stress_ms"),
+        Decimal(
+            1
+            if bool(scorecard.get("implementation_uncertainty_stability_passed"))
+            else 0
+        ),
+        _scorecard_decimal(
+            scorecard, "implementation_uncertainty_lower_net_pnl_per_day"
+        ),
+        -_scorecard_decimal(
+            scorecard, "implementation_uncertainty_interval_width_per_day"
+        ),
         Decimal(1 if bool(scorecard.get("double_oos_passed")) else 0),
         _scorecard_decimal(scorecard, "double_oos_independent_window_count"),
         _scorecard_decimal(scorecard, "double_oos_pass_rate"),
         _scorecard_decimal(scorecard, "double_oos_net_pnl_per_day"),
         _scorecard_decimal(scorecard, "double_oos_cost_shock_net_pnl_per_day"),
-        _scorecard_decimal(scorecard, "net_pnl_per_day"),
         -_scorecard_decimal(scorecard, "missing_sleeve_daily_net_count"),
-        _scorecard_decimal(scorecard, "avg_filled_notional_per_day"),
         -_scorecard_decimal(scorecard, "best_day_share"),
         -_scorecard_decimal(scorecard, "max_single_symbol_contribution_share"),
         -_scorecard_decimal(scorecard, "max_cluster_contribution_share"),
+        _scorecard_decimal(scorecard, "avg_filled_notional_per_day"),
+        _scorecard_decimal(scorecard, "net_pnl_per_day"),
         -_scorecard_decimal(scorecard, "max_gross_exposure_pct_equity"),
         _scorecard_decimal(scorecard, "min_cash"),
         -_scorecard_decimal(scorecard, "negative_cash_observation_count"),
@@ -1122,6 +1415,16 @@ def _portfolio_selection_key(
 
 def _empty_selection_key() -> tuple[Decimal, ...]:
     return (
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
+        Decimal("0"),
         Decimal("0"),
         Decimal("0"),
         Decimal("0"),

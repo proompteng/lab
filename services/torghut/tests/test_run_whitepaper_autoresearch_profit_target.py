@@ -25,6 +25,7 @@ from app.models import (
     AutoresearchPortfolioCandidate,
     AutoresearchProposalScore,
     Base,
+    RejectedSignalOutcomeEvent,
     WhitepaperAnalysisRun,
     WhitepaperClaim,
     WhitepaperClaimRelation,
@@ -129,12 +130,14 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             paper_run_id=[],
             source_jsonl=[],
             feedback_evidence_jsonl=[],
+            candidate_specs=[],
             seed_recent_whitepapers=True,
             target_net_pnl_per_day="500",
             max_candidates=8,
             top_k=4,
             exploration_slots=2,
             feedback_block_reaudit_slots=0,
+            selection_only=False,
             portfolio_size_min=2,
             portfolio_size_max=4,
             replay_mode="synthetic",
@@ -421,6 +424,92 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(args.symbols.split(","), _CHIP_UNIVERSE)
         self.assertEqual(args.feedback_evidence_jsonl, [])
 
+    def test_parse_args_uses_reachable_clickhouse_env_defaults(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            with (
+                patch.dict(
+                    "os.environ",
+                    {
+                        "TA_CLICKHOUSE_URL": "http://127.0.0.1:8123",
+                        "TA_CLICKHOUSE_USERNAME": "reader",
+                    },
+                ),
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "run_whitepaper_autoresearch_profit_target.py",
+                        "--output-dir",
+                        tmpdir,
+                    ],
+                ),
+            ):
+                args = runner._parse_args()
+
+        self.assertEqual(args.clickhouse_http_url, "http://127.0.0.1:8123")
+        self.assertEqual(args.clickhouse_username, "reader")
+        self.assertEqual(args.clickhouse_password_env, "TA_CLICKHOUSE_PASSWORD")
+
+    def test_parse_args_prefers_explicit_clickhouse_http_url_over_ta_jdbc(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            with (
+                patch.dict(
+                    "os.environ",
+                    {
+                        "TA_CLICKHOUSE_URL": "jdbc:clickhouse://clickhouse/torghut",
+                        "CLICKHOUSE_HTTP_URL": "http://127.0.0.1:8123",
+                    },
+                ),
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "run_whitepaper_autoresearch_profit_target.py",
+                        "--output-dir",
+                        tmpdir,
+                    ],
+                ),
+            ):
+                args = runner._parse_args()
+
+        self.assertEqual(args.clickhouse_http_url, "http://127.0.0.1:8123")
+
+    def test_clickhouse_preflight_fails_fast_for_unresolved_in_cluster_dns(
+        self,
+    ) -> None:
+        args = Namespace(
+            replay_mode="real",
+            selection_only=False,
+            clickhouse_http_url="http://torghut-clickhouse.torghut.svc.cluster.local:8123",
+        )
+
+        with patch(
+            "scripts.run_whitepaper_autoresearch_profit_target.socket.getaddrinfo",
+            side_effect=runner.socket.gaierror("not known"),
+        ):
+            failure = runner._clickhouse_endpoint_preflight_failure(args)
+
+        self.assertIn("clickhouse_endpoint_unreachable", failure)
+        self.assertIn("TA_CLICKHOUSE_URL", failure)
+        self.assertIn("--clickhouse-http-url", failure)
+
+    def test_clickhouse_preflight_skips_explicit_non_cluster_endpoint(self) -> None:
+        args = Namespace(
+            replay_mode="real",
+            selection_only=False,
+            clickhouse_http_url="http://127.0.0.1:8123",
+        )
+
+        with patch(
+            "scripts.run_whitepaper_autoresearch_profit_target.socket.getaddrinfo",
+            side_effect=AssertionError("non-cluster endpoints are replay-checked"),
+        ):
+            failure = runner._clickhouse_endpoint_preflight_failure(args)
+
+        self.assertEqual(failure, "")
+
     def test_workflow_template_surfaces_feedback_and_fails_closed_on_stale_tape(
         self,
     ) -> None:
@@ -477,6 +566,14 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "name: realReplayShardTimeoutSeconds\n        value: '900'", template
         )
         self.assertIn("name: realReplayShardWorkers\n        value: '4'", template)
+        self.assertIn("name: trainDays\n        value: '12'", template)
+        self.assertIn("name: holdoutDays\n        value: '8'", template)
+        self.assertIn("name: secondOosDays\n        value: '5'", template)
+        self.assertIn('--train-days "{{inputs.parameters.trainDays}}"', template)
+        self.assertIn('--holdout-days "{{inputs.parameters.holdoutDays}}"', template)
+        self.assertIn(
+            '--second-oos-days "{{inputs.parameters.secondOosDays}}"', template
+        )
         self.assertIn("cpu: 4", template)
         self.assertIn("memory: 12Gi", template)
         self.assertIn("cpu: 8", template)
@@ -604,6 +701,18 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "history_daily_target_shortfall",
             row_by_spec[losing_spec.candidate_spec_id]["features"],
         )
+        self.assertIn(
+            "history_market_impact_stress_passed",
+            row_by_spec[losing_spec.candidate_spec_id]["features"],
+        )
+        self.assertIn(
+            "history_delay_adjusted_depth_stress_passed",
+            row_by_spec[losing_spec.candidate_spec_id]["features"],
+        )
+        self.assertIn(
+            "history_double_oos_cost_shock_net_pnl_per_day",
+            row_by_spec[losing_spec.candidate_spec_id]["features"],
+        )
 
     def test_feedback_evidence_jsonl_round_trips(self) -> None:
         spec = self._candidate_spec("spec-feedback-jsonl")
@@ -696,6 +805,134 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(model["feedback_matched_spec_count"], 1)
         self.assertEqual(rows[0]["training_source"], "feedback_real_replay")
         self.assertEqual(rows[0]["feedback_match_scope"], "candidate_spec_id")
+
+    def test_feedback_evidence_loads_labeled_rejected_signal_outcomes(self) -> None:
+        spec = self._candidate_spec("spec-rejected-outcome-feedback")
+        required_fields = [
+            "counterfactual_return",
+            "route_tca",
+            "post_cost_net_pnl",
+            "executable_quote",
+        ]
+        with (
+            Session(self.engine) as session,
+            patch(
+                "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+                side_effect=lambda: Session(self.engine),
+            ),
+        ):
+            session.add_all(
+                [
+                    RejectedSignalOutcomeEvent(
+                        event_id="reject-outcome-labeled",
+                        source="quote_quality_gate",
+                        paper_source="ssrn-6607301",
+                        paper_claim_id="post-rejection-follow-up-sampling",
+                        account_label="paper",
+                        symbol="AAPL",
+                        event_ts=datetime(2026, 5, 18, 14, 30, 0),
+                        timeframe="1Min",
+                        seq="1",
+                        reject_reason="missing_executable_quote",
+                        outcome_label_status="labeled",
+                        counterfactual_required=True,
+                        required_outcome_fields_json=required_fields,
+                        event_payload_json={
+                            "candidate_spec_id": spec.candidate_spec_id
+                        },
+                        outcome_payload_json={
+                            "candidate_id": "cand-rejected-outcome",
+                            "candidate_spec_id": spec.candidate_spec_id,
+                            "family_template_id": spec.family_template_id,
+                            "runtime_family": spec.runtime_family,
+                            "runtime_strategy_name": spec.runtime_strategy_name,
+                            "counterfactual_return": "-0.0042",
+                            "route_tca": {"post_cost_expectancy_bps_proxy": "-11.5"},
+                            "post_cost_net_pnl": "-84.25",
+                            "executable_quote": {"bid": "100.00", "ask": "100.02"},
+                            "objective_scorecard": {
+                                "net_pnl_per_day": "-84.25",
+                                "active_day_ratio": "1",
+                                "positive_day_ratio": "0",
+                                "negative_day_count": 1,
+                            },
+                        },
+                    ),
+                    RejectedSignalOutcomeEvent(
+                        event_id="reject-outcome-pending",
+                        source="quote_quality_gate",
+                        paper_source="ssrn-6607301",
+                        paper_claim_id="post-rejection-follow-up-sampling",
+                        account_label="paper",
+                        symbol="MSFT",
+                        event_ts=datetime(2026, 5, 18, 14, 31, 0),
+                        timeframe="1Min",
+                        seq="2",
+                        reject_reason="missing_executable_quote",
+                        outcome_label_status="pending",
+                        counterfactual_required=True,
+                        required_outcome_fields_json=required_fields,
+                        event_payload_json={
+                            "candidate_spec_id": spec.candidate_spec_id
+                        },
+                        outcome_payload_json=None,
+                    ),
+                    RejectedSignalOutcomeEvent(
+                        event_id="reject-outcome-incomplete",
+                        source="quote_quality_gate",
+                        paper_source="ssrn-6607301",
+                        paper_claim_id="post-rejection-follow-up-sampling",
+                        account_label="paper",
+                        symbol="NVDA",
+                        event_ts=datetime(2026, 5, 18, 14, 32, 0),
+                        timeframe="1Min",
+                        seq="3",
+                        reject_reason="missing_executable_quote",
+                        outcome_label_status="labeled",
+                        counterfactual_required=True,
+                        required_outcome_fields_json=required_fields,
+                        event_payload_json={
+                            "candidate_spec_id": spec.candidate_spec_id
+                        },
+                        outcome_payload_json={
+                            "candidate_spec_id": spec.candidate_spec_id,
+                            "counterfactual_return": "-0.001",
+                        },
+                    ),
+                ]
+            )
+            session.commit()
+
+            loaded, manifest = runner._load_autoresearch_feedback_evidence_bundles(
+                (), include_persisted=True
+            )
+
+        model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(spec,), feedback_evidence_bundles=loaded
+        )
+
+        self.assertEqual(manifest["combined_bundle_count"], 1)
+        self.assertEqual(
+            manifest["persisted"]["rejected_signal_outcome_scanned_count"], 2
+        )
+        self.assertEqual(
+            manifest["persisted"]["rejected_signal_outcome_bundle_count"], 1
+        )
+        self.assertEqual(
+            manifest["persisted"]["rejected_signal_outcome_invalid_count"], 1
+        )
+        self.assertEqual(
+            manifest["persisted"]["rejected_signal_outcome_event_ids"],
+            ["reject-outcome-labeled"],
+        )
+        self.assertEqual(model["feedback_evidence_bundle_count"], 1)
+        self.assertEqual(model["feedback_matched_spec_count"], 1)
+        self.assertEqual(rows[0]["training_source"], "feedback_real_replay")
+        self.assertEqual(rows[0]["feedback_match_scope"], "candidate_spec_id")
+        self.assertEqual(
+            loaded[0].dataset_snapshot_id,
+            "rejected-signal-outcome:reject-outcome-labeled",
+        )
 
     def test_feedback_evidence_dedupe_handles_missing_bundle_ids(self) -> None:
         spec = self._candidate_spec("spec-feedback-dedupe")
@@ -819,6 +1056,208 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(model["feedback_matched_spec_count"], 1)
         self.assertEqual(rows[0]["training_source"], "feedback_real_replay")
         self.assertEqual(rows[0]["selection_reason"], "pre_replay_mlx_feedback_blocked")
+
+    def test_feedback_evidence_persisted_loader_reconstructs_blocked_portfolio_candidates(
+        self,
+    ) -> None:
+        spec = self._candidate_spec("spec-portfolio-feedback")
+        scorecard = {
+            "net_pnl_per_day": "306.12",
+            "portfolio_post_cost_net_pnl_per_day": "306.12",
+            "active_day_ratio": "0.72",
+            "positive_day_ratio": "0.68",
+            "max_drawdown": "6400",
+            "max_single_symbol_contribution_share": "0.91",
+            "profit_target_oracle": {
+                "passed": False,
+                "blockers": [
+                    "portfolio_post_cost_net_pnl_per_day_failed",
+                    "max_single_symbol_contribution_share_failed",
+                    "max_drawdown_failed",
+                ],
+            },
+        }
+        sleeve = {
+            "candidate_id": "candidate-portfolio-feedback",
+            "candidate_spec_id": spec.candidate_spec_id,
+            "family_template_id": spec.family_template_id,
+            "runtime_family": spec.runtime_family,
+            "runtime_strategy_name": spec.runtime_strategy_name,
+            "weight": "0.50",
+            "expected_net_pnl_per_day": "153.06",
+            "source_expected_net_pnl_per_day": "306.12",
+            "risk_contribution": "3200",
+            "source_risk_contribution": "6400",
+            "correlation_cluster": "NVDA",
+            "params": {
+                "signal_motif": "order_flow_continuation",
+                "selection_mode": "top",
+                "rank_feature": "ofi_z",
+                "capital_profile": "feedback_escape",
+                "top_n": "2",
+            },
+            "universe_symbols": ["NVDA", "AMD"],
+        }
+
+        with (
+            Session(self.engine) as session,
+            patch(
+                "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+                side_effect=lambda: Session(self.engine),
+            ),
+        ):
+            session.add(
+                AutoresearchPortfolioCandidate(
+                    portfolio_candidate_id="portfolio-feedback-blocked",
+                    epoch_id="portfolio-feedback-epoch",
+                    source_candidate_ids_json=["candidate-portfolio-feedback"],
+                    target_net_pnl_per_day=Decimal("500"),
+                    objective_scorecard_json=scorecard,
+                    optimizer_report_json={"method": "test"},
+                    payload_json={
+                        "schema_version": "torghut.portfolio-candidate-spec.v1",
+                        "portfolio_candidate_id": "portfolio-feedback-blocked",
+                        "source_candidate_ids": ["candidate-portfolio-feedback"],
+                        "target_net_pnl_per_day": "500",
+                        "sleeves": [sleeve],
+                        "objective_scorecard": scorecard,
+                        "optimizer_report": {"method": "test"},
+                    },
+                    status="blocked",
+                )
+            )
+            session.commit()
+
+            loaded, manifest = runner._load_recent_persisted_feedback_evidence_bundles()
+
+        self.assertEqual(len(loaded), 1)
+        self.assertEqual(loaded[0].candidate_spec_id, spec.candidate_spec_id)
+        self.assertEqual(loaded[0].candidate_id, "candidate-portfolio-feedback")
+        self.assertEqual(
+            loaded[0].dataset_snapshot_id,
+            "autoresearch-portfolio-candidate:portfolio-feedback-epoch:portfolio-feedback-blocked",
+        )
+        self.assertEqual(
+            loaded[0].objective_scorecard["portfolio_candidate_id"],
+            "portfolio-feedback-blocked",
+        )
+        self.assertEqual(loaded[0].objective_scorecard["portfolio_status"], "blocked")
+        self.assertIn(
+            "portfolio_post_cost_net_pnl_per_day_failed",
+            loaded[0].objective_scorecard["portfolio_blockers"],
+        )
+        self.assertIn(
+            "max_drawdown_failed",
+            loaded[0].objective_scorecard["hard_vetoes"],
+        )
+        self.assertTrue(loaded[0].objective_scorecard["feedback_shape_key"])
+        self.assertTrue(loaded[0].objective_scorecard["feedback_risk_profile_key"])
+        self.assertEqual(manifest["status"], "loaded")
+        self.assertEqual(manifest["portfolio_candidate_scanned_count"], 1)
+        self.assertEqual(manifest["portfolio_candidate_bundle_count"], 1)
+        self.assertEqual(
+            manifest["portfolio_candidate_ids"], ["portfolio-feedback-blocked"]
+        )
+
+        model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(spec,), feedback_evidence_bundles=loaded
+        )
+
+        self.assertEqual(model["feedback_evidence_bundle_count"], 1)
+        self.assertEqual(model["feedback_matched_spec_count"], 1)
+        self.assertEqual(rows[0]["training_source"], "feedback_real_replay")
+        self.assertEqual(
+            rows[0]["selection_reason"], "pre_replay_mlx_feedback_penalized"
+        )
+
+    def test_portfolio_candidate_feedback_skips_non_feedback_and_empty_scorecards(
+        self,
+    ) -> None:
+        non_feedback_status = AutoresearchPortfolioCandidate(
+            portfolio_candidate_id="portfolio-feedback-ready",
+            epoch_id="portfolio-feedback-skip-epoch",
+            source_candidate_ids_json=["candidate-feedback-ready"],
+            target_net_pnl_per_day=Decimal("500"),
+            objective_scorecard_json={"net_pnl_per_day": "520"},
+            optimizer_report_json={},
+            payload_json={
+                "sleeves": [{"candidate_spec_id": "candidate-feedback-ready"}],
+            },
+            status="promotion_ready",
+        )
+        empty_scorecard = AutoresearchPortfolioCandidate(
+            portfolio_candidate_id="portfolio-feedback-empty",
+            epoch_id="portfolio-feedback-skip-epoch",
+            source_candidate_ids_json=["candidate-feedback-empty"],
+            target_net_pnl_per_day=Decimal("500"),
+            objective_scorecard_json={},
+            optimizer_report_json={},
+            payload_json={
+                "sleeves": [{"candidate_spec_id": "candidate-feedback-empty"}],
+            },
+            status="blocked",
+        )
+
+        self.assertEqual(
+            runner._portfolio_candidate_row_to_feedback_bundles(non_feedback_status),
+            (),
+        )
+        self.assertEqual(
+            runner._portfolio_candidate_row_to_feedback_bundles(empty_scorecard),
+            (),
+        )
+
+    def test_portfolio_candidate_feedback_uses_fallback_sleeves_and_skips_invalid_ones(
+        self,
+    ) -> None:
+        scorecard = {
+            "net_pnl_per_day": "520",
+            "profit_target_oracle": {
+                "passed": False,
+                "blockers": ["profit_factor_below_oracle"],
+            },
+        }
+        fallback_row = AutoresearchPortfolioCandidate(
+            portfolio_candidate_id="portfolio-feedback-fallback",
+            epoch_id="portfolio-feedback-fallback-epoch",
+            source_candidate_ids_json=["candidate-feedback-fallback"],
+            target_net_pnl_per_day=Decimal("500"),
+            objective_scorecard_json=scorecard,
+            optimizer_report_json={},
+            payload_json={"objective_scorecard": scorecard},
+            status="paper_probation",
+        )
+        invalid_sleeve_row = AutoresearchPortfolioCandidate(
+            portfolio_candidate_id="portfolio-feedback-invalid-sleeve",
+            epoch_id="portfolio-feedback-fallback-epoch",
+            source_candidate_ids_json=[],
+            target_net_pnl_per_day=Decimal("500"),
+            objective_scorecard_json=scorecard,
+            optimizer_report_json={},
+            payload_json={"sleeves": [{}], "objective_scorecard": scorecard},
+            status="blocked",
+        )
+
+        fallback_bundles = runner._portfolio_candidate_row_to_feedback_bundles(
+            fallback_row
+        )
+
+        self.assertEqual(len(fallback_bundles), 1)
+        self.assertEqual(
+            fallback_bundles[0].candidate_spec_id, "candidate-feedback-fallback"
+        )
+        self.assertEqual(
+            fallback_bundles[0].objective_scorecard["portfolio_status"],
+            "paper_probation",
+        )
+        self.assertIn(
+            "profit_factor_below_oracle",
+            fallback_bundles[0].objective_scorecard["portfolio_blockers"],
+        )
+        self.assertEqual(
+            runner._portfolio_candidate_row_to_feedback_bundles(invalid_sleeve_row),
+            (),
+        )
 
     def test_feedback_evidence_persisted_loader_skips_empty_invalid_and_limited_payloads(
         self,
@@ -963,6 +1402,52 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertIn("min_cash_below_oracle", failures)
         self.assertIn("negative_cash_observed", failures)
 
+    def test_candidate_quality_gate_preserves_current_oracle_blockers(self) -> None:
+        policy = runner.ProfitTargetOraclePolicy()
+
+        failures = runner._candidate_quality_gate_failures(
+            {
+                "net_pnl_per_day": "750",
+                "active_day_ratio": "1",
+                "positive_day_ratio": "1",
+                "profit_factor": "2",
+                "best_day_share": "0.1",
+                "worst_day_loss": "0",
+                "max_drawdown": "0",
+                "max_gross_exposure_pct_equity": "0.5",
+                "min_cash": "0",
+                "negative_cash_observation_count": "0",
+                "avg_filled_notional_per_day": "500000",
+                "regime_slice_pass_rate": "1",
+                "posterior_edge_lower": "0.01",
+                "shadow_parity_status": "within_budget",
+                "executable_replay_passed": True,
+                "executable_replay_artifact_ref": "/tmp/replay.json",
+                "executable_replay_order_count": "5",
+                "executable_replay_account_buying_power": "10000",
+                "executable_replay_max_notional_per_trade": "9000",
+                "profit_target_oracle": {
+                    "passed": False,
+                    "blockers": [
+                        "min_daily_net_pnl_failed",
+                        "max_single_day_contribution_share_failed",
+                        "max_single_symbol_contribution_share_failed",
+                        "max_cluster_contribution_share_failed",
+                        "market_impact_liquidity_evidence_present_failed",
+                        "delay_adjusted_depth_stress_model_failed",
+                    ],
+                },
+            },
+            oracle_policy=policy,
+        )
+
+        self.assertIn("min_daily_net_pnl_failed", failures)
+        self.assertIn("max_single_day_contribution_share_failed", failures)
+        self.assertIn("max_single_symbol_contribution_share_failed", failures)
+        self.assertIn("max_cluster_contribution_share_failed", failures)
+        self.assertIn("market_impact_liquidity_evidence_present_failed", failures)
+        self.assertIn("delay_adjusted_depth_stress_model_failed", failures)
+
     def test_candidate_quality_gate_flags_weak_profit_factor(self) -> None:
         policy = runner.ProfitTargetOraclePolicy()
 
@@ -1091,6 +1576,31 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                         "min_cash": "0",
                         "negative_cash_observation_count": 0,
                         "avg_filled_notional_per_day": "500000",
+                        "market_impact_stress_passed": True,
+                        "market_impact_stress_artifact_ref": "feedback://market-impact",
+                        "market_impact_stress_model": "almgren_chriss_proxy",
+                        "market_impact_stress_cost_bps": "6",
+                        "market_impact_stress_components": {
+                            "source_marker": "realistic_market_impact_arxiv_2603_29086_2026",
+                            "selected_model": "almgren_chriss_proxy",
+                            "selected_cost_bps": "6",
+                        },
+                        "nonlinear_market_impact_stress_passed": True,
+                        "nonlinear_market_impact_stress_model": "almgren_chriss_proxy",
+                        "nonlinear_market_impact_stress_cost_bps": "6",
+                        "nonlinear_market_impact_stress_net_pnl_per_day": "500",
+                        "market_impact_liquidity_evidence_present": True,
+                        "market_impact_stress_net_pnl_per_day": "500",
+                        "delay_adjusted_depth_stress_passed": True,
+                        "delay_adjusted_depth_stress_artifact_ref": "feedback://delay-depth",
+                        "delay_adjusted_depth_fillable_notional_per_day": "500000",
+                        "delay_adjusted_depth_stress_net_pnl_per_day": "500",
+                        "double_oos_passed": True,
+                        "double_oos_artifact_ref": "feedback://double-oos",
+                        "double_oos_independent_window_count": 2,
+                        "double_oos_pass_rate": "1",
+                        "double_oos_net_pnl_per_day": "500",
+                        "double_oos_cost_shock_net_pnl_per_day": "500",
                         **scorecard,
                     },
                 },
@@ -1142,7 +1652,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(model["feedback_matched_spec_count"], 3)
         self.assertEqual(
             row_by_spec[string_veto_spec.candidate_spec_id]["feedback_replay_target"],
-            85.0,
+            -665.0,
         )
         self.assertEqual(
             row_by_spec[string_veto_spec.candidate_spec_id]["features"][
@@ -1380,6 +1890,536 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(
             selection["rows"][0]["selection_reason"],
             "pre_replay_mlx_family_feedback_blocked",
+        )
+
+    def test_candidate_selection_keeps_active_loss_counter_candidate(
+        self,
+    ) -> None:
+        source_spec = self._candidate_spec("spec-active-loss-source")
+        adaptive_base = self._candidate_spec(
+            "spec-active-loss-adaptive",
+            entry_minute_after_open="75",
+        )
+        adaptive_params = dict(
+            cast(dict[str, Any], adaptive_base.strategy_overrides["params"])
+        )
+        adaptive_params["feedback_remediation_profile"] = (
+            "adverse_selection_feedback_escape"
+        )
+        adaptive_spec = replace(
+            adaptive_base,
+            strategy_overrides={
+                **adaptive_base.strategy_overrides,
+                "params": adaptive_params,
+            },
+        )
+        family_feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=source_spec.candidate_spec_id,
+            candidate={
+                "candidate_id": "cand-active-loss-source",
+                "family_template_id": source_spec.family_template_id,
+                "runtime_family": source_spec.runtime_family,
+                "runtime_strategy_name": source_spec.runtime_strategy_name,
+                "objective_scorecard": {
+                    "net_pnl_per_day": "-50",
+                    "active_day_ratio": "0.67",
+                    "positive_day_ratio": "0",
+                    "negative_day_count": 2,
+                    "decision_count": 4,
+                    "filled_count": 4,
+                    "avg_filled_notional_per_day": "40000",
+                    "worst_day_loss": "90",
+                    "max_drawdown": "130",
+                    "daily_net": {
+                        "2026-05-06": "-40",
+                        "2026-05-07": "-90",
+                    },
+                },
+            },
+            dataset_snapshot_id="snap-active-loss-feedback",
+            result_path="feedback://active-loss",
+        )
+
+        _model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(adaptive_spec,),
+            feedback_evidence_bundles=(family_feedback_bundle,),
+        )
+
+        self.assertEqual(rows[0]["training_source"], "feedback_family_replay")
+        self.assertEqual(
+            rows[0]["selection_reason"],
+            "pre_replay_mlx_active_loss_counter_candidate",
+        )
+        self.assertGreater(Decimal(str(rows[0]["proposal_score"])), Decimal("-999999"))
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(adaptive_spec,),
+            proposal_rows=rows,
+            top_k=0,
+            exploration_slots=1,
+            max_candidates=1,
+            portfolio_size_min=1,
+        )
+
+        self.assertEqual(selected, [adaptive_spec])
+        self.assertEqual(selection["budget"]["eligible_candidate_count"], 1)
+        self.assertEqual(
+            selection["budget"]["active_loss_counter_candidate_selected_count"],
+            1,
+        )
+        self.assertEqual(
+            selection["rows"][0]["selection_reason"],
+            "active_loss_counter_candidate",
+        )
+
+    def test_candidate_selection_keeps_positive_consistency_repair_candidate(
+        self,
+    ) -> None:
+        source_spec = self._candidate_spec("spec-consistency-source")
+        repair_base = self._candidate_spec(
+            "spec-consistency-repair",
+            entry_minute_after_open="75",
+        )
+        repair_params = dict(
+            cast(dict[str, Any], repair_base.strategy_overrides["params"])
+        )
+        repair_params["feedback_remediation_profile"] = (
+            "consistency_guard_feedback_escape"
+        )
+        repair_spec = replace(
+            repair_base,
+            strategy_overrides={
+                **repair_base.strategy_overrides,
+                "params": repair_params,
+            },
+        )
+        family_feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=source_spec.candidate_spec_id,
+            candidate={
+                "candidate_id": "cand-consistency-source",
+                "family_template_id": source_spec.family_template_id,
+                "runtime_family": source_spec.runtime_family,
+                "runtime_strategy_name": source_spec.runtime_strategy_name,
+                "objective_scorecard": {
+                    "net_pnl_per_day": "900",
+                    "active_day_ratio": "0.40",
+                    "positive_day_ratio": "0.20",
+                    "negative_day_count": 0,
+                    "decision_count": 5,
+                    "filled_count": 5,
+                    "avg_filled_notional_per_day": "350000",
+                    "best_day_share": "0.84",
+                    "max_cluster_contribution_share": "0.70",
+                    "worst_day_loss": "0",
+                    "max_drawdown": "0",
+                    "min_daily_net_pnl": "0",
+                    "daily_net": {
+                        "2026-05-06": "4500",
+                        "2026-05-07": "0",
+                    },
+                },
+            },
+            dataset_snapshot_id="snap-consistency-feedback",
+            result_path="feedback://consistency",
+        )
+
+        _model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(repair_spec,),
+            feedback_evidence_bundles=(family_feedback_bundle,),
+        )
+
+        self.assertEqual(rows[0]["training_source"], "feedback_family_replay")
+        self.assertEqual(
+            rows[0]["selection_reason"],
+            "pre_replay_mlx_consistency_repair_candidate",
+        )
+        self.assertGreater(Decimal(str(rows[0]["proposal_score"])), Decimal("-999999"))
+        self.assertEqual(rows[0]["consistency_repair_tags"], ["loss_control_shortfall"])
+        self.assertIn(
+            "daily_coverage_shortfall",
+            rows[0]["consistency_repair_feedback_reasons"],
+        )
+        self.assertIn(
+            "loss_control_shortfall",
+            rows[0]["consistency_repair_feedback_reasons"],
+        )
+        self.assertIn(
+            "symbol_concentration_shortfall",
+            rows[0]["consistency_repair_feedback_reasons"],
+        )
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(repair_spec,),
+            proposal_rows=rows,
+            top_k=0,
+            exploration_slots=1,
+            max_candidates=1,
+            portfolio_size_min=1,
+        )
+
+        self.assertEqual(selected, [repair_spec])
+        self.assertEqual(selection["budget"]["eligible_candidate_count"], 1)
+        self.assertEqual(
+            selection["budget"]["consistency_repair_candidate_selected_count"],
+            1,
+        )
+        self.assertEqual(
+            selection["rows"][0]["selection_reason"],
+            "consistency_repair_candidate",
+        )
+
+    def test_active_loss_counter_candidates_keep_relative_scores(
+        self,
+    ) -> None:
+        source_spec = self._candidate_spec("spec-active-loss-score-source")
+        daily_base = self._candidate_spec("spec-active-loss-score-daily")
+        adverse_base = self._candidate_spec("spec-active-loss-score-adverse")
+        daily_params = dict(
+            cast(dict[str, Any], daily_base.strategy_overrides["params"])
+        )
+        daily_params["feedback_remediation_profile"] = "daily_coverage_feedback_escape"
+        adverse_params = dict(
+            cast(dict[str, Any], adverse_base.strategy_overrides["params"])
+        )
+        adverse_params["feedback_remediation_profile"] = (
+            "adverse_selection_feedback_escape"
+        )
+        adverse_params["max_stop_loss_exits_per_session"] = "1"
+        adverse_params["stop_loss_lockout_seconds"] = "2400"
+        daily_spec = replace(
+            daily_base,
+            strategy_overrides={
+                **daily_base.strategy_overrides,
+                "params": daily_params,
+            },
+        )
+        adverse_spec = replace(
+            adverse_base,
+            strategy_overrides={
+                **adverse_base.strategy_overrides,
+                "params": adverse_params,
+            },
+        )
+        family_feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=source_spec.candidate_spec_id,
+            candidate={
+                "candidate_id": "cand-active-loss-score-source",
+                "family_template_id": source_spec.family_template_id,
+                "runtime_family": source_spec.runtime_family,
+                "runtime_strategy_name": source_spec.runtime_strategy_name,
+                "objective_scorecard": {
+                    "net_pnl_per_day": "-50",
+                    "active_day_ratio": "0.50",
+                    "positive_day_ratio": "0",
+                    "negative_day_count": 2,
+                    "decision_count": 4,
+                    "filled_count": 4,
+                    "avg_filled_notional_per_day": "40000",
+                    "worst_day_loss": "90",
+                    "max_drawdown": "130",
+                    "daily_net": {
+                        "2026-05-06": "-40",
+                        "2026-05-07": "-90",
+                    },
+                },
+            },
+            dataset_snapshot_id="snap-active-loss-score-feedback",
+            result_path="feedback://active-loss-score",
+        )
+
+        _model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(daily_spec, adverse_spec),
+            feedback_evidence_bundles=(family_feedback_bundle,),
+        )
+
+        row_by_spec = {row["candidate_spec_id"]: row for row in rows}
+        self.assertGreater(
+            Decimal(str(row_by_spec[adverse_spec.candidate_spec_id]["proposal_score"])),
+            Decimal(str(row_by_spec[daily_spec.candidate_spec_id]["proposal_score"])),
+        )
+        self.assertEqual(
+            row_by_spec[adverse_spec.candidate_spec_id]["active_loss_counter_tags"],
+            [
+                "adverse_selection_shortfall",
+                "daily_coverage_shortfall",
+                "loss_control_shortfall",
+                "notional_throughput_shortfall",
+            ],
+        )
+        self.assertIn(
+            "notional_throughput_shortfall",
+            row_by_spec[adverse_spec.candidate_spec_id][
+                "active_loss_counter_feedback_reasons"
+            ],
+        )
+
+    def test_candidate_selection_caps_active_loss_counter_for_small_batches(
+        self,
+    ) -> None:
+        active_breakout = replace(
+            self._candidate_spec(
+                "spec-active-breakout",
+                family_template_id="breakout_reclaim_v2",
+            ),
+            runtime_family="breakout_continuation_consistent",
+            runtime_strategy_name="breakout-continuation-long-v1",
+        )
+        active_microbar = replace(
+            self._candidate_spec(
+                "spec-active-microbar",
+                family_template_id="microbar_cross_sectional_pairs_v1",
+            ),
+            runtime_family="microbar_cross_sectional_pairs",
+            runtime_strategy_name="microbar-cross-sectional-pairs-v1",
+        )
+        active_late_day = replace(
+            self._candidate_spec(
+                "spec-active-late-day",
+                family_template_id="late_day_continuation_v1",
+            ),
+            runtime_family="late_day_continuation_consistent",
+            runtime_strategy_name="late-day-continuation-long-v1",
+        )
+        runtime_intraday = replace(
+            self._candidate_spec(
+                "spec-runtime-intraday",
+                family_template_id="intraday_tsmom_v2",
+            ),
+            runtime_family="intraday_tsmom_consistent",
+            runtime_strategy_name="intraday-tsmom-profit-v3",
+        )
+        runtime_late_day = replace(
+            self._candidate_spec(
+                "spec-runtime-late-day",
+                family_template_id="opening_drive_leader_reclaim_v1",
+            ),
+            runtime_family="late_day_continuation_consistent",
+            runtime_strategy_name="late-day-continuation-long-v1",
+        )
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(
+                active_breakout,
+                active_microbar,
+                active_late_day,
+                runtime_intraday,
+                runtime_late_day,
+            ),
+            proposal_rows=[
+                {
+                    "candidate_spec_id": spec.candidate_spec_id,
+                    "rank": index,
+                    "proposal_score": 100.0 - index,
+                    "selection_reason": "pre_replay_mlx_active_loss_counter_candidate",
+                }
+                for index, spec in enumerate(
+                    (active_breakout, active_microbar, active_late_day),
+                    start=1,
+                )
+            ]
+            + [
+                {
+                    "candidate_spec_id": runtime_intraday.candidate_spec_id,
+                    "rank": 4,
+                    "proposal_score": 1.0,
+                    "selection_reason": "pre_replay_mlx_rank",
+                },
+                {
+                    "candidate_spec_id": runtime_late_day.candidate_spec_id,
+                    "rank": 5,
+                    "proposal_score": 0.5,
+                    "selection_reason": "pre_replay_mlx_rank",
+                },
+            ],
+            top_k=0,
+            exploration_slots=4,
+            max_candidates=4,
+            portfolio_size_min=2,
+        )
+
+        selected_reasons = {
+            row["candidate_spec_id"]: row["selection_reason"]
+            for row in selection["rows"]
+            if row["selected_for_replay"]
+        }
+        self.assertEqual(len(selected), 4)
+        self.assertEqual(
+            selection["budget"]["active_loss_counter_candidate_selected_count"],
+            2,
+        )
+        self.assertEqual(
+            sum(
+                1
+                for reason in selected_reasons.values()
+                if reason == "active_loss_counter_candidate"
+            ),
+            2,
+        )
+        self.assertGreaterEqual(
+            sum(
+                1
+                for reason in selected_reasons.values()
+                if reason == "runtime_strategy_floor"
+            ),
+            1,
+        )
+
+    def test_candidate_selection_blocks_no_activity_feedback_from_reaudit(
+        self,
+    ) -> None:
+        spec = self._candidate_spec("spec-no-activity-feedback")
+        feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=spec.candidate_spec_id,
+            candidate={
+                "candidate_id": "cand-no-activity-feedback",
+                "family_template_id": spec.family_template_id,
+                "runtime_family": spec.runtime_family,
+                "runtime_strategy_name": spec.runtime_strategy_name,
+                "objective_scorecard": {
+                    "net_pnl_per_day": "75",
+                    "active_day_ratio": "0",
+                    "positive_day_ratio": "0",
+                    "decision_count": 0,
+                    "filled_count": 0,
+                    "orders_submitted_count": 0,
+                    "avg_filled_notional_per_day": "0",
+                },
+            },
+            dataset_snapshot_id="snap-no-activity-feedback",
+            result_path="feedback://no-activity",
+        )
+
+        _model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(spec,),
+            feedback_evidence_bundles=(feedback_bundle,),
+        )
+
+        self.assertEqual(rows[0]["training_source"], "feedback_real_replay")
+        self.assertEqual(
+            rows[0]["selection_reason"],
+            "pre_replay_mlx_no_activity_feedback_blocked",
+        )
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(spec,),
+            proposal_rows=rows,
+            top_k=1,
+            exploration_slots=0,
+            feedback_block_reaudit_slots=1,
+            max_candidates=1,
+            portfolio_size_min=1,
+        )
+
+        self.assertEqual(selected, [])
+        self.assertEqual(selection["budget"]["selected_count"], 0)
+        self.assertEqual(
+            selection["budget"]["feedback_block_reaudit_selected_count"], 0
+        )
+        self.assertEqual(
+            selection["rows"][0]["selection_reason"],
+            "pre_replay_mlx_no_activity_feedback_blocked",
+        )
+
+    def test_candidate_selection_blocks_failed_false_negative_rescue_family(
+        self,
+    ) -> None:
+        source_spec_base = self._candidate_spec(
+            "spec-fn-rescue-negative-source",
+            selection_mode="continuation",
+        )
+        source_params = cast(
+            dict[str, Any], source_spec_base.strategy_overrides["params"]
+        )
+        source_spec = replace(
+            source_spec_base,
+            parameter_space={
+                "mechanism_overlay_ids": ["rejected_signal_outcome_calibration"]
+            },
+            strategy_overrides={
+                **source_spec_base.strategy_overrides,
+                "params": {
+                    **source_params,
+                    "signal_motif": "rejected_signal_false_negative_replay",
+                    "outcome_label_filter": "profitable_after_costs",
+                    "veto_relaxation_scope": "labeled_false_negative_only",
+                    "rank_feature": "rejected_signal_counterfactual_return_rank",
+                },
+            },
+        )
+        probe_spec_base = self._candidate_spec(
+            "spec-fn-rescue-negative-probe",
+            selection_mode="continuation",
+        )
+        probe_params = cast(
+            dict[str, Any], probe_spec_base.strategy_overrides["params"]
+        )
+        probe_spec = replace(
+            probe_spec_base,
+            parameter_space={
+                "mechanism_overlay_ids": ["rejected_signal_outcome_calibration"]
+            },
+            strategy_overrides={
+                **probe_spec_base.strategy_overrides,
+                "params": {
+                    **probe_params,
+                    "signal_motif": "rejected_signal_false_negative_replay",
+                    "outcome_label_filter": "profitable_after_costs",
+                    "veto_relaxation_scope": "labeled_false_negative_only",
+                    "rank_feature": "rejected_signal_opening_drive_rank",
+                },
+            },
+        )
+        feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=source_spec.candidate_spec_id,
+            candidate=runner._candidate_payload_with_feedback_metadata(
+                spec=source_spec,
+                candidate={
+                    "candidate_id": "cand-fn-rescue-negative-source",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "-47.54",
+                        "active_day_ratio": "0.66",
+                        "positive_day_ratio": "0",
+                        "negative_day_count": 3,
+                        "daily_net": {
+                            "2026-05-06": "-77.11",
+                            "2026-05-07": "-65.51",
+                        },
+                    },
+                },
+            ),
+            dataset_snapshot_id="snap-fn-rescue-negative-feedback",
+            result_path="feedback://fn-rescue-negative",
+        )
+
+        _model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(probe_spec,),
+            feedback_evidence_bundles=(feedback_bundle,),
+        )
+
+        self.assertEqual(rows[0]["training_source"], "feedback_family_replay")
+        self.assertEqual(
+            rows[0]["selection_reason"],
+            "pre_replay_mlx_false_negative_rescue_feedback_blocked",
+        )
+        self.assertLessEqual(
+            Decimal(str(rows[0]["proposal_score"])), Decimal("-999999")
+        )
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(probe_spec,),
+            proposal_rows=rows,
+            top_k=1,
+            exploration_slots=1,
+            max_candidates=1,
+            portfolio_size_min=1,
+        )
+
+        self.assertEqual(selected, [])
+        self.assertEqual(selection["budget"]["selected_count"], 0)
+        self.assertEqual(selection["budget"]["eligible_candidate_count"], 0)
+        self.assertEqual(
+            selection["rows"][0]["selection_reason"],
+            "pre_replay_mlx_false_negative_rescue_feedback_blocked",
         )
 
     def test_candidate_selection_can_reaudit_feedback_blocked_candidates(
@@ -2220,6 +3260,148 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertTrue(selection["rows"][0]["selected_for_replay"])
 
+    def test_candidate_selection_blocks_capacity_short_synthetic_probe(
+        self,
+    ) -> None:
+        spec = self._candidate_spec("spec-capacity-short-synthetic-prior-probe")
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(spec,),
+            proposal_rows=[
+                {
+                    "candidate_spec_id": spec.candidate_spec_id,
+                    "rank": 1,
+                    "proposal_score": -12.5,
+                    "selection_reason": "pre_replay_mlx_rank",
+                    "training_source": "synthetic_prior",
+                    "feedback_evidence_context_count": 1,
+                    "features": {
+                        "configured_daily_notional_required_ratio": 0.2,
+                    },
+                }
+            ],
+            top_k=1,
+            exploration_slots=1,
+            max_candidates=1,
+            portfolio_size_min=1,
+        )
+
+        self.assertEqual(selected, [])
+        self.assertEqual(selection["budget"]["eligible_candidate_count"], 0)
+        self.assertEqual(
+            selection["budget"][
+                "pre_replay_synthetic_capacity_insufficient_candidate_count"
+            ],
+            1,
+        )
+        self.assertEqual(
+            selection["budget"]["pre_replay_nonpositive_synthetic_exploration_count"],
+            0,
+        )
+        self.assertEqual(
+            selection["rows"][0]["selection_reason"],
+            "pre_replay_synthetic_capacity_insufficient",
+        )
+
+    def test_real_replay_evidence_promotes_summary_activity_counts(self) -> None:
+        with TemporaryDirectory() as tmp:
+            result_path = Path(tmp) / "result.json"
+            result_path.write_text(
+                json.dumps(
+                    {
+                        "summary": {
+                            "decision_count": 0,
+                            "filled_count": 0,
+                            "orders_submitted_count": 0,
+                            "avg_filled_notional_per_day": "0",
+                        },
+                        "top": [
+                            {
+                                "candidate_id": "cand-summary-activity",
+                                "objective_scorecard": {
+                                    "net_pnl_per_day": "0",
+                                    "active_day_ratio": "0",
+                                },
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            replay = runner._real_replay_result_from_factory_payload(
+                {
+                    "experiments": [
+                        {
+                            "result_path": str(result_path),
+                            "candidate_spec_id": "spec-summary-activity",
+                            "dataset_snapshot_id": "real-summary-activity",
+                        }
+                    ]
+                }
+            )
+
+        self.assertEqual(len(replay.evidence_bundles), 1)
+        scorecard = replay.evidence_bundles[0].objective_scorecard
+        self.assertEqual(scorecard["decision_count"], 0)
+        self.assertEqual(scorecard["filled_count"], 0)
+        self.assertEqual(scorecard["orders_submitted_count"], 0)
+        self.assertEqual(scorecard["avg_filled_notional_per_day"], "0")
+
+    def test_real_replay_evidence_derives_activity_counts_from_decomposition(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            result_path = Path(tmp) / "result.json"
+            result_path.write_text(
+                json.dumps(
+                    {
+                        "top": [
+                            {
+                                "candidate_id": "cand-decomposition-activity",
+                                "objective_scorecard": {
+                                    "net_pnl_per_day": "-13.37",
+                                    "active_day_ratio": "0",
+                                },
+                                "decomposition": {
+                                    "families": {
+                                        "opening_drive_leader_reclaim_v1": {
+                                            "evaluations": 2,
+                                            "fills": 2,
+                                        }
+                                    },
+                                    "symbols": {
+                                        "NVDA": {
+                                            "filled_count": 2,
+                                            "net_pnl": "-40.13",
+                                        }
+                                    },
+                                },
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            replay = runner._real_replay_result_from_factory_payload(
+                {
+                    "experiments": [
+                        {
+                            "result_path": str(result_path),
+                            "candidate_spec_id": "spec-decomposition-activity",
+                            "dataset_snapshot_id": "real-decomposition-activity",
+                        }
+                    ]
+                }
+            )
+
+        self.assertEqual(len(replay.evidence_bundles), 1)
+        scorecard = replay.evidence_bundles[0].objective_scorecard
+        self.assertEqual(scorecard["decision_count"], 2)
+        self.assertEqual(scorecard["filled_count"], 2)
+        self.assertEqual(scorecard["filled_order_count"], 2)
+
     def test_candidate_selection_ignores_malformed_feedback_context_for_synthetic_prior(
         self,
     ) -> None:
@@ -2384,6 +3566,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             self.assertTrue((output_dir / "candidate-specs.jsonl").exists())
             self.assertTrue((output_dir / "candidate-compiler-report.json").exists())
             self.assertTrue((output_dir / "candidate-selection-manifest.json").exists())
+            self.assertTrue((output_dir / "selected-candidate-specs.jsonl").exists())
             self.assertTrue((output_dir / "pre-replay-mlx-ranker-model.json").exists())
             self.assertTrue(
                 (output_dir / "pre-replay-mlx-proposal-scores.jsonl").exists()
@@ -2452,6 +3635,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 payload["artifacts"]["mlx_snapshot_manifest"],
                 str((output_dir / "mlx-snapshot-manifest.json").resolve()),
             )
+            self.assertEqual(
+                payload["artifacts"]["selected_candidate_specs"],
+                str((output_dir / "selected-candidate-specs.jsonl").resolve()),
+            )
             self.assertTrue(
                 (output_dir / "whitepaper-autoresearch-diagnostics.ipynb").exists()
             )
@@ -2486,6 +3673,17 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             )
             self.assertEqual(
                 selection["proposal_model"]["proposal_stage"], "pre_replay"
+            )
+            selected_candidate_specs = [
+                json.loads(line)
+                for line in (output_dir / "selected-candidate-specs.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if line
+            ]
+            self.assertEqual(
+                [spec["candidate_spec_id"] for spec in selected_candidate_specs],
+                selection["selected_candidate_spec_ids"],
             )
             candidate_specs = [
                 json.loads(line)
@@ -2550,6 +3748,304 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 )
             )
 
+    def test_selection_only_writes_pre_replay_artifacts_without_replay_or_persistence(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            args = self._source_jsonl_args(output_dir)
+            args.epoch_id = "whitepaper-autoresearch-selection-only"
+            args.replay_mode = "real"
+            args.persist_results = True
+            args.selection_only = True
+            args.max_candidates = 4
+            args.top_k = 2
+
+            with (
+                patch.object(
+                    runner,
+                    "_run_replay_with_optional_timeout",
+                    side_effect=AssertionError("selection-only must not run replay"),
+                ) as replay_mock,
+                patch.object(
+                    runner,
+                    "_persist_vnext_specs",
+                    side_effect=AssertionError("selection-only must not persist specs"),
+                ) as persist_mock,
+                patch.object(
+                    runner,
+                    "_persist_epoch_ledgers",
+                    side_effect=AssertionError(
+                        "selection-only must not persist epoch ledgers"
+                    ),
+                ) as ledger_mock,
+                patch.object(
+                    runner,
+                    "optimize_portfolio_candidate",
+                    side_effect=AssertionError(
+                        "selection-only must not optimize a portfolio"
+                    ),
+                ) as optimizer_mock,
+                patch.object(
+                    runner,
+                    "_runtime_closure_payload",
+                    side_effect=AssertionError(
+                        "selection-only must not build runtime closure"
+                    ),
+                ) as runtime_mock,
+            ):
+                payload = runner.run_whitepaper_autoresearch_profit_target(args)
+
+            summary = json.loads(
+                (output_dir / "summary.json").read_text(encoding="utf-8")
+            )
+
+            self.assertTrue((output_dir / "epoch-manifest.json").exists())
+            self.assertTrue((output_dir / "whitepaper-sources.jsonl").exists())
+            self.assertTrue((output_dir / "hypothesis-cards.jsonl").exists())
+            self.assertTrue((output_dir / "candidate-specs.jsonl").exists())
+            self.assertTrue((output_dir / "candidate-compiler-report.json").exists())
+            self.assertTrue(
+                (output_dir / "feedback-evidence-source-manifest.json").exists()
+            )
+            self.assertTrue((output_dir / "pre-replay-mlx-ranker-model.json").exists())
+            self.assertTrue(
+                (output_dir / "pre-replay-mlx-proposal-scores.jsonl").exists()
+            )
+            self.assertTrue((output_dir / "candidate-selection-manifest.json").exists())
+            self.assertTrue((output_dir / "selected-candidate-specs.jsonl").exists())
+            self.assertTrue(
+                (output_dir / "whitepaper-autoresearch-diagnostics.ipynb").exists()
+            )
+            self.assertFalse((output_dir / "strategy-factory").exists())
+            self.assertFalse((output_dir / "synthetic-replays").exists())
+            self.assertFalse((output_dir / "candidate-evidence-bundles.jsonl").exists())
+            self.assertFalse((output_dir / "mlx-ranker-model.json").exists())
+            self.assertFalse((output_dir / "mlx-proposal-scores.jsonl").exists())
+            self.assertFalse((output_dir / "portfolio-candidates.jsonl").exists())
+            self.assertFalse((output_dir / "portfolio-optimizer-report.json").exists())
+            self.assertFalse((output_dir / "candidate-board.json").exists())
+            self.assertFalse((output_dir / "profitability-search-goal.json").exists())
+            self.assertFalse((output_dir / "runtime-closure" / "summary.json").exists())
+            selected_candidate_specs = [
+                json.loads(line)
+                for line in (output_dir / "selected-candidate-specs.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if line
+            ]
+
+        self.assertEqual(payload["status"], "selection_only")
+        self.assertEqual(payload["status_reason"], "pre_replay_selection_only")
+        self.assertEqual(payload["epoch_id"], "whitepaper-autoresearch-selection-only")
+        self.assertEqual(summary["status"], "selection_only")
+        self.assertFalse(payload["oracle_candidate_found"])
+        self.assertFalse(payload["promotion_readiness"]["promotable"])
+        self.assertIn(
+            "real_replay_not_run",
+            payload["promotion_readiness"]["blockers"],
+        )
+        self.assertGreater(payload["candidate_spec_count"], 0)
+        self.assertGreater(payload["pre_replay_proposal_score_count"], 0)
+        self.assertGreater(payload["replay_candidate_spec_count"], 0)
+        self.assertEqual(
+            payload["artifacts"]["selected_candidate_specs"],
+            str((output_dir / "selected-candidate-specs.jsonl").resolve()),
+        )
+        self.assertEqual(
+            [spec["candidate_spec_id"] for spec in selected_candidate_specs],
+            payload["selected_candidate_spec_ids"],
+        )
+        replay_mock.assert_not_called()
+        persist_mock.assert_not_called()
+        ledger_mock.assert_not_called()
+        optimizer_mock.assert_not_called()
+        runtime_mock.assert_not_called()
+
+    def test_candidate_specs_replay_skips_compiler_and_replays_selected_specs(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            selected_specs_path = Path(tmpdir) / "selected-candidate-specs.jsonl"
+            specs = (
+                self._candidate_spec("spec-direct-a"),
+                self._candidate_spec(
+                    "spec-direct-b",
+                    family_template_id="momentum_pullback_v1",
+                    selection_mode="pullback",
+                ),
+            )
+            selected_specs_path.write_text(
+                "\n".join(
+                    json.dumps(spec.to_payload(), sort_keys=True) for spec in specs
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            captured_spec_ids: list[str] = []
+
+            def fake_replay(
+                *,
+                args: Namespace,
+                output_dir: Path,
+                specs: Sequence[runner.CandidateSpec],
+            ) -> runner.EpochReplayResult:
+                del args
+                captured_spec_ids.extend(spec.candidate_spec_id for spec in specs)
+                bundle = runner.evidence_bundle_from_frontier_candidate(
+                    candidate_spec_id=specs[0].candidate_spec_id,
+                    candidate={
+                        "candidate_id": "cand-direct-a",
+                        "objective_scorecard": {
+                            "net_pnl_per_day": "25",
+                            "active_day_ratio": "1",
+                            "positive_day_ratio": "1",
+                        },
+                    },
+                    dataset_snapshot_id="snap-direct",
+                    result_path=str(output_dir / "direct-a.json"),
+                )
+                return runner.EpochReplayResult(
+                    evidence_bundles=(bundle,),
+                    replay_results=({"status": "ok"},),
+                )
+
+            args = self._args(output_dir)
+            args.seed_recent_whitepapers = False
+            args.candidate_specs = [selected_specs_path]
+            args.replay_mode = "real"
+            args.portfolio_size_min = 1
+
+            with (
+                patch.object(
+                    runner,
+                    "compile_sources_to_hypothesis_cards",
+                    side_effect=AssertionError("source compiler must not run"),
+                ) as source_compiler_mock,
+                patch.object(
+                    runner,
+                    "compile_whitepaper_candidate_specs",
+                    side_effect=AssertionError("candidate compiler must not run"),
+                ) as candidate_compiler_mock,
+                patch.object(
+                    runner,
+                    "_select_candidate_specs_for_replay",
+                    side_effect=AssertionError("selection must not run"),
+                ) as selection_mock,
+                patch.object(
+                    runner,
+                    "_run_replay_with_optional_timeout",
+                    side_effect=fake_replay,
+                ) as replay_mock,
+            ):
+                payload = runner.run_whitepaper_autoresearch_profit_target(args)
+
+            selection = json.loads(
+                (output_dir / "candidate-selection-manifest.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            selected_candidate_specs = [
+                json.loads(line)
+                for line in (output_dir / "selected-candidate-specs.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if line
+            ]
+            compiler_report = json.loads(
+                (output_dir / "candidate-compiler-report.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            profitability_goal = json.loads(
+                (output_dir / "profitability-search-goal.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+
+        self.assertEqual(captured_spec_ids, ["spec-direct-a", "spec-direct-b"])
+        self.assertEqual(payload["candidate_spec_count"], 2)
+        self.assertEqual(payload["replay_candidate_spec_count"], 2)
+        self.assertEqual(
+            payload["selected_candidate_spec_ids"], ["spec-direct-a", "spec-direct-b"]
+        )
+        self.assertEqual(selection["selection_mode"], "direct_candidate_specs_handoff")
+        self.assertEqual(
+            selection["selected_candidate_spec_ids"],
+            ["spec-direct-a", "spec-direct-b"],
+        )
+        self.assertEqual(
+            [spec["candidate_spec_id"] for spec in selected_candidate_specs],
+            ["spec-direct-a", "spec-direct-b"],
+        )
+        self.assertEqual(
+            compiler_report["status"], "loaded_candidate_specs_for_direct_replay"
+        )
+        self.assertEqual(
+            profitability_goal["recommended_next_epoch"][
+                "direct_candidate_specs_artifacts"
+            ],
+            [str(selected_specs_path)],
+        )
+        self.assertIn(
+            "--candidate-specs",
+            profitability_goal["recommended_next_epoch"]["argv"],
+        )
+        self.assertIn(
+            str(selected_specs_path),
+            profitability_goal["recommended_next_epoch"]["argv"],
+        )
+        source_compiler_mock.assert_not_called()
+        candidate_compiler_mock.assert_not_called()
+        selection_mock.assert_not_called()
+        replay_mock.assert_called_once()
+
+    def test_candidate_specs_replay_rejects_duplicate_spec_ids(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            selected_specs_path = Path(tmpdir) / "selected-candidate-specs.jsonl"
+            spec = self._candidate_spec("spec-direct-duplicate")
+            selected_specs_path.write_text(
+                "\n".join(
+                    json.dumps(spec.to_payload(), sort_keys=True) for _ in range(2)
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            args = self._args(output_dir)
+            args.seed_recent_whitepapers = False
+            args.candidate_specs = [selected_specs_path]
+            args.replay_mode = "real"
+
+            with patch.object(
+                runner,
+                "_run_replay_with_optional_timeout",
+                side_effect=AssertionError("invalid input must not run replay"),
+            ) as replay_mock:
+                payload = runner.run_whitepaper_autoresearch_profit_target(args)
+
+        self.assertEqual(payload["status"], "invalid_candidate_specs")
+        self.assertIn(
+            "candidate_specs_jsonl_duplicate_candidate_spec_id",
+            payload["failure_reason"],
+        )
+        replay_mock.assert_not_called()
+
+    def test_main_treats_selection_only_as_success(self) -> None:
+        with (
+            patch.object(runner, "_parse_args", return_value=Namespace()),
+            patch.object(
+                runner,
+                "run_whitepaper_autoresearch_profit_target",
+                return_value={"status": "selection_only"},
+            ),
+            patch("builtins.print"),
+        ):
+            exit_code = runner.main()
+
+        self.assertEqual(exit_code, 0)
+
     def test_candidate_universe_symbols_filter_to_live_chip_coverage(self) -> None:
         symbols = runner._candidate_universe_symbols_from_args(
             Namespace(symbols="NVDA,AAPL,MSFT,AMAT,TSM,nvda")
@@ -2569,6 +4065,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         source_ids = {source.run_id for source in sources}
         self.assertIn("weighted_microprice_momentum_2026", source_ids)
         self.assertIn("macro_announcement_intraday_momentum_2025", source_ids)
+        self.assertIn("intraday_ofi_news_dynamics_2025", source_ids)
+        self.assertIn("order_flow_filtration_2025", source_ids)
         self.assertIn("realistic_market_impact_rl_envs_2026", source_ids)
         self.assertIn("vwap_regime_classification_intraday_2026", source_ids)
         self.assertIn("structural_limits_ohlcv_intraday_2026", source_ids)
@@ -2576,6 +4074,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertIn("unified_order_flow_impact_volatility_2026", source_ids)
         self.assertIn("closing_auction_market_making_2026", source_ids)
         self.assertIn("mixed_market_limit_execution_2026", source_ids)
+        self.assertIn("retail_limit_orders_2025", source_ids)
+        self.assertIn("retail_order_flow_segmentation_2026", source_ids)
         self.assertIn("lobdiff_event_stream_prediction_2026", source_ids)
         self.assertIn("neural_hawkes_lob_simulation_2025", source_ids)
         self.assertIn("algorithmic_retail_options_intraday_2026", source_ids)
@@ -2644,6 +4144,81 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertIn(
             "execution_delay", depth_delay_source.claims[0]["data_requirements"]
         )
+
+        retail_limit_source = next(
+            source for source in sources if source.run_id == "retail_limit_orders_2025"
+        )
+        self.assertTrue(
+            runner.compile_sources_to_hypothesis_cards([retail_limit_source])
+        )
+        self.assertIn(
+            "order_type_ablation", retail_limit_source.claims[0]["data_requirements"]
+        )
+        self.assertIn(
+            "opportunity_cost", retail_limit_source.claims[1]["data_requirements"]
+        )
+
+        ofi_news_source = next(
+            source
+            for source in sources
+            if source.run_id == "intraday_ofi_news_dynamics_2025"
+        )
+        self.assertTrue(runner.compile_sources_to_hypothesis_cards([ofi_news_source]))
+        self.assertIn(
+            "price_flow_impact", ofi_news_source.claims[0]["data_requirements"]
+        )
+        self.assertEqual(ofi_news_source.claims[0]["claim_type"], "signal_mechanism")
+        self.assertEqual(ofi_news_source.claims[1]["claim_type"], "market_regime")
+
+        filtration_source = next(
+            source
+            for source in sources
+            if source.run_id == "order_flow_filtration_2025"
+        )
+        self.assertTrue(runner.compile_sources_to_hypothesis_cards([filtration_source]))
+        self.assertIn(
+            "filtered_orderbook_imbalance",
+            filtration_source.claims[0]["data_requirements"],
+        )
+        self.assertEqual(filtration_source.claims[0]["claim_type"], "feature_recipe")
+        self.assertEqual(
+            filtration_source.claims[1]["claim_type"], "validation_requirement"
+        )
+
+    def test_compiled_program_research_sources_have_no_missing_feature_aliases(
+        self,
+    ) -> None:
+        args = self._args(Path("/tmp/torghut-program-source-alias-check"))
+        args.program = Path(
+            "config/trading/research-programs/portfolio-profit-autoresearch-500-v1.yaml"
+        )
+        program = runner._load_epoch_program(args)
+        sources = runner._program_whitepaper_sources(program)
+        failures: dict[str, list[dict[str, object]]] = {}
+        compiled_source_count = 0
+
+        for source in sources:
+            cards = runner.compile_sources_to_hypothesis_cards([source])
+            if not cards:
+                continue
+            compiled_source_count += 1
+            compilation = runner.compile_whitepaper_candidate_specs(
+                hypothesis_cards=cards,
+                target_net_pnl_per_day=Decimal("500"),
+                family_template_dir=Path("config/trading/families"),
+                seed_sweep_dir=Path("config/trading"),
+                universe_symbols=("NVDA",),
+            )
+            missing_feature_blockers = [
+                blocker.to_payload()
+                for blocker in compilation.blockers
+                if blocker.reason == "required_features_missing_from_family_template"
+            ]
+            if missing_feature_blockers:
+                failures[source.run_id] = missing_feature_blockers
+
+        self.assertGreaterEqual(compiled_source_count, 10)
+        self.assertEqual(failures, {})
 
     def test_runtime_closure_replay_is_disabled_when_candidate_already_failed_oracle(
         self,
@@ -2835,7 +4410,12 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                         "objective_met": True,
                         "model": "square_root",
                         "impact_cost_bps": "5",
+                        "liquidity_evidence_present": True,
+                        "net_pnl_per_day": "999",
                         "post_impact_net_pnl_per_day": "610",
+                        "source_markers": [
+                            "realistic_market_impact_arxiv_2603_29086_2026"
+                        ],
                     }
                 )
                 + "\n",
@@ -2851,6 +4431,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                         "generated_at": "2026-05-19T13:00:00Z",
                         "fillable_notional_per_day": "300000",
                         "post_delay_depth_net_pnl_per_day": "605",
+                        "source_markers": [
+                            "lob_simulation_reality_gap_arxiv_2603_24137_2026"
+                        ],
                     }
                 )
                 + "\n",
@@ -2864,6 +4447,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                         "pass_rate": "1.00",
                         "post_double_oos_net_pnl_per_day": "615",
                         "post_cost_shock_net_pnl_per_day": "575",
+                        "source_markers": [
+                            "double_oos_walkforward_arxiv_2602_10785_2026"
+                        ],
                     }
                 )
                 + "\n",
@@ -2971,6 +4557,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "610",
         )
         self.assertEqual(
+            updated.objective_scorecard["market_impact_stress_source_markers"],
+            ["realistic_market_impact_arxiv_2603_29086_2026"],
+        )
+        self.assertEqual(
             updated.objective_scorecard["delay_adjusted_depth_stress_checks_total"],
             2,
         )
@@ -2980,6 +4570,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertTrue(
             updated.objective_scorecard["delay_adjusted_depth_stress_passed"]
+        )
+        self.assertEqual(
+            updated.objective_scorecard["delay_adjusted_depth_stress_source_markers"],
+            ["lob_simulation_reality_gap_arxiv_2603_24137_2026"],
         )
         self.assertEqual(
             updated.objective_scorecard["double_oos_artifact_ref"],
@@ -2993,6 +4587,18 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(
             updated.objective_scorecard["double_oos_cost_shock_net_pnl_per_day"],
             "575",
+        )
+        self.assertEqual(
+            updated.objective_scorecard["double_oos_source_markers"],
+            ["double_oos_walkforward_arxiv_2602_10785_2026"],
+        )
+        self.assertEqual(
+            updated.objective_scorecard["runtime_closure_source_markers"],
+            [
+                "double_oos_walkforward_arxiv_2602_10785_2026",
+                "lob_simulation_reality_gap_arxiv_2603_24137_2026",
+                "realistic_market_impact_arxiv_2603_29086_2026",
+            ],
         )
         self.assertIn(str(approval_replay_path), updated.evidence_refs)
 
@@ -3064,6 +4670,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     "blockers": [
                         "market_impact_stress_passed_failed",
                         "market_impact_stress_artifact_present_failed",
+                        "market_impact_liquidity_evidence_present_failed",
                         "market_impact_stress_model_failed",
                         "market_impact_stress_cost_bps_failed",
                         "market_impact_stress_net_pnl_per_day_failed",
@@ -3085,6 +4692,22 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
 
     def test_candidate_board_helpers_keep_blockers_explicit(self) -> None:
+        spec = replace(
+            self._candidate_spec("spec-regime-diagnostics"),
+            hard_vetoes={"required_min_regime_slice_pass_rate": "0.45"},
+            feature_contract={
+                "source_claims": [
+                    {
+                        "claim_id": "risk-sensitive-routing",
+                        "claim_type": "market_regime",
+                    },
+                    {
+                        "claim_id": "vvg-validation",
+                        "claim_type": "validation_requirement",
+                    },
+                ]
+            },
+        )
         evidence = runner.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-test",
@@ -3103,6 +4726,43 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
 
         self.assertEqual(runner._candidate_board_int_field({"bad": object()}, "bad"), 0)
+        self.assertEqual(
+            runner._candidate_board_market_impact_proof_summary(
+                {
+                    "market_impact_stress_model": "almgren_chriss_proxy",
+                    "market_impact_stress_cost_bps": "150",
+                    "market_impact_stress_net_pnl_per_day": "510",
+                    "market_impact_stress_artifact_ref": "/tmp/impact.json",
+                    "market_impact_stress_components": {
+                        "source_marker": "realistic_market_impact_arxiv_2603_29086_2026",
+                        "selected_model": "almgren_chriss_proxy",
+                        "selected_cost_bps": "150",
+                    },
+                    "nonlinear_market_impact_stress_passed": True,
+                }
+            )["state"],
+            "passed",
+        )
+        missing_impact = runner._candidate_board_market_impact_proof_summary(
+            {"target_met": True}
+        )
+        self.assertEqual(missing_impact["state"], "blocked")
+        self.assertIn(
+            "nonlinear_market_impact_components_missing",
+            missing_impact["blockers"],
+        )
+        regime_summary = runner._candidate_board_regime_specialist_summary(
+            spec, {"regime_slice_pass_rate": "0.30"}
+        )
+        self.assertEqual(regime_summary["state"], "blocked")
+        self.assertIn(
+            "regime_slice_pass_rate_below_specialist_threshold",
+            regime_summary["blockers"],
+        )
+        self.assertEqual(
+            regime_summary["regime_claim_ids"],
+            ["risk-sensitive-routing", "vvg-validation"],
+        )
         self.assertEqual(
             runner._candidate_board_blockers(
                 selected_for_replay=True,
@@ -3189,6 +4849,821 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertTrue(allowed_readiness["promotable"])
         self.assertEqual(allowed_readiness["status"], "promotion_ready")
+
+    def test_candidate_sleeve_goal_rows_carry_order_type_proof_refs(self) -> None:
+        spec = replace(
+            self._candidate_spec("spec-sleeve-order-type-proof"),
+            parameter_space={
+                "mechanism_overlay_ids": ["mixed_market_limit_execution_policy"]
+            },
+            hard_vetoes={
+                "required_order_type_ablation_passed": True,
+                "required_min_order_type_ablation_sample_count": "60",
+            },
+            promotion_contract={
+                "requires_order_type_execution_quality": True,
+                "requires_market_limit_order_mix": True,
+            },
+        )
+        evidence = runner.CandidateEvidenceBundle(
+            schema_version="torghut.candidate-evidence-bundle.v1",
+            evidence_bundle_id="ev-sleeve-order-type-proof",
+            candidate_id="cand-sleeve-order-type-proof",
+            candidate_spec_id=spec.candidate_spec_id,
+            dataset_snapshot_id="snapshot-sleeve-order-type-proof",
+            feature_spec_hash="hash-sleeve-order-type-proof",
+            code_commit="commit-test",
+            replay_artifact_refs=(
+                "replay.json",
+                "order-type-ablation.json",
+                "route-tca.json",
+            ),
+            objective_scorecard={
+                "net_pnl_per_day": "640",
+                "active_day_ratio": "1.0",
+                "positive_day_ratio": "1.0",
+                "order_type_ablation_passed": True,
+                "order_type_ablation_artifact_ref": "order-type-ablation.json",
+                "order_type_ablation_sample_count": 60,
+                "market_limit_order_mix_evidence_present": True,
+                "limit_fill_probability_evidence_present": True,
+                "price_improvement_evidence_present": True,
+                "opportunity_cost_evidence_present": True,
+                "execution_shortfall_evidence_present": True,
+                "route_tca_artifact_ref": "route-tca.json",
+                "order_type_opportunity_cost_bps": "4",
+                "market_order_spread_bps": "4",
+            },
+            fold_metrics=(),
+            stress_metrics=(),
+            cost_calibration={"status": "calibrated", "source": "route_tca"},
+            null_comparator={},
+            promotion_readiness={},
+        )
+
+        rows = runner._candidate_sleeve_goal_rows(
+            candidate_specs=(spec,),
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                        "rank": 1,
+                    }
+                ]
+            },
+            evidence_bundles=(evidence,),
+            false_positive_table=(),
+            best_false_negative_table=(),
+            portfolio=None,
+        )
+
+        self.assertEqual(
+            rows[0]["replay_artifact_refs"], list(evidence.replay_artifact_refs)
+        )
+        self.assertTrue(rows[0]["evidence_lineage"]["passed"])
+        self.assertEqual(rows[0]["evidence_lineage"]["code_commit"], "commit-test")
+        self.assertEqual(rows[0]["evidence_lineage"]["replay_artifact_ref_count"], 3)
+        self.assertEqual(
+            rows[0]["order_type_execution_quality"]["artifact_refs"],
+            ["order-type-ablation.json"],
+        )
+        self.assertEqual(rows[0]["order_type_execution_quality"]["sample_count"], 60)
+        self.assertTrue(rows[0]["order_type_execution_quality"]["passed"])
+
+        portfolio = runner.PortfolioCandidateSpec(
+            schema_version="torghut.portfolio-candidate-spec.v1",
+            portfolio_candidate_id="portfolio-sleeve-order-type-proof",
+            source_candidate_ids=(evidence.candidate_id,),
+            target_net_pnl_per_day=Decimal("500"),
+            sleeves=(
+                {
+                    "candidate_id": evidence.candidate_id,
+                    "candidate_spec_id": spec.candidate_spec_id,
+                    "weight": "1",
+                },
+            ),
+            capital_budget={},
+            correlation_budget={},
+            drawdown_budget={},
+            evidence_refs=(),
+            objective_scorecard={"target_met": True, "oracle_passed": True},
+            optimizer_report={},
+        )
+        portfolio_rows = runner._candidate_sleeve_goal_rows(
+            candidate_specs=(spec,),
+            candidate_selection={"rows": []},
+            evidence_bundles=(evidence,),
+            false_positive_table=(),
+            best_false_negative_table=(),
+            portfolio=portfolio,
+        )
+
+        self.assertEqual(portfolio_rows[0]["evidence_status"], "replayed")
+        self.assertEqual(
+            portfolio_rows[0]["replay_artifact_refs"],
+            list(evidence.replay_artifact_refs),
+        )
+        self.assertTrue(portfolio_rows[0]["evidence_lineage"]["passed"])
+        self.assertTrue(portfolio_rows[0]["order_type_execution_quality"]["passed"])
+        self.assertEqual(portfolio_rows[0]["market_impact_proof"]["state"], "blocked")
+
+    def test_candidate_board_marks_portfolio_promotion_found_when_portfolio_oracle_passes(
+        self,
+    ) -> None:
+        spec = self._candidate_spec("spec-portfolio-promotion-subject")
+        evidence = runner.CandidateEvidenceBundle(
+            schema_version="torghut.candidate-evidence-bundle.v1",
+            evidence_bundle_id="ev-portfolio-promotion-subject",
+            candidate_id="cand-portfolio-promotion-subject",
+            candidate_spec_id=spec.candidate_spec_id,
+            dataset_snapshot_id="snapshot-portfolio-promotion-subject",
+            feature_spec_hash="hash-portfolio-promotion-subject",
+            code_commit="commit-test",
+            replay_artifact_refs=("component-replay.json",),
+            objective_scorecard={
+                "target_met": False,
+                "oracle_passed": False,
+                "net_pnl_per_day": "260",
+            },
+            fold_metrics=(),
+            stress_metrics=(),
+            cost_calibration={},
+            null_comparator={},
+            promotion_readiness={},
+        )
+        portfolio = runner.PortfolioCandidateSpec(
+            schema_version="torghut.portfolio-candidate-spec.v1",
+            portfolio_candidate_id="portfolio-promotion-subject",
+            source_candidate_ids=(evidence.candidate_id,),
+            target_net_pnl_per_day=Decimal("500"),
+            sleeves=(
+                {
+                    "candidate_id": evidence.candidate_id,
+                    "candidate_spec_id": spec.candidate_spec_id,
+                    "weight": "1",
+                },
+            ),
+            capital_budget={},
+            correlation_budget={},
+            drawdown_budget={},
+            evidence_refs=("portfolio-replay.json",),
+            objective_scorecard={
+                "target_met": True,
+                "oracle_passed": True,
+                "net_pnl_per_day": "535",
+                "market_impact_stress_artifact_ref": "portfolio-impact.json",
+                "market_impact_stress_model": "almgren_chriss_proxy",
+                "market_impact_stress_cost_bps": "8",
+                "market_impact_stress_net_pnl_per_day": "515",
+                "market_impact_stress_components": {
+                    "source_marker": "realistic_market_impact_arxiv_2603_29086_2026",
+                    "selected_model": "almgren_chriss_proxy",
+                    "selected_cost_bps": "8",
+                },
+                "nonlinear_market_impact_stress_passed": True,
+            },
+            optimizer_report={},
+        )
+
+        board = runner._candidate_board_payload(
+            epoch_id="epoch-portfolio-promotion-subject",
+            output_dir=Path("/tmp/torghut-test"),
+            target=Decimal("500"),
+            candidate_specs=(spec,),
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                        "rank": 1,
+                    }
+                ]
+            },
+            pre_replay_proposal_rows=(),
+            proposal_rows=(),
+            evidence_bundles=(evidence,),
+            portfolio=portfolio,
+            promotion_readiness={"status": "promotion_ready", "promotable": True},
+            runtime_closure={"status": "ready_for_promotion_review"},
+        )
+
+        self.assertEqual(board["current_answer"], "promotion_candidate_found")
+        self.assertEqual(board["promotion_subject"]["type"], "portfolio")
+        self.assertEqual(
+            board["promotion_subject"]["portfolio_candidate_id"],
+            "portfolio-promotion-subject",
+        )
+        self.assertTrue(board["promotion_subject"]["oracle_passed"])
+        self.assertTrue(board["promotion_subject"]["promotable"])
+        self.assertEqual(
+            board["promotion_subject"]["market_impact_proof"]["state"], "passed"
+        )
+        self.assertFalse(board["closest_promotion_candidate"]["oracle_passed"])
+        self.assertEqual(
+            board["rows"][0]["status"], "portfolio_component_passed_oracle"
+        )
+
+    def test_candidate_board_fails_rejected_signal_candidate_without_labels(
+        self,
+    ) -> None:
+        spec = replace(
+            self._candidate_spec("spec-rejected-signal-proof"),
+            parameter_space={
+                "mechanism_overlay_ids": ["rejected_signal_outcome_calibration"]
+            },
+            hard_vetoes={
+                "required_min_rejected_signal_outcome_label_count": "120",
+                "required_min_rejected_signal_reason_coverage": "0.80",
+                "required_max_rejected_signal_outcome_pending_ratio": "0.05",
+                "required_rejected_signal_counterfactual_fields": [
+                    "counterfactual_return",
+                    "route_tca",
+                    "post_cost_net_pnl",
+                    "executable_quote",
+                ],
+                "required_rejected_signal_outcome_persistence_state": "ok",
+            },
+            promotion_contract={"requires_rejected_signal_outcome_learning": True},
+        )
+        evidence = runner.CandidateEvidenceBundle(
+            schema_version="torghut.candidate-evidence-bundle.v1",
+            evidence_bundle_id="ev-rejected-signal-proof",
+            candidate_id="cand-rejected-signal-proof",
+            candidate_spec_id=spec.candidate_spec_id,
+            dataset_snapshot_id="snapshot-rejected-signal-proof",
+            feature_spec_hash="hash-rejected-signal-proof",
+            code_commit="commit-test",
+            replay_artifact_refs=("replay.json",),
+            objective_scorecard={
+                "net_pnl_per_day": "640",
+                "target_met": True,
+                "oracle_passed": True,
+                "profit_target_oracle": {"blockers": []},
+                "trade_decision_count": 9,
+                "orders_submitted_count": 9,
+            },
+            fold_metrics=(),
+            stress_metrics=(),
+            cost_calibration={"status": "provisional", "source": "paper_runtime"},
+            null_comparator={},
+            promotion_readiness={},
+        )
+
+        board = runner._candidate_board_payload(
+            epoch_id="epoch-rejected-signal-board",
+            output_dir=Path("/tmp/epoch-rejected-signal-board"),
+            target=Decimal("500"),
+            candidate_specs=(spec,),
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                    }
+                ]
+            },
+            pre_replay_proposal_rows=(
+                {
+                    "candidate_spec_id": spec.candidate_spec_id,
+                    "rank": 1,
+                    "proposal_score": "9.0",
+                },
+            ),
+            proposal_rows=(),
+            evidence_bundles=(evidence,),
+            portfolio=None,
+            promotion_readiness={"promotable": True},
+            runtime_closure={},
+        )
+
+        row = board["rows"][0]
+        self.assertFalse(row["oracle_passed"])
+        self.assertEqual(board["current_answer"], "no_promotion_ready_candidate")
+        self.assertIn("rejected_signal_outcome_labeled_count_failed", row["blockers"])
+        self.assertIn("rejected_signal_reason_coverage_failed", row["blockers"])
+        self.assertIn(
+            "rejected_signal_counterfactual_fields_present_failed", row["blockers"]
+        )
+        self.assertFalse(row["rejected_signal_outcome_learning"]["passed"])
+
+    def test_candidate_board_rejects_unknown_code_commit_lineage(self) -> None:
+        spec = self._candidate_spec("spec-unknown-lineage")
+        evidence = runner.CandidateEvidenceBundle(
+            schema_version="torghut.candidate-evidence-bundle.v1",
+            evidence_bundle_id="ev-unknown-lineage",
+            candidate_id="cand-unknown-lineage",
+            candidate_spec_id=spec.candidate_spec_id,
+            dataset_snapshot_id="snapshot-unknown-lineage",
+            feature_spec_hash="hash-unknown-lineage",
+            code_commit="unknown",
+            replay_artifact_refs=("replay.json",),
+            objective_scorecard={
+                "net_pnl_per_day": "700",
+                "target_met": True,
+                "oracle_passed": True,
+                "profit_target_oracle": {"blockers": []},
+            },
+            fold_metrics=(),
+            stress_metrics=(),
+            cost_calibration={"status": "calibrated", "source": "route_tca"},
+            null_comparator={},
+            promotion_readiness={},
+        )
+
+        board = runner._candidate_board_payload(
+            epoch_id="epoch-unknown-lineage-board",
+            output_dir=Path("/tmp/epoch-unknown-lineage-board"),
+            target=Decimal("500"),
+            candidate_specs=(spec,),
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                    }
+                ]
+            },
+            pre_replay_proposal_rows=(
+                {
+                    "candidate_spec_id": spec.candidate_spec_id,
+                    "rank": 1,
+                    "proposal_score": "9.0",
+                },
+            ),
+            proposal_rows=(),
+            evidence_bundles=(evidence,),
+            portfolio=None,
+            promotion_readiness={"promotable": True},
+            runtime_closure={},
+        )
+
+        row = board["rows"][0]
+        self.assertFalse(row["oracle_passed"])
+        self.assertFalse(row["evidence_lineage"]["passed"])
+        self.assertIn("code_commit_missing_or_unknown", row["blockers"])
+        self.assertIn(
+            "code_commit_missing_or_unknown",
+            row["evidence_lineage"]["blockers"],
+        )
+        self.assertEqual(board["current_answer"], "no_promotion_ready_candidate")
+
+    def test_candidate_board_fails_market_limit_candidate_without_order_type_evidence(
+        self,
+    ) -> None:
+        spec = replace(
+            self._candidate_spec("spec-market-limit-proof"),
+            parameter_space={
+                "mechanism_overlay_ids": ["mixed_market_limit_execution_policy"]
+            },
+            hard_vetoes={
+                "required_order_type_ablation_passed": True,
+                "required_min_order_type_ablation_sample_count": "60",
+                "required_limit_fill_probability_evidence": True,
+                "required_price_improvement_evidence": True,
+                "required_opportunity_cost_evidence": True,
+                "required_execution_shortfall_evidence": True,
+                "required_max_order_type_opportunity_cost_bps": "8",
+                "required_max_market_order_spread_bps": "8",
+            },
+            promotion_contract={
+                "requires_order_type_execution_quality": True,
+                "requires_market_limit_order_mix": True,
+                "requires_limit_fill_probability": True,
+                "requires_execution_shortfall": True,
+            },
+        )
+        evidence = runner.CandidateEvidenceBundle(
+            schema_version="torghut.candidate-evidence-bundle.v1",
+            evidence_bundle_id="ev-market-limit-proof",
+            candidate_id="cand-market-limit-proof",
+            candidate_spec_id=spec.candidate_spec_id,
+            dataset_snapshot_id="snapshot-market-limit-proof",
+            feature_spec_hash="hash-market-limit-proof",
+            code_commit="commit-test",
+            replay_artifact_refs=("replay.json",),
+            objective_scorecard={
+                "net_pnl_per_day": "640",
+                "target_met": True,
+                "oracle_passed": True,
+                "profit_target_oracle": {"blockers": []},
+                "order_type_ablation_sample_count": 59,
+                "order_type_opportunity_cost_bps": "9",
+                "market_order_spread_bps": "9",
+            },
+            fold_metrics=(),
+            stress_metrics=(),
+            cost_calibration={"status": "provisional", "source": "paper_runtime"},
+            null_comparator={},
+            promotion_readiness={},
+        )
+
+        board = runner._candidate_board_payload(
+            epoch_id="epoch-market-limit-board",
+            output_dir=Path("/tmp/epoch-market-limit-board"),
+            target=Decimal("500"),
+            candidate_specs=(spec,),
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                    }
+                ]
+            },
+            pre_replay_proposal_rows=(
+                {
+                    "candidate_spec_id": spec.candidate_spec_id,
+                    "rank": 1,
+                    "proposal_score": "9.0",
+                },
+            ),
+            proposal_rows=(),
+            evidence_bundles=(evidence,),
+            portfolio=None,
+            promotion_readiness={"promotable": True},
+            runtime_closure={},
+        )
+
+        row = board["rows"][0]
+        self.assertFalse(row["oracle_passed"])
+        self.assertEqual(board["current_answer"], "no_promotion_ready_candidate")
+        self.assertIn("order_type_ablation_passed_failed", row["blockers"])
+        self.assertIn("order_type_ablation_artifact_present_failed", row["blockers"])
+        self.assertIn("order_type_ablation_sample_count_failed", row["blockers"])
+        self.assertIn("market_limit_order_mix_evidence_present_failed", row["blockers"])
+        self.assertIn("limit_fill_probability_evidence_present_failed", row["blockers"])
+        self.assertIn("route_tca_evidence_present_failed", row["blockers"])
+        self.assertIn("market_order_spread_bps_failed", row["blockers"])
+        self.assertFalse(row["order_type_execution_quality"]["passed"])
+
+    def test_candidate_board_accepts_market_limit_candidate_with_order_type_evidence(
+        self,
+    ) -> None:
+        spec = replace(
+            self._candidate_spec("spec-market-limit-pass"),
+            parameter_space={
+                "mechanism_overlay_ids": ["mixed_market_limit_execution_policy"]
+            },
+            hard_vetoes={
+                "required_order_type_ablation_passed": True,
+                "required_min_order_type_ablation_sample_count": "60",
+                "required_limit_fill_probability_evidence": True,
+                "required_price_improvement_evidence": True,
+                "required_opportunity_cost_evidence": True,
+                "required_execution_shortfall_evidence": True,
+                "required_max_order_type_opportunity_cost_bps": "8",
+                "required_max_market_order_spread_bps": "8",
+            },
+            promotion_contract={
+                "requires_order_type_execution_quality": True,
+                "requires_market_limit_order_mix": True,
+                "requires_limit_fill_probability": True,
+                "requires_execution_shortfall": True,
+            },
+        )
+        evidence = runner.CandidateEvidenceBundle(
+            schema_version="torghut.candidate-evidence-bundle.v1",
+            evidence_bundle_id="ev-market-limit-pass",
+            candidate_id="cand-market-limit-pass",
+            candidate_spec_id=spec.candidate_spec_id,
+            dataset_snapshot_id="snapshot-market-limit-pass",
+            feature_spec_hash="hash-market-limit-pass",
+            code_commit="commit-test",
+            replay_artifact_refs=(
+                "replay.json",
+                "order-type-ablation.json",
+                "route-tca.json",
+            ),
+            objective_scorecard={
+                "net_pnl_per_day": "640",
+                "target_met": True,
+                "oracle_passed": True,
+                "profit_target_oracle": {"blockers": []},
+                "order_type_ablation_passed": True,
+                "order_type_ablation_artifact_ref": "order-type-ablation.json",
+                "order_type_ablation_sample_count": 60,
+                "market_limit_order_mix_evidence_present": True,
+                "limit_fill_probability_evidence_present": True,
+                "price_improvement_evidence_present": True,
+                "opportunity_cost_evidence_present": True,
+                "execution_shortfall_evidence_present": True,
+                "route_tca_artifact_ref": "route-tca.json",
+                "order_type_opportunity_cost_bps": "8",
+                "market_order_spread_bps": "8",
+                "replay_lineage": {
+                    "lineage_hash": "lineage-market-limit-pass",
+                    "expected_windows": ["train", "holdout", "full_window"],
+                    "present_windows": ["train", "holdout", "full_window"],
+                    "missing_windows": [],
+                },
+                "replay_window_coverage": {
+                    "lineage_hash": "lineage-market-limit-pass",
+                    "expected_windows": ["train", "holdout", "full_window"],
+                    "present_windows": ["train", "holdout", "full_window"],
+                    "missing_windows": [],
+                },
+            },
+            fold_metrics=(),
+            stress_metrics=(),
+            cost_calibration={"status": "calibrated", "source": "route_tca"},
+            null_comparator={},
+            promotion_readiness={},
+        )
+
+        board = runner._candidate_board_payload(
+            epoch_id="epoch-market-limit-pass-board",
+            output_dir=Path("/tmp/epoch-market-limit-pass-board"),
+            target=Decimal("500"),
+            candidate_specs=(spec,),
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                    }
+                ]
+            },
+            pre_replay_proposal_rows=(
+                {
+                    "candidate_spec_id": spec.candidate_spec_id,
+                    "rank": 1,
+                    "proposal_score": "9.0",
+                },
+            ),
+            proposal_rows=(),
+            evidence_bundles=(evidence,),
+            portfolio=None,
+            promotion_readiness={"promotable": True},
+            runtime_closure={},
+        )
+
+        row = board["rows"][0]
+        self.assertTrue(row["order_type_execution_quality"]["passed"])
+        self.assertTrue(row["oracle_passed"])
+
+    def test_candidate_board_rejects_market_limit_candidate_with_unreachable_artifacts(
+        self,
+    ) -> None:
+        spec = replace(
+            self._candidate_spec("spec-market-limit-missing-artifact-ref"),
+            parameter_space={
+                "mechanism_overlay_ids": ["mixed_market_limit_execution_policy"]
+            },
+            hard_vetoes={
+                "required_order_type_ablation_passed": True,
+                "required_min_order_type_ablation_sample_count": "60",
+                "required_limit_fill_probability_evidence": True,
+                "required_price_improvement_evidence": True,
+                "required_opportunity_cost_evidence": True,
+                "required_execution_shortfall_evidence": True,
+                "required_max_order_type_opportunity_cost_bps": "8",
+                "required_max_market_order_spread_bps": "8",
+            },
+            promotion_contract={
+                "requires_order_type_execution_quality": True,
+                "requires_market_limit_order_mix": True,
+                "requires_limit_fill_probability": True,
+                "requires_execution_shortfall": True,
+            },
+        )
+        evidence = runner.CandidateEvidenceBundle(
+            schema_version="torghut.candidate-evidence-bundle.v1",
+            evidence_bundle_id="ev-market-limit-missing-artifact-ref",
+            candidate_id="cand-market-limit-missing-artifact-ref",
+            candidate_spec_id=spec.candidate_spec_id,
+            dataset_snapshot_id="snapshot-market-limit-missing-artifact-ref",
+            feature_spec_hash="hash-market-limit-missing-artifact-ref",
+            code_commit="commit-test",
+            replay_artifact_refs=("replay.json",),
+            objective_scorecard={
+                "net_pnl_per_day": "640",
+                "target_met": True,
+                "oracle_passed": True,
+                "profit_target_oracle": {"blockers": []},
+                "order_type_ablation_passed": True,
+                "order_type_ablation_artifact_ref": "order-type-ablation.json",
+                "order_type_ablation_sample_count": 60,
+                "market_limit_order_mix_evidence_present": True,
+                "limit_fill_probability_evidence_present": True,
+                "price_improvement_evidence_present": True,
+                "opportunity_cost_evidence_present": True,
+                "execution_shortfall_evidence_present": True,
+                "route_tca_artifact_ref": "route-tca.json",
+                "order_type_opportunity_cost_bps": "8",
+                "market_order_spread_bps": "8",
+            },
+            fold_metrics=(),
+            stress_metrics=(),
+            cost_calibration={"status": "calibrated", "source": "route_tca"},
+            null_comparator={},
+            promotion_readiness={},
+        )
+
+        board = runner._candidate_board_payload(
+            epoch_id="epoch-market-limit-missing-artifact-ref-board",
+            output_dir=Path("/tmp/epoch-market-limit-missing-artifact-ref-board"),
+            target=Decimal("500"),
+            candidate_specs=(spec,),
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                    }
+                ]
+            },
+            pre_replay_proposal_rows=(
+                {
+                    "candidate_spec_id": spec.candidate_spec_id,
+                    "rank": 1,
+                    "proposal_score": "9.0",
+                },
+            ),
+            proposal_rows=(),
+            evidence_bundles=(evidence,),
+            portfolio=None,
+            promotion_readiness={"promotable": True},
+            runtime_closure={},
+        )
+
+        row = board["rows"][0]
+        self.assertFalse(row["order_type_execution_quality"]["passed"])
+        self.assertFalse(row["oracle_passed"])
+        self.assertIn(
+            "order_type_proof_artifact_ref_missing_from_bundle", row["blockers"]
+        )
+        self.assertEqual(
+            row["order_type_execution_quality"]["missing_replay_artifact_refs"],
+            ["order-type-ablation.json", "route-tca.json"],
+        )
+
+    def test_candidate_board_rejects_route_tca_boolean_without_artifact(
+        self,
+    ) -> None:
+        spec = replace(
+            self._candidate_spec("spec-market-limit-route-bool"),
+            parameter_space={
+                "mechanism_overlay_ids": ["mixed_market_limit_execution_policy"]
+            },
+            hard_vetoes={
+                "required_order_type_ablation_passed": True,
+                "required_min_order_type_ablation_sample_count": "60",
+                "required_limit_fill_probability_evidence": True,
+                "required_price_improvement_evidence": True,
+                "required_opportunity_cost_evidence": True,
+                "required_execution_shortfall_evidence": True,
+                "required_max_order_type_opportunity_cost_bps": "8",
+                "required_max_market_order_spread_bps": "8",
+            },
+            promotion_contract={
+                "requires_order_type_execution_quality": True,
+                "requires_market_limit_order_mix": True,
+                "requires_limit_fill_probability": True,
+                "requires_execution_shortfall": True,
+            },
+        )
+        evidence = runner.CandidateEvidenceBundle(
+            schema_version="torghut.candidate-evidence-bundle.v1",
+            evidence_bundle_id="ev-market-limit-route-bool",
+            candidate_id="cand-market-limit-route-bool",
+            candidate_spec_id=spec.candidate_spec_id,
+            dataset_snapshot_id="snapshot-market-limit-route-bool",
+            feature_spec_hash="hash-market-limit-route-bool",
+            code_commit="commit-test",
+            replay_artifact_refs=("replay.json",),
+            objective_scorecard={
+                "net_pnl_per_day": "640",
+                "target_met": True,
+                "oracle_passed": True,
+                "profit_target_oracle": {"blockers": []},
+                "order_type_ablation_passed": True,
+                "order_type_ablation_artifact_ref": "order-type-ablation.json",
+                "order_type_ablation_sample_count": 60,
+                "market_limit_order_mix_evidence_present": True,
+                "limit_fill_probability_evidence_present": True,
+                "price_improvement_evidence_present": True,
+                "opportunity_cost_evidence_present": True,
+                "execution_shortfall_evidence_present": True,
+                "route_tca_evidence_present": True,
+                "order_type_opportunity_cost_bps": "8",
+                "market_order_spread_bps": "8",
+            },
+            fold_metrics=(),
+            stress_metrics=(),
+            cost_calibration={"status": "calibrated", "source": "route_tca"},
+            null_comparator={},
+            promotion_readiness={},
+        )
+
+        board = runner._candidate_board_payload(
+            epoch_id="epoch-market-limit-route-bool-board",
+            output_dir=Path("/tmp/epoch-market-limit-route-bool-board"),
+            target=Decimal("500"),
+            candidate_specs=(spec,),
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                    }
+                ]
+            },
+            pre_replay_proposal_rows=(),
+            proposal_rows=(),
+            evidence_bundles=(evidence,),
+            portfolio=None,
+            promotion_readiness={"promotable": True},
+            runtime_closure={},
+        )
+
+        row = board["rows"][0]
+        self.assertFalse(row["order_type_execution_quality"]["passed"])
+        self.assertIn("route_tca_evidence_present_failed", row["blockers"])
+
+    def test_candidate_board_rejects_route_tca_as_order_type_ablation_artifact(
+        self,
+    ) -> None:
+        spec = replace(
+            self._candidate_spec("spec-market-limit-route-artifact"),
+            parameter_space={
+                "mechanism_overlay_ids": ["mixed_market_limit_execution_policy"]
+            },
+            hard_vetoes={
+                "required_order_type_ablation_passed": True,
+                "required_min_order_type_ablation_sample_count": "60",
+                "required_limit_fill_probability_evidence": True,
+                "required_price_improvement_evidence": True,
+                "required_opportunity_cost_evidence": True,
+                "required_execution_shortfall_evidence": True,
+                "required_max_order_type_opportunity_cost_bps": "8",
+                "required_max_market_order_spread_bps": "8",
+            },
+            promotion_contract={
+                "requires_order_type_execution_quality": True,
+                "requires_market_limit_order_mix": True,
+                "requires_limit_fill_probability": True,
+                "requires_execution_shortfall": True,
+            },
+        )
+        evidence = runner.CandidateEvidenceBundle(
+            schema_version="torghut.candidate-evidence-bundle.v1",
+            evidence_bundle_id="ev-market-limit-route-artifact",
+            candidate_id="cand-market-limit-route-artifact",
+            candidate_spec_id=spec.candidate_spec_id,
+            dataset_snapshot_id="snapshot-market-limit-route-artifact",
+            feature_spec_hash="hash-market-limit-route-artifact",
+            code_commit="commit-test",
+            replay_artifact_refs=("replay.json",),
+            objective_scorecard={
+                "net_pnl_per_day": "640",
+                "target_met": True,
+                "oracle_passed": True,
+                "profit_target_oracle": {"blockers": []},
+                "order_type_ablation_passed": True,
+                "order_type_execution_artifact_ref": "order-type-execution.json",
+                "order_type_ablation_sample_count": 60,
+                "market_limit_order_mix_evidence_present": True,
+                "limit_fill_probability_evidence_present": True,
+                "price_improvement_evidence_present": True,
+                "opportunity_cost_evidence_present": True,
+                "execution_shortfall_evidence_present": True,
+                "route_tca_artifact_ref": "route-tca.json",
+                "order_type_opportunity_cost_bps": "8",
+                "market_order_spread_bps": "8",
+            },
+            fold_metrics=(),
+            stress_metrics=(),
+            cost_calibration={"status": "calibrated", "source": "route_tca"},
+            null_comparator={},
+            promotion_readiness={},
+        )
+
+        board = runner._candidate_board_payload(
+            epoch_id="epoch-market-limit-route-artifact-board",
+            output_dir=Path("/tmp/epoch-market-limit-route-artifact-board"),
+            target=Decimal("500"),
+            candidate_specs=(spec,),
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                    }
+                ]
+            },
+            pre_replay_proposal_rows=(),
+            proposal_rows=(),
+            evidence_bundles=(evidence,),
+            portfolio=None,
+            promotion_readiness={"promotable": True},
+            runtime_closure={},
+        )
+
+        row = board["rows"][0]
+        self.assertFalse(row["order_type_execution_quality"]["passed"])
+        self.assertIn("order_type_ablation_artifact_present_failed", row["blockers"])
+        self.assertNotIn("route_tca_evidence_present_failed", row["blockers"])
 
     def test_candidate_board_separates_research_rank_from_executed_candidate(
         self,
@@ -3278,10 +5753,85 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             board["closest_promotion_candidate"]["candidate_id"],
             "chip-paper-microbar-composite@execution-proof",
         )
+        self.assertIsNone(board["paper_probation_candidate"])
         self.assertEqual(board["best_executed_candidate"]["decision_count"], 7)
         self.assertEqual(board["best_executed_candidate"]["submitted_order_count"], 7)
         self.assertEqual(board["best_executed_candidate"]["filled_order_count"], 7)
+        self.assertEqual(board["double_oos_summary"]["replayed_candidate_count"], 1)
+        self.assertEqual(
+            board["double_oos_summary"]["missing_artifact_candidate_count"], 1
+        )
+        self.assertIn(
+            "double_oos_artifact_missing_for_replayed_candidates",
+            board["double_oos_summary"]["blockers"],
+        )
         self.assertRegex(board["status_digest"], r"^[0-9a-f]{64}$")
+
+    def test_candidate_board_surfaces_paper_probation_without_promotion(
+        self,
+    ) -> None:
+        spec = self._candidate_spec("spec-paper-probation")
+        evidence = runner.CandidateEvidenceBundle(
+            schema_version="torghut.candidate-evidence-bundle.v1",
+            evidence_bundle_id="ev-paper-probation",
+            candidate_id="cand-paper-probation",
+            candidate_spec_id=spec.candidate_spec_id,
+            dataset_snapshot_id="snapshot-paper-probation",
+            feature_spec_hash="hash-paper-probation",
+            code_commit="commit-test",
+            replay_artifact_refs=("paper-probation.json",),
+            objective_scorecard={
+                "net_pnl_per_day": "525",
+                "target_met": True,
+                "oracle_passed": False,
+                "trade_decision_count": 9,
+                "orders_submitted_count": 9,
+                "trade_count": 9,
+                "profit_target_oracle": {
+                    "blockers": ["delay_adjusted_depth_tail_coverage_passed_failed"]
+                },
+            },
+            fold_metrics=(),
+            stress_metrics=(),
+            cost_calibration={"status": "provisional", "source": "paper_runtime"},
+            null_comparator={},
+            promotion_readiness={},
+        )
+
+        board = runner._candidate_board_payload(
+            epoch_id="epoch-paper-probation-board",
+            output_dir=Path("/tmp/epoch-paper-probation-board"),
+            target=Decimal("500"),
+            candidate_specs=(spec,),
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                    }
+                ]
+            },
+            pre_replay_proposal_rows=(
+                {
+                    "candidate_spec_id": spec.candidate_spec_id,
+                    "rank": 1,
+                    "proposal_score": "9.0",
+                },
+            ),
+            proposal_rows=(),
+            evidence_bundles=(evidence,),
+            portfolio=None,
+            promotion_readiness={"promotable": False},
+            runtime_closure={},
+        )
+
+        self.assertEqual(board["current_answer"], "no_promotion_ready_candidate")
+        self.assertEqual(
+            board["paper_probation_candidate"]["candidate_id"], "cand-paper-probation"
+        )
+        self.assertEqual(
+            board["paper_probation_candidate"], board["closest_promotion_candidate"]
+        )
 
     def test_candidate_universe_symbols_default_to_chip_coverage_when_empty(
         self,
@@ -3382,15 +5932,29 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertTrue(
             all(row["capital_budget"]["capital_feasible"] for row in selected_rows)
         )
-        self.assertEqual(
-            {row["selection_reason"] for row in selected_rows},
-            {"exploitation", "exploration", "budget_backfill"},
+        selected_reasons = {row["selection_reason"] for row in selected_rows}
+        self.assertIn("runtime_strategy_floor", selected_reasons)
+        self.assertLessEqual(
+            selected_reasons,
+            {
+                "runtime_strategy_floor",
+                "exploitation",
+                "exploration",
+                "budget_backfill",
+            },
         )
         proposal_selected = [row for row in proposal_rows if row["selected_for_replay"]]
         self.assertEqual(len(proposal_selected), 3)
-        self.assertEqual(
-            {row["replay_selection_reason"] for row in proposal_selected},
-            {"exploitation", "exploration", "budget_backfill"},
+        proposal_reasons = {row["replay_selection_reason"] for row in proposal_selected}
+        self.assertIn("runtime_strategy_floor", proposal_reasons)
+        self.assertLessEqual(
+            proposal_reasons,
+            {
+                "runtime_strategy_floor",
+                "exploitation",
+                "exploration",
+                "budget_backfill",
+            },
         )
         self.assertEqual(len(pre_replay_rows), payload["candidate_spec_count"])
         self.assertEqual(
@@ -3464,18 +6028,21 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             )
 
         self.assertEqual(payload["status"], "no_profit_target_candidate")
-        exploitation_rows = [
-            row
-            for row in selection["rows"]
-            if row["selected_for_replay"] and row["selection_reason"] == "exploitation"
-        ]
         replay_rows = sorted(
             [row for row in selection["rows"] if row["selected_for_replay"]],
             key=lambda row: row["replay_order"],
         )
-        self.assertEqual(len(exploitation_rows), 3)
+        self.assertEqual(len(replay_rows), 3)
         self.assertGreater(
-            len({row["family_template_id"] for row in exploitation_rows}),
+            sum(
+                1
+                for row in replay_rows
+                if row["selection_reason"] == "runtime_strategy_floor"
+            ),
+            0,
+        )
+        self.assertGreater(
+            len({row["runtime_strategy_name"] for row in replay_rows}),
             1,
         )
         self.assertEqual(
@@ -3486,6 +6053,97 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertGreater(
             len({row["family_template_id"] for row in replay_rows[:2]}),
             1,
+        )
+
+    def test_candidate_selection_reserves_distinct_runtime_strategy_floor(
+        self,
+    ) -> None:
+        breakout_primary = replace(
+            self._candidate_spec(
+                "spec-breakout-primary",
+                family_template_id="microstructure_continuation_matched_filter_v1",
+            ),
+            runtime_family="breakout_continuation_consistent",
+            runtime_strategy_name="breakout-continuation-long-v1",
+        )
+        breakout_secondary = replace(
+            self._candidate_spec(
+                "spec-breakout-secondary",
+                family_template_id="opening_drive_leader_reclaim_v1",
+            ),
+            runtime_family="breakout_continuation_consistent",
+            runtime_strategy_name="breakout-continuation-long-v1",
+        )
+        intraday = replace(
+            self._candidate_spec(
+                "spec-intraday", family_template_id="intraday_tsmom_v2"
+            ),
+            runtime_family="intraday_tsmom_consistent",
+            runtime_strategy_name="intraday-tsmom-profit-v3",
+        )
+        late_day = replace(
+            self._candidate_spec(
+                "spec-late-day", family_template_id="late_day_continuation_v1"
+            ),
+            runtime_family="late_day_continuation_consistent",
+            runtime_strategy_name="late-day-continuation-long-v1",
+        )
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(breakout_primary, breakout_secondary, intraday, late_day),
+            proposal_rows=[
+                {
+                    "candidate_spec_id": breakout_primary.candidate_spec_id,
+                    "rank": 1,
+                    "proposal_score": 100.0,
+                    "selection_reason": "pre_replay_mlx_rank",
+                },
+                {
+                    "candidate_spec_id": breakout_secondary.candidate_spec_id,
+                    "rank": 2,
+                    "proposal_score": 99.0,
+                    "selection_reason": "pre_replay_mlx_rank",
+                },
+                {
+                    "candidate_spec_id": intraday.candidate_spec_id,
+                    "rank": 3,
+                    "proposal_score": 10.0,
+                    "selection_reason": "pre_replay_mlx_rank",
+                },
+                {
+                    "candidate_spec_id": late_day.candidate_spec_id,
+                    "rank": 4,
+                    "proposal_score": 5.0,
+                    "selection_reason": "pre_replay_mlx_rank",
+                },
+            ],
+            top_k=2,
+            exploration_slots=0,
+            max_candidates=3,
+            portfolio_size_min=2,
+        )
+
+        selected_runtime_names = {spec.runtime_strategy_name for spec in selected}
+        self.assertEqual(
+            selected_runtime_names,
+            {
+                "breakout-continuation-long-v1",
+                "intraday-tsmom-profit-v3",
+                "late-day-continuation-long-v1",
+            },
+        )
+        row_by_spec = {row["candidate_spec_id"]: row for row in selection["rows"]}
+        self.assertEqual(
+            row_by_spec[intraday.candidate_spec_id]["selection_reason"],
+            "runtime_strategy_floor",
+        )
+        self.assertEqual(
+            row_by_spec[late_day.candidate_spec_id]["selection_reason"],
+            "runtime_strategy_floor",
+        )
+        self.assertEqual(
+            selection["budget"]["runtime_strategy_floor_selected_count"],
+            3,
         )
 
     def test_seed_recent_whitepapers_dedupes_execution_signatures(self) -> None:
@@ -3773,6 +6431,137 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             ["promotion_gate_report_denied"],
         )
 
+    def test_epoch_ledgers_persist_target_met_oracle_failed_as_paper_probation(
+        self,
+    ) -> None:
+        portfolio = runner.PortfolioCandidateSpec(
+            schema_version="torghut.portfolio-candidate-spec.v1",
+            portfolio_candidate_id="portfolio-paper-probation",
+            source_candidate_ids=("candidate-test",),
+            target_net_pnl_per_day=Decimal("500"),
+            sleeves=(),
+            capital_budget={},
+            correlation_budget={},
+            drawdown_budget={},
+            evidence_refs=(),
+            objective_scorecard={"oracle_passed": False, "target_met": True},
+            optimizer_report={},
+        )
+        started_at = datetime(2026, 5, 8, 17, 0, 0)
+        completed_at = datetime(2026, 5, 8, 17, 1, 0)
+
+        with patch(
+            "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+            side_effect=lambda: Session(self.engine),
+        ):
+            runner._persist_epoch_ledgers(
+                epoch_id="epoch-paper-probation",
+                status="ok",
+                target_net_pnl_per_day=Decimal("500"),
+                paper_run_ids=[],
+                sources=[],
+                candidate_specs=[],
+                proposal_rows=[],
+                portfolio=portfolio,
+                summary={
+                    "promotion_readiness": {
+                        "status": "blocked_pending_promotion_prerequisites",
+                        "promotable": False,
+                        "blockers": ["oracle_blocked"],
+                    }
+                },
+                runner_config={},
+                started_at=started_at,
+                completed_at=completed_at,
+            )
+
+        with Session(self.engine) as session:
+            saved = session.execute(select(AutoresearchPortfolioCandidate)).scalar_one()
+
+        self.assertEqual(saved.status, "paper_probation")
+        self.assertFalse(saved.payload_json["promotion_readiness"]["promotable"])
+        self.assertEqual(
+            saved.payload_json["promotion_readiness"]["blockers"], ["oracle_blocked"]
+        )
+
+    def test_feedback_evidence_loader_reconstructs_paper_probation_candidates(
+        self,
+    ) -> None:
+        spec = self._candidate_spec("candidate-portfolio-probation")
+        scorecard = {
+            "target_met": True,
+            "oracle_passed": False,
+            "net_pnl_per_day": "525",
+            "profit_target_oracle": {
+                "blockers": ["delay_adjusted_depth_tail_coverage_passed_failed"]
+            },
+        }
+        sleeve = {
+            "candidate_id": "candidate-portfolio-probation",
+            "candidate_spec_id": spec.candidate_spec_id,
+            "family_template_id": spec.family_template_id,
+            "runtime_family": spec.runtime_family,
+            "runtime_strategy_name": spec.runtime_strategy_name,
+            "weight": "1.00",
+            "expected_net_pnl_per_day": "525",
+            "source_expected_net_pnl_per_day": "525",
+            "risk_contribution": "2500",
+            "source_risk_contribution": "2500",
+            "correlation_cluster": "NVDA",
+            "params": {"signal_motif": "order_flow_continuation"},
+            "universe_symbols": ["NVDA"],
+        }
+
+        with (
+            Session(self.engine) as session,
+            patch(
+                "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+                side_effect=lambda: Session(self.engine),
+            ),
+        ):
+            session.add(
+                AutoresearchPortfolioCandidate(
+                    portfolio_candidate_id="portfolio-feedback-probation",
+                    epoch_id="portfolio-feedback-probation-epoch",
+                    source_candidate_ids_json=["candidate-portfolio-probation"],
+                    target_net_pnl_per_day=Decimal("500"),
+                    objective_scorecard_json=scorecard,
+                    optimizer_report_json={"method": "test"},
+                    payload_json={
+                        "schema_version": "torghut.portfolio-candidate-spec.v1",
+                        "portfolio_candidate_id": "portfolio-feedback-probation",
+                        "source_candidate_ids": ["candidate-portfolio-probation"],
+                        "target_net_pnl_per_day": "500",
+                        "sleeves": [sleeve],
+                        "objective_scorecard": scorecard,
+                        "optimizer_report": {"method": "test"},
+                        "promotion_readiness": {
+                            "stage": "research_portfolio",
+                            "status": "blocked_pending_promotion_prerequisites",
+                            "promotable": False,
+                            "blockers": [
+                                "delay_adjusted_depth_tail_coverage_passed_failed"
+                            ],
+                        },
+                    },
+                    status="paper_probation",
+                )
+            )
+            session.commit()
+
+            loaded, manifest = runner._load_recent_persisted_feedback_evidence_bundles()
+
+        self.assertEqual(len(loaded), 1)
+        self.assertEqual(loaded[0].candidate_spec_id, spec.candidate_spec_id)
+        self.assertEqual(
+            loaded[0].objective_scorecard["portfolio_status"], "paper_probation"
+        )
+        self.assertIn(
+            "delay_adjusted_depth_tail_coverage_passed_failed",
+            loaded[0].objective_scorecard["portfolio_blockers"],
+        )
+        self.assertEqual(manifest["portfolio_candidate_bundle_count"], 1)
+
     def test_persistence_failure_preserves_artifacts_and_returns_infra_failure(
         self,
     ) -> None:
@@ -3972,6 +6761,92 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "7200",
         )
 
+    def test_remediation_surfaces_recent_trading_day_shortfall(self) -> None:
+        remediation = runner._candidate_search_remediation(
+            failure_reason="ValueError:insufficient_recent_trading_days:9<11",
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": "spec-selected",
+                        "selected_for_replay": True,
+                    }
+                ]
+            },
+            evidence_bundles=(),
+            false_positive_table=(
+                {
+                    "candidate_spec_id": "spec-selected",
+                    "evidence_status": "missing",
+                    "failure_reasons": ["replay_evidence_missing"],
+                },
+            ),
+            best_false_negative_table=(),
+            replay_timeout_seconds=600,
+            max_frontier_candidates_per_spec=1,
+            current_train_days=6,
+            current_holdout_days=3,
+            current_second_oos_days=2,
+        )
+
+        self.assertEqual(
+            remediation["recent_trading_days"]["available_recent_trading_days"],
+            9,
+        )
+        self.assertEqual(
+            remediation["recent_trading_days"]["required_recent_trading_days"],
+            11,
+        )
+        self.assertEqual(
+            remediation["recent_trading_days"]["required_window"],
+            {"train_days": 6, "holdout_days": 3, "second_oos_days": 2},
+        )
+        day_action = remediation["next_actions"][0]
+        self.assertEqual(
+            day_action["action"], "inspect_or_backfill_recent_ta_signal_days"
+        )
+        self.assertIn("torghut.ta_signals", day_action["recommended_operator_probe"])
+
+    def test_remediation_surfaces_stale_tape_shortfall(self) -> None:
+        remediation = runner._candidate_search_remediation(
+            failure_reason=(
+                "ValueError:stale_tape:"
+                "expected_last_trading_day=2026-05-19:end_day=2026-05-18"
+            ),
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": "spec-selected",
+                        "selected_for_replay": True,
+                    }
+                ]
+            },
+            evidence_bundles=(),
+            false_positive_table=(
+                {
+                    "candidate_spec_id": "spec-selected",
+                    "evidence_status": "missing",
+                    "failure_reasons": ["replay_evidence_missing"],
+                },
+            ),
+            best_false_negative_table=(),
+            replay_timeout_seconds=600,
+            max_frontier_candidates_per_spec=1,
+        )
+
+        self.assertEqual(
+            remediation["stale_tape"],
+            {
+                "expected_last_trading_day": "2026-05-19",
+                "available_end_day": "2026-05-18",
+            },
+        )
+        stale_action = remediation["next_actions"][0]
+        self.assertEqual(
+            stale_action["action"], "inspect_or_backfill_latest_ta_signal_day"
+        )
+        self.assertIn("torghut.ta_signals", stale_action["recommended_operator_probe"])
+        self.assertIn("2026-05-18", stale_action["diagnostic_replay_note"])
+
     def test_remediation_prioritizes_missing_promotion_proof(self) -> None:
         remediation = runner._candidate_search_remediation(
             failure_reason="portfolio_optimizer_produced_no_candidate",
@@ -3995,6 +6870,13 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                         "executable_replay_artifact_missing",
                         "executable_replay_account_buying_power_missing",
                         "executable_replay_max_notional_missing",
+                        "market_impact_liquidity_evidence_present_failed",
+                        "market_impact_stress_model_failed",
+                        "market_impact_stress_cost_bps_failed",
+                        "delay_adjusted_depth_stress_model_failed",
+                        "delay_adjusted_depth_stress_ms_failed",
+                        "double_oos_artifact_present_failed",
+                        "double_oos_cost_shock_net_pnl_per_day_failed",
                     ],
                 },
             ),
@@ -4006,7 +6888,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         proof_action = remediation["next_actions"][0]
         self.assertEqual(
             proof_action["action"],
-            "complete_executable_replay_and_shadow_parity_evidence",
+            "complete_runtime_closure_double_oos_and_shadow_evidence",
         )
         self.assertEqual(
             proof_action["blocking_failure_counts"]["executable_replay_not_passed"],
@@ -4014,6 +6896,18 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertIn(
             "executable_replay_artifact_ref",
+            proof_action["required_scorecard_fields"],
+        )
+        self.assertIn(
+            "market_impact_liquidity_evidence_present",
+            proof_action["required_scorecard_fields"],
+        )
+        self.assertIn(
+            "delay_adjusted_depth_stress_model",
+            proof_action["required_scorecard_fields"],
+        )
+        self.assertIn(
+            "double_oos_cost_shock_net_pnl_per_day",
             proof_action["required_scorecard_fields"],
         )
 
@@ -4059,7 +6953,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             action
             for action in remediation["next_actions"]
             if action["action"]
-            == "complete_executable_replay_and_shadow_parity_evidence"
+            == "complete_runtime_closure_double_oos_and_shadow_evidence"
         )
         self.assertEqual(
             proof_action["deferred_until"],
@@ -4787,10 +7681,13 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     "synthetic",
                     "--source-jsonl",
                     str(source_path),
+                    "--candidate-specs",
+                    str(Path(tmpdir) / "selected-candidate-specs.jsonl"),
                     "--clickhouse-password-env",
                     "TORGHUT_CLICKHOUSE_PASSWORD",
                     "--max-total-frontier-candidates",
                     "7",
+                    "--selection-only",
                     "--no-persist-results",
                 ],
             ):
@@ -4801,6 +7698,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertTrue(parsed.seed_recent_whitepapers)
         self.assertEqual(parsed.replay_mode, "synthetic")
         self.assertEqual(parsed.source_jsonl, [source_path])
+        self.assertEqual(
+            parsed.candidate_specs, [Path(tmpdir) / "selected-candidate-specs.jsonl"]
+        )
         self.assertEqual(parsed.clickhouse_password_env, "TORGHUT_CLICKHOUSE_PASSWORD")
         self.assertEqual(parsed.symbols, ",".join(_CHIP_UNIVERSE))
         self.assertEqual(
@@ -4811,6 +7711,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(parsed.real_replay_shard_size, 0)
         self.assertEqual(parsed.real_replay_shard_timeout_seconds, 0)
         self.assertEqual(parsed.real_replay_shard_workers, 1)
+        self.assertTrue(parsed.selection_only)
         self.assertEqual(parsed.max_worst_day_loss, "999999999")
         self.assertEqual(parsed.max_drawdown, "999999999")
         self.assertEqual(parsed.min_profit_factor, "1.50")
@@ -5181,6 +8082,60 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
 
         self.assertEqual(captured_budget, [11])
         self.assertEqual(len(result.evidence_bundles), 1)
+
+    def test_real_replay_caps_source_spec_frontier_budget_from_global_budget(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            result_path = output_dir / "result.json"
+            result_path.parent.mkdir(parents=True)
+            result_path.write_text(
+                json.dumps({"top": []}),
+                encoding="utf-8",
+            )
+            factory_payload = {
+                "experiments": [
+                    {
+                        "experiment_id": "spec-real-exp",
+                        "dataset_snapshot_id": "snap-real",
+                        "result_path": str(result_path),
+                    }
+                ]
+            }
+            captured_budget: list[int] = []
+
+            def fake_run(
+                factory_args: Namespace, *, source_specs: object
+            ) -> dict[str, object]:
+                captured_budget.append(int(factory_args.max_candidates_to_evaluate))
+                return factory_payload
+
+            with patch.object(
+                runner.strategy_factory_runner,
+                "run_strategy_factory_v2_from_specs",
+                side_effect=fake_run,
+            ):
+                cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
+                    [runner.RECENT_WHITEPAPER_SEEDS[0]]
+                )
+                compilation = runner.compile_whitepaper_candidate_specs(
+                    hypothesis_cards=cards,
+                    family_template_dir=Path("config/trading/families"),
+                    seed_sweep_dir=Path("config/trading"),
+                )
+                args = self._args(output_dir)
+                args.max_candidates = 24
+                args.max_frontier_candidates_per_spec = 64
+                args.max_total_frontier_candidates = 8
+                result = runner._run_real_replay(
+                    args,
+                    output_dir=output_dir,
+                    specs=compilation.executable_specs[:8],
+                )
+
+        self.assertEqual(captured_budget, [1])
+        self.assertEqual(len(result.evidence_bundles), 0)
 
     def test_real_replay_defaults_global_frontier_budget_to_candidate_budget(
         self,
@@ -5587,6 +8542,40 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             [2, 2, 2],
         )
         self.assertEqual([plan.args.top_k for plan in plans], [1, 1, 1])
+
+    def test_real_replay_shards_distribute_global_budget_across_one_spec_shards(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
+                [runner.RECENT_WHITEPAPER_SEEDS[0]]
+            )
+            compilation = runner.compile_whitepaper_candidate_specs(
+                hypothesis_cards=cards,
+                family_template_dir=Path("config/trading/families"),
+                seed_sweep_dir=Path("config/trading"),
+            )
+            specs = compilation.executable_specs[:8]
+            args = self._args(output_dir)
+            args.max_candidates = 24
+            args.top_k = 16
+            args.max_frontier_candidates_per_spec = 64
+            args.max_total_frontier_candidates = 8
+
+            plans = runner._build_real_replay_shards(
+                args=args,
+                output_dir=output_dir,
+                specs=specs,
+                shard_size=1,
+                shard_timeout_seconds=7,
+            )
+
+        self.assertEqual(len(plans), 8)
+        self.assertEqual(
+            [int(plan.args.max_total_frontier_candidates) for plan in plans],
+            [1] * 8,
+        )
 
     def test_real_replay_shards_runs_bounded_worker_pool(self) -> None:
         with TemporaryDirectory() as tmpdir:

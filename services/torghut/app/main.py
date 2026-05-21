@@ -104,12 +104,10 @@ from .trading.forecast_runtime import forecast_status_from_empirical_jobs
 from .trading.freshness_carry import build_freshness_carry_ledger
 from .trading.hypotheses import (
     JangarDependencyQuorumStatus,
-    compile_hypothesis_runtime_statuses,
     hypothesis_registry_requires_dependency_capability,
     load_jangar_dependency_quorum,
     load_hypothesis_registry,
     resolve_hypothesis_dependency_quorum,
-    summarize_hypothesis_runtime_statuses,
     validate_hypothesis_registry_from_settings,
 )
 from .trading.jangar_continuity import load_jangar_route_continuity_packet
@@ -149,6 +147,7 @@ from .trading.source_serving_repair_receipt import (
     build_source_serving_repair_receipt_ledger,
 )
 from .trading.submission_council import (
+    build_hypothesis_runtime_summary,
     build_live_submission_gate_payload,
     build_shadow_first_toggle_parity,
     load_quant_evidence_status,
@@ -5232,24 +5231,20 @@ def _build_hypothesis_runtime_payload(
     resolved_feature_readiness = feature_readiness or _load_clickhouse_ta_status(
         scheduler
     )
-    items = compile_hypothesis_runtime_statuses(
-        registry=registry,
-        state=scheduler.state,
-        tca_summary=tca_summary,
-        market_context_status=market_context_status,
-        jangar_dependency_quorum=dependency_quorum,
-        feature_readiness=resolved_feature_readiness,
-        market_session_open=cast(
-            bool | None,
-            getattr(scheduler.state, "market_session_open", None),
-        ),
-        route_symbol_filter_enabled=settings.trading_pipeline_mode == "simple",
+    with SessionLocal() as session:
+        summary_with_items = build_hypothesis_runtime_summary(
+            session,
+            state=scheduler.state,
+            tca_summary=tca_summary,
+            market_context_status=market_context_status,
+            dependency_quorum=dependency_quorum,
+            feature_readiness=resolved_feature_readiness,
+        )
+    items = list(
+        cast(Sequence[Mapping[str, Any]], summary_with_items.get("items") or [])
     )
-    summary = summarize_hypothesis_runtime_statuses(
-        items,
-        registry=registry,
-        dependency_quorum=dependency_quorum,
-    )
+    summary = dict(summary_with_items)
+    summary.pop("items", None)
     return (
         {
             "registry_loaded": registry.loaded,
@@ -6422,6 +6417,9 @@ def _build_rejected_signal_outcome_learning_payload(
             str(key): value
             for key, value in cast(Mapping[object, object], latest_event).items()
         }
+    labeled_count = 0
+    incomplete_count = 0
+    outcome_label_status_total: dict[str, int] = {}
     persistence_state = "not_configured"
     if persisted_summary is not None:
         persistence_state = str(persisted_summary.get("persistence_state") or "ok")
@@ -6434,6 +6432,20 @@ def _build_rejected_signal_outcome_learning_payload(
             pending,
             int(persisted_pending or 0),
         )
+        persisted_labeled = cast(Any, persisted_summary.get("labeled_count"))
+        labeled_count = max(0, int(persisted_labeled or 0))
+        persisted_incomplete = cast(Any, persisted_summary.get("incomplete_count"))
+        incomplete_count = max(
+            0, int(persisted_incomplete or 0)
+        )
+        persisted_status_total = persisted_summary.get("outcome_label_status_total")
+        if isinstance(persisted_status_total, Mapping):
+            outcome_label_status_total = {
+                str(key): max(0, int(value))
+                for key, value in cast(
+                    Mapping[object, Any], persisted_status_total
+                ).items()
+            }
         persisted_reasons = persisted_summary.get("reason_total")
         if isinstance(persisted_reasons, Mapping):
             for key, value in cast(Mapping[object, Any], persisted_reasons).items():
@@ -6445,14 +6457,20 @@ def _build_rejected_signal_outcome_learning_payload(
                 for key, value in cast(Mapping[object, object], persisted_latest).items()
             }
     blockers = ["counterfactual_outcome_labels_pending"] if pending > 0 else []
+    state_label = "pending_outcome_labels"
+    if pending <= 0:
+        state_label = "labeled_outcomes_available" if labeled_count > 0 else "empty"
     return {
         "schema_version": "torghut.rejected-signal-outcome-learning.v1",
         "source": "runtime_quote_quality_gate",
         "paper_source": "paper-arxiv-2605.12151",
         "paper_claim_id": "rejection-event-outcome-labels",
-        "state": "pending_outcome_labels" if pending > 0 else "empty",
+        "state": state_label,
         "events_total": total,
         "outcome_label_pending_total": pending,
+        "labeled_count": labeled_count,
+        "incomplete_count": incomplete_count,
+        "outcome_label_status_total": outcome_label_status_total,
         "reason_total": reasons,
         "latest_event": latest_payload,
         "persistence_state": persistence_state,
@@ -6485,6 +6503,16 @@ def _load_rejected_signal_outcome_learning_summary(
             ).scalar_one()
             or 0
         )
+        status_rows = session.execute(
+            select(
+                RejectedSignalOutcomeEvent.outcome_label_status,
+                func.count(RejectedSignalOutcomeEvent.id),
+            ).group_by(RejectedSignalOutcomeEvent.outcome_label_status)
+        ).all()
+        outcome_label_status_total = {
+            str(status or "unknown"): int(count or 0)
+            for status, count in status_rows
+        }
         reason_rows = session.execute(
             select(
                 RejectedSignalOutcomeEvent.reject_reason,
@@ -6529,6 +6557,9 @@ def _load_rejected_signal_outcome_learning_summary(
             "persistence_state": "ok",
             "events_total": total,
             "outcome_label_pending_total": pending,
+            "labeled_count": outcome_label_status_total.get("labeled", 0),
+            "incomplete_count": outcome_label_status_total.get("incomplete", 0),
+            "outcome_label_status_total": outcome_label_status_total,
             "reason_total": reason_total,
             "latest_event": latest_payload,
         }

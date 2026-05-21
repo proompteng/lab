@@ -70,6 +70,12 @@ spec:
         value: '900'
       - name: realReplayShardWorkers
         value: '4'
+      - name: trainDays
+        value: '12'
+      - name: holdoutDays
+        value: '8'
+      - name: secondOosDays
+        value: '5'
       - name: prefetchFullWindowRows
         value: 'true'
       - name: allowStaleTape
@@ -107,6 +113,9 @@ spec:
           - name: realReplayShardSize
           - name: realReplayShardTimeoutSeconds
           - name: realReplayShardWorkers
+          - name: trainDays
+          - name: holdoutDays
+          - name: secondOosDays
           - name: prefetchFullWindowRows
           - name: allowStaleTape
           - name: persistResults
@@ -196,8 +205,9 @@ spec:
               --real-replay-shard-size "{{inputs.parameters.realReplayShardSize}}"
               --real-replay-shard-timeout-seconds "{{inputs.parameters.realReplayShardTimeoutSeconds}}"
               --real-replay-shard-workers "{{inputs.parameters.realReplayShardWorkers}}"
-              --train-days 6
-              --holdout-days 3
+              --train-days "{{inputs.parameters.trainDays}}"
+              --holdout-days "{{inputs.parameters.holdoutDays}}"
+              --second-oos-days "{{inputs.parameters.secondOosDays}}"
             )
 
             if [ "{{inputs.parameters.seedRecentWhitepapers}}" = "true" ]; then

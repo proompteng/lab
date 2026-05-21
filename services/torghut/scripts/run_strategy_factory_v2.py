@@ -32,6 +32,19 @@ from scripts.search_consistent_profitability_frontier import (
 )
 
 
+_DEFAULT_CLICKHOUSE_HTTP_URL = (
+    "http://torghut-clickhouse.torghut.svc.cluster.local:8123"
+)
+
+
+def _default_clickhouse_http_url() -> str:
+    return (
+        os.environ.get("CLICKHOUSE_HTTP_URL")
+        or os.environ.get("TA_CLICKHOUSE_URL")
+        or _DEFAULT_CLICKHOUSE_HTTP_URL
+    )
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run strategy-factory v2 from mirrored experiment specs.",
@@ -69,9 +82,15 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--clickhouse-http-url",
-        default="http://torghut-clickhouse.torghut.svc.cluster.local:8123",
+        default=_default_clickhouse_http_url(),
     )
-    parser.add_argument("--clickhouse-username", default="torghut")
+    parser.add_argument(
+        "--clickhouse-username",
+        default=os.environ.get(
+            "TA_CLICKHOUSE_USERNAME",
+            os.environ.get("CLICKHOUSE_USERNAME", "torghut"),
+        ),
+    )
     parser.add_argument("--clickhouse-password", default="")
     parser.add_argument(
         "--clickhouse-password-env",
@@ -84,6 +103,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--progress-log-seconds", type=int, default=30)
     parser.add_argument("--train-days", type=int, default=6)
     parser.add_argument("--holdout-days", type=int, default=3)
+    parser.add_argument("--second-oos-days", type=int, default=0)
     parser.add_argument("--full-window-start-date", default="")
     parser.add_argument("--full-window-end-date", default="")
     parser.add_argument("--expected-last-trading-day", default="")
@@ -420,6 +440,7 @@ def _frontier_args(
         progress_log_seconds=int(args.progress_log_seconds),
         train_days=int(args.train_days),
         holdout_days=int(args.holdout_days),
+        second_oos_days=max(0, int(getattr(args, "second_oos_days", 0) or 0)),
         full_window_start_date=str(args.full_window_start_date),
         full_window_end_date=str(args.full_window_end_date),
         expected_last_trading_day=str(args.expected_last_trading_day),

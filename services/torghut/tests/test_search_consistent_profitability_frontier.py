@@ -20,6 +20,61 @@ import scripts.search_consistent_profitability_frontier as frontier
 
 
 class TestSearchConsistentProfitabilityFrontier(TestCase):
+    def test_candidate_replay_lineage_payload_hashes_window_coverage(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            candidate_configmap = root / "candidate.yaml"
+            candidate_configmap.write_text("data:\n  strategies.yaml: '{}'\n")
+            replay_payload = self._payload(
+                start_date="2026-03-18",
+                end_date="2026-03-19",
+                daily_net={"2026-03-18": "100", "2026-03-19": "150"},
+                decision_count=2,
+                filled_count=2,
+                wins=2,
+                losses=0,
+            )
+            window = frontier.FrontierReplayWindows(
+                train_days=(date(2026, 3, 18),),
+                holdout_days=(date(2026, 3, 19),),
+                second_oos_days=(),
+            )
+
+            lineage = frontier._candidate_replay_lineage_payload(
+                candidate_configmap_path=candidate_configmap,
+                candidate_search_key="candidate-key",
+                dataset_snapshot_id="snapshot-lineage",
+                train_payload=replay_payload,
+                holdout_payload=replay_payload,
+                full_window_payload=replay_payload,
+                second_oos_payload=None,
+                window=window,
+                full_window_start=date(2026, 3, 18),
+                full_window_end=date(2026, 3, 19),
+                holdout_replay_skipped=False,
+                full_window_replay_skipped=False,
+            )
+
+        coverage = frontier._replay_window_coverage_payload(lineage)
+        self.assertEqual(
+            lineage["schema_version"], "torghut.frontier-replay-lineage.v1"
+        )
+        self.assertEqual(lineage["missing_windows"], [])
+        self.assertEqual(
+            lineage["present_windows"], ["train", "holdout", "full_window"]
+        )
+        self.assertTrue(lineage["lineage_hash"])
+        self.assertEqual(
+            len(lineage["windows"]["full_window"]["daily_filled_notional_sha256"]),
+            64,
+        )
+        self.assertEqual(
+            len(lineage["windows"]["full_window"]["daily_liquidity_notional_sha256"]),
+            64,
+        )
+        self.assertEqual(coverage["lineage_hash"], lineage["lineage_hash"])
+        self.assertEqual(coverage["window_count"], 3)
+
     def test_parse_args_supports_harness_v2_flags(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -52,6 +107,8 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                     str(family_dir),
                     "--max-candidates-to-evaluate",
                     "12",
+                    "--candidate-record",
+                    str(root / "candidate.json"),
                     "--no-train-screening",
                     "--min-train-screen-net-per-day",
                     "-50",
@@ -59,6 +116,8 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                     "0.25",
                     "--max-train-screen-worst-day-loss",
                     "125",
+                    "--second-oos-days",
+                    "2",
                     "--collect-train-gate-diagnostics",
                 ],
             ):
@@ -69,10 +128,12 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertTrue(args.allow_stale_tape)
         self.assertEqual(args.family_template_dir, family_dir)
         self.assertEqual(args.max_candidates_to_evaluate, 12)
+        self.assertEqual(args.candidate_record, [root / "candidate.json"])
         self.assertFalse(args.train_screening)
         self.assertEqual(args.min_train_screen_net_per_day, "-50")
         self.assertEqual(args.min_train_screen_active_ratio, "0.25")
         self.assertEqual(args.max_train_screen_worst_day_loss, "125")
+        self.assertEqual(args.second_oos_days, 2)
         self.assertTrue(args.collect_train_gate_diagnostics)
 
     def test_clickhouse_password_env_resolution_keeps_secret_out_of_argv(self) -> None:
@@ -138,6 +199,73 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         with self.assertRaisesRegex(ValueError, "parameter_values_not_iterable:alpha"):
             frontier._parameter_grid_items({"alpha": 1})
 
+    def test_candidate_record_seed_extracts_exact_strategy_candidate(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "candidate.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "candidate_id": "H-TSMOM-LIQ-01",
+                        "candidate_strategy": {
+                            "strategy_name": "intraday-tsmom-profit-v3",
+                            "universe_symbols": ["NVDA", "AAPL"],
+                            "max_notional_per_trade": "50000",
+                            "max_position_pct_equity": "3.0",
+                            "params": {
+                                "entry_start_minute_utc": "810",
+                                "entry_end_minute_utc": "930",
+                                "max_spread_bps": "20",
+                                "min_recent_imbalance_pressure": "0.02",
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            params, overrides = frontier._candidate_record_seed(
+                path=path,
+                strategy_name="intraday-tsmom-profit-v3",
+            )
+
+        self.assertEqual(
+            params,
+            {
+                "entry_start_minute_utc": "810",
+                "entry_end_minute_utc": "930",
+                "max_spread_bps": "20",
+                "min_recent_imbalance_pressure": "0.02",
+            },
+        )
+        self.assertEqual(
+            overrides,
+            {
+                "universe_symbols": ["NVDA", "AAPL"],
+                "max_notional_per_trade": "50000",
+                "max_position_pct_equity": "3.0",
+            },
+        )
+
+    def test_initial_worklist_yields_candidate_record_seeds_before_grid(self) -> None:
+        candidates = frontier._iter_initial_worklist_candidates(
+            parameter_grid={"long_stop_loss_bps": ["10"]},
+            override_candidates=[{"max_notional_per_trade": "63180"}],
+            seed_candidates=[
+                (
+                    {"entry_start_minute_utc": "810"},
+                    {"max_notional_per_trade": "50000"},
+                )
+            ],
+        )
+
+        first = next(candidates)
+        second = next(candidates)
+
+        self.assertEqual(first[0], {"entry_start_minute_utc": "810"})
+        self.assertEqual(first[1], {"max_notional_per_trade": "50000"})
+        self.assertEqual(second[0], {"long_stop_loss_bps": "10"})
+        self.assertEqual(second[1], {"max_notional_per_trade": "63180"})
+
     def test_candidate_symbols_prefers_cli_filter_then_universe_override(self) -> None:
         self.assertEqual(
             frontier._candidate_symbols(
@@ -161,6 +289,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         end_date: str,
         daily_net: dict[str, str],
         daily_filled_notional: dict[str, str] | None = None,
+        daily_liquidity_notional: dict[str, str] | None = None,
         decision_count: int,
         filled_count: int,
         wins: int,
@@ -184,6 +313,10 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                         and day in daily_filled_notional
                         else ("1000" if float(value) != 0 else "0")
                     ),
+                    "daily_adv_notional": daily_liquidity_notional[day]
+                    if daily_liquidity_notional is not None
+                    and day in daily_liquidity_notional
+                    else None,
                 }
                 for day, value in daily_net.items()
             },
@@ -244,6 +377,257 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
 
         self.assertGreaterEqual(penalties, Decimal("600"))
         self.assertEqual(summary["negative_days"], 2)
+
+    def test_consistency_penalty_preserves_order_type_execution_metrics(self) -> None:
+        payload = self._payload(
+            start_date="2026-04-01",
+            end_date="2026-04-02",
+            daily_net={"2026-04-01": "120", "2026-04-02": "80"},
+            decision_count=4,
+            filled_count=3,
+            wins=2,
+            losses=0,
+        )
+        payload["decision_count_by_order_type"] = {"market": 2, "limit": 2}
+        payload["filled_count_by_order_type"] = {"market": 2, "limit": 1}
+        payload["limit_fill_rate"] = "0.50"
+
+        _, summary = frontier._consistency_penalty(
+            full_window_payload=payload,
+            policy=frontier.FullWindowConsistencyPolicy(
+                target_net_per_day=Decimal("10"),
+                min_daily_net_pnl=Decimal("-1000"),
+                min_active_days=1,
+                min_active_ratio=Decimal("0"),
+                min_positive_days=1,
+                max_worst_day_loss=Decimal("1000"),
+                max_negative_days=2,
+                max_drawdown=Decimal("1000"),
+                max_best_day_share_of_total_pnl=Decimal("1"),
+                min_avg_filled_notional_per_day=Decimal("0"),
+                min_avg_filled_notional_per_active_day=Decimal("0"),
+                require_every_day_active=False,
+            ),
+        )
+
+        self.assertEqual(
+            summary["decision_count_by_order_type"], {"market": 2, "limit": 2}
+        )
+        self.assertEqual(
+            summary["filled_count_by_order_type"], {"market": 2, "limit": 1}
+        )
+        self.assertEqual(summary["limit_fill_rate"], "0.50")
+        self.assertEqual(summary["market_limit_order_mix_sample_count"], 4)
+        self.assertEqual(summary["limit_fill_probability_sample_count"], 2)
+        self.assertTrue(summary["market_limit_order_mix_evidence_present"])
+        self.assertTrue(summary["limit_fill_probability_evidence_present"])
+
+    def test_run_frontier_writes_paired_order_type_ablation_artifact(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            strategy_configmap = self._write_strategy_configmap(root)
+            sweep_config = root / "sweep.yaml"
+            sweep_config.write_text(
+                yaml.safe_dump(
+                    {
+                        "schema_version": "torghut.replay-frontier-sweep.v1",
+                        "family": "intraday_tsmom_consistent",
+                        "strategy_name": "intraday-tsmom-profit-v3",
+                        "disable_other_strategies": True,
+                        "constraints": {
+                            "holdout_target_net_per_day": "100",
+                            "min_active_holdout_days": 2,
+                            "max_worst_holdout_day_loss": "200",
+                            "min_profit_factor": "1.0",
+                        },
+                        "consistency_constraints": {
+                            "target_net_per_day": "100",
+                            "min_active_days": 2,
+                            "max_worst_day_loss": "300",
+                            "max_negative_days": 1,
+                            "max_drawdown": "400",
+                            "require_every_day_active": False,
+                        },
+                        "order_type_ablation": {
+                            "enabled": True,
+                            "max_candidates": 1,
+                            "min_sample_count": 4,
+                            "max_opportunity_cost_bps": "8",
+                        },
+                        "strategy_overrides": {
+                            "universe_symbols": [["NVDA"]],
+                        },
+                        "parameters": {
+                            "long_stop_loss_bps": ["18"],
+                        },
+                    },
+                    sort_keys=False,
+                ),
+                encoding="utf-8",
+            )
+            json_output = root / "frontier.json"
+            args = self._make_args(
+                strategy_configmap=strategy_configmap,
+                sweep_config=sweep_config,
+                json_output=json_output,
+            )
+            args.min_train_screen_net_per_day = "1"
+            recent_days = tuple(
+                date(2026, 3, 18) + timedelta(days=index) for index in range(6)
+            )
+            snapshot_receipt = SimpleNamespace(
+                snapshot_id="snap-ablation",
+                is_fresh=True,
+                stale_override_used=False,
+                to_payload=lambda: {
+                    "snapshot_id": "snap-ablation",
+                    "source": "ta",
+                    "window_size": "PT1S",
+                    "start_day": "2026-03-18",
+                    "end_day": "2026-03-23",
+                    "expected_last_trading_day": "2026-03-23",
+                    "is_fresh": True,
+                    "missing_days": [],
+                    "row_count": 123,
+                    "stale_override_used": False,
+                    "witnesses": [],
+                },
+            )
+            forced_order_types: list[str] = []
+
+            def fake_run_replay(config: object) -> dict[str, object]:
+                configmap_path = Path(getattr(config, "strategy_configmap_path"))
+                payload = yaml.safe_load(configmap_path.read_text(encoding="utf-8"))
+                strategy = next(
+                    item
+                    for item in yaml.safe_load(payload["data"]["strategies.yaml"])[
+                        "strategies"
+                    ]
+                    if item["name"] == "intraday-tsmom-profit-v3"
+                )
+                entry_order_type = str(
+                    strategy.get("params", {}).get("entry_order_type") or "default"
+                )
+                start_date = str(getattr(config, "start_date"))
+                end_date = str(getattr(config, "end_date"))
+                full_window = start_date == "2026-03-18" and end_date == "2026-03-23"
+                if full_window and entry_order_type in {"market", "limit"}:
+                    forced_order_types.append(entry_order_type)
+                    daily_net = (
+                        {
+                            "2026-03-18": "120",
+                            "2026-03-19": "120",
+                            "2026-03-20": "120",
+                            "2026-03-21": "120",
+                            "2026-03-22": "120",
+                            "2026-03-23": "120",
+                        }
+                        if entry_order_type == "market"
+                        else {
+                            "2026-03-18": "110",
+                            "2026-03-19": "110",
+                            "2026-03-20": "110",
+                            "2026-03-21": "110",
+                            "2026-03-22": "110",
+                            "2026-03-23": "110",
+                        }
+                    )
+                    replay_payload = self._payload(
+                        start_date=start_date,
+                        end_date=end_date,
+                        daily_net=daily_net,
+                        daily_filled_notional={day: "20000" for day in daily_net},
+                        decision_count=6,
+                        filled_count=6 if entry_order_type == "market" else 5,
+                        wins=6,
+                        losses=0,
+                    )
+                    replay_payload["decision_count_by_order_type"] = {
+                        entry_order_type: 6
+                    }
+                    replay_payload["filled_count_by_order_type"] = {
+                        entry_order_type: 6 if entry_order_type == "market" else 5
+                    }
+                    if entry_order_type == "limit":
+                        replay_payload["limit_fill_rate"] = "0.83"
+                    return replay_payload
+
+                if start_date == "2026-03-18" and end_date == "2026-03-20":
+                    daily_net = {
+                        "2026-03-18": "105",
+                        "2026-03-19": "110",
+                        "2026-03-20": "115",
+                    }
+                elif start_date == "2026-03-21" and end_date == "2026-03-23":
+                    daily_net = {
+                        "2026-03-21": "125",
+                        "2026-03-22": "130",
+                        "2026-03-23": "135",
+                    }
+                else:
+                    daily_net = {
+                        "2026-03-18": "105",
+                        "2026-03-19": "110",
+                        "2026-03-20": "115",
+                        "2026-03-21": "125",
+                        "2026-03-22": "130",
+                        "2026-03-23": "135",
+                    }
+                return self._payload(
+                    start_date=start_date,
+                    end_date=end_date,
+                    daily_net=daily_net,
+                    decision_count=6,
+                    filled_count=6,
+                    wins=6,
+                    losses=0,
+                )
+
+            with (
+                patch(
+                    "scripts.search_consistent_profitability_frontier._resolve_recent_trading_days",
+                    return_value=recent_days,
+                ),
+                patch(
+                    "scripts.search_consistent_profitability_frontier.build_dataset_snapshot_receipt",
+                    return_value=snapshot_receipt,
+                ),
+                patch(
+                    "scripts.search_consistent_profitability_frontier.ensure_fresh_snapshot"
+                ),
+                patch(
+                    "scripts.search_consistent_profitability_frontier.run_replay",
+                    side_effect=fake_run_replay,
+                ),
+            ):
+                payload = frontier.run_consistent_profitability_frontier(args)
+
+            self.assertEqual(forced_order_types, ["market", "limit"])
+            scorecard = payload["top"][0]["objective_scorecard"]
+            artifact_ref = Path(scorecard["order_type_ablation_artifact_ref"])
+            self.assertTrue(artifact_ref.exists())
+            self.assertEqual(scorecard["order_type_ablation_sample_count"], 12)
+            self.assertTrue(scorecard["order_type_ablation_passed"])
+            self.assertEqual(
+                scorecard["order_type_ablation_selected_order_type"], "market"
+            )
+            self.assertNotIn("route_tca_artifact_ref", scorecard)
+            self.assertNotIn("price_improvement_evidence_present", scorecard)
+            self.assertNotIn("execution_shortfall_evidence_present", scorecard)
+            artifact = json.loads(artifact_ref.read_text(encoding="utf-8"))
+            self.assertEqual(
+                artifact["schema_version"], "torghut.order-type-ablation.v1"
+            )
+            self.assertEqual(artifact["selected_order_type"], "market")
+            self.assertEqual(artifact["alternative_order_type"], "limit")
+            self.assertEqual(artifact["market"]["sample_count"], 6)
+            self.assertEqual(artifact["limit"]["sample_count"], 6)
+            self.assertEqual(len(artifact["market"]["payload_sha256"]), 64)
+            self.assertEqual(len(artifact["limit"]["payload_sha256"]), 64)
+            self.assertEqual(
+                payload["top"][0]["order_type_ablation"]["artifact_ref"],
+                str(artifact_ref),
+            )
 
     def test_train_screen_failures_reports_worst_day_loss(self) -> None:
         failures = frontier._train_screen_failures(
@@ -378,6 +762,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             progress_log_seconds=30,
             train_days=3,
             holdout_days=3,
+            second_oos_days=0,
             full_window_start_date="",
             full_window_end_date="",
             expected_last_trading_day="",
@@ -398,6 +783,23 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             min_train_screen_active_ratio="0.50",
             max_train_screen_worst_day_loss="",
         )
+
+    def test_resolve_frontier_replay_windows_keeps_second_oos_independent(
+        self,
+    ) -> None:
+        days = tuple(date(2026, 3, 16) + timedelta(days=index) for index in range(8))
+
+        resolved = frontier._resolve_frontier_replay_windows(
+            days,
+            train_days=3,
+            holdout_days=3,
+            second_oos_days=2,
+        )
+
+        self.assertEqual(resolved.train_days, days[:3])
+        self.assertEqual(resolved.holdout_days, days[3:6])
+        self.assertEqual(resolved.second_oos_days, days[6:])
+        self.assertEqual(resolved.expected_days, days)
 
     def test_strategy_universe_symbols_reads_target_strategy_universe(self) -> None:
         configmap_payload = {
@@ -868,6 +1270,11 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                     "2026-04-01": "50000",
                     "2026-04-02": "60000",
                 },
+                daily_liquidity_notional={
+                    "2026-03-31": "1000000",
+                    "2026-04-01": "1250000",
+                    "2026-04-02": "1500000",
+                },
                 decision_count=3,
                 filled_count=3,
                 wins=1,
@@ -896,6 +1303,279 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             summary["best_day_share_of_total_pnl"], "1.104166666666666666666666667"
         )
         self.assertEqual(summary["avg_filled_notional_per_day"], "18750")
+        self.assertTrue(summary["market_impact_liquidity_evidence_present"])
+        self.assertEqual(summary["market_impact_liquidity_day_count"], 3)
+        self.assertEqual(summary["market_impact_liquidity_missing_day_count"], 5)
+        self.assertEqual(summary["avg_liquidity_notional_per_day"], "468750")
+        self.assertEqual(summary["market_impact_stress_model"], "square_root")
+        self.assertEqual(summary["market_impact_stress_cost_bps"], "20.0")
+        self.assertEqual(summary["market_impact_stress_net_pnl_per_day"], "262.5")
+        self.assertTrue(summary["implementation_uncertainty_required"])
+        self.assertEqual(
+            summary["implementation_uncertainty_model"],
+            "impact_latency_cost_model_interval",
+        )
+        self.assertEqual(summary["implementation_uncertainty_model_count"], 5)
+        self.assertIn(
+            "impact_decay_reversion_1_5x",
+            summary["implementation_uncertainty_scenarios"],
+        )
+        self.assertEqual(
+            summary["market_impact_stress_components"]["source_marker"],
+            "realistic_market_impact_arxiv_2603_29086_2026",
+        )
+        self.assertEqual(
+            summary["market_impact_stress_components"]["almgren_chriss_cost_bps"],
+            "10.00",
+        )
+        self.assertTrue(summary["market_impact_stress_passed"])
+        self.assertEqual(
+            summary["delay_adjusted_depth_stress_model"], "latency_depth_haircut"
+        )
+        self.assertEqual(
+            summary["delay_adjusted_depth_fillable_notional_per_day"], "18750"
+        )
+        self.assertEqual(
+            summary["delay_adjusted_depth_latency_grid_ms"], ["50", "150", "250"]
+        )
+        self.assertEqual(summary["delay_adjusted_depth_grid_max_stress_ms"], "250")
+        self.assertEqual(
+            summary["delay_adjusted_depth_worst_active_day_fillable_notional"],
+            "40000",
+        )
+        self.assertEqual(
+            summary["delay_adjusted_depth_p10_active_day_fillable_notional"],
+            "40000",
+        )
+        self.assertTrue(summary["delay_adjusted_depth_tail_coverage_passed"])
+        self.assertTrue(summary["delay_adjusted_depth_liquidity_evidence_present"])
+        self.assertEqual(summary["delay_adjusted_depth_liquidity_missing_day_count"], 0)
+        self.assertEqual(summary["delay_adjusted_depth_fillable_ratio"], "1")
+        self.assertEqual(
+            summary["delay_adjusted_depth_unfillable_notional_per_day"], "0"
+        )
+        self.assertEqual(
+            summary["delay_adjusted_depth_stress_net_pnl_per_day"], "298.125"
+        )
+        self.assertTrue(summary["delay_adjusted_depth_stress_passed"])
+        self.assertEqual(
+            summary["daily_liquidity_notional"],
+            {
+                "2026-03-31": "1000000",
+                "2026-04-01": "1250000",
+                "2026-04-02": "1500000",
+            },
+        )
+
+    def test_consistency_penalty_selects_almgren_chriss_proxy_when_stricter(
+        self,
+    ) -> None:
+        _, summary = frontier._consistency_penalty(
+            full_window_payload=self._payload(
+                start_date="2026-03-24",
+                end_date="2026-03-24",
+                daily_net={"2026-03-24": "1000"},
+                daily_filled_notional={"2026-03-24": "1000000"},
+                daily_liquidity_notional={"2026-03-24": "1000000"},
+                decision_count=10,
+                filled_count=10,
+                wins=10,
+                losses=0,
+            ),
+            policy=frontier.FullWindowConsistencyPolicy(
+                target_net_per_day=frontier.Decimal("500"),
+                min_daily_net_pnl=frontier.Decimal("0"),
+                min_active_days=1,
+                min_active_ratio=frontier.Decimal("1"),
+                min_positive_days=1,
+                max_worst_day_loss=frontier.Decimal("250"),
+                max_negative_days=0,
+                max_drawdown=frontier.Decimal("500"),
+                max_best_day_share_of_total_pnl=frontier.Decimal("1"),
+                min_avg_filled_notional_per_day=frontier.Decimal("50000"),
+                min_avg_filled_notional_per_active_day=frontier.Decimal("50000"),
+                require_every_day_active=True,
+            ),
+        )
+
+        self.assertEqual(summary["market_impact_stress_model"], "almgren_chriss_proxy")
+        self.assertEqual(summary["market_impact_stress_cost_bps"], "150")
+        self.assertEqual(
+            summary["market_impact_stress_components"]["square_root_cost_bps"], "100"
+        )
+        self.assertEqual(
+            summary["market_impact_stress_components"]["almgren_chriss_cost_bps"],
+            "150",
+        )
+        self.assertFalse(summary["market_impact_stress_passed"])
+
+    def test_consistency_penalty_fails_implementation_uncertainty_lower_bound(
+        self,
+    ) -> None:
+        penalties, summary = frontier._consistency_penalty(
+            full_window_payload=self._payload(
+                start_date="2026-03-24",
+                end_date="2026-03-25",
+                daily_net={
+                    "2026-03-24": "514",
+                    "2026-03-25": "514",
+                },
+                daily_filled_notional={
+                    "2026-03-24": "100000",
+                    "2026-03-25": "100000",
+                },
+                daily_liquidity_notional={
+                    "2026-03-24": "10000000000000",
+                    "2026-03-25": "10000000000000",
+                },
+                decision_count=4,
+                filled_count=4,
+                wins=4,
+                losses=0,
+            ),
+            policy=frontier.FullWindowConsistencyPolicy(
+                target_net_per_day=frontier.Decimal("500"),
+                min_daily_net_pnl=frontier.Decimal("0"),
+                min_active_days=2,
+                min_active_ratio=frontier.Decimal("1"),
+                min_positive_days=2,
+                max_worst_day_loss=frontier.Decimal("250"),
+                max_negative_days=0,
+                max_drawdown=frontier.Decimal("500"),
+                max_best_day_share_of_total_pnl=frontier.Decimal("0.60"),
+                min_avg_filled_notional_per_day=frontier.Decimal("50000"),
+                min_avg_filled_notional_per_active_day=frontier.Decimal("50000"),
+                require_every_day_active=True,
+            ),
+        )
+
+        self.assertTrue(summary["market_impact_stress_passed"])
+        self.assertEqual(summary["market_impact_stress_net_pnl_per_day"], "504.0")
+        self.assertFalse(summary["implementation_uncertainty_stability_passed"])
+        self.assertEqual(
+            summary["implementation_uncertainty_lower_net_pnl_per_day"], "499.0"
+        )
+        self.assertGreater(penalties, frontier.Decimal("0"))
+
+    def test_consistency_penalty_fails_delay_depth_when_filled_day_lacks_liquidity(
+        self,
+    ) -> None:
+        _, summary = frontier._consistency_penalty(
+            full_window_payload=self._payload(
+                start_date="2026-03-24",
+                end_date="2026-03-25",
+                daily_net={
+                    "2026-03-24": "800",
+                    "2026-03-25": "800",
+                },
+                daily_filled_notional={
+                    "2026-03-24": "200000",
+                    "2026-03-25": "200000",
+                },
+                daily_liquidity_notional={
+                    "2026-03-24": "100000",
+                },
+                decision_count=4,
+                filled_count=4,
+                wins=4,
+                losses=0,
+            ),
+            policy=frontier.FullWindowConsistencyPolicy(
+                target_net_per_day=frontier.Decimal("500"),
+                min_daily_net_pnl=frontier.Decimal("0"),
+                min_active_days=2,
+                min_active_ratio=frontier.Decimal("1"),
+                min_positive_days=2,
+                max_worst_day_loss=frontier.Decimal("250"),
+                max_negative_days=0,
+                max_drawdown=frontier.Decimal("500"),
+                max_best_day_share_of_total_pnl=frontier.Decimal("0.75"),
+                min_avg_filled_notional_per_day=frontier.Decimal("50000"),
+                min_avg_filled_notional_per_active_day=frontier.Decimal("50000"),
+                require_every_day_active=True,
+            ),
+        )
+
+        self.assertFalse(summary["delay_adjusted_depth_liquidity_evidence_present"])
+        self.assertEqual(summary["delay_adjusted_depth_liquidity_missing_day_count"], 1)
+        self.assertEqual(
+            summary["delay_adjusted_depth_fillable_notional_per_day"], "47500.00"
+        )
+        self.assertEqual(
+            summary["delay_adjusted_depth_worst_active_day_fillable_notional"], "0"
+        )
+        self.assertEqual(
+            summary["delay_adjusted_depth_p10_active_day_fillable_notional"], "0"
+        )
+        self.assertFalse(summary["delay_adjusted_depth_tail_coverage_passed"])
+        self.assertFalse(summary["delay_adjusted_depth_stress_passed"])
+
+    def test_consistency_penalty_scales_delay_depth_net_for_thin_recorded_liquidity(
+        self,
+    ) -> None:
+        _, summary = frontier._consistency_penalty(
+            full_window_payload=self._payload(
+                start_date="2026-03-24",
+                end_date="2026-03-25",
+                daily_net={
+                    "2026-03-24": "800",
+                    "2026-03-25": "800",
+                },
+                daily_filled_notional={
+                    "2026-03-24": "400000",
+                    "2026-03-25": "400000",
+                },
+                daily_liquidity_notional={
+                    "2026-03-24": "200000",
+                    "2026-03-25": "200000",
+                },
+                decision_count=4,
+                filled_count=4,
+                wins=4,
+                losses=0,
+            ),
+            policy=frontier.FullWindowConsistencyPolicy(
+                target_net_per_day=frontier.Decimal("500"),
+                min_daily_net_pnl=frontier.Decimal("0"),
+                min_active_days=2,
+                min_active_ratio=frontier.Decimal("1"),
+                min_positive_days=2,
+                max_worst_day_loss=frontier.Decimal("250"),
+                max_negative_days=0,
+                max_drawdown=frontier.Decimal("500"),
+                max_best_day_share_of_total_pnl=frontier.Decimal("0.75"),
+                min_avg_filled_notional_per_day=frontier.Decimal("50000"),
+                min_avg_filled_notional_per_active_day=frontier.Decimal("50000"),
+                require_every_day_active=True,
+            ),
+        )
+
+        self.assertTrue(summary["delay_adjusted_depth_liquidity_evidence_present"])
+        self.assertEqual(summary["delay_adjusted_depth_liquidity_missing_day_count"], 0)
+        self.assertEqual(
+            summary["delay_adjusted_depth_fillable_notional_per_day"], "190000.00"
+        )
+        self.assertEqual(
+            summary["delay_adjusted_depth_worst_grid_fillable_notional_per_day"],
+            "150000.00",
+        )
+        self.assertEqual(
+            summary["delay_adjusted_depth_worst_active_day_fillable_notional"],
+            "150000.00",
+        )
+        self.assertEqual(
+            summary["delay_adjusted_depth_p10_active_day_fillable_notional"],
+            "150000.00",
+        )
+        self.assertTrue(summary["delay_adjusted_depth_tail_coverage_passed"])
+        self.assertEqual(summary["delay_adjusted_depth_fillable_ratio"], "0.475")
+        self.assertEqual(
+            summary["delay_adjusted_depth_unfillable_notional_per_day"], "210000.00"
+        )
+        self.assertEqual(
+            frontier.Decimal(summary["delay_adjusted_depth_stress_net_pnl_per_day"]),
+            frontier.Decimal("361"),
+        )
 
     def test_consistency_penalty_reports_and_penalizes_capital_realism(self) -> None:
         payload = self._payload(
@@ -1112,6 +1792,262 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             )
             self.assertEqual(top["ranking"]["method"], "pareto_frontier_v2")
             self.assertEqual(top["family_template_id"], "intraday_tsmom_v2")
+
+    def test_run_frontier_vetoes_candidate_that_fails_second_oos(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            strategy_configmap = self._write_strategy_configmap(root)
+            sweep_config = self._write_sweep_config(root)
+            json_output = root / "frontier.json"
+            args = self._make_args(
+                strategy_configmap=strategy_configmap,
+                sweep_config=sweep_config,
+                json_output=json_output,
+            )
+            args.second_oos_days = 2
+            recent_days = tuple(
+                date(2026, 3, 18) + timedelta(days=index) for index in range(8)
+            )
+
+            def fake_run_replay(config: object) -> dict[str, object]:
+                configmap_path = Path(getattr(config, "strategy_configmap_path"))
+                payload = yaml.safe_load(configmap_path.read_text(encoding="utf-8"))
+                strategy = next(
+                    item
+                    for item in yaml.safe_load(payload["data"]["strategies.yaml"])[
+                        "strategies"
+                    ]
+                    if item["name"] == "intraday-tsmom-profit-v3"
+                )
+                stop = str(strategy["params"]["long_stop_loss_bps"])
+                start_date = str(getattr(config, "start_date"))
+                end_date = str(getattr(config, "end_date"))
+                if start_date == "2026-03-24" and end_date == "2026-03-25":
+                    if stop == "12":
+                        return self._payload(
+                            start_date=start_date,
+                            end_date=end_date,
+                            daily_net={"2026-03-24": "-250", "2026-03-25": "0"},
+                            daily_liquidity_notional={
+                                "2026-03-24": "1000000",
+                                "2026-03-25": "1000000",
+                            },
+                            decision_count=1,
+                            filled_count=1,
+                            wins=0,
+                            losses=1,
+                        )
+                    return self._payload(
+                        start_date=start_date,
+                        end_date=end_date,
+                        daily_net={"2026-03-24": "240", "2026-03-25": "230"},
+                        daily_liquidity_notional={
+                            "2026-03-24": "1000000",
+                            "2026-03-25": "1000000",
+                        },
+                        decision_count=2,
+                        filled_count=2,
+                        wins=2,
+                        losses=0,
+                    )
+                if start_date == "2026-03-21" and end_date == "2026-03-23":
+                    return self._payload(
+                        start_date=start_date,
+                        end_date=end_date,
+                        daily_net=(
+                            {
+                                "2026-03-21": "500",
+                                "2026-03-22": "510",
+                                "2026-03-23": "520",
+                            }
+                            if stop == "12"
+                            else {
+                                "2026-03-21": "220",
+                                "2026-03-22": "210",
+                                "2026-03-23": "205",
+                            }
+                        ),
+                        daily_liquidity_notional={
+                            "2026-03-21": "1000000",
+                            "2026-03-22": "1000000",
+                            "2026-03-23": "1000000",
+                        },
+                        decision_count=3,
+                        filled_count=3,
+                        wins=3,
+                        losses=0,
+                    )
+                if start_date == "2026-03-18" and end_date == "2026-03-20":
+                    return self._payload(
+                        start_date=start_date,
+                        end_date=end_date,
+                        daily_net={
+                            "2026-03-18": "90",
+                            "2026-03-19": "95",
+                            "2026-03-20": "100",
+                        },
+                        daily_liquidity_notional={
+                            "2026-03-18": "1000000",
+                            "2026-03-19": "1000000",
+                            "2026-03-20": "1000000",
+                        },
+                        decision_count=3,
+                        filled_count=3,
+                        wins=3,
+                        losses=0,
+                    )
+                return self._payload(
+                    start_date=start_date,
+                    end_date=end_date,
+                    daily_net=(
+                        {
+                            "2026-03-18": "90",
+                            "2026-03-19": "95",
+                            "2026-03-20": "100",
+                            "2026-03-21": "500",
+                            "2026-03-22": "510",
+                            "2026-03-23": "520",
+                            "2026-03-24": "-250",
+                            "2026-03-25": "0",
+                        }
+                        if stop == "12"
+                        else {
+                            "2026-03-18": "90",
+                            "2026-03-19": "95",
+                            "2026-03-20": "100",
+                            "2026-03-21": "220",
+                            "2026-03-22": "210",
+                            "2026-03-23": "205",
+                            "2026-03-24": "240",
+                            "2026-03-25": "230",
+                        }
+                    ),
+                    daily_liquidity_notional={
+                        "2026-03-18": "1000000",
+                        "2026-03-19": "1000000",
+                        "2026-03-20": "1000000",
+                        "2026-03-21": "1000000",
+                        "2026-03-22": "1000000",
+                        "2026-03-23": "1000000",
+                        "2026-03-24": "1000000",
+                        "2026-03-25": "1000000",
+                    },
+                    decision_count=8,
+                    filled_count=8,
+                    wins=7,
+                    losses=1 if stop == "12" else 0,
+                )
+
+            snapshot_receipt = SimpleNamespace(
+                snapshot_id="snap-second-oos",
+                is_fresh=True,
+                stale_override_used=False,
+                to_payload=lambda: {
+                    "snapshot_id": "snap-second-oos",
+                    "source": "ta",
+                    "window_size": "PT1S",
+                    "start_day": "2026-03-18",
+                    "end_day": "2026-03-25",
+                    "expected_last_trading_day": "2026-03-25",
+                    "is_fresh": True,
+                    "missing_days": [],
+                    "row_count": 123,
+                    "stale_override_used": False,
+                    "witnesses": [],
+                },
+            )
+            with (
+                patch(
+                    "scripts.search_consistent_profitability_frontier._resolve_recent_trading_days",
+                    return_value=recent_days,
+                ),
+                patch(
+                    "scripts.search_consistent_profitability_frontier.build_dataset_snapshot_receipt",
+                    return_value=snapshot_receipt,
+                ),
+                patch(
+                    "scripts.search_consistent_profitability_frontier.ensure_fresh_snapshot"
+                ),
+                patch(
+                    "scripts.search_consistent_profitability_frontier.run_replay",
+                    side_effect=fake_run_replay,
+                ),
+            ):
+                payload = frontier.run_consistent_profitability_frontier(args)
+
+            self.assertEqual(
+                payload["window"]["second_oos_days"], ["2026-03-24", "2026-03-25"]
+            )
+            self.assertEqual(
+                payload["constraints"]["second_oos"]["min_independent_window_count"],
+                2,
+            )
+            top_by_stop = {
+                str(row["replay_config"]["params"]["long_stop_loss_bps"]): row
+                for row in payload["top"]
+            }
+            self.assertTrue(top_by_stop["18"]["second_oos"]["passed"])
+            self.assertTrue(
+                top_by_stop["18"]["full_window"][
+                    "market_impact_liquidity_evidence_present"
+                ]
+            )
+            self.assertEqual(
+                top_by_stop["18"]["full_window"]["market_impact_liquidity_day_count"],
+                8,
+            )
+            self.assertEqual(
+                top_by_stop["18"]["second_oos"]["market_impact_liquidity_day_count"],
+                2,
+            )
+            self.assertTrue(
+                top_by_stop["18"]["objective_scorecard"][
+                    "market_impact_liquidity_evidence_present"
+                ]
+            )
+            self.assertEqual(
+                top_by_stop["18"]["objective_scorecard"]["market_impact_stress_model"],
+                "square_root",
+            )
+            self.assertEqual(
+                top_by_stop["18"]["objective_scorecard"][
+                    "market_impact_stress_components"
+                ]["source_marker"],
+                "realistic_market_impact_arxiv_2603_29086_2026",
+            )
+            self.assertTrue(
+                top_by_stop["18"]["objective_scorecard"][
+                    "nonlinear_market_impact_stress_passed"
+                ]
+            )
+            self.assertIn(
+                "market_impact_stress_net_pnl_per_day",
+                top_by_stop["18"]["objective_scorecard"],
+            )
+            self.assertEqual(
+                top_by_stop["18"]["objective_scorecard"][
+                    "delay_adjusted_depth_stress_model"
+                ],
+                "latency_depth_haircut",
+            )
+            self.assertIn(
+                "delay_adjusted_depth_stress_net_pnl_per_day",
+                top_by_stop["18"]["objective_scorecard"],
+            )
+            self.assertTrue(
+                top_by_stop["18"]["objective_scorecard"]["double_oos_passed"]
+            )
+            self.assertFalse(top_by_stop["12"]["second_oos"]["passed"])
+            self.assertIn(
+                "second_oos_net_per_day_below_target",
+                top_by_stop["12"]["hard_vetoes"],
+            )
+            self.assertEqual(
+                top_by_stop["12"]["objective_scorecard"][
+                    "double_oos_independent_window_count"
+                ],
+                2,
+            )
 
     def test_run_frontier_writes_partial_json_output_between_candidates(self) -> None:
         with TemporaryDirectory() as tmpdir:
