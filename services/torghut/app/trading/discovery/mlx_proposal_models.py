@@ -11,6 +11,11 @@ from app.trading.discovery.mlx_features import (
     MlxCandidateDescriptor,
     descriptor_numeric_vector,
 )
+from app.trading.discovery.objectives import (
+    deployable_lower_bound_missing_count,
+    deployable_lower_bound_net_pnl_per_day,
+    deployable_proof_failed_gate_count,
+)
 
 
 def _float(value: Any) -> float:
@@ -22,6 +27,14 @@ def _float(value: Any) -> float:
 
 def _candidate_target(row: Mapping[str, Any]) -> float:
     net = _float(row.get("net_pnl_per_day"))
+    deployable_lower_bound = deployable_lower_bound_net_pnl_per_day(row)
+    deployable_net = (
+        float(deployable_lower_bound) if deployable_lower_bound is not None else net
+    )
+    proof_penalty = (
+        deployable_lower_bound_missing_count(row) * 1_000.0
+        + deployable_proof_failed_gate_count(row) * 1_000.0
+    )
     activity = _float(row.get("active_day_ratio"))
     positive_day_ratio = _float(row.get("positive_day_ratio"))
     has_filled_notional = "avg_filled_notional_per_day" in row
@@ -54,11 +67,12 @@ def _candidate_target(row: Mapping[str, Any]) -> float:
         else 0.0
     )
     return (
-        net
+        deployable_net
         + (activity * 100.0)
         + (positive_day_ratio * 100.0)
         - (concentration_penalty * 100.0)
         - (veto_penalty * 250.0)
+        - proof_penalty
         - (max(0.0, 1.0 - activity) * 400.0)
         - (max(0.0, 1.0 - positive_day_ratio) * 300.0)
         - (notional_shortfall_penalty * 350.0)

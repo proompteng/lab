@@ -255,6 +255,8 @@ class TestMlxTrainingData(TestCase):
                         "double_oos_pass_rate": "1",
                         "double_oos_net_pnl_per_day": "3000",
                         "double_oos_cost_shock_net_pnl_per_day": "3000",
+                        "implementation_uncertainty_stability_passed": True,
+                        "implementation_uncertainty_lower_net_pnl_per_day": "3000",
                     },
                 },
                 dataset_snapshot_id="snapshot-1",
@@ -318,8 +320,8 @@ class TestMlxTrainingData(TestCase):
             ),
         ]
         tie_model = MlxRankerModel(
-            schema_version="torghut.mlx-ranker.v1",
-            model_id="mlx-ranker-v1-test",
+            schema_version=mlx_training_data_module.MLX_RANKER_SCHEMA_VERSION,
+            model_id="mlx-ranker-v2-test",
             backend="numpy-fallback",
             feature_names=("signal",),
             feature_means=(0.0,),
@@ -721,6 +723,8 @@ class TestMlxTrainingData(TestCase):
                         "double_oos_pass_rate": "0",
                         "double_oos_net_pnl_per_day": "100",
                         "double_oos_cost_shock_net_pnl_per_day": "50",
+                        "implementation_uncertainty_stability_passed": False,
+                        "implementation_uncertainty_lower_net_pnl_per_day": "25",
                     },
                 },
                 dataset_snapshot_id="snapshot-missing-proof",
@@ -758,6 +762,8 @@ class TestMlxTrainingData(TestCase):
                         "double_oos_pass_rate": "1",
                         "double_oos_net_pnl_per_day": "515",
                         "double_oos_cost_shock_net_pnl_per_day": "505",
+                        "implementation_uncertainty_stability_passed": True,
+                        "implementation_uncertainty_lower_net_pnl_per_day": "502",
                     },
                 },
                 dataset_snapshot_id="snapshot-passing-proof",
@@ -788,4 +794,156 @@ class TestMlxTrainingData(TestCase):
         self.assertLess(
             row_by_spec[missing_proof.candidate_spec_id].target,
             row_by_spec[passing_proof.candidate_spec_id].target - 2000.0,
+        )
+
+    def test_training_target_prefers_deployable_lower_bound_over_optimistic_net(
+        self,
+    ) -> None:
+        base_kwargs = {
+            "schema_version": "torghut.candidate-spec.v1",
+            "hypothesis_id": "H-LOWER-BOUND",
+            "family_template_id": "intraday_tsmom_v2",
+            "candidate_kind": "configuration",
+            "runtime_family": "intraday_tsmom_consistent",
+            "runtime_strategy_name": "intraday-tsmom-profit-v3",
+            "feature_contract": {},
+            "parameter_space": {},
+            "strategy_overrides": {
+                "max_notional_per_trade": "25000",
+                "max_position_pct_equity": "0.25",
+                "params": {
+                    "capital_profile": "feedback_daily_coverage_cash_constrained_1x",
+                    "max_entries_per_session": "12",
+                    "max_gross_exposure_pct_equity": "1.0",
+                    "top_n": "1",
+                },
+            },
+            "objective": {"target_net_pnl_per_day": "500"},
+            "hard_vetoes": {"required_min_daily_notional": "250000"},
+            "expected_failure_modes": (),
+            "promotion_contract": {},
+        }
+        optimistic = CandidateSpec(
+            candidate_spec_id="spec-optimistic-high-net",
+            **base_kwargs,
+        )
+        raw_only = CandidateSpec(
+            candidate_spec_id="spec-raw-only-high-net",
+            **{**base_kwargs, "hypothesis_id": "H-LOWER-BOUND-RAW-ONLY"},
+        )
+        robust = CandidateSpec(
+            candidate_spec_id="spec-robust-lower-bound",
+            **{**base_kwargs, "hypothesis_id": "H-LOWER-BOUND-ROBUST"},
+        )
+        shared_scorecard = {
+            "active_day_ratio": "1",
+            "positive_day_ratio": "1",
+            "negative_day_count": 0,
+            "best_day_share": "0.10",
+            "worst_day_loss": "0",
+            "max_drawdown": "25",
+            "avg_filled_notional_per_day": "300000",
+            "hard_vetoes": [],
+            "market_impact_stress_passed": True,
+            "market_impact_stress_artifact_ref": "/tmp/impact.json",
+            "market_impact_liquidity_evidence_present": True,
+            "delay_adjusted_depth_stress_passed": True,
+            "delay_adjusted_depth_stress_artifact_ref": "/tmp/depth.json",
+            "delay_adjusted_depth_fillable_notional_per_day": "300000",
+            "double_oos_passed": True,
+            "double_oos_artifact_ref": "/tmp/oos.json",
+            "double_oos_independent_window_count": 2,
+            "double_oos_pass_rate": "1",
+            "implementation_uncertainty_stability_passed": True,
+        }
+        bundles = [
+            evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=optimistic.candidate_spec_id,
+                candidate={
+                    "candidate_id": "cand-optimistic",
+                    "objective_scorecard": {
+                        **shared_scorecard,
+                        "net_pnl_per_day": "1500",
+                        "market_impact_stress_net_pnl_per_day": "320",
+                        "delay_adjusted_depth_stress_net_pnl_per_day": "280",
+                        "double_oos_net_pnl_per_day": "260",
+                        "double_oos_cost_shock_net_pnl_per_day": "240",
+                        "implementation_uncertainty_lower_net_pnl_per_day": "220",
+                    },
+                },
+                dataset_snapshot_id="snapshot-optimistic",
+                result_path="/tmp/cand-optimistic.json",
+            ),
+            evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=robust.candidate_spec_id,
+                candidate={
+                    "candidate_id": "cand-robust",
+                    "objective_scorecard": {
+                        **shared_scorecard,
+                        "net_pnl_per_day": "620",
+                        "market_impact_stress_net_pnl_per_day": "610",
+                        "delay_adjusted_depth_stress_net_pnl_per_day": "600",
+                        "double_oos_net_pnl_per_day": "595",
+                        "double_oos_cost_shock_net_pnl_per_day": "590",
+                        "implementation_uncertainty_lower_net_pnl_per_day": "580",
+                    },
+                },
+                dataset_snapshot_id="snapshot-robust",
+                result_path="/tmp/cand-robust.json",
+            ),
+            evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=raw_only.candidate_spec_id,
+                candidate={
+                    "candidate_id": "cand-raw-only",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "2500",
+                        "active_day_ratio": "1",
+                        "positive_day_ratio": "1",
+                        "negative_day_count": 0,
+                        "best_day_share": "0.10",
+                        "worst_day_loss": "0",
+                        "max_drawdown": "25",
+                        "avg_filled_notional_per_day": "300000",
+                        "hard_vetoes": [],
+                    },
+                },
+                dataset_snapshot_id="snapshot-raw-only",
+                result_path="/tmp/cand-raw-only.json",
+            ),
+        ]
+
+        rows = build_mlx_training_rows(
+            candidate_specs=[optimistic, robust, raw_only],
+            evidence_bundles=bundles,
+        )
+        row_by_spec = {row.candidate_spec_id: row for row in rows}
+        optimistic_payload = row_by_spec[optimistic.candidate_spec_id].to_payload()
+        robust_payload = row_by_spec[robust.candidate_spec_id].to_payload()
+        raw_only_payload = row_by_spec[raw_only.candidate_spec_id].to_payload()
+
+        self.assertEqual(
+            optimistic_payload["features"][
+                "history_deployable_lower_bound_net_pnl_per_day"
+            ],
+            220.0,
+        )
+        self.assertEqual(
+            robust_payload["features"][
+                "history_deployable_lower_bound_net_pnl_per_day"
+            ],
+            580.0,
+        )
+        self.assertLess(
+            row_by_spec[optimistic.candidate_spec_id].target,
+            row_by_spec[robust.candidate_spec_id].target,
+        )
+        self.assertGreater(
+            raw_only_payload["features"][
+                "history_deployable_lower_bound_missing_count"
+            ],
+            0.0,
+        )
+        self.assertLess(
+            row_by_spec[raw_only.candidate_spec_id].target,
+            row_by_spec[robust.candidate_spec_id].target,
         )

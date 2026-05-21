@@ -39,6 +39,9 @@ from app.trading.discovery.family_templates import (
 from app.trading.discovery.objectives import (
     ObjectiveVetoPolicy,
     build_scorecard,
+    deployable_lower_bound_missing_count,
+    deployable_lower_bound_net_pnl_per_day,
+    deployable_proof_failed_gate_count,
     evaluate_vetoes,
     rank_scorecards,
 )
@@ -2805,6 +2808,18 @@ def _generate_loss_repair_children(
 def _rank_scored_candidates(scored: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not scored:
         return []
+
+    def promotion_grade_lower_bound(scorecard: Mapping[str, Any]) -> Decimal:
+        lower_bound = deployable_lower_bound_net_pnl_per_day(scorecard)
+        if lower_bound is None:
+            return Decimal("0")
+        if (
+            deployable_lower_bound_missing_count(scorecard) > 0
+            or deployable_proof_failed_gate_count(scorecard) > 0
+        ):
+            return Decimal("0")
+        return lower_bound
+
     scorecards = {
         str(item["candidate_id"]): build_scorecard(
             candidate_id=str(item["candidate_id"]),
@@ -2856,6 +2871,9 @@ def _rank_scored_candidates(scored: list[dict[str, Any]]) -> list[dict[str, Any]
             negative_cash_observation_count=int(
                 item["objective_scorecard"].get("negative_cash_observation_count") or 0
             ),
+            deployable_lower_bound_net_pnl_per_day=promotion_grade_lower_bound(
+                cast(Mapping[str, Any], item["objective_scorecard"])
+            ),
         )
         for item in scored
     }
@@ -2873,7 +2891,16 @@ def _rank_scored_candidates(scored: list[dict[str, Any]]) -> list[dict[str, Any]
     for item in ranked_items:
         ranked = ranked_lookup[str(item["candidate_id"])]
         original_scorecard = dict(cast(Mapping[str, Any], item["objective_scorecard"]))
-        item["objective_scorecard"] = {**original_scorecard, **ranked.to_payload()}
+        item["objective_scorecard"] = {
+            **original_scorecard,
+            **ranked.to_payload(),
+            "deployable_lower_bound_missing_count": deployable_lower_bound_missing_count(
+                original_scorecard
+            ),
+            "deployable_lower_bound_failed_gate_count": (
+                deployable_proof_failed_gate_count(original_scorecard)
+            ),
+        }
         item["ranking"] = {
             "method": "pareto_frontier_v2",
             "pareto_tier": ranked.pareto_tier,

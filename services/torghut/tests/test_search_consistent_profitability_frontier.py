@@ -192,7 +192,8 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(validation["selected_row_count"], 1)
         self.assertEqual(validation["selected_symbols"], ["NVDA"])
         self.assertEqual(
-            validation["source_query_digest"], build_source_query_digest({"query": "frontier"})
+            validation["source_query_digest"],
+            build_source_query_digest({"query": "frontier"}),
         )
         self.assertEqual(validation["manifest_path"], "")
 
@@ -382,6 +383,85 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertNotEqual(
             base["candidate_evaluation_key"],
             changed_cost["candidate_evaluation_key"],
+        )
+
+    def test_rank_scored_candidates_uses_deployable_lower_bound_for_ordering(
+        self,
+    ) -> None:
+        def scored_candidate(
+            *,
+            candidate_id: str,
+            net_pnl_per_day: str,
+            deployable_lower_bound: str | None,
+        ) -> dict[str, object]:
+            scorecard: dict[str, object] = {
+                "net_pnl_per_day": net_pnl_per_day,
+                "active_day_ratio": "1",
+                "positive_day_ratio": "1",
+                "avg_filled_notional_per_day": "300000",
+                "avg_filled_notional_per_active_day": "300000",
+                "worst_day_loss": "0",
+                "max_drawdown": "30",
+                "best_day_share": "0.10",
+                "negative_day_count": 0,
+                "rolling_3d_lower_bound": "300",
+                "rolling_5d_lower_bound": "300",
+                "regime_slice_pass_rate": "1",
+                "symbol_concentration_share": "0.10",
+                "entry_family_contribution_share": "0.10",
+            }
+            if deployable_lower_bound is not None:
+                scorecard.update(
+                    {
+                        "market_impact_stress_passed": True,
+                        "market_impact_stress_net_pnl_per_day": deployable_lower_bound,
+                        "delay_adjusted_depth_stress_passed": True,
+                        "delay_adjusted_depth_stress_net_pnl_per_day": deployable_lower_bound,
+                        "double_oos_passed": True,
+                        "double_oos_cost_shock_net_pnl_per_day": deployable_lower_bound,
+                        "implementation_uncertainty_stability_passed": True,
+                        "implementation_uncertainty_lower_net_pnl_per_day": deployable_lower_bound,
+                    }
+                )
+            return {
+                "candidate_id": candidate_id,
+                "full_window": {
+                    "trading_day_count": 6,
+                    "net_per_day": net_pnl_per_day,
+                },
+                "hard_vetoes": [],
+                "objective_scorecard": scorecard,
+            }
+
+        ranked = frontier._rank_scored_candidates(
+            [
+                scored_candidate(
+                    candidate_id="raw-only",
+                    net_pnl_per_day="2500",
+                    deployable_lower_bound=None,
+                ),
+                scored_candidate(
+                    candidate_id="optimistic",
+                    net_pnl_per_day="1500",
+                    deployable_lower_bound="220",
+                ),
+                scored_candidate(
+                    candidate_id="robust",
+                    net_pnl_per_day="620",
+                    deployable_lower_bound="580",
+                ),
+            ]
+        )
+
+        self.assertEqual(ranked[0]["candidate_id"], "robust")
+        raw_only = next(item for item in ranked if item["candidate_id"] == "raw-only")
+        self.assertGreater(
+            raw_only["objective_scorecard"]["deployable_lower_bound_missing_count"],
+            0,
+        )
+        self.assertEqual(
+            ranked[0]["objective_scorecard"]["deployable_lower_bound_net_pnl_per_day"],
+            "580",
         )
 
     def test_parameter_grid_items_rejects_non_iterable_shapes(self) -> None:

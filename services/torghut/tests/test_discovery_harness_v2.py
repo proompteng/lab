@@ -583,3 +583,54 @@ class TestDiscoveryHarnessV2(TestCase):
         self.assertEqual(
             [item.candidate_id for item in ranked], ["dominant", "dominated"]
         )
+
+    def test_rank_scorecards_prefers_deployable_lower_bound_over_optimistic_net(
+        self,
+    ) -> None:
+        optimistic = build_scorecard(
+            candidate_id="optimistic",
+            trading_day_count=6,
+            net_pnl_per_day=Decimal("1500"),
+            active_days=6,
+            positive_days=6,
+            avg_filled_notional_per_day=Decimal("300000"),
+            avg_filled_notional_per_active_day=Decimal("300000"),
+            worst_day_loss=Decimal("0"),
+            max_drawdown=Decimal("30"),
+            best_day_share=Decimal("0.10"),
+            negative_day_count=0,
+            rolling_3d_lower_bound=Decimal("300"),
+            rolling_5d_lower_bound=Decimal("300"),
+            regime_slice_pass_rate=Decimal("1"),
+            symbol_concentration_share=Decimal("0.10"),
+            entry_family_contribution_share=Decimal("0.10"),
+            deployable_lower_bound_net_pnl_per_day=Decimal("220"),
+        )
+        robust = build_scorecard(
+            candidate_id="robust",
+            trading_day_count=6,
+            net_pnl_per_day=Decimal("620"),
+            active_days=6,
+            positive_days=6,
+            avg_filled_notional_per_day=Decimal("300000"),
+            avg_filled_notional_per_active_day=Decimal("300000"),
+            worst_day_loss=Decimal("0"),
+            max_drawdown=Decimal("30"),
+            best_day_share=Decimal("0.10"),
+            negative_day_count=0,
+            rolling_3d_lower_bound=Decimal("300"),
+            rolling_5d_lower_bound=Decimal("300"),
+            regime_slice_pass_rate=Decimal("1"),
+            symbol_concentration_share=Decimal("0.10"),
+            entry_family_contribution_share=Decimal("0.10"),
+            deployable_lower_bound_net_pnl_per_day=Decimal("580"),
+        )
+
+        ranked = rank_scorecards([optimistic, robust], veto_lookup={})
+
+        self.assertEqual(ranked[0].candidate_id, "robust")
+        self.assertGreater(tie_breaker(robust), tie_breaker(optimistic))
+        self.assertEqual(
+            ranked[0].to_payload()["deployable_lower_bound_net_pnl_per_day"],
+            "580",
+        )
