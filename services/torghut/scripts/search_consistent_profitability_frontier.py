@@ -42,6 +42,12 @@ from app.trading.discovery.objectives import (
     evaluate_vetoes,
     rank_scorecards,
 )
+from app.trading.discovery.replay_tape import (
+    load_replay_tape,
+    slice_tape_by_symbols,
+    slice_tape_by_window,
+    validate_tape_freshness,
+)
 from app.trading.reporting import (
     ProfitabilityConstraintPolicy,
     score_replay_profitability_candidate,
@@ -426,6 +432,19 @@ def _parse_args() -> argparse.Namespace:
         "--prefetch-full-window-rows",
         action="store_true",
         help="Fetch full-window replay rows once and reuse them for every candidate replay.",
+    )
+    parser.add_argument(
+        "--replay-tape-path",
+        type=Path,
+        help=(
+            "Optional manifest-verified replay tape to reuse for exact scheduler-v3 replays. "
+            "This replaces ClickHouse reads only; it does not make preview evidence promotable."
+        ),
+    )
+    parser.add_argument(
+        "--replay-tape-manifest",
+        type=Path,
+        help="Optional replay tape manifest path. Defaults to <replay-tape-path>.manifest.json.",
     )
     parser.add_argument("--top-n", type=int, default=10)
     parser.add_argument(
@@ -981,6 +1000,36 @@ def _cached_signal_rows_patch(rows: list[Any]) -> Iterator[None]:
         _cached_iter_signal_rows_factory(rows),
     ):
         yield
+
+
+def _load_replay_tape_rows(
+    *,
+    tape_path: Path,
+    manifest_path: Path | None,
+    start_date: date,
+    end_date: date,
+    symbols: tuple[str, ...],
+    allow_stale_tape: bool,
+) -> tuple[list[Any], dict[str, Any]]:
+    tape = load_replay_tape(tape_path, manifest_path=manifest_path)
+    validation = validate_tape_freshness(
+        tape.manifest,
+        start_date=start_date,
+        end_date=end_date,
+        symbols=symbols,
+        allow_stale_tape=allow_stale_tape,
+    )
+    rows = slice_tape_by_window(
+        tape.rows,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    rows = slice_tape_by_symbols(rows, symbols=symbols)
+    validation["tape_path"] = str(tape_path)
+    validation["manifest_path"] = str(manifest_path) if manifest_path else ""
+    validation["selected_row_count"] = len(rows)
+    validation["selected_symbols"] = sorted({row.symbol.upper() for row in rows})
+    return list(rows), validation
 
 
 def apply_candidate_to_configmap_with_overrides(
@@ -2388,6 +2437,7 @@ def _build_frontier_payload(
     top_n: int,
     status: str,
     pending_candidates: int,
+    replay_tape_validation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     ranked_items = _rank_scored_candidates(scored)
     return {
@@ -2430,6 +2480,7 @@ def _build_frontier_payload(
             "method": "pareto_frontier_v2",
             "stale_override_used": dataset_snapshot_receipt.stale_override_used,
         },
+        "replay_tape": dict(replay_tape_validation or {}),
         "progress": {
             "evaluated_candidates": len(scored),
             "pending_candidates": pending_candidates,
@@ -2677,7 +2728,22 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
         )
         order_type_ablation_evaluated = 0
         cached_rows: list[Any] | None = None
-        if args.prefetch_full_window_rows:
+        replay_tape_validation: dict[str, Any] | None = None
+        replay_tape_path = getattr(args, "replay_tape_path", None)
+        if replay_tape_path is not None:
+            cached_rows, replay_tape_validation = _load_replay_tape_rows(
+                tape_path=Path(replay_tape_path).resolve(),
+                manifest_path=(
+                    Path(args.replay_tape_manifest).resolve()
+                    if getattr(args, "replay_tape_manifest", None) is not None
+                    else None
+                ),
+                start_date=full_window_start,
+                end_date=full_window_end,
+                symbols=prefetch_symbols,
+                allow_stale_tape=bool(getattr(args, "allow_stale_tape", False)),
+            )
+        elif args.prefetch_full_window_rows:
             cached_rows = _prefetch_signal_rows(
                 strategy_configmap_path=args.strategy_configmap.resolve(),
                 clickhouse_http_url=str(args.clickhouse_http_url),
@@ -3431,6 +3497,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                         status="running",
                         pending_candidates=len(worklist)
                         + (0 if initial_candidates_exhausted else 1),
+                        replay_tape_validation=replay_tape_validation,
                     )
                     _write_json_output(args.json_output, partial_payload)
 
@@ -3451,6 +3518,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
         if budget_exhausted and (worklist or not initial_candidates_exhausted)
         else "completed",
         pending_candidates=len(worklist) + (0 if initial_candidates_exhausted else 1),
+        replay_tape_validation=replay_tape_validation,
     )
     if args.json_output is not None:
         _write_json_output(args.json_output, payload)

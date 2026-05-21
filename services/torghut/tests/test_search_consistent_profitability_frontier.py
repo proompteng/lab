@@ -16,6 +16,11 @@ from types import SimpleNamespace
 
 import yaml
 
+from app.trading.discovery.replay_tape import (
+    build_source_query_digest,
+    materialize_signal_tape,
+)
+from app.trading.models import SignalEnvelope
 import scripts.search_consistent_profitability_frontier as frontier
 
 
@@ -103,6 +108,10 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                     "--clickhouse-password-env",
                     "TORGHUT_CLICKHOUSE_PASSWORD",
                     "--allow-stale-tape",
+                    "--replay-tape-path",
+                    str(root / "tape.jsonl"),
+                    "--replay-tape-manifest",
+                    str(root / "tape.jsonl.manifest.json"),
                     "--family-template-dir",
                     str(family_dir),
                     "--max-candidates-to-evaluate",
@@ -126,6 +135,8 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(args.expected_last_trading_day, "2026-04-07")
         self.assertEqual(args.clickhouse_password_env, "TORGHUT_CLICKHOUSE_PASSWORD")
         self.assertTrue(args.allow_stale_tape)
+        self.assertEqual(args.replay_tape_path, root / "tape.jsonl")
+        self.assertEqual(args.replay_tape_manifest, root / "tape.jsonl.manifest.json")
         self.assertEqual(args.family_template_dir, family_dir)
         self.assertEqual(args.max_candidates_to_evaluate, 12)
         self.assertEqual(args.candidate_record, [root / "candidate.json"])
@@ -135,6 +146,52 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(args.max_train_screen_worst_day_loss, "125")
         self.assertEqual(args.second_oos_days, 2)
         self.assertTrue(args.collect_train_gate_diagnostics)
+
+    def test_load_replay_tape_rows_validates_and_slices_rows(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            tape_path = root / "frontier-tape.jsonl"
+            materialize_signal_tape(
+                rows=[
+                    SignalEnvelope(
+                        event_ts=datetime(2026, 3, 18, 17, 30, tzinfo=timezone.utc),
+                        symbol="NVDA",
+                        timeframe="1Sec",
+                        seq=1,
+                        source="ta",
+                        payload={"price": Decimal("900.00")},
+                    ),
+                    SignalEnvelope(
+                        event_ts=datetime(2026, 3, 19, 17, 30, tzinfo=timezone.utc),
+                        symbol="META",
+                        timeframe="1Sec",
+                        seq=2,
+                        source="ta",
+                        payload={"price": Decimal("500.00")},
+                    ),
+                ],
+                tape_path=tape_path,
+                dataset_snapshot_ref="snapshot-frontier",
+                symbols=("NVDA", "META"),
+                start_date=date(2026, 3, 18),
+                end_date=date(2026, 3, 19),
+                source_query_digest=build_source_query_digest({"query": "frontier"}),
+            )
+
+            rows, validation = frontier._load_replay_tape_rows(
+                tape_path=tape_path,
+                manifest_path=None,
+                start_date=date(2026, 3, 18),
+                end_date=date(2026, 3, 18),
+                symbols=("NVDA",),
+                allow_stale_tape=False,
+            )
+
+        self.assertEqual([row.symbol for row in rows], ["NVDA"])
+        self.assertEqual(validation["status"], "valid")
+        self.assertEqual(validation["selected_row_count"], 1)
+        self.assertEqual(validation["selected_symbols"], ["NVDA"])
+        self.assertEqual(validation["manifest_path"], "")
 
     def test_clickhouse_password_env_resolution_keeps_secret_out_of_argv(self) -> None:
         with patch.dict("os.environ", {"TORGHUT_CLICKHOUSE_PASSWORD": "from-env"}):
@@ -1644,6 +1701,27 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 sweep_config=sweep_config,
                 json_output=json_output,
             )
+            tape_path = root / "full-window-tape.jsonl"
+            materialize_signal_tape(
+                rows=[
+                    SignalEnvelope(
+                        event_ts=datetime(2026, 3, 18, 17, 30, tzinfo=timezone.utc),
+                        symbol="NVDA",
+                        timeframe="1Sec",
+                        seq=1,
+                        source="ta",
+                        payload={"price": Decimal("900.00")},
+                    )
+                ],
+                tape_path=tape_path,
+                dataset_snapshot_ref="snapshot-test",
+                symbols=("NVDA", "AMAT"),
+                start_date=date(2026, 3, 18),
+                end_date=date(2026, 3, 23),
+                source_query_digest=build_source_query_digest({"query": "frontier"}),
+            )
+            args.replay_tape_path = tape_path
+            args.replay_tape_manifest = None
             recent_days = tuple(
                 date(2026, 3, 18) + timedelta(days=index) for index in range(6)
             )
@@ -1790,6 +1868,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             self.assertEqual(
                 payload["dataset_snapshot_receipt"]["snapshot_id"], "snap-test"
             )
+            self.assertEqual(payload["replay_tape"]["selected_row_count"], 1)
             self.assertEqual(top["ranking"]["method"], "pareto_frontier_v2")
             self.assertEqual(top["family_template_id"], "intraday_tsmom_v2")
 

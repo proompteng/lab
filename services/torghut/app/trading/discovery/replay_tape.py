@@ -1,0 +1,420 @@
+"""Manifest-verified replay tape artifacts for Torghut research replays."""
+
+from __future__ import annotations
+
+import gzip
+import hashlib
+import json
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from datetime import date, datetime, time, timezone
+from decimal import Decimal
+from pathlib import Path
+from typing import Any, TextIO, cast
+
+from app.trading.models import SignalEnvelope
+
+REPLAY_TAPE_SCHEMA_VERSION = "torghut.replay-tape.v1"
+REPLAY_TAPE_MANIFEST_SCHEMA_VERSION = "torghut.replay-tape-manifest.v1"
+_DECIMAL_TAG = "__torghut_decimal__"
+_DATETIME_TAG = "__torghut_datetime__"
+_REGULAR_OPEN_UTC = time(hour=13, minute=30)
+_REGULAR_CLOSE_UTC = time(hour=20, minute=0)
+
+
+@dataclass(frozen=True)
+class ReplayTapeManifest:
+    schema_version: str
+    dataset_snapshot_ref: str
+    symbols: tuple[str, ...]
+    row_symbols: tuple[str, ...]
+    start_date: date
+    end_date: date
+    start_ts: datetime
+    end_ts: datetime
+    min_event_ts: datetime | None
+    max_event_ts: datetime | None
+    trading_day_count: int
+    row_count: int
+    source_query_digest: str
+    content_sha256: str
+    artifact_refs: Mapping[str, str]
+    source_table_versions: Mapping[str, str]
+    created_at: datetime
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "dataset_snapshot_ref": self.dataset_snapshot_ref,
+            "symbols": list(self.symbols),
+            "row_symbols": list(self.row_symbols),
+            "start_date": self.start_date.isoformat(),
+            "end_date": self.end_date.isoformat(),
+            "start_ts": self.start_ts.isoformat(),
+            "end_ts": self.end_ts.isoformat(),
+            "min_event_ts": self.min_event_ts.isoformat()
+            if self.min_event_ts is not None
+            else None,
+            "max_event_ts": self.max_event_ts.isoformat()
+            if self.max_event_ts is not None
+            else None,
+            "trading_day_count": self.trading_day_count,
+            "row_count": self.row_count,
+            "source_query_digest": self.source_query_digest,
+            "content_sha256": self.content_sha256,
+            "artifact_refs": dict(self.artifact_refs),
+            "source_table_versions": dict(self.source_table_versions),
+            "created_at": self.created_at.isoformat(),
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "ReplayTapeManifest":
+        schema_version = str(payload.get("schema_version") or "")
+        if schema_version != REPLAY_TAPE_MANIFEST_SCHEMA_VERSION:
+            raise ValueError(f"replay_tape_manifest_schema_invalid:{schema_version}")
+        return cls(
+            schema_version=schema_version,
+            dataset_snapshot_ref=str(payload.get("dataset_snapshot_ref") or ""),
+            symbols=_string_tuple(payload.get("symbols")),
+            row_symbols=_string_tuple(payload.get("row_symbols")),
+            start_date=date.fromisoformat(str(payload["start_date"])),
+            end_date=date.fromisoformat(str(payload["end_date"])),
+            start_ts=_parse_datetime(str(payload["start_ts"])),
+            end_ts=_parse_datetime(str(payload["end_ts"])),
+            min_event_ts=(
+                _parse_datetime(str(payload["min_event_ts"]))
+                if payload.get("min_event_ts")
+                else None
+            ),
+            max_event_ts=(
+                _parse_datetime(str(payload["max_event_ts"]))
+                if payload.get("max_event_ts")
+                else None
+            ),
+            trading_day_count=int(payload.get("trading_day_count") or 0),
+            row_count=int(payload.get("row_count") or 0),
+            source_query_digest=str(payload.get("source_query_digest") or ""),
+            content_sha256=str(payload.get("content_sha256") or ""),
+            artifact_refs=_string_mapping(payload.get("artifact_refs")),
+            source_table_versions=_string_mapping(payload.get("source_table_versions")),
+            created_at=_parse_datetime(str(payload["created_at"])),
+        )
+
+
+@dataclass(frozen=True)
+class ReplayTape:
+    manifest: ReplayTapeManifest
+    rows: tuple[SignalEnvelope, ...]
+
+
+def default_manifest_path(tape_path: Path) -> Path:
+    return tape_path.with_name(f"{tape_path.name}.manifest.json")
+
+
+def build_source_query_digest(payload: Mapping[str, Any]) -> str:
+    raw = json.dumps(
+        _json_ready(payload),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def materialize_signal_tape(
+    *,
+    rows: Iterable[SignalEnvelope],
+    tape_path: Path,
+    manifest_path: Path | None = None,
+    dataset_snapshot_ref: str,
+    symbols: Sequence[str] = (),
+    start_date: date,
+    end_date: date,
+    source_query_digest: str,
+    source_table_versions: Mapping[str, str] | None = None,
+    artifact_refs: Mapping[str, str] | None = None,
+    created_at: datetime | None = None,
+) -> ReplayTapeManifest:
+    ordered_rows = tuple(sorted(rows, key=_signal_sort_key))
+    tape_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_ref = manifest_path or default_manifest_path(tape_path)
+    manifest_ref.parent.mkdir(parents=True, exist_ok=True)
+
+    content_hash = hashlib.sha256()
+    with _open_text_writer(tape_path) as handle:
+        for row in ordered_rows:
+            line = _canonical_row_json(row)
+            content_hash.update(line.encode("utf-8"))
+            content_hash.update(b"\n")
+            handle.write(f"{line}\n")
+
+    event_dates = {row.event_ts.astimezone(timezone.utc).date() for row in ordered_rows}
+    event_times = tuple(row.event_ts.astimezone(timezone.utc) for row in ordered_rows)
+    start_ts = datetime.combine(start_date, _REGULAR_OPEN_UTC, tzinfo=timezone.utc)
+    end_ts = datetime.combine(end_date, _REGULAR_CLOSE_UTC, tzinfo=timezone.utc)
+    resolved_artifact_refs = {
+        "tape_path": str(tape_path),
+        **dict(artifact_refs or {}),
+    }
+    manifest = ReplayTapeManifest(
+        schema_version=REPLAY_TAPE_MANIFEST_SCHEMA_VERSION,
+        dataset_snapshot_ref=dataset_snapshot_ref,
+        symbols=_normalize_symbols(symbols),
+        row_symbols=tuple(sorted({row.symbol.upper() for row in ordered_rows})),
+        start_date=start_date,
+        end_date=end_date,
+        start_ts=start_ts,
+        end_ts=end_ts,
+        min_event_ts=min(event_times) if event_times else None,
+        max_event_ts=max(event_times) if event_times else None,
+        trading_day_count=len(event_dates),
+        row_count=len(ordered_rows),
+        source_query_digest=source_query_digest,
+        content_sha256=content_hash.hexdigest(),
+        artifact_refs=resolved_artifact_refs,
+        source_table_versions=dict(source_table_versions or {}),
+        created_at=created_at or datetime.now(timezone.utc),
+    )
+    manifest_ref.write_text(
+        json.dumps(manifest.to_payload(), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return manifest
+
+
+def load_replay_tape(
+    tape_path: Path,
+    *,
+    manifest_path: Path | None = None,
+    verify_digest: bool = True,
+) -> ReplayTape:
+    manifest_ref = manifest_path or default_manifest_path(tape_path)
+    manifest = ReplayTapeManifest.from_payload(
+        json.loads(manifest_ref.read_text(encoding="utf-8"))
+    )
+    rows: list[SignalEnvelope] = []
+    content_hash = hashlib.sha256()
+    with _open_text_reader(tape_path) as handle:
+        for line in handle:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            content_hash.update(stripped.encode("utf-8"))
+            content_hash.update(b"\n")
+            rows.append(signal_from_tape_payload(json.loads(stripped)))
+
+    if verify_digest and content_hash.hexdigest() != manifest.content_sha256:
+        raise ValueError("replay_tape_digest_mismatch")
+    if len(rows) != manifest.row_count:
+        raise ValueError(
+            f"replay_tape_row_count_mismatch:{len(rows)}!={manifest.row_count}"
+        )
+    rows.sort(key=_signal_sort_key)
+    return ReplayTape(manifest=manifest, rows=tuple(rows))
+
+
+def validate_tape_freshness(
+    manifest: ReplayTapeManifest,
+    *,
+    start_date: date,
+    end_date: date,
+    symbols: Sequence[str] = (),
+    allow_stale_tape: bool = False,
+) -> dict[str, Any]:
+    reasons: list[str] = []
+    if manifest.start_date > start_date or manifest.end_date < end_date:
+        reasons.append(
+            "window_not_covered:"
+            f"{manifest.start_date.isoformat()}..{manifest.end_date.isoformat()}"
+            f"<{start_date.isoformat()}..{end_date.isoformat()}"
+        )
+
+    requested_symbols = set(_normalize_symbols(symbols))
+    if requested_symbols and manifest.symbols:
+        missing = sorted(requested_symbols - set(manifest.symbols))
+        if missing:
+            reasons.append(f"symbols_not_covered:{','.join(missing)}")
+
+    if reasons and not allow_stale_tape:
+        raise ValueError(f"replay_tape_stale:{';'.join(reasons)}")
+    return {
+        "schema_version": "torghut.replay-tape-validation.v1",
+        "status": "stale_override" if reasons else "valid",
+        "reasons": reasons,
+        "stale_override_used": bool(reasons),
+        "content_sha256": manifest.content_sha256,
+        "dataset_snapshot_ref": manifest.dataset_snapshot_ref,
+        "row_count": manifest.row_count,
+        "trading_day_count": manifest.trading_day_count,
+    }
+
+
+def slice_tape_by_window(
+    rows: Iterable[SignalEnvelope],
+    *,
+    start_date: date,
+    end_date: date,
+) -> tuple[SignalEnvelope, ...]:
+    selected = (
+        row
+        for row in rows
+        if start_date <= row.event_ts.astimezone(timezone.utc).date() <= end_date
+    )
+    return tuple(sorted(selected, key=_signal_sort_key))
+
+
+def slice_tape_by_symbols(
+    rows: Iterable[SignalEnvelope],
+    *,
+    symbols: Sequence[str] = (),
+) -> tuple[SignalEnvelope, ...]:
+    selected_symbols = set(_normalize_symbols(symbols))
+    if not selected_symbols:
+        return tuple(sorted(rows, key=_signal_sort_key))
+    selected = (row for row in rows if row.symbol.upper() in selected_symbols)
+    return tuple(sorted(selected, key=_signal_sort_key))
+
+
+def signal_to_tape_payload(signal: SignalEnvelope) -> dict[str, Any]:
+    return {
+        "schema_version": REPLAY_TAPE_SCHEMA_VERSION,
+        "event_ts": signal.event_ts.astimezone(timezone.utc).isoformat(),
+        "symbol": signal.symbol,
+        "payload": _encode_value(signal.payload),
+        "timeframe": signal.timeframe,
+        "ingest_ts": signal.ingest_ts.astimezone(timezone.utc).isoformat()
+        if signal.ingest_ts is not None
+        else None,
+        "seq": signal.seq,
+        "source": signal.source,
+    }
+
+
+def signal_from_tape_payload(payload: Mapping[str, Any]) -> SignalEnvelope:
+    schema_version = str(payload.get("schema_version") or "")
+    if schema_version != REPLAY_TAPE_SCHEMA_VERSION:
+        raise ValueError(f"replay_tape_row_schema_invalid:{schema_version}")
+    ingest_ts = payload.get("ingest_ts")
+    return SignalEnvelope(
+        event_ts=_parse_datetime(str(payload["event_ts"])),
+        symbol=str(payload["symbol"]),
+        payload=_decode_value(payload.get("payload") or {}),
+        timeframe=str(payload["timeframe"]) if payload.get("timeframe") else None,
+        ingest_ts=_parse_datetime(str(ingest_ts)) if ingest_ts else None,
+        seq=int(payload["seq"]) if payload.get("seq") is not None else None,
+        source=str(payload["source"]) if payload.get("source") else None,
+    )
+
+
+def _canonical_row_json(signal: SignalEnvelope) -> str:
+    return json.dumps(
+        signal_to_tape_payload(signal),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _signal_sort_key(signal: SignalEnvelope) -> tuple[datetime, str, int]:
+    seq = signal.seq if signal.seq is not None else 0
+    return (signal.event_ts.astimezone(timezone.utc), signal.symbol.upper(), seq)
+
+
+def _open_text_writer(path: Path) -> TextIO:
+    if path.suffix == ".gz":
+        return gzip.open(path, "wt", encoding="utf-8")
+    return path.open("w", encoding="utf-8")
+
+
+def _open_text_reader(path: Path) -> TextIO:
+    if path.suffix == ".gz":
+        return gzip.open(path, "rt", encoding="utf-8")
+    return path.open("r", encoding="utf-8")
+
+
+def _parse_datetime(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _normalize_symbols(symbols: Sequence[str]) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()}
+        )
+    )
+
+
+def _string_tuple(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return ()
+    return tuple(str(item) for item in cast(Sequence[object], value))
+
+
+def _string_mapping(value: Any) -> Mapping[str, str]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {
+        str(key): str(item)
+        for key, item in cast(Mapping[object, object], value).items()
+    }
+
+
+def _encode_value(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        return {_DECIMAL_TAG: str(value)}
+    if isinstance(value, datetime):
+        return {_DATETIME_TAG: value.astimezone(timezone.utc).isoformat()}
+    if isinstance(value, Mapping):
+        return {
+            str(key): _encode_value(item)
+            for key, item in cast(Mapping[object, object], value).items()
+        }
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [_encode_value(item) for item in cast(Sequence[object], value)]
+    return value
+
+
+def _decode_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        mapping = cast(Mapping[object, object], value)
+        if set(mapping) == {_DECIMAL_TAG}:
+            return Decimal(str(mapping[_DECIMAL_TAG]))
+        if set(mapping) == {_DATETIME_TAG}:
+            return _parse_datetime(str(mapping[_DATETIME_TAG]))
+        return {str(key): _decode_value(item) for key, item in mapping.items()}
+    if isinstance(value, list):
+        return [_decode_value(item) for item in cast(list[object], value)]
+    return value
+
+
+def _json_ready(value: Any) -> Any:
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, Mapping):
+        return {
+            str(key): _json_ready(item)
+            for key, item in cast(Mapping[object, object], value).items()
+        }
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [_json_ready(item) for item in cast(Sequence[object], value)]
+    return value
+
+
+__all__ = [
+    "REPLAY_TAPE_MANIFEST_SCHEMA_VERSION",
+    "REPLAY_TAPE_SCHEMA_VERSION",
+    "ReplayTape",
+    "ReplayTapeManifest",
+    "build_source_query_digest",
+    "default_manifest_path",
+    "load_replay_tape",
+    "materialize_signal_tape",
+    "signal_from_tape_payload",
+    "signal_to_tape_payload",
+    "slice_tape_by_symbols",
+    "slice_tape_by_window",
+    "validate_tape_freshness",
+]
