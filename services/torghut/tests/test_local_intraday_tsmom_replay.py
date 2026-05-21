@@ -27,6 +27,7 @@ from scripts.local_intraday_tsmom_replay import (
     _SHARED_POSITION_OWNER,
     _apply_filled_decision,
     _apply_order_preferences,
+    _append_decimal_sample,
     _build_near_miss,
     _decision_exit_reason,
     _decision_market_order_spread_bps_max,
@@ -37,8 +38,10 @@ from scripts.local_intraday_tsmom_replay import (
     _http_query,
     _init_funnel_stats,
     _insert_near_miss,
+    _latency_bucket,
     _load_strategies,
     _parse_signal_row,
+    _pending_censor_time,
     _positions_payload,
     _quote_quality_status,
     _record_capital_snapshot,
@@ -87,6 +90,53 @@ class TestLocalIntradayTsmomReplay(TestCase):
         self.assertEqual(
             _decision_position_owner(decision, force_position_isolation=True),
             "candidate-strategy-1",
+        )
+
+    def test_order_lifecycle_helpers_cover_defensive_branches(self) -> None:
+        samples: dict[str, object] = {}
+        _append_decimal_sample(samples, "spread_bps_samples", None)
+        self.assertEqual(samples, {})
+        self.assertEqual(_latency_bucket(50), "1-50ms")
+        self.assertEqual(_latency_bucket(151), "151-250ms")
+
+        decision = StrategyDecision(
+            strategy_id="candidate-strategy-1",
+            symbol="META",
+            event_ts=datetime(2026, 3, 27, 17, 30, 3, tzinfo=timezone.utc),
+            timeframe="1Sec",
+            action="buy",
+            qty=Decimal("1"),
+            order_type="limit",
+            time_in_force="day",
+            params={},
+            limit_price=Decimal("100"),
+        )
+        signal = self._signal(bid="99.90", ask="100.00", price="99.95")
+        before_close = PendingOrder(
+            decision=decision,
+            created_at=datetime(2026, 3, 27, 17, 30, tzinfo=timezone.utc),
+            signal=signal,
+        )
+        after_close = PendingOrder(
+            decision=decision,
+            created_at=datetime(2026, 3, 27, 21, 30, tzinfo=timezone.utc),
+            signal=signal,
+        )
+        fallback = datetime(2026, 3, 27, 22, 0, tzinfo=timezone.utc)
+
+        self.assertEqual(
+            _pending_censor_time(pending=before_close, fallback=fallback),
+            datetime(2026, 3, 27, 20, 0, tzinfo=timezone.utc),
+        )
+        self.assertEqual(
+            _pending_censor_time(pending=after_close, fallback=fallback), fallback
+        )
+        self.assertIsNone(
+            _reconcile_pending_order_before_immediate_fill(
+                decision=decision,
+                pending_orders={},
+                created_at=signal.event_ts,
+            )
         )
 
     def test_kubectl_clickhouse_query_validates_target_and_reports_failure(
@@ -1877,6 +1927,8 @@ class TestLocalIntradayTsmomReplay(TestCase):
                 "price": Decimal("99.95"),
                 "imbalance_bid_px": Decimal("99.90"),
                 "imbalance_ask_px": Decimal("100.00"),
+                "imbalance_bid_sz": Decimal("60"),
+                "imbalance_ask_sz": Decimal("40"),
                 "spread": Decimal("0.10"),
             },
         )
@@ -1889,6 +1941,8 @@ class TestLocalIntradayTsmomReplay(TestCase):
                 "price": Decimal("99.45"),
                 "imbalance_bid_px": Decimal("99.40"),
                 "imbalance_ask_px": Decimal("99.50"),
+                "imbalance_bid_sz": Decimal("70"),
+                "imbalance_ask_sz": Decimal("50"),
                 "spread": Decimal("0.10"),
             },
         )
@@ -1901,6 +1955,8 @@ class TestLocalIntradayTsmomReplay(TestCase):
                 "price": Decimal("101.50"),
                 "imbalance_bid_px": Decimal("101.40"),
                 "imbalance_ask_px": Decimal("101.50"),
+                "imbalance_bid_sz": Decimal("80"),
+                "imbalance_ask_sz": Decimal("60"),
                 "spread": Decimal("0.10"),
             },
         )
@@ -2070,6 +2126,39 @@ class TestLocalIntradayTsmomReplay(TestCase):
         )
         self.assertEqual(payload["funnel"]["buckets"][0]["trading_day"], "2026-03-26")
         self.assertGreaterEqual(payload["filled_count"], 2)
+        lifecycle = payload["order_lifecycle"]
+        self.assertEqual(lifecycle["submitted_order_count"], 2)
+        self.assertEqual(lifecycle["filled_order_count"], 1)
+        self.assertEqual(lifecycle["pending_censored_count"], 1)
+        self.assertEqual(lifecycle["replaced_pending_count"], 1)
+        self.assertEqual(lifecycle["fill_time_ms_p50"], 60000)
+        self.assertEqual(
+            lifecycle["fill_probability_by_latency_bucket"][">1000ms"]["fill_rate"], "1"
+        )
+        self.assertEqual(
+            lifecycle["censor_reason_counts"],
+            {"pending_replaced": 1},
+        )
+        self.assertEqual(
+            Decimal(str(lifecycle["depth_notional_min_at_order"])),
+            Decimal("9994.00"),
+        )
+        self.assertEqual(
+            Decimal(str(lifecycle["order_qty_to_touch_qty_ratio_p95"])),
+            Decimal("0.05"),
+        )
+        self.assertEqual(
+            payload["order_lifecycle_by_day"]["2026-03-26"]["submitted_order_count"],
+            2,
+        )
+        self.assertEqual(
+            payload["order_lifecycle_by_symbol"]["AAPL"]["filled_order_count"],
+            1,
+        )
+        self.assertEqual(
+            lifecycle["post_cost_survivorship"]["closed_trade_count"],
+            1,
+        )
 
     def test_run_replay_enriches_day_two_open_with_prev_day_open45_ranks(self) -> None:
         strategy = Strategy(

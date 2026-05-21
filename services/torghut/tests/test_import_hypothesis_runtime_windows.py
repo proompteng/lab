@@ -10,6 +10,10 @@ from unittest.mock import patch
 
 from scripts.import_hypothesis_runtime_windows import (
     EXECUTION_ELIGIBLE_DECISION_STATUSES,
+    POST_COST_BASIS_REALIZED_STRATEGY_PNL,
+    POST_COST_BASIS_SIMULATION_REPORT,
+    POST_COST_BASIS_TCA_PROXY,
+    _build_realized_strategy_pnl_rows,
     _load_json_artifact,
     _load_report_post_cost_expectancy_bps,
     _nonnegative_int,
@@ -25,7 +29,17 @@ class _FakeCursor:
         self.executed: list[tuple[str, tuple[object, ...]]] = []
         self._results = [
             [(datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),)],
-            [(datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),)],
+            [
+                (
+                    datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "AAPL",
+                    "buy",
+                    Decimal("1"),
+                    Decimal("100"),
+                    Decimal("0.01"),
+                )
+            ],
             [
                 (
                     datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
@@ -142,6 +156,20 @@ class TestImportHypothesisRuntimeWindows(TestCase):
 
         self.assertEqual(value, Decimal("3.306984755680006238084907933"))
 
+    def test_load_report_post_cost_expectancy_bps_rejects_gross_only_report(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temp_dir:
+            report_path = Path(temp_dir) / "simulation-report.json"
+            report_path.write_text(
+                '{"pnl":{"gross_pnl":"66.16","execution_notional_total":"200061.4"}}',
+                encoding="utf-8",
+            )
+
+            value = _load_report_post_cost_expectancy_bps([str(report_path)])
+
+        self.assertEqual(value, None)
+
     def test_json_artifact_and_nonnegative_int_helpers_fail_closed(self) -> None:
         with TemporaryDirectory() as temp_dir:
             missing_path = Path(temp_dir) / "missing.json"
@@ -180,6 +208,50 @@ class TestImportHypothesisRuntimeWindows(TestCase):
     def test_strategy_name_candidates_drop_blank_values(self) -> None:
         self.assertEqual(_strategy_name_candidates("", "   ", None), [])
 
+    def test_build_realized_strategy_pnl_rows_requires_costed_round_trip(
+        self,
+    ) -> None:
+        rows = _build_realized_strategy_pnl_rows(
+            [
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "filled_qty": Decimal("2"),
+                    "avg_fill_price": Decimal("100"),
+                    "shortfall_notional": Decimal("0.20"),
+                },
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                    "symbol": "AAPL",
+                    "side": "sell",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("101"),
+                    "shortfall_notional": Decimal("0.10"),
+                },
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 45, tzinfo=timezone.utc),
+                    "symbol": "AAPL",
+                    "side": "sell",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("102"),
+                    "shortfall_notional": None,
+                },
+            ]
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(
+            rows[0]["post_cost_expectancy_basis"],
+            POST_COST_BASIS_REALIZED_STRATEGY_PNL,
+        )
+        self.assertEqual(rows[0]["post_cost_promotion_eligible"], True)
+        self.assertEqual(rows[0]["realized_net_pnl"], Decimal("0.80"))
+        self.assertEqual(
+            rows[0]["post_cost_expectancy_bps"],
+            Decimal("39.80099502487562189054726368"),
+        )
+
     def test_query_timestamps_filters_to_execution_eligible_decisions(self) -> None:
         cursor = _FakeCursor()
         connection = _FakeConnection(cursor)
@@ -205,6 +277,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(len(tca_rows), 1)
         self.assertEqual(tca_rows[0]["abs_slippage_bps"], Decimal("1.25"))
         self.assertEqual(tca_rows[0]["post_cost_expectancy_bps"], Decimal("0.50"))
+        self.assertEqual(
+            tca_rows[0]["post_cost_expectancy_basis"], POST_COST_BASIS_TCA_PROXY
+        )
+        self.assertEqual(tca_rows[0]["post_cost_promotion_eligible"], False)
         self.assertEqual(len(cursor.executed), 3)
         decision_query, decision_params = cursor.executed[0]
         self.assertIn("s.name = any(%s)", decision_query)
@@ -219,7 +295,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         )
         tca_query, _ = cursor.executed[2]
         execution_query, _ = cursor.executed[1]
-        self.assertIn("select d.created_at", execution_query)
+        self.assertIn("left join execution_tca_metrics", execution_query)
         self.assertIn("d.created_at >= %s", execution_query)
         self.assertIn("d.created_at < %s", execution_query)
         self.assertNotIn("e.created_at >= %s", execution_query)
@@ -453,7 +529,9 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 patch(
                     "scripts.import_hypothesis_runtime_windows.resolve_hypothesis_manifest",
                     return_value=(
-                        SimpleNamespace(path="config/trading/hypotheses/h-micro-01.json"),
+                        SimpleNamespace(
+                            path="config/trading/hypotheses/h-micro-01.json"
+                        ),
                         manifest,
                     ),
                 ),
@@ -500,3 +578,104 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             "2026-03-06T15:20:00Z",
         )
         self.assertIn(str(report_path), runtime_payload["artifact_refs"])
+
+    def test_main_uses_report_runtime_pnl_when_tca_rows_are_empty(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            report_path = Path(temp_dir) / "simulation-report.json"
+            report_path.write_text(
+                '{"pnl":{"net_pnl_estimated":"50","execution_notional_total":"10000"}}',
+                encoding="utf-8",
+            )
+            args = SimpleNamespace(
+                run_id="run-report-pnl",
+                candidate_id="cand-report-pnl",
+                hypothesis_id="H-CONT-01",
+                observed_stage="paper",
+                strategy_family="",
+                source_dsn="postgresql://example",
+                source_dsn_env="DB_DSN",
+                strategy_name="intraday-tsmom-profit-v2",
+                account_label="TORGHUT_SIM",
+                window_start="2026-03-06T14:30:00Z",
+                window_end="2026-03-06T15:00:00Z",
+                bucket_minutes=30,
+                sample_minutes=5,
+                source_manifest_ref="",
+                source_kind="simulation_paper_runtime",
+                artifact_ref=[str(report_path)],
+                delay_adjusted_depth_stress_report_ref="",
+                dataset_snapshot_ref="runtime-report-snapshot",
+                dependency_quorum_decision="allow",
+                continuity_ok="true",
+                drift_ok="true",
+                json=False,
+            )
+            fake_session = _FakeSession()
+            manifest = SimpleNamespace(
+                strategy_family="intraday_continuation",
+                strategy_id="intraday_tsmom_v1@paper",
+                max_allowed_slippage_bps=Decimal("12"),
+            )
+
+            with (
+                patch(
+                    "scripts.import_hypothesis_runtime_windows._parse_args",
+                    return_value=args,
+                ),
+                patch(
+                    "scripts.import_hypothesis_runtime_windows.resolve_hypothesis_manifest",
+                    return_value=(
+                        SimpleNamespace(
+                            path="config/trading/hypotheses/h-cont-01.json"
+                        ),
+                        manifest,
+                    ),
+                ),
+                patch(
+                    "scripts.import_hypothesis_runtime_windows._query_timestamps",
+                    return_value=(
+                        [datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
+                        [datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+                        [],
+                    ),
+                ),
+                patch(
+                    "scripts.import_hypothesis_runtime_windows.build_regular_session_buckets",
+                    return_value=[],
+                ),
+                patch(
+                    "scripts.import_hypothesis_runtime_windows.build_observed_runtime_buckets",
+                    return_value=[],
+                ) as build_buckets,
+                patch(
+                    "scripts.import_hypothesis_runtime_windows.persist_observed_runtime_windows",
+                    return_value={"run_id": "run-report-pnl"},
+                ) as persist_windows,
+                patch(
+                    "scripts.import_hypothesis_runtime_windows.SessionLocal",
+                    return_value=fake_session,
+                ),
+                patch("builtins.print"),
+            ):
+                exit_code = main()
+
+        self.assertEqual(exit_code, 0)
+        tca_rows = build_buckets.call_args.kwargs["tca_rows"]
+        self.assertEqual(
+            tca_rows,
+            [
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "post_cost_expectancy_bps": Decimal("50.000"),
+                    "post_cost_expectancy_basis": POST_COST_BASIS_SIMULATION_REPORT,
+                    "post_cost_promotion_eligible": True,
+                }
+            ],
+        )
+        runtime_payload = persist_windows.call_args.kwargs[
+            "runtime_observation_payload"
+        ]
+        self.assertEqual(
+            runtime_payload["report_post_cost_expectancy_basis"],
+            POST_COST_BASIS_SIMULATION_REPORT,
+        )

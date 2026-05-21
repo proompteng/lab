@@ -1634,6 +1634,63 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             frontier.Decimal("361"),
         )
 
+    def test_consistency_penalty_applies_order_lifecycle_fill_survival_to_delay_depth(
+        self,
+    ) -> None:
+        payload = self._payload(
+            start_date="2026-03-24",
+            end_date="2026-03-24",
+            daily_net={"2026-03-24": "1000"},
+            daily_filled_notional={"2026-03-24": "100000"},
+            daily_liquidity_notional={"2026-03-24": "1000000"},
+            decision_count=4,
+            filled_count=4,
+            wins=4,
+            losses=0,
+        )
+        payload["order_lifecycle"] = {
+            "submitted_order_count": 4,
+            "filled_order_count": 2,
+            "fill_rate": "0.5",
+            "fill_survival_sample_count": 4,
+            "fill_survival_evidence_present": True,
+            "order_qty_to_touch_qty_ratio_p95": "0.25",
+            "post_cost_survivorship": {
+                "post_cost_survival_rate": "1",
+                "gross_positive_killed_by_cost_count": 0,
+            },
+        }
+
+        _, summary = frontier._consistency_penalty(
+            full_window_payload=payload,
+            policy=frontier.FullWindowConsistencyPolicy(
+                target_net_per_day=frontier.Decimal("500"),
+                min_daily_net_pnl=frontier.Decimal("0"),
+                min_active_days=1,
+                min_active_ratio=frontier.Decimal("1"),
+                min_positive_days=1,
+                max_worst_day_loss=frontier.Decimal("250"),
+                max_negative_days=0,
+                max_drawdown=frontier.Decimal("500"),
+                max_best_day_share_of_total_pnl=frontier.Decimal("1"),
+                min_avg_filled_notional_per_day=frontier.Decimal("50000"),
+                min_avg_filled_notional_per_active_day=frontier.Decimal("50000"),
+                require_every_day_active=True,
+            ),
+        )
+
+        self.assertEqual(summary["fill_survival_sample_count"], 4)
+        self.assertEqual(summary["fill_survival_fill_rate"], "0.5")
+        self.assertEqual(
+            summary["delay_adjusted_depth_survival_adjusted_fillable_ratio"],
+            "0.5",
+        )
+        self.assertEqual(
+            frontier.Decimal(summary["delay_adjusted_depth_stress_net_pnl_per_day"]),
+            frontier.Decimal("490"),
+        )
+        self.assertEqual(summary["delay_adjusted_depth_queue_ratio_p95"], "0.25")
+
     def test_consistency_penalty_reports_and_penalizes_capital_realism(self) -> None:
         payload = self._payload(
             start_date="2026-03-24",

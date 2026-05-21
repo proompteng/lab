@@ -73,6 +73,51 @@ MARKET_IMPACT_SCORECARD_KEYS = (
     "implementation_uncertainty_scenarios",
     "implementation_uncertainty_source_markers",
 )
+DELAY_DEPTH_SURVIVAL_SCORECARD_KEYS = (
+    "delay_adjusted_depth_stress_passed",
+    "delay_adjusted_depth_stress_model",
+    "delay_adjusted_depth_stress_ms",
+    "delay_adjusted_depth_latency_grid_ms",
+    "delay_adjusted_depth_grid_max_stress_ms",
+    "delay_adjusted_depth_liquidity_evidence_present",
+    "delay_adjusted_depth_liquidity_missing_day_count",
+    "delay_adjusted_depth_fillable_notional_per_day",
+    "delay_adjusted_depth_worst_grid_fillable_notional_per_day",
+    "delay_adjusted_depth_worst_active_day_fillable_notional",
+    "delay_adjusted_depth_p10_active_day_fillable_notional",
+    "delay_adjusted_depth_tail_coverage_passed",
+    "delay_adjusted_depth_fillable_ratio",
+    "delay_adjusted_depth_survival_adjusted_fillable_ratio",
+    "delay_adjusted_depth_unfillable_notional_per_day",
+    "delay_adjusted_depth_stress_net_pnl_per_day",
+    "delay_adjusted_depth_fill_survival_evidence_present",
+    "delay_adjusted_depth_fill_survival_sample_count",
+    "delay_adjusted_depth_fill_survival_rate",
+    "delay_adjusted_depth_queue_ratio_p95",
+)
+FILL_SURVIVAL_SCORECARD_KEYS = (
+    "order_lifecycle",
+    "fill_survival_evidence_present",
+    "fill_survival_sample_count",
+    "fill_survival_fill_rate",
+    "fill_time_ms_avg",
+    "fill_time_ms_p50",
+    "fill_time_ms_p95",
+    "pending_age_ms_p95",
+    "max_censored_pending_age_ms",
+    "spread_bps_avg_at_order",
+    "spread_bps_p95_at_order",
+    "depth_notional_min_at_order",
+    "depth_notional_avg_at_order",
+    "queue_touch_qty_avg",
+    "queue_touch_notional_avg",
+    "order_qty_to_touch_qty_ratio_p95",
+    "fill_probability_by_latency_bucket",
+    "fill_probability_by_latency_threshold_ms",
+    "post_cost_survivorship",
+    "post_cost_survival_rate",
+    "gross_positive_killed_by_cost_count",
+)
 
 
 def _stable_hash(payload: Mapping[str, Any]) -> str:
@@ -102,6 +147,23 @@ def _decimal(value: Any) -> Decimal:
         return Decimal(str(value or "0"))
     except (InvalidOperation, ValueError):
         return Decimal("0")
+
+
+def _bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, Decimal):
+        return value != 0
+    if isinstance(value, (int, float)):
+        return value != 0
+    normalized = str(value).strip().lower()
+    if normalized in {"", "0", "false", "f", "no", "n", "off", "none", "null"}:
+        return False
+    if normalized in {"1", "true", "t", "yes", "y", "on"}:
+        return True
+    return bool(value)
 
 
 def _decimal_mapping_total(mapping: Mapping[str, Any]) -> Decimal:
@@ -462,8 +524,25 @@ def _enrich_scorecard_with_replay_stress_metrics(
         if delay_depth_total_filled_notional > 0
         else Decimal("1")
     )
+    fill_survival_sample_count = max(
+        _int(enriched.get("fill_survival_sample_count")),
+        _int(enriched.get("delay_adjusted_depth_fill_survival_sample_count")),
+    )
+    fill_survival_rate_value = enriched.get(
+        "delay_adjusted_depth_fill_survival_rate"
+    ) or enriched.get("fill_survival_fill_rate")
+    fill_survival_rate = _decimal(fill_survival_rate_value)
+    has_fill_survival_evidence = (
+        _bool(enriched.get("fill_survival_evidence_present"))
+        or _bool(enriched.get("delay_adjusted_depth_fill_survival_evidence_present"))
+    ) and fill_survival_sample_count > 0
+    survival_adjusted_fillable_ratio = delay_depth_fillable_ratio
+    if fill_survival_sample_count > 0 or has_fill_survival_evidence:
+        survival_adjusted_fillable_ratio *= max(
+            Decimal("0"), min(Decimal("1"), fill_survival_rate)
+        )
     delay_depth_net_pnl_per_day = (
-        net_pnl_per_day * delay_depth_fillable_ratio
+        net_pnl_per_day * survival_adjusted_fillable_ratio
     ) - delay_depth_cost_per_day
     if "delay_adjusted_depth_stress_model" not in enriched:
         enriched["delay_adjusted_depth_stress_model"] = "latency_depth_haircut"
@@ -513,6 +592,22 @@ def _enrich_scorecard_with_replay_stress_metrics(
         enriched["delay_adjusted_depth_fillable_ratio"] = str(
             delay_depth_fillable_ratio
         )
+    if "delay_adjusted_depth_survival_adjusted_fillable_ratio" not in enriched:
+        enriched["delay_adjusted_depth_survival_adjusted_fillable_ratio"] = str(
+            survival_adjusted_fillable_ratio
+        )
+    if "delay_adjusted_depth_fill_survival_sample_count" not in enriched:
+        enriched["delay_adjusted_depth_fill_survival_sample_count"] = (
+            fill_survival_sample_count
+        )
+    if "delay_adjusted_depth_fill_survival_evidence_present" not in enriched:
+        enriched["delay_adjusted_depth_fill_survival_evidence_present"] = (
+            has_fill_survival_evidence
+        )
+    if "delay_adjusted_depth_fill_survival_rate" not in enriched and _string(
+        fill_survival_rate_value
+    ):
+        enriched["delay_adjusted_depth_fill_survival_rate"] = str(fill_survival_rate)
     if "delay_adjusted_depth_unfillable_notional_per_day" not in enriched:
         enriched["delay_adjusted_depth_unfillable_notional_per_day"] = str(
             max(
@@ -534,8 +629,8 @@ def _enrich_scorecard_with_replay_stress_metrics(
         enriched["delay_adjusted_depth_stress_artifact_ref"] = result_path
     if "delay_adjusted_depth_stress_passed" not in enriched:
         enriched["delay_adjusted_depth_stress_passed"] = (
-            bool(enriched.get("delay_adjusted_depth_liquidity_evidence_present"))
-            and bool(enriched.get("delay_adjusted_depth_tail_coverage_passed"))
+            _bool(enriched.get("delay_adjusted_depth_liquidity_evidence_present"))
+            and _bool(enriched.get("delay_adjusted_depth_tail_coverage_passed"))
             and delay_depth_fillable_notional_per_day > 0
             and delay_depth_net_pnl_per_day > 0
         )
@@ -610,6 +705,13 @@ def evidence_bundle_from_frontier_candidate(
                 scorecard = {**scorecard, key: source[key]}
                 break
     for key in MARKET_IMPACT_SCORECARD_KEYS:
+        if key in scorecard:
+            continue
+        for source in (candidate, summary, full_window):
+            if key in source:
+                scorecard = {**scorecard, key: source[key]}
+                break
+    for key in (*DELAY_DEPTH_SURVIVAL_SCORECARD_KEYS, *FILL_SURVIVAL_SCORECARD_KEYS):
         if key in scorecard:
             continue
         for source in (candidate, summary, full_window):
@@ -720,8 +822,48 @@ def evidence_bundle_from_frontier_candidate(
                 "stress_type": "delay_adjusted_depth",
                 "model": scorecard.get("delay_adjusted_depth_stress_model"),
                 "stress_ms": scorecard.get("delay_adjusted_depth_stress_ms"),
+                "latency_grid_ms": scorecard.get(
+                    "delay_adjusted_depth_latency_grid_ms"
+                ),
+                "grid_max_stress_ms": scorecard.get(
+                    "delay_adjusted_depth_grid_max_stress_ms"
+                ),
                 "fillable_notional_per_day": scorecard.get(
                     "delay_adjusted_depth_fillable_notional_per_day"
+                ),
+                "worst_grid_fillable_notional_per_day": scorecard.get(
+                    "delay_adjusted_depth_worst_grid_fillable_notional_per_day"
+                ),
+                "worst_active_day_fillable_notional": scorecard.get(
+                    "delay_adjusted_depth_worst_active_day_fillable_notional"
+                ),
+                "p10_active_day_fillable_notional": scorecard.get(
+                    "delay_adjusted_depth_p10_active_day_fillable_notional"
+                ),
+                "tail_coverage_passed": scorecard.get(
+                    "delay_adjusted_depth_tail_coverage_passed"
+                ),
+                "liquidity_missing_day_count": scorecard.get(
+                    "delay_adjusted_depth_liquidity_missing_day_count"
+                ),
+                "fillable_ratio": scorecard.get("delay_adjusted_depth_fillable_ratio"),
+                "survival_adjusted_fillable_ratio": scorecard.get(
+                    "delay_adjusted_depth_survival_adjusted_fillable_ratio"
+                ),
+                "unfillable_notional_per_day": scorecard.get(
+                    "delay_adjusted_depth_unfillable_notional_per_day"
+                ),
+                "fill_survival_evidence_present": scorecard.get(
+                    "delay_adjusted_depth_fill_survival_evidence_present"
+                ),
+                "fill_survival_sample_count": scorecard.get(
+                    "delay_adjusted_depth_fill_survival_sample_count"
+                ),
+                "fill_survival_rate": scorecard.get(
+                    "delay_adjusted_depth_fill_survival_rate"
+                ),
+                "queue_ratio_p95": scorecard.get(
+                    "delay_adjusted_depth_queue_ratio_p95"
                 ),
                 "net_pnl_per_day": scorecard.get(
                     "delay_adjusted_depth_stress_net_pnl_per_day"
@@ -830,6 +972,65 @@ def evidence_bundle_from_payload(payload: Mapping[str, Any]) -> CandidateEvidenc
     )
 
 
+def _requires_promotion_proof(bundle: CandidateEvidenceBundle) -> bool:
+    readiness = bundle.promotion_readiness
+    if _bool(readiness.get("promotable")):
+        return True
+    stage = _string(readiness.get("stage")).lower()
+    status = _string(readiness.get("status")).lower()
+    if stage and stage not in {"research_candidate", "research"}:
+        return True
+    return status in {
+        "promotion_ready",
+        "ready_for_promotion",
+        "paper_probation",
+        "paper_canary",
+        "live_canary",
+    }
+
+
+def _delay_depth_survival_blockers(scorecard: Mapping[str, Any]) -> list[str]:
+    blockers: list[str] = []
+    if not _bool(scorecard.get("delay_adjusted_depth_stress_passed")):
+        blockers.append("delay_adjusted_depth_stress_failed")
+    if not _string(scorecard.get("delay_adjusted_depth_stress_model")):
+        blockers.append("delay_adjusted_depth_stress_model_missing")
+    if _decimal(scorecard.get("delay_adjusted_depth_stress_ms")) <= 0:
+        blockers.append("delay_adjusted_depth_stress_ms_missing")
+    if not _string(scorecard.get("delay_adjusted_depth_stress_artifact_ref")):
+        blockers.append("delay_adjusted_depth_stress_artifact_missing")
+    if not _bool(scorecard.get("delay_adjusted_depth_tail_coverage_passed")):
+        blockers.append("delay_adjusted_depth_tail_coverage_missing")
+    if (
+        _decimal(scorecard.get("delay_adjusted_depth_p10_active_day_fillable_notional"))
+        <= 0
+    ):
+        blockers.append("delay_adjusted_depth_p10_fillable_non_positive")
+    if (
+        _decimal(
+            scorecard.get("delay_adjusted_depth_worst_active_day_fillable_notional")
+        )
+        <= 0
+    ):
+        blockers.append("delay_adjusted_depth_worst_fillable_non_positive")
+    if _decimal(scorecard.get("delay_adjusted_depth_stress_net_pnl_per_day")) <= 0:
+        blockers.append("delay_adjusted_depth_stress_net_pnl_non_positive")
+    if not (
+        _bool(scorecard.get("fill_survival_evidence_present"))
+        or _bool(scorecard.get("delay_adjusted_depth_fill_survival_evidence_present"))
+    ):
+        blockers.append("fill_survival_evidence_missing")
+    if (
+        max(
+            _int(scorecard.get("fill_survival_sample_count")),
+            _int(scorecard.get("delay_adjusted_depth_fill_survival_sample_count")),
+        )
+        <= 0
+    ):
+        blockers.append("fill_survival_sample_count_zero")
+    return blockers
+
+
 def evidence_bundle_blockers(bundle: CandidateEvidenceBundle) -> tuple[str, ...]:
     blockers: list[str] = []
     if not _string(bundle.dataset_snapshot_id):
@@ -868,6 +1069,8 @@ def evidence_bundle_blockers(bundle: CandidateEvidenceBundle) -> tuple[str, ...]
         bundle.dataset_snapshot_id
     ):
         blockers.append("synthetic_evidence_not_promotion_proof")
+    if _requires_promotion_proof(bundle):
+        blockers.extend(_delay_depth_survival_blockers(scorecard))
     return tuple(dict.fromkeys(blockers))
 
 

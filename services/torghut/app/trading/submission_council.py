@@ -742,6 +742,18 @@ def _metric_window_activity_reason_codes(
     expectancy_bps = _safe_decimal(metric_window.post_cost_expectancy_bps)
     if expectancy_bps is None or expectancy_bps <= 0:
         reasons.append("hypothesis_window_post_cost_expectancy_non_positive")
+    payload_raw = getattr(metric_window, "payload_json", None)
+    payload: Mapping[str, object] = (
+        cast(Mapping[str, object], payload_raw)
+        if isinstance(payload_raw, Mapping)
+        else cast(Mapping[str, object], {})
+    )
+    basis_counts: object | None = payload.get("post_cost_basis_counts")
+    if (
+        isinstance(basis_counts, Mapping)
+        and _safe_int(payload.get("post_cost_promotion_sample_count")) <= 0
+    ):
+        reasons.append("hypothesis_window_post_cost_pnl_basis_missing")
 
     avg_abs_slippage_bps = _safe_decimal(metric_window.avg_abs_slippage_bps)
     slippage_budget_bps = _safe_decimal(metric_window.slippage_budget_bps)
