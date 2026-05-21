@@ -1,10 +1,4 @@
-import { randomUUID } from 'node:crypto'
-
 import { sql } from 'kysely'
-import {
-  submitTorghutMarketContextAgentRun,
-  type TorghutMarketContextAgentRunSubmitter as MarketContextAgentRunSubmitter,
-} from '~/server/torghut-market-context-agentrun'
 
 import type { Db } from '~/server/db'
 import type { MarketContextProviderDomain } from '~/server/torghut-market-context-agents'
@@ -220,8 +214,8 @@ export const resolveMarketContextDispatchDecisionFromRows = (params: {
   return {
     attempted: true,
     dispatched: false,
-    shouldDispatch: true,
-    reason: `${params.snapshotState}_snapshot_refresh`,
+    shouldDispatch: false,
+    reason: 'per_symbol_market_context_dispatch_removed',
     runName: null,
     error: null,
   }
@@ -315,85 +309,6 @@ const readProviderCapacityDispatchHold = async (params: {
   })
 }
 
-const reserveMarketContextDispatch = async (params: {
-  db: Db
-  symbol: string
-  domain: MarketContextProviderDomain
-  requestId: string
-  now: Date
-  cooldownCutoff: Date
-}) => {
-  const result = await sql<{ last_run_name: string | null }>`
-    INSERT INTO torghut_market_context_dispatch_state (
-      symbol,
-      domain,
-      last_dispatched_at,
-      last_run_name,
-      last_status,
-      last_error,
-      updated_at
-    )
-    VALUES (
-      ${params.symbol},
-      ${params.domain},
-      ${params.now},
-      ${params.requestId},
-      'reserved',
-      NULL,
-      ${params.now}
-    )
-    ON CONFLICT (symbol, domain) DO UPDATE
-      SET
-        last_dispatched_at = EXCLUDED.last_dispatched_at,
-        last_run_name = EXCLUDED.last_run_name,
-        last_status = EXCLUDED.last_status,
-        last_error = NULL,
-        updated_at = EXCLUDED.updated_at
-      WHERE torghut_market_context_dispatch_state.last_dispatched_at IS NULL
-        OR torghut_market_context_dispatch_state.last_dispatched_at <= ${params.cooldownCutoff}
-    RETURNING last_run_name;
-  `.execute(params.db)
-
-  return result.rows.length > 0
-}
-
-const updateMarketContextDispatchState = async (params: {
-  db: Db
-  symbol: string
-  domain: MarketContextProviderDomain
-  runName: string
-  status: string
-  error: string | null
-  now: Date
-}) => {
-  await sql`
-    INSERT INTO torghut_market_context_dispatch_state (
-      symbol,
-      domain,
-      last_dispatched_at,
-      last_run_name,
-      last_status,
-      last_error,
-      updated_at
-    )
-    VALUES (
-      ${params.symbol},
-      ${params.domain},
-      ${params.now},
-      ${params.runName},
-      ${params.status},
-      ${params.error},
-      ${params.now}
-    )
-    ON CONFLICT (symbol, domain) DO UPDATE
-      SET
-        last_run_name = EXCLUDED.last_run_name,
-        last_status = EXCLUDED.last_status,
-        last_error = EXCLUDED.last_error,
-        updated_at = EXCLUDED.updated_at;
-  `.execute(params.db)
-}
-
 export const dispatchMarketContextRefreshIfNeeded = async (params: {
   db: Db
   symbol: string
@@ -401,7 +316,6 @@ export const dispatchMarketContextRefreshIfNeeded = async (params: {
   snapshotState: MarketContextSnapshotState
   settings: MarketContextDispatchSettings
   now: Date
-  submitAgentRun?: MarketContextAgentRunSubmitter
 }): Promise<MarketContextDispatchResult> => {
   if (params.snapshotState === 'fresh') {
     return {
@@ -427,7 +341,6 @@ export const dispatchMarketContextRefreshIfNeeded = async (params: {
     params.now.getTime() - Math.max(1, params.settings.onDemandDispatchActiveRunSeconds) * 1000,
   )
   const cooldownSeconds = Math.max(1, params.settings.onDemandDispatchCooldownSeconds)
-  const cooldownCutoff = new Date(params.now.getTime() - cooldownSeconds * 1000)
   const [activeRun, dispatchState, providerCapacityHold] = await Promise.all([
     readActiveMarketContextRun({
       db: params.db,
@@ -461,75 +374,11 @@ export const dispatchMarketContextRefreshIfNeeded = async (params: {
     }
   }
 
-  const provider = params.settings.providerChain[0] ?? 'codex-spark'
-  const requestId = `market-context-${params.domain}-${params.symbol.toLowerCase()}-${randomUUID()}`
-  const reserved = await reserveMarketContextDispatch({
-    db: params.db,
-    symbol: params.symbol,
-    domain: params.domain,
-    requestId,
-    now: params.now,
-    cooldownCutoff,
-  })
-  if (!reserved) {
-    const nextState = await readMarketContextDispatchState({
-      db: params.db,
-      symbol: params.symbol,
-      domain: params.domain,
-    })
-    return {
-      attempted: true,
-      dispatched: false,
-      reason: 'dispatch_cooldown',
-      runName: nextState?.lastRunName ?? null,
-      error: null,
-    }
-  }
-
-  try {
-    const runName = await submitTorghutMarketContextAgentRun({
-      symbol: params.symbol,
-      domain: params.domain,
-      snapshotState: params.snapshotState,
-      provider,
-      requestId,
-      now: params.now,
-      settings: params.settings,
-      submitAgentRun: params.submitAgentRun,
-    })
-    await updateMarketContextDispatchState({
-      db: params.db,
-      symbol: params.symbol,
-      domain: params.domain,
-      runName,
-      status: 'dispatched',
-      error: null,
-      now: new Date(),
-    })
-    return {
-      attempted: true,
-      dispatched: true,
-      reason: decision.reason,
-      runName,
-      error: null,
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    await updateMarketContextDispatchState({
-      db: params.db,
-      symbol: params.symbol,
-      domain: params.domain,
-      runName: requestId,
-      status: 'dispatch_failed',
-      error: message,
-      now: new Date(),
-    })
-    return {
-      attempted: true,
-      dispatched: false,
-      reason: 'dispatch_failed',
-      runName: requestId,
-      error: message,
-    }
+  return {
+    attempted: decision.attempted,
+    dispatched: false,
+    reason: decision.reason,
+    runName: decision.runName,
+    error: decision.error,
   }
 }

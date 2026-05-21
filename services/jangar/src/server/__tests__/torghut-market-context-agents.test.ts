@@ -155,7 +155,7 @@ describe('torghut market-context agent helpers', () => {
     expect(signal.message).toBe('all_provider_attempts_failed')
   })
 
-  it('dispatches stale snapshots when no active run or cooldown exists', async () => {
+  it('does not dispatch per-symbol stale snapshots when no active run or cooldown exists', async () => {
     const { resolveMarketContextDispatchDecisionFromRows } = await import('../torghut-market-context-dispatch')
 
     const decision = resolveMarketContextDispatchDecisionFromRows({
@@ -167,10 +167,10 @@ describe('torghut market-context agent helpers', () => {
       now: new Date('2026-05-07T20:00:00.000Z'),
     })
 
-    expect(decision.shouldDispatch).toBe(true)
+    expect(decision.shouldDispatch).toBe(false)
     expect(decision.attempted).toBe(true)
     expect(decision.dispatched).toBe(false)
-    expect(decision.reason).toBe('stale_snapshot_refresh')
+    expect(decision.reason).toBe('per_symbol_market_context_dispatch_removed')
   })
 
   it('suppresses on-demand dispatch when a provider run is already active', async () => {

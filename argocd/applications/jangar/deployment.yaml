@@ -274,7 +274,7 @@ spec:
             - name: JANGAR_MARKET_CONTEXT_PROVIDER_COOLDOWN_SECONDS
               value: "900"
             - name: JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_ENABLED
-              value: "true"
+              value: "false"
             - name: JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_COOLDOWN_SECONDS
               value: "900"
             - name: JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_ACTIVE_RUN_SECONDS

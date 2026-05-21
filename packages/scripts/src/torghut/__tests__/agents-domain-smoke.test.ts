@@ -58,6 +58,44 @@ const stringAt = (value: unknown, key: string) => {
 const nameOf = (manifest: Record<string, unknown>) => stringAt(objectAt(manifest, 'metadata'), 'name')
 
 describe('Agents domain scheduled AgentRun templates', () => {
+  it('keeps per-symbol market-context on-demand dispatch disabled in Jangar', () => {
+    const deployment = readYamlObjects('argocd/applications/jangar/deployment.yaml').find(
+      (manifest) => manifest.kind === 'Deployment' && nameOf(manifest) === 'jangar',
+    )
+    const spec = objectAt(deployment, 'spec')
+    const template = objectAt(spec, 'template')
+    const podSpec = objectAt(template, 'spec')
+    const containers = objectAt(podSpec, 'containers')
+    const appContainer = Array.isArray(containers)
+      ? containers.find((container) => objectAt(container, 'name') === 'app')
+      : undefined
+    const env = objectAt(appContainer, 'env')
+    const envMap = new Map(
+      Array.isArray(env)
+        ? env
+            .map((entry) => [objectAt(entry, 'name'), objectAt(entry, 'value')])
+            .filter((entry): entry is [string, string] => typeof entry[0] === 'string' && typeof entry[1] === 'string')
+        : [],
+    )
+
+    expect(envMap.get('JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_ENABLED')).toBe('false')
+  })
+
+  it('schedules only batch market-context refresh templates', () => {
+    const manifests = readYamlObjects('argocd/applications/torghut/agents-domain/torghut-market-context-batch.yaml')
+    const scheduleTargets = manifests
+      .filter((manifest) => manifest.kind === 'Schedule')
+      .map((schedule) => objectAt(objectAt(objectAt(schedule, 'spec'), 'targetRef'), 'name'))
+      .sort()
+
+    expect(scheduleTargets).toEqual([
+      'torghut-market-context-fundamentals-batch-template',
+      'torghut-market-context-fundamentals-preopen-probe-template',
+      'torghut-market-context-news-batch-template',
+      'torghut-market-context-news-preopen-probe-template',
+    ])
+  })
+
   it('keeps dedicated Torghut capacity pools blocking while shared providers only degrade by default', () => {
     const provider = readYamlObjects(
       'argocd/applications/torghut/agents-domain/torghut-market-context-agentprovider.yaml',
