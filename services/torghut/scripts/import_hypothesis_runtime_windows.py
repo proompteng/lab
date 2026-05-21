@@ -238,6 +238,75 @@ def _query_timestamps(
     return decisions, executions, tca_rows
 
 
+def _source_activity_missing_summary(
+    *,
+    run_id: str,
+    candidate_id: str,
+    hypothesis_id: str,
+    observed_stage: str,
+    strategy_name: str,
+    strategy_names: list[str],
+    account_label: str,
+    window_start: datetime,
+    window_end: datetime,
+    source_manifest_ref: str,
+    source_kind: str,
+    dataset_snapshot_ref: str | None,
+) -> dict[str, Any]:
+    blocker = {
+        "blocker": "runtime_window_source_activity_missing",
+        "hypothesis_id": hypothesis_id,
+        "candidate_id": candidate_id or None,
+        "strategy_name": strategy_name,
+        "strategy_name_candidates": strategy_names,
+        "account_label": account_label,
+        "window_start": window_start.isoformat(),
+        "window_end": window_end.isoformat(),
+        "remediation": (
+            "Run live-paper replay or route/TCA repair until the source database contains "
+            "execution-eligible trade_decisions, executions, or TCA rows for this target "
+            "before importing promotion evidence."
+        ),
+    }
+    return {
+        "status": "skipped",
+        "proof_status": "blocked",
+        "proof_blockers": [blocker],
+        "run_id": run_id,
+        "candidate_id": candidate_id or None,
+        "hypothesis_id": hypothesis_id,
+        "observed_stage": observed_stage,
+        "window_count": 0,
+        "market_session_samples": 0,
+        "decision_count": 0,
+        "trade_count": 0,
+        "order_count": 0,
+        "avg_abs_slippage_bps": "0",
+        "avg_post_cost_expectancy_bps": "0",
+        "promotion_allowed": False,
+        "promotion_blocking_reasons": ["runtime_window_source_activity_missing"],
+        "runtime_observation": {
+            "authoritative": False,
+            "observed_stage": observed_stage,
+            "evidence_provenance": (
+                "paper_runtime_observed"
+                if observed_stage == "paper"
+                else "live_runtime_observed"
+            ),
+            "source_kind": source_kind
+            or ("simulation_paper_runtime" if observed_stage == "paper" else "live_runtime"),
+            "source_manifest_ref": source_manifest_ref or None,
+            "strategy_name": strategy_name,
+            "strategy_name_candidates": strategy_names,
+            "account_label": account_label,
+            "window_start": window_start.isoformat(),
+            "window_end": window_end.isoformat(),
+            "dataset_snapshot_ref": dataset_snapshot_ref,
+            "skip_reason": "runtime_window_source_activity_missing",
+        },
+    }
+
+
 def main() -> int:
     args = _parse_args()
     source_dsn = args.source_dsn.strip() or os.getenv(args.source_dsn_env, "").strip()
@@ -260,6 +329,29 @@ def main() -> int:
         window_start=window_start,
         window_end=window_end,
     )
+    dataset_snapshot_ref = (
+        str(getattr(args, "dataset_snapshot_ref", "") or "").strip() or None
+    )
+    if not decisions and not executions and not tca_rows:
+        summary = _source_activity_missing_summary(
+            run_id=args.run_id,
+            candidate_id=args.candidate_id.strip(),
+            hypothesis_id=args.hypothesis_id,
+            observed_stage=args.observed_stage,
+            strategy_name=args.strategy_name,
+            strategy_names=strategy_names,
+            account_label=args.account_label,
+            window_start=window_start,
+            window_end=window_end,
+            source_manifest_ref=args.source_manifest_ref.strip(),
+            source_kind=args.source_kind.strip(),
+            dataset_snapshot_ref=dataset_snapshot_ref,
+        )
+        if args.json:
+            print(json.dumps(summary, indent=2))
+        else:
+            print(summary)
+        return 0
     artifact_refs = [
         str(item).strip() for item in args.artifact_ref if str(item).strip()
     ]
@@ -305,9 +397,6 @@ def main() -> int:
     )
     source_kind = args.source_kind.strip() or (
         "simulation_paper_runtime" if args.observed_stage == "paper" else "live_runtime"
-    )
-    dataset_snapshot_ref = (
-        str(getattr(args, "dataset_snapshot_ref", "") or "").strip() or None
     )
     runtime_observation_payload = {
         "authoritative": True,
