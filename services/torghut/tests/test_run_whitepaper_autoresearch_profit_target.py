@@ -6162,7 +6162,14 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             board["closest_promotion_candidate"]["candidate_id"],
             "chip-paper-microbar-composite@execution-proof",
         )
-        self.assertIsNone(board["paper_probation_candidate"])
+        self.assertEqual(
+            board["paper_probation_candidate"]["candidate_id"],
+            "chip-paper-microbar-composite@execution-proof",
+        )
+        self.assertEqual(
+            board["paper_probation_candidate"]["selection_reason"],
+            "closest_lower_bound_economics_below_target",
+        )
         self.assertEqual(board["best_executed_candidate"]["decision_count"], 7)
         self.assertEqual(board["best_executed_candidate"]["submitted_order_count"], 7)
         self.assertEqual(board["best_executed_candidate"]["filled_order_count"], 7)
@@ -6238,8 +6245,27 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(
             board["paper_probation_candidate"]["candidate_id"], "cand-paper-probation"
         )
+        probation_candidate = board["paper_probation_candidate"]
         self.assertEqual(
-            board["paper_probation_candidate"], board["closest_promotion_candidate"]
+            probation_candidate["candidate_selection"],
+            "oracle_recommended_paper_probation",
+        )
+        self.assertTrue(probation_candidate["paper_probation_authorized"])
+        self.assertTrue(probation_candidate["probation_allowed"])
+        self.assertEqual(
+            probation_candidate["paper_probation_authorization_scope"],
+            "evidence_collection_only",
+        )
+        self.assertEqual(probation_candidate["evidence_collection_stage"], "paper")
+        self.assertEqual(
+            probation_candidate["selection_reason"], "target_met_but_oracle_blocked"
+        )
+        self.assertFalse(probation_candidate["promotion_allowed"])
+        self.assertFalse(probation_candidate["final_promotion_authorized"])
+        self.assertFalse(probation_candidate["final_promotion_allowed"])
+        self.assertIn(
+            "delay_adjusted_depth_tail_coverage_passed_failed",
+            probation_candidate["final_promotion_blockers"],
         )
         plan = board["runtime_window_import_plan"]
         self.assertEqual(
@@ -6261,6 +6287,130 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(
             target["promotion_gate"], "existing_runtime_governance_fail_closed"
         )
+        self.assertTrue(target["paper_probation_authorized"])
+        self.assertEqual(target["evidence_collection_stage"], "paper")
+        self.assertFalse(target["promotion_allowed"])
+        self.assertFalse(target["final_promotion_authorized"])
+        self.assertFalse(target["final_promotion_allowed"])
+        self.assertEqual(target["selection_reason"], "target_met_but_oracle_blocked")
+
+    def test_candidate_board_paper_probation_prefers_lower_bound_economics(
+        self,
+    ) -> None:
+        weak_spec = self._candidate_spec("spec-weak-probation")
+        close_spec = self._candidate_spec("spec-close-probation")
+        weak_evidence = runner.CandidateEvidenceBundle(
+            schema_version="torghut.candidate-evidence-bundle.v1",
+            evidence_bundle_id="ev-weak-probation",
+            candidate_id="cand-weak-probation",
+            candidate_spec_id=weak_spec.candidate_spec_id,
+            dataset_snapshot_id="snapshot-weak-probation",
+            feature_spec_hash="hash-weak-probation",
+            code_commit="commit-test",
+            replay_artifact_refs=("weak-probation.json",),
+            objective_scorecard={
+                "net_pnl_per_day": "125",
+                "target_met": False,
+                "oracle_passed": False,
+                "active_day_ratio": "1",
+                "positive_day_ratio": "1",
+                "best_day_share": "0.10",
+                "worst_day_loss": "0",
+                "trade_decision_count": 12,
+                "orders_submitted_count": 12,
+                "trade_count": 12,
+                "profit_target_oracle": {
+                    "blockers": ["min_daily_net_pnl_failed"],
+                },
+            },
+            fold_metrics=(),
+            stress_metrics=(),
+            cost_calibration={"status": "provisional", "source": "paper_runtime"},
+            null_comparator={},
+            promotion_readiness={},
+        )
+        close_evidence = runner.CandidateEvidenceBundle(
+            schema_version="torghut.candidate-evidence-bundle.v1",
+            evidence_bundle_id="ev-close-probation",
+            candidate_id="cand-close-probation",
+            candidate_spec_id=close_spec.candidate_spec_id,
+            dataset_snapshot_id="snapshot-close-probation",
+            feature_spec_hash="hash-close-probation",
+            code_commit="commit-test",
+            replay_artifact_refs=("close-probation.json",),
+            objective_scorecard={
+                "net_pnl_per_day": "480",
+                "market_impact_stress_net_pnl_per_day": "460",
+                "target_met": False,
+                "oracle_passed": False,
+                "active_day_ratio": "0.82",
+                "positive_day_ratio": "0.68",
+                "best_day_share": "0.32",
+                "worst_day_loss": "40",
+                "trade_decision_count": 8,
+                "orders_submitted_count": 8,
+                "trade_count": 8,
+                "profit_target_oracle": {
+                    "blockers": [
+                        "min_daily_net_pnl_failed",
+                        "delay_adjusted_depth_stress_net_pnl_per_day_failed",
+                    ],
+                },
+            },
+            fold_metrics=(),
+            stress_metrics=(),
+            cost_calibration={"status": "provisional", "source": "paper_runtime"},
+            null_comparator={},
+            promotion_readiness={},
+        )
+
+        board = runner._candidate_board_payload(
+            epoch_id="epoch-paper-probation-economics",
+            output_dir=Path("/tmp/epoch-paper-probation-economics"),
+            target=Decimal("500"),
+            candidate_specs=(weak_spec, close_spec),
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": weak_spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                    },
+                    {
+                        "candidate_spec_id": close_spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                    },
+                ]
+            },
+            pre_replay_proposal_rows=(
+                {
+                    "candidate_spec_id": weak_spec.candidate_spec_id,
+                    "rank": 1,
+                    "proposal_score": "9.0",
+                },
+                {
+                    "candidate_spec_id": close_spec.candidate_spec_id,
+                    "rank": 2,
+                    "proposal_score": "8.0",
+                },
+            ),
+            proposal_rows=(),
+            evidence_bundles=(weak_evidence, close_evidence),
+            portfolio=None,
+            promotion_readiness={"promotable": False},
+            runtime_closure={},
+        )
+
+        probation_candidate = board["paper_probation_candidate"]
+        self.assertEqual(probation_candidate["candidate_id"], "cand-close-probation")
+        self.assertEqual(
+            probation_candidate["selection_reason"],
+            "closest_lower_bound_economics_below_target",
+        )
+        self.assertEqual(
+            probation_candidate["probation_lower_bound_net_pnl_per_day"], "460"
+        )
+        self.assertEqual(probation_candidate["probation_target_shortfall"], "40")
+        self.assertFalse(probation_candidate["final_promotion_allowed"])
 
     def test_candidate_board_runtime_window_plan_dedupes_and_blocks_incomplete_targets(
         self,
