@@ -11,7 +11,7 @@ import signal
 import socket
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Mapping, Sequence, cast
@@ -48,6 +48,7 @@ from app.trading.discovery.evidence_bundles import (
     evidence_bundle_from_frontier_candidate,
     evidence_bundle_from_payload,
 )
+from app.trading.discovery.fast_replay import build_fast_replay_preview
 from app.trading.discovery.hypothesis_cards import HypothesisCard
 from app.trading.discovery.mlx_snapshot import build_mlx_snapshot_manifest
 from app.trading.discovery.mlx_snapshot import MlxSnapshotManifest
@@ -67,6 +68,12 @@ from app.trading.discovery.portfolio_optimizer import (
 from app.trading.discovery.profit_target_oracle import (
     ProfitTargetOraclePolicy,
     evaluate_profit_target_oracle,
+)
+from app.trading.discovery.replay_tape import (
+    load_replay_tape,
+    slice_tape_by_symbols,
+    slice_tape_by_window,
+    validate_tape_freshness,
 )
 from app.trading.discovery.runtime_closure import (
     RuntimeClosureExecutionContext,
@@ -386,6 +393,21 @@ def _parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help="Optional manifest path for --replay-tape-path.",
+    )
+    parser.add_argument(
+        "--replay-tape-preview-top-k",
+        type=int,
+        default=0,
+        help=(
+            "Preview-only tape-vectorized narrowing budget before exact replay. "
+            "Requires --replay-tape-path and never counts as promotion proof."
+        ),
+    )
+    parser.add_argument(
+        "--replay-tape-preview-min-rows",
+        type=int,
+        default=2,
+        help="Minimum manifest-verified tape rows required to score a candidate in preview narrowing.",
     )
     parser.add_argument(
         "--collect-train-gate-diagnostics",
@@ -5688,6 +5710,142 @@ def _candidate_selection_for_direct_replay(
     }
 
 
+def _apply_fast_replay_preview_narrowing(
+    *,
+    args: argparse.Namespace,
+    output_dir: Path,
+    specs: Sequence[CandidateSpec],
+    candidate_selection: Mapping[str, Any],
+) -> tuple[list[CandidateSpec], dict[str, Any]]:
+    preview_top_k = max(0, int(getattr(args, "replay_tape_preview_top_k", 0) or 0))
+    if preview_top_k <= 0:
+        return list(specs), dict(candidate_selection)
+    if str(getattr(args, "replay_mode", "") or "") != "real":
+        raise ValueError("fast_replay_preview_requires_real_replay")
+    tape_path = getattr(args, "replay_tape_path", None)
+    if tape_path is None:
+        raise ValueError("fast_replay_preview_requires_replay_tape_path")
+
+    start_date = _fast_replay_preview_date_arg(args, "full_window_start_date")
+    end_date = _fast_replay_preview_date_arg(args, "full_window_end_date")
+    tape = load_replay_tape(
+        Path(tape_path).resolve(),
+        manifest_path=(
+            Path(args.replay_tape_manifest).resolve()
+            if getattr(args, "replay_tape_manifest", None) is not None
+            else None
+        ),
+    )
+    validation = validate_tape_freshness(
+        tape.manifest,
+        start_date=start_date,
+        end_date=end_date,
+        symbols=_candidate_universe_symbols_from_args(args),
+        allow_stale_tape=bool(getattr(args, "allow_stale_tape", False)),
+    )
+    selected_rows = slice_tape_by_symbols(
+        slice_tape_by_window(
+            tape.rows,
+            start_date=start_date,
+            end_date=end_date,
+        ),
+        symbols=_candidate_universe_symbols_from_args(args),
+    )
+    preview = build_fast_replay_preview(
+        specs=specs,
+        rows=selected_rows,
+        replay_tape_manifest=tape.manifest,
+        top_k=preview_top_k,
+        min_rows_per_candidate=max(
+            1, int(getattr(args, "replay_tape_preview_min_rows", 2) or 2)
+        ),
+    )
+    preview_scores_path = output_dir / "replay-tape-preview-scores.jsonl"
+    preview_manifest_path = output_dir / "replay-tape-preview-manifest.json"
+    _write_jsonl(preview_scores_path, [row.to_payload() for row in preview.rows])
+    preview_manifest = {
+        **preview.to_manifest_payload(),
+        "validation": validation,
+        "artifacts": {
+            "scores_jsonl": str(preview_scores_path),
+            "manifest_json": str(preview_manifest_path),
+        },
+    }
+    _write_json(preview_manifest_path, preview_manifest)
+
+    spec_by_id = {spec.candidate_spec_id: spec for spec in specs}
+    narrowed_specs = [
+        spec_by_id[candidate_spec_id]
+        for candidate_spec_id in preview.selected_candidate_spec_ids
+        if candidate_spec_id in spec_by_id
+    ]
+    if not narrowed_specs and specs:
+        narrowed_specs = [specs[0]]
+
+    selected_ids = {spec.candidate_spec_id for spec in narrowed_specs}
+    replay_order_by_spec = {
+        spec.candidate_spec_id: index
+        for index, spec in enumerate(narrowed_specs, start=1)
+    }
+    preview_row_by_spec = {
+        row.candidate_spec_id: row.to_payload() for row in preview.rows
+    }
+    original_selected_ids = _selected_candidate_spec_ids(candidate_selection)
+    updated_rows: list[dict[str, Any]] = []
+    for row in _list_of_mappings(candidate_selection.get("rows")):
+        candidate_spec_id = _string(row.get("candidate_spec_id"))
+        updated = dict(row)
+        preview_row = preview_row_by_spec.get(candidate_spec_id)
+        if preview_row is not None:
+            updated["fast_replay_preview_rank"] = preview_row["rank"]
+            updated["fast_replay_preview_score"] = preview_row["preview_score"]
+            updated["fast_replay_preview_selected"] = preview_row["selected"]
+            updated["fast_replay_preview_selection_reason"] = preview_row[
+                "selection_reason"
+            ]
+            updated["fast_replay_preview_matched_row_count"] = preview_row[
+                "matched_row_count"
+            ]
+        if candidate_spec_id in original_selected_ids:
+            updated["pre_fast_replay_preview_selected_for_replay"] = bool(
+                row.get("selected_for_replay")
+            )
+            updated["selected_for_replay"] = candidate_spec_id in selected_ids
+            updated["replay_order"] = replay_order_by_spec.get(candidate_spec_id)
+            if candidate_spec_id not in selected_ids:
+                updated["selection_reason"] = "fast_replay_preview_filtered"
+        updated_rows.append(updated)
+
+    updated_selection = {
+        **dict(candidate_selection),
+        "budget": {
+            **_mapping(candidate_selection.get("budget")),
+            "fast_replay_preview_enabled": True,
+            "fast_replay_preview_requested_top_k": preview_top_k,
+            "fast_replay_preview_selected_count": len(narrowed_specs),
+            "pre_fast_replay_preview_selected_count": len(specs),
+            "selected_count": len(narrowed_specs),
+        },
+        "selected_candidate_spec_ids": [
+            spec.candidate_spec_id for spec in narrowed_specs
+        ],
+        "rows": updated_rows,
+        "replay_tape_preview": {
+            **preview_manifest,
+            "scores_artifact": str(preview_scores_path),
+            "manifest_artifact": str(preview_manifest_path),
+        },
+    }
+    return narrowed_specs, updated_selection
+
+
+def _fast_replay_preview_date_arg(args: argparse.Namespace, key: str) -> date:
+    value = str(getattr(args, key, "") or "").strip()
+    if not value:
+        raise ValueError(f"fast_replay_preview_requires_{key}")
+    return date.fromisoformat(value)
+
+
 def _synthetic_net_for_spec(spec: CandidateSpec, *, rank: int) -> Decimal:
     family_bonus = {
         "microbar_cross_sectional_pairs_v1": Decimal("215"),
@@ -8694,6 +8852,23 @@ def run_whitepaper_autoresearch_profit_target(
             output_dir / "selected-candidate-specs.jsonl"
         ),
     }
+    try:
+        replay_candidate_specs, candidate_selection = (
+            _apply_fast_replay_preview_narrowing(
+                args=args,
+                output_dir=output_dir,
+                specs=replay_candidate_specs,
+                candidate_selection=candidate_selection,
+            )
+        )
+    except ValueError as exc:
+        return _write_failure_summary(
+            output_dir=output_dir,
+            epoch_id=epoch_id,
+            status="invalid_replay_tape_preview",
+            reason=str(exc),
+            started_at=started_at,
+        )
     _write_json(output_dir / "candidate-selection-manifest.json", candidate_selection)
     _write_jsonl(
         output_dir / "selected-candidate-specs.jsonl",
@@ -9278,6 +9453,12 @@ def run_whitepaper_autoresearch_profit_target(
             "real_replay_retry_max_frontier_candidates_per_spec": int(
                 getattr(args, "real_replay_retry_max_frontier_candidates_per_spec", 1)
                 or 1
+            ),
+            "replay_tape_preview_top_k": int(
+                getattr(args, "replay_tape_preview_top_k", 0) or 0
+            ),
+            "replay_tape_preview_min_rows": int(
+                getattr(args, "replay_tape_preview_min_rows", 2) or 2
             ),
             "source_jsonl": [str(path) for path in getattr(args, "source_jsonl", [])],
         }

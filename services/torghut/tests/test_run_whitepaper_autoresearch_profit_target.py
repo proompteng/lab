@@ -5,7 +5,7 @@ from dataclasses import replace
 import json
 import sys
 from argparse import Namespace
-from datetime import datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -32,7 +32,13 @@ from app.models import (
     WhitepaperDocument,
     WhitepaperDocumentVersion,
 )
+from app.trading.discovery import fast_replay
+from app.trading.discovery.replay_tape import (
+    build_source_query_digest,
+    materialize_signal_tape,
+)
 from app.trading.discovery.evidence_bundles import evidence_bundle_blockers
+from app.trading.models import SignalEnvelope
 
 _CHIP_UNIVERSE = list(runner.LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE)
 
@@ -174,6 +180,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             prefetch_full_window_rows=False,
             replay_tape_path=None,
             replay_tape_manifest=None,
+            replay_tape_preview_top_k=0,
+            replay_tape_preview_min_rows=2,
             min_daily_net_pnl=None,
             persist_results=False,
         )
@@ -3879,6 +3887,276 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         ledger_mock.assert_not_called()
         optimizer_mock.assert_not_called()
         runtime_mock.assert_not_called()
+
+    def test_replay_tape_preview_narrows_direct_specs_without_promotion_proof(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output_dir = root / "epoch"
+            specs_path = root / "candidate-specs.jsonl"
+            tape_path = root / "preview-tape.jsonl"
+            base_nvda = self._candidate_spec("spec-nvda-continuation")
+            nvda_spec = replace(
+                base_nvda,
+                strategy_overrides={
+                    **base_nvda.strategy_overrides,
+                    "universe_symbols": ["NVDA"],
+                },
+            )
+            base_aapl = self._candidate_spec("spec-aapl-continuation")
+            aapl_spec = replace(
+                base_aapl,
+                strategy_overrides={
+                    **base_aapl.strategy_overrides,
+                    "universe_symbols": ["AAPL"],
+                },
+            )
+            specs_path.write_text(
+                "\n".join(
+                    json.dumps(spec.to_payload(), sort_keys=True)
+                    for spec in (nvda_spec, aapl_spec)
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            materialize_signal_tape(
+                rows=[
+                    SignalEnvelope(
+                        event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
+                        symbol="NVDA",
+                        timeframe="1Sec",
+                        seq=1,
+                        source="ta",
+                        payload={"price": Decimal("100"), "spread_bps": Decimal("2")},
+                    ),
+                    SignalEnvelope(
+                        event_ts=datetime(2026, 2, 23, 15, 31, tzinfo=timezone.utc),
+                        symbol="NVDA",
+                        timeframe="1Sec",
+                        seq=2,
+                        source="ta",
+                        payload={"price": Decimal("101"), "spread_bps": Decimal("2")},
+                    ),
+                ],
+                tape_path=tape_path,
+                dataset_snapshot_ref="preview-snapshot",
+                symbols=("NVDA", "AAPL"),
+                start_date=date(2026, 2, 23),
+                end_date=date(2026, 2, 27),
+                source_query_digest=build_source_query_digest({"query": "preview"}),
+            )
+            args = self._args(output_dir)
+            args.candidate_specs = [specs_path]
+            args.seed_recent_whitepapers = False
+            args.replay_mode = "real"
+            args.selection_only = True
+            args.replay_tape_path = tape_path
+            args.replay_tape_preview_top_k = 1
+            args.symbols = "NVDA,AAPL"
+
+            payload = runner.run_whitepaper_autoresearch_profit_target(args)
+
+            selection = json.loads(
+                (output_dir / "candidate-selection-manifest.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            selected_specs = [
+                json.loads(line)
+                for line in (output_dir / "selected-candidate-specs.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if line
+            ]
+            preview_scores_exists = (
+                output_dir / "replay-tape-preview-scores.jsonl"
+            ).exists()
+
+        self.assertEqual(payload["status"], "selection_only")
+        self.assertEqual(payload["replay_candidate_spec_count"], 1)
+        self.assertEqual(
+            selection["selected_candidate_spec_ids"], ["spec-nvda-continuation"]
+        )
+        self.assertEqual(
+            [spec["candidate_spec_id"] for spec in selected_specs],
+            ["spec-nvda-continuation"],
+        )
+        self.assertFalse(selection["replay_tape_preview"]["promotion_proof"])
+        self.assertIn(
+            "exact_replay_required", selection["replay_tape_preview"]["blockers"]
+        )
+        self.assertTrue(preview_scores_exists)
+        aapl_row = next(
+            row
+            for row in selection["rows"]
+            if row["candidate_spec_id"] == "spec-aapl-continuation"
+        )
+        self.assertTrue(aapl_row["pre_fast_replay_preview_selected_for_replay"])
+        self.assertFalse(aapl_row["selected_for_replay"])
+        self.assertEqual(aapl_row["selection_reason"], "fast_replay_preview_filtered")
+
+    def test_replay_tape_preview_error_paths_and_fallback_selection(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output_dir = root / "epoch"
+            tape_path = root / "preview-tape.jsonl"
+            materialize_signal_tape(
+                rows=[
+                    SignalEnvelope(
+                        event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
+                        symbol="NVDA",
+                        timeframe="1Sec",
+                        seq=1,
+                        source="ta",
+                        payload={"price": Decimal("100")},
+                    )
+                ],
+                tape_path=tape_path,
+                dataset_snapshot_ref="preview-snapshot",
+                symbols=("NVDA",),
+                start_date=date(2026, 2, 23),
+                end_date=date(2026, 2, 27),
+                source_query_digest=build_source_query_digest({"query": "preview"}),
+            )
+            spec = self._candidate_spec("spec-preview-fallback")
+            selection = {
+                "selected_candidate_spec_ids": [spec.candidate_spec_id],
+                "rows": [
+                    {
+                        "candidate_spec_id": spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                    }
+                ],
+                "budget": {"selected_count": 1},
+            }
+            args = self._args(output_dir)
+            args.replay_tape_preview_top_k = 1
+            with self.assertRaisesRegex(
+                ValueError, "fast_replay_preview_requires_real_replay"
+            ):
+                runner._apply_fast_replay_preview_narrowing(
+                    args=args,
+                    output_dir=output_dir,
+                    specs=[spec],
+                    candidate_selection=selection,
+                )
+            args.replay_mode = "real"
+            args.replay_tape_path = None
+            with self.assertRaisesRegex(
+                ValueError, "fast_replay_preview_requires_replay_tape_path"
+            ):
+                runner._apply_fast_replay_preview_narrowing(
+                    args=args,
+                    output_dir=output_dir,
+                    specs=[spec],
+                    candidate_selection=selection,
+                )
+            args.replay_tape_path = tape_path
+            args.full_window_start_date = ""
+            with self.assertRaisesRegex(
+                ValueError, "fast_replay_preview_requires_full_window_start_date"
+            ):
+                runner._apply_fast_replay_preview_narrowing(
+                    args=args,
+                    output_dir=output_dir,
+                    specs=[spec],
+                    candidate_selection=selection,
+                )
+
+            class UnknownPreview:
+                selected_candidate_spec_ids = ("missing-spec",)
+                rows = ()
+
+                def to_manifest_payload(self) -> dict[str, object]:
+                    return {
+                        "schema_version": "torghut.fast-replay-preview.v1",
+                        "promotion_proof": False,
+                    }
+
+            args.full_window_start_date = "2026-02-23"
+            args.symbols = "NVDA"
+            with patch.object(
+                runner,
+                "build_fast_replay_preview",
+                return_value=UnknownPreview(),
+            ):
+                narrowed, updated = runner._apply_fast_replay_preview_narrowing(
+                    args=args,
+                    output_dir=output_dir,
+                    specs=[spec],
+                    candidate_selection=selection,
+                )
+
+        self.assertEqual(
+            [item.candidate_spec_id for item in narrowed], [spec.candidate_spec_id]
+        )
+        self.assertEqual(
+            updated["selected_candidate_spec_ids"], [spec.candidate_spec_id]
+        )
+
+    def test_fast_replay_preview_covers_signal_field_fallbacks(self) -> None:
+        no_universe_spec = replace(
+            self._candidate_spec("spec-no-universe"),
+            runtime_strategy_name="NVDA",
+            strategy_overrides={
+                "params": {
+                    "selection_mode": "continuation",
+                    "signal_motif": "opening_continuation",
+                }
+            },
+        )
+        self.assertEqual(fast_replay._candidate_symbols(no_universe_spec), ("NVDA",))
+        self.assertEqual(fast_replay._candidate_direction(no_universe_spec), 1.0)
+        self.assertEqual(
+            fast_replay._extract_price(
+                SignalEnvelope(
+                    event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
+                    symbol="NVDA",
+                    payload={"bid": Decimal("100"), "ask": Decimal("102")},
+                )
+            ),
+            101.0,
+        )
+        self.assertIsNone(
+            fast_replay._extract_price(
+                SignalEnvelope(
+                    event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
+                    symbol="NVDA",
+                    payload={},
+                )
+            )
+        )
+        bid_ask_spread = fast_replay._extract_spread_bps(
+            SignalEnvelope(
+                event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
+                symbol="NVDA",
+                payload={"bid": Decimal("100"), "ask": Decimal("101")},
+            )
+        )
+        self.assertAlmostEqual(bid_ask_spread or 0.0, 99.50248756218905)
+        self.assertEqual(
+            fast_replay._extract_spread_bps(
+                SignalEnvelope(
+                    event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
+                    symbol="NVDA",
+                    payload={"price": Decimal("100"), "spread": Decimal("0.05")},
+                )
+            ),
+            5.0,
+        )
+        self.assertIsNone(
+            fast_replay._extract_spread_bps(
+                SignalEnvelope(
+                    event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
+                    symbol="NVDA",
+                    payload={},
+                )
+            )
+        )
+        self.assertIsNone(fast_replay._float_or_none("not-a-number"))
+        self.assertIsNone(fast_replay._float_or_none(float("nan")))
+        self.assertEqual(fast_replay._mapping("not-a-mapping"), {})
 
     def test_candidate_specs_replay_skips_compiler_and_replays_selected_specs(
         self,
