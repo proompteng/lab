@@ -191,6 +191,9 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(validation["status"], "valid")
         self.assertEqual(validation["selected_row_count"], 1)
         self.assertEqual(validation["selected_symbols"], ["NVDA"])
+        self.assertEqual(
+            validation["source_query_digest"], build_source_query_digest({"query": "frontier"})
+        )
         self.assertEqual(validation["manifest_path"], "")
 
     def test_clickhouse_password_env_resolution_keeps_secret_out_of_argv(self) -> None:
@@ -247,6 +250,139 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         )
 
         self.assertEqual(left, right)
+
+    def test_candidate_evaluation_key_binds_replay_and_cost_proof_context(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            candidate_configmap = root / "candidate.yaml"
+            candidate_configmap.write_text("data:\n  strategies.yaml: '{}'\n")
+            replay_payload = self._payload(
+                start_date="2026-03-18",
+                end_date="2026-03-19",
+                daily_net={"2026-03-18": "100", "2026-03-19": "150"},
+                decision_count=2,
+                filled_count=2,
+                wins=2,
+                losses=0,
+            )
+            window = frontier.FrontierReplayWindows(
+                train_days=(date(2026, 3, 18),),
+                holdout_days=(date(2026, 3, 19),),
+                second_oos_days=(),
+            )
+            lineage = frontier._candidate_replay_lineage_payload(
+                candidate_configmap_path=candidate_configmap,
+                candidate_search_key="candidate-key",
+                dataset_snapshot_id="snapshot-lineage",
+                train_payload=replay_payload,
+                holdout_payload=replay_payload,
+                full_window_payload=replay_payload,
+                second_oos_payload=None,
+                window=window,
+                full_window_start=date(2026, 3, 18),
+                full_window_end=date(2026, 3, 19),
+                holdout_replay_skipped=False,
+                full_window_replay_skipped=False,
+            )
+
+        base = frontier._candidate_evaluation_key_payload(
+            candidate_search_key="candidate-key",
+            params_candidate={"long_stop_loss_bps": "12"},
+            strategy_overrides={
+                "normalization_regime": "price_scaled",
+                "universe_symbols": ["NVDA"],
+            },
+            replay_lineage=lineage,
+            replay_tape_validation={
+                "content_sha256": "tape-sha",
+                "dataset_snapshot_ref": "snapshot-lineage",
+                "source_query_digest": "query-sha",
+                "selected_symbols": ["NVDA"],
+                "selected_row_count": 10,
+                "status": "valid",
+            },
+            window=window,
+            full_window_start=date(2026, 3, 18),
+            full_window_end=date(2026, 3, 19),
+            full_window_summary={
+                "market_impact_stress_model": "impact-v1",
+                "market_impact_stress_cost_bps": "8",
+                "delay_adjusted_depth_stress_model": "latency_depth_haircut",
+                "delay_adjusted_depth_stress_ms": "50",
+                "implementation_uncertainty_model": "interval-v1",
+            },
+        )
+        changed_tape = frontier._candidate_evaluation_key_payload(
+            candidate_search_key="candidate-key",
+            params_candidate={"long_stop_loss_bps": "12"},
+            strategy_overrides={
+                "normalization_regime": "price_scaled",
+                "universe_symbols": ["NVDA"],
+            },
+            replay_lineage=lineage,
+            replay_tape_validation={
+                "content_sha256": "different-tape-sha",
+                "dataset_snapshot_ref": "snapshot-lineage",
+                "source_query_digest": "query-sha",
+                "selected_symbols": ["NVDA"],
+                "selected_row_count": 10,
+                "status": "valid",
+            },
+            window=window,
+            full_window_start=date(2026, 3, 18),
+            full_window_end=date(2026, 3, 19),
+            full_window_summary={
+                "market_impact_stress_model": "impact-v1",
+                "market_impact_stress_cost_bps": "8",
+                "delay_adjusted_depth_stress_model": "latency_depth_haircut",
+                "delay_adjusted_depth_stress_ms": "50",
+                "implementation_uncertainty_model": "interval-v1",
+            },
+        )
+        changed_cost = frontier._candidate_evaluation_key_payload(
+            candidate_search_key="candidate-key",
+            params_candidate={"long_stop_loss_bps": "12"},
+            strategy_overrides={
+                "normalization_regime": "price_scaled",
+                "universe_symbols": ["NVDA"],
+            },
+            replay_lineage=lineage,
+            replay_tape_validation={
+                "content_sha256": "tape-sha",
+                "dataset_snapshot_ref": "snapshot-lineage",
+                "source_query_digest": "query-sha",
+                "selected_symbols": ["NVDA"],
+                "selected_row_count": 10,
+                "status": "valid",
+            },
+            window=window,
+            full_window_start=date(2026, 3, 18),
+            full_window_end=date(2026, 3, 19),
+            full_window_summary={
+                "market_impact_stress_model": "impact-v2",
+                "market_impact_stress_cost_bps": "12",
+                "delay_adjusted_depth_stress_model": "latency_depth_haircut",
+                "delay_adjusted_depth_stress_ms": "50",
+                "implementation_uncertainty_model": "interval-v1",
+            },
+        )
+
+        self.assertEqual(base["schema_version"], "torghut.candidate-evaluation-key.v1")
+        self.assertEqual(base["replay_tape"]["source_query_digest"], "query-sha")
+        self.assertEqual(
+            base["effective_strategy_config_sha256"],
+            lineage["candidate_configmap_sha256"],
+        )
+        self.assertNotEqual(
+            base["candidate_evaluation_key"],
+            changed_tape["candidate_evaluation_key"],
+        )
+        self.assertNotEqual(
+            base["candidate_evaluation_key"],
+            changed_cost["candidate_evaluation_key"],
+        )
 
     def test_parameter_grid_items_rejects_non_iterable_shapes(self) -> None:
         with self.assertRaisesRegex(ValueError, "parameter_values_not_sequence:alpha"):

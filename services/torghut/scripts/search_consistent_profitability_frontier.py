@@ -980,6 +980,86 @@ def _candidate_search_key(
     )
 
 
+def _candidate_evaluation_key_payload(
+    *,
+    candidate_search_key: str,
+    params_candidate: Mapping[str, Any],
+    strategy_overrides: Mapping[str, Any],
+    replay_lineage: Mapping[str, Any],
+    replay_tape_validation: Mapping[str, Any] | None,
+    window: FrontierReplayWindows,
+    full_window_start: date,
+    full_window_end: date,
+    full_window_summary: Mapping[str, Any],
+) -> dict[str, Any]:
+    validation = dict(replay_tape_validation or {})
+    payload: dict[str, Any] = {
+        "schema_version": "torghut.candidate-evaluation-key.v1",
+        "candidate_search_key": candidate_search_key,
+        "candidate_params_sha256": _stable_payload_hash(params_candidate),
+        "strategy_overrides_sha256": _stable_payload_hash(
+            {
+                str(key): value
+                for key, value in strategy_overrides.items()
+                if str(key) not in _LOCAL_ONLY_OVERRIDE_KEYS
+            }
+        ),
+        "effective_strategy_config_sha256": str(
+            replay_lineage.get("candidate_configmap_sha256") or ""
+        ),
+        "dataset_snapshot_id": str(replay_lineage.get("dataset_snapshot_id") or ""),
+        "replay_lineage_hash": str(replay_lineage.get("lineage_hash") or ""),
+        "replay_tape": {
+            "content_sha256": str(validation.get("content_sha256") or ""),
+            "dataset_snapshot_ref": str(validation.get("dataset_snapshot_ref") or ""),
+            "source_query_digest": str(validation.get("source_query_digest") or ""),
+            "selected_symbols": list(
+                cast(Sequence[Any], validation.get("selected_symbols") or ())
+            ),
+            "selected_row_count": int(validation.get("selected_row_count") or 0),
+            "validation_status": str(validation.get("status") or ""),
+        },
+        "replay_window_spec": {
+            "train_start": window.train_start.isoformat(),
+            "train_end": window.train_end.isoformat(),
+            "holdout_start": window.holdout_start.isoformat(),
+            "holdout_end": window.holdout_end.isoformat(),
+            "second_oos_start": (
+                window.second_oos_start.isoformat()
+                if window.second_oos_start is not None
+                else ""
+            ),
+            "second_oos_end": (
+                window.second_oos_end.isoformat()
+                if window.second_oos_end is not None
+                else ""
+            ),
+            "full_window_start": full_window_start.isoformat(),
+            "full_window_end": full_window_end.isoformat(),
+        },
+        "cost_model_signature": {
+            "market_impact_stress_model": str(
+                full_window_summary.get("market_impact_stress_model") or ""
+            ),
+            "market_impact_stress_cost_bps": str(
+                full_window_summary.get("market_impact_stress_cost_bps") or "0"
+            ),
+            "delay_adjusted_depth_stress_model": str(
+                full_window_summary.get("delay_adjusted_depth_stress_model") or ""
+            ),
+            "delay_adjusted_depth_stress_ms": str(
+                full_window_summary.get("delay_adjusted_depth_stress_ms") or "0"
+            ),
+            "implementation_uncertainty_model": str(
+                full_window_summary.get("implementation_uncertainty_model") or ""
+            ),
+        },
+        "proof_basis_version": "post_cost_replay_net_pnl_with_cost_stress.v1",
+    }
+    payload["candidate_evaluation_key"] = _stable_payload_hash(payload)
+    return payload
+
+
 def _resolve_prefetch_symbols(
     *,
     cli_symbols: tuple[str, ...],
@@ -1094,6 +1174,7 @@ def _load_replay_tape_rows(
     validation["manifest_path"] = str(manifest_path) if manifest_path else ""
     validation["selected_row_count"] = len(rows)
     validation["selected_symbols"] = sorted({row.symbol.upper() for row in rows})
+    validation["source_query_digest"] = tape.manifest.source_query_digest
     return list(rows), validation
 
 
@@ -3461,6 +3542,23 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     full_window_replay_skipped=full_window_replay_skipped,
                 )
                 candidate_payload["replay_lineage"] = replay_lineage
+                candidate_evaluation_key = _candidate_evaluation_key_payload(
+                    candidate_search_key=candidate_key,
+                    params_candidate=params_candidate,
+                    strategy_overrides=override_candidate,
+                    replay_lineage=replay_lineage,
+                    replay_tape_validation=replay_tape_validation,
+                    window=window,
+                    full_window_start=full_window_start,
+                    full_window_end=full_window_end,
+                    full_window_summary=full_window_summary,
+                )
+                candidate_payload["candidate_evaluation_key"] = (
+                    candidate_evaluation_key["candidate_evaluation_key"]
+                )
+                candidate_payload["candidate_evaluation_key_payload"] = (
+                    candidate_evaluation_key
+                )
                 candidate_payload["screening"] = {
                     "schema_version": "torghut.frontier-train-screen.v1",
                     "enabled": bool(getattr(args, "train_screening", True)),
