@@ -640,7 +640,6 @@ def _load_latest_certificate_evidence(
         select(StrategyPromotionDecision)
         .where(
             StrategyPromotionDecision.hypothesis_id.in_(normalized_ids),
-            StrategyPromotionDecision.allowed.is_(True),
         )
         .order_by(StrategyPromotionDecision.created_at.desc())
     ).scalars()
@@ -766,6 +765,37 @@ def _metric_window_activity_reason_codes(
     return reasons
 
 
+def _promotion_decision_blocking_reason_codes(
+    promotion_decision: StrategyPromotionDecision,
+) -> list[str]:
+    payload_raw = getattr(promotion_decision, "payload_json", None)
+    payload: Mapping[str, object] = (
+        cast(Mapping[str, object], payload_raw)
+        if isinstance(payload_raw, Mapping)
+        else cast(Mapping[str, object], {})
+    )
+    reasons = [
+        str(reason).strip()
+        for reason in cast(
+            Sequence[object], payload.get("promotion_blocking_reasons") or []
+        )
+        if str(reason).strip()
+    ]
+    summary = _safe_text(getattr(promotion_decision, "reason_summary", None))
+    satisfied_summaries = {
+        "runtime_evidence_thresholds_satisfied",
+        "paper_runtime_evidence_thresholds_satisfied",
+        "ready",
+    }
+    if summary and summary not in satisfied_summaries:
+        reasons.extend(
+            reason.strip() for reason in summary.split(",") if reason.strip()
+        )
+    if _safe_bool(getattr(promotion_decision, "allowed", True)) is False:
+        reasons.append("promotion_decision_not_allowed")
+    return _normalize_reason_codes(reasons)
+
+
 def _merge_runtime_certificate_evidence(
     items: Sequence[Mapping[str, Any]],
     *,
@@ -796,9 +826,6 @@ def _merge_runtime_certificate_evidence(
         if metric_window is None or promotion_decision is None:
             merged.append(updated)
             continue
-        if _safe_bool(getattr(promotion_decision, "allowed", True)) is False:
-            merged.append(updated)
-            continue
         if not _certificate_evidence_is_fresh(
             metric_window,
             max_age_seconds=max_age_seconds,
@@ -810,6 +837,56 @@ def _merge_runtime_certificate_evidence(
             merged.append(updated)
             continue
         if _safe_text(metric_window.dependency_quorum_decision) != "allow":
+            merged.append(updated)
+            continue
+        decision_blockers = _promotion_decision_blocking_reason_codes(
+            promotion_decision
+        )
+        if decision_blockers:
+            observed = (
+                dict(cast(Mapping[str, Any], updated.get("observed")))
+                if isinstance(updated.get("observed"), Mapping)
+                else {}
+            )
+            observed.update(
+                {
+                    "runtime_window_certificate_rejected": True,
+                    "runtime_window_rejection_reasons": decision_blockers,
+                    "metric_window_id": str(metric_window.id),
+                    "promotion_decision_id": str(promotion_decision.id),
+                    "metric_window_market_session_count": metric_window.market_session_count,
+                    "metric_window_decision_count": metric_window.decision_count,
+                    "metric_window_trade_count": metric_window.trade_count,
+                    "metric_window_order_count": metric_window.order_count,
+                    "metric_window_avg_abs_slippage_bps": metric_window.avg_abs_slippage_bps,
+                    "metric_window_post_cost_expectancy_bps": metric_window.post_cost_expectancy_bps,
+                }
+            )
+            prior_reasons = [
+                str(reason).strip()
+                for reason in cast(Sequence[object], updated.get("reasons") or [])
+                if str(reason).strip()
+            ]
+            updated["reasons"] = _normalize_reason_codes(
+                [*prior_reasons, *decision_blockers]
+            )
+            updated["informational_reasons"] = sorted(
+                {
+                    *[
+                        str(reason)
+                        for reason in cast(
+                            Sequence[object],
+                            updated.get("informational_reasons") or [],
+                        )
+                        if str(reason).strip()
+                    ],
+                    "runtime_window_certificate_rejected",
+                }
+            )
+            updated["promotion_eligible"] = False
+            updated["promotion_decision_id"] = str(promotion_decision.id)
+            updated["metric_window_id"] = str(metric_window.id)
+            updated["observed"] = observed
             merged.append(updated)
             continue
         activity_reason_codes = _metric_window_activity_reason_codes(metric_window)
@@ -1128,6 +1205,8 @@ def _evaluate_certificate_candidates(
             metric_window_id = str(metric_window.id)
             candidate_id = metric_window.candidate_id
             capital_stage = metric_window.capital_stage
+            if _safe_text(getattr(metric_window, "observed_stage", None)) != "live":
+                reasons.append("promotion_certificate_not_live_runtime")
             issued_at = metric_window.window_ended_at or metric_window.created_at
             if issued_at.tzinfo is None:
                 issued_at = issued_at.replace(tzinfo=timezone.utc)
@@ -1151,6 +1230,9 @@ def _evaluate_certificate_candidates(
                 candidate_id = promotion_decision.candidate_id
             if capital_stage is None:
                 capital_stage = promotion_decision.state
+            reasons.extend(
+                _promotion_decision_blocking_reason_codes(promotion_decision)
+            )
         if candidate_id is None:
             candidate_id = _safe_text(manifest.get("candidate_id"))
         if _safe_text(capital_stage) in {None, "shadow"}:

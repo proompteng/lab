@@ -116,7 +116,7 @@ class TestSubmissionCouncil(TestCase):
     def _metric_window(
         self,
         capital_stage: str = "0.10x canary",
-        observed_stage: str | None = None,
+        observed_stage: str | None = "live",
     ) -> SimpleNamespace:
         observed_at = datetime.now(timezone.utc)
         payload = {
@@ -141,12 +141,20 @@ class TestSubmissionCouncil(TestCase):
         return SimpleNamespace(**payload)
 
     def _promotion_decision(
-        self, capital_stage: str = "0.10x canary"
+        self,
+        capital_stage: str = "0.10x canary",
+        *,
+        allowed: bool = True,
+        reason_summary: str | None = None,
+        payload_json: dict[str, object] | None = None,
     ) -> SimpleNamespace:
         return SimpleNamespace(
             id="promo-1",
             candidate_id="cand-1",
             state=capital_stage,
+            allowed=allowed,
+            reason_summary=reason_summary,
+            payload_json=payload_json,
         )
 
     def _healthy_quant_status(self) -> dict[str, object]:
@@ -181,6 +189,55 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(
             reasons,
             ["hypothesis_window_post_cost_pnl_basis_missing"],
+        )
+
+    def test_merge_runtime_certificate_evidence_surfaces_blocked_import_reason(
+        self,
+    ) -> None:
+        merged = _merge_runtime_certificate_evidence(
+            [
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "promotion_eligible": False,
+                    "capital_stage": "shadow",
+                    "reasons": [],
+                    "observed": {},
+                }
+            ],
+            evidence=[
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "metric_window": self._metric_window(observed_stage="live"),
+                    "promotion_decision": self._promotion_decision(
+                        allowed=False,
+                        reason_summary="runtime_ledger_pnl_basis_missing",
+                        payload_json={
+                            "promotion_blocking_reasons": [
+                                "runtime_ledger_pnl_basis_missing"
+                            ]
+                        },
+                    ),
+                }
+            ],
+            now=datetime.now(timezone.utc),
+            max_age_seconds=3600,
+        )
+
+        self.assertEqual(len(merged), 1)
+        self.assertFalse(merged[0]["promotion_eligible"])
+        self.assertEqual(
+            merged[0]["reasons"],
+            [
+                "runtime_ledger_pnl_basis_missing",
+                "promotion_decision_not_allowed",
+            ],
+        )
+        self.assertEqual(
+            merged[0]["observed"]["runtime_window_rejection_reasons"],
+            [
+                "runtime_ledger_pnl_basis_missing",
+                "promotion_decision_not_allowed",
+            ],
         )
 
     def test_refresh_runtime_summary_totals_counts_reasons_and_rollback(self) -> None:
@@ -334,7 +391,14 @@ class TestSubmissionCouncil(TestCase):
 
                 self.assertFalse(result[0]["promotion_eligible"])
                 self.assertEqual(result[0]["capital_stage"], "shadow")
-                self.assertEqual(result[0]["reasons"], ["drift_checks_missing"])
+                expected_reasons = ["drift_checks_missing"]
+                if (
+                    evidence
+                    and getattr(evidence[0]["promotion_decision"], "allowed", True)
+                    is False
+                ):
+                    expected_reasons.append("promotion_decision_not_allowed")
+                self.assertEqual(result[0]["reasons"], expected_reasons)
 
     def test_hypothesis_runtime_summary_uses_fresh_imported_runtime_proof(
         self,
@@ -1748,6 +1812,59 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(result["reason_codes"], ["promotion_certificate_valid"])
         self.assertEqual(result["evidence_tuple"]["hypothesis_id"], "H-CONT-01")
         self.assertEqual(result["evidence_tuple"]["candidate_id"], "cand-1")
+
+    def test_build_live_submission_gate_payload_blocks_paper_runtime_certificate_for_live_submission(
+        self,
+    ) -> None:
+        result = build_live_submission_gate_payload(
+            SimpleNamespace(
+                last_autonomy_promotion_eligible=True,
+                last_autonomy_promotion_action="promote",
+                drift_live_promotion_eligible=False,
+                last_market_context_freshness_seconds=45,
+            ),
+            hypothesis_summary={
+                "summary": {
+                    "promotion_eligible_total": 1,
+                    "capital_stage_totals": {"0.10x canary": 1},
+                    "dependency_quorum": {
+                        "decision": "allow",
+                        "reasons": [],
+                        "message": "ready",
+                    },
+                },
+                "items": [
+                    {
+                        "hypothesis_id": "H-CONT-01",
+                        "candidate_id": "cand-1",
+                        "strategy_id": "intraday_tsmom_v1@paper",
+                        "promotion_eligible": True,
+                        "capital_stage": "0.10x canary",
+                        "reasons": [],
+                    }
+                ],
+            },
+            empirical_jobs_status={"ready": True, "status": "healthy"},
+            quant_health_status=self._healthy_quant_status(),
+            promotion_certificate_evidence=[
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "metric_window": self._metric_window(observed_stage="paper"),
+                    "promotion_decision": self._promotion_decision(),
+                }
+            ],
+        )
+
+        self.assertFalse(result["allowed"])
+        self.assertEqual(result["capital_state"], "observe")
+        self.assertIn(
+            "promotion_certificate_not_live_runtime",
+            result["blocked_reasons"],
+        )
+        self.assertNotIn(
+            "promotion_certificate_valid",
+            result["reason_codes"],
+        )
 
     def test_build_live_submission_gate_payload_blocks_without_certificate_evidence(
         self,

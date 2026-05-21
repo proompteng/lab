@@ -758,7 +758,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         )
         self.assertIn(str(report_path), runtime_payload["artifact_refs"])
 
-    def test_main_uses_report_runtime_pnl_when_tca_rows_are_empty(self) -> None:
+    def test_main_quarantines_report_runtime_pnl_when_tca_rows_are_empty(self) -> None:
         with TemporaryDirectory() as temp_dir:
             report_path = Path(temp_dir) / "simulation-report.json"
             report_path.write_text(
@@ -847,7 +847,8 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
                     "post_cost_expectancy_bps": Decimal("50.000"),
                     "post_cost_expectancy_basis": POST_COST_BASIS_SIMULATION_REPORT,
-                    "post_cost_promotion_eligible": True,
+                    "post_cost_promotion_eligible": False,
+                    "promotion_blocker": "simulation_report_not_runtime_ledger_proof",
                 }
             ],
         )

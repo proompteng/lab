@@ -1277,6 +1277,98 @@ class StrategyHypothesisMetricWindow(Base, TimestampMixin):
     )
 
 
+class StrategyRuntimeLedgerBucket(Base, TimestampMixin):
+    """Durable runtime-ledger PnL bucket used as promotion-grade profit proof."""
+
+    __tablename__ = "strategy_runtime_ledger_buckets"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    candidate_id: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    hypothesis_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    observed_stage: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    bucket_started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    bucket_ended_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    account_label: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    runtime_strategy_name: Mapped[Optional[str]] = mapped_column(
+        String(length=255), nullable=True
+    )
+    strategy_family: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    fill_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("0")
+    )
+    decision_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("0")
+    )
+    submitted_order_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("0")
+    )
+    cancelled_order_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("0")
+    )
+    rejected_order_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("0")
+    )
+    unfilled_order_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("0")
+    )
+    closed_trade_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("0")
+    )
+    open_position_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("0")
+    )
+    filled_notional: Mapped[Decimal] = mapped_column(
+        Numeric(20, 8), nullable=False, server_default=text("0")
+    )
+    gross_strategy_pnl: Mapped[Decimal] = mapped_column(
+        Numeric(20, 8), nullable=False, server_default=text("0")
+    )
+    cost_amount: Mapped[Decimal] = mapped_column(
+        Numeric(20, 8), nullable=False, server_default=text("0")
+    )
+    net_strategy_pnl_after_costs: Mapped[Decimal] = mapped_column(
+        Numeric(20, 8), nullable=False, server_default=text("0")
+    )
+    post_cost_expectancy_bps: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    ledger_schema_version: Mapped[str] = mapped_column(
+        String(length=64), nullable=False
+    )
+    pnl_basis: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    execution_policy_hash_counts: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
+    cost_model_hash_counts: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
+    lineage_hash_counts: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    blockers_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    __table_args__ = (
+        Index("ix_strategy_runtime_ledger_buckets_run_id", "run_id"),
+        Index("ix_strategy_runtime_ledger_buckets_hypothesis_id", "hypothesis_id"),
+        Index("ix_strategy_runtime_ledger_buckets_candidate_id", "candidate_id"),
+        Index(
+            "ix_strategy_runtime_ledger_buckets_stage_started",
+            "observed_stage",
+            "bucket_started_at",
+        ),
+    )
+
+
 class StrategyCapitalAllocation(Base, TimestampMixin):
     """Capital-band transitions for each hypothesis lane."""
 
