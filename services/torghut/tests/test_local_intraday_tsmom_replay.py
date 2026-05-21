@@ -2131,9 +2131,16 @@ class TestLocalIntradayTsmomReplay(TestCase):
         self.assertEqual(lifecycle["filled_order_count"], 1)
         self.assertEqual(lifecycle["pending_censored_count"], 1)
         self.assertEqual(lifecycle["replaced_pending_count"], 1)
+        self.assertTrue(lifecycle["fill_survival_evidence_present"])
+        self.assertEqual(lifecycle["fill_survival_sample_count"], 2)
+        self.assertEqual(lifecycle["fill_rate"], "0.5")
         self.assertEqual(lifecycle["fill_time_ms_p50"], 60000)
         self.assertEqual(
             lifecycle["fill_probability_by_latency_bucket"][">1000ms"]["fill_rate"], "1"
+        )
+        self.assertEqual(
+            lifecycle["fill_probability_by_latency_threshold_ms"]["250"]["fill_rate"],
+            "0",
         )
         self.assertEqual(
             lifecycle["censor_reason_counts"],
@@ -2146,6 +2153,14 @@ class TestLocalIntradayTsmomReplay(TestCase):
         self.assertEqual(
             Decimal(str(lifecycle["order_qty_to_touch_qty_ratio_p95"])),
             Decimal("0.05"),
+        )
+        self.assertEqual(
+            Decimal(str(lifecycle["queue_touch_qty_avg"])),
+            Decimal("40"),
+        )
+        self.assertEqual(
+            Decimal(str(lifecycle["queue_touch_notional_avg"])),
+            Decimal("4000.00"),
         )
         self.assertEqual(
             payload["order_lifecycle_by_day"]["2026-03-26"]["submitted_order_count"],

@@ -211,6 +211,71 @@ def _order_type_execution_metrics(source: Mapping[str, Any]) -> dict[str, Any]:
     return metrics
 
 
+def _order_lifecycle_metrics(source: Mapping[str, Any]) -> dict[str, Any]:
+    lifecycle = _mapping(source.get("order_lifecycle"))
+    if not lifecycle:
+        return {}
+
+    sample_count = max(
+        _int(lifecycle.get("fill_survival_sample_count")),
+        _int(lifecycle.get("submitted_order_count")),
+    )
+    if "fill_survival_evidence_present" in lifecycle:
+        evidence_present = _bool(lifecycle.get("fill_survival_evidence_present"))
+    else:
+        evidence_present = sample_count > 0
+    fill_rate = lifecycle.get("fill_survival_fill_rate") or lifecycle.get("fill_rate")
+
+    metrics: dict[str, Any] = {
+        "order_lifecycle": lifecycle,
+        "fill_survival_evidence_present": evidence_present,
+        "fill_survival_sample_count": sample_count,
+    }
+    if fill_rate is not None:
+        metrics["fill_survival_fill_rate"] = _string(fill_rate)
+        metrics["delay_adjusted_depth_fill_survival_rate"] = _string(fill_rate)
+    if sample_count > 0:
+        metrics["delay_adjusted_depth_fill_survival_sample_count"] = sample_count
+        metrics["delay_adjusted_depth_fill_survival_evidence_present"] = (
+            evidence_present
+        )
+
+    for key in (
+        "fill_time_ms_avg",
+        "fill_time_ms_p50",
+        "fill_time_ms_p95",
+        "pending_age_ms_p95",
+        "max_censored_pending_age_ms",
+        "spread_bps_avg_at_order",
+        "spread_bps_p95_at_order",
+        "depth_notional_min_at_order",
+        "depth_notional_avg_at_order",
+        "queue_touch_qty_avg",
+        "queue_touch_notional_avg",
+        "order_qty_to_touch_qty_ratio_p95",
+        "fill_probability_by_latency_bucket",
+        "fill_probability_by_latency_threshold_ms",
+        "post_cost_survivorship",
+    ):
+        if key in lifecycle:
+            metrics[key] = lifecycle[key]
+
+    queue_ratio_p95 = _string(lifecycle.get("order_qty_to_touch_qty_ratio_p95"))
+    if queue_ratio_p95:
+        metrics["delay_adjusted_depth_queue_ratio_p95"] = queue_ratio_p95
+
+    survivorship = _mapping(lifecycle.get("post_cost_survivorship"))
+    if survivorship:
+        survival_rate = _string(survivorship.get("post_cost_survival_rate"))
+        if survival_rate:
+            metrics["post_cost_survival_rate"] = survival_rate
+        metrics["gross_positive_killed_by_cost_count"] = _int(
+            survivorship.get("gross_positive_killed_by_cost_count")
+        )
+
+    return metrics
+
+
 def _order_type_ablation_metrics(source: Mapping[str, Any]) -> dict[str, Any]:
     raw_ablation = source.get("order_type_ablation")
     if not isinstance(raw_ablation, Mapping):
@@ -720,6 +785,10 @@ def evidence_bundle_from_frontier_candidate(
                 break
     for source in (candidate, summary, full_window):
         for key, value in _order_type_execution_metrics(source).items():
+            if key not in scorecard:
+                scorecard = {**scorecard, key: value}
+    for source in (candidate, summary, full_window):
+        for key, value in _order_lifecycle_metrics(source).items():
             if key not in scorecard:
                 scorecard = {**scorecard, key: value}
     for source in (candidate, summary, full_window):

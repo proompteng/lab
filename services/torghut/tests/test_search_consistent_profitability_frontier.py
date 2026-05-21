@@ -2125,7 +2125,11 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         )
 
         self.assertEqual(summary["fill_survival_sample_count"], 4)
+        self.assertTrue(summary["fill_survival_evidence_present"])
         self.assertEqual(summary["fill_survival_fill_rate"], "0.5")
+        self.assertTrue(summary["delay_adjusted_depth_fill_survival_evidence_present"])
+        self.assertEqual(summary["delay_adjusted_depth_fill_survival_sample_count"], 4)
+        self.assertEqual(summary["delay_adjusted_depth_fill_survival_rate"], "0.5")
         self.assertEqual(
             summary["delay_adjusted_depth_survival_adjusted_fillable_ratio"],
             "0.5",
