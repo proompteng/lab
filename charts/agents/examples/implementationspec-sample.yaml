@@ -10,15 +10,12 @@ spec:
   contract:
     requiredKeys:
       - repository
-      - issueNumber
       - base
       - head
       - url
     mappings:
       - from: linearRepo
         to: repository
-      - from: linearIssue
-        to: issueNumber
       - from: linearUrl
         to: url
   summary: 'Implement onboarding flow'

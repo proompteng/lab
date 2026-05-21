@@ -181,7 +181,7 @@ annotations:
           name: codex-orchestration
         parameters:
           repository: proompteng/lab
-          issueNumber: "1234"
+          head: codex/orchestration-run
     - apiVersion: swarm.proompteng.ai/v1alpha1
       kind: Swarm
       metadata:

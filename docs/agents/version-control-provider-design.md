@@ -269,14 +269,14 @@ spec:
     pullRequests: true
   defaults:
     baseBranch: main
-    branchTemplate: codex/{{issueNumber}}
+    branchTemplate: codex/{{agentRun.name}}
     commitAuthorName: codex
     commitAuthorEmail: codex@proompt.com
     pullRequest:
       enabled: true
       draft: false
       titleTemplate: 'Codex: {{repository}}'
-      bodyTemplate: 'Closes #{{issueNumber}}'
+      bodyTemplate: 'AgentRun: {{agentRun.name}}'
 ```
 
 ### Agent referencing VCS provider

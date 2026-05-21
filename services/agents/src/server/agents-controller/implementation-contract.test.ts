@@ -57,6 +57,41 @@ describe('agents controller implementation-contract module', () => {
     })
   })
 
+  it('validates repository-backed specs without github issue metadata', () => {
+    const implementation = {
+      source: {
+        provider: 'manual',
+        externalId: 'manual:task-1',
+      },
+      text: 'Implement the task from the prompt',
+      contract: {
+        requiredKeys: ['repository', 'base', 'head', 'stage'],
+      },
+    }
+
+    const parameters = {
+      repository: 'proompteng/lab',
+      base: 'main',
+      head: 'codex/no-issue-task',
+      stage: 'implementation',
+    }
+
+    const validation = validateImplementationContract(implementation, parameters)
+    expect(validation).toMatchObject({ ok: true, requiredKeys: ['repository', 'base', 'head', 'stage'] })
+
+    const context = buildEventContext(implementation, parameters)
+    expect(context.missingRequiredKeys).toEqual([])
+    expect(context.payload).toMatchObject({
+      repository: 'proompteng/lab',
+      base: 'main',
+      head: 'codex/no-issue-task',
+      stage: 'implementation',
+      prompt: 'Implement the task from the prompt',
+    })
+    expect(context.payload).not.toHaveProperty('issueNumber')
+    expect(context.payload).not.toHaveProperty('issueTitle')
+  })
+
   it('renders parameterized implementation text for prompt and issue body', () => {
     const implementation = {
       source: {

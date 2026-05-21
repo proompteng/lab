@@ -22,7 +22,7 @@ spec:
     pullRequests: true
   defaults:
     baseBranch: main
-    branchTemplate: codex/{{issueNumber}}
+    branchTemplate: codex/{{agentRun.name}}
     branchConflictSuffixTemplate: "{{agentRun.name}}"
     commitAuthorName: "Greg Konush"
     commitAuthorEmail: 12027037+gregkonush@users.noreply.github.com
