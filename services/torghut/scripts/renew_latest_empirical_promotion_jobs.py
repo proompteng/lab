@@ -42,6 +42,26 @@ DEFAULT_AUTORESEARCH_RUNTIME_WINDOW_STATUSES = (
     "no_profit_target_candidate",
     "selection_only",
 )
+RUNTIME_WINDOW_TARGET_METADATA_KEYS = (
+    "candidate_spec_id",
+    "candidate_selection",
+    "paper_probation_authorized",
+    "paper_probation_authorization_scope",
+    "evidence_collection_stage",
+    "probation_allowed",
+    "probation_reason",
+    "selection_reason",
+    "selected_by",
+    "probation_lower_bound_net_pnl_per_day",
+    "probation_target_shortfall",
+    "promotion_allowed",
+    "final_promotion_authorized",
+    "final_promotion_allowed",
+    "final_promotion_blockers",
+    "candidate_blockers",
+    "handoff",
+    "promotion_gate",
+)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -267,6 +287,8 @@ class RuntimeWindowImportTarget:
     source_manifest_ref: str
     source_kind: str
     delay_adjusted_depth_stress_report_ref: str
+    artifact_refs: tuple[str, ...] = ()
+    target_metadata: Mapping[str, Any] | None = None
 
 
 def _parse_runtime_window_target_spec(spec: str) -> dict[str, str]:
@@ -493,9 +515,45 @@ def _runtime_window_targets_from_plan(
                     "delay_adjusted_depth_stress_report_ref",
                     "runtime_window_delay_adjusted_depth_stress_report_ref",
                 ),
+                artifact_refs=_runtime_window_target_artifact_refs(payload),
+                target_metadata=_runtime_window_target_metadata(payload),
             )
         )
     return targets
+
+
+def _runtime_window_target_artifact_refs(payload: Mapping[str, Any]) -> tuple[str, ...]:
+    raw_refs = payload.get("artifact_refs")
+    if not isinstance(raw_refs, Sequence) or isinstance(
+        raw_refs, (str, bytes, bytearray)
+    ):
+        return ()
+    refs: list[str] = []
+    for item in raw_refs:
+        ref = _as_text(item)
+        if ref is not None and ref not in refs:
+            refs.append(ref)
+    return tuple(refs)
+
+
+def _runtime_window_target_metadata(payload: Mapping[str, Any]) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    for key in RUNTIME_WINDOW_TARGET_METADATA_KEYS:
+        if key not in payload:
+            continue
+        value = payload.get(key)
+        if value is None or value == "":
+            continue
+        metadata[key] = value
+    if bool(metadata.get("paper_probation_authorized")):
+        metadata.setdefault(
+            "paper_probation_authorization_scope", "evidence_collection_only"
+        )
+        metadata.setdefault("evidence_collection_stage", "paper")
+        metadata.setdefault("promotion_allowed", False)
+        metadata.setdefault("final_promotion_authorized", False)
+        metadata.setdefault("final_promotion_allowed", False)
+    return metadata
 
 
 def _runtime_window_autoresearch_statuses(args: argparse.Namespace) -> set[str]:
@@ -1013,6 +1071,15 @@ def _run_runtime_window_import_target(
         "true",
         "--json",
     ]
+    for artifact_ref in target.artifact_refs:
+        command.extend(["--artifact-ref", artifact_ref])
+    if target.target_metadata:
+        command.extend(
+            [
+                "--target-metadata-json",
+                json.dumps(dict(target.target_metadata), sort_keys=True),
+            ]
+        )
     dataset_snapshot_ref = (
         _as_text(target.dataset_snapshot_ref)
         or _as_text(runtime_manifest.get("dataset_snapshot_ref"))
@@ -1039,8 +1106,12 @@ def _run_runtime_window_import_target(
         "window_end": _utc_iso(window_end),
         "window_selection": window_selection,
         "hypothesis_id": target.hypothesis_id,
+        "candidate_id": candidate_id,
         "strategy_name": target.strategy_name,
         "account_label": target.account_label,
+        "source_kind": target.source_kind,
+        "artifact_refs": [str(manifest_path), *target.artifact_refs],
+        "target_metadata": dict(target.target_metadata or {}),
         "proof_status": "blocked" if proof_blockers else "ok",
         "proof_blockers": proof_blockers,
         "summary": payload,

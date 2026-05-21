@@ -57,6 +57,14 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--source-kind", default="")
     parser.add_argument("--dataset-snapshot-ref", default="")
     parser.add_argument("--artifact-ref", action="append", default=[])
+    parser.add_argument(
+        "--target-metadata-json",
+        default="",
+        help=(
+            "JSON object copied from the candidate-board runtime-window target. "
+            "Used for evidence-collection-only paper probation handoffs."
+        ),
+    )
     parser.add_argument("--delay-adjusted-depth-stress-report-ref", default="")
     parser.add_argument("--dependency-quorum-decision", default="allow")
     parser.add_argument("--continuity-ok", default="true")
@@ -82,6 +90,19 @@ def _as_mapping(value: Any) -> dict[str, Any]:
         if isinstance(value, Mapping)
         else {}
     )
+
+
+def _parse_target_metadata(raw: str) -> dict[str, Any]:
+    text = str(raw or "").strip()
+    if not text:
+        return {}
+    try:
+        payload = json.loads(text)
+    except Exception as exc:
+        raise RuntimeError("target_metadata_json_invalid") from exc
+    if not isinstance(payload, Mapping):
+        raise RuntimeError("target_metadata_json_not_mapping")
+    return {str(key): value for key, value in payload.items()}
 
 
 def _decimal_or_none(value: Any) -> Decimal | None:
@@ -367,7 +388,9 @@ def _source_activity_missing_summary(
     source_manifest_ref: str,
     source_kind: str,
     dataset_snapshot_ref: str | None,
+    target_metadata: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    metadata = _as_mapping(target_metadata)
     blocker = {
         "blocker": "runtime_window_source_activity_missing",
         "hypothesis_id": hypothesis_id,
@@ -421,6 +444,7 @@ def _source_activity_missing_summary(
             "window_start": window_start.isoformat(),
             "window_end": window_end.isoformat(),
             "dataset_snapshot_ref": dataset_snapshot_ref,
+            "target_metadata": metadata,
             "skip_reason": "runtime_window_source_activity_missing",
         },
     }
@@ -451,6 +475,9 @@ def main() -> int:
     dataset_snapshot_ref = (
         str(getattr(args, "dataset_snapshot_ref", "") or "").strip() or None
     )
+    target_metadata = _parse_target_metadata(
+        str(getattr(args, "target_metadata_json", "") or "")
+    )
     if not decisions and not executions and not tca_rows:
         summary = _source_activity_missing_summary(
             run_id=args.run_id,
@@ -465,6 +492,7 @@ def main() -> int:
             source_manifest_ref=args.source_manifest_ref.strip(),
             source_kind=args.source_kind.strip(),
             dataset_snapshot_ref=dataset_snapshot_ref,
+            target_metadata=target_metadata,
         )
         if args.json:
             print(json.dumps(summary, indent=2))
@@ -531,6 +559,7 @@ def main() -> int:
         "window_end": window_end.isoformat(),
         "artifact_refs": artifact_refs,
         "dataset_snapshot_ref": dataset_snapshot_ref,
+        "target_metadata": target_metadata,
         "report_post_cost_expectancy_bps": (
             str(report_post_cost_expectancy_bps)
             if report_post_cost_expectancy_bps is not None

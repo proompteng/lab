@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+import json
 from types import SimpleNamespace
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -18,6 +19,7 @@ from scripts.import_hypothesis_runtime_windows import (
     _load_report_post_cost_expectancy_bps,
     _nonnegative_int,
     _parse_args,
+    _parse_target_metadata,
     _query_timestamps,
     _strategy_name_candidates,
     main,
@@ -118,6 +120,8 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 "torghut-runtime-window-cand-1",
                 "--artifact-ref",
                 "s3://torghut-runtime/cand-1/report.json",
+                "--target-metadata-json",
+                '{"paper_probation_authorized":true}',
                 "--json",
             ],
         ):
@@ -126,7 +130,21 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(args.run_id, "run-1")
         self.assertEqual(args.dataset_snapshot_ref, "torghut-runtime-window-cand-1")
         self.assertEqual(args.artifact_ref, ["s3://torghut-runtime/cand-1/report.json"])
+        self.assertEqual(
+            args.target_metadata_json, '{"paper_probation_authorized":true}'
+        )
         self.assertEqual(args.json, True)
+
+    def test_parse_target_metadata_requires_json_mapping(self) -> None:
+        self.assertEqual(_parse_target_metadata(""), {})
+        self.assertEqual(
+            _parse_target_metadata('{"paper_probation_authorized": true}'),
+            {"paper_probation_authorized": True},
+        )
+        with self.assertRaisesRegex(RuntimeError, "target_metadata_json_invalid"):
+            _parse_target_metadata("{")
+        with self.assertRaisesRegex(RuntimeError, "target_metadata_json_not_mapping"):
+            _parse_target_metadata("[]")
 
     def test_main_requires_source_dsn(self) -> None:
         args = SimpleNamespace(
@@ -424,6 +442,100 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 "intraday-tsmom-v1@paper",
                 "intraday-tsmom-v1",
             ],
+        )
+
+    def test_main_attaches_target_metadata_to_runtime_payload(self) -> None:
+        args = SimpleNamespace(
+            run_id="run-probation",
+            candidate_id="cand-paper-probation",
+            hypothesis_id="H-MICRO-01",
+            observed_stage="paper",
+            strategy_family="microstructure_breakout",
+            source_dsn="postgresql://example",
+            source_dsn_env="DB_DSN",
+            strategy_name="microbar-volume-continuation-long-top2-chip-v1",
+            account_label="TORGHUT_SIM",
+            window_start="2026-03-06T14:30:00Z",
+            window_end="2026-03-06T15:00:00Z",
+            bucket_minutes=30,
+            sample_minutes=5,
+            source_manifest_ref="config/trading/hypotheses/h-micro-01.json",
+            source_kind="paper_runtime_observed",
+            artifact_ref=[],
+            delay_adjusted_depth_stress_report_ref="",
+            dataset_snapshot_ref="runtime-probation-snapshot",
+            target_metadata_json=json.dumps(
+                {
+                    "paper_probation_authorized": True,
+                    "evidence_collection_stage": "paper",
+                    "promotion_allowed": False,
+                    "final_promotion_authorized": False,
+                }
+            ),
+            dependency_quorum_decision="allow",
+            continuity_ok="true",
+            drift_ok="true",
+            json=False,
+        )
+        fake_session = _FakeSession()
+        manifest = SimpleNamespace(
+            strategy_family="microstructure_breakout",
+            strategy_id="microbar_volume_continuation_long_top2_chip_v1@paper",
+            max_allowed_slippage_bps=Decimal("12"),
+        )
+
+        with (
+            patch(
+                "scripts.import_hypothesis_runtime_windows._parse_args",
+                return_value=args,
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows.resolve_hypothesis_manifest",
+                return_value=(
+                    SimpleNamespace(path="config/trading/hypotheses/h-micro-01.json"),
+                    manifest,
+                ),
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows._query_timestamps",
+                return_value=(
+                    [datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
+                    [datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+                    [],
+                ),
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows.build_regular_session_buckets",
+                return_value=[],
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows.build_observed_runtime_buckets",
+                return_value=[],
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows.persist_observed_runtime_windows",
+                return_value={"run_id": "run-probation"},
+            ) as persist_windows,
+            patch(
+                "scripts.import_hypothesis_runtime_windows.SessionLocal",
+                return_value=fake_session,
+            ),
+            patch("builtins.print"),
+        ):
+            exit_code = main()
+
+        self.assertEqual(exit_code, 0)
+        runtime_payload = persist_windows.call_args.kwargs[
+            "runtime_observation_payload"
+        ]
+        self.assertEqual(
+            runtime_payload["target_metadata"],
+            {
+                "paper_probation_authorized": True,
+                "evidence_collection_stage": "paper",
+                "promotion_allowed": False,
+                "final_promotion_authorized": False,
+            },
         )
 
     def test_main_skips_persist_when_source_activity_is_empty(self) -> None:
