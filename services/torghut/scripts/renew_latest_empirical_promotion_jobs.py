@@ -19,7 +19,7 @@ import yaml
 from sqlalchemy import select
 
 from app.db import SessionLocal
-from app.models import VNextEmpiricalJobRun
+from app.models import AutoresearchEpoch, VNextEmpiricalJobRun
 from app.trading.empirical_jobs import (
     EMPIRICAL_JOB_TYPES,
     empirical_artifact_truthfulness_reasons,
@@ -36,6 +36,11 @@ EXECUTION_ELIGIBLE_DECISION_STATUSES = (
     "submitted",
     "filled",
     "partially_filled",
+)
+DEFAULT_AUTORESEARCH_RUNTIME_WINDOW_STATUSES = (
+    "ok",
+    "no_profit_target_candidate",
+    "selection_only",
 )
 
 
@@ -94,6 +99,28 @@ def _parse_args() -> argparse.Namespace:
             "artifact. Explicit --runtime-window-target entries take precedence "
             "over duplicate hypothesis_id values."
         ),
+    )
+    parser.add_argument(
+        "--runtime-window-targets-from-latest-autoresearch",
+        action="store_true",
+        help=(
+            "Import runtime-window targets from the latest persisted whitepaper "
+            "autoresearch candidate board before falling back to hypothesis "
+            "registry targets."
+        ),
+    )
+    parser.add_argument(
+        "--runtime-window-autoresearch-status",
+        action="append",
+        default=[],
+        help=(
+            "Repeatable autoresearch epoch status eligible for latest candidate "
+            "board import. Defaults to ok, no_profit_target_candidate, and "
+            "selection_only."
+        ),
+    )
+    parser.add_argument(
+        "--runtime-window-autoresearch-scan-limit", type=int, default=20
     )
     parser.add_argument("--runtime-window-hypothesis-id", default="H-TSMOM-01")
     parser.add_argument("--runtime-window-candidate-id", default="")
@@ -399,71 +426,138 @@ def _runtime_window_plan_targets(
     targets: list[RuntimeWindowImportTarget] = []
     for ref in refs:
         plan = _read_runtime_window_target_plan(ref)
-        raw_targets = plan.get("targets")
-        if not isinstance(raw_targets, Sequence) or isinstance(
-            raw_targets, (str, bytes, bytearray)
-        ):
-            raise RuntimeError(f"runtime_window_target_plan_targets_missing:{ref}")
-        for index, raw_target in enumerate(raw_targets):
-            payload = _as_dict(raw_target)
-
-            def value(key: str, legacy_name: str) -> str:
-                return str(
-                    payload.get(key) or getattr(args, legacy_name, "") or ""
-                ).strip()
-
-            hypothesis_id = value("hypothesis_id", "runtime_window_hypothesis_id")
-            candidate_id = value("candidate_id", "runtime_window_candidate_id")
-            strategy_family = value("strategy_family", "runtime_window_strategy_family")
-            strategy_name = value("strategy_name", "runtime_window_strategy_name")
-            missing = [
-                field
-                for field, item in (
-                    ("hypothesis_id", hypothesis_id),
-                    ("candidate_id", candidate_id),
-                    ("strategy_family", strategy_family),
-                    ("strategy_name", strategy_name),
-                )
-                if not item
-            ]
-            if missing:
-                raise RuntimeError(
-                    "runtime_window_target_plan_target_invalid:"
-                    f"{ref}:{index}:{','.join(missing)}"
-                )
-            targets.append(
-                RuntimeWindowImportTarget(
-                    hypothesis_id=hypothesis_id,
-                    candidate_id=candidate_id,
-                    observed_stage=value(
-                        "observed_stage", "runtime_window_observed_stage"
-                    )
-                    or "paper",
-                    strategy_family=strategy_family,
-                    source_dsn_env=value(
-                        "source_dsn_env", "runtime_window_source_dsn_env"
-                    )
-                    or "DB_DSN",
-                    strategy_name=strategy_name,
-                    account_label=value("account_label", "runtime_window_account_label")
-                    or "TORGHUT_SIM",
-                    dataset_snapshot_ref=value(
-                        "dataset_snapshot_ref",
-                        "runtime_window_dataset_snapshot_ref",
-                    ),
-                    source_manifest_ref=value(
-                        "source_manifest_ref",
-                        "runtime_window_source_manifest_ref",
-                    ),
-                    source_kind=value("source_kind", "runtime_window_source_kind")
-                    or "paper_runtime_observed",
-                    delay_adjusted_depth_stress_report_ref=value(
-                        "delay_adjusted_depth_stress_report_ref",
-                        "runtime_window_delay_adjusted_depth_stress_report_ref",
-                    ),
-                )
-            )
+        targets.extend(_runtime_window_targets_from_plan(plan=plan, ref=ref, args=args))
     return targets
+
+
+def _runtime_window_targets_from_plan(
+    *,
+    plan: Mapping[str, Any],
+    ref: str,
+    args: argparse.Namespace,
+) -> list[RuntimeWindowImportTarget]:
+    raw_targets = plan.get("targets")
+    if not isinstance(raw_targets, Sequence) or isinstance(
+        raw_targets, (str, bytes, bytearray)
+    ):
+        raise RuntimeError(f"runtime_window_target_plan_targets_missing:{ref}")
+    targets: list[RuntimeWindowImportTarget] = []
+    for index, raw_target in enumerate(raw_targets):
+        payload = _as_dict(raw_target)
+
+        def value(key: str, legacy_name: str) -> str:
+            return str(payload.get(key) or getattr(args, legacy_name, "") or "").strip()
+
+        hypothesis_id = value("hypothesis_id", "runtime_window_hypothesis_id")
+        candidate_id = value("candidate_id", "runtime_window_candidate_id")
+        strategy_family = value("strategy_family", "runtime_window_strategy_family")
+        strategy_name = value("strategy_name", "runtime_window_strategy_name")
+        missing = [
+            field
+            for field, item in (
+                ("hypothesis_id", hypothesis_id),
+                ("candidate_id", candidate_id),
+                ("strategy_family", strategy_family),
+                ("strategy_name", strategy_name),
+            )
+            if not item
+        ]
+        if missing:
+            raise RuntimeError(
+                "runtime_window_target_plan_target_invalid:"
+                f"{ref}:{index}:{','.join(missing)}"
+            )
+        targets.append(
+            RuntimeWindowImportTarget(
+                hypothesis_id=hypothesis_id,
+                candidate_id=candidate_id,
+                observed_stage=value("observed_stage", "runtime_window_observed_stage")
+                or "paper",
+                strategy_family=strategy_family,
+                source_dsn_env=value("source_dsn_env", "runtime_window_source_dsn_env")
+                or "DB_DSN",
+                strategy_name=strategy_name,
+                account_label=value("account_label", "runtime_window_account_label")
+                or "TORGHUT_SIM",
+                dataset_snapshot_ref=value(
+                    "dataset_snapshot_ref",
+                    "runtime_window_dataset_snapshot_ref",
+                ),
+                source_manifest_ref=value(
+                    "source_manifest_ref",
+                    "runtime_window_source_manifest_ref",
+                ),
+                source_kind=value("source_kind", "runtime_window_source_kind")
+                or "paper_runtime_observed",
+                delay_adjusted_depth_stress_report_ref=value(
+                    "delay_adjusted_depth_stress_report_ref",
+                    "runtime_window_delay_adjusted_depth_stress_report_ref",
+                ),
+            )
+        )
+    return targets
+
+
+def _runtime_window_autoresearch_statuses(args: argparse.Namespace) -> set[str]:
+    statuses = {
+        str(item).strip()
+        for item in getattr(args, "runtime_window_autoresearch_status", []) or []
+        if str(item).strip()
+    }
+    return statuses or set(DEFAULT_AUTORESEARCH_RUNTIME_WINDOW_STATUSES)
+
+
+def _runtime_window_targets_from_autoresearch_epochs(
+    *,
+    args: argparse.Namespace,
+    epochs: Sequence[Any],
+) -> list[RuntimeWindowImportTarget]:
+    eligible_statuses = _runtime_window_autoresearch_statuses(args)
+    for epoch in epochs:
+        if str(getattr(epoch, "status", "") or "").strip() not in eligible_statuses:
+            continue
+        summary = _as_dict(getattr(epoch, "summary_json", None))
+        candidate_board = _as_dict(summary.get("candidate_board"))
+        plan = _as_dict(candidate_board.get("runtime_window_import_plan"))
+        if not plan or "targets" not in plan:
+            continue
+        targets = _runtime_window_targets_from_plan(
+            plan=plan,
+            ref=f"autoresearch_epoch:{getattr(epoch, 'epoch_id', 'unknown')}",
+            args=args,
+        )
+        if targets:
+            return targets
+    return []
+
+
+def _latest_autoresearch_runtime_window_targets(
+    args: argparse.Namespace,
+) -> list[RuntimeWindowImportTarget]:
+    if not bool(
+        getattr(args, "runtime_window_targets_from_latest_autoresearch", False)
+    ):
+        return []
+    scan_limit = max(
+        1,
+        int(getattr(args, "runtime_window_autoresearch_scan_limit", 20) or 20),
+    )
+    statuses = _runtime_window_autoresearch_statuses(args)
+    with SessionLocal() as session:
+        rows = (
+            session.execute(
+                select(AutoresearchEpoch)
+                .where(AutoresearchEpoch.status.in_(statuses))
+                .order_by(
+                    AutoresearchEpoch.completed_at.desc().nulls_last(),
+                    AutoresearchEpoch.created_at.desc(),
+                )
+                .limit(scan_limit)
+            )
+            .scalars()
+            .all()
+        )
+    return _runtime_window_targets_from_autoresearch_epochs(args=args, epochs=rows)
 
 
 def _runtime_window_targets(
@@ -471,8 +565,14 @@ def _runtime_window_targets(
 ) -> list[RuntimeWindowImportTarget]:
     specs = [str(item) for item in getattr(args, "runtime_window_target", []) or []]
     plan_targets = _runtime_window_plan_targets(args)
+    autoresearch_targets = _latest_autoresearch_runtime_window_targets(args)
     registry_targets = _registry_runtime_window_targets(args)
-    if not specs and not plan_targets and not registry_targets:
+    if (
+        not specs
+        and not plan_targets
+        and not autoresearch_targets
+        and not registry_targets
+    ):
         specs = [""]
     targets: list[RuntimeWindowImportTarget] = []
     for spec in specs:
@@ -520,6 +620,11 @@ def _runtime_window_targets(
         )
     seen_hypothesis_ids = {target.hypothesis_id for target in targets}
     for target in plan_targets:
+        if target.hypothesis_id in seen_hypothesis_ids:
+            continue
+        targets.append(target)
+        seen_hypothesis_ids.add(target.hypothesis_id)
+    for target in autoresearch_targets:
         if target.hypothesis_id in seen_hypothesis_ids:
             continue
         targets.append(target)

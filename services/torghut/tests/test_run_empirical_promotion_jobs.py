@@ -459,6 +459,138 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         )
         self.assertEqual(targets[0].dataset_snapshot_ref, "snapshot-paper-probation")
 
+    def test_runtime_window_targets_from_latest_autoresearch_epoch(self) -> None:
+        args = SimpleNamespace(
+            runtime_window_autoresearch_status=[],
+            runtime_window_observed_stage="paper",
+            runtime_window_source_dsn_env="SIM_DB_DSN",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_dataset_snapshot_ref="",
+            runtime_window_source_manifest_ref="",
+            runtime_window_source_kind="paper_runtime_observed",
+            runtime_window_delay_adjusted_depth_stress_report_ref="",
+            runtime_window_hypothesis_id="",
+            runtime_window_candidate_id="",
+            runtime_window_strategy_family="",
+            runtime_window_strategy_name="",
+        )
+        skipped_epoch = SimpleNamespace(
+            epoch_id="epoch-running",
+            status="running",
+            summary_json={
+                "candidate_board": {
+                    "runtime_window_import_plan": {
+                        "targets": [
+                            {
+                                "candidate_id": "cand-running",
+                                "hypothesis_id": "H-TSMOM-01",
+                                "strategy_family": "intraday_tsmom_consistent",
+                                "strategy_name": "intraday-tsmom-profit-v3",
+                            }
+                        ]
+                    }
+                }
+            },
+        )
+        latest_epoch = SimpleNamespace(
+            epoch_id="epoch-paper-probation",
+            status="no_profit_target_candidate",
+            summary_json={
+                "candidate_board": {
+                    "runtime_window_import_plan": {
+                        "targets": [
+                            {
+                                "candidate_id": "cand-paper-probation",
+                                "hypothesis_id": "H-MICRO-01",
+                                "strategy_family": "microstructure_breakout",
+                                "strategy_name": "microbar-volume-continuation-long-top2-chip-v1",
+                                "source_manifest_ref": "config/trading/hypotheses/h-micro-01.json",
+                                "dataset_snapshot_ref": "snapshot-paper-probation",
+                            }
+                        ]
+                    }
+                }
+            },
+        )
+
+        targets = renewal._runtime_window_targets_from_autoresearch_epochs(
+            args=args,
+            epochs=[skipped_epoch, latest_epoch],
+        )
+
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0].candidate_id, "cand-paper-probation")
+        self.assertEqual(targets[0].hypothesis_id, "H-MICRO-01")
+        self.assertEqual(targets[0].source_dsn_env, "SIM_DB_DSN")
+        self.assertEqual(targets[0].dataset_snapshot_ref, "snapshot-paper-probation")
+
+    def test_latest_autoresearch_targets_query_uses_persisted_candidate_board(
+        self,
+    ) -> None:
+        epoch = SimpleNamespace(
+            epoch_id="epoch-latest",
+            status="ok",
+            summary_json={
+                "candidate_board": {
+                    "runtime_window_import_plan": {
+                        "targets": [
+                            {
+                                "candidate_id": "cand-latest",
+                                "hypothesis_id": "H-TSMOM-01",
+                                "strategy_family": "intraday_tsmom_consistent",
+                                "strategy_name": "intraday-tsmom-profit-v3",
+                            }
+                        ]
+                    }
+                }
+            },
+        )
+
+        class FakeResult:
+            def scalars(self) -> "FakeResult":
+                return self
+
+            def all(self) -> list[SimpleNamespace]:
+                return [epoch]
+
+        class FakeSession:
+            statement: object | None = None
+
+            def __enter__(self) -> "FakeSession":
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def execute(self, statement: object) -> FakeResult:
+                self.statement = statement
+                return FakeResult()
+
+        fake_session = FakeSession()
+        args = SimpleNamespace(
+            runtime_window_targets_from_latest_autoresearch=True,
+            runtime_window_autoresearch_status=[],
+            runtime_window_autoresearch_scan_limit=5,
+            runtime_window_observed_stage="paper",
+            runtime_window_source_dsn_env="SIM_DB_DSN",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_dataset_snapshot_ref="",
+            runtime_window_source_manifest_ref="",
+            runtime_window_source_kind="paper_runtime_observed",
+            runtime_window_delay_adjusted_depth_stress_report_ref="",
+            runtime_window_hypothesis_id="",
+            runtime_window_candidate_id="",
+            runtime_window_strategy_family="",
+            runtime_window_strategy_name="",
+        )
+
+        with patch.object(renewal, "SessionLocal", return_value=fake_session):
+            targets = renewal._latest_autoresearch_runtime_window_targets(args)
+
+        self.assertIsNotNone(fake_session.statement)
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0].candidate_id, "cand-latest")
+
     def test_runtime_window_target_plan_errors_are_explicit(self) -> None:
         invalid_json_path = Path(self.tmp_dir) / "invalid-candidate-board.json"
         invalid_json_path.write_text("{", encoding="utf-8")

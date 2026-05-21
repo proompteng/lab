@@ -710,7 +710,9 @@ class TestLiveConfigManifestContract(TestCase):
             )
         }
         clickhouse_password = cast(Mapping[str, object], env["TA_CLICKHOUSE_PASSWORD"])
-        value_from = cast(Mapping[str, object], clickhouse_password.get("valueFrom", {}))
+        value_from = cast(
+            Mapping[str, object], clickhouse_password.get("valueFrom", {})
+        )
         self.assertEqual(
             value_from.get("secretKeyRef"),
             {"name": "torghut-clickhouse-auth", "key": "torghut_password"},
@@ -810,6 +812,7 @@ class TestLiveConfigManifestContract(TestCase):
 
         args = "\n".join(str(item) for item in container.get("args", []))
         self.assertIn("scripts/renew_latest_empirical_promotion_jobs.py", args)
+        self.assertIn("--runtime-window-targets-from-latest-autoresearch", args)
         self.assertIn("--runtime-window-targets-from-registry", args)
         self.assertIn("--runtime-window-hypothesis-id H-TSMOM-01", args)
         self.assertNotIn("--runtime-window-target hypothesis_id=", args)
