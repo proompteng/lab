@@ -6,11 +6,13 @@ from unittest import TestCase
 from unittest.mock import patch
 
 import app.trading.discovery.candidate_specs as candidate_specs_module
+import app.trading.discovery.evidence_bundles as evidence_bundles_module
 from app.trading.discovery.candidate_specs import (
     candidate_spec_from_payload,
     compile_candidate_specs,
 )
 from app.trading.discovery.evidence_bundles import (
+    evidence_bundle_blockers,
     evidence_bundle_from_frontier_candidate,
     evidence_bundle_from_payload,
 )
@@ -44,6 +46,13 @@ def _profile_ids_for_family(family_template_id: str) -> list[str]:
 
 
 class TestWhitepaperAutoresearchArtifacts(TestCase):
+    def test_evidence_bundle_bool_parser_handles_numeric_and_unknown_values(
+        self,
+    ) -> None:
+        self.assertEqual(evidence_bundles_module._bool(Decimal("1")), True)
+        self.assertEqual(evidence_bundles_module._bool(0), False)
+        self.assertEqual(evidence_bundles_module._bool("custom-truthy-marker"), True)
+
     def test_hypothesis_and_candidate_specs_round_trip(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-2026",
@@ -456,10 +465,215 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
         )
         self.assertEqual(len(bundle.stress_metrics), 3)
         self.assertEqual(
+            bundle.stress_metrics[1]["worst_grid_fillable_notional_per_day"],
+            "350000",
+        )
+        self.assertEqual(bundle.stress_metrics[1]["fillable_ratio"], "1")
+        self.assertEqual(
             bundle.stress_metrics[2]["stress_type"], "implementation_uncertainty"
         )
         with self.assertRaisesRegex(ValueError, "evidence_bundle_schema_invalid"):
             evidence_bundle_from_payload({"schema_version": "bad"})
+
+    def test_evidence_bundle_blocks_promotion_proof_without_fill_survival(self) -> None:
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-promotion-proof",
+            candidate={
+                "candidate_id": "cand-promotion-proof",
+                "objective_scorecard": {
+                    "net_pnl_per_day": "650",
+                    "delay_adjusted_depth_stress_passed": True,
+                    "delay_adjusted_depth_stress_model": "latency_depth_haircut",
+                    "delay_adjusted_depth_stress_ms": "50",
+                    "delay_adjusted_depth_stress_artifact_ref": "/tmp/depth.json",
+                    "delay_adjusted_depth_tail_coverage_passed": True,
+                    "delay_adjusted_depth_p10_active_day_fillable_notional": "250000",
+                    "delay_adjusted_depth_worst_active_day_fillable_notional": "200000",
+                    "delay_adjusted_depth_stress_net_pnl_per_day": "540",
+                },
+                "full_window": {
+                    "net_per_day": "650",
+                    "trading_day_count": "1",
+                    "avg_filled_notional_per_day": "350000",
+                    "daily_filled_notional": {"2026-02-23": "350000"},
+                    "daily_liquidity_notional": {"2026-02-23": "900000"},
+                },
+                "promotion_readiness": {
+                    "stage": "paper_probation",
+                    "status": "promotion_ready",
+                    "promotable": True,
+                    "blockers": [],
+                },
+            },
+            dataset_snapshot_id="snap-promotion-proof",
+            result_path="/tmp/promotion-proof.json",
+        )
+
+        blockers = evidence_bundle_blockers(bundle)
+
+        self.assertIn("fill_survival_evidence_missing", blockers)
+        self.assertIn("fill_survival_sample_count_zero", blockers)
+
+    def test_evidence_bundle_parses_serialized_false_survival_booleans(self) -> None:
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-serialized-false-proof",
+            candidate={
+                "candidate_id": "cand-serialized-false-proof",
+                "objective_scorecard": {
+                    "net_pnl_per_day": "650",
+                    "delay_adjusted_depth_stress_passed": "false",
+                    "delay_adjusted_depth_stress_model": "latency_depth_haircut",
+                    "delay_adjusted_depth_stress_ms": "50",
+                    "delay_adjusted_depth_stress_artifact_ref": "/tmp/depth.json",
+                    "delay_adjusted_depth_tail_coverage_passed": "0",
+                    "delay_adjusted_depth_p10_active_day_fillable_notional": "250000",
+                    "delay_adjusted_depth_worst_active_day_fillable_notional": "200000",
+                    "delay_adjusted_depth_stress_net_pnl_per_day": "540",
+                    "fill_survival_evidence_present": "false",
+                    "fill_survival_sample_count": "12",
+                    "fill_survival_fill_rate": "0.85",
+                },
+                "full_window": {
+                    "net_per_day": "650",
+                    "trading_day_count": "1",
+                    "avg_filled_notional_per_day": "350000",
+                    "daily_filled_notional": {"2026-02-23": "350000"},
+                    "daily_liquidity_notional": {"2026-02-23": "900000"},
+                },
+                "promotion_readiness": {
+                    "stage": "paper_probation",
+                    "status": "promotion_ready",
+                    "promotable": "true",
+                    "blockers": [],
+                },
+            },
+            dataset_snapshot_id="snap-serialized-false-proof",
+            result_path="/tmp/serialized-false-proof.json",
+        )
+
+        blockers = evidence_bundle_blockers(bundle)
+
+        self.assertIn("delay_adjusted_depth_stress_failed", blockers)
+        self.assertIn("delay_adjusted_depth_tail_coverage_missing", blockers)
+        self.assertIn("fill_survival_evidence_missing", blockers)
+
+    def test_evidence_bundle_fallback_stress_uses_fill_survival_rate(self) -> None:
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-survival-adjusted-fallback",
+            candidate={
+                "candidate_id": "cand-survival-adjusted-fallback",
+                "objective_scorecard": {
+                    "net_pnl_per_day": "100",
+                    "fill_survival_evidence_present": True,
+                    "fill_survival_sample_count": 10,
+                    "fill_survival_fill_rate": "0.01",
+                },
+                "full_window": {
+                    "net_per_day": "100",
+                    "trading_day_count": "1",
+                    "avg_filled_notional_per_day": "100000",
+                    "daily_filled_notional": {"2026-02-23": "100000"},
+                    "daily_liquidity_notional": {"2026-02-23": "1000000"},
+                },
+                "promotion_readiness": {
+                    "stage": "paper_probation",
+                    "status": "promotion_ready",
+                    "promotable": True,
+                    "blockers": [],
+                },
+            },
+            dataset_snapshot_id="snap-survival-adjusted-fallback",
+            result_path="/tmp/survival-adjusted-fallback.json",
+        )
+
+        self.assertEqual(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_survival_adjusted_fillable_ratio"
+            ],
+            "0.01",
+        )
+        self.assertEqual(
+            bundle.objective_scorecard["delay_adjusted_depth_stress_net_pnl_per_day"],
+            "-9.00",
+        )
+        blockers = evidence_bundle_blockers(bundle)
+        self.assertIn("delay_adjusted_depth_stress_failed", blockers)
+        self.assertIn("delay_adjusted_depth_stress_net_pnl_non_positive", blockers)
+
+    def test_evidence_bundle_copies_fill_survival_from_full_window(
+        self,
+    ) -> None:
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-stage-proof",
+            candidate={
+                "candidate_id": "cand-stage-proof",
+                "objective_scorecard": {
+                    "net_pnl_per_day": "650",
+                    "delay_adjusted_depth_stress_passed": True,
+                    "delay_adjusted_depth_tail_coverage_passed": True,
+                    "fill_survival_evidence_present": True,
+                    "fill_survival_sample_count": 8,
+                },
+                "full_window": {
+                    "net_per_day": "650",
+                    "trading_day_count": "1",
+                    "avg_filled_notional_per_day": "350000",
+                    "daily_filled_notional": {"2026-02-23": "350000"},
+                    "daily_liquidity_notional": {"2026-02-23": "900000"},
+                    "fill_survival_fill_rate": "0.75",
+                },
+                "promotion_readiness": {
+                    "stage": "paper_probation",
+                    "status": "candidate_review",
+                    "promotable": False,
+                    "blockers": [],
+                },
+            },
+            dataset_snapshot_id="snap-stage-proof",
+            result_path="/tmp/stage-proof.json",
+        )
+
+        blockers = evidence_bundle_blockers(bundle)
+
+        self.assertEqual(bundle.objective_scorecard["fill_survival_fill_rate"], "0.75")
+        self.assertEqual(blockers, ())
+
+    def test_evidence_bundle_blocks_stage_promotion_with_missing_depth_fields(
+        self,
+    ) -> None:
+        bundle = evidence_bundles_module.CandidateEvidenceBundle(
+            schema_version=evidence_bundles_module.EVIDENCE_BUNDLE_SCHEMA_VERSION,
+            evidence_bundle_id="bundle-stage-proof",
+            candidate_id="cand-stage-proof",
+            candidate_spec_id="spec-stage-proof",
+            dataset_snapshot_id="snap-stage-proof",
+            feature_spec_hash="feature-hash",
+            code_commit="commit-sha",
+            replay_artifact_refs=(),
+            objective_scorecard={
+                "delay_adjusted_depth_stress_passed": True,
+                "delay_adjusted_depth_tail_coverage_passed": True,
+                "fill_survival_evidence_present": True,
+                "fill_survival_sample_count": 8,
+            },
+            fold_metrics=(),
+            stress_metrics=(),
+            cost_calibration={},
+            null_comparator={},
+            promotion_readiness={
+                "stage": "paper_probation",
+                "status": "candidate_review",
+                "promotable": False,
+            },
+        )
+
+        blockers = evidence_bundle_blockers(bundle)
+
+        self.assertIn("delay_adjusted_depth_stress_model_missing", blockers)
+        self.assertIn("delay_adjusted_depth_stress_ms_missing", blockers)
+        self.assertIn("delay_adjusted_depth_stress_artifact_missing", blockers)
+        self.assertIn("delay_adjusted_depth_p10_fillable_non_positive", blockers)
+        self.assertIn("delay_adjusted_depth_worst_fillable_non_positive", blockers)
 
     def test_evidence_bundle_marks_order_type_execution_artifact_without_ablation(
         self,

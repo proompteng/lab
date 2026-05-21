@@ -70,6 +70,8 @@ DEFAULT_START_EQUITY = Decimal("31590.02")
 DEFAULT_PROGRESS_LOG_INTERVAL_SECONDS = 15
 logger = logging.getLogger(__name__)
 _SHARED_POSITION_OWNER = "__shared__"
+_FILL_LATENCY_BUCKETS_MS = (0, 50, 150, 250, 500, 1000)
+_FILL_LATENCY_THRESHOLDS_MS = (50, 150, 250)
 
 
 def _position_key(symbol: str, strategy_id: str) -> tuple[str, str]:
@@ -927,6 +929,367 @@ def _record_fill_order_type(stats: dict[str, Any], order_type: str) -> None:
     order_type_counts[order_type] += 1
 
 
+def _order_age_ms(*, created_at: datetime, as_of: datetime) -> int:
+    return max(0, int((as_of - created_at).total_seconds() * 1000))
+
+
+def _latency_bucket(ms: int) -> str:
+    if ms <= 0:
+        return "0ms"
+    lower_bound = 1
+    for upper_bound in _FILL_LATENCY_BUCKETS_MS[1:]:
+        if ms <= upper_bound:
+            return f"{lower_bound}-{upper_bound}ms"
+        lower_bound = upper_bound + 1
+    return f">{_FILL_LATENCY_BUCKETS_MS[-1]}ms"
+
+
+def _init_order_lifecycle_stats() -> dict[str, Any]:
+    return {
+        "submitted_order_count": 0,
+        "filled_order_count": 0,
+        "pending_censored_count": 0,
+        "replaced_pending_count": 0,
+        "outcome_counts": defaultdict(int),
+        "censor_reason_counts": defaultdict(int),
+        "decision_count_by_order_type": defaultdict(int),
+        "filled_count_by_order_type": defaultdict(int),
+        "submitted_count_by_latency_bucket": defaultdict(int),
+        "filled_count_by_latency_bucket": defaultdict(int),
+        "filled_latency_ms_samples": [],
+        "pending_age_ms_samples": [],
+        "spread_bps_samples": [],
+        "depth_notional_samples": [],
+        "queue_touch_qty_samples": [],
+        "queue_touch_notional_samples": [],
+        "order_qty_to_touch_qty_ratio_samples": [],
+        "max_censored_pending_age_ms": 0,
+    }
+
+
+def _append_decimal_sample(
+    stats: dict[str, Any],
+    key: str,
+    value: Decimal | None,
+) -> None:
+    if value is None:
+        return
+    samples = stats.setdefault(key, [])
+    samples.append(value)
+
+
+def _execution_proxy_payload(
+    *,
+    decision: StrategyDecision,
+    signal: SignalEnvelope,
+) -> dict[str, Decimal]:
+    price = _extract_price(signal)
+    bid_px = _extract_bid(signal)
+    ask_px = _extract_ask(signal)
+    bid_qty = _extract_decimal_payload(signal, "imbalance_bid_sz")
+    ask_qty = _extract_decimal_payload(signal, "imbalance_ask_sz")
+    proxy: dict[str, Decimal] = {}
+    spread_bps = _signal_spread_bps(signal=signal, price=price)
+    if spread_bps is not None:
+        proxy["spread_bps"] = spread_bps
+    if (
+        bid_px is not None
+        and ask_px is not None
+        and bid_qty is not None
+        and ask_qty is not None
+        and bid_px > 0
+        and ask_px > 0
+        and bid_qty > 0
+        and ask_qty > 0
+    ):
+        proxy["depth_notional"] = (bid_px * bid_qty) + (ask_px * ask_qty)
+    normalized_action = decision.action.strip().lower()
+    touch_px = ask_px if normalized_action == "buy" else bid_px
+    touch_qty = ask_qty if normalized_action == "buy" else bid_qty
+    if touch_qty is not None and touch_qty > 0:
+        proxy["queue_touch_qty"] = touch_qty
+        proxy["order_qty_to_touch_qty_ratio"] = decision.qty / touch_qty
+        if touch_px is not None and touch_px > 0:
+            proxy["queue_touch_notional"] = touch_px * touch_qty
+    return proxy
+
+
+def _record_order_lifecycle_outcome(
+    stats: dict[str, Any],
+    *,
+    decision: StrategyDecision,
+    placement_signal: SignalEnvelope,
+    created_at: datetime,
+    resolved_at: datetime,
+    outcome: str,
+    censor_reason: str | None = None,
+) -> None:
+    age_ms = _order_age_ms(created_at=created_at, as_of=resolved_at)
+    bucket = _latency_bucket(age_ms)
+    normalized_outcome = outcome.strip().lower() or "unknown"
+    order_type = decision.order_type.strip().lower() or "unknown"
+    stats["submitted_order_count"] += 1
+    stats["outcome_counts"][normalized_outcome] += 1
+    stats["decision_count_by_order_type"][order_type] += 1
+    stats["submitted_count_by_latency_bucket"][bucket] += 1
+    if normalized_outcome == "filled":
+        stats["filled_order_count"] += 1
+        stats["filled_count_by_order_type"][order_type] += 1
+        stats["filled_count_by_latency_bucket"][bucket] += 1
+        stats["filled_latency_ms_samples"].append(age_ms)
+    else:
+        stats["pending_censored_count"] += 1
+        stats["pending_age_ms_samples"].append(age_ms)
+        stats["max_censored_pending_age_ms"] = max(
+            int(stats.get("max_censored_pending_age_ms") or 0),
+            age_ms,
+        )
+        if normalized_outcome == "replaced":
+            stats["replaced_pending_count"] += 1
+        if censor_reason:
+            stats["censor_reason_counts"][censor_reason] += 1
+
+    proxy = _execution_proxy_payload(decision=decision, signal=placement_signal)
+    _append_decimal_sample(stats, "spread_bps_samples", proxy.get("spread_bps"))
+    _append_decimal_sample(stats, "depth_notional_samples", proxy.get("depth_notional"))
+    _append_decimal_sample(
+        stats, "queue_touch_qty_samples", proxy.get("queue_touch_qty")
+    )
+    _append_decimal_sample(
+        stats,
+        "queue_touch_notional_samples",
+        proxy.get("queue_touch_notional"),
+    )
+    _append_decimal_sample(
+        stats,
+        "order_qty_to_touch_qty_ratio_samples",
+        proxy.get("order_qty_to_touch_qty_ratio"),
+    )
+
+
+def _record_order_lifecycle(
+    *,
+    order_lifecycle_stats: dict[str, Any],
+    order_lifecycle_day_stats: dict[str, dict[str, Any]],
+    order_lifecycle_symbol_stats: dict[str, dict[str, Any]],
+    decision: StrategyDecision,
+    placement_signal: SignalEnvelope,
+    created_at: datetime,
+    resolved_at: datetime,
+    outcome: str,
+    censor_reason: str | None = None,
+) -> None:
+    day_key = created_at.date().isoformat()
+    symbol_key = decision.symbol.strip().upper()
+    for stats in (
+        order_lifecycle_stats,
+        order_lifecycle_day_stats.setdefault(day_key, _init_order_lifecycle_stats()),
+        order_lifecycle_symbol_stats.setdefault(
+            symbol_key, _init_order_lifecycle_stats()
+        ),
+    ):
+        _record_order_lifecycle_outcome(
+            stats,
+            decision=decision,
+            placement_signal=placement_signal,
+            created_at=created_at,
+            resolved_at=resolved_at,
+            outcome=outcome,
+            censor_reason=censor_reason,
+        )
+
+
+def _pending_censor_time(
+    *,
+    pending: PendingOrder,
+    fallback: datetime,
+) -> datetime:
+    close_ts = datetime.combine(
+        pending.created_at.date(),
+        REGULAR_CLOSE_UTC,
+        tzinfo=timezone.utc,
+    )
+    if close_ts > pending.created_at:
+        return close_ts
+    return fallback
+
+
+def _decimal_average(values: list[Decimal]) -> Decimal | None:
+    if not values:
+        return None
+    return sum(values, Decimal("0")) / Decimal(len(values))
+
+
+def _int_average(values: list[int]) -> Decimal | None:
+    if not values:
+        return None
+    return Decimal(sum(values)) / Decimal(len(values))
+
+
+def _decimal_percentile(values: list[Decimal], percentile: Decimal) -> Decimal | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    index = int(Decimal(len(ordered) - 1) * percentile)
+    return ordered[index]
+
+
+def _int_percentile(values: list[int], percentile: Decimal) -> int | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    index = int(Decimal(len(ordered) - 1) * percentile)
+    return ordered[index]
+
+
+def _decimal_or_none(value: Decimal | None) -> str | None:
+    return str(value) if value is not None else None
+
+
+def _fill_probability_by_latency_bucket(stats: Mapping[str, Any]) -> dict[str, Any]:
+    submitted = stats.get("submitted_count_by_latency_bucket") or {}
+    filled = stats.get("filled_count_by_latency_bucket") or {}
+    payload: dict[str, Any] = {}
+    for bucket in sorted(submitted):
+        submitted_count = int(submitted[bucket])
+        filled_count = int(filled.get(bucket, 0))
+        payload[str(bucket)] = {
+            "submitted_order_count": submitted_count,
+            "filled_order_count": filled_count,
+            "fill_rate": str(
+                Decimal(filled_count) / Decimal(submitted_count)
+                if submitted_count > 0
+                else Decimal("0")
+            ),
+        }
+    return payload
+
+
+def _fill_probability_by_latency_threshold(stats: Mapping[str, Any]) -> dict[str, Any]:
+    filled_latency = [
+        int(value) for value in stats.get("filled_latency_ms_samples") or []
+    ]
+    submitted_order_count = int(stats.get("submitted_order_count") or 0)
+    payload: dict[str, Any] = {}
+    for threshold_ms in _FILL_LATENCY_THRESHOLDS_MS:
+        filled_within_count = sum(
+            1 for value in filled_latency if value <= threshold_ms
+        )
+        payload[str(threshold_ms)] = {
+            "submitted_order_count": submitted_order_count,
+            "filled_within_count": filled_within_count,
+            "fill_rate": str(
+                Decimal(filled_within_count) / Decimal(submitted_order_count)
+                if submitted_order_count > 0
+                else Decimal("0")
+            ),
+        }
+    return payload
+
+
+def _order_lifecycle_summary(
+    stats: Mapping[str, Any],
+    *,
+    post_cost_survivorship: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    filled_latency = [
+        int(value) for value in stats.get("filled_latency_ms_samples") or []
+    ]
+    pending_age = [int(value) for value in stats.get("pending_age_ms_samples") or []]
+    spread_bps_samples = list(stats.get("spread_bps_samples") or [])
+    depth_notional_samples = list(stats.get("depth_notional_samples") or [])
+    queue_touch_qty_samples = list(stats.get("queue_touch_qty_samples") or [])
+    queue_touch_notional_samples = list(stats.get("queue_touch_notional_samples") or [])
+    touch_ratio_samples = list(stats.get("order_qty_to_touch_qty_ratio_samples") or [])
+    submitted_order_count = int(stats.get("submitted_order_count") or 0)
+    filled_order_count = int(stats.get("filled_order_count") or 0)
+    payload: dict[str, Any] = {
+        "submitted_order_count": submitted_order_count,
+        "filled_order_count": filled_order_count,
+        "pending_censored_count": int(stats.get("pending_censored_count") or 0),
+        "replaced_pending_count": int(stats.get("replaced_pending_count") or 0),
+        "fill_rate": str(
+            Decimal(filled_order_count) / Decimal(submitted_order_count)
+            if submitted_order_count > 0
+            else Decimal("0")
+        ),
+        "outcome_counts": dict(sorted((stats.get("outcome_counts") or {}).items())),
+        "censor_reason_counts": dict(
+            sorted((stats.get("censor_reason_counts") or {}).items())
+        ),
+        "decision_count_by_order_type": dict(
+            sorted((stats.get("decision_count_by_order_type") or {}).items())
+        ),
+        "filled_count_by_order_type": dict(
+            sorted((stats.get("filled_count_by_order_type") or {}).items())
+        ),
+        "fill_time_ms_avg": _decimal_or_none(_int_average(filled_latency)),
+        "fill_time_ms_p50": _int_percentile(filled_latency, Decimal("0.50")),
+        "fill_time_ms_p95": _int_percentile(filled_latency, Decimal("0.95")),
+        "pending_age_ms_avg": _decimal_or_none(_int_average(pending_age)),
+        "pending_age_ms_p95": _int_percentile(pending_age, Decimal("0.95")),
+        "max_censored_pending_age_ms": int(
+            stats.get("max_censored_pending_age_ms") or 0
+        ),
+        "fill_probability_by_latency_bucket": _fill_probability_by_latency_bucket(
+            stats
+        ),
+        "fill_probability_by_latency_threshold_ms": _fill_probability_by_latency_threshold(
+            stats
+        ),
+        "spread_bps_avg_at_order": _decimal_or_none(
+            _decimal_average(spread_bps_samples)
+        ),
+        "spread_bps_p95_at_order": _decimal_or_none(
+            _decimal_percentile(spread_bps_samples, Decimal("0.95"))
+        ),
+        "depth_notional_min_at_order": str(min(depth_notional_samples))
+        if depth_notional_samples
+        else None,
+        "depth_notional_avg_at_order": _decimal_or_none(
+            _decimal_average(depth_notional_samples)
+        ),
+        "queue_touch_qty_avg": _decimal_or_none(
+            _decimal_average(queue_touch_qty_samples)
+        ),
+        "queue_touch_notional_avg": _decimal_or_none(
+            _decimal_average(queue_touch_notional_samples)
+        ),
+        "order_qty_to_touch_qty_ratio_p95": _decimal_or_none(
+            _decimal_percentile(touch_ratio_samples, Decimal("0.95"))
+        ),
+        "fill_survival_sample_count": submitted_order_count,
+        "fill_survival_evidence_present": submitted_order_count > 0,
+    }
+    if post_cost_survivorship is not None:
+        payload["post_cost_survivorship"] = dict(post_cost_survivorship)
+    return payload
+
+
+def _post_cost_survivorship_summary(trades: list[ClosedTrade]) -> dict[str, Any]:
+    closed_trade_count = len(trades)
+    gross_positive_count = sum(1 for trade in trades if trade.gross_pnl > 0)
+    net_positive_count = sum(1 for trade in trades if trade.net_pnl > 0)
+    survived_count = sum(
+        1 for trade in trades if trade.gross_pnl > 0 and trade.net_pnl > 0
+    )
+    killed_count = sum(
+        1 for trade in trades if trade.gross_pnl > 0 and trade.net_pnl <= 0
+    )
+    return {
+        "closed_trade_count": closed_trade_count,
+        "gross_positive_count": gross_positive_count,
+        "net_positive_count": net_positive_count,
+        "gross_positive_survived_post_cost_count": survived_count,
+        "gross_positive_killed_by_cost_count": killed_count,
+        "post_cost_survival_rate": str(
+            Decimal(survived_count) / Decimal(gross_positive_count)
+            if gross_positive_count > 0
+            else Decimal("0")
+        ),
+    }
+
+
 def _decision_entry_order_type(decision: StrategyDecision) -> str:
     raw = decision.params.get("entry_order_type")
     if raw is None:
@@ -1408,7 +1771,7 @@ def _reconcile_pending_order_before_immediate_fill(
     pending_orders: dict[tuple[str, str], PendingOrder],
     created_at: datetime,
     force_position_isolation: bool = False,
-) -> None:
+) -> PendingOrder | None:
     pending_key = _position_key(
         decision.symbol,
         _decision_position_owner(
@@ -1418,7 +1781,7 @@ def _reconcile_pending_order_before_immediate_fill(
     )
     existing_pending = pending_orders.pop(pending_key, None)
     if existing_pending is None:
-        return
+        return None
     logger.info(
         "replay_pending_order_cleared_for_immediate_fill ts=%s symbol=%s existing_order_type=%s existing_limit=%s existing_exit=%s immediate_order_type=%s immediate_limit=%s immediate_exit=%s",
         created_at.isoformat(),
@@ -1430,6 +1793,7 @@ def _reconcile_pending_order_before_immediate_fill(
         decision.limit_price,
         _decision_exit_reason(decision),
     )
+    return existing_pending
 
 
 def _log_pending_order_replaced(
@@ -1748,6 +2112,9 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
     cash = config.start_equity
     day_stats: dict[str, dict[str, Any]] = {}
     funnel_stats: dict[tuple[str, str], dict[str, Any]] = {}
+    order_lifecycle_stats = _init_order_lifecycle_stats()
+    order_lifecycle_day_stats: dict[str, dict[str, Any]] = {}
+    order_lifecycle_symbol_stats: dict[str, dict[str, Any]] = {}
     trace_records: list[ReplayTraceRecord] = []
     near_misses: dict[str, list[NearMissRecord]] = {}
     all_closed_trades: list[ClosedTrade] = []
@@ -1774,6 +2141,45 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
         return funnel_stats.setdefault(
             (target_day.isoformat(), symbol), _init_funnel_stats()
         )
+
+    def _record_lifecycle_outcome(
+        *,
+        pending: PendingOrder | None,
+        decision: StrategyDecision,
+        placement_signal: SignalEnvelope,
+        created_at: datetime,
+        resolved_at: datetime,
+        outcome: str,
+        censor_reason: str | None = None,
+    ) -> None:
+        _record_order_lifecycle(
+            order_lifecycle_stats=order_lifecycle_stats,
+            order_lifecycle_day_stats=order_lifecycle_day_stats,
+            order_lifecycle_symbol_stats=order_lifecycle_symbol_stats,
+            decision=pending.decision if pending is not None else decision,
+            placement_signal=pending.signal
+            if pending is not None
+            else placement_signal,
+            created_at=pending.created_at if pending is not None else created_at,
+            resolved_at=resolved_at,
+            outcome=outcome,
+            censor_reason=censor_reason,
+        )
+
+    def _censor_pending_orders(*, reason: str, fallback: datetime) -> None:
+        for pending_key in sorted(list(pending_orders)):
+            pending = pending_orders.pop(pending_key, None)
+            if pending is None:
+                continue
+            _record_lifecycle_outcome(
+                pending=pending,
+                decision=pending.decision,
+                placement_signal=pending.signal,
+                created_at=pending.created_at,
+                resolved_at=_pending_censor_time(pending=pending, fallback=fallback),
+                outcome="censored",
+                censor_reason=reason,
+            )
 
     with (
         patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
@@ -1810,7 +2216,14 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                         all_closed_trades=all_closed_trades,
                     )
                     cash = cash_ref[0]
-                pending_orders.clear()
+                _censor_pending_orders(
+                    reason="day_boundary",
+                    fallback=datetime.combine(
+                        current_day,
+                        REGULAR_CLOSE_UTC,
+                        tzinfo=timezone.utc,
+                    ),
+                )
                 completed_day_stats = _active_day_stats(current_day)
                 completed_day_equity = _record_capital_snapshot(
                     bucket=completed_day_stats,
@@ -1882,6 +2295,14 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                 if fill_price is None:
                     pending_orders[pending_key] = pending
                     continue
+                _record_lifecycle_outcome(
+                    pending=pending,
+                    decision=decision,
+                    placement_signal=pending.signal,
+                    created_at=pending.created_at,
+                    resolved_at=signal.event_ts,
+                    outcome="filled",
+                )
                 cash = _apply_filled_decision(
                     decision=decision,
                     signal=signal,
@@ -2019,11 +2440,29 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                     continue
                 immediate_fill_price = _resolve_pending_fill_price(decision, signal)
                 if immediate_fill_price is not None:
-                    _reconcile_pending_order_before_immediate_fill(
+                    replaced_pending = _reconcile_pending_order_before_immediate_fill(
                         decision=decision,
                         pending_orders=pending_orders,
                         created_at=signal.event_ts,
                         force_position_isolation=config.force_position_isolation,
+                    )
+                    if replaced_pending is not None:
+                        _record_lifecycle_outcome(
+                            pending=replaced_pending,
+                            decision=replaced_pending.decision,
+                            placement_signal=replaced_pending.signal,
+                            created_at=replaced_pending.created_at,
+                            resolved_at=signal.event_ts,
+                            outcome="replaced",
+                            censor_reason="immediate_fill_replaced_pending",
+                        )
+                    _record_lifecycle_outcome(
+                        pending=None,
+                        decision=decision,
+                        placement_signal=signal,
+                        created_at=signal.event_ts,
+                        resolved_at=signal.event_ts,
+                        outcome="filled",
                     )
                     cash = _apply_filled_decision(
                         decision=decision,
@@ -2060,6 +2499,15 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                         existing=existing_pending.decision,
                         replacement=decision,
                     ):
+                        _record_lifecycle_outcome(
+                            pending=existing_pending,
+                            decision=existing_pending.decision,
+                            placement_signal=existing_pending.signal,
+                            created_at=existing_pending.created_at,
+                            resolved_at=signal.event_ts,
+                            outcome="replaced",
+                            censor_reason="pending_replaced",
+                        )
                         pending_orders[pending_key] = PendingOrder(
                             decision=decision,
                             created_at=signal.event_ts,
@@ -2134,6 +2582,15 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                 all_closed_trades=all_closed_trades,
             )
             cash = cash_ref[0]
+        if current_day is not None:
+            _censor_pending_orders(
+                reason="replay_end",
+                fallback=datetime.combine(
+                    current_day,
+                    REGULAR_CLOSE_UTC,
+                    tzinfo=timezone.utc,
+                ),
+            )
         if current_day is not None:
             final_day_stats = _active_day_stats(current_day)
             final_day_equity = _record_capital_snapshot(
@@ -2270,6 +2727,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
         _decimal_text(total_cost),
         _decimal_text(final_equity),
     )
+    post_cost_survivorship = _post_cost_survivorship_summary(all_closed_trades)
     return {
         "start_date": config.start_date.isoformat(),
         "end_date": config.end_date.isoformat(),
@@ -2404,6 +2862,18 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
         "trace": [item.to_payload() for item in trace_records],
         "funnel": funnel_report.to_payload(),
         "near_misses": near_miss_payload,
+        "order_lifecycle": _order_lifecycle_summary(
+            order_lifecycle_stats,
+            post_cost_survivorship=post_cost_survivorship,
+        ),
+        "order_lifecycle_by_day": {
+            key: _order_lifecycle_summary(value)
+            for key, value in sorted(order_lifecycle_day_stats.items())
+        },
+        "order_lifecycle_by_symbol": {
+            key: _order_lifecycle_summary(value)
+            for key, value in sorted(order_lifecycle_symbol_stats.items())
+        },
     }
 
 

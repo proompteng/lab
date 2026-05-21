@@ -29,6 +29,7 @@ from app.trading.submission_council import (
     _coerce_aware_datetime,
     _load_profit_promotion_table_counts,
     _merge_runtime_certificate_evidence,
+    _metric_window_activity_reason_codes,
     _refresh_runtime_summary_totals,
     build_hypothesis_runtime_summary,
     build_live_submission_gate_payload,
@@ -159,6 +160,28 @@ class TestSubmissionCouncil(TestCase):
             "status": "healthy",
             "source_url": "http://jangar.test/api/torghut/trading/control-plane/quant/health?account=paper&window=15m",
         }
+
+    def test_metric_window_activity_rejects_tca_proxy_expectancy(self) -> None:
+        metric_window = SimpleNamespace(
+            market_session_count=3,
+            decision_count=3,
+            trade_count=3,
+            order_count=3,
+            post_cost_expectancy_bps="8.5",
+            avg_abs_slippage_bps="4.2",
+            slippage_budget_bps="12",
+            payload_json={
+                "post_cost_promotion_sample_count": 0,
+                "post_cost_basis_counts": {"tca_shortfall_proxy": 3},
+            },
+        )
+
+        reasons = _metric_window_activity_reason_codes(metric_window)
+
+        self.assertEqual(
+            reasons,
+            ["hypothesis_window_post_cost_pnl_basis_missing"],
+        )
 
     def test_refresh_runtime_summary_totals_counts_reasons_and_rollback(self) -> None:
         refreshed = _refresh_runtime_summary_totals(

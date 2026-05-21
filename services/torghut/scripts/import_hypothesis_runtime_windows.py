@@ -26,6 +26,9 @@ EXECUTION_ELIGIBLE_DECISION_STATUSES = (
     "filled",
     "partially_filled",
 )
+POST_COST_BASIS_REALIZED_STRATEGY_PNL = "realized_strategy_pnl"
+POST_COST_BASIS_SIMULATION_REPORT = "simulation_report_net_pnl"
+POST_COST_BASIS_TCA_PROXY = "tca_shortfall_proxy"
 
 
 def _parse_args() -> argparse.Namespace:
@@ -114,6 +117,90 @@ def _strategy_name_candidates(*values: str | None) -> list[str]:
     return candidates
 
 
+def _execution_signed_qty(*, side: Any, qty: Any) -> Decimal:
+    normalized_side = str(side or "").strip().lower()
+    quantity = _decimal_or_none(qty)
+    if quantity is None or quantity <= 0:
+        return Decimal("0")
+    if normalized_side == "buy":
+        return quantity
+    if normalized_side == "sell":
+        return -quantity
+    return Decimal("0")
+
+
+def _build_realized_strategy_pnl_rows(
+    execution_rows: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    lots_by_symbol: dict[str, list[dict[str, Decimal]]] = {}
+    realized_rows: list[dict[str, object]] = []
+    for row in execution_rows:
+        symbol = str(row.get("symbol") or "").strip().upper()
+        computed_at = row.get("computed_at")
+        price = _decimal_or_none(row.get("avg_fill_price"))
+        signed_qty = _execution_signed_qty(
+            side=row.get("side"), qty=row.get("filled_qty")
+        )
+        if not symbol or not isinstance(computed_at, datetime):
+            continue
+        if price is None or price <= 0 or signed_qty == 0:
+            continue
+        fill_qty = abs(signed_qty)
+        shortfall_notional = _decimal_or_none(row.get("shortfall_notional"))
+        if shortfall_notional is None:
+            continue
+        fill_cost_per_share = abs(shortfall_notional) / fill_qty
+        remaining = fill_qty
+        fill_sign = Decimal("1") if signed_qty > 0 else Decimal("-1")
+        lots = lots_by_symbol.setdefault(symbol, [])
+        while remaining > 0 and lots and lots[0]["signed_qty"] * fill_sign < 0:
+            lot = lots[0]
+            lot_qty = abs(lot["signed_qty"])
+            close_qty = min(remaining, lot_qty)
+            entry_price = lot["price"]
+            entry_cost = lot["cost_per_share"] * close_qty
+            exit_cost = fill_cost_per_share * close_qty
+            if lot["signed_qty"] > 0:
+                gross_pnl = (price - entry_price) * close_qty
+            else:
+                gross_pnl = (entry_price - price) * close_qty
+            net_pnl = gross_pnl - entry_cost - exit_cost
+            turnover_notional = (entry_price + price) * close_qty
+            if turnover_notional > 0:
+                realized_rows.append(
+                    {
+                        "computed_at": computed_at,
+                        "abs_slippage_bps": (
+                            (entry_cost + exit_cost) / turnover_notional
+                        )
+                        * Decimal("10000"),
+                        "post_cost_expectancy_bps": (net_pnl / turnover_notional)
+                        * Decimal("10000"),
+                        "post_cost_expectancy_basis": POST_COST_BASIS_REALIZED_STRATEGY_PNL,
+                        "post_cost_promotion_eligible": True,
+                        "realized_gross_pnl": gross_pnl,
+                        "realized_net_pnl": net_pnl,
+                        "turnover_notional": turnover_notional,
+                        "symbol": symbol,
+                    }
+                )
+            remaining -= close_qty
+            lot["signed_qty"] -= (
+                Decimal("1") if lot["signed_qty"] > 0 else Decimal("-1")
+            ) * close_qty
+            if abs(lot["signed_qty"]) <= Decimal("0"):
+                lots.pop(0)
+        if remaining > 0:
+            lots.append(
+                {
+                    "signed_qty": fill_sign * remaining,
+                    "price": price,
+                    "cost_per_share": fill_cost_per_share,
+                }
+            )
+    return realized_rows
+
+
 def _load_report_post_cost_expectancy_bps(artifact_refs: list[str]) -> Decimal | None:
     for ref in artifact_refs:
         path = Path(ref)
@@ -129,9 +216,7 @@ def _load_report_post_cost_expectancy_bps(artifact_refs: list[str]) -> Decimal |
         pnl_payload = _as_mapping(payload.get("pnl"))
         metrics_payload = _as_mapping(payload.get("metrics"))
         net_pnl = _decimal_or_none(
-            pnl_payload.get("net_pnl_estimated")
-            or metrics_payload.get("net_pnl")
-            or pnl_payload.get("gross_pnl")
+            pnl_payload.get("net_pnl_estimated") or metrics_payload.get("net_pnl")
         )
         execution_notional = _decimal_or_none(
             pnl_payload.get("execution_notional_total")
@@ -170,6 +255,7 @@ def _query_timestamps(
     decisions: list[datetime] = []
     executions: list[datetime] = []
     tca_rows: list[dict[str, object]] = []
+    execution_rows: list[dict[str, object]] = []
     with psycopg.connect(dsn) as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -195,10 +281,18 @@ def _query_timestamps(
             decisions = [row[0] for row in cur.fetchall() if row[0] is not None]
             cur.execute(
                 """
-                select d.created_at
+                select
+                    d.created_at,
+                    e.created_at,
+                    e.symbol,
+                    e.side,
+                    e.filled_qty,
+                    e.avg_fill_price,
+                    t.shortfall_notional
                 from executions e
                 join trade_decisions d on d.id = e.trade_decision_id
                 join strategies s on s.id = d.strategy_id
+                left join execution_tca_metrics t on t.execution_id = e.id
                 where s.name = any(%s)
                   and d.alpaca_account_label = %s
                   and d.created_at >= %s
@@ -207,7 +301,24 @@ def _query_timestamps(
                 """,
                 (strategy_names, account_label, window_start, window_end),
             )
-            executions = [row[0] for row in cur.fetchall() if row[0] is not None]
+            execution_rows = [
+                {
+                    "computed_at": row[0],
+                    "execution_created_at": row[1],
+                    "symbol": row[2],
+                    "side": row[3],
+                    "filled_qty": row[4],
+                    "avg_fill_price": row[5],
+                    "shortfall_notional": row[6],
+                }
+                for row in cur.fetchall()
+                if row[0] is not None
+            ]
+            executions = []
+            for row in execution_rows:
+                computed_at = row.get("computed_at")
+                if isinstance(computed_at, datetime):
+                    executions.append(computed_at)
             cur.execute(
                 """
                 select
@@ -231,10 +342,13 @@ def _query_timestamps(
                     "computed_at": row[0],
                     "abs_slippage_bps": row[1] or Decimal("0"),
                     "post_cost_expectancy_bps": row[2] or Decimal("0"),
+                    "post_cost_expectancy_basis": POST_COST_BASIS_TCA_PROXY,
+                    "post_cost_promotion_eligible": False,
                 }
                 for row in cur.fetchall()
                 if row[0] is not None
             ]
+    tca_rows.extend(_build_realized_strategy_pnl_rows(execution_rows))
     return decisions, executions, tca_rows
 
 
@@ -294,7 +408,11 @@ def _source_activity_missing_summary(
                 else "live_runtime_observed"
             ),
             "source_kind": source_kind
-            or ("simulation_paper_runtime" if observed_stage == "paper" else "live_runtime"),
+            or (
+                "simulation_paper_runtime"
+                if observed_stage == "paper"
+                else "live_runtime"
+            ),
             "source_manifest_ref": source_manifest_ref or None,
             "strategy_name": strategy_name,
             "strategy_name_candidates": strategy_names,
@@ -368,13 +486,14 @@ def main() -> int:
         report_post_cost_expectancy_bps is not None
         and args.source_kind.strip().startswith("simulation_")
     ):
-        tca_rows = [
+        tca_rows.append(
             {
-                **row,
+                "computed_at": executions[-1] if executions else window_end,
                 "post_cost_expectancy_bps": report_post_cost_expectancy_bps,
+                "post_cost_expectancy_basis": POST_COST_BASIS_SIMULATION_REPORT,
+                "post_cost_promotion_eligible": True,
             }
-            for row in tca_rows
-        ]
+        )
     bucket_ranges = build_regular_session_buckets(
         window_start=window_start,
         window_end=window_end,
@@ -414,6 +533,12 @@ def main() -> int:
         "report_post_cost_expectancy_bps": (
             str(report_post_cost_expectancy_bps)
             if report_post_cost_expectancy_bps is not None
+            else None
+        ),
+        "report_post_cost_expectancy_basis": (
+            POST_COST_BASIS_SIMULATION_REPORT
+            if report_post_cost_expectancy_bps is not None
+            and source_kind.startswith("simulation_")
             else None
         ),
     }

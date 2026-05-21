@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
@@ -28,6 +29,9 @@ from .hypotheses import (
 US_EQUITIES_REGULAR_TIMEZONE = "America/New_York"
 US_EQUITIES_REGULAR_OPEN = time(hour=9, minute=30)
 US_EQUITIES_REGULAR_CLOSE = time(hour=16, minute=0)
+PROMOTION_GRADE_POST_COST_BASES = frozenset(
+    {"realized_strategy_pnl", "simulation_report_net_pnl"}
+)
 
 
 @dataclass(frozen=True)
@@ -41,6 +45,8 @@ class ObservedRuntimeBucket:
     decision_alignment_ratio: Decimal
     avg_abs_slippage_bps: Decimal
     post_cost_expectancy_bps: Decimal
+    post_cost_promotion_sample_count: int
+    post_cost_basis_counts: dict[str, int]
     continuity_ok: bool
     drift_ok: bool
     dependency_quorum_decision: str
@@ -50,8 +56,10 @@ class ObservedRuntimeBucket:
 @dataclass(frozen=True)
 class _NormalizedTcaRow:
     computed_at: datetime
-    abs_slippage_bps: Decimal
-    post_cost_expectancy_bps: Decimal
+    abs_slippage_bps: Decimal | None
+    post_cost_expectancy_bps: Decimal | None
+    post_cost_expectancy_basis: str
+    post_cost_promotion_eligible: bool
 
 
 def _utc(dt: datetime) -> datetime:
@@ -60,12 +68,18 @@ def _utc(dt: datetime) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
-def _decimal(value: Any, *, default: str = "0") -> Decimal:
+def _optional_decimal(value: Any) -> Decimal | None:
+    if value is None:
+        return None
     if isinstance(value, Decimal):
         return value
-    if value is None:
-        return Decimal(default)
-    return Decimal(str(value))
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return Decimal(text)
+    except Exception:
+        return None
 
 
 def _strategy_family_matches(
@@ -90,6 +104,24 @@ def _text(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _post_cost_expectancy_basis(value: Any) -> str:
+    text = _text(value)
+    if text is None:
+        return "tca_shortfall_proxy"
+    return text.lower().replace("-", "_")
+
+
+def _post_cost_basis_is_promotion_grade(
+    *,
+    basis: str,
+    explicit_value: Any,
+) -> bool:
+    parsed = _observation_bool(explicit_value)
+    if parsed is not None:
+        return parsed
+    return basis in PROMOTION_GRADE_POST_COST_BASES
 
 
 def _parse_observation_datetime(value: Any) -> datetime | None:
@@ -127,6 +159,13 @@ def _observation_int(value: Any) -> int:
         return max(0, int(Decimal(str(value))))
     except Exception:
         return 0
+
+
+def _observation_decimal(value: Any) -> Decimal:
+    try:
+        return Decimal(str(value or "0"))
+    except Exception:
+        return Decimal("0")
 
 
 def _string_list(value: Any) -> list[str]:
@@ -191,6 +230,20 @@ def _delay_adjusted_depth_stress_blocking_reasons(
         - timedelta(minutes=requirements.max_delay_adjusted_depth_stress_age_minutes)
     ):
         reasons.append("delay_adjusted_depth_stress_stale")
+    if not reasons:
+        summary = _delay_adjusted_depth_stress_summary(runtime_payload)
+        if _observation_bool(summary.get("tail_coverage_passed")) is not True:
+            reasons.append("delay_adjusted_depth_tail_coverage_missing")
+        if _observation_decimal(summary.get("p10_active_day_fillable_notional")) <= 0:
+            reasons.append("delay_adjusted_depth_p10_fillable_non_positive")
+        if _observation_decimal(summary.get("worst_active_day_fillable_notional")) <= 0:
+            reasons.append("delay_adjusted_depth_worst_fillable_non_positive")
+        if _observation_decimal(summary.get("stress_net_pnl_per_day")) <= 0:
+            reasons.append("delay_adjusted_depth_stress_net_pnl_non_positive")
+        if _observation_bool(summary.get("fill_survival_evidence_present")) is not True:
+            reasons.append("fill_survival_evidence_missing")
+        if _observation_int(summary.get("fill_survival_sample_count")) <= 0:
+            reasons.append("fill_survival_sample_count_zero")
     return list(dict.fromkeys(reasons))
 
 
@@ -219,10 +272,10 @@ def _delay_adjusted_depth_stress_summary(
         or _parse_observation_datetime(report.get("generated_at"))
         or _parse_observation_datetime(report.get("checked_at"))
     )
-    latency_grid_ms = _string_list(
-        runtime_payload.get("delay_adjusted_depth_latency_grid_ms")
-    ) or _string_list(report.get("delay_adjusted_depth_latency_grid_ms")) or _string_list(
-        report.get("latency_grid_ms")
+    latency_grid_ms = (
+        _string_list(runtime_payload.get("delay_adjusted_depth_latency_grid_ms"))
+        or _string_list(report.get("delay_adjusted_depth_latency_grid_ms"))
+        or _string_list(report.get("latency_grid_ms"))
     )
     return {
         "checks_total": check_count,
@@ -247,7 +300,9 @@ def _delay_adjusted_depth_stress_summary(
                 "delay_adjusted_depth_worst_grid_fillable_notional_per_day"
             )
         )
-        or _text(report.get("delay_adjusted_depth_worst_grid_fillable_notional_per_day"))
+        or _text(
+            report.get("delay_adjusted_depth_worst_grid_fillable_notional_per_day")
+        )
         or _text(report.get("worst_grid_fillable_notional_per_day")),
         "worst_active_day_fillable_notional": _text(
             runtime_payload.get(
@@ -270,6 +325,56 @@ def _delay_adjusted_depth_stress_summary(
                 report.get("tail_coverage_passed"),
             )
         ),
+        "fillable_ratio": _text(
+            runtime_payload.get("delay_adjusted_depth_fillable_ratio")
+        )
+        or _text(report.get("delay_adjusted_depth_fillable_ratio"))
+        or _text(report.get("fillable_ratio")),
+        "survival_adjusted_fillable_ratio": _text(
+            runtime_payload.get("delay_adjusted_depth_survival_adjusted_fillable_ratio")
+        )
+        or _text(report.get("delay_adjusted_depth_survival_adjusted_fillable_ratio"))
+        or _text(report.get("survival_adjusted_fillable_ratio")),
+        "unfillable_notional_per_day": _text(
+            runtime_payload.get("delay_adjusted_depth_unfillable_notional_per_day")
+        )
+        or _text(report.get("delay_adjusted_depth_unfillable_notional_per_day"))
+        or _text(report.get("unfillable_notional_per_day")),
+        "stress_net_pnl_per_day": _text(
+            runtime_payload.get("delay_adjusted_depth_stress_net_pnl_per_day")
+        )
+        or _text(report.get("delay_adjusted_depth_stress_net_pnl_per_day"))
+        or _text(report.get("stress_net_pnl_per_day")),
+        "fill_survival_evidence_present": _observation_bool(
+            runtime_payload.get("delay_adjusted_depth_fill_survival_evidence_present")
+            if runtime_payload.get(
+                "delay_adjusted_depth_fill_survival_evidence_present"
+            )
+            is not None
+            else report.get(
+                "delay_adjusted_depth_fill_survival_evidence_present",
+                report.get("fill_survival_evidence_present"),
+            )
+        ),
+        "fill_survival_sample_count": max(
+            _observation_int(
+                runtime_payload.get("delay_adjusted_depth_fill_survival_sample_count")
+            ),
+            _observation_int(
+                report.get("delay_adjusted_depth_fill_survival_sample_count")
+            ),
+            _observation_int(report.get("fill_survival_sample_count")),
+        ),
+        "fill_survival_rate": _text(
+            runtime_payload.get("delay_adjusted_depth_fill_survival_rate")
+        )
+        or _text(report.get("delay_adjusted_depth_fill_survival_rate"))
+        or _text(report.get("fill_survival_rate")),
+        "queue_ratio_p95": _text(
+            runtime_payload.get("delay_adjusted_depth_queue_ratio_p95")
+        )
+        or _text(report.get("delay_adjusted_depth_queue_ratio_p95"))
+        or _text(report.get("queue_ratio_p95")),
     }
 
 
@@ -304,6 +409,7 @@ def _runtime_promotion_blocking_reasons(
     total_decision_count: int,
     total_trade_count: int,
     total_order_count: int,
+    total_post_cost_promotion_sample_count: int,
     average_slippage: Decimal,
     average_post_cost: Decimal,
     latest_three_budget_ok: bool,
@@ -325,6 +431,8 @@ def _runtime_promotion_blocking_reasons(
         reasons.append("slippage_budget_exceeded")
     if not latest_three_budget_ok:
         reasons.append("recent_slippage_budget_exceeded")
+    if total_post_cost_promotion_sample_count <= 0:
+        reasons.append("post_cost_pnl_basis_missing")
     if average_post_cost <= Decimal("0"):
         reasons.append("post_cost_expectancy_non_positive")
     elif average_post_cost < manifest.expected_gross_edge_bps:
@@ -415,11 +523,21 @@ def build_observed_runtime_buckets(
         computed_at_raw = row.get("computed_at")
         if not isinstance(computed_at_raw, datetime):
             continue
+        basis = _post_cost_expectancy_basis(
+            row.get("post_cost_expectancy_basis") or row.get("post_cost_basis")
+        )
         normalized_tca_rows.append(
             _NormalizedTcaRow(
                 computed_at=_utc(computed_at_raw),
-                abs_slippage_bps=_decimal(row.get("abs_slippage_bps")),
-                post_cost_expectancy_bps=_decimal(row.get("post_cost_expectancy_bps")),
+                abs_slippage_bps=_optional_decimal(row.get("abs_slippage_bps")),
+                post_cost_expectancy_bps=_optional_decimal(
+                    row.get("post_cost_expectancy_bps")
+                ),
+                post_cost_expectancy_basis=basis,
+                post_cost_promotion_eligible=_post_cost_basis_is_promotion_grade(
+                    basis=basis,
+                    explicit_value=row.get("post_cost_promotion_eligible"),
+                ),
             )
         )
 
@@ -445,15 +563,31 @@ def build_observed_runtime_buckets(
             decision_alignment_ratio = Decimal("0")
         else:
             decision_alignment_ratio = Decimal(trade_count) / Decimal(decision_count)
-        if bucket_tca:
-            avg_abs_slippage_bps = sum(
-                row.abs_slippage_bps for row in bucket_tca
-            ) / Decimal(len(bucket_tca))
-            post_cost_expectancy_bps = sum(
-                row.post_cost_expectancy_bps for row in bucket_tca
-            ) / Decimal(len(bucket_tca))
+        slippage_values = [
+            row.abs_slippage_bps
+            for row in bucket_tca
+            if row.abs_slippage_bps is not None
+        ]
+        promotion_post_cost_values = [
+            row.post_cost_expectancy_bps
+            for row in bucket_tca
+            if row.post_cost_expectancy_bps is not None
+            and row.post_cost_promotion_eligible
+        ]
+        basis_counts = dict(
+            sorted(
+                Counter(row.post_cost_expectancy_basis for row in bucket_tca).items()
+            )
+        )
+        if slippage_values:
+            avg_abs_slippage_bps = sum(slippage_values) / Decimal(len(slippage_values))
         else:
             avg_abs_slippage_bps = Decimal("0")
+        if promotion_post_cost_values:
+            post_cost_expectancy_bps = sum(
+                promotion_post_cost_values, Decimal("0")
+            ) / Decimal(len(promotion_post_cost_values))
+        else:
             post_cost_expectancy_bps = Decimal("0")
         buckets.append(
             ObservedRuntimeBucket(
@@ -466,6 +600,8 @@ def build_observed_runtime_buckets(
                 decision_alignment_ratio=decision_alignment_ratio,
                 avg_abs_slippage_bps=avg_abs_slippage_bps,
                 post_cost_expectancy_bps=post_cost_expectancy_bps,
+                post_cost_promotion_sample_count=len(promotion_post_cost_values),
+                post_cost_basis_counts=basis_counts,
                 continuity_ok=continuity_ok,
                 drift_ok=drift_ok,
                 dependency_quorum_decision=dependency_quorum_decision,
@@ -477,6 +613,9 @@ def build_observed_runtime_buckets(
                     "trade_count": trade_count,
                     "order_count": order_count,
                     "tca_row_count": len(bucket_tca),
+                    "slippage_sample_count": len(slippage_values),
+                    "post_cost_promotion_sample_count": len(promotion_post_cost_values),
+                    "post_cost_basis_counts": basis_counts,
                 },
             )
         )
@@ -625,6 +764,13 @@ def persist_observed_runtime_windows(
     total_decision_count = sum(bucket.decision_count for bucket in sorted_buckets)
     total_trade_count = sum(bucket.trade_count for bucket in sorted_buckets)
     total_order_count = sum(bucket.order_count for bucket in sorted_buckets)
+    total_post_cost_promotion_sample_count = sum(
+        bucket.post_cost_promotion_sample_count for bucket in sorted_buckets
+    )
+    total_post_cost_basis_counter: Counter[str] = Counter()
+    for bucket in sorted_buckets:
+        total_post_cost_basis_counter.update(bucket.post_cost_basis_counts)
+    total_post_cost_basis_counts = dict(sorted(total_post_cost_basis_counter.items()))
     total_post_cost = sum(
         (
             bucket.post_cost_expectancy_bps * Decimal(bucket.market_session_count)
@@ -658,6 +804,7 @@ def persist_observed_runtime_windows(
         total_decision_count=total_decision_count,
         total_trade_count=total_trade_count,
         total_order_count=total_order_count,
+        total_post_cost_promotion_sample_count=total_post_cost_promotion_sample_count,
         average_slippage=average_slippage,
         average_post_cost=average_post_cost,
         latest_three_budget_ok=latest_three_budget_ok,
@@ -753,6 +900,8 @@ def persist_observed_runtime_windows(
                 "decision_count": total_decision_count,
                 "trade_count": total_trade_count,
                 "order_count": total_order_count,
+                "post_cost_promotion_sample_count": total_post_cost_promotion_sample_count,
+                "post_cost_basis_counts": total_post_cost_basis_counts,
                 "promotion_allowed": promotion_allowed,
                 "promotion_blocking_reasons": promotion_blocking_reasons,
                 "delay_adjusted_depth_stress": delay_depth_stress_summary,
@@ -779,6 +928,8 @@ def persist_observed_runtime_windows(
                 "decision_count": total_decision_count,
                 "trade_count": total_trade_count,
                 "order_count": total_order_count,
+                "post_cost_promotion_sample_count": total_post_cost_promotion_sample_count,
+                "post_cost_basis_counts": total_post_cost_basis_counts,
                 "avg_abs_slippage_bps": str(average_slippage),
                 "avg_post_cost_expectancy_bps": str(average_post_cost),
                 "latest_three_within_budget": latest_three_budget_ok,
@@ -802,6 +953,8 @@ def persist_observed_runtime_windows(
         "decision_count": total_decision_count,
         "trade_count": total_trade_count,
         "order_count": total_order_count,
+        "post_cost_promotion_sample_count": total_post_cost_promotion_sample_count,
+        "post_cost_basis_counts": total_post_cost_basis_counts,
         "avg_abs_slippage_bps": str(average_slippage),
         "avg_post_cost_expectancy_bps": str(average_post_cost),
         "latest_three_within_budget": latest_three_budget_ok,

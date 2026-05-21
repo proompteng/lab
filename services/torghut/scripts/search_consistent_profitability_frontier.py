@@ -1193,6 +1193,72 @@ def _int_mapping(value: Any) -> dict[str, int]:
     return counts
 
 
+def _mapping(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {str(key): item for key, item in cast(Mapping[Any, Any], value).items()}
+
+
+def _optional_decimal(value: Any) -> Decimal | None:
+    if value in (None, ""):
+        return None
+    return Decimal(str(value))
+
+
+def _order_lifecycle_metrics(payload: Mapping[str, Any]) -> dict[str, Any]:
+    lifecycle = _mapping(payload.get("order_lifecycle"))
+    if not lifecycle:
+        return {}
+    metrics: dict[str, Any] = {
+        "order_lifecycle": lifecycle,
+        "fill_survival_evidence_present": bool(
+            lifecycle.get("fill_survival_evidence_present")
+        ),
+        "fill_survival_sample_count": int(
+            lifecycle.get("fill_survival_sample_count")
+            or lifecycle.get("submitted_order_count")
+            or 0
+        ),
+        "fill_survival_fill_rate": str(lifecycle.get("fill_rate") or "0"),
+        "fill_time_ms_avg": str(lifecycle.get("fill_time_ms_avg") or ""),
+        "fill_time_ms_p50": lifecycle.get("fill_time_ms_p50"),
+        "fill_time_ms_p95": lifecycle.get("fill_time_ms_p95"),
+        "pending_age_ms_p95": lifecycle.get("pending_age_ms_p95"),
+        "max_censored_pending_age_ms": lifecycle.get("max_censored_pending_age_ms"),
+        "spread_bps_avg_at_order": str(lifecycle.get("spread_bps_avg_at_order") or ""),
+        "spread_bps_p95_at_order": str(lifecycle.get("spread_bps_p95_at_order") or ""),
+        "depth_notional_min_at_order": str(
+            lifecycle.get("depth_notional_min_at_order") or ""
+        ),
+        "depth_notional_avg_at_order": str(
+            lifecycle.get("depth_notional_avg_at_order") or ""
+        ),
+        "queue_touch_qty_avg": str(lifecycle.get("queue_touch_qty_avg") or ""),
+        "queue_touch_notional_avg": str(
+            lifecycle.get("queue_touch_notional_avg") or ""
+        ),
+        "order_qty_to_touch_qty_ratio_p95": str(
+            lifecycle.get("order_qty_to_touch_qty_ratio_p95") or ""
+        ),
+        "fill_probability_by_latency_bucket": _mapping(
+            lifecycle.get("fill_probability_by_latency_bucket")
+        ),
+        "fill_probability_by_latency_threshold_ms": _mapping(
+            lifecycle.get("fill_probability_by_latency_threshold_ms")
+        ),
+    }
+    survivorship = _mapping(lifecycle.get("post_cost_survivorship"))
+    if survivorship:
+        metrics["post_cost_survivorship"] = survivorship
+        metrics["post_cost_survival_rate"] = str(
+            survivorship.get("post_cost_survival_rate") or "0"
+        )
+        metrics["gross_positive_killed_by_cost_count"] = int(
+            survivorship.get("gross_positive_killed_by_cost_count") or 0
+        )
+    return metrics
+
+
 def _order_type_execution_metrics(payload: Mapping[str, Any]) -> dict[str, Any]:
     decision_counts = _int_mapping(payload.get("decision_count_by_order_type"))
     filled_counts = _int_mapping(payload.get("filled_count_by_order_type"))
@@ -1512,6 +1578,9 @@ def _replay_stress_metrics(
     avg_filled_notional_per_day: Decimal,
     total_filled_notional: Decimal,
     total_liquidity_notional: Decimal,
+    fill_survival_rate: Decimal | None = None,
+    fill_survival_sample_count: int = 0,
+    queue_ratio_p95: Decimal | None = None,
 ) -> dict[str, Any]:
     participation = (
         total_filled_notional / total_liquidity_notional
@@ -1586,7 +1655,12 @@ def _replay_stress_metrics(
         if total_filled_notional > 0
         else Decimal("1")
     )
-    delay_depth_net_per_day = (net_per_day * delay_depth_fillable_ratio) - (
+    survival_adjusted_fillable_ratio = delay_depth_fillable_ratio
+    if fill_survival_sample_count > 0 and fill_survival_rate is not None:
+        survival_adjusted_fillable_ratio *= max(
+            Decimal("0"), min(Decimal("1"), fill_survival_rate)
+        )
+    delay_depth_net_per_day = (net_per_day * survival_adjusted_fillable_ratio) - (
         delay_depth_fillable_notional_per_day * Decimal("1") / Decimal("10000")
     )
     implementation_uncertainty = _implementation_uncertainty_metrics(
@@ -1667,6 +1741,19 @@ def _replay_stress_metrics(
         ),
         "delay_adjusted_depth_tail_coverage_passed": tail_coverage_passed,
         "delay_adjusted_depth_fillable_ratio": str(delay_depth_fillable_ratio),
+        "delay_adjusted_depth_survival_adjusted_fillable_ratio": str(
+            survival_adjusted_fillable_ratio
+        ),
+        "delay_adjusted_depth_fill_survival_evidence_present": (
+            fill_survival_sample_count > 0
+        ),
+        "delay_adjusted_depth_fill_survival_sample_count": fill_survival_sample_count,
+        "delay_adjusted_depth_fill_survival_rate": str(fill_survival_rate)
+        if fill_survival_rate is not None
+        else "",
+        "delay_adjusted_depth_queue_ratio_p95": str(queue_ratio_p95)
+        if queue_ratio_p95 is not None
+        else "",
         "delay_adjusted_depth_unfillable_notional_per_day": str(
             max(
                 Decimal("0"),
@@ -1753,6 +1840,13 @@ def _consistency_penalty(
         if summary.active_days > 0
         else Decimal("0")
     )
+    order_lifecycle_metrics = _order_lifecycle_metrics(full_window_payload)
+    fill_survival_rate = _optional_decimal(
+        order_lifecycle_metrics.get("fill_survival_fill_rate")
+    )
+    queue_ratio_p95 = _optional_decimal(
+        order_lifecycle_metrics.get("order_qty_to_touch_qty_ratio_p95")
+    )
     replay_stress_metrics = _replay_stress_metrics(
         target_net_per_day=policy.target_net_per_day,
         net_per_day=summary.net_per_day,
@@ -1762,6 +1856,11 @@ def _consistency_penalty(
         avg_filled_notional_per_day=avg_filled_notional_per_day,
         total_filled_notional=total_filled_notional,
         total_liquidity_notional=total_liquidity_notional,
+        fill_survival_rate=fill_survival_rate,
+        fill_survival_sample_count=int(
+            order_lifecycle_metrics.get("fill_survival_sample_count") or 0
+        ),
+        queue_ratio_p95=queue_ratio_p95,
     )
     best_day_share_of_total_pnl = _max_best_day_share_of_total_pnl(
         daily_net=summary.daily_net,
@@ -1927,6 +2026,7 @@ def _consistency_penalty(
             },
             "daily_negative_cash_observation_count": daily_negative_cash_observations,
             **_order_type_execution_metrics(full_window_payload),
+            **order_lifecycle_metrics,
         },
     )
 
@@ -3318,6 +3418,12 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                             )
                             or "0"
                         ),
+                        "delay_adjusted_depth_worst_grid_fillable_notional_per_day": str(
+                            full_window_summary.get(
+                                "delay_adjusted_depth_worst_grid_fillable_notional_per_day"
+                            )
+                            or "0"
+                        ),
                         "delay_adjusted_depth_worst_active_day_fillable_notional": str(
                             full_window_summary.get(
                                 "delay_adjusted_depth_worst_active_day_fillable_notional"
@@ -3334,6 +3440,47 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                             full_window_summary.get(
                                 "delay_adjusted_depth_tail_coverage_passed"
                             )
+                        ),
+                        "delay_adjusted_depth_fillable_ratio": str(
+                            full_window_summary.get(
+                                "delay_adjusted_depth_fillable_ratio"
+                            )
+                            or "0"
+                        ),
+                        "delay_adjusted_depth_survival_adjusted_fillable_ratio": str(
+                            full_window_summary.get(
+                                "delay_adjusted_depth_survival_adjusted_fillable_ratio"
+                            )
+                            or "0"
+                        ),
+                        "delay_adjusted_depth_unfillable_notional_per_day": str(
+                            full_window_summary.get(
+                                "delay_adjusted_depth_unfillable_notional_per_day"
+                            )
+                            or "0"
+                        ),
+                        "delay_adjusted_depth_fill_survival_evidence_present": bool(
+                            full_window_summary.get(
+                                "delay_adjusted_depth_fill_survival_evidence_present"
+                            )
+                        ),
+                        "delay_adjusted_depth_fill_survival_sample_count": int(
+                            full_window_summary.get(
+                                "delay_adjusted_depth_fill_survival_sample_count"
+                            )
+                            or 0
+                        ),
+                        "delay_adjusted_depth_fill_survival_rate": str(
+                            full_window_summary.get(
+                                "delay_adjusted_depth_fill_survival_rate"
+                            )
+                            or ""
+                        ),
+                        "delay_adjusted_depth_queue_ratio_p95": str(
+                            full_window_summary.get(
+                                "delay_adjusted_depth_queue_ratio_p95"
+                            )
+                            or ""
                         ),
                         "delay_adjusted_depth_stress_net_pnl_per_day": str(
                             full_window_summary.get(
@@ -3408,6 +3555,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                             replay_lineage
                         ),
                         **_order_type_execution_metrics(full_window_summary),
+                        **_order_lifecycle_metrics(full_window_payload),
                     }
                 )
                 objective_scorecard_payload.update(order_type_ablation_update)
