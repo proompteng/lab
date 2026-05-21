@@ -2,15 +2,22 @@ import {
   parseAgentRunNotifyPayload,
   parseAgentRunRunCompletePayload,
 } from '@proompteng/agent-contracts/agent-run-callbacks'
-import { Data, Effect } from 'effect'
+import { Data, Effect, Layer } from 'effect'
 
-import { createCodexRunProjectionStore, type CodexRunProjectionStore } from '../codex-run-projection-store'
+import { type CodexRunProjectionStore } from '../codex-run-projection-store'
 import { errorResponse, okResponse, parseJsonBody } from '../http'
 import { asString, readNested } from '../primitives'
 import type { AgentRunRecord, CreateAuditEventInput, UpdateRunDetailsInput } from '../primitives-store'
 
 import { AgentRunStorageError, describeAgentRunSubmitError } from './agent-run-errors'
 import { AgentRunStoreService, makeAgentRunStoreLayer, type AgentRunsApiStore } from './agent-run-store'
+import {
+  CodexRunProjectionStorageError,
+  CodexRunProjectionStoreService,
+  type CodexRunProjectionStoreServiceDefinition,
+  describeCodexRunProjectionStorageError,
+  makeCodexRunProjectionStoreLayer,
+} from './codex-run-projection-store'
 
 export type AgentRunCallbackStore = {
   ready: Promise<unknown>
@@ -65,7 +72,11 @@ class AgentRunCallbackStorageError extends Data.TaggedError('AgentRunCallbackSto
   readonly cause: unknown
 }> {}
 
-type AgentRunCallbackError = AgentRunCallbackRequestError | AgentRunCallbackStorageError | AgentRunStorageError
+type AgentRunCallbackError =
+  | AgentRunCallbackRequestError
+  | AgentRunCallbackStorageError
+  | AgentRunStorageError
+  | CodexRunProjectionStorageError
 
 const toErrorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
@@ -215,26 +226,8 @@ const createAuditEvent = (store: AgentRunCallbackStore, input: CreateAuditEventI
     catch: (cause) => new AgentRunCallbackStorageError({ operation: 'create-audit-event', cause }),
   })
 
-const openCodexStore = (deps: AgentRunCallbacksApiDependencies) =>
-  Effect.try({
-    try: () => (deps.codexStoreFactory ?? createCodexRunProjectionStore)(),
-    catch: (cause) => new AgentRunCallbackStorageError({ operation: 'open-codex-run-projection-store', cause }),
-  })
-
-const closeCodexStore = (store: CodexRunProjectionStore) =>
-  Effect.promise(() =>
-    store.close().catch((error) => {
-      console.warn('[agents] failed to close Codex run projection store', error)
-    }),
-  )
-
-const readyCodexStore = (store: CodexRunProjectionStore) =>
-  Effect.tryPromise({
-    try: () => store.ready,
-    catch: (cause) => new AgentRunCallbackStorageError({ operation: 'ready-codex-run-projection-store', cause }),
-  })
-
 const updateCodexNotifyProjection = (
+  codexStores: CodexRunProjectionStoreServiceDefinition,
   codexStore: CodexRunProjectionStore,
   run: AgentRunRecord,
   parsed: Extract<ParsedCallback, { kind: 'notify' }>,
@@ -243,43 +236,32 @@ const updateCodexNotifyProjection = (
     const codex = parsed.codexProjection
     const agentRunName = deriveAgentRunName(run, parsed) ?? parsed.agentRunName ?? run.externalRunId ?? run.id
     const agentRunNamespace = deriveAgentRunNamespace(run, parsed)
-    const projection = yield* Effect.tryPromise({
-      try: () =>
-        codexStore.attachNotify({
-          runId: codex.runId,
-          agentRunName,
-          agentRunNamespace,
-          notifyPayload: codex.notifyPayload,
-          repository: codex.repository,
-          issueNumber: codex.issueNumber,
-          branch: codex.branch,
-          prompt: codex.prompt,
-          stage: codex.stage,
-          iteration: codex.iteration,
-          iterationCycle: codex.iterationCycle,
-        }),
-      catch: (cause) => new AgentRunCallbackStorageError({ operation: 'attach-codex-notify-projection', cause }),
+    const projection = yield* codexStores.attachNotify(codexStore, {
+      runId: codex.runId,
+      agentRunName,
+      agentRunNamespace,
+      notifyPayload: codex.notifyPayload,
+      repository: codex.repository,
+      issueNumber: codex.issueNumber,
+      branch: codex.branch,
+      prompt: codex.prompt,
+      stage: codex.stage,
+      iteration: codex.iteration,
+      iterationCycle: codex.iterationCycle,
     })
 
     const prNumber = codex.prNumber
     const prUrl = codex.prUrl
     if (projection && prNumber && prUrl) {
-      yield* Effect.tryPromise({
-        try: () => codexStore.updateRunPrInfo(projection.id, prNumber, prUrl, codex.headSha),
-        catch: (cause) => new AgentRunCallbackStorageError({ operation: 'update-codex-pr-projection', cause }),
-      })
+      yield* codexStores.updateRunPrInfo(codexStore, projection.id, prNumber, prUrl, codex.headSha)
     }
 
     const reviewStatus = codex.reviewStatus
     if (projection && reviewStatus) {
-      yield* Effect.tryPromise({
-        try: () =>
-          codexStore.updateReviewStatus({
-            runId: projection.id,
-            status: reviewStatus,
-            summary: codex.reviewSummary ?? {},
-          }),
-        catch: (cause) => new AgentRunCallbackStorageError({ operation: 'update-codex-review-projection', cause }),
+      yield* codexStores.updateReviewStatus(codexStore, {
+        runId: projection.id,
+        status: reviewStatus,
+        summary: codex.reviewSummary ?? {},
       })
     }
 
@@ -287,6 +269,7 @@ const updateCodexNotifyProjection = (
   })
 
 const updateCodexRunCompleteProjection = (
+  codexStores: CodexRunProjectionStoreServiceDefinition,
   codexStore: CodexRunProjectionStore,
   run: AgentRunRecord,
   parsed: Extract<ParsedCallback, { kind: 'run_complete' }>,
@@ -295,85 +278,74 @@ const updateCodexRunCompleteProjection = (
     const codex = parsed.codexProjection
     const agentRunName = deriveAgentRunName(run, parsed) ?? parsed.agentRunName ?? run.externalRunId ?? run.id
     const agentRunNamespace = deriveAgentRunNamespace(run, parsed)
-    const existing = yield* Effect.tryPromise({
-      try: async () =>
-        (codex.runId ? await codexStore.getRunById(codex.runId) : null) ??
-        (agentRunName ? await codexStore.getRunByAgentRun(agentRunName, agentRunNamespace) : null),
-      catch: (cause) => new AgentRunCallbackStorageError({ operation: 'lookup-codex-run-projection', cause }),
-    })
+    const existing =
+      (codex.runId ? yield* codexStores.getRunById(codexStore, codex.runId) : null) ??
+      (agentRunName ? yield* codexStores.getRunByAgentRun(codexStore, agentRunName, agentRunNamespace) : null)
     const repository = codex.repository || existing?.repository || 'unknown'
     const issueNumber = codex.issueNumber > 0 ? codex.issueNumber : (existing?.issueNumber ?? 0)
     const branch = codex.head || existing?.branch || 'unknown'
-    const projection = yield* Effect.tryPromise({
-      try: () =>
-        codexStore.upsertRunComplete({
-          runId: codex.runId,
-          repository,
-          issueNumber,
-          branch,
-          agentRunName,
-          agentRunUid: codex.agentRunUid ?? existing?.agentRunUid ?? deriveAgentRunUid(run, parsed),
-          agentRunNamespace,
-          stage: codex.stage ?? existing?.stage ?? null,
-          turnId: codex.turnId ?? existing?.turnId ?? null,
-          threadId: codex.threadId ?? existing?.threadId ?? null,
-          status: 'run_complete',
-          phase: codex.phase,
-          iteration: codex.iteration,
-          iterationCycle: codex.iterationCycle,
-          prompt: codex.prompt ?? existing?.prompt ?? null,
-          runCompletePayload: {
-            ...codex.runCompletePayload,
-            issueTitle: codex.issueTitle,
-            issueBody: codex.issueBody,
-            issueUrl: codex.issueUrl,
-            base: codex.base,
-            head: branch,
-            repository,
-            issueNumber,
-            turnId: codex.turnId ?? existing?.turnId ?? null,
-            threadId: codex.threadId ?? existing?.threadId ?? null,
-            iteration: codex.iteration,
-            iteration_cycle: codex.iterationCycle,
-            iterations: codex.iterations,
-            runId: codex.runId,
-            agentRunName,
-            agentRunNamespace,
-            agentRunUid: codex.agentRunUid,
-          },
-          startedAt: codex.startedAt,
-          finishedAt: codex.finishedAt,
-        }),
-      catch: (cause) => new AgentRunCallbackStorageError({ operation: 'upsert-codex-run-complete-projection', cause }),
+    const projection = yield* codexStores.upsertRunComplete(codexStore, {
+      runId: codex.runId,
+      repository,
+      issueNumber,
+      branch,
+      agentRunName,
+      agentRunUid: codex.agentRunUid ?? existing?.agentRunUid ?? deriveAgentRunUid(run, parsed),
+      agentRunNamespace,
+      stage: codex.stage ?? existing?.stage ?? null,
+      turnId: codex.turnId ?? existing?.turnId ?? null,
+      threadId: codex.threadId ?? existing?.threadId ?? null,
+      status: 'run_complete',
+      phase: codex.phase,
+      iteration: codex.iteration,
+      iterationCycle: codex.iterationCycle,
+      prompt: codex.prompt ?? existing?.prompt ?? null,
+      runCompletePayload: {
+        ...codex.runCompletePayload,
+        issueTitle: codex.issueTitle,
+        issueBody: codex.issueBody,
+        issueUrl: codex.issueUrl,
+        base: codex.base,
+        head: branch,
+        repository,
+        issueNumber,
+        turnId: codex.turnId ?? existing?.turnId ?? null,
+        threadId: codex.threadId ?? existing?.threadId ?? null,
+        iteration: codex.iteration,
+        iteration_cycle: codex.iterationCycle,
+        iterations: codex.iterations,
+        runId: codex.runId,
+        agentRunName,
+        agentRunNamespace,
+        agentRunUid: codex.agentRunUid,
+      },
+      startedAt: codex.startedAt,
+      finishedAt: codex.finishedAt,
     })
 
     if (codex.artifacts.length > 0) {
-      yield* Effect.tryPromise({
-        try: () => codexStore.upsertArtifacts({ runId: projection.id, artifacts: codex.artifacts }),
-        catch: (cause) => new AgentRunCallbackStorageError({ operation: 'upsert-codex-artifact-projection', cause }),
-      })
+      yield* codexStores.upsertArtifacts(codexStore, { runId: projection.id, artifacts: codex.artifacts })
     }
 
     return projection
   })
 
-const updateCodexRunProjection = (
-  run: AgentRunRecord,
-  parsed: ParsedCallback,
-  deps: AgentRunCallbacksApiDependencies,
-) =>
-  Effect.acquireUseRelease(
-    openCodexStore(deps),
-    (codexStore) =>
-      Effect.gen(function* () {
-        yield* readyCodexStore(codexStore)
-        if (parsed.kind === 'notify') {
-          return yield* updateCodexNotifyProjection(codexStore, run, parsed)
-        }
-        return yield* updateCodexRunCompleteProjection(codexStore, run, parsed)
-      }),
-    closeCodexStore,
-  )
+const updateCodexRunProjection = (run: AgentRunRecord, parsed: ParsedCallback) =>
+  Effect.gen(function* () {
+    const codexStores = yield* CodexRunProjectionStoreService
+    return yield* Effect.acquireUseRelease(
+      codexStores.open,
+      (codexStore) =>
+        Effect.gen(function* () {
+          yield* codexStores.ready(codexStore)
+          if (parsed.kind === 'notify') {
+            return yield* updateCodexNotifyProjection(codexStores, codexStore, run, parsed)
+          }
+          return yield* updateCodexRunCompleteProjection(codexStores, codexStore, run, parsed)
+        }),
+      codexStores.close,
+    )
+  })
 
 export const ingestAgentRunCallbackEffect = (
   routeId: string,
@@ -399,7 +371,7 @@ export const ingestAgentRunCallbackEffect = (
           yield* stores.ready(activeStore)
           const run = yield* resolveAgentRun(store, routeId, parsed)
           const updated = yield* updateAgentRunProjection(store, run, parsed)
-          const codexRun = yield* updateCodexRunProjection(run, parsed, deps)
+          const codexRun = yield* updateCodexRunProjection(run, parsed)
           yield* createAuditEvent(store, {
             entityType: 'AgentRun',
             entityId: run.id,
@@ -419,16 +391,22 @@ export const ingestAgentRunCallbackEffect = (
         }),
       stores.close,
     )
-  }).pipe(Effect.provide(makeAgentRunStoreLayer(deps.storeFactory)))
+  }).pipe(
+    Effect.provide(
+      Layer.merge(makeAgentRunStoreLayer(deps.storeFactory), makeCodexRunProjectionStoreLayer(deps.codexStoreFactory)),
+    ),
+  )
 
 const describeCallbackError = (error: AgentRunCallbackError) => {
   if (error instanceof AgentRunCallbackRequestError) return error.message
   if (error instanceof AgentRunStorageError) return describeAgentRunSubmitError(error)
+  if (error instanceof CodexRunProjectionStorageError) return describeCodexRunProjectionStorageError(error)
   return `AgentRun callback storage ${error.operation} failed: ${toErrorMessage(error.cause)}`
 }
 
 const callbackStatus = (error: AgentRunCallbackError) => {
   if (error instanceof AgentRunCallbackRequestError) return error.status
+  if (error instanceof CodexRunProjectionStorageError) return error.httpStatusCode
   return 503
 }
 

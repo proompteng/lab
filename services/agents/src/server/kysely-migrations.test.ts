@@ -40,7 +40,7 @@ describe('Agents migration registration', () => {
     expect(matches).toEqual([])
   })
 
-  it('creates the Codex projection schema before backfilling retired Jangar rows', () => {
+  it('creates the Codex projection schema before the retained legacy backfill marker', () => {
     const registered = __test__.getRegisteredMigrations()
 
     expect(registered.indexOf('20260520_agents_codex_run_projection')).toBeGreaterThanOrEqual(0)
@@ -49,26 +49,22 @@ describe('Agents migration registration', () => {
     )
   })
 
-  it('keeps retired codex_judge access isolated to the Agents legacy backfill migration', () => {
+  it('does not reach back into retired Codex judge storage from Agents server code', () => {
     const serverDir = fileURLToPath(new URL('.', import.meta.url))
     const codexJudgeMatches = listTypeScriptFiles(serverDir).filter((path) =>
       readFileSync(path, 'utf8').includes('codex_judge'),
     )
     const relativeMatches = codexJudgeMatches.map((path) => relative(serverDir, path)).sort()
 
-    expect(relativeMatches).toEqual(['migrations/20260521_agents_codex_legacy_backfill.ts'])
+    expect(relativeMatches).toEqual([])
   })
 
-  it('backfills retired Jangar Codex judge rows into the Agents-owned projection schema', () => {
+  it('keeps the retired legacy backfill migration as a no-op registry marker', () => {
     const migrationPath = new URL('./migrations/20260521_agents_codex_legacy_backfill.ts', import.meta.url)
     const normalized = readFileSync(fileURLToPath(migrationPath), 'utf8').toLowerCase().replace(/\s+/g, ' ')
 
-    expect(normalized).toContain("to_regclass('codex_judge.runs')")
-    expect(normalized).toContain('insert into agents_codex.runs')
-    expect(normalized).toContain('from codex_judge.runs legacy')
-    expect(normalized).toContain('insert into agents_codex.artifacts')
-    expect(normalized).toContain('from codex_judge.artifacts legacy')
-    expect(normalized).toContain('insert into agents_codex.evaluations')
-    expect(normalized).toContain('from codex_judge.evaluations legacy')
+    expect(normalized).not.toContain('codex_judge')
+    expect(normalized).toContain('export const up = async')
+    expect(normalized).toContain('retained only so already-applied production migration history remains stable')
   })
 })

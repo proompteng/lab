@@ -1,5 +1,9 @@
 import { createFileRoute, type AgentsServerRouteArgs } from '../../../server/server-route'
-import { getCodexIssuesHandler } from '../../../server/v1/codex-runs'
+import {
+  getCodexIssuesHandler as getCodexIssuesApiHandler,
+  type CodexRunsApiDependencies,
+} from '../../../server/v1/codex-runs'
+import { resolveCodexRunsApiDependencies, runtimeDependencyErrorResponse } from '../../../server/v1/runtime'
 
 export const Route = createFileRoute('/v1/codex/issues')({
   server: {
@@ -9,3 +13,9 @@ export const Route = createFileRoute('/v1/codex/issues')({
     },
   },
 })
+
+export const getCodexIssuesHandler = async (request: Request, deps: Partial<CodexRunsApiDependencies> = {}) => {
+  const resolved = await resolveCodexRunsApiDependencies(deps)
+  if (!resolved.ok) return runtimeDependencyErrorResponse(resolved.error)
+  return getCodexIssuesApiHandler(request, resolved.value)
+}

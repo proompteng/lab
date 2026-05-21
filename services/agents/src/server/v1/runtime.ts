@@ -6,6 +6,8 @@ import type { AgentsApiDependencies } from './agents'
 import type { AgentRunCallbacksApiDependencies } from './agent-run-callbacks'
 import type { AgentRunsApiDependencies } from './agent-runs-dependencies'
 import type { AgentRunRerunsApiDependencies } from './agent-run-reruns'
+import type { CodexGithubEventsApiDependencies } from './codex-github-events'
+import type { CodexRunsApiDependencies } from './codex-runs'
 import type { MemoriesApiDependencies } from './memories'
 import type { MemoryOperationsApiDependencies } from './memory-operations'
 import type { MemoryQueriesApiDependencies } from './memory-queries'
@@ -27,6 +29,8 @@ export type AgentsV1RuntimeDependencies = {
   agentRunCallbacks?: Partial<AgentRunCallbacksApiDependencies>
   agentRuns?: Partial<AgentRunsApiDependencies>
   agentRunReruns?: Partial<AgentRunRerunsApiDependencies>
+  codexGithubEvents?: Partial<CodexGithubEventsApiDependencies>
+  codexRuns?: Partial<CodexRunsApiDependencies>
   memories?: Partial<MemoriesApiDependencies>
   memoryOperations?: Partial<MemoryOperationsApiDependencies>
   memoryQueries?: Partial<MemoryQueriesApiDependencies>
@@ -51,6 +55,12 @@ export type AgentsV1RuntimeService = {
   resolveAgentRunRerunsDependencies: (
     overrides?: Partial<AgentRunRerunsApiDependencies>,
   ) => Effect.Effect<AgentRunRerunsApiDependencies, AgentsV1RuntimeConfigurationError>
+  resolveCodexGithubEventsDependencies: (
+    overrides?: Partial<CodexGithubEventsApiDependencies>,
+  ) => Effect.Effect<CodexGithubEventsApiDependencies, AgentsV1RuntimeConfigurationError>
+  resolveCodexRunsDependencies: (
+    overrides?: Partial<CodexRunsApiDependencies>,
+  ) => Effect.Effect<CodexRunsApiDependencies, AgentsV1RuntimeConfigurationError>
   resolveMemoriesDependencies: (
     overrides?: Partial<MemoriesApiDependencies>,
   ) => Effect.Effect<MemoriesApiDependencies, AgentsV1RuntimeConfigurationError>
@@ -134,6 +144,10 @@ export const createAgentsV1RuntimeService = (
       Effect.flatMap((resolved) => ensureStoreFactory('AgentRun reruns API', resolved)),
       Effect.map((resolved) => resolved as AgentRunRerunsApiDependencies),
     ),
+  resolveCodexGithubEventsDependencies: (overrides = {}) =>
+    Effect.succeed({ ...dependencies.codexGithubEvents, ...overrides } as CodexGithubEventsApiDependencies),
+  resolveCodexRunsDependencies: (overrides = {}) =>
+    Effect.succeed({ ...dependencies.codexRuns, ...overrides } as CodexRunsApiDependencies),
   resolveMemoriesDependencies: (overrides = {}) =>
     pipe(
       Effect.succeed({ ...dependencies.memories, ...overrides }),
@@ -228,6 +242,20 @@ export const resolveAgentRunRerunsApiDependencies = (
 ): Promise<ResolvedDependencyResult<AgentRunRerunsApiDependencies>> =>
   toResolvedDependencyResult(
     runWithConfiguredOrAdHocRuntime((service) => service.resolveAgentRunRerunsDependencies(overrides)),
+  )
+
+export const resolveCodexGithubEventsApiDependencies = (
+  overrides: Partial<CodexGithubEventsApiDependencies> = {},
+): Promise<ResolvedDependencyResult<CodexGithubEventsApiDependencies>> =>
+  toResolvedDependencyResult(
+    runWithConfiguredOrAdHocRuntime((service) => service.resolveCodexGithubEventsDependencies(overrides)),
+  )
+
+export const resolveCodexRunsApiDependencies = (
+  overrides: Partial<CodexRunsApiDependencies> = {},
+): Promise<ResolvedDependencyResult<CodexRunsApiDependencies>> =>
+  toResolvedDependencyResult(
+    runWithConfiguredOrAdHocRuntime((service) => service.resolveCodexRunsDependencies(overrides)),
   )
 
 export const resolveAgentsApiDependencies = (

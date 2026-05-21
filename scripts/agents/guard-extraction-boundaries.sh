@@ -447,6 +447,11 @@ fail_if_matches \
   "${ROOT_DIR}/services/agents/Dockerfile.codex-runner"
 
 fail_if_matches \
+  "services/agents must not read retired Codex judge storage after Agents owns Codex projections" \
+  'codex_judge' \
+  "${ROOT_DIR}/services/agents/src/server"
+
+fail_if_matches \
   "Agents runtime subscribers must not consume legacy workflow, Argo workflow, or workflow_comms agent-message subjects" \
   'workflow_comms\.agent_messages|legacy_workflow_comms|workflow\.>|agents\.workflow\.>|argo\.workflow|agents\.agentrun\.>|agents\.agent_messages\.>|parts\[[0-9]+\] === .workflow.|parts\[[0-9]+\] === .argo.' \
   "${ROOT_DIR}/services/agents/src/server/agent-comms-subscriber.ts" \

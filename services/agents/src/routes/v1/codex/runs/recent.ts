@@ -1,5 +1,9 @@
 import { createFileRoute, type AgentsServerRouteArgs } from '../../../../server/server-route'
-import { getCodexRecentRunsHandler } from '../../../../server/v1/codex-runs'
+import {
+  getCodexRecentRunsHandler as getCodexRecentRunsApiHandler,
+  type CodexRunsApiDependencies,
+} from '../../../../server/v1/codex-runs'
+import { resolveCodexRunsApiDependencies, runtimeDependencyErrorResponse } from '../../../../server/v1/runtime'
 
 export const Route = createFileRoute('/v1/codex/runs/recent')({
   server: {
@@ -9,3 +13,9 @@ export const Route = createFileRoute('/v1/codex/runs/recent')({
     },
   },
 })
+
+export const getCodexRecentRunsHandler = async (request: Request, deps: Partial<CodexRunsApiDependencies> = {}) => {
+  const resolved = await resolveCodexRunsApiDependencies(deps)
+  if (!resolved.ok) return runtimeDependencyErrorResponse(resolved.error)
+  return getCodexRecentRunsApiHandler(request, resolved.value)
+}

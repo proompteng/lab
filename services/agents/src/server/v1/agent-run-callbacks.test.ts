@@ -197,6 +197,8 @@ describe('AgentRun callbacks v1 API', () => {
       7299,
       'https://github.com/proompteng/lab/pull/7299',
       null,
+      undefined,
+      undefined,
     )
   })
 })

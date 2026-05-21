@@ -1,7 +1,15 @@
 import { Data, Effect } from 'effect'
 
+import { type CodexRunProjectionStore } from '../codex-run-projection-store'
 import { errorResponse, okResponse } from '../http'
-import { createCodexRunProjectionStore, type CodexRunProjectionStore } from '../codex-run-projection-store'
+
+import {
+  CodexRunProjectionStorageError,
+  CodexRunProjectionStoreService,
+  type CodexRunProjectionStoreServiceDefinition,
+  describeCodexRunProjectionStorageError,
+  makeCodexRunProjectionStoreLayer,
+} from './codex-run-projection-store'
 
 type CodexRunsStore = Pick<
   CodexRunProjectionStore,
@@ -24,14 +32,7 @@ class CodexRunsRequestError extends Data.TaggedError('CodexRunsRequestError')<{
   readonly status: 400
 }> {}
 
-class CodexRunsStorageError extends Data.TaggedError('CodexRunsStorageError')<{
-  readonly operation: string
-  readonly cause: unknown
-}> {}
-
-type CodexRunsError = CodexRunsRequestError | CodexRunsStorageError
-
-const toErrorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
+type CodexRunsError = CodexRunsRequestError | CodexRunProjectionStorageError
 
 const parsePositiveInt = (value: string | null, max: number) => {
   if (!value) return null
@@ -39,25 +40,6 @@ const parsePositiveInt = (value: string | null, max: number) => {
   if (!Number.isFinite(parsed) || parsed <= 0) return null
   return Math.min(parsed, max)
 }
-
-const openStore = (deps: CodexRunsApiDependencies = {}) =>
-  Effect.try({
-    try: () => (deps.storeFactory ?? createCodexRunProjectionStore)(),
-    catch: (cause) => new CodexRunsStorageError({ operation: 'open-codex-run-projection-store', cause }),
-  })
-
-const readyStore = (store: CodexRunsStore) =>
-  Effect.tryPromise({
-    try: () => store.ready,
-    catch: (cause) => new CodexRunsStorageError({ operation: 'ready-codex-run-projection-store', cause }),
-  })
-
-const closeStore = (store: CodexRunsStore) =>
-  Effect.promise(() =>
-    store.close().catch((error) => {
-      console.warn('[agents] failed to close Codex run projection store', error)
-    }),
-  )
 
 const requireRepository = (url: URL) => {
   const repository = url.searchParams.get('repository')?.trim() ?? ''
@@ -95,27 +77,35 @@ const requirePrNumber = (url: URL) => {
   return Effect.succeed(prNumber)
 }
 
-export const getCodexRunByIdEffect = (request: Request, deps: CodexRunsApiDependencies = {}) =>
+const withCodexRunProjectionStore = <A>(
+  run: (
+    store: CodexRunProjectionStore,
+    stores: CodexRunProjectionStoreServiceDefinition,
+  ) => Effect.Effect<A, CodexRunProjectionStorageError>,
+): Effect.Effect<A, CodexRunProjectionStorageError, CodexRunProjectionStoreService> =>
   Effect.gen(function* () {
-    const url = new URL(request.url)
-    const runId = yield* requireRunId(url)
-
+    const stores = yield* CodexRunProjectionStoreService
     return yield* Effect.acquireUseRelease(
-      openStore(deps),
-      (store) =>
-        Effect.gen(function* () {
-          yield* readyStore(store)
-          const run = yield* Effect.tryPromise({
-            try: () => store.getRunById(runId),
-            catch: (cause) => new CodexRunsStorageError({ operation: 'get-codex-run-by-id', cause }),
-          })
-          return { ok: true, run }
-        }),
-      closeStore,
+      stores.open,
+      (store) => stores.ready(store).pipe(Effect.zipRight(run(store, stores))),
+      stores.close,
     )
   })
 
-export const getCodexRunHistoryEffect = (request: Request, deps: CodexRunsApiDependencies = {}) =>
+export const getCodexRunByIdWithServicesEffect = (
+  request: Request,
+): Effect.Effect<Record<string, unknown>, CodexRunsError, CodexRunProjectionStoreService> =>
+  Effect.gen(function* () {
+    const url = new URL(request.url)
+    const runId = yield* requireRunId(url)
+    return yield* withCodexRunProjectionStore((store, stores) =>
+      stores.getRunById(store, runId).pipe(Effect.map((run) => ({ ok: true, run }))),
+    )
+  })
+
+export const getCodexRunHistoryWithServicesEffect = (
+  request: Request,
+): Effect.Effect<Record<string, unknown>, CodexRunsError, CodexRunProjectionStoreService> =>
   Effect.gen(function* () {
     const url = new URL(request.url)
     const repository = yield* requireRepository(url)
@@ -123,114 +113,99 @@ export const getCodexRunHistoryEffect = (request: Request, deps: CodexRunsApiDep
     const branch = url.searchParams.get('branch')?.trim() || undefined
     const limit = parsePositiveInt(url.searchParams.get('limit'), 100) ?? undefined
 
-    return yield* Effect.acquireUseRelease(
-      openStore(deps),
-      (store) =>
-        Effect.gen(function* () {
-          yield* readyStore(store)
-          const history = yield* Effect.tryPromise({
-            try: () => store.getRunHistory({ repository, issueNumber, branch, limit }),
-            catch: (cause) => new CodexRunsStorageError({ operation: 'get-codex-run-history', cause }),
-          })
-          return { ok: true, ...history }
-        }),
-      closeStore,
+    return yield* withCodexRunProjectionStore((store, stores) =>
+      stores
+        .getRunHistory(store, { repository, issueNumber, branch, limit })
+        .pipe(Effect.map((history) => ({ ok: true, ...history }))),
     )
   })
 
-export const getCodexRunsByPrEffect = (request: Request, deps: CodexRunsApiDependencies = {}) =>
+export const getCodexRunsByPrWithServicesEffect = (
+  request: Request,
+): Effect.Effect<Record<string, unknown>, CodexRunsError, CodexRunProjectionStoreService> =>
   Effect.gen(function* () {
     const url = new URL(request.url)
     const repository = yield* requireRepository(url)
     const prNumber = yield* requirePrNumber(url)
-
-    return yield* Effect.acquireUseRelease(
-      openStore(deps),
-      (store) =>
-        Effect.gen(function* () {
-          yield* readyStore(store)
-          const runs = yield* Effect.tryPromise({
-            try: () => store.listRunsByPrNumber(repository, prNumber),
-            catch: (cause) => new CodexRunsStorageError({ operation: 'list-codex-runs-by-pr', cause }),
-          })
-          return { ok: true, runs }
-        }),
-      closeStore,
+    return yield* withCodexRunProjectionStore((store, stores) =>
+      stores.listRunsByPrNumber(store, repository, prNumber).pipe(Effect.map((runs) => ({ ok: true, runs }))),
     )
   })
 
-export const getCodexRecentRunsEffect = (request: Request, deps: CodexRunsApiDependencies = {}) =>
+export const getCodexRecentRunsWithServicesEffect = (
+  request: Request,
+): Effect.Effect<Record<string, unknown>, CodexRunsError, CodexRunProjectionStoreService> =>
   Effect.gen(function* () {
     const url = new URL(request.url)
     const repository = url.searchParams.get('repository')?.trim() || undefined
     const limit = parsePositiveInt(url.searchParams.get('limit'), 200) ?? undefined
-
-    return yield* Effect.acquireUseRelease(
-      openStore(deps),
-      (store) =>
-        Effect.gen(function* () {
-          yield* readyStore(store)
-          const runs = yield* Effect.tryPromise({
-            try: () => store.listRecentRuns({ repository, limit }),
-            catch: (cause) => new CodexRunsStorageError({ operation: 'list-codex-recent-runs', cause }),
-          })
-          return { ok: true, runs }
-        }),
-      closeStore,
+    return yield* withCodexRunProjectionStore((store, stores) =>
+      stores.listRecentRuns(store, { repository, limit }).pipe(Effect.map((runs) => ({ ok: true, runs }))),
     )
   })
 
-export const getCodexRunsPageEffect = (request: Request, deps: CodexRunsApiDependencies = {}) =>
+export const getCodexRunsPageWithServicesEffect = (
+  request: Request,
+): Effect.Effect<Record<string, unknown>, CodexRunsError, CodexRunProjectionStoreService> =>
   Effect.gen(function* () {
     const url = new URL(request.url)
     const repository = url.searchParams.get('repository')?.trim() || undefined
     const page = parsePositiveInt(url.searchParams.get('page'), Number.MAX_SAFE_INTEGER) ?? 1
     const pageSize = parsePositiveInt(url.searchParams.get('pageSize'), 200) ?? 50
 
-    return yield* Effect.acquireUseRelease(
-      openStore(deps),
-      (store) =>
-        Effect.gen(function* () {
-          yield* readyStore(store)
-          const result = yield* Effect.tryPromise({
-            try: () => store.listRunsPage({ repository, page, pageSize }),
-            catch: (cause) => new CodexRunsStorageError({ operation: 'list-codex-runs-page', cause }),
-          })
-          return { ok: true, runs: result.runs, total: result.total }
-        }),
-      closeStore,
+    return yield* withCodexRunProjectionStore((store, stores) =>
+      stores
+        .listRunsPage(store, { repository, page, pageSize })
+        .pipe(Effect.map((result) => ({ ok: true, runs: result.runs, total: result.total }))),
     )
   })
 
-export const getCodexIssuesEffect = (request: Request, deps: CodexRunsApiDependencies = {}) =>
+export const getCodexIssuesWithServicesEffect = (
+  request: Request,
+): Effect.Effect<Record<string, unknown>, CodexRunsError, CodexRunProjectionStoreService> =>
   Effect.gen(function* () {
     const url = new URL(request.url)
     const repository = yield* requireRepository(url)
     const limit = parsePositiveInt(url.searchParams.get('limit'), 500) ?? undefined
-
-    return yield* Effect.acquireUseRelease(
-      openStore(deps),
-      (store) =>
-        Effect.gen(function* () {
-          yield* readyStore(store)
-          const issues = yield* Effect.tryPromise({
-            try: () => store.listIssueSummaries(repository, limit),
-            catch: (cause) => new CodexRunsStorageError({ operation: 'list-codex-issue-summaries', cause }),
-          })
-          return { ok: true, issues }
-        }),
-      closeStore,
+    return yield* withCodexRunProjectionStore((store, stores) =>
+      stores.listIssueSummaries(store, repository, limit).pipe(Effect.map((issues) => ({ ok: true, issues }))),
     )
   })
 
+const provideCodexProjectionStore = <A, E, R>(
+  effect: Effect.Effect<A, E, R | CodexRunProjectionStoreService>,
+  deps: CodexRunsApiDependencies = {},
+) =>
+  effect.pipe(
+    Effect.provide(makeCodexRunProjectionStoreLayer(deps.storeFactory as (() => CodexRunProjectionStore) | undefined)),
+  )
+
+export const getCodexRunByIdEffect = (request: Request, deps: CodexRunsApiDependencies = {}) =>
+  provideCodexProjectionStore(getCodexRunByIdWithServicesEffect(request), deps)
+
+export const getCodexRunHistoryEffect = (request: Request, deps: CodexRunsApiDependencies = {}) =>
+  provideCodexProjectionStore(getCodexRunHistoryWithServicesEffect(request), deps)
+
+export const getCodexRunsByPrEffect = (request: Request, deps: CodexRunsApiDependencies = {}) =>
+  provideCodexProjectionStore(getCodexRunsByPrWithServicesEffect(request), deps)
+
+export const getCodexRecentRunsEffect = (request: Request, deps: CodexRunsApiDependencies = {}) =>
+  provideCodexProjectionStore(getCodexRecentRunsWithServicesEffect(request), deps)
+
+export const getCodexRunsPageEffect = (request: Request, deps: CodexRunsApiDependencies = {}) =>
+  provideCodexProjectionStore(getCodexRunsPageWithServicesEffect(request), deps)
+
+export const getCodexIssuesEffect = (request: Request, deps: CodexRunsApiDependencies = {}) =>
+  provideCodexProjectionStore(getCodexIssuesWithServicesEffect(request), deps)
+
 const describeCodexRunsError = (error: CodexRunsError) => {
   if (error instanceof CodexRunsRequestError) return error.message
-  return `Codex run projection ${error.operation} failed: ${toErrorMessage(error.cause)}`
+  return describeCodexRunProjectionStorageError(error)
 }
 
 const codexRunsStatus = (error: CodexRunsError) => {
   if (error instanceof CodexRunsRequestError) return error.status
-  return toErrorMessage(error.cause).includes('DATABASE_URL') ? 503 : 500
+  return error.httpStatusCode
 }
 
 const runHandler = async (effect: Effect.Effect<Record<string, unknown>, CodexRunsError>): Promise<Response> => {

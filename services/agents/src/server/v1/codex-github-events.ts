@@ -1,11 +1,15 @@
 import { Data, Effect } from 'effect'
 
-import {
-  createCodexRunProjectionStore,
-  type CodexRunProjectionStore,
-  type CodexRunRecord,
-} from '../codex-run-projection-store'
+import { type CodexRunProjectionStore, type CodexRunRecord } from '../codex-run-projection-store'
 import { errorResponse, okResponse, parseJsonBody } from '../http'
+
+import {
+  CodexRunProjectionStorageError,
+  CodexRunProjectionStoreService,
+  type CodexRunProjectionStoreServiceDefinition,
+  describeCodexRunProjectionStorageError,
+  makeCodexRunProjectionStoreLayer,
+} from './codex-run-projection-store'
 
 type CodexGithubEventsStore = Pick<
   CodexRunProjectionStore,
@@ -28,12 +32,7 @@ class CodexGithubEventRequestError extends Data.TaggedError('CodexGithubEventReq
   readonly status: 400 | 422
 }> {}
 
-class CodexGithubEventStorageError extends Data.TaggedError('CodexGithubEventStorageError')<{
-  readonly operation: string
-  readonly cause: unknown
-}> {}
-
-type CodexGithubEventError = CodexGithubEventRequestError | CodexGithubEventStorageError
+type CodexGithubEventError = CodexGithubEventRequestError | CodexRunProjectionStorageError
 
 type GithubWebhookStreamEvent = {
   event: string
@@ -305,55 +304,40 @@ const dedupeRuns = (runs: CodexRunRecord[]) => {
   return [...seen.values()]
 }
 
-const openStore = (deps: CodexGithubEventsApiDependencies = {}) =>
-  Effect.try({
-    try: () => (deps.storeFactory ?? createCodexRunProjectionStore)(),
-    catch: (cause) => new CodexGithubEventStorageError({ operation: 'open-codex-run-projection-store', cause }),
-  })
-
-const readyStore = (store: CodexGithubEventsStore) =>
-  Effect.tryPromise({
-    try: () => store.ready,
-    catch: (cause) => new CodexGithubEventStorageError({ operation: 'ready-codex-run-projection-store', cause }),
-  })
-
-const closeStore = (store: CodexGithubEventsStore) =>
-  Effect.promise(() =>
-    store.close().catch((error) => {
-      console.warn('[agents] failed to close Codex GitHub event projection store', error)
-    }),
-  )
-
-const listRunsByPrNumbers = (store: CodexGithubEventsStore, repository: string, prNumbers: number[]) =>
-  Effect.tryPromise({
-    try: async () => {
-      const runs: CodexRunRecord[] = []
-      for (const prNumber of prNumbers) {
-        runs.push(...(await store.listRunsByPrNumber(repository, prNumber)))
-      }
-      return dedupeRuns(runs)
-    },
-    catch: (cause) => new CodexGithubEventStorageError({ operation: 'list-codex-runs-by-pr', cause }),
+const listRunsByPrNumbers = (
+  stores: CodexRunProjectionStoreServiceDefinition,
+  store: CodexRunProjectionStore,
+  repository: string,
+  prNumbers: number[],
+) =>
+  Effect.gen(function* () {
+    const runs: CodexRunRecord[] = []
+    for (const prNumber of prNumbers) {
+      runs.push(...(yield* stores.listRunsByPrNumber(store, repository, prNumber)))
+    }
+    return dedupeRuns(runs)
   })
 
 const resolveRunsForCommitOrPr = (
-  store: CodexGithubEventsStore,
+  stores: CodexRunProjectionStoreServiceDefinition,
+  store: CodexRunProjectionStore,
   repository: string,
   commitSha: string | null,
   prNumbers: number[],
 ) =>
   Effect.gen(function* () {
     if (commitSha) {
-      const byCommit = yield* Effect.tryPromise({
-        try: () => store.listRunsByCommitSha(repository, commitSha),
-        catch: (cause) => new CodexGithubEventStorageError({ operation: 'list-codex-runs-by-commit', cause }),
-      })
+      const byCommit = yield* stores.listRunsByCommitSha(store, repository, commitSha)
       if (byCommit.length > 0) return dedupeRuns(byCommit)
     }
-    return yield* listRunsByPrNumbers(store, repository, prNumbers)
+    return yield* listRunsByPrNumbers(stores, store, repository, prNumbers)
   })
 
-const handleCheckEvent = (store: CodexGithubEventsStore, event: GithubWebhookStreamEvent) =>
+const handleCheckEvent = (
+  stores: CodexRunProjectionStoreServiceDefinition,
+  store: CodexRunProjectionStore,
+  event: GithubWebhookStreamEvent,
+) =>
   Effect.gen(function* () {
     const repository = event.repository
     const check = extractCheckPayload(event.payload)
@@ -362,52 +346,51 @@ const handleCheckEvent = (store: CodexGithubEventsStore, event: GithubWebhookStr
     const prNumbers = extractCheckPullRequests(check)
     const ciStatus = deriveCiStatus(normalizeOptionalString(check.status), normalizeOptionalString(check.conclusion))
     const ciUrl = normalizeOptionalString(check.html_url ?? check.details_url ?? check.url)
-    const runs = yield* resolveRunsForCommitOrPr(store, repository, commitSha, prNumbers)
+    const runs = yield* resolveRunsForCommitOrPr(stores, store, repository, commitSha, prNumbers)
     const updatedRunIds: string[] = []
     for (const run of runs) {
-      const updated = yield* Effect.tryPromise({
-        try: () => store.updateCiStatus({ runId: run.id, status: ciStatus, url: ciUrl, commitSha }),
-        catch: (cause) => new CodexGithubEventStorageError({ operation: 'update-codex-ci-projection', cause }),
+      const updated = yield* stores.updateCiStatus(store, {
+        runId: run.id,
+        status: ciStatus,
+        url: ciUrl,
+        commitSha,
       })
       if (updated) updatedRunIds.push(updated.id)
     }
     return { updatedRunIds, status: ciStatus }
   })
 
-const handlePullRequestEvent = (store: CodexGithubEventsStore, event: GithubWebhookStreamEvent) =>
+const handlePullRequestEvent = (
+  stores: CodexRunProjectionStoreServiceDefinition,
+  store: CodexRunProjectionStore,
+  event: GithubWebhookStreamEvent,
+) =>
   Effect.gen(function* () {
     const repository = event.repository
     const pr = extractPullRequestInfo(event.payload)
     if (!repository || !pr.number) return { updatedRunIds: [] as string[] }
-    const byBranch = pr.headRef
-      ? yield* Effect.tryPromise({
-          try: () => store.listRunsByBranch(repository, pr.headRef as string),
-          catch: (cause) => new CodexGithubEventStorageError({ operation: 'list-codex-runs-by-branch', cause }),
-        })
-      : []
+    const byBranch = pr.headRef ? yield* stores.listRunsByBranch(store, repository, pr.headRef) : []
     const byCommit =
-      byBranch.length === 0 && pr.headSha
-        ? yield* Effect.tryPromise({
-            try: () => store.listRunsByCommitSha(repository, pr.headSha as string),
-            catch: (cause) => new CodexGithubEventStorageError({ operation: 'list-codex-runs-by-commit', cause }),
-          })
-        : []
+      byBranch.length === 0 && pr.headSha ? yield* stores.listRunsByCommitSha(store, repository, pr.headSha) : []
     const byPr =
-      byBranch.length === 0 && byCommit.length === 0 ? yield* listRunsByPrNumbers(store, repository, [pr.number]) : []
+      byBranch.length === 0 && byCommit.length === 0
+        ? yield* listRunsByPrNumbers(stores, store, repository, [pr.number])
+        : []
     const runs = dedupeRuns([...byBranch, ...byCommit, ...byPr])
     const prUrl = pr.url ?? `https://github.com/${repository}/pull/${pr.number}`
     const updatedRunIds: string[] = []
     for (const run of runs) {
-      const updated = yield* Effect.tryPromise({
-        try: () => store.updateRunPrInfo(run.id, pr.number as number, prUrl, pr.headSha, pr.state, pr.merged),
-        catch: (cause) => new CodexGithubEventStorageError({ operation: 'update-codex-pr-projection', cause }),
-      })
+      const updated = yield* stores.updateRunPrInfo(store, run.id, pr.number, prUrl, pr.headSha, pr.state, pr.merged)
       if (updated) updatedRunIds.push(updated.id)
     }
     return { updatedRunIds }
   })
 
-const handleReviewEvent = (store: CodexGithubEventsStore, event: GithubWebhookStreamEvent) =>
+const handleReviewEvent = (
+  stores: CodexRunProjectionStoreServiceDefinition,
+  store: CodexRunProjectionStore,
+  event: GithubWebhookStreamEvent,
+) =>
   Effect.gen(function* () {
     const repository = event.repository
     if (!repository) return { updatedRunIds: [] as string[] }
@@ -417,28 +400,41 @@ const handleReviewEvent = (store: CodexGithubEventsStore, event: GithubWebhookSt
     const pr = extractPullRequestInfo(event.payload)
     const prNumber = pr.number ?? extractIssueCommentPrNumber(event.payload)
     if (!prNumber) return { updatedRunIds: [] as string[] }
-    const runs = yield* listRunsByPrNumbers(store, repository, [prNumber])
+    const runs = yield* listRunsByPrNumbers(stores, store, repository, [prNumber])
     const reviewStatus =
       event.event === 'pull_request_review'
         ? (normalizeOptionalString(isRecord(event.payload.review) ? event.payload.review.state : null) ?? 'reviewed')
         : 'commented'
     const updatedRunIds: string[] = []
     for (const run of runs) {
-      const updated = yield* Effect.tryPromise({
-        try: () =>
-          store.updateReviewStatus({
-            runId: run.id,
-            status: reviewStatus,
-            summary: { event: event.event, action: event.action, deliveryId: event.deliveryId },
-          }),
-        catch: (cause) => new CodexGithubEventStorageError({ operation: 'update-codex-review-projection', cause }),
+      const updated = yield* stores.updateReviewStatus(store, {
+        runId: run.id,
+        status: reviewStatus,
+        summary: { event: event.event, action: event.action, deliveryId: event.deliveryId },
       })
       if (updated) updatedRunIds.push(updated.id)
     }
     return { updatedRunIds }
   })
 
-export const ingestCodexGithubEventEffect = (request: Request, deps: CodexGithubEventsApiDependencies = {}) =>
+const withCodexRunProjectionStore = <A>(
+  run: (
+    store: CodexRunProjectionStore,
+    stores: CodexRunProjectionStoreServiceDefinition,
+  ) => Effect.Effect<A, CodexRunProjectionStorageError>,
+): Effect.Effect<A, CodexRunProjectionStorageError, CodexRunProjectionStoreService> =>
+  Effect.gen(function* () {
+    const stores = yield* CodexRunProjectionStoreService
+    return yield* Effect.acquireUseRelease(
+      stores.open,
+      (store) => stores.ready(store).pipe(Effect.zipRight(run(store, stores))),
+      stores.close,
+    )
+  })
+
+export const ingestCodexGithubEventWithServicesEffect = (
+  request: Request,
+): Effect.Effect<Record<string, unknown>, CodexGithubEventError, CodexRunProjectionStoreService> =>
   Effect.gen(function* () {
     const payload = yield* Effect.tryPromise({
       try: () => parseJsonBody(request),
@@ -454,31 +450,32 @@ export const ingestCodexGithubEventEffect = (request: Request, deps: CodexGithub
       )
     }
 
-    return yield* Effect.acquireUseRelease(
-      openStore(deps),
-      (store) =>
-        Effect.gen(function* () {
-          yield* readyStore(store)
-          const result =
-            event.event === 'check_run' || event.event === 'check_suite'
-              ? yield* handleCheckEvent(store, event)
-              : event.event === 'pull_request'
-                ? yield* handlePullRequestEvent(store, event)
-                : yield* handleReviewEvent(store, event)
-          return { ok: true, event: event.event, action: event.action, ...result }
-        }),
-      closeStore,
+    return yield* withCodexRunProjectionStore((store, stores) =>
+      Effect.gen(function* () {
+        const result =
+          event.event === 'check_run' || event.event === 'check_suite'
+            ? yield* handleCheckEvent(stores, store, event)
+            : event.event === 'pull_request'
+              ? yield* handlePullRequestEvent(stores, store, event)
+              : yield* handleReviewEvent(stores, store, event)
+        return { ok: true, event: event.event, action: event.action, ...result }
+      }),
     )
   })
 
+export const ingestCodexGithubEventEffect = (request: Request, deps: CodexGithubEventsApiDependencies = {}) =>
+  ingestCodexGithubEventWithServicesEffect(request).pipe(
+    Effect.provide(makeCodexRunProjectionStoreLayer(deps.storeFactory as (() => CodexRunProjectionStore) | undefined)),
+  )
+
 const describeGithubEventError = (error: CodexGithubEventError) => {
   if (error instanceof CodexGithubEventRequestError) return error.message
-  return `Codex GitHub event projection ${error.operation} failed: ${toErrorMessage(error.cause)}`
+  return describeCodexRunProjectionStorageError(error)
 }
 
 const githubEventStatus = (error: CodexGithubEventError) => {
   if (error instanceof CodexGithubEventRequestError) return error.status
-  return toErrorMessage(error.cause).includes('DATABASE_URL') ? 503 : 500
+  return error.httpStatusCode
 }
 
 export const postCodexGithubEventsHandler = async (request: Request, deps: CodexGithubEventsApiDependencies = {}) => {
