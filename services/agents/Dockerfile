@@ -183,6 +183,8 @@ RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-r
   && chmod +x /app/packages/cx-tools/dist/*.js
 
 COPY --from=agents-deps-prod /app/node_modules ./node_modules
+RUN mkdir -p /app/packages/agent-contracts/node_modules \
+  && ln -sf /app/node_modules/effect /app/packages/agent-contracts/node_modules/effect
 WORKDIR /app/services/agents
 COPY --from=agents-build /app/services/agents/package.json ./package.json
 COPY --from=agents-build /app/services/agents/src ./src
@@ -230,6 +232,8 @@ RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-r
   && chmod +x /app/packages/cx-tools/dist/*.js
 
 COPY --from=agents-deps-prod /app/node_modules ./node_modules
+RUN mkdir -p /app/packages/agent-contracts/node_modules \
+  && ln -sf /app/node_modules/effect /app/packages/agent-contracts/node_modules/effect
 WORKDIR /app/services/agents
 COPY --from=agents-build /app/services/agents/package.json ./package.json
 COPY --from=agents-build /app/services/agents/src ./src
