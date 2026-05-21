@@ -26,6 +26,7 @@ from ..models import (
     StrategyHypothesis,
     StrategyHypothesisMetricWindow,
     StrategyPromotionDecision,
+    StrategyRuntimeLedgerBucket,
     TradeDecision,
     VNextDatasetSnapshot,
     VNextPromotionDecision,
@@ -456,6 +457,10 @@ def build_hypothesis_runtime_summary(
     registry = load_hypothesis_registry()
     if dependency_quorum is None:
         dependency_quorum = resolve_hypothesis_dependency_quorum(registry)
+    runtime_ledger_summary = _load_latest_runtime_ledger_summary(
+        session,
+        hypothesis_ids=[item.hypothesis_id for item in registry.items],
+    )
     items = compile_hypothesis_runtime_statuses(
         registry=registry,
         state=state,
@@ -465,6 +470,7 @@ def build_hypothesis_runtime_summary(
             session=session,
             account_label=settings.trading_account_label,
         ),
+        runtime_ledger_summary=runtime_ledger_summary,
         market_context_status=market_context_status,
         jangar_dependency_quorum=dependency_quorum,
         feature_readiness=feature_readiness,
@@ -492,6 +498,70 @@ def build_hypothesis_runtime_summary(
     )
     summary["items"] = items
     return summary
+
+
+def _runtime_ledger_bucket_payload(
+    row: StrategyRuntimeLedgerBucket,
+) -> dict[str, object]:
+    return {
+        "run_id": row.run_id,
+        "candidate_id": row.candidate_id,
+        "hypothesis_id": row.hypothesis_id,
+        "observed_stage": row.observed_stage,
+        "bucket_started_at": row.bucket_started_at.isoformat(),
+        "bucket_ended_at": row.bucket_ended_at.isoformat(),
+        "account_label": row.account_label,
+        "runtime_strategy_name": row.runtime_strategy_name,
+        "strategy_family": row.strategy_family,
+        "fill_count": row.fill_count,
+        "decision_count": row.decision_count,
+        "submitted_order_count": row.submitted_order_count,
+        "cancelled_order_count": row.cancelled_order_count,
+        "rejected_order_count": row.rejected_order_count,
+        "unfilled_order_count": row.unfilled_order_count,
+        "closed_trade_count": row.closed_trade_count,
+        "open_position_count": row.open_position_count,
+        "filled_notional": str(row.filled_notional),
+        "gross_strategy_pnl": str(row.gross_strategy_pnl),
+        "cost_amount": str(row.cost_amount),
+        "net_strategy_pnl_after_costs": str(row.net_strategy_pnl_after_costs),
+        "post_cost_expectancy_bps": str(row.post_cost_expectancy_bps)
+        if row.post_cost_expectancy_bps is not None
+        else None,
+        "ledger_schema_version": row.ledger_schema_version,
+        "pnl_basis": row.pnl_basis,
+        "execution_policy_hash_counts": row.execution_policy_hash_counts or {},
+        "cost_model_hash_counts": row.cost_model_hash_counts or {},
+        "lineage_hash_counts": row.lineage_hash_counts or {},
+        "blockers": row.blockers_json or [],
+    }
+
+
+def _load_latest_runtime_ledger_summary(
+    session: Session,
+    *,
+    hypothesis_ids: Sequence[str],
+) -> dict[str, object]:
+    normalized_ids = [
+        hypothesis_id for hypothesis_id in hypothesis_ids if hypothesis_id
+    ]
+    by_hypothesis: dict[str, dict[str, object]] = {}
+    if not normalized_ids:
+        return {"by_hypothesis": by_hypothesis}
+
+    rows = session.execute(
+        select(StrategyRuntimeLedgerBucket)
+        .where(StrategyRuntimeLedgerBucket.hypothesis_id.in_(normalized_ids))
+        .order_by(
+            StrategyRuntimeLedgerBucket.bucket_ended_at.desc(),
+            StrategyRuntimeLedgerBucket.created_at.desc(),
+        )
+    ).scalars()
+    for row in rows:
+        if row.hypothesis_id in by_hypothesis:
+            continue
+        by_hypothesis[row.hypothesis_id] = _runtime_ledger_bucket_payload(row)
+    return {"by_hypothesis": by_hypothesis}
 
 
 def _extract_runtime_summary(

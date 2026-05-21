@@ -98,6 +98,45 @@ def _hypothesis_manifest_payload(
     return payload
 
 
+def _runtime_ledger_summary(
+    *hypothesis_ids: str,
+    submitted_order_count: int = 45,
+    fill_count: int | None = None,
+    closed_trade_count: int = 12,
+    open_position_count: int = 0,
+    filled_notional: str = "100000",
+    net_strategy_pnl_after_costs: str = "80",
+    post_cost_expectancy_bps: str | None = "8",
+    observed_stage: str = "live",
+    blockers: list[str] | None = None,
+) -> dict[str, object]:
+    return {
+        "by_hypothesis": {
+            hypothesis_id: {
+                "hypothesis_id": hypothesis_id,
+                "candidate_id": f"candidate-{hypothesis_id.lower()}",
+                "observed_stage": observed_stage,
+                "bucket_started_at": "2026-03-06T15:00:00+00:00",
+                "bucket_ended_at": "2026-03-06T15:55:00+00:00",
+                "fill_count": fill_count
+                if fill_count is not None
+                else submitted_order_count,
+                "submitted_order_count": submitted_order_count,
+                "closed_trade_count": closed_trade_count,
+                "open_position_count": open_position_count,
+                "filled_notional": filled_notional,
+                "net_strategy_pnl_after_costs": net_strategy_pnl_after_costs,
+                "post_cost_expectancy_bps": post_cost_expectancy_bps,
+                "execution_policy_hash_counts": {"policy-sha": 1},
+                "cost_model_hash_counts": {"cost-sha": 1},
+                "lineage_hash_counts": {"lineage-sha": 1},
+                "blockers": blockers or [],
+            }
+            for hypothesis_id in hypothesis_ids
+        }
+    }
+
+
 class _FakeHttpResponse:
     def __init__(self, payload: dict[str, object], status: int = 200) -> None:
         self.status = status
@@ -310,6 +349,11 @@ class TestHypothesisReadiness(TestCase):
                 "avg_realized_shortfall_bps": -8,
                 "last_computed_at": "2026-03-06T15:50:00+00:00",
             },
+            runtime_ledger_summary=_runtime_ledger_summary(
+                "H-CONT-01",
+                "H-REV-01",
+                submitted_order_count=45,
+            ),
             market_context_status={"last_freshness_seconds": 60},
             jangar_dependency_quorum=JangarDependencyQuorumStatus(
                 decision="allow",
@@ -327,6 +371,169 @@ class TestHypothesisReadiness(TestCase):
         self.assertTrue(cont["promotion_eligible"])
         self.assertEqual(rev["state"], "canary_live")
         self.assertEqual(cont["observed"]["tca_age_minutes"], 10)
+
+    def test_compile_hypothesis_runtime_statuses_requires_live_runtime_ledger_profit_authority(
+        self,
+    ) -> None:
+        registry = load_hypothesis_registry()
+        state = _state(
+            feature_rows=5,
+            drift_checks=3,
+            evidence_checks=2,
+            signal_lag_seconds=15,
+            evidence_report={
+                "ok": True,
+                "checked_at": "2026-03-06T15:45:00+00:00",
+            },
+        )
+        statuses = compile_hypothesis_runtime_statuses(
+            registry=registry,
+            state=state,
+            tca_summary={
+                "order_count": 45,
+                "avg_abs_slippage_bps": 4,
+                "avg_realized_shortfall_bps": -8,
+                "last_computed_at": "2026-03-06T15:50:00+00:00",
+            },
+            runtime_ledger_summary=_runtime_ledger_summary(
+                "H-CONT-01",
+                submitted_order_count=45,
+                observed_stage="paper",
+                post_cost_expectancy_bps="8",
+            ),
+            market_context_status={"last_freshness_seconds": 60},
+            jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                decision="allow",
+                reasons=[],
+                message="ok",
+            ),
+            now=datetime(2026, 3, 6, 16, 0, tzinfo=timezone.utc),
+        )
+
+        cont = next(item for item in statuses if item["hypothesis_id"] == "H-CONT-01")
+        self.assertFalse(cont["promotion_eligible"])
+        self.assertEqual(cont["state"], "shadow")
+        self.assertIn("runtime_ledger_stage_not_live", cont["reasons"])
+        self.assertEqual(cont["observed"]["runtime_ledger_observed_stage"], "paper")
+        self.assertNotIn("post_cost_expectancy_non_positive", cont["reasons"])
+
+    def test_compile_hypothesis_runtime_statuses_blocks_runtime_ledger_lifecycle_blockers(
+        self,
+    ) -> None:
+        registry = load_hypothesis_registry()
+        state = _state(
+            feature_rows=5,
+            drift_checks=3,
+            evidence_checks=2,
+            signal_lag_seconds=15,
+            evidence_report={
+                "ok": True,
+                "checked_at": "2026-03-06T15:45:00+00:00",
+            },
+        )
+        statuses = compile_hypothesis_runtime_statuses(
+            registry=registry,
+            state=state,
+            tca_summary={
+                "order_count": 45,
+                "avg_abs_slippage_bps": 4,
+                "avg_realized_shortfall_bps": -8,
+                "last_computed_at": "2026-03-06T15:50:00+00:00",
+            },
+            runtime_ledger_summary={
+                "hypothesis_id": "H-CONT-01",
+                "observed_stage": "live",
+                "bucket_ended_at": "2026-03-06T15:10:00+00:00",
+                "submitted_order_count": 45,
+                "post_cost_expectancy_bps": "8",
+                "items": [
+                    "ignored",
+                    {
+                        "hypothesis_id": "H-REV-01",
+                        "observed_stage": "live",
+                    },
+                    {
+                        "hypothesis_id": "H-CONT-01",
+                        "observed_stage": "live",
+                        "bucket_ended_at": "2026-03-06T15:55:00+00:00",
+                        "submitted_order_count": 45,
+                        "closed_trade_count": 5,
+                        "post_cost_expectancy_bps": "8",
+                        "execution_policy_hash_counts": ["not-a-hash-map"],
+                        "cost_model_hash_counts": {"cost-sha": 1},
+                        "lineage_hash_counts": {"lineage-sha": 1},
+                        "blockers": [
+                            "unclosed_position",
+                            "",
+                            "unclosed_position",
+                        ],
+                    },
+                ],
+            },
+            market_context_status={"last_freshness_seconds": 60},
+            jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                decision="allow",
+                reasons=[],
+                message="ok",
+            ),
+            now=datetime(2026, 3, 6, 16, 0, tzinfo=timezone.utc),
+        )
+
+        cont = next(item for item in statuses if item["hypothesis_id"] == "H-CONT-01")
+        self.assertFalse(cont["promotion_eligible"])
+        self.assertTrue(cont["rollback_required"])
+        self.assertEqual(cont["reasons"], ["unclosed_position"])
+        observed = cont["observed"]
+        self.assertEqual(observed["runtime_ledger_blockers"], ["unclosed_position"])
+        self.assertEqual(
+            observed["runtime_ledger_bucket_ended_at"], "2026-03-06T15:55:00+00:00"
+        )
+        self.assertEqual(observed["runtime_ledger_execution_policy_hash_count"], 0)
+        self.assertEqual(observed["runtime_ledger_cost_model_hash_count"], 1)
+        self.assertEqual(observed["runtime_ledger_lineage_hash_count"], 1)
+
+    def test_compile_hypothesis_runtime_statuses_blocks_missing_runtime_ledger_expectancy(
+        self,
+    ) -> None:
+        registry = load_hypothesis_registry()
+        state = _state(
+            feature_rows=5,
+            drift_checks=3,
+            evidence_checks=2,
+            signal_lag_seconds=15,
+            evidence_report={
+                "ok": True,
+                "checked_at": "2026-03-06T15:45:00+00:00",
+            },
+        )
+        statuses = compile_hypothesis_runtime_statuses(
+            registry=registry,
+            state=state,
+            tca_summary={
+                "order_count": 45,
+                "avg_abs_slippage_bps": 4,
+                "avg_realized_shortfall_bps": -8,
+                "last_computed_at": "2026-03-06T15:50:00+00:00",
+            },
+            runtime_ledger_summary=_runtime_ledger_summary(
+                "H-CONT-01",
+                submitted_order_count=45,
+                post_cost_expectancy_bps=None,
+            ),
+            market_context_status={"last_freshness_seconds": 60},
+            jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                decision="allow",
+                reasons=[],
+                message="ok",
+            ),
+            now=datetime(2026, 3, 6, 16, 0, tzinfo=timezone.utc),
+        )
+
+        cont = next(item for item in statuses if item["hypothesis_id"] == "H-CONT-01")
+        self.assertFalse(cont["promotion_eligible"])
+        self.assertTrue(cont["rollback_required"])
+        self.assertIn("runtime_ledger_expectancy_missing", cont["reasons"])
+        self.assertIsNone(cont["observed"]["runtime_ledger_post_cost_expectancy_bps"])
 
     def test_compile_hypothesis_runtime_statuses_blocks_h_micro_without_delay_depth_stress(
         self,
@@ -352,6 +559,11 @@ class TestHypothesisReadiness(TestCase):
                 "avg_realized_shortfall_bps": -12,
                 "last_computed_at": "2026-03-06T15:50:00+00:00",
             },
+            runtime_ledger_summary=_runtime_ledger_summary(
+                "H-MICRO-01",
+                submitted_order_count=80,
+                post_cost_expectancy_bps="12",
+            ),
             market_context_status={"last_freshness_seconds": 60},
             jangar_dependency_quorum=JangarDependencyQuorumStatus(
                 decision="allow",
@@ -399,6 +611,11 @@ class TestHypothesisReadiness(TestCase):
                 "avg_realized_shortfall_bps": -12,
                 "last_computed_at": "2026-03-06T15:50:00+00:00",
             },
+            runtime_ledger_summary=_runtime_ledger_summary(
+                "H-MICRO-01",
+                submitted_order_count=80,
+                post_cost_expectancy_bps="12",
+            ),
             market_context_status={"last_freshness_seconds": 60},
             jangar_dependency_quorum=JangarDependencyQuorumStatus(
                 decision="allow",
@@ -572,6 +789,11 @@ class TestHypothesisReadiness(TestCase):
                     },
                 ],
             },
+            runtime_ledger_summary=_runtime_ledger_summary(
+                "H-CONT-01",
+                submitted_order_count=90,
+                post_cost_expectancy_bps="8",
+            ),
             market_context_status={"last_freshness_seconds": 60},
             jangar_dependency_quorum=JangarDependencyQuorumStatus(
                 decision="allow",
@@ -592,7 +814,8 @@ class TestHypothesisReadiness(TestCase):
         observed = cont["observed"]
         self.assertEqual(observed["tca_order_count"], 90)
         self.assertEqual(observed["avg_abs_slippage_bps"], "6")
-        self.assertEqual(observed["post_cost_expectancy_bps_proxy"], "8")
+        self.assertEqual(observed["runtime_ledger_post_cost_expectancy_bps"], "8")
+        self.assertEqual(observed["runtime_ledger_submitted_order_count"], 90)
         self.assertEqual(observed["route_tca_symbols"], ["AAPL"])
         self.assertEqual(observed["route_tca_excluded_symbol_count"], 1)
 
@@ -695,6 +918,12 @@ class TestHypothesisReadiness(TestCase):
                     },
                 ],
             },
+            runtime_ledger_summary=_runtime_ledger_summary(
+                "H-CONT-01",
+                submitted_order_count=45,
+                net_strategy_pnl_after_costs="-10",
+                post_cost_expectancy_bps="-1",
+            ),
             market_context_status={"last_freshness_seconds": 60},
             jangar_dependency_quorum=JangarDependencyQuorumStatus(
                 decision="allow",
@@ -714,7 +943,7 @@ class TestHypothesisReadiness(TestCase):
         self.assertIn("post_cost_expectancy_non_positive", cont["reasons"])
         observed = cont["observed"]
         self.assertEqual(observed["avg_abs_slippage_bps"], "6")
-        self.assertEqual(observed["post_cost_expectancy_bps_proxy"], "-1")
+        self.assertEqual(observed["runtime_ledger_post_cost_expectancy_bps"], "-1")
         self.assertEqual(observed["route_tca_symbols"], ["AAPL"])
 
     def test_compile_hypothesis_runtime_statuses_blocks_stale_tca_evidence(
@@ -779,6 +1008,14 @@ class TestHypothesisReadiness(TestCase):
                 "avg_realized_shortfall_bps": -12,
                 "last_computed_at": "2026-03-06T15:00:00+00:00",
             },
+            runtime_ledger_summary=_runtime_ledger_summary(
+                "H-CONT-01",
+                "H-MICRO-01",
+                "H-REV-01",
+                "H-BREAKOUT-01",
+                submitted_order_count=120,
+                post_cost_expectancy_bps="12",
+            ),
             market_context_status={"last_freshness_seconds": 10_000},
             jangar_dependency_quorum=JangarDependencyQuorumStatus(
                 decision="allow",
@@ -811,7 +1048,7 @@ class TestHypothesisReadiness(TestCase):
                 message="ok",
             ),
         )
-        self.assertEqual(summary["reason_totals"]["slippage_budget_exceeded"], 4)
+        self.assertEqual(summary["reason_totals"]["slippage_budget_exceeded"], 2)
         self.assertEqual(
             summary["informational_reason_totals"]["closed_session_signal_hold"], 5
         )
