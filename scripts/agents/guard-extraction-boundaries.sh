@@ -792,11 +792,24 @@ fail_if_path_exists \
   "${ROOT_DIR}/services/agents/src/routes/api/agents/codex/notify.ts" \
   "${ROOT_DIR}/services/agents/src/routes/api/agents/codex/run-complete.ts"
 
+fail_if_path_exists \
+  "Agents must not expose legacy AgentRun callback compatibility APIs after app-server terminal events own status ingestion" \
+  "${ROOT_DIR}/services/agents/src/server/v1/agent-run-callbacks.ts" \
+  "${ROOT_DIR}/services/agents/src/server/v1/agent-run-callbacks.test.ts" \
+  "${ROOT_DIR}/services/agents/src/routes/v1/agent-runs/\$id/callbacks.ts" \
+  "${ROOT_DIR}/packages/agent-contracts/src/agent-run-callbacks.ts" \
+  "${ROOT_DIR}/packages/agent-contracts/src/agent-run-callbacks.test.ts" \
+  "${ROOT_DIR}/packages/agent-contracts/src/agent-run-callbacks-client.ts" \
+  "${ROOT_DIR}/packages/agent-contracts/src/agent-run-callbacks-client.test.ts"
+
 fail_if_matches \
   "Agents package exports and route registration must not expose legacy Codex notify/run-complete callback routes" \
-  'codex-callbacks|api/agents/codex/(notify|run-complete)' \
+  'codex-callbacks|api/agents/codex/(notify|run-complete)|agent-run-callbacks|agent-runs/[^/]+/callbacks|AgentRun callbacks API' \
   "${ROOT_DIR}/services/agents/package.json" \
-  "${ROOT_DIR}/services/agents/src/server/control-plane.ts"
+  "${ROOT_DIR}/services/agents/src/server/control-plane.ts" \
+  "${ROOT_DIR}/services/agents/src/server/v1/runtime.ts" \
+  "${ROOT_DIR}/packages/agent-contracts/package.json" \
+  "${ROOT_DIR}/packages/agent-contracts/src/index.ts"
 
 fail_if_matches \
   "Jangar deploy verifier must read Agents control-plane status through the Agents service, not svc/jangar proxy routes" \

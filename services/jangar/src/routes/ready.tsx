@@ -309,7 +309,6 @@ export const getReadyHandler = async () => {
   const status = ready && servingPassportReady && agentsDependency.status === 'healthy' ? 'ok' : 'degraded'
   const readyPathRolloutHealth = agentsStatus.rollout_health
   const readyPathSourceServingExchange = buildReadyPathSourceServingExchange(now, primaryNamespace)
-  const readyPathAgentRunIngestion = agentsStatus.agentrun_ingestion
   const readyPathControllerWitness =
     agentsStatus.control_plane_controller_witness as ControlPlaneControllerWitnessQuorum
   const readyPathDatabase = agentsStatus.database
@@ -367,11 +366,7 @@ export const getReadyHandler = async () => {
     now,
     namespace: primaryNamespace,
     servingReadiness: ready ? status : 'down',
-    controllerWitness: readyPathControllerWitness,
-    agentRunIngestion: readyPathAgentRunIngestion,
-    executionTrust: trust,
-    database: readyPathDatabase,
-    rolloutHealth: readyPathRolloutHealth,
+    agentsControllerIngestionSettlement: agentsStatus.controller_ingestion_settlement,
     sourceServingContractVerdictExchange: readyPathSourceServingExchange,
     verifyTrustForeclosureBoard,
     repairSlotEscrow,
