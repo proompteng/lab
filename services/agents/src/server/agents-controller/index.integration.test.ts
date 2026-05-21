@@ -4947,6 +4947,55 @@ describe('agents controller resolveVcsContext', () => {
     expect(result.ok).toBe(true)
     expect(result.context?.headBranch).toBe('codex/123-run-1')
   })
+
+  it('falls back to the AgentRun name when an issue branch template has no issue number', async () => {
+    const kube = buildKube({
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.VersionControlProvider) {
+          return buildVcsProvider({
+            spec: {
+              provider: 'github',
+              auth: { method: 'none' },
+              defaults: {
+                branchTemplate: 'codex/{{issueNumber}}',
+                branchConflictSuffixTemplate: '{{agentRun.name}}',
+              },
+            },
+          })
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'job', config: {} },
+        workload: { image: defaultRunnerImage },
+        vcsRef: { name: 'vcs-1' },
+        parameters: {
+          repository: 'proompteng/lab',
+        },
+      },
+    })
+
+    const result = await __test.resolveVcsContext({
+      kube: kube as never,
+      namespace: 'agents',
+      agentRun,
+      agent: { metadata: { name: 'agent-1' }, spec: {} },
+      implementation: {},
+      parameters: {
+        repository: 'proompteng/lab',
+      },
+      allowedSecrets: [],
+      existingRuns: [],
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.context?.headBranch).toBe('codex/run-1')
+  })
 })
 describe('agents controller reconcileVersionControlProvider', () => {
   it('surfaces deprecation warnings for github token types', async () => {

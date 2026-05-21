@@ -51,9 +51,6 @@ spec:
     repository: proompteng/lab
     base: main
     head: codex/agents/leader-election-implementation-20260207
-    issueNumber: '0'
-    issueTitle: Implement leader election (code + chart)
-    issueUrl: https://github.com/proompteng/lab/blob/main/docs/agents/leader-election-design.md
     stage: implementation
   runtime:
     type: workflow

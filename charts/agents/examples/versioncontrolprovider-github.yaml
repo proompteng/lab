@@ -23,7 +23,7 @@ spec:
     pullRequests: true
   defaults:
     baseBranch: main
-    branchTemplate: codex/{{issueNumber}}
+    branchTemplate: codex/{{agentRun.name}}
     branchConflictSuffixTemplate: '{{agentRun.name}}'
     commitAuthorName: codex
     commitAuthorEmail: codex@proompt.com
@@ -31,4 +31,4 @@ spec:
       enabled: true
       draft: false
       titleTemplate: 'Codex: {{repository}}'
-      bodyTemplate: 'Closes #{{issueNumber}}'
+      bodyTemplate: 'AgentRun: {{agentRun.name}}'

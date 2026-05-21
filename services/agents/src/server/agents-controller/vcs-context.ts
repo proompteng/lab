@@ -28,6 +28,13 @@ const makeName = (base: string, suffix: string) => {
     .slice(0, 63)
 }
 
+const defaultHeadBranchForRun = (runName: string) => `codex/${runName}`
+
+const isUsableRenderedBranch = (value: string) => {
+  const branch = value.trim()
+  return branch.length > 0 && !branch.split('/').some((part) => part.length === 0)
+}
+
 export type EnvVar = {
   name: string
   value?: string
@@ -410,7 +417,11 @@ export const resolveVcsContext = async ({
     event: eventContext.payload,
   }
   if (!headBranch && branchTemplate) {
-    headBranch = renderTemplate(branchTemplate, templateContext)
+    const renderedBranch = renderTemplate(branchTemplate, templateContext)
+    headBranch = isUsableRenderedBranch(renderedBranch) ? renderedBranch.trim() : defaultHeadBranchForRun(runName)
+  }
+  if (!headBranch && effectiveMode === 'read-write') {
+    headBranch = defaultHeadBranchForRun(runName)
   }
   if (headBranch && conflictSuffixTemplate) {
     const conflictRuns = existingRuns ?? []

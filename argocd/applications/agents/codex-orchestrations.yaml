@@ -16,15 +16,15 @@ spec:
       with:
         implementation: |-
           {
-            "summary": "Codex rerun for {{repository}}#{{issueNumber}}",
+            "summary": "Codex rerun for {{repository}} on {{head}}",
             "text": "{{codexPrompt}}",
             "source": {
-              "provider": "github",
-              "externalId": "{{repository}}#{{issueNumber}}",
+              "provider": "codex",
+              "externalId": "{{repository}}:{{head}}",
               "url": "{{issueUrl}}"
             },
             "contract": {
-              "requiredKeys": ["repository", "issueNumber", "base", "head", "stage"]
+              "requiredKeys": ["repository", "base", "head", "stage"]
             },
             "metadata": {
               "stage": "implementation"
@@ -60,15 +60,15 @@ spec:
       with:
         implementation: |-
           {
-            "summary": "Codex system improvement for {{repository}}#{{issueNumber}}",
+            "summary": "Codex system improvement for {{repository}} on {{head}}",
             "text": "{{codexPrompt}}",
             "source": {
-              "provider": "github",
-              "externalId": "{{repository}}#{{issueNumber}}",
+              "provider": "codex",
+              "externalId": "{{repository}}:{{head}}",
               "url": "{{issueUrl}}"
             },
             "contract": {
-              "requiredKeys": ["repository", "issueNumber", "base", "head", "stage"]
+              "requiredKeys": ["repository", "base", "head", "stage"]
             },
             "metadata": {
               "stage": "implementation",

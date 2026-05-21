@@ -36,7 +36,7 @@ The following context is available to templates:
 ```
 defaults:
   baseBranch: main
-  branchTemplate: codex/{{issueNumber}}
+  branchTemplate: codex/{{agentRun.name}}
   branchConflictSuffixTemplate: "{{agentRun.name}}"
 ```
 

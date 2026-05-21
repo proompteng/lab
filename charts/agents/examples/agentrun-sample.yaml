@@ -29,7 +29,6 @@ spec:
         memory: 512Mi
   parameters:
     repository: proompteng/lab
-    issueNumber: '1234'
     base: main
     head: codex/onboarding-flow
     url: https://example.com/tasks/1234
