@@ -9,16 +9,34 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 POST_COST_PNL_BASIS = "realized_strategy_pnl_after_explicit_costs"
+EXACT_REPLAY_LEDGER_SCHEMA_VERSION = "torghut.exact_replay_ledger.v1"
 
 _BPS_MULTIPLIER = Decimal("10000")
 _BUY_SIDES = frozenset({"buy", "buy_to_cover", "cover"})
 _SELL_SIDES = frozenset({"sell", "sell_short", "short"})
+_DECISION_EVENTS = frozenset({"decision", "trade_decision", "signal_decision"})
+_SUBMITTED_ORDER_EVENTS = frozenset(
+    {"order_submitted", "submitted_order", "submitted", "accepted", "new"}
+)
+_FILL_EVENTS = frozenset({"fill", "filled", "partial_fill", "partially_filled"})
+_CANCELLED_ORDER_EVENTS = frozenset({"order_cancelled", "order_canceled", "cancelled", "canceled"})
+_REJECTED_ORDER_EVENTS = frozenset({"order_rejected", "rejected"})
+_UNFILLED_ORDER_EVENTS = frozenset({"order_unfilled", "unfilled", "expired", "order_expired"})
+_LIFECYCLE_EVENTS = (
+    _DECISION_EVENTS
+    | _SUBMITTED_ORDER_EVENTS
+    | _FILL_EVENTS
+    | _CANCELLED_ORDER_EVENTS
+    | _REJECTED_ORDER_EVENTS
+    | _UNFILLED_ORDER_EVENTS
+)
 _TCA_PNL_BASES = frozenset(
     {
         "tca_shortfall_proxy",
         "tca_shortfall",
         "shortfall_proxy",
         "realized_pnl_proxy_from_tca_shortfall",
+        "execution_tca_shortfall_cost",
     }
 )
 
@@ -38,6 +56,13 @@ class RuntimeLedgerFill:
     strategy_id: str | None = None
     symbol: str | None = None
     source: str = "runtime_execution"
+    event_type: str | None = None
+    decision_id: str | None = None
+    order_id: str | None = None
+    execution_policy_hash: str | None = None
+    cost_model_hash: str | None = None
+    lineage_hash: str | None = None
+    replay_data_hash: str | None = None
 
 
 @dataclass(frozen=True)
@@ -50,6 +75,11 @@ class RuntimeLedgerBucket:
     strategy_id: str | None
     symbol: str | None
     fill_count: int
+    decision_count: int
+    submitted_order_count: int
+    cancelled_order_count: int
+    rejected_order_count: int
+    unfilled_order_count: int
     closed_trade_count: int
     open_position_count: int
     filled_notional: Decimal
@@ -58,7 +88,11 @@ class RuntimeLedgerBucket:
     net_strategy_pnl_after_costs: Decimal
     post_cost_expectancy_bps: Decimal | None
     cost_basis_counts: dict[str, int]
+    execution_policy_hash_counts: dict[str, int]
+    cost_model_hash_counts: dict[str, int]
+    lineage_hash_counts: dict[str, int]
     blockers: list[str]
+    ledger_schema_version: str = EXACT_REPLAY_LEDGER_SCHEMA_VERSION
     pnl_basis: str = POST_COST_PNL_BASIS
 
 
@@ -75,12 +109,20 @@ class _NormalizedFill:
     filled_notional: Decimal | None
     cost_amount: Decimal | None
     cost_basis: str | None
+    event_type: str
+    decision_id: str | None
+    order_id: str | None
+    execution_policy_hash: str | None
+    cost_model_hash: str | None
+    lineage_hash: str | None
+    replay_data_hash: str | None
     blockers: tuple[str, ...]
 
     @property
     def is_usable_fill(self) -> bool:
         return (
-            self.executed_at is not None
+            self.event_type in _FILL_EVENTS
+            and self.executed_at is not None
             and self.side is not None
             and self.filled_qty is not None
             and self.filled_qty > 0
@@ -116,6 +158,7 @@ def build_runtime_ledger_buckets(
     *,
     bucket_ranges: Sequence[tuple[datetime, datetime]],
     group_by: Sequence[str] = (),
+    require_order_lifecycle: bool = False,
 ) -> list[RuntimeLedgerBucket]:
     """Aggregate runtime fills into fail-closed post-cost PnL buckets.
 
@@ -148,6 +191,7 @@ def build_runtime_ledger_buckets(
                     bucket_end=bucket_end,
                     rows=bucket_rows,
                     carried_positions=positions,
+                    require_order_lifecycle=require_order_lifecycle,
                 )
             )
         return buckets
@@ -170,6 +214,7 @@ def build_runtime_ledger_buckets(
                     rows=grouped_rows[key],
                     group_by=group_by,
                     group_key=key,
+                    require_order_lifecycle=require_order_lifecycle,
                 )
             )
     return buckets
@@ -184,17 +229,43 @@ def _build_bucket(
     group_key: tuple[str | None, ...] = (),
     carried_positions: dict[tuple[str | None, str | None, str | None], _PositionState]
     | None = None,
+    require_order_lifecycle: bool = False,
 ) -> RuntimeLedgerBucket:
     blockers: list[str] = []
     for row in rows:
         blockers.extend(row.blockers)
 
+    lifecycle_rows = [row for row in rows if row.event_type in _LIFECYCLE_EVENTS]
+    decision_count = sum(1 for row in rows if row.event_type in _DECISION_EVENTS)
+    submitted_order_count = sum(
+        1 for row in rows if row.event_type in _SUBMITTED_ORDER_EVENTS
+    )
+    cancelled_order_count = sum(
+        1 for row in rows if row.event_type in _CANCELLED_ORDER_EVENTS
+    )
+    rejected_order_count = sum(
+        1 for row in rows if row.event_type in _REJECTED_ORDER_EVENTS
+    )
+    unfilled_order_count = sum(
+        1 for row in rows if row.event_type in _UNFILLED_ORDER_EVENTS
+    )
     usable_fills = [row for row in rows if row.is_usable_fill]
     if not usable_fills:
         blockers.append("runtime_fills_missing")
 
     accumulator = _LedgerAccumulator()
     cost_basis_counter: Counter[str] = Counter()
+    execution_policy_hash_counter: Counter[str] = Counter()
+    cost_model_hash_counter: Counter[str] = Counter()
+    lineage_hash_counter: Counter[str] = Counter()
+    for row in lifecycle_rows:
+        if row.execution_policy_hash is not None:
+            execution_policy_hash_counter[row.execution_policy_hash] += 1
+        if row.cost_model_hash is not None:
+            cost_model_hash_counter[row.cost_model_hash] += 1
+        if (lineage_hash := row.lineage_hash or row.replay_data_hash) is not None:
+            lineage_hash_counter[lineage_hash] += 1
+
     positions: dict[tuple[str | None, str | None, str | None], _PositionState] = (
         carried_positions if carried_positions is not None else {}
     )
@@ -221,6 +292,20 @@ def _build_bucket(
         blockers.append("unclosed_position")
     if accumulator.filled_notional <= 0:
         blockers.append("filled_notional_missing")
+    if require_order_lifecycle:
+        blockers.extend(
+            _order_lifecycle_blockers(
+                lifecycle_rows=lifecycle_rows,
+                usable_fills=usable_fills,
+                decision_count=decision_count,
+                submitted_order_count=submitted_order_count,
+                rejected_order_count=rejected_order_count,
+                unfilled_order_count=unfilled_order_count,
+                execution_policy_hash_counter=execution_policy_hash_counter,
+                cost_model_hash_counter=cost_model_hash_counter,
+                lineage_hash_counter=lineage_hash_counter,
+            )
+        )
 
     unique_blockers = _dedupe(blockers)
     post_cost_expectancy_bps: Decimal | None = None
@@ -238,6 +323,11 @@ def _build_bucket(
         strategy_id=_bucket_field("strategy_id", rows, group_by, group_key),
         symbol=_bucket_field("symbol", rows, group_by, group_key),
         fill_count=len(usable_fills),
+        decision_count=decision_count,
+        submitted_order_count=submitted_order_count,
+        cancelled_order_count=cancelled_order_count,
+        rejected_order_count=rejected_order_count,
+        unfilled_order_count=unfilled_order_count,
         closed_trade_count=accumulator.closed_trade_count,
         open_position_count=open_position_count,
         filled_notional=accumulator.filled_notional,
@@ -246,8 +336,75 @@ def _build_bucket(
         net_strategy_pnl_after_costs=accumulator.net_strategy_pnl_after_costs,
         post_cost_expectancy_bps=post_cost_expectancy_bps,
         cost_basis_counts=dict(sorted(cost_basis_counter.items())),
+        execution_policy_hash_counts=dict(sorted(execution_policy_hash_counter.items())),
+        cost_model_hash_counts=dict(sorted(cost_model_hash_counter.items())),
+        lineage_hash_counts=dict(sorted(lineage_hash_counter.items())),
         blockers=unique_blockers,
     )
+
+
+def _order_lifecycle_blockers(
+    *,
+    lifecycle_rows: Sequence[_NormalizedFill],
+    usable_fills: Sequence[_NormalizedFill],
+    decision_count: int,
+    submitted_order_count: int,
+    rejected_order_count: int,
+    unfilled_order_count: int,
+    execution_policy_hash_counter: Counter[str],
+    cost_model_hash_counter: Counter[str],
+    lineage_hash_counter: Counter[str],
+) -> list[str]:
+    blockers: list[str] = []
+    if not lifecycle_rows:
+        blockers.append("runtime_order_lifecycle_missing")
+    if decision_count <= 0:
+        blockers.append("runtime_decision_lifecycle_missing")
+    if submitted_order_count <= 0:
+        blockers.append("submitted_order_lifecycle_missing")
+    if not usable_fills:
+        blockers.append("zero_fill_runtime_ledger")
+
+    submitted_order_ids = {
+        row.order_id
+        for row in lifecycle_rows
+        if row.event_type in _SUBMITTED_ORDER_EVENTS and row.order_id is not None
+    }
+    submitted_without_decision = [
+        row
+        for row in lifecycle_rows
+        if row.event_type in _SUBMITTED_ORDER_EVENTS and row.decision_id is None
+    ]
+    if submitted_without_decision:
+        blockers.append("order_decision_linkage_missing")
+
+    fill_order_ids = {
+        row.order_id for row in usable_fills if row.order_id is not None
+    }
+    if usable_fills and len(fill_order_ids) < len(usable_fills):
+        blockers.append("fill_order_linkage_missing")
+    if fill_order_ids - submitted_order_ids:
+        blockers.append("fill_order_submission_missing")
+    if submitted_order_ids - fill_order_ids:
+        blockers.append("unfilled_order_present")
+    if rejected_order_count > 0:
+        blockers.append("rejected_order_present")
+    if unfilled_order_count > 0:
+        blockers.append("unfilled_order_present")
+
+    if any(row.execution_policy_hash is None for row in lifecycle_rows):
+        blockers.append("execution_policy_hash_missing")
+    if any(row.cost_model_hash is None for row in lifecycle_rows):
+        blockers.append("cost_model_hash_missing")
+    if any(row.lineage_hash is None and row.replay_data_hash is None for row in lifecycle_rows):
+        blockers.append("proof_lineage_hash_missing")
+    if len(execution_policy_hash_counter) > 1:
+        blockers.append("execution_policy_hash_ambiguous")
+    if len(cost_model_hash_counter) > 1:
+        blockers.append("cost_model_hash_ambiguous")
+    if len(lineage_hash_counter) > 1:
+        blockers.append("proof_lineage_hash_ambiguous")
+    return blockers
 
 
 def _apply_fill_to_position(
@@ -357,6 +514,7 @@ def _normalize_fill_row(
     )
     strategy_id = _coerce_text(_row_value(row, "strategy_id", "strategy_name"))
     symbol = _coerce_text(_row_value(row, "symbol"))
+    event_type = _coerce_event_type(row)
     side = _coerce_side(_row_value(row, "side", "action", "order_side"))
     filled_qty = _positive_decimal(_row_value(row, "filled_qty", "qty", "quantity"))
     avg_fill_price = _positive_decimal(
@@ -383,24 +541,68 @@ def _normalize_fill_row(
         )
     )
     cost_basis = _coerce_text(_row_value(row, "cost_basis", "cost_source", "fee_basis"))
+    decision_id = _coerce_text(
+        _row_value(row, "decision_id", "trade_decision_id", "decision_hash")
+    )
+    order_id = _coerce_text(
+        _row_value(
+            row,
+            "order_id",
+            "alpaca_order_id",
+            "client_order_id",
+            "execution_id",
+            "execution_correlation_id",
+        )
+    )
+    execution_policy_hash = _coerce_text(
+        _row_value(
+            row,
+            "execution_policy_hash",
+            "execution_policy_sha256",
+            "policy_hash",
+            "execution_idempotency_key",
+        )
+    )
+    cost_model_hash = _coerce_text(
+        _row_value(row, "cost_model_hash", "fee_model_hash", "cost_model_sha256")
+    )
+    lineage_hash = _coerce_text(
+        _row_value(
+            row,
+            "lineage_hash",
+            "candidate_lineage_hash",
+            "replay_lineage_hash",
+            "candidate_evaluation_key",
+        )
+    )
+    replay_data_hash = _coerce_text(
+        _row_value(
+            row,
+            "replay_data_hash",
+            "replay_tape_content_sha256",
+            "dataset_snapshot_hash",
+            "source_query_digest",
+        )
+    )
 
     blockers: list[str] = []
     if _has_tca_pnl_shortcut(row):
         blockers.append("tca_shortfall_not_runtime_pnl")
-    if executed_at is None:
+    if executed_at is None and event_type != "diagnostic":
         blockers.append("executed_at_missing")
-    if side is None:
-        blockers.append("side_missing_or_invalid")
-    if filled_qty is None:
-        blockers.append("filled_qty_missing_or_non_positive")
-    if avg_fill_price is None:
-        blockers.append("fill_price_missing")
-    if filled_notional is None:
-        blockers.append("filled_notional_missing")
-    if cost_amount is None:
-        blockers.append("explicit_cost_missing")
-    if cost_basis is None:
-        blockers.append("cost_basis_missing")
+    if event_type in _FILL_EVENTS:
+        if side is None:
+            blockers.append("side_missing_or_invalid")
+        if filled_qty is None:
+            blockers.append("filled_qty_missing_or_non_positive")
+        if avg_fill_price is None:
+            blockers.append("fill_price_missing")
+        if filled_notional is None:
+            blockers.append("filled_notional_missing")
+        if cost_amount is None:
+            blockers.append("explicit_cost_missing")
+        if cost_basis is None:
+            blockers.append("cost_basis_missing")
 
     return _NormalizedFill(
         row_index=row_index,
@@ -414,8 +616,58 @@ def _normalize_fill_row(
         filled_notional=filled_notional,
         cost_amount=cost_amount,
         cost_basis=cost_basis,
+        event_type=event_type,
+        decision_id=decision_id,
+        order_id=order_id,
+        execution_policy_hash=execution_policy_hash,
+        cost_model_hash=cost_model_hash,
+        lineage_hash=lineage_hash,
+        replay_data_hash=replay_data_hash,
         blockers=tuple(_dedupe(blockers)),
     )
+
+
+def _coerce_event_type(row: RuntimeLedgerFill | Mapping[str, object]) -> str:
+    raw = _coerce_text(
+        _row_value(
+            row,
+            "ledger_event_type",
+            "runtime_ledger_event_type",
+            "lifecycle_event",
+            "event_type",
+            "order_event_type",
+            "order_status",
+            "status",
+        )
+    )
+    if raw is not None:
+        normalized = raw.lower().replace("-", "_").replace(" ", "_")
+        aliases = {
+            "trade_decision": "decision",
+            "signal_decision": "decision",
+            "new_order": "order_submitted",
+            "submitted": "order_submitted",
+            "accepted": "order_submitted",
+            "new": "order_submitted",
+            "filled": "fill",
+            "partial_fill": "partial_fill",
+            "partially_filled": "partial_fill",
+            "canceled": "order_cancelled",
+            "cancelled": "order_cancelled",
+            "rejected": "order_rejected",
+            "expired": "order_unfilled",
+        }
+        candidate = aliases.get(normalized, normalized)
+        if candidate in _LIFECYCLE_EVENTS:
+            return candidate
+
+    if _row_value(row, "filled_qty", "qty", "quantity", "avg_fill_price", "fill_price") is not None:
+        return "fill"
+    if _row_value(row, "alpaca_order_id", "client_order_id", "order_id") is not None:
+        return "order_submitted"
+    if _row_value(row, "decision_id", "trade_decision_id", "decision_hash") is not None:
+        return "decision"
+    return "diagnostic"
 
 
 def _row_value(
@@ -436,7 +688,13 @@ def _row_value(
 
 def _has_tca_pnl_shortcut(row: RuntimeLedgerFill | Mapping[str, object]) -> bool:
     basis = _coerce_text(
-        _row_value(row, "post_cost_expectancy_basis", "post_cost_basis", "pnl_basis")
+        _row_value(
+            row,
+            "post_cost_expectancy_basis",
+            "post_cost_basis",
+            "pnl_basis",
+            "cost_basis",
+        )
     )
     if basis is not None and basis.lower().replace("-", "_") in _TCA_PNL_BASES:
         return True
@@ -558,6 +816,7 @@ def _dedupe(items: Sequence[str]) -> list[str]:
 
 
 __all__ = [
+    "EXACT_REPLAY_LEDGER_SCHEMA_VERSION",
     "POST_COST_PNL_BASIS",
     "RuntimeLedgerBucket",
     "RuntimeLedgerFill",

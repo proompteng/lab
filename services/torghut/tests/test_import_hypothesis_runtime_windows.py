@@ -40,6 +40,17 @@ class _FakeCursor:
                     Decimal("1"),
                     Decimal("100"),
                     Decimal("0.01"),
+                    {
+                        "cost_amount": "0.01",
+                        "cost_basis": "broker_reported_commission_and_fees",
+                    },
+                    {},
+                    "TORGHUT_SIM",
+                    "intraday_tsmom_v1@paper",
+                    "decision-sha",
+                    "alpaca-order-1",
+                    "client-order-1",
+                    "filled",
                 )
             ],
             [
@@ -237,7 +248,14 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "side": "buy",
                     "filled_qty": Decimal("1"),
                     "avg_fill_price": Decimal("100"),
-                    "shortfall_notional": Decimal("0.20"),
+                    "shortfall_notional": Decimal("99"),
+                    "cost_amount": Decimal("0.20"),
+                    "cost_basis": "broker_reported_commission_and_fees",
+                    "decision_hash": "decision-buy",
+                    "alpaca_order_id": "order-buy",
+                    "execution_policy_hash": "policy-sha",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
                 },
                 {
                     "computed_at": datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
@@ -245,15 +263,14 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "side": "sell",
                     "filled_qty": Decimal("1"),
                     "avg_fill_price": Decimal("101"),
-                    "shortfall_notional": Decimal("0.10"),
-                },
-                {
-                    "computed_at": datetime(2026, 3, 6, 14, 45, tzinfo=timezone.utc),
-                    "symbol": "AAPL",
-                    "side": "sell",
-                    "filled_qty": Decimal("1"),
-                    "avg_fill_price": Decimal("102"),
-                    "shortfall_notional": None,
+                    "shortfall_notional": Decimal("99"),
+                    "cost_amount": Decimal("0.10"),
+                    "cost_basis": "broker_reported_commission_and_fees",
+                    "decision_hash": "decision-sell",
+                    "alpaca_order_id": "order-sell",
+                    "execution_policy_hash": "policy-sha",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
                 },
             ]
         )
@@ -269,6 +286,36 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             rows[0]["post_cost_expectancy_bps"],
             Decimal("34.82587064676616915422885572"),
         )
+
+    def test_build_realized_strategy_pnl_rows_rejects_shortfall_only_costs(
+        self,
+    ) -> None:
+        rows = _build_realized_strategy_pnl_rows(
+            [
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("100"),
+                    "shortfall_notional": Decimal("0.20"),
+                },
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                    "symbol": "AAPL",
+                    "side": "sell",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("101"),
+                    "shortfall_notional": Decimal("0.10"),
+                },
+            ]
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["post_cost_promotion_eligible"], False)
+        self.assertIsNone(rows[0]["post_cost_expectancy_bps"])
+        self.assertIn("explicit_cost_missing", rows[0]["runtime_ledger_blockers"])
+        self.assertIn("cost_basis_missing", rows[0]["runtime_ledger_blockers"])
 
     def test_build_realized_strategy_pnl_rows_returns_empty_without_event_times(
         self,
@@ -310,13 +357,15 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(
             executions, [datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)]
         )
-        self.assertEqual(len(tca_rows), 1)
+        self.assertEqual(len(tca_rows), 2)
         self.assertEqual(tca_rows[0]["abs_slippage_bps"], Decimal("1.25"))
         self.assertEqual(tca_rows[0]["post_cost_expectancy_bps"], Decimal("0.50"))
         self.assertEqual(
             tca_rows[0]["post_cost_expectancy_basis"], POST_COST_BASIS_TCA_PROXY
         )
         self.assertEqual(tca_rows[0]["post_cost_promotion_eligible"], False)
+        self.assertEqual(tca_rows[1]["post_cost_promotion_eligible"], False)
+        self.assertIn("unclosed_position", tca_rows[1]["runtime_ledger_blockers"])
         self.assertEqual(len(cursor.executed), 3)
         decision_query, decision_params = cursor.executed[0]
         self.assertIn("s.name = any(%s)", decision_query)

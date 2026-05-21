@@ -117,6 +117,33 @@ def _decimal_or_none(value: Any) -> Decimal | None:
         return None
 
 
+def _row_payloads(row: Mapping[str, object]) -> list[Mapping[str, object]]:
+    payloads: list[Mapping[str, object]] = [row]
+    for key in ("execution_audit_json", "raw_order"):
+        payload = row.get(key)
+        if isinstance(payload, Mapping):
+            payloads.append({str(item_key): item for item_key, item in payload.items()})
+    return payloads
+
+
+def _first_decimal(row: Mapping[str, object], *keys: str) -> Decimal | None:
+    for payload in _row_payloads(row):
+        for key in keys:
+            value = payload.get(key)
+            if (parsed := _decimal_or_none(value)) is not None:
+                return parsed
+    return None
+
+
+def _first_text(row: Mapping[str, object], *keys: str) -> str | None:
+    for payload in _row_payloads(row):
+        for key in keys:
+            text = str(payload.get(key) or "").strip()
+            if text:
+                return text
+    return None
+
+
 def _nonnegative_int(value: Any) -> int:
     try:
         return max(0, int(Decimal(str(value))))
@@ -158,9 +185,8 @@ def _execution_signed_qty(*, side: Any, qty: Any) -> Decimal:
 def _build_realized_strategy_pnl_rows(
     execution_rows: list[dict[str, object]],
 ) -> list[dict[str, object]]:
-    fills: list[RuntimeLedgerFill] = []
+    ledger_rows: list[RuntimeLedgerFill | dict[str, object]] = []
     event_times: list[datetime] = []
-    fallback_cost_basis = "execution_tca_shortfall_cost"
     for row in execution_rows:
         computed_at = row.get("computed_at")
         price = _decimal_or_none(row.get("avg_fill_price"))
@@ -168,22 +194,86 @@ def _build_realized_strategy_pnl_rows(
             side=row.get("side"), qty=row.get("filled_qty")
         )
         symbol = str(row.get("symbol") or "").strip().upper()
-        shortfall_notional = _decimal_or_none(row.get("shortfall_notional"))
         if not symbol or not isinstance(computed_at, datetime):
             continue
         event_times.append(computed_at)
+        decision_id = _first_text(row, "decision_id", "trade_decision_id", "decision_hash")
+        order_id = _first_text(
+            row,
+            "order_id",
+            "alpaca_order_id",
+            "client_order_id",
+            "execution_correlation_id",
+        )
+        common_ledger_fields = {
+            "executed_at": computed_at,
+            "account_label": str(row.get("account_label") or "") or None,
+            "strategy_id": str(row.get("strategy_id") or "") or None,
+            "symbol": symbol,
+            "decision_id": decision_id,
+            "order_id": order_id,
+            "execution_policy_hash": _first_text(
+                row,
+                "execution_policy_hash",
+                "execution_policy_sha256",
+                "policy_hash",
+                "execution_idempotency_key",
+            ),
+            "cost_model_hash": _first_text(
+                row, "cost_model_hash", "fee_model_hash", "cost_model_sha256"
+            ),
+            "lineage_hash": _first_text(
+                row,
+                "lineage_hash",
+                "candidate_lineage_hash",
+                "replay_lineage_hash",
+                "candidate_evaluation_key",
+            ),
+            "replay_data_hash": _first_text(
+                row,
+                "replay_data_hash",
+                "replay_tape_content_sha256",
+                "dataset_snapshot_hash",
+                "source_query_digest",
+            ),
+        }
+        if decision_id is not None:
+            ledger_rows.append({**common_ledger_fields, "event_type": "decision"})
+        if order_id is not None:
+            ledger_rows.append({**common_ledger_fields, "event_type": "order_submitted"})
         if price is None or price <= 0 or signed_qty == 0:
             continue
-        if shortfall_notional is None:
-            continue
-        cost_basis = str(row.get("cost_basis") or fallback_cost_basis).strip()
-        fills.append(
+        cost_amount = _first_decimal(
+            row,
+            "cost_amount",
+            "explicit_cost",
+            "commission",
+            "fees",
+            "fee_amount",
+            "broker_fee",
+        )
+        cost_basis = _first_text(
+            row,
+            "cost_basis",
+            "cost_source",
+            "fee_basis",
+            "commission_basis",
+            "broker_fee_basis",
+        )
+        ledger_rows.append(
             RuntimeLedgerFill(
                 executed_at=computed_at,
+                event_type="fill",
+                decision_id=decision_id,
+                order_id=order_id,
+                execution_policy_hash=common_ledger_fields["execution_policy_hash"],
+                cost_model_hash=common_ledger_fields["cost_model_hash"],
+                lineage_hash=common_ledger_fields["lineage_hash"],
+                replay_data_hash=common_ledger_fields["replay_data_hash"],
                 side=str(row.get("side") or ""),
                 filled_qty=abs(signed_qty),
                 avg_fill_price=price,
-                cost_amount=abs(shortfall_notional),
+                cost_amount=cost_amount,
                 cost_basis=cost_basis,
                 account_label=str(row.get("account_label") or "") or None,
                 strategy_id=str(row.get("strategy_id") or "") or None,
@@ -195,8 +285,12 @@ def _build_realized_strategy_pnl_rows(
     unique_times = sorted(set(event_times))
     bucket_ranges = [(unique_times[0], unique_times[-1] + timedelta(microseconds=1))]
     realized_rows: list[dict[str, object]] = []
-    for bucket in build_runtime_ledger_buckets(fills, bucket_ranges=bucket_ranges):
-        if bucket.closed_trade_count <= 0:
+    for bucket in build_runtime_ledger_buckets(
+        ledger_rows,
+        bucket_ranges=bucket_ranges,
+        require_order_lifecycle=True,
+    ):
+        if bucket.closed_trade_count <= 0 and not bucket.blockers:
             continue
         promotion_eligible = (
             bucket.post_cost_expectancy_bps is not None and not bucket.blockers
@@ -310,7 +404,15 @@ def _query_timestamps(
                     e.side,
                     e.filled_qty,
                     e.avg_fill_price,
-                    t.shortfall_notional
+                    t.shortfall_notional,
+                    e.execution_audit_json,
+                    e.raw_order,
+                    e.alpaca_account_label,
+                    s.name,
+                    d.decision_hash,
+                    e.alpaca_order_id,
+                    e.client_order_id,
+                    e.status
                 from executions e
                 join trade_decisions d on d.id = e.trade_decision_id
                 join strategies s on s.id = d.strategy_id
@@ -332,6 +434,14 @@ def _query_timestamps(
                     "filled_qty": row[4],
                     "avg_fill_price": row[5],
                     "shortfall_notional": row[6],
+                    "execution_audit_json": row[7],
+                    "raw_order": row[8],
+                    "account_label": row[9],
+                    "strategy_id": row[10],
+                    "decision_hash": row[11],
+                    "alpaca_order_id": row[12],
+                    "client_order_id": row[13],
+                    "order_status": row[14],
                 }
                 for row in cur.fetchall()
                 if row[0] is not None
