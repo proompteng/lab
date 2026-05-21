@@ -185,6 +185,34 @@ def _string_list(value: Any) -> list[str]:
     ]
 
 
+def _mapping(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    mapping = cast(Mapping[Any, Any], value)
+    return {str(key): item for key, item in mapping.items()}
+
+
+def _paper_probation_blocking_reasons(runtime_payload: Mapping[str, Any]) -> list[str]:
+    target_metadata = _mapping(runtime_payload.get("target_metadata"))
+    if not target_metadata:
+        return []
+
+    reasons: list[str] = []
+    paper_probation_authorized = _observation_bool(
+        target_metadata.get("paper_probation_authorized")
+    )
+    evidence_collection_stage = _text(target_metadata.get("evidence_collection_stage"))
+    if paper_probation_authorized is True and evidence_collection_stage == "paper":
+        reasons.append("paper_probation_evidence_collection_only")
+    if _observation_bool(target_metadata.get("promotion_allowed")) is False:
+        reasons.append("candidate_board_promotion_not_allowed")
+    if _observation_bool(target_metadata.get("final_promotion_authorized")) is False:
+        reasons.append("final_promotion_not_authorized")
+    if _observation_bool(target_metadata.get("final_promotion_allowed")) is False:
+        reasons.append("final_promotion_not_allowed")
+    return reasons
+
+
 def _delay_adjusted_depth_stress_blocking_reasons(
     *,
     manifest: HypothesisManifest,
@@ -842,6 +870,7 @@ def persist_observed_runtime_windows(
         dict.fromkeys(
             [
                 *promotion_blocking_reasons,
+                *_paper_probation_blocking_reasons(runtime_payload),
                 *_delay_adjusted_depth_stress_blocking_reasons(
                     manifest=manifest,
                     runtime_payload=runtime_payload,

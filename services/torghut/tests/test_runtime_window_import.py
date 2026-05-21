@@ -712,6 +712,102 @@ class TestRuntimeWindowImport(TestCase):
             summary["delay_adjusted_depth_stress"],
         )
 
+    def test_persist_observed_runtime_windows_keeps_paper_probation_evidence_only(
+        self,
+    ) -> None:
+        buckets = build_observed_runtime_buckets(
+            bucket_ranges=[
+                (
+                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    30,
+                ),
+                (
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 30, tzinfo=timezone.utc),
+                    30,
+                ),
+            ],
+            decision_times=[
+                datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                datetime(2026, 3, 6, 15, 5, tzinfo=timezone.utc),
+            ],
+            execution_times=[
+                datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                datetime(2026, 3, 6, 15, 6, tzinfo=timezone.utc),
+            ],
+            tca_rows=[
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("4"),
+                    "post_cost_expectancy_bps": Decimal("12"),
+                    **_runtime_pnl_basis(),
+                },
+                {
+                    "computed_at": datetime(2026, 3, 6, 15, 6, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("5"),
+                    "post_cost_expectancy_bps": Decimal("12"),
+                    **_runtime_pnl_basis(),
+                },
+            ],
+            continuity_ok=True,
+            drift_ok=True,
+            dependency_quorum_decision="allow",
+        )
+
+        with self.session_local() as session:
+            summary = persist_observed_runtime_windows(
+                session=session,
+                run_id="import-h-micro-paper-probation",
+                candidate_id="cand-paper-probation",
+                hypothesis_id="H-MICRO-01",
+                observed_stage="paper",
+                strategy_family="microstructure_breakout",
+                source_manifest_ref="config/trading/hypotheses/h-micro-01.json",
+                buckets=buckets,
+                runtime_observation_payload={
+                    "target_metadata": {
+                        "paper_probation_authorized": True,
+                        "evidence_collection_stage": "paper",
+                        "promotion_allowed": False,
+                        "final_promotion_authorized": False,
+                        "final_promotion_allowed": False,
+                    },
+                    "delay_adjusted_depth_stress_report": {
+                        "passed": True,
+                        "case_count": 1,
+                        "generated_at": "2026-03-06T15:20:00+00:00",
+                        "artifact_ref": "proof/h-micro-delay-depth.json",
+                        "worst_grid_fillable_notional_per_day": "450000",
+                        "worst_active_day_fillable_notional": "350000",
+                        "p10_active_day_fillable_notional": "325000",
+                        "tail_coverage_passed": True,
+                        "stress_net_pnl_per_day": "620",
+                        "fill_survival_evidence_present": True,
+                        "fill_survival_sample_count": 44,
+                    },
+                },
+            )
+            session.commit()
+            decision = session.execute(select(StrategyPromotionDecision)).scalar_one()
+
+        self.assertEqual(summary["promotion_allowed"], False)
+        self.assertIn(
+            "paper_probation_evidence_collection_only",
+            summary["promotion_blocking_reasons"],
+        )
+        self.assertIn(
+            "final_promotion_not_authorized",
+            summary["promotion_blocking_reasons"],
+        )
+        self.assertEqual(decision.allowed, False)
+        self.assertEqual(
+            decision.payload_json["runtime_observation"]["target_metadata"][
+                "paper_probation_authorized"
+            ],
+            True,
+        )
+
     def test_persist_observed_runtime_windows_blocks_zero_activity_evidence(
         self,
     ) -> None:
