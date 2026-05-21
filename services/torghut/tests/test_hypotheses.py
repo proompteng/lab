@@ -24,6 +24,27 @@ from app.trading.hypotheses import (
     resolve_hypothesis_dependency_quorum,
     summarize_hypothesis_runtime_statuses,
 )
+from app.trading.runtime_ledger import (
+    EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
+    POST_COST_PNL_BASIS,
+)
+
+
+_MANIFEST_CANDIDATE_IDS = {
+    "H-CONT-01": "chip-paper-microbar-composite@execution-proof",
+    "H-MICRO-01": "chip-paper-microbar-composite@execution-proof",
+    "H-PAIRS-01": "spec-d74b07b2aaab8d0cfa8a4c38",
+    "H-REV-01": "chip-paper-microbar-composite@execution-proof",
+    "H-TSMOM-01": "spec-83161ae16d17828eabcc58cc",
+}
+
+_MANIFEST_STRATEGY_FAMILIES = {
+    "H-CONT-01": "intraday_continuation",
+    "H-MICRO-01": "microstructure_breakout",
+    "H-PAIRS-01": "microbar_cross_sectional_pairs",
+    "H-REV-01": "event_reversion",
+    "H-TSMOM-01": "intraday_tsmom_consistent",
+}
 
 
 def _state(
@@ -100,6 +121,7 @@ def _hypothesis_manifest_payload(
 
 def _runtime_ledger_summary(
     *hypothesis_ids: str,
+    candidate_id: str | None = None,
     submitted_order_count: int = 45,
     fill_count: int | None = None,
     closed_trade_count: int = 12,
@@ -114,10 +136,13 @@ def _runtime_ledger_summary(
         "by_hypothesis": {
             hypothesis_id: {
                 "hypothesis_id": hypothesis_id,
-                "candidate_id": f"candidate-{hypothesis_id.lower()}",
+                "candidate_id": candidate_id
+                or _MANIFEST_CANDIDATE_IDS.get(hypothesis_id)
+                or f"candidate-{hypothesis_id.lower()}",
                 "observed_stage": observed_stage,
                 "bucket_started_at": "2026-03-06T15:00:00+00:00",
                 "bucket_ended_at": "2026-03-06T15:55:00+00:00",
+                "strategy_family": _MANIFEST_STRATEGY_FAMILIES.get(hypothesis_id),
                 "fill_count": fill_count
                 if fill_count is not None
                 else submitted_order_count,
@@ -127,6 +152,8 @@ def _runtime_ledger_summary(
                 "filled_notional": filled_notional,
                 "net_strategy_pnl_after_costs": net_strategy_pnl_after_costs,
                 "post_cost_expectancy_bps": post_cost_expectancy_bps,
+                "ledger_schema_version": EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
+                "pnl_basis": POST_COST_PNL_BASIS,
                 "execution_policy_hash_counts": {"policy-sha": 1},
                 "cost_model_hash_counts": {"cost-sha": 1},
                 "lineage_hash_counts": {"lineage-sha": 1},
@@ -417,6 +444,185 @@ class TestHypothesisReadiness(TestCase):
         self.assertEqual(cont["observed"]["runtime_ledger_observed_stage"], "paper")
         self.assertNotIn("post_cost_expectancy_non_positive", cont["reasons"])
 
+    def test_compile_hypothesis_runtime_statuses_prefers_target_live_bucket_over_newer_paper(
+        self,
+    ) -> None:
+        registry = load_hypothesis_registry()
+        state = _state(
+            feature_rows=5,
+            drift_checks=3,
+            evidence_checks=2,
+            signal_lag_seconds=15,
+            evidence_report={
+                "ok": True,
+                "checked_at": "2026-03-06T15:45:00+00:00",
+            },
+        )
+        candidate_id = _MANIFEST_CANDIDATE_IDS["H-CONT-01"]
+        strategy_family = _MANIFEST_STRATEGY_FAMILIES["H-CONT-01"]
+        statuses = compile_hypothesis_runtime_statuses(
+            registry=registry,
+            state=state,
+            tca_summary={
+                "order_count": 45,
+                "avg_abs_slippage_bps": 4,
+                "avg_realized_shortfall_bps": -8,
+                "last_computed_at": "2026-03-06T15:50:00+00:00",
+            },
+            runtime_ledger_summary={
+                "by_hypothesis": {
+                    "H-CONT-01": {
+                        "hypothesis_id": "H-CONT-01",
+                        "candidate_id": candidate_id,
+                        "observed_stage": "paper",
+                        "strategy_family": strategy_family,
+                        "bucket_ended_at": "2026-03-06T15:55:00+00:00",
+                        "submitted_order_count": 45,
+                        "post_cost_expectancy_bps": "8",
+                        "ledger_schema_version": EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
+                        "pnl_basis": POST_COST_PNL_BASIS,
+                        "execution_policy_hash_counts": {"policy-sha": 1},
+                        "cost_model_hash_counts": {"cost-sha": 1},
+                        "lineage_hash_counts": {"lineage-sha": 1},
+                    }
+                },
+                "runtime_ledger_buckets": [
+                    {
+                        "hypothesis_id": "H-CONT-01",
+                        "candidate_id": candidate_id,
+                        "observed_stage": "live",
+                        "strategy_family": strategy_family,
+                        "bucket_ended_at": "2026-03-06T15:30:00+00:00",
+                        "submitted_order_count": 45,
+                        "closed_trade_count": 8,
+                        "post_cost_expectancy_bps": "8",
+                        "ledger_schema_version": EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
+                        "pnl_basis": POST_COST_PNL_BASIS,
+                        "execution_policy_hash_counts": {"policy-sha": 1},
+                        "cost_model_hash_counts": {"cost-sha": 1},
+                        "lineage_hash_counts": {"lineage-sha": 1},
+                    }
+                ],
+            },
+            market_context_status={"last_freshness_seconds": 60},
+            jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                decision="allow",
+                reasons=[],
+                message="ok",
+            ),
+            now=datetime(2026, 3, 6, 16, 0, tzinfo=timezone.utc),
+        )
+
+        cont = next(item for item in statuses if item["hypothesis_id"] == "H-CONT-01")
+        self.assertTrue(cont["promotion_eligible"])
+        self.assertEqual(cont["observed"]["runtime_ledger_observed_stage"], "live")
+        self.assertEqual(
+            cont["observed"]["runtime_ledger_bucket_ended_at"],
+            "2026-03-06T15:30:00+00:00",
+        )
+
+    def test_compile_hypothesis_runtime_statuses_blocks_mismatched_runtime_ledger_candidate(
+        self,
+    ) -> None:
+        registry = load_hypothesis_registry()
+        state = _state(
+            feature_rows=5,
+            drift_checks=3,
+            evidence_checks=2,
+            signal_lag_seconds=15,
+            evidence_report={
+                "ok": True,
+                "checked_at": "2026-03-06T15:45:00+00:00",
+            },
+        )
+        statuses = compile_hypothesis_runtime_statuses(
+            registry=registry,
+            state=state,
+            tca_summary={
+                "order_count": 45,
+                "avg_abs_slippage_bps": 4,
+                "avg_realized_shortfall_bps": -8,
+                "last_computed_at": "2026-03-06T15:50:00+00:00",
+            },
+            runtime_ledger_summary=_runtime_ledger_summary(
+                "H-CONT-01",
+                candidate_id="unrelated-candidate",
+                submitted_order_count=45,
+            ),
+            market_context_status={"last_freshness_seconds": 60},
+            jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                decision="allow",
+                reasons=[],
+                message="ok",
+            ),
+            now=datetime(2026, 3, 6, 16, 0, tzinfo=timezone.utc),
+        )
+
+        cont = next(item for item in statuses if item["hypothesis_id"] == "H-CONT-01")
+        self.assertFalse(cont["promotion_eligible"])
+        self.assertIn("runtime_ledger_candidate_id_mismatch", cont["reasons"])
+        self.assertEqual(
+            cont["observed"]["runtime_ledger_candidate_id"], "unrelated-candidate"
+        )
+
+    def test_compile_hypothesis_runtime_statuses_blocks_runtime_ledger_weak_provenance(
+        self,
+    ) -> None:
+        registry = load_hypothesis_registry()
+        state = _state(
+            feature_rows=5,
+            drift_checks=3,
+            evidence_checks=2,
+            signal_lag_seconds=15,
+            evidence_report={
+                "ok": True,
+                "checked_at": "2026-03-06T15:45:00+00:00",
+            },
+        )
+        statuses = compile_hypothesis_runtime_statuses(
+            registry=registry,
+            state=state,
+            tca_summary={
+                "order_count": 45,
+                "avg_abs_slippage_bps": 4,
+                "avg_realized_shortfall_bps": -8,
+                "last_computed_at": "2026-03-06T15:50:00+00:00",
+            },
+            runtime_ledger_summary={
+                "by_hypothesis": {
+                    "H-CONT-01": {
+                        "hypothesis_id": "H-CONT-01",
+                        "candidate_id": _MANIFEST_CANDIDATE_IDS["H-CONT-01"],
+                        "observed_stage": "live",
+                        "strategy_family": _MANIFEST_STRATEGY_FAMILIES["H-CONT-01"],
+                        "bucket_ended_at": "2026-03-06T15:55:00+00:00",
+                        "submitted_order_count": 45,
+                        "post_cost_expectancy_bps": "8",
+                        "ledger_schema_version": "unknown",
+                        "pnl_basis": "tca_shortfall_proxy",
+                        "execution_policy_hash_counts": {},
+                        "cost_model_hash_counts": {},
+                        "lineage_hash_counts": {},
+                    }
+                }
+            },
+            market_context_status={"last_freshness_seconds": 60},
+            jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                decision="allow",
+                reasons=[],
+                message="ok",
+            ),
+            now=datetime(2026, 3, 6, 16, 0, tzinfo=timezone.utc),
+        )
+
+        cont = next(item for item in statuses if item["hypothesis_id"] == "H-CONT-01")
+        self.assertFalse(cont["promotion_eligible"])
+        self.assertIn("runtime_ledger_schema_version_invalid", cont["reasons"])
+        self.assertIn("runtime_ledger_pnl_basis_invalid", cont["reasons"])
+        self.assertIn("runtime_ledger_execution_policy_hash_missing", cont["reasons"])
+        self.assertIn("runtime_ledger_cost_model_hash_missing", cont["reasons"])
+        self.assertIn("runtime_ledger_lineage_hash_missing", cont["reasons"])
+
     def test_compile_hypothesis_runtime_statuses_blocks_runtime_ledger_lifecycle_blockers(
         self,
     ) -> None:
@@ -454,12 +660,16 @@ class TestHypothesisReadiness(TestCase):
                     },
                     {
                         "hypothesis_id": "H-CONT-01",
+                        "candidate_id": _MANIFEST_CANDIDATE_IDS["H-CONT-01"],
                         "observed_stage": "live",
+                        "strategy_family": _MANIFEST_STRATEGY_FAMILIES["H-CONT-01"],
                         "bucket_ended_at": "2026-03-06T15:55:00+00:00",
                         "submitted_order_count": 45,
                         "closed_trade_count": 5,
                         "post_cost_expectancy_bps": "8",
-                        "execution_policy_hash_counts": ["not-a-hash-map"],
+                        "ledger_schema_version": EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
+                        "pnl_basis": POST_COST_PNL_BASIS,
+                        "execution_policy_hash_counts": {"policy-sha": 1},
                         "cost_model_hash_counts": {"cost-sha": 1},
                         "lineage_hash_counts": {"lineage-sha": 1},
                         "blockers": [
@@ -488,7 +698,7 @@ class TestHypothesisReadiness(TestCase):
         self.assertEqual(
             observed["runtime_ledger_bucket_ended_at"], "2026-03-06T15:55:00+00:00"
         )
-        self.assertEqual(observed["runtime_ledger_execution_policy_hash_count"], 0)
+        self.assertEqual(observed["runtime_ledger_execution_policy_hash_count"], 1)
         self.assertEqual(observed["runtime_ledger_cost_model_hash_count"], 1)
         self.assertEqual(observed["runtime_ledger_lineage_hash_count"], 1)
 

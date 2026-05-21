@@ -17,6 +17,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from ..config import settings
+from .runtime_ledger import EXACT_REPLAY_LEDGER_SCHEMA_VERSION, POST_COST_PNL_BASIS
 
 HypothesisState = Literal["blocked", "shadow", "canary_live", "scaled_live"]
 CapitalStage = Literal[
@@ -143,6 +144,24 @@ _CAPITAL_STAGE_RANK = {
     "0.50x live": 3,
     "1.00x live": 4,
 }
+_KNOWN_RUNTIME_LEDGER_SCHEMA_VERSIONS = frozenset(
+    {
+        EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
+        "torghut.runtime-ledger-bucket.v1",
+    }
+)
+_RUNTIME_LEDGER_PROVENANCE_REASONS = {
+    "runtime_ledger_candidate_id_mismatch",
+    "runtime_ledger_candidate_id_missing",
+    "runtime_ledger_cost_model_hash_missing",
+    "runtime_ledger_execution_policy_hash_missing",
+    "runtime_ledger_lineage_hash_missing",
+    "runtime_ledger_pnl_basis_invalid",
+    "runtime_ledger_pnl_basis_missing",
+    "runtime_ledger_schema_version_invalid",
+    "runtime_ledger_schema_version_missing",
+    "runtime_ledger_strategy_family_mismatch",
+}
 _EVIDENCE_REFRESH_REASONS = {
     "delay_adjusted_depth_stress_failed",
     "delay_adjusted_depth_stress_missing",
@@ -157,6 +176,7 @@ _EVIDENCE_REFRESH_REASONS = {
     "required_feature_set_unavailable",
     "runtime_ledger_proof_missing",
     "tca_evidence_stale",
+    *_RUNTIME_LEDGER_PROVENANCE_REASONS,
 }
 _SAMPLE_REASONS = {"sample_count_below_canary_minimum", "route_universe_empty"}
 _EDGE_OR_COST_REASONS = {
@@ -273,6 +293,12 @@ def _ranked_candidate_dossiers(
                 "observed": {
                     "tca_order_count": observed.get("tca_order_count"),
                     "avg_abs_slippage_bps": observed.get("avg_abs_slippage_bps"),
+                    "runtime_ledger_candidate_id": observed.get(
+                        "runtime_ledger_candidate_id"
+                    ),
+                    "runtime_ledger_observed_stage": observed.get(
+                        "runtime_ledger_observed_stage"
+                    ),
                     "runtime_ledger_submitted_order_count": observed.get(
                         "runtime_ledger_submitted_order_count"
                     ),
@@ -284,6 +310,12 @@ def _ranked_candidate_dossiers(
                     ),
                     "runtime_ledger_net_strategy_pnl_after_costs": observed.get(
                         "runtime_ledger_net_strategy_pnl_after_costs"
+                    ),
+                    "runtime_ledger_schema_version": observed.get(
+                        "runtime_ledger_schema_version"
+                    ),
+                    "runtime_ledger_pnl_basis": observed.get(
+                        "runtime_ledger_pnl_basis"
                     ),
                     "feature_batch_rows_total": observed.get(
                         "feature_batch_rows_total"
@@ -635,7 +667,10 @@ class _TcaReadinessInputs:
 @dataclass(frozen=True)
 class _RuntimeLedgerReadinessInputs:
     proof_present: bool
+    candidate_id: str | None
     observed_stage: str | None
+    runtime_strategy_name: str | None
+    strategy_family: str | None
     fill_count: int
     submitted_order_count: int
     closed_trade_count: int
@@ -649,6 +684,8 @@ class _RuntimeLedgerReadinessInputs:
     execution_policy_hash_count: int
     cost_model_hash_count: int
     lineage_hash_count: int
+    ledger_schema_version: str | None
+    pnl_basis: str | None
 
 
 @dataclass(frozen=True)
@@ -869,23 +906,84 @@ def _runtime_ledger_rows_for_hypothesis(
     return rows
 
 
+def _runtime_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _runtime_target_token(value: object) -> str | None:
+    text = _runtime_text(value)
+    return text.lower().replace("-", "_") if text is not None else None
+
+
+def _runtime_ledger_target_blockers(
+    row: Mapping[str, Any],
+    *,
+    candidate_id: str | None,
+    strategy_family: str | None,
+) -> tuple[str, ...]:
+    blockers: list[str] = []
+    expected_candidate_id = _runtime_text(candidate_id)
+    actual_candidate_id = _runtime_text(row.get("candidate_id"))
+    if expected_candidate_id is not None:
+        if actual_candidate_id is None:
+            blockers.append("runtime_ledger_candidate_id_missing")
+        elif actual_candidate_id != expected_candidate_id:
+            blockers.append("runtime_ledger_candidate_id_mismatch")
+
+    expected_strategy_family = _runtime_target_token(strategy_family)
+    actual_strategy_family = _runtime_target_token(row.get("strategy_family"))
+    if (
+        expected_strategy_family is not None
+        and actual_strategy_family is not None
+        and actual_strategy_family != expected_strategy_family
+    ):
+        blockers.append("runtime_ledger_strategy_family_mismatch")
+    return tuple(blockers)
+
+
+def _runtime_ledger_row_rank(
+    row: Mapping[str, Any],
+    *,
+    candidate_id: str | None,
+    strategy_family: str | None,
+) -> tuple[int, int, datetime]:
+    target_blockers = _runtime_ledger_target_blockers(
+        row,
+        candidate_id=candidate_id,
+        strategy_family=strategy_family,
+    )
+    row_at = (
+        _parse_iso8601(row.get("bucket_ended_at"))
+        or _parse_iso8601(row.get("window_ended_at"))
+        or _parse_iso8601(row.get("created_at"))
+        or datetime.min.replace(tzinfo=timezone.utc)
+    )
+    return (
+        0 if target_blockers else 1,
+        1 if _runtime_text(row.get("observed_stage")) == "live" else 0,
+        row_at,
+    )
+
+
 def _runtime_ledger_latest_row(
     rows: Sequence[Mapping[str, Any]],
+    *,
+    candidate_id: str | None,
+    strategy_family: str | None,
 ) -> Mapping[str, Any] | None:
-    latest: Mapping[str, Any] | None = None
-    latest_at: datetime | None = None
-    for row in rows:
-        row_at = (
-            _parse_iso8601(row.get("bucket_ended_at"))
-            or _parse_iso8601(row.get("window_ended_at"))
-            or _parse_iso8601(row.get("created_at"))
-        )
-        if latest is None or (
-            row_at is not None and (latest_at is None or row_at > latest_at)
-        ):
-            latest = row
-            latest_at = row_at
-    return latest
+    if not rows:
+        return None
+    return max(
+        rows,
+        key=lambda row: _runtime_ledger_row_rank(
+            row,
+            candidate_id=candidate_id,
+            strategy_family=strategy_family,
+        ),
+    )
 
 
 def _hash_count(value: object) -> int:
@@ -893,6 +991,46 @@ def _hash_count(value: object) -> int:
         mapping = cast(Mapping[object, object], value)
         return sum(1 for key in mapping.keys() if str(key).strip())
     return 0
+
+
+def _dedupe_runtime_ledger_blockers(blockers: Sequence[str]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for blocker in blockers:
+        reason = str(blocker).strip()
+        if not reason or reason in seen:
+            continue
+        seen.add(reason)
+        deduped.append(reason)
+    return tuple(deduped)
+
+
+def _runtime_ledger_provenance_blockers(
+    *,
+    ledger_schema_version: str | None,
+    pnl_basis: str | None,
+    execution_policy_hash_count: int,
+    cost_model_hash_count: int,
+    lineage_hash_count: int,
+) -> tuple[str, ...]:
+    blockers: list[str] = []
+    if ledger_schema_version is None:
+        blockers.append("runtime_ledger_schema_version_missing")
+    elif ledger_schema_version not in _KNOWN_RUNTIME_LEDGER_SCHEMA_VERSIONS:
+        blockers.append("runtime_ledger_schema_version_invalid")
+
+    if pnl_basis is None:
+        blockers.append("runtime_ledger_pnl_basis_missing")
+    elif pnl_basis != POST_COST_PNL_BASIS:
+        blockers.append("runtime_ledger_pnl_basis_invalid")
+
+    if execution_policy_hash_count <= 0:
+        blockers.append("runtime_ledger_execution_policy_hash_missing")
+    if cost_model_hash_count <= 0:
+        blockers.append("runtime_ledger_cost_model_hash_missing")
+    if lineage_hash_count <= 0:
+        blockers.append("runtime_ledger_lineage_hash_missing")
+    return tuple(blockers)
 
 
 def _runtime_ledger_blockers(row: Mapping[str, Any]) -> tuple[str, ...]:
@@ -920,18 +1058,23 @@ def _runtime_ledger_blockers(row: Mapping[str, Any]) -> tuple[str, ...]:
 def _resolve_runtime_ledger_readiness_inputs(
     runtime_ledger_summary: Mapping[str, Any] | None,
     *,
-    hypothesis_id: str,
+    manifest: HypothesisManifest,
 ) -> _RuntimeLedgerReadinessInputs:
     row = _runtime_ledger_latest_row(
         _runtime_ledger_rows_for_hypothesis(
             runtime_ledger_summary,
-            hypothesis_id=hypothesis_id,
-        )
+            hypothesis_id=manifest.hypothesis_id,
+        ),
+        candidate_id=manifest.candidate_id,
+        strategy_family=manifest.strategy_family,
     )
     if row is None:
         return _RuntimeLedgerReadinessInputs(
             proof_present=False,
+            candidate_id=None,
             observed_stage=None,
+            runtime_strategy_name=None,
+            strategy_family=None,
             fill_count=0,
             submitted_order_count=0,
             closed_trade_count=0,
@@ -945,11 +1088,39 @@ def _resolve_runtime_ledger_readiness_inputs(
             execution_policy_hash_count=0,
             cost_model_hash_count=0,
             lineage_hash_count=0,
+            ledger_schema_version=None,
+            pnl_basis=None,
         )
 
+    execution_policy_hash_count = _hash_count(row.get("execution_policy_hash_counts"))
+    cost_model_hash_count = _hash_count(row.get("cost_model_hash_counts"))
+    lineage_hash_count = _hash_count(row.get("lineage_hash_counts"))
+    ledger_schema_version = _runtime_text(row.get("ledger_schema_version"))
+    pnl_basis = _runtime_text(row.get("pnl_basis"))
+    blockers = _dedupe_runtime_ledger_blockers(
+        (
+            *_runtime_ledger_blockers(row),
+            *_runtime_ledger_target_blockers(
+                row,
+                candidate_id=manifest.candidate_id,
+                strategy_family=manifest.strategy_family,
+            ),
+            *_runtime_ledger_provenance_blockers(
+                ledger_schema_version=ledger_schema_version,
+                pnl_basis=pnl_basis,
+                execution_policy_hash_count=execution_policy_hash_count,
+                cost_model_hash_count=cost_model_hash_count,
+                lineage_hash_count=lineage_hash_count,
+            ),
+        )
+    )
     return _RuntimeLedgerReadinessInputs(
         proof_present=True,
-        observed_stage=str(row.get("observed_stage") or "").strip() or None,
+        candidate_id=_runtime_text(row.get("candidate_id")),
+        observed_stage=_runtime_text(row.get("observed_stage")),
+        runtime_strategy_name=_runtime_text(row.get("runtime_strategy_name"))
+        or _runtime_text(row.get("strategy_id")),
+        strategy_family=_runtime_text(row.get("strategy_family")),
         fill_count=max(0, _optional_int(row.get("fill_count")) or 0),
         submitted_order_count=max(
             0, _optional_int(row.get("submitted_order_count")) or 0
@@ -963,12 +1134,12 @@ def _resolve_runtime_ledger_readiness_inputs(
         post_cost_expectancy_bps=_optional_decimal(row.get("post_cost_expectancy_bps")),
         bucket_started_at=_parse_iso8601(row.get("bucket_started_at")),
         bucket_ended_at=_parse_iso8601(row.get("bucket_ended_at")),
-        blockers=_runtime_ledger_blockers(row),
-        execution_policy_hash_count=_hash_count(
-            row.get("execution_policy_hash_counts")
-        ),
-        cost_model_hash_count=_hash_count(row.get("cost_model_hash_counts")),
-        lineage_hash_count=_hash_count(row.get("lineage_hash_counts")),
+        blockers=blockers,
+        execution_policy_hash_count=execution_policy_hash_count,
+        cost_model_hash_count=cost_model_hash_count,
+        lineage_hash_count=lineage_hash_count,
+        ledger_schema_version=ledger_schema_version,
+        pnl_basis=pnl_basis,
     )
 
 
@@ -1389,7 +1560,7 @@ def compile_hypothesis_runtime_statuses(
         )
         runtime_ledger_inputs = _resolve_runtime_ledger_readiness_inputs(
             runtime_ledger_summary,
-            hypothesis_id=manifest.hypothesis_id,
+            manifest=manifest,
         )
         tca_age_minutes: int | None = None
         if tca_inputs.last_computed_at is not None:
@@ -1656,7 +1827,12 @@ def compile_hypothesis_runtime_statuses(
             "market_session_open": market_session_open,
             "avg_abs_slippage_bps": _decimal_to_string(tca_inputs.avg_abs_slippage_bps),
             "runtime_ledger_proof_present": runtime_ledger_inputs.proof_present,
+            "runtime_ledger_candidate_id": runtime_ledger_inputs.candidate_id,
             "runtime_ledger_observed_stage": runtime_ledger_inputs.observed_stage,
+            "runtime_ledger_runtime_strategy_name": (
+                runtime_ledger_inputs.runtime_strategy_name
+            ),
+            "runtime_ledger_strategy_family": runtime_ledger_inputs.strategy_family,
             "runtime_ledger_fill_count": runtime_ledger_inputs.fill_count,
             "runtime_ledger_submitted_order_count": runtime_ledger_inputs.submitted_order_count,
             "runtime_ledger_closed_trade_count": runtime_ledger_inputs.closed_trade_count,
@@ -1690,6 +1866,8 @@ def compile_hypothesis_runtime_statuses(
                 runtime_ledger_inputs.cost_model_hash_count
             ),
             "runtime_ledger_lineage_hash_count": runtime_ledger_inputs.lineage_hash_count,
+            "runtime_ledger_schema_version": runtime_ledger_inputs.ledger_schema_version,
+            "runtime_ledger_pnl_basis": runtime_ledger_inputs.pnl_basis,
         }
         if tca_inputs.route_filter_applied:
             observed.update(
