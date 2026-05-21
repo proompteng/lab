@@ -24,6 +24,7 @@ class FakeChildProcess extends EventEmitter {
 }
 
 const spawnMock = spawn as unknown as {
+  mock: { calls: unknown[][] }
   mockReturnValue: (value: unknown) => void
   mockReset: () => void
 }
@@ -327,6 +328,73 @@ describe('CodexAppServerClient v2 notifications', () => {
     client.stop()
   })
 
+  it('keeps the active stream open when app-server error notifications are retryable', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const runPromise = client.runTurnStream('hello')
+    await respondToThreadStart(child, 'thread-1')
+    await respondToTurnStart(child, 'response-turn-id')
+    const { stream } = await runPromise
+
+    writeLine(child, {
+      method: 'turn/started',
+      params: {
+        threadId: 'thread-1',
+        turn: {
+          id: 'canonical-turn-id',
+          status: 'inProgress',
+          items: [],
+          error: null,
+          startedAt: null,
+          completedAt: null,
+          durationMs: null,
+        },
+      },
+    })
+    writeLine(child, {
+      method: 'error',
+      params: {
+        error: {
+          message: 'Reconnecting... 2/5',
+          codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
+          additionalDetails: 'Stream disconnected before completion.',
+        },
+        willRetry: true,
+        threadId: 'thread-1',
+        turnId: 'canonical-turn-id',
+      },
+    })
+
+    await expect(stream.next()).resolves.toMatchObject({
+      value: {
+        type: 'error',
+        error: {
+          error: {
+            message: 'Reconnecting... 2/5',
+          },
+          willRetry: true,
+        },
+      },
+      done: false,
+    })
+
+    writeLine(child, {
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-1',
+        turn: { id: 'canonical-turn-id', status: 'completed', items: [], error: null },
+      },
+    })
+
+    await expect(withTimeout(stream.next(), 'retryable error stream completion')).resolves.toMatchObject({
+      done: true,
+      value: { id: 'canonical-turn-id', status: 'completed' },
+    })
+    client.stop()
+  })
+
   it('omits the CLI approval flag for structured rejection policies', async () => {
     const { child, client } = setupClient({
       approval: {
@@ -340,7 +408,7 @@ describe('CodexAppServerClient v2 notifications', () => {
       },
     })
 
-    const [binaryPath, args] = vi.mocked(spawn).mock.calls[0] ?? []
+    const [binaryPath, args] = spawnMock.mock.calls[0] ?? []
     expect(binaryPath).toBe('codex')
     expect(args).toEqual(['--sandbox', 'danger-full-access', '--model', 'gpt-5.5', 'app-server'])
 
@@ -354,7 +422,7 @@ describe('CodexAppServerClient v2 notifications', () => {
       cliConfigOverrides: ['mcp_servers={}', 'notify=[]'],
     })
 
-    const [binaryPath, args] = vi.mocked(spawn).mock.calls[0] ?? []
+    const [binaryPath, args] = spawnMock.mock.calls[0] ?? []
     expect(binaryPath).toBe('codex')
     expect(args).toEqual([
       '--sandbox',

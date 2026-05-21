@@ -1391,19 +1391,28 @@ export class CodexAppServerClient {
       }
       case 'error': {
         const errorPayload = (notification.params as ErrorNotification) ?? { message: 'unknown error' }
+        const willRetry =
+          typeof notification.params === 'object' &&
+          notification.params !== null &&
+          (notification.params as { willRetry?: unknown }).willRetry === true
         const notificationTurnId = this.findTurnId(notification.params)
         if (notificationTurnId) this.reconcileActiveTurnId(notificationTurnId)
         const resolved = this.resolveTurnStream(notification.params)
         if (resolved) {
           resolved.stream.push({ type: 'error', error: errorPayload })
-          this.failTurnStream(resolved.turnId, streamErrorToError(errorPayload))
+          if (!willRetry) {
+            this.failTurnStream(resolved.turnId, streamErrorToError(errorPayload))
+          }
         } else {
           this.log('info', 'stream error without matching active turn (dropped)', {
             method,
             params: notification.params,
           })
         }
-        this.log('error', 'codex stream error', { method, params: notification.params })
+        this.log(willRetry ? 'warn' : 'error', willRetry ? 'codex stream retryable error' : 'codex stream error', {
+          method,
+          params: notification.params,
+        })
         break
       }
       default:
