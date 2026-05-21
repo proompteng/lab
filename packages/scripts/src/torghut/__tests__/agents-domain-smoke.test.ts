@@ -58,6 +58,16 @@ const stringAt = (value: unknown, key: string) => {
 const nameOf = (manifest: Record<string, unknown>) => stringAt(objectAt(manifest, 'metadata'), 'name')
 
 describe('Agents domain scheduled AgentRun templates', () => {
+  it('keeps dedicated Torghut capacity pools blocking while shared providers only degrade by default', () => {
+    const provider = readYamlObjects(
+      'argocd/applications/torghut/agents-domain/torghut-market-context-agentprovider.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'AgentProvider')
+    const spec = objectAt(provider, 'spec')
+    const health = objectAt(spec, 'health')
+
+    expect(objectAt(health, 'capacityFailurePolicy')).toBe('block')
+  })
+
   it('keeps scheduled template retention aligned with the swarm brownout window', () => {
     const manifestPaths = [
       ...swarmAgentRunTemplatePaths,

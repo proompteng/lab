@@ -9,7 +9,7 @@ import {
   stringList,
   stringValues,
 } from '~/server/control-plane-torghut-evidence-normalizers'
-import { asRecord } from '@proompteng/agent-contracts/json'
+import { asRecord } from '@proompteng/agent-contracts'
 
 const EXECUTABLE_ALPHA_REPAIR_RECEIPT_SCHEMA_VERSION = 'torghut.executable-alpha-repair-receipt.v1'
 const EXECUTABLE_ALPHA_REPAIR_RECEIPTS_SCHEMA_VERSION = 'torghut.executable-alpha-repair-receipts.v1'

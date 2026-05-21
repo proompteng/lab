@@ -2,7 +2,7 @@ import {
   fetchApprovalPolicyResourceFromAgentsService,
   fetchBudgetResourceFromAgentsService,
   fetchSecretBindingResourceFromAgentsService,
-} from '@proompteng/agent-contracts/policy-reference-client'
+} from '@proompteng/agent-contracts'
 import {
   extractAllowedServiceAccounts,
   extractApprovalPolicies,
@@ -15,9 +15,9 @@ import {
   type PolicyChecks,
   type PolicyResourceGetter,
   type PolicySubject,
-} from '@proompteng/agent-contracts/policy-validation'
+} from '@proompteng/agent-contracts'
 
-import { asRecord } from '@proompteng/agent-contracts/json'
+import { asRecord } from '@proompteng/agent-contracts'
 
 export type { PolicyChecks, PolicyResourceGetter, PolicySubject }
 export { extractAllowedServiceAccounts, extractApprovalPolicies, extractRequiredSecrets, extractRuntimeServiceAccount }

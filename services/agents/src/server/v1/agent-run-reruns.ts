@@ -1,4 +1,4 @@
-import { buildCodexOrchestrationParameters } from '@proompteng/agent-contracts/codex-orchestration-parameters'
+import { buildCodexOrchestrationParameters } from '@proompteng/agent-contracts'
 import { Context, Data, Effect, Layer } from 'effect'
 
 import { errorResponse, okResponse, parseJsonBody } from '../http'

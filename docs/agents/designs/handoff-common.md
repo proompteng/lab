@@ -1,6 +1,6 @@
 # Agents: Shared Handoff Appendix (Repo + Chart + Cluster)
 
-Status: Current (2026-02-07)
+Status: Current (2026-05-21)
 
 Docs index: [README](../README.md)
 
@@ -32,23 +32,20 @@ declared in:
   - Related apps (not part of `agents` release, but commonly involved): `argocd/applications/jangar/`,
     `argocd/applications/froussard/`
 
-## Current cluster desired state (GitOps)
-
-As of 2026-02-07 (repo `main`), the repo declares:
+## Current GitOps Desired State
 
 - Argo CD app `agents` deploys to namespace `agents`. See `argocd/applications/agents/application.yaml`.
 - Install mechanism: kustomize `helmCharts` with `includeCRDs: true` and Helm release name `agents`. See
   `argocd/applications/agents/kustomization.yaml`.
-- Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
-- Images pinned by GitOps (from `argocd/applications/agents/values.yaml`):
-  - Control plane (Deployment `agents`): `registry.ide-newton.ts.net/lab/jangar-control-plane:5436c9d2@sha256:b511d73a2622ea3a4f81f5507899bca1970a0e7b6a9742b42568362f1d682b9a`
-  - Controllers (Deployment `agents-controllers`): `registry.ide-newton.ts.net/lab/jangar:5436c9d2@sha256:d673055eb54af663963dedfee69e63de46059254b830eca2a52e97e641f00349`
-  - Runtime runner (AgentRun pods): `registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl`
+- Chart version is defined by `charts/agents/Chart.yaml`.
+- Images are pinned by `argocd/applications/agents/values.yaml`:
+  - Control plane uses `registry.ide-newton.ts.net/lab/agents-control-plane`.
+  - Controllers use `registry.ide-newton.ts.net/lab/agents-controller`.
+  - Runtime runner uses `registry.ide-newton.ts.net/lab/agents-codex-runner`.
 - Controllers enabled: `controllers.enabled: true`. See `argocd/applications/agents/values.yaml`.
-- Namespaced reconciliation (not cluster-scoped): `controller.namespaces: [agents]` and `rbac.clusterScoped: false`.
-  See `argocd/applications/agents/values.yaml`.
+- Reconciliation namespace and RBAC mode are declared in `controller.namespaces` and `rbac.clusterScoped`.
 - Database connection:
-  - `database.secretRef.name: jangar-db-app`
+  - `database.secretRef.name: agents-db-app`
   - `database.secretRef.key: uri`
     See `argocd/applications/agents/values.yaml`.
 - gRPC is enabled and explicitly managed via both chart values and env vars:
@@ -57,6 +54,8 @@ As of 2026-02-07 (repo `main`), the repo declares:
     See `argocd/applications/agents/values.yaml`.
 - GitHub VersionControlProvider is declared in GitOps as `VersionControlProvider/github`. See
   `argocd/applications/agents/codex-versioncontrolprovider.yaml`.
+- Jangar is a domain client/event consumer. It does not own Agents CRD reconciliation, runner images, controller
+  startup, or the Agents database.
 
 Note on “live cluster state”: this repo is GitOps-first, so treat `argocd/applications/**` + `charts/agents/**` as
 the desired state. Validate live state with the commands in the next section (requires read access to `argocd` and

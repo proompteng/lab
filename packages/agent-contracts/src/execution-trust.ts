@@ -135,6 +135,7 @@ const parseDurationToMs = (value: string | null) => {
   const amount = Number(match[1])
   if (!Number.isFinite(amount) || amount <= 0) return null
   const unit = match[2]
+  if (!unit) return null
   if (unit.startsWith('s')) return amount * 1000
   if (unit.startsWith('m')) return amount * 60 * 1000
   if (unit.startsWith('h')) return amount * 60 * 60 * 1000
@@ -621,7 +622,7 @@ export const buildExecutionTrust = async ({
       .map((item) => `${item.scope}|${item.type}|${item.name ?? ''}|${item.class}|${item.reason}`)
       .slice(0, summaryLimit),
   ).map((line) => {
-    const [scope, type, name, blockingClass, ...reasonPieces] = line.split('|')
+    const [scope = 'unknown', type = 'dependencies', name = '', blockingClass, ...reasonPieces] = line.split('|')
     return {
       type: type as ExecutionTrustStatus['blocking_windows'][number]['type'],
       scope,

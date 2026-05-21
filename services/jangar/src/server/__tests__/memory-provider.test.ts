@@ -33,7 +33,7 @@ describe('memory-provider Agents service client', () => {
         type: 'postgres',
         connection: {
           secretRef: {
-            name: 'agents-db-next-app',
+            name: 'agents-db-app',
             key: 'uri',
           },
         },

@@ -8,7 +8,7 @@ Status: Draft (2026-02-07)
   - Control plane: `charts/agents/templates/deployment.yaml`
   - Controllers: `charts/agents/templates/deployment-controllers.yaml`
 - Per-run payloads are delivered to runner Jobs via generated ConfigMaps:
-  - `services/jangar/src/server/agents-controller.ts` (`createRunSpecConfigMap`, `createInputFilesConfigMap`)
+  - `services/agents/src/server/agents-controller` (`createRunSpecConfigMap`, `createInputFilesConfigMap`)
 - Jangar already has a `kubectl`-based watch abstraction used by controllers:
   - `services/jangar/src/server/kube-watch.ts` (`startResourceWatch`)
 - There is no general-purpose “settings store” with runtime reload semantics; changing controller knobs typically requires a pod restart.
@@ -162,12 +162,12 @@ Backwards compatibility approach:
 
 Example mapping entries:
 
-- `JANGAR_AGENT_RUNNER_BACKOFF_LIMIT` -> `['control_plane', 'agent_runner', 'backoff_limit']`
-- `JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS` -> `['control_plane', 'agent_runner', 'job_ttl_seconds']`
-- `JANGAR_AGENT_RUNNER_LOG_RETENTION_SECONDS` -> `['control_plane', 'agent_runner', 'log_retention_seconds']`
-- `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_NAMESPACE` -> `['control_plane', 'agents_controller', 'concurrency', 'namespace']`
-- `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_AGENT` -> `['control_plane', 'agents_controller', 'concurrency', 'agent']`
-- `JANGAR_AGENTS_CONTROLLER_CONCURRENCY_CLUSTER` -> `['control_plane', 'agents_controller', 'concurrency', 'cluster']`
+- `AGENTS_AGENT_RUNNER_BACKOFF_LIMIT` -> `['control_plane', 'agent_runner', 'backoff_limit']`
+- `AGENTS_AGENT_RUNNER_JOB_TTL_SECONDS` -> `['control_plane', 'agent_runner', 'job_ttl_seconds']`
+- `AGENTS_AGENT_RUNNER_LOG_RETENTION_SECONDS` -> `['control_plane', 'agent_runner', 'log_retention_seconds']`
+- `AGENTS_CONTROLLER_CONCURRENCY_NAMESPACE` -> `['control_plane', 'agents_controller', 'concurrency', 'namespace']`
+- `AGENTS_CONTROLLER_CONCURRENCY_AGENT` -> `['control_plane', 'agents_controller', 'concurrency', 'agent']`
+- `AGENTS_CONTROLLER_CONCURRENCY_CLUSTER` -> `['control_plane', 'agents_controller', 'concurrency', 'cluster']`
 
 ### Initial Adoption Targets
 
@@ -231,7 +231,7 @@ The chart should render ConfigMap `data.settings` from values in a way that guar
    - Add metrics + logs.
    - Add unit tests for reload and precedence.
 2. Adopt high-value knobs
-   - Update `services/jangar/src/server/agents-controller.ts` to source runner Job defaults via settings helper (keep `AgentRun.spec.runtime.config` highest precedence).
+   - Update `services/agents/src/server/agents-controller` to source runner Job defaults via settings helper (keep `AgentRun.spec.runtime.config` highest precedence).
    - Update webhook tuning in `services/agents/src/server/implementation-source-webhooks.ts`.
    - Update any “controller knobs” that are currently parsed once at startup (ensure re-reads happen per reconcile tick or on update).
 3. Chart plumbing
@@ -263,58 +263,3 @@ The chart should render ConfigMap `data.settings` from values in a way that guar
 - Updating the settings ConfigMap changes effective controller behavior without restarting pods.
 - Invalid updates do not crash controllers and do not replace last-known-good settings.
 - Operators can observe reload status via logs and metrics.
-
-## Handoff Appendix (Repo + Chart + Cluster)
-
-### Source of truth
-
-- Helm chart: `charts/agents` (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `crds/`)
-- GitOps application (desired state): `argocd/applications/agents/application.yaml`, `argocd/applications/agents/kustomization.yaml`, `argocd/applications/agents/values.yaml`
-- Control plane + controllers code:
-  - `kubectl` watch abstraction: `services/jangar/src/server/kube-watch.ts`
-  - Agents/AgentRuns controller: `services/jangar/src/server/agents-controller.ts`
-  - Orchestrations: `services/jangar/src/server/orchestration-controller.ts`, `services/jangar/src/server/orchestration-submit.ts`
-  - Supporting primitives: `services/jangar/src/server/supporting-primitives-controller.ts`
-  - Policy checks (budgets/approval/etc): `services/jangar/src/server/primitives-policy.ts`
-- API endpoints that surface controller health/state:
-  - `/health`: `services/jangar/src/routes/health.tsx`
-  - Control-plane status surface: `services/jangar/src/server/control-plane-status.ts`
-
-### Current cluster state (GitOps desired + live API server)
-
-As of 2026-02-07 (repo `main`):
-
-- Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
-- Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
-- Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
-- Images pinned by GitOps (see `argocd/applications/agents/values.yaml`):
-  - Control plane (`Deployment/agents`): `registry.ide-newton.ts.net/lab/jangar-control-plane:5436c9d2@sha256:b511d73a2622ea3a4f81f5507899bca1970a0e7b6a9742b42568362f1d682b9a`
-  - Controllers (`Deployment/agents-controllers`): `registry.ide-newton.ts.net/lab/jangar:5436c9d2@sha256:d673055eb54af663963dedfee69e63de46059254b830eca2a52e97e641f00349`
-- Namespaced reconciliation: `controller.namespaces: [agents]` and `rbac.clusterScoped: false`. See `argocd/applications/agents/values.yaml`.
-- Runner auth (GitHub token): `envFromSecretRefs: [agents-github-token-env]`. See `argocd/applications/agents/values.yaml`.
-
-To verify live cluster state (requires sufficient RBAC), run:
-
-```bash
-kubectl get --raw /version
-
-kubectl -n agents get deploy
-kubectl -n agents get pods
-
-kubectl rollout status -n agents deploy/agents
-kubectl rollout status -n agents deploy/agents-controllers
-```
-
-### Rollout plan (GitOps)
-
-1. Add the ConfigMap template + values/schema to `charts/agents`.
-2. Update the GitOps overlay to enable it:
-   - `argocd/applications/agents/values.yaml`
-3. Validate rendering and manifests:
-
-```bash
-mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml
-./scripts/agents/validate-agents.sh
-./scripts/argo-lint.sh
-./scripts/kubeconform.sh argocd
-```

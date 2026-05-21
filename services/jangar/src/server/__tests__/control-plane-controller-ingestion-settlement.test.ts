@@ -4,7 +4,7 @@ import {
   buildControlPlaneControllerIngestionSettlement,
   type ControlPlaneControllerIngestionSettlement,
   type ControlPlaneSourceServingSnapshot,
-} from '@proompteng/agent-contracts/control-plane-status'
+} from '@proompteng/agent-contracts'
 
 import type {
   ControlPlaneControllerWitnessQuorum,

@@ -94,6 +94,44 @@ describe('supporting primitives controller', () => {
     expect(probeNamespacedResource).toHaveBeenCalledWith(RESOURCE_MAP.Swarm, 'agents')
   })
 
+  it('observes Swarm resources without dispatching domain requirement signals', async () => {
+    const { kube, applied, statuses } = createKubeMock()
+
+    await __test__.reconcileSwarm(kube, {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'runtime-workers', namespace: 'agents', generation: 2 },
+      status: {
+        phase: 'Ready',
+        material_reentry_clearinghouse: {
+          implementer_dispatches: [
+            {
+              dispatch_kind: 'swarm_requirement_signal',
+              signal_name: 'domain-material-reentry',
+              source_swarm: 'jangar-domain',
+              target_swarm: 'runtime-workers',
+              target_stage: 'implement',
+              channel: 'agentrun.general.requirement',
+              description: 'domain repair',
+              payload: { domain: 'jangar' },
+            },
+          ],
+        },
+      },
+    })
+
+    expect(applied).toHaveLength(0)
+    expect(statuses[0]).toMatchObject({
+      kind: 'Swarm',
+      metadata: { name: 'runtime-workers', namespace: 'agents' },
+      status: {
+        observedGeneration: 2,
+        phase: 'Ready',
+        conditions: [expect.objectContaining({ type: 'Ready', status: 'True', reason: 'Observed' })],
+      },
+    })
+  })
+
   it('validates Tool specs and writes standard status', async () => {
     const { kube, statuses } = createKubeMock()
     await __test__.reconcileTool(kube, {

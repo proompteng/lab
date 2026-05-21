@@ -1,4 +1,4 @@
-import { fetchExecutionTrustFromAgentsService } from '@proompteng/agent-contracts/execution-trust-client'
+import { fetchExecutionTrustFromAgentsService } from '@proompteng/agent-contracts'
 import {
   buildExecutionTrust as buildExecutionTrustFromResources,
   DEFAULT_EXECUTION_TRUST_SUMMARY_LIMIT,
@@ -6,7 +6,7 @@ import {
   type ExecutionTrustSnapshot,
   type ExecutionTrustSwarmLister,
   type ExecutionTrustSwarmResource,
-} from '@proompteng/agent-contracts/execution-trust'
+} from '@proompteng/agent-contracts'
 
 import { resolveControlPlaneStatusConfig } from '~/server/control-plane-config'
 

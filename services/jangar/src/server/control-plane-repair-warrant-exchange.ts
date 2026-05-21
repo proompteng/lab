@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto'
 
-import { fetchJobResourcesFromAgentsService } from '@proompteng/agent-contracts/agent-jobs-client'
+import { fetchJobResourcesFromAgentsService } from '@proompteng/agent-contracts'
 import {
   SWARM_ADMISSION_ANNOTATION_RUNTIME_DIGEST,
   SWARM_NAME_LABEL,
   SWARM_STAGE_LABEL,
-} from '@proompteng/agent-contracts/swarm-contracts'
+} from '@proompteng/agent-contracts'
 
 import type {
   ActionSloBudget,
@@ -22,7 +22,7 @@ import type {
   SourceRolloutTruthExchange,
 } from '~/server/control-plane-status-types'
 import type { ControlPlaneRolloutHealth, ControlPlaneWatchReliability } from '~/server/control-plane-status-types'
-import { asRecord, asString } from '@proompteng/agent-contracts/json'
+import { asRecord, asString } from '@proompteng/agent-contracts'
 import {
   SCHEDULE_DEBT_ANNOTATION_IMAGE_REF,
   SCHEDULE_DEBT_ANNOTATION_LANE,

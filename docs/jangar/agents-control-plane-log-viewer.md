@@ -295,7 +295,7 @@ Client state (per open log stream):
 ## Appendix: related docs and code
 
 - Generic Agents log APIs and browser run pages now live under `services/agents`.
-- typed `@proompteng/agent-contracts/*-client` imports for Jangar domain consumers
+- typed root `@proompteng/agent-contracts` imports for Jangar domain consumers
 - `services/jangar/src/server/control-plane-status-types.ts` for domain status normalization only
 - `docs/jangar/primitives/control-plane.md`
 - `docs/agents/agentctl-cli-design.md`

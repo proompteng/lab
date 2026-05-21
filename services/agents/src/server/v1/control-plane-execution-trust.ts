@@ -3,7 +3,7 @@ import {
   DEFAULT_EXECUTION_TRUST_SUMMARY_LIMIT,
   toExecutionTrustSwarmResources,
   type ExecutionTrustSwarmLister,
-} from '@proompteng/agent-contracts/execution-trust'
+} from '@proompteng/agent-contracts'
 
 import { errorResponse, okResponse } from '../http'
 import { createKubernetesClient, RESOURCE_MAP, type KubernetesClient } from '../kube-types'

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { AgentsAgentRunTerminalEvent } from '@proompteng/agent-contracts/agent-run-terminal-events-client'
+import type { AgentsAgentRunTerminalEvent } from '@proompteng/agent-contracts'
 
 import {
   getWhitepaperFinalizeConsumerHealth,

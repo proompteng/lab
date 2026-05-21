@@ -5,7 +5,7 @@ import {
   normalizeReason,
   stringList,
 } from '~/server/control-plane-torghut-evidence-normalizers'
-import { asRecord } from '@proompteng/agent-contracts/json'
+import { asRecord } from '@proompteng/agent-contracts'
 
 export const NO_DELTA_REPAIR_REENTRY_AUCTION_REF_SCHEMA_VERSION = 'torghut.no-delta-repair-reentry-auction-ref.v1'
 

@@ -6,8 +6,8 @@ import {
   isControllerHealthReady,
   getAgentsReadySnapshot,
   uniqueStrings,
-} from '@proompteng/agent-contracts/agents-ready'
-import { findAdmissionPassport } from '@proompteng/agent-contracts/runtime-admission'
+} from '@proompteng/agent-contracts'
+import { findAdmissionPassport } from '@proompteng/agent-contracts'
 
 import type {
   ControlPlaneControllerWitnessQuorum,

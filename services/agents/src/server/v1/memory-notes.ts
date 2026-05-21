@@ -2,7 +2,7 @@ import {
   normalizeOptionalMemoryNoteNamespace,
   parsePersistMemoryNoteInput,
   parseRetrieveMemoryNotesInput,
-} from '@proompteng/agent-contracts/memory-client'
+} from '@proompteng/agent-contracts'
 
 import { errorResponse, okResponse, parseJsonBody } from '../http'
 import { createPostgresMemoriesStore, type MemoriesStore } from '../memory-notes-store'

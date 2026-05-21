@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 
-import type { ControlPlaneControllerIngestionSettlement } from '@proompteng/agent-contracts/control-plane-status'
+import type { ControlPlaneControllerIngestionSettlement } from '@proompteng/agent-contracts'
 
 import type {
   ControllerIngestionSettlement,

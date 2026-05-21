@@ -7,7 +7,7 @@ const { submitAgentRunToAgentsServiceMock } = vi.hoisted(() => ({
   submitAgentRunToAgentsServiceMock: vi.fn(),
 }))
 
-vi.mock('@proompteng/agent-contracts/agent-runs-client', () => ({
+vi.mock('@proompteng/agent-contracts', () => ({
   submitAgentRunToAgentsService: submitAgentRunToAgentsServiceMock,
 }))
 

@@ -3,7 +3,7 @@ import type {
   AgentsAgentRunTerminalEventAckInput,
   AgentsAgentRunTerminalEventAckResult,
   AgentsAgentRunTerminalEventsListResult,
-} from '@proompteng/agent-contracts/agent-run-terminal-events-client'
+} from '@proompteng/agent-contracts'
 import { Context, Data, Effect, Layer } from 'effect'
 
 import { errorResponse, okResponse, parseJsonBody } from '../http'

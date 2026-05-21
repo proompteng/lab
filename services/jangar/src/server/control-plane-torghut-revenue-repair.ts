@@ -5,7 +5,7 @@ import {
   normalizeReason,
   stringValues,
 } from '~/server/control-plane-torghut-evidence-normalizers'
-import { asRecord } from '@proompteng/agent-contracts/json'
+import { asRecord } from '@proompteng/agent-contracts'
 
 export const normalizeRevenueRepairBoolean = (value: unknown): boolean | null => {
   if (typeof value === 'boolean') return value

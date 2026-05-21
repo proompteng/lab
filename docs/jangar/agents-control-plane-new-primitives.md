@@ -227,5 +227,5 @@ Current ownership:
 
 - `services/agents/**`
 - `charts/agents/**`
-- typed `@proompteng/agent-contracts/*-client` imports for Jangar domain-client reads
+- typed root `@proompteng/agent-contracts` imports for Jangar domain-client reads
 - `services/jangar/src/server/control-plane-status-types.ts` for domain status payload normalization only

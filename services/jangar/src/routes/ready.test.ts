@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   buildControlPlaneControllerIngestionSettlement,
   type AgentRunIngestionStatus,
-} from '@proompteng/agent-contracts/control-plane-status'
+} from '@proompteng/agent-contracts'
 
 const originalEnv = { ...process.env }
 delete originalEnv.JANGAR_TORGHUT_STATUS_URL
@@ -37,10 +37,8 @@ const githubReviewIngestMocks = vi.hoisted(() => ({
   getGithubReviewIngestPressureSummary: vi.fn(),
 }))
 
-vi.mock('@proompteng/agent-contracts/agents-ready', async () => {
-  const actual = await vi.importActual<typeof import('@proompteng/agent-contracts/agents-ready')>(
-    '@proompteng/agent-contracts/agents-ready',
-  )
+vi.mock('@proompteng/agent-contracts', async () => {
+  const actual = await vi.importActual<typeof import('@proompteng/agent-contracts')>('@proompteng/agent-contracts')
   return {
     ...actual,
     getAgentsReadySnapshot: agentsControlPlaneClientMocks.getAgentsReadySnapshot,
