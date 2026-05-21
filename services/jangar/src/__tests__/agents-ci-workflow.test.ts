@@ -17,5 +17,6 @@ describe('agents-ci workflow', () => {
     expect(workflow).toContain('--max-time 120')
     expect(workflow).toContain('--retry 3')
     expect(workflow).toContain('--retry-all-errors')
+    expect(workflow).toContain('timeout -k 30s "${AGENTS_TIMEOUT}" bun run packages/scripts/src/agents/smoke-agents.ts')
   })
 })

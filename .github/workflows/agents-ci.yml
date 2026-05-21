@@ -666,7 +666,9 @@ jobs:
           AGENTS_RUNNER_IMAGE_TAG: ${{ env.BUILT_AGENTS_RUNNER_IMAGE_TAG }}
           AGENTS_RUNNER_IMAGE_DIGEST: ${{ env.BUILT_AGENTS_RUNNER_IMAGE_DIGEST }}
           AGENTCTL_BIN: services/agents/agentctl/dist/agentctl
-        run: bun run packages/scripts/src/agents/smoke-agents.ts
+        run: |
+          set -euo pipefail
+          timeout -k 30s "${AGENTS_TIMEOUT}" bun run packages/scripts/src/agents/smoke-agents.ts
 
       - name: Cleanup agents integration release
         if: always()
