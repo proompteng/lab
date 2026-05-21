@@ -102,10 +102,13 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain(
       'Jangar must not retain the Agents memory note store or local memory HTTP parser after Agents owns memory notes',
     )
+    expect(content).toContain('Jangar must not expose generic memory compatibility routes')
+    expect(content).toContain('Jangar MCP must not expose generic memory tools')
     expect(content).toContain(
-      'Jangar memory compatibility routes and MCP must use the Agents memory service boundary instead of DB-backed memory tables',
+      'Agents service must own memory note persistence, retrieval, count, stats, and MCP endpoints',
     )
-    expect(content).toContain('Agents service must own memory note persistence, retrieval, count, and stats endpoints')
+    expect(content).toContain('Memories CLI helpers must not target Jangar memory compatibility APIs')
+    expect(content).toContain('Memories CLI helpers must target the Agents memory note API')
     expect(content).toContain(
       'Shared Argo Workflows GitOps must not retain generic Agents WorkflowTemplate or Argo completion ingestion manifests',
     )
@@ -172,6 +175,8 @@ describe('agents extraction boundary guard', () => {
     expect(content).toContain('Jangar must not own generic supporting-primitives helper contracts')
     expect(content).toContain('supporting-primitives-evidence-pressure.ts')
     expect(content).toContain('supporting-primitives-(evidence-pressure|material-evidence-trace|naming')
+    expect(content).toContain('Jangar must not expose generic memory compatibility routes')
+    expect(content).toContain('Jangar UI and route tree must not link to generic memory compatibility pages or APIs')
     expect(content).toContain(
       'Jangar must not expose generic Codex projection compatibility routes after Agents owns Codex projections',
     )

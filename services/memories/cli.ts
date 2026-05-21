@@ -43,9 +43,9 @@ export function parseCliFlags(argv: string[] = []) {
   return flags
 }
 
-export const DEFAULT_JANGAR_BASE_URL = 'http://jangar.ide-newton.ts.net'
-export const DEFAULT_K8S_JANGAR_BASE_URL = 'http://jangar.jangar.svc.cluster.local'
-export const DEFAULT_K8S_SAME_NAMESPACE_JANGAR_BASE_URL = 'http://jangar'
+export const DEFAULT_AGENTS_BASE_URL = 'https://agents.k8s.proompteng.ai'
+export const DEFAULT_K8S_AGENTS_BASE_URL = 'http://agents.agents.svc.cluster.local'
+export const DEFAULT_K8S_SAME_NAMESPACE_AGENTS_BASE_URL = 'http://agents'
 
 const SERVICEACCOUNT_NAMESPACE_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/namespace'
 
@@ -82,25 +82,25 @@ function resolveKubernetesNamespace(env: EnvMap, explicitNamespace?: string | nu
   )
 }
 
-export function resolveJangarBaseUrl(options?: { env?: EnvMap; kubernetesNamespace?: string | null }) {
+export function resolveAgentsBaseUrl(options?: { env?: EnvMap; kubernetesNamespace?: string | null }) {
   const env = options?.env ?? process.env
-  const configured = env.MEMORIES_JANGAR_URL ?? env.JANGAR_BASE_URL ?? env.MEMORIES_BASE_URL
+  const configured = env.MEMORIES_AGENTS_URL ?? env.AGENTS_SERVICE_BASE_URL ?? env.MEMORIES_BASE_URL
   if (configured) {
     return trimTrailingSlash(configured)
   }
 
   const kubernetesNamespace = resolveKubernetesNamespace(env, options?.kubernetesNamespace)
   if (kubernetesNamespace) {
-    return kubernetesNamespace.toLowerCase() === 'jangar'
-      ? DEFAULT_K8S_SAME_NAMESPACE_JANGAR_BASE_URL
-      : DEFAULT_K8S_JANGAR_BASE_URL
+    return kubernetesNamespace.toLowerCase() === 'agents'
+      ? DEFAULT_K8S_SAME_NAMESPACE_AGENTS_BASE_URL
+      : DEFAULT_K8S_AGENTS_BASE_URL
   }
 
   if (env.KUBERNETES_SERVICE_HOST || env.KUBERNETES_SERVICE_PORT) {
-    return DEFAULT_K8S_JANGAR_BASE_URL
+    return DEFAULT_K8S_AGENTS_BASE_URL
   }
 
-  return DEFAULT_JANGAR_BASE_URL
+  return DEFAULT_AGENTS_BASE_URL
 }
 
 export function getFlagValue(flags: FlagMap, key: string): string | undefined {

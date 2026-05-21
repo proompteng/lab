@@ -19,7 +19,6 @@ import {
 } from '@proompteng/design/ui'
 import {
   IconActivity,
-  IconBrain,
   IconChartCandle,
   IconChartLine,
   IconDatabase,
@@ -50,7 +49,6 @@ type TerminalSession = {
 
 const appNav: AppNavItem[] = [
   { to: '/', label: 'Home', icon: IconHome },
-  { to: '/memories', label: 'Memories', icon: IconBrain },
   { to: '/github/pulls', label: 'PR reviews', icon: IconGitPullRequest },
   { to: '/terminals', label: 'Terminals', icon: IconTerminal2 },
   {

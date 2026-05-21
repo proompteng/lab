@@ -88,7 +88,6 @@ const ROOT_LABELS = new Map<string, string>([
   ['/torghut', 'Torghut'],
   ['/torghut/charts', 'Charts'],
   ['/torghut/symbols', 'Symbols'],
-  ['/memories', 'Memories'],
   ['/mcp', 'MCP'],
 ])
 

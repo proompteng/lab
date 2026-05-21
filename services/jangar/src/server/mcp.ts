@@ -1,14 +1,7 @@
 import { Effect, Layer, ManagedRuntime } from 'effect'
 
-import {
-  MAX_MEMORY_NOTE_CONTENT_CHARS,
-  MAX_MEMORY_NOTE_QUERY_CHARS,
-  MAX_MEMORY_NOTE_SUMMARY_CHARS,
-} from '@proompteng/agent-contracts/memory-client'
-
 import { Atlas, AtlasLive } from './atlas'
 import { parseAtlasCodeSearchInput, parseAtlasIndexInput, parseAtlasSearchInput } from './atlas-http'
-import { MemoryNotes, MemoryNotesLive } from './memory-notes'
 
 type JsonRpcId = string | number | null
 
@@ -34,7 +27,7 @@ type JsonRpcResponse = {
 
 const MCP_SESSION_HEADER = 'Mcp-Session-Id'
 const MCP_PROTOCOL_VERSION = '2024-11-05'
-const MCP_SERVER_INFO = { name: 'memories', version: '0.1.0' } as const
+const MCP_SERVER_INFO = { name: 'jangar-atlas', version: '0.1.0' } as const
 
 const jsonResponse = (payload: unknown, init: ResponseInit = {}) =>
   new Response(JSON.stringify(payload), {
@@ -73,39 +66,6 @@ const normalizeToolName = (name: string) => TOOL_NAME_ALIASES[name] ?? name
 
 const toolsListResult = {
   tools: [
-    {
-      name: 'persist_memory',
-      description: 'Persist a memory record through the Agents memory service.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          namespace: { type: 'string', description: 'Optional namespace (defaults to "default")' },
-          content: { type: 'string', description: 'Memory content (required)' },
-          summary: { type: 'string', description: 'Optional short summary' },
-          tags: { type: 'array', items: { type: 'string' }, description: 'Optional tags' },
-          metadata: { type: 'object', description: 'Optional metadata to attach to the memory record' },
-        },
-        required: ['content'],
-        additionalProperties: false,
-      },
-    },
-    {
-      name: 'retrieve_memory',
-      description: 'Retrieve relevant memories through the Agents memory service.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          namespace: {
-            type: 'string',
-            description: 'Optional namespace filter (omit to search across all namespaces)',
-          },
-          query: { type: 'string', description: 'Search query (required)' },
-          limit: { type: 'integer', description: 'Max results (default 10, max 50)', minimum: 1, maximum: 50 },
-        },
-        required: ['query'],
-        additionalProperties: false,
-      },
-    },
     {
       name: 'atlas_index',
       description: 'Request Atlas enrichment for a repository file path (indexed in Postgres).',
@@ -171,14 +131,14 @@ const toolsListResult = {
   ],
 } as const
 
-const MCP_CONFIG_RESOURCE_URI = 'memories://config'
+const MCP_CONFIG_RESOURCE_URI = 'atlas://config'
 
 const resourcesListResult = {
   resources: [
     {
       uri: MCP_CONFIG_RESOURCE_URI,
-      name: 'Memories MCP config',
-      description: 'Server metadata and defaults for the memories tools.',
+      name: 'Jangar Atlas MCP config',
+      description: 'Server metadata and defaults for the Jangar Atlas tools.',
       mimeType: 'application/json',
     },
   ],
@@ -224,10 +184,6 @@ const toolError = (id: JsonRpcId, message: string, data?: unknown): JsonRpcRespo
 const invalidParams = (id: JsonRpcId, message: string, data?: unknown): JsonRpcResponse =>
   asJsonRpcError(id, { code: -32602, message, data })
 
-const MAX_CONTENT_CHARS = MAX_MEMORY_NOTE_CONTENT_CHARS
-const MAX_QUERY_CHARS = MAX_MEMORY_NOTE_QUERY_CHARS
-const MAX_SUMMARY_CHARS = MAX_MEMORY_NOTE_SUMMARY_CHARS
-
 const buildConfigResource = (request: Request) => {
   const endpoint = new URL(request.url).toString()
   return {
@@ -239,14 +195,6 @@ const buildConfigResource = (request: Request) => {
         serverInfo: MCP_SERVER_INFO,
         endpoint,
         tools: toolsListResult.tools,
-        defaults: {
-          namespace: 'default',
-          limits: {
-            maxContentChars: MAX_CONTENT_CHARS,
-            maxQueryChars: MAX_QUERY_CHARS,
-            maxSummaryChars: MAX_SUMMARY_CHARS,
-          },
-        },
       },
       null,
       2,
@@ -314,83 +262,10 @@ const handleJsonRpcMessageEffect = (request: Request, raw: unknown) =>
           return asJsonRpcError(id, parsed)
         }
 
-        const memories = yield* MemoryNotes
         const atlas = yield* Atlas
         const baseUrl = new URL(request.url)
         const toolName = normalizeToolName(parsed.name)
         const args = parsed.args
-
-        if (toolName === 'persist_memory') {
-          const content = typeof args.content === 'string' ? args.content.trim() : ''
-          if (!content) {
-            if (isNotification) return null
-            return invalidParams(id, 'Invalid params: content is required')
-          }
-          if (content.length > MAX_CONTENT_CHARS) {
-            if (isNotification) return null
-            return invalidParams(id, 'Invalid params: content is too large', { maxChars: MAX_CONTENT_CHARS })
-          }
-
-          const summary = typeof args.summary === 'string' ? args.summary.trim() : null
-          if (summary && summary.length > MAX_SUMMARY_CHARS) {
-            if (isNotification) return null
-            return invalidParams(id, 'Invalid params: summary is too large', { maxChars: MAX_SUMMARY_CHARS })
-          }
-
-          const namespace = typeof args.namespace === 'string' ? args.namespace : undefined
-          const tags = Array.isArray(args.tags)
-            ? (args.tags.filter((t) => typeof t === 'string') as string[])
-            : undefined
-          const metadata = isRecord(args.metadata) ? (args.metadata as Record<string, unknown>) : undefined
-
-          const recordResult = yield* Effect.either(memories.persist({ namespace, content, summary, tags, metadata }))
-          if (recordResult._tag === 'Left') {
-            if (isNotification) return null
-            return toolError(id, recordResult.left.message, { tool: toolName })
-          }
-          const record = recordResult.right
-          if (isNotification) return null
-          return asJsonRpcResponse(
-            id,
-            toTextToolResult(
-              JSON.stringify({ ok: true, memory: record, mcp: { server: baseUrl.origin, tool: toolName } }, null, 2),
-            ),
-          )
-        }
-
-        if (toolName === 'retrieve_memory') {
-          const query = typeof args.query === 'string' ? args.query.trim() : ''
-          if (!query) {
-            if (isNotification) return null
-            return invalidParams(id, 'Invalid params: query is required')
-          }
-          if (query.length > MAX_QUERY_CHARS) {
-            if (isNotification) return null
-            return invalidParams(id, 'Invalid params: query is too large', { maxChars: MAX_QUERY_CHARS })
-          }
-
-          const namespace = typeof args.namespace === 'string' ? args.namespace : undefined
-          const limit =
-            typeof args.limit === 'number' && Number.isFinite(args.limit) ? Math.floor(args.limit) : undefined
-          if (limit != null && (limit < 1 || limit > 50)) {
-            if (isNotification) return null
-            return invalidParams(id, 'Invalid params: limit must be between 1 and 50')
-          }
-
-          const recordsResult = yield* Effect.either(memories.retrieve({ namespace, query, limit }))
-          if (recordsResult._tag === 'Left') {
-            if (isNotification) return null
-            return toolError(id, recordsResult.left.message, { tool: toolName })
-          }
-          const records = recordsResult.right
-          if (isNotification) return null
-          return asJsonRpcResponse(
-            id,
-            toTextToolResult(
-              JSON.stringify({ ok: true, memories: records, mcp: { server: baseUrl.origin, tool: toolName } }, null, 2),
-            ),
-          )
-        }
 
         if (toolName === 'atlas_index') {
           const parsed = parseAtlasIndexInput(args)
@@ -553,7 +428,7 @@ export const handleMcpRequestEffect = (request: Request) =>
     return jsonResponse(response, withMcpSessionHeaders(request))
   })
 
-const handlerRuntime = ManagedRuntime.make(Layer.mergeAll(MemoryNotesLive, AtlasLive))
+const handlerRuntime = ManagedRuntime.make(Layer.mergeAll(AtlasLive))
 
 export const handleMcpRequest = (request: Request): Promise<Response> =>
   handlerRuntime.runPromise(handleMcpRequestEffect(request))

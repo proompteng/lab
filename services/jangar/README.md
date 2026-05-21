@@ -767,26 +767,18 @@ Jangar terminals are intended to run against a dedicated terminal backend deploy
 - Terminal backend: set `JANGAR_TERMINAL_BACKEND_ID` (unique per pod) for session metadata and routing diagnostics.
 - Optional: tune `JANGAR_TERMINAL_BUFFER_BYTES` (output replay buffer) and `JANGAR_TERMINAL_IDLE_TIMEOUT_MS` (auto-terminate idle sessions).
 
-## MCP (memories)
+## MCP
 
-The memories MCP endpoint is available at `POST /mcp` (see `services/jangar/src/routes/mcp.ts`). The Codex app-server is configured to use it via `threadConfig.mcp_servers.memories` (see `services/jangar/src/server/codex-client.ts`).
+Jangar exposes the Atlas MCP endpoint at `POST /mcp` (see `services/jangar/src/routes/mcp.ts`). The Codex app-server registers this endpoint as `threadConfig.mcp_servers.atlas` and registers Agents-owned memory tools through `threadConfig.mcp_servers.memories` (see `services/jangar/src/server/codex-client.ts`).
 
-The MCP server provides:
+The Jangar MCP server provides Atlas indexing/search tools only:
 
-- `persist_memory`: stores `{ namespace, content, summary?, tags? }` plus an OpenAI embedding in Postgres (pgvector).
-- `retrieve_memory`: semantic search over stored memories (cosine distance) for a namespace.
+- `atlas_index`: records repository file-version metadata for Atlas enrichment.
+- `atlas_search`: searches Atlas enrichments.
+- `atlas_code_search`: searches code chunks with file and line pointers.
+- `atlas_stats`: returns Atlas table counts and ingestion stats.
 
-Storage details:
-
-- Table is `memories.entries` (auto-created on first use; see `schemas/embeddings/memories.sql`) and requires `pgvector` + `pgcrypto` extensions.
-- No table migrations are performed; the store expects the current schema only. If `OPENAI_EMBEDDING_DIMENSION` does not match the existing `memories.entries.embedding` column dimension, MCP calls will fail with a schema mismatch error.
-
-## REST (memories)
-
-Jangar also exposes JSON endpoints that mirror the MCP memory inputs:
-
-- `POST /api/memories` with `{ namespace?, content, summary?, tags? }` to persist a memory.
-- `GET /api/memories?query=...&namespace=...&limit=...` to retrieve matches.
+Generic memory note persistence, retrieval, count, stats, and MCP tools are owned by the Agents service at `/v1/memory-notes*` and `/mcp`.
 
 ## Environment
 
@@ -800,8 +792,10 @@ Jangar also exposes JSON endpoints that mirror the MCP memory inputs:
 - `JANGAR_OPENWEBUI_RICH_RENDER_ENABLED` (optional; enables OpenWebUI text-plus-links detail rendering in the standard SSE transcript)
 - `JANGAR_OPENWEBUI_EXTERNAL_BASE_URL` (optional; browser-reachable Jangar origin used to build signed `/api/openwebui/rich-ui/render/$renderId` links)
 - `JANGAR_OPENWEBUI_RENDER_SIGNING_SECRET` (optional; required with the external base URL to sign OpenWebUI detail links)
-- `JANGAR_MCP_URL` (optional; defaults to `http://127.0.0.1:$PORT/mcp`)
-- `DATABASE_URL` (required to use MCP memories tools)
+- `AGENTS_MCP_URL` (optional; defaults to `http://agents.agents.svc.cluster.local/mcp`)
+- `JANGAR_ATLAS_MCP_URL` (optional; defaults to `http://127.0.0.1:$PORT/mcp`)
+- `JANGAR_MCP_URL` (deprecated alias for `JANGAR_ATLAS_MCP_URL`)
+- `DATABASE_URL` (required for Atlas storage)
 - `PGSSLMODE` (optional; defaults to `require`; Jangar does not support `sslrootcert` URL params for Bun’s Postgres client)
 
 Control-plane cache freshness (API read path):

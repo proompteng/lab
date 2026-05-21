@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'bun:test'
 import {
-  DEFAULT_JANGAR_BASE_URL,
-  DEFAULT_K8S_JANGAR_BASE_URL,
-  DEFAULT_K8S_SAME_NAMESPACE_JANGAR_BASE_URL,
+  DEFAULT_AGENTS_BASE_URL,
+  DEFAULT_K8S_AGENTS_BASE_URL,
+  DEFAULT_K8S_SAME_NAMESPACE_AGENTS_BASE_URL,
   parseCliFlags,
   parseCommaList,
   parseJson,
-  resolveJangarBaseUrl,
+  resolveAgentsBaseUrl,
 } from '../cli'
 
 describe('parseCliFlags', () => {
@@ -38,49 +38,49 @@ describe('parseJson', () => {
   })
 })
 
-describe('resolveJangarBaseUrl', () => {
+describe('resolveAgentsBaseUrl', () => {
   it('uses explicit override env vars and trims trailing slash', () => {
     expect(
-      resolveJangarBaseUrl({
-        env: { MEMORIES_JANGAR_URL: 'http://custom.example/' },
+      resolveAgentsBaseUrl({
+        env: { MEMORIES_AGENTS_URL: 'http://custom.example/' },
         kubernetesNamespace: null,
       }),
     ).toBe('http://custom.example')
   })
 
-  it('uses in-namespace service when running inside jangar namespace', () => {
+  it('uses in-namespace service when running inside agents namespace', () => {
     expect(
-      resolveJangarBaseUrl({
+      resolveAgentsBaseUrl({
         env: {},
-        kubernetesNamespace: 'jangar',
+        kubernetesNamespace: 'agents',
       }),
-    ).toBe(DEFAULT_K8S_SAME_NAMESPACE_JANGAR_BASE_URL)
+    ).toBe(DEFAULT_K8S_SAME_NAMESPACE_AGENTS_BASE_URL)
   })
 
   it('uses cross-namespace service DNS when running in another namespace', () => {
     expect(
-      resolveJangarBaseUrl({
+      resolveAgentsBaseUrl({
         env: {},
         kubernetesNamespace: 'coder',
       }),
-    ).toBe(DEFAULT_K8S_JANGAR_BASE_URL)
+    ).toBe(DEFAULT_K8S_AGENTS_BASE_URL)
   })
 
   it('uses in-cluster DNS when Kubernetes service env is present', () => {
     expect(
-      resolveJangarBaseUrl({
+      resolveAgentsBaseUrl({
         env: { KUBERNETES_SERVICE_HOST: '10.96.0.1' },
         kubernetesNamespace: null,
       }),
-    ).toBe(DEFAULT_K8S_JANGAR_BASE_URL)
+    ).toBe(DEFAULT_K8S_AGENTS_BASE_URL)
   })
 
-  it('uses tailscale hostname default outside Kubernetes', () => {
+  it('uses public Agents API default outside Kubernetes', () => {
     expect(
-      resolveJangarBaseUrl({
+      resolveAgentsBaseUrl({
         env: {},
         kubernetesNamespace: null,
       }),
-    ).toBe(DEFAULT_JANGAR_BASE_URL)
+    ).toBe(DEFAULT_AGENTS_BASE_URL)
   })
 })

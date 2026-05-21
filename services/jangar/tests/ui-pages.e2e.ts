@@ -3,14 +3,8 @@ import { expect, test } from '@playwright/test'
 test.describe('ui pages', () => {
   test('home', async ({ page }) => {
     await page.goto('/')
-    await expect(page.getByRole('heading', { name: 'Memories', level: 1 })).toBeVisible()
-  })
-
-  test('memories', async ({ page }) => {
-    await page.goto('/memories')
-    await expect(page.getByLabel('Namespace')).toBeVisible()
-    await expect(page.getByLabel('Query')).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Search' })).toBeVisible()
+    await expect(page.getByText('PR reviews')).toBeVisible()
+    await expect(page.getByText('Atlas search')).toBeVisible()
   })
 
   test('atlas search', async ({ page }) => {

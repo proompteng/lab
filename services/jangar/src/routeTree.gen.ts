@@ -10,7 +10,6 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ReadyRouteImport } from './routes/ready'
-import { Route as MemoriesRouteImport } from './routes/memories'
 import { Route as McpRouteImport } from './routes/mcp'
 import { Route as HealthRouteImport } from './routes/health'
 import { Route as IndexRouteImport } from './routes/index'
@@ -30,7 +29,6 @@ import { Route as AtlasEnrichRouteImport } from './routes/atlas/enrich'
 import { Route as ApiTerminalsRouteImport } from './routes/api/terminals'
 import { Route as ApiSearchRouteImport } from './routes/api/search'
 import { Route as ApiModelsRouteImport } from './routes/api/models'
-import { Route as ApiMemoriesRouteImport } from './routes/api/memories'
 import { Route as ApiHealthRouteImport } from './routes/api/health'
 import { Route as ApiEnrichRouteImport } from './routes/api/enrich'
 import { Route as ApiCodeSearchRouteImport } from './routes/api/code-search'
@@ -46,8 +44,6 @@ import { Route as LibraryWhitepapersRunIdRouteImport } from './routes/library/wh
 import { Route as ApiWhitepapersSearchRouteImport } from './routes/api/whitepapers/search'
 import { Route as ApiTorghutSymbolsRouteImport } from './routes/api/torghut/symbols'
 import { Route as ApiTerminalsSessionIdRouteImport } from './routes/api/terminals/$sessionId'
-import { Route as ApiMemoriesStatsRouteImport } from './routes/api/memories/stats'
-import { Route as ApiMemoriesCountRouteImport } from './routes/api/memories/count'
 import { Route as ApiGithubPullsRouteImport } from './routes/api/github/pulls'
 import { Route as ApiGithubIssuesRouteImport } from './routes/api/github/issues'
 import { Route as ApiAtlasPathsRouteImport } from './routes/api/atlas/paths'
@@ -115,11 +111,6 @@ import { Route as ApiGithubPullsOwnerRepoNumberThreadsThreadIdResolveRouteImport
 const ReadyRoute = ReadyRouteImport.update({
   id: '/ready',
   path: '/ready',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MemoriesRoute = MemoriesRouteImport.update({
-  id: '/memories',
-  path: '/memories',
   getParentRoute: () => rootRouteImport,
 } as any)
 const McpRoute = McpRouteImport.update({
@@ -217,11 +208,6 @@ const ApiModelsRoute = ApiModelsRouteImport.update({
   path: '/api/models',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiMemoriesRoute = ApiMemoriesRouteImport.update({
-  id: '/api/memories',
-  path: '/api/memories',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ApiHealthRoute = ApiHealthRouteImport.update({
   id: '/api/health',
   path: '/api/health',
@@ -299,16 +285,6 @@ const ApiTerminalsSessionIdRoute = ApiTerminalsSessionIdRouteImport.update({
   id: '/$sessionId',
   path: '/$sessionId',
   getParentRoute: () => ApiTerminalsRoute,
-} as any)
-const ApiMemoriesStatsRoute = ApiMemoriesStatsRouteImport.update({
-  id: '/stats',
-  path: '/stats',
-  getParentRoute: () => ApiMemoriesRoute,
-} as any)
-const ApiMemoriesCountRoute = ApiMemoriesCountRouteImport.update({
-  id: '/count',
-  path: '/count',
-  getParentRoute: () => ApiMemoriesRoute,
 } as any)
 const ApiGithubPullsRoute = ApiGithubPullsRouteImport.update({
   id: '/api/github/pulls',
@@ -679,12 +655,10 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/health': typeof HealthRoute
   '/mcp': typeof McpRoute
-  '/memories': typeof MemoriesRoute
   '/ready': typeof ReadyRoute
   '/api/code-search': typeof ApiCodeSearchRoute
   '/api/enrich': typeof ApiEnrichRoute
   '/api/health': typeof ApiHealthRoute
-  '/api/memories': typeof ApiMemoriesRouteWithChildren
   '/api/models': typeof ApiModelsRoute
   '/api/search': typeof ApiSearchRoute
   '/api/terminals': typeof ApiTerminalsRouteWithChildren
@@ -707,8 +681,6 @@ export interface FileRoutesByFullPath {
   '/api/atlas/paths': typeof ApiAtlasPathsRoute
   '/api/github/issues': typeof ApiGithubIssuesRoute
   '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
-  '/api/memories/count': typeof ApiMemoriesCountRoute
-  '/api/memories/stats': typeof ApiMemoriesStatsRoute
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/api/whitepapers/search': typeof ApiWhitepapersSearchRoute
@@ -783,12 +755,10 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/health': typeof HealthRoute
   '/mcp': typeof McpRoute
-  '/memories': typeof MemoriesRoute
   '/ready': typeof ReadyRoute
   '/api/code-search': typeof ApiCodeSearchRoute
   '/api/enrich': typeof ApiEnrichRoute
   '/api/health': typeof ApiHealthRoute
-  '/api/memories': typeof ApiMemoriesRouteWithChildren
   '/api/models': typeof ApiModelsRoute
   '/api/search': typeof ApiSearchRoute
   '/api/terminals': typeof ApiTerminalsRouteWithChildren
@@ -809,8 +779,6 @@ export interface FileRoutesByTo {
   '/api/atlas/paths': typeof ApiAtlasPathsRoute
   '/api/github/issues': typeof ApiGithubIssuesRoute
   '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
-  '/api/memories/count': typeof ApiMemoriesCountRoute
-  '/api/memories/stats': typeof ApiMemoriesStatsRoute
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/api/whitepapers/search': typeof ApiWhitepapersSearchRoute
@@ -886,12 +854,10 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/health': typeof HealthRoute
   '/mcp': typeof McpRoute
-  '/memories': typeof MemoriesRoute
   '/ready': typeof ReadyRoute
   '/api/code-search': typeof ApiCodeSearchRoute
   '/api/enrich': typeof ApiEnrichRoute
   '/api/health': typeof ApiHealthRoute
-  '/api/memories': typeof ApiMemoriesRouteWithChildren
   '/api/models': typeof ApiModelsRoute
   '/api/search': typeof ApiSearchRoute
   '/api/terminals': typeof ApiTerminalsRouteWithChildren
@@ -914,8 +880,6 @@ export interface FileRoutesById {
   '/api/atlas/paths': typeof ApiAtlasPathsRoute
   '/api/github/issues': typeof ApiGithubIssuesRoute
   '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
-  '/api/memories/count': typeof ApiMemoriesCountRoute
-  '/api/memories/stats': typeof ApiMemoriesStatsRoute
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/api/whitepapers/search': typeof ApiWhitepapersSearchRoute
@@ -992,12 +956,10 @@ export interface FileRouteTypes {
     | '/'
     | '/health'
     | '/mcp'
-    | '/memories'
     | '/ready'
     | '/api/code-search'
     | '/api/enrich'
     | '/api/health'
-    | '/api/memories'
     | '/api/models'
     | '/api/search'
     | '/api/terminals'
@@ -1020,8 +982,6 @@ export interface FileRouteTypes {
     | '/api/atlas/paths'
     | '/api/github/issues'
     | '/api/github/pulls'
-    | '/api/memories/count'
-    | '/api/memories/stats'
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
     | '/api/whitepapers/search'
@@ -1096,12 +1056,10 @@ export interface FileRouteTypes {
     | '/'
     | '/health'
     | '/mcp'
-    | '/memories'
     | '/ready'
     | '/api/code-search'
     | '/api/enrich'
     | '/api/health'
-    | '/api/memories'
     | '/api/models'
     | '/api/search'
     | '/api/terminals'
@@ -1122,8 +1080,6 @@ export interface FileRouteTypes {
     | '/api/atlas/paths'
     | '/api/github/issues'
     | '/api/github/pulls'
-    | '/api/memories/count'
-    | '/api/memories/stats'
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
     | '/api/whitepapers/search'
@@ -1198,12 +1154,10 @@ export interface FileRouteTypes {
     | '/'
     | '/health'
     | '/mcp'
-    | '/memories'
     | '/ready'
     | '/api/code-search'
     | '/api/enrich'
     | '/api/health'
-    | '/api/memories'
     | '/api/models'
     | '/api/search'
     | '/api/terminals'
@@ -1226,8 +1180,6 @@ export interface FileRouteTypes {
     | '/api/atlas/paths'
     | '/api/github/issues'
     | '/api/github/pulls'
-    | '/api/memories/count'
-    | '/api/memories/stats'
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
     | '/api/whitepapers/search'
@@ -1303,12 +1255,10 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   HealthRoute: typeof HealthRoute
   McpRoute: typeof McpRoute
-  MemoriesRoute: typeof MemoriesRoute
   ReadyRoute: typeof ReadyRoute
   ApiCodeSearchRoute: typeof ApiCodeSearchRoute
   ApiEnrichRoute: typeof ApiEnrichRoute
   ApiHealthRoute: typeof ApiHealthRoute
-  ApiMemoriesRoute: typeof ApiMemoriesRouteWithChildren
   ApiModelsRoute: typeof ApiModelsRoute
   ApiSearchRoute: typeof ApiSearchRoute
   ApiTerminalsRoute: typeof ApiTerminalsRouteWithChildren
@@ -1382,13 +1332,6 @@ declare module '@tanstack/react-router' {
       path: '/ready'
       fullPath: '/ready'
       preLoaderRoute: typeof ReadyRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/memories': {
-      id: '/memories'
-      path: '/memories'
-      fullPath: '/memories'
-      preLoaderRoute: typeof MemoriesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/mcp': {
@@ -1524,13 +1467,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiModelsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/memories': {
-      id: '/api/memories'
-      path: '/api/memories'
-      fullPath: '/api/memories'
-      preLoaderRoute: typeof ApiMemoriesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/api/health': {
       id: '/api/health'
       path: '/api/health'
@@ -1635,20 +1571,6 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/terminals/$sessionId'
       preLoaderRoute: typeof ApiTerminalsSessionIdRouteImport
       parentRoute: typeof ApiTerminalsRoute
-    }
-    '/api/memories/stats': {
-      id: '/api/memories/stats'
-      path: '/stats'
-      fullPath: '/api/memories/stats'
-      preLoaderRoute: typeof ApiMemoriesStatsRouteImport
-      parentRoute: typeof ApiMemoriesRoute
-    }
-    '/api/memories/count': {
-      id: '/api/memories/count'
-      path: '/count'
-      fullPath: '/api/memories/count'
-      preLoaderRoute: typeof ApiMemoriesCountRouteImport
-      parentRoute: typeof ApiMemoriesRoute
     }
     '/api/github/pulls': {
       id: '/api/github/pulls'
@@ -2094,20 +2016,6 @@ declare module '@tanstack/react-router' {
   }
 }
 
-interface ApiMemoriesRouteChildren {
-  ApiMemoriesCountRoute: typeof ApiMemoriesCountRoute
-  ApiMemoriesStatsRoute: typeof ApiMemoriesStatsRoute
-}
-
-const ApiMemoriesRouteChildren: ApiMemoriesRouteChildren = {
-  ApiMemoriesCountRoute: ApiMemoriesCountRoute,
-  ApiMemoriesStatsRoute: ApiMemoriesStatsRoute,
-}
-
-const ApiMemoriesRouteWithChildren = ApiMemoriesRoute._addFileChildren(
-  ApiMemoriesRouteChildren,
-)
-
 interface ApiTerminalsSessionIdRouteChildren {
   ApiTerminalsSessionIdDeleteRoute: typeof ApiTerminalsSessionIdDeleteRoute
   ApiTerminalsSessionIdInputRoute: typeof ApiTerminalsSessionIdInputRoute
@@ -2304,12 +2212,10 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   HealthRoute: HealthRoute,
   McpRoute: McpRoute,
-  MemoriesRoute: MemoriesRoute,
   ReadyRoute: ReadyRoute,
   ApiCodeSearchRoute: ApiCodeSearchRoute,
   ApiEnrichRoute: ApiEnrichRoute,
   ApiHealthRoute: ApiHealthRoute,
-  ApiMemoriesRoute: ApiMemoriesRouteWithChildren,
   ApiModelsRoute: ApiModelsRoute,
   ApiSearchRoute: ApiSearchRoute,
   ApiTerminalsRoute: ApiTerminalsRouteWithChildren,

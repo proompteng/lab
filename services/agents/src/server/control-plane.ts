@@ -32,6 +32,11 @@ type ControlPlaneRuntimeOptions = {
 
 const routeSources: RouteSourceSpec[] = [
   {
+    file: 'src/routes/mcp.ts',
+    sourceUrl: new URL('../routes/mcp.ts', import.meta.url),
+    load: () => import('../routes/mcp'),
+  },
+  {
     file: 'src/routes/v1/agents.ts',
     sourceUrl: new URL('../routes/v1/agents.ts', import.meta.url),
     load: () => import('../routes/v1/agents'),

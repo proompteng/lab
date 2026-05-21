@@ -1014,24 +1014,58 @@ fail_if_path_exists \
   "${ROOT_DIR}/services/jangar/src/server/memories-store.ts" \
   "${ROOT_DIR}/services/jangar/src/server/memories-http.ts" \
   "${ROOT_DIR}/services/jangar/src/server/memories.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/memory-notes.ts" \
   "${ROOT_DIR}/services/jangar/src/data/memories.ts" \
   "${ROOT_DIR}/services/jangar/src/server/migrations/20260418_embedding_dimension_4096.ts"
 
-fail_if_matches \
-  "Jangar memory compatibility routes and MCP must use the Agents memory service boundary instead of DB-backed memory tables" \
-  'createPostgresMemoriesStore|memories\.entries|MemoriesLive|~/server/memories|from .*/memories-store|from .*/memories-http' \
+fail_if_path_exists \
+  "Jangar must not expose generic memory compatibility routes after Agents owns memory note APIs" \
   "${ROOT_DIR}/services/jangar/src/routes/api/memories.ts" \
   "${ROOT_DIR}/services/jangar/src/routes/api/memories/count.ts" \
   "${ROOT_DIR}/services/jangar/src/routes/api/memories/stats.ts" \
-  "${ROOT_DIR}/services/jangar/src/server/mcp.ts"
+  "${ROOT_DIR}/services/jangar/src/routes/memories.tsx" \
+  "${ROOT_DIR}/services/jangar/src/server/__tests__/memories-rest.test.ts"
+
+fail_if_matches \
+  "Jangar UI and route tree must not link to generic memory compatibility pages or APIs" \
+  '/api/memories|/memories' \
+  "${ROOT_DIR}/services/jangar/src/routeTree.gen.ts" \
+  "${ROOT_DIR}/services/jangar/src/components/app-sidebar.tsx" \
+  "${ROOT_DIR}/services/jangar/src/components/app-shell.tsx" \
+  "${ROOT_DIR}/services/jangar/src/routes/index.tsx"
+
+fail_if_matches \
+  "Jangar MCP must not expose generic memory tools after Agents owns the memory MCP endpoint" \
+  'persist_memory|retrieve_memory|MemoryNotes|memory-notes|memories://config|Memories MCP|createPostgresMemoriesStore|memories\.entries|MemoriesLive|~/server/memories|from .*/memories-store|from .*/memories-http' \
+  "${ROOT_DIR}/services/jangar/src/server/mcp.ts" \
+  "${ROOT_DIR}/services/jangar/src/server/__tests__/mcp.test.ts"
 
 require_matches \
-  "Agents service must own memory note persistence, retrieval, count, and stats endpoints" \
-  '/v1/memory-notes|createPostgresMemoriesStore|memories\.entries' \
+  "Agents service must own memory note persistence, retrieval, count, stats, and MCP endpoints" \
+  '/v1/memory-notes|/mcp|persist_memory|retrieve_memory|createPostgresMemoriesStore|memories\.entries' \
   "${ROOT_DIR}/services/agents/src/server/control-plane.ts" \
+  "${ROOT_DIR}/services/agents/src/server/mcp.ts" \
   "${ROOT_DIR}/services/agents/src/server/v1/memory-notes.ts" \
   "${ROOT_DIR}/services/agents/src/server/memory-notes-store.ts" \
   "${ROOT_DIR}/services/agents/src/server/migrations/20260521_agents_memory_notes.ts"
+
+fail_if_matches \
+  "Memories CLI helpers must not target Jangar memory compatibility APIs after Agents owns memory notes" \
+  'resolveJangarBaseUrl|MEMORIES_JANGAR_URL|JANGAR_BASE_URL|/api/memories|jangar\.jangar|Jangar' \
+  "${ROOT_DIR}/services/memories/cli.ts" \
+  "${ROOT_DIR}/services/memories/save.ts" \
+  "${ROOT_DIR}/services/memories/retrieve.ts" \
+  "${ROOT_DIR}/services/memories/README.md" \
+  "${ROOT_DIR}/services/memories/tests/cli.test.ts"
+
+require_matches \
+  "Memories CLI helpers must target the Agents memory note API" \
+  '/v1/memory-notes|MEMORIES_AGENTS_URL|AGENTS_SERVICE_BASE_URL|agents\.agents\.svc\.cluster\.local' \
+  "${ROOT_DIR}/services/memories/cli.ts" \
+  "${ROOT_DIR}/services/memories/save.ts" \
+  "${ROOT_DIR}/services/memories/retrieve.ts" \
+  "${ROOT_DIR}/services/memories/README.md" \
+  "${ROOT_DIR}/services/memories/tests/cli.test.ts"
 
 fail_if_matches \
   "Jangar must call the Agents service boundary instead of importing Agents package internals" \

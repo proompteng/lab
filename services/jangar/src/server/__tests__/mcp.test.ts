@@ -1,62 +1,69 @@
 import { Effect, pipe } from 'effect'
 import { describe, expect, it } from 'vitest'
 
-import type { AgentsMemoryNoteRecord } from '@proompteng/agent-contracts/memory-client'
-
 import { Atlas, type AtlasService } from '../atlas'
-import { MemoryNotes, type MemoryNotesService } from '../memory-notes'
 import { handleMcpRequestEffect } from '../mcp'
-
-const makeService = (): { service: MemoryNotesService; saved: AgentsMemoryNoteRecord[] } => {
-  const saved: AgentsMemoryNoteRecord[] = []
-
-  const service: MemoryNotesService = {
-    persist: ({ namespace, content, summary, tags }) =>
-      Effect.sync(() => {
-        const record: AgentsMemoryNoteRecord = {
-          id: `mem-${saved.length + 1}`,
-          namespace: namespace ?? 'default',
-          content,
-          summary: summary ?? null,
-          tags: tags ?? [],
-          metadata: {},
-          createdAt: new Date().toISOString(),
-        }
-        saved.push(record)
-        return record
-      }),
-    retrieve: ({ namespace, query, limit }) =>
-      Effect.sync(() =>
-        saved
-          .filter((mem) => mem.namespace === (namespace ?? 'default'))
-          .filter((mem) => mem.content.includes(query) || (mem.summary ?? '').includes(query))
-          .slice(0, limit ?? 10),
-      ),
-    count: ({ namespace } = {}) =>
-      Effect.sync(() => saved.filter((mem) => (namespace ? mem.namespace === namespace : true)).length),
-    stats: ({ days } = {}) =>
-      Effect.sync(() => {
-        const resolvedDays = days ?? 30
-        const today = new Date().toISOString().slice(0, 10)
-        return {
-          range: { days: resolvedDays, from: today, to: today },
-          byDay: [],
-          topNamespaces: [],
-        }
-      }),
-  }
-
-  return { service, saved }
-}
 
 const makeAtlasService = (): AtlasService => {
   const fail = <T>() => Effect.fail(new Error('atlas unavailable')) as Effect.Effect<T, Error>
+  const repository = {
+    id: 'repo-1',
+    name: 'proompteng/lab',
+    defaultRef: 'main',
+    metadata: {},
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }
+  const fileKey = {
+    id: 'file-key-1',
+    repositoryId: 'repo-1',
+    path: 'services/agents/src/server/mcp.ts',
+    createdAt: new Date().toISOString(),
+  }
+  const fileVersion = {
+    id: 'file-version-1',
+    fileKeyId: 'file-key-1',
+    repositoryRef: 'main',
+    repositoryCommit: null,
+    contentHash: 'sha256:test',
+    language: 'typescript',
+    byteSize: 128,
+    lineCount: 10,
+    metadata: {},
+    sourceTimestamp: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }
+  const chunk = {
+    id: 'chunk-1',
+    fileVersionId: 'file-version-1',
+    chunkIndex: 0,
+    startLine: 1,
+    endLine: 10,
+    content: 'export const handleMcpRequest = ...',
+    tokenCount: 12,
+    metadata: {},
+    createdAt: new Date().toISOString(),
+  }
+  const enrichment = {
+    id: 'enrichment-1',
+    fileVersionId: 'file-version-1',
+    chunkId: 'chunk-1',
+    kind: 'note',
+    source: 'test',
+    content: 'Agents owns memory MCP.',
+    summary: null,
+    tags: ['agents'],
+    metadata: {},
+    createdAt: new Date().toISOString(),
+    distance: 0.1,
+  }
   return {
-    upsertRepository: () => fail(),
+    upsertRepository: () => Effect.succeed(repository),
     getRepositoryByName: () => fail(),
-    upsertFileKey: () => fail(),
+    upsertFileKey: () => Effect.succeed(fileKey),
     getFileKeyByPath: () => fail(),
-    upsertFileVersion: () => fail(),
+    upsertFileVersion: () => Effect.succeed(fileVersion),
     getFileVersionByKey: () => fail(),
     upsertFileChunk: () => fail(),
     upsertEnrichment: () => fail(),
@@ -72,15 +79,32 @@ const makeAtlasService = (): AtlasService => {
     upsertIngestionTarget: () => fail(),
     listIndexedFiles: () => fail(),
     getAstPreview: () => fail(),
-    search: () => fail(),
-    codeSearch: () => fail(),
-    searchCount: () => fail(),
-    stats: () => fail(),
+    search: () => Effect.succeed([{ enrichment, fileVersion, fileKey, repository }]),
+    codeSearch: () =>
+      Effect.succeed([
+        {
+          repository,
+          fileKey,
+          fileVersion,
+          chunk,
+          score: 0.1,
+          signals: { semanticDistance: 0.1, lexicalRank: null, matchedIdentifiers: ['handleMcpRequest'] },
+        },
+      ]),
+    searchCount: () => Effect.succeed(1),
+    stats: () =>
+      Effect.succeed({
+        repositories: 1,
+        fileKeys: 1,
+        fileVersions: 1,
+        enrichments: 1,
+        embeddings: 1,
+      }),
     close: () => Effect.void,
   }
 }
 
-const post = async (service: MemoryNotesService, body: unknown, headers: Record<string, string> = {}) => {
+const post = async (body: unknown, headers: Record<string, string> = {}) => {
   const request = new Request('http://localhost/mcp', {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...headers },
@@ -88,29 +112,21 @@ const post = async (service: MemoryNotesService, body: unknown, headers: Record<
   })
 
   const response = await Effect.runPromise(
-    pipe(
-      handleMcpRequestEffect(request),
-      Effect.provideService(MemoryNotes, service),
-      Effect.provideService(Atlas, makeAtlasService()),
-    ),
+    pipe(handleMcpRequestEffect(request), Effect.provideService(Atlas, makeAtlasService())),
   )
   const json = response.status === 202 || response.status === 204 ? null : await response.json()
   return { response, json }
 }
 
-describe('Memories MCP handler', () => {
+describe('Jangar Atlas MCP handler', () => {
   it('supports initialize + tools/list', async () => {
-    const { service } = makeService()
-
-    const init = await post(service, { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} })
+    const init = await post({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} })
     expect(init.response.status).toBe(200)
-    expect(init.json?.result?.serverInfo?.name).toBe('memories')
+    expect(init.json?.result?.serverInfo?.name).toBe('jangar-atlas')
 
-    const list = await post(service, { jsonrpc: '2.0', id: 2, method: 'tools/list' })
+    const list = await post({ jsonrpc: '2.0', id: 2, method: 'tools/list' })
     expect(list.response.status).toBe(200)
     expect(list.json?.result?.tools?.map((tool: { name: string }) => tool.name)).toEqual([
-      'persist_memory',
-      'retrieve_memory',
       'atlas_index',
       'atlas_search',
       'atlas_code_search',
@@ -119,129 +135,74 @@ describe('Memories MCP handler', () => {
   })
 
   it('supports resources/list + resources/templates/list', async () => {
-    const { service } = makeService()
-
-    const resources = await post(service, { jsonrpc: '2.0', id: 1, method: 'resources/list' })
+    const resources = await post({ jsonrpc: '2.0', id: 1, method: 'resources/list' })
     expect(resources.response.status).toBe(200)
-    expect(resources.json?.result?.resources?.[0]?.uri).toBe('memories://config')
+    expect(resources.json?.result?.resources?.[0]?.uri).toBe('atlas://config')
 
-    const templates = await post(service, { jsonrpc: '2.0', id: 2, method: 'resources/templates/list' })
+    const templates = await post({ jsonrpc: '2.0', id: 2, method: 'resources/templates/list' })
     expect(templates.response.status).toBe(200)
     expect(templates.json?.result?.resourceTemplates).toEqual([])
   })
 
-  it('supports resources/read for the config resource', async () => {
-    const { service } = makeService()
-
-    const resource = await post(service, {
+  it('supports resources/read for the Atlas config resource', async () => {
+    const resource = await post({
       jsonrpc: '2.0',
       id: 1,
       method: 'resources/read',
-      params: { uri: 'memories://config' },
+      params: { uri: 'atlas://config' },
     })
     expect(resource.response.status).toBe(200)
     const text = resource.json?.result?.contents?.[0]?.text as string
     expect(text).toContain('"serverInfo"')
-    expect(text).toContain('"memories"')
+    expect(text).toContain('"jangar-atlas"')
   })
 
-  it('supports persist_memory + retrieve_memory', async () => {
-    const { service } = makeService()
-
-    const persist = await post(service, {
+  it('supports Atlas stats and search tools', async () => {
+    const stats = await post({
       jsonrpc: '2.0',
       id: 1,
       method: 'tools/call',
-      params: { name: 'persist_memory', arguments: { namespace: 'n1', content: 'hello world', tags: ['a'] } },
+      params: { name: 'atlas_stats', arguments: {} },
     })
-    expect(persist.response.status).toBe(200)
-    expect(persist.json?.result?.content?.[0]?.type).toBe('text')
+    expect(stats.response.status).toBe(200)
+    expect(stats.json?.result?.content?.[0]?.text).toContain('"repositories": 1')
 
-    const retrieve = await post(service, {
+    const search = await post({
       jsonrpc: '2.0',
       id: 2,
       method: 'tools/call',
-      params: { name: 'retrieve_memory', arguments: { namespace: 'n1', query: 'hello', limit: 5 } },
+      params: { name: 'atlas.search', arguments: { query: 'agents', limit: 5 } },
     })
-    expect(retrieve.response.status).toBe(200)
-    const text = retrieve.json?.result?.content?.[0]?.text as string
-    expect(text).toContain('hello world')
+    expect(search.response.status).toBe(200)
+    expect(search.json?.result?.content?.[0]?.text).toContain('Agents owns memory MCP')
   })
 
-  it('returns JSON-RPC invalid params errors for missing required arguments', async () => {
-    const { service } = makeService()
-
-    const persist = await post(service, {
+  it('returns JSON-RPC invalid params errors for malformed Atlas calls', async () => {
+    const search = await post({
       jsonrpc: '2.0',
       id: 1,
       method: 'tools/call',
-      params: { name: 'persist_memory', arguments: { namespace: 'n1' } },
+      params: { name: 'atlas_search', arguments: {} },
     })
-    expect(persist.response.status).toBe(200)
-    expect(persist.json?.error?.code).toBe(-32602)
-
-    const retrieve = await post(service, {
-      jsonrpc: '2.0',
-      id: 2,
-      method: 'tools/call',
-      params: { name: 'retrieve_memory', arguments: { namespace: 'n1' } },
-    })
-    expect(retrieve.response.status).toBe(200)
-    expect(retrieve.json?.error?.code).toBe(-32602)
-  })
-
-  it('returns JSON-RPC tool errors when the underlying service fails', async () => {
-    const failing: MemoryNotesService = {
-      persist: () => Effect.fail(new Error('persist failed')),
-      retrieve: () => Effect.fail(new Error('retrieve failed')),
-      count: () => Effect.fail(new Error('count failed')),
-      stats: () => Effect.fail(new Error('stats failed')),
-    }
-
-    const persist = await post(failing, {
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'tools/call',
-      params: { name: 'persist_memory', arguments: { content: 'hello world' } },
-    })
-    expect(persist.response.status).toBe(200)
-    expect(persist.json?.error?.code).toBe(-32000)
-    expect(persist.json?.error?.message).toContain('persist failed')
-
-    const retrieve = await post(failing, {
-      jsonrpc: '2.0',
-      id: 2,
-      method: 'tools/call',
-      params: { name: 'retrieve_memory', arguments: { query: 'hello' } },
-    })
-    expect(retrieve.response.status).toBe(200)
-    expect(retrieve.json?.error?.code).toBe(-32000)
-    expect(retrieve.json?.error?.message).toContain('retrieve failed')
+    expect(search.response.status).toBe(200)
+    expect(search.json?.error?.code).toBe(-32602)
   })
 
   it('handles batches with mixed successes and failures', async () => {
-    const failing: MemoryNotesService = {
-      persist: () => Effect.fail(new Error('persist failed')),
-      retrieve: () => Effect.fail(new Error('retrieve failed')),
-      count: () => Effect.fail(new Error('count failed')),
-      stats: () => Effect.fail(new Error('stats failed')),
-    }
-
     const batch = await post(
-      failing,
       [
         { jsonrpc: '2.0', id: 1, method: 'initialize' },
         {
           jsonrpc: '2.0',
           id: 2,
           method: 'tools/call',
-          params: { name: 'persist_memory', arguments: { content: 'hello world' } },
+          params: { name: 'atlas_stats', arguments: {} },
         },
         {
           jsonrpc: '2.0',
           id: 3,
           method: 'tools/call',
-          params: { name: 'retrieve_memory', arguments: { query: 'hello' } },
+          params: { name: 'atlas_search', arguments: {} },
         },
       ],
       { 'Mcp-Session-Id': 'session-1' },
@@ -250,8 +211,10 @@ describe('Memories MCP handler', () => {
     expect(batch.response.headers.get('Mcp-Session-Id')).toBe('session-1')
     expect(Array.isArray(batch.json)).toBe(true)
     expect(batch.json?.map((item: { id: number }) => item.id)).toEqual([1, 2, 3])
-    expect(batch.json?.find((item: { id: number }) => item.id === 1)?.result?.serverInfo?.name).toBe('memories')
-    expect(batch.json?.find((item: { id: number }) => item.id === 2)?.error?.code).toBe(-32000)
-    expect(batch.json?.find((item: { id: number }) => item.id === 3)?.error?.code).toBe(-32000)
+    expect(batch.json?.find((item: { id: number }) => item.id === 1)?.result?.serverInfo?.name).toBe('jangar-atlas')
+    expect(batch.json?.find((item: { id: number }) => item.id === 2)?.result?.content?.[0]?.text).toContain(
+      '"repositories": 1',
+    )
+    expect(batch.json?.find((item: { id: number }) => item.id === 3)?.error?.code).toBe(-32602)
   })
 })

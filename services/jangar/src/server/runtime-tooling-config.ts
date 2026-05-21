@@ -1,6 +1,7 @@
 type EnvSource = Record<string, string | undefined>
 
 const DEFAULT_HTTP_TIMEOUT_MS = 2_000
+const DEFAULT_AGENTS_SERVICE_BASE_URL = 'http://agents.agents.svc.cluster.local'
 
 const normalizeNonEmpty = (value: string | undefined | null) => {
   const normalized = value?.trim()
@@ -47,7 +48,8 @@ export type TerminalRuntimeConfig = {
 }
 
 export type CodexClientConfig = {
-  mcpUrl: string
+  agentsMcpUrl: string
+  atlasMcpUrl: string
   binaryPath: string
 }
 
@@ -88,8 +90,13 @@ export const resolveTerminalRuntimeConfig = (env: EnvSource = process.env): Term
 
 export const resolveCodexClientConfig = (env: EnvSource = process.env): CodexClientConfig => {
   const port = normalizeNonEmpty(env.UI_PORT) ?? normalizeNonEmpty(env.PORT) ?? '8080'
+  const agentsServiceBaseUrl = normalizeNonEmpty(env.AGENTS_SERVICE_BASE_URL) ?? DEFAULT_AGENTS_SERVICE_BASE_URL
   return {
-    mcpUrl: normalizeNonEmpty(env.JANGAR_MCP_URL) ?? `http://127.0.0.1:${port}/mcp`,
+    agentsMcpUrl: normalizeNonEmpty(env.AGENTS_MCP_URL) ?? `${agentsServiceBaseUrl.replace(/\/+$/, '')}/mcp`,
+    atlasMcpUrl:
+      normalizeNonEmpty(env.JANGAR_ATLAS_MCP_URL) ??
+      normalizeNonEmpty(env.JANGAR_MCP_URL) ??
+      `http://127.0.0.1:${port}/mcp`,
     binaryPath: normalizeNonEmpty(env.JANGAR_CODEX_BINARY) ?? 'codex',
   }
 }

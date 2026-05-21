@@ -5,7 +5,6 @@ const isLocalBaseURL = !baseURL || /localhost|127\.0\.0\.1/.test(baseURL)
 
 test.skip(!isLocalBaseURL, 'UI snapshot tests are only stable against local renders.')
 
-const memoryCount = 12
 const torghutSymbolsResponse = {
   items: [
     { assetClass: 'equity', enabled: true, symbol: 'AAPL', updatedAt: '2024-01-01T00:00:00.000Z' },
@@ -429,7 +428,6 @@ const disableMotionStyles = `
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(
     ({
-      memoryCountValue,
       symbolsValue,
       atlasIndexedValue,
       atlasSearchValue,
@@ -461,9 +459,6 @@ test.beforeEach(async ({ page }) => {
             status,
             headers: { 'content-type': 'application/json' },
           })
-
-        if (pathname === '/api/memories/count') return jsonResponse({ ok: true, count: memoryCountValue })
-        if (pathname === '/api/memories') return jsonResponse({ ok: true, memories: [] })
 
         if (pathname === '/api/torghut/symbols') {
           if ((init?.method ?? 'GET').toUpperCase() === 'GET') {
@@ -504,7 +499,6 @@ test.beforeEach(async ({ page }) => {
       }
     },
     {
-      memoryCountValue: memoryCount,
       symbolsValue: torghutSymbolsResponse,
       atlasIndexedValue: atlasIndexedResponse,
       atlasSearchValue: atlasSearchResponse,
@@ -532,15 +526,9 @@ test.beforeEach(async ({ page }) => {
 
 test('home route screenshot', async ({ page }) => {
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: 'Memories' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Refresh' })).toBeEnabled()
+  await expect(page.getByText('PR reviews')).toBeVisible()
+  await expect(page.getByText('Atlas search')).toBeVisible()
   await expect(page).toHaveScreenshot('home.png', { fullPage: true, animations: 'disabled' })
-})
-
-test('memories route screenshot', async ({ page }) => {
-  await page.goto('/memories')
-  await expect(page.getByRole('button', { name: 'Search' })).toBeVisible()
-  await expect(page).toHaveScreenshot('memories.png', { fullPage: true, animations: 'disabled' })
 })
 
 test('atlas search route screenshot', async ({ page }) => {
