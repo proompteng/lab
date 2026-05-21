@@ -85,6 +85,16 @@ def _parse_args() -> argparse.Namespace:
             "delay_adjusted_depth_stress_report_ref."
         ),
     )
+    parser.add_argument(
+        "--runtime-window-target-plan-ref",
+        action="append",
+        default=[],
+        help=(
+            "Repeatable path to a candidate-board/runtime-window-import-plan JSON "
+            "artifact. Explicit --runtime-window-target entries take precedence "
+            "over duplicate hypothesis_id values."
+        ),
+    )
     parser.add_argument("--runtime-window-hypothesis-id", default="H-TSMOM-01")
     parser.add_argument("--runtime-window-candidate-id", default="")
     parser.add_argument(
@@ -269,6 +279,21 @@ def _read_json_mapping(path: Path) -> dict[str, Any]:
     return _as_dict(payload)
 
 
+def _read_runtime_window_target_plan(ref: str) -> dict[str, Any]:
+    path = Path(ref.strip())
+    if not path.exists():
+        raise RuntimeError(f"runtime_window_target_plan_ref_missing:{path}")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"runtime_window_target_plan_ref_invalid:{path}") from exc
+    data = _as_dict(payload)
+    if not data:
+        raise RuntimeError(f"runtime_window_target_plan_ref_invalid:{path}")
+    plan = _as_dict(data.get("runtime_window_import_plan")) or data
+    return plan
+
+
 def _runtime_family_harnesses(family_dir: str) -> dict[str, dict[str, str]]:
     root = Path(family_dir)
     if not root.exists():
@@ -363,12 +388,91 @@ def _registry_runtime_window_targets(
     return targets
 
 
+def _runtime_window_plan_targets(
+    args: argparse.Namespace,
+) -> list[RuntimeWindowImportTarget]:
+    refs = [
+        str(item).strip()
+        for item in getattr(args, "runtime_window_target_plan_ref", []) or []
+        if str(item).strip()
+    ]
+    targets: list[RuntimeWindowImportTarget] = []
+    for ref in refs:
+        plan = _read_runtime_window_target_plan(ref)
+        raw_targets = plan.get("targets")
+        if not isinstance(raw_targets, Sequence) or isinstance(
+            raw_targets, (str, bytes, bytearray)
+        ):
+            raise RuntimeError(f"runtime_window_target_plan_targets_missing:{ref}")
+        for index, raw_target in enumerate(raw_targets):
+            payload = _as_dict(raw_target)
+
+            def value(key: str, legacy_name: str) -> str:
+                return str(
+                    payload.get(key) or getattr(args, legacy_name, "") or ""
+                ).strip()
+
+            hypothesis_id = value("hypothesis_id", "runtime_window_hypothesis_id")
+            candidate_id = value("candidate_id", "runtime_window_candidate_id")
+            strategy_family = value("strategy_family", "runtime_window_strategy_family")
+            strategy_name = value("strategy_name", "runtime_window_strategy_name")
+            missing = [
+                field
+                for field, item in (
+                    ("hypothesis_id", hypothesis_id),
+                    ("candidate_id", candidate_id),
+                    ("strategy_family", strategy_family),
+                    ("strategy_name", strategy_name),
+                )
+                if not item
+            ]
+            if missing:
+                raise RuntimeError(
+                    "runtime_window_target_plan_target_invalid:"
+                    f"{ref}:{index}:{','.join(missing)}"
+                )
+            targets.append(
+                RuntimeWindowImportTarget(
+                    hypothesis_id=hypothesis_id,
+                    candidate_id=candidate_id,
+                    observed_stage=value(
+                        "observed_stage", "runtime_window_observed_stage"
+                    )
+                    or "paper",
+                    strategy_family=strategy_family,
+                    source_dsn_env=value(
+                        "source_dsn_env", "runtime_window_source_dsn_env"
+                    )
+                    or "DB_DSN",
+                    strategy_name=strategy_name,
+                    account_label=value("account_label", "runtime_window_account_label")
+                    or "TORGHUT_SIM",
+                    dataset_snapshot_ref=value(
+                        "dataset_snapshot_ref",
+                        "runtime_window_dataset_snapshot_ref",
+                    ),
+                    source_manifest_ref=value(
+                        "source_manifest_ref",
+                        "runtime_window_source_manifest_ref",
+                    ),
+                    source_kind=value("source_kind", "runtime_window_source_kind")
+                    or "paper_runtime_observed",
+                    delay_adjusted_depth_stress_report_ref=value(
+                        "delay_adjusted_depth_stress_report_ref",
+                        "runtime_window_delay_adjusted_depth_stress_report_ref",
+                    ),
+                )
+            )
+    return targets
+
+
 def _runtime_window_targets(
     args: argparse.Namespace,
 ) -> list[RuntimeWindowImportTarget]:
     specs = [str(item) for item in getattr(args, "runtime_window_target", []) or []]
+    plan_targets = _runtime_window_plan_targets(args)
     registry_targets = _registry_runtime_window_targets(args)
-    if not specs and not registry_targets:
+    if not specs and not plan_targets and not registry_targets:
         specs = [""]
     targets: list[RuntimeWindowImportTarget] = []
     for spec in specs:
@@ -415,6 +519,11 @@ def _runtime_window_targets(
             )
         )
     seen_hypothesis_ids = {target.hypothesis_id for target in targets}
+    for target in plan_targets:
+        if target.hypothesis_id in seen_hypothesis_ids:
+            continue
+        targets.append(target)
+        seen_hypothesis_ids.add(target.hypothesis_id)
     for target in registry_targets:
         if target.hypothesis_id in seen_hypothesis_ids:
             continue
