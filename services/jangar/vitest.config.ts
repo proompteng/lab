@@ -212,7 +212,6 @@ export default defineConfig({
     testTimeout: 10_000,
     coverage: {
       provider: 'v8',
-      exclude: ['src/server/agents-controller/index.ts'],
     },
   },
 })
