@@ -483,6 +483,37 @@ class TestRuntimeWindowImport(TestCase):
         )
         self.assertEqual(decision.allowed, False)
 
+    def test_build_observed_runtime_buckets_cannot_upgrade_tca_basis_to_promotion_grade(
+        self,
+    ) -> None:
+        buckets = build_observed_runtime_buckets(
+            bucket_ranges=[
+                (
+                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    40,
+                )
+            ],
+            decision_times=[datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
+            execution_times=[datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+            tca_rows=[
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("4"),
+                    "post_cost_expectancy_bps": Decimal("80"),
+                    "post_cost_expectancy_basis": "tca_shortfall_proxy",
+                    "post_cost_promotion_eligible": True,
+                }
+            ],
+            continuity_ok=True,
+            drift_ok=True,
+            dependency_quorum_decision="allow",
+        )
+
+        self.assertEqual(buckets[0].post_cost_promotion_sample_count, 0)
+        self.assertEqual(buckets[0].post_cost_expectancy_bps, Decimal("0"))
+        self.assertEqual(buckets[0].post_cost_basis_counts, {"tca_shortfall_proxy": 1})
+
     def test_persist_observed_runtime_windows_skips_idle_buckets(self) -> None:
         buckets = build_observed_runtime_buckets(
             bucket_ranges=[

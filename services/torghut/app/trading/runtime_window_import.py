@@ -126,9 +126,12 @@ def _post_cost_basis_is_promotion_grade(
     explicit_value: Any,
 ) -> bool:
     parsed = _observation_bool(explicit_value)
-    if parsed is not None:
-        return parsed
-    return basis in PROMOTION_GRADE_POST_COST_BASES
+    basis_is_promotion_grade = basis in PROMOTION_GRADE_POST_COST_BASES
+    if parsed is False:
+        return False
+    if parsed is True:
+        return basis_is_promotion_grade
+    return basis_is_promotion_grade
 
 
 def _parse_observation_datetime(value: Any) -> datetime | None:
