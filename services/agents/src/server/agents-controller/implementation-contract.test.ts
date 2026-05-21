@@ -90,6 +90,44 @@ describe('agents controller implementation-contract module', () => {
     })
     expect(context.payload).not.toHaveProperty('issueNumber')
     expect(context.payload).not.toHaveProperty('issueTitle')
+    expect(context.payload).not.toHaveProperty('issueBody')
+    expect(context.metadata).not.toHaveProperty('issueNumber')
+    expect(context.metadata).not.toHaveProperty('issueTitle')
+    expect(context.metadata).not.toHaveProperty('issueBody')
+  })
+
+  it('does not synthesize github issue title or body for repository-backed specs without an issue number', () => {
+    const implementation = {
+      source: {
+        provider: 'codex',
+        externalId: 'proompteng/lab:codex/no-issue-task',
+      },
+      summary: 'Repository-backed task summary',
+      text: 'Repository-backed task body',
+      contract: {
+        requiredKeys: ['repository', 'base', 'head', 'stage'],
+      },
+    }
+
+    const context = buildEventContext(implementation, {
+      repository: 'proompteng/lab',
+      base: 'main',
+      head: 'codex/no-issue-task',
+      stage: 'implementation',
+    })
+
+    expect(context.payload).toMatchObject({
+      repository: 'proompteng/lab',
+      base: 'main',
+      head: 'codex/no-issue-task',
+      stage: 'implementation',
+      prompt: 'Repository-backed task body',
+    })
+    expect(context.payload).not.toHaveProperty('issueNumber')
+    expect(context.payload).not.toHaveProperty('issueTitle')
+    expect(context.payload).not.toHaveProperty('issueBody')
+    expect(context.metadata).not.toHaveProperty('issueTitle')
+    expect(context.metadata).not.toHaveProperty('issueBody')
   })
 
   it('renders parameterized implementation text for prompt and issue body', () => {
@@ -106,6 +144,7 @@ describe('agents controller implementation-contract module', () => {
 
     const parameters = {
       repository: 'proompteng/lab',
+      issueNumber: '123',
       datasetRef: 'artifacts/dspy/run-1/dataset-build/dspy-dataset.json',
       optimizer: 'miprov2',
       artifactPath: 'artifacts/dspy/run-1/compile',
@@ -134,6 +173,7 @@ describe('agents controller implementation-contract module', () => {
     }
 
     const parameters = {
+      issueNumber: '123',
       symbol: 'AAPL',
     }
 
@@ -141,6 +181,29 @@ describe('agents controller implementation-contract module', () => {
     expect(context.missingRequiredKeys).toEqual([])
     expect(context.payload.prompt).toBe('SCRIPT_ROOT=/root/.codex && test -f "${SCRIPT_ROOT}/run.py" && echo AAPL')
     expect(context.payload.issueBody).toBe('SCRIPT_ROOT=/root/.codex && test -f "${SCRIPT_ROOT}/run.py" && echo AAPL')
+  })
+
+  it('preserves explicit issue body metadata without requiring an issue number', () => {
+    const context = buildEventContext(
+      {
+        text: 'Prompt text',
+        contract: {
+          requiredKeys: ['repository', 'issueBody'],
+        },
+      },
+      {
+        repository: 'proompteng/lab',
+        issueBody: 'Explicit issue body',
+      },
+    )
+
+    expect(context.missingRequiredKeys).toEqual([])
+    expect(context.payload).toMatchObject({
+      repository: 'proompteng/lab',
+      prompt: 'Prompt text',
+      issueBody: 'Explicit issue body',
+    })
+    expect(context.payload).not.toHaveProperty('issueNumber')
   })
 
   it('falls back to github external id when repository metadata is missing', () => {
