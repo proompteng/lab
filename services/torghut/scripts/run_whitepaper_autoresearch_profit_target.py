@@ -7910,6 +7910,109 @@ def _candidate_board_portfolio_promotion_subject(
     }
 
 
+def _candidate_board_hypothesis_manifest_ref(hypothesis_id: str | None) -> str:
+    normalized = _string(hypothesis_id).lower().replace("_", "-")
+    if not normalized:
+        return ""
+    return f"config/trading/hypotheses/{normalized}.json"
+
+
+def _candidate_board_runtime_window_import_plan(
+    *,
+    rows: Sequence[Mapping[str, Any]],
+    paper_probation_candidate: Mapping[str, Any] | None,
+    promotion_subject: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    source_rows: list[Mapping[str, Any]] = []
+    if paper_probation_candidate is not None:
+        source_rows.append(paper_probation_candidate)
+
+    if promotion_subject is not None and _boolish(promotion_subject.get("target_met")):
+        portfolio_spec_ids = {
+            _string(candidate_spec_id)
+            for candidate_spec_id in cast(
+                Sequence[Any],
+                promotion_subject.get("sleeve_candidate_spec_ids") or (),
+            )
+            if _string(candidate_spec_id)
+        }
+        for row in rows:
+            if _string(row.get("candidate_spec_id")) in portfolio_spec_ids:
+                source_rows.append(row)
+
+    targets: list[dict[str, Any]] = []
+    blockers: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, str, str]] = set()
+    for row in source_rows:
+        candidate_id = _string(row.get("candidate_id"))
+        hypothesis_id = _string(row.get("hypothesis_id"))
+        strategy_family = _string(row.get("runtime_family"))
+        strategy_name = _string(row.get("runtime_strategy_name"))
+        candidate_spec_id = _string(row.get("candidate_spec_id"))
+        missing_fields = [
+            field
+            for field, value in (
+                ("candidate_id", candidate_id),
+                ("hypothesis_id", hypothesis_id),
+                ("runtime_family", strategy_family),
+                ("runtime_strategy_name", strategy_name),
+            )
+            if not value
+        ]
+        if missing_fields:
+            blockers.append(
+                {
+                    "blocker": "runtime_window_import_target_incomplete",
+                    "candidate_spec_id": candidate_spec_id,
+                    "candidate_id": candidate_id,
+                    "missing_fields": missing_fields,
+                }
+            )
+            continue
+        dedupe_key = (hypothesis_id, candidate_id, strategy_name)
+        if dedupe_key in seen_keys:
+            continue
+        seen_keys.add(dedupe_key)
+        targets.append(
+            {
+                "candidate_spec_id": candidate_spec_id,
+                "candidate_id": candidate_id,
+                "hypothesis_id": hypothesis_id,
+                "observed_stage": "paper",
+                "strategy_family": strategy_family,
+                "strategy_name": strategy_name,
+                "source_kind": "paper_runtime_observed",
+                "source_manifest_ref": _candidate_board_hypothesis_manifest_ref(
+                    hypothesis_id
+                ),
+                "dataset_snapshot_ref": _string(row.get("dataset_snapshot_id")),
+                "artifact_refs": [
+                    _string(ref)
+                    for ref in cast(
+                        Sequence[Any], row.get("replay_artifact_refs") or ()
+                    )
+                    if _string(ref)
+                ],
+                "candidate_blockers": [
+                    _string(blocker)
+                    for blocker in cast(Sequence[Any], row.get("blockers") or ())
+                    if _string(blocker)
+                ],
+                "handoff": "runtime_window_import_only",
+                "promotion_gate": "existing_runtime_governance_fail_closed",
+            }
+        )
+
+    return {
+        "schema_version": "torghut.runtime-window-import-plan.v1",
+        "status": "ready" if targets else "blocked",
+        "observed_stage": "paper",
+        "target_count": len(targets),
+        "targets": targets,
+        "blockers": blockers,
+    }
+
+
 def _candidate_board_payload(
     *,
     epoch_id: str,
@@ -7996,6 +8099,9 @@ def _candidate_board_payload(
                 "selected_for_replay": selected_for_replay,
                 "has_replay_evidence": evidence is not None,
                 "in_best_portfolio": in_best_portfolio,
+                "dataset_snapshot_id": evidence.dataset_snapshot_id
+                if evidence is not None
+                else "",
                 "status": _candidate_board_status(
                     selected_for_replay=selected_for_replay,
                     evidence=evidence,
@@ -8142,6 +8248,11 @@ def _candidate_board_payload(
         "closest_promotion_candidate": closest_promotion_candidate,
         "paper_probation_candidate": paper_probation_candidate,
         "promotion_subject": promotion_subject,
+        "runtime_window_import_plan": _candidate_board_runtime_window_import_plan(
+            rows=rows,
+            paper_probation_candidate=paper_probation_candidate,
+            promotion_subject=promotion_subject,
+        ),
         "double_oos_summary": _candidate_board_double_oos_summary(rows),
         "best_portfolio_candidate_id": _string(
             portfolio_payload.get("portfolio_candidate_id")

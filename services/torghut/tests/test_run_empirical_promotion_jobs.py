@@ -403,6 +403,160 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             "config/trading/hypotheses/h-pairs-01.json",
         )
 
+    def test_runtime_window_targets_from_candidate_board_plan(self) -> None:
+        plan_path = Path(self.tmp_dir) / "candidate-board.json"
+        plan_path.write_text(
+            json.dumps(
+                {
+                    "runtime_window_import_plan": {
+                        "schema_version": "torghut.runtime-window-import-plan.v1",
+                        "targets": [
+                            {
+                                "candidate_id": "cand-paper-probation",
+                                "hypothesis_id": "H-MICRO-01",
+                                "observed_stage": "paper",
+                                "strategy_family": "microstructure_breakout",
+                                "strategy_name": "microbar-volume-continuation-long-top2-chip-v1",
+                                "source_kind": "paper_runtime_observed",
+                                "source_manifest_ref": "config/trading/hypotheses/h-micro-01.json",
+                                "dataset_snapshot_ref": "snapshot-paper-probation",
+                            }
+                        ],
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        args = SimpleNamespace(
+            runtime_window_target=[],
+            runtime_window_target_plan_ref=[str(plan_path)],
+            runtime_window_targets_from_registry=False,
+            runtime_window_hypothesis_id="",
+            runtime_window_candidate_id="",
+            runtime_window_observed_stage="paper",
+            runtime_window_strategy_family="",
+            runtime_window_source_dsn_env="SIM_DB_DSN",
+            runtime_window_strategy_name="",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_dataset_snapshot_ref="",
+            runtime_window_source_manifest_ref="",
+            runtime_window_source_kind="paper_runtime_observed",
+        )
+
+        targets = renewal._runtime_window_targets(args)
+
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0].candidate_id, "cand-paper-probation")
+        self.assertEqual(targets[0].hypothesis_id, "H-MICRO-01")
+        self.assertEqual(targets[0].observed_stage, "paper")
+        self.assertEqual(targets[0].strategy_family, "microstructure_breakout")
+        self.assertEqual(
+            targets[0].strategy_name, "microbar-volume-continuation-long-top2-chip-v1"
+        )
+        self.assertEqual(
+            targets[0].source_manifest_ref,
+            "config/trading/hypotheses/h-micro-01.json",
+        )
+        self.assertEqual(targets[0].dataset_snapshot_ref, "snapshot-paper-probation")
+
+    def test_runtime_window_target_plan_errors_are_explicit(self) -> None:
+        invalid_json_path = Path(self.tmp_dir) / "invalid-candidate-board.json"
+        invalid_json_path.write_text("{", encoding="utf-8")
+        empty_json_path = Path(self.tmp_dir) / "empty-candidate-board.json"
+        empty_json_path.write_text("[]", encoding="utf-8")
+        missing_targets_path = Path(self.tmp_dir) / "missing-targets-board.json"
+        missing_targets_path.write_text(
+            json.dumps({"runtime_window_import_plan": {"targets": "not-a-list"}}),
+            encoding="utf-8",
+        )
+        invalid_target_path = Path(self.tmp_dir) / "invalid-target-board.json"
+        invalid_target_path.write_text(
+            json.dumps(
+                {
+                    "runtime_window_import_plan": {
+                        "targets": [{"candidate_id": "cand-missing-fields"}]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        cases = (
+            (
+                Path(self.tmp_dir) / "missing-candidate-board.json",
+                "runtime_window_target_plan_ref_missing",
+            ),
+            (invalid_json_path, "runtime_window_target_plan_ref_invalid"),
+            (empty_json_path, "runtime_window_target_plan_ref_invalid"),
+            (missing_targets_path, "runtime_window_target_plan_targets_missing"),
+            (invalid_target_path, "runtime_window_target_plan_target_invalid"),
+        )
+        args = SimpleNamespace(
+            runtime_window_target=[],
+            runtime_window_targets_from_registry=False,
+            runtime_window_hypothesis_id="",
+            runtime_window_candidate_id="",
+            runtime_window_observed_stage="paper",
+            runtime_window_strategy_family="",
+            runtime_window_source_dsn_env="SIM_DB_DSN",
+            runtime_window_strategy_name="",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_dataset_snapshot_ref="",
+            runtime_window_source_manifest_ref="",
+            runtime_window_source_kind="paper_runtime_observed",
+        )
+
+        for path, message in cases:
+            with self.subTest(path=path):
+                args.runtime_window_target_plan_ref = [str(path)]
+                with self.assertRaisesRegex(RuntimeError, message):
+                    renewal._runtime_window_targets(args)
+
+    def test_explicit_runtime_window_target_takes_precedence_over_plan(self) -> None:
+        plan_path = Path(self.tmp_dir) / "candidate-board.json"
+        plan_path.write_text(
+            json.dumps(
+                {
+                    "runtime_window_import_plan": {
+                        "targets": [
+                            {
+                                "candidate_id": "cand-from-plan",
+                                "hypothesis_id": "H-MICRO-01",
+                                "strategy_family": "microstructure_breakout",
+                                "strategy_name": "microbar-volume-continuation-long-top2-chip-v1",
+                            }
+                        ],
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        args = SimpleNamespace(
+            runtime_window_target=[
+                (
+                    "hypothesis_id=H-MICRO-01,candidate_id=cand-explicit,"
+                    "strategy_family=microstructure_breakout,"
+                    "strategy_name=microbar-volume-continuation-long-top2-chip-v1"
+                )
+            ],
+            runtime_window_target_plan_ref=[str(plan_path)],
+            runtime_window_targets_from_registry=False,
+            runtime_window_hypothesis_id="",
+            runtime_window_candidate_id="",
+            runtime_window_observed_stage="paper",
+            runtime_window_strategy_family="",
+            runtime_window_source_dsn_env="SIM_DB_DSN",
+            runtime_window_strategy_name="",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_dataset_snapshot_ref="",
+            runtime_window_source_manifest_ref="",
+            runtime_window_source_kind="paper_runtime_observed",
+        )
+
+        targets = renewal._runtime_window_targets(args)
+
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0].candidate_id, "cand-explicit")
+
     def test_runtime_window_targets_from_registry_imports_all_hypotheses(
         self,
     ) -> None:

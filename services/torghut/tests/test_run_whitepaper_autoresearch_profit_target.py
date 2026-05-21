@@ -5832,6 +5832,77 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(
             board["paper_probation_candidate"], board["closest_promotion_candidate"]
         )
+        plan = board["runtime_window_import_plan"]
+        self.assertEqual(
+            plan["schema_version"], "torghut.runtime-window-import-plan.v1"
+        )
+        self.assertEqual(plan["status"], "ready")
+        self.assertEqual(plan["target_count"], 1)
+        target = plan["targets"][0]
+        self.assertEqual(target["candidate_id"], "cand-paper-probation")
+        self.assertEqual(target["candidate_spec_id"], spec.candidate_spec_id)
+        self.assertEqual(target["hypothesis_id"], spec.hypothesis_id)
+        self.assertEqual(target["strategy_family"], spec.runtime_family)
+        self.assertEqual(target["strategy_name"], spec.runtime_strategy_name)
+        self.assertEqual(target["observed_stage"], "paper")
+        self.assertEqual(target["source_kind"], "paper_runtime_observed")
+        self.assertEqual(target["dataset_snapshot_ref"], "snapshot-paper-probation")
+        self.assertEqual(target["artifact_refs"], ["paper-probation.json"])
+        self.assertEqual(target["handoff"], "runtime_window_import_only")
+        self.assertEqual(
+            target["promotion_gate"], "existing_runtime_governance_fail_closed"
+        )
+
+    def test_candidate_board_runtime_window_plan_dedupes_and_blocks_incomplete_targets(
+        self,
+    ) -> None:
+        row = {
+            "candidate_spec_id": "spec-runtime-plan",
+            "candidate_id": "cand-runtime-plan",
+            "hypothesis_id": "H-MICRO-01",
+            "runtime_family": "microstructure_breakout",
+            "runtime_strategy_name": "microbar-volume-continuation-long-top2-chip-v1",
+            "dataset_snapshot_id": "snapshot-runtime-plan",
+            "replay_artifact_refs": ["paper-runtime-plan.json"],
+            "blockers": ["delay_adjusted_depth_tail_coverage_passed_failed"],
+        }
+
+        plan = runner._candidate_board_runtime_window_import_plan(
+            rows=(row,),
+            paper_probation_candidate=row,
+            promotion_subject={
+                "target_met": True,
+                "sleeve_candidate_spec_ids": ["spec-runtime-plan"],
+            },
+        )
+        incomplete_plan = runner._candidate_board_runtime_window_import_plan(
+            rows=(),
+            paper_probation_candidate={
+                "candidate_spec_id": "spec-incomplete",
+                "candidate_id": "",
+                "hypothesis_id": "",
+                "runtime_family": "microstructure_breakout",
+                "runtime_strategy_name": "microbar-volume-continuation-long-top2-chip-v1",
+            },
+            promotion_subject=None,
+        )
+
+        self.assertEqual(
+            runner._candidate_board_hypothesis_manifest_ref(None),
+            "",
+        )
+        self.assertEqual(plan["target_count"], 1)
+        self.assertEqual(
+            plan["targets"][0]["source_manifest_ref"],
+            "config/trading/hypotheses/h-micro-01.json",
+        )
+        self.assertEqual(plan["targets"][0]["candidate_blockers"], row["blockers"])
+        self.assertEqual(incomplete_plan["status"], "blocked")
+        self.assertEqual(incomplete_plan["target_count"], 0)
+        self.assertEqual(
+            incomplete_plan["blockers"][0]["missing_fields"],
+            ["candidate_id", "hypothesis_id"],
+        )
 
     def test_candidate_universe_symbols_default_to_chip_coverage_when_empty(
         self,
