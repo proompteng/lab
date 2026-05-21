@@ -52,11 +52,11 @@ describe('buildHelmArgs', () => {
       'controlPlane.image.repository=agents-ci-local',
       '--set',
       'controllers.image.repository=agents-ci-local',
-      '--set',
+      '--set-string',
       'image.tag=latest',
-      '--set',
+      '--set-string',
       'controlPlane.image.tag=latest',
-      '--set',
+      '--set-string',
       'controllers.image.tag=latest',
       '--set',
       'image.digest=',
@@ -144,6 +144,41 @@ describe('buildHelmArgs', () => {
     expect(args).toContain(
       'runner.image.digest=sha256:3333333333333333333333333333333333333333333333333333333333333333',
     )
+  })
+
+  it('passes numeric-looking published image tags as strings for Helm schema validation', () => {
+    const valuesFile = resolve(process.cwd(), 'scripts/agents/values-ci.yaml')
+    const args = buildHelmArgs({
+      releaseName: 'agents',
+      namespace: 'agents-ci',
+      valuesFile,
+      createNamespace: false,
+      controlPlaneImageRepository: 'registry.example/agents-control-plane',
+      controllersImageRepository: 'registry.example/agents-controller',
+      runnerImageRepository: 'registry.example/agents-codex-runner',
+      controlPlaneImageTag: '80403146',
+      controllersImageTag: '80403146',
+      runnerImageTag: '80403146',
+      imageDigestSet: false,
+      imageDigest: '',
+    })
+
+    expect(args).toContain('--set-string')
+    expect(
+      args.slice(
+        args.indexOf('controlPlane.image.tag=80403146') - 1,
+        args.indexOf('controlPlane.image.tag=80403146') + 1,
+      ),
+    ).toEqual(['--set-string', 'controlPlane.image.tag=80403146'])
+    expect(
+      args.slice(
+        args.indexOf('controllers.image.tag=80403146') - 1,
+        args.indexOf('controllers.image.tag=80403146') + 1,
+      ),
+    ).toEqual(['--set-string', 'controllers.image.tag=80403146'])
+    expect(
+      args.slice(args.indexOf('runner.image.tag=80403146') - 1, args.indexOf('runner.image.tag=80403146') + 1),
+    ).toEqual(['--set-string', 'runner.image.tag=80403146'])
   })
 
   it('omits image digest when the env key is unset', () => {
