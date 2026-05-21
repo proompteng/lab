@@ -7,7 +7,7 @@ spec:
   adapter:
     type: codex-app-server
     codex:
-      model: gpt-5.5
+      model: gpt-5.3-codex-spark
       effort: xhigh
       sandbox: danger-full-access
       approval: never
@@ -20,15 +20,15 @@ spec:
     CODEX_LOG_LEVEL: info
     AGENT_RUN_NAME: "{{agentRun.name}}"
     AGENT_RUN_NAMESPACE: "{{agentRun.namespace}}"
-    CODEX_MODEL: gpt-5.5
-    CODEX_MODEL_FALLBACKS: gpt-5.4,gpt-5.4-mini,gpt-5.2-codex,gpt-5-codex
+    CODEX_MODEL: gpt-5.3-codex-spark
+    CODEX_MODEL_FALLBACKS: gpt-5.5,gpt-5.4,gpt-5.4-mini,gpt-5.2-codex,gpt-5-codex
     CODEX_MAX_SESSION_ATTEMPTS: "5"
     HF_BASE_URL: https://router.huggingface.co/v1
     HF_MODEL: meta-llama/Llama-3.1-8B-Instruct:novita
   inputFiles:
     - path: /root/.codex/config.toml
       content: |-
-        model = "gpt-5.5"
+        model = "gpt-5.3-codex-spark"
         model_reasoning_summary = "none"
         model_reasoning_effort = "xhigh"
         model_verbosity = "medium"

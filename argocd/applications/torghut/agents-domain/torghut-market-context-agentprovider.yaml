@@ -21,7 +21,7 @@ spec:
   envTemplate:
     CODEX_LOG_LEVEL: info
     NATS_URL: nats://nats.nats.svc.cluster.local:4222
-    CODEX_MARKET_CONTEXT_PROVIDER_CHAIN: codex:gpt-5.5,codex-spark:gpt-5.5
+    CODEX_MARKET_CONTEXT_PROVIDER_CHAIN: codex:gpt-5.5,codex-spark:gpt-5.3-codex-spark
     CODEX_MARKET_CONTEXT_ATTEMPT_TIMEOUT_SECONDS: "600"
     CODEX_MARKET_CONTEXT_OVERALL_TIMEOUT_SECONDS: "1200"
     CODEX_MARKET_CONTEXT_PROGRESS_TIMEOUT_SECONDS: "10"
