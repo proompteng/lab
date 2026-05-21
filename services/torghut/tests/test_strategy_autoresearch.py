@@ -4,7 +4,7 @@ import copy
 import json
 import sys
 from argparse import Namespace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -411,6 +411,11 @@ class TestStrategyAutoresearch(TestCase):
                 "program.yaml",
                 "--output-dir",
                 "/tmp/out",
+                "--materialize-replay-tape",
+                "--replay-tape-path",
+                "/tmp/tape.jsonl",
+                "--replay-tape-manifest",
+                "/tmp/tape.manifest.json",
             ],
         ):
             args = runner._parse_args()
@@ -420,6 +425,9 @@ class TestStrategyAutoresearch(TestCase):
             runner._REPO_ROOT / "argocd/applications/torghut/strategy-configmap.yaml",
         )
         self.assertIsNone(args.shadow_validation_artifact)
+        self.assertTrue(args.materialize_replay_tape)
+        self.assertEqual(args.replay_tape_path, Path("/tmp/tape.jsonl"))
+        self.assertEqual(args.replay_tape_manifest, Path("/tmp/tape.manifest.json"))
 
     def test_parse_args_prefers_clickhouse_http_url_env(self) -> None:
         with (
@@ -495,6 +503,8 @@ class TestStrategyAutoresearch(TestCase):
                 expected_last_trading_day="",
                 allow_stale_tape=False,
                 prefetch_full_window_rows=False,
+                replay_tape_path=root / "tape.jsonl",
+                replay_tape_manifest=root / "tape.manifest.json",
                 max_candidates_per_frontier_run=0,
             )
 
@@ -507,6 +517,143 @@ class TestStrategyAutoresearch(TestCase):
             )
 
         self.assertEqual(frontier_args.second_oos_days, 4)
+        self.assertEqual(
+            frontier_args.replay_tape_path, (root / "tape.jsonl").resolve()
+        )
+        self.assertEqual(
+            frontier_args.replay_tape_manifest,
+            (root / "tape.manifest.json").resolve(),
+        )
+
+    def test_materialize_run_replay_tape_writes_bundle_and_receipt(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            configmap_path = root / "strategy-configmap.yaml"
+            configmap_path.write_text("apiVersion: v1\nkind: ConfigMap\n")
+            bundle_paths = runner._mlx_bundle_paths(root)
+            args = Namespace(
+                strategy_configmap=configmap_path,
+                clickhouse_http_url="http://example.invalid:8123",
+                clickhouse_username="torghut",
+                clickhouse_password="secret",
+                start_equity="31590.02",
+                chunk_minutes=10,
+                progress_log_seconds=30,
+                materialize_replay_tape=True,
+                replay_tape_path=None,
+            )
+            signal_rows = [
+                SignalEnvelope(
+                    event_ts=datetime(2026, 3, 20, 13, 30, tzinfo=UTC),
+                    symbol="AMAT",
+                    seq=1,
+                    source="ta",
+                    timeframe="1Sec",
+                    payload={"price": "180.10"},
+                )
+            ]
+
+            with patch(
+                "scripts.run_strategy_autoresearch_loop.replay_mod._iter_signal_rows",
+                return_value=iter(signal_rows),
+            ):
+                stats, receipt = runner._maybe_materialize_run_replay_tape(
+                    args=args,
+                    runner_run_id="strategy-autoresearch-test",
+                    snapshot_symbols=("AMAT",),
+                    bundle_paths=bundle_paths,
+                    full_window_start_date="2026-03-20",
+                    full_window_end_date="2026-03-20",
+                    existing_signal_bundle=None,
+                )
+            assert receipt is not None
+            tape_exists = Path(receipt["tape_path"]).exists()
+            manifest_exists = Path(receipt["manifest_path"]).exists()
+
+        assert stats is not None
+        self.assertEqual(stats.row_count, 1)
+        self.assertEqual(receipt["status"], "materialized")
+        self.assertEqual(receipt["row_count"], 1)
+        self.assertTrue(tape_exists)
+        self.assertTrue(manifest_exists)
+
+    def test_provided_replay_tape_receipt_reads_manifest_and_handles_missing(
+        self,
+    ) -> None:
+        signal_row = SignalEnvelope(
+            event_ts=datetime(2026, 3, 20, 13, 30, tzinfo=UTC),
+            symbol="AMAT",
+            seq=1,
+            source="ta",
+            timeframe="1Sec",
+            payload={"price": "180.10"},
+        )
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            tape_path = root / "provided-tape.jsonl"
+            missing_tape_path = root / "missing-tape.jsonl"
+            manifest = runner.materialize_signal_tape(
+                rows=[signal_row],
+                tape_path=tape_path,
+                dataset_snapshot_ref="provided-snapshot",
+                symbols=("AMAT",),
+                start_date=date(2026, 3, 20),
+                end_date=date(2026, 3, 20),
+                source_query_digest="digest",
+            )
+
+            missing_receipt = runner._provided_replay_tape_receipt(
+                tape_path=missing_tape_path, manifest_path=None
+            )
+            receipt = runner._provided_replay_tape_receipt(
+                tape_path=tape_path, manifest_path=None
+            )
+
+        self.assertIsNone(missing_receipt)
+        assert receipt is not None
+        self.assertEqual(receipt["status"], "provided")
+        self.assertEqual(receipt["row_count"], manifest.row_count)
+        self.assertEqual(receipt["dataset_snapshot_ref"], "provided-snapshot")
+
+    def test_materialize_run_replay_tape_skips_when_supplied_or_unresolved(
+        self,
+    ) -> None:
+        existing_stats = runner.MlxSignalBundleStats(
+            path="/tmp/existing.jsonl",
+            row_count=7,
+            symbol_count=1,
+            first_event_ts="2026-03-20T13:30:00+00:00",
+            last_event_ts="2026-03-20T13:31:00+00:00",
+        )
+        args = Namespace(
+            materialize_replay_tape=True,
+            replay_tape_path=Path("/tmp/provided-tape.jsonl"),
+        )
+
+        stats, receipt = runner._maybe_materialize_run_replay_tape(
+            args=args,
+            runner_run_id="strategy-autoresearch-test",
+            snapshot_symbols=("AMAT",),
+            bundle_paths={},
+            full_window_start_date="2026-03-20",
+            full_window_end_date="2026-03-20",
+            existing_signal_bundle=existing_stats,
+        )
+        self.assertIs(stats, existing_stats)
+        self.assertIsNone(receipt)
+
+        args.replay_tape_path = None
+        stats, receipt = runner._maybe_materialize_run_replay_tape(
+            args=args,
+            runner_run_id="strategy-autoresearch-test",
+            snapshot_symbols=("AMAT",),
+            bundle_paths={},
+            full_window_start_date="",
+            full_window_end_date="2026-03-20",
+            existing_signal_bundle=existing_stats,
+        )
+        self.assertIs(stats, existing_stats)
+        self.assertIsNone(receipt)
 
     def _write_program_fixture(self, root: Path) -> tuple[Path, Path]:
         family_dir = root / "families"
@@ -1609,11 +1756,14 @@ class TestStrategyAutoresearch(TestCase):
                 shadow_validation_artifact=None,
                 train_days=6,
                 holdout_days=3,
-                full_window_start_date="",
-                full_window_end_date="",
+                full_window_start_date="2026-03-20",
+                full_window_end_date="2026-03-20",
                 expected_last_trading_day="",
                 allow_stale_tape=False,
                 prefetch_full_window_rows=False,
+                replay_tape_path=None,
+                replay_tape_manifest=None,
+                materialize_replay_tape=True,
                 max_frontier_runs=0,
                 json_output=None,
             )
@@ -1641,6 +1791,8 @@ class TestStrategyAutoresearch(TestCase):
             self.assertTrue((run_root / "promotion_readiness.json").exists())
             self.assertTrue((run_root / "mlx-snapshot-manifest.json").exists())
             self.assertTrue((run_root / "mlx-snapshot-signals.jsonl").exists())
+            self.assertTrue((run_root / "replay-tape.jsonl").exists())
+            self.assertTrue((run_root / "replay-tape.jsonl.manifest.json").exists())
             self.assertTrue((run_root / "mlx-candidate-descriptors.jsonl").exists())
             self.assertTrue((run_root / "mlx-proposal-scores.jsonl").exists())
             summary = json.loads(
@@ -1713,6 +1865,14 @@ class TestStrategyAutoresearch(TestCase):
             self.assertEqual(manifest["symbols"], ["AMAT", "NVDA"])
             self.assertEqual(manifest["row_counts"]["signal_row_count"], 1)
             self.assertEqual(
+                manifest["tape_freshness_receipts"][0]["status"],
+                "materialized",
+            )
+            self.assertEqual(
+                manifest["tape_freshness_receipts"][0]["row_count"],
+                1,
+            )
+            self.assertEqual(
                 manifest["tensor_bundle_paths"]["signal_rows_jsonl"],
                 str(run_root / "mlx-snapshot-signals.jsonl"),
             )
@@ -1740,6 +1900,26 @@ class TestStrategyAutoresearch(TestCase):
                 ),
                 encoding="utf-8",
             )
+            signal_row = SignalEnvelope(
+                event_ts=datetime(2026, 3, 20, 13, 30, tzinfo=UTC),
+                symbol="AMAT",
+                seq=1,
+                source="ta",
+                timeframe="1Sec",
+                payload={"price": "180.10"},
+            )
+            tape_path = root / "provided-tape.jsonl"
+            manifest_path = root / "provided-tape.jsonl.manifest.json"
+            runner.materialize_signal_tape(
+                rows=[signal_row],
+                tape_path=tape_path,
+                manifest_path=manifest_path,
+                dataset_snapshot_ref="provided-snapshot",
+                symbols=("AMAT",),
+                start_date=date(2026, 3, 20),
+                end_date=date(2026, 3, 20),
+                source_query_digest="digest",
+            )
             output_dir = root / "out"
             args = Namespace(
                 program=program_path,
@@ -1761,6 +1941,9 @@ class TestStrategyAutoresearch(TestCase):
                 expected_last_trading_day="",
                 allow_stale_tape=False,
                 prefetch_full_window_rows=False,
+                replay_tape_path=tape_path,
+                replay_tape_manifest=manifest_path,
+                materialize_replay_tape=False,
                 max_frontier_runs=0,
                 json_output=None,
             )
@@ -1786,6 +1969,13 @@ class TestStrategyAutoresearch(TestCase):
             self.assertEqual(len(history_rows), 1)
             self.assertEqual(history_rows[0]["status"], "skip")
             self.assertIn("runtime_strategy_missing", history_rows[0]["hard_vetoes"])
+            snapshot_manifest = json.loads(
+                (run_root / "mlx-snapshot-manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                snapshot_manifest["tape_freshness_receipts"][0]["status"],
+                "provided",
+            )
             self.assertEqual(
                 history_rows[0]["proposal_selection_reason"], "runtime_strategy_missing"
             )

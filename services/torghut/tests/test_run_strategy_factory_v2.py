@@ -223,6 +223,10 @@ class TestRunStrategyFactoryV2(TestCase):
                     "TORGHUT_CLICKHOUSE_PASSWORD",
                     "--allow-stale-tape",
                     "--prefetch-full-window-rows",
+                    "--replay-tape-path",
+                    str(seed_dir / "tape.jsonl"),
+                    "--replay-tape-manifest",
+                    str(seed_dir / "tape.manifest.json"),
                     "--no-persist-results",
                 ],
             ):
@@ -241,6 +245,8 @@ class TestRunStrategyFactoryV2(TestCase):
         self.assertEqual(parsed.clickhouse_password_env, "TORGHUT_CLICKHOUSE_PASSWORD")
         self.assertTrue(parsed.allow_stale_tape)
         self.assertTrue(parsed.prefetch_full_window_rows)
+        self.assertEqual(parsed.replay_tape_path, seed_dir / "tape.jsonl")
+        self.assertEqual(parsed.replay_tape_manifest, seed_dir / "tape.manifest.json")
         self.assertFalse(parsed.persist_results)
         self.assertEqual(runner._list_of_strings("not-a-list"), [])
         self.assertEqual(
@@ -287,6 +293,33 @@ class TestRunStrategyFactoryV2(TestCase):
 
         self.assertEqual(parsed.clickhouse_http_url, "http://127.0.0.1:8123")
         self.assertEqual(parsed.clickhouse_username, "reader")
+
+    def test_frontier_args_forwards_replay_tape_paths(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            args = self._args(
+                output_dir=root / "out",
+                strategy_configmap=root / "strategy-configmap.yaml",
+                family_template_dir=root / "families",
+                seed_sweep_dir=root / "seed",
+            )
+            args.replay_tape_path = root / "tape.jsonl"
+            args.replay_tape_manifest = root / "tape.manifest.json"
+
+            frontier_args = runner._frontier_args(
+                args=args,
+                strategy_configmap=args.strategy_configmap,
+                sweep_config=root / "compiled-sweep.yaml",
+                json_output=root / "result.json",
+            )
+
+        self.assertEqual(
+            frontier_args.replay_tape_path, (root / "tape.jsonl").resolve()
+        )
+        self.assertEqual(
+            frontier_args.replay_tape_manifest,
+            (root / "tape.manifest.json").resolve(),
+        )
 
     def test_load_source_experiment_specs_applies_filters(self) -> None:
         with Session(self.engine) as session:
