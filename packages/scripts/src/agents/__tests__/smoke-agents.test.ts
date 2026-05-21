@@ -505,20 +505,28 @@ describe('scheduled AgentRun templates', () => {
     const codex = objectAt(adapter, 'codex')
     const envTemplate = objectAt(objectAt(provider, 'spec'), 'envTemplate')
     const inputFiles = objectAt(objectAt(provider, 'spec'), 'inputFiles') as Record<string, unknown>[] | undefined
+    const codexConfig = (inputFiles ?? []).find(
+      (inputFile) => objectAt(inputFile, 'path') === '/root/.codex/config.toml',
+    )
 
     expect(objectAt(spec, 'binary')).toBe('/usr/local/bin/agent-runner')
     expect(objectAt(spec, 'argsTemplate')).toEqual([])
     expect(objectAt(adapter, 'type')).toBe('codex-app-server')
-    expect(objectAt(codex, 'model')).toBe('gpt-5.5')
+    expect(objectAt(codex, 'model')).toBe('gpt-5.3-codex-spark')
     expect(objectAt(codex, 'effort')).toBe('xhigh')
     expect(objectAt(codex, 'sandbox')).toBe('danger-full-access')
     expect(objectAt(codex, 'approval')).toBe('never')
     expect(objectAt(codex, 'cwd')).toBe('/workspace/lab')
     expect(objectAt(envTemplate, 'AGENT_RUN_NAME')).toBe('{{agentRun.name}}')
     expect(objectAt(envTemplate, 'AGENT_RUN_NAMESPACE')).toBe('{{agentRun.namespace}}')
-    expect(objectAt(envTemplate, 'CODEX_MODEL_FALLBACKS')).toBe('gpt-5.4,gpt-5.4-mini,gpt-5.2-codex,gpt-5-codex')
+    expect(objectAt(envTemplate, 'CODEX_MODEL')).toBe('gpt-5.3-codex-spark')
+    expect(objectAt(envTemplate, 'CODEX_MODEL_FALLBACKS')).toBe(
+      'gpt-5.5,gpt-5.4,gpt-5.4-mini,gpt-5.2-codex,gpt-5-codex',
+    )
     expect(objectAt(envTemplate, 'CODEX_MODEL_FALLBACKS')).not.toContain('gpt-5.3-codex-spark')
     expect(objectAt(envTemplate, 'CODEX_MAX_SESSION_ATTEMPTS')).toBe('5')
+    expect(objectAt(codexConfig, 'content')).toContain('model = "gpt-5.3-codex-spark"')
+    expect(objectAt(codexConfig, 'content')).not.toContain('model = "gpt-5.5"')
     expect((inputFiles ?? []).map((inputFile) => objectAt(inputFile, 'path'))).not.toContain(
       '/root/.codex/provider-codex-spark.json',
     )
