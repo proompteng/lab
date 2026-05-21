@@ -1,5 +1,5 @@
 import { buildCodexOrchestrationParameters } from '@proompteng/agent-contracts/codex-orchestration-parameters'
-import { Data, Effect } from 'effect'
+import { Context, Data, Effect, Layer } from 'effect'
 
 import { errorResponse, okResponse, parseJsonBody } from '../http'
 import { asRecord, asString, readNested } from '../primitives'
@@ -18,14 +18,27 @@ import {
   OrchestrationSubmitNotFoundError,
   OrchestrationSubmitPolicyDeniedError,
   OrchestrationSubmitStorageError,
+  makeOrchestrationSubmitLayer,
+  submitOrchestrationRunWithServicesEffect,
   type OrchestrationRunSubmitStore,
   type SubmitOrchestrationRunDeps,
-  submitOrchestrationRunEffect,
 } from './orchestration-submit'
 
 export type AgentRunRerunRuntimeConfigOptions = {
   env?: Record<string, string | undefined>
 }
+
+type AgentRunRerunRuntimeConfigServiceDefinition = {
+  readonly env: Record<string, string | undefined>
+}
+
+class AgentRunRerunRuntimeConfigService extends Context.Tag('agents/AgentRunRerunRuntimeConfigService')<
+  AgentRunRerunRuntimeConfigService,
+  AgentRunRerunRuntimeConfigServiceDefinition
+>() {}
+
+const makeAgentRunRerunRuntimeConfigLayer = (runtimeConfig?: AgentRunRerunRuntimeConfigOptions) =>
+  Layer.succeed(AgentRunRerunRuntimeConfigService, { env: runtimeConfig?.env ?? process.env })
 
 export type AgentRunRerunStore = {
   ready: Promise<unknown>
@@ -289,7 +302,8 @@ export const submitAgentRunRerunEffect = (
   deps: AgentRunRerunsApiDependencies,
 ): Effect.Effect<Record<string, unknown>, AgentRunRerunError> =>
   Effect.gen(function* () {
-    const env = deps.runtimeConfig?.env ?? process.env
+    const runtimeConfig = yield* AgentRunRerunRuntimeConfigService
+    const env = runtimeConfig.env
     const payload = yield* Effect.tryPromise({
       try: () => parseJsonBody(request),
       catch: (cause) => new AgentRunRerunRequestError({ message: toErrorMessage(cause), status: 400 }),
@@ -361,15 +375,12 @@ export const submitAgentRunRerunEffect = (
             submittedAt: null,
           })
 
-          const result = yield* submitOrchestrationRunEffect(
-            {
-              deliveryId,
-              orchestrationRef: { name: orchestrationName },
-              namespace: orchestrationNamespace,
-              parameters,
-            },
-            deps,
-          ).pipe(
+          const result = yield* submitOrchestrationRunWithServicesEffect({
+            deliveryId,
+            orchestrationRef: { name: orchestrationName },
+            namespace: orchestrationNamespace,
+            parameters,
+          }).pipe(
             Effect.tapError((error) =>
               rerunStoreEffect('mark-rerun-submission-failed', () =>
                 store.updateAgentRunRerunSubmission({
@@ -436,7 +447,15 @@ export const submitAgentRunRerunEffect = (
         }),
       stores.close,
     )
-  }).pipe(Effect.provide(makeAgentRunStoreLayer(deps.storeFactory)))
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        makeAgentRunStoreLayer(deps.storeFactory),
+        makeOrchestrationSubmitLayer({ ...deps, storeFactory: deps.storeFactory }),
+        makeAgentRunRerunRuntimeConfigLayer(deps.runtimeConfig),
+      ),
+    ),
+  )
 
 const describeRerunError = (error: AgentRunRerunError) => {
   if (error instanceof AgentRunRerunRequestError) return error.message
