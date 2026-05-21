@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
+import {
+  buildControlPlaneControllerIngestionSettlement,
+  type ControlPlaneControllerIngestionSettlement,
+  type ControlPlaneSourceServingSnapshot,
+} from '@proompteng/agent-contracts/control-plane-status'
+
 import type {
   ControlPlaneControllerWitnessQuorum,
   RepairSlotEscrow,
@@ -112,6 +118,23 @@ const sourceServing = (
   ...overrides,
 })
 
+const agentsSourceServing = (exchange: SourceServingContractVerdictExchange): ControlPlaneSourceServingSnapshot => ({
+  verdict_ref: exchange.exchange_id,
+  status: exchange.status,
+  fresh_until: exchange.fresh_until,
+  source_head_sha: exchange.source_sha,
+  serving_build_commit: exchange.serving_build_commit,
+  manifest_image_digest: exchange.manifest_image_digest,
+  serving_image_digest: exchange.serving_image_digest,
+  allowed_action_classes: exchange.allowed_action_classes,
+  repair_only_action_classes: exchange.repair_only_action_classes,
+  held_action_classes: exchange.held_action_classes,
+  blocked_action_classes: exchange.blocked_action_classes,
+  reason_codes: exchange.reason_codes,
+  evidence_refs: exchange.verdict_refs,
+  rollback_target: exchange.rollback_target,
+})
+
 const verifyBoard = (overrides: Partial<VerifyTrustForeclosureBoard> = {}): VerifyTrustForeclosureBoard =>
   ({
     schema_version: 'jangar.verify-trust-foreclosure-board.v1',
@@ -181,28 +204,41 @@ const torghutConsumerEvidence = (
   ...overrides,
 })
 
-const buildSettlement = (overrides: Partial<Parameters<typeof buildControllerIngestionSettlement>[0]> = {}) =>
-  buildControllerIngestionSettlement({
+const buildSettlement = (overrides: Partial<Parameters<typeof buildControllerIngestionSettlement>[0]> = {}) => {
+  const input = {
     now,
     namespace: 'agents',
-    servingReadiness: 'ok',
-    controllerWitness: controllerWitness(),
-    agentRunIngestion: agentRunIngestion(),
-    executionTrust: {
-      status: 'healthy',
-      reason: 'execution trust is healthy',
-      last_evaluated_at: now.toISOString(),
-      blocking_windows: [],
-      evidence_summary: [],
-    },
-    database: database(),
-    rolloutHealth: rolloutHealth(),
+    servingReadiness: 'ok' as const,
     sourceServingContractVerdictExchange: sourceServing(),
     verifyTrustForeclosureBoard: verifyBoard(),
     repairSlotEscrow: repairSlot(),
     torghutConsumerEvidence: torghutConsumerEvidence(),
     ...overrides,
+  }
+  return buildControllerIngestionSettlement({
+    ...input,
+    agentsControllerIngestionSettlement:
+      input.agentsControllerIngestionSettlement ??
+      buildControlPlaneControllerIngestionSettlement({
+        now: input.now,
+        namespace: input.namespace,
+        mode: 'observe',
+        servingReadiness: input.servingReadiness,
+        controllerWitness: controllerWitness(),
+        agentRunIngestion: agentRunIngestion(),
+        executionTrust: {
+          status: 'healthy',
+          reason: 'execution trust is healthy',
+          last_evaluated_at: now.toISOString(),
+          blocking_windows: [],
+          evidence_summary: [],
+        },
+        database: database(),
+        rolloutHealth: rolloutHealth(),
+        sourceServing: agentsSourceServing(input.sourceServingContractVerdictExchange),
+      }),
   })
+}
 
 describe('control-plane controller ingestion settlement', () => {
   it('allows material carry when controller ingestion and source-serving evidence agree', () => {
@@ -257,18 +293,36 @@ describe('control-plane controller ingestion settlement', () => {
   })
 
   it('selects one controller-ingestion repair ticket when ingestion is the only missing witness', () => {
+    const agentsControllerIngestionSettlement: ControlPlaneControllerIngestionSettlement =
+      buildControlPlaneControllerIngestionSettlement({
+        now,
+        namespace: 'agents',
+        mode: 'observe',
+        servingReadiness: 'ok',
+        controllerWitness: controllerWitness({
+          decision: 'repair_only',
+          reason_codes: ['controller_witness_split'],
+          quorum_id: 'controller-witness:repair-only',
+        }),
+        agentRunIngestion: agentRunIngestion({
+          status: 'unknown',
+          message: 'AgentRun ingestion self-report missing',
+          last_watch_event_at: null,
+          last_resync_at: null,
+        }),
+        executionTrust: {
+          status: 'healthy',
+          reason: 'execution trust is healthy',
+          last_evaluated_at: now.toISOString(),
+          blocking_windows: [],
+          evidence_summary: [],
+        },
+        database: database(),
+        rolloutHealth: rolloutHealth(),
+        sourceServing: agentsSourceServing(sourceServing()),
+      })
     const settlement = buildSettlement({
-      controllerWitness: controllerWitness({
-        decision: 'repair_only',
-        reason_codes: ['controller_witness_split'],
-        quorum_id: 'controller-witness:repair-only',
-      }),
-      agentRunIngestion: agentRunIngestion({
-        status: 'unknown',
-        message: 'AgentRun ingestion self-report missing',
-        last_watch_event_at: null,
-        last_resync_at: null,
-      }),
+      agentsControllerIngestionSettlement,
     })
 
     expect(settlement.decision).toBe('repair_only')

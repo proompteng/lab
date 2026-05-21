@@ -1,28 +1,18 @@
 import { createHash } from 'node:crypto'
 
-import {
-  buildControlPlaneControllerIngestionSettlement,
-  type ControlPlaneSourceServingSnapshot,
-} from '@proompteng/agent-contracts/control-plane-status'
+import type { ControlPlaneControllerIngestionSettlement } from '@proompteng/agent-contracts/control-plane-status'
 
 import type {
   ControllerIngestionSettlement,
   ControllerIngestionSettlementDecision,
   ControllerIngestionSettlementTicketClass,
   ControllerIngestionSettlementTorghutCarryStatus,
-  ControlPlaneControllerWitnessQuorum,
-  ExecutionTrustStatus,
   ReadyTruthArbiterMode,
   ReadyTruthServingReadiness,
   RepairSlotEscrow,
   SourceServingContractVerdictExchange,
   TorghutConsumerEvidenceStatus,
   VerifyTrustForeclosureBoard,
-} from '~/server/control-plane-status-types'
-import type {
-  AgentRunIngestionStatus,
-  ControlPlaneRolloutHealth,
-  DatabaseStatus,
 } from '~/server/control-plane-status-types'
 
 export const CONTROLLER_INGESTION_SETTLEMENT_DESIGN_ARTIFACT =
@@ -47,11 +37,7 @@ export type BuildControllerIngestionSettlementInput = {
   now: Date
   namespace: string
   servingReadiness: ReadyTruthServingReadiness
-  controllerWitness: ControlPlaneControllerWitnessQuorum
-  agentRunIngestion: AgentRunIngestionStatus
-  executionTrust: ExecutionTrustStatus
-  database: DatabaseStatus
-  rolloutHealth: ControlPlaneRolloutHealth
+  agentsControllerIngestionSettlement: ControlPlaneControllerIngestionSettlement
   sourceServingContractVerdictExchange: SourceServingContractVerdictExchange
   verifyTrustForeclosureBoard: VerifyTrustForeclosureBoard | null
   repairSlotEscrow: RepairSlotEscrow | null
@@ -70,25 +56,6 @@ const normalizeReason = (value: string | null | undefined) =>
     .replace(/[^a-z0-9_.:-]+/g, '_') ?? null
 
 const uniqueStrings = (values: Array<string | null | undefined>) => [...new Set(values.filter(Boolean) as string[])]
-
-const toControlPlaneSourceServingSnapshot = (
-  exchange: SourceServingContractVerdictExchange,
-): ControlPlaneSourceServingSnapshot => ({
-  verdict_ref: exchange.exchange_id,
-  status: exchange.status,
-  fresh_until: exchange.fresh_until,
-  source_head_sha: exchange.source_sha,
-  serving_build_commit: exchange.serving_build_commit,
-  manifest_image_digest: exchange.manifest_image_digest,
-  serving_image_digest: exchange.serving_image_digest,
-  allowed_action_classes: exchange.allowed_action_classes,
-  repair_only_action_classes: exchange.repair_only_action_classes,
-  held_action_classes: exchange.held_action_classes,
-  blocked_action_classes: exchange.blocked_action_classes,
-  reason_codes: exchange.reason_codes,
-  evidence_refs: exchange.verdict_refs,
-  rollback_target: exchange.rollback_target,
-})
 
 const parseTimestampMs = (value: string | null | undefined) => {
   if (!value) return null
@@ -111,7 +78,7 @@ const isZeroNotional = (value: string | null | undefined) => {
 const freshUntilFor = (input: BuildControllerIngestionSettlementInput) => {
   const fallback = addSeconds(input.now, DEFAULT_TTL_SECONDS).toISOString()
   const times = [
-    input.controllerWitness.expires_at,
+    input.agentsControllerIngestionSettlement.fresh_until,
     input.sourceServingContractVerdictExchange.fresh_until,
     input.verifyTrustForeclosureBoard?.fresh_until,
     input.repairSlotEscrow?.fresh_until,
@@ -211,8 +178,8 @@ const hasBlockingContradiction = (
   carryStatus: ControllerIngestionSettlementTorghutCarryStatus,
   reasonCodes: string[],
 ) =>
-  input.controllerWitness.decision === 'block' ||
-  input.executionTrust.status === 'blocked' ||
+  input.agentsControllerIngestionSettlement.controller_witness_decision === 'block' ||
+  input.agentsControllerIngestionSettlement.execution_trust_status === 'blocked' ||
   carryStatus === 'contradicted' ||
   reasonCodes.includes('capital_notional_nonzero')
 
@@ -273,18 +240,7 @@ export const buildControllerIngestionSettlement = (
   input: BuildControllerIngestionSettlementInput,
   mode: ReadyTruthArbiterMode = 'observe',
 ): ControllerIngestionSettlement => {
-  const genericSettlement = buildControlPlaneControllerIngestionSettlement({
-    now: input.now,
-    namespace: input.namespace,
-    mode,
-    servingReadiness: input.servingReadiness,
-    controllerWitness: input.controllerWitness,
-    agentRunIngestion: input.agentRunIngestion,
-    executionTrust: input.executionTrust,
-    database: input.database,
-    rolloutHealth: input.rolloutHealth,
-    sourceServing: toControlPlaneSourceServingSnapshot(input.sourceServingContractVerdictExchange),
-  })
+  const genericSettlement = input.agentsControllerIngestionSettlement
   const carryStatus = torghutCarryStatus(input)
   const controllerReasons = genericSettlement.controller_reason_codes
   const sourceReasons = sourceCarryReasons(input, carryStatus)

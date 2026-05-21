@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import {
+  buildControlPlaneControllerIngestionSettlement,
+  type AgentRunIngestionStatus,
+} from '@proompteng/agent-contracts/control-plane-status'
+
 const originalEnv = { ...process.env }
 delete originalEnv.JANGAR_TORGHUT_STATUS_URL
 delete originalEnv.JANGAR_TORGHUT_STATUS_TIMEOUT_MS
@@ -288,7 +293,7 @@ const buildAgentsControlPlaneStatusSnapshot = (overrides: Record<string, unknown
     (overrides.runtimeAdmission as ReturnType<typeof buildRuntimeAdmissionSnapshot> | undefined) ??
     buildRuntimeAdmissionSnapshot()
   const agentRunIngestion =
-    (overrides.agentrun_ingestion as Record<string, unknown> | undefined) ??
+    (overrides.agentrun_ingestion as AgentRunIngestionStatus | undefined) ??
     ({
       namespace,
       status: 'healthy',
@@ -297,7 +302,73 @@ const buildAgentsControlPlaneStatusSnapshot = (overrides: Record<string, unknown
       last_resync_at: '2026-03-08T21:00:00Z',
       untouched_run_count: 0,
       oldest_untouched_age_seconds: null,
-    } satisfies Record<string, unknown>)
+    } satisfies AgentRunIngestionStatus)
+  const databaseStatus = {
+    configured: false,
+    connected: false,
+    status: 'disabled' as const,
+    message: 'DATABASE_URL is not set',
+    latency_ms: 0,
+    migration_consistency: {
+      status: 'unknown' as const,
+      migration_table: null,
+      registered_count: 0,
+      applied_count: 0,
+      unapplied_count: 0,
+      unexpected_count: 0,
+      latest_registered: null,
+      latest_applied: null,
+      missing_migrations: [],
+      unexpected_migrations: [],
+      message: 'migration consistency unavailable',
+    },
+  }
+  const controllerWitness = {
+    mode: 'shadow' as const,
+    design_artifact:
+      'docs/agents/designs/116-jangar-controller-witness-quorum-and-capital-activation-receipts-2026-05-06.md',
+    quorum_id: `controller-witness:${namespace}:agents-control-plane-status`,
+    generated_at: '2026-03-08T21:00:00Z',
+    expires_at: '2026-03-08T21:01:00Z',
+    namespace,
+    decision: 'allow' as const,
+    reason_codes: [],
+    message: 'Agents controller ingestion self-report is current',
+    witness_refs: [
+      `witness:kubernetes_deployment:${namespace}:agents-control-plane-status`,
+      `witness:watch_epoch:${namespace}:agents-control-plane-status`,
+      `witness:agentrun_ingestion:${namespace}:agents-control-plane-status`,
+    ],
+    deployment_available: true,
+    watch_epoch_current: true,
+    controller_self_report_current: true,
+    witnesses: [],
+    rollback_target: 'use Agents controller logs and AgentRun status conditions for controller ingestion proof',
+  }
+  const rolloutHealth = {
+    status: 'healthy' as const,
+    observed_deployments: 2,
+    degraded_deployments: 0,
+    deployments: [],
+    message: '2 configured deployment(s) healthy',
+  }
+  const controllerIngestionSettlement = buildControlPlaneControllerIngestionSettlement({
+    now: new Date('2026-03-08T21:00:00Z'),
+    namespace,
+    mode: 'observe',
+    servingReadiness: 'ok',
+    controllerWitness,
+    agentRunIngestion,
+    executionTrust: {
+      status: 'healthy',
+      reason: 'execution trust is healthy.',
+      last_evaluated_at: '2026-03-08T21:00:00Z',
+      blocking_windows: [],
+      evidence_summary: [],
+    },
+    database: databaseStatus,
+    rolloutHealth,
+  })
   const status = {
     service: 'agents',
     generated_at: '2026-03-08T21:00:00Z',
@@ -336,26 +407,7 @@ const buildAgentsControlPlaneStatusSnapshot = (overrides: Record<string, unknown
       },
     ],
     runtime_adapters: [],
-    database: {
-      configured: false,
-      connected: false,
-      status: 'disabled',
-      message: 'DATABASE_URL is not set',
-      latency_ms: 0,
-      migration_consistency: {
-        status: 'unknown',
-        migration_table: null,
-        registered_count: 0,
-        applied_count: 0,
-        unapplied_count: 0,
-        unexpected_count: 0,
-        latest_registered: null,
-        latest_applied: null,
-        missing_migrations: [],
-        unexpected_migrations: [],
-        message: 'migration consistency unavailable',
-      },
-    },
+    database: databaseStatus,
     grpc: {
       enabled: false,
       address: '',
@@ -381,28 +433,8 @@ const buildAgentsControlPlaneStatusSnapshot = (overrides: Record<string, unknown
       ],
     },
     agentrun_ingestion: agentRunIngestion,
-    control_plane_controller_witness: {
-      mode: 'shadow',
-      design_artifact:
-        'docs/agents/designs/116-jangar-controller-witness-quorum-and-capital-activation-receipts-2026-05-06.md',
-      quorum_id: `controller-witness:${namespace}:agents-control-plane-status`,
-      generated_at: '2026-03-08T21:00:00Z',
-      expires_at: '2026-03-08T21:01:00Z',
-      namespace,
-      decision: 'allow',
-      reason_codes: [],
-      message: 'Agents controller ingestion self-report is current',
-      witness_refs: [
-        `witness:kubernetes_deployment:${namespace}:agents-control-plane-status`,
-        `witness:watch_epoch:${namespace}:agents-control-plane-status`,
-        `witness:agentrun_ingestion:${namespace}:agents-control-plane-status`,
-      ],
-      deployment_available: true,
-      watch_epoch_current: true,
-      controller_self_report_current: true,
-      witnesses: [],
-      rollback_target: 'use Agents controller logs and AgentRun status conditions for controller ingestion proof',
-    },
+    control_plane_controller_witness: controllerWitness,
+    controller_ingestion_settlement: controllerIngestionSettlement,
     runtime_kits: runtimeAdmission.runtimeKits,
     admission_passports: runtimeAdmission.admissionPassports,
     serving_passport_id: runtimeAdmission.servingPassportId,
@@ -421,13 +453,7 @@ const buildAgentsControlPlaneStatusSnapshot = (overrides: Record<string, unknown
       target_namespaces: 1,
       message: '1 namespace collected',
     },
-    rollout_health: {
-      status: 'healthy',
-      observed_deployments: 2,
-      degraded_deployments: 0,
-      deployments: [],
-      message: '2 configured deployment(s) healthy',
-    },
+    rollout_health: rolloutHealth,
     namespaces: [{ namespace, status: 'healthy', degraded_components: [] }],
     ...((overrides.controlPlaneStatus as Record<string, unknown> | undefined) ?? {}),
   }
