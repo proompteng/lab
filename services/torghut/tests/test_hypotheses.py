@@ -36,6 +36,7 @@ _MANIFEST_CANDIDATE_IDS = {
     "H-PAIRS-01": "spec-d74b07b2aaab8d0cfa8a4c38",
     "H-REV-01": "chip-paper-microbar-composite@execution-proof",
     "H-TSMOM-01": "spec-83161ae16d17828eabcc58cc",
+    "H-TSMOM-LIQ-01": "H-TSMOM-LIQ-01",
 }
 
 _MANIFEST_STRATEGY_FAMILIES = {
@@ -44,6 +45,7 @@ _MANIFEST_STRATEGY_FAMILIES = {
     "H-PAIRS-01": "microbar_cross_sectional_pairs",
     "H-REV-01": "event_reversion",
     "H-TSMOM-01": "intraday_tsmom_consistent",
+    "H-TSMOM-LIQ-01": "intraday_tsmom_consistent",
 }
 
 
@@ -443,6 +445,56 @@ class TestHypothesisReadiness(TestCase):
         self.assertIn("runtime_ledger_stage_not_live", cont["reasons"])
         self.assertEqual(cont["observed"]["runtime_ledger_observed_stage"], "paper")
         self.assertNotIn("post_cost_expectancy_non_positive", cont["reasons"])
+
+    def test_htsmom_liq_manifest_keeps_candidate_identity_but_blocks_paper_ledger(
+        self,
+    ) -> None:
+        registry = load_hypothesis_registry()
+        liq_manifest = next(
+            item for item in registry.items if item.hypothesis_id == "H-TSMOM-LIQ-01"
+        )
+        self.assertEqual(liq_manifest.candidate_id, "H-TSMOM-LIQ-01")
+        self.assertEqual(liq_manifest.strategy_family, "intraday_tsmom_consistent")
+
+        statuses = compile_hypothesis_runtime_statuses(
+            registry=registry,
+            state=_state(
+                feature_rows=5,
+                drift_checks=3,
+                evidence_checks=2,
+                signal_lag_seconds=15,
+                evidence_report={
+                    "ok": True,
+                    "checked_at": "2026-03-06T15:45:00+00:00",
+                },
+            ),
+            tca_summary={
+                "order_count": 90,
+                "avg_abs_slippage_bps": 4,
+                "avg_realized_shortfall_bps": -8,
+                "last_computed_at": "2026-03-06T15:50:00+00:00",
+            },
+            runtime_ledger_summary=_runtime_ledger_summary(
+                "H-TSMOM-LIQ-01",
+                submitted_order_count=90,
+                observed_stage="paper",
+                post_cost_expectancy_bps="8",
+            ),
+            market_context_status={"last_freshness_seconds": 60},
+            jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                decision="allow",
+                reasons=[],
+                message="ok",
+            ),
+            now=datetime(2026, 3, 6, 16, 0, tzinfo=timezone.utc),
+        )
+
+        liq = next(
+            item for item in statuses if item["hypothesis_id"] == "H-TSMOM-LIQ-01"
+        )
+        self.assertFalse(liq["promotion_eligible"])
+        self.assertIn("runtime_ledger_stage_not_live", liq["reasons"])
+        self.assertNotIn("runtime_ledger_candidate_id_mismatch", liq["reasons"])
 
     def test_compile_hypothesis_runtime_statuses_prefers_target_live_bucket_over_newer_paper(
         self,
@@ -1260,7 +1312,7 @@ class TestHypothesisReadiness(TestCase):
         )
         self.assertEqual(summary["reason_totals"]["slippage_budget_exceeded"], 2)
         self.assertEqual(
-            summary["informational_reason_totals"]["closed_session_signal_hold"], 5
+            summary["informational_reason_totals"]["closed_session_signal_hold"], 6
         )
 
     def test_compile_hypothesis_runtime_statuses_isolates_dependency_capabilities_between_hypotheses(
@@ -1441,12 +1493,12 @@ class TestHypothesisReadiness(TestCase):
             ),
         )
 
-        self.assertEqual(summary["hypotheses_total"], 5)
+        self.assertEqual(summary["hypotheses_total"], 6)
         self.assertEqual(
             summary["candidate_dossier_version"],
             "torghut.hypothesis-candidate-dossier.v1",
         )
-        self.assertEqual(len(summary["ranked_candidates"]), 5)
+        self.assertEqual(len(summary["ranked_candidates"]), 6)
         self.assertIsNotNone(summary["selected_candidate"])
         self.assertEqual(summary["selected_candidate"]["hypothesis_id"], "H-MICRO-01")
         self.assertEqual(
@@ -1457,8 +1509,8 @@ class TestHypothesisReadiness(TestCase):
             summary["selected_candidate"]["next_blocker"],
             "delay_adjusted_depth_stress_missing",
         )
-        self.assertEqual(summary["state_totals"], {"blocked": 3, "shadow": 2})
-        self.assertEqual(summary["capital_stage_totals"], {"shadow": 5})
+        self.assertEqual(summary["state_totals"], {"blocked": 4, "shadow": 2})
+        self.assertEqual(summary["capital_stage_totals"], {"shadow": 6})
         self.assertEqual(summary["promotion_eligible_total"], 0)
         self.assertEqual(summary["rollback_required_total"], 0)
         self.assertEqual(
