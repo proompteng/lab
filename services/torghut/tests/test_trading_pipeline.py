@@ -2174,17 +2174,16 @@ class TestTradingPipeline(TestCase):
             return _market_context_bundle(symbol=symbol), None
 
         pipeline._fetch_market_context = _fetch  # type: ignore[method-assign]
-        now = datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc)
-        pipeline.state.last_market_context_checked_at = datetime(
-            2026, 3, 26, 13, 29, 45
-        )
+        now = datetime.now(timezone.utc)
+        pipeline.state.last_market_context_checked_at = now - timedelta(seconds=15)
 
         self.assertTrue(pipeline._market_context_refresh_recent(now))
         pipeline._refresh_market_context_for_proof_floor()
         self.assertEqual(fetch_calls, [])
 
+        now = datetime.now(timezone.utc)
         pipeline.state.last_market_context_checked_at = now - timedelta(seconds=60)
-        pipeline.state.last_market_context_as_of = datetime(2026, 3, 26, 13, 29, 30)
+        pipeline.state.last_market_context_as_of = now - timedelta(seconds=30)
         pipeline.state.last_market_context_freshness_seconds = 30
         pipeline.state.market_context_alert_active = False
         pipeline._refresh_market_context_for_proof_floor()
@@ -7597,7 +7596,7 @@ class TestTradingPipeline(TestCase):
                 "0.03",
             )
             self.assertEqual(updated_decision.params.get("execution_seconds"), 180)
-            self.assertEqual(payload.get("adjusted_qty"), "5")
+            self.assertEqual(Decimal(str(payload.get("adjusted_qty"))), Decimal("5"))
         finally:
             config.settings.trading_runtime_uncertainty_degrade_qty_multipliers_by_regime = original[
                 "qty_multipliers"

@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Mapping
@@ -14,6 +14,11 @@ from typing import Any, Mapping
 import psycopg
 
 from app.db import SessionLocal
+from app.trading.runtime_ledger import (
+    POST_COST_PNL_BASIS,
+    RuntimeLedgerFill,
+    build_runtime_ledger_buckets,
+)
 from app.trading.runtime_window_import import (
     build_observed_runtime_buckets,
     build_regular_session_buckets,
@@ -26,7 +31,7 @@ EXECUTION_ELIGIBLE_DECISION_STATUSES = (
     "filled",
     "partially_filled",
 )
-POST_COST_BASIS_REALIZED_STRATEGY_PNL = "realized_strategy_pnl"
+POST_COST_BASIS_RUNTIME_LEDGER = POST_COST_PNL_BASIS
 POST_COST_BASIS_SIMULATION_REPORT = "simulation_report_net_pnl"
 POST_COST_BASIS_TCA_PROXY = "tca_shortfall_proxy"
 
@@ -132,72 +137,68 @@ def _execution_signed_qty(*, side: Any, qty: Any) -> Decimal:
 def _build_realized_strategy_pnl_rows(
     execution_rows: list[dict[str, object]],
 ) -> list[dict[str, object]]:
-    lots_by_symbol: dict[str, list[dict[str, Decimal]]] = {}
-    realized_rows: list[dict[str, object]] = []
+    fills: list[RuntimeLedgerFill] = []
+    event_times: list[datetime] = []
+    fallback_cost_basis = "execution_tca_shortfall_cost"
     for row in execution_rows:
-        symbol = str(row.get("symbol") or "").strip().upper()
         computed_at = row.get("computed_at")
         price = _decimal_or_none(row.get("avg_fill_price"))
         signed_qty = _execution_signed_qty(
             side=row.get("side"), qty=row.get("filled_qty")
         )
+        symbol = str(row.get("symbol") or "").strip().upper()
+        shortfall_notional = _decimal_or_none(row.get("shortfall_notional"))
         if not symbol or not isinstance(computed_at, datetime):
             continue
+        event_times.append(computed_at)
         if price is None or price <= 0 or signed_qty == 0:
             continue
-        fill_qty = abs(signed_qty)
-        shortfall_notional = _decimal_or_none(row.get("shortfall_notional"))
         if shortfall_notional is None:
             continue
-        fill_cost_per_share = abs(shortfall_notional) / fill_qty
-        remaining = fill_qty
-        fill_sign = Decimal("1") if signed_qty > 0 else Decimal("-1")
-        lots = lots_by_symbol.setdefault(symbol, [])
-        while remaining > 0 and lots and lots[0]["signed_qty"] * fill_sign < 0:
-            lot = lots[0]
-            lot_qty = abs(lot["signed_qty"])
-            close_qty = min(remaining, lot_qty)
-            entry_price = lot["price"]
-            entry_cost = lot["cost_per_share"] * close_qty
-            exit_cost = fill_cost_per_share * close_qty
-            if lot["signed_qty"] > 0:
-                gross_pnl = (price - entry_price) * close_qty
-            else:
-                gross_pnl = (entry_price - price) * close_qty
-            net_pnl = gross_pnl - entry_cost - exit_cost
-            turnover_notional = (entry_price + price) * close_qty
-            if turnover_notional > 0:
-                realized_rows.append(
-                    {
-                        "computed_at": computed_at,
-                        "abs_slippage_bps": (
-                            (entry_cost + exit_cost) / turnover_notional
-                        )
-                        * Decimal("10000"),
-                        "post_cost_expectancy_bps": (net_pnl / turnover_notional)
-                        * Decimal("10000"),
-                        "post_cost_expectancy_basis": POST_COST_BASIS_REALIZED_STRATEGY_PNL,
-                        "post_cost_promotion_eligible": True,
-                        "realized_gross_pnl": gross_pnl,
-                        "realized_net_pnl": net_pnl,
-                        "turnover_notional": turnover_notional,
-                        "symbol": symbol,
-                    }
-                )
-            remaining -= close_qty
-            lot["signed_qty"] -= (
-                Decimal("1") if lot["signed_qty"] > 0 else Decimal("-1")
-            ) * close_qty
-            if abs(lot["signed_qty"]) <= Decimal("0"):
-                lots.pop(0)
-        if remaining > 0:
-            lots.append(
-                {
-                    "signed_qty": fill_sign * remaining,
-                    "price": price,
-                    "cost_per_share": fill_cost_per_share,
-                }
+        cost_basis = str(row.get("cost_basis") or fallback_cost_basis).strip()
+        fills.append(
+            RuntimeLedgerFill(
+                executed_at=computed_at,
+                side=str(row.get("side") or ""),
+                filled_qty=abs(signed_qty),
+                avg_fill_price=price,
+                cost_amount=abs(shortfall_notional),
+                cost_basis=cost_basis,
+                account_label=str(row.get("account_label") or "") or None,
+                strategy_id=str(row.get("strategy_id") or "") or None,
+                symbol=symbol,
             )
+        )
+    if not event_times:
+        return []
+    unique_times = sorted(set(event_times))
+    bucket_ranges = [(unique_times[0], unique_times[-1] + timedelta(microseconds=1))]
+    realized_rows: list[dict[str, object]] = []
+    for bucket in build_runtime_ledger_buckets(fills, bucket_ranges=bucket_ranges):
+        if bucket.closed_trade_count <= 0:
+            continue
+        promotion_eligible = (
+            bucket.post_cost_expectancy_bps is not None and not bucket.blockers
+        )
+        realized_rows.append(
+            {
+                "computed_at": unique_times[-1],
+                "abs_slippage_bps": (
+                    (bucket.cost_amount / bucket.filled_notional) * Decimal("10000")
+                    if bucket.filled_notional > 0
+                    else None
+                ),
+                "post_cost_expectancy_bps": bucket.post_cost_expectancy_bps,
+                "post_cost_expectancy_basis": POST_COST_BASIS_RUNTIME_LEDGER,
+                "post_cost_promotion_eligible": promotion_eligible,
+                "realized_gross_pnl": bucket.gross_strategy_pnl,
+                "realized_net_pnl": bucket.net_strategy_pnl_after_costs,
+                "turnover_notional": bucket.filled_notional,
+                "runtime_ledger_blockers": bucket.blockers,
+                "runtime_ledger_cost_basis_counts": bucket.cost_basis_counts,
+                "runtime_ledger_pnl_basis": bucket.pnl_basis,
+            }
+        )
     return realized_rows
 
 
