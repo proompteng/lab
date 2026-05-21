@@ -28,6 +28,12 @@ from app.strategies.catalog import StrategyCatalogConfig, _compose_strategy_desc
 from app.config import settings
 from app.trading.costs import CostModelInputs, OrderIntent, TransactionCostModel
 from app.trading.decisions import DecisionEngine
+from app.trading.discovery.replay_tape import (
+    load_replay_tape,
+    slice_tape_by_symbols,
+    slice_tape_by_window,
+    validate_tape_freshness,
+)
 from app.trading.evaluation_trace import (
     NearMissRecord,
     ReplayFunnelBucket,
@@ -82,6 +88,9 @@ class ReplayConfig:
     flatten_eod: bool
     start_equity: Decimal
     symbols: tuple[str, ...] = ()
+    replay_tape_path: Path | None = None
+    replay_tape_manifest_path: Path | None = None
+    allow_stale_tape: bool = False
     progress_log_interval_seconds: int = DEFAULT_PROGRESS_LOG_INTERVAL_SECONDS
     capture_traces: bool = False
     capture_trace_funnel: bool = False
@@ -161,6 +170,21 @@ def _parse_args() -> argparse.Namespace:
         "--symbols",
         default="",
         help="Optional comma-separated symbol filter applied in the ClickHouse query.",
+    )
+    parser.add_argument(
+        "--replay-tape-path",
+        type=Path,
+        help="Optional manifest-verified replay tape JSONL/JSONL.GZ to use instead of ClickHouse reads.",
+    )
+    parser.add_argument(
+        "--replay-tape-manifest",
+        type=Path,
+        help="Optional replay tape manifest path. Defaults to <replay-tape-path>.manifest.json.",
+    )
+    parser.add_argument(
+        "--allow-stale-tape",
+        action="store_true",
+        help="Allow a replay tape whose manifest does not fully cover the requested date/symbol window.",
     )
     parser.add_argument(
         "--progress-log-seconds",
@@ -338,6 +362,10 @@ def _b64(raw: bytes) -> str:
 
 
 def _iter_signal_rows(config: ReplayConfig) -> Iterable[SignalEnvelope]:
+    if config.replay_tape_path is not None:
+        yield from _iter_signal_rows_from_replay_tape(config)
+        return
+
     chunk_delta = timedelta(minutes=config.chunk_minutes)
     current_day = config.start_date
     while current_day <= config.end_date:
@@ -391,6 +419,40 @@ def _iter_signal_rows(config: ReplayConfig) -> Iterable[SignalEnvelope]:
                 yield row
             chunk_start = chunk_end
         current_day += timedelta(days=1)
+
+
+def _iter_signal_rows_from_replay_tape(
+    config: ReplayConfig,
+) -> Iterable[SignalEnvelope]:
+    if config.replay_tape_path is None:
+        return
+    tape = load_replay_tape(
+        config.replay_tape_path,
+        manifest_path=config.replay_tape_manifest_path,
+    )
+    validation = validate_tape_freshness(
+        tape.manifest,
+        start_date=config.start_date,
+        end_date=config.end_date,
+        symbols=config.symbols,
+        allow_stale_tape=config.allow_stale_tape,
+    )
+    logger.info(
+        "replay_tape_loaded path=%s rows=%s validation_status=%s stale_override=%s digest=%s",
+        config.replay_tape_path,
+        tape.manifest.row_count,
+        validation["status"],
+        validation["stale_override_used"],
+        tape.manifest.content_sha256,
+    )
+    rows = slice_tape_by_window(
+        tape.rows,
+        start_date=config.start_date,
+        end_date=config.end_date,
+    )
+    rows = slice_tape_by_symbols(rows, symbols=config.symbols)
+    for row in rows:
+        yield row
 
 
 def _fetch_chunk(
@@ -2478,6 +2540,18 @@ def main() -> None:
             for symbol in str(args.symbols or "").split(",")
             if symbol.strip()
         ),
+        replay_tape_path=(
+            Path(replay_tape_path).resolve()
+            if (replay_tape_path := getattr(args, "replay_tape_path", None)) is not None
+            else None
+        ),
+        replay_tape_manifest_path=(
+            Path(replay_tape_manifest).resolve()
+            if (replay_tape_manifest := getattr(args, "replay_tape_manifest", None))
+            is not None
+            else None
+        ),
+        allow_stale_tape=bool(getattr(args, "allow_stale_tape", False)),
         progress_log_interval_seconds=max(1, int(args.progress_log_seconds)),
         capture_traces=(
             bool(getattr(args, "collect_traces", False))

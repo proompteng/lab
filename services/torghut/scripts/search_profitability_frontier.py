@@ -262,6 +262,9 @@ def _build_replay_config(
     symbols: tuple[str, ...],
     progress_log_interval_seconds: int,
     capture_trace_funnel: bool = False,
+    replay_tape_path: Path | None = None,
+    replay_tape_manifest_path: Path | None = None,
+    allow_stale_tape: bool = False,
 ) -> ReplayConfig:
     return ReplayConfig(
         strategy_configmap_path=strategy_configmap_path,
@@ -274,6 +277,9 @@ def _build_replay_config(
         flatten_eod=True,
         start_equity=start_equity,
         symbols=symbols,
+        replay_tape_path=replay_tape_path,
+        replay_tape_manifest_path=replay_tape_manifest_path,
+        allow_stale_tape=allow_stale_tape,
         progress_log_interval_seconds=progress_log_interval_seconds,
         capture_trace_funnel=capture_trace_funnel,
         force_position_isolation=True,
