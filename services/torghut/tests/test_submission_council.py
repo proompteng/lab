@@ -188,10 +188,44 @@ class TestSubmissionCouncil(TestCase):
         with session_local() as session:
             self.assertEqual(
                 _load_latest_runtime_ledger_summary(session, hypothesis_ids=[]),
-                {"by_hypothesis": {}},
+                {"by_hypothesis": {}, "runtime_ledger_buckets": []},
             )
             session.add_all(
                 [
+                    StrategyRuntimeLedgerBucket(
+                        run_id="ledger-paper-newer",
+                        candidate_id="cand-new",
+                        hypothesis_id="H-CONT-01",
+                        observed_stage="paper",
+                        bucket_started_at=datetime(
+                            2026, 3, 6, 15, 45, tzinfo=timezone.utc
+                        ),
+                        bucket_ended_at=datetime(
+                            2026, 3, 6, 15, 45, tzinfo=timezone.utc
+                        ),
+                        account_label="paper",
+                        runtime_strategy_name="paper-runtime",
+                        strategy_family="intraday_continuation",
+                        fill_count=55,
+                        decision_count=55,
+                        submitted_order_count=55,
+                        cancelled_order_count=0,
+                        rejected_order_count=0,
+                        unfilled_order_count=0,
+                        closed_trade_count=9,
+                        open_position_count=0,
+                        filled_notional=Decimal("2500"),
+                        gross_strategy_pnl=Decimal("25"),
+                        cost_amount=Decimal("4"),
+                        net_strategy_pnl_after_costs=Decimal("21"),
+                        post_cost_expectancy_bps=Decimal("9"),
+                        ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+                        pnl_basis="realized_strategy_pnl_after_explicit_costs",
+                        execution_policy_hash_counts={"paper-policy": 1},
+                        cost_model_hash_counts={"paper-cost": 1},
+                        lineage_hash_counts={"paper-lineage": 1},
+                        blockers_json=[],
+                    ),
                     StrategyRuntimeLedgerBucket(
                         run_id="ledger-old",
                         candidate_id="cand-old",
@@ -301,6 +335,7 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(cont["post_cost_expectancy_bps"], "8.00000000")
         self.assertEqual(cont["execution_policy_hash_counts"], {"new-policy": 1})
         self.assertIsNone(rev["post_cost_expectancy_bps"])
+        self.assertGreaterEqual(len(summary["runtime_ledger_buckets"]), 4)
 
     def test_metric_window_activity_rejects_tca_proxy_expectancy(self) -> None:
         metric_window = SimpleNamespace(

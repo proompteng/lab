@@ -547,8 +547,10 @@ def _load_latest_runtime_ledger_summary(
     ]
     by_hypothesis: dict[str, dict[str, object]] = {}
     if not normalized_ids:
-        return {"by_hypothesis": by_hypothesis}
+        return {"by_hypothesis": by_hypothesis, "runtime_ledger_buckets": []}
 
+    rows_by_hypothesis: dict[str, int] = {}
+    retained_rows: list[dict[str, object]] = []
     rows = session.execute(
         select(StrategyRuntimeLedgerBucket)
         .where(StrategyRuntimeLedgerBucket.hypothesis_id.in_(normalized_ids))
@@ -558,10 +560,21 @@ def _load_latest_runtime_ledger_summary(
         )
     ).scalars()
     for row in rows:
-        if row.hypothesis_id in by_hypothesis:
+        payload = _runtime_ledger_bucket_payload(row)
+        retained_count = rows_by_hypothesis.get(row.hypothesis_id, 0)
+        if retained_count < 8:
+            retained_rows.append(payload)
+            rows_by_hypothesis[row.hypothesis_id] = retained_count + 1
+
+        current = by_hypothesis.get(row.hypothesis_id)
+        if current is None:
+            by_hypothesis[row.hypothesis_id] = payload
             continue
-        by_hypothesis[row.hypothesis_id] = _runtime_ledger_bucket_payload(row)
-    return {"by_hypothesis": by_hypothesis}
+        current_is_live = str(current.get("observed_stage") or "").strip() == "live"
+        row_is_live = str(payload.get("observed_stage") or "").strip() == "live"
+        if row_is_live and not current_is_live:
+            by_hypothesis[row.hypothesis_id] = payload
+    return {"by_hypothesis": by_hypothesis, "runtime_ledger_buckets": retained_rows}
 
 
 def _extract_runtime_summary(
