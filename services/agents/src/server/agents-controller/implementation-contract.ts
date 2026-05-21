@@ -166,9 +166,20 @@ export const createImplementationContractTools = (resolveParam: ResolveParam) =>
     const templateContext = buildTemplateContext(metadata, parameters)
     const renderedSummary = renderParameterTemplate(summary, templateContext)
     const renderedText = renderParameterTemplate(text, templateContext)
-    const issueTitle = renderParameterTemplate(resolvedIssueTitle || renderedSummary, templateContext)
-    const issueBody = renderParameterTemplate(resolvedIssueBody || renderedText, templateContext)
     const prompt = renderedText || renderedSummary
+    let issueTitle = ''
+    if (resolvedIssueTitle) {
+      issueTitle = renderParameterTemplate(resolvedIssueTitle, templateContext)
+    } else if (issueNumber) {
+      issueTitle = renderParameterTemplate(renderedSummary, templateContext)
+    }
+
+    let issueBody = ''
+    if (resolvedIssueBody) {
+      issueBody = renderParameterTemplate(resolvedIssueBody, templateContext)
+    } else if (issueNumber) {
+      issueBody = renderParameterTemplate(renderedText, templateContext)
+    }
 
     setMetadataIfMissing(metadata, 'issueTitle', issueTitle)
     setMetadataIfMissing(metadata, 'issueBody', issueBody)
