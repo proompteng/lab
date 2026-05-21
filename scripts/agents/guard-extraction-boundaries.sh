@@ -804,7 +804,7 @@ fail_if_path_exists \
 
 fail_if_matches \
   "Agents package exports and route registration must not expose legacy Codex notify/run-complete callback routes" \
-  'codex-callbacks|api/agents/codex/(notify|run-complete)|agent-run-callbacks|agent-runs/\$id/callbacks|AgentRun callbacks API' \
+  'codex-callbacks|api/agents/codex/(notify|run-complete)|agent-run-callbacks|agent-runs/[^/]+/callbacks|AgentRun callbacks API' \
   "${ROOT_DIR}/services/agents/package.json" \
   "${ROOT_DIR}/services/agents/src/server/control-plane.ts" \
   "${ROOT_DIR}/services/agents/src/server/v1/runtime.ts" \
