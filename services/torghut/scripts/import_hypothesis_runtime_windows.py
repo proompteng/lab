@@ -15,8 +15,10 @@ import psycopg
 
 from app.db import SessionLocal
 from app.trading.runtime_ledger import (
+    EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
     POST_COST_PNL_BASIS,
     RuntimeLedgerFill,
+    RuntimeLedgerBucket,
     build_runtime_ledger_buckets,
 )
 from app.trading.runtime_window_import import (
@@ -34,6 +36,18 @@ EXECUTION_ELIGIBLE_DECISION_STATUSES = (
 POST_COST_BASIS_RUNTIME_LEDGER = POST_COST_PNL_BASIS
 POST_COST_BASIS_SIMULATION_REPORT = "simulation_report_net_pnl"
 POST_COST_BASIS_TCA_PROXY = "tca_shortfall_proxy"
+RUNTIME_LEDGER_ARTIFACT_SCHEMAS = frozenset(
+    {
+        EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
+        "torghut.exact_replay_ledger.rows.v1",
+    }
+)
+_RUNTIME_LEDGER_DECISION_EVENTS = frozenset(
+    {"decision", "trade_decision", "signal_decision"}
+)
+_RUNTIME_LEDGER_FILL_EVENTS = frozenset(
+    {"fill", "filled", "partial_fill", "partially_filled"}
+)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -84,6 +98,22 @@ def _parse_dt(value: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def _parse_dt_or_none(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return (
+            value.astimezone(timezone.utc)
+            if value.tzinfo
+            else value.replace(tzinfo=timezone.utc)
+        )
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return _parse_dt(text)
+    except Exception:
+        return None
+
+
 def _as_mapping(value: Any) -> dict[str, Any]:
     return (
         {str(key): item for key, item in value.items()}
@@ -117,6 +147,11 @@ def _decimal_or_none(value: Any) -> Decimal | None:
         return None
 
 
+def _text_or_none(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
 def _row_payloads(row: Mapping[str, object]) -> list[Mapping[str, object]]:
     payloads: list[Mapping[str, object]] = [row]
     for key in ("execution_audit_json", "raw_order"):
@@ -142,6 +177,72 @@ def _first_text(row: Mapping[str, object], *keys: str) -> str | None:
             if text:
                 return text
     return None
+
+
+def _runtime_ledger_bucket_payload(bucket: RuntimeLedgerBucket) -> dict[str, object]:
+    return {
+        "bucket_started_at": bucket.bucket_started_at.isoformat(),
+        "bucket_ended_at": bucket.bucket_ended_at.isoformat(),
+        "account_label": bucket.account_label,
+        "strategy_id": bucket.strategy_id,
+        "symbol": bucket.symbol,
+        "fill_count": bucket.fill_count,
+        "decision_count": bucket.decision_count,
+        "submitted_order_count": bucket.submitted_order_count,
+        "cancelled_order_count": bucket.cancelled_order_count,
+        "rejected_order_count": bucket.rejected_order_count,
+        "unfilled_order_count": bucket.unfilled_order_count,
+        "closed_trade_count": bucket.closed_trade_count,
+        "open_position_count": bucket.open_position_count,
+        "filled_notional": str(bucket.filled_notional),
+        "gross_strategy_pnl": str(bucket.gross_strategy_pnl),
+        "cost_amount": str(bucket.cost_amount),
+        "net_strategy_pnl_after_costs": str(bucket.net_strategy_pnl_after_costs),
+        "post_cost_expectancy_bps": (
+            str(bucket.post_cost_expectancy_bps)
+            if bucket.post_cost_expectancy_bps is not None
+            else None
+        ),
+        "cost_basis_counts": bucket.cost_basis_counts,
+        "execution_policy_hash_counts": bucket.execution_policy_hash_counts,
+        "cost_model_hash_counts": bucket.cost_model_hash_counts,
+        "lineage_hash_counts": bucket.lineage_hash_counts,
+        "blockers": bucket.blockers,
+        "ledger_schema_version": bucket.ledger_schema_version,
+        "pnl_basis": bucket.pnl_basis,
+    }
+
+
+def _runtime_ledger_tca_row_from_bucket(
+    *,
+    bucket: RuntimeLedgerBucket,
+    computed_at: datetime | None = None,
+) -> dict[str, object]:
+    promotion_eligible = (
+        bucket.post_cost_expectancy_bps is not None and not bucket.blockers
+    )
+    return {
+        "computed_at": computed_at
+        or max(
+            bucket.bucket_started_at,
+            bucket.bucket_ended_at - timedelta(microseconds=1),
+        ),
+        "abs_slippage_bps": (
+            (bucket.cost_amount / bucket.filled_notional) * Decimal("10000")
+            if bucket.filled_notional > 0
+            else None
+        ),
+        "post_cost_expectancy_bps": bucket.post_cost_expectancy_bps,
+        "post_cost_expectancy_basis": POST_COST_BASIS_RUNTIME_LEDGER,
+        "post_cost_promotion_eligible": promotion_eligible,
+        "realized_gross_pnl": bucket.gross_strategy_pnl,
+        "realized_net_pnl": bucket.net_strategy_pnl_after_costs,
+        "turnover_notional": bucket.filled_notional,
+        "runtime_ledger_blockers": bucket.blockers,
+        "runtime_ledger_cost_basis_counts": bucket.cost_basis_counts,
+        "runtime_ledger_pnl_basis": bucket.pnl_basis,
+        "runtime_ledger_bucket": _runtime_ledger_bucket_payload(bucket),
+    }
 
 
 def _nonnegative_int(value: Any) -> int:
@@ -296,60 +397,11 @@ def _build_realized_strategy_pnl_rows(
     ):
         if bucket.closed_trade_count <= 0 and not bucket.blockers:
             continue
-        promotion_eligible = (
-            bucket.post_cost_expectancy_bps is not None and not bucket.blockers
-        )
         realized_rows.append(
-            {
-                "computed_at": unique_times[-1],
-                "abs_slippage_bps": (
-                    (bucket.cost_amount / bucket.filled_notional) * Decimal("10000")
-                    if bucket.filled_notional > 0
-                    else None
-                ),
-                "post_cost_expectancy_bps": bucket.post_cost_expectancy_bps,
-                "post_cost_expectancy_basis": POST_COST_BASIS_RUNTIME_LEDGER,
-                "post_cost_promotion_eligible": promotion_eligible,
-                "realized_gross_pnl": bucket.gross_strategy_pnl,
-                "realized_net_pnl": bucket.net_strategy_pnl_after_costs,
-                "turnover_notional": bucket.filled_notional,
-                "runtime_ledger_blockers": bucket.blockers,
-                "runtime_ledger_cost_basis_counts": bucket.cost_basis_counts,
-                "runtime_ledger_pnl_basis": bucket.pnl_basis,
-                "runtime_ledger_bucket": {
-                    "bucket_started_at": bucket.bucket_started_at.isoformat(),
-                    "bucket_ended_at": bucket.bucket_ended_at.isoformat(),
-                    "account_label": bucket.account_label,
-                    "strategy_id": bucket.strategy_id,
-                    "symbol": bucket.symbol,
-                    "fill_count": bucket.fill_count,
-                    "decision_count": bucket.decision_count,
-                    "submitted_order_count": bucket.submitted_order_count,
-                    "cancelled_order_count": bucket.cancelled_order_count,
-                    "rejected_order_count": bucket.rejected_order_count,
-                    "unfilled_order_count": bucket.unfilled_order_count,
-                    "closed_trade_count": bucket.closed_trade_count,
-                    "open_position_count": bucket.open_position_count,
-                    "filled_notional": str(bucket.filled_notional),
-                    "gross_strategy_pnl": str(bucket.gross_strategy_pnl),
-                    "cost_amount": str(bucket.cost_amount),
-                    "net_strategy_pnl_after_costs": str(
-                        bucket.net_strategy_pnl_after_costs
-                    ),
-                    "post_cost_expectancy_bps": (
-                        str(bucket.post_cost_expectancy_bps)
-                        if bucket.post_cost_expectancy_bps is not None
-                        else None
-                    ),
-                    "cost_basis_counts": bucket.cost_basis_counts,
-                    "execution_policy_hash_counts": bucket.execution_policy_hash_counts,
-                    "cost_model_hash_counts": bucket.cost_model_hash_counts,
-                    "lineage_hash_counts": bucket.lineage_hash_counts,
-                    "blockers": bucket.blockers,
-                    "ledger_schema_version": bucket.ledger_schema_version,
-                    "pnl_basis": bucket.pnl_basis,
-                },
-            }
+            _runtime_ledger_tca_row_from_bucket(
+                bucket=bucket,
+                computed_at=unique_times[-1],
+            )
         )
     return realized_rows
 
@@ -393,6 +445,153 @@ def _load_json_artifact(ref: str) -> dict[str, Any]:
     except Exception:
         return {}
     return _as_mapping(payload)
+
+
+def _runtime_ledger_artifact_schema(payload: Mapping[str, Any]) -> str | None:
+    return _text_or_none(
+        payload.get("schema_version") or payload.get("ledger_schema_version")
+    )
+
+
+def _runtime_ledger_artifact_rows(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+    if _runtime_ledger_artifact_schema(payload) not in RUNTIME_LEDGER_ARTIFACT_SCHEMAS:
+        return []
+    defaults = {
+        key: value
+        for key in (
+            "account_label",
+            "strategy_id",
+            "strategy_name",
+            "execution_policy_hash",
+            "execution_policy_sha256",
+            "cost_model_hash",
+            "cost_model_sha256",
+            "lineage_hash",
+            "candidate_lineage_hash",
+            "replay_data_hash",
+            "replay_tape_content_sha256",
+            "dataset_snapshot_hash",
+            "source_query_digest",
+        )
+        if (value := payload.get(key)) is not None
+    }
+    for key in ("runtime_ledger_rows", "ledger_rows", "rows", "events"):
+        raw_rows = payload.get(key)
+        if not isinstance(raw_rows, list):
+            continue
+        rows: list[dict[str, Any]] = []
+        for raw_row in raw_rows:
+            row = _as_mapping(raw_row)
+            if row:
+                rows.append({**defaults, **row})
+        if rows:
+            return rows
+    return []
+
+
+def _runtime_ledger_event_type(row: Mapping[str, Any]) -> str:
+    raw = _text_or_none(
+        row.get("ledger_event_type")
+        or row.get("runtime_ledger_event_type")
+        or row.get("lifecycle_event")
+        or row.get("event_type")
+        or row.get("order_event_type")
+        or row.get("order_status")
+        or row.get("status")
+    )
+    if raw is None:
+        if any(row.get(key) is not None for key in ("filled_qty", "qty", "quantity")):
+            return "fill"
+        if any(row.get(key) is not None for key in ("order_id", "alpaca_order_id")):
+            return "order_submitted"
+        if any(
+            row.get(key) is not None
+            for key in ("decision_id", "trade_decision_id", "decision_hash")
+        ):
+            return "decision"
+        return "diagnostic"
+    normalized = raw.lower().replace("-", "_").replace(" ", "_")
+    return {
+        "trade_decision": "decision",
+        "signal_decision": "decision",
+        "new_order": "order_submitted",
+        "submitted": "order_submitted",
+        "accepted": "order_submitted",
+        "new": "order_submitted",
+        "filled": "fill",
+        "partially_filled": "partial_fill",
+    }.get(normalized, normalized)
+
+
+def _runtime_ledger_row_time(row: Mapping[str, Any]) -> datetime | None:
+    for key in ("executed_at", "filled_at", "event_ts", "created_at", "computed_at"):
+        if (parsed := _parse_dt_or_none(row.get(key))) is not None:
+            return parsed
+    return None
+
+
+def _runtime_ledger_activity_times(
+    rows: list[dict[str, Any]],
+) -> tuple[list[datetime], list[datetime]]:
+    decision_times: list[datetime] = []
+    execution_times: list[datetime] = []
+    for row in rows:
+        event_time = _runtime_ledger_row_time(row)
+        if event_time is None:
+            continue
+        event_type = _runtime_ledger_event_type(row)
+        if event_type in _RUNTIME_LEDGER_DECISION_EVENTS:
+            decision_times.append(event_time)
+        elif event_type in _RUNTIME_LEDGER_FILL_EVENTS:
+            execution_times.append(event_time)
+    return decision_times, execution_times
+
+
+def _runtime_ledger_tca_rows_from_artifacts(
+    *,
+    artifact_refs: list[str],
+    bucket_ranges: list[tuple[datetime, datetime, int]],
+) -> tuple[list[datetime], list[datetime], list[dict[str, object]], dict[str, Any]]:
+    ledger_rows: list[dict[str, Any]] = []
+    tca_rows: list[dict[str, object]] = []
+    loaded_refs: list[str] = []
+    ignored_refs: list[str] = []
+    for ref in artifact_refs:
+        payload = _load_json_artifact(ref)
+        if not payload:
+            continue
+        rows = _runtime_ledger_artifact_rows(payload)
+        if not rows:
+            if _runtime_ledger_artifact_schema(payload) is not None:
+                ignored_refs.append(ref)
+            continue
+        loaded_refs.append(ref)
+        ledger_rows.extend(rows)
+    decision_times, execution_times = _runtime_ledger_activity_times(ledger_rows)
+    runtime_bucket_ranges = [(start, end) for start, end, _ in bucket_ranges]
+    if ledger_rows and runtime_bucket_ranges:
+        for bucket in build_runtime_ledger_buckets(
+            ledger_rows,
+            bucket_ranges=runtime_bucket_ranges,
+            require_order_lifecycle=True,
+        ):
+            if (
+                bucket.fill_count <= 0
+                and bucket.decision_count <= 0
+                and bucket.submitted_order_count <= 0
+                and bucket.cancelled_order_count <= 0
+                and bucket.rejected_order_count <= 0
+                and bucket.unfilled_order_count <= 0
+            ):
+                continue
+            tca_rows.append(_runtime_ledger_tca_row_from_bucket(bucket=bucket))
+    metadata = {
+        "runtime_ledger_artifact_refs": loaded_refs,
+        "runtime_ledger_ignored_artifact_refs": ignored_refs,
+        "runtime_ledger_artifact_row_count": len(ledger_rows),
+        "runtime_ledger_artifact_tca_row_count": len(tca_rows),
+    }
+    return decision_times, execution_times, tca_rows, metadata
 
 
 def _query_timestamps(
@@ -600,7 +799,12 @@ def _source_activity_missing_summary(
 def main() -> int:
     args = _parse_args()
     source_dsn = args.source_dsn.strip() or os.getenv(args.source_dsn_env, "").strip()
-    if not source_dsn:
+    artifact_refs = [
+        str(item).strip()
+        for item in getattr(args, "artifact_ref", [])
+        if str(item).strip()
+    ]
+    if not source_dsn and not artifact_refs:
         raise RuntimeError("source_dsn_not_configured")
     window_start = _parse_dt(args.window_start)
     window_end = _parse_dt(args.window_end)
@@ -612,13 +816,48 @@ def main() -> int:
         args.strategy_name,
         getattr(manifest, "strategy_id", None),
     )
-    decisions, executions, tca_rows = _query_timestamps(
-        dsn=source_dsn,
-        strategy_names=strategy_names,
-        account_label=args.account_label,
-        window_start=window_start,
-        window_end=window_end,
-    )
+    decisions: list[datetime] = []
+    executions: list[datetime] = []
+    tca_rows: list[dict[str, object]] = []
+    if source_dsn:
+        decisions, executions, tca_rows = _query_timestamps(
+            dsn=source_dsn,
+            strategy_names=strategy_names,
+            account_label=args.account_label,
+            window_start=window_start,
+            window_end=window_end,
+        )
+    bucket_ranges: list[tuple[datetime, datetime, int]] = []
+    runtime_ledger_artifact_metadata: dict[str, Any] = {
+        "runtime_ledger_artifact_refs": [],
+        "runtime_ledger_ignored_artifact_refs": [],
+        "runtime_ledger_artifact_row_count": 0,
+        "runtime_ledger_artifact_tca_row_count": 0,
+    }
+    if artifact_refs:
+        bucket_ranges = build_regular_session_buckets(
+            window_start=window_start,
+            window_end=window_end,
+            bucket_minutes=args.bucket_minutes,
+            sample_minutes=args.sample_minutes,
+        )
+        (
+            runtime_ledger_decisions,
+            runtime_ledger_executions,
+            runtime_ledger_tca_rows,
+            runtime_ledger_artifact_metadata,
+        ) = _runtime_ledger_tca_rows_from_artifacts(
+            artifact_refs=artifact_refs,
+            bucket_ranges=bucket_ranges,
+        )
+        decisions.extend(runtime_ledger_decisions)
+        executions.extend(runtime_ledger_executions)
+        tca_rows.extend(runtime_ledger_tca_rows)
+    if (
+        not source_dsn
+        and not runtime_ledger_artifact_metadata["runtime_ledger_artifact_refs"]
+    ):
+        raise RuntimeError("source_dsn_not_configured")
     dataset_snapshot_ref = (
         str(getattr(args, "dataset_snapshot_ref", "") or "").strip() or None
     )
@@ -646,9 +885,6 @@ def main() -> int:
         else:
             print(summary)
         return 0
-    artifact_refs = [
-        str(item).strip() for item in args.artifact_ref if str(item).strip()
-    ]
     delay_depth_report_ref = str(
         getattr(args, "delay_adjusted_depth_stress_report_ref", "") or ""
     ).strip()
@@ -671,12 +907,13 @@ def main() -> int:
                 "promotion_blocker": "simulation_report_not_runtime_ledger_proof",
             }
         )
-    bucket_ranges = build_regular_session_buckets(
-        window_start=window_start,
-        window_end=window_end,
-        bucket_minutes=args.bucket_minutes,
-        sample_minutes=args.sample_minutes,
-    )
+    if not bucket_ranges:
+        bucket_ranges = build_regular_session_buckets(
+            window_start=window_start,
+            window_end=window_end,
+            bucket_minutes=args.bucket_minutes,
+            sample_minutes=args.sample_minutes,
+        )
     buckets = build_observed_runtime_buckets(
         bucket_ranges=bucket_ranges,
         decision_times=decisions,
@@ -708,6 +945,7 @@ def main() -> int:
         "artifact_refs": artifact_refs,
         "dataset_snapshot_ref": dataset_snapshot_ref,
         "target_metadata": target_metadata,
+        **runtime_ledger_artifact_metadata,
         "report_post_cost_expectancy_bps": (
             str(report_post_cost_expectancy_bps)
             if report_post_cost_expectancy_bps is not None

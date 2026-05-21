@@ -800,6 +800,18 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             ),
             encoding="utf-8",
         )
+        (hypothesis_dir / "h-tsmom-liq-01.json").write_text(
+            json.dumps(
+                {
+                    "hypothesis_id": "H-TSMOM-LIQ-01",
+                    "strategy_family": "stale_family",
+                    "strategy_id": "intraday_tsmom_v2@research",
+                    "candidate_id": "H-TSMOM-LIQ-01",
+                    "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
+                }
+            ),
+            encoding="utf-8",
+        )
         (hypothesis_dir / "h-micro-01.json").write_text(
             json.dumps(
                 {
@@ -845,7 +857,7 @@ class TestRunEmpiricalPromotionJobs(TestCase):
 
         self.assertEqual(
             [target.hypothesis_id for target in targets],
-            ["H-CONT-01", "H-MICRO-01", "H-TSMOM-01"],
+            ["H-CONT-01", "H-MICRO-01", "H-TSMOM-01", "H-TSMOM-LIQ-01"],
         )
         by_id = {target.hypothesis_id: target for target in targets}
         self.assertEqual(
@@ -854,6 +866,14 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         )
         self.assertEqual(
             by_id["H-TSMOM-01"].strategy_name,
+            "intraday-tsmom-profit-v3",
+        )
+        self.assertEqual(
+            by_id["H-TSMOM-LIQ-01"].candidate_id,
+            "H-TSMOM-LIQ-01",
+        )
+        self.assertEqual(
+            by_id["H-TSMOM-LIQ-01"].strategy_name,
             "intraday-tsmom-profit-v3",
         )
         self.assertEqual(

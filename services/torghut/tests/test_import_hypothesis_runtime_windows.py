@@ -19,8 +19,11 @@ from scripts.import_hypothesis_runtime_windows import (
     _load_report_post_cost_expectancy_bps,
     _nonnegative_int,
     _parse_args,
+    _parse_dt_or_none,
     _parse_target_metadata,
     _query_timestamps,
+    _runtime_ledger_event_type,
+    _runtime_ledger_tca_rows_from_artifacts,
     _strategy_name_candidates,
     main,
 )
@@ -403,6 +406,253 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 window_end=window_end,
             )
 
+    def test_runtime_ledger_artifacts_build_promotion_grade_tca_rows(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            artifact_path = Path(temp_dir) / "exact-ledger.json"
+            artifact_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "torghut.exact_replay_ledger.rows.v1",
+                        "account_label": "TORGHUT_SIM",
+                        "strategy_id": "intraday-tsmom-profit-v3",
+                        "execution_policy_hash": "policy-sha",
+                        "cost_model_hash": "cost-sha",
+                        "lineage_hash": "lineage-sha",
+                        "runtime_ledger_rows": [
+                            {
+                                "event_type": "decision",
+                                "executed_at": "2026-03-06T14:35:00Z",
+                                "decision_id": "decision-buy",
+                                "order_id": "order-buy",
+                            },
+                            {
+                                "event_type": "order_submitted",
+                                "executed_at": "2026-03-06T14:35:01Z",
+                                "decision_id": "decision-buy",
+                                "order_id": "order-buy",
+                            },
+                            {
+                                "event_type": "fill",
+                                "executed_at": "2026-03-06T14:35:02Z",
+                                "decision_id": "decision-buy",
+                                "order_id": "order-buy",
+                                "symbol": "AAPL",
+                                "side": "buy",
+                                "filled_qty": "1",
+                                "avg_fill_price": "100",
+                                "cost_amount": "0.10",
+                                "cost_basis": "broker_reported_commission_and_fees",
+                            },
+                            {
+                                "event_type": "decision",
+                                "executed_at": "2026-03-06T14:40:00Z",
+                                "decision_id": "decision-sell",
+                                "order_id": "order-sell",
+                            },
+                            {
+                                "event_type": "order_submitted",
+                                "executed_at": "2026-03-06T14:40:01Z",
+                                "decision_id": "decision-sell",
+                                "order_id": "order-sell",
+                            },
+                            {
+                                "event_type": "fill",
+                                "executed_at": "2026-03-06T14:40:02Z",
+                                "decision_id": "decision-sell",
+                                "order_id": "order-sell",
+                                "symbol": "AAPL",
+                                "side": "sell",
+                                "filled_qty": "1",
+                                "avg_fill_price": "101",
+                                "cost_amount": "0.10",
+                                "cost_basis": "broker_reported_commission_and_fees",
+                            },
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            decisions, executions, tca_rows, metadata = (
+                _runtime_ledger_tca_rows_from_artifacts(
+                    artifact_refs=[str(artifact_path)],
+                    bucket_ranges=[
+                        (
+                            datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                            datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                            6,
+                        )
+                    ],
+                )
+            )
+
+        self.assertEqual(
+            decisions,
+            [
+                datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+            ],
+        )
+        self.assertEqual(len(executions), 2)
+        self.assertEqual(len(tca_rows), 1)
+        self.assertEqual(
+            tca_rows[0]["post_cost_expectancy_basis"],
+            POST_COST_BASIS_RUNTIME_LEDGER,
+        )
+        self.assertEqual(tca_rows[0]["post_cost_promotion_eligible"], True)
+        ledger_bucket = tca_rows[0]["runtime_ledger_bucket"]
+        assert isinstance(ledger_bucket, dict)
+        self.assertEqual(
+            ledger_bucket["ledger_schema_version"], "torghut.exact_replay_ledger.v1"
+        )
+        self.assertEqual(ledger_bucket["pnl_basis"], POST_COST_BASIS_RUNTIME_LEDGER)
+        self.assertEqual(ledger_bucket["decision_count"], 2)
+        self.assertEqual(ledger_bucket["submitted_order_count"], 2)
+        self.assertEqual(ledger_bucket["closed_trade_count"], 1)
+        self.assertEqual(ledger_bucket["blockers"], [])
+        self.assertEqual(metadata["runtime_ledger_artifact_row_count"], 6)
+        self.assertEqual(metadata["runtime_ledger_artifact_tca_row_count"], 1)
+
+    def test_runtime_ledger_artifact_helpers_fail_closed_on_loose_rows(self) -> None:
+        aware_time = datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)
+        naive_time = datetime(2026, 3, 6, 14, 35)
+
+        self.assertEqual(_parse_dt_or_none(aware_time), aware_time)
+        self.assertEqual(_parse_dt_or_none(naive_time), aware_time)
+        self.assertEqual(_parse_dt_or_none(""), None)
+        self.assertEqual(_parse_dt_or_none("not-a-date"), None)
+        self.assertEqual(_runtime_ledger_event_type({"filled_qty": "1"}), "fill")
+        self.assertEqual(
+            _runtime_ledger_event_type({"order_id": "alpaca-order-1"}),
+            "order_submitted",
+        )
+        self.assertEqual(
+            _runtime_ledger_event_type({"decision_id": "decision-1"}),
+            "decision",
+        )
+        self.assertEqual(_runtime_ledger_event_type({}), "diagnostic")
+
+        with TemporaryDirectory() as temp_dir:
+            missing_path = Path(temp_dir) / "missing.json"
+            malformed_rows_path = Path(temp_dir) / "malformed-rows.json"
+            diagnostic_path = Path(temp_dir) / "diagnostic.json"
+            malformed_rows_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "torghut.exact_replay_ledger.rows.v1",
+                        "runtime_ledger_rows": {"bad": "shape"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            diagnostic_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "torghut.exact_replay_ledger.rows.v1",
+                        "runtime_ledger_rows": [
+                            {"event_type": "diagnostic"},
+                            {
+                                "event_type": "diagnostic",
+                                "executed_at": "2026-03-06T14:35:00Z",
+                            },
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            decisions, executions, tca_rows, metadata = (
+                _runtime_ledger_tca_rows_from_artifacts(
+                    artifact_refs=[
+                        str(missing_path),
+                        str(malformed_rows_path),
+                        str(diagnostic_path),
+                    ],
+                    bucket_ranges=[
+                        (
+                            datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                            datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                            6,
+                        )
+                    ],
+                )
+            )
+
+        self.assertEqual(decisions, [])
+        self.assertEqual(executions, [])
+        self.assertEqual(tca_rows, [])
+        self.assertEqual(
+            metadata["runtime_ledger_artifact_refs"], [str(diagnostic_path)]
+        )
+        self.assertEqual(
+            metadata["runtime_ledger_ignored_artifact_refs"],
+            [str(malformed_rows_path)],
+        )
+        self.assertEqual(metadata["runtime_ledger_artifact_row_count"], 2)
+        self.assertEqual(metadata["runtime_ledger_artifact_tca_row_count"], 0)
+
+    def test_main_rejects_artifact_refs_without_exact_runtime_ledger_rows(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            artifact_path = Path(temp_dir) / "malformed-rows.json"
+            artifact_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "torghut.exact_replay_ledger.rows.v1",
+                        "runtime_ledger_rows": {"bad": "shape"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            args = SimpleNamespace(
+                run_id="run-empty-ledger-artifact",
+                candidate_id="H-TSMOM-LIQ-01",
+                hypothesis_id="H-TSMOM-LIQ-01",
+                observed_stage="paper",
+                strategy_family="intraday_tsmom_consistent",
+                source_dsn="",
+                source_dsn_env="DB_DSN",
+                strategy_name="intraday-tsmom-profit-v3",
+                account_label="TORGHUT_SIM",
+                window_start="2026-03-06T14:30:00Z",
+                window_end="2026-03-06T15:00:00Z",
+                bucket_minutes=30,
+                sample_minutes=5,
+                source_manifest_ref="config/trading/hypotheses/h-tsmom-liq-01.json",
+                source_kind="paper_runtime_observed",
+                artifact_ref=[str(artifact_path)],
+                delay_adjusted_depth_stress_report_ref="",
+                dataset_snapshot_ref="runtime-ledger-empty-artifact-snapshot",
+                target_metadata_json="",
+                dependency_quorum_decision="allow",
+                continuity_ok="true",
+                drift_ok="true",
+                json=False,
+            )
+            manifest = SimpleNamespace(
+                strategy_family="intraday_tsmom_consistent",
+                strategy_id="intraday_tsmom_v2@research",
+                max_allowed_slippage_bps=Decimal("6"),
+            )
+
+            with (
+                patch(
+                    "scripts.import_hypothesis_runtime_windows._parse_args",
+                    return_value=args,
+                ),
+                patch(
+                    "scripts.import_hypothesis_runtime_windows.resolve_hypothesis_manifest",
+                    return_value=(
+                        SimpleNamespace(
+                            path="config/trading/hypotheses/h-tsmom-liq-01.json"
+                        ),
+                        manifest,
+                    ),
+                ),
+                patch.dict("os.environ", {}, clear=True),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "source_dsn_not_configured"):
+                    main()
+
     def test_main_preserves_registry_manifest_fallback_when_source_manifest_ref_missing(
         self,
     ) -> None:
@@ -659,6 +909,159 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             "runtime_window_source_activity_missing",
         )
         self.assertFalse(summary["runtime_observation"]["authoritative"])
+
+    def test_main_imports_exact_runtime_ledger_artifact_without_db_activity(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temp_dir:
+            artifact_path = Path(temp_dir) / "exact-ledger.json"
+            artifact_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "torghut.exact_replay_ledger.rows.v1",
+                        "account_label": "TORGHUT_SIM",
+                        "strategy_id": "intraday-tsmom-profit-v3",
+                        "execution_policy_hash": "policy-sha",
+                        "cost_model_hash": "cost-sha",
+                        "lineage_hash": "lineage-sha",
+                        "runtime_ledger_rows": [
+                            {
+                                "event_type": "decision",
+                                "executed_at": "2026-03-06T14:35:00Z",
+                                "decision_id": "decision-buy",
+                                "order_id": "order-buy",
+                            },
+                            {
+                                "event_type": "order_submitted",
+                                "executed_at": "2026-03-06T14:35:01Z",
+                                "decision_id": "decision-buy",
+                                "order_id": "order-buy",
+                            },
+                            {
+                                "event_type": "fill",
+                                "executed_at": "2026-03-06T14:35:02Z",
+                                "decision_id": "decision-buy",
+                                "order_id": "order-buy",
+                                "symbol": "AAPL",
+                                "side": "buy",
+                                "filled_qty": "1",
+                                "avg_fill_price": "100",
+                                "cost_amount": "0.10",
+                                "cost_basis": "broker_reported_commission_and_fees",
+                            },
+                            {
+                                "event_type": "decision",
+                                "executed_at": "2026-03-06T14:40:00Z",
+                                "decision_id": "decision-sell",
+                                "order_id": "order-sell",
+                            },
+                            {
+                                "event_type": "order_submitted",
+                                "executed_at": "2026-03-06T14:40:01Z",
+                                "decision_id": "decision-sell",
+                                "order_id": "order-sell",
+                            },
+                            {
+                                "event_type": "fill",
+                                "executed_at": "2026-03-06T14:40:02Z",
+                                "decision_id": "decision-sell",
+                                "order_id": "order-sell",
+                                "symbol": "AAPL",
+                                "side": "sell",
+                                "filled_qty": "1",
+                                "avg_fill_price": "101",
+                                "cost_amount": "0.10",
+                                "cost_basis": "broker_reported_commission_and_fees",
+                            },
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            args = SimpleNamespace(
+                run_id="run-ledger-artifact",
+                candidate_id="H-TSMOM-LIQ-01",
+                hypothesis_id="H-TSMOM-LIQ-01",
+                observed_stage="paper",
+                strategy_family="intraday_tsmom_consistent",
+                source_dsn="",
+                source_dsn_env="DB_DSN",
+                strategy_name="intraday-tsmom-profit-v3",
+                account_label="TORGHUT_SIM",
+                window_start="2026-03-06T14:30:00Z",
+                window_end="2026-03-06T15:00:00Z",
+                bucket_minutes=30,
+                sample_minutes=5,
+                source_manifest_ref="config/trading/hypotheses/h-tsmom-liq-01.json",
+                source_kind="paper_runtime_observed",
+                artifact_ref=[str(artifact_path)],
+                delay_adjusted_depth_stress_report_ref="",
+                dataset_snapshot_ref="runtime-ledger-artifact-snapshot",
+                target_metadata_json="",
+                dependency_quorum_decision="allow",
+                continuity_ok="true",
+                drift_ok="true",
+                json=False,
+            )
+            fake_session = _FakeSession()
+            manifest = SimpleNamespace(
+                strategy_family="intraday_tsmom_consistent",
+                strategy_id="intraday_tsmom_v2@research",
+                max_allowed_slippage_bps=Decimal("6"),
+            )
+
+            with (
+                patch(
+                    "scripts.import_hypothesis_runtime_windows._parse_args",
+                    return_value=args,
+                ),
+                patch(
+                    "scripts.import_hypothesis_runtime_windows.resolve_hypothesis_manifest",
+                    return_value=(
+                        SimpleNamespace(
+                            path="config/trading/hypotheses/h-tsmom-liq-01.json"
+                        ),
+                        manifest,
+                    ),
+                ),
+                patch.dict("os.environ", {}, clear=True),
+                patch(
+                    "scripts.import_hypothesis_runtime_windows._query_timestamps",
+                ) as query_timestamps,
+                patch(
+                    "scripts.import_hypothesis_runtime_windows.build_observed_runtime_buckets",
+                    return_value=[],
+                ) as build_buckets,
+                patch(
+                    "scripts.import_hypothesis_runtime_windows.persist_observed_runtime_windows",
+                    return_value={"run_id": "run-ledger-artifact"},
+                ) as persist_windows,
+                patch(
+                    "scripts.import_hypothesis_runtime_windows.SessionLocal",
+                    return_value=fake_session,
+                ),
+                patch("builtins.print"),
+            ):
+                exit_code = main()
+
+        self.assertEqual(exit_code, 0)
+        query_timestamps.assert_not_called()
+        self.assertEqual(len(build_buckets.call_args.kwargs["decision_times"]), 2)
+        self.assertEqual(len(build_buckets.call_args.kwargs["execution_times"]), 2)
+        tca_rows = build_buckets.call_args.kwargs["tca_rows"]
+        self.assertEqual(len(tca_rows), 1)
+        self.assertEqual(
+            tca_rows[0]["post_cost_expectancy_basis"],
+            POST_COST_BASIS_RUNTIME_LEDGER,
+        )
+        self.assertEqual(tca_rows[0]["post_cost_promotion_eligible"], True)
+        runtime_payload = persist_windows.call_args.kwargs[
+            "runtime_observation_payload"
+        ]
+        self.assertEqual(
+            runtime_payload["runtime_ledger_artifact_refs"], [str(artifact_path)]
+        )
+        self.assertEqual(runtime_payload["runtime_ledger_artifact_row_count"], 6)
 
     def test_main_attaches_delay_adjusted_depth_report_to_runtime_payload(
         self,
