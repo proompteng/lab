@@ -1671,6 +1671,58 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             ],
         )
 
+    def test_economic_shortlist_preserves_high_pnl_vetoed_candidate(self) -> None:
+        items = [
+            {
+                "candidate_id": "clean-low",
+                "strategy_name": "strategy",
+                "family": "family",
+                "objective_scorecard": {
+                    "net_pnl_per_day": "25",
+                    "net_pnl": "125",
+                    "active_day_ratio": "1",
+                    "positive_day_ratio": "1",
+                    "max_drawdown": "0",
+                    "worst_day_loss": "0",
+                    "max_gross_exposure_pct_equity": "0.5",
+                    "min_cash": "100",
+                },
+                "full_window": {"net_per_day": "25", "net_pnl": "125"},
+                "hard_vetoes": [],
+                "ranking": {"vetoed": False, "pareto_tier": 0},
+            },
+            {
+                "candidate_id": "vetoed-high",
+                "strategy_name": "strategy",
+                "family": "family",
+                "objective_scorecard": {
+                    "net_pnl_per_day": "150",
+                    "net_pnl": "750",
+                    "active_day_ratio": "1",
+                    "positive_day_ratio": "0.8",
+                    "max_drawdown": "6",
+                    "worst_day_loss": "6",
+                    "max_gross_exposure_pct_equity": "1.01",
+                    "min_cash": "-15",
+                },
+                "full_window": {"net_per_day": "150", "net_pnl": "750"},
+                "runtime_ledger_artifact_ref": "/tmp/high-ledger.json",
+                "replay_artifact_refs": ["/tmp/high-ledger.json"],
+                "hard_vetoes": ["min_cash_below_min"],
+                "ranking": {"vetoed": True, "pareto_tier": 999},
+            },
+        ]
+
+        shortlist = frontier._build_economic_shortlist(items, top_n=1)
+
+        self.assertEqual(shortlist[0]["candidate_id"], "vetoed-high")
+        self.assertEqual(shortlist[0]["net_pnl_per_day"], "150")
+        self.assertEqual(
+            shortlist[0]["runtime_ledger_artifact_ref"], "/tmp/high-ledger.json"
+        )
+        self.assertEqual(shortlist[0]["hard_vetoes"], ["min_cash_below_min"])
+        self.assertTrue(shortlist[0]["vetoed"])
+
     def test_generate_symbol_prune_children_removes_worst_symbols_from_universe(
         self,
     ) -> None:

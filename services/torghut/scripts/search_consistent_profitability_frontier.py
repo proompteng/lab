@@ -2973,6 +2973,153 @@ def _rank_scored_candidates(scored: list[dict[str, Any]]) -> list[dict[str, Any]
     return ranked_items
 
 
+def _safe_decimal(value: Any) -> Decimal:
+    if value in (None, ""):
+        return Decimal("0")
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return Decimal("0")
+
+
+def _candidate_metric_value(
+    item: Mapping[str, Any],
+    *,
+    scorecard_key: str,
+    full_window_key: str,
+    default: str = "0",
+) -> Any:
+    scorecard = _mapping(item.get("objective_scorecard"))
+    raw_value = scorecard.get(scorecard_key)
+    if raw_value not in (None, ""):
+        return raw_value
+    full_window = _mapping(item.get("full_window"))
+    raw_value = full_window.get(full_window_key)
+    if raw_value not in (None, ""):
+        return raw_value
+    return default
+
+
+def _build_economic_shortlist(
+    ranked_items: Sequence[Mapping[str, Any]], *, top_n: int
+) -> list[dict[str, Any]]:
+    visible_items = [
+        item
+        for item in ranked_items
+        if _safe_decimal(
+            _candidate_metric_value(
+                item,
+                scorecard_key="net_pnl_per_day",
+                full_window_key="net_per_day",
+            )
+        )
+        != Decimal("0")
+        or item.get("runtime_ledger_artifact_ref")
+        or item.get("replay_artifact_refs")
+    ]
+    visible_items.sort(
+        key=lambda item: (
+            -_safe_decimal(
+                _candidate_metric_value(
+                    item,
+                    scorecard_key="net_pnl_per_day",
+                    full_window_key="net_per_day",
+                )
+            ),
+            -_safe_decimal(
+                _candidate_metric_value(
+                    item,
+                    scorecard_key="net_pnl",
+                    full_window_key="net_pnl",
+                )
+            ),
+            str(item.get("candidate_id") or ""),
+        )
+    )
+    shortlist: list[dict[str, Any]] = []
+    for item in visible_items[: max(1, int(top_n))]:
+        ranking = _mapping(item.get("ranking"))
+        hard_vetoes = [
+            str(reason) for reason in cast(Sequence[Any], item.get("hard_vetoes") or ())
+        ]
+        shortlist.append(
+            {
+                "candidate_id": str(item.get("candidate_id") or ""),
+                "strategy_name": str(item.get("strategy_name") or ""),
+                "family": str(item.get("family") or ""),
+                "net_pnl_per_day": str(
+                    _candidate_metric_value(
+                        item,
+                        scorecard_key="net_pnl_per_day",
+                        full_window_key="net_per_day",
+                    )
+                ),
+                "net_pnl": str(
+                    _candidate_metric_value(
+                        item,
+                        scorecard_key="net_pnl",
+                        full_window_key="net_pnl",
+                    )
+                ),
+                "active_day_ratio": str(
+                    _candidate_metric_value(
+                        item,
+                        scorecard_key="active_day_ratio",
+                        full_window_key="active_ratio",
+                    )
+                ),
+                "positive_day_ratio": str(
+                    _candidate_metric_value(
+                        item,
+                        scorecard_key="positive_day_ratio",
+                        full_window_key="positive_day_ratio",
+                    )
+                ),
+                "max_drawdown": str(
+                    _candidate_metric_value(
+                        item,
+                        scorecard_key="max_drawdown",
+                        full_window_key="max_drawdown",
+                    )
+                ),
+                "worst_day_loss": str(
+                    _candidate_metric_value(
+                        item,
+                        scorecard_key="worst_day_loss",
+                        full_window_key="worst_day_loss",
+                    )
+                ),
+                "max_gross_exposure_pct_equity": str(
+                    _candidate_metric_value(
+                        item,
+                        scorecard_key="max_gross_exposure_pct_equity",
+                        full_window_key="max_gross_exposure_pct_equity",
+                    )
+                ),
+                "min_cash": str(
+                    _candidate_metric_value(
+                        item,
+                        scorecard_key="min_cash",
+                        full_window_key="min_cash",
+                    )
+                ),
+                "runtime_ledger_artifact_ref": str(
+                    item.get("runtime_ledger_artifact_ref") or ""
+                ),
+                "replay_artifact_refs": [
+                    str(ref)
+                    for ref in cast(
+                        Sequence[Any], item.get("replay_artifact_refs") or ()
+                    )
+                ],
+                "hard_vetoes": hard_vetoes,
+                "vetoed": bool(ranking.get("vetoed") or hard_vetoes),
+                "pareto_tier": ranking.get("pareto_tier"),
+            }
+        )
+    return shortlist
+
+
 def _build_frontier_payload(
     *,
     scored: list[dict[str, Any]],
@@ -3038,6 +3185,14 @@ def _build_frontier_payload(
             "pending_candidates": pending_candidates,
         },
         "candidate_count": len(scored),
+        "economic_shortlist": {
+            "schema_version": "torghut.frontier-economic-shortlist.v1",
+            "ranking_basis": "full_window_net_pnl_per_day_desc",
+            "items": _build_economic_shortlist(
+                ranked_items,
+                top_n=max(1, int(top_n)),
+            ),
+        },
         "top": ranked_items[: max(1, int(top_n))],
     }
 
