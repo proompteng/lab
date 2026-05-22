@@ -4,7 +4,7 @@ import io
 import json
 import sys
 from argparse import Namespace
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -146,6 +146,73 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(args.max_train_screen_worst_day_loss, "125")
         self.assertEqual(args.second_oos_days, 2)
         self.assertTrue(args.collect_train_gate_diagnostics)
+
+    def test_clickhouse_preflight_fails_fast_for_unresolved_in_cluster_dns(
+        self,
+    ) -> None:
+        args = Namespace(
+            replay_tape_path=None,
+            clickhouse_http_url="http://torghut-clickhouse.torghut.svc.cluster.local:8123",
+        )
+
+        with patch(
+            "scripts.search_consistent_profitability_frontier.socket.getaddrinfo",
+            side_effect=frontier.socket.gaierror("not known"),
+        ):
+            failure = frontier._clickhouse_endpoint_preflight_failure(args)
+
+        self.assertIn("clickhouse_endpoint_unreachable", failure)
+        self.assertIn("TA_CLICKHOUSE_URL", failure)
+        self.assertIn("--clickhouse-http-url", failure)
+
+    def test_clickhouse_preflight_skips_when_replay_tape_is_supplied(self) -> None:
+        args = Namespace(
+            replay_tape_path=Path("/tmp/replay-tape.jsonl"),
+            clickhouse_http_url="http://torghut-clickhouse.torghut.svc.cluster.local:8123",
+        )
+
+        with patch(
+            "scripts.search_consistent_profitability_frontier.socket.getaddrinfo",
+            side_effect=AssertionError("replay tape should bypass DNS preflight"),
+        ):
+            failure = frontier._clickhouse_endpoint_preflight_failure(args)
+
+        self.assertEqual(failure, "")
+
+    def test_main_writes_error_json_for_clickhouse_preflight_failure(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            json_output = Path(tmpdir) / "frontier.json"
+            with (
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "search_consistent_profitability_frontier.py",
+                        "--clickhouse-http-url",
+                        "http://torghut-clickhouse.torghut.svc.cluster.local:8123",
+                        "--json-output",
+                        str(json_output),
+                    ],
+                ),
+                patch(
+                    "scripts.search_consistent_profitability_frontier.socket.getaddrinfo",
+                    side_effect=frontier.socket.gaierror("not known"),
+                ),
+                redirect_stdout(io.StringIO()),
+                redirect_stderr(io.StringIO()),
+            ):
+                code = frontier.main()
+
+            payload = json.loads(json_output.read_text(encoding="utf-8"))
+
+        self.assertEqual(code, 1)
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(
+            payload["schema_version"],
+            "torghut.consistent-profitability-frontier-error.v1",
+        )
+        self.assertIn("clickhouse_endpoint_unreachable", payload["error"])
+        self.assertIn("--replay-tape-path", payload["remediation"][-1])
 
     def test_load_replay_tape_rows_validates_and_slices_rows(self) -> None:
         with TemporaryDirectory() as tmpdir:
