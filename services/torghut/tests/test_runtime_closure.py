@@ -782,6 +782,12 @@ data:
                             "weight": "0.60",
                             "expected_net_pnl_per_day": "320",
                             "correlation_cluster": "momentum",
+                            "universe_symbols": ["NVDA", "AAPL"],
+                            "max_notional_per_trade": "17500",
+                            "params": {
+                                "entry_minute_after_open": "45",
+                                "exit_minute_after_open": "240",
+                            },
                         },
                         {
                             "candidate_id": "cand-b",
@@ -817,6 +823,9 @@ data:
                 strategies[1]["strategy_type"], "momentum_pullback_consistent"
             )
             self.assertEqual(strategies[1]["params"]["candidate_spec_id"], "spec-a")
+            self.assertEqual(strategies[1]["params"]["entry_minute_after_open"], "45")
+            self.assertEqual(strategies[1]["universe_symbols"], ["NVDA", "AAPL"])
+            self.assertEqual(strategies[1]["max_notional_per_trade"], "17500")
             self.assertEqual(strategies[1]["params"]["sleeve_weight"], "0.6")
             self.assertEqual(strategies[2]["max_notional_per_trade"], "20000")
             self.assertEqual(

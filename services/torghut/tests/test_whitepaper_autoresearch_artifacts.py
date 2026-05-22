@@ -475,6 +475,60 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
         with self.assertRaisesRegex(ValueError, "evidence_bundle_schema_invalid"):
             evidence_bundle_from_payload({"schema_version": "bad"})
 
+    def test_evidence_bundle_hydrates_runtime_config_from_frontier_replay_config(
+        self,
+    ) -> None:
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-frontier-runtime-config",
+            candidate={
+                "candidate_id": "cand-frontier-runtime-config",
+                "family": "microbar_cross_sectional_pairs",
+                "strategy_name": "microbar-cross-sectional-pairs-v1",
+                "family_template_id": "microbar_cross_sectional_pairs_v1",
+                "full_window": {
+                    "net_per_day": "143",
+                    "active_day_ratio": "1.0",
+                    "positive_day_ratio": "1.0",
+                    "best_day_share": "0.25",
+                    "max_drawdown": "0",
+                },
+                "replay_config": {
+                    "params": {
+                        "signal_motif": "vwap_displacement_reversal",
+                        "rank_feature": "cross_section_vwap_w5m_rank",
+                        "selection_mode": "reversal",
+                        "top_n": "2",
+                        "entry_minute_after_open": "180",
+                        "exit_minute_after_open": "240",
+                    },
+                    "strategy_overrides": {
+                        "universe_symbols": ["NVDA", "AAPL"],
+                        "max_notional_per_trade": "30642.32",
+                        "max_position_pct_equity": "0.97",
+                    },
+                },
+            },
+            dataset_snapshot_id="snap-frontier-runtime-config",
+            result_path="/tmp/frontier-runtime-config.json",
+        )
+
+        scorecard = bundle.objective_scorecard
+        self.assertEqual(
+            scorecard["runtime_params"]["signal_motif"],
+            "vwap_displacement_reversal",
+        )
+        self.assertEqual(scorecard["runtime_family"], "microbar_cross_sectional_pairs")
+        self.assertEqual(
+            scorecard["runtime_strategy_name"], "microbar-cross-sectional-pairs-v1"
+        )
+        self.assertEqual(scorecard["universe_symbols"], ["NVDA", "AAPL"])
+        self.assertEqual(scorecard["max_notional_per_trade"], "30642.32")
+        self.assertEqual(scorecard["max_position_pct_equity"], "0.97")
+        self.assertEqual(
+            scorecard["candidate_strategy_overrides"]["universe_symbols"],
+            ["NVDA", "AAPL"],
+        )
+
     def test_evidence_bundle_blocks_promotion_proof_without_fill_survival(self) -> None:
         bundle = evidence_bundle_from_frontier_candidate(
             candidate_spec_id="spec-promotion-proof",

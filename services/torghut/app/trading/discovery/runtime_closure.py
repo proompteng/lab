@@ -1010,6 +1010,7 @@ def _materialized_generic_portfolio_runtime_strategies(
     candidate_id = _string(best_candidate.get("candidate_id")) or "runtime-closure"
     strategies: list[dict[str, Any]] = []
     for sleeve_index, sleeve in enumerate(sleeves, start=1):
+        sleeve_params = _mapping(sleeve.get("params"))
         runtime_family = (
             _string(sleeve.get("runtime_family"))
             or _runtime_family(best_candidate)
@@ -1032,7 +1033,11 @@ def _materialized_generic_portfolio_runtime_strategies(
         else:
             max_position_pct_equity = Decimal("10")
         max_position_pct_equity = max(max_position_pct_equity, Decimal("0.1"))
-        strategy_symbols = _list_of_strings(sleeve.get("symbols")) or symbols
+        strategy_symbols = (
+            _list_of_strings(sleeve.get("symbols"))
+            or _list_of_strings(sleeve.get("universe_symbols"))
+            or symbols
+        )
         strategies.append(
             {
                 "name": strategy_name,
@@ -1047,6 +1052,7 @@ def _materialized_generic_portfolio_runtime_strategies(
                 "max_notional_per_trade": _decimal_string(max_notional_per_trade),
                 "max_position_pct_equity": _decimal_string(max_position_pct_equity),
                 "params": {
+                    **{str(key): value for key, value in sleeve_params.items()},
                     "source_candidate_id": _string(sleeve.get("candidate_id")),
                     "candidate_spec_id": _string(sleeve.get("candidate_spec_id")),
                     "portfolio_candidate_id": candidate_id,
