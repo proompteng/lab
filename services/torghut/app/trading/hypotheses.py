@@ -173,6 +173,7 @@ _EVIDENCE_REFRESH_REASONS = {
     "feature_rows_missing",
     "hypothesis_window_evidence_missing",
     "hypothesis_window_evidence_stale",
+    "paper_probation_evidence_collection_only",
     "required_feature_set_unavailable",
     "runtime_ledger_proof_missing",
     "tca_evidence_stale",
@@ -287,6 +288,10 @@ def _ranked_candidate_dossiers(
                 "capital_stage": item.get("capital_stage"),
                 "capital_multiplier": item.get("capital_multiplier"),
                 "promotion_eligible": bool(item.get("promotion_eligible")),
+                "paper_probation_eligible": bool(item.get("paper_probation_eligible")),
+                "paper_probation_target_capital_stage": item.get(
+                    "paper_probation_target_capital_stage"
+                ),
                 "blocker_class": blocker_class,
                 "next_blocker": reason_codes[0] if reason_codes else None,
                 "reason_codes": reason_codes,
@@ -1982,6 +1987,9 @@ def summarize_hypothesis_runtime_statuses(
     promotion_eligible_total = sum(
         1 for item in statuses if bool(item.get("promotion_eligible"))
     )
+    paper_probation_eligible_total = sum(
+        1 for item in statuses if bool(item.get("paper_probation_eligible"))
+    )
     rollback_required_total = sum(
         1 for item in statuses if bool(item.get("rollback_required"))
     )
@@ -2002,6 +2010,7 @@ def summarize_hypothesis_runtime_statuses(
         "capital_stage_totals": dict(sorted(capital_stage_totals.items())),
         "capital_multiplier_by_hypothesis": capital_multiplier_by_hypothesis,
         "promotion_eligible_total": promotion_eligible_total,
+        "paper_probation_eligible_total": paper_probation_eligible_total,
         "rollback_required_total": rollback_required_total,
         "dependency_quorum": dependency_quorum.as_payload(),
     }
