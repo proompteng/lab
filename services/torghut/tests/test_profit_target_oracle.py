@@ -44,6 +44,14 @@ def _executable_scorecard_fields() -> dict[str, object]:
         "delay_adjusted_depth_worst_active_day_fillable_notional": "525000",
         "delay_adjusted_depth_p10_active_day_fillable_notional": "525000",
         "delay_adjusted_depth_tail_coverage_passed": True,
+        "queue_position_survival_fill_curve_evidence_present": True,
+        "queue_position_survival_sample_count": 20,
+        "queue_position_survival_fill_rate": "0.85",
+        "queue_position_survival_queue_ratio_p95": "0.25",
+        "queue_position_survival_queue_ahead_depletion_evidence_present": True,
+        "queue_position_survival_queue_ahead_depletion_sample_count": 20,
+        "delay_adjusted_depth_queue_ahead_depletion_evidence_present": True,
+        "delay_adjusted_depth_queue_ahead_depletion_sample_count": 20,
         "delay_adjusted_depth_fill_survival_evidence_present": True,
         "delay_adjusted_depth_fill_survival_sample_count": 20,
         "delay_adjusted_depth_fill_survival_rate": "0.85",
@@ -51,6 +59,7 @@ def _executable_scorecard_fields() -> dict[str, object]:
         "fill_survival_sample_count": 20,
         "fill_survival_fill_rate": "0.85",
         "delay_adjusted_depth_stress_net_pnl_per_day": "520",
+        "post_cost_net_pnl_after_queue_position_survival_fill_stress": "515",
         "double_oos_passed": True,
         "double_oos_artifact_ref": "/tmp/double-oos-report.json",
         "double_oos_independent_window_count": 2,
@@ -94,6 +103,9 @@ class TestProfitTargetOracle(TestCase):
     def test_profit_target_oracle_rejects_missing_fill_survival(self) -> None:
         scorecard = {
             **_passing_scorecard(),
+            "queue_position_survival_fill_curve_evidence_present": False,
+            "queue_position_survival_sample_count": 0,
+            "queue_position_survival_fill_rate": "0",
             "delay_adjusted_depth_fill_survival_evidence_present": False,
             "delay_adjusted_depth_fill_survival_sample_count": 0,
             "delay_adjusted_depth_fill_survival_rate": "0",
@@ -108,13 +120,40 @@ class TestProfitTargetOracle(TestCase):
         )
 
         self.assertFalse(result["passed"])
+        self.assertIn(
+            "queue_position_survival_fill_curve_evidence_present_failed",
+            result["blockers"],
+        )
         self.assertIn("fill_survival_evidence_present_failed", result["blockers"])
         self.assertIn("fill_survival_sample_count_failed", result["blockers"])
         self.assertIn("fill_survival_rate_failed", result["blockers"])
 
+    def test_profit_target_oracle_rejects_fill_survival_without_queue_ahead_depletion(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "queue_position_survival_queue_ahead_depletion_evidence_present": False,
+            "queue_position_survival_queue_ahead_depletion_sample_count": 0,
+            "delay_adjusted_depth_queue_ahead_depletion_evidence_present": False,
+            "delay_adjusted_depth_queue_ahead_depletion_sample_count": 0,
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn(
+            "queue_ahead_depletion_evidence_present_failed", result["blockers"]
+        )
+        self.assertIn("queue_ahead_depletion_sample_count_failed", result["blockers"])
+
     def test_profit_target_oracle_rejects_zero_fill_survival_rate(self) -> None:
         scorecard = {
             **_passing_scorecard(),
+            "queue_position_survival_fill_rate": "0",
             "delay_adjusted_depth_fill_survival_rate": "0",
             "fill_survival_fill_rate": "0",
         }

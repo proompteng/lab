@@ -11,6 +11,7 @@ DEPLOYABLE_LOWER_BOUND_SCORECARD_KEYS = (
     "net_pnl_per_day",
     "market_impact_stress_net_pnl_per_day",
     "delay_adjusted_depth_stress_net_pnl_per_day",
+    "post_cost_net_pnl_after_queue_position_survival_fill_stress",
     "double_oos_cost_shock_net_pnl_per_day",
     "implementation_uncertainty_lower_net_pnl_per_day",
     "conformal_tail_risk_adjusted_net_pnl_per_day",
@@ -24,17 +25,30 @@ DEPLOYABLE_PROOF_GATE_KEYS = (
     "conformal_tail_risk_passed",
 )
 FILL_SURVIVAL_EVIDENCE_KEYS = (
+    "queue_position_survival_fill_curve_evidence_present",
     "delay_adjusted_depth_fill_survival_evidence_present",
     "fill_survival_evidence_present",
 )
 FILL_SURVIVAL_SAMPLE_COUNT_KEYS = (
+    "queue_position_survival_sample_count",
     "delay_adjusted_depth_fill_survival_sample_count",
     "fill_survival_sample_count",
 )
 FILL_SURVIVAL_RATE_KEYS = (
+    "queue_position_survival_fill_rate",
     "delay_adjusted_depth_fill_survival_rate",
     "fill_survival_fill_rate",
     "fill_survival_rate",
+)
+QUEUE_AHEAD_DEPLETION_EVIDENCE_KEYS = (
+    "queue_position_survival_queue_ahead_depletion_evidence_present",
+    "delay_adjusted_depth_queue_ahead_depletion_evidence_present",
+    "queue_ahead_depletion_evidence_present",
+)
+QUEUE_AHEAD_DEPLETION_SAMPLE_COUNT_KEYS = (
+    "queue_position_survival_queue_ahead_depletion_sample_count",
+    "delay_adjusted_depth_queue_ahead_depletion_sample_count",
+    "queue_ahead_depletion_sample_count",
 )
 
 
@@ -220,17 +234,30 @@ def _max_decimal_for_keys(
 def fill_survival_proof_passed(scorecard: Mapping[str, Any]) -> bool:
     if not scorecard:
         return False
+    queue_position_survival_evidence_present = _truthy(
+        scorecard.get("queue_position_survival_fill_curve_evidence_present")
+    )
     evidence_present = any(
         _truthy(scorecard.get(key)) for key in FILL_SURVIVAL_EVIDENCE_KEYS
     )
     sample_count = _max_decimal_for_keys(scorecard, FILL_SURVIVAL_SAMPLE_COUNT_KEYS)
     fill_rate = _max_decimal_for_keys(scorecard, FILL_SURVIVAL_RATE_KEYS)
+    queue_ahead_depletion_evidence_present = any(
+        _truthy(scorecard.get(key)) for key in QUEUE_AHEAD_DEPLETION_EVIDENCE_KEYS
+    )
+    queue_ahead_depletion_sample_count = _max_decimal_for_keys(
+        scorecard, QUEUE_AHEAD_DEPLETION_SAMPLE_COUNT_KEYS
+    )
     return (
         evidence_present
+        and queue_position_survival_evidence_present
         and sample_count is not None
         and sample_count > 0
         and fill_rate is not None
         and fill_rate > 0
+        and queue_ahead_depletion_evidence_present
+        and queue_ahead_depletion_sample_count is not None
+        and queue_ahead_depletion_sample_count > 0
     )
 
 

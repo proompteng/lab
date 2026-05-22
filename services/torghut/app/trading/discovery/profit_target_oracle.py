@@ -75,6 +75,9 @@ class ProfitTargetOraclePolicy:
     min_delay_adjusted_depth_fillable_notional_per_day: Decimal = Decimal("300000")
     min_delay_adjusted_depth_tail_fillable_notional: Decimal = Decimal("300000")
     require_fill_survival_evidence: bool = True
+    require_queue_position_survival_evidence: bool = True
+    require_queue_ahead_depletion_evidence: bool = True
+    min_queue_ahead_depletion_sample_count: int = 1
     min_fill_survival_sample_count: int = 1
     min_fill_survival_rate: Decimal = Decimal("0")
     require_implementation_uncertainty_stability: bool = False
@@ -170,6 +173,9 @@ class ProfitTargetOraclePolicy:
                 self.min_delay_adjusted_depth_tail_fillable_notional
             ),
             "require_fill_survival_evidence": self.require_fill_survival_evidence,
+            "require_queue_position_survival_evidence": self.require_queue_position_survival_evidence,
+            "require_queue_ahead_depletion_evidence": self.require_queue_ahead_depletion_evidence,
+            "min_queue_ahead_depletion_sample_count": self.min_queue_ahead_depletion_sample_count,
             "min_fill_survival_sample_count": self.min_fill_survival_sample_count,
             "min_fill_survival_rate": str(self.min_fill_survival_rate),
             "accepted_delay_adjusted_depth_stress_models": sorted(
@@ -1098,8 +1104,72 @@ def evaluate_profit_target_oracle(
         policy.require_delay_adjusted_depth_stress
         and policy.require_fill_survival_evidence
     )
+    require_queue_position_survival_evidence = (
+        require_fill_survival_evidence
+        and policy.require_queue_position_survival_evidence
+    )
+    require_queue_ahead_depletion_evidence = (
+        require_fill_survival_evidence and policy.require_queue_ahead_depletion_evidence
+    )
+    queue_position_survival_evidence_present = _boolish(
+        scorecard.get("queue_position_survival_fill_curve_evidence_present")
+    )
+    checks.append(
+        {
+            "metric": "queue_position_survival_fill_curve_evidence_present",
+            "observed": str(queue_position_survival_evidence_present).lower(),
+            "operator": "eq",
+            "threshold": "true",
+            "source_marker": "kanformer_fill_survival_arxiv_2512_05734_2025",
+            "passed": queue_position_survival_evidence_present
+            if require_queue_position_survival_evidence
+            else True,
+        }
+    )
+    queue_ahead_depletion_evidence_present = _boolish(
+        scorecard.get("queue_position_survival_queue_ahead_depletion_evidence_present")
+        or scorecard.get("delay_adjusted_depth_queue_ahead_depletion_evidence_present")
+        or scorecard.get("queue_ahead_depletion_evidence_present")
+    )
+    checks.append(
+        {
+            "metric": "queue_ahead_depletion_evidence_present",
+            "observed": str(queue_ahead_depletion_evidence_present).lower(),
+            "operator": "eq",
+            "threshold": "true",
+            "source_marker": "deep_queue_reactive_arxiv_2501_08822_2025",
+            "passed": queue_ahead_depletion_evidence_present
+            if require_queue_ahead_depletion_evidence
+            else True,
+        }
+    )
+    queue_ahead_depletion_sample_count = max(
+        _nonnegative_int(
+            scorecard.get("queue_position_survival_queue_ahead_depletion_sample_count")
+        ),
+        _nonnegative_int(
+            scorecard.get("delay_adjusted_depth_queue_ahead_depletion_sample_count")
+        ),
+        _nonnegative_int(scorecard.get("queue_ahead_depletion_sample_count")),
+    )
+    queue_ahead_depletion_sample_check = _numeric_check(
+        metric="queue_ahead_depletion_sample_count",
+        observed=Decimal(queue_ahead_depletion_sample_count),
+        operator="gte",
+        threshold=Decimal(policy.min_queue_ahead_depletion_sample_count),
+    )
+    if not require_queue_ahead_depletion_evidence:
+        queue_ahead_depletion_sample_check["passed"] = True
+    checks.append(
+        {
+            **queue_ahead_depletion_sample_check,
+            "source_marker": "deep_queue_reactive_arxiv_2501_08822_2025",
+        }
+    )
     fill_survival_evidence_present = _boolish(
-        scorecard.get("delay_adjusted_depth_fill_survival_evidence_present")
+        scorecard.get("queue_position_survival_fill_curve_evidence_present")
+        or scorecard.get("queue_position_survival_evidence_present")
+        or scorecard.get("delay_adjusted_depth_fill_survival_evidence_present")
         or scorecard.get("fill_survival_evidence_present")
     )
     checks.append(
@@ -1115,6 +1185,7 @@ def evaluate_profit_target_oracle(
         }
     )
     fill_survival_sample_count = max(
+        _nonnegative_int(scorecard.get("queue_position_survival_sample_count")),
         _nonnegative_int(
             scorecard.get("delay_adjusted_depth_fill_survival_sample_count")
         ),
@@ -1135,6 +1206,7 @@ def evaluate_profit_target_oracle(
         }
     )
     fill_survival_rate = max(
+        _decimal(scorecard.get("queue_position_survival_fill_rate")),
         _decimal(scorecard.get("delay_adjusted_depth_fill_survival_rate")),
         _decimal(scorecard.get("fill_survival_fill_rate")),
         _decimal(scorecard.get("fill_survival_rate")),

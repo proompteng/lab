@@ -69,10 +69,21 @@ def _executable_scorecard_fields(index: int | str = 0) -> dict[str, object]:
         "delay_adjusted_depth_fill_survival_evidence_present": True,
         "delay_adjusted_depth_fill_survival_sample_count": 5,
         "delay_adjusted_depth_fill_survival_rate": "0.85",
+        "queue_position_survival_fill_curve_evidence_present": True,
+        "queue_position_survival_sample_count": 5,
+        "queue_position_survival_fill_rate": "0.85",
+        "queue_position_survival_queue_ratio_p95": "0.25",
+        "queue_position_survival_queue_ahead_depletion_evidence_present": True,
+        "queue_position_survival_queue_ahead_depletion_sample_count": 5,
+        "delay_adjusted_depth_queue_ahead_depletion_evidence_present": True,
+        "delay_adjusted_depth_queue_ahead_depletion_sample_count": 5,
+        "queue_ahead_depletion_evidence_present": True,
+        "queue_ahead_depletion_sample_count": 5,
         "fill_survival_evidence_present": True,
         "fill_survival_sample_count": 5,
         "fill_survival_fill_rate": "0.85",
         "delay_adjusted_depth_stress_net_pnl_per_day": "520",
+        "post_cost_net_pnl_after_queue_position_survival_fill_stress": "520",
         "double_oos_passed": True,
         "double_oos_artifact_ref": f"/tmp/double-oos-{index}.json",
         "double_oos_independent_window_count": 2,
@@ -781,6 +792,32 @@ class TestPortfolioOptimizer(TestCase):
         self.assertEqual(
             portfolio.objective_scorecard["delay_adjusted_depth_fill_survival_rate"],
             "0.85",
+        )
+        self.assertTrue(
+            portfolio.objective_scorecard[
+                "queue_position_survival_fill_curve_evidence_present"
+            ]
+        )
+        self.assertEqual(
+            portfolio.objective_scorecard["queue_position_survival_sample_count"],
+            10,
+        )
+        self.assertTrue(
+            portfolio.objective_scorecard[
+                "queue_position_survival_queue_ahead_depletion_evidence_present"
+            ]
+        )
+        self.assertEqual(
+            portfolio.objective_scorecard[
+                "queue_position_survival_queue_ahead_depletion_sample_count"
+            ],
+            10,
+        )
+        self.assertEqual(
+            portfolio.objective_scorecard[
+                "post_cost_net_pnl_after_queue_position_survival_fill_stress"
+            ],
+            "1040",
         )
         self.assertTrue(portfolio.objective_scorecard["oracle_passed"])
 

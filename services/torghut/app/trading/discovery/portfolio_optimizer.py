@@ -623,6 +623,65 @@ def _fill_survival_rate(bundle: CandidateEvidenceBundle) -> Decimal:
     )
 
 
+def _queue_position_survival_evidence_present(
+    bundle: CandidateEvidenceBundle,
+) -> bool:
+    scorecard = _scorecard(bundle)
+    return _boolish(
+        scorecard.get("queue_position_survival_fill_curve_evidence_present")
+    )
+
+
+def _queue_position_survival_sample_count(bundle: CandidateEvidenceBundle) -> int:
+    return int(_decimal(_scorecard(bundle).get("queue_position_survival_sample_count")))
+
+
+def _queue_position_survival_fill_rate(bundle: CandidateEvidenceBundle) -> Decimal:
+    return _decimal(_scorecard(bundle).get("queue_position_survival_fill_rate"))
+
+
+def _queue_position_survival_queue_ratio_p95(
+    bundle: CandidateEvidenceBundle,
+) -> Decimal:
+    return _decimal(_scorecard(bundle).get("queue_position_survival_queue_ratio_p95"))
+
+
+def _queue_ahead_depletion_evidence_present(bundle: CandidateEvidenceBundle) -> bool:
+    scorecard = _scorecard(bundle)
+    return _boolish(
+        scorecard.get("queue_position_survival_queue_ahead_depletion_evidence_present")
+        or scorecard.get("delay_adjusted_depth_queue_ahead_depletion_evidence_present")
+        or scorecard.get("queue_ahead_depletion_evidence_present")
+    )
+
+
+def _queue_ahead_depletion_sample_count(bundle: CandidateEvidenceBundle) -> int:
+    scorecard = _scorecard(bundle)
+    return int(
+        max(
+            _decimal(
+                scorecard.get(
+                    "queue_position_survival_queue_ahead_depletion_sample_count"
+                )
+            ),
+            _decimal(
+                scorecard.get("delay_adjusted_depth_queue_ahead_depletion_sample_count")
+            ),
+            _decimal(scorecard.get("queue_ahead_depletion_sample_count")),
+        )
+    )
+
+
+def _queue_position_survival_stress_net_per_day(
+    bundle: CandidateEvidenceBundle,
+) -> Decimal:
+    scorecard = _scorecard(bundle)
+    return _decimal(
+        scorecard.get("post_cost_net_pnl_after_queue_position_survival_fill_stress")
+        or scorecard.get("queue_position_survival_stress_net_pnl_per_day")
+    )
+
+
 def _delay_adjusted_depth_stress_artifact_ref(
     bundle: CandidateEvidenceBundle,
 ) -> str:
@@ -1319,6 +1378,33 @@ def _portfolio_scorecard(
         (_fill_survival_rate(bundle) for bundle in selected),
         default=Decimal("0"),
     )
+    queue_position_survival_evidence_present = bool(selected) and all(
+        _queue_position_survival_evidence_present(bundle) for bundle in selected
+    )
+    queue_position_survival_sample_count = sum(
+        _queue_position_survival_sample_count(bundle) for bundle in selected
+    )
+    queue_position_survival_fill_rate = min(
+        (_queue_position_survival_fill_rate(bundle) for bundle in selected),
+        default=Decimal("0"),
+    )
+    queue_position_survival_queue_ratio_p95 = max(
+        (_queue_position_survival_queue_ratio_p95(bundle) for bundle in selected),
+        default=Decimal("0"),
+    )
+    queue_ahead_depletion_evidence_present = bool(selected) and all(
+        _queue_ahead_depletion_evidence_present(bundle) for bundle in selected
+    )
+    queue_ahead_depletion_sample_count = sum(
+        _queue_ahead_depletion_sample_count(bundle) for bundle in selected
+    )
+    queue_position_survival_stress_net_pnl_per_day = sum(
+        (
+            _queue_position_survival_stress_net_per_day(bundle) * weight
+            for bundle, weight in zip(selected, weights, strict=True)
+        ),
+        Decimal("0"),
+    )
     double_oos_artifact_refs = [
         ref for ref in (_double_oos_artifact_ref(bundle) for bundle in selected) if ref
     ]
@@ -1571,6 +1657,30 @@ def _portfolio_scorecard(
         "fill_survival_evidence_present": fill_survival_evidence_present,
         "fill_survival_sample_count": fill_survival_sample_count,
         "fill_survival_fill_rate": str(fill_survival_rate),
+        "queue_position_survival_fill_curve_evidence_present": (
+            queue_position_survival_evidence_present
+        ),
+        "queue_position_survival_sample_count": (queue_position_survival_sample_count),
+        "queue_position_survival_fill_rate": str(queue_position_survival_fill_rate),
+        "queue_position_survival_queue_ratio_p95": str(
+            queue_position_survival_queue_ratio_p95
+        ),
+        "queue_position_survival_queue_ahead_depletion_evidence_present": (
+            queue_ahead_depletion_evidence_present
+        ),
+        "queue_position_survival_queue_ahead_depletion_sample_count": (
+            queue_ahead_depletion_sample_count
+        ),
+        "delay_adjusted_depth_queue_ahead_depletion_evidence_present": (
+            queue_ahead_depletion_evidence_present
+        ),
+        "delay_adjusted_depth_queue_ahead_depletion_sample_count": (
+            queue_ahead_depletion_sample_count
+        ),
+        "queue_ahead_depletion_evidence_present": (
+            queue_ahead_depletion_evidence_present
+        ),
+        "queue_ahead_depletion_sample_count": queue_ahead_depletion_sample_count,
         "delay_adjusted_depth_stress_artifact_refs": delay_depth_artifact_refs,
         "delay_adjusted_depth_stress_artifact_ref": delay_depth_artifact_refs[0]
         if delay_depth_artifact_refs
@@ -1595,6 +1705,9 @@ def _portfolio_scorecard(
         ),
         "delay_adjusted_depth_stress_net_pnl_per_day": str(
             delay_depth_stress_net_pnl_per_day
+        ),
+        "post_cost_net_pnl_after_queue_position_survival_fill_stress": str(
+            queue_position_survival_stress_net_pnl_per_day
         ),
         "double_oos_passed": bool(selected)
         and all(_double_oos_passed(bundle) for bundle in selected),
