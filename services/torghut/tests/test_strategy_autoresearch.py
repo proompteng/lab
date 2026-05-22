@@ -1044,8 +1044,47 @@ class TestStrategyAutoresearch(TestCase):
                 "profitability-frontier-strict-daily-microbar-prev-day-open60-short-top1.yaml",
                 "profitability-frontier-strict-daily-microbar-recent15-reversal-short.yaml",
                 "profitability-frontier-strict-daily-microbar-vwap-stretch-reversal-long-top4.yaml",
+                "profitability-frontier-portfolio-coverage-microbar-overnight-gap-reversal.yaml",
+                "profitability-frontier-portfolio-coverage-microbar-opening-prev-close-reversal.yaml",
+                "profitability-frontier-portfolio-coverage-microbar-tug-of-war-reversal.yaml",
             }.issubset(microbar_seed_names)
         )
+        coverage_seed_payloads = {
+            plan.seed_sweep_config.name: yaml.safe_load(
+                plan.seed_sweep_config.read_text(encoding="utf-8")
+            )
+            for plan in program.families
+            if plan.seed_sweep_config.name.startswith(
+                "profitability-frontier-portfolio-coverage-microbar-"
+            )
+        }
+        self.assertEqual(
+            {
+                "overnight_gap_reversal",
+                "opening_window_prev_close_reversal",
+                "intraday_tug_of_war_reversal",
+            },
+            {
+                payload["parameters"]["signal_motif"][0]
+                for payload in coverage_seed_payloads.values()
+            },
+        )
+        for payload in coverage_seed_payloads.values():
+            self.assertFalse(
+                payload["consistency_constraints"]["require_every_day_active"]
+            )
+            self.assertEqual(
+                payload["parameters"]["gate_feature"],
+                ["cross_section_positive_opening_window_return_from_prev_close_ratio"],
+            )
+            self.assertLessEqual(
+                Decimal(payload["strategy_overrides"]["max_position_pct_equity"][0]),
+                Decimal("1.0"),
+            )
+            self.assertLessEqual(
+                Decimal(payload["strategy_overrides"]["max_notional_per_trade"][0]),
+                Decimal("30000"),
+            )
         self.assertEqual(program.promotion_policy, "research_only")
         self.assertIn("scheduler_v3_parity_replay", program.parity_requirements)
 

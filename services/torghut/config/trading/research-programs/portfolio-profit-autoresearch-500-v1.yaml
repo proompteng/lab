@@ -1012,6 +1012,145 @@ families:
       max_position_pct_equity:
         mode: explicit_values
         values: ['0.25', '0.50', '0.75', '1.0']
+  - family_template_id: microbar_cross_sectional_pairs_v1
+    seed_sweep_config: ../profitability-frontier-portfolio-coverage-microbar-overnight-gap-reversal.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: false
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    loss_repair_iterations: 1
+    loss_repair_candidates: 1
+    parameter_mutations:
+      entry_minute_after_open:
+        mode: numeric_step
+        deltas: ['-10', '0', '10']
+        minimum: '0'
+        maximum: '60'
+      entry_window_minutes:
+        mode: explicit_values
+        values: ['15', '25', '45']
+      exit_minute_after_open:
+        mode: numeric_step
+        deltas: ['-30', '0', '30']
+        minimum: '60'
+        maximum: '210'
+      top_n:
+        mode: explicit_values
+        values: ['1', '2', '3']
+      gate_min:
+        mode: explicit_values
+        values: ['0.15', '0.20', '0.30']
+      gate_max:
+        mode: explicit_values
+        values: ['0.70', '0.80', '0.90']
+      max_entries_per_session:
+        mode: explicit_values
+        values: ['1', '2', '3', '4']
+      entry_cooldown_seconds:
+        mode: explicit_values
+        values: ['300', '600', '900']
+    strategy_override_mutations:
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['7500', '15000', '22500', '30000']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['0.25', '0.50', '0.75', '1.0']
+  - family_template_id: microbar_cross_sectional_pairs_v1
+    seed_sweep_config: ../profitability-frontier-portfolio-coverage-microbar-opening-prev-close-reversal.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: false
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    loss_repair_iterations: 1
+    loss_repair_candidates: 1
+    parameter_mutations:
+      entry_minute_after_open:
+        mode: numeric_step
+        deltas: ['-15', '0', '15']
+        minimum: '15'
+        maximum: '90'
+      entry_window_minutes:
+        mode: explicit_values
+        values: ['15', '25', '45']
+      exit_minute_after_open:
+        mode: numeric_step
+        deltas: ['-30', '0', '30']
+        minimum: '90'
+        maximum: '240'
+      top_n:
+        mode: explicit_values
+        values: ['1', '2', '3']
+      gate_min:
+        mode: explicit_values
+        values: ['0.15', '0.20', '0.30']
+      gate_max:
+        mode: explicit_values
+        values: ['0.75', '0.85', '0.90']
+      max_entries_per_session:
+        mode: explicit_values
+        values: ['1', '2', '3', '4']
+      entry_cooldown_seconds:
+        mode: explicit_values
+        values: ['300', '600', '900']
+    strategy_override_mutations:
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['7500', '15000', '22500', '30000']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['0.25', '0.50', '0.75', '1.0']
+  - family_template_id: microbar_cross_sectional_pairs_v1
+    seed_sweep_config: ../profitability-frontier-portfolio-coverage-microbar-tug-of-war-reversal.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: false
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    loss_repair_iterations: 1
+    loss_repair_candidates: 1
+    parameter_mutations:
+      entry_minute_after_open:
+        mode: numeric_step
+        deltas: ['-30', '0', '30']
+        minimum: '90'
+        maximum: '240'
+      entry_window_minutes:
+        mode: explicit_values
+        values: ['15', '30', '45']
+      exit_minute_after_open:
+        mode: explicit_values
+        values: ['240', '300', 'close']
+      top_n:
+        mode: explicit_values
+        values: ['1', '2', '3']
+      gate_min:
+        mode: explicit_values
+        values: ['0.10', '0.15', '0.25']
+      gate_max:
+        mode: explicit_values
+        values: ['0.75', '0.85', '0.90']
+      max_entries_per_session:
+        mode: explicit_values
+        values: ['1', '2', '3', '4']
+      entry_cooldown_seconds:
+        mode: explicit_values
+        values: ['600', '1200', '1800']
+    strategy_override_mutations:
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['7500', '15000', '22500', '30000']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['0.25', '0.50', '0.75', '1.0']
   - family_template_id: intraday_tsmom_v2
     seed_sweep_config: ../profitability-frontier-strict-daily-tsmom.yaml
     max_iterations: 2
