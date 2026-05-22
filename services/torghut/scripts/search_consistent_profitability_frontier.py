@@ -629,9 +629,10 @@ def _objective_veto_policy(
         and trading_day_count > 0
         and consistency_policy.min_active_days > 0
     ):
-        required_min_active_day_ratio = Decimal(
-            consistency_policy.min_active_days
-        ) / Decimal(trading_day_count)
+        required_min_active_day_ratio = min(
+            Decimal("1"),
+            Decimal(consistency_policy.min_active_days) / Decimal(trading_day_count),
+        )
     return ObjectiveVetoPolicy(
         required_min_active_day_ratio=max(
             required_min_active_day_ratio,
@@ -1470,6 +1471,15 @@ def _payload_digest(payload: Mapping[str, Any]) -> str:
     ).hexdigest()
 
 
+def _artifact_run_dir_name(json_output: Path) -> str:
+    raw_name = json_output.stem.strip()
+    safe_name = "".join(
+        character if character.isalnum() or character in "._-" else "-"
+        for character in raw_name
+    ).strip(".-_")
+    return safe_name or "frontier-run"
+
+
 def _order_type_ablation_artifact_dir(
     *,
     args: argparse.Namespace,
@@ -1477,7 +1487,11 @@ def _order_type_ablation_artifact_dir(
 ) -> Path:
     json_output = getattr(args, "json_output", None)
     if isinstance(json_output, Path):
-        return json_output.parent / "frontier-artifacts"
+        return (
+            json_output.parent
+            / "frontier-artifacts"
+            / _artifact_run_dir_name(json_output)
+        )
     return root / "frontier-artifacts"
 
 
@@ -2095,14 +2109,21 @@ def _consistency_penalty(
             Decimal(max(0, summary.trading_day_count - len(summary.daily_net)))
             * policy.min_daily_net_pnl
         )
-    if summary.active_days < policy.min_active_days:
-        penalties += Decimal(policy.min_active_days - summary.active_days) * Decimal(
+    effective_min_active_days = min(policy.min_active_days, summary.trading_day_count)
+    if summary.active_days < effective_min_active_days:
+        penalties += Decimal(effective_min_active_days - summary.active_days) * Decimal(
             "250"
         )
     if active_ratio < policy.min_active_ratio:
         penalties += (policy.min_active_ratio - active_ratio) * Decimal("2000")
-    if positive_days < policy.min_positive_days:
-        penalties += Decimal(policy.min_positive_days - positive_days) * Decimal("350")
+    effective_min_positive_days = min(
+        policy.min_positive_days,
+        summary.trading_day_count,
+    )
+    if positive_days < effective_min_positive_days:
+        penalties += Decimal(effective_min_positive_days - positive_days) * Decimal(
+            "350"
+        )
     if (
         policy.require_every_day_active
         and summary.active_days < summary.trading_day_count
