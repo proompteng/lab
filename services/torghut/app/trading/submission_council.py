@@ -620,6 +620,7 @@ def _refresh_runtime_summary_totals(
     capital_stage_totals: dict[str, int] = {}
     capital_multiplier_by_hypothesis: dict[str, str] = {}
     promotion_eligible_total = 0
+    paper_probation_eligible_total = 0
     rollback_required_total = 0
 
     for item in runtime_items:
@@ -638,6 +639,8 @@ def _refresh_runtime_summary_totals(
 
         if bool(item.get("promotion_eligible")):
             promotion_eligible_total += 1
+        if bool(item.get("paper_probation_eligible")):
+            paper_probation_eligible_total += 1
         if bool(item.get("rollback_required")):
             rollback_required_total += 1
 
@@ -664,6 +667,7 @@ def _refresh_runtime_summary_totals(
             "capital_stage_totals": dict(sorted(capital_stage_totals.items())),
             "capital_multiplier_by_hypothesis": capital_multiplier_by_hypothesis,
             "promotion_eligible_total": promotion_eligible_total,
+            "paper_probation_eligible_total": paper_probation_eligible_total,
             "rollback_required_total": rollback_required_total,
             "items": list(runtime_items),
         }
@@ -1037,10 +1041,8 @@ def _merge_runtime_certificate_evidence(
         if capital_stage is None:
             merged.append(updated)
             continue
-        if _stage_rank(capital_stage) <= _stage_rank("shadow"):
-            if _safe_text(getattr(metric_window, "observed_stage", None)) != "paper":
-                merged.append(updated)
-                continue
+        observed_stage = _safe_text(getattr(metric_window, "observed_stage", None))
+        if observed_stage == "paper":
             issued_at = _window_evidence_issued_at(metric_window)
             candidate_id = (
                 _safe_text(metric_window.candidate_id)
@@ -1055,6 +1057,9 @@ def _merge_runtime_certificate_evidence(
             observed.update(
                 {
                     "runtime_window_certificate_readiness_applied": True,
+                    "runtime_window_paper_probation_applied": True,
+                    "paper_probation_evidence_collection_only": True,
+                    "paper_probation_target_capital_stage": capital_stage,
                     "runtime_window_prior_reasons": list(
                         cast(Sequence[object], updated.get("reasons") or [])
                     ),
@@ -1076,11 +1081,13 @@ def _merge_runtime_certificate_evidence(
             updated.update(
                 {
                     "state": "shadow",
-                    "capital_stage": capital_stage or "shadow",
+                    "capital_stage": "shadow",
                     "capital_multiplier": "0",
-                    "promotion_eligible": True,
+                    "promotion_eligible": False,
+                    "paper_probation_eligible": True,
+                    "paper_probation_target_capital_stage": capital_stage,
                     "rollback_required": False,
-                    "reasons": [],
+                    "reasons": ["paper_probation_evidence_collection_only"],
                     "informational_reasons": sorted(
                         {
                             *[
@@ -1092,6 +1099,7 @@ def _merge_runtime_certificate_evidence(
                                 if str(reason).strip()
                             ],
                             "runtime_window_certificate_readiness_applied",
+                            "runtime_window_paper_probation_applied",
                         }
                     ),
                     "promotion_decision_id": str(promotion_decision.id),
@@ -1099,6 +1107,12 @@ def _merge_runtime_certificate_evidence(
                     "observed": observed,
                 }
             )
+            merged.append(updated)
+            continue
+        if observed_stage != "live":
+            merged.append(updated)
+            continue
+        if _stage_rank(capital_stage) <= _stage_rank("shadow"):
             merged.append(updated)
             continue
 
@@ -1911,8 +1925,6 @@ def build_live_submission_gate_payload(
             continue
         if _safe_text(getattr(metric_window, "observed_stage", None)) != "paper":
             continue
-        if _certificate_capital_stage(metric_window, promotion_decision) != "shadow":
-            continue
         readiness_evidence_rows.append(row)
     if runtime_items and readiness_evidence_rows:
         runtime_items = _merge_runtime_certificate_evidence(
@@ -1923,6 +1935,9 @@ def build_live_submission_gate_payload(
         )
         summary = _refresh_runtime_summary_totals(summary, runtime_items)
     promotion_eligible_total = _safe_int(summary.get("promotion_eligible_total"))
+    paper_probation_eligible_total = _safe_int(
+        summary.get("paper_probation_eligible_total")
+    )
     active_capital_stage = resolve_active_capital_stage(summary)
     segment_summary = _segment_summary(
         state=state,
@@ -1985,6 +2000,7 @@ def build_live_submission_gate_payload(
             "autonomy_promotion_action": autonomy_promotion_action,
             "drift_live_promotion_eligible": drift_live_promotion_eligible,
             "promotion_eligible_total": promotion_eligible_total,
+            "paper_probation_eligible_total": paper_probation_eligible_total,
             "dependency_quorum_decision": dependency_decision,
             "empirical_jobs_ready": empirical_ready,
             "dspy_live_ready": dspy_live_ready,
@@ -2051,18 +2067,20 @@ def build_live_submission_gate_payload(
             item for item in evaluated_tuples if not item.get("reason_codes")
         ]
 
+    candidate_reason_codes = [
+        reason
+        for item in evaluated_tuples
+        for reason in cast(Sequence[str], item.get("reason_codes") or [])
+    ]
     if promotion_eligible_total > 0 and not valid_candidates:
         if not evaluated_tuples:
             blocked_reasons.append("promotion_certificate_missing")
             blocked_reasons.append("hypothesis_window_evidence_missing")
         else:
-            candidate_reason_codes = [
-                reason
-                for item in evaluated_tuples
-                for reason in cast(Sequence[str], item.get("reason_codes") or [])
-            ]
             blocked_reasons.extend(candidate_reason_codes)
             blocked_reasons.append("promotion_certificate_missing")
+    elif paper_probation_eligible_total > 0 and evaluated_tuples:
+        blocked_reasons.extend(candidate_reason_codes)
 
     blocked_reasons = _normalize_reason_codes(blocked_reasons)
 
@@ -2164,6 +2182,7 @@ def build_live_submission_gate_payload(
         "autonomy_promotion_action": autonomy_promotion_action,
         "drift_live_promotion_eligible": drift_live_promotion_eligible,
         "promotion_eligible_total": promotion_eligible_total,
+        "paper_probation_eligible_total": paper_probation_eligible_total,
         "dependency_quorum_decision": dependency_decision,
         "empirical_jobs_ready": empirical_ready,
         "dspy_live_ready": dspy_live_ready,

@@ -5901,13 +5901,17 @@ class TestTradingApi(TestCase):
                 feature_readiness={},
             )
 
-        self.assertEqual(summary["promotion_eligible_total"], 1)
-        self.assertEqual(payload["summary"]["promotion_eligible_total"], 1)
+        self.assertEqual(summary["promotion_eligible_total"], 0)
+        self.assertEqual(summary["paper_probation_eligible_total"], 1)
+        self.assertEqual(payload["summary"]["promotion_eligible_total"], 0)
+        self.assertEqual(payload["summary"]["paper_probation_eligible_total"], 1)
         item = payload["items"][0]
-        self.assertTrue(item["promotion_eligible"])
+        self.assertFalse(item["promotion_eligible"])
+        self.assertTrue(item["paper_probation_eligible"])
+        self.assertEqual(item["paper_probation_target_capital_stage"], "0.10x canary")
         self.assertEqual(item["candidate_id"], "cand-status-runtime")
-        self.assertEqual(item["capital_stage"], "0.10x canary")
-        self.assertEqual(item["reasons"], [])
+        self.assertEqual(item["capital_stage"], "shadow")
+        self.assertEqual(item["reasons"], ["paper_probation_evidence_collection_only"])
 
     def test_trading_status_exposes_rejection_and_market_context_controls(self) -> None:
         original_scheduler = getattr(app.state, "trading_scheduler", None)

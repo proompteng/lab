@@ -468,6 +468,7 @@ class TestSubmissionCouncil(TestCase):
                     "capital_stage": "shadow",
                     "capital_multiplier": "0",
                     "promotion_eligible": True,
+                    "paper_probation_eligible": True,
                     "rollback_required": False,
                     "reasons": [],
                     "informational_reasons": [],
@@ -477,6 +478,7 @@ class TestSubmissionCouncil(TestCase):
 
         self.assertEqual(refreshed["hypotheses_total"], 2)
         self.assertEqual(refreshed["promotion_eligible_total"], 1)
+        self.assertEqual(refreshed["paper_probation_eligible_total"], 1)
         self.assertEqual(refreshed["rollback_required_total"], 1)
         self.assertEqual(refreshed["reason_totals"], {"drift_checks_missing": 1})
         self.assertEqual(
@@ -580,6 +582,24 @@ class TestSubmissionCouncil(TestCase):
                     "promotion_decision": promotion(state="shadow"),
                 }
             ],
+            [
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "metric_window": metric_window(
+                        capital_stage="shadow",
+                        observed_stage="live",
+                        payload_json={
+                            "post_cost_promotion_sample_count": 42,
+                            "post_cost_basis_counts": {
+                                "realized_strategy_pnl_after_explicit_costs": 42
+                            },
+                            "post_cost_expectancy_aggregation": "runtime_ledger_notional_weighted",
+                            "runtime_ledger_notional_weighted_sample_count": 42,
+                        },
+                    ),
+                    "promotion_decision": promotion(state="shadow"),
+                }
+            ],
         ]
 
         for evidence in scenarios:
@@ -645,7 +665,7 @@ class TestSubmissionCouncil(TestCase):
                     run_id="runtime-proof-1",
                     candidate_id="cand-runtime",
                     hypothesis_id="H-CONT-01",
-                    observed_stage="paper",
+                    observed_stage="live",
                     window_started_at=now,
                     window_ended_at=now,
                     market_session_count=3,
@@ -659,6 +679,14 @@ class TestSubmissionCouncil(TestCase):
                     drift_ok=True,
                     dependency_quorum_decision="allow",
                     capital_stage="0.10x canary",
+                    payload_json={
+                        "post_cost_promotion_sample_count": 42,
+                        "post_cost_basis_counts": {
+                            "realized_strategy_pnl_after_explicit_costs": 42
+                        },
+                        "post_cost_expectancy_aggregation": "runtime_ledger_notional_weighted",
+                        "runtime_ledger_notional_weighted_sample_count": 42,
+                    },
                 )
             )
             session.add(
@@ -666,7 +694,7 @@ class TestSubmissionCouncil(TestCase):
                     run_id="runtime-proof-1",
                     candidate_id="cand-runtime",
                     hypothesis_id="H-CONT-01",
-                    promotion_target="paper",
+                    promotion_target="live",
                     state="0.10x canary",
                     allowed=True,
                     reason_summary="runtime_evidence_thresholds_satisfied",
@@ -703,6 +731,7 @@ class TestSubmissionCouncil(TestCase):
                 )
 
         self.assertEqual(result["promotion_eligible_total"], 1)
+        self.assertEqual(result["paper_probation_eligible_total"], 0)
         item = result["items"][0]
         self.assertTrue(item["promotion_eligible"])
         self.assertEqual(item["candidate_id"], "cand-runtime")
@@ -831,7 +860,10 @@ class TestSubmissionCouncil(TestCase):
                 promotion_certificate_evidence=[
                     {
                         "hypothesis_id": "H-CONT-01",
-                        "metric_window": self._metric_window(capital_stage="shadow"),
+                        "metric_window": self._metric_window(
+                            capital_stage="shadow",
+                            observed_stage="paper",
+                        ),
                         "promotion_decision": self._promotion_decision(
                             capital_stage="shadow"
                         ),
@@ -840,24 +872,30 @@ class TestSubmissionCouncil(TestCase):
                 session=session,
             )
 
-        self.assertEqual(summary["promotion_eligible_total"], 1)
+        self.assertEqual(summary["promotion_eligible_total"], 0)
+        self.assertEqual(summary["paper_probation_eligible_total"], 1)
         item = summary["items"][0]
-        self.assertTrue(item["promotion_eligible"])
+        self.assertFalse(item["promotion_eligible"])
+        self.assertTrue(item["paper_probation_eligible"])
+        self.assertEqual(item["paper_probation_target_capital_stage"], "shadow")
         self.assertEqual(item["candidate_id"], "cand-runtime-paper")
         self.assertEqual(item["state"], "shadow")
         self.assertEqual(item["capital_stage"], "shadow")
         self.assertEqual(item["capital_multiplier"], "0")
-        self.assertEqual(item["reasons"], [])
+        self.assertEqual(item["reasons"], ["paper_probation_evidence_collection_only"])
         self.assertEqual(
             item["informational_reasons"],
-            ["runtime_window_certificate_readiness_applied"],
+            [
+                "runtime_window_certificate_readiness_applied",
+                "runtime_window_paper_probation_applied",
+            ],
         )
         self.assertEqual(
             item["observed"]["runtime_window_prior_reasons"],
             ["drift_checks_missing"],
         )
         self.assertFalse(gate["allowed"])
-        self.assertNotIn(
+        self.assertIn(
             "alpha_readiness_not_promotion_eligible",
             gate["blocked_reasons"],
         )
@@ -899,8 +937,9 @@ class TestSubmissionCouncil(TestCase):
             session=session,
         )
 
-        self.assertEqual(stale_gate["promotion_eligible_total"], 1)
-        self.assertNotIn(
+        self.assertEqual(stale_gate["promotion_eligible_total"], 0)
+        self.assertEqual(stale_gate["paper_probation_eligible_total"], 1)
+        self.assertIn(
             "alpha_readiness_not_promotion_eligible",
             stale_gate["blocked_reasons"],
         )
@@ -936,8 +975,13 @@ class TestSubmissionCouncil(TestCase):
         )
 
         self.assertEqual(non_shadow_paper_gate["promotion_eligible_total"], 0)
+        self.assertEqual(non_shadow_paper_gate["paper_probation_eligible_total"], 1)
         self.assertIn(
             "alpha_readiness_not_promotion_eligible",
+            non_shadow_paper_gate["blocked_reasons"],
+        )
+        self.assertIn(
+            "promotion_certificate_not_live_runtime",
             non_shadow_paper_gate["blocked_reasons"],
         )
 
