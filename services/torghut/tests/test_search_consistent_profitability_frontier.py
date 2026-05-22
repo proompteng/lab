@@ -2719,13 +2719,16 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             materialize_signal_tape(
                 rows=[
                     SignalEnvelope(
-                        event_ts=datetime(2026, 3, 18, 17, 30, tzinfo=timezone.utc),
+                        event_ts=datetime(
+                            2026, 3, 18 + index, 17, 30, tzinfo=timezone.utc
+                        ),
                         symbol="NVDA",
                         timeframe="1Sec",
-                        seq=1,
+                        seq=index + 1,
                         source="ta",
                         payload={"price": Decimal("900.00")},
                     )
+                    for index in range(6)
                 ],
                 tape_path=tape_path,
                 dataset_snapshot_ref="snapshot-test",
@@ -2736,9 +2739,6 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             )
             args.replay_tape_path = tape_path
             args.replay_tape_manifest = None
-            recent_days = tuple(
-                date(2026, 3, 18) + timedelta(days=index) for index in range(6)
-            )
 
             def fake_run_replay(config: object) -> dict[str, object]:
                 configmap_path = Path(getattr(config, "strategy_configmap_path"))
@@ -2830,24 +2830,6 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 )
 
             stdout = io.StringIO()
-            snapshot_receipt = SimpleNamespace(
-                snapshot_id="snap-test",
-                is_fresh=True,
-                stale_override_used=False,
-                to_payload=lambda: {
-                    "snapshot_id": "snap-test",
-                    "source": "ta",
-                    "window_size": "PT1S",
-                    "start_day": "2026-03-18",
-                    "end_day": "2026-03-23",
-                    "expected_last_trading_day": "2026-03-23",
-                    "is_fresh": True,
-                    "missing_days": [],
-                    "row_count": 123,
-                    "stale_override_used": False,
-                    "witnesses": [],
-                },
-            )
             with (
                 patch(
                     "scripts.search_consistent_profitability_frontier._parse_args",
@@ -2855,14 +2837,11 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 ),
                 patch(
                     "scripts.search_consistent_profitability_frontier._resolve_recent_trading_days",
-                    return_value=recent_days,
+                    side_effect=AssertionError("unexpected ClickHouse recent-day call"),
                 ),
                 patch(
                     "scripts.search_consistent_profitability_frontier.build_dataset_snapshot_receipt",
-                    return_value=snapshot_receipt,
-                ),
-                patch(
-                    "scripts.search_consistent_profitability_frontier.ensure_fresh_snapshot"
+                    side_effect=AssertionError("unexpected ClickHouse snapshot call"),
                 ),
                 patch(
                     "scripts.search_consistent_profitability_frontier.run_replay",
@@ -2880,9 +2859,13 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             self.assertEqual(top["replay_config"]["params"]["long_stop_loss_bps"], "18")
             self.assertEqual(top["full_window"]["active_days"], 6)
             self.assertEqual(
-                payload["dataset_snapshot_receipt"]["snapshot_id"], "snap-test"
+                payload["dataset_snapshot_receipt"]["snapshot_id"], "snapshot-test"
             )
-            self.assertEqual(payload["replay_tape"]["selected_row_count"], 1)
+            self.assertEqual(
+                payload["dataset_snapshot_receipt"]["source"], "replay_tape"
+            )
+            self.assertEqual(payload["replay_tape"]["status"], "valid")
+            self.assertEqual(payload["replay_tape"]["selected_row_count"], 6)
             self.assertEqual(top["ranking"]["method"], "pareto_frontier_v2")
             self.assertEqual(top["family_template_id"], "intraday_tsmom_v2")
 
