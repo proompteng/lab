@@ -72,6 +72,15 @@ MARKET_IMPACT_SCORECARD_KEYS = (
     "implementation_uncertainty_target_net_pnl_per_day",
     "implementation_uncertainty_scenarios",
     "implementation_uncertainty_source_markers",
+    "conformal_tail_risk_required",
+    "conformal_tail_risk_model",
+    "conformal_tail_risk_alpha",
+    "conformal_tail_risk_sample_count",
+    "conformal_tail_risk_buffer_per_day",
+    "conformal_tail_risk_adjusted_net_pnl_per_day",
+    "conformal_tail_risk_target_net_pnl_per_day",
+    "conformal_tail_risk_passed",
+    "conformal_tail_risk_source_markers",
 )
 DELAY_DEPTH_SURVIVAL_SCORECARD_KEYS = (
     "delay_adjusted_depth_stress_passed",

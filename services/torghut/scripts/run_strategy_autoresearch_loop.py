@@ -832,6 +832,16 @@ def _history_record(
         "implementation_uncertainty_lower_net_pnl_per_day": _string(
             scorecard.get("implementation_uncertainty_lower_net_pnl_per_day")
         ),
+        "conformal_tail_risk_required": bool(
+            scorecard.get("conformal_tail_risk_required")
+        ),
+        "conformal_tail_risk_passed": bool(scorecard.get("conformal_tail_risk_passed")),
+        "conformal_tail_risk_adjusted_net_pnl_per_day": _string(
+            scorecard.get("conformal_tail_risk_adjusted_net_pnl_per_day")
+        ),
+        "conformal_tail_risk_buffer_per_day": _string(
+            scorecard.get("conformal_tail_risk_buffer_per_day")
+        ),
         "active_day_ratio": _string(scorecard.get("active_day_ratio")),
         "positive_day_ratio": _string(scorecard.get("positive_day_ratio")),
         "avg_filled_notional_per_day": _string(

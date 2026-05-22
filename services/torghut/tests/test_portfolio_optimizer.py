@@ -504,6 +504,14 @@ class TestPortfolioOptimizer(TestCase):
         self.assertTrue(
             portfolio.objective_scorecard["implementation_uncertainty_stability_passed"]
         )
+        self.assertFalse(portfolio.objective_scorecard["conformal_tail_risk_required"])
+        self.assertTrue(portfolio.objective_scorecard["conformal_tail_risk_passed"])
+        self.assertEqual(
+            portfolio.objective_scorecard[
+                "conformal_tail_risk_adjusted_net_pnl_per_day"
+            ],
+            "600",
+        )
         self.assertEqual(
             portfolio.objective_scorecard[
                 "delay_adjusted_depth_stress_net_pnl_per_day"
@@ -588,6 +596,93 @@ class TestPortfolioOptimizer(TestCase):
         )
         self.assertIn(
             "implementation_uncertainty_lower_net_pnl_per_day_failed",
+            portfolio.objective_scorecard["profit_target_oracle"]["blockers"],
+        )
+
+    def test_portfolio_oracle_rejects_conformal_tail_risk_adjusted_net_below_target(
+        self,
+    ) -> None:
+        def bundle(
+            candidate_id: str,
+            symbol: str,
+            daily_net: tuple[str, str, str, str, str],
+        ) -> CandidateEvidenceBundle:
+            return evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=f"spec-{candidate_id}",
+                candidate={
+                    "candidate_id": candidate_id,
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "1000",
+                        "active_day_ratio": "1.0",
+                        "positive_day_ratio": "0.8",
+                        "worst_day_loss": "1500",
+                        "max_drawdown": "1500",
+                        "max_gross_exposure_pct_equity": "0.5",
+                        "min_cash": "5000",
+                        "negative_cash_observation_count": 0,
+                        "best_day_share": "0.25",
+                        "max_single_day_contribution_share": "0.25",
+                        "max_cluster_contribution_share": "0.34",
+                        "max_single_symbol_contribution_share": "0.25",
+                        "avg_filled_notional_per_day": "250000",
+                        "regime_slice_pass_rate": "0.55",
+                        "posterior_edge_lower": "0.01",
+                        "shadow_parity_status": "within_budget",
+                        "symbol_contribution_shares": {symbol: "1.0"},
+                        **_executable_scorecard_fields(candidate_id),
+                    },
+                    "full_window": {
+                        "daily_net": {
+                            "2026-02-23": daily_net[0],
+                            "2026-02-24": daily_net[1],
+                            "2026-02-25": daily_net[2],
+                            "2026-02-26": daily_net[3],
+                            "2026-02-27": daily_net[4],
+                        },
+                    },
+                },
+                dataset_snapshot_id="snapshot-conformal-tail-risk",
+                result_path=f"/tmp/{candidate_id}.json",
+            )
+
+        portfolio = optimize_portfolio_candidate(
+            evidence_bundles=[
+                bundle(
+                    "tail-risk-a",
+                    "AAPL",
+                    ("1625", "1625", "1625", "-1500", "1625"),
+                ),
+                bundle(
+                    "tail-risk-b",
+                    "AMZN",
+                    ("100", "3000", "300", "-1500", "3100"),
+                ),
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            oracle_policy=ProfitTargetOraclePolicy(
+                max_cluster_contribution_share=Decimal("0.50"),
+                max_single_symbol_contribution_share=Decimal("0.50"),
+                min_observed_trading_days=5,
+            ),
+            portfolio_size_min=2,
+            portfolio_size_max=2,
+        )
+
+        self.assertIsNotNone(portfolio)
+        assert portfolio is not None
+        self.assertFalse(portfolio.objective_scorecard["oracle_passed"])
+        self.assertEqual(
+            portfolio.objective_scorecard["conformal_tail_risk_buffer_per_day"],
+            "3000",
+        )
+        self.assertEqual(
+            portfolio.objective_scorecard[
+                "conformal_tail_risk_adjusted_net_pnl_per_day"
+            ],
+            "-1000",
+        )
+        self.assertIn(
+            "conformal_tail_risk_adjusted_net_pnl_per_day_failed",
             portfolio.objective_scorecard["profit_target_oracle"]["blockers"],
         )
 
