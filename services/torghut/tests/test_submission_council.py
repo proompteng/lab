@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest import TestCase
@@ -28,6 +28,7 @@ from app.trading.hypotheses import JangarDependencyQuorumStatus
 from app.trading.submission_council import (
     _QUANT_HEALTH_CACHE,
     _coerce_aware_datetime,
+    _load_latest_certificate_evidence,
     _load_latest_runtime_ledger_summary,
     _load_profit_promotion_table_counts,
     _merge_runtime_certificate_evidence,
@@ -119,11 +120,17 @@ class TestSubmissionCouncil(TestCase):
         self,
         capital_stage: str = "0.10x canary",
         observed_stage: str | None = "live",
+        *,
+        run_id: str = "runtime-proof-1",
+        candidate_id: str = "cand-1",
+        hypothesis_id: str = "H-CONT-01",
     ) -> SimpleNamespace:
         observed_at = datetime.now(timezone.utc)
         payload = {
             "id": "window-1",
-            "candidate_id": "cand-1",
+            "run_id": run_id,
+            "candidate_id": candidate_id,
+            "hypothesis_id": hypothesis_id,
             "capital_stage": capital_stage,
             "window_ended_at": observed_at,
             "created_at": observed_at,
@@ -154,17 +161,154 @@ class TestSubmissionCouncil(TestCase):
         self,
         capital_stage: str = "0.10x canary",
         *,
+        run_id: str = "runtime-proof-1",
+        candidate_id: str = "cand-1",
+        hypothesis_id: str = "H-CONT-01",
         allowed: bool = True,
         reason_summary: str | None = None,
         payload_json: dict[str, object] | None = None,
     ) -> SimpleNamespace:
         return SimpleNamespace(
             id="promo-1",
-            candidate_id="cand-1",
+            run_id=run_id,
+            candidate_id=candidate_id,
+            hypothesis_id=hypothesis_id,
+            promotion_target="live",
             state=capital_stage,
             allowed=allowed,
             reason_summary=reason_summary,
             payload_json=payload_json,
+        )
+
+    def _runtime_ledger_bucket_payload(
+        self,
+        *,
+        run_id: str = "runtime-proof-1",
+        candidate_id: str = "cand-1",
+        hypothesis_id: str = "H-CONT-01",
+        observed_stage: str = "live",
+        strategy_family: str = "intraday_continuation",
+    ) -> dict[str, object]:
+        return {
+            "run_id": run_id,
+            "candidate_id": candidate_id,
+            "hypothesis_id": hypothesis_id,
+            "observed_stage": observed_stage,
+            "bucket_started_at": datetime.now(timezone.utc).isoformat(),
+            "bucket_ended_at": datetime.now(timezone.utc).isoformat(),
+            "account_label": "paper",
+            "runtime_strategy_name": "intraday-continuation-runtime",
+            "strategy_family": strategy_family,
+            "fill_count": 42,
+            "decision_count": 42,
+            "submitted_order_count": 42,
+            "cancelled_order_count": 0,
+            "rejected_order_count": 0,
+            "unfilled_order_count": 0,
+            "closed_trade_count": 6,
+            "open_position_count": 0,
+            "filled_notional": "50000",
+            "gross_strategy_pnl": "75",
+            "cost_amount": "15",
+            "net_strategy_pnl_after_costs": "60",
+            "post_cost_expectancy_bps": "12",
+            "ledger_schema_version": "torghut.runtime-ledger-bucket.v1",
+            "pnl_basis": "realized_strategy_pnl_after_explicit_costs",
+            "execution_policy_hash_counts": {"policy": 42},
+            "cost_model_hash_counts": {"cost": 42},
+            "lineage_hash_counts": {"lineage": 42},
+            "blockers": [],
+        }
+
+    def _runtime_ledger_observed(
+        self,
+        *,
+        run_id: str = "runtime-proof-1",
+        candidate_id: str = "cand-1",
+        hypothesis_id: str = "H-CONT-01",
+        observed_stage: str = "live",
+        strategy_family: str = "intraday_continuation",
+    ) -> dict[str, object]:
+        payload = self._runtime_ledger_bucket_payload(
+            run_id=run_id,
+            candidate_id=candidate_id,
+            hypothesis_id=hypothesis_id,
+            observed_stage=observed_stage,
+            strategy_family=strategy_family,
+        )
+        return {
+            "runtime_ledger_proof_present": True,
+            "runtime_ledger_candidate_id": payload["candidate_id"],
+            "runtime_ledger_observed_stage": payload["observed_stage"],
+            "runtime_ledger_runtime_strategy_name": payload["runtime_strategy_name"],
+            "runtime_ledger_strategy_family": payload["strategy_family"],
+            "runtime_ledger_fill_count": payload["fill_count"],
+            "runtime_ledger_submitted_order_count": payload["submitted_order_count"],
+            "runtime_ledger_closed_trade_count": payload["closed_trade_count"],
+            "runtime_ledger_open_position_count": payload["open_position_count"],
+            "runtime_ledger_filled_notional": payload["filled_notional"],
+            "runtime_ledger_net_strategy_pnl_after_costs": payload[
+                "net_strategy_pnl_after_costs"
+            ],
+            "runtime_ledger_post_cost_expectancy_bps": payload[
+                "post_cost_expectancy_bps"
+            ],
+            "runtime_ledger_blockers": payload["blockers"],
+            "runtime_ledger_execution_policy_hash_count": 42,
+            "runtime_ledger_cost_model_hash_count": 42,
+            "runtime_ledger_lineage_hash_count": 42,
+            "runtime_ledger_schema_version": payload["ledger_schema_version"],
+            "runtime_ledger_pnl_basis": payload["pnl_basis"],
+        }
+
+    def _runtime_ledger_bucket_row(
+        self,
+        *,
+        run_id: str = "runtime-proof-1",
+        candidate_id: str = "cand-1",
+        hypothesis_id: str = "H-CONT-01",
+        observed_stage: str = "live",
+        strategy_family: str = "intraday_continuation",
+        bucket_at: datetime | None = None,
+    ) -> StrategyRuntimeLedgerBucket:
+        payload = self._runtime_ledger_bucket_payload(
+            run_id=run_id,
+            candidate_id=candidate_id,
+            hypothesis_id=hypothesis_id,
+            observed_stage=observed_stage,
+            strategy_family=strategy_family,
+        )
+        observed_at = bucket_at or datetime.now(timezone.utc)
+        return StrategyRuntimeLedgerBucket(
+            run_id=run_id,
+            candidate_id=candidate_id,
+            hypothesis_id=hypothesis_id,
+            observed_stage=observed_stage,
+            bucket_started_at=observed_at,
+            bucket_ended_at=observed_at,
+            account_label="paper",
+            runtime_strategy_name=str(payload["runtime_strategy_name"]),
+            strategy_family=strategy_family,
+            fill_count=42,
+            decision_count=42,
+            submitted_order_count=42,
+            cancelled_order_count=0,
+            rejected_order_count=0,
+            unfilled_order_count=0,
+            closed_trade_count=6,
+            open_position_count=0,
+            filled_notional=Decimal("50000"),
+            gross_strategy_pnl=Decimal("75"),
+            cost_amount=Decimal("15"),
+            net_strategy_pnl_after_costs=Decimal("60"),
+            post_cost_expectancy_bps=Decimal("12"),
+            ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+            pnl_basis="realized_strategy_pnl_after_explicit_costs",
+            execution_policy_hash_counts={"policy": 42},
+            cost_model_hash_counts={"cost": 42},
+            lineage_hash_counts={"lineage": 42},
+            blockers_json=[],
+            payload_json=payload,
         )
 
     def _healthy_quant_status(self) -> dict[str, object]:
@@ -622,6 +766,221 @@ class TestSubmissionCouncil(TestCase):
                     expected_reasons.append("promotion_decision_not_allowed")
                 self.assertEqual(result[0]["reasons"], expected_reasons)
 
+    def test_runtime_certificate_merge_blocks_live_certificate_without_runtime_ledger(
+        self,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        result = _merge_runtime_certificate_evidence(
+            [
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "candidate_id": None,
+                    "strategy_family": "intraday_continuation",
+                    "capital_stage": "shadow",
+                    "capital_multiplier": "0",
+                    "promotion_eligible": False,
+                    "rollback_required": False,
+                    "reasons": ["drift_checks_missing"],
+                    "informational_reasons": [],
+                    "observed": {},
+                }
+            ],
+            evidence=[
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "metric_window": self._metric_window(
+                        run_id="runtime-proof-missing-ledger",
+                        candidate_id="cand-runtime",
+                    ),
+                    "promotion_decision": self._promotion_decision(
+                        run_id="runtime-proof-missing-ledger",
+                        candidate_id="cand-runtime",
+                    ),
+                }
+            ],
+            now=now,
+            max_age_seconds=3600,
+        )
+
+        self.assertFalse(result[0]["promotion_eligible"])
+        self.assertEqual(result[0]["capital_stage"], "shadow")
+        self.assertEqual(
+            result[0]["reasons"],
+            ["drift_checks_missing", "runtime_ledger_proof_missing"],
+        )
+        self.assertEqual(
+            result[0]["observed"]["runtime_window_rejection_reasons"],
+            ["runtime_ledger_proof_missing"],
+        )
+
+    def test_runtime_certificate_merge_accepts_runtime_item_ledger_observed_fallback(
+        self,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        result = _merge_runtime_certificate_evidence(
+            [
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "candidate_id": "cand-1",
+                    "strategy_family": "intraday_continuation",
+                    "capital_stage": "shadow",
+                    "capital_multiplier": "0",
+                    "promotion_eligible": False,
+                    "rollback_required": False,
+                    "reasons": ["drift_checks_missing"],
+                    "informational_reasons": [],
+                    "observed": self._runtime_ledger_observed(),
+                }
+            ],
+            evidence=[
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "metric_window": self._metric_window(),
+                    "promotion_decision": self._promotion_decision(),
+                }
+            ],
+            now=now,
+            max_age_seconds=3600,
+        )
+
+        self.assertTrue(result[0]["promotion_eligible"])
+        self.assertEqual(result[0]["capital_stage"], "0.10x canary")
+        self.assertEqual(result[0]["reasons"], [])
+        self.assertTrue(result[0]["observed"]["runtime_window_certificate_applied"])
+        self.assertEqual(
+            result[0]["informational_reasons"],
+            ["runtime_window_certificate_applied"],
+        )
+
+    def test_runtime_certificate_merge_rejects_invalid_runtime_ledger_payloads(
+        self,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        base_item = {
+            "hypothesis_id": "H-CONT-01",
+            "candidate_id": None,
+            "strategy_family": "intraday_continuation",
+            "capital_stage": "shadow",
+            "capital_multiplier": "0",
+            "promotion_eligible": False,
+            "rollback_required": False,
+            "reasons": ["drift_checks_missing"],
+            "informational_reasons": [],
+            "observed": {},
+        }
+        drop = object()
+        scenarios: list[tuple[str, dict[str, object], tuple[str, ...]]] = [
+            (
+                "hypothesis mismatch",
+                {"hypothesis_id": "H-OTHER"},
+                ("runtime_ledger_hypothesis_mismatch",),
+            ),
+            (
+                "run mismatch",
+                {"run_id": "runtime-proof-other"},
+                ("runtime_ledger_run_id_mismatch",),
+            ),
+            (
+                "candidate missing",
+                {"candidate_id": drop},
+                ("runtime_ledger_candidate_missing",),
+            ),
+            (
+                "candidate mismatch",
+                {"candidate_id": "cand-other"},
+                ("runtime_ledger_candidate_mismatch",),
+            ),
+            (
+                "stage not live",
+                {"observed_stage": "paper"},
+                ("runtime_ledger_stage_not_live",),
+            ),
+            (
+                "family mismatch",
+                {"strategy_family": "mean_reversion"},
+                ("runtime_ledger_strategy_family_mismatch",),
+            ),
+            (
+                "pnl basis missing",
+                {"pnl_basis": drop},
+                ("runtime_ledger_pnl_basis_missing",),
+            ),
+            (
+                "filled notional missing",
+                {"filled_notional": "0"},
+                ("runtime_ledger_filled_notional_missing",),
+            ),
+            (
+                "expectancy missing",
+                {"post_cost_expectancy_bps": drop},
+                ("runtime_ledger_expectancy_missing",),
+            ),
+            (
+                "expectancy nonpositive",
+                {"post_cost_expectancy_bps": "0"},
+                ("post_cost_expectancy_non_positive",),
+            ),
+            (
+                "closed trades missing",
+                {"closed_trade_count": 0},
+                ("runtime_ledger_closed_trades_missing",),
+            ),
+            ("open position", {"open_position_count": 1}, ("unclosed_position",)),
+            (
+                "orders missing",
+                {"submitted_order_count": 0},
+                ("runtime_order_lifecycle_missing",),
+            ),
+            (
+                "orders below metric",
+                {"submitted_order_count": 1},
+                ("runtime_ledger_submitted_order_count_mismatch",),
+            ),
+            (
+                "hash counts missing",
+                {
+                    "execution_policy_hash_counts": drop,
+                    "cost_model_hash_counts": drop,
+                    "lineage_hash_counts": drop,
+                },
+                (
+                    "runtime_ledger_execution_policy_hash_missing",
+                    "runtime_ledger_cost_model_hash_missing",
+                    "runtime_ledger_lineage_hash_missing",
+                ),
+            ),
+        ]
+
+        for label, updates, expected_reasons in scenarios:
+            with self.subTest(label=label):
+                payload = self._runtime_ledger_bucket_payload()
+                for key, value in updates.items():
+                    if value is drop:
+                        payload.pop(key, None)
+                    else:
+                        payload[key] = value
+                result = _merge_runtime_certificate_evidence(
+                    [dict(base_item)],
+                    evidence=[
+                        {
+                            "hypothesis_id": "H-CONT-01",
+                            "metric_window": self._metric_window(),
+                            "promotion_decision": self._promotion_decision(),
+                            "runtime_ledger_bucket": payload,
+                        }
+                    ],
+                    now=now,
+                    max_age_seconds=3600,
+                )
+
+                self.assertFalse(result[0]["promotion_eligible"])
+                self.assertEqual(result[0]["capital_stage"], "shadow")
+                rejection_reasons = result[0]["observed"][
+                    "runtime_window_rejection_reasons"
+                ]
+                for reason in expected_reasons:
+                    self.assertIn(reason, rejection_reasons)
+
     def test_hypothesis_runtime_summary_uses_fresh_imported_runtime_proof(
         self,
     ) -> None:
@@ -700,6 +1059,14 @@ class TestSubmissionCouncil(TestCase):
                     reason_summary="runtime_evidence_thresholds_satisfied",
                 )
             )
+            session.add(
+                self._runtime_ledger_bucket_row(
+                    run_id="runtime-proof-1",
+                    candidate_id="cand-runtime",
+                    hypothesis_id="H-CONT-01",
+                    bucket_at=now,
+                )
+            )
             session.commit()
 
             with (
@@ -746,6 +1113,88 @@ class TestSubmissionCouncil(TestCase):
             item["informational_reasons"],
             ["runtime_window_certificate_applied"],
         )
+
+    def test_load_latest_certificate_evidence_skips_mismatched_runtime_ledger_bucket(
+        self,
+    ) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        now = datetime.now(timezone.utc)
+
+        with session_local() as session:
+            session.add(
+                StrategyHypothesisMetricWindow(
+                    run_id="runtime-proof-1",
+                    candidate_id="cand-runtime",
+                    hypothesis_id="H-CONT-01",
+                    observed_stage="live",
+                    window_started_at=now,
+                    window_ended_at=now,
+                    market_session_count=3,
+                    decision_count=42,
+                    trade_count=42,
+                    order_count=42,
+                    avg_abs_slippage_bps="4.2",
+                    slippage_budget_bps="12",
+                    post_cost_expectancy_bps="8.5",
+                    continuity_ok=True,
+                    drift_ok=True,
+                    dependency_quorum_decision="allow",
+                    capital_stage="0.10x canary",
+                    payload_json={
+                        "post_cost_promotion_sample_count": 42,
+                        "post_cost_basis_counts": {
+                            "realized_strategy_pnl_after_explicit_costs": 42
+                        },
+                        "post_cost_expectancy_aggregation": "runtime_ledger_notional_weighted",
+                        "runtime_ledger_notional_weighted_sample_count": 42,
+                    },
+                )
+            )
+            session.add(
+                StrategyPromotionDecision(
+                    run_id="runtime-proof-1",
+                    candidate_id="cand-runtime",
+                    hypothesis_id="H-CONT-01",
+                    promotion_target="live",
+                    state="0.10x canary",
+                    allowed=True,
+                    reason_summary="runtime_evidence_thresholds_satisfied",
+                )
+            )
+            session.add(
+                self._runtime_ledger_bucket_row(
+                    run_id="runtime-proof-wrong",
+                    candidate_id="cand-runtime",
+                    hypothesis_id="H-CONT-01",
+                    bucket_at=now + timedelta(seconds=1),
+                )
+            )
+            session.add(
+                self._runtime_ledger_bucket_row(
+                    run_id="runtime-proof-1",
+                    candidate_id="cand-runtime",
+                    hypothesis_id="H-CONT-01",
+                    bucket_at=now,
+                )
+            )
+            session.commit()
+
+            evidence = _load_latest_certificate_evidence(
+                session,
+                hypothesis_ids=["H-CONT-01"],
+            )
+
+        self.assertEqual(len(evidence), 1)
+        runtime_ledger_bucket = evidence[0]["runtime_ledger_bucket"]
+        self.assertIsInstance(runtime_ledger_bucket, dict)
+        self.assertEqual(runtime_ledger_bucket["run_id"], "runtime-proof-1")
 
     def test_hypothesis_runtime_summary_counts_allowed_paper_runtime_readiness_without_capital_promotion(
         self,
@@ -2035,12 +2484,24 @@ class TestSubmissionCouncil(TestCase):
             ),
             hypothesis_summary={
                 "promotion_eligible_total": 1,
-                "capital_stage_totals": {"shadow": 1},
+                "capital_stage_totals": {"0.10x canary": 1},
                 "dependency_quorum": {
                     "decision": "allow",
                     "reasons": [],
                     "message": "ready",
                 },
+                "items": [
+                    {
+                        "hypothesis_id": "H-CONT-01",
+                        "candidate_id": "cand-1",
+                        "lane_id": "continuation",
+                        "strategy_family": "intraday_continuation",
+                        "promotion_eligible": True,
+                        "capital_stage": "0.10x canary",
+                        "reasons": [],
+                        "observed": self._runtime_ledger_observed(),
+                    }
+                ],
             },
             empirical_jobs_status={"ready": True, "status": "healthy"},
             quant_health_status=self._healthy_quant_status(),
@@ -2049,6 +2510,7 @@ class TestSubmissionCouncil(TestCase):
                     "hypothesis_id": "H-CONT-01",
                     "metric_window": self._metric_window(),
                     "promotion_decision": self._promotion_decision(),
+                    "runtime_ledger_bucket": self._runtime_ledger_bucket_payload(),
                 }
             ],
         )

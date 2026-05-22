@@ -142,6 +142,10 @@ def _safe_text(value: object) -> str | None:
     return text or None
 
 
+def _safe_attr_text(value: object, name: str) -> str | None:
+    return _safe_text(cast(object, getattr(value, name, None)))
+
+
 def _normalize_reason_codes(values: Sequence[object]) -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()
@@ -537,6 +541,273 @@ def _runtime_ledger_bucket_payload(
     }
 
 
+def _normalized_strategy_family(value: object) -> str | None:
+    text = _safe_text(value)
+    return text.replace("-", "_").lower() if text is not None else None
+
+
+def _runtime_ledger_hash_count(
+    payload: Mapping[str, object],
+    *,
+    payload_key: str,
+    observed: Mapping[str, object],
+    observed_key: str,
+) -> int:
+    payload_counts = payload.get(payload_key)
+    if isinstance(payload_counts, Mapping):
+        typed_counts = cast(Mapping[str, object], payload_counts)
+        total = 0
+        for raw_value in typed_counts.values():
+            count = _safe_int(raw_value)
+            if count > 0:
+                total += count
+        return total
+    return _safe_int(observed.get(observed_key))
+
+
+def _runtime_ledger_payload_from_runtime_item(
+    runtime_item: Mapping[str, object],
+) -> dict[str, object]:
+    observed_raw = runtime_item.get("observed")
+    observed = (
+        cast(Mapping[str, object], observed_raw)
+        if isinstance(observed_raw, Mapping)
+        else cast(Mapping[str, object], {})
+    )
+    if not bool(observed.get("runtime_ledger_proof_present")):
+        return {}
+    return {
+        "candidate_id": observed.get("runtime_ledger_candidate_id"),
+        "hypothesis_id": runtime_item.get("hypothesis_id"),
+        "observed_stage": observed.get("runtime_ledger_observed_stage"),
+        "runtime_strategy_name": observed.get("runtime_ledger_runtime_strategy_name"),
+        "strategy_family": observed.get("runtime_ledger_strategy_family")
+        or runtime_item.get("strategy_family"),
+        "fill_count": observed.get("runtime_ledger_fill_count"),
+        "submitted_order_count": observed.get("runtime_ledger_submitted_order_count"),
+        "closed_trade_count": observed.get("runtime_ledger_closed_trade_count"),
+        "open_position_count": observed.get("runtime_ledger_open_position_count"),
+        "filled_notional": observed.get("runtime_ledger_filled_notional"),
+        "net_strategy_pnl_after_costs": observed.get(
+            "runtime_ledger_net_strategy_pnl_after_costs"
+        ),
+        "post_cost_expectancy_bps": observed.get(
+            "runtime_ledger_post_cost_expectancy_bps"
+        ),
+        "blockers": observed.get("runtime_ledger_blockers"),
+        "ledger_schema_version": observed.get("runtime_ledger_schema_version"),
+        "pnl_basis": observed.get("runtime_ledger_pnl_basis"),
+    }
+
+
+def _certificate_runtime_ledger_payload(
+    *,
+    evidence_row: Mapping[str, object],
+    runtime_item: Mapping[str, object],
+) -> dict[str, object]:
+    payload = evidence_row.get("runtime_ledger_bucket")
+    if isinstance(payload, Mapping):
+        return dict(cast(Mapping[str, object], payload))
+    return _runtime_ledger_payload_from_runtime_item(runtime_item)
+
+
+def _certificate_runtime_ledger_reason_codes(
+    *,
+    evidence_row: Mapping[str, object],
+    runtime_item: Mapping[str, object],
+    metric_window: StrategyHypothesisMetricWindow,
+    promotion_decision: StrategyPromotionDecision,
+) -> list[str]:
+    ledger_payload = _certificate_runtime_ledger_payload(
+        evidence_row=evidence_row,
+        runtime_item=runtime_item,
+    )
+    if not ledger_payload:
+        return ["runtime_ledger_proof_missing"]
+
+    reasons: list[str] = []
+    observed_raw = runtime_item.get("observed")
+    observed = (
+        cast(Mapping[str, object], observed_raw)
+        if isinstance(observed_raw, Mapping)
+        else cast(Mapping[str, object], {})
+    )
+    ledger_hypothesis_id = _safe_text(
+        ledger_payload.get("hypothesis_id") or runtime_item.get("hypothesis_id")
+    )
+    metric_hypothesis_id = (
+        _safe_attr_text(metric_window, "hypothesis_id")
+        or _safe_text(evidence_row.get("hypothesis_id"))
+        or _safe_text(runtime_item.get("hypothesis_id"))
+    )
+    if ledger_hypothesis_id != metric_hypothesis_id:
+        reasons.append("runtime_ledger_hypothesis_mismatch")
+
+    ledger_run_id = _safe_text(ledger_payload.get("run_id"))
+    metric_run_id = _safe_attr_text(metric_window, "run_id")
+    if (
+        ledger_run_id is not None
+        and metric_run_id is not None
+        and ledger_run_id != metric_run_id
+    ):
+        reasons.append("runtime_ledger_run_id_mismatch")
+
+    certificate_candidate_id = (
+        _safe_attr_text(metric_window, "candidate_id")
+        or _safe_attr_text(promotion_decision, "candidate_id")
+        or _safe_text(runtime_item.get("candidate_id"))
+    )
+    ledger_candidate_id = _safe_text(
+        ledger_payload.get("candidate_id")
+        or observed.get("runtime_ledger_candidate_id")
+        or runtime_item.get("candidate_id")
+    )
+    if ledger_candidate_id is None:
+        reasons.append("runtime_ledger_candidate_missing")
+    elif (
+        certificate_candidate_id is not None
+        and ledger_candidate_id != certificate_candidate_id
+    ):
+        reasons.append("runtime_ledger_candidate_mismatch")
+
+    if _safe_text(ledger_payload.get("observed_stage")) != "live":
+        reasons.append("runtime_ledger_stage_not_live")
+
+    ledger_family = _normalized_strategy_family(ledger_payload.get("strategy_family"))
+    runtime_family = _normalized_strategy_family(runtime_item.get("strategy_family"))
+    if (
+        ledger_family is not None
+        and runtime_family is not None
+        and ledger_family != runtime_family
+    ):
+        reasons.append("runtime_ledger_strategy_family_mismatch")
+
+    blockers = [
+        str(reason).strip()
+        for reason in cast(Sequence[object], ledger_payload.get("blockers") or [])
+        if str(reason).strip()
+    ]
+    reasons.extend(blockers)
+
+    if (
+        _safe_text(ledger_payload.get("pnl_basis"))
+        != "realized_strategy_pnl_after_explicit_costs"
+    ):
+        reasons.append("runtime_ledger_pnl_basis_missing")
+
+    filled_notional = _safe_decimal(ledger_payload.get("filled_notional"))
+    if filled_notional is None or filled_notional <= 0:
+        reasons.append("runtime_ledger_filled_notional_missing")
+
+    expectancy_bps = _safe_decimal(ledger_payload.get("post_cost_expectancy_bps"))
+    if expectancy_bps is None:
+        reasons.append("runtime_ledger_expectancy_missing")
+    elif expectancy_bps <= 0:
+        reasons.append("post_cost_expectancy_non_positive")
+
+    if _safe_int(ledger_payload.get("closed_trade_count")) <= 0:
+        reasons.append("runtime_ledger_closed_trades_missing")
+    if _safe_int(ledger_payload.get("open_position_count")) > 0:
+        reasons.append("unclosed_position")
+
+    submitted_order_count = _safe_int(ledger_payload.get("submitted_order_count"))
+    if submitted_order_count <= 0:
+        reasons.append("runtime_order_lifecycle_missing")
+    elif submitted_order_count < _safe_int(
+        cast(object, getattr(metric_window, "order_count", None))
+    ):
+        reasons.append("runtime_ledger_submitted_order_count_mismatch")
+
+    if (
+        _runtime_ledger_hash_count(
+            ledger_payload,
+            payload_key="execution_policy_hash_counts",
+            observed=observed,
+            observed_key="runtime_ledger_execution_policy_hash_count",
+        )
+        <= 0
+    ):
+        reasons.append("runtime_ledger_execution_policy_hash_missing")
+    if (
+        _runtime_ledger_hash_count(
+            ledger_payload,
+            payload_key="cost_model_hash_counts",
+            observed=observed,
+            observed_key="runtime_ledger_cost_model_hash_count",
+        )
+        <= 0
+    ):
+        reasons.append("runtime_ledger_cost_model_hash_missing")
+    if (
+        _runtime_ledger_hash_count(
+            ledger_payload,
+            payload_key="lineage_hash_counts",
+            observed=observed,
+            observed_key="runtime_ledger_lineage_hash_count",
+        )
+        <= 0
+    ):
+        reasons.append("runtime_ledger_lineage_hash_missing")
+
+    return _normalize_reason_codes(reasons)
+
+
+def _mark_runtime_certificate_rejected(
+    updated: dict[str, object],
+    *,
+    metric_window: StrategyHypothesisMetricWindow,
+    promotion_decision: StrategyPromotionDecision,
+    reason_codes: Sequence[object],
+) -> dict[str, object]:
+    normalized_reasons = _normalize_reason_codes(reason_codes)
+    observed_raw = updated.get("observed")
+    observed = (
+        dict(cast(Mapping[str, object], observed_raw))
+        if isinstance(observed_raw, Mapping)
+        else {}
+    )
+    observed.update(
+        {
+            "runtime_window_certificate_rejected": True,
+            "runtime_window_rejection_reasons": normalized_reasons,
+            "metric_window_id": str(metric_window.id),
+            "promotion_decision_id": str(promotion_decision.id),
+            "metric_window_market_session_count": metric_window.market_session_count,
+            "metric_window_decision_count": metric_window.decision_count,
+            "metric_window_trade_count": metric_window.trade_count,
+            "metric_window_order_count": metric_window.order_count,
+            "metric_window_avg_abs_slippage_bps": metric_window.avg_abs_slippage_bps,
+            "metric_window_post_cost_expectancy_bps": (
+                metric_window.post_cost_expectancy_bps
+            ),
+        }
+    )
+    prior_reasons = [
+        str(reason).strip()
+        for reason in cast(Sequence[object], updated.get("reasons") or [])
+        if str(reason).strip()
+    ]
+    updated["reasons"] = _normalize_reason_codes([*prior_reasons, *normalized_reasons])
+    updated["informational_reasons"] = sorted(
+        {
+            *[
+                str(reason)
+                for reason in cast(
+                    Sequence[object],
+                    updated.get("informational_reasons") or [],
+                )
+                if str(reason).strip()
+            ],
+            "runtime_window_certificate_rejected",
+        }
+    )
+    updated["promotion_eligible"] = False
+    updated["promotion_decision_id"] = str(promotion_decision.id)
+    updated["metric_window_id"] = str(metric_window.id)
+    updated["observed"] = observed
+    return updated
+
+
 def _load_latest_runtime_ledger_summary(
     session: Session,
     *,
@@ -733,6 +1004,18 @@ def _load_latest_certificate_evidence(
     for row in promotion_rows:
         latest_promotions.setdefault(row.hypothesis_id, []).append(row)
 
+    latest_runtime_ledgers: dict[str, list[StrategyRuntimeLedgerBucket]] = {}
+    runtime_ledger_rows = session.execute(
+        select(StrategyRuntimeLedgerBucket)
+        .where(StrategyRuntimeLedgerBucket.hypothesis_id.in_(normalized_ids))
+        .order_by(
+            StrategyRuntimeLedgerBucket.bucket_ended_at.desc(),
+            StrategyRuntimeLedgerBucket.created_at.desc(),
+        )
+    ).scalars()
+    for row in runtime_ledger_rows:
+        latest_runtime_ledgers.setdefault(row.hypothesis_id, []).append(row)
+
     evidence: list[dict[str, object]] = []
     for hypothesis_id in normalized_ids:
         metric_window = latest_windows.get(hypothesis_id)
@@ -744,11 +1027,24 @@ def _load_latest_certificate_evidence(
             ):
                 promotion_decision = decision
                 break
+        runtime_ledger_bucket = None
+        for ledger in latest_runtime_ledgers.get(hypothesis_id, []):
+            if metric_window is not None and (
+                _safe_text(ledger.run_id) != _safe_text(metric_window.run_id)
+                or _safe_text(ledger.candidate_id)
+                != _safe_text(metric_window.candidate_id)
+                or _safe_text(ledger.observed_stage)
+                != _safe_text(metric_window.observed_stage)
+            ):
+                continue
+            runtime_ledger_bucket = _runtime_ledger_bucket_payload(ledger)
+            break
         evidence.append(
             {
                 "hypothesis_id": hypothesis_id,
                 "metric_window": metric_window,
                 "promotion_decision": promotion_decision,
+                "runtime_ledger_bucket": runtime_ledger_bucket,
             }
         )
     return evidence
@@ -945,95 +1241,22 @@ def _merge_runtime_certificate_evidence(
             promotion_decision
         )
         if decision_blockers:
-            observed = (
-                dict(cast(Mapping[str, Any], updated.get("observed")))
-                if isinstance(updated.get("observed"), Mapping)
-                else {}
+            updated = _mark_runtime_certificate_rejected(
+                updated,
+                metric_window=metric_window,
+                promotion_decision=promotion_decision,
+                reason_codes=decision_blockers,
             )
-            observed.update(
-                {
-                    "runtime_window_certificate_rejected": True,
-                    "runtime_window_rejection_reasons": decision_blockers,
-                    "metric_window_id": str(metric_window.id),
-                    "promotion_decision_id": str(promotion_decision.id),
-                    "metric_window_market_session_count": metric_window.market_session_count,
-                    "metric_window_decision_count": metric_window.decision_count,
-                    "metric_window_trade_count": metric_window.trade_count,
-                    "metric_window_order_count": metric_window.order_count,
-                    "metric_window_avg_abs_slippage_bps": metric_window.avg_abs_slippage_bps,
-                    "metric_window_post_cost_expectancy_bps": metric_window.post_cost_expectancy_bps,
-                }
-            )
-            prior_reasons = [
-                str(reason).strip()
-                for reason in cast(Sequence[object], updated.get("reasons") or [])
-                if str(reason).strip()
-            ]
-            updated["reasons"] = _normalize_reason_codes(
-                [*prior_reasons, *decision_blockers]
-            )
-            updated["informational_reasons"] = sorted(
-                {
-                    *[
-                        str(reason)
-                        for reason in cast(
-                            Sequence[object],
-                            updated.get("informational_reasons") or [],
-                        )
-                        if str(reason).strip()
-                    ],
-                    "runtime_window_certificate_rejected",
-                }
-            )
-            updated["promotion_eligible"] = False
-            updated["promotion_decision_id"] = str(promotion_decision.id)
-            updated["metric_window_id"] = str(metric_window.id)
-            updated["observed"] = observed
             merged.append(updated)
             continue
         activity_reason_codes = _metric_window_activity_reason_codes(metric_window)
         if activity_reason_codes:
-            observed = (
-                dict(cast(Mapping[str, Any], updated.get("observed")))
-                if isinstance(updated.get("observed"), Mapping)
-                else {}
+            updated = _mark_runtime_certificate_rejected(
+                updated,
+                metric_window=metric_window,
+                promotion_decision=promotion_decision,
+                reason_codes=activity_reason_codes,
             )
-            observed.update(
-                {
-                    "runtime_window_certificate_rejected": True,
-                    "runtime_window_rejection_reasons": activity_reason_codes,
-                    "metric_window_id": str(metric_window.id),
-                    "promotion_decision_id": str(promotion_decision.id),
-                    "metric_window_market_session_count": metric_window.market_session_count,
-                    "metric_window_decision_count": metric_window.decision_count,
-                    "metric_window_trade_count": metric_window.trade_count,
-                    "metric_window_order_count": metric_window.order_count,
-                    "metric_window_avg_abs_slippage_bps": metric_window.avg_abs_slippage_bps,
-                    "metric_window_post_cost_expectancy_bps": metric_window.post_cost_expectancy_bps,
-                }
-            )
-            prior_reasons = [
-                str(reason).strip()
-                for reason in cast(Sequence[object], updated.get("reasons") or [])
-                if str(reason).strip()
-            ]
-            updated["reasons"] = _normalize_reason_codes(
-                [*prior_reasons, *activity_reason_codes]
-            )
-            updated["informational_reasons"] = sorted(
-                {
-                    *[
-                        str(reason)
-                        for reason in cast(
-                            Sequence[object],
-                            updated.get("informational_reasons") or [],
-                        )
-                        if str(reason).strip()
-                    ],
-                    "runtime_window_certificate_rejected",
-                }
-            )
-            updated["observed"] = observed
             merged.append(updated)
             continue
 
@@ -1113,6 +1336,21 @@ def _merge_runtime_certificate_evidence(
             merged.append(updated)
             continue
         if _stage_rank(capital_stage) <= _stage_rank("shadow"):
+            merged.append(updated)
+            continue
+        runtime_ledger_reason_codes = _certificate_runtime_ledger_reason_codes(
+            evidence_row=row,
+            runtime_item=updated,
+            metric_window=metric_window,
+            promotion_decision=promotion_decision,
+        )
+        if runtime_ledger_reason_codes:
+            updated = _mark_runtime_certificate_rejected(
+                updated,
+                metric_window=metric_window,
+                promotion_decision=promotion_decision,
+                reason_codes=runtime_ledger_reason_codes,
+            )
             merged.append(updated)
             continue
 
@@ -1296,7 +1534,7 @@ def _evaluate_certificate_candidates(
             continue
         manifest = cast(Mapping[str, Any], manifests.get(hypothesis_id) or {})
         runtime_item = cast(
-            Mapping[str, Any], runtime_by_hypothesis.get(hypothesis_id) or {}
+            Mapping[str, object], runtime_by_hypothesis.get(hypothesis_id) or {}
         )
         metric_window = cast(
             StrategyHypothesisMetricWindow | None, row.get("metric_window")
@@ -1333,6 +1571,18 @@ def _evaluate_certificate_candidates(
             if _safe_text(metric_window.dependency_quorum_decision) != "allow":
                 reasons.append("hypothesis_window_dependency_quorum_not_allow")
             reasons.extend(_metric_window_activity_reason_codes(metric_window))
+            if (
+                _safe_text(getattr(metric_window, "observed_stage", None)) == "live"
+                and promotion_decision is not None
+            ):
+                reasons.extend(
+                    _certificate_runtime_ledger_reason_codes(
+                        evidence_row=row,
+                        runtime_item=runtime_item,
+                        metric_window=metric_window,
+                        promotion_decision=promotion_decision,
+                    )
+                )
 
         if promotion_decision is None:
             reasons.append("promotion_decision_evidence_missing")
