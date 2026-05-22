@@ -103,6 +103,29 @@ _LOSS_REPAIR_STRATEGY_EXPOSURE_KEYS = (
     "max_notional_per_trade",
     "max_position_pct_equity",
 )
+_CONSISTENCY_REPAIR_TRIGGER_REASONS = frozenset(
+    {
+        "active_day_ratio_below_min",
+        "avg_daily_notional_below_min",
+        "best_day_share_above_max",
+    }
+)
+_CONSISTENCY_REPAIR_UNSAFE_REASONS = frozenset(
+    {
+        "gross_exposure_pct_equity_above_max",
+        "min_cash_below_min",
+        "negative_cash_observation_count_above_max",
+    }
+)
+_CONSISTENCY_REPAIR_ENTRY_KEYS = (
+    "max_entries_per_session",
+    "max_entries_per_day",
+)
+_CONSISTENCY_REPAIR_BREADTH_KEYS = ("top_n",)
+_CONSISTENCY_REPAIR_COOLDOWN_KEYS = (
+    "entry_cooldown_seconds",
+    "signal_cooldown_seconds",
+)
 _WorklistItem: TypeAlias = tuple[
     dict[str, Any],
     dict[str, Any],
@@ -542,6 +565,21 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=1,
         help="How many loss/drawdown repair children to branch on per failed candidate.",
+    )
+    parser.add_argument(
+        "--consistency-repair-iterations",
+        type=int,
+        default=0,
+        help=(
+            "Generate bounded child candidates that increase activity or breadth "
+            "after positive capital-safe candidates fail consistency gates."
+        ),
+    )
+    parser.add_argument(
+        "--consistency-repair-candidates",
+        type=int,
+        default=2,
+        help="How many consistency repair children to branch on per positive near-miss.",
     )
     parser.add_argument(
         "--train-screening",
@@ -2860,6 +2898,150 @@ def _generate_loss_repair_children(
     return children
 
 
+def _positive_capital_safe_summary(full_window_summary: Mapping[str, Any]) -> bool:
+    net_per_day = _decimal_or_none(
+        full_window_summary.get("net_per_day")
+        or full_window_summary.get("net_pnl_per_day")
+    )
+    max_gross = _decimal_or_none(
+        full_window_summary.get("max_gross_exposure_pct_equity")
+    )
+    min_cash = _decimal_or_none(full_window_summary.get("min_cash"))
+    if net_per_day is None or max_gross is None or min_cash is None:
+        return False
+    if net_per_day <= 0 or max_gross > 1 or min_cash < 0:
+        return False
+    try:
+        negative_cash_count = int(
+            full_window_summary.get("negative_cash_observation_count") or 0
+        )
+    except (TypeError, ValueError):
+        negative_cash_count = 1
+    return negative_cash_count <= 0
+
+
+def _consistency_repair_trigger_reason(
+    *,
+    hard_vetoes: Sequence[Any],
+    full_window_summary: Mapping[str, Any],
+) -> str | None:
+    reasons = [str(raw_reason) for raw_reason in hard_vetoes]
+    if any(reason in _CONSISTENCY_REPAIR_UNSAFE_REASONS for reason in reasons):
+        return None
+    if not _positive_capital_safe_summary(full_window_summary):
+        return None
+    for reason in reasons:
+        if reason in _CONSISTENCY_REPAIR_TRIGGER_REASONS:
+            return reason
+    return None
+
+
+def _increment_integer_candidate_param(
+    *,
+    params: dict[str, Any],
+    strategy_params: Mapping[str, Any],
+    keys: Sequence[str],
+) -> bool:
+    for key in keys:
+        if key not in params and key not in strategy_params:
+            continue
+        current = _decimal_or_none(params.get(key, strategy_params.get(key)))
+        if current is None or current < 1:
+            continue
+        params[key] = _decimal_payload(current.to_integral_value() + 1)
+        return True
+    return False
+
+
+def _halve_positive_integer_candidate_param(
+    *,
+    params: dict[str, Any],
+    strategy_params: Mapping[str, Any],
+    keys: Sequence[str],
+) -> bool:
+    for key in keys:
+        if key not in params and key not in strategy_params:
+            continue
+        current = _decimal_or_none(params.get(key, strategy_params.get(key)))
+        if current is None or current <= 1:
+            continue
+        repaired = max(Decimal("1"), (current / Decimal("2")).quantize(Decimal("1")))
+        params[key] = _decimal_payload(repaired)
+        return True
+    return False
+
+
+def _generate_consistency_repair_children(
+    *,
+    params_candidate: Mapping[str, Any],
+    strategy_overrides: Mapping[str, Any],
+    candidate_configmap: Mapping[str, Any],
+    strategy_name: str,
+    hard_vetoes: Sequence[Any],
+    full_window_summary: Mapping[str, Any],
+    branch_count: int,
+) -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
+    trigger_reason = _consistency_repair_trigger_reason(
+        hard_vetoes=hard_vetoes,
+        full_window_summary=full_window_summary,
+    )
+    if trigger_reason is None:
+        return []
+
+    _, strategy_params = _strategy_item_from_configmap(
+        configmap_payload=candidate_configmap,
+        strategy_name=strategy_name,
+    )
+    parent_key = _candidate_search_key(
+        params_candidate=params_candidate,
+        strategy_overrides=strategy_overrides,
+    )
+    children: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+    seen: set[str] = {parent_key}
+
+    def add_child(label: str, mutator: Callable[[dict[str, Any]], bool]) -> None:
+        if len(children) >= max(1, branch_count):
+            return
+        next_params = dict(params_candidate)
+        next_overrides = dict(strategy_overrides)
+        if not mutator(next_params):
+            return
+        child_key = _candidate_search_key(
+            params_candidate=next_params,
+            strategy_overrides=next_overrides,
+        )
+        if child_key in seen:
+            return
+        seen.add(child_key)
+        children.append((f"{label}:{trigger_reason}", next_params, next_overrides))
+
+    add_child(
+        "consistency_entries",
+        lambda next_params: _increment_integer_candidate_param(
+            params=next_params,
+            strategy_params=strategy_params,
+            keys=_CONSISTENCY_REPAIR_ENTRY_KEYS,
+        ),
+    )
+    add_child(
+        "consistency_breadth",
+        lambda next_params: _increment_integer_candidate_param(
+            params=next_params,
+            strategy_params=strategy_params,
+            keys=_CONSISTENCY_REPAIR_BREADTH_KEYS,
+        ),
+    )
+    add_child(
+        "consistency_cooldown",
+        lambda next_params: _halve_positive_integer_candidate_param(
+            params=next_params,
+            strategy_params=strategy_params,
+            keys=_CONSISTENCY_REPAIR_COOLDOWN_KEYS,
+        ),
+    )
+    return children
+
+
 def _rank_scored_candidates(scored: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not scored:
         return []
@@ -3497,7 +3679,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     override_candidate,
                     prune_iteration,
                     pruned_symbol,
-                    loss_repair_reason,
+                    repair_reason,
                     parent_candidate_id,
                 ) = worklist.popleft()
                 candidate_key = _candidate_search_key(
@@ -3837,8 +4019,11 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                 }
                 if pruned_symbol is not None:
                     candidate_payload["pruned_symbol"] = pruned_symbol
-                if loss_repair_reason is not None:
-                    candidate_payload["loss_repair_reason"] = loss_repair_reason
+                if repair_reason is not None:
+                    if repair_reason.startswith("consistency_"):
+                        candidate_payload["consistency_repair_reason"] = repair_reason
+                    else:
+                        candidate_payload["loss_repair_reason"] = repair_reason
                 if parent_candidate_id is not None:
                     candidate_payload["parent_candidate_id"] = parent_candidate_id
                 symbol_contributions = _symbol_contributions_from_replay_payload(
@@ -4304,6 +4489,34 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                                 prune_iteration + 1,
                                 None,
                                 repair_reason,
+                                str(candidate_payload["candidate_id"]),
+                            )
+                        )
+                if prune_iteration < max(
+                    0, int(getattr(args, "consistency_repair_iterations", 0))
+                ):
+                    for (
+                        consistency_reason,
+                        next_params,
+                        next_override,
+                    ) in _generate_consistency_repair_children(
+                        params_candidate=params_candidate,
+                        strategy_overrides=override_candidate,
+                        candidate_configmap=candidate_configmap,
+                        strategy_name=strategy_name,
+                        hard_vetoes=hard_vetoes,
+                        full_window_summary=full_window_summary,
+                        branch_count=max(
+                            1, int(getattr(args, "consistency_repair_candidates", 1))
+                        ),
+                    ):
+                        worklist.append(
+                            (
+                                next_params,
+                                next_override,
+                                prune_iteration + 1,
+                                None,
+                                consistency_reason,
                                 str(candidate_payload["candidate_id"]),
                             )
                         )

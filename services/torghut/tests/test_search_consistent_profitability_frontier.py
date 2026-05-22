@@ -1723,6 +1723,37 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(shortlist[0]["hard_vetoes"], ["min_cash_below_min"])
         self.assertTrue(shortlist[0]["vetoed"])
 
+    def test_economic_shortlist_metric_helpers_handle_missing_and_invalid_values(
+        self,
+    ) -> None:
+        self.assertEqual(frontier._safe_decimal(None), Decimal("0"))
+        self.assertEqual(frontier._safe_decimal("not-a-decimal"), Decimal("0"))
+        self.assertEqual(
+            frontier._candidate_metric_value(
+                {},
+                scorecard_key="net_pnl_per_day",
+                full_window_key="net_per_day",
+                default="7",
+            ),
+            "7",
+        )
+
+        shortlist = frontier._build_economic_shortlist(
+            [
+                {
+                    "candidate_id": "artifact-only",
+                    "objective_scorecard": {},
+                    "full_window": {},
+                    "ranking": {},
+                    "replay_artifact_refs": ["/tmp/artifact.json"],
+                }
+            ],
+            top_n=1,
+        )
+
+        self.assertEqual(shortlist[0]["candidate_id"], "artifact-only")
+        self.assertEqual(shortlist[0]["net_pnl_per_day"], "0")
+
     def test_generate_symbol_prune_children_removes_worst_symbols_from_universe(
         self,
     ) -> None:
@@ -1810,6 +1841,190 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         )
 
         self.assertEqual(children, [])
+
+    def test_generate_consistency_repair_children_increases_activity_and_breadth(
+        self,
+    ) -> None:
+        configmap_payload = {
+            "data": {
+                "strategies.yaml": yaml.safe_dump(
+                    {
+                        "strategies": [
+                            {
+                                "name": "microbar-cross-sectional-pairs-v1",
+                                "params": {
+                                    "max_entries_per_session": "1",
+                                    "top_n": "2",
+                                    "entry_cooldown_seconds": "300",
+                                },
+                            }
+                        ],
+                    },
+                    sort_keys=False,
+                )
+            }
+        }
+
+        children = frontier._generate_consistency_repair_children(
+            params_candidate={},
+            strategy_overrides={},
+            candidate_configmap=configmap_payload,
+            strategy_name="microbar-cross-sectional-pairs-v1",
+            hard_vetoes=[
+                "active_day_ratio_below_min",
+                "avg_daily_notional_below_min",
+                "best_day_share_above_max",
+            ],
+            full_window_summary={
+                "net_per_day": "97",
+                "max_gross_exposure_pct_equity": "0.97",
+                "min_cash": "935",
+                "negative_cash_observation_count": "0",
+            },
+            branch_count=3,
+        )
+
+        self.assertEqual(
+            children[0][0], "consistency_entries:active_day_ratio_below_min"
+        )
+        self.assertEqual(children[0][1], {"max_entries_per_session": "2"})
+        self.assertEqual(children[0][2], {})
+        self.assertEqual(
+            children[1][0], "consistency_breadth:active_day_ratio_below_min"
+        )
+        self.assertEqual(children[1][1], {"top_n": "3"})
+        self.assertEqual(
+            children[2][0], "consistency_cooldown:active_day_ratio_below_min"
+        )
+        self.assertEqual(children[2][1], {"entry_cooldown_seconds": "150"})
+
+    def test_generate_consistency_repair_children_rejects_unsafe_parent(
+        self,
+    ) -> None:
+        children = frontier._generate_consistency_repair_children(
+            params_candidate={"max_entries_per_session": "1"},
+            strategy_overrides={},
+            candidate_configmap={},
+            strategy_name="microbar-cross-sectional-pairs-v1",
+            hard_vetoes=["active_day_ratio_below_min", "min_cash_below_min"],
+            full_window_summary={
+                "net_per_day": "97",
+                "max_gross_exposure_pct_equity": "1.2",
+                "min_cash": "-1",
+            },
+            branch_count=3,
+        )
+
+        self.assertEqual(children, [])
+
+    def test_consistency_repair_helpers_reject_non_actionable_inputs(self) -> None:
+        self.assertFalse(frontier._positive_capital_safe_summary({}))
+        self.assertFalse(
+            frontier._positive_capital_safe_summary(
+                {
+                    "net_per_day": "-1",
+                    "max_gross_exposure_pct_equity": "0.9",
+                    "min_cash": "10",
+                }
+            )
+        )
+        self.assertFalse(
+            frontier._positive_capital_safe_summary(
+                {
+                    "net_per_day": "1",
+                    "max_gross_exposure_pct_equity": "0.9",
+                    "min_cash": "10",
+                    "negative_cash_observation_count": "bad",
+                }
+            )
+        )
+        self.assertIsNone(
+            frontier._consistency_repair_trigger_reason(
+                hard_vetoes=["avg_daily_notional_below_min"],
+                full_window_summary={},
+            )
+        )
+        self.assertIsNone(
+            frontier._consistency_repair_trigger_reason(
+                hard_vetoes=["profit_factor_below_min"],
+                full_window_summary={
+                    "net_per_day": "1",
+                    "max_gross_exposure_pct_equity": "0.9",
+                    "min_cash": "10",
+                },
+            )
+        )
+        self.assertFalse(
+            frontier._increment_integer_candidate_param(
+                params={},
+                strategy_params={"ignored": "1", "max_entries_per_session": "bad"},
+                keys=("missing", "max_entries_per_session"),
+            )
+        )
+        self.assertFalse(
+            frontier._halve_positive_integer_candidate_param(
+                params={},
+                strategy_params={"ignored": "1", "entry_cooldown_seconds": "1"},
+                keys=("missing", "entry_cooldown_seconds"),
+            )
+        )
+
+        self.assertEqual(
+            frontier._generate_consistency_repair_children(
+                params_candidate={},
+                strategy_overrides={},
+                candidate_configmap={},
+                strategy_name="microbar-cross-sectional-pairs-v1",
+                hard_vetoes=["active_day_ratio_below_min"],
+                full_window_summary={
+                    "net_per_day": "1",
+                    "max_gross_exposure_pct_equity": "0.9",
+                    "min_cash": "10",
+                },
+                branch_count=3,
+            ),
+            [],
+        )
+
+    def test_consistency_repair_children_are_branch_count_bounded(self) -> None:
+        configmap_payload = {
+            "data": {
+                "strategies.yaml": yaml.safe_dump(
+                    {
+                        "strategies": [
+                            {
+                                "name": "microbar-cross-sectional-pairs-v1",
+                                "params": {
+                                    "max_entries_per_session": "1",
+                                    "top_n": "2",
+                                    "entry_cooldown_seconds": "300",
+                                },
+                            }
+                        ],
+                    },
+                    sort_keys=False,
+                )
+            }
+        }
+
+        children = frontier._generate_consistency_repair_children(
+            params_candidate={},
+            strategy_overrides={},
+            candidate_configmap=configmap_payload,
+            strategy_name="microbar-cross-sectional-pairs-v1",
+            hard_vetoes=["active_day_ratio_below_min"],
+            full_window_summary={
+                "net_per_day": "97",
+                "max_gross_exposure_pct_equity": "0.97",
+                "min_cash": "935",
+            },
+            branch_count=1,
+        )
+
+        self.assertEqual(len(children), 1)
+        self.assertEqual(
+            children[0][0], "consistency_entries:active_day_ratio_below_min"
+        )
 
     def test_loss_repair_configmap_lookup_handles_invalid_shapes(self) -> None:
         invalid_payloads = [
