@@ -651,6 +651,91 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertGreaterEqual(penalties, Decimal("600"))
         self.assertEqual(summary["negative_days"], 2)
 
+    def test_consistency_penalty_caps_impossible_count_activity_gates(self) -> None:
+        penalties, summary = frontier._consistency_penalty(
+            full_window_payload=self._payload(
+                start_date="2026-04-01",
+                end_date="2026-04-03",
+                daily_net={
+                    "2026-04-01": "20",
+                    "2026-04-02": "30",
+                    "2026-04-03": "40",
+                },
+                decision_count=3,
+                filled_count=3,
+                wins=3,
+                losses=0,
+            ),
+            policy=frontier.FullWindowConsistencyPolicy(
+                target_net_per_day=Decimal("0"),
+                min_daily_net_pnl=Decimal("-1000"),
+                min_active_days=9,
+                min_active_ratio=Decimal("0"),
+                min_positive_days=9,
+                max_worst_day_loss=Decimal("1000"),
+                max_negative_days=3,
+                max_drawdown=Decimal("1000"),
+                max_best_day_share_of_total_pnl=Decimal("1"),
+                min_avg_filled_notional_per_day=Decimal("0"),
+                min_avg_filled_notional_per_active_day=Decimal("0"),
+                require_every_day_active=False,
+            ),
+        )
+
+        self.assertEqual(summary["trading_day_count"], 3)
+        self.assertEqual(summary["active_days"], 3)
+        self.assertEqual(penalties, Decimal("0"))
+
+    def test_objective_veto_policy_caps_min_active_day_ratio_at_one(self) -> None:
+        policy = frontier._objective_veto_policy(
+            consistency_policy=frontier.FullWindowConsistencyPolicy(
+                target_net_per_day=Decimal("0"),
+                min_daily_net_pnl=Decimal("-1000"),
+                min_active_days=9,
+                min_active_ratio=Decimal("0"),
+                min_positive_days=0,
+                max_worst_day_loss=Decimal("1000"),
+                max_negative_days=3,
+                max_drawdown=Decimal("1000"),
+                max_best_day_share_of_total_pnl=Decimal("1"),
+                min_avg_filled_notional_per_day=Decimal("0"),
+                min_avg_filled_notional_per_active_day=Decimal("0"),
+                require_every_day_active=False,
+            ),
+            template_defaults={},
+            trading_day_count=5,
+        )
+
+        self.assertEqual(policy.required_min_active_day_ratio, Decimal("1"))
+
+    def test_microbar_template_enforces_cash_and_gross_exposure_defaults(
+        self,
+    ) -> None:
+        template = frontier.load_family_template("microbar_cross_sectional_pairs_v1")
+        policy = frontier._objective_veto_policy(
+            consistency_policy=frontier.FullWindowConsistencyPolicy(
+                target_net_per_day=Decimal("0"),
+                min_daily_net_pnl=Decimal("-1000"),
+                min_active_days=0,
+                min_active_ratio=Decimal("0"),
+                min_positive_days=0,
+                max_worst_day_loss=Decimal("1000"),
+                max_negative_days=3,
+                max_drawdown=Decimal("1000"),
+                max_best_day_share_of_total_pnl=Decimal("1"),
+                min_avg_filled_notional_per_day=Decimal("0"),
+                min_avg_filled_notional_per_active_day=Decimal("0"),
+                require_every_day_active=False,
+                max_gross_exposure_pct_equity=Decimal("999999999"),
+                min_cash=Decimal("-999999999"),
+            ),
+            template_defaults=template.default_hard_vetoes,
+            trading_day_count=5,
+        )
+
+        self.assertEqual(policy.required_max_gross_exposure_pct_equity, Decimal("1.0"))
+        self.assertEqual(policy.required_min_cash, Decimal("0"))
+
     def test_consistency_penalty_preserves_order_type_execution_metrics(self) -> None:
         payload = self._payload(
             start_date="2026-04-01",
@@ -951,6 +1036,10 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             self.assertNotIn("execution_shortfall_evidence_present", scorecard)
             exact_ledger_ref = Path(scorecard["exact_replay_ledger_artifact_ref"])
             self.assertTrue(exact_ledger_ref.exists())
+            self.assertEqual(
+                exact_ledger_ref.parent, root / "frontier-artifacts" / "frontier"
+            )
+            self.assertEqual(artifact_ref.parent, exact_ledger_ref.parent)
             self.assertEqual(
                 payload["top"][0]["runtime_ledger_artifact_ref"],
                 str(exact_ledger_ref),
