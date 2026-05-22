@@ -13,6 +13,7 @@ DEPLOYABLE_LOWER_BOUND_SCORECARD_KEYS = (
     "delay_adjusted_depth_stress_net_pnl_per_day",
     "double_oos_cost_shock_net_pnl_per_day",
     "implementation_uncertainty_lower_net_pnl_per_day",
+    "conformal_tail_risk_adjusted_net_pnl_per_day",
 )
 
 DEPLOYABLE_PROOF_GATE_KEYS = (
@@ -20,6 +21,7 @@ DEPLOYABLE_PROOF_GATE_KEYS = (
     "delay_adjusted_depth_stress_passed",
     "double_oos_passed",
     "implementation_uncertainty_stability_passed",
+    "conformal_tail_risk_passed",
 )
 
 

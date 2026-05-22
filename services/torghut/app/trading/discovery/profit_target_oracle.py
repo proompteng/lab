@@ -73,6 +73,8 @@ class ProfitTargetOraclePolicy:
     min_delay_adjusted_depth_tail_fillable_notional: Decimal = Decimal("300000")
     require_implementation_uncertainty_stability: bool = False
     min_implementation_uncertainty_model_count: int = 2
+    require_conformal_tail_risk: bool = False
+    min_conformal_tail_risk_sample_count: int = 0
     require_double_oos: bool = True
     min_double_oos_independent_window_count: int = 2
     min_double_oos_pass_rate: Decimal = Decimal("1.00")
@@ -163,6 +165,8 @@ class ProfitTargetOraclePolicy:
             ),
             "require_implementation_uncertainty_stability": self.require_implementation_uncertainty_stability,
             "min_implementation_uncertainty_model_count": self.min_implementation_uncertainty_model_count,
+            "require_conformal_tail_risk": self.require_conformal_tail_risk,
+            "min_conformal_tail_risk_sample_count": self.min_conformal_tail_risk_sample_count,
             "require_double_oos": self.require_double_oos,
             "min_double_oos_independent_window_count": self.min_double_oos_independent_window_count,
             "min_double_oos_pass_rate": str(self.min_double_oos_pass_rate),
@@ -344,6 +348,34 @@ def _requires_implementation_uncertainty_stability(
             "execution_reality_gap_stability",
             "implementation_risk_backtest_stability",
             "order_flow_impact_stability",
+        }
+        & overlay_ids
+    )
+
+
+def _requires_conformal_tail_risk(
+    scorecard: Mapping[str, Any], policy: ProfitTargetOraclePolicy
+) -> bool:
+    if policy.require_conformal_tail_risk:
+        return True
+    if _boolish(
+        scorecard.get("conformal_tail_risk_required")
+        or scorecard.get("requires_conformal_tail_risk")
+        or scorecard.get("requires_conformal_var_cost_buffer")
+    ):
+        return True
+    overlay_ids = set(
+        _string_sequence(
+            scorecard.get("mechanism_overlay_ids")
+            or scorecard.get("mechanism_overlays")
+            or scorecard.get("overlay_ids")
+        )
+    )
+    return bool(
+        {
+            "conformal_tail_risk",
+            "conformal_var_cost_buffer",
+            "regime_weighted_conformal_var",
         }
         & overlay_ids
     )
@@ -1138,6 +1170,60 @@ def evaluate_profit_target_oracle(
                 "passed": implementation_uncertainty_lower_bound
                 >= target_net_pnl_per_day
                 if require_implementation_uncertainty_stability
+                else True,
+            },
+        )
+    )
+    require_conformal_tail_risk = _requires_conformal_tail_risk(scorecard, policy)
+    conformal_tail_risk_passed = _boolish(
+        scorecard.get("conformal_tail_risk_passed")
+        or scorecard.get("conformal_risk_passed")
+        or scorecard.get("conformal_var_passed")
+    )
+    conformal_tail_risk_sample_count = _nonnegative_int(
+        scorecard.get("conformal_tail_risk_sample_count")
+        or scorecard.get("conformal_risk_sample_count")
+        or scorecard.get("conformal_var_sample_count")
+    )
+    min_conformal_tail_risk_sample_count = max(
+        policy.min_conformal_tail_risk_sample_count,
+        policy.min_observed_trading_days,
+    )
+    conformal_tail_risk_adjusted_net = _decimal(
+        scorecard.get("conformal_tail_risk_adjusted_net_pnl_per_day")
+        or scorecard.get("conformal_risk_adjusted_net_pnl_per_day")
+        or scorecard.get("conformal_var_adjusted_net_pnl_per_day")
+    )
+    checks.extend(
+        (
+            {
+                "metric": "conformal_tail_risk_passed",
+                "observed": str(conformal_tail_risk_passed).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "regime_weighted_conformal_var_arxiv_2602_03903_2026",
+                "passed": conformal_tail_risk_passed
+                if require_conformal_tail_risk
+                else True,
+            },
+            _numeric_check(
+                metric="conformal_tail_risk_sample_count",
+                observed=Decimal(conformal_tail_risk_sample_count),
+                operator="gte",
+                threshold=Decimal(min_conformal_tail_risk_sample_count)
+                if require_conformal_tail_risk
+                else Decimal("0"),
+            ),
+            {
+                **_numeric_check(
+                    metric="conformal_tail_risk_adjusted_net_pnl_per_day",
+                    observed=conformal_tail_risk_adjusted_net,
+                    operator="gte",
+                    threshold=target_net_pnl_per_day,
+                ),
+                "source_marker": "regime_weighted_conformal_var_arxiv_2602_03903_2026",
+                "passed": conformal_tail_risk_adjusted_net >= target_net_pnl_per_day
+                if require_conformal_tail_risk
                 else True,
             },
         )

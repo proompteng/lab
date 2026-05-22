@@ -8725,6 +8725,18 @@ def _candidate_board_payload(
                 "implementation_uncertainty_lower_net_pnl_per_day": _candidate_board_decimal_field(
                     scorecard, "implementation_uncertainty_lower_net_pnl_per_day"
                 ),
+                "conformal_tail_risk_required": _boolish(
+                    scorecard.get("conformal_tail_risk_required")
+                ),
+                "conformal_tail_risk_passed": _boolish(
+                    scorecard.get("conformal_tail_risk_passed")
+                ),
+                "conformal_tail_risk_adjusted_net_pnl_per_day": _candidate_board_decimal_field(
+                    scorecard, "conformal_tail_risk_adjusted_net_pnl_per_day"
+                ),
+                "conformal_tail_risk_buffer_per_day": _candidate_board_decimal_field(
+                    scorecard, "conformal_tail_risk_buffer_per_day"
+                ),
                 "trading_day_count": _candidate_board_int_field(
                     scorecard, "trading_day_count"
                 ),

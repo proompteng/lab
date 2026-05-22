@@ -257,6 +257,8 @@ class TestMlxTrainingData(TestCase):
                         "double_oos_cost_shock_net_pnl_per_day": "3000",
                         "implementation_uncertainty_stability_passed": True,
                         "implementation_uncertainty_lower_net_pnl_per_day": "3000",
+                        "conformal_tail_risk_passed": True,
+                        "conformal_tail_risk_adjusted_net_pnl_per_day": "3000",
                     },
                 },
                 dataset_snapshot_id="snapshot-1",

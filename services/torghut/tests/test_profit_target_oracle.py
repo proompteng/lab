@@ -124,6 +124,30 @@ class TestProfitTargetOracle(TestCase):
             result["blockers"],
         )
 
+    def test_profit_target_oracle_rejects_conformal_tail_risk_below_target(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "conformal_tail_risk_required": True,
+            "conformal_tail_risk_passed": False,
+            "conformal_tail_risk_sample_count": 20,
+            "conformal_tail_risk_buffer_per_day": "175",
+            "conformal_tail_risk_adjusted_net_pnl_per_day": "499.99",
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn("conformal_tail_risk_passed_failed", result["blockers"])
+        self.assertIn(
+            "conformal_tail_risk_adjusted_net_pnl_per_day_failed",
+            result["blockers"],
+        )
+
     def test_profit_target_oracle_requires_rejected_signal_outcome_learning_when_declared(
         self,
     ) -> None:

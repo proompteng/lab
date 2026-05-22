@@ -421,6 +421,8 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                         "double_oos_cost_shock_net_pnl_per_day": deployable_lower_bound,
                         "implementation_uncertainty_stability_passed": True,
                         "implementation_uncertainty_lower_net_pnl_per_day": deployable_lower_bound,
+                        "conformal_tail_risk_passed": True,
+                        "conformal_tail_risk_adjusted_net_pnl_per_day": deployable_lower_bound,
                     }
                 )
             return {

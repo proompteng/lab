@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import Decimal, ROUND_CEILING
 from typing import Any, Mapping, Sequence, cast
 
 from app.trading.discovery.evidence_bundles import (
@@ -20,6 +20,7 @@ from app.trading.discovery.profit_target_oracle import evaluate_profit_target_or
 from app.trading.discovery.profit_target_oracle import ProfitTargetOraclePolicy
 
 MAX_ALLOWED_PAIRWISE_CORRELATION = Decimal("0.85")
+CONFORMAL_TAIL_RISK_ALPHA = Decimal("0.20")
 PORTFOLIO_SEARCH_BEAM_WIDTH = 256
 PORTFOLIO_WEIGHTING_EQUAL_COUNT = "equal_count"
 PORTFOLIO_WEIGHTING_GROSS_EXPOSURE_BUDGET = "gross_exposure_budget"
@@ -31,6 +32,7 @@ PORTFOLIO_COMPOSABLE_SINGLE_SLEEVE_VETOES = frozenset(
         "avg_filled_notional_per_day_below_oracle",
         "best_day_share_above_max",
         "best_day_share_above_oracle",
+        "conformal_tail_risk_below_target",
         "daily_net_below_min",
         "max_drawdown_above_max",
         "max_drawdown_above_oracle",
@@ -467,6 +469,26 @@ def _implementation_uncertainty_interval_width_per_day(
     return _decimal(
         _scorecard(bundle).get("implementation_uncertainty_interval_width_per_day")
     )
+
+
+def _conformal_tail_risk_required(bundle: CandidateEvidenceBundle) -> bool:
+    return _boolish(_scorecard(bundle).get("conformal_tail_risk_required"))
+
+
+def _conformal_tail_loss_buffer(values: Sequence[Decimal]) -> Decimal:
+    losses = sorted(max(Decimal("0"), -value) for value in values)
+    if not losses:
+        return Decimal("0")
+    tail_count = max(
+        1,
+        int(
+            (Decimal(len(losses)) * CONFORMAL_TAIL_RISK_ALPHA).to_integral_value(
+                rounding=ROUND_CEILING
+            )
+        ),
+    )
+    tail_count = min(tail_count, len(losses))
+    return max(losses[-tail_count:], default=Decimal("0"))
 
 
 def _delay_adjusted_depth_stress_passed(bundle: CandidateEvidenceBundle) -> bool:
@@ -958,6 +980,18 @@ def _portfolio_scorecard(
         [Decimal("0")] * missing_day_count
     )
     net_per_day = _mean(values)
+    conformal_tail_risk_buffer_per_day = _conformal_tail_loss_buffer(values)
+    conformal_tail_risk_adjusted_net_pnl_per_day = (
+        net_per_day - conformal_tail_risk_buffer_per_day
+    )
+    conformal_tail_risk_required = bool(selected) and (
+        conformal_tail_risk_buffer_per_day > 0
+        or any(_conformal_tail_risk_required(bundle) for bundle in selected)
+    )
+    conformal_tail_risk_passed = (
+        bool(values)
+        and conformal_tail_risk_adjusted_net_pnl_per_day >= target_net_pnl_per_day
+    )
     active_day_ratio = (
         Decimal(sum(1 for value in values if value != 0)) / Decimal(len(values))
         if values
@@ -1262,6 +1296,19 @@ def _portfolio_scorecard(
             "order_flow_market_impact_volatility_arxiv_2601_23172_2026",
             "implementation_risk_backtesting_arxiv_2603_20319_2026",
         ],
+        "conformal_tail_risk_required": conformal_tail_risk_required,
+        "conformal_tail_risk_model": "portfolio_empirical_daily_loss_conformal_buffer",
+        "conformal_tail_risk_alpha": str(CONFORMAL_TAIL_RISK_ALPHA),
+        "conformal_tail_risk_sample_count": len(values),
+        "conformal_tail_risk_buffer_per_day": str(conformal_tail_risk_buffer_per_day),
+        "conformal_tail_risk_adjusted_net_pnl_per_day": str(
+            conformal_tail_risk_adjusted_net_pnl_per_day
+        ),
+        "conformal_tail_risk_target_net_pnl_per_day": str(target_net_pnl_per_day),
+        "conformal_tail_risk_passed": conformal_tail_risk_passed,
+        "conformal_tail_risk_source_markers": [
+            "regime_weighted_conformal_var_arxiv_2602_03903_2026"
+        ],
         "delay_adjusted_depth_stress_passed": bool(selected)
         and all(_delay_adjusted_depth_stress_passed(bundle) for bundle in selected),
         "delay_adjusted_depth_liquidity_evidence_present": bool(selected)
@@ -1413,6 +1460,9 @@ def _portfolio_selection_key(
         -_scorecard_decimal(
             scorecard, "implementation_uncertainty_interval_width_per_day"
         ),
+        Decimal(1 if bool(scorecard.get("conformal_tail_risk_passed")) else 0),
+        _scorecard_decimal(scorecard, "conformal_tail_risk_adjusted_net_pnl_per_day"),
+        -_scorecard_decimal(scorecard, "conformal_tail_risk_buffer_per_day"),
         Decimal(1 if bool(scorecard.get("double_oos_passed")) else 0),
         _scorecard_decimal(scorecard, "double_oos_independent_window_count"),
         _scorecard_decimal(scorecard, "double_oos_pass_rate"),

@@ -1680,6 +1680,8 @@ class TestStrategyAutoresearch(TestCase):
                                 "double_oos_cost_shock_net_pnl_per_day": "410",
                                 "implementation_uncertainty_stability_passed": True,
                                 "implementation_uncertainty_lower_net_pnl_per_day": "405",
+                                "conformal_tail_risk_passed": True,
+                                "conformal_tail_risk_adjusted_net_pnl_per_day": "405",
                             },
                             "full_window": {
                                 "net_per_day": "450",
@@ -1733,6 +1735,8 @@ class TestStrategyAutoresearch(TestCase):
                                 "double_oos_cost_shock_net_pnl_per_day": "580",
                                 "implementation_uncertainty_stability_passed": True,
                                 "implementation_uncertainty_lower_net_pnl_per_day": "570",
+                                "conformal_tail_risk_passed": True,
+                                "conformal_tail_risk_adjusted_net_pnl_per_day": "570",
                             },
                             "full_window": {
                                 "net_per_day": "620",
@@ -2096,6 +2100,8 @@ class TestStrategyAutoresearch(TestCase):
                                 "double_oos_cost_shock_net_pnl_per_day": "410",
                                 "implementation_uncertainty_stability_passed": True,
                                 "implementation_uncertainty_lower_net_pnl_per_day": "405",
+                                "conformal_tail_risk_passed": True,
+                                "conformal_tail_risk_adjusted_net_pnl_per_day": "405",
                             },
                             "full_window": {
                                 "net_per_day": "450",
@@ -2149,6 +2155,8 @@ class TestStrategyAutoresearch(TestCase):
                                 "double_oos_cost_shock_net_pnl_per_day": "580",
                                 "implementation_uncertainty_stability_passed": True,
                                 "implementation_uncertainty_lower_net_pnl_per_day": "570",
+                                "conformal_tail_risk_passed": True,
+                                "conformal_tail_risk_adjusted_net_pnl_per_day": "570",
                             },
                             "full_window": {
                                 "net_per_day": "620",
@@ -2194,6 +2202,8 @@ class TestStrategyAutoresearch(TestCase):
                                 "double_oos_cost_shock_net_pnl_per_day": "550",
                                 "implementation_uncertainty_stability_passed": True,
                                 "implementation_uncertainty_lower_net_pnl_per_day": "540",
+                                "conformal_tail_risk_passed": True,
+                                "conformal_tail_risk_adjusted_net_pnl_per_day": "540",
                             },
                             "full_window": {
                                 "net_per_day": "600",

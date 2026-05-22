@@ -77,6 +77,8 @@ def _proof_metrics(net_pnl_per_day: str) -> dict[str, object]:
         "double_oos_cost_shock_net_pnl_per_day": net_pnl_per_day,
         "implementation_uncertainty_stability_passed": True,
         "implementation_uncertainty_lower_net_pnl_per_day": net_pnl_per_day,
+        "conformal_tail_risk_passed": True,
+        "conformal_tail_risk_adjusted_net_pnl_per_day": net_pnl_per_day,
     }
 
 
