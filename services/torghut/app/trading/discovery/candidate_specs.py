@@ -3334,6 +3334,70 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
 
     if has_any(
         (
+            "kanformer",
+            "queue-position",
+            "queue position",
+            "queue_position",
+            "queue ratio",
+            "queue_ratio",
+            "time-to-fill",
+            "time to fill",
+            "time_to_fill",
+            "survival analysis",
+            "survival model",
+            "survival_fill_curve",
+            "fill survival",
+            "fill_survival",
+            "fill probability",
+            "fill probabilities",
+            "fill_probability",
+            "limit fill probability",
+            "limit_fill_probability",
+            "nonfill opportunity cost",
+            "nonfill_opportunity_cost",
+            "right-censored",
+            "right censored",
+        )
+    ):
+        overlay_ids.append("queue_position_survival_fill_curve")
+        overlay_contracts.append(
+            {
+                "overlay_id": "queue_position_survival_fill_curve",
+                "required_evidence": [
+                    "queue_position",
+                    "survival_fill_curve",
+                    "time_to_fill_quantiles",
+                    "limit_fill_probability",
+                    "nonfill_opportunity_cost",
+                    "route_tca",
+                    "live_paper_parity",
+                ],
+                "rank_metric": "post_cost_net_pnl_after_queue_position_survival_fill_stress",
+                "evidence_policy": "queue_position_fill_probability_requires_real_order_lifecycle_evidence",
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_queue_position_survival_fill_curve": True,
+                "required_min_queue_position_survival_sample_count": "60",
+                "required_max_queue_position_nonfill_opportunity_cost_bps": "8",
+                "required_time_to_fill_quantiles": True,
+                "required_order_lifecycle_fill_evidence": True,
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_queue_position_survival_fill_curve": True,
+                "requires_time_to_fill_quantiles": True,
+                "requires_nonfill_opportunity_cost": True,
+                "requires_order_lifecycle_fill_evidence": True,
+                "rejects_queue_position_free_fill_assumptions": True,
+                "execution_policy": "queue_position_survival_fill_curve",
+            }
+        )
+
+    if has_any(
+        (
             "nonlinear impact",
             "nonlinear_impact",
             "square-root",
@@ -4016,6 +4080,35 @@ def _family_scores_for_hypothesis(
             "representation_or_normalization",
         )
         bump("microbar_cross_sectional_pairs_v1", 2, "microstructure_representation")
+    if has_any(
+        (
+            "kanformer",
+            "queue-position",
+            "queue position",
+            "queue_position",
+            "time-to-fill",
+            "time to fill",
+            "time_to_fill",
+            "survival analysis",
+            "survival model",
+            "survival_fill_curve",
+            "fill survival",
+            "fill_survival",
+            "fill probability",
+            "fill probabilities",
+            "nonfill opportunity cost",
+            "nonfill_opportunity_cost",
+        )
+    ):
+        bump(
+            "microstructure_continuation_matched_filter_v1",
+            6,
+            "queue_position_survival_fill_curve",
+        )
+        bump(
+            "microbar_cross_sectional_pairs_v1", 3, "queue_position_survival_fill_curve"
+        )
+
     if has_any(
         (
             "order flow",

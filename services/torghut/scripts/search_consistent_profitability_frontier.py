@@ -2240,6 +2240,16 @@ def _replay_stress_metrics(
     delay_depth_net_per_day = (net_per_day * survival_adjusted_fillable_ratio) - (
         delay_depth_fillable_notional_per_day * Decimal("1") / Decimal("10000")
     )
+    queue_position_nonfill_opportunity_cost_per_day = max(
+        Decimal("0"), net_per_day - delay_depth_net_per_day
+    )
+    queue_position_nonfill_opportunity_cost_bps = (
+        queue_position_nonfill_opportunity_cost_per_day
+        / avg_filled_notional_per_day
+        * Decimal("10000")
+        if avg_filled_notional_per_day > 0
+        else Decimal("0")
+    )
     implementation_uncertainty = _implementation_uncertainty_metrics(
         target_net_per_day=target_net_per_day,
         net_per_day=net_per_day,
@@ -2331,6 +2341,29 @@ def _replay_stress_metrics(
         "delay_adjusted_depth_queue_ratio_p95": str(queue_ratio_p95)
         if queue_ratio_p95 is not None
         else "",
+        "queue_position_survival_fill_curve_evidence_present": (
+            fill_survival_sample_count > 0 and queue_ratio_p95 is not None
+        ),
+        "queue_position_survival_sample_count": fill_survival_sample_count,
+        "queue_position_survival_fill_rate": str(fill_survival_rate)
+        if fill_survival_rate is not None
+        else "",
+        "queue_position_survival_queue_ratio_p95": str(queue_ratio_p95)
+        if queue_ratio_p95 is not None
+        else "",
+        "queue_position_survival_adjusted_fillable_ratio": str(
+            survival_adjusted_fillable_ratio
+        ),
+        "queue_position_survival_nonfill_opportunity_cost_per_day": str(
+            queue_position_nonfill_opportunity_cost_per_day
+        ),
+        "queue_position_survival_nonfill_opportunity_cost_bps": str(
+            queue_position_nonfill_opportunity_cost_bps
+        ),
+        "queue_position_survival_stress_net_pnl_per_day": str(delay_depth_net_per_day),
+        "queue_position_survival_source_marker": (
+            "queue_position_survival_fill_probability_arxiv_2512_05734_2025"
+        ),
         "delay_adjusted_depth_unfillable_notional_per_day": str(
             max(
                 Decimal("0"),
@@ -3590,6 +3623,11 @@ def _rank_scored_candidates(scored: list[dict[str, Any]]) -> list[dict[str, Any]
                 _nonnegative_int_metric(
                     item["objective_scorecard"].get("fill_survival_sample_count")
                 ),
+                _nonnegative_int_metric(
+                    item["objective_scorecard"].get(
+                        "queue_position_survival_sample_count"
+                    )
+                ),
             ),
             fill_survival_rate=(
                 _optional_decimal(
@@ -3599,6 +3637,9 @@ def _rank_scored_candidates(scored: list[dict[str, Any]]) -> list[dict[str, Any]
                 )
                 or _optional_decimal(
                     item["objective_scorecard"].get("fill_survival_fill_rate")
+                )
+                or _optional_decimal(
+                    item["objective_scorecard"].get("queue_position_survival_fill_rate")
                 )
                 or Decimal("0")
             ),
@@ -4615,6 +4656,9 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     _nonnegative_int_metric(
                         full_window_summary.get("fill_survival_sample_count")
                     ),
+                    _nonnegative_int_metric(
+                        full_window_summary.get("queue_position_survival_sample_count")
+                    ),
                 )
                 fill_survival_rate = (
                     _optional_decimal(
@@ -4624,6 +4668,9 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     )
                     or _optional_decimal(
                         full_window_summary.get("fill_survival_fill_rate")
+                    )
+                    or _optional_decimal(
+                        full_window_summary.get("queue_position_survival_fill_rate")
                     )
                     or Decimal("0")
                 )
@@ -4893,6 +4940,57 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                         "delay_adjusted_depth_queue_ratio_p95": str(
                             full_window_summary.get(
                                 "delay_adjusted_depth_queue_ratio_p95"
+                            )
+                            or ""
+                        ),
+                        "queue_position_survival_fill_curve_evidence_present": bool(
+                            full_window_summary.get(
+                                "queue_position_survival_fill_curve_evidence_present"
+                            )
+                        ),
+                        "queue_position_survival_sample_count": int(
+                            full_window_summary.get(
+                                "queue_position_survival_sample_count"
+                            )
+                            or 0
+                        ),
+                        "queue_position_survival_fill_rate": str(
+                            full_window_summary.get("queue_position_survival_fill_rate")
+                            or ""
+                        ),
+                        "queue_position_survival_queue_ratio_p95": str(
+                            full_window_summary.get(
+                                "queue_position_survival_queue_ratio_p95"
+                            )
+                            or ""
+                        ),
+                        "queue_position_survival_adjusted_fillable_ratio": str(
+                            full_window_summary.get(
+                                "queue_position_survival_adjusted_fillable_ratio"
+                            )
+                            or "0"
+                        ),
+                        "queue_position_survival_nonfill_opportunity_cost_per_day": str(
+                            full_window_summary.get(
+                                "queue_position_survival_nonfill_opportunity_cost_per_day"
+                            )
+                            or "0"
+                        ),
+                        "queue_position_survival_nonfill_opportunity_cost_bps": str(
+                            full_window_summary.get(
+                                "queue_position_survival_nonfill_opportunity_cost_bps"
+                            )
+                            or "0"
+                        ),
+                        "queue_position_survival_stress_net_pnl_per_day": str(
+                            full_window_summary.get(
+                                "queue_position_survival_stress_net_pnl_per_day"
+                            )
+                            or "0"
+                        ),
+                        "queue_position_survival_source_marker": str(
+                            full_window_summary.get(
+                                "queue_position_survival_source_marker"
                             )
                             or ""
                         ),

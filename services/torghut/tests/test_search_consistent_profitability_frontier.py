@@ -3113,6 +3113,24 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             frontier.Decimal("490"),
         )
         self.assertEqual(summary["delay_adjusted_depth_queue_ratio_p95"], "0.25")
+        self.assertTrue(summary["queue_position_survival_fill_curve_evidence_present"])
+        self.assertEqual(summary["queue_position_survival_sample_count"], 4)
+        self.assertEqual(summary["queue_position_survival_fill_rate"], "0.5")
+        self.assertEqual(summary["queue_position_survival_queue_ratio_p95"], "0.25")
+        self.assertEqual(
+            summary["queue_position_survival_adjusted_fillable_ratio"],
+            "0.5",
+        )
+        self.assertEqual(
+            frontier.Decimal(
+                summary["queue_position_survival_nonfill_opportunity_cost_bps"]
+            ),
+            frontier.Decimal("51.0"),
+        )
+        self.assertEqual(
+            frontier.Decimal(summary["queue_position_survival_stress_net_pnl_per_day"]),
+            frontier.Decimal("490"),
+        )
 
     def test_consistency_penalty_reports_and_penalizes_capital_realism(self) -> None:
         payload = self._payload(
