@@ -6927,6 +6927,10 @@ def _runtime_closure_artifact_refs(
         "parity_report_path",
         "approval_replay_path",
         "approval_report_path",
+        "exact_replay_ledger_artifact_path",
+        "exact_replay_ledger_artifact_ref",
+        "runtime_ledger_artifact_path",
+        "runtime_ledger_artifact_ref",
         "shadow_validation_path",
         "portfolio_proof_receipt_path",
         "market_impact_stress_report_path",
@@ -6988,6 +6992,49 @@ def _portfolio_executable_max_notional(portfolio: PortfolioCandidateSpec) -> Dec
             weight = Decimal("1")
         max_notional = max(max_notional, base_per_leg_notional * weight)
     return max_notional
+
+
+def _runtime_closure_exact_replay_ledger_update(
+    runtime_closure: Mapping[str, Any],
+) -> dict[str, Any]:
+    artifact_ref = next(
+        (
+            ref
+            for ref in (
+                _string(runtime_closure.get("exact_replay_ledger_artifact_path")),
+                _string(runtime_closure.get("exact_replay_ledger_artifact_ref")),
+                _string(runtime_closure.get("runtime_ledger_artifact_path")),
+                _string(runtime_closure.get("runtime_ledger_artifact_ref")),
+            )
+            if ref and Path(ref).exists()
+        ),
+        "",
+    )
+    if not artifact_ref:
+        return {}
+    ledger = _load_json_mapping_artifact(artifact_ref)
+    raw_rows = ledger.get("runtime_ledger_rows")
+    row_count = _runtime_report_int(
+        ledger.get("runtime_ledger_artifact_row_count")
+        or ledger.get("exact_replay_ledger_artifact_row_count")
+        or ledger.get("row_count")
+        or (len(raw_rows) if isinstance(raw_rows, list) else 0)
+    )
+    fill_count = _runtime_report_int(
+        ledger.get("runtime_ledger_artifact_fill_count")
+        or ledger.get("exact_replay_ledger_artifact_fill_count")
+        or ledger.get("fill_row_count")
+        or ledger.get("filled_count")
+        or _mapping(ledger.get("summary")).get("filled_count")
+    )
+    return {
+        "exact_replay_ledger_artifact_ref": artifact_ref,
+        "runtime_ledger_artifact_ref": artifact_ref,
+        "exact_replay_ledger_artifact_row_count": row_count,
+        "runtime_ledger_artifact_row_count": row_count,
+        "exact_replay_ledger_artifact_fill_count": fill_count,
+        "runtime_ledger_artifact_fill_count": fill_count,
+    }
 
 
 def _runtime_closure_market_impact_stress_update(
@@ -7219,6 +7266,9 @@ def _runtime_closure_scorecard_update(
         runtime_closure
     )
     double_oos_update = _runtime_closure_double_oos_update(runtime_closure)
+    exact_replay_ledger_update = _runtime_closure_exact_replay_ledger_update(
+        runtime_closure
+    )
     runtime_closure_source_markers = sorted(
         set(
             _string_list_from_value(
@@ -7249,6 +7299,9 @@ def _runtime_closure_scorecard_update(
             "double_oos_artifact_ref": double_oos_update.get(
                 "double_oos_artifact_ref", ""
             ),
+            "exact_replay_ledger_artifact_ref": exact_replay_ledger_update.get(
+                "exact_replay_ledger_artifact_ref", ""
+            ),
         },
         "runtime_closure_artifact_refs": list(artifact_refs),
         "shadow_parity_status": "within_budget"
@@ -7270,6 +7323,7 @@ def _runtime_closure_scorecard_update(
             _portfolio_executable_max_notional(portfolio)
         ),
         "runtime_closure_source_markers": runtime_closure_source_markers,
+        **exact_replay_ledger_update,
         **market_impact_update,
         **delay_depth_update,
         **double_oos_update,

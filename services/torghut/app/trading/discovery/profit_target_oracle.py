@@ -60,6 +60,9 @@ class ProfitTargetOraclePolicy:
     require_executable_replay: bool = True
     min_executable_order_count: int = 1
     require_executable_replay_notional_within_buying_power: bool = True
+    require_exact_replay_ledger: bool = True
+    min_exact_replay_ledger_row_count: int = 1
+    min_exact_replay_ledger_fill_count: int = 1
     require_market_impact_stress: bool = True
     min_market_impact_stress_cost_bps: Decimal = Decimal("1")
     require_market_impact_liquidity_evidence: bool = True
@@ -136,6 +139,9 @@ class ProfitTargetOraclePolicy:
             "require_executable_replay": self.require_executable_replay,
             "min_executable_order_count": self.min_executable_order_count,
             "require_executable_replay_notional_within_buying_power": self.require_executable_replay_notional_within_buying_power,
+            "require_exact_replay_ledger": self.require_exact_replay_ledger,
+            "min_exact_replay_ledger_row_count": self.min_exact_replay_ledger_row_count,
+            "min_exact_replay_ledger_fill_count": self.min_exact_replay_ledger_fill_count,
             "require_market_impact_stress": self.require_market_impact_stress,
             "min_market_impact_stress_cost_bps": str(
                 self.min_market_impact_stress_cost_bps
@@ -790,6 +796,52 @@ def evaluate_profit_target_oracle(
                 threshold=executable_buying_power,
             )
         )
+    exact_replay_ledger_artifact_refs = _artifact_refs(
+        scorecard,
+        "exact_replay_ledger_artifact_ref",
+        "exact_replay_ledger_artifact_refs",
+        "runtime_ledger_artifact_ref",
+        "runtime_ledger_artifact_refs",
+    )
+    exact_replay_ledger_artifact_present = bool(exact_replay_ledger_artifact_refs)
+    exact_replay_ledger_row_count = _nonnegative_int(
+        scorecard.get("exact_replay_ledger_artifact_row_count")
+        or scorecard.get("runtime_ledger_artifact_row_count")
+    )
+    exact_replay_ledger_fill_count = _nonnegative_int(
+        scorecard.get("exact_replay_ledger_artifact_fill_count")
+        or scorecard.get("runtime_ledger_artifact_fill_count")
+    )
+    checks.extend(
+        (
+            {
+                "metric": "exact_replay_ledger_artifact_present",
+                "observed": str(exact_replay_ledger_artifact_present).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "exact_replay_runtime_ledger_authority",
+                "passed": exact_replay_ledger_artifact_present
+                if policy.require_exact_replay_ledger
+                else True,
+            },
+            _numeric_check(
+                metric="exact_replay_ledger_artifact_row_count",
+                observed=Decimal(exact_replay_ledger_row_count),
+                operator="gte",
+                threshold=Decimal(max(0, policy.min_exact_replay_ledger_row_count))
+                if policy.require_exact_replay_ledger
+                else Decimal("0"),
+            ),
+            _numeric_check(
+                metric="exact_replay_ledger_artifact_fill_count",
+                observed=Decimal(exact_replay_ledger_fill_count),
+                operator="gte",
+                threshold=Decimal(max(0, policy.min_exact_replay_ledger_fill_count))
+                if policy.require_exact_replay_ledger
+                else Decimal("0"),
+            ),
+        )
+    )
     market_impact_artifact_refs = _artifact_refs(
         scorecard,
         "market_impact_stress_artifact_ref",

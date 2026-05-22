@@ -24,6 +24,9 @@ def _executable_scorecard_fields(index: int | str = 0) -> dict[str, object]:
         "executable_replay_order_count": 5,
         "executable_replay_account_buying_power": "20000",
         "executable_replay_max_notional_per_trade": "10000",
+        "exact_replay_ledger_artifact_ref": f"/tmp/exact-replay-ledger-{index}.json",
+        "exact_replay_ledger_artifact_row_count": 5,
+        "exact_replay_ledger_artifact_fill_count": 5,
         "market_impact_stress_passed": True,
         "market_impact_stress_artifact_ref": f"/tmp/market-impact-stress-{index}.json",
         "market_impact_stress_model": "square_root",
@@ -74,6 +77,44 @@ def _executable_scorecard_fields(index: int | str = 0) -> dict[str, object]:
 
 
 class TestPortfolioOptimizer(TestCase):
+    def test_exact_replay_ledger_helpers_accept_list_refs_and_runtime_alias_counts(
+        self,
+    ) -> None:
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-ledger-list",
+            candidate={
+                "candidate_id": "cand-ledger-list",
+                "objective_scorecard": {
+                    "exact_replay_ledger_artifact_refs": [
+                        "",
+                        "s3://proof/exact-ledger.json",
+                        "s3://proof/exact-ledger.json",
+                    ],
+                    "runtime_ledger_artifact_refs": ["s3://proof/runtime-ledger.json"],
+                    "runtime_ledger_artifact_row_count": "7",
+                    "runtime_ledger_artifact_fill_count": "6",
+                },
+            },
+            dataset_snapshot_id="snapshot-ledger-list",
+            result_path="/tmp/cand-ledger-list.json",
+        )
+
+        self.assertEqual(
+            portfolio_optimizer_module._exact_replay_ledger_artifact_refs(bundle),
+            [
+                "s3://proof/exact-ledger.json",
+                "s3://proof/runtime-ledger.json",
+            ],
+        )
+        self.assertEqual(
+            portfolio_optimizer_module._exact_replay_ledger_row_count(bundle),
+            7,
+        )
+        self.assertEqual(
+            portfolio_optimizer_module._exact_replay_ledger_fill_count(bundle),
+            6,
+        )
+
     def test_oracle_blocker_count_treats_malformed_payloads_as_unblocked(
         self,
     ) -> None:
@@ -484,6 +525,21 @@ class TestPortfolioOptimizer(TestCase):
         self.assertEqual(
             portfolio.objective_scorecard["market_impact_stress_models"],
             ["square_root"],
+        )
+        self.assertEqual(
+            portfolio.objective_scorecard["exact_replay_ledger_artifact_refs"],
+            [
+                "/tmp/exact-replay-ledger-impact-a.json",
+                "/tmp/exact-replay-ledger-impact-b.json",
+            ],
+        )
+        self.assertEqual(
+            portfolio.objective_scorecard["exact_replay_ledger_artifact_row_count"],
+            10,
+        )
+        self.assertEqual(
+            portfolio.objective_scorecard["exact_replay_ledger_artifact_fill_count"],
+            10,
         )
         self.assertEqual(
             portfolio.objective_scorecard["market_impact_stress_components"][
