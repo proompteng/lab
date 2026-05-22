@@ -15,7 +15,7 @@ import tempfile
 from collections import Counter, deque
 from dataclasses import dataclass
 from datetime import date, timedelta, timezone
-from decimal import Decimal, InvalidOperation, ROUND_CEILING
+from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_DOWN
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeAlias, cast
 from urllib.parse import urlparse
@@ -109,6 +109,9 @@ _LOSS_REPAIR_STRATEGY_EXPOSURE_KEYS = (
     "max_notional_per_trade",
     "max_position_pct_equity",
 )
+_LOSS_REPAIR_DEFAULT_EXPOSURE_SCALE = Decimal("0.75")
+_LOSS_REPAIR_CAPITAL_SAFETY_BUFFER = Decimal("0.95")
+_LOSS_REPAIR_MIN_SCALE_QUANTUM = Decimal("0.000001")
 _CONSISTENCY_REPAIR_TRIGGER_REASONS = frozenset(
     {
         "active_day_ratio_below_min",
@@ -3020,9 +3023,12 @@ def _decimal_or_none(value: Any) -> Decimal | None:
     if not text:
         return None
     try:
-        return Decimal(text)
+        value = Decimal(text)
     except (InvalidOperation, ValueError):
         return None
+    if not value.is_finite():
+        return None
+    return value
 
 
 def _decimal_payload(value: Decimal) -> str:
@@ -3042,14 +3048,65 @@ def _tightened_bps(value: Any, *, floor: Decimal) -> str | None:
     return _decimal_payload(tightened)
 
 
-def _reduced_exposure(value: Any) -> str | None:
+def _reduced_exposure(
+    value: Any,
+    *,
+    scale: Decimal = _LOSS_REPAIR_DEFAULT_EXPOSURE_SCALE,
+) -> str | None:
     current = _decimal_or_none(value)
     if current is None or current <= 0:
         return None
-    reduced = (current * Decimal("0.75")).quantize(Decimal("0.000001"))
+    if scale <= 0 or scale >= 1:
+        return None
+    reduced = (current * scale).quantize(
+        _LOSS_REPAIR_MIN_SCALE_QUANTUM, rounding=ROUND_DOWN
+    )
     if reduced <= 0 or reduced >= current:
         return None
     return _decimal_payload(reduced)
+
+
+def _capital_repair_exposure_scale(
+    full_window_summary: Mapping[str, Any],
+    *,
+    policy_required_max_gross_exposure_pct_equity: Decimal | None = None,
+    policy_required_min_cash: Decimal | None = None,
+) -> Decimal:
+    scale = _LOSS_REPAIR_DEFAULT_EXPOSURE_SCALE
+    max_gross = _decimal_or_none(
+        full_window_summary.get("max_gross_exposure_pct_equity")
+    )
+    required_max_gross = _decimal_or_none(
+        full_window_summary.get("max_gross_exposure_pct_equity_required")
+        or full_window_summary.get("required_max_gross_exposure_pct_equity")
+    )
+    if required_max_gross is None or required_max_gross <= 0:
+        required_max_gross = Decimal("1")
+    if (
+        policy_required_max_gross_exposure_pct_equity is not None
+        and policy_required_max_gross_exposure_pct_equity > 0
+    ):
+        required_max_gross = min(
+            required_max_gross, policy_required_max_gross_exposure_pct_equity
+        )
+    if max_gross is not None and max_gross > required_max_gross:
+        gross_scale = (
+            required_max_gross / max_gross * _LOSS_REPAIR_CAPITAL_SAFETY_BUFFER
+        ).quantize(_LOSS_REPAIR_MIN_SCALE_QUANTUM, rounding=ROUND_DOWN)
+        scale = min(scale, max(_LOSS_REPAIR_MIN_SCALE_QUANTUM, gross_scale))
+
+    min_cash = _decimal_or_none(full_window_summary.get("min_cash"))
+    required_min_cash = _decimal_or_none(
+        full_window_summary.get("min_cash_required")
+        or full_window_summary.get("required_min_cash")
+    )
+    if required_min_cash is None:
+        required_min_cash = Decimal("0")
+    if policy_required_min_cash is not None:
+        required_min_cash = max(required_min_cash, policy_required_min_cash)
+    if min_cash is not None and min_cash < required_min_cash:
+        scale = min(scale, Decimal("0.5"))
+    return max(_LOSS_REPAIR_MIN_SCALE_QUANTUM, scale)
 
 
 def _loss_repair_trigger_reason(
@@ -3121,12 +3178,15 @@ def _apply_exposure_clamp(
     overrides: dict[str, Any],
     strategy_item: Mapping[str, Any],
     strategy_params: Mapping[str, Any],
+    scale: Decimal = _LOSS_REPAIR_DEFAULT_EXPOSURE_SCALE,
 ) -> bool:
     changed = False
     for key in _LOSS_REPAIR_PARAM_EXPOSURE_KEYS:
         if key not in params and key not in strategy_params:
             continue
-        reduced = _reduced_exposure(params.get(key, strategy_params.get(key)))
+        reduced = _reduced_exposure(
+            params.get(key, strategy_params.get(key)), scale=scale
+        )
         if reduced is not None:
             params[key] = reduced
             changed = True
@@ -3134,7 +3194,9 @@ def _apply_exposure_clamp(
     for key in _LOSS_REPAIR_STRATEGY_EXPOSURE_KEYS:
         if key not in overrides and key not in strategy_item:
             continue
-        reduced = _reduced_exposure(overrides.get(key, strategy_item.get(key)))
+        reduced = _reduced_exposure(
+            overrides.get(key, strategy_item.get(key)), scale=scale
+        )
         if reduced is not None:
             overrides[key] = reduced
             changed = True
@@ -3150,6 +3212,8 @@ def _generate_loss_repair_children(
     hard_vetoes: Sequence[Any],
     full_window_summary: Mapping[str, Any],
     branch_count: int,
+    policy_required_max_gross_exposure_pct_equity: Decimal | None = None,
+    policy_required_min_cash: Decimal | None = None,
 ) -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
     trigger_reason = _loss_repair_trigger_reason(
         hard_vetoes=hard_vetoes,
@@ -3165,6 +3229,11 @@ def _generate_loss_repair_children(
     parent_key = _candidate_search_key(
         params_candidate=params_candidate,
         strategy_overrides=strategy_overrides,
+    )
+    exposure_repair_scale = _capital_repair_exposure_scale(
+        full_window_summary,
+        policy_required_max_gross_exposure_pct_equity=policy_required_max_gross_exposure_pct_equity,
+        policy_required_min_cash=policy_required_min_cash,
     )
     children: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
     seen: set[str] = {parent_key}
@@ -3190,6 +3259,7 @@ def _generate_loss_repair_children(
                     overrides=next_overrides,
                     strategy_item=strategy_item,
                     strategy_params=strategy_params,
+                    scale=exposure_repair_scale,
                 )
                 or changed
             )
@@ -4922,6 +4992,10 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                         branch_count=max(
                             1, int(getattr(args, "loss_repair_candidates", 1))
                         ),
+                        policy_required_max_gross_exposure_pct_equity=(
+                            objective_veto_policy.required_max_gross_exposure_pct_equity
+                        ),
+                        policy_required_min_cash=objective_veto_policy.required_min_cash,
                     ):
                         worklist.append(
                             (
