@@ -6197,7 +6197,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             dataset_snapshot_id="snapshot-paper-probation",
             feature_spec_hash="hash-paper-probation",
             code_commit="commit-test",
-            replay_artifact_refs=("paper-probation.json",),
+            replay_artifact_refs=(
+                "paper-probation.json",
+                "paper-probation-exact-ledger.json",
+            ),
             objective_scorecard={
                 "net_pnl_per_day": "525",
                 "target_met": True,
@@ -6205,6 +6208,17 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 "trade_decision_count": 9,
                 "orders_submitted_count": 9,
                 "trade_count": 9,
+                "exact_replay_ledger_artifact_ref": "paper-probation-exact-ledger.json",
+                "runtime_ledger_artifact_row_count": 27,
+                "runtime_ledger_artifact_fill_count": 9,
+                "replay_lineage": {
+                    "windows": {
+                        "full_window": {
+                            "start_date": "2026-05-18",
+                            "end_date": "2026-05-20",
+                        }
+                    }
+                },
                 "profit_target_oracle": {
                     "blockers": ["delay_adjusted_depth_tail_coverage_passed_failed"]
                 },
@@ -6282,9 +6296,31 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(target["strategy_family"], spec.runtime_family)
         self.assertEqual(target["strategy_name"], spec.runtime_strategy_name)
         self.assertEqual(target["observed_stage"], "paper")
-        self.assertEqual(target["source_kind"], "paper_runtime_observed")
+        self.assertEqual(
+            target["source_kind"], "simulation_exact_replay_runtime_ledger"
+        )
+        self.assertEqual(target["account_label"], "TORGHUT_REPLAY")
+        self.assertEqual(target["window_start"], "2026-05-18")
+        self.assertEqual(target["window_end"], "2026-05-20")
         self.assertEqual(target["dataset_snapshot_ref"], "snapshot-paper-probation")
-        self.assertEqual(target["artifact_refs"], ["paper-probation.json"])
+        self.assertEqual(
+            target["artifact_refs"],
+            ["paper-probation.json", "paper-probation-exact-ledger.json"],
+        )
+        self.assertEqual(
+            target["runtime_ledger_artifact_refs"],
+            ["paper-probation-exact-ledger.json"],
+        )
+        self.assertEqual(
+            target["exact_replay_ledger_artifact_ref"],
+            "paper-probation-exact-ledger.json",
+        )
+        self.assertEqual(target["runtime_ledger_artifact_row_count"], 27)
+        self.assertEqual(target["runtime_ledger_artifact_fill_count"], 9)
+        self.assertIn("--artifact-ref", target["import_command_args"])
+        self.assertIn(
+            "paper-probation-exact-ledger.json", target["import_command_args"]
+        )
         self.assertEqual(target["handoff"], "runtime_window_import_only")
         self.assertEqual(
             target["promotion_gate"], "existing_runtime_governance_fail_closed"
@@ -6485,8 +6521,32 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "runtime_family": "microstructure_breakout",
             "runtime_strategy_name": "microbar-volume-continuation-long-top2-chip-v1",
             "dataset_snapshot_id": "snapshot-runtime-plan",
-            "replay_artifact_refs": ["paper-runtime-plan.json"],
+            "replay_artifact_refs": [
+                "paper-runtime-plan.json",
+                "paper-runtime-plan-exact-replay-ledger.json",
+            ],
+            "exact_replay_ledger_artifact_ref": "paper-runtime-plan-exact-replay-ledger.json",
+            "runtime_ledger_artifact_row_count": 36,
+            "runtime_ledger_artifact_fill_count": 12,
+            "runtime_window_start": "2026-05-18T13:30:00+00:00",
+            "runtime_window_end": "2026-05-20T20:00:00+00:00",
+            "account_label": "TORGHUT_REPLAY",
             "blockers": ["delay_adjusted_depth_tail_coverage_passed_failed"],
+        }
+        fallback_row = {
+            "candidate_spec_id": "spec-runtime-plan-fallback",
+            "candidate_id": "cand-runtime-plan-fallback",
+            "hypothesis_id": "H-MICRO-02",
+            "runtime_family": "microstructure_breakout",
+            "runtime_strategy_name": "microbar-volume-continuation-long-top2-chip-v1",
+            "dataset_snapshot_id": "snapshot-runtime-plan-fallback",
+            "exact_replay_ledger_artifact_refs": "fallback-exact-replay-ledger.json",
+            "runtime_ledger_artifact_refs": [
+                "fallback-runtime-ledger.json",
+                "",
+            ],
+            "runtime_window_start": "2026-05-21T13:30:00+00:00",
+            "runtime_window_end": "2026-05-21T20:00:00+00:00",
         }
 
         plan = runner._candidate_board_runtime_window_import_plan(
@@ -6496,6 +6556,11 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 "target_met": True,
                 "sleeve_candidate_spec_ids": ["spec-runtime-plan"],
             },
+        )
+        fallback_plan = runner._candidate_board_runtime_window_import_plan(
+            rows=(),
+            paper_probation_candidate=fallback_row,
+            promotion_subject=None,
         )
         incomplete_plan = runner._candidate_board_runtime_window_import_plan(
             rows=(),
@@ -6513,17 +6578,66 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             runner._candidate_board_hypothesis_manifest_ref(None),
             "",
         )
+        self.assertEqual(
+            runner._candidate_board_runtime_window_bounds(
+                {
+                    "runtime_window_start": "2026-05-01",
+                    "runtime_window_end": "2026-05-02",
+                }
+            ),
+            ("2026-05-01", "2026-05-02"),
+        )
         self.assertEqual(plan["target_count"], 1)
         self.assertEqual(
             plan["targets"][0]["source_manifest_ref"],
             "config/trading/hypotheses/h-micro-01.json",
         )
         self.assertEqual(plan["targets"][0]["candidate_blockers"], row["blockers"])
+        self.assertEqual(
+            plan["targets"][0]["runtime_ledger_artifact_refs"],
+            ["paper-runtime-plan-exact-replay-ledger.json"],
+        )
+        self.assertEqual(
+            plan["targets"][0]["window_start"], "2026-05-18T13:30:00+00:00"
+        )
+        self.assertEqual(plan["targets"][0]["window_end"], "2026-05-20T20:00:00+00:00")
+        self.assertEqual(plan["targets"][0]["account_label"], "TORGHUT_REPLAY")
+        self.assertIn(
+            "paper-runtime-plan-exact-replay-ledger.json",
+            plan["targets"][0]["import_command_args"],
+        )
+        self.assertEqual(fallback_plan["status"], "ready")
+        self.assertEqual(fallback_plan["target_count"], 1)
+        self.assertEqual(
+            fallback_plan["targets"][0]["runtime_ledger_artifact_refs"],
+            [
+                "fallback-exact-replay-ledger.json",
+                "fallback-runtime-ledger.json",
+            ],
+        )
+        self.assertEqual(
+            fallback_plan["targets"][0]["exact_replay_ledger_artifact_ref"],
+            "fallback-exact-replay-ledger.json",
+        )
+        self.assertEqual(
+            fallback_plan["targets"][0]["runtime_ledger_artifact_ref"],
+            "fallback-exact-replay-ledger.json",
+        )
+        self.assertEqual(
+            fallback_plan["targets"][0]["account_label"],
+            "TORGHUT_REPLAY",
+        )
         self.assertEqual(incomplete_plan["status"], "blocked")
         self.assertEqual(incomplete_plan["target_count"], 0)
         self.assertEqual(
             incomplete_plan["blockers"][0]["missing_fields"],
-            ["candidate_id", "hypothesis_id"],
+            [
+                "candidate_id",
+                "hypothesis_id",
+                "window_start",
+                "window_end",
+                "account_label",
+            ],
         )
 
     def test_candidate_universe_symbols_default_to_chip_coverage_when_empty(

@@ -8303,6 +8303,121 @@ def _candidate_board_hypothesis_manifest_ref(hypothesis_id: str | None) -> str:
     return f"config/trading/hypotheses/{normalized}.json"
 
 
+def _candidate_board_runtime_window_bounds(
+    scorecard: Mapping[str, Any],
+) -> tuple[str, str]:
+    for source in (
+        scorecard,
+        _mapping(scorecard.get("replay_window_spec")),
+        _mapping(scorecard.get("candidate_evaluation_key_payload")).get(
+            "replay_window_spec"
+        ),
+    ):
+        mapping = _mapping(source)
+        start = _string(
+            mapping.get("runtime_window_start")
+            or mapping.get("window_start")
+            or mapping.get("full_window_start")
+            or mapping.get("full_window_start_date")
+        )
+        end = _string(
+            mapping.get("runtime_window_end")
+            or mapping.get("window_end")
+            or mapping.get("full_window_end")
+            or mapping.get("full_window_end_date")
+        )
+        if start and end:
+            return start, end
+
+    replay_lineage = _mapping(scorecard.get("replay_lineage"))
+    windows = _mapping(replay_lineage.get("windows"))
+    for window_id in ("full_window", "holdout", "train"):
+        window = _mapping(windows.get(window_id))
+        start = _string(window.get("start_date") or window.get("window_start"))
+        end = _string(window.get("end_date") or window.get("window_end"))
+        if start and end:
+            return start, end
+    return "", ""
+
+
+def _candidate_board_runtime_ledger_refs(row: Mapping[str, Any]) -> tuple[str, ...]:
+    refs: list[str] = []
+    for key in (
+        "exact_replay_ledger_artifact_ref",
+        "runtime_ledger_artifact_ref",
+    ):
+        ref = _string(row.get(key))
+        if ref:
+            refs.append(ref)
+    for key in (
+        "exact_replay_ledger_artifact_refs",
+        "runtime_ledger_artifact_refs",
+    ):
+        raw_refs = row.get(key)
+        if isinstance(raw_refs, str):
+            ref = _string(raw_refs)
+            if ref:
+                refs.append(ref)
+            continue
+        for raw_ref in cast(Sequence[Any], raw_refs or ()):
+            ref = _string(raw_ref)
+            if ref:
+                refs.append(ref)
+    for raw_ref in cast(Sequence[Any], row.get("replay_artifact_refs") or ()):
+        ref = _string(raw_ref)
+        ref_lower = ref.lower()
+        if ref and (
+            "exact-replay-ledger" in ref_lower
+            or "runtime-ledger" in ref_lower
+            or "exact_replay_ledger" in ref_lower
+            or "runtime_ledger" in ref_lower
+        ):
+            refs.append(ref)
+    return tuple(dict.fromkeys(refs))
+
+
+def _candidate_board_runtime_import_args(target: Mapping[str, Any]) -> list[str]:
+    args = [
+        "uv",
+        "run",
+        "--frozen",
+        "python",
+        "scripts/import_hypothesis_runtime_windows.py",
+        "--run-id",
+        _string(target.get("run_id")) or "candidate-board-runtime-window-import",
+        "--candidate-id",
+        _string(target.get("candidate_id")),
+        "--hypothesis-id",
+        _string(target.get("hypothesis_id")),
+        "--observed-stage",
+        _string(target.get("observed_stage")) or "paper",
+        "--strategy-family",
+        _string(target.get("strategy_family")),
+        "--strategy-name",
+        _string(target.get("strategy_name")),
+        "--account-label",
+        _string(target.get("account_label")),
+        "--window-start",
+        _string(target.get("window_start")),
+        "--window-end",
+        _string(target.get("window_end")),
+        "--source-kind",
+        _string(target.get("source_kind")),
+        "--source-manifest-ref",
+        _string(target.get("source_manifest_ref")),
+        "--dataset-snapshot-ref",
+        _string(target.get("dataset_snapshot_ref")),
+    ]
+    for artifact_ref in cast(
+        Sequence[Any], target.get("runtime_ledger_artifact_refs") or ()
+    ):
+        ref = _string(artifact_ref)
+        if ref:
+            args.extend(["--artifact-ref", ref])
+    args.append("--json")
+    return args
+
+
 def _candidate_board_runtime_window_import_plan(
     *,
     rows: Sequence[Mapping[str, Any]],
@@ -8335,6 +8450,25 @@ def _candidate_board_runtime_window_import_plan(
         strategy_family = _string(row.get("runtime_family"))
         strategy_name = _string(row.get("runtime_strategy_name"))
         candidate_spec_id = _string(row.get("candidate_spec_id"))
+        runtime_ledger_artifact_refs = _candidate_board_runtime_ledger_refs(row)
+        exact_replay_ledger_artifact_ref = _string(
+            row.get("exact_replay_ledger_artifact_ref")
+        )
+        if not exact_replay_ledger_artifact_ref:
+            exact_replay_ledger_artifact_ref = next(
+                (ref for ref in runtime_ledger_artifact_refs if "exact" in ref.lower()),
+                "",
+            )
+        runtime_ledger_artifact_ref = _string(row.get("runtime_ledger_artifact_ref"))
+        if not runtime_ledger_artifact_ref and runtime_ledger_artifact_refs:
+            runtime_ledger_artifact_ref = runtime_ledger_artifact_refs[0]
+        window_start = _string(
+            row.get("runtime_window_start") or row.get("window_start")
+        )
+        window_end = _string(row.get("runtime_window_end") or row.get("window_end"))
+        account_label = _string(row.get("account_label"))
+        if not account_label and runtime_ledger_artifact_refs:
+            account_label = "TORGHUT_REPLAY"
         missing_fields = [
             field
             for field, value in (
@@ -8342,6 +8476,9 @@ def _candidate_board_runtime_window_import_plan(
                 ("hypothesis_id", hypothesis_id),
                 ("runtime_family", strategy_family),
                 ("runtime_strategy_name", strategy_name),
+                ("window_start", window_start),
+                ("window_end", window_end),
+                ("account_label", account_label),
             )
             if not value
         ]
@@ -8360,13 +8497,20 @@ def _candidate_board_runtime_window_import_plan(
             continue
         seen_keys.add(dedupe_key)
         target = {
+            "run_id": _string(row.get("epoch_id"))
+            or "candidate-board-runtime-window-import",
             "candidate_spec_id": candidate_spec_id,
             "candidate_id": candidate_id,
             "hypothesis_id": hypothesis_id,
             "observed_stage": "paper",
             "strategy_family": strategy_family,
             "strategy_name": strategy_name,
-            "source_kind": "paper_runtime_observed",
+            "account_label": account_label,
+            "window_start": window_start,
+            "window_end": window_end,
+            "source_kind": "simulation_exact_replay_runtime_ledger"
+            if runtime_ledger_artifact_refs
+            else "paper_runtime_observed",
             "source_manifest_ref": _candidate_board_hypothesis_manifest_ref(
                 hypothesis_id
             ),
@@ -8376,6 +8520,15 @@ def _candidate_board_runtime_window_import_plan(
                 for ref in cast(Sequence[Any], row.get("replay_artifact_refs") or ())
                 if _string(ref)
             ],
+            "runtime_ledger_artifact_refs": list(runtime_ledger_artifact_refs),
+            "runtime_ledger_artifact_ref": runtime_ledger_artifact_ref,
+            "exact_replay_ledger_artifact_ref": exact_replay_ledger_artifact_ref,
+            "runtime_ledger_artifact_row_count": int(
+                _decimal(row.get("runtime_ledger_artifact_row_count"))
+            ),
+            "runtime_ledger_artifact_fill_count": int(
+                _decimal(row.get("runtime_ledger_artifact_fill_count"))
+            ),
             "candidate_blockers": [
                 _string(blocker)
                 for blocker in cast(Sequence[Any], row.get("blockers") or ())
@@ -8417,6 +8570,16 @@ def _candidate_board_runtime_window_import_plan(
                     ],
                 }
             )
+        target["import_command_args"] = _candidate_board_runtime_import_args(target)
+        target["target_metadata"] = {
+            key: value
+            for key, value in target.items()
+            if key
+            not in {
+                "import_command_args",
+                "target_metadata",
+            }
+        }
         targets.append(target)
 
     return {
@@ -8498,8 +8661,19 @@ def _candidate_board_payload(
             evidence=evidence,
             scorecard=scorecard,
         )
+        runtime_window_start, runtime_window_end = (
+            _candidate_board_runtime_window_bounds(scorecard)
+        )
+        exact_replay_ledger_artifact_ref = _string(
+            scorecard.get("exact_replay_ledger_artifact_ref")
+        )
+        runtime_ledger_artifact_ref = _string(
+            scorecard.get("runtime_ledger_artifact_ref")
+            or exact_replay_ledger_artifact_ref
+        )
         rows.append(
             {
+                "epoch_id": epoch_id,
                 "candidate_spec_id": spec.candidate_spec_id,
                 "candidate_id": evidence.candidate_id if evidence is not None else "",
                 "hypothesis_id": spec.hypothesis_id,
@@ -8638,6 +8812,26 @@ def _candidate_board_payload(
                 "evidence_lineage": evidence_lineage,
                 "replay_window_coverage": replay_window_coverage,
                 "blockers": blockers,
+                "runtime_window_start": runtime_window_start,
+                "runtime_window_end": runtime_window_end,
+                "account_label": _string(scorecard.get("account_label"))
+                or ("TORGHUT_REPLAY" if runtime_ledger_artifact_ref else ""),
+                "exact_replay_ledger_artifact_ref": exact_replay_ledger_artifact_ref,
+                "runtime_ledger_artifact_ref": runtime_ledger_artifact_ref,
+                "runtime_ledger_artifact_row_count": _candidate_board_first_int_field(
+                    scorecard,
+                    (
+                        "runtime_ledger_artifact_row_count",
+                        "exact_replay_ledger_artifact_row_count",
+                    ),
+                ),
+                "runtime_ledger_artifact_fill_count": _candidate_board_first_int_field(
+                    scorecard,
+                    (
+                        "runtime_ledger_artifact_fill_count",
+                        "exact_replay_ledger_artifact_fill_count",
+                    ),
+                ),
                 "replay_artifact_refs": list(evidence.replay_artifact_refs)
                 if evidence is not None
                 else [],
