@@ -30,6 +30,13 @@ def _empty_row_count_by_symbol_trading_day() -> dict[str, dict[str, int]]:
     return {}
 
 
+class ReplayTapeCoverageError(ValueError):
+    def __init__(self, reason: str, *, diagnostics: Mapping[str, Any]) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.diagnostics = dict(diagnostics)
+
+
 @dataclass(frozen=True)
 class ReplayTapeManifest:
     schema_version: str
@@ -200,14 +207,27 @@ def materialize_signal_tape(
         requested_trading_days=requested_trading_days,
         observed_trading_days=observed_trading_days,
     )
+    row_count_by_trading_day: dict[str, int] = {}
+    for row in ordered_rows:
+        key = row.event_ts.astimezone(timezone.utc).date().isoformat()
+        row_count_by_trading_day[key] = row_count_by_trading_day.get(key, 0) + 1
     if require_complete_coverage and (
         missing_trading_days or missing_symbol_trading_days
     ):
-        raise ValueError(
-            _incomplete_coverage_reason(
+        reason = _incomplete_coverage_reason(
+            missing_trading_days=missing_trading_days,
+            missing_symbol_trading_days=missing_symbol_trading_days,
+        )
+        raise ReplayTapeCoverageError(
+            reason,
+            diagnostics=_coverage_error_diagnostics(
+                requested_trading_days=requested_trading_days,
+                observed_trading_days=observed_trading_days,
                 missing_trading_days=missing_trading_days,
+                row_count_by_trading_day=row_count_by_trading_day,
                 missing_symbol_trading_days=missing_symbol_trading_days,
-            )
+                row_count_by_symbol_trading_day=row_count_by_symbol_trading_day,
+            ),
         )
 
     tape_path.parent.mkdir(parents=True, exist_ok=True)
@@ -222,10 +242,6 @@ def materialize_signal_tape(
             content_hash.update(b"\n")
             handle.write(f"{line}\n")
 
-    row_count_by_trading_day: dict[str, int] = {}
-    for row in ordered_rows:
-        key = row.event_ts.astimezone(timezone.utc).date().isoformat()
-        row_count_by_trading_day[key] = row_count_by_trading_day.get(key, 0) + 1
     start_ts = datetime.combine(start_date, _REGULAR_OPEN_UTC, tzinfo=timezone.utc)
     end_ts = datetime.combine(end_date, _REGULAR_CLOSE_UTC, tzinfo=timezone.utc)
     resolved_artifact_refs = {
@@ -576,6 +592,31 @@ def _incomplete_coverage_reason(
     return "replay_tape_incomplete_coverage:" + ":".join(parts)
 
 
+def _coverage_error_diagnostics(
+    *,
+    requested_trading_days: Sequence[date],
+    observed_trading_days: Sequence[date],
+    missing_trading_days: Sequence[date],
+    row_count_by_trading_day: Mapping[str, int],
+    missing_symbol_trading_days: Sequence[str],
+    row_count_by_symbol_trading_day: Mapping[str, Mapping[str, int]],
+) -> dict[str, Any]:
+    return {
+        "schema_version": "torghut.replay-tape-coverage-error.v1",
+        "requested_trading_days": [item.isoformat() for item in requested_trading_days],
+        "observed_executable_trading_days": [
+            item.isoformat() for item in observed_trading_days
+        ],
+        "missing_trading_days": [item.isoformat() for item in missing_trading_days],
+        "materialized_executable_rows_by_trading_day": dict(row_count_by_trading_day),
+        "missing_symbol_trading_days": list(missing_symbol_trading_days),
+        "materialized_executable_rows_by_symbol_trading_day": {
+            symbol: dict(days)
+            for symbol, days in row_count_by_symbol_trading_day.items()
+        },
+    }
+
+
 def _date_tuple(value: Any) -> tuple[date, ...]:
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
         return ()
@@ -671,6 +712,7 @@ __all__ = [
     "REPLAY_TAPE_MANIFEST_SCHEMA_VERSION",
     "REPLAY_TAPE_SCHEMA_VERSION",
     "ReplayTape",
+    "ReplayTapeCoverageError",
     "ReplayTapeManifest",
     "build_source_query_digest",
     "default_manifest_path",

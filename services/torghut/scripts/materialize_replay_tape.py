@@ -4,15 +4,17 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import logging
 import os
-from datetime import date
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 from app.trading.discovery.replay_tape import (
+    ReplayTapeCoverageError,
     build_source_query_digest,
     default_manifest_path,
     materialize_signal_tape,
@@ -105,6 +107,15 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--coverage-diagnostic-output",
+        type=Path,
+        help=(
+            "Optional JSON path for day-level source coverage diagnostics. When strict "
+            "materialization fails closed, this records raw TA signal, executable "
+            "quote-backed signal, and microbar row counts without relaxing the failure."
+        ),
+    )
+    parser.add_argument(
         "--log-level",
         default=os.environ.get("TORGHUT_REPLAY_LOG_LEVEL", "INFO"),
     )
@@ -145,6 +156,216 @@ def _source_query_payload(
     }
 
 
+def _business_days(start_day: date, end_day: date) -> tuple[date, ...]:
+    if start_day > end_day:
+        return ()
+    days: list[date] = []
+    current = start_day
+    while current <= end_day:
+        if current.weekday() < 5:
+            days.append(current)
+        current += timedelta(days=1)
+    return tuple(days)
+
+
+def _coverage_diagnostics_query(
+    *,
+    start_date: date,
+    end_date: date,
+    symbols: tuple[str, ...],
+) -> str:
+    start_ts = datetime.combine(start_date, time.min, tzinfo=timezone.utc)
+    end_ts = datetime.combine(
+        end_date + timedelta(days=1), time.min, tzinfo=timezone.utc
+    )
+    symbol_filter = ""
+    if symbols:
+        rendered_symbols = ", ".join(f"'{symbol}'" for symbol in symbols)
+        symbol_filter = f"\n  AND symbol IN ({rendered_symbols})"
+    start_literal = start_ts.strftime("%Y-%m-%d %H:%M:%S")
+    end_literal = end_ts.strftime("%Y-%m-%d %H:%M:%S")
+    shared_where = f"""
+WHERE source = 'ta'
+  AND window_size = 'PT1S'
+  AND event_ts >= toDateTime64('{start_literal}', 3, 'UTC')
+  AND event_ts < toDateTime64('{end_literal}', 3, 'UTC')
+  {symbol_filter}
+""".rstrip()
+    executable_where = f"""
+{shared_where}
+  AND isNotNull(imbalance_bid_px)
+  AND isNotNull(imbalance_ask_px)
+""".rstrip()
+    return f"""
+SELECT
+  toString(trading_day) AS trading_day,
+  toString(sum(raw_signal_rows)) AS raw_signal_rows,
+  toString(sum(executable_signal_rows)) AS executable_signal_rows,
+  toString(sum(microbar_rows)) AS microbar_rows,
+  toString(uniqExactIf(symbol, source_kind = 'raw_signal')) AS raw_signal_symbol_count,
+  toString(uniqExactIf(symbol, source_kind = 'executable_signal')) AS executable_signal_symbol_count,
+  toString(uniqExactIf(symbol, source_kind = 'microbar')) AS microbar_symbol_count
+FROM
+(
+  SELECT
+    toDate(event_ts, 'UTC') AS trading_day,
+    symbol,
+    'raw_signal' AS source_kind,
+    count() AS raw_signal_rows,
+    0 AS executable_signal_rows,
+    0 AS microbar_rows
+  FROM torghut.ta_signals
+  {shared_where}
+  GROUP BY trading_day, symbol
+  UNION ALL
+  SELECT
+    toDate(event_ts, 'UTC') AS trading_day,
+    symbol,
+    'executable_signal' AS source_kind,
+    0 AS raw_signal_rows,
+    count() AS executable_signal_rows,
+    0 AS microbar_rows
+  FROM torghut.ta_signals
+  {executable_where}
+  GROUP BY trading_day, symbol
+  UNION ALL
+  SELECT
+    toDate(event_ts, 'UTC') AS trading_day,
+    symbol,
+    'microbar' AS source_kind,
+    0 AS raw_signal_rows,
+    0 AS executable_signal_rows,
+    count() AS microbar_rows
+  FROM torghut.ta_microbars
+  {shared_where}
+  GROUP BY trading_day, symbol
+)
+GROUP BY trading_day
+ORDER BY trading_day
+FORMAT TSVRaw
+""".strip()
+
+
+def _parse_coverage_diagnostics(
+    raw: str,
+) -> dict[str, dict[str, int]]:
+    diagnostics: dict[str, dict[str, int]] = {}
+    reader = csv.reader(raw.splitlines(), delimiter="\t")
+    for parts in reader:
+        if len(parts) != 7:
+            continue
+        (
+            trading_day,
+            raw_signal_rows,
+            executable_signal_rows,
+            microbar_rows,
+            raw_signal_symbol_count,
+            executable_signal_symbol_count,
+            microbar_symbol_count,
+        ) = parts
+        diagnostics[str(trading_day)] = {
+            "raw_signal_rows": int(raw_signal_rows or 0),
+            "executable_signal_rows": int(executable_signal_rows or 0),
+            "microbar_rows": int(microbar_rows or 0),
+            "raw_signal_symbol_count": int(raw_signal_symbol_count or 0),
+            "executable_signal_symbol_count": int(executable_signal_symbol_count or 0),
+            "microbar_symbol_count": int(microbar_symbol_count or 0),
+        }
+    return diagnostics
+
+
+def _fetch_coverage_diagnostics(
+    *,
+    args: argparse.Namespace,
+    symbols: tuple[str, ...],
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    requested_days = tuple(
+        day.isoformat() for day in _business_days(start_date, end_date)
+    )
+    query = _coverage_diagnostics_query(
+        start_date=start_date,
+        end_date=end_date,
+        symbols=symbols,
+    )
+    raw = replay_mod._http_query(
+        url=str(args.clickhouse_http_url),
+        username=(str(args.clickhouse_username).strip() or None),
+        password=(str(args.clickhouse_password).strip() or None),
+        timeout_seconds=max(
+            1,
+            int(
+                getattr(
+                    args,
+                    "clickhouse_query_timeout_seconds",
+                    replay_mod.DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS,
+                )
+            ),
+        ),
+        query=query,
+    )
+    rows = _parse_coverage_diagnostics(raw)
+    missing_raw_signal_days = tuple(
+        day
+        for day in requested_days
+        if rows.get(day, {}).get("raw_signal_rows", 0) <= 0
+    )
+    missing_executable_signal_days = tuple(
+        day
+        for day in requested_days
+        if rows.get(day, {}).get("executable_signal_rows", 0) <= 0
+    )
+    missing_microbar_days = tuple(
+        day for day in requested_days if rows.get(day, {}).get("microbar_rows", 0) <= 0
+    )
+    return {
+        "schema_version": "torghut.replay-coverage-diagnostic.v1",
+        "query_family": "torghut.ta_replay_source_coverage",
+        "requested_trading_days": list(requested_days),
+        "symbols": list(symbols),
+        "rows_by_trading_day": rows,
+        "missing_raw_signal_days": list(missing_raw_signal_days),
+        "missing_executable_signal_days": list(missing_executable_signal_days),
+        "missing_microbar_days": list(missing_microbar_days),
+        "source_query_digest": build_source_query_digest(
+            {
+                "query_family": "torghut.ta_replay_source_coverage",
+                "start_date": start_date,
+                "end_date": end_date,
+                "symbols": list(symbols),
+            }
+        ),
+    }
+
+
+def _write_coverage_diagnostics(
+    *,
+    output_path: Path,
+    args: argparse.Namespace,
+    symbols: tuple[str, ...],
+    start_date: date,
+    end_date: date,
+    failure_reason: str | None = None,
+    materialization_diagnostics: dict[str, Any] | None = None,
+) -> None:
+    diagnostics = _fetch_coverage_diagnostics(
+        args=args,
+        symbols=symbols,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    if failure_reason:
+        diagnostics["materialization_failure_reason"] = failure_reason
+    if materialization_diagnostics is not None:
+        diagnostics["materialization_diagnostics"] = dict(materialization_diagnostics)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(diagnostics, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
 def main() -> int:
     args = _parse_args()
     logging.basicConfig(
@@ -181,18 +402,43 @@ def main() -> int:
     )
     rows = tuple(replay_mod._iter_signal_rows(config))
     manifest_path = args.manifest_output or default_manifest_path(args.output)
-    manifest = materialize_signal_tape(
-        rows=rows,
-        tape_path=Path(args.output).resolve(),
-        manifest_path=Path(manifest_path).resolve(),
-        dataset_snapshot_ref=str(args.dataset_snapshot_ref),
-        symbols=symbols,
-        start_date=start_date,
-        end_date=end_date,
-        source_query_digest=source_query_digest,
-        source_table_versions=_parse_source_table_versions(args.source_table_version),
-        require_complete_coverage=not bool(args.allow_incomplete_coverage),
-    )
+    try:
+        manifest = materialize_signal_tape(
+            rows=rows,
+            tape_path=Path(args.output).resolve(),
+            manifest_path=Path(manifest_path).resolve(),
+            dataset_snapshot_ref=str(args.dataset_snapshot_ref),
+            symbols=symbols,
+            start_date=start_date,
+            end_date=end_date,
+            source_query_digest=source_query_digest,
+            source_table_versions=_parse_source_table_versions(
+                args.source_table_version
+            ),
+            require_complete_coverage=not bool(args.allow_incomplete_coverage),
+        )
+    except ReplayTapeCoverageError as exc:
+        diagnostic_output = getattr(args, "coverage_diagnostic_output", None)
+        if diagnostic_output:
+            _write_coverage_diagnostics(
+                output_path=Path(diagnostic_output).resolve(),
+                args=args,
+                symbols=symbols,
+                start_date=start_date,
+                end_date=end_date,
+                failure_reason=str(exc),
+                materialization_diagnostics=exc.diagnostics,
+            )
+        raise
+    diagnostic_output = getattr(args, "coverage_diagnostic_output", None)
+    if diagnostic_output:
+        _write_coverage_diagnostics(
+            output_path=Path(diagnostic_output).resolve(),
+            args=args,
+            symbols=symbols,
+            start_date=start_date,
+            end_date=end_date,
+        )
     logger.info(
         "replay_tape_materialized output=%s manifest=%s rows=%s digest=%s",
         args.output,

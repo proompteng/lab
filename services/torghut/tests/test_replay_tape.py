@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 from app.trading.discovery.replay_tape import (
     REPLAY_TAPE_MANIFEST_SCHEMA_VERSION,
+    ReplayTapeCoverageError,
     ReplayTapeManifest,
     build_source_query_digest,
     default_manifest_path,
@@ -405,10 +406,7 @@ class TestReplayTape(TestCase):
         self,
     ) -> None:
         with TemporaryDirectory() as tmpdir:
-            with self.assertRaisesRegex(
-                ValueError,
-                "replay_tape_incomplete_coverage:missing_symbol_days=AAPL:2026-03-27",
-            ):
+            with self.assertRaises(ReplayTapeCoverageError) as raised:
                 materialize_signal_tape(
                     rows=[
                         self._signal(day=26, seq=1, symbol="META"),
@@ -424,6 +422,20 @@ class TestReplayTape(TestCase):
                     require_complete_coverage=True,
                 )
 
+            self.assertRegex(
+                str(raised.exception),
+                "replay_tape_incomplete_coverage:missing_symbol_days=AAPL:2026-03-27",
+            )
+            self.assertEqual(
+                raised.exception.diagnostics[
+                    "materialized_executable_rows_by_trading_day"
+                ],
+                {"2026-03-26": 2, "2026-03-27": 1},
+            )
+            self.assertEqual(
+                raised.exception.diagnostics["missing_symbol_trading_days"],
+                ["AAPL:2026-03-27"],
+            )
             self.assertFalse((Path(tmpdir) / "tape.jsonl").exists())
 
     def test_source_query_digest_normalizes_dates_decimals_and_lists(self) -> None:
@@ -526,6 +538,8 @@ class TestMaterializeReplayTapeCli(TestCase):
                     str(output),
                     "--symbols",
                     " nvda, META ",
+                    "--coverage-diagnostic-output",
+                    str(output.with_suffix(".coverage.json")),
                     "--source-table-version",
                     "ta_signals=v1",
                     "--clickhouse-query-timeout-seconds",
@@ -537,6 +551,10 @@ class TestMaterializeReplayTapeCli(TestCase):
         symbols = materialize_cli._parse_symbols(str(args.symbols))
         self.assertEqual(symbols, ("NVDA", "META"))
         self.assertEqual(args.clickhouse_query_timeout_seconds, 9)
+        self.assertEqual(
+            args.coverage_diagnostic_output,
+            output.with_suffix(".coverage.json"),
+        )
         self.assertFalse(args.allow_incomplete_coverage)
         self.assertEqual(
             materialize_cli._parse_source_table_versions(args.source_table_version),
@@ -568,11 +586,60 @@ class TestMaterializeReplayTapeCli(TestCase):
         with self.assertRaisesRegex(ValueError, "source_table_version_invalid"):
             materialize_cli._parse_source_table_versions(["broken"])
 
+    def test_coverage_diagnostics_parse_day_level_counts(self) -> None:
+        diagnostics = materialize_cli._parse_coverage_diagnostics(
+            "bad\trow\n2026-03-26\t10\t5\t7\t2\t1\t2\n"
+        )
+
+        self.assertEqual(
+            diagnostics,
+            {
+                "2026-03-26": {
+                    "raw_signal_rows": 10,
+                    "executable_signal_rows": 5,
+                    "microbar_rows": 7,
+                    "raw_signal_symbol_count": 2,
+                    "executable_signal_symbol_count": 1,
+                    "microbar_symbol_count": 2,
+                },
+            },
+        )
+
+    def test_fetch_coverage_diagnostics_marks_missing_source_layers(self) -> None:
+        args = Namespace(
+            clickhouse_http_url="http://clickhouse.invalid:8123",
+            clickhouse_username="torghut",
+            clickhouse_password="secret",
+            clickhouse_query_timeout_seconds=7,
+        )
+        with patch(
+            "scripts.materialize_replay_tape.replay_mod._http_query",
+            return_value="2026-03-26\t10\t5\t7\t2\t1\t2\n",
+        ) as query:
+            diagnostics = materialize_cli._fetch_coverage_diagnostics(
+                args=args,
+                symbols=("META",),
+                start_date=date(2026, 3, 26),
+                end_date=date(2026, 3, 27),
+            )
+
+        self.assertEqual(
+            materialize_cli._business_days(date(2026, 3, 27), date(2026, 3, 26)),
+            (),
+        )
+        query_payload = str(query.call_args.kwargs["query"])
+        self.assertIn("symbol IN ('META')", query_payload)
+        self.assertEqual(query.call_args.kwargs["timeout_seconds"], 7)
+        self.assertEqual(diagnostics["missing_raw_signal_days"], ["2026-03-27"])
+        self.assertEqual(diagnostics["missing_executable_signal_days"], ["2026-03-27"])
+        self.assertEqual(diagnostics["missing_microbar_days"], ["2026-03-27"])
+
     def test_main_materializes_manifest_from_replay_rows(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             output = root / "tape.jsonl"
             manifest_output = root / "tape.manifest.json"
+            diagnostic_output = root / "coverage.json"
             args = Namespace(
                 strategy_configmap=root / "strategy.yaml",
                 clickhouse_http_url="http://clickhouse.invalid:8123",
@@ -586,6 +653,7 @@ class TestMaterializeReplayTapeCli(TestCase):
                 dataset_snapshot_ref="snapshot-cli",
                 output=output,
                 manifest_output=manifest_output,
+                coverage_diagnostic_output=diagnostic_output,
                 source_table_version=["ta_signals=v1"],
                 allow_incomplete_coverage=False,
                 log_level="WARNING",
@@ -603,6 +671,14 @@ class TestMaterializeReplayTapeCli(TestCase):
                         self._signal(day=27, seq=2),
                     ),
                 ),
+                patch(
+                    "scripts.materialize_replay_tape._fetch_coverage_diagnostics",
+                    return_value={
+                        "schema_version": "torghut.replay-coverage-diagnostic.v1",
+                        "requested_trading_days": ["2026-03-26", "2026-03-27"],
+                        "missing_executable_signal_days": [],
+                    },
+                ),
                 redirect_stdout(stdout),
             ):
                 exit_code = materialize_cli.main()
@@ -610,6 +686,9 @@ class TestMaterializeReplayTapeCli(TestCase):
             payload = json.loads(stdout.getvalue())
             output_exists = output.exists()
             manifest_exists = manifest_output.exists()
+            diagnostic_payload = json.loads(
+                diagnostic_output.read_text(encoding="utf-8")
+            )
 
         self.assertEqual(exit_code, 0)
         self.assertTrue(output_exists)
@@ -628,6 +707,7 @@ class TestMaterializeReplayTapeCli(TestCase):
             payload["row_count_by_symbol_trading_day"],
             {"META": {"2026-03-26": 1, "2026-03-27": 1}},
         )
+        self.assertEqual(diagnostic_payload["missing_executable_signal_days"], [])
 
     def test_main_fails_closed_on_incomplete_coverage_by_default(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -647,6 +727,7 @@ class TestMaterializeReplayTapeCli(TestCase):
                 dataset_snapshot_ref="snapshot-cli",
                 output=output,
                 manifest_output=manifest_output,
+                coverage_diagnostic_output=None,
                 source_table_version=[],
                 allow_incomplete_coverage=False,
                 log_level="WARNING",
@@ -670,6 +751,83 @@ class TestMaterializeReplayTapeCli(TestCase):
             self.assertFalse(output.exists())
             self.assertFalse(manifest_output.exists())
 
+    def test_main_writes_coverage_diagnostics_when_strict_coverage_fails(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output = root / "tape.jsonl"
+            manifest_output = root / "tape.manifest.json"
+            diagnostic_output = root / "coverage.json"
+            args = Namespace(
+                strategy_configmap=root / "strategy.yaml",
+                clickhouse_http_url="http://clickhouse.invalid:8123",
+                clickhouse_username="torghut",
+                clickhouse_password="secret",
+                start_date="2026-03-26",
+                end_date="2026-03-27",
+                chunk_minutes=0,
+                start_equity="10000",
+                symbols="meta",
+                dataset_snapshot_ref="snapshot-cli",
+                output=output,
+                manifest_output=manifest_output,
+                coverage_diagnostic_output=diagnostic_output,
+                source_table_version=[],
+                allow_incomplete_coverage=False,
+                log_level="WARNING",
+            )
+            with (
+                patch(
+                    "scripts.materialize_replay_tape._parse_args",
+                    return_value=args,
+                ),
+                patch(
+                    "scripts.materialize_replay_tape.replay_mod._iter_signal_rows",
+                    return_value=(self._signal(day=26, seq=1),),
+                ),
+                patch(
+                    "scripts.materialize_replay_tape._fetch_coverage_diagnostics",
+                    return_value={
+                        "schema_version": "torghut.replay-coverage-diagnostic.v1",
+                        "requested_trading_days": ["2026-03-26", "2026-03-27"],
+                        "rows_by_trading_day": {
+                            "2026-03-26": {
+                                "raw_signal_rows": 10,
+                                "executable_signal_rows": 1,
+                                "microbar_rows": 10,
+                            },
+                            "2026-03-27": {
+                                "raw_signal_rows": 11,
+                                "executable_signal_rows": 0,
+                                "microbar_rows": 11,
+                            },
+                        },
+                        "missing_executable_signal_days": ["2026-03-27"],
+                    },
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "replay_tape_incomplete_coverage:missing_days=2026-03-27",
+                ):
+                    materialize_cli.main()
+
+            payload = json.loads(diagnostic_output.read_text(encoding="utf-8"))
+            self.assertEqual(
+                payload["materialization_failure_reason"],
+                "replay_tape_incomplete_coverage:missing_days=2026-03-27",
+            )
+            self.assertEqual(payload["missing_executable_signal_days"], ["2026-03-27"])
+            self.assertEqual(
+                payload["materialization_diagnostics"][
+                    "materialized_executable_rows_by_trading_day"
+                ],
+                {"2026-03-26": 1},
+            )
+            self.assertFalse(output.exists())
+            self.assertFalse(manifest_output.exists())
+
     def test_main_fails_closed_on_missing_symbol_days_by_default(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -688,6 +846,7 @@ class TestMaterializeReplayTapeCli(TestCase):
                 dataset_snapshot_ref="snapshot-cli",
                 output=output,
                 manifest_output=manifest_output,
+                coverage_diagnostic_output=None,
                 source_table_version=[],
                 allow_incomplete_coverage=False,
                 log_level="WARNING",
