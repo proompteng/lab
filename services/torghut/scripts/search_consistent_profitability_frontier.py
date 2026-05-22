@@ -14,7 +14,7 @@ import tempfile
 from collections import Counter, deque
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_CEILING
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeAlias, cast
 from unittest.mock import patch
@@ -73,6 +73,7 @@ _LOSS_REPAIR_TRIGGER_REASONS = frozenset(
         "train_worst_day_loss_above_screen",
         "worst_day_loss_above_max",
         "max_drawdown_above_max",
+        "conformal_tail_risk_below_target",
         "daily_net_below_min",
         "gross_exposure_pct_equity_above_max",
         "min_cash_below_min",
@@ -1706,6 +1707,7 @@ DELAY_ADJUSTED_DEPTH_STRESS_GRID_MS = (
     Decimal("150"),
     Decimal("250"),
 )
+CONFORMAL_TAIL_RISK_ALPHA = Decimal("0.20")
 
 
 def _p10(values: Sequence[Decimal]) -> Decimal:
@@ -1714,6 +1716,52 @@ def _p10(values: Sequence[Decimal]) -> Decimal:
     ordered = sorted(values)
     index = int((len(ordered) - 1) * 0.10)
     return ordered[index]
+
+
+def _conformal_tail_loss_buffer(
+    daily_net: Mapping[str, Decimal],
+    *,
+    alpha: Decimal = CONFORMAL_TAIL_RISK_ALPHA,
+) -> Decimal:
+    losses = sorted((max(Decimal("0"), -value) for value in daily_net.values()))
+    if not losses:
+        return Decimal("0")
+    tail_fraction = max(Decimal("0"), min(Decimal("1"), alpha))
+    tail_count = max(
+        1,
+        int(
+            (Decimal(len(losses)) * tail_fraction).to_integral_value(
+                rounding=ROUND_CEILING
+            )
+        ),
+    )
+    tail_count = min(tail_count, len(losses))
+    return max(losses[-tail_count:], default=Decimal("0"))
+
+
+def _conformal_tail_risk_metrics(
+    *,
+    target_net_per_day: Decimal,
+    net_per_day: Decimal,
+    daily_net: Mapping[str, Decimal],
+) -> dict[str, Any]:
+    buffer_per_day = _conformal_tail_loss_buffer(daily_net)
+    adjusted_net_per_day = net_per_day - buffer_per_day
+    sample_count = len(daily_net)
+    passed = sample_count > 0 and adjusted_net_per_day >= target_net_per_day
+    return {
+        "conformal_tail_risk_required": True,
+        "conformal_tail_risk_model": "empirical_daily_loss_conformal_buffer",
+        "conformal_tail_risk_alpha": str(CONFORMAL_TAIL_RISK_ALPHA),
+        "conformal_tail_risk_sample_count": sample_count,
+        "conformal_tail_risk_buffer_per_day": str(buffer_per_day),
+        "conformal_tail_risk_adjusted_net_pnl_per_day": str(adjusted_net_per_day),
+        "conformal_tail_risk_target_net_pnl_per_day": str(target_net_per_day),
+        "conformal_tail_risk_passed": passed,
+        "conformal_tail_risk_source_markers": [
+            "regime_weighted_conformal_var_arxiv_2602_03903_2026"
+        ],
+    }
 
 
 def _delay_depth_fillability(
@@ -2097,6 +2145,11 @@ def _consistency_penalty(
         ),
         queue_ratio_p95=queue_ratio_p95,
     )
+    conformal_tail_risk_metrics = _conformal_tail_risk_metrics(
+        target_net_per_day=policy.target_net_per_day,
+        net_per_day=summary.net_per_day,
+        daily_net=summary.daily_net,
+    )
     best_day_share_of_total_pnl = _max_best_day_share_of_total_pnl(
         daily_net=summary.daily_net,
         total_net_pnl=summary.net_pnl,
@@ -2212,6 +2265,18 @@ def _consistency_penalty(
             Decimal("0"),
             policy.target_net_per_day - implementation_uncertainty_lower_bound,
         )
+    if not bool(conformal_tail_risk_metrics["conformal_tail_risk_passed"]):
+        penalties += max(
+            Decimal("0"),
+            policy.target_net_per_day
+            - Decimal(
+                str(
+                    conformal_tail_risk_metrics[
+                        "conformal_tail_risk_adjusted_net_pnl_per_day"
+                    ]
+                )
+            ),
+        )
 
     return (
         penalties,
@@ -2244,6 +2309,7 @@ def _consistency_penalty(
             "total_liquidity_notional": str(total_liquidity_notional),
             "avg_liquidity_notional_per_day": str(avg_liquidity_notional_per_day),
             **replay_stress_metrics,
+            **conformal_tail_risk_metrics,
             "best_day_share_of_total_pnl": str(best_day_share_of_total_pnl),
             "max_gross_exposure_pct_equity": str(max_gross_exposure_pct_equity),
             "max_gross_exposure_pct_equity_required": str(
@@ -4125,6 +4191,8 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     > 0
                 ):
                     hard_vetoes.append("daily_net_below_min")
+                if not bool(full_window_summary.get("conformal_tail_risk_passed")):
+                    hard_vetoes.append("conformal_tail_risk_below_target")
                 if (
                     objective_scorecard.symbol_concentration_share
                     > consistency_policy.max_symbol_concentration_share
@@ -4380,6 +4448,49 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                                 Sequence[Any],
                                 full_window_summary.get(
                                     "implementation_uncertainty_source_markers"
+                                )
+                                or (),
+                            )
+                        ),
+                        "conformal_tail_risk_required": bool(
+                            full_window_summary.get("conformal_tail_risk_required")
+                        ),
+                        "conformal_tail_risk_model": str(
+                            full_window_summary.get("conformal_tail_risk_model") or ""
+                        ),
+                        "conformal_tail_risk_alpha": str(
+                            full_window_summary.get("conformal_tail_risk_alpha") or "0"
+                        ),
+                        "conformal_tail_risk_sample_count": int(
+                            full_window_summary.get("conformal_tail_risk_sample_count")
+                            or 0
+                        ),
+                        "conformal_tail_risk_buffer_per_day": str(
+                            full_window_summary.get(
+                                "conformal_tail_risk_buffer_per_day"
+                            )
+                            or "0"
+                        ),
+                        "conformal_tail_risk_adjusted_net_pnl_per_day": str(
+                            full_window_summary.get(
+                                "conformal_tail_risk_adjusted_net_pnl_per_day"
+                            )
+                            or "0"
+                        ),
+                        "conformal_tail_risk_target_net_pnl_per_day": str(
+                            full_window_summary.get(
+                                "conformal_tail_risk_target_net_pnl_per_day"
+                            )
+                            or "0"
+                        ),
+                        "conformal_tail_risk_passed": bool(
+                            full_window_summary.get("conformal_tail_risk_passed")
+                        ),
+                        "conformal_tail_risk_source_markers": list(
+                            cast(
+                                Sequence[Any],
+                                full_window_summary.get(
+                                    "conformal_tail_risk_source_markers"
                                 )
                                 or (),
                             )
