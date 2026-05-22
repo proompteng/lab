@@ -483,17 +483,21 @@ def build_hypothesis_runtime_summary(
         ),
         route_symbol_filter_enabled=settings.trading_pipeline_mode == "simple",
     )
+    max_age_seconds = max(
+        0, int(settings.trading_drift_live_promotion_max_evidence_age_seconds)
+    )
+    now = datetime.now(timezone.utc)
     evidence = _load_latest_certificate_evidence(
         session,
         hypothesis_ids=[item.hypothesis_id for item in registry.items],
+        now=now,
+        max_age_seconds=max_age_seconds,
     )
     items = _merge_runtime_certificate_evidence(
         items,
         evidence=evidence,
-        now=datetime.now(timezone.utc),
-        max_age_seconds=max(
-            0, int(settings.trading_drift_live_promotion_max_evidence_age_seconds)
-        ),
+        now=now,
+        max_age_seconds=max_age_seconds,
     )
     summary = summarize_hypothesis_runtime_statuses(
         items,
@@ -848,6 +852,116 @@ def _load_latest_runtime_ledger_summary(
     return {"by_hypothesis": by_hypothesis, "runtime_ledger_buckets": retained_rows}
 
 
+def _runtime_ledger_selection_score(payload: Mapping[str, object] | None) -> int:
+    if not isinstance(payload, Mapping):
+        return 0
+
+    score = 0
+    blockers = [
+        str(reason).strip()
+        for reason in cast(Sequence[object], payload.get("blockers") or [])
+        if str(reason).strip()
+    ]
+    if not blockers:
+        score += 1
+    if (
+        _safe_text(payload.get("pnl_basis"))
+        == "realized_strategy_pnl_after_explicit_costs"
+    ):
+        score += 1
+    if (_safe_decimal(payload.get("filled_notional")) or Decimal("0")) > 0:
+        score += 1
+    if (_safe_decimal(payload.get("post_cost_expectancy_bps")) or Decimal("0")) > 0:
+        score += 1
+    if _safe_int(payload.get("closed_trade_count")) > 0:
+        score += 1
+    if _safe_int(payload.get("open_position_count")) == 0:
+        score += 1
+    if _runtime_ledger_hash_count(
+        payload,
+        payload_key="execution_policy_hash_counts",
+        observed={},
+        observed_key="runtime_ledger_execution_policy_hash_count",
+    ) > 0:
+        score += 1
+    if _runtime_ledger_hash_count(
+        payload,
+        payload_key="cost_model_hash_counts",
+        observed={},
+        observed_key="runtime_ledger_cost_model_hash_count",
+    ) > 0:
+        score += 1
+    if _runtime_ledger_hash_count(
+        payload,
+        payload_key="lineage_hash_counts",
+        observed={},
+        observed_key="runtime_ledger_lineage_hash_count",
+    ) > 0:
+        score += 1
+    return score
+
+
+def _certificate_evidence_selection_key(
+    row: Mapping[str, object],
+    *,
+    now: datetime | None,
+    max_age_seconds: int | None,
+) -> tuple[int, int, int, int, int, int, int, Decimal, float]:
+    metric_window = cast(
+        StrategyHypothesisMetricWindow | None, row.get("metric_window")
+    )
+    promotion_decision = cast(
+        StrategyPromotionDecision | None, row.get("promotion_decision")
+    )
+    runtime_ledger_bucket = cast(
+        Mapping[str, object] | None, row.get("runtime_ledger_bucket")
+    )
+    if metric_window is None:
+        return (0, 0, 0, 0, 0, 0, 0, Decimal("0"), 0.0)
+
+    issued_at = _coerce_aware_datetime(
+        getattr(metric_window, "window_ended_at", None)
+        or getattr(metric_window, "created_at", None)
+    )
+    fresh_score = 1
+    if now is not None and max_age_seconds is not None and max_age_seconds > 0:
+        fresh_score = int(
+            issued_at is not None and issued_at >= now - timedelta(seconds=max_age_seconds)
+        )
+    observed_stage = _safe_text(getattr(metric_window, "observed_stage", None))
+    stage_score = {"live": 2, "paper": 1}.get(observed_stage or "", 0)
+    decision_score = 0
+    if promotion_decision is not None:
+        decision_score = int(
+            _safe_bool(getattr(promotion_decision, "allowed", False)) is True
+            and not _promotion_decision_blocking_reason_codes(promotion_decision)
+        )
+    activity_score = int(not _metric_window_activity_reason_codes(metric_window))
+    continuity_score = int(
+        bool(getattr(metric_window, "continuity_ok", False))
+        and bool(getattr(metric_window, "drift_ok", False))
+        and _safe_text(getattr(metric_window, "dependency_quorum_decision", None))
+        == "allow"
+    )
+    capital_rank = max(0, _stage_rank(getattr(metric_window, "capital_stage", None)))
+    sample_count = _safe_int(getattr(metric_window, "order_count", None))
+    expectancy_bps = _safe_decimal(
+        getattr(metric_window, "post_cost_expectancy_bps", None)
+    ) or Decimal("0")
+    issued_ts = issued_at.timestamp() if issued_at is not None else 0.0
+    return (
+        fresh_score,
+        stage_score,
+        decision_score,
+        activity_score,
+        continuity_score,
+        _runtime_ledger_selection_score(runtime_ledger_bucket),
+        capital_rank + sample_count,
+        expectancy_bps,
+        issued_ts,
+    )
+
+
 def _extract_runtime_summary(
     hypothesis_summary: Mapping[str, Any] | None,
 ) -> tuple[Mapping[str, Any], list[Mapping[str, Any]]]:
@@ -972,6 +1086,8 @@ def _load_latest_certificate_evidence(
     session: Session,
     *,
     hypothesis_ids: Sequence[str],
+    now: datetime | None = None,
+    max_age_seconds: int | None = None,
 ) -> list[dict[str, object]]:
     normalized_ids = [
         hypothesis_id for hypothesis_id in hypothesis_ids if hypothesis_id
@@ -979,7 +1095,7 @@ def _load_latest_certificate_evidence(
     if not normalized_ids:
         return []
 
-    latest_windows: dict[str, StrategyHypothesisMetricWindow] = {}
+    windows_by_hypothesis: dict[str, list[StrategyHypothesisMetricWindow]] = {}
     window_rows = session.execute(
         select(StrategyHypothesisMetricWindow)
         .where(StrategyHypothesisMetricWindow.hypothesis_id.in_(normalized_ids))
@@ -989,9 +1105,7 @@ def _load_latest_certificate_evidence(
         )
     ).scalars()
     for row in window_rows:
-        if row.hypothesis_id in latest_windows:
-            continue
-        latest_windows[row.hypothesis_id] = row
+        windows_by_hypothesis.setdefault(row.hypothesis_id, []).append(row)
 
     latest_promotions: dict[str, list[StrategyPromotionDecision]] = {}
     promotion_rows = session.execute(
@@ -1018,34 +1132,55 @@ def _load_latest_certificate_evidence(
 
     evidence: list[dict[str, object]] = []
     for hypothesis_id in normalized_ids:
-        metric_window = latest_windows.get(hypothesis_id)
-        promotion_decision = None
-        for decision in latest_promotions.get(hypothesis_id, []):
-            if metric_window is None or _promotion_decision_matches_metric_window(
-                decision,
-                metric_window=metric_window,
-            ):
-                promotion_decision = decision
+        candidate_rows: list[dict[str, object]] = []
+        for metric_window in windows_by_hypothesis.get(hypothesis_id, []):
+            promotion_decision = None
+            for decision in latest_promotions.get(hypothesis_id, []):
+                if _promotion_decision_matches_metric_window(
+                    decision,
+                    metric_window=metric_window,
+                ):
+                    promotion_decision = decision
+                    break
+            runtime_ledger_bucket = None
+            for ledger in latest_runtime_ledgers.get(hypothesis_id, []):
+                if (
+                    _safe_text(ledger.run_id) != _safe_text(metric_window.run_id)
+                    or _safe_text(ledger.candidate_id)
+                    != _safe_text(metric_window.candidate_id)
+                    or _safe_text(ledger.observed_stage)
+                    != _safe_text(metric_window.observed_stage)
+                ):
+                    continue
+                runtime_ledger_bucket = _runtime_ledger_bucket_payload(ledger)
                 break
-        runtime_ledger_bucket = None
-        for ledger in latest_runtime_ledgers.get(hypothesis_id, []):
-            if metric_window is not None and (
-                _safe_text(ledger.run_id) != _safe_text(metric_window.run_id)
-                or _safe_text(ledger.candidate_id)
-                != _safe_text(metric_window.candidate_id)
-                or _safe_text(ledger.observed_stage)
-                != _safe_text(metric_window.observed_stage)
-            ):
-                continue
-            runtime_ledger_bucket = _runtime_ledger_bucket_payload(ledger)
-            break
+            candidate_rows.append(
+                {
+                    "hypothesis_id": hypothesis_id,
+                    "metric_window": metric_window,
+                    "promotion_decision": promotion_decision,
+                    "runtime_ledger_bucket": runtime_ledger_bucket,
+                }
+            )
+        if not candidate_rows:
+            evidence.append(
+                {
+                    "hypothesis_id": hypothesis_id,
+                    "metric_window": None,
+                    "promotion_decision": None,
+                    "runtime_ledger_bucket": None,
+                }
+            )
+            continue
         evidence.append(
-            {
-                "hypothesis_id": hypothesis_id,
-                "metric_window": metric_window,
-                "promotion_decision": promotion_decision,
-                "runtime_ledger_bucket": runtime_ledger_bucket,
-            }
+            max(
+                candidate_rows,
+                key=lambda row: _certificate_evidence_selection_key(
+                    row,
+                    now=now,
+                    max_age_seconds=max_age_seconds,
+                ),
+            )
         )
     return evidence
 
@@ -2159,11 +2294,13 @@ def build_live_submission_gate_payload(
         else _load_latest_certificate_evidence(
             session,
             hypothesis_ids=[item.hypothesis_id for item in registry.items],
+            now=now,
+            max_age_seconds=max_age_seconds,
         )
         if session is not None
         else []
     )
-    readiness_evidence_rows: list[Mapping[str, object]] = []
+    runtime_evidence_rows: list[Mapping[str, object]] = []
     for row in evidence_rows:
         metric_window = cast(
             StrategyHypothesisMetricWindow | None, row.get("metric_window")
@@ -2173,13 +2310,17 @@ def build_live_submission_gate_payload(
         )
         if metric_window is None or promotion_decision is None:
             continue
-        if _safe_text(getattr(metric_window, "observed_stage", None)) != "paper":
+        if _safe_text(getattr(metric_window, "observed_stage", None)) not in {
+            "paper",
+            "live",
+        }:
             continue
-        readiness_evidence_rows.append(row)
-    if runtime_items and readiness_evidence_rows:
+        runtime_evidence_rows.append(row)
+    claimed_promotion_eligible_total = _safe_int(summary.get("promotion_eligible_total"))
+    if runtime_items and runtime_evidence_rows:
         runtime_items = _merge_runtime_certificate_evidence(
             runtime_items,
-            evidence=readiness_evidence_rows,
+            evidence=runtime_evidence_rows,
             now=now,
             max_age_seconds=max_age_seconds,
         )
@@ -2322,7 +2463,9 @@ def build_live_submission_gate_payload(
         for item in evaluated_tuples
         for reason in cast(Sequence[str], item.get("reason_codes") or [])
     ]
-    if promotion_eligible_total > 0 and not valid_candidates:
+    if (
+        promotion_eligible_total > 0 or claimed_promotion_eligible_total > 0
+    ) and not valid_candidates:
         if not evaluated_tuples:
             blocked_reasons.append("promotion_certificate_missing")
             blocked_reasons.append("hypothesis_window_evidence_missing")
