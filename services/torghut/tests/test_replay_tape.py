@@ -34,6 +34,32 @@ from scripts.local_intraday_tsmom_replay import (
 
 
 class TestReplayTape(TestCase):
+    def test_materialize_cli_default_strategy_configmap_is_repo_rooted(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            with patch.object(
+                sys,
+                "argv",
+                [
+                    "materialize_replay_tape.py",
+                    "--start-date",
+                    "2026-05-13",
+                    "--end-date",
+                    "2026-05-13",
+                    "--dataset-snapshot-ref",
+                    "snapshot-a",
+                    "--output",
+                    str(Path(tmpdir) / "tape.jsonl"),
+                ],
+            ):
+                args = materialize_cli._parse_args()
+
+        expected = (
+            Path(__file__).resolve().parents[3]
+            / "argocd/applications/torghut/strategy-configmap.yaml"
+        )
+        self.assertEqual(args.strategy_configmap, expected)
+        self.assertTrue(args.strategy_configmap.exists())
+
     def _signal(
         self,
         *,

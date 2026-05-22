@@ -22,7 +22,12 @@ from app.trading.reporting import (
     ProfitabilityConstraintPolicy,
     score_replay_profitability_candidate,
 )
-from scripts.local_intraday_tsmom_replay import ReplayConfig, _http_query, run_replay
+from scripts.local_intraday_tsmom_replay import (
+    ReplayConfig,
+    _http_query,
+    default_strategy_configmap_path,
+    run_replay,
+)
 
 _SWEEP_SCHEMA_VERSION = "torghut.replay-frontier-sweep.v1"
 _REPLAY_SIGNAL_TABLE = "torghut.ta_signals"
@@ -58,7 +63,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--strategy-configmap",
         type=Path,
-        default=Path("argocd/applications/torghut/strategy-configmap.yaml"),
+        default=default_strategy_configmap_path(),
     )
     parser.add_argument(
         "--sweep-config",

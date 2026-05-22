@@ -77,6 +77,11 @@ _EXACT_REPLAY_LEDGER_ROWS_SCHEMA_VERSION = "torghut.exact_replay_ledger.rows.v1"
 _REPLAY_LEDGER_ACCOUNT_LABEL = "TORGHUT_REPLAY"
 _REPLAY_COST_BASIS = "local_replay_transaction_cost_model"
 _REPLAY_LEDGER_SOURCE = "local_intraday_tsmom_replay"
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def default_strategy_configmap_path() -> Path:
+    return _REPO_ROOT / "argocd/applications/torghut/strategy-configmap.yaml"
 
 
 def _position_key(symbol: str, strategy_id: str) -> tuple[str, str]:
@@ -468,7 +473,8 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--strategy-configmap",
-        default="argocd/applications/torghut/strategy-configmap.yaml",
+        type=Path,
+        default=default_strategy_configmap_path(),
     )
     parser.add_argument(
         "--clickhouse-http-url",
