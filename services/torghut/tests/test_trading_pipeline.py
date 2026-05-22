@@ -23,6 +23,7 @@ from app.models import (
     StrategyHypothesis,
     StrategyHypothesisMetricWindow,
     StrategyPromotionDecision,
+    StrategyRuntimeLedgerBucket,
     TradeDecision,
     VNextDatasetSnapshot,
 )
@@ -1343,6 +1344,67 @@ class TestTradingPipeline(TestCase):
             "runtime_ledger_notional_weighted_sample_count": sample_count,
         }
 
+    def _runtime_ledger_bucket(
+        self,
+        *,
+        run_id: str = "run-1",
+        candidate_id: str = "cand-1",
+        hypothesis_id: str = "H-CONT-01",
+        observed_stage: str = "live",
+        strategy_family: str = "demo",
+        post_cost_expectancy_bps: Decimal = Decimal("2.5"),
+        bucket_at: datetime | None = None,
+    ) -> StrategyRuntimeLedgerBucket:
+        observed_at = bucket_at or datetime.now(timezone.utc)
+        return StrategyRuntimeLedgerBucket(
+            run_id=run_id,
+            candidate_id=candidate_id,
+            hypothesis_id=hypothesis_id,
+            observed_stage=observed_stage,
+            bucket_started_at=observed_at - timedelta(minutes=15),
+            bucket_ended_at=observed_at,
+            account_label="live",
+            runtime_strategy_name=f"runtime-{candidate_id}",
+            strategy_family=strategy_family,
+            fill_count=1,
+            decision_count=1,
+            submitted_order_count=1,
+            cancelled_order_count=0,
+            rejected_order_count=0,
+            unfilled_order_count=0,
+            closed_trade_count=1,
+            open_position_count=0,
+            filled_notional=Decimal("10000"),
+            gross_strategy_pnl=Decimal("3.0"),
+            cost_amount=Decimal("0.5"),
+            net_strategy_pnl_after_costs=Decimal("2.5"),
+            post_cost_expectancy_bps=post_cost_expectancy_bps,
+            ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+            pnl_basis="realized_strategy_pnl_after_explicit_costs",
+            execution_policy_hash_counts={"policy": 1},
+            cost_model_hash_counts={"cost": 1},
+            lineage_hash_counts={"lineage": 1},
+            blockers_json=[],
+            payload_json={
+                "run_id": run_id,
+                "candidate_id": candidate_id,
+                "hypothesis_id": hypothesis_id,
+                "observed_stage": observed_stage,
+                "strategy_family": strategy_family,
+                "submitted_order_count": 1,
+                "closed_trade_count": 1,
+                "open_position_count": 0,
+                "filled_notional": "10000",
+                "net_strategy_pnl_after_costs": "2.5",
+                "post_cost_expectancy_bps": str(post_cost_expectancy_bps),
+                "pnl_basis": "realized_strategy_pnl_after_explicit_costs",
+                "execution_policy_hash_counts": {"policy": 1},
+                "cost_model_hash_counts": {"cost": 1},
+                "lineage_hash_counts": {"lineage": 1},
+                "blockers": [],
+            },
+        )
+
     def _seed_promotion_certificate_evidence(
         self,
         *,
@@ -1387,6 +1449,16 @@ class TestTradingPipeline(TestCase):
                     state=capital_stage,
                     allowed=True,
                     reason_summary="ready",
+                )
+            )
+            session.add(
+                self._runtime_ledger_bucket(
+                    run_id="run-1",
+                    candidate_id=candidate_id,
+                    hypothesis_id=hypothesis_id,
+                    strategy_family=strategy_family,
+                    post_cost_expectancy_bps=post_cost_expectancy_bps,
+                    bucket_at=evidence_at,
                 )
             )
             session.add(
@@ -5000,6 +5072,16 @@ class TestTradingPipeline(TestCase):
                         state="0.10x canary",
                         allowed=True,
                         reason_summary="ready",
+                    )
+                )
+                session.add(
+                    self._runtime_ledger_bucket(
+                        run_id="run-1",
+                        candidate_id="cand-1",
+                        hypothesis_id="H-CONT-01",
+                        strategy_family="live-canary-eligible",
+                        post_cost_expectancy_bps=Decimal("2.5"),
+                        bucket_at=evidence_at,
                     )
                 )
                 session.add(
