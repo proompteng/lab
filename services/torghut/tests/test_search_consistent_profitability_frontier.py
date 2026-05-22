@@ -3074,6 +3074,11 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             "fill_survival_sample_count": 4,
             "fill_survival_evidence_present": True,
             "order_qty_to_touch_qty_ratio_p95": "0.25",
+            "queue_ahead_depletion_evidence_present": True,
+            "queue_ahead_depletion_sample_count": 4,
+            "queue_ahead_depletion_rate": "0.50",
+            "queue_ahead_depleted_qty_p50": "25",
+            "queue_ahead_depletion_time_ms_p50": "125",
             "post_cost_survivorship": {
                 "post_cost_survival_rate": "1",
                 "gross_positive_killed_by_cost_count": 0,
@@ -3117,6 +3122,15 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(summary["queue_position_survival_sample_count"], 4)
         self.assertEqual(summary["queue_position_survival_fill_rate"], "0.5")
         self.assertEqual(summary["queue_position_survival_queue_ratio_p95"], "0.25")
+        self.assertTrue(
+            summary["queue_position_survival_queue_ahead_depletion_evidence_present"]
+        )
+        self.assertEqual(
+            summary["queue_position_survival_queue_ahead_depletion_sample_count"],
+            4,
+        )
+        self.assertTrue(summary["queue_ahead_depletion_evidence_present"])
+        self.assertEqual(summary["queue_ahead_depletion_sample_count"], 4)
         self.assertEqual(
             summary["queue_position_survival_adjusted_fillable_ratio"],
             "0.5",
@@ -3136,6 +3150,58 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 summary["post_cost_net_pnl_after_queue_position_survival_fill_stress"]
             ),
             frontier.Decimal("490"),
+        )
+
+    def test_consistency_penalty_does_not_count_l1_queue_ratio_as_queue_survival(
+        self,
+    ) -> None:
+        payload = self._payload(
+            start_date="2026-03-24",
+            end_date="2026-03-24",
+            daily_net={"2026-03-24": "1000"},
+            daily_filled_notional={"2026-03-24": "100000"},
+            daily_liquidity_notional={"2026-03-24": "1000000"},
+            decision_count=4,
+            filled_count=4,
+            wins=4,
+            losses=0,
+        )
+        payload["order_lifecycle"] = {
+            "submitted_order_count": 4,
+            "filled_order_count": 2,
+            "fill_rate": "0.5",
+            "fill_survival_sample_count": 4,
+            "fill_survival_evidence_present": True,
+            "order_qty_to_touch_qty_ratio_p95": "0.25",
+        }
+
+        _, summary = frontier._consistency_penalty(
+            full_window_payload=payload,
+            policy=frontier.FullWindowConsistencyPolicy(
+                target_net_per_day=frontier.Decimal("500"),
+                min_daily_net_pnl=frontier.Decimal("0"),
+                min_active_days=1,
+                min_active_ratio=frontier.Decimal("1"),
+                min_positive_days=1,
+                max_worst_day_loss=frontier.Decimal("250"),
+                max_negative_days=0,
+                max_drawdown=frontier.Decimal("500"),
+                max_best_day_share_of_total_pnl=frontier.Decimal("1"),
+                min_avg_filled_notional_per_day=frontier.Decimal("50000"),
+                min_avg_filled_notional_per_active_day=frontier.Decimal("50000"),
+                require_every_day_active=True,
+            ),
+        )
+
+        self.assertTrue(summary["delay_adjusted_depth_fill_survival_evidence_present"])
+        self.assertEqual(summary["delay_adjusted_depth_queue_ratio_p95"], "0.25")
+        self.assertFalse(summary["queue_position_survival_fill_curve_evidence_present"])
+        self.assertFalse(
+            summary["queue_position_survival_queue_ahead_depletion_evidence_present"]
+        )
+        self.assertEqual(
+            summary["queue_position_survival_queue_ahead_depletion_sample_count"],
+            0,
         )
 
     def test_consistency_penalty_reports_and_penalizes_capital_realism(self) -> None:

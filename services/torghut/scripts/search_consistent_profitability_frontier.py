@@ -1688,10 +1688,32 @@ def _nonnegative_int_metric(value: Any) -> int:
         return 0
 
 
+def _truthy_metric(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value in (None, ""):
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "pass", "passed"}
+
+
 def _order_lifecycle_metrics(payload: Mapping[str, Any]) -> dict[str, Any]:
     lifecycle = _mapping(payload.get("order_lifecycle"))
     if not lifecycle:
         return {}
+    queue_ahead_depletion_sample_count = _nonnegative_int_metric(
+        lifecycle.get("queue_ahead_depletion_sample_count")
+        or lifecycle.get("queue_depletion_sample_count")
+    )
+    queue_ahead_depletion_evidence_present = _truthy_metric(
+        lifecycle.get("queue_ahead_depletion_evidence_present")
+    ) or (
+        queue_ahead_depletion_sample_count > 0
+        and (
+            lifecycle.get("queue_ahead_depletion_rate") is not None
+            or lifecycle.get("queue_ahead_depleted_qty_p50") is not None
+            or lifecycle.get("queue_ahead_depletion_time_ms_p50") is not None
+        )
+    )
     metrics: dict[str, Any] = {
         "order_lifecycle": lifecycle,
         "fill_survival_evidence_present": bool(
@@ -1723,6 +1745,16 @@ def _order_lifecycle_metrics(payload: Mapping[str, Any]) -> dict[str, Any]:
         "order_qty_to_touch_qty_ratio_p95": str(
             lifecycle.get("order_qty_to_touch_qty_ratio_p95") or ""
         ),
+        "queue_ahead_depletion_evidence_present": (
+            queue_ahead_depletion_evidence_present
+        ),
+        "queue_ahead_depletion_sample_count": queue_ahead_depletion_sample_count,
+        "delay_adjusted_depth_queue_ahead_depletion_evidence_present": (
+            queue_ahead_depletion_evidence_present
+        ),
+        "delay_adjusted_depth_queue_ahead_depletion_sample_count": (
+            queue_ahead_depletion_sample_count
+        ),
         "fill_probability_by_latency_bucket": _mapping(
             lifecycle.get("fill_probability_by_latency_bucket")
         ),
@@ -1730,6 +1762,16 @@ def _order_lifecycle_metrics(payload: Mapping[str, Any]) -> dict[str, Any]:
             lifecycle.get("fill_probability_by_latency_threshold_ms")
         ),
     }
+    for key in (
+        "queue_ahead_depletion_rate",
+        "queue_ahead_qty_p95",
+        "queue_ahead_depleted_qty_p50",
+        "queue_ahead_depleted_qty_p95",
+        "queue_ahead_depletion_time_ms_p50",
+        "queue_ahead_depletion_time_ms_p95",
+    ):
+        if key in lifecycle:
+            metrics[key] = lifecycle[key]
     survivorship = _mapping(lifecycle.get("post_cost_survivorship"))
     if survivorship:
         metrics["post_cost_survivorship"] = survivorship
@@ -2158,6 +2200,8 @@ def _replay_stress_metrics(
     fill_survival_rate: Decimal | None = None,
     fill_survival_sample_count: int = 0,
     queue_ratio_p95: Decimal | None = None,
+    queue_ahead_depletion_evidence_present: bool = False,
+    queue_ahead_depletion_sample_count: int = 0,
 ) -> dict[str, Any]:
     participation = (
         total_filled_notional / total_liquidity_notional
@@ -2342,7 +2386,10 @@ def _replay_stress_metrics(
         if queue_ratio_p95 is not None
         else "",
         "queue_position_survival_fill_curve_evidence_present": (
-            fill_survival_sample_count > 0 and queue_ratio_p95 is not None
+            fill_survival_sample_count > 0
+            and queue_ratio_p95 is not None
+            and queue_ahead_depletion_evidence_present
+            and queue_ahead_depletion_sample_count > 0
         ),
         "queue_position_survival_sample_count": fill_survival_sample_count,
         "queue_position_survival_fill_rate": str(fill_survival_rate)
@@ -2351,6 +2398,12 @@ def _replay_stress_metrics(
         "queue_position_survival_queue_ratio_p95": str(queue_ratio_p95)
         if queue_ratio_p95 is not None
         else "",
+        "queue_position_survival_queue_ahead_depletion_evidence_present": (
+            queue_ahead_depletion_evidence_present
+        ),
+        "queue_position_survival_queue_ahead_depletion_sample_count": (
+            queue_ahead_depletion_sample_count
+        ),
         "queue_position_survival_adjusted_fillable_ratio": str(
             survival_adjusted_fillable_ratio
         ),
@@ -2474,6 +2527,12 @@ def _consistency_penalty(
             order_lifecycle_metrics.get("fill_survival_sample_count") or 0
         ),
         queue_ratio_p95=queue_ratio_p95,
+        queue_ahead_depletion_evidence_present=bool(
+            order_lifecycle_metrics.get("queue_ahead_depletion_evidence_present")
+        ),
+        queue_ahead_depletion_sample_count=int(
+            order_lifecycle_metrics.get("queue_ahead_depletion_sample_count") or 0
+        ),
     )
     conformal_tail_risk_metrics = _conformal_tail_risk_metrics(
         target_net_per_day=policy.target_net_per_day,
@@ -4966,6 +5025,17 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                                 "queue_position_survival_queue_ratio_p95"
                             )
                             or ""
+                        ),
+                        "queue_position_survival_queue_ahead_depletion_evidence_present": bool(
+                            full_window_summary.get(
+                                "queue_position_survival_queue_ahead_depletion_evidence_present"
+                            )
+                        ),
+                        "queue_position_survival_queue_ahead_depletion_sample_count": int(
+                            full_window_summary.get(
+                                "queue_position_survival_queue_ahead_depletion_sample_count"
+                            )
+                            or 0
                         ),
                         "queue_position_survival_adjusted_fillable_ratio": str(
                             full_window_summary.get(
