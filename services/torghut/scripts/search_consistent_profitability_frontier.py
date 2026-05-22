@@ -136,6 +136,25 @@ _CONSISTENCY_REPAIR_COOLDOWN_KEYS = (
     "entry_cooldown_seconds",
     "signal_cooldown_seconds",
 )
+_CONSISTENCY_REPAIR_SIGNAL_THRESHOLD_KEYS = (
+    "min_cross_section_continuation_rank",
+    "min_cross_section_reversal_rank",
+    "min_cross_section_opening_window_return_rank",
+    "isolated_same_day_min_session_open_rank",
+    "isolated_same_day_min_opening_window_return_rank",
+    "isolated_same_day_min_continuation_rank",
+    "min_cross_section_continuation_breadth",
+    "min_recent_above_opening_window_close_ratio",
+    "min_recent_above_opening_range_high_ratio",
+    "min_recent_above_vwap_w5m_ratio",
+    "min_recent_microprice_bias_bps",
+    "min_recent_imbalance_pressure",
+    "min_imbalance_pressure",
+)
+_CONSISTENCY_REPAIR_RANK_STEP = Decimal("0.05")
+_CONSISTENCY_REPAIR_MIN_RANK_THRESHOLD = Decimal("0.01")
+_CONSISTENCY_REPAIR_THRESHOLD_SCALE = Decimal("0.80")
+_CONSISTENCY_REPAIR_MAX_SIGNAL_THRESHOLD_RELAXATIONS = 2
 
 
 @dataclass(frozen=True)
@@ -923,11 +942,26 @@ def _parameter_grid_items(
 
 def _parameter_exploration_priority(name: str) -> int:
     lowered = name.lower()
+    if lowered in {
+        "rank_feature",
+        "rank_count",
+        "selection_mode",
+        "signal_motif",
+        "top_n",
+    } or any(
+        token in lowered
+        for token in (
+            "entry_minute",
+            "exit_minute",
+            "entry_window",
+        )
+    ):
+        return 0
     if any(
         token in lowered
         for token in ("imbalance", "microprice", "recent_above", "spread", "quote")
     ):
-        return 0
+        return 1
     if any(
         token in lowered
         for token in (
@@ -942,17 +976,17 @@ def _parameter_exploration_priority(name: str) -> int:
             "entry_end",
         )
     ):
-        return 1
+        return 2
     if any(
         token in lowered
         for token in ("bullish_hist", "bull_rsi", "vol_floor", "vol_ceil")
     ):
-        return 2
+        return 3
     if any(
         token in lowered
         for token in ("universe_symbols", "max_notional", "position_pct")
     ):
-        return 3
+        return 4
     if any(
         token in lowered
         for token in (
@@ -964,8 +998,8 @@ def _parameter_exploration_priority(name: str) -> int:
             "max_concurrent",
         )
     ):
-        return 4
-    return 5
+        return 5
+    return 6
 
 
 def _candidate_payload_key(candidate: Mapping[str, Any]) -> str:
@@ -2919,6 +2953,7 @@ def _train_gate_diagnostics_from_replay_payload(
     first_failed_gate_counts: Counter[str] = Counter()
     failing_threshold_counts: Counter[str] = Counter()
     gate_pass_counts: Counter[str] = Counter()
+    post_gate_block_reason_counts: Counter[str] = Counter()
     for raw_bucket in buckets:
         if not isinstance(raw_bucket, Mapping):
             continue
@@ -2942,6 +2977,9 @@ def _train_gate_diagnostics_from_replay_payload(
         gate_pass_counts.update(
             _counter_from_payload(raw_bucket.get("gate_pass_counts"))
         )
+        post_gate_block_reason_counts.update(
+            _counter_from_payload(raw_bucket.get("post_gate_block_reason_counts"))
+        )
 
     near_misses = payload.get("near_misses")
     near_miss_digest = [
@@ -2961,6 +2999,9 @@ def _train_gate_diagnostics_from_replay_payload(
         "top_first_failed_gates": _top_counter_payload(first_failed_gate_counts),
         "top_failing_thresholds": _top_counter_payload(failing_threshold_counts),
         "top_gate_pass_counts": _top_counter_payload(gate_pass_counts),
+        "top_post_gate_block_reasons": _top_counter_payload(
+            post_gate_block_reason_counts
+        ),
         "near_misses": near_miss_digest,
     }
 
@@ -3364,6 +3405,37 @@ def _halve_positive_integer_candidate_param(
     return False
 
 
+def _relax_signal_threshold_candidate_param(
+    *,
+    params: dict[str, Any],
+    strategy_params: Mapping[str, Any],
+    keys: Sequence[str],
+) -> bool:
+    relaxed_count = 0
+    for key in keys:
+        if key not in params and key not in strategy_params:
+            continue
+        current = _decimal_or_none(params.get(key, strategy_params.get(key)))
+        if current is None or current <= 0:
+            continue
+        if current <= Decimal("1"):
+            repaired = max(
+                _CONSISTENCY_REPAIR_MIN_RANK_THRESHOLD,
+                (current - _CONSISTENCY_REPAIR_RANK_STEP).quantize(Decimal("0.01")),
+            )
+        else:
+            repaired = (current * _CONSISTENCY_REPAIR_THRESHOLD_SCALE).quantize(
+                Decimal("0.01")
+            )
+        if repaired >= current:
+            continue
+        params[key] = _decimal_payload(repaired)
+        relaxed_count += 1
+        if relaxed_count >= _CONSISTENCY_REPAIR_MAX_SIGNAL_THRESHOLD_RELAXATIONS:
+            break
+    return relaxed_count > 0
+
+
 def _generate_consistency_repair_children(
     *,
     params_candidate: Mapping[str, Any],
@@ -3409,11 +3481,11 @@ def _generate_consistency_repair_children(
         children.append((f"{label}:{trigger_reason}", next_params, next_overrides))
 
     add_child(
-        "consistency_entries",
-        lambda next_params: _increment_integer_candidate_param(
+        "consistency_signal_thresholds",
+        lambda next_params: _relax_signal_threshold_candidate_param(
             params=next_params,
             strategy_params=strategy_params,
-            keys=_CONSISTENCY_REPAIR_ENTRY_KEYS,
+            keys=_CONSISTENCY_REPAIR_SIGNAL_THRESHOLD_KEYS,
         ),
     )
     add_child(
@@ -3422,6 +3494,14 @@ def _generate_consistency_repair_children(
             params=next_params,
             strategy_params=strategy_params,
             keys=_CONSISTENCY_REPAIR_BREADTH_KEYS,
+        ),
+    )
+    add_child(
+        "consistency_entries",
+        lambda next_params: _increment_integer_candidate_param(
+            params=next_params,
+            strategy_params=strategy_params,
+            keys=_CONSISTENCY_REPAIR_ENTRY_KEYS,
         ),
     )
     add_child(
@@ -4118,11 +4198,19 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
         with cache_context:
             budget_exhausted = False
             while True:
-                if not worklist and not initial_candidates_exhausted:
+                seed_initial_candidate = not initial_candidates_exhausted and (
+                    not worklist or len(scored) % 2 == 0
+                )
+                if seed_initial_candidate:
                     try:
-                        worklist.append(next(initial_candidates))
+                        next_initial = next(initial_candidates)
                     except StopIteration:
                         initial_candidates_exhausted = True
+                    else:
+                        if worklist:
+                            worklist.appendleft(next_initial)
+                        else:
+                            worklist.append(next_initial)
                 if not worklist:
                     break
                 if candidate_budget > 0 and len(scored) >= candidate_budget:
@@ -4224,6 +4312,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                             progress_log_interval_seconds=max(
                                 1, int(args.progress_log_seconds)
                             ),
+                            capture_trace_funnel=collect_train_gate_diagnostics,
                         )
                     )
                     second_oos_payload = None
@@ -4248,6 +4337,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                                 progress_log_interval_seconds=max(
                                     1, int(args.progress_log_seconds)
                                 ),
+                                capture_trace_funnel=collect_train_gate_diagnostics,
                             )
                         )
                     full_window_payload = run_replay(
@@ -4266,6 +4356,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                             progress_log_interval_seconds=max(
                                 1, int(args.progress_log_seconds)
                             ),
+                            capture_trace_funnel=collect_train_gate_diagnostics,
                             capture_exact_replay_ledger=True,
                         )
                     )
@@ -4967,6 +5058,22 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     candidate_payload["train_gate_diagnostics"] = (
                         _train_gate_diagnostics_from_replay_payload(train_payload)
                     )
+                    if not holdout_replay_skipped:
+                        candidate_payload["holdout_gate_diagnostics"] = (
+                            _train_gate_diagnostics_from_replay_payload(holdout_payload)
+                        )
+                    if second_oos_payload is not None:
+                        candidate_payload["second_oos_gate_diagnostics"] = (
+                            _train_gate_diagnostics_from_replay_payload(
+                                second_oos_payload
+                            )
+                        )
+                    if not full_window_replay_skipped:
+                        candidate_payload["full_window_gate_diagnostics"] = (
+                            _train_gate_diagnostics_from_replay_payload(
+                                full_window_payload
+                            )
+                        )
                 if cached_rows is not None:
                     candidate_payload["prefetched_row_count"] = len(cached_rows)
                     candidate_payload["prefetched_symbols"] = list(prefetch_symbols)

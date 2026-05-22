@@ -1751,6 +1751,7 @@ def _init_funnel_stats() -> dict[str, Any]:
         "gate_pass_counts": defaultdict(int),
         "first_failed_gate_counts": defaultdict(int),
         "failing_threshold_counts": defaultdict(int),
+        "post_gate_block_reason_counts": defaultdict(int),
         "passed_trace_count": 0,
         "decision_count": 0,
         "filled_count": 0,
@@ -2036,13 +2037,19 @@ def _first_reject_reason(
 def _resolve_passed_trace_block_reason(
     *,
     strategy_id: str,
+    runtime_intent_strategy_ids: set[str],
+    runtime_suppression_reason_by_strategy_id: dict[str, str],
     raw_decision_strategy_ids: set[str],
     allocation_reject_reason_by_strategy_id: dict[str, str],
     sizing_reject_reason_by_strategy_id: dict[str, str],
     emitted_strategy_ids: set[str],
 ) -> str | None:
+    if strategy_id not in runtime_intent_strategy_ids:
+        return "engine_runtime_no_intent"
+    if strategy_id in runtime_suppression_reason_by_strategy_id:
+        return runtime_suppression_reason_by_strategy_id[strategy_id]
     if strategy_id not in raw_decision_strategy_ids:
-        return "engine_runtime_filter_rejected"
+        return "engine_runtime_intent_not_emitted"
     if strategy_id in allocation_reject_reason_by_strategy_id:
         return allocation_reject_reason_by_strategy_id[strategy_id]
     if strategy_id in sizing_reject_reason_by_strategy_id:
@@ -2756,6 +2763,17 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
             raw_decision_strategy_ids = {
                 decision.strategy_id for decision in raw_decisions
             }
+            runtime_intent_strategy_ids = set(raw_decision_strategy_ids)
+            runtime_suppression_reason_by_strategy_id: dict[str, str] = {}
+            observation = getattr(telemetry, "observation", None)
+            if observation is not None:
+                runtime_intent_strategy_ids = set(observation.strategy_intents_total)
+                for raw_key in observation.strategy_intent_suppression_total:
+                    strategy_id, separator, reason = str(raw_key).partition("|")
+                    if separator and strategy_id and reason:
+                        runtime_suppression_reason_by_strategy_id.setdefault(
+                            strategy_id, reason
+                        )
             allocation_reject_reason_by_strategy_id: dict[str, str] = {}
             sizing_reject_reason_by_strategy_id: dict[str, str] = {}
             for allocation_result in allocator.allocate(
@@ -2799,11 +2817,13 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
             }
             fill_status_by_strategy_id: dict[str, str] = {}
             block_reason_by_strategy_id: dict[str, str] = {}
-            if config.capture_traces:
+            if capture_runtime_traces:
                 for trace in telemetry_traces:
                     if trace.passed:
                         block_reason = _resolve_passed_trace_block_reason(
                             strategy_id=trace.strategy_id,
+                            runtime_intent_strategy_ids=runtime_intent_strategy_ids,
+                            runtime_suppression_reason_by_strategy_id=runtime_suppression_reason_by_strategy_id,
                             raw_decision_strategy_ids=raw_decision_strategy_ids,
                             allocation_reject_reason_by_strategy_id=allocation_reject_reason_by_strategy_id,
                             sizing_reject_reason_by_strategy_id=sizing_reject_reason_by_strategy_id,
@@ -2813,6 +2833,9 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                             block_reason_by_strategy_id[trace.strategy_id] = (
                                 block_reason
                             )
+                            symbol_bucket["post_gate_block_reason_counts"][
+                                block_reason
+                            ] += 1
                     elif not trace.passed and trace.first_failed_gate is not None:
                         block_reason_by_strategy_id[trace.strategy_id] = (
                             trace.first_failed_gate
@@ -3122,6 +3145,9 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                 gate_pass_counts=dict(bucket["gate_pass_counts"]),
                 first_failed_gate_counts=dict(bucket["first_failed_gate_counts"]),
                 failing_threshold_counts=dict(bucket["failing_threshold_counts"]),
+                post_gate_block_reason_counts=dict(
+                    bucket["post_gate_block_reason_counts"]
+                ),
                 passed_trace_count=int(bucket["passed_trace_count"]),
                 decision_count=int(bucket["decision_count"]),
                 filled_count=int(bucket["filled_count"]),
