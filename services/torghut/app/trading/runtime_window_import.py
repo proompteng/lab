@@ -319,6 +319,13 @@ def _delay_adjusted_depth_stress_blocking_reasons(
             reasons.append("fill_survival_evidence_missing")
         if _observation_int(summary.get("fill_survival_sample_count")) <= 0:
             reasons.append("fill_survival_sample_count_zero")
+        if (
+            _observation_bool(summary.get("queue_ahead_depletion_evidence_present"))
+            is not True
+        ):
+            reasons.append("queue_ahead_depletion_evidence_missing")
+        if _observation_int(summary.get("queue_ahead_depletion_sample_count")) <= 0:
+            reasons.append("queue_ahead_depletion_sample_count_zero")
     return list(dict.fromkeys(reasons))
 
 
@@ -450,6 +457,30 @@ def _delay_adjusted_depth_stress_summary(
         )
         or _text(report.get("delay_adjusted_depth_queue_ratio_p95"))
         or _text(report.get("queue_ratio_p95")),
+        "queue_ahead_depletion_evidence_present": _observation_bool(
+            runtime_payload.get(
+                "delay_adjusted_depth_queue_ahead_depletion_evidence_present"
+            )
+            if runtime_payload.get(
+                "delay_adjusted_depth_queue_ahead_depletion_evidence_present"
+            )
+            is not None
+            else report.get(
+                "delay_adjusted_depth_queue_ahead_depletion_evidence_present",
+                report.get("queue_ahead_depletion_evidence_present"),
+            )
+        ),
+        "queue_ahead_depletion_sample_count": max(
+            _observation_int(
+                runtime_payload.get(
+                    "delay_adjusted_depth_queue_ahead_depletion_sample_count"
+                )
+            ),
+            _observation_int(
+                report.get("delay_adjusted_depth_queue_ahead_depletion_sample_count")
+            ),
+            _observation_int(report.get("queue_ahead_depletion_sample_count")),
+        ),
     }
 
 

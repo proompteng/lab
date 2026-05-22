@@ -103,6 +103,20 @@ DELAY_DEPTH_SURVIVAL_SCORECARD_KEYS = (
     "delay_adjusted_depth_fill_survival_sample_count",
     "delay_adjusted_depth_fill_survival_rate",
     "delay_adjusted_depth_queue_ratio_p95",
+    "delay_adjusted_depth_queue_ahead_depletion_evidence_present",
+    "delay_adjusted_depth_queue_ahead_depletion_sample_count",
+    "queue_position_survival_fill_curve_evidence_present",
+    "queue_position_survival_sample_count",
+    "queue_position_survival_fill_rate",
+    "queue_position_survival_queue_ratio_p95",
+    "queue_position_survival_queue_ahead_depletion_evidence_present",
+    "queue_position_survival_queue_ahead_depletion_sample_count",
+    "queue_position_survival_adjusted_fillable_ratio",
+    "queue_position_survival_nonfill_opportunity_cost_per_day",
+    "queue_position_survival_nonfill_opportunity_cost_bps",
+    "queue_position_survival_stress_net_pnl_per_day",
+    "post_cost_net_pnl_after_queue_position_survival_fill_stress",
+    "queue_position_survival_source_marker",
 )
 FILL_SURVIVAL_SCORECARD_KEYS = (
     "order_lifecycle",
@@ -121,6 +135,14 @@ FILL_SURVIVAL_SCORECARD_KEYS = (
     "queue_touch_qty_avg",
     "queue_touch_notional_avg",
     "order_qty_to_touch_qty_ratio_p95",
+    "queue_ahead_depletion_evidence_present",
+    "queue_ahead_depletion_sample_count",
+    "queue_ahead_depletion_rate",
+    "queue_ahead_qty_p95",
+    "queue_ahead_depleted_qty_p50",
+    "queue_ahead_depleted_qty_p95",
+    "queue_ahead_depletion_time_ms_p50",
+    "queue_ahead_depletion_time_ms_p95",
     "fill_probability_by_latency_bucket",
     "fill_probability_by_latency_threshold_ms",
     "post_cost_survivorship",
@@ -256,11 +278,35 @@ def _order_lifecycle_metrics(source: Mapping[str, Any]) -> dict[str, Any]:
     else:
         evidence_present = sample_count > 0
     fill_rate = lifecycle.get("fill_survival_fill_rate") or lifecycle.get("fill_rate")
+    queue_ahead_depletion_sample_count = max(
+        _int(lifecycle.get("queue_ahead_depletion_sample_count")),
+        _int(lifecycle.get("queue_depletion_sample_count")),
+    )
+    queue_ahead_depletion_evidence_present = _bool(
+        lifecycle.get("queue_ahead_depletion_evidence_present")
+    ) or (
+        queue_ahead_depletion_sample_count > 0
+        and (
+            lifecycle.get("queue_ahead_depletion_rate") is not None
+            or lifecycle.get("queue_ahead_depleted_qty_p50") is not None
+            or lifecycle.get("queue_ahead_depletion_time_ms_p50") is not None
+        )
+    )
 
     metrics: dict[str, Any] = {
         "order_lifecycle": lifecycle,
         "fill_survival_evidence_present": evidence_present,
         "fill_survival_sample_count": sample_count,
+        "queue_ahead_depletion_evidence_present": (
+            queue_ahead_depletion_evidence_present
+        ),
+        "queue_ahead_depletion_sample_count": queue_ahead_depletion_sample_count,
+        "delay_adjusted_depth_queue_ahead_depletion_evidence_present": (
+            queue_ahead_depletion_evidence_present
+        ),
+        "delay_adjusted_depth_queue_ahead_depletion_sample_count": (
+            queue_ahead_depletion_sample_count
+        ),
     }
     if fill_rate is not None:
         metrics["fill_survival_fill_rate"] = _string(fill_rate)
@@ -284,6 +330,12 @@ def _order_lifecycle_metrics(source: Mapping[str, Any]) -> dict[str, Any]:
         "queue_touch_qty_avg",
         "queue_touch_notional_avg",
         "order_qty_to_touch_qty_ratio_p95",
+        "queue_ahead_depletion_rate",
+        "queue_ahead_qty_p95",
+        "queue_ahead_depleted_qty_p50",
+        "queue_ahead_depleted_qty_p95",
+        "queue_ahead_depletion_time_ms_p50",
+        "queue_ahead_depletion_time_ms_p95",
         "fill_probability_by_latency_bucket",
         "fill_probability_by_latency_threshold_ms",
         "post_cost_survivorship",
@@ -988,6 +1040,12 @@ def evidence_bundle_from_frontier_candidate(
                 "queue_ratio_p95": scorecard.get(
                     "delay_adjusted_depth_queue_ratio_p95"
                 ),
+                "queue_ahead_depletion_evidence_present": scorecard.get(
+                    "delay_adjusted_depth_queue_ahead_depletion_evidence_present"
+                ),
+                "queue_ahead_depletion_sample_count": scorecard.get(
+                    "delay_adjusted_depth_queue_ahead_depletion_sample_count"
+                ),
                 "net_pnl_per_day": scorecard.get(
                     "delay_adjusted_depth_stress_net_pnl_per_day"
                 ),
@@ -1151,6 +1209,33 @@ def _delay_depth_survival_blockers(scorecard: Mapping[str, Any]) -> list[str]:
         <= 0
     ):
         blockers.append("fill_survival_sample_count_zero")
+    if not (
+        _bool(scorecard.get("queue_ahead_depletion_evidence_present"))
+        or _bool(
+            scorecard.get("delay_adjusted_depth_queue_ahead_depletion_evidence_present")
+        )
+        or _bool(
+            scorecard.get(
+                "queue_position_survival_queue_ahead_depletion_evidence_present"
+            )
+        )
+    ):
+        blockers.append("queue_ahead_depletion_evidence_missing")
+    if (
+        max(
+            _int(scorecard.get("queue_ahead_depletion_sample_count")),
+            _int(
+                scorecard.get("delay_adjusted_depth_queue_ahead_depletion_sample_count")
+            ),
+            _int(
+                scorecard.get(
+                    "queue_position_survival_queue_ahead_depletion_sample_count"
+                )
+            ),
+        )
+        <= 0
+    ):
+        blockers.append("queue_ahead_depletion_sample_count_zero")
     return blockers
 
 

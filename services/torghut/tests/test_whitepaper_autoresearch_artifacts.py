@@ -598,6 +598,11 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
                         "fill_rate": "0.75",
                         "fill_survival_sample_count": 4,
                         "order_qty_to_touch_qty_ratio_p95": "0.20",
+                        "queue_ahead_depletion_evidence_present": True,
+                        "queue_ahead_depletion_sample_count": 4,
+                        "queue_ahead_depletion_rate": "0.75",
+                        "queue_ahead_depleted_qty_p50": "18",
+                        "queue_ahead_depletion_time_ms_p50": "140",
                         "post_cost_survivorship": {
                             "post_cost_survival_rate": "0.50",
                             "gross_positive_killed_by_cost_count": 1,
@@ -641,6 +646,24 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
             bundle.objective_scorecard["delay_adjusted_depth_queue_ratio_p95"],
             "0.20",
         )
+        self.assertTrue(
+            bundle.objective_scorecard["queue_ahead_depletion_evidence_present"]
+        )
+        self.assertEqual(
+            bundle.objective_scorecard["queue_ahead_depletion_sample_count"],
+            4,
+        )
+        self.assertTrue(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_queue_ahead_depletion_evidence_present"
+            ]
+        )
+        self.assertEqual(
+            bundle.objective_scorecard[
+                "delay_adjusted_depth_queue_ahead_depletion_sample_count"
+            ],
+            4,
+        )
         self.assertEqual(
             bundle.objective_scorecard["post_cost_survival_rate"],
             "0.50",
@@ -649,6 +672,55 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
             bundle.objective_scorecard["gross_positive_killed_by_cost_count"],
             1,
         )
+
+    def test_evidence_bundle_blocks_l1_queue_ratio_without_queue_ahead_depletion(
+        self,
+    ) -> None:
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-l1-proxy-proof",
+            candidate={
+                "candidate_id": "cand-l1-proxy-proof",
+                "objective_scorecard": {
+                    "net_pnl_per_day": "650",
+                    "delay_adjusted_depth_stress_passed": True,
+                    "delay_adjusted_depth_stress_model": "latency_depth_haircut",
+                    "delay_adjusted_depth_stress_ms": "50",
+                    "delay_adjusted_depth_stress_artifact_ref": "/tmp/depth.json",
+                    "delay_adjusted_depth_tail_coverage_passed": True,
+                    "delay_adjusted_depth_p10_active_day_fillable_notional": "250000",
+                    "delay_adjusted_depth_worst_active_day_fillable_notional": "200000",
+                    "delay_adjusted_depth_stress_net_pnl_per_day": "540",
+                },
+                "full_window": {
+                    "net_per_day": "650",
+                    "trading_day_count": "1",
+                    "avg_filled_notional_per_day": "350000",
+                    "daily_filled_notional": {"2026-02-23": "350000"},
+                    "daily_liquidity_notional": {"2026-02-23": "900000"},
+                    "order_lifecycle": {
+                        "submitted_order_count": 4,
+                        "filled_order_count": 3,
+                        "fill_rate": "0.75",
+                        "fill_survival_sample_count": 4,
+                        "order_qty_to_touch_qty_ratio_p95": "0.20",
+                    },
+                },
+                "promotion_readiness": {
+                    "stage": "paper_probation",
+                    "status": "promotion_ready",
+                    "promotable": True,
+                    "blockers": [],
+                },
+            },
+            dataset_snapshot_id="snap-l1-proxy-proof",
+            result_path="/tmp/l1-proxy-proof.json",
+        )
+
+        blockers = evidence_bundle_blockers(bundle)
+
+        self.assertNotIn("fill_survival_evidence_missing", blockers)
+        self.assertIn("queue_ahead_depletion_evidence_missing", blockers)
+        self.assertIn("queue_ahead_depletion_sample_count_zero", blockers)
 
     def test_evidence_bundle_parses_serialized_false_survival_booleans(self) -> None:
         bundle = evidence_bundle_from_frontier_candidate(
@@ -757,6 +829,8 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
                     "daily_filled_notional": {"2026-02-23": "350000"},
                     "daily_liquidity_notional": {"2026-02-23": "900000"},
                     "fill_survival_fill_rate": "0.75",
+                    "queue_ahead_depletion_evidence_present": True,
+                    "queue_ahead_depletion_sample_count": 8,
                 },
                 "promotion_readiness": {
                     "stage": "paper_probation",

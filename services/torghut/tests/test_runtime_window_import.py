@@ -271,6 +271,8 @@ class TestRuntimeWindowImport(TestCase):
                 "delay_adjusted_depth_stress_net_pnl_non_positive",
                 "fill_survival_evidence_missing",
                 "fill_survival_sample_count_zero",
+                "queue_ahead_depletion_evidence_missing",
+                "queue_ahead_depletion_sample_count_zero",
             ],
         )
 
@@ -936,6 +938,8 @@ class TestRuntimeWindowImport(TestCase):
                         "fill_survival_sample_count": 44,
                         "fill_survival_rate": "0.90",
                         "queue_ratio_p95": "0.12",
+                        "queue_ahead_depletion_evidence_present": True,
+                        "queue_ahead_depletion_sample_count": 44,
                     }
                 },
             )
@@ -965,6 +969,8 @@ class TestRuntimeWindowImport(TestCase):
                 "fill_survival_sample_count": 44,
                 "fill_survival_rate": "0.90",
                 "queue_ratio_p95": "0.12",
+                "queue_ahead_depletion_evidence_present": True,
+                "queue_ahead_depletion_sample_count": 44,
             },
         )
         self.assertEqual(decision.allowed, True)
