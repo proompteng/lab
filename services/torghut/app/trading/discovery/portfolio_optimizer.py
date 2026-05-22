@@ -352,6 +352,66 @@ def _executable_replay_artifact_ref(bundle: CandidateEvidenceBundle) -> str:
     return _string(scorecard.get("executable_replay_artifact_ref"))
 
 
+def _artifact_refs_from_scorecard(
+    scorecard: Mapping[str, Any], *keys: str
+) -> list[str]:
+    refs: list[str] = []
+    for key in keys:
+        value = scorecard.get(key)
+        if isinstance(value, Sequence) and not isinstance(value, str):
+            refs.extend(
+                normalized
+                for normalized in (_string(item) for item in cast(Sequence[Any], value))
+                if normalized
+            )
+            continue
+        normalized = _string(value)
+        if normalized:
+            refs.append(normalized)
+    return list(dict.fromkeys(refs))
+
+
+def _exact_replay_ledger_artifact_refs(bundle: CandidateEvidenceBundle) -> list[str]:
+    scorecard = _scorecard(bundle)
+    return _artifact_refs_from_scorecard(
+        scorecard,
+        "exact_replay_ledger_artifact_ref",
+        "exact_replay_ledger_artifact_refs",
+        "runtime_ledger_artifact_ref",
+        "runtime_ledger_artifact_refs",
+    )
+
+
+def _exact_replay_ledger_row_count(bundle: CandidateEvidenceBundle) -> int:
+    scorecard = _scorecard(bundle)
+    return max(
+        0,
+        int(
+            _decimal(
+                scorecard.get("exact_replay_ledger_artifact_row_count")
+                or scorecard.get("runtime_ledger_artifact_row_count")
+                or scorecard.get("exact_replay_ledger_row_count")
+                or scorecard.get("runtime_ledger_row_count")
+            )
+        ),
+    )
+
+
+def _exact_replay_ledger_fill_count(bundle: CandidateEvidenceBundle) -> int:
+    scorecard = _scorecard(bundle)
+    return max(
+        0,
+        int(
+            _decimal(
+                scorecard.get("exact_replay_ledger_artifact_fill_count")
+                or scorecard.get("runtime_ledger_artifact_fill_count")
+                or scorecard.get("exact_replay_ledger_fill_count")
+                or scorecard.get("runtime_ledger_fill_count")
+            )
+        ),
+    )
+
+
 def _executable_replay_buying_power(bundle: CandidateEvidenceBundle) -> Decimal:
     scorecard = _scorecard(bundle)
     return _decimal(
@@ -1034,6 +1094,19 @@ def _portfolio_scorecard(
         for ref in (_executable_replay_artifact_ref(bundle) for bundle in selected)
         if ref
     ]
+    exact_replay_ledger_artifact_refs = list(
+        dict.fromkeys(
+            ref
+            for bundle in selected
+            for ref in _exact_replay_ledger_artifact_refs(bundle)
+        )
+    )
+    exact_replay_ledger_row_count = sum(
+        _exact_replay_ledger_row_count(bundle) for bundle in selected
+    )
+    exact_replay_ledger_fill_count = sum(
+        _exact_replay_ledger_fill_count(bundle) for bundle in selected
+    )
     executable_order_count = sum(
         _executable_replay_order_count(bundle) for bundle in selected
     )
@@ -1232,6 +1305,18 @@ def _portfolio_scorecard(
         "executable_replay_artifact_ref": executable_artifact_refs[0]
         if executable_artifact_refs
         else "",
+        "exact_replay_ledger_artifact_refs": exact_replay_ledger_artifact_refs,
+        "exact_replay_ledger_artifact_ref": exact_replay_ledger_artifact_refs[0]
+        if exact_replay_ledger_artifact_refs
+        else "",
+        "runtime_ledger_artifact_refs": exact_replay_ledger_artifact_refs,
+        "runtime_ledger_artifact_ref": exact_replay_ledger_artifact_refs[0]
+        if exact_replay_ledger_artifact_refs
+        else "",
+        "exact_replay_ledger_artifact_row_count": exact_replay_ledger_row_count,
+        "runtime_ledger_artifact_row_count": exact_replay_ledger_row_count,
+        "exact_replay_ledger_artifact_fill_count": exact_replay_ledger_fill_count,
+        "runtime_ledger_artifact_fill_count": exact_replay_ledger_fill_count,
         "executable_replay_account_buying_power": str(
             min(executable_buying_powers, default=Decimal("0"))
         ),

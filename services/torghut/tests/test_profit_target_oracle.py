@@ -16,6 +16,9 @@ def _executable_scorecard_fields() -> dict[str, object]:
         "executable_replay_order_count": 4,
         "executable_replay_account_buying_power": "20000",
         "executable_replay_max_notional_per_trade": "10000",
+        "exact_replay_ledger_artifact_ref": "/tmp/exact-replay-ledger.json",
+        "exact_replay_ledger_artifact_row_count": 20,
+        "exact_replay_ledger_artifact_fill_count": 20,
         "market_impact_stress_passed": True,
         "market_impact_stress_artifact_ref": "/tmp/market-impact-stress.json",
         "market_impact_stress_model": "square_root",
@@ -903,6 +906,49 @@ class TestProfitTargetOracle(TestCase):
         self.assertIn("executable_replay_passed_failed", result["blockers"])
         self.assertIn("executable_replay_artifact_present_failed", result["blockers"])
         self.assertIn("executable_replay_order_count_failed", result["blockers"])
+        self.assertIn("exact_replay_ledger_artifact_present_failed", result["blockers"])
+
+    def test_profit_target_oracle_rejects_missing_exact_replay_ledger(self) -> None:
+        scorecard = {
+            key: value
+            for key, value in _passing_scorecard().items()
+            if not key.startswith("exact_replay_ledger_")
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn("exact_replay_ledger_artifact_present_failed", result["blockers"])
+        self.assertIn(
+            "exact_replay_ledger_artifact_row_count_failed", result["blockers"]
+        )
+        self.assertIn(
+            "exact_replay_ledger_artifact_fill_count_failed", result["blockers"]
+        )
+
+    def test_profit_target_oracle_accepts_runtime_ledger_aliases(self) -> None:
+        scorecard = {
+            key: value
+            for key, value in _passing_scorecard().items()
+            if not key.startswith("exact_replay_ledger_")
+        }
+        scorecard.update(
+            {
+                "runtime_ledger_artifact_ref": "/tmp/runtime-ledger.json",
+                "runtime_ledger_artifact_row_count": 20,
+                "runtime_ledger_artifact_fill_count": 20,
+            }
+        )
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertTrue(result["passed"])
 
     def test_profit_target_oracle_rejects_capital_unsafe_replay(self) -> None:
         result = evaluate_profit_target_oracle(

@@ -4769,6 +4769,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             approval_report_path = replay_dir / "scheduler-v3-approval-report.json"
             shadow_path = replay_dir / "shadow-validation-plan.json"
             replay_plan_path = replay_dir / "runtime-replay-plan.json"
+            exact_ledger_path = replay_dir / "exact-replay-ledger.json"
             market_impact_path = replay_dir / "market-impact-stress.json"
             delay_depth_path = replay_dir / "delay-adjusted-depth-stress.json"
             double_oos_path = replay_dir / "double-oos-walkforward.json"
@@ -4815,6 +4816,17 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             )
             replay_plan_path.write_text(
                 json.dumps({"execution_context": {"start_equity": "31590.02"}}) + "\n",
+                encoding="utf-8",
+            )
+            exact_ledger_path.write_text(
+                json.dumps(
+                    {
+                        "artifact_kind": "exact_replay_ledger",
+                        "runtime_ledger_rows": [{"id": 1}, {"id": 2}],
+                        "fill_row_count": 2,
+                    }
+                )
+                + "\n",
                 encoding="utf-8",
             )
             market_impact_path.write_text(
@@ -4938,6 +4950,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     "shadow_validation_path": str(shadow_path),
                     "portfolio_proof_receipt_path": str(proof_path),
                     "replay_plan_path": str(replay_plan_path),
+                    "exact_replay_ledger_artifact_path": str(exact_ledger_path),
                     "market_impact_stress_report_path": str(market_impact_path),
                     "delay_adjusted_depth_stress_report_path": str(delay_depth_path),
                     "double_oos_report_path": str(double_oos_path),
@@ -4957,6 +4970,18 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(
             updated.objective_scorecard["executable_replay_artifact_ref"],
             str(approval_replay_path),
+        )
+        self.assertEqual(
+            updated.objective_scorecard["exact_replay_ledger_artifact_ref"],
+            str(exact_ledger_path),
+        )
+        self.assertEqual(
+            updated.objective_scorecard["exact_replay_ledger_artifact_row_count"],
+            2,
+        )
+        self.assertEqual(
+            updated.objective_scorecard["exact_replay_ledger_artifact_fill_count"],
+            2,
         )
         self.assertEqual(
             updated.objective_scorecard["market_impact_stress_artifact_ref"],
