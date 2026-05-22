@@ -836,6 +836,21 @@ def _metric_window_activity_reason_codes(
         and _safe_int(payload.get("post_cost_promotion_sample_count")) <= 0
     ):
         reasons.append("hypothesis_window_post_cost_pnl_basis_missing")
+    observed_stage = _safe_text(getattr(metric_window, "observed_stage", None))
+    if observed_stage == "live":
+        promotion_sample_count = _safe_int(
+            payload.get("post_cost_promotion_sample_count")
+        )
+        runtime_ledger_sample_count = _safe_int(
+            payload.get("runtime_ledger_notional_weighted_sample_count")
+        )
+        aggregation = _safe_text(payload.get("post_cost_expectancy_aggregation"))
+        if (
+            promotion_sample_count <= 0
+            or runtime_ledger_sample_count < promotion_sample_count
+            or aggregation != "runtime_ledger_notional_weighted"
+        ):
+            reasons.append("runtime_ledger_pnl_basis_missing")
 
     avg_abs_slippage_bps = _safe_decimal(metric_window.avg_abs_slippage_bps)
     slippage_budget_bps = _safe_decimal(metric_window.slippage_budget_bps)
