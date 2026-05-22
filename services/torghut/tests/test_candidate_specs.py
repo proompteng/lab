@@ -629,6 +629,70 @@ class TestCandidateSpecs(TestCase):
             specs[0].promotion_contract["rejects_queue_position_free_fill_assumptions"]
         )
 
+    def test_alpha_decay_claim_adds_predictability_stress_contract(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-tkan-alpha-decay",
+            claims=[
+                {
+                    "claim_id": "lob-alpha-decay",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "T-KAN limit order book forecasting shows alpha decay as "
+                        "predictability declines over longer horizons and under "
+                        "spread-adjusted labels."
+                    ),
+                    "data_requirements": [
+                        "horizon_decay_curve",
+                        "spread_adjusted_labels",
+                        "tight_spread_regime_slices",
+                        "high_volume_regime_slices",
+                        "route_tca",
+                    ],
+                    "confidence": "0.78",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+
+        self.assertIn(
+            "alpha_decay_predictability_stress",
+            specs[0].parameter_space["mechanism_overlay_ids"],
+        )
+        self.assertTrue(specs[0].hard_vetoes["required_predictability_decay_stress"])
+        self.assertTrue(specs[0].hard_vetoes["required_horizon_decay_curve"])
+        self.assertEqual(
+            specs[0].hard_vetoes["required_min_decay_stress_horizon_count"],
+            "3",
+        )
+        self.assertEqual(
+            specs[0].hard_vetoes["required_max_model_inference_latency_ms"],
+            "200",
+        )
+        mechanism_overlays = candidate_specs_module._mechanism_overlays_for_card(
+            cards[0]
+        )
+        decay_contract = next(
+            contract
+            for contract in mechanism_overlays["feature_contract"]["mechanism_overlays"]
+            if contract["overlay_id"] == "alpha_decay_predictability_stress"
+        )
+        self.assertEqual(
+            decay_contract["rank_metric"],
+            "post_cost_net_pnl_after_predictability_decay_stress",
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["requires_predictability_decay_stress"]
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["rejects_single_horizon_lob_alpha_promotion"]
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["rejects_classification_accuracy_without_costs"]
+        )
+
     def test_ohlcv_only_claim_adds_falsification_contract(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-ohlcv-falsification",

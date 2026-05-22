@@ -540,6 +540,39 @@ research_sources:
       - claim_id: algorithmic_activity_decay_stress
         summary: Higher algorithmic activity, tighter spreads, and heavier trading can reduce short-horizon predictability.
         implication: Stress microstructure candidates by algo-intensity, tight-spread, and high-volume regimes before portfolio ranking.
+  - source_id: tkan_lob_alpha_decay_2026
+    title: 'Temporal Kolmogorov-Arnold Networks (T-KAN) for High-Frequency Limit Order Book Forecasting: Efficiency, Interpretability, and Alpha Decay'
+    url: https://arxiv.org/abs/2601.02310
+    published_at: '2026-01-05'
+    claims:
+      - claim_id: lob_alpha_decay_horizon_stress
+        claim_type: validation_requirement
+        claim_text: Limit-order-book alpha decays as the forecast horizon lengthens; single-horizon backtests are not enough to prove executable edge.
+        summary: LOB forecasting edge must survive horizon-decay checks instead of being accepted from one favorable horizon.
+        implication: Require horizon-decay curves, walk-forward replay, and post-cost route/TCA before any LOB model output supports promotion.
+        data_requirements:
+          - horizon_decay_curve
+          - forecast_horizon
+          - walk_forward_replay
+          - route_tca
+          - post_cost_net_pnl
+        asset_scope: limit_order_book_intraday
+        horizon_scope: short_horizon_returns
+        expected_direction: neutral
+      - claim_id: spread_adjusted_lob_label_cost_stress
+        claim_type: risk_constraint
+        claim_text: LOB trend labels and model latency must be evaluated after spread adjustment and under tight-spread, high-volume, algorithmic-activity regimes.
+        summary: Classification gains are not promotion evidence unless they survive spread-adjusted labels, latency budgets, and regime slices.
+        implication: Route T-KAN/TLOB-style proposals through predictability-decay stress before ranking them for paper probation.
+        data_requirements:
+          - spread_adjusted_labels
+          - inference_latency
+          - tight_spread_regime_slices
+          - high_volume_regime_slices
+          - algorithmic_activity_regime
+        asset_scope: limit_order_book_intraday
+        horizon_scope: intraday_microstructure
+        expected_direction: neutral
   - source_id: idiosyncratic_trade_imbalance_2026
     title: 'Decomposing High-Frequency Order Flow: Commonality and Idiosyncratic Trade Imbalance'
     url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6535019

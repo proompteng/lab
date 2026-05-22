@@ -3398,6 +3398,74 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
 
     if has_any(
         (
+            "alpha decay",
+            "alpha_decay",
+            "predictability decay",
+            "predictability_decay",
+            "declined over time",
+            "market efficiency",
+            "short-run market efficiency",
+            "t-kan",
+            "tkan",
+            "temporal kolmogorov",
+            "tlob",
+            "dual attention",
+            "horizon bias",
+            "horizon_bias",
+            "spread-adjusted labels",
+            "spread adjusted labels",
+            "algorithmic activity",
+            "tight spreads",
+            "heavier trading",
+            "high-volume regimes",
+            "high volume regimes",
+        )
+    ):
+        overlay_ids.append("alpha_decay_predictability_stress")
+        overlay_contracts.append(
+            {
+                "overlay_id": "alpha_decay_predictability_stress",
+                "required_evidence": [
+                    "horizon_decay_curve",
+                    "spread_adjusted_labels",
+                    "tight_spread_regime_slices",
+                    "high_volume_regime_slices",
+                    "inference_latency",
+                    "walk_forward_replay",
+                    "route_tca",
+                ],
+                "rank_metric": "post_cost_net_pnl_after_predictability_decay_stress",
+                "evidence_policy": "short_horizon_lob_alpha_requires_decay_and_cost_stress",
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_predictability_decay_stress": True,
+                "required_horizon_decay_curve": True,
+                "required_spread_adjusted_label_replay": True,
+                "required_min_decay_stress_horizon_count": "3",
+                "required_min_tight_spread_regime_count": "20",
+                "required_min_high_volume_regime_count": "20",
+                "required_min_decay_stress_split_pass_rate": "0.60",
+                "required_max_decay_stress_best_split_share": "0.35",
+                "required_max_model_inference_latency_ms": "200",
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_predictability_decay_stress": True,
+                "requires_horizon_decay_curve": True,
+                "requires_spread_adjusted_label_replay": True,
+                "requires_tight_spread_and_high_volume_slices": True,
+                "requires_model_latency_budget": True,
+                "requires_route_tca": True,
+                "rejects_single_horizon_lob_alpha_promotion": True,
+                "rejects_classification_accuracy_without_costs": True,
+            }
+        )
+
+    if has_any(
+        (
             "nonlinear impact",
             "nonlinear_impact",
             "square-root",
@@ -4107,6 +4175,40 @@ def _family_scores_for_hypothesis(
         )
         bump(
             "microbar_cross_sectional_pairs_v1", 3, "queue_position_survival_fill_curve"
+        )
+
+    if has_any(
+        (
+            "alpha decay",
+            "alpha_decay",
+            "predictability decay",
+            "predictability_decay",
+            "declined over time",
+            "short-run market efficiency",
+            "market efficiency",
+            "t-kan",
+            "tkan",
+            "temporal kolmogorov",
+            "tlob",
+            "dual attention",
+            "horizon bias",
+            "spread-adjusted",
+            "algorithmic activity",
+            "tight spreads",
+            "heavier trading",
+            "high-volume regimes",
+        )
+    ):
+        bump(
+            "microstructure_continuation_matched_filter_v1",
+            5,
+            "alpha_decay_predictability_stress",
+        )
+        bump("intraday_tsmom_v2", 3, "alpha_decay_predictability_stress")
+        bump(
+            "microbar_cross_sectional_pairs_v1",
+            3,
+            "alpha_decay_predictability_stress",
         )
 
     if has_any(
