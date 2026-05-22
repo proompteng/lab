@@ -491,7 +491,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--strategy-configmap",
         type=Path,
-        default=Path("argocd/applications/torghut/strategy-configmap.yaml"),
+        default=replay_mod.default_strategy_configmap_path(),
     )
     parser.add_argument(
         "--sweep-config",

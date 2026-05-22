@@ -147,6 +147,17 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(args.second_oos_days, 2)
         self.assertTrue(args.collect_train_gate_diagnostics)
 
+    def test_parse_args_uses_repo_root_strategy_configmap_by_default(self) -> None:
+        with patch.object(sys, "argv", ["prog"]):
+            args = frontier._parse_args()
+
+        expected = (
+            Path(__file__).resolve().parents[3]
+            / "argocd/applications/torghut/strategy-configmap.yaml"
+        )
+        self.assertEqual(args.strategy_configmap, expected)
+        self.assertTrue(args.strategy_configmap.exists())
+
     def test_clickhouse_preflight_fails_fast_for_unresolved_in_cluster_dns(
         self,
     ) -> None:

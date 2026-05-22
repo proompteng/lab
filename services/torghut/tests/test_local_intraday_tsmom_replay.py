@@ -1846,6 +1846,17 @@ class TestLocalIntradayTsmomReplay(TestCase):
         self.assertEqual(args.clickhouse_username, "env-user")
         self.assertEqual(args.clickhouse_password, "env-secret")
 
+    def test_parse_args_uses_repo_root_strategy_configmap_by_default(self) -> None:
+        with patch.object(sys, "argv", ["local_intraday_tsmom_replay.py"]):
+            args = replay_main.__globals__["_parse_args"]()
+
+        expected = (
+            Path(__file__).resolve().parents[3]
+            / "argocd/applications/torghut/strategy-configmap.yaml"
+        )
+        self.assertEqual(args.strategy_configmap, expected)
+        self.assertTrue(args.strategy_configmap.exists())
+
     def test_replay_main_enables_trace_capture_for_funnel_and_near_miss_outputs(
         self,
     ) -> None:
