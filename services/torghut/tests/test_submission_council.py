@@ -137,6 +137,14 @@ class TestSubmissionCouncil(TestCase):
             "continuity_ok": True,
             "drift_ok": True,
             "dependency_quorum_decision": "allow",
+            "payload_json": {
+                "post_cost_promotion_sample_count": 42,
+                "post_cost_basis_counts": {
+                    "realized_strategy_pnl_after_explicit_costs": 42
+                },
+                "post_cost_expectancy_aggregation": "runtime_ledger_notional_weighted",
+                "runtime_ledger_notional_weighted_sample_count": 42,
+            },
         }
         if observed_stage is not None:
             payload["observed_stage"] = observed_stage
@@ -358,6 +366,32 @@ class TestSubmissionCouncil(TestCase):
             reasons,
             ["hypothesis_window_post_cost_pnl_basis_missing"],
         )
+
+    def test_metric_window_activity_rejects_live_window_without_runtime_ledger_weighted_pnl(
+        self,
+    ) -> None:
+        metric_window = SimpleNamespace(
+            observed_stage="live",
+            market_session_count=3,
+            decision_count=3,
+            trade_count=3,
+            order_count=3,
+            post_cost_expectancy_bps="8.5",
+            avg_abs_slippage_bps="4.2",
+            slippage_budget_bps="12",
+            payload_json={
+                "post_cost_promotion_sample_count": 3,
+                "post_cost_basis_counts": {
+                    "realized_strategy_pnl_after_explicit_costs": 3
+                },
+                "post_cost_expectancy_aggregation": "promotion_bps_average",
+                "runtime_ledger_notional_weighted_sample_count": 2,
+            },
+        )
+
+        reasons = _metric_window_activity_reason_codes(metric_window)
+
+        self.assertEqual(reasons, ["runtime_ledger_pnl_basis_missing"])
 
     def test_merge_runtime_certificate_evidence_surfaces_blocked_import_reason(
         self,

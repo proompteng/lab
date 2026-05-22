@@ -1330,6 +1330,19 @@ class TestTradingPipeline(TestCase):
                 }
             )
 
+    @staticmethod
+    def _runtime_ledger_weighted_window_payload(
+        *, sample_count: int = 1
+    ) -> dict[str, object]:
+        return {
+            "post_cost_promotion_sample_count": sample_count,
+            "post_cost_basis_counts": {
+                "realized_strategy_pnl_after_explicit_costs": sample_count
+            },
+            "post_cost_expectancy_aggregation": "runtime_ledger_notional_weighted",
+            "runtime_ledger_notional_weighted_sample_count": sample_count,
+        }
+
     def _seed_promotion_certificate_evidence(
         self,
         *,
@@ -1362,6 +1375,7 @@ class TestTradingPipeline(TestCase):
                     avg_abs_slippage_bps=str(avg_abs_slippage_bps),
                     slippage_budget_bps=str(slippage_budget_bps),
                     capital_stage=capital_stage,
+                    payload_json=self._runtime_ledger_weighted_window_payload(),
                 )
             )
             session.add(
@@ -4974,6 +4988,7 @@ class TestTradingPipeline(TestCase):
                         avg_abs_slippage_bps="1.0",
                         slippage_budget_bps="5.0",
                         capital_stage="0.10x canary",
+                        payload_json=self._runtime_ledger_weighted_window_payload(),
                     )
                 )
                 session.add(
