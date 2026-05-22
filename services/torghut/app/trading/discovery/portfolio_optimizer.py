@@ -596,6 +596,33 @@ def _delay_adjusted_depth_tail_coverage_passed(
     )
 
 
+def _fill_survival_evidence_present(bundle: CandidateEvidenceBundle) -> bool:
+    scorecard = _scorecard(bundle)
+    return _boolish(
+        scorecard.get("delay_adjusted_depth_fill_survival_evidence_present")
+        or scorecard.get("fill_survival_evidence_present")
+    )
+
+
+def _fill_survival_sample_count(bundle: CandidateEvidenceBundle) -> int:
+    scorecard = _scorecard(bundle)
+    return int(
+        max(
+            _decimal(scorecard.get("delay_adjusted_depth_fill_survival_sample_count")),
+            _decimal(scorecard.get("fill_survival_sample_count")),
+        )
+    )
+
+
+def _fill_survival_rate(bundle: CandidateEvidenceBundle) -> Decimal:
+    scorecard = _scorecard(bundle)
+    return max(
+        _decimal(scorecard.get("delay_adjusted_depth_fill_survival_rate")),
+        _decimal(scorecard.get("fill_survival_fill_rate")),
+        _decimal(scorecard.get("fill_survival_rate")),
+    )
+
+
 def _delay_adjusted_depth_stress_artifact_ref(
     bundle: CandidateEvidenceBundle,
 ) -> str:
@@ -1282,6 +1309,16 @@ def _portfolio_scorecard(
         ),
         Decimal("0"),
     )
+    fill_survival_evidence_present = bool(selected) and all(
+        _fill_survival_evidence_present(bundle) for bundle in selected
+    )
+    fill_survival_sample_count = sum(
+        _fill_survival_sample_count(bundle) for bundle in selected
+    )
+    fill_survival_rate = min(
+        (_fill_survival_rate(bundle) for bundle in selected),
+        default=Decimal("0"),
+    )
     double_oos_artifact_refs = [
         ref for ref in (_double_oos_artifact_ref(bundle) for bundle in selected) if ref
     ]
@@ -1528,6 +1565,12 @@ def _portfolio_scorecard(
         and all(
             _delay_adjusted_depth_tail_coverage_passed(bundle) for bundle in selected
         ),
+        "delay_adjusted_depth_fill_survival_evidence_present": fill_survival_evidence_present,
+        "delay_adjusted_depth_fill_survival_sample_count": fill_survival_sample_count,
+        "delay_adjusted_depth_fill_survival_rate": str(fill_survival_rate),
+        "fill_survival_evidence_present": fill_survival_evidence_present,
+        "fill_survival_sample_count": fill_survival_sample_count,
+        "fill_survival_fill_rate": str(fill_survival_rate),
         "delay_adjusted_depth_stress_artifact_refs": delay_depth_artifact_refs,
         "delay_adjusted_depth_stress_artifact_ref": delay_depth_artifact_refs[0]
         if delay_depth_artifact_refs

@@ -23,6 +23,19 @@ DEPLOYABLE_PROOF_GATE_KEYS = (
     "implementation_uncertainty_stability_passed",
     "conformal_tail_risk_passed",
 )
+FILL_SURVIVAL_EVIDENCE_KEYS = (
+    "delay_adjusted_depth_fill_survival_evidence_present",
+    "fill_survival_evidence_present",
+)
+FILL_SURVIVAL_SAMPLE_COUNT_KEYS = (
+    "delay_adjusted_depth_fill_survival_sample_count",
+    "fill_survival_sample_count",
+)
+FILL_SURVIVAL_RATE_KEYS = (
+    "delay_adjusted_depth_fill_survival_rate",
+    "fill_survival_fill_rate",
+    "fill_survival_rate",
+)
 
 
 @dataclass(frozen=True)
@@ -35,6 +48,8 @@ class ObjectiveVetoPolicy:
     required_min_regime_slice_pass_rate: Decimal = Decimal("0")
     required_max_gross_exposure_pct_equity: Decimal = Decimal("999999999")
     required_min_cash: Decimal = Decimal("-999999999")
+    required_min_fill_survival_sample_count: int = 0
+    required_min_fill_survival_rate: Decimal = Decimal("0")
 
     def to_payload(self) -> dict[str, str]:
         return {
@@ -50,6 +65,12 @@ class ObjectiveVetoPolicy:
                 self.required_max_gross_exposure_pct_equity
             ),
             "required_min_cash": str(self.required_min_cash),
+            "required_min_fill_survival_sample_count": str(
+                self.required_min_fill_survival_sample_count
+            ),
+            "required_min_fill_survival_rate": str(
+                self.required_min_fill_survival_rate
+            ),
         }
 
 
@@ -73,6 +94,8 @@ class CandidateObjectiveScorecard:
     max_gross_exposure_pct_equity: Decimal = Decimal("0")
     min_cash: Decimal = Decimal("0")
     negative_cash_observation_count: int = 0
+    fill_survival_sample_count: int = 0
+    fill_survival_rate: Decimal = Decimal("0")
     deployable_lower_bound_net_pnl_per_day: Decimal | None = None
     veto_reasons: tuple[str, ...] = ()
     pareto_tier: int | None = None
@@ -116,6 +139,8 @@ class CandidateObjectiveScorecard:
             "max_gross_exposure_pct_equity": str(self.max_gross_exposure_pct_equity),
             "min_cash": str(self.min_cash),
             "negative_cash_observation_count": self.negative_cash_observation_count,
+            "fill_survival_sample_count": self.fill_survival_sample_count,
+            "fill_survival_rate": str(self.fill_survival_rate),
             "deployable_lower_bound_net_pnl_per_day": (
                 str(self.deployable_lower_bound_net_pnl_per_day)
                 if self.deployable_lower_bound_net_pnl_per_day is not None
@@ -173,8 +198,39 @@ def deployable_lower_bound_missing_count(scorecard: Mapping[str, Any]) -> int:
 def deployable_proof_failed_gate_count(scorecard: Mapping[str, Any]) -> int:
     if not scorecard:
         return 0
-    return sum(
+    failed_base_gates = sum(
         1 for key in DEPLOYABLE_PROOF_GATE_KEYS if not _truthy(scorecard.get(key))
+    )
+    return failed_base_gates + (0 if fill_survival_proof_passed(scorecard) else 1)
+
+
+def _max_decimal_for_keys(
+    scorecard: Mapping[str, Any], keys: tuple[str, ...]
+) -> Decimal | None:
+    values = tuple(
+        value
+        for key in keys
+        if (value := _decimal_or_none(scorecard.get(key))) is not None
+    )
+    if not values:
+        return None
+    return max(values)
+
+
+def fill_survival_proof_passed(scorecard: Mapping[str, Any]) -> bool:
+    if not scorecard:
+        return False
+    evidence_present = any(
+        _truthy(scorecard.get(key)) for key in FILL_SURVIVAL_EVIDENCE_KEYS
+    )
+    sample_count = _max_decimal_for_keys(scorecard, FILL_SURVIVAL_SAMPLE_COUNT_KEYS)
+    fill_rate = _max_decimal_for_keys(scorecard, FILL_SURVIVAL_RATE_KEYS)
+    return (
+        evidence_present
+        and sample_count is not None
+        and sample_count > 0
+        and fill_rate is not None
+        and fill_rate > 0
     )
 
 
@@ -207,6 +263,8 @@ def build_scorecard(
     max_gross_exposure_pct_equity: Decimal = Decimal("0"),
     min_cash: Decimal = Decimal("0"),
     negative_cash_observation_count: int = 0,
+    fill_survival_sample_count: int = 0,
+    fill_survival_rate: Decimal = Decimal("0"),
     deployable_lower_bound_net_pnl_per_day: Decimal | None = None,
 ) -> CandidateObjectiveScorecard:
     day_count = max(trading_day_count, 1)
@@ -229,6 +287,8 @@ def build_scorecard(
         max_gross_exposure_pct_equity=max_gross_exposure_pct_equity,
         min_cash=min_cash,
         negative_cash_observation_count=negative_cash_observation_count,
+        fill_survival_sample_count=fill_survival_sample_count,
+        fill_survival_rate=fill_survival_rate,
         deployable_lower_bound_net_pnl_per_day=deployable_lower_bound_net_pnl_per_day,
     )
 
@@ -259,6 +319,16 @@ def evaluate_vetoes(
         reasons.append("gross_exposure_pct_equity_above_max")
     if scorecard.min_cash < policy.required_min_cash:
         reasons.append("min_cash_below_min")
+    if (
+        scorecard.fill_survival_sample_count
+        < policy.required_min_fill_survival_sample_count
+    ):
+        reasons.append("fill_survival_sample_count_below_min")
+    if (
+        policy.required_min_fill_survival_sample_count > 0
+        and scorecard.fill_survival_rate <= policy.required_min_fill_survival_rate
+    ):
+        reasons.append("fill_survival_rate_below_min")
     if not is_fresh:
         reasons.append("stale_tape")
     return tuple(reasons)
@@ -275,6 +345,7 @@ def _maximize_metrics(scorecard: CandidateObjectiveScorecard) -> tuple[Decimal, 
         scorecard.rolling_5d_lower_bound,
         scorecard.regime_slice_pass_rate,
         scorecard.min_cash,
+        scorecard.fill_survival_rate,
     )
 
 

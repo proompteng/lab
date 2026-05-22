@@ -822,6 +822,16 @@ def _objective_veto_policy(
                 )
             ),
         ),
+        required_min_fill_survival_sample_count=max(
+            1,
+            _nonnegative_int_metric(
+                template_defaults.get("required_min_fill_survival_sample_count")
+            ),
+        ),
+        required_min_fill_survival_rate=max(
+            Decimal("0"),
+            Decimal(str(template_defaults.get("required_min_fill_survival_rate", "0"))),
+        ),
     )
 
 
@@ -1619,6 +1629,15 @@ def _optional_decimal(value: Any) -> Decimal | None:
     if value in (None, ""):
         return None
     return Decimal(str(value))
+
+
+def _nonnegative_int_metric(value: Any) -> int:
+    if value in (None, ""):
+        return 0
+    try:
+        return max(0, int(Decimal(str(value))))
+    except (InvalidOperation, ValueError):
+        return 0
 
 
 def _order_lifecycle_metrics(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -3401,6 +3420,27 @@ def _rank_scored_candidates(scored: list[dict[str, Any]]) -> list[dict[str, Any]
             negative_cash_observation_count=int(
                 item["objective_scorecard"].get("negative_cash_observation_count") or 0
             ),
+            fill_survival_sample_count=max(
+                _nonnegative_int_metric(
+                    item["objective_scorecard"].get(
+                        "delay_adjusted_depth_fill_survival_sample_count"
+                    )
+                ),
+                _nonnegative_int_metric(
+                    item["objective_scorecard"].get("fill_survival_sample_count")
+                ),
+            ),
+            fill_survival_rate=(
+                _optional_decimal(
+                    item["objective_scorecard"].get(
+                        "delay_adjusted_depth_fill_survival_rate"
+                    )
+                )
+                or _optional_decimal(
+                    item["objective_scorecard"].get("fill_survival_fill_rate")
+                )
+                or Decimal("0")
+            ),
             deployable_lower_bound_net_pnl_per_day=promotion_grade_lower_bound(
                 cast(Mapping[str, Any], item["objective_scorecard"])
             ),
@@ -4384,6 +4424,27 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                 negative_days = sum(
                     1 for value in summary.daily_net.values() if value < 0
                 )
+                fill_survival_sample_count = max(
+                    _nonnegative_int_metric(
+                        full_window_summary.get(
+                            "delay_adjusted_depth_fill_survival_sample_count"
+                        )
+                    ),
+                    _nonnegative_int_metric(
+                        full_window_summary.get("fill_survival_sample_count")
+                    ),
+                )
+                fill_survival_rate = (
+                    _optional_decimal(
+                        full_window_summary.get(
+                            "delay_adjusted_depth_fill_survival_rate"
+                        )
+                    )
+                    or _optional_decimal(
+                        full_window_summary.get("fill_survival_fill_rate")
+                    )
+                    or Decimal("0")
+                )
                 objective_scorecard = build_scorecard(
                     candidate_id=str(candidate_payload["candidate_id"]),
                     trading_day_count=summary.trading_day_count,
@@ -4433,6 +4494,8 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     negative_cash_observation_count=int(
                         full_window_summary.get("negative_cash_observation_count") or 0
                     ),
+                    fill_survival_sample_count=fill_survival_sample_count,
+                    fill_survival_rate=fill_survival_rate,
                 )
                 hard_vetoes = list(
                     evaluate_vetoes(

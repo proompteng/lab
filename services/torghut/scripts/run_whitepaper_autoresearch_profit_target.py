@@ -7134,6 +7134,22 @@ def _runtime_closure_delay_adjusted_depth_stress_update(
     )
     if not latency_grid and stress_ms > 0:
         latency_grid = ("50", "150", "250")
+    fill_survival_sample_count = max(
+        _runtime_report_int(
+            delay_depth_report.get("delay_adjusted_depth_fill_survival_sample_count")
+        ),
+        _runtime_report_int(delay_depth_report.get("fill_survival_sample_count")),
+    )
+    fill_survival_rate = _decimal(
+        delay_depth_report.get("delay_adjusted_depth_fill_survival_rate")
+        or delay_depth_report.get("fill_survival_fill_rate")
+        or delay_depth_report.get("fill_survival_rate")
+    )
+    fill_survival_evidence_present = _boolish(
+        delay_depth_report.get("delay_adjusted_depth_fill_survival_evidence_present")
+        or delay_depth_report.get("fill_survival_evidence_present")
+        or (fill_survival_sample_count > 0)
+    )
     return {
         "delay_adjusted_depth_stress_checks_total": max(
             _runtime_report_int(delay_depth_report.get("stress_case_count")),
@@ -7183,6 +7199,9 @@ def _runtime_closure_delay_adjusted_depth_stress_update(
             if "tail_coverage_passed" in delay_depth_report
             else fillable_notional_per_day > 0
         ),
+        "delay_adjusted_depth_fill_survival_evidence_present": fill_survival_evidence_present,
+        "delay_adjusted_depth_fill_survival_sample_count": fill_survival_sample_count,
+        "delay_adjusted_depth_fill_survival_rate": str(fill_survival_rate),
         "delay_adjusted_depth_stress_net_pnl_per_day": str(
             _decimal(
                 delay_depth_report.get("post_delay_depth_net_pnl_per_day")
@@ -8774,6 +8793,22 @@ def _candidate_board_payload(
                 "delay_adjusted_depth_stress_net_pnl_per_day": _candidate_board_decimal_field(
                     scorecard, "delay_adjusted_depth_stress_net_pnl_per_day"
                 ),
+                "delay_adjusted_depth_fill_survival_evidence_present": _boolish(
+                    scorecard.get("delay_adjusted_depth_fill_survival_evidence_present")
+                    or scorecard.get("fill_survival_evidence_present")
+                ),
+                "delay_adjusted_depth_fill_survival_sample_count": _candidate_board_first_int_field(
+                    scorecard,
+                    (
+                        "delay_adjusted_depth_fill_survival_sample_count",
+                        "fill_survival_sample_count",
+                    ),
+                ),
+                "delay_adjusted_depth_fill_survival_rate": _candidate_board_decimal_field(
+                    scorecard, "delay_adjusted_depth_fill_survival_rate"
+                )
+                or _candidate_board_decimal_field(scorecard, "fill_survival_fill_rate")
+                or _candidate_board_decimal_field(scorecard, "fill_survival_rate"),
                 "implementation_uncertainty_stability_passed": _boolish(
                     scorecard.get("implementation_uncertainty_stability_passed")
                 ),

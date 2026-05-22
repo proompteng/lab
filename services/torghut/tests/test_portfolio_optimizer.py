@@ -66,6 +66,12 @@ def _executable_scorecard_fields(index: int | str = 0) -> dict[str, object]:
         "delay_adjusted_depth_worst_active_day_fillable_notional": "525000",
         "delay_adjusted_depth_p10_active_day_fillable_notional": "525000",
         "delay_adjusted_depth_tail_coverage_passed": True,
+        "delay_adjusted_depth_fill_survival_evidence_present": True,
+        "delay_adjusted_depth_fill_survival_sample_count": 5,
+        "delay_adjusted_depth_fill_survival_rate": "0.85",
+        "fill_survival_evidence_present": True,
+        "fill_survival_sample_count": 5,
+        "fill_survival_fill_rate": "0.85",
         "delay_adjusted_depth_stress_net_pnl_per_day": "520",
         "double_oos_passed": True,
         "double_oos_artifact_ref": f"/tmp/double-oos-{index}.json",
@@ -760,6 +766,21 @@ class TestPortfolioOptimizer(TestCase):
                 "delay_adjusted_depth_fillable_notional_per_day"
             ],
             "1050000",
+        )
+        self.assertTrue(
+            portfolio.objective_scorecard[
+                "delay_adjusted_depth_fill_survival_evidence_present"
+            ]
+        )
+        self.assertEqual(
+            portfolio.objective_scorecard[
+                "delay_adjusted_depth_fill_survival_sample_count"
+            ],
+            10,
+        )
+        self.assertEqual(
+            portfolio.objective_scorecard["delay_adjusted_depth_fill_survival_rate"],
+            "0.85",
         )
         self.assertTrue(portfolio.objective_scorecard["oracle_passed"])
 
