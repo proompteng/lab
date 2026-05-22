@@ -3710,6 +3710,14 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
         else None
     )
     loaded_replay_tape: ReplayTape | None = None
+    explicit_expected_last_trading_day = (
+        date.fromisoformat(str(args.expected_last_trading_day))
+        if str(args.expected_last_trading_day or "").strip()
+        else None
+    )
+    recent_day_ceiling = explicit_expected_last_trading_day
+    if recent_day_ceiling is None and str(args.full_window_end_date or "").strip():
+        recent_day_ceiling = date.fromisoformat(str(args.full_window_end_date))
     if replay_tape_path is not None:
         loaded_replay_tape = load_replay_tape(
             Path(replay_tape_path).resolve(),
@@ -3726,6 +3734,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                 + max(1, int(args.holdout_days))
                 + second_oos_day_count
             ),
+            latest_trading_day=recent_day_ceiling,
         )
     window = _resolve_frontier_replay_windows(
         recent_days,
@@ -3888,10 +3897,8 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
         configmap_payload=base_configmap,
         strategy_name=strategy_name,
     )
-    expected_last_trading_day = (
-        date.fromisoformat(str(args.expected_last_trading_day))
-        if str(args.expected_last_trading_day or "").strip()
-        else (full_window_end if str(args.full_window_end_date or "").strip() else None)
+    expected_last_trading_day = explicit_expected_last_trading_day or (
+        full_window_end if str(args.full_window_end_date or "").strip() else None
     )
     expected_snapshot_days = _snapshot_expected_days(
         window=window,

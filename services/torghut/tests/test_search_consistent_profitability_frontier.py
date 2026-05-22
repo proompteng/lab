@@ -1384,6 +1384,30 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(resolved.second_oos_days, days[6:])
         self.assertEqual(resolved.expected_days, days)
 
+    def test_recent_day_query_honors_explicit_expected_last_trading_day(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            args = self._make_args(
+                strategy_configmap=self._write_strategy_configmap(root),
+                sweep_config=self._write_sweep_config(root),
+                json_output=root / "frontier.json",
+            )
+            args.expected_last_trading_day = "2026-05-21"
+            args.second_oos_days = 2
+
+            with patch(
+                "scripts.search_consistent_profitability_frontier._resolve_recent_trading_days",
+                side_effect=RuntimeError("stop-after-recent-days"),
+            ) as resolve_recent:
+                with self.assertRaisesRegex(RuntimeError, "stop-after-recent-days"):
+                    frontier.run_consistent_profitability_frontier(args)
+
+        self.assertEqual(
+            resolve_recent.call_args.kwargs["latest_trading_day"],
+            date(2026, 5, 21),
+        )
+        self.assertEqual(resolve_recent.call_args.kwargs["limit"], 8)
+
     def test_explicit_full_window_replay_tape_receipt_keeps_missing_business_days(
         self,
     ) -> None:

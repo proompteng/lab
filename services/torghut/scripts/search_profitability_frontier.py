@@ -17,6 +17,7 @@ from typing import Any, Iterable, Mapping, cast
 
 import yaml
 
+from app.trading.discovery.dataset_snapshot import resolve_expected_last_trading_day
 from app.trading.reporting import (
     ProfitabilityConstraintPolicy,
     score_replay_profitability_candidate,
@@ -102,7 +103,11 @@ def _resolve_recent_trading_days(
     clickhouse_username: str | None,
     clickhouse_password: str | None,
     limit: int,
+    latest_trading_day: date | None = None,
 ) -> tuple[date, ...]:
+    resolved_latest_day = latest_trading_day or resolve_expected_last_trading_day(
+        explicit_day=None
+    )
     raw = _http_query(
         url=clickhouse_http_url,
         username=clickhouse_username,
@@ -112,6 +117,7 @@ def _resolve_recent_trading_days(
             f"FROM {_REPLAY_SIGNAL_TABLE} "
             "WHERE source = 'ta' "
             "  AND window_size = 'PT1S' "
+            f"  AND toDate(event_ts) <= toDate('{resolved_latest_day.isoformat()}') "
             "ORDER BY trading_day DESC "
             f"LIMIT {max(1, int(limit))} "
             "FORMAT TSVRaw"
@@ -120,6 +126,7 @@ def _resolve_recent_trading_days(
     values = [
         date.fromisoformat(line.strip()) for line in raw.splitlines() if line.strip()
     ]
+    values = [value for value in values if value <= resolved_latest_day]
     values.sort()
     return tuple(values)
 
