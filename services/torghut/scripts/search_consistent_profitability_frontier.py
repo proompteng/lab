@@ -13,7 +13,7 @@ import sys
 import tempfile
 from collections import Counter, deque
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timezone
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeAlias, cast
@@ -22,6 +22,8 @@ from unittest.mock import patch
 import yaml
 
 from app.trading.discovery.dataset_snapshot import (
+    DatasetSnapshotReceipt,
+    DatasetWitness,
     build_dataset_snapshot_receipt,
     ensure_fresh_snapshot,
 )
@@ -46,6 +48,7 @@ from app.trading.discovery.objectives import (
     rank_scorecards,
 )
 from app.trading.discovery.replay_tape import (
+    ReplayTape,
     load_replay_tape,
     slice_tape_by_symbols,
     slice_tape_by_window,
@@ -1198,17 +1201,18 @@ def _load_replay_tape_rows(
     end_date: date,
     symbols: tuple[str, ...],
     allow_stale_tape: bool,
+    tape: ReplayTape | None = None,
 ) -> tuple[list[Any], dict[str, Any]]:
-    tape = load_replay_tape(tape_path, manifest_path=manifest_path)
+    loaded_tape = tape or load_replay_tape(tape_path, manifest_path=manifest_path)
     validation = validate_tape_freshness(
-        tape.manifest,
+        loaded_tape.manifest,
         start_date=start_date,
         end_date=end_date,
         symbols=symbols,
         allow_stale_tape=allow_stale_tape,
     )
     rows = slice_tape_by_window(
-        tape.rows,
+        loaded_tape.rows,
         start_date=start_date,
         end_date=end_date,
     )
@@ -1217,8 +1221,108 @@ def _load_replay_tape_rows(
     validation["manifest_path"] = str(manifest_path) if manifest_path else ""
     validation["selected_row_count"] = len(rows)
     validation["selected_symbols"] = sorted({row.symbol.upper() for row in rows})
-    validation["source_query_digest"] = tape.manifest.source_query_digest
+    validation["source_query_digest"] = loaded_tape.manifest.source_query_digest
+    validation["manifest_start_date"] = loaded_tape.manifest.start_date.isoformat()
+    validation["manifest_end_date"] = loaded_tape.manifest.end_date.isoformat()
+    validation["row_symbols"] = list(loaded_tape.manifest.row_symbols)
+    validation["source_table_versions"] = dict(
+        loaded_tape.manifest.source_table_versions
+    )
+    validation["artifact_refs"] = dict(loaded_tape.manifest.artifact_refs)
     return list(rows), validation
+
+
+def _replay_tape_trading_days(tape: ReplayTape) -> tuple[date, ...]:
+    return tuple(
+        sorted({row.event_ts.astimezone(timezone.utc).date() for row in tape.rows})
+    )
+
+
+def _build_replay_tape_snapshot_receipt(
+    *,
+    validation: Mapping[str, Any],
+    rows: Sequence[Any],
+    start_day: date,
+    end_day: date,
+    expected_last_trading_day: date,
+    expected_trading_days: Sequence[date],
+    allow_stale_tape: bool,
+) -> DatasetSnapshotReceipt:
+    observed_days = _replay_tape_row_days(rows)
+    observed_day_set = set(observed_days)
+    missing_days = tuple(
+        day for day in expected_trading_days if day not in observed_day_set
+    )
+    latest_observed_day = observed_days[-1] if observed_days else start_day
+    is_fresh = (
+        str(validation.get("status") or "") == "valid"
+        and latest_observed_day >= expected_last_trading_day
+        and not missing_days
+    )
+    snapshot_id = str(validation.get("dataset_snapshot_ref") or "").strip()
+    if not snapshot_id:
+        snapshot_id = f"replay-tape-{str(validation.get('content_sha256') or '')[:24]}"
+    return DatasetSnapshotReceipt(
+        snapshot_id=snapshot_id,
+        source="replay_tape",
+        window_size="PT1S",
+        start_day=start_day,
+        end_day=end_day,
+        expected_last_trading_day=expected_last_trading_day,
+        is_fresh=is_fresh,
+        missing_days=missing_days,
+        row_count=len(rows),
+        stale_override_used=bool(validation.get("stale_override_used"))
+        or (allow_stale_tape and not is_fresh),
+        witnesses=(
+            DatasetWitness(
+                name="replay_tape_manifest",
+                payload={
+                    "dataset_snapshot_ref": str(
+                        validation.get("dataset_snapshot_ref") or ""
+                    ),
+                    "content_sha256": str(validation.get("content_sha256") or ""),
+                    "source_query_digest": str(
+                        validation.get("source_query_digest") or ""
+                    ),
+                    "manifest_start_date": str(
+                        validation.get("manifest_start_date") or ""
+                    ),
+                    "manifest_end_date": str(validation.get("manifest_end_date") or ""),
+                    "row_count": int(validation.get("row_count") or 0),
+                    "trading_day_count": int(validation.get("trading_day_count") or 0),
+                    "source_table_versions": dict(
+                        cast(
+                            Mapping[str, Any],
+                            validation.get("source_table_versions") or {},
+                        )
+                    ),
+                    "artifact_refs": dict(
+                        cast(Mapping[str, Any], validation.get("artifact_refs") or {})
+                    ),
+                },
+            ),
+            DatasetWitness(
+                name="replay_tape_selected_rows",
+                payload={
+                    "row_count": len(rows),
+                    "observed_days": [item.isoformat() for item in observed_days],
+                    "missing_days": [item.isoformat() for item in missing_days],
+                    "selected_symbols": list(
+                        cast(Sequence[Any], validation.get("selected_symbols") or [])
+                    ),
+                    "status": str(validation.get("status") or ""),
+                    "reasons": list(
+                        cast(Sequence[Any], validation.get("reasons") or [])
+                    ),
+                },
+            ),
+        ),
+    )
+
+
+def _replay_tape_row_days(rows: Iterable[Any]) -> tuple[date, ...]:
+    return tuple(sorted({row.event_ts.astimezone(timezone.utc).date() for row in rows}))
 
 
 def apply_candidate_to_configmap_with_overrides(
@@ -3472,16 +3576,30 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
     clickhouse_password = _resolved_clickhouse_password(args)
     sweep_config = _load_sweep_config(args.sweep_config.resolve())
     second_oos_day_count = max(0, int(getattr(args, "second_oos_days", 0) or 0))
-    recent_days = _resolve_recent_trading_days(
-        clickhouse_http_url=str(args.clickhouse_http_url),
-        clickhouse_username=(str(args.clickhouse_username).strip() or None),
-        clickhouse_password=clickhouse_password,
-        limit=(
-            max(1, int(args.train_days))
-            + max(1, int(args.holdout_days))
-            + second_oos_day_count
-        ),
+    replay_tape_path = getattr(args, "replay_tape_path", None)
+    replay_tape_manifest_path = (
+        Path(args.replay_tape_manifest).resolve()
+        if getattr(args, "replay_tape_manifest", None) is not None
+        else None
     )
+    loaded_replay_tape: ReplayTape | None = None
+    if replay_tape_path is not None:
+        loaded_replay_tape = load_replay_tape(
+            Path(replay_tape_path).resolve(),
+            manifest_path=replay_tape_manifest_path,
+        )
+        recent_days = _replay_tape_trading_days(loaded_replay_tape)
+    else:
+        recent_days = _resolve_recent_trading_days(
+            clickhouse_http_url=str(args.clickhouse_http_url),
+            clickhouse_username=(str(args.clickhouse_username).strip() or None),
+            clickhouse_password=clickhouse_password,
+            limit=(
+                max(1, int(args.train_days))
+                + max(1, int(args.holdout_days))
+                + second_oos_day_count
+            ),
+        )
     window = _resolve_frontier_replay_windows(
         recent_days,
         train_days=max(1, int(args.train_days)),
@@ -3625,34 +3743,6 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
     min_train_screen_active_ratio = Decimal(
         str(getattr(args, "min_train_screen_active_ratio", "0.50") or "0.50")
     )
-    expected_last_trading_day = (
-        date.fromisoformat(str(args.expected_last_trading_day))
-        if str(args.expected_last_trading_day or "").strip()
-        else (full_window_end if str(args.full_window_end_date or "").strip() else None)
-    )
-    dataset_snapshot_receipt = build_dataset_snapshot_receipt(
-        clickhouse_http_url=str(args.clickhouse_http_url),
-        clickhouse_username=(str(args.clickhouse_username).strip() or None),
-        clickhouse_password=clickhouse_password,
-        start_day=full_window_start,
-        end_day=full_window_end,
-        expected_last_trading_day=expected_last_trading_day,
-        expected_trading_days=window.expected_days,
-        allow_stale_tape=bool(args.allow_stale_tape),
-    )
-    ensure_fresh_snapshot(
-        dataset_snapshot_receipt,
-        allow_stale_tape=bool(args.allow_stale_tape),
-    )
-    objective_veto_policy = _objective_veto_policy(
-        consistency_policy=consistency_policy,
-        template_defaults=family_template.default_hard_vetoes,
-        trading_day_count=len(window.train_days) + len(window.holdout_days),
-    )
-    collect_train_gate_diagnostics = bool(
-        getattr(args, "collect_train_gate_diagnostics", False)
-    )
-
     symbols = tuple(
         symbol.strip().upper()
         for symbol in str(args.symbols or "").split(",")
@@ -3671,6 +3761,56 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
         configmap_payload=base_configmap,
         strategy_name=strategy_name,
     )
+    expected_last_trading_day = (
+        date.fromisoformat(str(args.expected_last_trading_day))
+        if str(args.expected_last_trading_day or "").strip()
+        else (full_window_end if str(args.full_window_end_date or "").strip() else None)
+    )
+    cached_rows: list[Any] | None = None
+    replay_tape_validation: dict[str, Any] | None = None
+    if loaded_replay_tape is not None:
+        cached_rows, replay_tape_validation = _load_replay_tape_rows(
+            tape_path=Path(replay_tape_path).resolve(),
+            manifest_path=replay_tape_manifest_path,
+            start_date=full_window_start,
+            end_date=full_window_end,
+            symbols=prefetch_symbols,
+            allow_stale_tape=bool(getattr(args, "allow_stale_tape", False)),
+            tape=loaded_replay_tape,
+        )
+        dataset_snapshot_receipt = _build_replay_tape_snapshot_receipt(
+            validation=replay_tape_validation,
+            rows=cached_rows,
+            start_day=full_window_start,
+            end_day=full_window_end,
+            expected_last_trading_day=expected_last_trading_day or full_window_end,
+            expected_trading_days=window.expected_days,
+            allow_stale_tape=bool(args.allow_stale_tape),
+        )
+    else:
+        dataset_snapshot_receipt = build_dataset_snapshot_receipt(
+            clickhouse_http_url=str(args.clickhouse_http_url),
+            clickhouse_username=(str(args.clickhouse_username).strip() or None),
+            clickhouse_password=clickhouse_password,
+            start_day=full_window_start,
+            end_day=full_window_end,
+            expected_last_trading_day=expected_last_trading_day,
+            expected_trading_days=window.expected_days,
+            allow_stale_tape=bool(args.allow_stale_tape),
+        )
+    ensure_fresh_snapshot(
+        dataset_snapshot_receipt,
+        allow_stale_tape=bool(args.allow_stale_tape),
+    )
+    objective_veto_policy = _objective_veto_policy(
+        consistency_policy=consistency_policy,
+        template_defaults=family_template.default_hard_vetoes,
+        trading_day_count=len(window.train_days) + len(window.holdout_days),
+    )
+    collect_train_gate_diagnostics = bool(
+        getattr(args, "collect_train_gate_diagnostics", False)
+    )
+
     scored: list[dict[str, Any]] = []
 
     with tempfile.TemporaryDirectory(
@@ -3682,23 +3822,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
             root=root,
         )
         order_type_ablation_evaluated = 0
-        cached_rows: list[Any] | None = None
-        replay_tape_validation: dict[str, Any] | None = None
-        replay_tape_path = getattr(args, "replay_tape_path", None)
-        if replay_tape_path is not None:
-            cached_rows, replay_tape_validation = _load_replay_tape_rows(
-                tape_path=Path(replay_tape_path).resolve(),
-                manifest_path=(
-                    Path(args.replay_tape_manifest).resolve()
-                    if getattr(args, "replay_tape_manifest", None) is not None
-                    else None
-                ),
-                start_date=full_window_start,
-                end_date=full_window_end,
-                symbols=prefetch_symbols,
-                allow_stale_tape=bool(getattr(args, "allow_stale_tape", False)),
-            )
-        elif args.prefetch_full_window_rows:
+        if cached_rows is None and args.prefetch_full_window_rows:
             cached_rows = _prefetch_signal_rows(
                 strategy_configmap_path=args.strategy_configmap.resolve(),
                 clickhouse_http_url=str(args.clickhouse_http_url),
