@@ -3131,6 +3131,12 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             frontier.Decimal(summary["queue_position_survival_stress_net_pnl_per_day"]),
             frontier.Decimal("490"),
         )
+        self.assertEqual(
+            frontier.Decimal(
+                summary["post_cost_net_pnl_after_queue_position_survival_fill_stress"]
+            ),
+            frontier.Decimal("490"),
+        )
 
     def test_consistency_penalty_reports_and_penalizes_capital_realism(self) -> None:
         payload = self._payload(
