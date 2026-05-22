@@ -1052,6 +1052,8 @@ class TestPortfolioOptimizer(TestCase):
                         "shadow_parity_status": "within_budget",
                         "correlation_cluster": candidate_id,
                         "symbol_contribution_shares": {symbol: "1.0"},
+                        "max_notional_per_trade": "24000",
+                        "max_position_pct_equity": "0.76",
                         "runtime_params": {
                             "entry_minute_after_open": "35",
                             "entry_window_minutes": "25",
@@ -1115,6 +1117,8 @@ class TestPortfolioOptimizer(TestCase):
             "cross_section_positive_opening_window_return_from_prev_close_ratio",
         )
         self.assertEqual(first_sleeve["universe_symbols"], ["NVDA", "AVGO", "AMD"])
+        self.assertEqual(first_sleeve["max_notional_per_trade"], "24000")
+        self.assertEqual(first_sleeve["max_position_pct_equity"], "0.76")
 
     def test_portfolio_candidate_round_trips_from_optimizer_payload(self) -> None:
         daily_profiles = [

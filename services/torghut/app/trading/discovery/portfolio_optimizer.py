@@ -88,6 +88,16 @@ def _scorecard_universe_symbols(bundle: CandidateEvidenceBundle) -> list[str]:
     ]
 
 
+def _scorecard_sleeve_runtime_limits(bundle: CandidateEvidenceBundle) -> dict[str, str]:
+    limits: dict[str, str] = {}
+    scorecard = _scorecard(bundle)
+    for key in ("max_notional_per_trade", "max_position_pct_equity"):
+        value = _string(scorecard.get(key))
+        if value:
+            limits[key] = value
+    return limits
+
+
 def _scorecard_signal(bundle: CandidateEvidenceBundle) -> str:
     params = _scorecard_runtime_params(bundle)
     signal = _string(params.get("signal_motif"))
@@ -1692,6 +1702,7 @@ def optimize_portfolio_candidate(
                 "signal": _scorecard_signal(bundle),
                 "params": dict(_scorecard_runtime_params(bundle)),
                 "universe_symbols": _scorecard_universe_symbols(bundle),
+                **_scorecard_sleeve_runtime_limits(bundle),
                 "expected_net_pnl_per_day": str(_net_per_day(bundle) * weight),
                 "source_expected_net_pnl_per_day": str(_net_per_day(bundle)),
                 "risk_contribution": str(_max_drawdown(bundle) * weight),

@@ -185,6 +185,28 @@ def _int_mapping(value: Any) -> dict[str, int]:
     return counts
 
 
+def _frontier_replay_config(candidate: Mapping[str, Any]) -> dict[str, Any]:
+    return _mapping(candidate.get("replay_config"))
+
+
+def _frontier_replay_params(candidate: Mapping[str, Any]) -> dict[str, Any]:
+    return _mapping(_frontier_replay_config(candidate).get("params"))
+
+
+def _frontier_strategy_overrides(candidate: Mapping[str, Any]) -> dict[str, Any]:
+    return _mapping(_frontier_replay_config(candidate).get("strategy_overrides"))
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, Sequence) or isinstance(value, str):
+        return []
+    return [
+        normalized
+        for normalized in (_string(item) for item in cast(Sequence[Any], value))
+        if normalized
+    ]
+
+
 def _order_type_execution_metrics(source: Mapping[str, Any]) -> dict[str, Any]:
     decision_counts = _int_mapping(source.get("decision_count_by_order_type"))
     filled_counts = _int_mapping(source.get("filled_count_by_order_type"))
@@ -840,10 +862,29 @@ def evidence_bundle_from_frontier_candidate(
     )
     if hard_vetoes and "hard_vetoes" not in scorecard:
         scorecard = {**scorecard, "hard_vetoes": list(hard_vetoes)}
+    replay_params = _frontier_replay_params(candidate)
+    if replay_params and "runtime_params" not in scorecard:
+        scorecard = {**scorecard, "runtime_params": replay_params}
+    strategy_overrides = _frontier_strategy_overrides(candidate)
+    if strategy_overrides and "candidate_strategy_overrides" not in scorecard:
+        scorecard = {**scorecard, "candidate_strategy_overrides": strategy_overrides}
+    universe_symbols = _string_list(strategy_overrides.get("universe_symbols"))
+    if universe_symbols and "universe_symbols" not in scorecard:
+        scorecard = {**scorecard, "universe_symbols": universe_symbols}
+    for key in ("max_notional_per_trade", "max_position_pct_equity"):
+        if key in scorecard:
+            continue
+        value = strategy_overrides.get(key)
+        if value is not None:
+            scorecard = {**scorecard, key: value}
     if "symbol_contribution_shares" not in scorecard and "symbol" not in scorecard:
         symbol_shares = _decomposition_symbol_contribution_shares(candidate)
         if symbol_shares:
             scorecard = {**scorecard, "symbol_contribution_shares": symbol_shares}
+    runtime_identity_fallbacks = {
+        "runtime_family": _string(candidate.get("family")),
+        "runtime_strategy_name": _string(candidate.get("strategy_name")),
+    }
     for key in (
         "family_template_id",
         "runtime_family",
@@ -856,7 +897,7 @@ def evidence_bundle_from_frontier_candidate(
         "universe_key",
         "signal_key",
     ):
-        value = _string(candidate.get(key))
+        value = _string(candidate.get(key)) or runtime_identity_fallbacks.get(key, "")
         if value and key not in scorecard:
             scorecard = {**scorecard, key: value}
     replay_lineage = _mapping(candidate.get("replay_lineage"))
