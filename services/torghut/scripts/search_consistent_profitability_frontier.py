@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_DOWN
 from pathlib import Path
-from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeAlias, cast
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, cast
 from urllib.parse import urlparse
 from unittest.mock import patch
 
@@ -136,14 +136,26 @@ _CONSISTENCY_REPAIR_COOLDOWN_KEYS = (
     "entry_cooldown_seconds",
     "signal_cooldown_seconds",
 )
-_WorklistItem: TypeAlias = tuple[
-    dict[str, Any],
-    dict[str, Any],
-    int,
-    str | None,
-    str | None,
-    str | None,
-]
+
+
+@dataclass(frozen=True)
+class _WorklistItem:
+    params_candidate: dict[str, Any]
+    strategy_overrides: dict[str, Any]
+    symbol_prune_iteration: int = 0
+    loss_repair_iteration: int = 0
+    consistency_repair_iteration: int = 0
+    pruned_symbol: str | None = None
+    repair_reason: str | None = None
+    parent_candidate_id: str | None = None
+
+    @property
+    def search_iteration(self) -> int:
+        return (
+            self.symbol_prune_iteration
+            + self.loss_repair_iteration
+            + self.consistency_repair_iteration
+        )
 
 
 @dataclass(frozen=True)
@@ -1011,16 +1023,15 @@ def _iter_initial_worklist_candidates(
     seed_candidates: Iterable[tuple[Mapping[str, Any], Mapping[str, Any]]] = (),
 ) -> Iterator[_WorklistItem]:
     for params_candidate, override_candidate in seed_candidates:
-        yield (dict(params_candidate), dict(override_candidate), 0, None, None, None)
+        yield _WorklistItem(
+            params_candidate=dict(params_candidate),
+            strategy_overrides=dict(override_candidate),
+        )
     for override_candidate in override_candidates:
         for params_candidate in _iter_parameter_candidates(parameter_grid):
-            yield (
-                dict(params_candidate),
-                dict(override_candidate),
-                0,
-                None,
-                None,
-                None,
+            yield _WorklistItem(
+                params_candidate=dict(params_candidate),
+                strategy_overrides=dict(override_candidate),
             )
 
 
@@ -4117,14 +4128,9 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                 if candidate_budget > 0 and len(scored) >= candidate_budget:
                     budget_exhausted = True
                     break
-                (
-                    params_candidate,
-                    override_candidate,
-                    prune_iteration,
-                    pruned_symbol,
-                    repair_reason,
-                    parent_candidate_id,
-                ) = worklist.popleft()
+                worklist_item = worklist.popleft()
+                params_candidate = worklist_item.params_candidate
+                override_candidate = worklist_item.strategy_overrides
                 candidate_key = _candidate_search_key(
                     params_candidate=params_candidate,
                     strategy_overrides=override_candidate,
@@ -4408,7 +4414,16 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                 if second_oos_summary is not None:
                     candidate_payload["second_oos_penalty"] = str(second_oos_penalty)
                 candidate_payload["adjusted_score"] = str(adjusted_score)
-                candidate_payload["search_iteration"] = prune_iteration
+                candidate_payload["search_iteration"] = worklist_item.search_iteration
+                candidate_payload["symbol_prune_iteration"] = (
+                    worklist_item.symbol_prune_iteration
+                )
+                candidate_payload["loss_repair_iteration"] = (
+                    worklist_item.loss_repair_iteration
+                )
+                candidate_payload["consistency_repair_iteration"] = (
+                    worklist_item.consistency_repair_iteration
+                )
                 candidate_payload["family_template_id"] = family_template.family_id
                 candidate_payload["dataset_snapshot_id"] = (
                     dataset_snapshot_receipt.snapshot_id
@@ -4460,15 +4475,21 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                         train_screen_failures and window.second_oos_days
                     ),
                 }
-                if pruned_symbol is not None:
-                    candidate_payload["pruned_symbol"] = pruned_symbol
-                if repair_reason is not None:
-                    if repair_reason.startswith("consistency_"):
-                        candidate_payload["consistency_repair_reason"] = repair_reason
+                if worklist_item.pruned_symbol is not None:
+                    candidate_payload["pruned_symbol"] = worklist_item.pruned_symbol
+                if worklist_item.repair_reason is not None:
+                    if worklist_item.repair_reason.startswith("consistency_"):
+                        candidate_payload["consistency_repair_reason"] = (
+                            worklist_item.repair_reason
+                        )
                     else:
-                        candidate_payload["loss_repair_reason"] = repair_reason
-                if parent_candidate_id is not None:
-                    candidate_payload["parent_candidate_id"] = parent_candidate_id
+                        candidate_payload["loss_repair_reason"] = (
+                            worklist_item.repair_reason
+                        )
+                if worklist_item.parent_candidate_id is not None:
+                    candidate_payload["parent_candidate_id"] = (
+                        worklist_item.parent_candidate_id
+                    )
                 symbol_contributions = _symbol_contributions_from_replay_payload(
                     full_window_payload
                 )
@@ -4950,7 +4971,9 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     candidate_payload["prefetched_row_count"] = len(cached_rows)
                     candidate_payload["prefetched_symbols"] = list(prefetch_symbols)
                 scored.append(candidate_payload)
-                if prune_iteration < max(0, int(args.symbol_prune_iterations)):
+                if worklist_item.symbol_prune_iteration < max(
+                    0, int(args.symbol_prune_iterations)
+                ):
                     for (
                         removed_symbol,
                         next_override,
@@ -4966,16 +4989,20 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                         ),
                     ):
                         worklist.append(
-                            (
-                                dict(params_candidate),
-                                next_override,
-                                prune_iteration + 1,
-                                removed_symbol,
-                                None,
-                                str(candidate_payload["candidate_id"]),
+                            _WorklistItem(
+                                params_candidate=dict(params_candidate),
+                                strategy_overrides=next_override,
+                                symbol_prune_iteration=worklist_item.symbol_prune_iteration
+                                + 1,
+                                loss_repair_iteration=worklist_item.loss_repair_iteration,
+                                consistency_repair_iteration=worklist_item.consistency_repair_iteration,
+                                pruned_symbol=removed_symbol,
+                                parent_candidate_id=str(
+                                    candidate_payload["candidate_id"]
+                                ),
                             )
                         )
-                if prune_iteration < max(
+                if worklist_item.loss_repair_iteration < max(
                     0, int(getattr(args, "loss_repair_iterations", 0))
                 ):
                     for (
@@ -4998,16 +5025,20 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                         policy_required_min_cash=objective_veto_policy.required_min_cash,
                     ):
                         worklist.append(
-                            (
-                                next_params,
-                                next_override,
-                                prune_iteration + 1,
-                                None,
-                                repair_reason,
-                                str(candidate_payload["candidate_id"]),
+                            _WorklistItem(
+                                params_candidate=next_params,
+                                strategy_overrides=next_override,
+                                symbol_prune_iteration=worklist_item.symbol_prune_iteration,
+                                loss_repair_iteration=worklist_item.loss_repair_iteration
+                                + 1,
+                                consistency_repair_iteration=worklist_item.consistency_repair_iteration,
+                                repair_reason=repair_reason,
+                                parent_candidate_id=str(
+                                    candidate_payload["candidate_id"]
+                                ),
                             )
                         )
-                if prune_iteration < max(
+                if worklist_item.consistency_repair_iteration < max(
                     0, int(getattr(args, "consistency_repair_iterations", 0))
                 ):
                     for (
@@ -5026,13 +5057,17 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                         ),
                     ):
                         worklist.append(
-                            (
-                                next_params,
-                                next_override,
-                                prune_iteration + 1,
-                                None,
-                                consistency_reason,
-                                str(candidate_payload["candidate_id"]),
+                            _WorklistItem(
+                                params_candidate=next_params,
+                                strategy_overrides=next_override,
+                                symbol_prune_iteration=worklist_item.symbol_prune_iteration,
+                                loss_repair_iteration=worklist_item.loss_repair_iteration,
+                                consistency_repair_iteration=worklist_item.consistency_repair_iteration
+                                + 1,
+                                repair_reason=consistency_reason,
+                                parent_candidate_id=str(
+                                    candidate_payload["candidate_id"]
+                                ),
                             )
                         )
                 if args.json_output is not None:

@@ -632,10 +632,10 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         first = next(candidates)
         second = next(candidates)
 
-        self.assertEqual(first[0], {"entry_start_minute_utc": "810"})
-        self.assertEqual(first[1], {"max_notional_per_trade": "50000"})
-        self.assertEqual(second[0], {"long_stop_loss_bps": "10"})
-        self.assertEqual(second[1], {"max_notional_per_trade": "63180"})
+        self.assertEqual(first.params_candidate, {"entry_start_minute_utc": "810"})
+        self.assertEqual(first.strategy_overrides, {"max_notional_per_trade": "50000"})
+        self.assertEqual(second.params_candidate, {"long_stop_loss_bps": "10"})
+        self.assertEqual(second.strategy_overrides, {"max_notional_per_trade": "63180"})
 
     def test_candidate_symbols_prefers_cli_filter_then_universe_override(self) -> None:
         self.assertEqual(
@@ -1390,6 +1390,8 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             symbol_prune_min_universe_size=2,
             loss_repair_iterations=0,
             loss_repair_candidates=1,
+            consistency_repair_iterations=0,
+            consistency_repair_candidates=1,
             train_screening=True,
             min_train_screen_net_per_day="0",
             min_train_screen_active_ratio="0.50",
@@ -3900,41 +3902,30 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             override_candidates=[{"universe_symbols": ["NVDA"]}],
         )
 
-        (
-            first_params,
-            first_overrides,
-            first_iteration,
-            first_pruned_symbol,
-            first_loss_repair_reason,
-            first_parent_id,
-        ) = next(candidates)
-        (
-            second_params,
-            second_overrides,
-            second_iteration,
-            second_pruned_symbol,
-            second_loss_repair_reason,
-            second_parent_id,
-        ) = next(candidates)
+        first = next(candidates)
+        second = next(candidates)
 
         self.assertEqual(
-            first_params,
+            first.params_candidate,
             {"min_recent_microprice_bias_bps": 0, "min_late_day_continuation_bps": 0},
         )
         self.assertEqual(
-            second_params,
+            second.params_candidate,
             {"min_recent_microprice_bias_bps": 1, "min_late_day_continuation_bps": 0},
         )
-        self.assertEqual(first_overrides, {"universe_symbols": ["NVDA"]})
-        self.assertEqual(second_overrides, {"universe_symbols": ["NVDA"]})
-        self.assertEqual(first_iteration, 0)
-        self.assertEqual(second_iteration, 0)
-        self.assertIsNone(first_pruned_symbol)
-        self.assertIsNone(second_pruned_symbol)
-        self.assertIsNone(first_loss_repair_reason)
-        self.assertIsNone(second_loss_repair_reason)
-        self.assertIsNone(first_parent_id)
-        self.assertIsNone(second_parent_id)
+        self.assertEqual(first.strategy_overrides, {"universe_symbols": ["NVDA"]})
+        self.assertEqual(second.strategy_overrides, {"universe_symbols": ["NVDA"]})
+        self.assertEqual(first.search_iteration, 0)
+        self.assertEqual(second.search_iteration, 0)
+        self.assertEqual(first.symbol_prune_iteration, 0)
+        self.assertEqual(first.loss_repair_iteration, 0)
+        self.assertEqual(first.consistency_repair_iteration, 0)
+        self.assertIsNone(first.pruned_symbol)
+        self.assertIsNone(second.pruned_symbol)
+        self.assertIsNone(first.repair_reason)
+        self.assertIsNone(second.repair_reason)
+        self.assertIsNone(first.parent_candidate_id)
+        self.assertIsNone(second.parent_candidate_id)
 
     def test_parameter_stream_prioritizes_entry_gates_for_small_budgets(self) -> None:
         candidates = frontier._iter_parameter_candidates(
@@ -4149,6 +4140,246 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             )
             self.assertEqual(top["search_iteration"], 1)
             self.assertEqual(top["pruned_symbol"], "AVGO")
+
+    def test_main_chains_loss_repair_into_consistency_repair_with_one_iteration_each(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            strategy_configmap = root / "strategy-configmap.yaml"
+            strategy_configmap.write_text(
+                yaml.safe_dump(
+                    {
+                        "apiVersion": "v1",
+                        "kind": "ConfigMap",
+                        "data": {
+                            "strategies.yaml": yaml.safe_dump(
+                                {
+                                    "strategies": [
+                                        {
+                                            "name": "intraday-tsmom-profit-v3",
+                                            "enabled": True,
+                                            "max_notional_per_trade": "25000",
+                                            "max_position_pct_equity": "0.50",
+                                            "universe_symbols": ["NVDA", "AMAT"],
+                                            "params": {
+                                                "long_stop_loss_bps": "12",
+                                                "max_gross_exposure_pct_equity": "1.0",
+                                                "max_entries_per_session": "1",
+                                                "top_n": "2",
+                                                "entry_cooldown_seconds": "300",
+                                            },
+                                        }
+                                    ]
+                                },
+                                sort_keys=False,
+                            )
+                        },
+                    },
+                    sort_keys=False,
+                ),
+                encoding="utf-8",
+            )
+            sweep_config = root / "sweep.yaml"
+            sweep_config.write_text(
+                yaml.safe_dump(
+                    {
+                        "schema_version": "torghut.replay-frontier-sweep.v1",
+                        "family": "intraday_tsmom_consistent",
+                        "strategy_name": "intraday-tsmom-profit-v3",
+                        "disable_other_strategies": True,
+                        "constraints": {
+                            "holdout_target_net_per_day": "100",
+                            "min_active_holdout_days": 1,
+                            "max_worst_holdout_day_loss": "300",
+                            "min_profit_factor": "1.0",
+                        },
+                        "consistency_constraints": {
+                            "target_net_per_day": "100",
+                            "min_active_days": 6,
+                            "min_active_ratio": "1",
+                            "max_worst_day_loss": "200",
+                            "max_negative_days": 0,
+                            "max_drawdown": "300",
+                            "max_best_day_share_of_total_pnl": "1",
+                            "max_gross_exposure_pct_equity": "1",
+                            "min_cash": "0",
+                            "require_every_day_active": True,
+                        },
+                        "strategy_overrides": {
+                            "universe_symbols": [["NVDA", "AMAT"]],
+                        },
+                        "parameters": {
+                            "long_stop_loss_bps": ["12"],
+                        },
+                    },
+                    sort_keys=False,
+                ),
+                encoding="utf-8",
+            )
+            json_output = root / "frontier.json"
+            args = self._make_args(
+                strategy_configmap=strategy_configmap,
+                sweep_config=sweep_config,
+                json_output=json_output,
+            )
+            args.max_candidates_to_evaluate = 4
+            args.loss_repair_iterations = 1
+            args.loss_repair_candidates = 1
+            args.consistency_repair_iterations = 1
+            args.consistency_repair_candidates = 2
+            args.train_screening = False
+            recent_days = tuple(
+                date(2026, 3, 18) + timedelta(days=index) for index in range(6)
+            )
+            snapshot_receipt = SimpleNamespace(
+                snapshot_id="snap-repair-chain",
+                is_fresh=True,
+                stale_override_used=False,
+                to_payload=lambda: {
+                    "snapshot_id": "snap-repair-chain",
+                    "source": "ta",
+                    "window_size": "PT1S",
+                    "start_day": "2026-03-18",
+                    "end_day": "2026-03-23",
+                    "expected_last_trading_day": "2026-03-23",
+                    "is_fresh": True,
+                    "missing_days": [],
+                    "row_count": 123,
+                    "stale_override_used": False,
+                    "witnesses": [],
+                },
+            )
+
+            def fake_run_replay(config: object) -> dict[str, object]:
+                configmap_path = Path(getattr(config, "strategy_configmap_path"))
+                payload = yaml.safe_load(configmap_path.read_text(encoding="utf-8"))
+                strategy = next(
+                    item
+                    for item in yaml.safe_load(payload["data"]["strategies.yaml"])[
+                        "strategies"
+                    ]
+                    if item["name"] == "intraday-tsmom-profit-v3"
+                )
+                params = strategy.get("params") or {}
+                stop_loss = str(params.get("long_stop_loss_bps") or "")
+                max_entries = str(params.get("max_entries_per_session") or "")
+                top_n = str(params.get("top_n") or "")
+                start_date = str(getattr(config, "start_date"))
+                end_date = str(getattr(config, "end_date"))
+                full_window = start_date == "2026-03-18" and end_date == "2026-03-23"
+
+                if full_window and stop_loss == "12":
+                    daily_net = {
+                        "2026-03-18": "350",
+                        "2026-03-19": "350",
+                        "2026-03-20": "350",
+                        "2026-03-21": "350",
+                        "2026-03-22": "350",
+                        "2026-03-23": "-500",
+                    }
+                    max_gross = "1.40"
+                    min_cash = "-100"
+                elif full_window and (max_entries == "2" or top_n == "3"):
+                    daily_net = {
+                        "2026-03-18": "130",
+                        "2026-03-19": "130",
+                        "2026-03-20": "130",
+                        "2026-03-21": "130",
+                        "2026-03-22": "130",
+                        "2026-03-23": "130",
+                    }
+                    max_gross = "0.80"
+                    min_cash = "500"
+                elif full_window:
+                    daily_net = {
+                        "2026-03-18": "180",
+                        "2026-03-19": "180",
+                        "2026-03-20": "180",
+                        "2026-03-21": "0",
+                        "2026-03-22": "0",
+                        "2026-03-23": "0",
+                    }
+                    max_gross = "0.80"
+                    min_cash = "500"
+                else:
+                    daily_net = {
+                        "2026-03-18": "140",
+                        "2026-03-19": "140",
+                        "2026-03-20": "140",
+                        "2026-03-21": "140",
+                        "2026-03-22": "140",
+                        "2026-03-23": "140",
+                    }
+                    max_gross = "0.80"
+                    min_cash = "500"
+
+                subset = {
+                    day: value
+                    for day, value in daily_net.items()
+                    if start_date <= day <= end_date
+                }
+                replay_payload = self._payload(
+                    start_date=start_date,
+                    end_date=end_date,
+                    daily_net=subset,
+                    daily_filled_notional={
+                        day: "200000" if value != "0" else "0"
+                        for day, value in subset.items()
+                    },
+                    decision_count=max(1, len(subset)),
+                    filled_count=sum(1 for value in subset.values() if value != "0"),
+                    wins=sum(1 for value in subset.values() if float(value) > 0),
+                    losses=sum(1 for value in subset.values() if float(value) < 0),
+                )
+                replay_payload["max_gross_exposure_pct_equity"] = max_gross
+                replay_payload["min_cash"] = min_cash
+                replay_payload["negative_cash_observation_count"] = 0
+                return replay_payload
+
+            with (
+                patch(
+                    "scripts.search_consistent_profitability_frontier._resolve_recent_trading_days",
+                    return_value=recent_days,
+                ),
+                patch(
+                    "scripts.search_consistent_profitability_frontier.build_dataset_snapshot_receipt",
+                    return_value=snapshot_receipt,
+                ),
+                patch(
+                    "scripts.search_consistent_profitability_frontier.ensure_fresh_snapshot"
+                ),
+                patch(
+                    "scripts.search_consistent_profitability_frontier.run_replay",
+                    side_effect=fake_run_replay,
+                ),
+            ):
+                payload = frontier.run_consistent_profitability_frontier(args)
+
+            by_id = {str(item["candidate_id"]): item for item in payload["top"]}
+            consistency_reasons = {
+                item.get("consistency_repair_reason") for item in payload["top"]
+            }
+            self.assertIn(
+                "consistency_entries:active_day_ratio_below_min",
+                consistency_reasons,
+            )
+            self.assertIn(
+                "consistency_breadth:active_day_ratio_below_min",
+                consistency_reasons,
+            )
+            chained = next(
+                item
+                for item in payload["top"]
+                if item.get("consistency_repair_reason")
+                == "consistency_entries:active_day_ratio_below_min"
+            )
+            parent = by_id[str(chained["parent_candidate_id"])]
+            self.assertEqual(parent["loss_repair_iteration"], 1)
+            self.assertEqual(parent["consistency_repair_iteration"], 0)
+            self.assertEqual(chained["loss_repair_iteration"], 1)
+            self.assertEqual(chained["consistency_repair_iteration"], 1)
+            self.assertEqual(chained["search_iteration"], 2)
 
     def test_main_adds_concentration_hard_vetoes(self) -> None:
         with TemporaryDirectory() as tmpdir:
