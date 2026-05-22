@@ -1481,6 +1481,40 @@ def _order_type_ablation_artifact_dir(
     return root / "frontier-artifacts"
 
 
+def _exact_replay_ledger_artifact_update(
+    *,
+    args: argparse.Namespace,
+    root: Path,
+    candidate_index: int,
+    candidate_id: str,
+    full_window_payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    ledger_payload = _mapping(full_window_payload.get("exact_replay_ledger"))
+    raw_rows = ledger_payload.get("runtime_ledger_rows")
+    if not isinstance(raw_rows, list) or not raw_rows:
+        return {}
+    artifact_dir = _order_type_ablation_artifact_dir(args=args, root=root)
+    artifact_path = (
+        artifact_dir / f"candidate-{candidate_index:04d}-exact-replay-ledger.json"
+    )
+    artifact_ref = str(artifact_path)
+    artifact_payload = {
+        **ledger_payload,
+        "artifact_ref": artifact_ref,
+        "artifact_kind": "exact_replay_ledger",
+        "candidate_id": candidate_id,
+    }
+    _write_json_output(artifact_path, artifact_payload)
+    return {
+        "exact_replay_ledger_artifact_ref": artifact_ref,
+        "runtime_ledger_artifact_ref": artifact_ref,
+        "runtime_ledger_artifact_row_count": len(raw_rows),
+        "runtime_ledger_artifact_fill_count": int(
+            ledger_payload.get("fill_row_count") or 0
+        ),
+    }
+
+
 def _order_type_replay_arm_summary(
     *,
     order_type: str,
@@ -3425,6 +3459,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                             progress_log_interval_seconds=max(
                                 1, int(args.progress_log_seconds)
                             ),
+                            capture_exact_replay_ledger=True,
                         )
                     )
 
@@ -3464,6 +3499,29 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     - second_oos_penalty
                 )
                 candidate_payload = base_result.to_payload()
+                exact_replay_ledger_update = _exact_replay_ledger_artifact_update(
+                    args=args,
+                    root=root,
+                    candidate_index=candidate_index,
+                    candidate_id=str(candidate_payload["candidate_id"]),
+                    full_window_payload=full_window_payload,
+                )
+                if exact_replay_ledger_update:
+                    artifact_ref = str(
+                        exact_replay_ledger_update["exact_replay_ledger_artifact_ref"]
+                    )
+                    candidate_payload.update(exact_replay_ledger_update)
+                    candidate_payload["replay_artifact_refs"] = list(
+                        dict.fromkeys(
+                            [
+                                *cast(
+                                    Sequence[Any],
+                                    candidate_payload.get("replay_artifact_refs") or (),
+                                ),
+                                artifact_ref,
+                            ]
+                        )
+                    )
                 order_type_ablation_update: dict[str, Any] = {}
                 if (
                     order_type_ablation_policy.enabled
@@ -3974,6 +4032,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     }
                 )
                 objective_scorecard_payload.update(order_type_ablation_update)
+                objective_scorecard_payload.update(exact_replay_ledger_update)
                 if second_oos_summary is not None:
                     holdout_oos_passed = _holdout_oos_passed(
                         holdout_payload=holdout_payload,

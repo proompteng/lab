@@ -846,7 +846,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                         "2026-03-22": "130",
                         "2026-03-23": "135",
                     }
-                return self._payload(
+                replay_payload = self._payload(
                     start_date=start_date,
                     end_date=end_date,
                     daily_net=daily_net,
@@ -855,6 +855,68 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                     wins=6,
                     losses=0,
                 )
+                if full_window and bool(
+                    getattr(config, "capture_exact_replay_ledger", False)
+                ):
+                    replay_payload["exact_replay_ledger"] = {
+                        "schema_version": "torghut.exact_replay_ledger.rows.v1",
+                        "account_label": "TORGHUT_REPLAY",
+                        "execution_policy_hash": "policy-sha",
+                        "cost_model_hash": "cost-sha",
+                        "lineage_hash": "lineage-sha",
+                        "fill_row_count": 2,
+                        "runtime_ledger_rows": [
+                            {
+                                "event_type": "decision",
+                                "executed_at": "2026-03-18T14:35:00+00:00",
+                                "decision_id": "decision-buy",
+                                "order_id": "order-buy",
+                            },
+                            {
+                                "event_type": "order_submitted",
+                                "executed_at": "2026-03-18T14:35:01+00:00",
+                                "decision_id": "decision-buy",
+                                "order_id": "order-buy",
+                            },
+                            {
+                                "event_type": "fill",
+                                "executed_at": "2026-03-18T14:35:02+00:00",
+                                "decision_id": "decision-buy",
+                                "order_id": "order-buy",
+                                "symbol": "NVDA",
+                                "side": "buy",
+                                "filled_qty": "1",
+                                "avg_fill_price": "100",
+                                "cost_amount": "0.10",
+                                "cost_basis": "local_replay_transaction_cost_model",
+                            },
+                            {
+                                "event_type": "decision",
+                                "executed_at": "2026-03-18T14:40:00+00:00",
+                                "decision_id": "decision-sell",
+                                "order_id": "order-sell",
+                            },
+                            {
+                                "event_type": "order_submitted",
+                                "executed_at": "2026-03-18T14:40:01+00:00",
+                                "decision_id": "decision-sell",
+                                "order_id": "order-sell",
+                            },
+                            {
+                                "event_type": "fill",
+                                "executed_at": "2026-03-18T14:40:02+00:00",
+                                "decision_id": "decision-sell",
+                                "order_id": "order-sell",
+                                "symbol": "NVDA",
+                                "side": "sell",
+                                "filled_qty": "1",
+                                "avg_fill_price": "101",
+                                "cost_amount": "0.10",
+                                "cost_basis": "local_replay_transaction_cost_model",
+                            },
+                        ],
+                    }
+                return replay_payload
 
             with (
                 patch(
@@ -887,6 +949,29 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             self.assertNotIn("route_tca_artifact_ref", scorecard)
             self.assertNotIn("price_improvement_evidence_present", scorecard)
             self.assertNotIn("execution_shortfall_evidence_present", scorecard)
+            exact_ledger_ref = Path(scorecard["exact_replay_ledger_artifact_ref"])
+            self.assertTrue(exact_ledger_ref.exists())
+            self.assertEqual(
+                payload["top"][0]["runtime_ledger_artifact_ref"],
+                str(exact_ledger_ref),
+            )
+            self.assertIn(
+                str(exact_ledger_ref), payload["top"][0]["replay_artifact_refs"]
+            )
+            exact_ledger_artifact = json.loads(
+                exact_ledger_ref.read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                exact_ledger_artifact["schema_version"],
+                "torghut.exact_replay_ledger.rows.v1",
+            )
+            self.assertEqual(
+                exact_ledger_artifact["candidate_id"], payload["top"][0]["candidate_id"]
+            )
+            self.assertEqual(
+                exact_ledger_artifact["artifact_kind"], "exact_replay_ledger"
+            )
+            self.assertEqual(scorecard["runtime_ledger_artifact_row_count"], 6)
             artifact = json.loads(artifact_ref.read_text(encoding="utf-8"))
             self.assertEqual(
                 artifact["schema_version"], "torghut.order-type-ablation.v1"
