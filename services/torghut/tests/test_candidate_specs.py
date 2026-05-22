@@ -571,6 +571,52 @@ class TestCandidateSpecs(TestCase):
             specs[0].promotion_contract["rejects_no_delay_fill_assumptions"]
         )
 
+    def test_queue_position_survival_claim_adds_fill_curve_contract(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-kanformer-queue-survival",
+            claims=[
+                {
+                    "claim_id": "kanformer-fill-survival",
+                    "claim_type": "execution_assumption",
+                    "claim_text": (
+                        "KANFormer predicts limit order fill probabilities with "
+                        "queue-position survival analysis and time-to-fill quantiles."
+                    ),
+                    "data_requirements": [
+                        "queue_position",
+                        "survival_fill_curve",
+                        "time_to_fill_quantiles",
+                        "nonfill_opportunity_cost",
+                        "route_tca",
+                    ],
+                    "confidence": "0.80",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+
+        self.assertIn(
+            "queue_position_survival_fill_curve",
+            specs[0].parameter_space["mechanism_overlay_ids"],
+        )
+        self.assertTrue(
+            specs[0].hard_vetoes["required_queue_position_survival_fill_curve"]
+        )
+        self.assertEqual(
+            specs[0].hard_vetoes["required_min_queue_position_survival_sample_count"],
+            "60",
+        )
+        self.assertTrue(specs[0].hard_vetoes["required_time_to_fill_quantiles"])
+        self.assertTrue(
+            specs[0].promotion_contract["requires_queue_position_survival_fill_curve"]
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["rejects_queue_position_free_fill_assumptions"]
+        )
+
     def test_ohlcv_only_claim_adds_falsification_contract(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-ohlcv-falsification",
