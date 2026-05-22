@@ -9,6 +9,7 @@ import hashlib
 import itertools
 import json
 import os
+import socket
 import sys
 import tempfile
 from collections import Counter, deque
@@ -17,6 +18,7 @@ from datetime import date, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeAlias, cast
+from urllib.parse import urlparse
 from unittest.mock import patch
 
 import yaml
@@ -274,6 +276,58 @@ def _order_type_ablation_policy(
 def _write_json_output(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _frontier_error_payload(exc: Exception) -> dict[str, Any]:
+    message = str(exc)
+    payload: dict[str, Any] = {
+        "schema_version": "torghut.consistent-profitability-frontier-error.v1",
+        "status": "error",
+        "error_type": type(exc).__name__,
+        "error": message,
+    }
+    if message.startswith("clickhouse_endpoint_"):
+        payload["remediation"] = [
+            "Run the frontier harness from an in-cluster pod.",
+            "Set TA_CLICKHOUSE_URL or CLICKHOUSE_HTTP_URL to a reachable ClickHouse HTTP endpoint.",
+            "Pass --clickhouse-http-url for a local port-forward or HTTP endpoint.",
+            "Pass --replay-tape-path with a manifest-verified replay tape when ClickHouse is intentionally offline.",
+        ]
+    return payload
+
+
+def _clickhouse_host_requires_dns_preflight(url: str) -> bool:
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    return host.endswith(".svc") or host.endswith(".svc.cluster.local")
+
+
+def _clickhouse_endpoint_preflight_failure(args: argparse.Namespace) -> str:
+    if getattr(args, "replay_tape_path", None) is not None:
+        return ""
+    url = str(getattr(args, "clickhouse_http_url", "") or "").strip()
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    if not host:
+        return (
+            "clickhouse_endpoint_invalid_url:"
+            f"url={url or '<empty>'}; set TA_CLICKHOUSE_URL, CLICKHOUSE_HTTP_URL, "
+            "or pass --clickhouse-http-url to a reachable ClickHouse HTTP endpoint"
+        )
+    if not _clickhouse_host_requires_dns_preflight(url):
+        return ""
+    port = parsed.port or (443 if parsed.scheme == "https" else 8123)
+    try:
+        socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError as exc:
+        return (
+            "clickhouse_endpoint_unreachable:"
+            f"host={host};port={port};error={exc}; "
+            "the default Kubernetes service DNS is only reachable in-cluster. "
+            "Run from a cluster pod, set TA_CLICKHOUSE_URL or CLICKHOUSE_HTTP_URL, "
+            "or pass --clickhouse-http-url to a local port-forward/HTTP endpoint."
+        )
+    return ""
 
 
 def _stable_payload_hash(payload: Any) -> str:
@@ -3641,6 +3695,10 @@ def _resolved_clickhouse_password(args: argparse.Namespace) -> str | None:
 
 
 def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str, Any]:
+    clickhouse_preflight_failure = _clickhouse_endpoint_preflight_failure(args)
+    if clickhouse_preflight_failure:
+        raise RuntimeError(clickhouse_preflight_failure)
+
     clickhouse_password = _resolved_clickhouse_password(args)
     sweep_config = _load_sweep_config(args.sweep_config.resolve())
     second_oos_day_count = max(0, int(getattr(args, "second_oos_days", 0) or 0))
@@ -4879,7 +4937,14 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
 
 def main() -> int:
     args = _parse_args()
-    payload = run_consistent_profitability_frontier(args)
+    try:
+        payload = run_consistent_profitability_frontier(args)
+    except (RuntimeError, ValueError) as exc:
+        payload = _frontier_error_payload(exc)
+        if args.json_output:
+            _write_json_output(args.json_output, payload)
+        print(str(exc), file=sys.stderr)
+        return 1
     if args.json_output:
         _write_json_output(args.json_output, payload)
     print(json.dumps(payload, indent=2, sort_keys=True))
@@ -4887,11 +4952,7 @@ def main() -> int:
 
 
 def cli_main() -> int:
-    try:
-        return main()
-    except ValueError as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
+    return main()
 
 
 if __name__ == "__main__":
