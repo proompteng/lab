@@ -1429,7 +1429,9 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(gate["promotion_eligible_total"], 1)
         self.assertEqual(gate["capital_stage"], "0.10x canary")
         self.assertEqual(gate["evidence_tuple"]["candidate_id"], "cand-live")
-        self.assertNotIn("alpha_readiness_not_promotion_eligible", gate["blocked_reasons"])
+        self.assertNotIn(
+            "alpha_readiness_not_promotion_eligible", gate["blocked_reasons"]
+        )
 
     def test_load_latest_certificate_evidence_skips_mismatched_runtime_ledger_bucket(
         self,
@@ -2327,6 +2329,17 @@ class TestSubmissionCouncil(TestCase):
                         "delay_adjusted_depth_fill_survival_evidence_present": True,
                         "delay_adjusted_depth_fill_survival_sample_count": 20,
                         "delay_adjusted_depth_fill_survival_rate": "1.00",
+                        "queue_position_survival_fill_curve_evidence_present": True,
+                        "queue_position_survival_sample_count": 20,
+                        "queue_position_survival_fill_rate": "1.00",
+                        "queue_position_survival_queue_ratio_p95": "0.25",
+                        "queue_position_survival_queue_ahead_depletion_evidence_present": True,
+                        "queue_position_survival_queue_ahead_depletion_sample_count": 20,
+                        "delay_adjusted_depth_queue_ahead_depletion_evidence_present": True,
+                        "delay_adjusted_depth_queue_ahead_depletion_sample_count": 20,
+                        "queue_ahead_depletion_evidence_present": True,
+                        "queue_ahead_depletion_sample_count": 20,
+                        "post_cost_net_pnl_after_queue_position_survival_fill_stress": "525",
                         "double_oos_passed": True,
                         "double_oos_artifact_ref": "s3://proof/current-ready-double-oos.json",
                         "double_oos_independent_window_count": 2,
@@ -2599,6 +2612,17 @@ class TestSubmissionCouncil(TestCase):
                             "delay_adjusted_depth_fill_survival_evidence_present": True,
                             "delay_adjusted_depth_fill_survival_sample_count": 20,
                             "delay_adjusted_depth_fill_survival_rate": "1.00",
+                            "queue_position_survival_fill_curve_evidence_present": True,
+                            "queue_position_survival_sample_count": 20,
+                            "queue_position_survival_fill_rate": "1.00",
+                            "queue_position_survival_queue_ratio_p95": "0.25",
+                            "queue_position_survival_queue_ahead_depletion_evidence_present": True,
+                            "queue_position_survival_queue_ahead_depletion_sample_count": 20,
+                            "delay_adjusted_depth_queue_ahead_depletion_evidence_present": True,
+                            "delay_adjusted_depth_queue_ahead_depletion_sample_count": 20,
+                            "queue_ahead_depletion_evidence_present": True,
+                            "queue_ahead_depletion_sample_count": 20,
+                            "post_cost_net_pnl_after_queue_position_survival_fill_stress": "525",
                             "double_oos_passed": True,
                             "double_oos_artifact_ref": "s3://proof/current-ready-double-oos.json",
                             "double_oos_independent_window_count": 2,

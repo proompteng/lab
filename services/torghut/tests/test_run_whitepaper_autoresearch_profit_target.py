@@ -1625,6 +1625,17 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                         "delay_adjusted_depth_fill_survival_evidence_present": True,
                         "delay_adjusted_depth_fill_survival_sample_count": 12,
                         "delay_adjusted_depth_fill_survival_rate": "0.85",
+                        "queue_position_survival_fill_curve_evidence_present": True,
+                        "queue_position_survival_sample_count": 12,
+                        "queue_position_survival_fill_rate": "0.85",
+                        "queue_position_survival_queue_ratio_p95": "0.25",
+                        "queue_position_survival_queue_ahead_depletion_evidence_present": True,
+                        "queue_position_survival_queue_ahead_depletion_sample_count": 12,
+                        "delay_adjusted_depth_queue_ahead_depletion_evidence_present": True,
+                        "delay_adjusted_depth_queue_ahead_depletion_sample_count": 12,
+                        "queue_ahead_depletion_evidence_present": True,
+                        "queue_ahead_depletion_sample_count": 12,
+                        "post_cost_net_pnl_after_queue_position_survival_fill_stress": "500",
                         "double_oos_passed": True,
                         "double_oos_artifact_ref": "feedback://double-oos",
                         "double_oos_independent_window_count": 2,
@@ -4900,6 +4911,15 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                         "fill_survival_evidence_present": True,
                         "fill_survival_sample_count": 2,
                         "fill_survival_rate": "0.85",
+                        "queue_position_survival_fill_curve_evidence_present": True,
+                        "queue_position_survival_sample_count": 2,
+                        "queue_position_survival_fill_rate": "0.85",
+                        "queue_position_survival_queue_ratio_p95": "0.25",
+                        "queue_position_survival_queue_ahead_depletion_evidence_present": True,
+                        "queue_position_survival_queue_ahead_depletion_sample_count": 2,
+                        "delay_adjusted_depth_queue_ahead_depletion_evidence_present": True,
+                        "delay_adjusted_depth_queue_ahead_depletion_sample_count": 2,
+                        "post_cost_net_pnl_after_queue_position_survival_fill_stress": "605",
                         "post_delay_depth_net_pnl_per_day": "605",
                         "source_markers": [
                             "lob_simulation_reality_gap_arxiv_2603_24137_2026"
@@ -5068,6 +5088,32 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(
             updated.objective_scorecard["delay_adjusted_depth_fill_survival_rate"],
             "0.85",
+        )
+        self.assertTrue(
+            updated.objective_scorecard[
+                "queue_position_survival_fill_curve_evidence_present"
+            ]
+        )
+        self.assertEqual(
+            updated.objective_scorecard["queue_position_survival_sample_count"],
+            2,
+        )
+        self.assertTrue(
+            updated.objective_scorecard[
+                "queue_position_survival_queue_ahead_depletion_evidence_present"
+            ]
+        )
+        self.assertEqual(
+            updated.objective_scorecard[
+                "queue_position_survival_queue_ahead_depletion_sample_count"
+            ],
+            2,
+        )
+        self.assertEqual(
+            updated.objective_scorecard[
+                "post_cost_net_pnl_after_queue_position_survival_fill_stress"
+            ],
+            "605",
         )
         self.assertEqual(
             updated.objective_scorecard["delay_adjusted_depth_stress_source_markers"],
@@ -6443,6 +6489,17 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 "delay_adjusted_depth_fill_survival_evidence_present": True,
                 "delay_adjusted_depth_fill_survival_sample_count": 12,
                 "delay_adjusted_depth_fill_survival_rate": "0.85",
+                "queue_position_survival_fill_curve_evidence_present": True,
+                "queue_position_survival_sample_count": 12,
+                "queue_position_survival_fill_rate": "0.85",
+                "queue_position_survival_queue_ratio_p95": "0.25",
+                "queue_position_survival_queue_ahead_depletion_evidence_present": True,
+                "queue_position_survival_queue_ahead_depletion_sample_count": 12,
+                "delay_adjusted_depth_queue_ahead_depletion_evidence_present": True,
+                "delay_adjusted_depth_queue_ahead_depletion_sample_count": 12,
+                "queue_ahead_depletion_evidence_present": True,
+                "queue_ahead_depletion_sample_count": 12,
+                "post_cost_net_pnl_after_queue_position_survival_fill_stress": "125",
                 "double_oos_passed": True,
                 "double_oos_net_pnl_per_day": "125",
                 "double_oos_cost_shock_net_pnl_per_day": "125",
@@ -6487,6 +6544,17 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 "delay_adjusted_depth_fill_survival_evidence_present": True,
                 "delay_adjusted_depth_fill_survival_sample_count": 8,
                 "delay_adjusted_depth_fill_survival_rate": "0.85",
+                "queue_position_survival_fill_curve_evidence_present": True,
+                "queue_position_survival_sample_count": 8,
+                "queue_position_survival_fill_rate": "0.85",
+                "queue_position_survival_queue_ratio_p95": "0.25",
+                "queue_position_survival_queue_ahead_depletion_evidence_present": True,
+                "queue_position_survival_queue_ahead_depletion_sample_count": 8,
+                "delay_adjusted_depth_queue_ahead_depletion_evidence_present": True,
+                "delay_adjusted_depth_queue_ahead_depletion_sample_count": 8,
+                "queue_ahead_depletion_evidence_present": True,
+                "queue_ahead_depletion_sample_count": 8,
+                "post_cost_net_pnl_after_queue_position_survival_fill_stress": "430",
                 "double_oos_passed": True,
                 "double_oos_net_pnl_per_day": "440",
                 "double_oos_cost_shock_net_pnl_per_day": "440",

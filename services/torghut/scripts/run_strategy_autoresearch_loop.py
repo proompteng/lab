@@ -833,6 +833,41 @@ def _history_record(
             or scorecard.get("fill_survival_fill_rate")
             or scorecard.get("fill_survival_rate")
         ),
+        "queue_position_survival_fill_curve_evidence_present": bool(
+            scorecard.get("queue_position_survival_fill_curve_evidence_present")
+        ),
+        "queue_position_survival_sample_count": _string(
+            scorecard.get("queue_position_survival_sample_count")
+        ),
+        "queue_position_survival_fill_rate": _string(
+            scorecard.get("queue_position_survival_fill_rate")
+        ),
+        "queue_position_survival_queue_ratio_p95": _string(
+            scorecard.get("queue_position_survival_queue_ratio_p95")
+        ),
+        "queue_position_survival_queue_ahead_depletion_evidence_present": bool(
+            scorecard.get(
+                "queue_position_survival_queue_ahead_depletion_evidence_present"
+            )
+        ),
+        "queue_position_survival_queue_ahead_depletion_sample_count": _string(
+            scorecard.get("queue_position_survival_queue_ahead_depletion_sample_count")
+        ),
+        "delay_adjusted_depth_queue_ahead_depletion_evidence_present": bool(
+            scorecard.get("delay_adjusted_depth_queue_ahead_depletion_evidence_present")
+        ),
+        "delay_adjusted_depth_queue_ahead_depletion_sample_count": _string(
+            scorecard.get("delay_adjusted_depth_queue_ahead_depletion_sample_count")
+        ),
+        "queue_ahead_depletion_evidence_present": bool(
+            scorecard.get("queue_ahead_depletion_evidence_present")
+        ),
+        "queue_ahead_depletion_sample_count": _string(
+            scorecard.get("queue_ahead_depletion_sample_count")
+        ),
+        "post_cost_net_pnl_after_queue_position_survival_fill_stress": _string(
+            scorecard.get("post_cost_net_pnl_after_queue_position_survival_fill_stress")
+        ),
         "double_oos_passed": bool(scorecard.get("double_oos_passed")),
         "double_oos_net_pnl_per_day": _string(
             scorecard.get("double_oos_net_pnl_per_day")

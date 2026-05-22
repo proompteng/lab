@@ -496,6 +496,15 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                         "market_impact_stress_net_pnl_per_day": deployable_lower_bound,
                         "delay_adjusted_depth_stress_passed": True,
                         "delay_adjusted_depth_stress_net_pnl_per_day": deployable_lower_bound,
+                        "post_cost_net_pnl_after_queue_position_survival_fill_stress": deployable_lower_bound,
+                        "queue_position_survival_fill_curve_evidence_present": True,
+                        "queue_position_survival_sample_count": 6,
+                        "queue_position_survival_fill_rate": "0.85",
+                        "queue_position_survival_queue_ratio_p95": "0.25",
+                        "queue_position_survival_queue_ahead_depletion_evidence_present": True,
+                        "queue_position_survival_queue_ahead_depletion_sample_count": 6,
+                        "delay_adjusted_depth_queue_ahead_depletion_evidence_present": True,
+                        "delay_adjusted_depth_queue_ahead_depletion_sample_count": 6,
                         "delay_adjusted_depth_fill_survival_evidence_present": True,
                         "delay_adjusted_depth_fill_survival_sample_count": 6,
                         "delay_adjusted_depth_fill_survival_rate": "0.85",
@@ -508,6 +517,22 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                     }
                 )
                 if not include_fill_survival:
+                    scorecard.pop("queue_position_survival_fill_curve_evidence_present")
+                    scorecard.pop("queue_position_survival_sample_count")
+                    scorecard.pop("queue_position_survival_fill_rate")
+                    scorecard.pop("queue_position_survival_queue_ratio_p95")
+                    scorecard.pop(
+                        "queue_position_survival_queue_ahead_depletion_evidence_present"
+                    )
+                    scorecard.pop(
+                        "queue_position_survival_queue_ahead_depletion_sample_count"
+                    )
+                    scorecard.pop(
+                        "delay_adjusted_depth_queue_ahead_depletion_evidence_present"
+                    )
+                    scorecard.pop(
+                        "delay_adjusted_depth_queue_ahead_depletion_sample_count"
+                    )
                     scorecard.pop("delay_adjusted_depth_fill_survival_evidence_present")
                     scorecard.pop("delay_adjusted_depth_fill_survival_sample_count")
                     scorecard.pop("delay_adjusted_depth_fill_survival_rate")
@@ -561,6 +586,40 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             ranked[0]["objective_scorecard"]["deployable_lower_bound_net_pnl_per_day"],
             "580",
         )
+
+    def test_deployable_proof_requires_queue_ahead_depletion_survival(self) -> None:
+        scorecard: dict[str, object] = {
+            "market_impact_stress_passed": True,
+            "delay_adjusted_depth_stress_passed": True,
+            "double_oos_passed": True,
+            "implementation_uncertainty_stability_passed": True,
+            "conformal_tail_risk_passed": True,
+            "delay_adjusted_depth_fill_survival_evidence_present": True,
+            "delay_adjusted_depth_fill_survival_sample_count": 20,
+            "delay_adjusted_depth_fill_survival_rate": "0.85",
+            "fill_survival_evidence_present": True,
+            "fill_survival_sample_count": 20,
+            "fill_survival_fill_rate": "0.85",
+        }
+
+        self.assertGreater(frontier.deployable_proof_failed_gate_count(scorecard), 0)
+
+        scorecard.update(
+            {
+                "queue_position_survival_fill_curve_evidence_present": True,
+                "queue_position_survival_sample_count": 20,
+                "queue_position_survival_fill_rate": "0.85",
+            }
+        )
+        self.assertGreater(frontier.deployable_proof_failed_gate_count(scorecard), 0)
+
+        scorecard.update(
+            {
+                "queue_position_survival_queue_ahead_depletion_evidence_present": True,
+                "queue_position_survival_queue_ahead_depletion_sample_count": 20,
+            }
+        )
+        self.assertEqual(frontier.deployable_proof_failed_gate_count(scorecard), 0)
 
     def test_parameter_grid_items_rejects_non_iterable_shapes(self) -> None:
         with self.assertRaisesRegex(ValueError, "parameter_values_not_sequence:alpha"):

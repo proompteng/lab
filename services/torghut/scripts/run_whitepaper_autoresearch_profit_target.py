@@ -7150,6 +7150,71 @@ def _runtime_closure_delay_adjusted_depth_stress_update(
         or delay_depth_report.get("fill_survival_evidence_present")
         or (fill_survival_sample_count > 0)
     )
+    queue_position_survival_evidence_present = _boolish(
+        delay_depth_report.get("queue_position_survival_fill_curve_evidence_present")
+        or delay_depth_report.get("queue_position_survival_evidence_present")
+    )
+    queue_position_survival_sample_count = max(
+        _runtime_report_int(
+            delay_depth_report.get("queue_position_survival_sample_count")
+        ),
+        _runtime_report_int(
+            delay_depth_report.get("queue_position_survival_fill_sample_count")
+        ),
+    )
+    if (
+        queue_position_survival_evidence_present
+        and queue_position_survival_sample_count == 0
+    ):
+        queue_position_survival_sample_count = fill_survival_sample_count
+    queue_position_survival_fill_rate = _decimal(
+        delay_depth_report.get("queue_position_survival_fill_rate")
+        or (
+            fill_survival_rate
+            if queue_position_survival_evidence_present
+            else Decimal("0")
+        )
+    )
+    queue_position_survival_queue_ratio_p95 = _decimal(
+        delay_depth_report.get("queue_position_survival_queue_ratio_p95")
+    )
+    queue_ahead_depletion_sample_count = max(
+        _runtime_report_int(
+            delay_depth_report.get(
+                "queue_position_survival_queue_ahead_depletion_sample_count"
+            )
+        ),
+        _runtime_report_int(
+            delay_depth_report.get(
+                "delay_adjusted_depth_queue_ahead_depletion_sample_count"
+            )
+        ),
+        _runtime_report_int(
+            delay_depth_report.get("queue_ahead_depletion_sample_count")
+        ),
+    )
+    queue_ahead_depletion_evidence_present = _boolish(
+        delay_depth_report.get(
+            "queue_position_survival_queue_ahead_depletion_evidence_present"
+        )
+        or delay_depth_report.get(
+            "delay_adjusted_depth_queue_ahead_depletion_evidence_present"
+        )
+        or delay_depth_report.get("queue_ahead_depletion_evidence_present")
+        or (queue_ahead_depletion_sample_count > 0)
+    )
+    queue_position_survival_net_pnl_per_day = _decimal(
+        delay_depth_report.get(
+            "post_cost_net_pnl_after_queue_position_survival_fill_stress"
+        )
+        or delay_depth_report.get("post_queue_position_survival_net_pnl_per_day")
+        or (
+            delay_depth_report.get("post_delay_depth_net_pnl_per_day")
+            if queue_position_survival_evidence_present
+            and queue_ahead_depletion_evidence_present
+            else Decimal("0")
+        )
+    )
     return {
         "delay_adjusted_depth_stress_checks_total": max(
             _runtime_report_int(delay_depth_report.get("stress_case_count")),
@@ -7202,11 +7267,36 @@ def _runtime_closure_delay_adjusted_depth_stress_update(
         "delay_adjusted_depth_fill_survival_evidence_present": fill_survival_evidence_present,
         "delay_adjusted_depth_fill_survival_sample_count": fill_survival_sample_count,
         "delay_adjusted_depth_fill_survival_rate": str(fill_survival_rate),
+        "queue_position_survival_fill_curve_evidence_present": (
+            queue_position_survival_evidence_present
+        ),
+        "queue_position_survival_sample_count": queue_position_survival_sample_count,
+        "queue_position_survival_fill_rate": str(queue_position_survival_fill_rate),
+        "queue_position_survival_queue_ratio_p95": str(
+            queue_position_survival_queue_ratio_p95
+        ),
+        "queue_position_survival_queue_ahead_depletion_evidence_present": (
+            queue_ahead_depletion_evidence_present
+        ),
+        "queue_position_survival_queue_ahead_depletion_sample_count": (
+            queue_ahead_depletion_sample_count
+        ),
+        "delay_adjusted_depth_queue_ahead_depletion_evidence_present": (
+            queue_ahead_depletion_evidence_present
+        ),
+        "delay_adjusted_depth_queue_ahead_depletion_sample_count": (
+            queue_ahead_depletion_sample_count
+        ),
+        "queue_ahead_depletion_evidence_present": queue_ahead_depletion_evidence_present,
+        "queue_ahead_depletion_sample_count": queue_ahead_depletion_sample_count,
         "delay_adjusted_depth_stress_net_pnl_per_day": str(
             _decimal(
                 delay_depth_report.get("post_delay_depth_net_pnl_per_day")
                 or delay_depth_report.get("stressed_net_pnl_per_day")
             )
+        ),
+        "post_cost_net_pnl_after_queue_position_survival_fill_stress": str(
+            queue_position_survival_net_pnl_per_day
         ),
     }
 
@@ -8809,6 +8899,52 @@ def _candidate_board_payload(
                 )
                 or _candidate_board_decimal_field(scorecard, "fill_survival_fill_rate")
                 or _candidate_board_decimal_field(scorecard, "fill_survival_rate"),
+                "queue_position_survival_fill_curve_evidence_present": _boolish(
+                    scorecard.get("queue_position_survival_fill_curve_evidence_present")
+                ),
+                "queue_position_survival_sample_count": _candidate_board_int_field(
+                    scorecard, "queue_position_survival_sample_count"
+                ),
+                "queue_position_survival_fill_rate": _candidate_board_decimal_field(
+                    scorecard, "queue_position_survival_fill_rate"
+                ),
+                "queue_position_survival_queue_ratio_p95": _candidate_board_decimal_field(
+                    scorecard, "queue_position_survival_queue_ratio_p95"
+                ),
+                "queue_position_survival_queue_ahead_depletion_evidence_present": _boolish(
+                    scorecard.get(
+                        "queue_position_survival_queue_ahead_depletion_evidence_present"
+                    )
+                ),
+                "queue_position_survival_queue_ahead_depletion_sample_count": (
+                    _candidate_board_int_field(
+                        scorecard,
+                        "queue_position_survival_queue_ahead_depletion_sample_count",
+                    )
+                ),
+                "delay_adjusted_depth_queue_ahead_depletion_evidence_present": _boolish(
+                    scorecard.get(
+                        "delay_adjusted_depth_queue_ahead_depletion_evidence_present"
+                    )
+                ),
+                "delay_adjusted_depth_queue_ahead_depletion_sample_count": (
+                    _candidate_board_int_field(
+                        scorecard,
+                        "delay_adjusted_depth_queue_ahead_depletion_sample_count",
+                    )
+                ),
+                "queue_ahead_depletion_evidence_present": _boolish(
+                    scorecard.get("queue_ahead_depletion_evidence_present")
+                ),
+                "queue_ahead_depletion_sample_count": _candidate_board_int_field(
+                    scorecard, "queue_ahead_depletion_sample_count"
+                ),
+                "post_cost_net_pnl_after_queue_position_survival_fill_stress": (
+                    _candidate_board_decimal_field(
+                        scorecard,
+                        "post_cost_net_pnl_after_queue_position_survival_fill_stress",
+                    )
+                ),
                 "implementation_uncertainty_stability_passed": _boolish(
                     scorecard.get("implementation_uncertainty_stability_passed")
                 ),
