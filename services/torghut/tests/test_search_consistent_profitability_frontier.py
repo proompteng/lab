@@ -651,6 +651,71 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertGreaterEqual(penalties, Decimal("600"))
         self.assertEqual(summary["negative_days"], 2)
 
+    def test_consistency_penalty_penalizes_tail_loss_adjusted_net_below_target(
+        self,
+    ) -> None:
+        penalties, summary = frontier._consistency_penalty(
+            full_window_payload=self._payload(
+                start_date="2026-04-01",
+                end_date="2026-04-07",
+                daily_net={
+                    "2026-04-01": "1200",
+                    "2026-04-02": "1200",
+                    "2026-04-03": "1200",
+                    "2026-04-06": "-500",
+                    "2026-04-07": "1200",
+                },
+                daily_filled_notional={
+                    "2026-04-01": "100000",
+                    "2026-04-02": "100000",
+                    "2026-04-03": "100000",
+                    "2026-04-06": "100000",
+                    "2026-04-07": "100000",
+                },
+                daily_liquidity_notional={
+                    "2026-04-01": "10000000000",
+                    "2026-04-02": "10000000000",
+                    "2026-04-03": "10000000000",
+                    "2026-04-06": "10000000000",
+                    "2026-04-07": "10000000000",
+                },
+                decision_count=5,
+                filled_count=5,
+                wins=4,
+                losses=1,
+            ),
+            policy=frontier.FullWindowConsistencyPolicy(
+                target_net_per_day=Decimal("500"),
+                min_daily_net_pnl=Decimal("-1000"),
+                min_active_days=5,
+                min_active_ratio=Decimal("1"),
+                min_positive_days=4,
+                max_worst_day_loss=Decimal("1000"),
+                max_negative_days=1,
+                max_drawdown=Decimal("1000"),
+                max_best_day_share_of_total_pnl=Decimal("1"),
+                min_avg_filled_notional_per_day=Decimal("0"),
+                min_avg_filled_notional_per_active_day=Decimal("0"),
+                require_every_day_active=True,
+            ),
+        )
+
+        self.assertFalse(summary["conformal_tail_risk_passed"])
+        self.assertEqual(
+            summary["conformal_tail_risk_model"],
+            "empirical_daily_loss_conformal_buffer",
+        )
+        self.assertEqual(summary["conformal_tail_risk_buffer_per_day"], "500")
+        self.assertEqual(
+            Decimal(str(summary["conformal_tail_risk_adjusted_net_pnl_per_day"])),
+            Decimal("360"),
+        )
+        self.assertIn(
+            "regime_weighted_conformal_var_arxiv_2602_03903_2026",
+            summary["conformal_tail_risk_source_markers"],
+        )
+        self.assertGreaterEqual(penalties, Decimal("140"))
+
     def test_consistency_penalty_caps_impossible_count_activity_gates(self) -> None:
         penalties, summary = frontier._consistency_penalty(
             full_window_payload=self._payload(
