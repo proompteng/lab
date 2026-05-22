@@ -262,6 +262,7 @@ def _build_replay_config(
     symbols: tuple[str, ...],
     progress_log_interval_seconds: int,
     capture_trace_funnel: bool = False,
+    capture_exact_replay_ledger: bool = False,
     replay_tape_path: Path | None = None,
     replay_tape_manifest_path: Path | None = None,
     allow_stale_tape: bool = False,
@@ -282,6 +283,7 @@ def _build_replay_config(
         allow_stale_tape=allow_stale_tape,
         progress_log_interval_seconds=progress_log_interval_seconds,
         capture_trace_funnel=capture_trace_funnel,
+        capture_exact_replay_ledger=capture_exact_replay_ledger,
         force_position_isolation=True,
     )
 

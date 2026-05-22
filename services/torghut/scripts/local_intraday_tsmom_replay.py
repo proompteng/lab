@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import http.client
 import json
 import logging
@@ -72,10 +73,35 @@ logger = logging.getLogger(__name__)
 _SHARED_POSITION_OWNER = "__shared__"
 _FILL_LATENCY_BUCKETS_MS = (0, 50, 150, 250, 500, 1000)
 _FILL_LATENCY_THRESHOLDS_MS = (50, 150, 250)
+_EXACT_REPLAY_LEDGER_ROWS_SCHEMA_VERSION = "torghut.exact_replay_ledger.rows.v1"
+_REPLAY_LEDGER_ACCOUNT_LABEL = "TORGHUT_REPLAY"
+_REPLAY_COST_BASIS = "local_replay_transaction_cost_model"
+_REPLAY_LEDGER_SOURCE = "local_intraday_tsmom_replay"
 
 
 def _position_key(symbol: str, strategy_id: str) -> tuple[str, str]:
     return (symbol.strip().upper(), strategy_id.strip())
+
+
+def _stable_json_hash(payload: Mapping[str, Any]) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _file_sha256(path: Path | None) -> str | None:
+    if path is None or not path.exists():
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _utc_text(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat()
+
+
+def _decimal_text_or_none(value: Decimal | None) -> str | None:
+    if value is None:
+        return None
+    return _decimal_text(value)
 
 
 @dataclass(frozen=True)
@@ -96,6 +122,7 @@ class ReplayConfig:
     progress_log_interval_seconds: int = DEFAULT_PROGRESS_LOG_INTERVAL_SECONDS
     capture_traces: bool = False
     capture_trace_funnel: bool = False
+    capture_exact_replay_ledger: bool = False
     force_position_isolation: bool = False
     max_executable_spread_bps: Decimal = DEFAULT_MAX_EXECUTABLE_SPREAD_BPS
     max_quote_mid_jump_bps: Decimal = DEFAULT_MAX_QUOTE_MID_JUMP_BPS
@@ -120,6 +147,15 @@ class PendingOrder:
     signal: SignalEnvelope
 
 
+@dataclass(frozen=True)
+class ReplayLedgerContext:
+    account_label: str
+    execution_policy_hash: str
+    cost_model_hash: str
+    lineage_hash: str
+    replay_data_hash: str | None
+
+
 @dataclass
 class ClosedTrade:
     symbol: str
@@ -133,6 +169,297 @@ class ClosedTrade:
     gross_pnl: Decimal
     net_pnl: Decimal
     exit_reason: str
+
+
+def _ledger_identity(
+    *,
+    prefix: str,
+    decision: StrategyDecision,
+    created_at: datetime,
+    strategy_id: str,
+) -> str:
+    payload = {
+        "prefix": prefix,
+        "strategy_id": strategy_id,
+        "symbol": decision.symbol.upper(),
+        "created_at": _utc_text(created_at),
+        "event_ts": _utc_text(decision.event_ts),
+        "action": decision.action,
+        "qty": _decimal_text(decision.qty),
+        "order_type": decision.order_type,
+        "time_in_force": decision.time_in_force,
+        "limit_price": _decimal_text_or_none(decision.limit_price),
+    }
+    digest = _stable_json_hash(payload)
+    return f"{prefix}-{uuid.uuid5(uuid.NAMESPACE_URL, digest)}"
+
+
+def _build_replay_ledger_context(
+    *,
+    config: ReplayConfig,
+    cost_model: TransactionCostModel,
+) -> ReplayLedgerContext:
+    config_hash = _file_sha256(config.strategy_configmap_path)
+    replay_manifest_hash = _file_sha256(config.replay_tape_manifest_path)
+    replay_tape_hash = _file_sha256(config.replay_tape_path)
+    execution_policy_hash = _stable_json_hash(
+        {
+            "source": _REPLAY_LEDGER_SOURCE,
+            "strategy_configmap_sha256": config_hash,
+            "flatten_eod": config.flatten_eod,
+            "force_position_isolation": config.force_position_isolation,
+            "max_executable_spread_bps": str(config.max_executable_spread_bps),
+            "max_quote_mid_jump_bps": str(config.max_quote_mid_jump_bps),
+            "max_jump_with_wide_spread_bps": str(config.max_jump_with_wide_spread_bps),
+        }
+    )
+    cost_model_hash = _stable_json_hash(
+        {
+            "model": cost_model.__class__.__name__,
+            "module": cost_model.__class__.__module__,
+            "cost_basis": _REPLAY_COST_BASIS,
+        }
+    )
+    lineage_payload = {
+        "source": _REPLAY_LEDGER_SOURCE,
+        "strategy_configmap_sha256": config_hash,
+        "start_date": config.start_date.isoformat(),
+        "end_date": config.end_date.isoformat(),
+        "symbols": list(config.symbols),
+        "chunk_minutes": config.chunk_minutes,
+        "replay_tape_sha256": replay_tape_hash,
+        "replay_tape_manifest_sha256": replay_manifest_hash,
+        "allow_stale_tape": config.allow_stale_tape,
+    }
+    replay_data_hash = _stable_json_hash(
+        {
+            "clickhouse_http_url": config.clickhouse_http_url,
+            "start_date": config.start_date.isoformat(),
+            "end_date": config.end_date.isoformat(),
+            "symbols": list(config.symbols),
+            "replay_tape_sha256": replay_tape_hash,
+            "replay_tape_manifest_sha256": replay_manifest_hash,
+        }
+    )
+    return ReplayLedgerContext(
+        account_label=_REPLAY_LEDGER_ACCOUNT_LABEL,
+        execution_policy_hash=execution_policy_hash,
+        cost_model_hash=cost_model_hash,
+        lineage_hash=_stable_json_hash(lineage_payload),
+        replay_data_hash=replay_data_hash,
+    )
+
+
+def _base_ledger_row(
+    *,
+    context: ReplayLedgerContext,
+    decision: StrategyDecision,
+    strategy_id: str,
+    decision_id: str,
+    order_id: str,
+    event_type: str,
+    executed_at: datetime,
+) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "event_type": event_type,
+        "executed_at": _utc_text(executed_at),
+        "account_label": context.account_label,
+        "strategy_id": strategy_id,
+        "symbol": decision.symbol.upper(),
+        "side": decision.action,
+        "decision_id": decision_id,
+        "order_id": order_id,
+        "source": _REPLAY_LEDGER_SOURCE,
+        "execution_policy_hash": context.execution_policy_hash,
+        "cost_model_hash": context.cost_model_hash,
+        "lineage_hash": context.lineage_hash,
+        "replay_data_hash": context.replay_data_hash,
+        "order_type": decision.order_type,
+        "time_in_force": decision.time_in_force,
+    }
+    if decision.limit_price is not None:
+        row["limit_price"] = _decimal_text(decision.limit_price)
+    if decision.rationale:
+        row["rationale"] = decision.rationale
+    return row
+
+
+def _append_ledger_submission(
+    *,
+    rows: list[dict[str, Any]] | None,
+    context: ReplayLedgerContext | None,
+    decision: StrategyDecision,
+    created_at: datetime,
+    strategy_id: str,
+) -> tuple[str, str]:
+    decision_id = _ledger_identity(
+        prefix="decision",
+        decision=decision,
+        created_at=created_at,
+        strategy_id=strategy_id,
+    )
+    order_id = _ledger_identity(
+        prefix="order",
+        decision=decision,
+        created_at=created_at,
+        strategy_id=strategy_id,
+    )
+    if rows is None or context is None:
+        return decision_id, order_id
+    decision_row = _base_ledger_row(
+        context=context,
+        decision=decision,
+        strategy_id=strategy_id,
+        decision_id=decision_id,
+        order_id=order_id,
+        event_type="decision",
+        executed_at=created_at,
+    )
+    decision_row["qty"] = _decimal_text(decision.qty)
+    rows.append(decision_row)
+    order_row = _base_ledger_row(
+        context=context,
+        decision=decision,
+        strategy_id=strategy_id,
+        decision_id=decision_id,
+        order_id=order_id,
+        event_type="order_submitted",
+        executed_at=created_at,
+    )
+    order_row["submitted_qty"] = _decimal_text(decision.qty)
+    rows.append(order_row)
+    return decision_id, order_id
+
+
+def _append_ledger_resolution(
+    *,
+    rows: list[dict[str, Any]] | None,
+    context: ReplayLedgerContext | None,
+    decision: StrategyDecision,
+    created_at: datetime,
+    resolved_at: datetime,
+    strategy_id: str,
+    event_type: str,
+    reason: str | None = None,
+) -> None:
+    if rows is None or context is None:
+        return
+    decision_id = _ledger_identity(
+        prefix="decision",
+        decision=decision,
+        created_at=created_at,
+        strategy_id=strategy_id,
+    )
+    order_id = _ledger_identity(
+        prefix="order",
+        decision=decision,
+        created_at=created_at,
+        strategy_id=strategy_id,
+    )
+    row = _base_ledger_row(
+        context=context,
+        decision=decision,
+        strategy_id=strategy_id,
+        decision_id=decision_id,
+        order_id=order_id,
+        event_type=event_type,
+        executed_at=resolved_at,
+    )
+    if reason:
+        row["reason"] = reason
+    rows.append(row)
+
+
+def _ledger_resolution_event_type(outcome: str) -> str | None:
+    if outcome == "filled":
+        return None
+    if outcome == "replaced":
+        return "order_cancelled"
+    if outcome == "censored":
+        return "order_unfilled"
+    if outcome == "rejected":
+        return "order_rejected"
+    return "order_unfilled"
+
+
+def _append_ledger_fill(
+    *,
+    rows: list[dict[str, Any]] | None,
+    context: ReplayLedgerContext | None,
+    decision: StrategyDecision,
+    created_at: datetime,
+    filled_at: datetime,
+    strategy_id: str,
+    filled_qty: Decimal,
+    avg_fill_price: Decimal,
+    cost_amount: Decimal,
+) -> None:
+    if rows is None or context is None:
+        return
+    decision_id = _ledger_identity(
+        prefix="decision",
+        decision=decision,
+        created_at=created_at,
+        strategy_id=strategy_id,
+    )
+    order_id = _ledger_identity(
+        prefix="order",
+        decision=decision,
+        created_at=created_at,
+        strategy_id=strategy_id,
+    )
+    row = _base_ledger_row(
+        context=context,
+        decision=decision,
+        strategy_id=strategy_id,
+        decision_id=decision_id,
+        order_id=order_id,
+        event_type="fill",
+        executed_at=filled_at,
+    )
+    filled_notional = avg_fill_price * filled_qty
+    row.update(
+        {
+            "filled_qty": _decimal_text(filled_qty),
+            "avg_fill_price": _decimal_text(avg_fill_price),
+            "filled_notional": _decimal_text(filled_notional),
+            "cost_amount": _decimal_text(cost_amount),
+            "cost_basis": _REPLAY_COST_BASIS,
+            "fill_price_basis": "local_replay_resolved_fill_price",
+        }
+    )
+    rows.append(row)
+
+
+def _exact_replay_ledger_payload(
+    *,
+    rows: list[dict[str, Any]],
+    config: ReplayConfig,
+    context: ReplayLedgerContext,
+) -> dict[str, Any]:
+    event_type_counts: defaultdict[str, int] = defaultdict(int)
+    for row in rows:
+        event_type_counts[str(row.get("event_type") or "diagnostic")] += 1
+    return {
+        "schema_version": _EXACT_REPLAY_LEDGER_ROWS_SCHEMA_VERSION,
+        "source": _REPLAY_LEDGER_SOURCE,
+        "account_label": context.account_label,
+        "stage": "replay",
+        "promotion_authority": "replay_artifact_only_not_live",
+        "window_start": config.start_date.isoformat(),
+        "window_end": config.end_date.isoformat(),
+        "execution_policy_hash": context.execution_policy_hash,
+        "cost_model_hash": context.cost_model_hash,
+        "lineage_hash": context.lineage_hash,
+        "replay_data_hash": context.replay_data_hash,
+        "cost_basis": _REPLAY_COST_BASIS,
+        "row_count": len(rows),
+        "event_type_counts": dict(sorted(event_type_counts.items())),
+        "decision_row_count": event_type_counts.get("decision", 0),
+        "submitted_order_row_count": event_type_counts.get("order_submitted", 0),
+        "fill_row_count": event_type_counts.get("fill", 0),
+        "runtime_ledger_rows": rows,
+    }
 
 
 def _parse_args() -> argparse.Namespace:
@@ -228,6 +555,11 @@ def _parse_args() -> argparse.Namespace:
         "--near-misses-output",
         type=Path,
         help="Optional path to write replay near-miss JSON.",
+    )
+    parser.add_argument(
+        "--exact-replay-ledger-output",
+        type=Path,
+        help="Optional path to write exact replay decision/order/fill ledger JSON.",
     )
     parser.add_argument(
         "--collect-traces",
@@ -1928,12 +2260,20 @@ def _apply_filled_decision(
     cash: Decimal,
     all_closed_trades: list[ClosedTrade],
     force_position_isolation: bool = False,
+    exact_ledger_rows: list[dict[str, Any]] | None = None,
+    ledger_context: ReplayLedgerContext | None = None,
+    ledger_strategy_id: str | None = None,
 ) -> Decimal:
     day_bucket = _ensure_replay_stats_bucket(day_bucket)
     if symbol_bucket is not None:
         symbol_bucket = _ensure_replay_stats_bucket(symbol_bucket)
 
-    def _record_fill(fill_notional: Decimal, fill_cost: Decimal) -> None:
+    def _record_fill(
+        *,
+        fill_qty: Decimal,
+        fill_notional: Decimal,
+        fill_cost: Decimal,
+    ) -> None:
         day_bucket["cost_total"] += fill_cost
         day_bucket["filled_count"] += 1
         _record_fill_order_type(day_bucket, decision.order_type)
@@ -1943,6 +2283,17 @@ def _apply_filled_decision(
             symbol_bucket["filled_count"] += 1
             _record_fill_order_type(symbol_bucket, decision.order_type)
             symbol_bucket["filled_notional"] += fill_notional
+        _append_ledger_fill(
+            rows=exact_ledger_rows,
+            context=ledger_context,
+            decision=decision,
+            created_at=created_at,
+            filled_at=filled_at,
+            strategy_id=ledger_strategy_id or owner_strategy_id,
+            filled_qty=fill_qty,
+            avg_fill_price=fill_price,
+            cost_amount=fill_cost,
+        )
 
     owner_strategy_id = _decision_position_owner(
         decision,
@@ -1955,7 +2306,9 @@ def _apply_filled_decision(
         if existing is not None and existing.qty < 0:
             cover_qty = min(decision.qty, abs(existing.qty))
             fill_notional = fill_price * cover_qty
-            _record_fill(fill_notional, fill_cost)
+            _record_fill(
+                fill_qty=cover_qty, fill_notional=fill_notional, fill_cost=fill_cost
+            )
             cash -= fill_notional + fill_cost
             entry_cost_allocated = existing.entry_cost_total * (
                 cover_qty / abs(existing.qty)
@@ -1990,7 +2343,9 @@ def _apply_filled_decision(
             return cash
 
         fill_notional = fill_price * decision.qty
-        _record_fill(fill_notional, fill_cost)
+        _record_fill(
+            fill_qty=decision.qty, fill_notional=fill_notional, fill_cost=fill_cost
+        )
         cash -= fill_notional + fill_cost
         if existing is None:
             positions[position_key] = PositionState(
@@ -2020,7 +2375,9 @@ def _apply_filled_decision(
 
     if existing is None:
         fill_notional = fill_price * decision.qty
-        _record_fill(fill_notional, fill_cost)
+        _record_fill(
+            fill_qty=decision.qty, fill_notional=fill_notional, fill_cost=fill_cost
+        )
         cash += fill_notional - fill_cost
         positions[position_key] = PositionState(
             strategy_id=owner_strategy_id,
@@ -2035,7 +2392,9 @@ def _apply_filled_decision(
 
     if existing.qty < 0:
         fill_notional = fill_price * decision.qty
-        _record_fill(fill_notional, fill_cost)
+        _record_fill(
+            fill_qty=decision.qty, fill_notional=fill_notional, fill_cost=fill_cost
+        )
         cash += fill_notional - fill_cost
         new_abs_qty = abs(existing.qty) + decision.qty
         avg_entry = (
@@ -2054,7 +2413,7 @@ def _apply_filled_decision(
 
     sell_qty = min(decision.qty, existing.qty)
     fill_notional = fill_price * sell_qty
-    _record_fill(fill_notional, fill_cost)
+    _record_fill(fill_qty=sell_qty, fill_notional=fill_notional, fill_cost=fill_cost)
     cash += fill_notional - fill_cost
     entry_cost_allocated = existing.entry_cost_total * (sell_qty / existing.qty)
     remaining, trade = _close_position(
@@ -2105,6 +2464,14 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
         quote_quality_policy=quote_quality.policy,
     )
     cost_model = TransactionCostModel()
+    ledger_context = (
+        _build_replay_ledger_context(config=config, cost_model=cost_model)
+        if config.capture_exact_replay_ledger
+        else None
+    )
+    exact_ledger_rows: list[dict[str, Any]] | None = (
+        [] if ledger_context is not None else None
+    )
     positions: dict[tuple[str, str], PositionState] = {}
     pending_orders: dict[tuple[str, str], PendingOrder] = {}
     last_prices: dict[str, Decimal] = {}
@@ -2152,6 +2519,23 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
         outcome: str,
         censor_reason: str | None = None,
     ) -> None:
+        ledger_decision = pending.decision if pending is not None else decision
+        ledger_created_at = pending.created_at if pending is not None else created_at
+        ledger_strategy_id = _decision_position_owner(
+            ledger_decision,
+            force_position_isolation=config.force_position_isolation,
+        )
+        if (event_type := _ledger_resolution_event_type(outcome)) is not None:
+            _append_ledger_resolution(
+                rows=exact_ledger_rows,
+                context=ledger_context,
+                decision=ledger_decision,
+                created_at=ledger_created_at,
+                resolved_at=resolved_at,
+                strategy_id=ledger_strategy_id,
+                event_type=event_type,
+                reason=censor_reason or outcome,
+            )
         _record_order_lifecycle(
             order_lifecycle_stats=order_lifecycle_stats,
             order_lifecycle_day_stats=order_lifecycle_day_stats,
@@ -2214,6 +2598,8 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                         cost_model=cost_model,
                         cash_ref=cash_ref,
                         all_closed_trades=all_closed_trades,
+                        exact_ledger_rows=exact_ledger_rows,
+                        ledger_context=ledger_context,
                     )
                     cash = cash_ref[0]
                 _censor_pending_orders(
@@ -2303,6 +2689,10 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                     resolved_at=signal.event_ts,
                     outcome="filled",
                 )
+                pending_ledger_strategy_id = _decision_position_owner(
+                    decision,
+                    force_position_isolation=config.force_position_isolation,
+                )
                 cash = _apply_filled_decision(
                     decision=decision,
                     signal=signal,
@@ -2316,6 +2706,9 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                     cash=cash,
                     all_closed_trades=all_closed_trades,
                     force_position_isolation=config.force_position_isolation,
+                    exact_ledger_rows=exact_ledger_rows,
+                    ledger_context=ledger_context,
+                    ledger_strategy_id=pending_ledger_strategy_id,
                 )
                 equity = _record_capital_snapshot(
                     bucket=day_bucket,
@@ -2438,6 +2831,10 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                 decision_symbol_bucket["decision_count"] += 1
                 if decision.qty <= 0:
                     continue
+                ledger_strategy_id = _decision_position_owner(
+                    decision,
+                    force_position_isolation=config.force_position_isolation,
+                )
                 immediate_fill_price = _resolve_pending_fill_price(decision, signal)
                 if immediate_fill_price is not None:
                     replaced_pending = _reconcile_pending_order_before_immediate_fill(
@@ -2464,6 +2861,13 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                         resolved_at=signal.event_ts,
                         outcome="filled",
                     )
+                    _append_ledger_submission(
+                        rows=exact_ledger_rows,
+                        context=ledger_context,
+                        decision=decision,
+                        created_at=signal.event_ts,
+                        strategy_id=ledger_strategy_id,
+                    )
                     cash = _apply_filled_decision(
                         decision=decision,
                         signal=signal,
@@ -2477,6 +2881,9 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                         cash=cash,
                         all_closed_trades=all_closed_trades,
                         force_position_isolation=config.force_position_isolation,
+                        exact_ledger_rows=exact_ledger_rows,
+                        ledger_context=ledger_context,
+                        ledger_strategy_id=ledger_strategy_id,
                     )
                     equity = _record_capital_snapshot(
                         bucket=day_bucket,
@@ -2513,6 +2920,13 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                             created_at=signal.event_ts,
                             signal=signal,
                         )
+                        _append_ledger_submission(
+                            rows=exact_ledger_rows,
+                            context=ledger_context,
+                            decision=decision,
+                            created_at=signal.event_ts,
+                            strategy_id=ledger_strategy_id,
+                        )
                         _log_pending_order_replaced(
                             created_at=signal.event_ts,
                             existing=existing_pending.decision,
@@ -2525,6 +2939,13 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                     decision=decision,
                     created_at=signal.event_ts,
                     signal=signal,
+                )
+                _append_ledger_submission(
+                    rows=exact_ledger_rows,
+                    context=ledger_context,
+                    decision=decision,
+                    created_at=signal.event_ts,
+                    strategy_id=ledger_strategy_id,
                 )
                 _log_decision_queued(decision, signal.event_ts)
                 fill_status_by_strategy_id[decision.strategy_id] = "pending"
@@ -2580,6 +3001,8 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                 cost_model=cost_model,
                 cash_ref=cash_ref,
                 all_closed_trades=all_closed_trades,
+                exact_ledger_rows=exact_ledger_rows,
+                ledger_context=ledger_context,
             )
             cash = cash_ref[0]
         if current_day is not None:
@@ -2728,7 +3151,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
         _decimal_text(final_equity),
     )
     post_cost_survivorship = _post_cost_survivorship_summary(all_closed_trades)
-    return {
+    payload = {
         "start_date": config.start_date.isoformat(),
         "end_date": config.end_date.isoformat(),
         "start_equity": str(config.start_equity),
@@ -2875,6 +3298,13 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
             for key, value in sorted(order_lifecycle_symbol_stats.items())
         },
     }
+    if exact_ledger_rows is not None and ledger_context is not None:
+        payload["exact_replay_ledger"] = _exact_replay_ledger_payload(
+            rows=exact_ledger_rows,
+            config=config,
+            context=ledger_context,
+        )
+    return payload
 
 
 def _signal_regime_label(signal: SignalEnvelope) -> str | None:
@@ -2900,13 +3330,15 @@ def _flatten_positions(
     cost_model: TransactionCostModel,
     cash_ref: list[Decimal],
     all_closed_trades: list[ClosedTrade],
+    exact_ledger_rows: list[dict[str, Any]] | None = None,
+    ledger_context: ReplayLedgerContext | None = None,
 ) -> None:
     if not positions:
         return
     stats = _ensure_replay_stats_bucket(stats)
     current_cash = cash_ref[0]
     for position_key in sorted(list(positions)):
-        symbol, owner_strategy_id = position_key
+        symbol, _owner_strategy_id = position_key
         position = positions.pop(position_key)
         last_signal = last_signals.get(symbol)
         if last_signal is None:
@@ -2914,12 +3346,11 @@ def _flatten_positions(
         fill_price = last_prices.get(symbol, position.avg_entry_price)
         exit_action = "buy" if position.qty < 0 else "sell"
         exit_qty = abs(position.qty)
+        closed_at = datetime.combine(day, REGULAR_CLOSE_UTC, tzinfo=timezone.utc)
         synthetic_decision = StrategyDecision(
-            strategy_id=owner_strategy_id
-            if owner_strategy_id != _SHARED_POSITION_OWNER
-            else "flatten",
+            strategy_id=position.strategy_id,
             symbol=symbol,
-            event_ts=last_signal.event_ts,
+            event_ts=closed_at,
             timeframe="1Sec",
             action=exit_action,
             qty=exit_qty,
@@ -2937,12 +3368,30 @@ def _flatten_positions(
             current_cash -= exit_notional + exit_cost
         else:
             current_cash += exit_notional - exit_cost
+        _append_ledger_submission(
+            rows=exact_ledger_rows,
+            context=ledger_context,
+            decision=synthetic_decision,
+            created_at=closed_at,
+            strategy_id=position.strategy_id,
+        )
+        _append_ledger_fill(
+            rows=exact_ledger_rows,
+            context=ledger_context,
+            decision=synthetic_decision,
+            created_at=closed_at,
+            filled_at=closed_at,
+            strategy_id=position.strategy_id,
+            filled_qty=exit_qty,
+            avg_fill_price=fill_price,
+            cost_amount=exit_cost,
+        )
         trade = ClosedTrade(
             symbol=symbol,
             strategy_id=position.strategy_id,
             decision_at=position.decision_at,
             opened_at=position.opened_at,
-            closed_at=datetime.combine(day, REGULAR_CLOSE_UTC, tzinfo=timezone.utc),
+            closed_at=closed_at,
             qty=exit_qty,
             entry_price=position.avg_entry_price,
             exit_price=fill_price,
@@ -3030,6 +3479,9 @@ def main() -> None:
             or args.near_misses_output is not None
         ),
         capture_trace_funnel=bool(getattr(args, "collect_trace_funnel", False)),
+        capture_exact_replay_ledger=(
+            getattr(args, "exact_replay_ledger_output", None) is not None
+        ),
         force_position_isolation=bool(getattr(args, "force_position_isolation", False)),
         max_executable_spread_bps=Decimal(str(args.max_executable_spread_bps)),
         max_quote_mid_jump_bps=Decimal(str(args.max_quote_mid_jump_bps)),
@@ -3051,6 +3503,12 @@ def main() -> None:
     if args.near_misses_output:
         args.near_misses_output.write_text(
             json.dumps(payload["near_misses"], indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+    exact_replay_ledger_output = getattr(args, "exact_replay_ledger_output", None)
+    if exact_replay_ledger_output is not None:
+        exact_replay_ledger_output.write_text(
+            json.dumps(payload["exact_replay_ledger"], indent=2, sort_keys=True),
             encoding="utf-8",
         )
     if args.json:

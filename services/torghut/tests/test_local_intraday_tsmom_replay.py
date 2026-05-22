@@ -20,6 +20,7 @@ from app.trading.evaluation_trace import (
 )
 from app.models import Strategy
 from app.trading.models import SignalEnvelope, StrategyDecision
+from app.trading.runtime_ledger import build_runtime_ledger_buckets
 from scripts.local_intraday_tsmom_replay import (
     PendingOrder,
     PositionState,
@@ -2092,6 +2093,7 @@ class TestLocalIntradayTsmomReplay(TestCase):
             flatten_eod=True,
             start_equity=Decimal("10000"),
             capture_traces=True,
+            capture_exact_replay_ledger=True,
         )
 
         with (
@@ -2174,6 +2176,47 @@ class TestLocalIntradayTsmomReplay(TestCase):
             lifecycle["post_cost_survivorship"]["closed_trade_count"],
             1,
         )
+        exact_ledger = payload["exact_replay_ledger"]
+        self.assertEqual(
+            exact_ledger["schema_version"], "torghut.exact_replay_ledger.rows.v1"
+        )
+        self.assertEqual(exact_ledger["stage"], "replay")
+        self.assertEqual(
+            exact_ledger["promotion_authority"], "replay_artifact_only_not_live"
+        )
+        self.assertEqual(exact_ledger["decision_row_count"], 3)
+        self.assertEqual(exact_ledger["submitted_order_row_count"], 3)
+        self.assertEqual(exact_ledger["fill_row_count"], 2)
+        rows = exact_ledger["runtime_ledger_rows"]
+        self.assertEqual(
+            [row["event_type"] for row in rows],
+            [
+                "decision",
+                "order_submitted",
+                "order_cancelled",
+                "decision",
+                "order_submitted",
+                "fill",
+                "decision",
+                "order_submitted",
+                "fill",
+            ],
+        )
+        ledger_bucket = build_runtime_ledger_buckets(
+            rows,
+            bucket_ranges=[
+                (
+                    datetime(2026, 3, 26, 17, 0, tzinfo=timezone.utc),
+                    datetime(2026, 3, 26, 21, 0, tzinfo=timezone.utc),
+                )
+            ],
+            require_order_lifecycle=True,
+        )[0]
+        self.assertEqual(ledger_bucket.fill_count, 2)
+        self.assertEqual(ledger_bucket.closed_trade_count, 1)
+        self.assertNotIn("unclosed_position", ledger_bucket.blockers)
+        self.assertNotIn("cost_model_hash_missing", ledger_bucket.blockers)
+        self.assertIn("unfilled_order_present", ledger_bucket.blockers)
 
     def test_run_replay_enriches_day_two_open_with_prev_day_open45_ranks(self) -> None:
         strategy = Strategy(

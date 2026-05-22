@@ -913,6 +913,35 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
             "execution_shortfall_evidence_present", bundle.objective_scorecard
         )
 
+    def test_evidence_bundle_preserves_exact_replay_ledger_artifact_ref(self) -> None:
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-exact-ledger",
+            candidate={
+                "candidate_id": "cand-exact-ledger",
+                "full_window": {
+                    "net_per_day": "123",
+                    "trading_day_count": "1",
+                    "daily_net": {"2026-02-23": "123"},
+                },
+                "objective_scorecard": {
+                    "net_pnl_per_day": "123",
+                    "exact_replay_ledger_artifact_ref": "/tmp/exact-replay-ledger.json",
+                    "runtime_ledger_artifact_row_count": 6,
+                },
+            },
+            dataset_snapshot_id="snap-exact-ledger",
+            result_path="/tmp/frontier-result.json",
+        )
+
+        self.assertEqual(
+            bundle.objective_scorecard["exact_replay_ledger_artifact_ref"],
+            "/tmp/exact-replay-ledger.json",
+        )
+        self.assertEqual(
+            bundle.replay_artifact_refs,
+            ("/tmp/frontier-result.json", "/tmp/exact-replay-ledger.json"),
+        )
+
     def test_evidence_bundle_fails_delay_depth_without_recorded_daily_liquidity(
         self,
     ) -> None:
