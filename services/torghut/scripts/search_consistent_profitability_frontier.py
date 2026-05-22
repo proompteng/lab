@@ -13,7 +13,7 @@ import sys
 import tempfile
 from collections import Counter, deque
 from dataclasses import dataclass
-from datetime import date, timezone
+from datetime import date, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeAlias, cast
@@ -643,6 +643,37 @@ def _resolve_frontier_replay_windows(
         train_days=train_slice,
         holdout_days=holdout_slice,
         second_oos_days=second_slice,
+    )
+
+
+def _business_days(start_day: date, end_day: date) -> tuple[date, ...]:
+    if start_day > end_day:
+        return ()
+    current = start_day
+    values: list[date] = []
+    while current <= end_day:
+        if current.weekday() < 5:
+            values.append(current)
+        current += timedelta(days=1)
+    return tuple(values)
+
+
+def _snapshot_expected_days(
+    *,
+    window: FrontierReplayWindows,
+    full_window_start: date,
+    full_window_end: date,
+    require_full_window_coverage: bool,
+) -> tuple[date, ...]:
+    if not require_full_window_coverage:
+        return window.expected_days
+    return tuple(
+        sorted(
+            {
+                *window.expected_days,
+                *_business_days(full_window_start, full_window_end),
+            }
+        )
     )
 
 
@@ -1291,6 +1322,43 @@ def _build_replay_tape_snapshot_receipt(
                     "manifest_end_date": str(validation.get("manifest_end_date") or ""),
                     "row_count": int(validation.get("row_count") or 0),
                     "trading_day_count": int(validation.get("trading_day_count") or 0),
+                    "requested_trading_days": list(
+                        cast(
+                            Sequence[Any],
+                            validation.get("requested_trading_days") or [],
+                        )
+                    ),
+                    "observed_trading_days": list(
+                        cast(
+                            Sequence[Any],
+                            validation.get("observed_trading_days") or [],
+                        )
+                    ),
+                    "missing_trading_days": list(
+                        cast(
+                            Sequence[Any],
+                            validation.get("missing_trading_days") or [],
+                        )
+                    ),
+                    "row_count_by_trading_day": dict(
+                        cast(
+                            Mapping[str, Any],
+                            validation.get("row_count_by_trading_day") or {},
+                        )
+                    ),
+                    "missing_symbol_trading_days": list(
+                        cast(
+                            Sequence[Any],
+                            validation.get("missing_symbol_trading_days") or [],
+                        )
+                    ),
+                    "row_count_by_symbol_trading_day": dict(
+                        cast(
+                            Mapping[str, Any],
+                            validation.get("row_count_by_symbol_trading_day") or {},
+                        )
+                    ),
+                    "coverage_status": str(validation.get("coverage_status") or ""),
                     "source_table_versions": dict(
                         cast(
                             Mapping[str, Any],
@@ -3766,6 +3834,15 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
         if str(args.expected_last_trading_day or "").strip()
         else (full_window_end if str(args.full_window_end_date or "").strip() else None)
     )
+    expected_snapshot_days = _snapshot_expected_days(
+        window=window,
+        full_window_start=full_window_start,
+        full_window_end=full_window_end,
+        require_full_window_coverage=bool(
+            str(args.full_window_start_date or "").strip()
+            or str(args.full_window_end_date or "").strip()
+        ),
+    )
     cached_rows: list[Any] | None = None
     replay_tape_validation: dict[str, Any] | None = None
     if loaded_replay_tape is not None:
@@ -3784,7 +3861,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
             start_day=full_window_start,
             end_day=full_window_end,
             expected_last_trading_day=expected_last_trading_day or full_window_end,
-            expected_trading_days=window.expected_days,
+            expected_trading_days=expected_snapshot_days,
             allow_stale_tape=bool(args.allow_stale_tape),
         )
     else:
@@ -3795,7 +3872,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
             start_day=full_window_start,
             end_day=full_window_end,
             expected_last_trading_day=expected_last_trading_day,
-            expected_trading_days=window.expected_days,
+            expected_trading_days=expected_snapshot_days,
             allow_stale_tape=bool(args.allow_stale_tape),
         )
     ensure_fresh_snapshot(

@@ -579,6 +579,56 @@ class TestStrategyAutoresearch(TestCase):
         self.assertTrue(tape_exists)
         self.assertTrue(manifest_exists)
 
+    def test_materialize_run_replay_tape_fails_closed_on_missing_days(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            configmap_path = root / "strategy-configmap.yaml"
+            configmap_path.write_text("apiVersion: v1\nkind: ConfigMap\n")
+            bundle_paths = runner._mlx_bundle_paths(root)
+            args = Namespace(
+                strategy_configmap=configmap_path,
+                clickhouse_http_url="http://example.invalid:8123",
+                clickhouse_username="torghut",
+                clickhouse_password="secret",
+                start_equity="31590.02",
+                chunk_minutes=10,
+                progress_log_seconds=30,
+                materialize_replay_tape=True,
+                replay_tape_path=None,
+                allow_stale_tape=False,
+            )
+            signal_rows = [
+                SignalEnvelope(
+                    event_ts=datetime(2026, 3, 20, 13, 30, tzinfo=UTC),
+                    symbol="AMAT",
+                    seq=1,
+                    source="ta",
+                    timeframe="1Sec",
+                    payload={"price": "180.10"},
+                )
+            ]
+
+            with patch(
+                "scripts.run_strategy_autoresearch_loop.replay_mod._iter_signal_rows",
+                return_value=iter(signal_rows),
+            ):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "replay_tape_incomplete_coverage:missing_days=2026-03-23",
+                ):
+                    runner._maybe_materialize_run_replay_tape(
+                        args=args,
+                        runner_run_id="strategy-autoresearch-test",
+                        snapshot_symbols=("AMAT",),
+                        bundle_paths=bundle_paths,
+                        full_window_start_date="2026-03-20",
+                        full_window_end_date="2026-03-23",
+                        existing_signal_bundle=None,
+                    )
+
+            self.assertFalse(Path(bundle_paths["replay_tape_jsonl"]).exists())
+            self.assertFalse(Path(bundle_paths["replay_tape_manifest_json"]).exists())
+
     def test_provided_replay_tape_receipt_reads_manifest_and_handles_missing(
         self,
     ) -> None:
@@ -1766,7 +1816,15 @@ class TestStrategyAutoresearch(TestCase):
                     source="ta",
                     timeframe="1Sec",
                     payload={"price": "180.10"},
-                )
+                ),
+                SignalEnvelope(
+                    event_ts=datetime(2026, 3, 20, 13, 31, tzinfo=UTC),
+                    symbol="NVDA",
+                    seq=2,
+                    source="ta",
+                    timeframe="1Sec",
+                    payload={"price": "900.10"},
+                ),
             ]
 
             args = Namespace(
@@ -1891,14 +1949,14 @@ class TestStrategyAutoresearch(TestCase):
                 (run_root / "mlx-snapshot-manifest.json").read_text(encoding="utf-8")
             )
             self.assertEqual(manifest["symbols"], ["AMAT", "NVDA"])
-            self.assertEqual(manifest["row_counts"]["signal_row_count"], 1)
+            self.assertEqual(manifest["row_counts"]["signal_row_count"], 2)
             self.assertEqual(
                 manifest["tape_freshness_receipts"][0]["status"],
                 "materialized",
             )
             self.assertEqual(
                 manifest["tape_freshness_receipts"][0]["row_count"],
-                1,
+                2,
             )
             self.assertEqual(
                 manifest["tensor_bundle_paths"]["signal_rows_jsonl"],

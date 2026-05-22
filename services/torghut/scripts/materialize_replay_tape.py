@@ -86,6 +86,14 @@ def _parse_args() -> argparse.Namespace:
         help="Optional source table/version metadata, repeatable.",
     )
     parser.add_argument(
+        "--allow-incomplete-coverage",
+        action="store_true",
+        help=(
+            "Write the tape even when the requested business-day window has missing "
+            "signal rows. By default materialization fails closed."
+        ),
+    )
+    parser.add_argument(
         "--log-level",
         default=os.environ.get("TORGHUT_REPLAY_LOG_LEVEL", "INFO"),
     )
@@ -162,6 +170,7 @@ def main() -> int:
         end_date=end_date,
         source_query_digest=source_query_digest,
         source_table_versions=_parse_source_table_versions(args.source_table_version),
+        require_complete_coverage=not bool(args.allow_incomplete_coverage),
     )
     logger.info(
         "replay_tape_materialized output=%s manifest=%s rows=%s digest=%s",

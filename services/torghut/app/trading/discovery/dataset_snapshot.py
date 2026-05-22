@@ -404,10 +404,13 @@ def ensure_fresh_snapshot(
 ) -> None:
     if receipt.is_fresh or allow_stale_tape:
         return
+    missing_days = ",".join(item.isoformat() for item in receipt.missing_days)
+    missing_suffix = f":missing_days={missing_days}" if missing_days else ""
     raise ValueError(
         "stale_tape:"
         f"expected_last_trading_day={receipt.expected_last_trading_day.isoformat()}:"
         f"end_day={receipt.end_day.isoformat()}"
+        f"{missing_suffix}"
     )
 
 

@@ -729,6 +729,7 @@ def _maybe_materialize_run_replay_tape(
             full_window_start_date=full_window_start_date,
             full_window_end_date=full_window_end_date,
         ),
+        require_complete_coverage=not bool(getattr(args, "allow_stale_tape", False)),
     )
     signal_bundle_stats = existing_signal_bundle or write_mlx_signal_bundle(
         Path(bundle_paths["signal_rows_jsonl"]),

@@ -6,8 +6,8 @@ import gzip
 import hashlib
 import json
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
-from datetime import date, datetime, time, timezone
+from dataclasses import dataclass, field
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, TextIO, cast
@@ -20,6 +20,14 @@ _DECIMAL_TAG = "__torghut_decimal__"
 _DATETIME_TAG = "__torghut_datetime__"
 _REGULAR_OPEN_UTC = time(hour=13, minute=30)
 _REGULAR_CLOSE_UTC = time(hour=20, minute=0)
+
+
+def _empty_row_count_by_trading_day() -> dict[str, int]:
+    return {}
+
+
+def _empty_row_count_by_symbol_trading_day() -> dict[str, dict[str, int]]:
+    return {}
 
 
 @dataclass(frozen=True)
@@ -41,6 +49,16 @@ class ReplayTapeManifest:
     artifact_refs: Mapping[str, str]
     source_table_versions: Mapping[str, str]
     created_at: datetime
+    requested_trading_days: tuple[date, ...] = ()
+    observed_trading_days: tuple[date, ...] = ()
+    missing_trading_days: tuple[date, ...] = ()
+    row_count_by_trading_day: Mapping[str, int] = field(
+        default_factory=_empty_row_count_by_trading_day
+    )
+    missing_symbol_trading_days: tuple[str, ...] = ()
+    row_count_by_symbol_trading_day: Mapping[str, Mapping[str, int]] = field(
+        default_factory=_empty_row_count_by_symbol_trading_day
+    )
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -65,6 +83,25 @@ class ReplayTapeManifest:
             "artifact_refs": dict(self.artifact_refs),
             "source_table_versions": dict(self.source_table_versions),
             "created_at": self.created_at.isoformat(),
+            "requested_trading_days": [
+                item.isoformat() for item in self.requested_trading_days
+            ],
+            "observed_trading_days": [
+                item.isoformat() for item in self.observed_trading_days
+            ],
+            "missing_trading_days": [
+                item.isoformat() for item in self.missing_trading_days
+            ],
+            "row_count_by_trading_day": dict(self.row_count_by_trading_day),
+            "missing_symbol_trading_days": list(self.missing_symbol_trading_days),
+            "row_count_by_symbol_trading_day": {
+                symbol: dict(days)
+                for symbol, days in self.row_count_by_symbol_trading_day.items()
+            },
+            "coverage_status": _coverage_status(
+                missing_trading_days=self.missing_trading_days,
+                missing_symbol_trading_days=self.missing_symbol_trading_days,
+            ),
         }
 
     @classmethod
@@ -98,6 +135,18 @@ class ReplayTapeManifest:
             artifact_refs=_string_mapping(payload.get("artifact_refs")),
             source_table_versions=_string_mapping(payload.get("source_table_versions")),
             created_at=_parse_datetime(str(payload["created_at"])),
+            requested_trading_days=_date_tuple(payload.get("requested_trading_days")),
+            observed_trading_days=_date_tuple(payload.get("observed_trading_days")),
+            missing_trading_days=_date_tuple(payload.get("missing_trading_days")),
+            row_count_by_trading_day=_int_mapping(
+                payload.get("row_count_by_trading_day")
+            ),
+            missing_symbol_trading_days=_string_tuple(
+                payload.get("missing_symbol_trading_days")
+            ),
+            row_count_by_symbol_trading_day=_nested_int_mapping(
+                payload.get("row_count_by_symbol_trading_day")
+            ),
         )
 
 
@@ -133,8 +182,34 @@ def materialize_signal_tape(
     source_table_versions: Mapping[str, str] | None = None,
     artifact_refs: Mapping[str, str] | None = None,
     created_at: datetime | None = None,
+    require_complete_coverage: bool = False,
 ) -> ReplayTapeManifest:
     ordered_rows = tuple(sorted(rows, key=_signal_sort_key))
+    normalized_symbols = _normalize_symbols(symbols)
+    event_dates = {row.event_ts.astimezone(timezone.utc).date() for row in ordered_rows}
+    event_times = tuple(row.event_ts.astimezone(timezone.utc) for row in ordered_rows)
+    requested_trading_days = _business_days(start_date, end_date)
+    observed_trading_days = tuple(sorted(event_dates))
+    missing_trading_days = tuple(
+        day for day in requested_trading_days if day not in event_dates
+    )
+    row_count_by_symbol_trading_day = _row_count_by_symbol_trading_day(ordered_rows)
+    missing_symbol_trading_days = _missing_symbol_trading_days(
+        row_count_by_symbol_trading_day=row_count_by_symbol_trading_day,
+        requested_symbols=normalized_symbols,
+        requested_trading_days=requested_trading_days,
+        observed_trading_days=observed_trading_days,
+    )
+    if require_complete_coverage and (
+        missing_trading_days or missing_symbol_trading_days
+    ):
+        raise ValueError(
+            _incomplete_coverage_reason(
+                missing_trading_days=missing_trading_days,
+                missing_symbol_trading_days=missing_symbol_trading_days,
+            )
+        )
+
     tape_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_ref = manifest_path or default_manifest_path(tape_path)
     manifest_ref.parent.mkdir(parents=True, exist_ok=True)
@@ -147,8 +222,10 @@ def materialize_signal_tape(
             content_hash.update(b"\n")
             handle.write(f"{line}\n")
 
-    event_dates = {row.event_ts.astimezone(timezone.utc).date() for row in ordered_rows}
-    event_times = tuple(row.event_ts.astimezone(timezone.utc) for row in ordered_rows)
+    row_count_by_trading_day: dict[str, int] = {}
+    for row in ordered_rows:
+        key = row.event_ts.astimezone(timezone.utc).date().isoformat()
+        row_count_by_trading_day[key] = row_count_by_trading_day.get(key, 0) + 1
     start_ts = datetime.combine(start_date, _REGULAR_OPEN_UTC, tzinfo=timezone.utc)
     end_ts = datetime.combine(end_date, _REGULAR_CLOSE_UTC, tzinfo=timezone.utc)
     resolved_artifact_refs = {
@@ -158,7 +235,7 @@ def materialize_signal_tape(
     manifest = ReplayTapeManifest(
         schema_version=REPLAY_TAPE_MANIFEST_SCHEMA_VERSION,
         dataset_snapshot_ref=dataset_snapshot_ref,
-        symbols=_normalize_symbols(symbols),
+        symbols=normalized_symbols,
         row_symbols=tuple(sorted({row.symbol.upper() for row in ordered_rows})),
         start_date=start_date,
         end_date=end_date,
@@ -173,6 +250,12 @@ def materialize_signal_tape(
         artifact_refs=resolved_artifact_refs,
         source_table_versions=dict(source_table_versions or {}),
         created_at=created_at or datetime.now(timezone.utc),
+        requested_trading_days=requested_trading_days,
+        observed_trading_days=observed_trading_days,
+        missing_trading_days=missing_trading_days,
+        row_count_by_trading_day=row_count_by_trading_day,
+        missing_symbol_trading_days=missing_symbol_trading_days,
+        row_count_by_symbol_trading_day=row_count_by_symbol_trading_day,
     )
     manifest_ref.write_text(
         json.dumps(manifest.to_payload(), indent=2, sort_keys=True) + "\n",
@@ -234,6 +317,30 @@ def validate_tape_freshness(
         if missing:
             reasons.append(f"symbols_not_covered:{','.join(missing)}")
 
+    missing_trading_days = tuple(
+        day for day in manifest.missing_trading_days if start_date <= day <= end_date
+    )
+    if missing_trading_days:
+        reasons.append(
+            "trading_days_missing:"
+            + ",".join(day.isoformat() for day in missing_trading_days)
+        )
+
+    missing_symbol_trading_days = tuple(
+        entry
+        for entry in manifest.missing_symbol_trading_days
+        if _symbol_day_entry_in_window(
+            entry,
+            start_date=start_date,
+            end_date=end_date,
+            requested_symbols=requested_symbols,
+        )
+    )
+    if missing_symbol_trading_days:
+        reasons.append(
+            "symbol_trading_days_missing:" + ",".join(missing_symbol_trading_days)
+        )
+
     if reasons and not allow_stale_tape:
         raise ValueError(f"replay_tape_stale:{';'.join(reasons)}")
     return {
@@ -245,6 +352,25 @@ def validate_tape_freshness(
         "dataset_snapshot_ref": manifest.dataset_snapshot_ref,
         "row_count": manifest.row_count,
         "trading_day_count": manifest.trading_day_count,
+        "requested_trading_days": [
+            item.isoformat() for item in manifest.requested_trading_days
+        ],
+        "observed_trading_days": [
+            item.isoformat() for item in manifest.observed_trading_days
+        ],
+        "missing_trading_days": [
+            item.isoformat() for item in manifest.missing_trading_days
+        ],
+        "row_count_by_trading_day": dict(manifest.row_count_by_trading_day),
+        "missing_symbol_trading_days": list(manifest.missing_symbol_trading_days),
+        "row_count_by_symbol_trading_day": {
+            symbol: dict(days)
+            for symbol, days in manifest.row_count_by_symbol_trading_day.items()
+        },
+        "coverage_status": _coverage_status(
+            missing_trading_days=manifest.missing_trading_days,
+            missing_symbol_trading_days=manifest.missing_symbol_trading_days,
+        ),
     }
 
 
@@ -345,6 +471,123 @@ def _normalize_symbols(symbols: Sequence[str]) -> tuple[str, ...]:
     )
 
 
+def _business_days(start_day: date, end_day: date) -> tuple[date, ...]:
+    if start_day > end_day:
+        return ()
+    current = start_day
+    values: list[date] = []
+    while current <= end_day:
+        if current.weekday() < 5:
+            values.append(current)
+        current += timedelta(days=1)
+    return tuple(values)
+
+
+def _row_count_by_symbol_trading_day(
+    rows: Sequence[SignalEnvelope],
+) -> dict[str, dict[str, int]]:
+    counts: dict[str, dict[str, int]] = {}
+    for row in rows:
+        symbol = row.symbol.strip().upper()
+        if not symbol:
+            continue
+        day = row.event_ts.astimezone(timezone.utc).date().isoformat()
+        symbol_counts = counts.setdefault(symbol, {})
+        symbol_counts[day] = symbol_counts.get(day, 0) + 1
+    return counts
+
+
+def _missing_symbol_trading_days(
+    *,
+    row_count_by_symbol_trading_day: Mapping[str, Mapping[str, int]],
+    requested_symbols: Sequence[str],
+    requested_trading_days: Sequence[date],
+    observed_trading_days: Sequence[date],
+) -> tuple[str, ...]:
+    if not requested_symbols:
+        return ()
+    observed_days = set(observed_trading_days)
+    entries: list[str] = []
+    for symbol in requested_symbols:
+        symbol_counts = row_count_by_symbol_trading_day.get(symbol, {})
+        for day in requested_trading_days:
+            if day not in observed_days:
+                continue
+            if int(symbol_counts.get(day.isoformat()) or 0) <= 0:
+                entries.append(_symbol_day_entry(symbol=symbol, day=day))
+    return tuple(entries)
+
+
+def _symbol_day_entry(*, symbol: str, day: date) -> str:
+    return f"{symbol}:{day.isoformat()}"
+
+
+def _parse_symbol_day_entry(entry: str) -> tuple[str, date] | None:
+    symbol, sep, raw_day = entry.partition(":")
+    if not sep or not symbol:
+        return None
+    try:
+        parsed_day = date.fromisoformat(raw_day)
+    except ValueError:
+        return None
+    return symbol, parsed_day
+
+
+def _symbol_day_entry_in_window(
+    entry: str,
+    *,
+    start_date: date,
+    end_date: date,
+    requested_symbols: set[str],
+) -> bool:
+    parsed = _parse_symbol_day_entry(entry)
+    if parsed is None:
+        return False
+    symbol, day = parsed
+    if requested_symbols and symbol not in requested_symbols:
+        return False
+    return start_date <= day <= end_date
+
+
+def _coverage_status(
+    *,
+    missing_trading_days: Sequence[date],
+    missing_symbol_trading_days: Sequence[str],
+) -> str:
+    if missing_trading_days:
+        return "missing_days"
+    if missing_symbol_trading_days:
+        return "missing_symbol_days"
+    return "complete"
+
+
+def _incomplete_coverage_reason(
+    *,
+    missing_trading_days: Sequence[date],
+    missing_symbol_trading_days: Sequence[str],
+) -> str:
+    parts: list[str] = []
+    if missing_trading_days:
+        missing = ",".join(day.isoformat() for day in missing_trading_days)
+        parts.append(f"missing_days={missing}")
+    if missing_symbol_trading_days:
+        missing_symbols = ",".join(missing_symbol_trading_days)
+        parts.append(f"missing_symbol_days={missing_symbols}")
+    return "replay_tape_incomplete_coverage:" + ":".join(parts)
+
+
+def _date_tuple(value: Any) -> tuple[date, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return ()
+    parsed: list[date] = []
+    for item in cast(Sequence[object], value):
+        try:
+            parsed.append(date.fromisoformat(str(item)))
+        except ValueError:
+            continue
+    return tuple(parsed)
+
+
 def _string_tuple(value: Any) -> tuple[str, ...]:
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
         return ()
@@ -356,6 +599,27 @@ def _string_mapping(value: Any) -> Mapping[str, str]:
         return {}
     return {
         str(key): str(item)
+        for key, item in cast(Mapping[object, object], value).items()
+    }
+
+
+def _int_mapping(value: Any) -> Mapping[str, int]:
+    if not isinstance(value, Mapping):
+        return {}
+    parsed: dict[str, int] = {}
+    for key, item in cast(Mapping[object, object], value).items():
+        try:
+            parsed[str(key)] = int(str(item))
+        except (TypeError, ValueError):
+            continue
+    return parsed
+
+
+def _nested_int_mapping(value: Any) -> Mapping[str, Mapping[str, int]]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {
+        str(key): _int_mapping(item)
         for key, item in cast(Mapping[object, object], value).items()
     }
 
