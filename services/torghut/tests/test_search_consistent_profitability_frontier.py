@@ -2082,6 +2082,57 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(repaired_overrides["max_notional_per_trade"], "15000")
         self.assertEqual(repaired_overrides["max_position_pct_equity"], "0.375")
 
+    def test_generate_loss_repair_children_uses_capital_aware_exposure_scale(
+        self,
+    ) -> None:
+        configmap_payload = {
+            "data": {
+                "strategies.yaml": yaml.safe_dump(
+                    {
+                        "strategies": [
+                            {
+                                "name": "microbar-cross-sectional-pairs-v1",
+                                "max_notional_per_trade": "157950",
+                                "max_position_pct_equity": "0.50",
+                                "params": {
+                                    "max_gross_exposure_pct_equity": "1.0",
+                                },
+                            }
+                        ],
+                    },
+                    sort_keys=False,
+                )
+            }
+        }
+
+        children = frontier._generate_loss_repair_children(
+            params_candidate={},
+            strategy_overrides={},
+            candidate_configmap=configmap_payload,
+            strategy_name="microbar-cross-sectional-pairs-v1",
+            hard_vetoes=[
+                "gross_exposure_pct_equity_above_max",
+                "min_cash_below_min",
+            ],
+            full_window_summary={
+                "max_gross_exposure_pct_equity": "8.181368403273092342936517235",
+                "max_gross_exposure_pct_equity_required": "999999999",
+                "min_cash": "-234450.4847634027429531207507",
+                "min_cash_required": "-999999999",
+            },
+            branch_count=1,
+            policy_required_max_gross_exposure_pct_equity=Decimal("1.0"),
+            policy_required_min_cash=Decimal("0"),
+        )
+
+        self.assertEqual(
+            children[0][0],
+            "loss_controls_and_exposure:gross_exposure_pct_equity_above_max",
+        )
+        self.assertEqual(children[0][1]["max_gross_exposure_pct_equity"], "0.116117")
+        self.assertEqual(children[0][2]["max_notional_per_trade"], "18340.68015")
+        self.assertEqual(children[0][2]["max_position_pct_equity"], "0.058058")
+
     def test_generate_loss_repair_children_ignores_non_loss_vetoes(self) -> None:
         children = frontier._generate_loss_repair_children(
             params_candidate={"entry_cooldown_seconds": "300"},
@@ -2387,6 +2438,76 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         )
         self.assertIsNone(frontier._reduced_exposure("0"))
         self.assertIsNone(frontier._reduced_exposure("0.0000001"))
+        self.assertIsNone(frontier._reduced_exposure("NaN"))
+        self.assertIsNone(frontier._reduced_exposure("Infinity"))
+        self.assertEqual(
+            frontier._reduced_exposure("1.5", scale=Decimal("0.116117")),
+            "0.174175",
+        )
+
+    def test_capital_repair_exposure_scale_uses_summary_thresholds(self) -> None:
+        self.assertEqual(frontier._capital_repair_exposure_scale({}), Decimal("0.75"))
+        self.assertEqual(
+            frontier._capital_repair_exposure_scale(
+                {
+                    "max_gross_exposure_pct_equity": "8.181368403273092342936517235",
+                    "max_gross_exposure_pct_equity_required": "1.0",
+                }
+            ),
+            Decimal("0.116117"),
+        )
+        self.assertEqual(
+            frontier._capital_repair_exposure_scale(
+                {
+                    "min_cash": "-1",
+                    "min_cash_required": "0",
+                }
+            ),
+            Decimal("0.5"),
+        )
+        self.assertEqual(
+            frontier._capital_repair_exposure_scale(
+                {
+                    "max_gross_exposure_pct_equity": "10000000",
+                    "max_gross_exposure_pct_equity_required": "1.0",
+                }
+            ),
+            Decimal("0.000001"),
+        )
+        self.assertEqual(
+            frontier._capital_repair_exposure_scale(
+                {
+                    "max_gross_exposure_pct_equity": "NaN",
+                    "max_gross_exposure_pct_equity_required": "1.0",
+                }
+            ),
+            Decimal("0.75"),
+        )
+        self.assertEqual(
+            frontier._capital_repair_exposure_scale(
+                {
+                    "max_gross_exposure_pct_equity": "8.181368403273092342936517235",
+                    "max_gross_exposure_pct_equity_required": "999999999",
+                    "min_cash": "-234450.4847634027429531207507",
+                    "min_cash_required": "-999999999",
+                },
+                policy_required_max_gross_exposure_pct_equity=Decimal("1.0"),
+                policy_required_min_cash=Decimal("0"),
+            ),
+            Decimal("0.116117"),
+        )
+
+    def test_positive_capital_safe_summary_rejects_non_finite_values(self) -> None:
+        self.assertFalse(
+            frontier._positive_capital_safe_summary(
+                {
+                    "net_per_day": "NaN",
+                    "max_gross_exposure_pct_equity": "0.9",
+                    "min_cash": "10",
+                    "negative_cash_observation_count": "0",
+                }
+            )
+        )
 
     def test_loss_repair_trigger_reason_accepts_suffix_and_daily_summary(
         self,
