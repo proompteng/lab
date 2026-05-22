@@ -196,6 +196,42 @@ def _mapping(value: Any) -> dict[str, Any]:
     return {str(key): item for key, item in mapping.items()}
 
 
+def _runtime_ledger_post_cost_from_rows(
+    rows: Sequence[_NormalizedTcaRow],
+) -> tuple[Decimal | None, Decimal, Decimal, int]:
+    total_net = Decimal("0")
+    total_notional = Decimal("0")
+    sample_count = 0
+    for row in rows:
+        if (
+            not row.post_cost_promotion_eligible
+            or row.post_cost_expectancy_basis
+            != "realized_strategy_pnl_after_explicit_costs"
+            or not row.runtime_ledger_bucket
+            or _string_list(row.runtime_ledger_bucket.get("blockers"))
+        ):
+            continue
+        net_pnl = _optional_decimal(
+            row.runtime_ledger_bucket.get("net_strategy_pnl_after_costs")
+        )
+        filled_notional = _optional_decimal(
+            row.runtime_ledger_bucket.get("filled_notional")
+        )
+        if net_pnl is None or filled_notional is None or filled_notional <= 0:
+            continue
+        total_net += net_pnl
+        total_notional += filled_notional
+        sample_count += 1
+    if sample_count <= 0 or total_notional <= 0:
+        return None, total_net, total_notional, sample_count
+    return (
+        (total_net / total_notional) * Decimal("10000"),
+        total_net,
+        total_notional,
+        sample_count,
+    )
+
+
 def _paper_probation_blocking_reasons(runtime_payload: Mapping[str, Any]) -> list[str]:
     target_metadata = _mapping(runtime_payload.get("target_metadata"))
     if not target_metadata:
@@ -450,6 +486,7 @@ def _runtime_promotion_blocking_reasons(
     total_trade_count: int,
     total_order_count: int,
     total_post_cost_promotion_sample_count: int,
+    runtime_ledger_notional_weighted_sample_count: int,
     total_post_cost_basis_counts: Mapping[str, int],
     average_slippage: Decimal,
     average_post_cost: Decimal,
@@ -474,13 +511,14 @@ def _runtime_promotion_blocking_reasons(
         reasons.append("recent_slippage_budget_exceeded")
     if total_post_cost_promotion_sample_count <= 0:
         reasons.append("post_cost_pnl_basis_missing")
-    if (
-        observed_stage == "live"
-        and sum(
+    if observed_stage == "live" and (
+        sum(
             total_post_cost_basis_counts.get(basis, 0)
             for basis in LIVE_PROMOTION_GRADE_POST_COST_BASES
         )
         <= 0
+        or runtime_ledger_notional_weighted_sample_count
+        < total_post_cost_promotion_sample_count
     ):
         reasons.append("runtime_ledger_pnl_basis_missing")
     if average_post_cost <= Decimal("0"):
@@ -619,12 +657,22 @@ def build_observed_runtime_buckets(
             for row in bucket_tca
             if row.abs_slippage_bps is not None
         ]
-        promotion_post_cost_values = [
-            row.post_cost_expectancy_bps
+        promotion_post_cost_rows = [
+            row
             for row in bucket_tca
             if row.post_cost_expectancy_bps is not None
             and row.post_cost_promotion_eligible
         ]
+        runtime_ledger_post_cost_bps: Decimal | None
+        runtime_ledger_net: Decimal
+        runtime_ledger_notional: Decimal
+        runtime_ledger_sample_count: int
+        (
+            runtime_ledger_post_cost_bps,
+            runtime_ledger_net,
+            runtime_ledger_notional,
+            runtime_ledger_sample_count,
+        ) = _runtime_ledger_post_cost_from_rows(promotion_post_cost_rows)
         basis_counts = dict(
             sorted(
                 Counter(row.post_cost_expectancy_basis for row in bucket_tca).items()
@@ -637,12 +685,22 @@ def build_observed_runtime_buckets(
             avg_abs_slippage_bps = sum(slippage_values) / Decimal(len(slippage_values))
         else:
             avg_abs_slippage_bps = Decimal("0")
-        if promotion_post_cost_values:
+        if runtime_ledger_post_cost_bps is not None:
+            post_cost_expectancy_bps = runtime_ledger_post_cost_bps
+            post_cost_expectancy_aggregation = "runtime_ledger_notional_weighted"
+        elif promotion_post_cost_rows:
             post_cost_expectancy_bps = sum(
-                promotion_post_cost_values, Decimal("0")
-            ) / Decimal(len(promotion_post_cost_values))
+                (
+                    row.post_cost_expectancy_bps
+                    for row in promotion_post_cost_rows
+                    if row.post_cost_expectancy_bps is not None
+                ),
+                Decimal("0"),
+            ) / Decimal(len(promotion_post_cost_rows))
+            post_cost_expectancy_aggregation = "promotion_bps_average"
         else:
             post_cost_expectancy_bps = Decimal("0")
+            post_cost_expectancy_aggregation = "no_promotion_grade_post_cost_rows"
         buckets.append(
             ObservedRuntimeBucket(
                 window_started_at=bucket_start,
@@ -654,7 +712,7 @@ def build_observed_runtime_buckets(
                 decision_alignment_ratio=decision_alignment_ratio,
                 avg_abs_slippage_bps=avg_abs_slippage_bps,
                 post_cost_expectancy_bps=post_cost_expectancy_bps,
-                post_cost_promotion_sample_count=len(promotion_post_cost_values),
+                post_cost_promotion_sample_count=len(promotion_post_cost_rows),
                 post_cost_basis_counts=basis_counts,
                 continuity_ok=continuity_ok,
                 drift_ok=drift_ok,
@@ -668,7 +726,13 @@ def build_observed_runtime_buckets(
                     "order_count": order_count,
                     "tca_row_count": len(bucket_tca),
                     "slippage_sample_count": len(slippage_values),
-                    "post_cost_promotion_sample_count": len(promotion_post_cost_values),
+                    "post_cost_promotion_sample_count": len(promotion_post_cost_rows),
+                    "post_cost_expectancy_aggregation": post_cost_expectancy_aggregation,
+                    "runtime_ledger_notional_weighted_sample_count": runtime_ledger_sample_count,
+                    "runtime_ledger_filled_notional": str(runtime_ledger_notional),
+                    "runtime_ledger_net_strategy_pnl_after_costs": str(
+                        runtime_ledger_net
+                    ),
                     "post_cost_basis_counts": basis_counts,
                     "runtime_ledger_buckets": runtime_ledger_buckets,
                 },
@@ -689,6 +753,39 @@ def _runtime_ledger_bucket_payloads(payload: Mapping[str, Any]) -> list[dict[str
         ]
     single_payload = _mapping(payload.get("runtime_ledger_bucket"))
     return [single_payload] if single_payload else []
+
+
+def _runtime_ledger_post_cost_from_observed_buckets(
+    buckets: Sequence[ObservedRuntimeBucket],
+) -> tuple[Decimal | None, Decimal, Decimal, int]:
+    total_net = Decimal("0")
+    total_notional = Decimal("0")
+    sample_count = 0
+    for bucket in buckets:
+        for ledger_payload in _runtime_ledger_bucket_payloads(bucket.payload_json):
+            if _text(
+                ledger_payload.get("pnl_basis")
+            ) != "realized_strategy_pnl_after_explicit_costs" or _string_list(
+                ledger_payload.get("blockers")
+            ):
+                continue
+            net_pnl = _optional_decimal(
+                ledger_payload.get("net_strategy_pnl_after_costs")
+            )
+            filled_notional = _optional_decimal(ledger_payload.get("filled_notional"))
+            if net_pnl is None or filled_notional is None or filled_notional <= 0:
+                continue
+            total_net += net_pnl
+            total_notional += filled_notional
+            sample_count += 1
+    if sample_count <= 0 or total_notional <= 0:
+        return None, total_net, total_notional, sample_count
+    return (
+        (total_net / total_notional) * Decimal("10000"),
+        total_net,
+        total_notional,
+        sample_count,
+    )
 
 
 def persist_observed_runtime_windows(
@@ -862,6 +959,17 @@ def persist_observed_runtime_windows(
     average_post_cost = (
         (total_post_cost / total_weight) if total_weight > 0 else Decimal("0")
     )
+    (
+        runtime_ledger_average_post_cost,
+        runtime_ledger_net_strategy_pnl_after_costs,
+        runtime_ledger_filled_notional,
+        runtime_ledger_sample_count,
+    ) = _runtime_ledger_post_cost_from_observed_buckets(sorted_buckets)
+    if runtime_ledger_average_post_cost is not None:
+        average_post_cost = runtime_ledger_average_post_cost
+        post_cost_expectancy_aggregation = "runtime_ledger_notional_weighted"
+    else:
+        post_cost_expectancy_aggregation = "promotion_bps_session_weighted_average"
     average_slippage = (
         sum(
             (
@@ -882,6 +990,7 @@ def persist_observed_runtime_windows(
         total_trade_count=total_trade_count,
         total_order_count=total_order_count,
         total_post_cost_promotion_sample_count=total_post_cost_promotion_sample_count,
+        runtime_ledger_notional_weighted_sample_count=runtime_ledger_sample_count,
         total_post_cost_basis_counts=total_post_cost_basis_counts,
         average_slippage=average_slippage,
         average_post_cost=average_post_cost,
@@ -1059,6 +1168,12 @@ def persist_observed_runtime_windows(
                 "order_count": total_order_count,
                 "post_cost_promotion_sample_count": total_post_cost_promotion_sample_count,
                 "post_cost_basis_counts": total_post_cost_basis_counts,
+                "post_cost_expectancy_aggregation": post_cost_expectancy_aggregation,
+                "runtime_ledger_notional_weighted_sample_count": runtime_ledger_sample_count,
+                "runtime_ledger_filled_notional": str(runtime_ledger_filled_notional),
+                "runtime_ledger_net_strategy_pnl_after_costs": str(
+                    runtime_ledger_net_strategy_pnl_after_costs
+                ),
                 "promotion_allowed": promotion_allowed,
                 "promotion_blocking_reasons": promotion_blocking_reasons,
                 "delay_adjusted_depth_stress": delay_depth_stress_summary,
@@ -1089,6 +1204,12 @@ def persist_observed_runtime_windows(
                 "post_cost_basis_counts": total_post_cost_basis_counts,
                 "avg_abs_slippage_bps": str(average_slippage),
                 "avg_post_cost_expectancy_bps": str(average_post_cost),
+                "post_cost_expectancy_aggregation": post_cost_expectancy_aggregation,
+                "runtime_ledger_notional_weighted_sample_count": runtime_ledger_sample_count,
+                "runtime_ledger_filled_notional": str(runtime_ledger_filled_notional),
+                "runtime_ledger_net_strategy_pnl_after_costs": str(
+                    runtime_ledger_net_strategy_pnl_after_costs
+                ),
                 "latest_three_within_budget": latest_three_budget_ok,
                 "promotion_allowed": promotion_allowed,
                 "promotion_blocking_reasons": promotion_blocking_reasons,
@@ -1114,6 +1235,12 @@ def persist_observed_runtime_windows(
         "post_cost_basis_counts": total_post_cost_basis_counts,
         "avg_abs_slippage_bps": str(average_slippage),
         "avg_post_cost_expectancy_bps": str(average_post_cost),
+        "post_cost_expectancy_aggregation": post_cost_expectancy_aggregation,
+        "runtime_ledger_notional_weighted_sample_count": runtime_ledger_sample_count,
+        "runtime_ledger_filled_notional": str(runtime_ledger_filled_notional),
+        "runtime_ledger_net_strategy_pnl_after_costs": str(
+            runtime_ledger_net_strategy_pnl_after_costs
+        ),
         "latest_three_within_budget": latest_three_budget_ok,
         "slippage_budget_bps": str(budget),
         "promotion_allowed": promotion_allowed,

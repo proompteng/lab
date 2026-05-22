@@ -124,6 +124,68 @@ class TestRuntimeWindowImport(TestCase):
             {"simulation_report_net_pnl": 1},
         )
 
+    def test_build_observed_runtime_buckets_weights_runtime_ledger_by_notional(
+        self,
+    ) -> None:
+        buckets = build_observed_runtime_buckets(
+            bucket_ranges=[
+                (
+                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    6,
+                )
+            ],
+            decision_times=[
+                datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+            ],
+            execution_times=[
+                datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                datetime(2026, 3, 6, 14, 41, tzinfo=timezone.utc),
+            ],
+            tca_rows=[
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("1"),
+                    "post_cost_expectancy_bps": Decimal("100"),
+                    "runtime_ledger_bucket": {
+                        "filled_notional": "100",
+                        "net_strategy_pnl_after_costs": "1",
+                        "blockers": [],
+                    },
+                    **_runtime_pnl_basis(),
+                },
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 41, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("1"),
+                    "post_cost_expectancy_bps": Decimal("1"),
+                    "runtime_ledger_bucket": {
+                        "filled_notional": "10000",
+                        "net_strategy_pnl_after_costs": "1",
+                        "blockers": [],
+                    },
+                    **_runtime_pnl_basis(),
+                },
+            ],
+            continuity_ok=True,
+            drift_ok=True,
+            dependency_quorum_decision="allow",
+        )
+
+        expected = (Decimal("2") / Decimal("10100")) * Decimal("10000")
+        self.assertEqual(buckets[0].post_cost_expectancy_bps, expected)
+        self.assertEqual(
+            buckets[0].payload_json["post_cost_expectancy_aggregation"],
+            "runtime_ledger_notional_weighted",
+        )
+        self.assertEqual(
+            buckets[0].payload_json["runtime_ledger_filled_notional"], "10100"
+        )
+        self.assertEqual(
+            buckets[0].payload_json["runtime_ledger_net_strategy_pnl_after_costs"],
+            "2",
+        )
+
     def test_runtime_observation_parsers_handle_edge_inputs(self) -> None:
         parsed = _parse_observation_datetime(
             datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
@@ -337,11 +399,99 @@ class TestRuntimeWindowImport(TestCase):
             summary["promotion_blocking_reasons"],
         )
         self.assertIn(
-            "post_cost_expectancy_below_manifest_threshold",
+            "runtime_ledger_pnl_basis_missing",
             summary["promotion_blocking_reasons"],
         )
         self.assertEqual(decisions[0].allowed, False)
         self.assertEqual(decisions[0].state, "shadow")
+
+    def test_persist_observed_runtime_windows_uses_notional_weighted_ledger_summary(
+        self,
+    ) -> None:
+        buckets = build_observed_runtime_buckets(
+            bucket_ranges=[
+                (
+                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    6,
+                ),
+                (
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 30, tzinfo=timezone.utc),
+                    6,
+                ),
+            ],
+            decision_times=[
+                datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                datetime(2026, 3, 6, 15, 5, tzinfo=timezone.utc),
+            ],
+            execution_times=[
+                datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                datetime(2026, 3, 6, 15, 6, tzinfo=timezone.utc),
+            ],
+            tca_rows=[
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("1"),
+                    "post_cost_expectancy_bps": Decimal("100"),
+                    "runtime_ledger_bucket": {
+                        "filled_notional": "100",
+                        "net_strategy_pnl_after_costs": "1",
+                        "pnl_basis": "realized_strategy_pnl_after_explicit_costs",
+                        "blockers": [],
+                    },
+                    **_runtime_pnl_basis(),
+                },
+                {
+                    "computed_at": datetime(2026, 3, 6, 15, 6, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("1"),
+                    "post_cost_expectancy_bps": Decimal("1"),
+                    "runtime_ledger_bucket": {
+                        "filled_notional": "10000",
+                        "net_strategy_pnl_after_costs": "1",
+                        "pnl_basis": "realized_strategy_pnl_after_explicit_costs",
+                        "blockers": [],
+                    },
+                    **_runtime_pnl_basis(),
+                },
+            ],
+            continuity_ok=True,
+            drift_ok=True,
+            dependency_quorum_decision="allow",
+        )
+
+        with self.session_local() as session:
+            summary = persist_observed_runtime_windows(
+                session=session,
+                run_id="import-live-weighted",
+                candidate_id="cand-weighted",
+                hypothesis_id="H-CONT-01",
+                observed_stage="live",
+                strategy_family="intraday_continuation",
+                source_manifest_ref="config/trading/hypotheses/h-cont-01.json",
+                buckets=buckets,
+                runtime_observation_payload={
+                    "dataset_snapshot_ref": "torghut-runtime-window-weighted",
+                    "source_kind": "live_runtime_observed",
+                },
+            )
+            session.commit()
+
+            decision = session.execute(select(StrategyPromotionDecision)).scalar_one()
+
+        expected = (Decimal("2") / Decimal("10100")) * Decimal("10000")
+        self.assertEqual(summary["avg_post_cost_expectancy_bps"], str(expected))
+        self.assertEqual(
+            summary["post_cost_expectancy_aggregation"],
+            "runtime_ledger_notional_weighted",
+        )
+        assert decision.payload_json is not None
+        self.assertEqual(
+            decision.payload_json["avg_post_cost_expectancy_bps"], str(expected)
+        )
+        self.assertEqual(
+            decision.payload_json["runtime_ledger_filled_notional"], "10100"
+        )
 
     def test_persist_observed_runtime_windows_does_not_promote_bucket_early(
         self,
@@ -372,12 +522,24 @@ class TestRuntimeWindowImport(TestCase):
                     "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
                     "abs_slippage_bps": Decimal("4"),
                     "post_cost_expectancy_bps": Decimal("8"),
+                    "runtime_ledger_bucket": {
+                        "filled_notional": "1000",
+                        "net_strategy_pnl_after_costs": "0.8",
+                        "pnl_basis": "realized_strategy_pnl_after_explicit_costs",
+                        "blockers": [],
+                    },
                     **_runtime_pnl_basis(),
                 },
                 {
                     "computed_at": datetime(2026, 3, 6, 15, 6, tzinfo=timezone.utc),
                     "abs_slippage_bps": Decimal("5"),
                     "post_cost_expectancy_bps": Decimal("8"),
+                    "runtime_ledger_bucket": {
+                        "filled_notional": "1000",
+                        "net_strategy_pnl_after_costs": "0.8",
+                        "pnl_basis": "realized_strategy_pnl_after_explicit_costs",
+                        "blockers": [],
+                    },
                     **_runtime_pnl_basis(),
                 },
             ],
