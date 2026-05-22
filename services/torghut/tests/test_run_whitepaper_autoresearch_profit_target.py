@@ -3928,25 +3928,30 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             materialize_signal_tape(
                 rows=[
                     SignalEnvelope(
-                        event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
-                        symbol="NVDA",
+                        event_ts=datetime(2026, 2, day, 15, 30, tzinfo=timezone.utc),
+                        symbol=symbol,
                         timeframe="1Sec",
-                        seq=1,
+                        seq=seq,
                         source="ta",
-                        payload={"price": Decimal("100"), "spread_bps": Decimal("2")},
-                    ),
-                    SignalEnvelope(
-                        event_ts=datetime(2026, 2, 23, 15, 31, tzinfo=timezone.utc),
-                        symbol="NVDA",
-                        timeframe="1Sec",
-                        seq=2,
-                        source="ta",
-                        payload={"price": Decimal("101"), "spread_bps": Decimal("2")},
-                    ),
+                        payload={
+                            "price": Decimal(price),
+                            "spread_bps": Decimal("2"),
+                        },
+                    )
+                    for seq, (day, symbol, price) in enumerate(
+                        (
+                            (23, "NVDA", "100"),
+                            (24, "NVDA", "101"),
+                            (25, "NVDA", "102"),
+                            (26, "NVDA", "103"),
+                            (27, "NVDA", "104"),
+                        ),
+                        start=1,
+                    )
                 ],
                 tape_path=tape_path,
                 dataset_snapshot_ref="preview-snapshot",
-                symbols=("NVDA", "AAPL"),
+                symbols=("NVDA",),
                 start_date=date(2026, 2, 23),
                 end_date=date(2026, 2, 27),
                 source_query_digest=build_source_query_digest({"query": "preview"}),
@@ -3958,7 +3963,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             args.selection_only = True
             args.replay_tape_path = tape_path
             args.replay_tape_preview_top_k = 1
-            args.symbols = "NVDA,AAPL"
+            args.symbols = "NVDA"
 
             payload = runner.run_whitepaper_autoresearch_profit_target(args)
 
@@ -4154,13 +4159,14 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             materialize_signal_tape(
                 rows=[
                     SignalEnvelope(
-                        event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
+                        event_ts=datetime(2026, 2, day, 15, 30, tzinfo=timezone.utc),
                         symbol="NVDA",
                         timeframe="1Sec",
-                        seq=1,
+                        seq=seq,
                         source="ta",
                         payload={"price": Decimal("100")},
                     )
+                    for seq, day in enumerate(range(23, 28), start=1)
                 ],
                 tape_path=tape_path,
                 dataset_snapshot_ref="preview-snapshot",

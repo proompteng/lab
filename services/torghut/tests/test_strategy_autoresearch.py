@@ -1816,7 +1816,15 @@ class TestStrategyAutoresearch(TestCase):
                     source="ta",
                     timeframe="1Sec",
                     payload={"price": "180.10"},
-                )
+                ),
+                SignalEnvelope(
+                    event_ts=datetime(2026, 3, 20, 13, 31, tzinfo=UTC),
+                    symbol="NVDA",
+                    seq=2,
+                    source="ta",
+                    timeframe="1Sec",
+                    payload={"price": "900.10"},
+                ),
             ]
 
             args = Namespace(
@@ -1941,14 +1949,14 @@ class TestStrategyAutoresearch(TestCase):
                 (run_root / "mlx-snapshot-manifest.json").read_text(encoding="utf-8")
             )
             self.assertEqual(manifest["symbols"], ["AMAT", "NVDA"])
-            self.assertEqual(manifest["row_counts"]["signal_row_count"], 1)
+            self.assertEqual(manifest["row_counts"]["signal_row_count"], 2)
             self.assertEqual(
                 manifest["tape_freshness_receipts"][0]["status"],
                 "materialized",
             )
             self.assertEqual(
                 manifest["tape_freshness_receipts"][0]["row_count"],
-                1,
+                2,
             )
             self.assertEqual(
                 manifest["tensor_bundle_paths"]["signal_rows_jsonl"],
