@@ -68,6 +68,7 @@ REGULAR_OPEN_UTC = time(hour=13, minute=30)
 REGULAR_CLOSE_UTC = time(hour=20, minute=0)
 DEFAULT_CHUNK_MINUTES = 10
 DEFAULT_START_EQUITY = Decimal("31590.02")
+DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS = 30
 DEFAULT_PROGRESS_LOG_INTERVAL_SECONDS = 15
 logger = logging.getLogger(__name__)
 _SHARED_POSITION_OWNER = "__shared__"
@@ -132,6 +133,7 @@ class ReplayConfig:
     max_executable_spread_bps: Decimal = DEFAULT_MAX_EXECUTABLE_SPREAD_BPS
     max_quote_mid_jump_bps: Decimal = DEFAULT_MAX_QUOTE_MID_JUMP_BPS
     max_jump_with_wide_spread_bps: Decimal = DEFAULT_MAX_JUMP_WITH_WIDE_SPREAD_BPS
+    clickhouse_query_timeout_seconds: int = DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS
 
 
 @dataclass
@@ -500,6 +502,17 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--start-date", default="2026-03-23")
     parser.add_argument("--end-date", default="2026-03-27")
     parser.add_argument("--chunk-minutes", type=int, default=DEFAULT_CHUNK_MINUTES)
+    parser.add_argument(
+        "--clickhouse-query-timeout-seconds",
+        type=int,
+        default=int(
+            os.environ.get(
+                "TA_CLICKHOUSE_QUERY_TIMEOUT_SECONDS",
+                str(DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS),
+            )
+        ),
+        help="Per ClickHouse HTTP or kubectl query timeout. Keeps bounded refreshes from hanging.",
+    )
     parser.add_argument("--start-equity", default=str(DEFAULT_START_EQUITY))
     parser.add_argument(
         "--symbols",
@@ -624,13 +637,16 @@ def _http_query(
     username: str | None,
     password: str | None,
     query: str,
+    timeout_seconds: int = DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS,
 ) -> str:
+    timeout_seconds = max(1, int(timeout_seconds))
     if url.startswith("kubectl://"):
         return _kubectl_clickhouse_query(
             url=url,
             username=username,
             password=password,
             query=query,
+            timeout_seconds=timeout_seconds,
         )
     body = query.encode("utf-8")
     last_error: Exception | None = None
@@ -640,7 +656,7 @@ def _http_query(
             credentials = f"{username}:{password or ''}".encode("utf-8")
             req.add_header("Authorization", "Basic " + _b64(credentials))
         try:
-            with request.urlopen(req, timeout=120) as resp:
+            with request.urlopen(req, timeout=timeout_seconds) as resp:
                 return resp.read().decode("utf-8")
         except error.HTTPError as exc:
             payload = exc.read().decode("utf-8", errors="replace")
@@ -663,6 +679,7 @@ def _kubectl_clickhouse_query(
     username: str | None,
     password: str | None,
     query: str,
+    timeout_seconds: int = DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS,
 ) -> str:
     target = parse.urlparse(url)
     context = parse.unquote(target.netloc).strip()
@@ -688,7 +705,18 @@ def _kubectl_clickhouse_query(
     if password:
         command.extend(["--password", password])
     command.extend(["--query", query])
-    result = subprocess.run(command, check=False, capture_output=True, text=True)
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=max(1, int(timeout_seconds)),
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"clickhouse_kubectl_query_timeout:{max(1, int(timeout_seconds))}s"
+        ) from exc
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
         raise RuntimeError(f"clickhouse_kubectl_query_failed: {detail[:400]}")
@@ -742,6 +770,7 @@ def _iter_signal_rows(config: ReplayConfig) -> Iterable[SignalEnvelope]:
                 http_url=config.clickhouse_http_url,
                 username=config.clickhouse_username,
                 password=config.clickhouse_password,
+                timeout_seconds=config.clickhouse_query_timeout_seconds,
                 chunk_start=chunk_start,
                 chunk_end=chunk_end,
                 symbols=config.symbols,
@@ -800,6 +829,7 @@ def _fetch_chunk(
     http_url: str,
     username: str | None,
     password: str | None,
+    timeout_seconds: int = DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS,
     chunk_start: datetime,
     chunk_end: datetime,
     symbols: tuple[str, ...] = (),
@@ -848,6 +878,7 @@ FORMAT TSVRaw
         url=http_url,
         username=username,
         password=password,
+        timeout_seconds=timeout_seconds,
         query=query,
     )
     reader = csv.reader(raw.splitlines(), delimiter="\t")
@@ -3518,6 +3549,16 @@ def main() -> None:
         max_executable_spread_bps=Decimal(str(args.max_executable_spread_bps)),
         max_quote_mid_jump_bps=Decimal(str(args.max_quote_mid_jump_bps)),
         max_jump_with_wide_spread_bps=Decimal(str(args.max_jump_with_wide_spread_bps)),
+        clickhouse_query_timeout_seconds=max(
+            1,
+            int(
+                getattr(
+                    args,
+                    "clickhouse_query_timeout_seconds",
+                    DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS,
+                )
+            ),
+        ),
     )
     payload = run_replay(config)
     if args.trace_output:

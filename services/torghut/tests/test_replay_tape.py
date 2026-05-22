@@ -528,12 +528,15 @@ class TestMaterializeReplayTapeCli(TestCase):
                     " nvda, META ",
                     "--source-table-version",
                     "ta_signals=v1",
+                    "--clickhouse-query-timeout-seconds",
+                    "9",
                 ],
             ):
                 args = materialize_cli._parse_args()
 
         symbols = materialize_cli._parse_symbols(str(args.symbols))
         self.assertEqual(symbols, ("NVDA", "META"))
+        self.assertEqual(args.clickhouse_query_timeout_seconds, 9)
         self.assertFalse(args.allow_incomplete_coverage)
         self.assertEqual(
             materialize_cli._parse_source_table_versions(args.source_table_version),
