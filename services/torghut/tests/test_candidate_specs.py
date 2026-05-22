@@ -610,6 +610,18 @@ class TestCandidateSpecs(TestCase):
             "60",
         )
         self.assertTrue(specs[0].hard_vetoes["required_time_to_fill_quantiles"])
+        mechanism_overlays = candidate_specs_module._mechanism_overlays_for_card(
+            cards[0]
+        )
+        queue_contract = next(
+            contract
+            for contract in mechanism_overlays["feature_contract"]["mechanism_overlays"]
+            if contract["overlay_id"] == "queue_position_survival_fill_curve"
+        )
+        self.assertEqual(
+            queue_contract["rank_metric"],
+            "post_cost_net_pnl_after_queue_position_survival_fill_stress",
+        )
         self.assertTrue(
             specs[0].promotion_contract["requires_queue_position_survival_fill_curve"]
         )

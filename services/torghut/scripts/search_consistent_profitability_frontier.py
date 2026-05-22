@@ -2361,6 +2361,9 @@ def _replay_stress_metrics(
             queue_position_nonfill_opportunity_cost_bps
         ),
         "queue_position_survival_stress_net_pnl_per_day": str(delay_depth_net_per_day),
+        "post_cost_net_pnl_after_queue_position_survival_fill_stress": str(
+            delay_depth_net_per_day
+        ),
         "queue_position_survival_source_marker": (
             "queue_position_survival_fill_probability_arxiv_2512_05734_2025"
         ),
@@ -4984,6 +4987,15 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                         ),
                         "queue_position_survival_stress_net_pnl_per_day": str(
                             full_window_summary.get(
+                                "queue_position_survival_stress_net_pnl_per_day"
+                            )
+                            or "0"
+                        ),
+                        "post_cost_net_pnl_after_queue_position_survival_fill_stress": str(
+                            full_window_summary.get(
+                                "post_cost_net_pnl_after_queue_position_survival_fill_stress"
+                            )
+                            or full_window_summary.get(
                                 "queue_position_survival_stress_net_pnl_per_day"
                             )
                             or "0"
