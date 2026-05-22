@@ -29,7 +29,7 @@ afterEach(() => {
 })
 
 describe('Agents control-plane runtime', () => {
-  it('serves health from the Agents runtime without Jangar route modules', async () => {
+  it('serves health from the Agents runtime without external route modules', async () => {
     process.env.AGENTS_CONTROLLER_ENABLED = '0'
     const runtime = await createAgentsControlPlaneRuntime()
 

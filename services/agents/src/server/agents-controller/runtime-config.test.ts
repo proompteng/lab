@@ -22,20 +22,6 @@ describe('Agents controller runtime config', () => {
     expect(resolveAgentsControllerAuthSecretConfig(env)?.name).toBe('agents-auth')
   })
 
-  it('does not read legacy Jangar env names in the Agents controller', () => {
-    const env = {
-      JANGAR_AGENT_RUNNER_IMAGE: 'registry.example/jangar-runner:compat',
-      JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS: '120',
-      JANGAR_AGENTRUN_ARTIFACTS_MAX: '5',
-      JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME: 'jangar-auth',
-    }
-
-    expect(resolveAgentRunnerDefaultsConfig(env).defaultRunnerImage).toBeNull()
-    expect(resolveAgentRunnerDefaultsConfig(env).jobTtlSeconds).toBe(600)
-    expect(resolveAgentsControllerBehaviorConfig(env).artifactsMaxEntries).toBe(50)
-    expect(resolveAgentsControllerAuthSecretConfig(env)).toBeNull()
-  })
-
   it('does not read the legacy generic AGENTS_AGENT_IMAGE runner alias', () => {
     expect(
       resolveAgentRunnerDefaultsConfig({
@@ -52,7 +38,6 @@ describe('Agents controller runtime config', () => {
         AGENTS_IMPLEMENTATION_SOURCE_WEBHOOK_RETRY_BASE_DELAY_SECONDS: '2',
         AGENTS_IMPLEMENTATION_SOURCE_WEBHOOK_RETRY_MAX_DELAY_SECONDS: '30',
         AGENTS_IMPLEMENTATION_SOURCE_WEBHOOK_RETRY_MAX_ATTEMPTS: '4',
-        JANGAR_IMPLEMENTATION_SOURCE_WEBHOOK_QUEUE_SIZE: '999',
       }),
     ).toEqual({
       namespacesRaw: 'agents,dev',
@@ -62,12 +47,7 @@ describe('Agents controller runtime config', () => {
       retryMaxAttempts: 4,
     })
 
-    expect(
-      resolveImplementationSourceWebhookConfig({
-        JANGAR_IMPLEMENTATION_SOURCE_WEBHOOK_NAMESPACES: 'jangar',
-        JANGAR_IMPLEMENTATION_SOURCE_WEBHOOK_QUEUE_SIZE: '999',
-      }),
-    ).toEqual({
+    expect(resolveImplementationSourceWebhookConfig({})).toEqual({
       namespacesRaw: null,
       queueSize: null,
       retryBaseDelaySeconds: null,

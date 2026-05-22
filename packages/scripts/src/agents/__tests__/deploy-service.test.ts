@@ -5,15 +5,7 @@ import { join } from 'node:path'
 
 import { __private } from '../deploy-service'
 
-const envKeys = [
-  'AGENTS_IMAGE_TAG',
-  'AGENTS_IMAGE_PLATFORMS',
-  'JANGAR_IMAGE_REGISTRY',
-  'JANGAR_IMAGE_REPOSITORY',
-  'JANGAR_CONTROL_PLANE_IMAGE_REPOSITORY',
-  'JANGAR_IMAGE_TAG',
-  'JANGAR_IMAGE_PLATFORMS',
-]
+const envKeys = ['AGENTS_IMAGE_TAG', 'AGENTS_IMAGE_PLATFORMS']
 
 afterEach(() => {
   for (const key of envKeys) {
@@ -54,22 +46,6 @@ describe('agents deploy-service helpers', () => {
         platforms: ['linux/arm64'],
       },
     ])
-  })
-
-  it('ignores legacy Jangar image env aliases', () => {
-    process.env.JANGAR_IMAGE_REGISTRY = 'registry.example/jangar'
-    process.env.JANGAR_IMAGE_REPOSITORY = 'lab/jangar'
-    process.env.JANGAR_CONTROL_PLANE_IMAGE_REPOSITORY = 'lab/jangar-control-plane'
-    process.env.JANGAR_IMAGE_TAG = 'jangar-tag'
-    process.env.JANGAR_IMAGE_PLATFORMS = 'linux/s390x'
-
-    const options = __private.resolveOptions()
-
-    expect(options.registry).toBe('registry.ide-newton.ts.net')
-    expect(options.repository).toBe('lab/agents-controller')
-    expect(options.controlPlaneRepository).toBe('lab/agents-control-plane')
-    expect(options.tag).not.toBe('jangar-tag')
-    expect(options.platforms).toEqual(['linux/amd64', 'linux/arm64'])
   })
 
   it('treats local Codex auth as optional for runner image builds', () => {

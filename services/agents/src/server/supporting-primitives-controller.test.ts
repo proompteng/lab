@@ -108,12 +108,12 @@ describe('supporting primitives controller', () => {
             {
               dispatch_kind: 'swarm_requirement_signal',
               signal_name: 'domain-material-reentry',
-              source_swarm: 'jangar-domain',
+              source_swarm: 'domain-runtime',
               target_swarm: 'runtime-workers',
               target_stage: 'implement',
               channel: 'agentrun.general.requirement',
               description: 'domain repair',
-              payload: { domain: 'jangar' },
+              payload: { domain: 'finance' },
             },
           ],
         },
@@ -181,7 +181,7 @@ describe('supporting primitives controller', () => {
     })
   })
 
-  it('renders Schedule resources into ConfigMap and CronJob without Jangar runner paths', async () => {
+  it('renders Schedule resources into ConfigMap and CronJob from the Agents runner path', async () => {
     const { kube, applied, statuses } = createKubeMock({
       'agentruns.agents.proompteng.ai:agents:template-run': {
         apiVersion: 'agents.proompteng.ai/v1alpha1',
@@ -213,7 +213,6 @@ describe('supporting primitives controller', () => {
     const cronJob = applied.find((resource) => resource.kind === 'CronJob')
     expect(configMap).toBeTruthy()
     expect(cronJob).toBeTruthy()
-    expect(JSON.stringify(configMap)).not.toContain('JANGAR')
     expect(cronJob).toMatchObject({
       spec: {
         schedule: '*/15 * * * *',

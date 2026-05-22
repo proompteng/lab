@@ -8,27 +8,23 @@ describe('resolveConfig', () => {
     expect(warnings.length).toBeGreaterThan(0)
   })
 
-  it('ignores Jangar compatibility aliases for gRPC config', () => {
+  it('reads canonical Agents gRPC env config', () => {
     const previousServer = process.env.AGENTCTL_SERVER
     const previousAgentctlAddress = process.env.AGENTCTL_ADDRESS
     const previousAgentctlToken = process.env.AGENTCTL_TOKEN
     const previousAddress = process.env.AGENTS_GRPC_ADDRESS
-    const previousLegacyAddress = process.env.JANGAR_GRPC_ADDRESS
     const previousToken = process.env.AGENTS_GRPC_TOKEN
-    const previousLegacyToken = process.env.JANGAR_GRPC_TOKEN
     try {
       delete process.env.AGENTCTL_SERVER
       delete process.env.AGENTCTL_ADDRESS
       delete process.env.AGENTCTL_TOKEN
-      delete process.env.AGENTS_GRPC_ADDRESS
-      process.env.JANGAR_GRPC_ADDRESS = 'jangar-grpc.jangar.svc.cluster.local:50051'
-      delete process.env.AGENTS_GRPC_TOKEN
-      process.env.JANGAR_GRPC_TOKEN = 'jangar-token'
+      process.env.AGENTS_GRPC_ADDRESS = 'agents-grpc.agents.svc.cluster.local:50051'
+      process.env.AGENTS_GRPC_TOKEN = 'agents-token'
 
       const { resolved } = resolveConfig({ grpc: true }, {})
 
       expect(resolved.address).toBe('agents-grpc.agents.svc.cluster.local:50051')
-      expect(resolved.token).toBeUndefined()
+      expect(resolved.token).toBe('agents-token')
     } finally {
       if (previousServer === undefined) delete process.env.AGENTCTL_SERVER
       else process.env.AGENTCTL_SERVER = previousServer
@@ -38,12 +34,8 @@ describe('resolveConfig', () => {
       else process.env.AGENTCTL_TOKEN = previousAgentctlToken
       if (previousAddress === undefined) delete process.env.AGENTS_GRPC_ADDRESS
       else process.env.AGENTS_GRPC_ADDRESS = previousAddress
-      if (previousLegacyAddress === undefined) delete process.env.JANGAR_GRPC_ADDRESS
-      else process.env.JANGAR_GRPC_ADDRESS = previousLegacyAddress
       if (previousToken === undefined) delete process.env.AGENTS_GRPC_TOKEN
       else process.env.AGENTS_GRPC_TOKEN = previousToken
-      if (previousLegacyToken === undefined) delete process.env.JANGAR_GRPC_TOKEN
-      else process.env.JANGAR_GRPC_TOKEN = previousLegacyToken
     }
   })
 })

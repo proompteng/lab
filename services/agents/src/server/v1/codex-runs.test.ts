@@ -97,7 +97,7 @@ describe('Codex runs v1 API', () => {
     expect(issuesResponse.status).toBe(200)
   })
 
-  it('serves run lookup APIs used by Jangar compatibility routes', async () => {
+  it('serves run lookup APIs used by compatibility routes', async () => {
     const run = { id: 'run-1', repository: 'owner/repo' }
     const store = createStore({
       getRunById: vi.fn(async () => run),
