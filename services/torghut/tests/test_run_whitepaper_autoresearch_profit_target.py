@@ -4017,21 +4017,14 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             args.symbols = "NVDA"
             rows = [
                 SignalEnvelope(
-                    event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
+                    event_ts=datetime(2026, 2, day, 15, 30, tzinfo=timezone.utc),
                     symbol="NVDA",
                     timeframe="1Sec",
-                    seq=1,
+                    seq=seq,
                     source="ta",
                     payload={"price": Decimal("100"), "spread": Decimal("0.01")},
-                ),
-                SignalEnvelope(
-                    event_ts=datetime(2026, 2, 23, 15, 31, tzinfo=timezone.utc),
-                    symbol="NVDA",
-                    timeframe="1Sec",
-                    seq=2,
-                    source="ta",
-                    payload={"price": Decimal("101"), "spread": Decimal("0.01")},
-                ),
+                )
+                for seq, day in enumerate(range(23, 28), start=1)
             ]
 
             with patch.object(
@@ -4053,11 +4046,51 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 output_dir / "replay-tape.jsonl.manifest.json",
             )
             self.assertEqual(receipt["status"], "materialized")
-            self.assertEqual(receipt["row_count"], 2)
+            self.assertEqual(receipt["row_count"], 5)
             self.assertEqual(receipt["row_symbols"], ["NVDA"])
             self.assertTrue((output_dir / "replay-tape-receipt.json").exists())
             self.assertEqual(tape.manifest.dataset_snapshot_ref, "epoch-materialized")
-            self.assertEqual(tape.manifest.row_count, 2)
+            self.assertEqual(tape.manifest.row_count, 5)
+            self.assertEqual(tape.manifest.missing_trading_days, ())
+
+    def test_materialize_replay_tape_fails_closed_on_missing_days(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output_dir = root / "epoch"
+            output_dir.mkdir()
+            strategy_configmap = root / "strategy-configmap.yaml"
+            strategy_configmap.write_text("{}", encoding="utf-8")
+            args = self._args(output_dir)
+            args.strategy_configmap = strategy_configmap
+            args.replay_mode = "real"
+            args.materialize_replay_tape = True
+            args.symbols = "NVDA"
+            rows = [
+                SignalEnvelope(
+                    event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
+                    symbol="NVDA",
+                    timeframe="1Sec",
+                    seq=1,
+                    source="ta",
+                    payload={"price": Decimal("100"), "spread": Decimal("0.01")},
+                )
+            ]
+
+            with patch.object(
+                runner.replay_mod, "_iter_signal_rows", return_value=rows
+            ):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "replay_tape_incomplete_coverage:missing_days=2026-02-24,2026-02-25,2026-02-26,2026-02-27",
+                ):
+                    runner._maybe_materialize_epoch_replay_tape(
+                        args=args,
+                        output_dir=output_dir,
+                        epoch_id="epoch-materialized",
+                    )
+
+            self.assertFalse((output_dir / "replay-tape.jsonl").exists())
+            self.assertFalse((output_dir / "replay-tape.jsonl.manifest.json").exists())
 
     def test_materialize_replay_tape_skips_provided_tape_and_fails_closed(
         self,

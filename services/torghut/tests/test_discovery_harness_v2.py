@@ -222,7 +222,7 @@ class TestDiscoveryHarnessV2(TestCase):
             receipt.to_payload()["witnesses"][0]["payload"]["latest_observed_day"],
             "2026-04-04",
         )
-        with self.assertRaisesRegex(ValueError, "stale_tape"):
+        with self.assertRaisesRegex(ValueError, "stale_tape:.*missing_days=2026-04-07"):
             ensure_fresh_snapshot(receipt, allow_stale_tape=False)
 
     def test_dataset_snapshot_receipt_handles_empty_latest_days_and_override(

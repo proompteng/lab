@@ -80,6 +80,30 @@ class TestReplayTape(TestCase):
             tape = load_replay_tape(tape_path)
 
         self.assertEqual(tape.manifest.row_count, 2)
+        self.assertEqual(
+            tape.manifest.requested_trading_days,
+            (date(2026, 3, 26), date(2026, 3, 27)),
+        )
+        self.assertEqual(
+            tape.manifest.observed_trading_days,
+            (date(2026, 3, 26), date(2026, 3, 27)),
+        )
+        self.assertEqual(tape.manifest.missing_trading_days, ())
+        self.assertEqual(
+            tape.manifest.row_count_by_trading_day,
+            {"2026-03-26": 1, "2026-03-27": 1},
+        )
+        self.assertEqual(
+            tape.manifest.missing_symbol_trading_days,
+            ("AAPL:2026-03-26", "META:2026-03-27"),
+        )
+        self.assertEqual(
+            tape.manifest.row_count_by_symbol_trading_day,
+            {
+                "AAPL": {"2026-03-27": 1},
+                "META": {"2026-03-26": 1},
+            },
+        )
         self.assertEqual([row.symbol for row in tape.rows], ["META", "AAPL"])
         self.assertEqual(tape.rows[0].payload["price"], Decimal("100.25"))
         self.assertEqual(tape.rows[0].payload["nested"]["label"], "keep-string")
@@ -164,6 +188,8 @@ class TestReplayTape(TestCase):
         self.assertEqual(manifest.artifact_refs, {})
         self.assertEqual(manifest.source_table_versions, {})
         self.assertEqual(manifest.start_ts.tzinfo, timezone.utc)
+        self.assertEqual(manifest.missing_symbol_trading_days, ())
+        self.assertEqual(manifest.row_count_by_symbol_trading_day, {})
 
     def test_load_replay_tape_rejects_digest_and_row_count_mismatches(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -259,6 +285,121 @@ class TestReplayTape(TestCase):
                 symbols=("AAPL",),
             )
 
+    def test_manifest_records_and_validates_missing_trading_days(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            manifest = materialize_signal_tape(
+                rows=[self._signal(day=27, seq=1, symbol="META")],
+                tape_path=Path(tmpdir) / "tape.jsonl",
+                dataset_snapshot_ref="snapshot-a",
+                symbols=("META",),
+                start_date=date(2026, 3, 26),
+                end_date=date(2026, 3, 27),
+                source_query_digest=build_source_query_digest({"window": "a"}),
+            )
+
+        self.assertEqual(
+            manifest.requested_trading_days,
+            (date(2026, 3, 26), date(2026, 3, 27)),
+        )
+        self.assertEqual(manifest.observed_trading_days, (date(2026, 3, 27),))
+        self.assertEqual(manifest.missing_trading_days, (date(2026, 3, 26),))
+        self.assertEqual(manifest.to_payload()["coverage_status"], "missing_days")
+
+        with self.assertRaisesRegex(ValueError, "trading_days_missing:2026-03-26"):
+            validate_tape_freshness(
+                manifest,
+                start_date=date(2026, 3, 26),
+                end_date=date(2026, 3, 27),
+                symbols=("META",),
+            )
+
+        receipt = validate_tape_freshness(
+            manifest,
+            start_date=date(2026, 3, 26),
+            end_date=date(2026, 3, 27),
+            symbols=("META",),
+            allow_stale_tape=True,
+        )
+        self.assertEqual(receipt["status"], "stale_override")
+        self.assertEqual(receipt["missing_trading_days"], ["2026-03-26"])
+
+    def test_manifest_records_and_validates_missing_symbol_trading_days(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            manifest = materialize_signal_tape(
+                rows=[
+                    self._signal(day=26, seq=1, symbol="META"),
+                    self._signal(day=27, seq=2, symbol="META"),
+                    self._signal(day=26, seq=3, symbol="AAPL"),
+                ],
+                tape_path=Path(tmpdir) / "tape.jsonl",
+                dataset_snapshot_ref="snapshot-a",
+                symbols=("META", "AAPL"),
+                start_date=date(2026, 3, 26),
+                end_date=date(2026, 3, 27),
+                source_query_digest=build_source_query_digest({"window": "a"}),
+            )
+
+        self.assertEqual(manifest.missing_trading_days, ())
+        self.assertEqual(
+            manifest.missing_symbol_trading_days,
+            ("AAPL:2026-03-27",),
+        )
+        self.assertEqual(
+            manifest.to_payload()["coverage_status"], "missing_symbol_days"
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "symbol_trading_days_missing:AAPL:2026-03-27",
+        ):
+            validate_tape_freshness(
+                manifest,
+                start_date=date(2026, 3, 26),
+                end_date=date(2026, 3, 27),
+                symbols=("META", "AAPL"),
+            )
+
+        receipt = validate_tape_freshness(
+            manifest,
+            start_date=date(2026, 3, 26),
+            end_date=date(2026, 3, 27),
+            symbols=("AAPL",),
+            allow_stale_tape=True,
+        )
+        self.assertEqual(receipt["status"], "stale_override")
+        self.assertEqual(receipt["coverage_status"], "missing_symbol_days")
+        self.assertEqual(
+            receipt["missing_symbol_trading_days"],
+            ["AAPL:2026-03-27"],
+        )
+
+    def test_materialize_tape_requires_symbol_day_coverage_when_strict(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            with self.assertRaisesRegex(
+                ValueError,
+                "replay_tape_incomplete_coverage:missing_symbol_days=AAPL:2026-03-27",
+            ):
+                materialize_signal_tape(
+                    rows=[
+                        self._signal(day=26, seq=1, symbol="META"),
+                        self._signal(day=27, seq=2, symbol="META"),
+                        self._signal(day=26, seq=3, symbol="AAPL"),
+                    ],
+                    tape_path=Path(tmpdir) / "tape.jsonl",
+                    dataset_snapshot_ref="snapshot-a",
+                    symbols=("META", "AAPL"),
+                    start_date=date(2026, 3, 26),
+                    end_date=date(2026, 3, 27),
+                    source_query_digest=build_source_query_digest({"window": "a"}),
+                    require_complete_coverage=True,
+                )
+
+            self.assertFalse((Path(tmpdir) / "tape.jsonl").exists())
+
     def test_source_query_digest_normalizes_dates_decimals_and_lists(self) -> None:
         digest = build_source_query_digest(
             {
@@ -291,7 +432,8 @@ class TestReplayTape(TestCase):
             materialize_signal_tape(
                 rows=[
                     self._signal(day=26, seq=1, symbol="META"),
-                    self._signal(day=27, seq=2, symbol="AAPL"),
+                    self._signal(day=26, seq=2, symbol="AAPL"),
+                    self._signal(day=27, seq=3, symbol="AAPL"),
                 ],
                 tape_path=tape_path,
                 dataset_snapshot_ref="snapshot-a",
@@ -320,7 +462,7 @@ class TestReplayTape(TestCase):
             ):
                 rows = list(_iter_signal_rows(config))
 
-        self.assertEqual([row.symbol for row in rows], ["AAPL"])
+        self.assertEqual([row.symbol for row in rows], ["AAPL", "AAPL"])
         self.assertEqual(rows[0].payload["price"], Decimal("100.25"))
 
 
@@ -366,6 +508,7 @@ class TestMaterializeReplayTapeCli(TestCase):
 
         symbols = materialize_cli._parse_symbols(str(args.symbols))
         self.assertEqual(symbols, ("NVDA", "META"))
+        self.assertFalse(args.allow_incomplete_coverage)
         self.assertEqual(
             materialize_cli._parse_source_table_versions(args.source_table_version),
             {"ta_signals": "v1"},
@@ -376,6 +519,23 @@ class TestMaterializeReplayTapeCli(TestCase):
             ],
             ["NVDA", "META"],
         )
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "prog",
+                "--start-date",
+                "2026-03-26",
+                "--end-date",
+                "2026-03-27",
+                "--dataset-snapshot-ref",
+                "snapshot-cli",
+                "--output",
+                str(args.output),
+                "--allow-incomplete-coverage",
+            ],
+        ):
+            self.assertTrue(materialize_cli._parse_args().allow_incomplete_coverage)
         with self.assertRaisesRegex(ValueError, "source_table_version_invalid"):
             materialize_cli._parse_source_table_versions(["broken"])
 
@@ -398,6 +558,7 @@ class TestMaterializeReplayTapeCli(TestCase):
                 output=output,
                 manifest_output=manifest_output,
                 source_table_version=["ta_signals=v1"],
+                allow_incomplete_coverage=False,
                 log_level="WARNING",
             )
             stdout = io.StringIO()
@@ -408,7 +569,10 @@ class TestMaterializeReplayTapeCli(TestCase):
                 ),
                 patch(
                     "scripts.materialize_replay_tape.replay_mod._iter_signal_rows",
-                    return_value=(self._signal(day=26, seq=1),),
+                    return_value=(
+                        self._signal(day=26, seq=1),
+                        self._signal(day=27, seq=2),
+                    ),
                 ),
                 redirect_stdout(stdout),
             ):
@@ -422,5 +586,101 @@ class TestMaterializeReplayTapeCli(TestCase):
         self.assertTrue(output_exists)
         self.assertTrue(manifest_exists)
         self.assertEqual(payload["dataset_snapshot_ref"], "snapshot-cli")
-        self.assertEqual(payload["row_count"], 1)
+        self.assertEqual(payload["row_count"], 2)
         self.assertEqual(payload["source_table_versions"], {"ta_signals": "v1"})
+        self.assertEqual(payload["observed_trading_days"], ["2026-03-26", "2026-03-27"])
+        self.assertEqual(payload["missing_trading_days"], [])
+        self.assertEqual(
+            payload["row_count_by_trading_day"],
+            {"2026-03-26": 1, "2026-03-27": 1},
+        )
+        self.assertEqual(payload["missing_symbol_trading_days"], [])
+        self.assertEqual(
+            payload["row_count_by_symbol_trading_day"],
+            {"META": {"2026-03-26": 1, "2026-03-27": 1}},
+        )
+
+    def test_main_fails_closed_on_incomplete_coverage_by_default(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output = root / "tape.jsonl"
+            manifest_output = root / "tape.manifest.json"
+            args = Namespace(
+                strategy_configmap=root / "strategy.yaml",
+                clickhouse_http_url="http://clickhouse.invalid:8123",
+                clickhouse_username="torghut",
+                clickhouse_password="secret",
+                start_date="2026-03-26",
+                end_date="2026-03-27",
+                chunk_minutes=0,
+                start_equity="10000",
+                symbols="meta",
+                dataset_snapshot_ref="snapshot-cli",
+                output=output,
+                manifest_output=manifest_output,
+                source_table_version=[],
+                allow_incomplete_coverage=False,
+                log_level="WARNING",
+            )
+            with (
+                patch(
+                    "scripts.materialize_replay_tape._parse_args",
+                    return_value=args,
+                ),
+                patch(
+                    "scripts.materialize_replay_tape.replay_mod._iter_signal_rows",
+                    return_value=(self._signal(day=26, seq=1),),
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "replay_tape_incomplete_coverage:missing_days=2026-03-27",
+                ):
+                    materialize_cli.main()
+
+            self.assertFalse(output.exists())
+            self.assertFalse(manifest_output.exists())
+
+    def test_main_fails_closed_on_missing_symbol_days_by_default(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output = root / "tape.jsonl"
+            manifest_output = root / "tape.manifest.json"
+            args = Namespace(
+                strategy_configmap=root / "strategy.yaml",
+                clickhouse_http_url="http://clickhouse.invalid:8123",
+                clickhouse_username="torghut",
+                clickhouse_password="secret",
+                start_date="2026-03-26",
+                end_date="2026-03-27",
+                chunk_minutes=0,
+                start_equity="10000",
+                symbols="meta,aapl",
+                dataset_snapshot_ref="snapshot-cli",
+                output=output,
+                manifest_output=manifest_output,
+                source_table_version=[],
+                allow_incomplete_coverage=False,
+                log_level="WARNING",
+            )
+            with (
+                patch(
+                    "scripts.materialize_replay_tape._parse_args",
+                    return_value=args,
+                ),
+                patch(
+                    "scripts.materialize_replay_tape.replay_mod._iter_signal_rows",
+                    return_value=(
+                        self._signal(day=26, seq=1),
+                        self._signal(day=27, seq=2),
+                    ),
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "replay_tape_incomplete_coverage:missing_symbol_days=AAPL:2026-03-26,AAPL:2026-03-27",
+                ):
+                    materialize_cli.main()
+
+            self.assertFalse(output.exists())
+            self.assertFalse(manifest_output.exists())

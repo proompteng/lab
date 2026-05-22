@@ -1317,6 +1317,72 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(resolved.second_oos_days, days[6:])
         self.assertEqual(resolved.expected_days, days)
 
+    def test_explicit_full_window_replay_tape_receipt_keeps_missing_business_days(
+        self,
+    ) -> None:
+        window = frontier.FrontierReplayWindows(
+            train_days=(date(2026, 5, 18),),
+            holdout_days=(date(2026, 5, 21),),
+        )
+        expected_days = frontier._snapshot_expected_days(
+            window=window,
+            full_window_start=date(2026, 5, 18),
+            full_window_end=date(2026, 5, 21),
+            require_full_window_coverage=True,
+        )
+        rows = [
+            SignalEnvelope(
+                event_ts=datetime(2026, 5, 18, 14, 30, tzinfo=timezone.utc),
+                symbol="AMZN",
+                timeframe="1Sec",
+                seq=1,
+                source="ta",
+                payload={"price": Decimal("200")},
+            ),
+            SignalEnvelope(
+                event_ts=datetime(2026, 5, 21, 14, 30, tzinfo=timezone.utc),
+                symbol="AMZN",
+                timeframe="1Sec",
+                seq=2,
+                source="ta",
+                payload={"price": Decimal("210")},
+            ),
+        ]
+
+        receipt = frontier._build_replay_tape_snapshot_receipt(
+            validation={
+                "status": "valid",
+                "dataset_snapshot_ref": "snapshot-gap",
+                "content_sha256": "content-sha",
+                "source_query_digest": "query-sha",
+                "row_count": 2,
+                "trading_day_count": 2,
+                "source_table_versions": {},
+                "artifact_refs": {},
+            },
+            rows=rows,
+            start_day=date(2026, 5, 18),
+            end_day=date(2026, 5, 21),
+            expected_last_trading_day=date(2026, 5, 21),
+            expected_trading_days=expected_days,
+            allow_stale_tape=False,
+        )
+
+        self.assertEqual(
+            expected_days,
+            (
+                date(2026, 5, 18),
+                date(2026, 5, 19),
+                date(2026, 5, 20),
+                date(2026, 5, 21),
+            ),
+        )
+        self.assertFalse(receipt.is_fresh)
+        self.assertEqual(
+            receipt.missing_days,
+            (date(2026, 5, 19), date(2026, 5, 20)),
+        )
+
     def test_strategy_universe_symbols_reads_target_strategy_universe(self) -> None:
         configmap_payload = {
             "data": {
@@ -2716,20 +2782,35 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 json_output=json_output,
             )
             tape_path = root / "full-window-tape.jsonl"
+            tape_rows = [
+                SignalEnvelope(
+                    event_ts=datetime(2026, 3, day, 17, 30, tzinfo=timezone.utc),
+                    symbol=symbol,
+                    timeframe="1Sec",
+                    seq=seq,
+                    source="ta",
+                    payload={"price": Decimal("900.00")},
+                )
+                for seq, (day, symbol) in enumerate(
+                    (
+                        (18, "NVDA"),
+                        (18, "AMAT"),
+                        (19, "NVDA"),
+                        (19, "AMAT"),
+                        (20, "NVDA"),
+                        (20, "AMAT"),
+                        (21, "NVDA"),
+                        (21, "AMAT"),
+                        (22, "NVDA"),
+                        (22, "AMAT"),
+                        (23, "NVDA"),
+                        (23, "AMAT"),
+                    ),
+                    start=1,
+                )
+            ]
             materialize_signal_tape(
-                rows=[
-                    SignalEnvelope(
-                        event_ts=datetime(
-                            2026, 3, 18 + index, 17, 30, tzinfo=timezone.utc
-                        ),
-                        symbol="NVDA",
-                        timeframe="1Sec",
-                        seq=index + 1,
-                        source="ta",
-                        payload={"price": Decimal("900.00")},
-                    )
-                    for index in range(6)
-                ],
+                rows=tape_rows,
                 tape_path=tape_path,
                 dataset_snapshot_ref="snapshot-test",
                 symbols=("NVDA", "AMAT"),
@@ -2865,7 +2946,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 payload["dataset_snapshot_receipt"]["source"], "replay_tape"
             )
             self.assertEqual(payload["replay_tape"]["status"], "valid")
-            self.assertEqual(payload["replay_tape"]["selected_row_count"], 6)
+            self.assertEqual(payload["replay_tape"]["selected_row_count"], 12)
             self.assertEqual(top["ranking"]["method"], "pareto_frontier_v2")
             self.assertEqual(top["family_template_id"], "intraday_tsmom_v2")
 

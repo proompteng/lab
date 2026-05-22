@@ -5903,6 +5903,7 @@ def _maybe_materialize_epoch_replay_tape(
         start_date=start_date,
         end_date=end_date,
         source_query_digest=source_query_digest,
+        require_complete_coverage=not bool(getattr(args, "allow_stale_tape", False)),
     )
     receipt_path = output_dir / "replay-tape-receipt.json"
     receipt = {
