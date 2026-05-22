@@ -423,6 +423,8 @@ class TestLocalIntradayTsmomReplay(TestCase):
     ) -> None:
         reason = _resolve_passed_trace_block_reason(
             strategy_id="candidate-a",
+            runtime_intent_strategy_ids={"candidate-a"},
+            runtime_suppression_reason_by_strategy_id={},
             raw_decision_strategy_ids={"candidate-a"},
             allocation_reject_reason_by_strategy_id={},
             sizing_reject_reason_by_strategy_id={},
@@ -430,6 +432,53 @@ class TestLocalIntradayTsmomReplay(TestCase):
         )
 
         self.assertEqual(reason, "post_runtime_filter_rejected")
+
+    def test_resolve_passed_trace_block_reason_reports_runtime_suppression(
+        self,
+    ) -> None:
+        reason = _resolve_passed_trace_block_reason(
+            strategy_id="candidate-a",
+            runtime_intent_strategy_ids={"candidate-a"},
+            runtime_suppression_reason_by_strategy_id={
+                "candidate-a": "runtime_trade_policy_blocked"
+            },
+            raw_decision_strategy_ids=set(),
+            allocation_reject_reason_by_strategy_id={},
+            sizing_reject_reason_by_strategy_id={},
+            emitted_strategy_ids=set(),
+        )
+
+        self.assertEqual(reason, "runtime_trade_policy_blocked")
+
+    def test_resolve_passed_trace_block_reason_reports_no_runtime_intent(
+        self,
+    ) -> None:
+        reason = _resolve_passed_trace_block_reason(
+            strategy_id="candidate-a",
+            runtime_intent_strategy_ids=set(),
+            runtime_suppression_reason_by_strategy_id={},
+            raw_decision_strategy_ids=set(),
+            allocation_reject_reason_by_strategy_id={},
+            sizing_reject_reason_by_strategy_id={},
+            emitted_strategy_ids=set(),
+        )
+
+        self.assertEqual(reason, "engine_runtime_no_intent")
+
+    def test_resolve_passed_trace_block_reason_reports_intent_not_emitted(
+        self,
+    ) -> None:
+        reason = _resolve_passed_trace_block_reason(
+            strategy_id="candidate-a",
+            runtime_intent_strategy_ids={"candidate-a"},
+            runtime_suppression_reason_by_strategy_id={},
+            raw_decision_strategy_ids=set(),
+            allocation_reject_reason_by_strategy_id={},
+            sizing_reject_reason_by_strategy_id={},
+            emitted_strategy_ids=set(),
+        )
+
+        self.assertEqual(reason, "engine_runtime_intent_not_emitted")
 
     def test_apply_filled_decision_opens_position_on_same_signal(self) -> None:
         signal = self._signal(bid="523.22", ask="523.28", price="523.25")
@@ -2655,7 +2704,7 @@ class TestLocalIntradayTsmomReplay(TestCase):
             payload["trace"][0]["block_reason"], "allocator_reject_symbol_capacity"
         )
 
-    def test_run_replay_marks_passed_trace_with_engine_runtime_filter_reason(
+    def test_run_replay_marks_passed_trace_with_runtime_suppression_reason(
         self,
     ) -> None:
         strategy = Strategy(
@@ -2717,7 +2766,21 @@ class TestLocalIntradayTsmomReplay(TestCase):
                 return []
 
             def consume_runtime_telemetry(self):  # type: ignore[no-untyped-def]
-                return type("Telemetry", (), {"traces": [passed_trace]})()
+                observation = type(
+                    "Observation",
+                    (),
+                    {
+                        "strategy_intents_total": {decision_strategy_id},
+                        "strategy_intent_suppression_total": {
+                            f"{decision_strategy_id}|runtime_trade_policy_blocked": 1
+                        },
+                    },
+                )()
+                return type(
+                    "Telemetry",
+                    (),
+                    {"traces": [passed_trace], "observation": observation},
+                )()
 
         config = ReplayConfig(
             strategy_configmap_path=Path("/tmp/strategies.yaml"),
@@ -2747,7 +2810,7 @@ class TestLocalIntradayTsmomReplay(TestCase):
 
         self.assertEqual(len(payload["trace"]), 1)
         self.assertEqual(
-            payload["trace"][0]["block_reason"], "engine_runtime_filter_rejected"
+            payload["trace"][0]["block_reason"], "runtime_trade_policy_blocked"
         )
 
     def test_run_replay_serializes_real_daily_liquidity_evidence(self) -> None:

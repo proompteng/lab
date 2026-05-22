@@ -1813,6 +1813,9 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                         "failing_threshold_counts": {
                             "short:confirmation:imbalance_pressure": 5,
                         },
+                        "post_gate_block_reason_counts": {
+                            "raw_decision_not_emitted": 2,
+                        },
                     },
                     {
                         "retained_rows": 4,
@@ -1856,6 +1859,10 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(
             diagnostics["top_failing_thresholds"][0],
             {"key": "short:confirmation:imbalance_pressure", "count": 5},
+        )
+        self.assertEqual(
+            diagnostics["top_post_gate_block_reasons"][0],
+            {"key": "raw_decision_not_emitted", "count": 2},
         )
         self.assertEqual(
             diagnostics["near_misses"][0]["thresholds"][0]["metric"],
@@ -2191,18 +2198,93 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         )
 
         self.assertEqual(
-            children[0][0], "consistency_entries:active_day_ratio_below_min"
+            children[0][0], "consistency_breadth:active_day_ratio_below_min"
         )
-        self.assertEqual(children[0][1], {"max_entries_per_session": "2"})
+        self.assertEqual(children[0][1], {"top_n": "3"})
         self.assertEqual(children[0][2], {})
         self.assertEqual(
-            children[1][0], "consistency_breadth:active_day_ratio_below_min"
+            children[1][0], "consistency_entries:active_day_ratio_below_min"
         )
-        self.assertEqual(children[1][1], {"top_n": "3"})
+        self.assertEqual(children[1][1], {"max_entries_per_session": "2"})
         self.assertEqual(
             children[2][0], "consistency_cooldown:active_day_ratio_below_min"
         )
         self.assertEqual(children[2][1], {"entry_cooldown_seconds": "150"})
+
+    def test_generate_consistency_repair_children_relaxes_signal_thresholds_first(
+        self,
+    ) -> None:
+        configmap_payload = {
+            "data": {
+                "strategies.yaml": yaml.safe_dump(
+                    {
+                        "strategies": [
+                            {
+                                "name": "microbar-cross-sectional-pairs-v1",
+                                "params": {
+                                    "min_cross_section_continuation_rank": "0.55",
+                                    "min_cross_section_reversal_rank": "0.65",
+                                    "max_entries_per_session": "1",
+                                    "top_n": "2",
+                                },
+                            }
+                        ],
+                    },
+                    sort_keys=False,
+                )
+            }
+        }
+
+        children = frontier._generate_consistency_repair_children(
+            params_candidate={},
+            strategy_overrides={},
+            candidate_configmap=configmap_payload,
+            strategy_name="microbar-cross-sectional-pairs-v1",
+            hard_vetoes=["active_day_ratio_below_min"],
+            full_window_summary={
+                "net_per_day": "131",
+                "max_gross_exposure_pct_equity": "0.93",
+                "min_cash": "2089",
+                "negative_cash_observation_count": "0",
+            },
+            branch_count=2,
+        )
+
+        self.assertEqual(
+            children[0][0], "consistency_signal_thresholds:active_day_ratio_below_min"
+        )
+        self.assertEqual(
+            children[0][1],
+            {
+                "min_cross_section_continuation_rank": "0.5",
+                "min_cross_section_reversal_rank": "0.6",
+            },
+        )
+        self.assertEqual(
+            children[1][0], "consistency_breadth:active_day_ratio_below_min"
+        )
+        self.assertEqual(children[1][1], {"top_n": "3"})
+
+    def test_relax_signal_threshold_candidate_param_scales_absolute_thresholds(
+        self,
+    ) -> None:
+        params: dict[str, object] = {}
+
+        repaired = frontier._relax_signal_threshold_candidate_param(
+            params=params,
+            strategy_params={
+                "min_recent_microprice_bias_bps": "2.50",
+                "min_cross_section_continuation_rank": "0.01",
+            },
+            keys=(
+                "min_recent_microprice_bias_bps",
+                "min_cross_section_continuation_rank",
+            ),
+        )
+
+        self.assertTrue(repaired)
+        self.assertEqual(params["min_recent_microprice_bias_bps"], "2")
+        self.assertNotIn("min_cross_section_continuation_rank", params)
 
     def test_generate_consistency_repair_children_rejects_unsafe_parent(
         self,
@@ -2274,6 +2356,16 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 keys=("missing", "entry_cooldown_seconds"),
             )
         )
+        self.assertFalse(
+            frontier._relax_signal_threshold_candidate_param(
+                params={},
+                strategy_params={
+                    "ignored": "1",
+                    "min_cross_section_continuation_rank": "bad",
+                },
+                keys=("missing", "min_cross_section_continuation_rank"),
+            )
+        )
 
         self.assertEqual(
             frontier._generate_consistency_repair_children(
@@ -2329,7 +2421,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
 
         self.assertEqual(len(children), 1)
         self.assertEqual(
-            children[0][0], "consistency_entries:active_day_ratio_below_min"
+            children[0][0], "consistency_breadth:active_day_ratio_below_min"
         )
 
     def test_consistency_repair_children_target_second_oos_shortfall(
@@ -3270,6 +3362,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 json_output=json_output,
             )
             args.second_oos_days = 2
+            args.collect_train_gate_diagnostics = True
             recent_days = tuple(
                 date(2026, 3, 18) + timedelta(days=index) for index in range(8)
             )
@@ -3452,6 +3545,10 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 for row in payload["top"]
             }
             self.assertTrue(top_by_stop["18"]["second_oos"]["passed"])
+            self.assertEqual(
+                top_by_stop["18"]["second_oos_gate_diagnostics"]["status"],
+                "no_runtime_trace_evaluations",
+            )
             self.assertTrue(
                 top_by_stop["18"]["full_window"][
                     "market_impact_liquidity_evidence_present"
@@ -3696,6 +3793,13 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             self.assertEqual(payload["candidate_count"], 2)
             self.assertEqual(
                 payload["top"][0]["train_gate_diagnostics"]["status"], "available"
+            )
+            self.assertEqual(
+                payload["top"][0]["holdout_gate_diagnostics"]["status"], "available"
+            )
+            self.assertEqual(
+                payload["top"][0]["full_window_gate_diagnostics"]["status"],
+                "available",
             )
             persisted = json.loads(json_output.read_text(encoding="utf-8"))
             self.assertEqual(persisted["status"], "completed")
@@ -3944,6 +4048,182 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(second["min_cross_section_continuation_rank"], "0.70")
         self.assertEqual(second["long_stop_loss_bps"], "20")
         self.assertEqual(third["long_stop_loss_bps"], "24")
+
+    def test_parameter_stream_prioritizes_entry_hypotheses_before_thresholds(
+        self,
+    ) -> None:
+        self.assertEqual(frontier._parameter_exploration_priority("bullish_hist"), 3)
+        candidates = frontier._iter_parameter_candidates(
+            {
+                "min_cross_section_continuation_rank": ["0.60", "0.70"],
+                "rank_feature": [
+                    "cross_section_vwap_w5m_rank",
+                    "cross_section_session_open_rank",
+                ],
+                "top_n": ["1", "5"],
+                "signal_motif": [
+                    "vwap_close_continuation",
+                    "open_window_continuation",
+                ],
+                "entry_cooldown_seconds": ["600", "900"],
+            }
+        )
+
+        first = next(candidates)
+        second = next(candidates)
+        third = next(candidates)
+        fourth = next(candidates)
+        fifth = next(candidates)
+
+        self.assertEqual(first["rank_feature"], "cross_section_vwap_w5m_rank")
+        self.assertEqual(second["rank_feature"], "cross_section_session_open_rank")
+        self.assertEqual(third["top_n"], "5")
+        self.assertEqual(fourth["signal_motif"], "open_window_continuation")
+        self.assertEqual(fifth["min_cross_section_continuation_rank"], "0.70")
+
+    def test_run_frontier_interleaves_initial_grid_with_repair_worklist(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            strategy_configmap = self._write_strategy_configmap(root)
+            sweep_config = root / "sweep.yaml"
+            sweep_config.write_text(
+                yaml.safe_dump(
+                    {
+                        "schema_version": "torghut.replay-frontier-sweep.v1",
+                        "family": "intraday_tsmom_consistent",
+                        "strategy_name": "intraday-tsmom-profit-v3",
+                        "disable_other_strategies": True,
+                        "constraints": {
+                            "holdout_target_net_per_day": "1",
+                            "min_active_holdout_days": 1,
+                            "max_worst_holdout_day_loss": "200",
+                            "min_profit_factor": "1.0",
+                        },
+                        "consistency_constraints": {
+                            "target_net_per_day": "1",
+                            "min_active_days": 1,
+                            "max_worst_day_loss": "300",
+                            "max_negative_days": 1,
+                            "max_drawdown": "400",
+                            "require_every_day_active": False,
+                        },
+                        "strategy_overrides": {
+                            "universe_symbols": [["NVDA"]],
+                        },
+                        "parameters": {
+                            "long_stop_loss_bps": ["12", "18"],
+                        },
+                    },
+                    sort_keys=False,
+                ),
+                encoding="utf-8",
+            )
+            args = self._make_args(
+                strategy_configmap=strategy_configmap,
+                sweep_config=sweep_config,
+                json_output=root / "frontier.json",
+            )
+            args.max_candidates_to_evaluate = 3
+            args.consistency_repair_iterations = 1
+            args.consistency_repair_candidates = 2
+            recent_days = tuple(
+                date(2026, 3, 18) + timedelta(days=index) for index in range(6)
+            )
+            snapshot_receipt = SimpleNamespace(
+                snapshot_id="snap-interleave",
+                is_fresh=True,
+                stale_override_used=False,
+                to_payload=lambda: {
+                    "snapshot_id": "snap-interleave",
+                    "source": "ta",
+                    "window_size": "PT1S",
+                    "start_day": "2026-03-18",
+                    "end_day": "2026-03-23",
+                    "expected_last_trading_day": "2026-03-23",
+                    "is_fresh": True,
+                    "missing_days": [],
+                    "row_count": 123,
+                    "stale_override_used": False,
+                    "witnesses": [],
+                },
+            )
+            full_window_stops: list[str] = []
+
+            def fake_run_replay(config: object) -> dict[str, object]:
+                configmap_path = Path(getattr(config, "strategy_configmap_path"))
+                payload = yaml.safe_load(configmap_path.read_text(encoding="utf-8"))
+                strategy = next(
+                    item
+                    for item in yaml.safe_load(payload["data"]["strategies.yaml"])[
+                        "strategies"
+                    ]
+                    if item["name"] == "intraday-tsmom-profit-v3"
+                )
+                stop = str(strategy["params"]["long_stop_loss_bps"])
+                start_date = str(getattr(config, "start_date"))
+                end_date = str(getattr(config, "end_date"))
+                if start_date == "2026-03-18" and end_date == "2026-03-23":
+                    full_window_stops.append(stop)
+                start = date.fromisoformat(start_date)
+                end = date.fromisoformat(end_date)
+                days = {
+                    (start + timedelta(days=index)).isoformat(): "100"
+                    for index in range((end - start).days + 1)
+                }
+                return self._payload(
+                    start_date=start_date,
+                    end_date=end_date,
+                    daily_net=days,
+                    decision_count=len(days),
+                    filled_count=len(days),
+                    wins=len(days),
+                    losses=0,
+                )
+
+            def fake_consistency_children(
+                **kwargs: object,
+            ) -> list[tuple[str, dict[str, str], dict[str, object]]]:
+                params = cast(dict[str, object], kwargs["params_candidate"])
+                if params.get("long_stop_loss_bps") != "12":
+                    return []
+                return [
+                    (
+                        "consistency_signal_thresholds:active_day_ratio_below_min",
+                        {"long_stop_loss_bps": "13"},
+                        {},
+                    ),
+                    (
+                        "consistency_breadth:active_day_ratio_below_min",
+                        {"long_stop_loss_bps": "14"},
+                        {},
+                    ),
+                ]
+
+            with (
+                patch(
+                    "scripts.search_consistent_profitability_frontier._resolve_recent_trading_days",
+                    return_value=recent_days,
+                ),
+                patch(
+                    "scripts.search_consistent_profitability_frontier.build_dataset_snapshot_receipt",
+                    return_value=snapshot_receipt,
+                ),
+                patch(
+                    "scripts.search_consistent_profitability_frontier.ensure_fresh_snapshot"
+                ),
+                patch(
+                    "scripts.search_consistent_profitability_frontier.run_replay",
+                    side_effect=fake_run_replay,
+                ),
+                patch(
+                    "scripts.search_consistent_profitability_frontier._generate_consistency_repair_children",
+                    side_effect=fake_consistency_children,
+                ),
+            ):
+                payload = frontier.run_consistent_profitability_frontier(args)
+
+        self.assertEqual(payload["status"], "candidate_budget_exhausted")
+        self.assertEqual(full_window_stops, ["12", "13", "18"])
 
     def test_main_symbol_pruning_promotes_pruned_universe(self) -> None:
         with TemporaryDirectory() as tmpdir:

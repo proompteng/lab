@@ -8,21 +8,21 @@ from decimal import Decimal
 from typing import Any, Literal, Mapping, cast
 
 GateCategory = Literal[
-    'eligibility',
-    'feed_quality',
-    'structure',
-    'confirmation',
-    'risk',
-    'execution',
-    'exit',
+    "eligibility",
+    "feed_quality",
+    "structure",
+    "confirmation",
+    "risk",
+    "execution",
+    "exit",
 ]
-MissingPolicy = Literal['fail_open', 'fail_closed']
-FillStatus = Literal['none', 'pending', 'filled']
+MissingPolicy = Literal["fail_open", "fail_closed"]
+FillStatus = Literal["none", "pending", "filled"]
 
-_TRACE_SCHEMA_VERSION = 'torghut.strategy-trace.v1'
-_REPLAY_TRACE_SCHEMA_VERSION = 'torghut.replay-trace.v1'
-_REPLAY_FUNNEL_SCHEMA_VERSION = 'torghut.replay-funnel.v1'
-_SWEEP_RESULT_SCHEMA_VERSION = 'torghut.sweep-candidate-result.v1'
+_TRACE_SCHEMA_VERSION = "torghut.strategy-trace.v1"
+_REPLAY_TRACE_SCHEMA_VERSION = "torghut.replay-trace.v1"
+_REPLAY_FUNNEL_SCHEMA_VERSION = "torghut.replay-funnel.v1"
+_SWEEP_RESULT_SCHEMA_VERSION = "torghut.sweep-candidate-result.v1"
 
 
 def _empty_context() -> dict[str, Any]:
@@ -45,8 +45,7 @@ def _serialize_trace_value(value: Any) -> Any:
     if isinstance(value, dict):
         dict_value = cast(dict[Any, Any], value)
         return {
-            str(key): _serialize_trace_value(item)
-            for key, item in dict_value.items()
+            str(key): _serialize_trace_value(item) for key, item in dict_value.items()
         }
     return value
 
@@ -63,14 +62,16 @@ class ThresholdTrace:
 
     def to_payload(self) -> dict[str, Any]:
         return {
-            'metric': self.metric,
-            'comparator': self.comparator,
-            'value': _serialize_trace_value(self.value),
-            'threshold': _serialize_trace_value(self.threshold),
-            'passed': self.passed,
-            'missing_policy': self.missing_policy,
-            'distance_to_pass': (
-                str(self.distance_to_pass) if self.distance_to_pass is not None else None
+            "metric": self.metric,
+            "comparator": self.comparator,
+            "value": _serialize_trace_value(self.value),
+            "threshold": _serialize_trace_value(self.threshold),
+            "passed": self.passed,
+            "missing_policy": self.missing_policy,
+            "distance_to_pass": (
+                str(self.distance_to_pass)
+                if self.distance_to_pass is not None
+                else None
             ),
         }
 
@@ -87,21 +88,21 @@ class GateTrace:
         return tuple(item for item in self.thresholds if not item.passed)
 
     def distance_score(self) -> Decimal:
-        score = Decimal('0')
+        score = Decimal("0")
         for threshold in self.failing_thresholds():
             if threshold.distance_to_pass is None:
-                score += Decimal('1')
+                score += Decimal("1")
             else:
                 score += threshold.distance_to_pass
         return score
 
     def to_payload(self) -> dict[str, Any]:
         return {
-            'gate': self.gate,
-            'category': self.category,
-            'passed': self.passed,
-            'thresholds': [item.to_payload() for item in self.thresholds],
-            'context': _serialize_trace_value(self.context),
+            "gate": self.gate,
+            "category": self.category,
+            "passed": self.passed,
+            "thresholds": [item.to_payload() for item in self.thresholds],
+            "context": _serialize_trace_value(self.context),
         }
 
 
@@ -113,7 +114,7 @@ class StrategyTrace:
     event_ts: str
     timeframe: str
     passed: bool
-    action: Literal['buy', 'sell'] | None
+    action: Literal["buy", "sell"] | None
     rationale: tuple[str, ...] = ()
     gates: tuple[GateTrace, ...] = ()
     first_failed_gate: str | None = None
@@ -139,23 +140,23 @@ class StrategyTrace:
     def distance_score(self) -> Decimal:
         failed_gate = self.failed_gate()
         if failed_gate is None:
-            return Decimal('0')
+            return Decimal("0")
         return failed_gate.distance_score()
 
     def to_payload(self) -> dict[str, Any]:
         return {
-            'schema_version': self.schema_version,
-            'strategy_id': self.strategy_id,
-            'strategy_type': self.strategy_type,
-            'symbol': self.symbol,
-            'event_ts': self.event_ts,
-            'timeframe': self.timeframe,
-            'passed': self.passed,
-            'action': self.action,
-            'rationale': list(self.rationale),
-            'first_failed_gate': self.first_failed_gate,
-            'gates': [gate.to_payload() for gate in self.gates],
-            'context': _serialize_trace_value(self.context),
+            "schema_version": self.schema_version,
+            "strategy_id": self.strategy_id,
+            "strategy_type": self.strategy_type,
+            "symbol": self.symbol,
+            "event_ts": self.event_ts,
+            "timeframe": self.timeframe,
+            "passed": self.passed,
+            "action": self.action,
+            "rationale": list(self.rationale),
+            "first_failed_gate": self.first_failed_gate,
+            "gates": [gate.to_payload() for gate in self.gates],
+            "context": _serialize_trace_value(self.context),
         }
 
 
@@ -175,14 +176,14 @@ class ReplayTraceRecord:
 
     def to_payload(self) -> dict[str, Any]:
         return {
-            'schema_version': self.schema_version,
-            'trading_day': self.trading_day,
-            'decision_emitted': self.decision_emitted,
-            'fill_status': self.fill_status,
-            'decision_strategy_id': self.decision_strategy_id,
-            'block_reason': self.block_reason,
-            'fill_price': str(self.fill_price) if self.fill_price is not None else None,
-            'strategy_trace': self.strategy_trace.to_payload(),
+            "schema_version": self.schema_version,
+            "trading_day": self.trading_day,
+            "decision_emitted": self.decision_emitted,
+            "fill_status": self.fill_status,
+            "decision_strategy_id": self.decision_strategy_id,
+            "block_reason": self.block_reason,
+            "fill_price": str(self.fill_price) if self.fill_price is not None else None,
+            "strategy_trace": self.strategy_trace.to_payload(),
         }
 
 
@@ -197,6 +198,7 @@ class ReplayFunnelBucket:
     gate_pass_counts: dict[str, int]
     first_failed_gate_counts: dict[str, int]
     failing_threshold_counts: dict[str, int]
+    post_gate_block_reason_counts: dict[str, int]
     passed_trace_count: int
     decision_count: int
     filled_count: int
@@ -208,23 +210,30 @@ class ReplayFunnelBucket:
 
     def to_payload(self) -> dict[str, Any]:
         return {
-            'trading_day': self.trading_day,
-            'symbol': self.symbol,
-            'retained_rows': self.retained_rows,
-            'runtime_evaluable_rows': self.runtime_evaluable_rows,
-            'quote_valid_rows': self.quote_valid_rows,
-            'strategy_evaluations': self.strategy_evaluations,
-            'gate_pass_counts': dict(sorted(self.gate_pass_counts.items())),
-            'first_failed_gate_counts': dict(sorted(self.first_failed_gate_counts.items())),
-            'failing_threshold_counts': dict(sorted(self.failing_threshold_counts.items())),
-            'passed_trace_count': self.passed_trace_count,
-            'decision_count': self.decision_count,
-            'filled_count': self.filled_count,
-            'filled_notional': str(self.filled_notional),
-            'closed_trade_count': self.closed_trade_count,
-            'gross_pnl': str(self.gross_pnl),
-            'net_pnl': str(self.net_pnl),
-            'cost_total': str(self.cost_total),
+            "trading_day": self.trading_day,
+            "symbol": self.symbol,
+            "retained_rows": self.retained_rows,
+            "runtime_evaluable_rows": self.runtime_evaluable_rows,
+            "quote_valid_rows": self.quote_valid_rows,
+            "strategy_evaluations": self.strategy_evaluations,
+            "gate_pass_counts": dict(sorted(self.gate_pass_counts.items())),
+            "first_failed_gate_counts": dict(
+                sorted(self.first_failed_gate_counts.items())
+            ),
+            "failing_threshold_counts": dict(
+                sorted(self.failing_threshold_counts.items())
+            ),
+            "post_gate_block_reason_counts": dict(
+                sorted(self.post_gate_block_reason_counts.items())
+            ),
+            "passed_trace_count": self.passed_trace_count,
+            "decision_count": self.decision_count,
+            "filled_count": self.filled_count,
+            "filled_notional": str(self.filled_notional),
+            "closed_trade_count": self.closed_trade_count,
+            "gross_pnl": str(self.gross_pnl),
+            "net_pnl": str(self.net_pnl),
+            "cost_total": str(self.cost_total),
         }
 
 
@@ -237,10 +246,10 @@ class ReplayFunnelReport:
 
     def to_payload(self) -> dict[str, Any]:
         return {
-            'schema_version': self.schema_version,
-            'start_date': self.start_date,
-            'end_date': self.end_date,
-            'buckets': [bucket.to_payload() for bucket in self.buckets],
+            "schema_version": self.schema_version,
+            "start_date": self.start_date,
+            "end_date": self.end_date,
+            "buckets": [bucket.to_payload() for bucket in self.buckets],
         }
 
 
@@ -251,22 +260,22 @@ class NearMissRecord:
     strategy_id: str
     strategy_type: str
     event_ts: str
-    action: Literal['buy', 'sell'] | None
+    action: Literal["buy", "sell"] | None
     first_failed_gate: str
     distance_score: Decimal
     thresholds: tuple[ThresholdTrace, ...]
 
     def to_payload(self) -> dict[str, Any]:
         return {
-            'trading_day': self.trading_day,
-            'symbol': self.symbol,
-            'strategy_id': self.strategy_id,
-            'strategy_type': self.strategy_type,
-            'event_ts': self.event_ts,
-            'action': self.action,
-            'first_failed_gate': self.first_failed_gate,
-            'distance_score': str(self.distance_score),
-            'thresholds': [item.to_payload() for item in self.thresholds],
+            "trading_day": self.trading_day,
+            "symbol": self.symbol,
+            "strategy_id": self.strategy_id,
+            "strategy_type": self.strategy_type,
+            "event_ts": self.event_ts,
+            "action": self.action,
+            "first_failed_gate": self.first_failed_gate,
+            "distance_score": str(self.distance_score),
+            "thresholds": [item.to_payload() for item in self.thresholds],
         }
 
 
@@ -290,33 +299,35 @@ class SweepCandidateResult:
 
     def to_payload(self) -> dict[str, Any]:
         return {
-            'schema_version': self.schema_version,
-            'candidate_id': self.candidate_id,
-            'family': self.family,
-            'strategy_name': self.strategy_name,
-            'train_net_per_day': str(self.train_net_per_day),
-            'holdout_net_per_day': str(self.holdout_net_per_day),
-            'train_total_net': str(self.train_total_net),
-            'holdout_total_net': str(self.holdout_total_net),
-            'active_holdout_days': self.active_holdout_days,
-            'max_holdout_drawdown_day': str(self.max_holdout_drawdown_day),
-            'profit_factor': str(self.profit_factor) if self.profit_factor is not None else None,
-            'wins': self.wins,
-            'losses': self.losses,
-            'score': str(self.score),
-            'replay_config': _serialize_trace_value(dict(self.replay_config)),
+            "schema_version": self.schema_version,
+            "candidate_id": self.candidate_id,
+            "family": self.family,
+            "strategy_name": self.strategy_name,
+            "train_net_per_day": str(self.train_net_per_day),
+            "holdout_net_per_day": str(self.holdout_net_per_day),
+            "train_total_net": str(self.train_total_net),
+            "holdout_total_net": str(self.holdout_total_net),
+            "active_holdout_days": self.active_holdout_days,
+            "max_holdout_drawdown_day": str(self.max_holdout_drawdown_day),
+            "profit_factor": str(self.profit_factor)
+            if self.profit_factor is not None
+            else None,
+            "wins": self.wins,
+            "losses": self.losses,
+            "score": str(self.score),
+            "replay_config": _serialize_trace_value(dict(self.replay_config)),
         }
 
 
 __all__ = [
-    'FillStatus',
-    'GateCategory',
-    'GateTrace',
-    'NearMissRecord',
-    'ReplayFunnelBucket',
-    'ReplayFunnelReport',
-    'ReplayTraceRecord',
-    'StrategyTrace',
-    'SweepCandidateResult',
-    'ThresholdTrace',
+    "FillStatus",
+    "GateCategory",
+    "GateTrace",
+    "NearMissRecord",
+    "ReplayFunnelBucket",
+    "ReplayFunnelReport",
+    "ReplayTraceRecord",
+    "StrategyTrace",
+    "SweepCandidateResult",
+    "ThresholdTrace",
 ]
