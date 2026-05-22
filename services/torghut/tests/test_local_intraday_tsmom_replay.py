@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -165,6 +166,21 @@ class TestLocalIntradayTsmomReplay(TestCase):
                     query="SELECT 1",
                 )
 
+        with patch(
+            "scripts.local_intraday_tsmom_replay.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd=["kubectl"], timeout=2),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError, "clickhouse_kubectl_query_timeout:2s"
+            ):
+                _kubectl_clickhouse_query(
+                    url="kubectl://galactic-lan/torghut/clickhouse-0",
+                    username="torghut",
+                    password="secret",
+                    query="SELECT 1",
+                    timeout_seconds=2,
+                )
+
     def test_execution_spread_helpers_fall_back_on_invalid_payloads(self) -> None:
         decision = StrategyDecision(
             strategy_id="candidate-strategy-1",
@@ -217,11 +233,13 @@ class TestLocalIntradayTsmomReplay(TestCase):
             url: str,
             username: str | None,
             password: str | None,
+            timeout_seconds: int,
             query: str,
         ) -> str:
             self.assertEqual(url, "http://clickhouse")
             self.assertEqual(username, "reader")
             self.assertEqual(password, "secret")
+            self.assertEqual(timeout_seconds, 7)
             captured_queries.append(query)
             return "\t".join(
                 [
@@ -255,6 +273,7 @@ class TestLocalIntradayTsmomReplay(TestCase):
                 http_url="http://clickhouse",
                 username="reader",
                 password="secret",
+                timeout_seconds=7,
                 chunk_start=datetime(2026, 3, 27, 17, 0, tzinfo=timezone.utc),
                 chunk_end=datetime(2026, 3, 27, 18, 0, tzinfo=timezone.utc),
                 symbols=("META", "NVDA"),
@@ -282,11 +301,13 @@ class TestLocalIntradayTsmomReplay(TestCase):
                 url="kubectl://galactic-lan/torghut/chi-torghut-clickhouse-default-0-0-0",
                 username="torghut",
                 password="secret",
+                timeout_seconds=5,
                 query="SELECT 1 FORMAT TSVRaw",
             )
 
         self.assertEqual(output, "2026-05-18\n")
         cmd = run_mock.call_args.args[0]
+        self.assertEqual(run_mock.call_args.kwargs["timeout"], 5)
         self.assertEqual(
             cmd[:7],
             [

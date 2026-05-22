@@ -61,6 +61,17 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--chunk-minutes", type=int, default=replay_mod.DEFAULT_CHUNK_MINUTES
     )
+    parser.add_argument(
+        "--clickhouse-query-timeout-seconds",
+        type=int,
+        default=int(
+            os.environ.get(
+                "TA_CLICKHOUSE_QUERY_TIMEOUT_SECONDS",
+                str(replay_mod.DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS),
+            )
+        ),
+        help="Per ClickHouse HTTP or kubectl query timeout. Keeps replay-tape materialization bounded.",
+    )
     parser.add_argument("--start-equity", default=str(replay_mod.DEFAULT_START_EQUITY))
     parser.add_argument(
         "--symbols",
@@ -154,6 +165,16 @@ def main() -> int:
         start_date=start_date,
         end_date=end_date,
         chunk_minutes=max(1, int(args.chunk_minutes)),
+        clickhouse_query_timeout_seconds=max(
+            1,
+            int(
+                getattr(
+                    args,
+                    "clickhouse_query_timeout_seconds",
+                    replay_mod.DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS,
+                )
+            ),
+        ),
         flatten_eod=True,
         start_equity=Decimal(str(args.start_equity)),
         symbols=symbols,
