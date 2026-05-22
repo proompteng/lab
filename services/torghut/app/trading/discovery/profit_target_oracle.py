@@ -74,6 +74,9 @@ class ProfitTargetOraclePolicy:
     min_delay_adjusted_depth_grid_max_stress_ms: Decimal = Decimal("250")
     min_delay_adjusted_depth_fillable_notional_per_day: Decimal = Decimal("300000")
     min_delay_adjusted_depth_tail_fillable_notional: Decimal = Decimal("300000")
+    require_fill_survival_evidence: bool = True
+    min_fill_survival_sample_count: int = 1
+    min_fill_survival_rate: Decimal = Decimal("0")
     require_implementation_uncertainty_stability: bool = False
     min_implementation_uncertainty_model_count: int = 2
     require_conformal_tail_risk: bool = False
@@ -166,6 +169,9 @@ class ProfitTargetOraclePolicy:
             "min_delay_adjusted_depth_tail_fillable_notional": str(
                 self.min_delay_adjusted_depth_tail_fillable_notional
             ),
+            "require_fill_survival_evidence": self.require_fill_survival_evidence,
+            "min_fill_survival_sample_count": self.min_fill_survival_sample_count,
+            "min_fill_survival_rate": str(self.min_fill_survival_rate),
             "accepted_delay_adjusted_depth_stress_models": sorted(
                 _ACCEPTED_DELAY_ADJUSTED_DEPTH_STRESS_MODELS
             ),
@@ -1086,6 +1092,65 @@ def evaluate_profit_target_oracle(
                 and policy.require_delay_adjusted_depth_tail_coverage
             )
             else True,
+        }
+    )
+    require_fill_survival_evidence = (
+        policy.require_delay_adjusted_depth_stress
+        and policy.require_fill_survival_evidence
+    )
+    fill_survival_evidence_present = _boolish(
+        scorecard.get("delay_adjusted_depth_fill_survival_evidence_present")
+        or scorecard.get("fill_survival_evidence_present")
+    )
+    checks.append(
+        {
+            "metric": "fill_survival_evidence_present",
+            "observed": str(fill_survival_evidence_present).lower(),
+            "operator": "eq",
+            "threshold": "true",
+            "source_marker": "kanformer_fill_survival_arxiv_2512_05734_2025",
+            "passed": fill_survival_evidence_present
+            if require_fill_survival_evidence
+            else True,
+        }
+    )
+    fill_survival_sample_count = max(
+        _nonnegative_int(
+            scorecard.get("delay_adjusted_depth_fill_survival_sample_count")
+        ),
+        _nonnegative_int(scorecard.get("fill_survival_sample_count")),
+    )
+    fill_survival_sample_check = _numeric_check(
+        metric="fill_survival_sample_count",
+        observed=Decimal(fill_survival_sample_count),
+        operator="gte",
+        threshold=Decimal(policy.min_fill_survival_sample_count),
+    )
+    if not require_fill_survival_evidence:
+        fill_survival_sample_check["passed"] = True
+    checks.append(
+        {
+            **fill_survival_sample_check,
+            "source_marker": "kanformer_fill_survival_arxiv_2512_05734_2025",
+        }
+    )
+    fill_survival_rate = max(
+        _decimal(scorecard.get("delay_adjusted_depth_fill_survival_rate")),
+        _decimal(scorecard.get("fill_survival_fill_rate")),
+        _decimal(scorecard.get("fill_survival_rate")),
+    )
+    fill_survival_rate_check = _numeric_check(
+        metric="fill_survival_rate",
+        observed=fill_survival_rate,
+        operator="gt",
+        threshold=policy.min_fill_survival_rate,
+    )
+    if not require_fill_survival_evidence:
+        fill_survival_rate_check["passed"] = True
+    checks.append(
+        {
+            **fill_survival_rate_check,
+            "source_marker": "kanformer_fill_survival_arxiv_2512_05734_2025",
         }
     )
     for metric_name, *keys in (

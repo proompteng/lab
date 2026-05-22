@@ -1622,6 +1622,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                         "delay_adjusted_depth_stress_artifact_ref": "feedback://delay-depth",
                         "delay_adjusted_depth_fillable_notional_per_day": "500000",
                         "delay_adjusted_depth_stress_net_pnl_per_day": "500",
+                        "delay_adjusted_depth_fill_survival_evidence_present": True,
+                        "delay_adjusted_depth_fill_survival_sample_count": 12,
+                        "delay_adjusted_depth_fill_survival_rate": "0.85",
                         "double_oos_passed": True,
                         "double_oos_artifact_ref": "feedback://double-oos",
                         "double_oos_independent_window_count": 2,
@@ -4894,6 +4897,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                         "case_count": 2,
                         "generated_at": "2026-05-19T13:00:00Z",
                         "fillable_notional_per_day": "300000",
+                        "fill_survival_evidence_present": True,
+                        "fill_survival_sample_count": 2,
+                        "fill_survival_rate": "0.85",
                         "post_delay_depth_net_pnl_per_day": "605",
                         "source_markers": [
                             "lob_simulation_reality_gap_arxiv_2603_24137_2026"
@@ -5047,6 +5053,21 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertTrue(
             updated.objective_scorecard["delay_adjusted_depth_stress_passed"]
+        )
+        self.assertTrue(
+            updated.objective_scorecard[
+                "delay_adjusted_depth_fill_survival_evidence_present"
+            ]
+        )
+        self.assertEqual(
+            updated.objective_scorecard[
+                "delay_adjusted_depth_fill_survival_sample_count"
+            ],
+            2,
+        )
+        self.assertEqual(
+            updated.objective_scorecard["delay_adjusted_depth_fill_survival_rate"],
+            "0.85",
         )
         self.assertEqual(
             updated.objective_scorecard["delay_adjusted_depth_stress_source_markers"],
@@ -6419,6 +6440,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 "market_impact_stress_net_pnl_per_day": "125",
                 "delay_adjusted_depth_stress_passed": True,
                 "delay_adjusted_depth_stress_net_pnl_per_day": "125",
+                "delay_adjusted_depth_fill_survival_evidence_present": True,
+                "delay_adjusted_depth_fill_survival_sample_count": 12,
+                "delay_adjusted_depth_fill_survival_rate": "0.85",
                 "double_oos_passed": True,
                 "double_oos_net_pnl_per_day": "125",
                 "double_oos_cost_shock_net_pnl_per_day": "125",
@@ -6460,6 +6484,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 "market_impact_stress_net_pnl_per_day": "460",
                 "delay_adjusted_depth_stress_passed": True,
                 "delay_adjusted_depth_stress_net_pnl_per_day": "450",
+                "delay_adjusted_depth_fill_survival_evidence_present": True,
+                "delay_adjusted_depth_fill_survival_sample_count": 8,
+                "delay_adjusted_depth_fill_survival_rate": "0.85",
                 "double_oos_passed": True,
                 "double_oos_net_pnl_per_day": "440",
                 "double_oos_cost_shock_net_pnl_per_day": "440",

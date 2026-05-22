@@ -820,6 +820,19 @@ def _history_record(
         "delay_adjusted_depth_stress_net_pnl_per_day": _string(
             scorecard.get("delay_adjusted_depth_stress_net_pnl_per_day")
         ),
+        "delay_adjusted_depth_fill_survival_evidence_present": bool(
+            scorecard.get("delay_adjusted_depth_fill_survival_evidence_present")
+            or scorecard.get("fill_survival_evidence_present")
+        ),
+        "delay_adjusted_depth_fill_survival_sample_count": _string(
+            scorecard.get("delay_adjusted_depth_fill_survival_sample_count")
+            or scorecard.get("fill_survival_sample_count")
+        ),
+        "delay_adjusted_depth_fill_survival_rate": _string(
+            scorecard.get("delay_adjusted_depth_fill_survival_rate")
+            or scorecard.get("fill_survival_fill_rate")
+            or scorecard.get("fill_survival_rate")
+        ),
         "double_oos_passed": bool(scorecard.get("double_oos_passed")),
         "double_oos_net_pnl_per_day": _string(
             scorecard.get("double_oos_net_pnl_per_day")

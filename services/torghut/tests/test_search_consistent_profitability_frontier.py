@@ -460,6 +460,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             candidate_id: str,
             net_pnl_per_day: str,
             deployable_lower_bound: str | None,
+            include_fill_survival: bool = True,
         ) -> dict[str, object]:
             scorecard: dict[str, object] = {
                 "net_pnl_per_day": net_pnl_per_day,
@@ -484,6 +485,9 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                         "market_impact_stress_net_pnl_per_day": deployable_lower_bound,
                         "delay_adjusted_depth_stress_passed": True,
                         "delay_adjusted_depth_stress_net_pnl_per_day": deployable_lower_bound,
+                        "delay_adjusted_depth_fill_survival_evidence_present": True,
+                        "delay_adjusted_depth_fill_survival_sample_count": 6,
+                        "delay_adjusted_depth_fill_survival_rate": "0.85",
                         "double_oos_passed": True,
                         "double_oos_cost_shock_net_pnl_per_day": deployable_lower_bound,
                         "implementation_uncertainty_stability_passed": True,
@@ -492,6 +496,10 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                         "conformal_tail_risk_adjusted_net_pnl_per_day": deployable_lower_bound,
                     }
                 )
+                if not include_fill_survival:
+                    scorecard.pop("delay_adjusted_depth_fill_survival_evidence_present")
+                    scorecard.pop("delay_adjusted_depth_fill_survival_sample_count")
+                    scorecard.pop("delay_adjusted_depth_fill_survival_rate")
             return {
                 "candidate_id": candidate_id,
                 "full_window": {
@@ -513,6 +521,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                     candidate_id="optimistic",
                     net_pnl_per_day="1500",
                     deployable_lower_bound="220",
+                    include_fill_survival=False,
                 ),
                 scored_candidate(
                     candidate_id="robust",
@@ -526,6 +535,15 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         raw_only = next(item for item in ranked if item["candidate_id"] == "raw-only")
         self.assertGreater(
             raw_only["objective_scorecard"]["deployable_lower_bound_missing_count"],
+            0,
+        )
+        optimistic = next(
+            item for item in ranked if item["candidate_id"] == "optimistic"
+        )
+        self.assertGreater(
+            optimistic["objective_scorecard"][
+                "deployable_lower_bound_failed_gate_count"
+            ],
             0,
         )
         self.assertEqual(
