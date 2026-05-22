@@ -508,6 +508,7 @@ class TestSearchProfitabilityFrontier(TestCase):
                 clickhouse_username="torghut",
                 clickhouse_password="secret",
                 limit=2,
+                latest_trading_day=date(2026, 3, 27),
             )
 
         self.assertEqual(days, (date(2026, 3, 26), date(2026, 3, 27)))
@@ -515,6 +516,26 @@ class TestSearchProfitabilityFrontier(TestCase):
         self.assertIn("FROM torghut.ta_signals", sql)
         self.assertIn("source = 'ta'", sql)
         self.assertIn("window_size = 'PT1S'", sql)
+        self.assertIn("toDate(event_ts) <= toDate('2026-03-27')", sql)
+
+    def test_resolve_recent_trading_days_filters_partial_trading_day(self) -> None:
+        with patch(
+            "scripts.search_profitability_frontier.resolve_expected_last_trading_day",
+            return_value=date(2026, 5, 21),
+        ), patch(
+            "scripts.search_profitability_frontier._http_query",
+            return_value="2026-05-22\n2026-05-21\n2026-05-20\n",
+        ) as query:
+            days = frontier._resolve_recent_trading_days(
+                clickhouse_http_url="http://example.invalid:8123",
+                clickhouse_username="torghut",
+                clickhouse_password="secret",
+                limit=3,
+            )
+
+        self.assertEqual(days, (date(2026, 5, 20), date(2026, 5, 21)))
+        sql = query.call_args.kwargs["query"]
+        self.assertIn("toDate(event_ts) <= toDate('2026-05-21')", sql)
 
     def test_load_sweep_config_rejects_non_mapping_payload(self) -> None:
         with TemporaryDirectory() as tmpdir:
