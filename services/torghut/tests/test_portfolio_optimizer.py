@@ -129,6 +129,77 @@ class TestPortfolioOptimizer(TestCase):
             Decimal("0"),
         )
 
+    def test_gross_exposure_allocation_priority_rejects_bad_edge_or_quality(
+        self,
+    ) -> None:
+        def bundle(
+            candidate_id: str,
+            *,
+            net_pnl_per_day: str,
+            active_day_ratio: str = "1",
+            positive_day_ratio: str = "1",
+        ) -> CandidateEvidenceBundle:
+            return evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=f"spec-{candidate_id}",
+                candidate={
+                    "candidate_id": candidate_id,
+                    "objective_scorecard": {
+                        "net_pnl_per_day": net_pnl_per_day,
+                        "active_day_ratio": active_day_ratio,
+                        "positive_day_ratio": positive_day_ratio,
+                        "worst_day_loss": "10",
+                        "max_drawdown": "10",
+                        "best_day_share": "0.2",
+                    },
+                },
+                dataset_snapshot_id="snapshot-priority-zero",
+                result_path=f"/tmp/{candidate_id}.json",
+            )
+
+        self.assertEqual(
+            portfolio_optimizer_module._gross_exposure_allocation_priority(
+                bundle("negative-edge", net_pnl_per_day="-1")
+            ),
+            Decimal("0"),
+        )
+        self.assertEqual(
+            portfolio_optimizer_module._gross_exposure_allocation_priority(
+                bundle("inactive", net_pnl_per_day="100", active_day_ratio="0")
+            ),
+            Decimal("0"),
+        )
+
+    def test_edge_risk_gross_exposure_budget_weights_covers_saturation_and_noop(
+        self,
+    ) -> None:
+        saturated_weights = (
+            portfolio_optimizer_module._edge_risk_gross_exposure_budget_weights(
+                (Decimal("0.1"), Decimal("1.0")),
+                (Decimal("100"), Decimal("1")),
+                max_gross_exposure_pct_equity=Decimal("0.6"),
+                equal_scale=Decimal("0.6") / Decimal("1.1"),
+            )
+        )
+
+        self.assertIsNotNone(saturated_weights)
+        assert saturated_weights is not None
+        self.assertEqual(saturated_weights[0], Decimal("1"))
+        self.assertLess(saturated_weights[1], Decimal("0.6") / Decimal("1.1"))
+        self.assertLessEqual(
+            (Decimal("0.1") * saturated_weights[0])
+            + (Decimal("1.0") * saturated_weights[1]),
+            Decimal("0.6"),
+        )
+
+        self.assertIsNone(
+            portfolio_optimizer_module._edge_risk_gross_exposure_budget_weights(
+                (Decimal("0.25"), Decimal("0.75")),
+                (Decimal("1"), Decimal("3")),
+                max_gross_exposure_pct_equity=Decimal("0.5"),
+                equal_scale=Decimal("0.5"),
+            )
+        )
+
     def test_capital_safety_rejection_reasons_block_minimums(self) -> None:
         def bundle(
             candidate_id: str,
@@ -450,6 +521,116 @@ class TestPortfolioOptimizer(TestCase):
         )
         self.assertTrue(portfolio.objective_scorecard["target_met"])
         self.assertTrue(portfolio.objective_scorecard["oracle_passed"])
+
+    def test_portfolio_gross_exposure_budget_overweights_better_edge_risk_sleeve(
+        self,
+    ) -> None:
+        def bundle(
+            candidate_id: str,
+            symbol: str,
+            cluster: str,
+            *,
+            net_pnl_per_day: str,
+            worst_day_loss: str,
+            max_drawdown: str,
+        ) -> CandidateEvidenceBundle:
+            return evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=f"spec-{candidate_id}",
+                candidate={
+                    "candidate_id": candidate_id,
+                    "runtime_family": "microbar_cross_sectional_pairs",
+                    "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                    "family_template_id": "microbar_cross_sectional_pairs_v1",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": net_pnl_per_day,
+                        "active_day_ratio": "1.0",
+                        "positive_day_ratio": "1.0",
+                        "worst_day_loss": worst_day_loss,
+                        "max_drawdown": max_drawdown,
+                        "max_gross_exposure_pct_equity": "0.75",
+                        "min_cash": "5000",
+                        "negative_cash_observation_count": 0,
+                        "best_day_share": "0.2",
+                        "avg_filled_notional_per_day": "400000",
+                        "regime_slice_pass_rate": "0.55",
+                        "posterior_edge_lower": "0.01",
+                        "shadow_parity_status": "within_budget",
+                        "correlation_cluster": cluster,
+                        "symbol_contribution_shares": {symbol: "1.0"},
+                        **_executable_scorecard_fields(candidate_id),
+                    },
+                    "full_window": {
+                        "daily_net": {
+                            "2026-02-23": net_pnl_per_day,
+                            "2026-02-24": net_pnl_per_day,
+                            "2026-02-25": net_pnl_per_day,
+                            "2026-02-26": net_pnl_per_day,
+                            "2026-02-27": net_pnl_per_day,
+                        },
+                        "daily_filled_notional": {
+                            "2026-02-23": "400000",
+                            "2026-02-24": "400000",
+                            "2026-02-25": "400000",
+                            "2026-02-26": "400000",
+                            "2026-02-27": "400000",
+                        },
+                    },
+                },
+                dataset_snapshot_id="snapshot-edge-risk-gross-budget",
+                result_path=f"/tmp/{candidate_id}.json",
+            )
+
+        portfolio = optimize_portfolio_candidate(
+            evidence_bundles=[
+                bundle(
+                    "cand-edge-risk-strong",
+                    "AAPL",
+                    "edge-risk-strong",
+                    net_pnl_per_day="700",
+                    worst_day_loss="25",
+                    max_drawdown="40",
+                ),
+                bundle(
+                    "cand-edge-risk-weak",
+                    "AMZN",
+                    "edge-risk-weak",
+                    net_pnl_per_day="150",
+                    worst_day_loss="150",
+                    max_drawdown="300",
+                ),
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            oracle_policy=ProfitTargetOraclePolicy(
+                max_cluster_contribution_share=Decimal("0.99"),
+                max_single_symbol_contribution_share=Decimal("0.99"),
+                max_gross_exposure_pct_equity=Decimal("0.75"),
+                min_observed_trading_days=5,
+            ),
+            portfolio_size_min=2,
+            portfolio_size_max=2,
+        )
+
+        self.assertIsNotNone(portfolio)
+        assert portfolio is not None
+        weights = portfolio.capital_budget["sleeve_weights"]
+        strong_weight = Decimal(str(weights["cand-edge-risk-strong"]))
+        weak_weight = Decimal(str(weights["cand-edge-risk-weak"]))
+        self.assertEqual(
+            portfolio.objective_scorecard["portfolio_weighting_mode"],
+            "edge_risk_gross_exposure_budget",
+        )
+        self.assertGreater(strong_weight, weak_weight)
+        self.assertGreater(
+            Decimal(str(portfolio.objective_scorecard["net_pnl_per_day"])),
+            Decimal("425"),
+        )
+        self.assertLessEqual(
+            Decimal(
+                str(portfolio.objective_scorecard["max_gross_exposure_pct_equity"])
+            ),
+            Decimal("0.75"),
+        )
+        self.assertTrue(portfolio.objective_scorecard["target_met"])
 
     def test_portfolio_aggregates_market_impact_stress_into_oracle(
         self,

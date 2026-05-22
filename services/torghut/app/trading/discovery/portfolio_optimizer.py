@@ -24,6 +24,7 @@ CONFORMAL_TAIL_RISK_ALPHA = Decimal("0.20")
 PORTFOLIO_SEARCH_BEAM_WIDTH = 256
 PORTFOLIO_WEIGHTING_EQUAL_COUNT = "equal_count"
 PORTFOLIO_WEIGHTING_GROSS_EXPOSURE_BUDGET = "gross_exposure_budget"
+PORTFOLIO_WEIGHTING_EDGE_RISK_GROSS_EXPOSURE_BUDGET = "edge_risk_gross_exposure_budget"
 PORTFOLIO_COMPOSABLE_SINGLE_SLEEVE_VETOES = frozenset(
     {
         "active_day_ratio_below_min",
@@ -918,6 +919,109 @@ def _equal_weights(selected: Sequence[CandidateEvidenceBundle]) -> tuple[Decimal
     return tuple(weight for _ in selected)
 
 
+def _gross_exposure_allocation_edge_net_per_day(
+    bundle: CandidateEvidenceBundle,
+) -> Decimal:
+    scorecard = _scorecard(bundle)
+    lower_bound = deployable_lower_bound_net_pnl_per_day(scorecard)
+    edge_candidates: list[Decimal] = [
+        _net_per_day(bundle),
+    ]
+    if lower_bound is not None:
+        edge_candidates.append(lower_bound)
+    for key in (
+        "market_impact_stress_net_pnl_per_day",
+        "delay_adjusted_depth_stress_net_pnl_per_day",
+        "delay_adjusted_depth_net_pnl_per_day",
+        "implementation_uncertainty_lower_net_pnl_per_day",
+        "double_oos_cost_shock_net_pnl_per_day",
+        "double_oos_net_pnl_per_day",
+        "conformal_tail_risk_adjusted_net_pnl_per_day",
+    ):
+        if key in scorecard:
+            edge_candidates.append(_decimal(scorecard.get(key)))
+    return min(edge_candidates, default=Decimal("0"))
+
+
+def _gross_exposure_allocation_priority(bundle: CandidateEvidenceBundle) -> Decimal:
+    edge = _gross_exposure_allocation_edge_net_per_day(bundle)
+    if edge <= 0:
+        return Decimal("0")
+    downside_risk = max(
+        _worst_day_loss(bundle),
+        _max_drawdown(bundle),
+        Decimal("1"),
+    )
+    concentration_penalty = Decimal("1") + max(
+        _best_day_share(bundle),
+        Decimal("0"),
+    )
+    quality = max(_active_ratio(bundle), Decimal("0")) * max(
+        _positive_ratio(bundle),
+        Decimal("0"),
+    )
+    if quality <= 0:
+        return Decimal("0")
+    return (edge * quality) / (downside_risk * concentration_penalty)
+
+
+def _edge_risk_gross_exposure_budget_weights(
+    exposures: Sequence[Decimal],
+    priorities: Sequence[Decimal],
+    *,
+    max_gross_exposure_pct_equity: Decimal,
+    equal_scale: Decimal,
+) -> tuple[Decimal, ...] | None:
+    positive_priorities = tuple(max(priority, Decimal("0")) for priority in priorities)
+    if (
+        not positive_priorities
+        or sum(positive_priorities, Decimal("0")) <= 0
+        or max(positive_priorities) == min(positive_priorities)
+    ):
+        return None
+
+    weights = [equal_scale * Decimal("0.50") for _ in exposures]
+    used_exposure = sum(
+        exposure * weight for exposure, weight in zip(exposures, weights, strict=True)
+    )
+    remaining_exposure = max_gross_exposure_pct_equity - used_exposure
+    active_indexes = {
+        index
+        for index, (exposure, weight, priority) in enumerate(
+            zip(exposures, weights, positive_priorities, strict=True)
+        )
+        if exposure > 0 and weight < Decimal("1") and priority > 0
+    }
+
+    while remaining_exposure > 0 and active_indexes:
+        total_priority = sum(
+            (positive_priorities[index] for index in active_indexes),
+            Decimal("0"),
+        )
+        used_this_round = Decimal("0")
+        saturated_indexes: set[int] = set()
+        for index in sorted(active_indexes):
+            desired_additional_exposure = (
+                remaining_exposure * positive_priorities[index] / total_priority
+            )
+            max_additional_exposure = exposures[index] * (Decimal("1") - weights[index])
+            additional_exposure = min(
+                desired_additional_exposure,
+                max_additional_exposure,
+            )
+            weights[index] += additional_exposure / exposures[index]
+            used_this_round += additional_exposure
+            if weights[index] >= Decimal("1"):
+                weights[index] = Decimal("1")
+                saturated_indexes.add(index)
+        remaining_exposure -= used_this_round
+        active_indexes.difference_update(saturated_indexes)
+
+    if tuple(weights) == tuple(equal_scale for _ in exposures):
+        return None
+    return tuple(weights)
+
+
 def _gross_exposure_budget_weights(
     selected: Sequence[CandidateEvidenceBundle],
     *,
@@ -934,6 +1038,15 @@ def _gross_exposure_budget_weights(
         Decimal("1"),
         policy.max_gross_exposure_pct_equity / total_exposure,
     )
+    if scale < Decimal("1"):
+        edge_risk_weights = _edge_risk_gross_exposure_budget_weights(
+            exposures,
+            tuple(_gross_exposure_allocation_priority(bundle) for bundle in selected),
+            max_gross_exposure_pct_equity=policy.max_gross_exposure_pct_equity,
+            equal_scale=scale,
+        )
+        if edge_risk_weights is not None:
+            return edge_risk_weights
     return tuple(scale for _ in selected)
 
 
@@ -955,10 +1068,16 @@ def _portfolio_weighting_mode(
     *,
     oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> str:
-    if (
-        _gross_exposure_budget_weights(selected, oracle_policy=oracle_policy)
-        is not None
-    ):
+    weights = _gross_exposure_budget_weights(selected, oracle_policy=oracle_policy)
+    if weights is not None:
+        policy = oracle_policy or ProfitTargetOraclePolicy()
+        exposures = tuple(_max_gross_exposure_pct_equity(bundle) for bundle in selected)
+        if exposures and all(exposure > 0 for exposure in exposures):
+            total_exposure = sum(exposures, Decimal("0"))
+            if total_exposure > policy.max_gross_exposure_pct_equity:
+                equal_scale = policy.max_gross_exposure_pct_equity / total_exposure
+                if weights != tuple(equal_scale for _ in selected):
+                    return PORTFOLIO_WEIGHTING_EDGE_RISK_GROSS_EXPOSURE_BUDGET
         return PORTFOLIO_WEIGHTING_GROSS_EXPOSURE_BUDGET
     return PORTFOLIO_WEIGHTING_EQUAL_COUNT
 
