@@ -931,6 +931,26 @@ class TestLiveConfigManifestContract(TestCase):
                 checked_universe_sets += 1
         self.assertGreater(checked_universe_sets, 0)
 
+    def test_washout_profitability_frontier_requires_capital_safe_replay(
+        self,
+    ) -> None:
+        payload = _load_yaml_mapping(
+            "services/torghut/config/trading/profitability-frontier-consistent-washout.yaml"
+        )
+        consistency_constraints = payload.get("consistency_constraints")
+        self.assertIsInstance(consistency_constraints, Mapping)
+        constraints = cast(Mapping[str, object], consistency_constraints)
+
+        self.assertIs(payload.get("disable_other_strategies"), True)
+        self.assertLessEqual(
+            Decimal(str(constraints.get("max_gross_exposure_pct_equity"))),
+            Decimal("1.0"),
+        )
+        self.assertGreaterEqual(
+            Decimal(str(constraints.get("min_cash"))),
+            Decimal("0"),
+        )
+
     def test_candidate_records_are_not_left_on_mixed_large_cap_universes(self) -> None:
         candidates_dir = (
             _repo_root() / "services" / "torghut" / "config" / "trading" / "candidates"

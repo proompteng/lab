@@ -2226,6 +2226,71 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             children[0][0], "consistency_entries:active_day_ratio_below_min"
         )
 
+    def test_consistency_repair_children_target_second_oos_shortfall(
+        self,
+    ) -> None:
+        configmap_payload = {
+            "data": {
+                "strategies.yaml": yaml.safe_dump(
+                    {
+                        "strategies": [
+                            {
+                                "name": "washout-rebound-long-v1",
+                                "params": {
+                                    "max_entries_per_session": "2",
+                                    "entry_cooldown_seconds": "600",
+                                },
+                            }
+                        ],
+                    },
+                    sort_keys=False,
+                )
+            }
+        }
+
+        children = frontier._generate_consistency_repair_children(
+            params_candidate={},
+            strategy_overrides={},
+            candidate_configmap=configmap_payload,
+            strategy_name="washout-rebound-long-v1",
+            hard_vetoes=["second_oos_net_per_day_below_target"],
+            full_window_summary={
+                "net_per_day": "515",
+                "max_gross_exposure_pct_equity": "0.95",
+                "min_cash": "2500",
+                "negative_cash_observation_count": "0",
+            },
+            branch_count=2,
+        )
+
+        self.assertEqual(
+            children[0][0],
+            "consistency_entries:second_oos_net_per_day_below_target",
+        )
+        self.assertEqual(children[0][1], {"max_entries_per_session": "3"})
+        self.assertEqual(
+            children[1][0],
+            "consistency_cooldown:second_oos_net_per_day_below_target",
+        )
+        self.assertEqual(children[1][1], {"entry_cooldown_seconds": "300"})
+
+        unsafe_children = frontier._generate_consistency_repair_children(
+            params_candidate={},
+            strategy_overrides={},
+            candidate_configmap=configmap_payload,
+            strategy_name="washout-rebound-long-v1",
+            hard_vetoes=["second_oos_net_per_day_below_target"],
+            full_window_summary={
+                "net_per_day": "515",
+                "max_gross_exposure_pct_equity": "1.2",
+                "min_cash": "-1",
+                "negative_cash_observation_count": "1",
+            },
+            branch_count=2,
+        )
+
+        self.assertEqual(unsafe_children, [])
+
     def test_loss_repair_configmap_lookup_handles_invalid_shapes(self) -> None:
         invalid_payloads = [
             {"not_data": {}},
