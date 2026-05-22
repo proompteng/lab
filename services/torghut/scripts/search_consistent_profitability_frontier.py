@@ -114,6 +114,7 @@ _CONSISTENCY_REPAIR_TRIGGER_REASONS = frozenset(
         "active_day_ratio_below_min",
         "avg_daily_notional_below_min",
         "best_day_share_above_max",
+        "second_oos_net_per_day_below_target",
     }
 )
 _CONSISTENCY_REPAIR_UNSAFE_REASONS = frozenset(
