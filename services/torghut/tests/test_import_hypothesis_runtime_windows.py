@@ -460,16 +460,21 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
         artifact_metadata = {
             "runtime_ledger_artifact_refs": ["exact-ledger.json"],
+            "runtime_ledger_artifact_candidate_id": "cand-one",
             "runtime_ledger_artifact_row_count": 6,
             "runtime_ledger_artifact_fill_count": 2,
+            "runtime_ledger_artifact_window_weekday_count": 5,
         }
 
         self.assertEqual(
             _runtime_ledger_target_metadata_blockers(
                 target_metadata={
                     "runtime_ledger_artifact_refs": ["exact-ledger.json"],
+                    "candidate_id": "cand-one",
                     "runtime_ledger_artifact_row_count": 6,
                     "runtime_ledger_artifact_fill_count": 2,
+                    "replay_window_weekday_count": 5,
+                    "replay_min_window_weekday_count": 5,
                     "window_start": "2026-03-06T14:30:00+00:00",
                     "window_end": "2026-03-06T15:00:00+00:00",
                 },
@@ -483,8 +488,11 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             _runtime_ledger_target_metadata_blockers(
                 target_metadata={
                     "runtime_ledger_artifact_refs": ["different-ledger.json"],
+                    "candidate_id": "different-cand",
                     "runtime_ledger_artifact_row_count": 7,
                     "runtime_ledger_artifact_fill_count": 3,
+                    "replay_window_weekday_count": 4,
+                    "replay_min_window_weekday_count": 20,
                     "window_start": "2026-03-06T14:35:00+00:00",
                     "window_end": "2026-03-06T15:00:00+00:00",
                 },
@@ -497,6 +505,9 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 "runtime_ledger_artifact_row_count_mismatch",
                 "runtime_ledger_artifact_fill_count_mismatch",
                 "runtime_ledger_window_bounds_mismatch",
+                "runtime_ledger_artifact_candidate_id_mismatch",
+                "runtime_ledger_artifact_window_weekday_count_mismatch",
+                "runtime_ledger_artifact_window_weekday_count_below_min",
             ],
         )
 
@@ -803,6 +814,9 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 json.dumps(
                     {
                         "schema_version": "torghut.exact_replay_ledger.rows.v1",
+                        "candidate_id": "artifact-candidate-1",
+                        "window_start": "2026-03-06",
+                        "window_end": "2026-03-06",
                         "account_label": "TORGHUT_SIM",
                         "strategy_id": "intraday-tsmom-profit-v3",
                         "execution_policy_hash": "policy-sha",
@@ -902,6 +916,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(ledger_bucket["blockers"], [])
         self.assertEqual(metadata["runtime_ledger_artifact_row_count"], 6)
         self.assertEqual(metadata["runtime_ledger_artifact_tca_row_count"], 1)
+        self.assertEqual(
+            metadata["runtime_ledger_artifact_candidate_id"], "artifact-candidate-1"
+        )
+        self.assertEqual(metadata["runtime_ledger_artifact_window_weekday_count"], 1)
 
     def test_runtime_ledger_artifact_helpers_fail_closed_on_loose_rows(self) -> None:
         aware_time = datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)

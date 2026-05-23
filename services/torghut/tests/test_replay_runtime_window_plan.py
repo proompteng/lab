@@ -151,9 +151,16 @@ def test_handoff_builds_non_promotional_runtime_window_target(
     assert target["runtime_ledger_artifact_refs"] == [str(artifact_path.resolve())]
     assert target["runtime_ledger_artifact_row_count"] == 6
     assert target["runtime_ledger_artifact_fill_count"] == 2
+    assert target["replay_window_weekday_count"] == 5
+    assert target["replay_min_window_weekday_count"] == 20
+    assert target["replay_target_net_pnl_per_day"] == "500"
     assert target["paper_probation_authorized"] is False
     assert target["promotion_allowed"] is False
     assert target["final_promotion_authorized"] is False
+    assert (
+        "window_weekday_count_below_min_observed_trading_days"
+        in target["runtime_ledger_target_metadata_blockers"]
+    )
     assert (
         "paper_probation_evidence_collection_only" in target["final_promotion_blockers"]
     )

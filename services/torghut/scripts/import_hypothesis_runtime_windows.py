@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Mapping, Sequence, cast
@@ -388,6 +388,40 @@ def _runtime_ledger_target_metadata_blockers(
             blockers.append("runtime_ledger_window_bounds_mismatch")
             break
 
+    expected_candidate_id = _text_or_none(metadata.get("candidate_id"))
+    loaded_candidate_id = _text_or_none(
+        runtime_ledger_artifact_metadata.get("runtime_ledger_artifact_candidate_id")
+    )
+    if (
+        expected_candidate_id is not None
+        and loaded_candidate_id is not None
+        and expected_candidate_id != loaded_candidate_id
+    ):
+        blockers.append("runtime_ledger_artifact_candidate_id_mismatch")
+
+    planned_window_weekdays = _metadata_nonnegative_int_or_none(
+        metadata.get("replay_window_weekday_count")
+    )
+    loaded_window_weekdays = _metadata_nonnegative_int_or_none(
+        runtime_ledger_artifact_metadata.get(
+            "runtime_ledger_artifact_window_weekday_count"
+        )
+    )
+    if planned_window_weekdays is not None:
+        if loaded_window_weekdays is None:
+            blockers.append("runtime_ledger_artifact_window_weekday_count_missing")
+        elif planned_window_weekdays != loaded_window_weekdays:
+            blockers.append("runtime_ledger_artifact_window_weekday_count_mismatch")
+
+    min_window_weekdays = _metadata_nonnegative_int_or_none(
+        metadata.get("replay_min_window_weekday_count")
+    )
+    if min_window_weekdays is not None:
+        if loaded_window_weekdays is None:
+            blockers.append("runtime_ledger_artifact_window_weekday_count_missing")
+        elif loaded_window_weekdays < min_window_weekdays:
+            blockers.append("runtime_ledger_artifact_window_weekday_count_below_min")
+
     return list(dict.fromkeys(blockers))
 
 
@@ -728,6 +762,83 @@ def _runtime_ledger_activity_times(
     return decision_times, execution_times
 
 
+def _parse_artifact_window_datetime(
+    value: Any,
+    *,
+    date_end: bool = False,
+) -> datetime | None:
+    if isinstance(value, datetime):
+        return (
+            value.astimezone(timezone.utc)
+            if value.tzinfo
+            else value.replace(tzinfo=timezone.utc)
+        )
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        if "T" not in text and len(text) == 10:
+            parsed_date = date.fromisoformat(text)
+            parsed = datetime.combine(parsed_date, time.min, tzinfo=timezone.utc)
+            return parsed + timedelta(days=1) if date_end else parsed
+        return _parse_dt(text)
+    except Exception:
+        return None
+
+
+def _runtime_ledger_artifact_window_metadata(
+    *,
+    payload: Mapping[str, Any],
+    rows: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    full_window = _as_mapping(payload.get("full_window"))
+    start = _parse_artifact_window_datetime(
+        payload.get("window_start")
+        or payload.get("bucket_started_at")
+        or payload.get("started_at")
+        or payload.get("start")
+        or full_window.get("start_date")
+    )
+    end = _parse_artifact_window_datetime(
+        payload.get("window_end")
+        or payload.get("bucket_ended_at")
+        or payload.get("ended_at")
+        or payload.get("end")
+        or full_window.get("end_date"),
+        date_end=True,
+    )
+    if start is None or end is None:
+        row_times = [
+            row_time
+            for row in rows
+            if (row_time := _runtime_ledger_row_time(row)) is not None
+        ]
+        if row_times:
+            start = min(row_times) if start is None else start
+            end = max(row_times) + timedelta(microseconds=1) if end is None else end
+    if start is None or end is None or end <= start:
+        return {}
+    return {
+        "runtime_ledger_artifact_window_start": start.isoformat(),
+        "runtime_ledger_artifact_window_end": end.isoformat(),
+        "runtime_ledger_artifact_window_weekday_count": _window_weekday_count(
+            start=start,
+            end=end,
+        ),
+    }
+
+
+def _window_weekday_count(*, start: datetime, end: datetime) -> int:
+    count = 0
+    current = datetime.combine(start.date(), time.min, tzinfo=timezone.utc)
+    while current < end:
+        next_day = current + timedelta(days=1)
+        if current.weekday() < 5 and next_day > start:
+            count += 1
+        current = next_day
+    return count
+
+
 def _runtime_ledger_tca_rows_from_artifacts(
     *,
     artifact_refs: list[str],
@@ -737,6 +848,8 @@ def _runtime_ledger_tca_rows_from_artifacts(
     tca_rows: list[dict[str, object]] = []
     loaded_refs: list[str] = []
     ignored_refs: list[str] = []
+    artifact_candidates: list[str] = []
+    artifact_window_metadata: list[dict[str, Any]] = []
     for ref in artifact_refs:
         payload = _load_json_artifact(ref)
         if not payload:
@@ -748,6 +861,13 @@ def _runtime_ledger_tca_rows_from_artifacts(
             continue
         loaded_refs.append(ref)
         ledger_rows.extend(rows)
+        if candidate_id := _text_or_none(payload.get("candidate_id")):
+            artifact_candidates.append(candidate_id)
+        if metadata := _runtime_ledger_artifact_window_metadata(
+            payload=payload,
+            rows=rows,
+        ):
+            artifact_window_metadata.append(metadata)
     decision_times, execution_times = _runtime_ledger_activity_times(ledger_rows)
     runtime_bucket_ranges = [(start, end) for start, end, _ in bucket_ranges]
     if ledger_rows and runtime_bucket_ranges:
@@ -777,6 +897,10 @@ def _runtime_ledger_tca_rows_from_artifacts(
         ),
         "runtime_ledger_artifact_tca_row_count": len(tca_rows),
     }
+    if len(set(artifact_candidates)) == 1:
+        metadata["runtime_ledger_artifact_candidate_id"] = artifact_candidates[0]
+    if len(artifact_window_metadata) == 1:
+        metadata.update(artifact_window_metadata[0])
     return decision_times, execution_times, tca_rows, metadata
 
 
