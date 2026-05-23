@@ -252,6 +252,57 @@ def _nonnegative_int(value: Any) -> int:
         return 0
 
 
+def _runtime_ledger_profit_proof_present(
+    tca_rows: list[dict[str, object]],
+) -> bool:
+    for row in tca_rows:
+        if row.get("post_cost_expectancy_basis") != POST_COST_BASIS_RUNTIME_LEDGER:
+            continue
+        bucket = row.get("runtime_ledger_bucket")
+        if not isinstance(bucket, Mapping):
+            continue
+        filled_notional = _decimal_or_none(bucket.get("filled_notional"))
+        if (
+            _nonnegative_int(bucket.get("fill_count")) <= 0
+            or filled_notional is None
+            or filled_notional <= 0
+            or bucket.get("post_cost_expectancy_bps") is None
+            or bucket.get("blockers")
+        ):
+            continue
+        return True
+    return False
+
+
+def _runtime_observation_authority_payload(
+    *,
+    source_kind: str,
+    tca_rows: list[dict[str, object]],
+) -> dict[str, object]:
+    has_runtime_ledger_profit_proof = _runtime_ledger_profit_proof_present(tca_rows)
+    if source_kind.startswith("simulation_") and not has_runtime_ledger_profit_proof:
+        return {
+            "authoritative": False,
+            "authority_reason": "simulation_runtime_without_runtime_ledger_profit_proof",
+            "promotion_authority": "blocked",
+            "runtime_ledger_profit_proof_present": False,
+        }
+    return {
+        "authoritative": True,
+        "authority_reason": (
+            "runtime_ledger_profit_proof"
+            if has_runtime_ledger_profit_proof
+            else "observed_runtime_activity"
+        ),
+        "promotion_authority": (
+            "runtime_ledger"
+            if has_runtime_ledger_profit_proof
+            else "observed_runtime_activity"
+        ),
+        "runtime_ledger_profit_proof_present": has_runtime_ledger_profit_proof,
+    }
+
+
 def _strategy_name_candidates(*values: str | None) -> list[str]:
     candidates: list[str] = []
     for value in values:
@@ -589,6 +640,11 @@ def _runtime_ledger_tca_rows_from_artifacts(
         "runtime_ledger_artifact_refs": loaded_refs,
         "runtime_ledger_ignored_artifact_refs": ignored_refs,
         "runtime_ledger_artifact_row_count": len(ledger_rows),
+        "runtime_ledger_artifact_fill_count": sum(
+            1
+            for row in ledger_rows
+            if _runtime_ledger_event_type(row) in _RUNTIME_LEDGER_FILL_EVENTS
+        ),
         "runtime_ledger_artifact_tca_row_count": len(tca_rows),
     }
     return decision_times, execution_times, tca_rows, metadata
@@ -832,6 +888,7 @@ def main() -> int:
         "runtime_ledger_artifact_refs": [],
         "runtime_ledger_ignored_artifact_refs": [],
         "runtime_ledger_artifact_row_count": 0,
+        "runtime_ledger_artifact_fill_count": 0,
         "runtime_ledger_artifact_tca_row_count": 0,
     }
     if artifact_refs:
@@ -932,7 +989,10 @@ def main() -> int:
         "simulation_paper_runtime" if args.observed_stage == "paper" else "live_runtime"
     )
     runtime_observation_payload = {
-        "authoritative": True,
+        **_runtime_observation_authority_payload(
+            source_kind=source_kind,
+            tca_rows=tca_rows,
+        ),
         "observed_stage": args.observed_stage,
         "evidence_provenance": evidence_provenance,
         "source_kind": source_kind,
