@@ -163,6 +163,47 @@ class TestPortfolioOptimizer(TestCase):
             0,
         )
 
+    def test_evidence_bundle_blockers_reject_nested_stale_replay_metadata(
+        self,
+    ) -> None:
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-nested-stale",
+            candidate={
+                "candidate_id": "cand-nested-stale",
+                "replay_tape": {
+                    "status": "stale_override",
+                    "stale_override_used": True,
+                },
+                "dataset_snapshot_receipt": {
+                    "snapshot_id": "snapshot-stale",
+                    "is_fresh": False,
+                    "stale_override_used": True,
+                },
+                "objective_scorecard": {
+                    "net_pnl_per_day": "600",
+                    "active_day_ratio": "1.0",
+                    "positive_day_ratio": "1.0",
+                    "worst_day_loss": "0",
+                    "max_drawdown": "0",
+                    "best_day_share": "0.1",
+                    **_executable_scorecard_fields("nested-stale"),
+                },
+            },
+            dataset_snapshot_id="snapshot-nested-stale",
+            result_path="/tmp/cand-nested-stale.json",
+        )
+
+        self.assertIn("stale_tape", evidence_bundle_blockers(bundle))
+        self.assertTrue(bundle.objective_scorecard["stale_override_used"])
+        self.assertEqual(
+            bundle.objective_scorecard["tape_freshness_status"],
+            "stale",
+        )
+        self.assertEqual(
+            bundle.objective_scorecard["dataset_freshness_status"],
+            "stale",
+        )
+
     def test_oracle_blocker_count_treats_malformed_payloads_as_unblocked(
         self,
     ) -> None:

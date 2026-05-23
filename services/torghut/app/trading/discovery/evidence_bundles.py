@@ -498,6 +498,56 @@ def _is_synthetic_dataset_snapshot(dataset_snapshot_id: str) -> bool:
     )
 
 
+def _freshness_status_from_validation_status(status: str) -> str:
+    normalized = status.strip().lower()
+    if normalized == "valid":
+        return "fresh"
+    if normalized in {"stale_override", "stale", "expired", "not_fresh"}:
+        return "stale"
+    return normalized
+
+
+def _scorecard_with_freshness_lineage(
+    *,
+    scorecard: Mapping[str, Any],
+    candidate: Mapping[str, Any],
+) -> dict[str, Any]:
+    enriched = dict(scorecard)
+    replay_tape = _mapping(candidate.get("replay_tape"))
+    if replay_tape and "replay_tape" not in enriched:
+        enriched["replay_tape"] = replay_tape
+
+    replay_status = _string(
+        replay_tape.get("status") or replay_tape.get("validation_status")
+    )
+    if replay_status and "tape_freshness_status" not in enriched:
+        enriched["tape_freshness_status"] = _freshness_status_from_validation_status(
+            replay_status
+        )
+    if _bool(replay_tape.get("stale_override_used")) or replay_status.lower() in {
+        "stale_override",
+        "stale",
+    }:
+        enriched["stale_override_used"] = True
+
+    dataset_receipt = _mapping(
+        candidate.get("dataset_snapshot_receipt")
+        or candidate.get("dataset_snapshot")
+        or candidate.get("dataset_receipt")
+    )
+    if dataset_receipt and "dataset_snapshot_receipt" not in enriched:
+        enriched["dataset_snapshot_receipt"] = dataset_receipt
+    if dataset_receipt:
+        if _bool(dataset_receipt.get("stale_override_used")):
+            enriched["stale_override_used"] = True
+        is_fresh = dataset_receipt.get("is_fresh")
+        if is_fresh is not None and "dataset_freshness_status" not in enriched:
+            enriched["dataset_freshness_status"] = (
+                "fresh" if _bool(is_fresh) else "stale"
+            )
+    return enriched
+
+
 def _decomposition_symbol_contribution_shares(
     candidate: Mapping[str, Any],
 ) -> dict[str, str]:
@@ -976,6 +1026,10 @@ def evidence_bundle_from_frontier_candidate(
         full_window=full_window,
         result_path=result_path,
     )
+    scorecard = _scorecard_with_freshness_lineage(
+        scorecard=scorecard,
+        candidate=candidate,
+    )
     stress_metrics = tuple(
         cast(Sequence[Mapping[str, Any]], candidate.get("stress_metrics") or ())
     )
@@ -1266,6 +1320,21 @@ def evidence_bundle_blockers(bundle: CandidateEvidenceBundle) -> tuple[str, ...]
         or scorecard.get("freshness_status")
     ).lower()
     if freshness in {"stale", "expired", "not_fresh"}:
+        blockers.append("stale_tape")
+    replay_tape = _mapping(scorecard.get("replay_tape"))
+    replay_status = _string(
+        replay_tape.get("status") or replay_tape.get("validation_status")
+    ).lower()
+    if _bool(replay_tape.get("stale_override_used")) or replay_status in {
+        "stale_override",
+        "stale",
+    }:
+        blockers.append("stale_tape")
+    dataset_receipt = _mapping(scorecard.get("dataset_snapshot_receipt"))
+    if _bool(dataset_receipt.get("stale_override_used")):
+        blockers.append("stale_tape")
+    receipt_is_fresh = dataset_receipt.get("is_fresh")
+    if receipt_is_fresh is not None and not _bool(receipt_is_fresh):
         blockers.append("stale_tape")
     validation_contract = _mapping(
         scorecard.get("validation_contract")
