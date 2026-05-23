@@ -540,6 +540,10 @@ class TestMaterializeReplayTapeCli(TestCase):
                     " nvda, META ",
                     "--coverage-diagnostic-output",
                     str(output.with_suffix(".coverage.json")),
+                    "--latest-complete-window-min-days",
+                    "2",
+                    "--latest-complete-window-receipt-output",
+                    str(output.with_suffix(".window.json")),
                     "--source-table-version",
                     "ta_signals=v1",
                     "--clickhouse-query-timeout-seconds",
@@ -554,6 +558,11 @@ class TestMaterializeReplayTapeCli(TestCase):
         self.assertEqual(
             args.coverage_diagnostic_output,
             output.with_suffix(".coverage.json"),
+        )
+        self.assertEqual(args.latest_complete_window_min_days, 2)
+        self.assertEqual(
+            args.latest_complete_window_receipt_output,
+            output.with_suffix(".window.json"),
         )
         self.assertFalse(args.allow_incomplete_coverage)
         self.assertEqual(
@@ -634,6 +643,73 @@ class TestMaterializeReplayTapeCli(TestCase):
         self.assertEqual(diagnostics["missing_executable_signal_days"], ["2026-03-27"])
         self.assertEqual(diagnostics["missing_microbar_days"], ["2026-03-27"])
 
+    def test_latest_complete_window_selects_latest_consecutive_complete_days(
+        self,
+    ) -> None:
+        diagnostics = {
+            "requested_trading_days": [
+                "2026-03-26",
+                "2026-03-27",
+                "2026-03-30",
+                "2026-03-31",
+            ],
+            "rows_by_trading_day": {
+                "2026-03-26": {
+                    "raw_signal_rows": 10,
+                    "executable_signal_rows": 10,
+                    "microbar_rows": 10,
+                    "raw_signal_symbol_count": 2,
+                    "executable_signal_symbol_count": 2,
+                    "microbar_symbol_count": 2,
+                },
+                "2026-03-27": {
+                    "raw_signal_rows": 10,
+                    "executable_signal_rows": 0,
+                    "microbar_rows": 10,
+                    "raw_signal_symbol_count": 2,
+                    "executable_signal_symbol_count": 0,
+                    "microbar_symbol_count": 2,
+                },
+                "2026-03-30": {
+                    "raw_signal_rows": 10,
+                    "executable_signal_rows": 10,
+                    "microbar_rows": 10,
+                    "raw_signal_symbol_count": 2,
+                    "executable_signal_symbol_count": 2,
+                    "microbar_symbol_count": 2,
+                },
+                "2026-03-31": {
+                    "raw_signal_rows": 11,
+                    "executable_signal_rows": 11,
+                    "microbar_rows": 11,
+                    "raw_signal_symbol_count": 2,
+                    "executable_signal_symbol_count": 2,
+                    "microbar_symbol_count": 2,
+                },
+            },
+        }
+
+        selected_start, selected_end, selected_days = (
+            materialize_cli._latest_complete_window(
+                diagnostics,
+                min_days=2,
+                expected_symbol_count=2,
+            )
+        )
+
+        self.assertEqual(selected_start, date(2026, 3, 30))
+        self.assertEqual(selected_end, date(2026, 3, 31))
+        self.assertEqual(selected_days, ("2026-03-30", "2026-03-31"))
+        with self.assertRaisesRegex(
+            ValueError,
+            "latest_complete_replay_window_missing:min_days=3",
+        ):
+            materialize_cli._latest_complete_window(
+                diagnostics,
+                min_days=3,
+                expected_symbol_count=2,
+            )
+
     def test_main_materializes_manifest_from_replay_rows(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -708,6 +784,129 @@ class TestMaterializeReplayTapeCli(TestCase):
             {"META": {"2026-03-26": 1, "2026-03-27": 1}},
         )
         self.assertEqual(diagnostic_payload["missing_executable_signal_days"], [])
+
+    def test_main_can_materialize_latest_complete_source_window(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output = root / "tape.jsonl"
+            manifest_output = root / "tape.manifest.json"
+            diagnostic_output = root / "coverage.json"
+            receipt_output = root / "window.json"
+            captured_windows: list[tuple[date, date]] = []
+
+            def iter_rows(config: ReplayConfig) -> tuple[SignalEnvelope, ...]:
+                captured_windows.append((config.start_date, config.end_date))
+                return (
+                    self._signal(day=30, seq=1),
+                    self._signal(day=31, seq=2),
+                )
+
+            args = Namespace(
+                strategy_configmap=root / "strategy.yaml",
+                clickhouse_http_url="http://clickhouse.invalid:8123",
+                clickhouse_username="torghut",
+                clickhouse_password="secret",
+                start_date="2026-03-26",
+                end_date="2026-03-31",
+                chunk_minutes=0,
+                start_equity="10000",
+                symbols="meta",
+                dataset_snapshot_ref="snapshot-cli",
+                output=output,
+                manifest_output=manifest_output,
+                coverage_diagnostic_output=diagnostic_output,
+                latest_complete_window_min_days=2,
+                latest_complete_window_receipt_output=receipt_output,
+                source_table_version=[],
+                allow_incomplete_coverage=False,
+                log_level="WARNING",
+            )
+            coverage = {
+                "schema_version": "torghut.replay-coverage-diagnostic.v1",
+                "requested_trading_days": [
+                    "2026-03-26",
+                    "2026-03-27",
+                    "2026-03-30",
+                    "2026-03-31",
+                ],
+                "rows_by_trading_day": {
+                    "2026-03-26": {
+                        "raw_signal_rows": 10,
+                        "executable_signal_rows": 10,
+                        "microbar_rows": 10,
+                        "raw_signal_symbol_count": 1,
+                        "executable_signal_symbol_count": 1,
+                        "microbar_symbol_count": 1,
+                    },
+                    "2026-03-27": {
+                        "raw_signal_rows": 10,
+                        "executable_signal_rows": 0,
+                        "microbar_rows": 10,
+                        "raw_signal_symbol_count": 1,
+                        "executable_signal_symbol_count": 0,
+                        "microbar_symbol_count": 1,
+                    },
+                    "2026-03-30": {
+                        "raw_signal_rows": 10,
+                        "executable_signal_rows": 10,
+                        "microbar_rows": 10,
+                        "raw_signal_symbol_count": 1,
+                        "executable_signal_symbol_count": 1,
+                        "microbar_symbol_count": 1,
+                    },
+                    "2026-03-31": {
+                        "raw_signal_rows": 11,
+                        "executable_signal_rows": 11,
+                        "microbar_rows": 11,
+                        "raw_signal_symbol_count": 1,
+                        "executable_signal_symbol_count": 1,
+                        "microbar_symbol_count": 1,
+                    },
+                },
+                "missing_executable_signal_days": ["2026-03-27"],
+            }
+            stdout = io.StringIO()
+            with (
+                patch(
+                    "scripts.materialize_replay_tape._parse_args",
+                    return_value=args,
+                ),
+                patch(
+                    "scripts.materialize_replay_tape._fetch_coverage_diagnostics",
+                    return_value=coverage,
+                ) as fetch,
+                patch(
+                    "scripts.materialize_replay_tape.replay_mod._iter_signal_rows",
+                    side_effect=iter_rows,
+                ),
+                redirect_stdout(stdout),
+            ):
+                exit_code = materialize_cli.main()
+
+            payload = json.loads(stdout.getvalue())
+            diagnostic_payload = json.loads(
+                diagnostic_output.read_text(encoding="utf-8")
+            )
+            receipt_payload = json.loads(receipt_output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(captured_windows, [(date(2026, 3, 30), date(2026, 3, 31))])
+        self.assertEqual(fetch.call_count, 1)
+        self.assertEqual(payload["start_date"], "2026-03-30")
+        self.assertEqual(payload["end_date"], "2026-03-31")
+        self.assertEqual(
+            payload["requested_trading_days"], ["2026-03-30", "2026-03-31"]
+        )
+        self.assertEqual(
+            diagnostic_payload["latest_complete_window"]["selected_trading_days"],
+            ["2026-03-30", "2026-03-31"],
+        )
+        self.assertEqual(receipt_payload["requested_start_date"], "2026-03-26")
+        self.assertEqual(receipt_payload["effective_start_date"], "2026-03-30")
+        self.assertEqual(
+            receipt_payload["materialized_manifest"]["row_count"],
+            2,
+        )
 
     def test_main_fails_closed_on_incomplete_coverage_by_default(self) -> None:
         with TemporaryDirectory() as tmpdir:
