@@ -349,6 +349,15 @@ def _parse_args() -> argparse.Namespace:
             "candidate specs. Defaults to --max-candidates when omitted."
         ),
     )
+    parser.add_argument(
+        "--staged-train-screen-multiplier",
+        type=int,
+        default=0,
+        help=(
+            "Optional override for cheap train-screen candidate breadth per "
+            "frontier run. 0 uses the research program replay budget."
+        ),
+    )
     parser.add_argument("--real-replay-timeout-seconds", type=int, default=0)
     parser.add_argument(
         "--real-replay-shard-size",
@@ -6277,6 +6286,9 @@ def _run_real_replay(
         top_n=args.top_k,
         max_candidates_to_evaluate=max_candidates_to_evaluate,
         max_total_candidates_to_evaluate=max_total_candidates_to_evaluate,
+        staged_train_screen_multiplier=max(
+            1, int(getattr(args, "staged_train_screen_multiplier", 1) or 1)
+        ),
         persist_results=args.persist_results,
     )
     factory_payload = (
@@ -6902,6 +6914,15 @@ def _load_epoch_program(args: argparse.Namespace) -> StrategyAutoresearchProgram
             ),
         )
     return program
+
+
+def _resolved_staged_train_screen_multiplier(
+    args: argparse.Namespace, program: StrategyAutoresearchProgram
+) -> int:
+    override = int(getattr(args, "staged_train_screen_multiplier", 0) or 0)
+    if override > 0:
+        return max(1, override)
+    return max(1, int(program.replay_budget.staged_train_screen_multiplier))
 
 
 def _epoch_mlx_snapshot_manifest(
@@ -9906,6 +9927,9 @@ def run_whitepaper_autoresearch_profit_target(
                         default="1.00",
                     ),
                 )
+            ),
+            "staged_train_screen_multiplier": _resolved_staged_train_screen_multiplier(
+                args, program
             ),
         }
     )

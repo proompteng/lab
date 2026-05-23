@@ -162,6 +162,35 @@ research_sources:
         asset_scope: limit_order_book_intraday
         horizon_scope: short_horizon_returns
         expected_direction: neutral
+  - source_id: optimal_signal_extraction_order_flow_2026
+    title: 'Optimal Signal Extraction from Order Flow'
+    url: https://arxiv.org/abs/2512.18648
+    published_at: '2026-02-20'
+    claims:
+      - claim_id: matched_filter_normalization
+        claim_type: feature_recipe
+        summary: Order-flow normalization should match the scaling behavior of the signal-generating process.
+        implication: Prefer bounded mutation neighborhoods that explicitly compare market-cap, volume, and notional scaling.
+        data_requirements:
+          - order_flow_intensity
+          - market_cap
+          - turnover
+          - short_horizon_returns
+        asset_scope: us_equities_intraday
+        horizon_scope: intraday_microstructure
+        expected_direction: positive
+      - claim_id: informed_executor_scaling
+        claim_type: signal_mechanism
+        summary: Different participant types can encode information through different order-flow scaling conventions.
+        implication: Keep normalization choice visible in candidate evidence and replay survivors instead of pooling all flow transforms.
+        data_requirements:
+          - participant_flow_proxy
+          - order_flow_intensity
+          - volume_profile
+          - market_cap
+        asset_scope: us_equities_intraday
+        horizon_scope: intraday_microstructure
+        expected_direction: positive
   - source_id: volume_imbalance_secret_2026
     title: 'Understanding the worst-kept secret of high-frequency trading'
     url: https://link.springer.com/article/10.1007/s00780-026-00585-9

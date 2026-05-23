@@ -237,6 +237,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             progress_log_seconds=30,
             max_frontier_candidates_per_spec=runner._DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
             max_total_frontier_candidates=0,
+            staged_train_screen_multiplier=0,
             real_replay_timeout_seconds=0,
             real_replay_shard_size=0,
             real_replay_shard_timeout_seconds=0,
@@ -9443,6 +9444,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     "TORGHUT_CLICKHOUSE_PASSWORD",
                     "--max-total-frontier-candidates",
                     "7",
+                    "--staged-train-screen-multiplier",
+                    "4",
                     "--replay-tape-path",
                     str(Path(tmpdir) / "tape.jsonl"),
                     "--replay-tape-manifest",
@@ -9469,6 +9472,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             runner._DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
         )
         self.assertEqual(parsed.max_total_frontier_candidates, 7)
+        self.assertEqual(parsed.staged_train_screen_multiplier, 4)
         self.assertEqual(parsed.real_replay_shard_size, 0)
         self.assertEqual(parsed.real_replay_shard_timeout_seconds, 0)
         self.assertEqual(parsed.real_replay_shard_workers, 1)
@@ -9976,6 +9980,74 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
 
         self.assertEqual(captured_budget, [24])
         self.assertEqual(len(result.evidence_bundles), 0)
+
+    def test_real_replay_forwards_staged_train_screen_multiplier(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            result_path = output_dir / "result.json"
+            result_path.parent.mkdir(parents=True)
+            result_path.write_text(
+                json.dumps({"top": []}),
+                encoding="utf-8",
+            )
+            factory_payload = {
+                "experiments": [
+                    {
+                        "experiment_id": "spec-real-exp",
+                        "dataset_snapshot_id": "snap-real",
+                        "result_path": str(result_path),
+                    }
+                ]
+            }
+            captured_multiplier: list[int] = []
+
+            def fake_run(
+                factory_args: Namespace, *, source_specs: object
+            ) -> dict[str, object]:
+                captured_multiplier.append(
+                    int(factory_args.staged_train_screen_multiplier)
+                )
+                return factory_payload
+
+            with patch.object(
+                runner.strategy_factory_runner,
+                "run_strategy_factory_v2_from_specs",
+                side_effect=fake_run,
+            ):
+                cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
+                    [runner.RECENT_WHITEPAPER_SEEDS[0]]
+                )
+                compilation = runner.compile_whitepaper_candidate_specs(
+                    hypothesis_cards=cards,
+                    family_template_dir=Path("config/trading/families"),
+                    seed_sweep_dir=Path("config/trading"),
+                )
+                args = self._args(output_dir)
+                args.staged_train_screen_multiplier = 3
+                result = runner._run_real_replay(
+                    args,
+                    output_dir=output_dir,
+                    specs=compilation.executable_specs[:1],
+                )
+
+        self.assertEqual(captured_multiplier, [3])
+        self.assertEqual(len(result.evidence_bundles), 0)
+
+    def test_program_replay_budget_supplies_staged_train_screen_multiplier(
+        self,
+    ) -> None:
+        args = self._args(Path("/tmp/epoch"))
+        program = runner._load_epoch_program(args)
+
+        self.assertEqual(
+            runner._resolved_staged_train_screen_multiplier(args, program),
+            3,
+        )
+        args.staged_train_screen_multiplier = 4
+        self.assertEqual(
+            runner._resolved_staged_train_screen_multiplier(args, program),
+            4,
+        )
 
     def test_sharded_real_replay_continues_after_candidate_timeout(self) -> None:
         with TemporaryDirectory() as tmpdir:
