@@ -170,7 +170,7 @@ class TestProfitTargetOracle(TestCase):
         self.assertFalse(result["passed"])
         self.assertIn("fill_survival_rate_failed", result["blockers"])
 
-    def test_profit_target_oracle_accepts_almgren_chriss_proxy_impact(
+    def test_profit_target_oracle_rejects_almgren_chriss_proxy_impact(
         self,
     ) -> None:
         scorecard = {
@@ -185,8 +185,64 @@ class TestProfitTargetOracle(TestCase):
             target_net_pnl_per_day=Decimal("500"),
         )
 
+        self.assertFalse(result["passed"])
+        self.assertIn("market_impact_stress_model_failed", result["blockers"])
+
+    def test_profit_target_oracle_enforces_mpc_dynamic_schedule_overlay(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "mechanism_overlay_ids": ["mpc_dynamic_execution_schedule"],
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn("execution_schedule_trace_present_failed", result["blockers"])
+        self.assertIn("liquidity_forecast_present_failed", result["blockers"])
+        self.assertIn("inventory_path_trace_present_failed", result["blockers"])
+        self.assertIn(
+            "mpc_execution_shortfall_evidence_present_failed", result["blockers"]
+        )
+        self.assertIn("mpc_route_tca_evidence_present_failed", result["blockers"])
+        self.assertIn(
+            "mpc_schedule_shortfall_ablation_passed_failed", result["blockers"]
+        )
+        self.assertIn("mpc_schedule_trace_sample_count_failed", result["blockers"])
+        self.assertIn("mpc_schedule_shortfall_bps_failed", result["blockers"])
+        self.assertIn(
+            "mpc_schedule_shortfall_net_pnl_per_day_failed", result["blockers"]
+        )
+
+    def test_profit_target_oracle_accepts_mpc_dynamic_schedule_overlay_with_real_evidence(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "mechanism_overlay_ids": ["mpc_dynamic_execution_schedule"],
+            "execution_schedule_trace_artifact_ref": "/tmp/mpc-schedule-trace.json",
+            "execution_schedule_trace_sample_count": 80,
+            "liquidity_forecast_artifact_ref": "/tmp/mpc-liquidity-forecast.json",
+            "inventory_path_trace_artifact_ref": "/tmp/mpc-inventory-path.json",
+            "execution_shortfall_artifact_ref": "/tmp/mpc-shortfall.json",
+            "route_tca_artifact_ref": "/tmp/mpc-route-tca.json",
+            "mpc_schedule_shortfall_ablation_passed": True,
+            "mpc_schedule_shortfall_ablation_artifact_ref": "/tmp/mpc-ablation.json",
+            "mpc_schedule_shortfall_bps": "6",
+            "mpc_schedule_shortfall_net_pnl_per_day": "520",
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
         self.assertTrue(result["passed"])
-        self.assertNotIn("market_impact_stress_model_failed", result["blockers"])
+        self.assertNotIn("execution_schedule_trace_present_failed", result["blockers"])
 
     def test_profit_target_oracle_rejects_implementation_uncertainty_below_target(
         self,

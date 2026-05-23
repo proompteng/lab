@@ -2224,7 +2224,7 @@ def _exact_replay_ledger_artifact_update(
         artifact_payload["proof_only"] = True
         artifact_payload["proof_only_reason"] = proof_only_reason
     _write_json_output(artifact_path, artifact_payload)
-    return {
+    update: dict[str, Any] = {
         "exact_replay_ledger_artifact_ref": artifact_ref,
         "runtime_ledger_artifact_ref": artifact_ref,
         "exact_replay_ledger_artifact_row_count": len(raw_rows),
@@ -2243,6 +2243,12 @@ def _exact_replay_ledger_artifact_update(
         "runtime_ledger_pnl_basis": POST_COST_PNL_BASIS,
         "runtime_ledger_pnl_source": "exact_replay_runtime_ledger",
     }
+    if proof_only_reason:
+        update["exact_replay_ledger_artifact_proof_only"] = True
+        update["exact_replay_ledger_artifact_proof_only_reason"] = proof_only_reason
+        update["runtime_ledger_artifact_proof_only"] = True
+        update["runtime_ledger_artifact_proof_only_reason"] = proof_only_reason
+    return update
 
 
 def _order_type_replay_arm_summary(
@@ -4485,6 +4491,15 @@ def _build_paper_probation_shortlist(
             blockers.append("missing_runtime_ledger_row_count")
         if runtime_ledger_fill_count <= 0:
             blockers.append("missing_runtime_ledger_fill_count")
+        screening = _mapping(item.get("screening"))
+        staged_search = _mapping(item.get("staged_search"))
+        if (
+            bool(item.get("exact_replay_ledger_artifact_proof_only"))
+            or bool(item.get("runtime_ledger_artifact_proof_only"))
+            or bool(screening.get("proof_only_full_window_replay_captured"))
+            or str(staged_search.get("stage") or "").endswith("_full_window_proof")
+        ):
+            blockers.append("proof_only_full_window_replay_not_probation_authority")
         paper_probation_allowed = not blockers
         shortlist.append(
             {

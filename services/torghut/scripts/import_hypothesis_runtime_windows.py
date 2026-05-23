@@ -411,19 +411,19 @@ def _runtime_observation_authority_payload(
     tca_rows: list[dict[str, object]],
 ) -> dict[str, object]:
     has_runtime_ledger_profit_proof = _runtime_ledger_profit_proof_present(tca_rows)
+    if source_kind.startswith("simulation_"):
+        return {
+            "authoritative": False,
+            "authority_reason": "simulation_source_replay_only",
+            "promotion_authority": "blocked",
+            "runtime_ledger_profit_proof_present": has_runtime_ledger_profit_proof,
+        }
     if has_runtime_ledger_profit_proof:
         return {
             "authoritative": True,
             "authority_reason": "runtime_ledger_profit_proof",
             "promotion_authority": "runtime_ledger",
             "runtime_ledger_profit_proof_present": True,
-        }
-    if source_kind.startswith("simulation_"):
-        return {
-            "authoritative": False,
-            "authority_reason": "simulation_runtime_without_runtime_ledger_profit_proof",
-            "promotion_authority": "blocked",
-            "runtime_ledger_profit_proof_present": False,
         }
     return {
         "authoritative": False,

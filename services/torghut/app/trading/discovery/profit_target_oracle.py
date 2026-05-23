@@ -26,8 +26,6 @@ _ACCEPTED_MARKET_IMPACT_STRESS_MODELS = frozenset(
     {
         "almgren_chriss",
         "almgren-chriss",
-        "almgren_chriss_proxy",
-        "almgren-chriss-proxy",
         "square_root",
         "square-root",
         "power_law",
@@ -125,6 +123,9 @@ class ProfitTargetOraclePolicy:
     min_order_type_ablation_sample_count: int = 60
     max_order_type_opportunity_cost_bps: Decimal = Decimal("8")
     max_market_order_spread_bps: Decimal = Decimal("8")
+    require_mpc_dynamic_execution_schedule: bool = False
+    min_mpc_schedule_trace_sample_count: int = 60
+    max_mpc_schedule_shortfall_bps: Decimal = Decimal("8")
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -238,6 +239,9 @@ class ProfitTargetOraclePolicy:
                 self.max_order_type_opportunity_cost_bps
             ),
             "max_market_order_spread_bps": str(self.max_market_order_spread_bps),
+            "require_mpc_dynamic_execution_schedule": self.require_mpc_dynamic_execution_schedule,
+            "min_mpc_schedule_trace_sample_count": self.min_mpc_schedule_trace_sample_count,
+            "max_mpc_schedule_shortfall_bps": str(self.max_mpc_schedule_shortfall_bps),
         }
 
 
@@ -377,6 +381,27 @@ def _requires_order_type_execution_quality(
         )
     )
     return "mixed_market_limit_execution_policy" in overlay_ids
+
+
+def _requires_mpc_dynamic_execution_schedule(
+    scorecard: Mapping[str, Any], policy: ProfitTargetOraclePolicy
+) -> bool:
+    if policy.require_mpc_dynamic_execution_schedule:
+        return True
+    if _boolish(
+        scorecard.get("requires_mpc_dynamic_execution_schedule")
+        or scorecard.get("required_mpc_dynamic_execution_schedule")
+        or scorecard.get("requires_dynamic_execution_schedule")
+    ):
+        return True
+    overlay_ids = set(
+        _string_sequence(
+            scorecard.get("mechanism_overlay_ids")
+            or scorecard.get("mechanism_overlays")
+            or scorecard.get("overlay_ids")
+        )
+    )
+    return "mpc_dynamic_execution_schedule" in overlay_ids
 
 
 def _requires_implementation_uncertainty_stability(
@@ -939,8 +964,7 @@ def evaluate_profit_target_oracle(
                 "threshold": sorted(_ACCEPTED_LEDGER_PNL_BASES),
                 "source_marker": "exact_replay_runtime_ledger_authority",
                 "passed": (
-                    portfolio_post_cost_net_pnl_basis
-                    in _ACCEPTED_LEDGER_PNL_BASES
+                    portfolio_post_cost_net_pnl_basis in _ACCEPTED_LEDGER_PNL_BASES
                 )
                 if policy.require_exact_replay_ledger
                 else True,
@@ -952,8 +976,7 @@ def evaluate_profit_target_oracle(
                 "threshold": sorted(_ACCEPTED_LEDGER_PNL_SOURCES),
                 "source_marker": "exact_replay_runtime_ledger_authority",
                 "passed": (
-                    portfolio_post_cost_net_pnl_source
-                    in _ACCEPTED_LEDGER_PNL_SOURCES
+                    portfolio_post_cost_net_pnl_source in _ACCEPTED_LEDGER_PNL_SOURCES
                 )
                 if policy.require_exact_replay_ledger
                 else True,
@@ -1823,6 +1846,176 @@ def evaluate_profit_target_oracle(
                 if require_order_type_execution_quality
                 else Decimal("999999"),
             ),
+        )
+    )
+    require_mpc_dynamic_execution_schedule = _requires_mpc_dynamic_execution_schedule(
+        scorecard, policy
+    )
+    execution_schedule_trace_artifact_refs = _artifact_refs(
+        scorecard,
+        "execution_schedule_trace_artifact_ref",
+        "execution_schedule_trace_artifact_refs",
+        "mpc_schedule_trace_artifact_ref",
+    )
+    liquidity_forecast_artifact_refs = _artifact_refs(
+        scorecard,
+        "liquidity_forecast_artifact_ref",
+        "liquidity_forecast_artifact_refs",
+        "mpc_liquidity_forecast_artifact_ref",
+    )
+    inventory_path_artifact_refs = _artifact_refs(
+        scorecard,
+        "inventory_path_artifact_ref",
+        "inventory_path_artifact_refs",
+        "inventory_path_trace_artifact_ref",
+        "mpc_inventory_path_artifact_ref",
+    )
+    execution_shortfall_artifact_refs = _artifact_refs(
+        scorecard,
+        "execution_shortfall_artifact_ref",
+        "execution_shortfall_artifact_refs",
+        "mpc_execution_shortfall_artifact_ref",
+    )
+    mpc_ablation_artifact_refs = _artifact_refs(
+        scorecard,
+        "mpc_schedule_shortfall_ablation_artifact_ref",
+        "mpc_schedule_shortfall_ablation_artifact_refs",
+        "dynamic_execution_schedule_ablation_artifact_ref",
+    )
+    execution_schedule_trace_present = bool(
+        execution_schedule_trace_artifact_refs
+    ) or _boolish(
+        scorecard.get("execution_schedule_trace_present")
+        or scorecard.get("mpc_schedule_trace_present")
+    )
+    liquidity_forecast_present = bool(liquidity_forecast_artifact_refs) or _boolish(
+        scorecard.get("liquidity_forecast_present")
+        or scorecard.get("mpc_liquidity_forecast_present")
+    )
+    inventory_path_present = bool(inventory_path_artifact_refs) or _boolish(
+        scorecard.get("inventory_path_trace_present")
+        or scorecard.get("inventory_path_present")
+        or scorecard.get("mpc_inventory_path_present")
+    )
+    mpc_execution_shortfall_evidence_present = (
+        bool(execution_shortfall_artifact_refs) or execution_shortfall_evidence_present
+    )
+    mpc_schedule_shortfall_ablation_passed = _boolish(
+        scorecard.get("mpc_schedule_shortfall_ablation_passed")
+        or scorecard.get("dynamic_execution_schedule_ablation_passed")
+    )
+    mpc_schedule_trace_sample_count = _nonnegative_int(
+        scorecard.get("mpc_schedule_trace_sample_count")
+        or scorecard.get("execution_schedule_trace_sample_count")
+    )
+    checks.extend(
+        (
+            {
+                "metric": "execution_schedule_trace_present",
+                "observed": str(execution_schedule_trace_present).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "mpc_trade_execution_arxiv_2603_28898_2026",
+                "passed": execution_schedule_trace_present
+                if require_mpc_dynamic_execution_schedule
+                else True,
+            },
+            {
+                "metric": "liquidity_forecast_present",
+                "observed": str(liquidity_forecast_present).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "mpc_trade_execution_arxiv_2603_28898_2026",
+                "passed": liquidity_forecast_present
+                if require_mpc_dynamic_execution_schedule
+                else True,
+            },
+            {
+                "metric": "inventory_path_trace_present",
+                "observed": str(inventory_path_present).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "mpc_trade_execution_arxiv_2603_28898_2026",
+                "passed": inventory_path_present
+                if require_mpc_dynamic_execution_schedule
+                else True,
+            },
+            {
+                "metric": "mpc_execution_shortfall_evidence_present",
+                "observed": str(mpc_execution_shortfall_evidence_present).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "mpc_trade_execution_arxiv_2603_28898_2026",
+                "passed": mpc_execution_shortfall_evidence_present
+                if require_mpc_dynamic_execution_schedule
+                else True,
+            },
+            {
+                "metric": "mpc_route_tca_evidence_present",
+                "observed": str(route_tca_evidence_present).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "mpc_trade_execution_arxiv_2603_28898_2026",
+                "passed": route_tca_evidence_present
+                if require_mpc_dynamic_execution_schedule
+                else True,
+            },
+            {
+                "metric": "mpc_schedule_shortfall_ablation_passed",
+                "observed": str(mpc_schedule_shortfall_ablation_passed).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "mpc_trade_execution_arxiv_2603_28898_2026",
+                "passed": (
+                    mpc_schedule_shortfall_ablation_passed
+                    and bool(mpc_ablation_artifact_refs)
+                )
+                if require_mpc_dynamic_execution_schedule
+                else True,
+            },
+            _numeric_check(
+                metric="mpc_schedule_trace_sample_count",
+                observed=Decimal(mpc_schedule_trace_sample_count),
+                operator="gte",
+                threshold=Decimal(policy.min_mpc_schedule_trace_sample_count)
+                if require_mpc_dynamic_execution_schedule
+                else Decimal("0"),
+            ),
+            _numeric_check(
+                metric="mpc_schedule_shortfall_bps",
+                observed=_decimal(
+                    scorecard.get("mpc_schedule_shortfall_bps")
+                    or scorecard.get("dynamic_execution_schedule_shortfall_bps"),
+                    default="999999",
+                ),
+                operator="lte",
+                threshold=policy.max_mpc_schedule_shortfall_bps
+                if require_mpc_dynamic_execution_schedule
+                else Decimal("999999"),
+            ),
+            {
+                **_numeric_check(
+                    metric="mpc_schedule_shortfall_net_pnl_per_day",
+                    observed=_decimal(
+                        scorecard.get("mpc_schedule_shortfall_net_pnl_per_day")
+                        or scorecard.get(
+                            "post_cost_net_pnl_after_mpc_schedule_shortfall_stress"
+                        )
+                    ),
+                    operator="gte",
+                    threshold=target_net_pnl_per_day,
+                ),
+                "source_marker": "mpc_trade_execution_arxiv_2603_28898_2026",
+                "passed": _decimal(
+                    scorecard.get("mpc_schedule_shortfall_net_pnl_per_day")
+                    or scorecard.get(
+                        "post_cost_net_pnl_after_mpc_schedule_shortfall_stress"
+                    )
+                )
+                >= target_net_pnl_per_day
+                if require_mpc_dynamic_execution_schedule
+                else True,
+            },
         )
     )
     double_oos_artifact_refs = _artifact_refs(

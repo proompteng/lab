@@ -596,6 +596,8 @@ def _runtime_promotion_blocking_reasons(
     budget: Decimal,
 ) -> list[str]:
     reasons: list[str] = []
+    if observed_stage == "paper":
+        reasons.append("paper_stage_evidence_collection_only")
     if inserted <= 0:
         reasons.append("runtime_window_evidence_missing")
     if total_session_samples < manifest.min_sample_count_for_live_canary:
