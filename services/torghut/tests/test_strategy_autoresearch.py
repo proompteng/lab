@@ -138,6 +138,45 @@ class TestStrategyAutoresearch(TestCase):
         )
         self.assertEqual(limited["parameters"]["max_entries_per_session"], ["12"])
 
+    def test_exact_replay_guidance_updates_next_sweep_label(self) -> None:
+        sweep, label = runner._apply_exact_replay_guidance_to_next_sweep(
+            sweep_config={
+                "parameters": {
+                    "max_entries_per_session": ["1"],
+                },
+            },
+            mutation_label="parent=candidate-1; mutate=max_entries_per_session",
+            remediation_report={
+                "status": "blocked_pending_search_remediation",
+                "candidate_id": "candidate-1",
+                "promotion_blockers": ["avg_filled_notional_per_day_below_min"],
+                "runtime_ledger_blockers": [],
+                "recommended_search_actions": [{"required_multiplier": "2.0"}],
+            },
+        )
+
+        self.assertEqual(sweep["parameters"]["max_entries_per_session"], ["1", "2"])
+        self.assertEqual(
+            label,
+            "parent=candidate-1; mutate=max_entries_per_session; replay-guidance=breadth",
+        )
+
+    def test_exact_replay_guidance_keeps_label_when_no_search_blocker(self) -> None:
+        sweep, label = runner._apply_exact_replay_guidance_to_next_sweep(
+            sweep_config={"parameters": {"max_entries_per_session": ["1"]}},
+            mutation_label="parent=candidate-1; mutate=max_entries_per_session",
+            remediation_report={
+                "promotion_blockers": ["replay_artifact_only_not_live"],
+                "runtime_ledger_blockers": [],
+            },
+        )
+
+        self.assertEqual(sweep["parameters"]["max_entries_per_session"], ["1"])
+        self.assertEqual(
+            label,
+            "parent=candidate-1; mutate=max_entries_per_session",
+        )
+
     def test_runtime_closure_candidate_rejects_failed_or_vetoed_candidates(
         self,
     ) -> None:

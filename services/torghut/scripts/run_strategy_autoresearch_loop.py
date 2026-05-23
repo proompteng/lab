@@ -68,6 +68,9 @@ from app.trading.discovery.replay_ledger_ranker import (
     build_replay_ledger_ranking_report,
     default_replay_ledger_ranking_policy,
 )
+from app.trading.discovery.replay_ledger_guided_search import (
+    apply_replay_ledger_remediation_guidance,
+)
 from app.trading.discovery.replay_ledger_remediation import (
     build_replay_ledger_remediation_report,
 )
@@ -419,6 +422,24 @@ def _apply_objective_capital_limits(
     payload["parameters"] = parameters
     payload["strategy_overrides"] = strategy_overrides
     return payload
+
+
+def _apply_exact_replay_guidance_to_next_sweep(
+    *,
+    sweep_config: Mapping[str, Any],
+    mutation_label: str,
+    remediation_report: Mapping[str, Any],
+) -> tuple[dict[str, Any], str]:
+    guided_sweep = apply_replay_ledger_remediation_guidance(
+        sweep_config=sweep_config,
+        remediation_report=remediation_report,
+    )
+    if not guided_sweep.applied:
+        return guided_sweep.sweep_config, mutation_label
+    return (
+        guided_sweep.sweep_config,
+        f"{mutation_label}; replay-guidance={guided_sweep.mutation_label_suffix}",
+    )
 
 
 def _slug(value: str) -> str:
@@ -2033,7 +2054,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
     manifest = _refresh_manifest()
     frontier_runs = 0
     objective_met = False
-    _persist_run_outputs(
+    summary = _persist_run_outputs(
         run_root=run_root,
         program=program,
         program_payload=program.to_payload(),
@@ -2048,6 +2069,9 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
         worklist=worklist,
         status="running",
         closure_execution_context=closure_execution_context,
+    )
+    latest_exact_replay_ledger_remediation = _mapping(
+        summary.get("exact_replay_ledger_remediation")
     )
     signal_bundle_stats, materialized_replay_tape_receipt = (
         _maybe_materialize_run_replay_tape(
@@ -2101,7 +2125,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
         }
     )
     manifest = _refresh_manifest()
-    _persist_run_outputs(
+    summary = _persist_run_outputs(
         run_root=run_root,
         program=program,
         program_payload=program.to_payload(),
@@ -2116,6 +2140,9 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
         worklist=worklist,
         status="running",
         closure_execution_context=closure_execution_context,
+    )
+    latest_exact_replay_ledger_remediation = _mapping(
+        summary.get("exact_replay_ledger_remediation")
     )
     try:
         while worklist:
@@ -2186,7 +2213,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                 if selected_score is not None
                 else None
             )
-            _persist_run_outputs(
+            summary = _persist_run_outputs(
                 run_root=run_root,
                 program=program,
                 program_payload=program.to_payload(),
@@ -2203,6 +2230,9 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                 selected_for_replay=selected_for_replay,
                 selected_descriptor=current_descriptor,
                 closure_execution_context=closure_execution_context,
+            )
+            latest_exact_replay_ledger_remediation = _mapping(
+                summary.get("exact_replay_ledger_remediation")
             )
             try:
                 frontier_payload = run_consistent_profitability_frontier(
@@ -2257,7 +2287,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                     json.dumps(frontier_payload, indent=2, sort_keys=True),
                     encoding="utf-8",
                 )
-                _persist_run_outputs(
+                summary = _persist_run_outputs(
                     run_root=run_root,
                     program=program,
                     program_payload=program.to_payload(),
@@ -2273,10 +2303,26 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                     status="running",
                     closure_execution_context=closure_execution_context,
                 )
+                latest_exact_replay_ledger_remediation = _mapping(
+                    summary.get("exact_replay_ledger_remediation")
+                )
                 continue
             result_path.write_text(
                 json.dumps(frontier_payload, indent=2, sort_keys=True),
                 encoding="utf-8",
+            )
+            exact_replay_ledger_ranking = _write_exact_replay_ledger_ranking(
+                run_root=run_root,
+                program=program,
+            )
+            exact_replay_ledger_remediation = _write_exact_replay_ledger_remediation(
+                run_root=run_root,
+                ranking_report=cast(
+                    Mapping[str, Any], exact_replay_ledger_ranking["report"]
+                ),
+            )
+            latest_exact_replay_ledger_remediation = _mapping(
+                exact_replay_ledger_remediation["report"]
             )
             dataset_snapshot_id = _string(
                 _mapping(frontier_payload.get("dataset_snapshot_receipt")).get(
@@ -2436,6 +2482,14 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                     holdout_day_count=max(1, int(args.holdout_days)),
                     full_window_day_count=_default_full_window_day_count(args),
                 )
+                (
+                    next_sweep_config,
+                    mutation_label,
+                ) = _apply_exact_replay_guidance_to_next_sweep(
+                    sweep_config=next_sweep_config,
+                    mutation_label=mutation_label,
+                    remediation_report=latest_exact_replay_ledger_remediation,
+                )
                 next_sweep_config = _apply_objective_capital_limits(
                     sweep_config=next_sweep_config,
                     max_gross_exposure_pct_equity=program.objective.max_gross_exposure_pct_equity,
@@ -2450,7 +2504,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                         parent_candidate_id=candidate_id,
                     )
                 )
-            _persist_run_outputs(
+            summary = _persist_run_outputs(
                 run_root=run_root,
                 program=program,
                 program_payload=program.to_payload(),
@@ -2465,6 +2519,9 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                 worklist=worklist,
                 status="running",
                 closure_execution_context=closure_execution_context,
+            )
+            latest_exact_replay_ledger_remediation = _mapping(
+                summary.get("exact_replay_ledger_remediation")
             )
             if objective_met and program.objective.stop_when_objective_met:
                 break
