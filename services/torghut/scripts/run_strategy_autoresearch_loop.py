@@ -99,6 +99,13 @@ def _default_clickhouse_http_url() -> str:
     )
 
 
+def _default_clickhouse_password() -> str:
+    return os.environ.get(
+        "TA_CLICKHOUSE_PASSWORD",
+        os.environ.get("CLICKHOUSE_PASSWORD", ""),
+    )
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run an autoresearch-style strategy discovery loop and emit notebooks.",
@@ -136,7 +143,7 @@ def _parse_args() -> argparse.Namespace:
             os.environ.get("CLICKHOUSE_USERNAME", "torghut"),
         ),
     )
-    parser.add_argument("--clickhouse-password", default="")
+    parser.add_argument("--clickhouse-password", default=_default_clickhouse_password())
     parser.add_argument("--start-equity", default="31590.02")
     parser.add_argument("--chunk-minutes", type=int, default=10)
     parser.add_argument("--symbols", default="")
@@ -1927,6 +1934,13 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
     frontier_base_args = argparse.Namespace(
         **{
             **vars(args),
+            "full_window_start_date": resolved_full_window_start_date,
+            "full_window_end_date": resolved_full_window_end_date,
+            "expected_last_trading_day": (
+                resolved_full_window_end_date
+                if materialized_replay_tape_receipt is not None
+                else str(args.expected_last_trading_day)
+            ),
             "replay_tape_path": effective_replay_tape_path,
             "replay_tape_manifest": effective_replay_tape_manifest,
         }

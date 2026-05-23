@@ -446,6 +446,7 @@ class TestStrategyAutoresearch(TestCase):
                     "TA_CLICKHOUSE_URL": "jdbc:clickhouse://clickhouse/torghut",
                     "CLICKHOUSE_HTTP_URL": "http://127.0.0.1:8123",
                     "TA_CLICKHOUSE_USERNAME": "reader",
+                    "TA_CLICKHOUSE_PASSWORD": "reader-secret",
                 },
             ),
             patch.object(
@@ -464,6 +465,7 @@ class TestStrategyAutoresearch(TestCase):
 
         self.assertEqual(args.clickhouse_http_url, "http://127.0.0.1:8123")
         self.assertEqual(args.clickhouse_username, "reader")
+        self.assertEqual(args.clickhouse_password, "reader-secret")
 
     def test_program_defaults_include_mlx_contract(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -2249,6 +2251,130 @@ class TestStrategyAutoresearch(TestCase):
             )
             self.assertEqual(promotion_readiness["candidate_id"], "mutated-1")
             self.assertFalse(promotion_readiness["promotable"])
+
+    def test_run_strategy_autoresearch_loop_forwards_selected_replay_window(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            program_path, family_dir = self._write_program_fixture(root)
+            configmap_path = root / "strategy-configmap.yaml"
+            configmap_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "apiVersion": "v1",
+                        "kind": "ConfigMap",
+                        "data": {"strategies.yaml": "strategies: []\n"},
+                    },
+                    sort_keys=False,
+                ),
+                encoding="utf-8",
+            )
+            output_dir = root / "out"
+            response = {
+                "dataset_snapshot_receipt": {"snapshot_id": "snap-selected"},
+                "window": {
+                    "full_window_start_date": "2026-03-23",
+                    "full_window_end_date": "2026-03-23",
+                },
+                "top": [],
+            }
+            signal_rows = [
+                SignalEnvelope(
+                    event_ts=datetime(2026, 3, 23, 13, 30, tzinfo=UTC),
+                    symbol="AMAT",
+                    seq=1,
+                    source="ta",
+                    timeframe="1Sec",
+                    payload={"price": "180.10"},
+                ),
+                SignalEnvelope(
+                    event_ts=datetime(2026, 3, 23, 13, 31, tzinfo=UTC),
+                    symbol="NVDA",
+                    seq=2,
+                    source="ta",
+                    timeframe="1Sec",
+                    payload={"price": "900.10"},
+                ),
+            ]
+            selected_receipt = {
+                "schema_version": "torghut.replay-latest-complete-window.v1",
+                "status": "selected",
+                "selected_trading_days": ["2026-03-23"],
+            }
+            args = Namespace(
+                program=program_path,
+                output_dir=output_dir,
+                strategy_configmap=configmap_path,
+                family_template_dir=family_dir,
+                clickhouse_http_url="http://example.invalid:8123",
+                clickhouse_username="torghut",
+                clickhouse_password="secret",
+                start_equity="31590.02",
+                chunk_minutes=10,
+                symbols="",
+                progress_log_seconds=30,
+                shadow_validation_artifact=None,
+                train_days=1,
+                holdout_days=1,
+                full_window_start_date="2026-03-20",
+                full_window_end_date="2026-03-24",
+                expected_last_trading_day="",
+                allow_stale_tape=False,
+                prefetch_full_window_rows=False,
+                replay_tape_path=None,
+                replay_tape_manifest=None,
+                materialize_replay_tape=True,
+                latest_complete_window_min_days=1,
+                latest_complete_window_receipt_output=None,
+                coverage_diagnostic_output=None,
+                min_executable_rows_per_symbol_day=10,
+                min_quote_valid_ratio="0.90",
+                max_coverage_spread_bps="50",
+                max_executable_gap_seconds=120,
+                max_frontier_runs=1,
+                json_output=None,
+            )
+
+            captured_frontier_args: list[Namespace] = []
+
+            def run_frontier(frontier_args: Namespace) -> dict[str, object]:
+                captured_frontier_args.append(frontier_args)
+                return response
+
+            with (
+                patch(
+                    "scripts.run_strategy_autoresearch_loop._select_effective_replay_tape_window",
+                    return_value=(
+                        date(2026, 3, 23),
+                        date(2026, 3, 23),
+                        selected_receipt,
+                    ),
+                ),
+                patch(
+                    "scripts.run_strategy_autoresearch_loop.replay_mod._iter_signal_rows",
+                    return_value=iter(signal_rows),
+                ),
+                patch(
+                    "scripts.run_strategy_autoresearch_loop.run_consistent_profitability_frontier",
+                    side_effect=run_frontier,
+                ),
+            ):
+                payload = runner.run_strategy_autoresearch_loop(args)
+
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(len(captured_frontier_args), 1)
+        self.assertEqual(
+            captured_frontier_args[0].full_window_start_date,
+            "2026-03-23",
+        )
+        self.assertEqual(
+            captured_frontier_args[0].full_window_end_date,
+            "2026-03-23",
+        )
+        self.assertEqual(
+            captured_frontier_args[0].expected_last_trading_day, "2026-03-23"
+        )
 
     def test_run_strategy_autoresearch_loop_records_missing_runtime_strategy_as_skip(
         self,
