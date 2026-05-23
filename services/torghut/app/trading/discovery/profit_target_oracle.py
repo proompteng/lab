@@ -84,6 +84,11 @@ class ProfitTargetOraclePolicy:
     min_implementation_uncertainty_model_count: int = 2
     require_conformal_tail_risk: bool = False
     min_conformal_tail_risk_sample_count: int = 0
+    require_predictability_decay_stress: bool = False
+    min_predictability_decay_stress_horizon_count: int = 3
+    min_tight_spread_regime_count: int = 20
+    min_predictability_decay_stress_split_pass_rate: Decimal = Decimal("0.60")
+    max_predictability_decay_stress_best_split_share: Decimal = Decimal("0.35")
     require_double_oos: bool = True
     min_double_oos_independent_window_count: int = 2
     min_double_oos_pass_rate: Decimal = Decimal("1.00")
@@ -185,6 +190,15 @@ class ProfitTargetOraclePolicy:
             "min_implementation_uncertainty_model_count": self.min_implementation_uncertainty_model_count,
             "require_conformal_tail_risk": self.require_conformal_tail_risk,
             "min_conformal_tail_risk_sample_count": self.min_conformal_tail_risk_sample_count,
+            "require_predictability_decay_stress": self.require_predictability_decay_stress,
+            "min_predictability_decay_stress_horizon_count": self.min_predictability_decay_stress_horizon_count,
+            "min_tight_spread_regime_count": self.min_tight_spread_regime_count,
+            "min_predictability_decay_stress_split_pass_rate": str(
+                self.min_predictability_decay_stress_split_pass_rate
+            ),
+            "max_predictability_decay_stress_best_split_share": str(
+                self.max_predictability_decay_stress_best_split_share
+            ),
             "require_double_oos": self.require_double_oos,
             "min_double_oos_independent_window_count": self.min_double_oos_independent_window_count,
             "min_double_oos_pass_rate": str(self.min_double_oos_pass_rate),
@@ -397,6 +411,28 @@ def _requires_conformal_tail_risk(
         }
         & overlay_ids
     )
+
+
+def _requires_predictability_decay_stress(
+    scorecard: Mapping[str, Any], policy: ProfitTargetOraclePolicy
+) -> bool:
+    if policy.require_predictability_decay_stress:
+        return True
+    if _boolish(
+        scorecard.get("predictability_decay_stress_required")
+        or scorecard.get("requires_predictability_decay_stress")
+        or scorecard.get("requires_horizon_decay_curve")
+        or scorecard.get("requires_spread_adjusted_label_replay")
+    ):
+        return True
+    overlay_ids = set(
+        _string_sequence(
+            scorecard.get("mechanism_overlay_ids")
+            or scorecard.get("mechanism_overlays")
+            or scorecard.get("overlay_ids")
+        )
+    )
+    return "alpha_decay_predictability_stress" in overlay_ids
 
 
 def _start_equity(
@@ -1413,6 +1449,151 @@ def evaluate_profit_target_oracle(
                 "source_marker": "regime_weighted_conformal_var_arxiv_2602_03903_2026",
                 "passed": conformal_tail_risk_adjusted_net >= target_net_pnl_per_day
                 if require_conformal_tail_risk
+                else True,
+            },
+        )
+    )
+    require_predictability_decay_stress = _requires_predictability_decay_stress(
+        scorecard, policy
+    )
+    predictability_decay_stress_artifact_refs = _artifact_refs(
+        scorecard,
+        "predictability_decay_stress_artifact_ref",
+        "predictability_decay_stress_artifact_refs",
+        "alpha_decay_stress_artifact_ref",
+    )
+    predictability_decay_stress_artifact_present = bool(
+        predictability_decay_stress_artifact_refs
+    )
+    predictability_decay_stress_passed = _boolish(
+        scorecard.get("predictability_decay_stress_passed")
+        or scorecard.get("alpha_decay_stress_passed")
+    )
+    horizon_decay_curve_present = _boolish(
+        scorecard.get("horizon_decay_curve_present")
+        or scorecard.get("predictability_horizon_decay_curve_present")
+    )
+    spread_adjusted_label_replay_present = _boolish(
+        scorecard.get("spread_adjusted_label_replay_present")
+        or scorecard.get("spread_adjusted_labels_present")
+    )
+    predictability_decay_horizon_count = _nonnegative_int(
+        scorecard.get("predictability_decay_stress_horizon_count")
+        or scorecard.get("horizon_decay_curve_horizon_count")
+    )
+    tight_spread_regime_count = _nonnegative_int(
+        scorecard.get("tight_spread_regime_slice_count")
+        or scorecard.get("tight_spread_regime_count")
+    )
+    predictability_decay_split_pass_rate = _decimal(
+        scorecard.get("predictability_decay_stress_split_pass_rate")
+        or scorecard.get("decay_stress_split_pass_rate")
+    )
+    predictability_decay_best_split_share = _decimal(
+        scorecard.get("predictability_decay_stress_best_split_share")
+        or scorecard.get("decay_stress_best_split_share"),
+        default="1",
+    )
+    predictability_decay_stress_net_pnl = _decimal(
+        scorecard.get("post_cost_net_pnl_after_predictability_decay_stress")
+        or scorecard.get("predictability_decay_stress_net_pnl_per_day")
+    )
+    checks.extend(
+        (
+            {
+                "metric": "predictability_decay_stress_passed",
+                "observed": str(predictability_decay_stress_passed).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "tkan_lob_alpha_decay_arxiv_2601_02310_2026",
+                "passed": predictability_decay_stress_passed
+                if require_predictability_decay_stress
+                else True,
+            },
+            {
+                "metric": "predictability_decay_stress_artifact_present",
+                "observed": str(predictability_decay_stress_artifact_present).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "tkan_lob_alpha_decay_arxiv_2601_02310_2026",
+                "passed": predictability_decay_stress_artifact_present
+                if require_predictability_decay_stress
+                else True,
+            },
+            {
+                "metric": "horizon_decay_curve_present",
+                "observed": str(horizon_decay_curve_present).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "tkan_lob_alpha_decay_arxiv_2601_02310_2026",
+                "passed": horizon_decay_curve_present
+                if require_predictability_decay_stress
+                else True,
+            },
+            {
+                "metric": "spread_adjusted_label_replay_present",
+                "observed": str(spread_adjusted_label_replay_present).lower(),
+                "operator": "eq",
+                "threshold": "true",
+                "source_marker": "tkan_lob_alpha_decay_arxiv_2601_02310_2026",
+                "passed": spread_adjusted_label_replay_present
+                if require_predictability_decay_stress
+                else True,
+            },
+            _numeric_check(
+                metric="predictability_decay_stress_horizon_count",
+                observed=Decimal(predictability_decay_horizon_count),
+                operator="gte",
+                threshold=Decimal(
+                    max(0, policy.min_predictability_decay_stress_horizon_count)
+                )
+                if require_predictability_decay_stress
+                else Decimal("0"),
+            ),
+            _numeric_check(
+                metric="tight_spread_regime_slice_count",
+                observed=Decimal(tight_spread_regime_count),
+                operator="gte",
+                threshold=Decimal(max(0, policy.min_tight_spread_regime_count))
+                if require_predictability_decay_stress
+                else Decimal("0"),
+            ),
+            {
+                **_numeric_check(
+                    metric="predictability_decay_stress_split_pass_rate",
+                    observed=predictability_decay_split_pass_rate,
+                    operator="gte",
+                    threshold=policy.min_predictability_decay_stress_split_pass_rate,
+                ),
+                "source_marker": "tkan_lob_alpha_decay_arxiv_2601_02310_2026",
+                "passed": predictability_decay_split_pass_rate
+                >= policy.min_predictability_decay_stress_split_pass_rate
+                if require_predictability_decay_stress
+                else True,
+            },
+            {
+                **_numeric_check(
+                    metric="predictability_decay_stress_best_split_share",
+                    observed=predictability_decay_best_split_share,
+                    operator="lte",
+                    threshold=policy.max_predictability_decay_stress_best_split_share,
+                ),
+                "source_marker": "tkan_lob_alpha_decay_arxiv_2601_02310_2026",
+                "passed": predictability_decay_best_split_share
+                <= policy.max_predictability_decay_stress_best_split_share
+                if require_predictability_decay_stress
+                else True,
+            },
+            {
+                **_numeric_check(
+                    metric="post_cost_net_pnl_after_predictability_decay_stress",
+                    observed=predictability_decay_stress_net_pnl,
+                    operator="gte",
+                    threshold=target_net_pnl_per_day,
+                ),
+                "source_marker": "tkan_lob_alpha_decay_arxiv_2601_02310_2026",
+                "passed": predictability_decay_stress_net_pnl >= target_net_pnl_per_day
+                if require_predictability_decay_stress
                 else True,
             },
         )

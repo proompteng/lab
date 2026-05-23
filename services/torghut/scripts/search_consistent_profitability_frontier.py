@@ -3985,6 +3985,52 @@ def _candidate_artifact_refs(item: Mapping[str, Any]) -> list[str]:
     return list(dict.fromkeys(refs))
 
 
+def _candidate_runtime_ledger_artifact_refs(item: Mapping[str, Any]) -> list[str]:
+    refs: list[str] = []
+    scorecard = _mapping(item.get("objective_scorecard"))
+    for source in (item, scorecard):
+        for key in (
+            "exact_replay_ledger_artifact_ref",
+            "runtime_ledger_artifact_ref",
+        ):
+            ref = str(source.get(key) or "").strip()
+            if ref:
+                refs.append(ref)
+        for key in (
+            "exact_replay_ledger_artifact_refs",
+            "runtime_ledger_artifact_refs",
+        ):
+            raw_refs = source.get(key)
+            if isinstance(raw_refs, str):
+                ref = raw_refs.strip()
+                if ref:
+                    refs.append(ref)
+                continue
+            for raw_ref in cast(Sequence[Any], raw_refs or ()):
+                ref = str(raw_ref).strip()
+                if ref:
+                    refs.append(ref)
+    for raw_ref in cast(Sequence[Any], item.get("replay_artifact_refs") or ()):
+        ref = str(raw_ref).strip()
+        ref_lower = ref.lower()
+        if ref and (
+            "exact-replay-ledger" in ref_lower
+            or "exact_replay_ledger" in ref_lower
+            or "runtime-ledger" in ref_lower
+            or "runtime_ledger" in ref_lower
+        ):
+            refs.append(ref)
+    return list(dict.fromkeys(refs))
+
+
+def _candidate_runtime_ledger_count(item: Mapping[str, Any], *keys: str) -> int:
+    scorecard = _mapping(item.get("objective_scorecard"))
+    values: list[int] = []
+    for source in (item, scorecard):
+        values.extend(_nonnegative_int_metric(source.get(key)) for key in keys)
+    return max(values, default=0)
+
+
 def _paper_probation_required_actions(hard_vetoes: Sequence[str]) -> list[str]:
     reasons = {str(reason) for reason in hard_vetoes}
     actions = ["collect_runtime_ledger_paper_evidence"]
@@ -4080,10 +4126,24 @@ def _build_paper_probation_shortlist(
         hard_vetoes = [
             str(reason) for reason in cast(Sequence[Any], item.get("hard_vetoes") or ())
         ]
-        artifact_refs = _candidate_artifact_refs(item)
+        artifact_refs = _candidate_runtime_ledger_artifact_refs(item)
+        runtime_ledger_row_count = _candidate_runtime_ledger_count(
+            item,
+            "runtime_ledger_artifact_row_count",
+            "exact_replay_ledger_artifact_row_count",
+        )
+        runtime_ledger_fill_count = _candidate_runtime_ledger_count(
+            item,
+            "runtime_ledger_artifact_fill_count",
+            "exact_replay_ledger_artifact_fill_count",
+        )
         blockers: list[str] = []
         if not artifact_refs:
-            blockers.append("missing_runtime_or_replay_ledger_artifact")
+            blockers.append("missing_exact_or_runtime_ledger_artifact")
+        if runtime_ledger_row_count <= 0:
+            blockers.append("missing_runtime_ledger_row_count")
+        if runtime_ledger_fill_count <= 0:
+            blockers.append("missing_runtime_ledger_fill_count")
         paper_probation_allowed = not blockers
         shortlist.append(
             {
@@ -4103,6 +4163,9 @@ def _build_paper_probation_shortlist(
                     objective_veto_policy=objective_veto_policy,
                     hard_vetoes=hard_vetoes,
                 ),
+                "runtime_ledger_artifact_refs": artifact_refs,
+                "runtime_ledger_artifact_row_count": runtime_ledger_row_count,
+                "runtime_ledger_artifact_fill_count": runtime_ledger_fill_count,
                 "net_pnl_per_day": str(
                     _candidate_metric_value(
                         item,

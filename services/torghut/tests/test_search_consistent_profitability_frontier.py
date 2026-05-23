@@ -2097,8 +2097,10 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                     "min_cash": "-161171.80",
                 },
                 "full_window": {"net_per_day": "406.58", "net_pnl": "813.16"},
-                "runtime_ledger_artifact_ref": "/tmp/microbar-ledger.json",
-                "replay_artifact_refs": ["/tmp/microbar-ledger.json"],
+                "runtime_ledger_artifact_ref": "/tmp/microbar-runtime-ledger.json",
+                "runtime_ledger_artifact_row_count": 12,
+                "runtime_ledger_artifact_fill_count": 4,
+                "replay_artifact_refs": ["/tmp/microbar-runtime-ledger.json"],
                 "hard_vetoes": [
                     "gross_exposure_pct_equity_above_max",
                     "min_cash_below_min",
@@ -2162,9 +2164,42 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertFalse(shortlist[0]["paper_probation_allowed"])
         self.assertEqual(
             shortlist[0]["probation_blockers"],
-            ["missing_runtime_or_replay_ledger_artifact"],
+            [
+                "missing_exact_or_runtime_ledger_artifact",
+                "missing_runtime_ledger_row_count",
+                "missing_runtime_ledger_fill_count",
+            ],
         )
         self.assertFalse(shortlist[0]["promotion_allowed"])
+
+    def test_paper_probation_shortlist_blocks_generic_replay_artifact(self) -> None:
+        shortlist = frontier._build_paper_probation_shortlist(
+            [
+                {
+                    "candidate_id": "positive-generic-replay-only",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "175",
+                        "net_pnl": "350",
+                        "max_gross_exposure_pct_equity": "0.5",
+                        "min_cash": "100",
+                    },
+                    "full_window": {"net_per_day": "175", "net_pnl": "350"},
+                    "replay_artifact_refs": ["/tmp/generic-replay.json"],
+                    "hard_vetoes": [],
+                }
+            ],
+            top_n=1,
+            objective_veto_policy=frontier.ObjectiveVetoPolicy(
+                required_max_gross_exposure_pct_equity=Decimal("1"),
+                required_min_cash=Decimal("0"),
+            ),
+        )
+
+        self.assertFalse(shortlist[0]["paper_probation_allowed"])
+        self.assertIn(
+            "missing_exact_or_runtime_ledger_artifact",
+            shortlist[0]["probation_blockers"],
+        )
 
     def test_generate_symbol_prune_children_removes_worst_symbols_from_universe(
         self,

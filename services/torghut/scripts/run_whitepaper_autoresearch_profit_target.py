@@ -1939,6 +1939,14 @@ def _persist_epoch_ledgers(
             promotion_readiness = _mapping(summary.get("promotion_readiness"))
             if promotion_readiness:
                 portfolio_payload["promotion_readiness"] = dict(promotion_readiness)
+            paper_probation_candidate = _mapping(
+                _mapping(summary.get("candidate_board")).get(
+                    "paper_probation_candidate"
+                )
+            )
+            paper_probation_authorized = _boolish(
+                paper_probation_candidate.get("paper_probation_authorized")
+            )
             portfolio_status = "blocked"
             if bool(portfolio.objective_scorecard.get("oracle_passed")):
                 portfolio_status = (
@@ -1946,7 +1954,10 @@ def _persist_epoch_ledgers(
                     if _boolish(promotion_readiness.get("promotable"))
                     else "target_met"
                 )
-            elif _boolish(portfolio.objective_scorecard.get("target_met")):
+            elif (
+                _boolish(portfolio.objective_scorecard.get("target_met"))
+                and paper_probation_authorized
+            ):
                 portfolio_status = "paper_probation"
             session.add(
                 AutoresearchPortfolioCandidate(
@@ -7648,6 +7659,166 @@ def _candidate_spec_requires_order_type_execution_quality(spec: CandidateSpec) -
     )
 
 
+def _candidate_spec_requires_predictability_decay_stress(
+    spec: CandidateSpec,
+) -> bool:
+    overlay_ids = set(
+        _string_list_from_value(spec.parameter_space.get("mechanism_overlay_ids"))
+    )
+    return (
+        "alpha_decay_predictability_stress" in overlay_ids
+        or _boolish(spec.promotion_contract.get("requires_predictability_decay_stress"))
+        or _boolish(spec.promotion_contract.get("requires_horizon_decay_curve"))
+        or _boolish(
+            spec.promotion_contract.get("requires_spread_adjusted_label_replay")
+        )
+        or "required_predictability_decay_stress" in spec.hard_vetoes
+        or "required_horizon_decay_curve" in spec.hard_vetoes
+        or "required_spread_adjusted_label_replay" in spec.hard_vetoes
+    )
+
+
+def _candidate_board_predictability_decay_summary(
+    spec: CandidateSpec, scorecard: Mapping[str, Any], *, target: Decimal
+) -> dict[str, Any]:
+    required = _candidate_spec_requires_predictability_decay_stress(spec)
+    artifact_refs = _string_list_from_value(
+        scorecard.get("predictability_decay_stress_artifact_refs")
+        or scorecard.get("predictability_decay_stress_artifact_ref")
+        or scorecard.get("alpha_decay_stress_artifact_ref")
+    )
+    available_refs = set(
+        _string_list_from_value(scorecard.get("replay_artifact_refs"))
+        or _string_list_from_value(scorecard.get("artifact_refs"))
+    )
+    horizon_count = _candidate_board_first_int_field(
+        scorecard,
+        (
+            "predictability_decay_stress_horizon_count",
+            "horizon_decay_curve_horizon_count",
+        ),
+    )
+    tight_spread_count = _candidate_board_first_int_field(
+        scorecard,
+        ("tight_spread_regime_slice_count", "tight_spread_regime_count"),
+    )
+    split_pass_rate = _decimal(
+        scorecard.get("predictability_decay_stress_split_pass_rate")
+        or scorecard.get("decay_stress_split_pass_rate")
+    )
+    best_split_share = _decimal(
+        scorecard.get("predictability_decay_stress_best_split_share")
+        or scorecard.get("decay_stress_best_split_share"),
+        default="1",
+    )
+    stress_net_pnl_per_day = _decimal(
+        scorecard.get("post_cost_net_pnl_after_predictability_decay_stress")
+        or scorecard.get("predictability_decay_stress_net_pnl_per_day")
+    )
+    min_horizon_count = _candidate_board_int_field(
+        spec.hard_vetoes, "required_min_decay_stress_horizon_count"
+    )
+    if min_horizon_count <= 0:
+        min_horizon_count = 3
+    min_tight_spread_count = _candidate_board_int_field(
+        spec.hard_vetoes, "required_min_tight_spread_regime_count"
+    )
+    if min_tight_spread_count <= 0:
+        min_tight_spread_count = 20
+    min_split_pass_rate = _decimal(
+        spec.hard_vetoes.get("required_min_decay_stress_split_pass_rate"),
+        default="0.60",
+    )
+    max_best_split_share = _decimal(
+        spec.hard_vetoes.get("required_max_decay_stress_best_split_share"),
+        default="0.35",
+    )
+    blockers: list[str] = []
+    missing_artifact_refs: list[str] = []
+    if required:
+        if not _boolish(
+            scorecard.get("predictability_decay_stress_passed")
+            or scorecard.get("alpha_decay_stress_passed")
+        ):
+            blockers.append("predictability_decay_stress_passed_failed")
+        if not artifact_refs:
+            blockers.append("predictability_decay_stress_artifact_present_failed")
+        missing_artifact_refs = [
+            ref for ref in artifact_refs if available_refs and ref not in available_refs
+        ]
+        if missing_artifact_refs:
+            blockers.append(
+                "predictability_decay_stress_artifact_ref_missing_from_bundle"
+            )
+        if not _boolish(
+            scorecard.get("horizon_decay_curve_present")
+            or scorecard.get("predictability_horizon_decay_curve_present")
+        ):
+            blockers.append("horizon_decay_curve_present_failed")
+        if not _boolish(
+            scorecard.get("spread_adjusted_label_replay_present")
+            or scorecard.get("spread_adjusted_labels_present")
+        ):
+            blockers.append("spread_adjusted_label_replay_present_failed")
+        if horizon_count < min_horizon_count:
+            blockers.append("predictability_decay_stress_horizon_count_failed")
+        if tight_spread_count < min_tight_spread_count:
+            blockers.append("tight_spread_regime_slice_count_failed")
+        if split_pass_rate < min_split_pass_rate:
+            blockers.append("predictability_decay_stress_split_pass_rate_failed")
+        if best_split_share > max_best_split_share:
+            blockers.append("predictability_decay_stress_best_split_share_failed")
+        if stress_net_pnl_per_day < target:
+            blockers.append(
+                "post_cost_net_pnl_after_predictability_decay_stress_failed"
+            )
+    return {
+        "required": required,
+        "passed": not blockers,
+        "blockers": blockers,
+        "artifact_refs": artifact_refs,
+        "missing_replay_artifact_refs": missing_artifact_refs
+        if required and artifact_refs
+        else [],
+        "horizon_count": horizon_count,
+        "min_horizon_count": min_horizon_count,
+        "tight_spread_regime_slice_count": tight_spread_count,
+        "min_tight_spread_regime_slice_count": min_tight_spread_count,
+        "split_pass_rate": str(split_pass_rate),
+        "min_split_pass_rate": str(min_split_pass_rate),
+        "best_split_share": str(best_split_share),
+        "max_best_split_share": str(max_best_split_share),
+        "stress_net_pnl_per_day": str(stress_net_pnl_per_day),
+        "target_net_pnl_per_day": str(target),
+        "source_marker": "tkan_lob_alpha_decay_arxiv_2601_02310_2026",
+    }
+
+
+def _candidate_board_scorecard_with_predictability_decay_blockers(
+    spec: CandidateSpec, scorecard: Mapping[str, Any], *, target: Decimal
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    summary = _candidate_board_predictability_decay_summary(
+        spec, scorecard, target=target
+    )
+    updated_scorecard = dict(scorecard)
+    blockers = [
+        _string(blocker)
+        for blocker in cast(Sequence[Any], summary.get("blockers") or ())
+        if _string(blocker)
+    ]
+    if blockers:
+        updated_scorecard["oracle_passed"] = False
+        oracle_payload = dict(_mapping(updated_scorecard.get("profit_target_oracle")))
+        oracle_blockers = [
+            _string(blocker)
+            for blocker in cast(Sequence[Any], oracle_payload.get("blockers") or ())
+            if _string(blocker)
+        ]
+        oracle_payload["blockers"] = list(dict.fromkeys([*oracle_blockers, *blockers]))
+        updated_scorecard["profit_target_oracle"] = oracle_payload
+    return updated_scorecard, summary
+
+
 def _candidate_board_order_type_execution_quality_summary(
     spec: CandidateSpec, scorecard: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -8250,6 +8421,23 @@ def _candidate_board_closest_promotion_candidate(
     return replayed_rows[0]
 
 
+def _candidate_board_paper_probation_admission_blockers(
+    row: Mapping[str, Any],
+) -> list[str]:
+    blockers: list[str] = []
+    runtime_ledger_refs = _candidate_board_runtime_ledger_refs(row)
+    if not runtime_ledger_refs:
+        blockers.append("paper_probation_runtime_ledger_artifact_missing")
+    if _candidate_board_int_field(row, "runtime_ledger_artifact_row_count") <= 0:
+        blockers.append("paper_probation_runtime_ledger_row_count_missing")
+    if _candidate_board_int_field(row, "runtime_ledger_artifact_fill_count") <= 0:
+        blockers.append("paper_probation_runtime_ledger_fill_count_missing")
+    window_start, window_end = _candidate_board_runtime_window_bounds(row)
+    if not window_start or not window_end:
+        blockers.append("paper_probation_runtime_window_bounds_missing")
+    return blockers
+
+
 def _candidate_board_paper_probation_candidate(
     rows: Sequence[Mapping[str, Any]],
     *,
@@ -8267,6 +8455,14 @@ def _candidate_board_paper_probation_candidate(
         and _string(row.get("runtime_strategy_name"))
     ]
     if not candidates:
+        return None
+
+    admitted_candidates = [
+        candidate
+        for candidate in candidates
+        if not _candidate_board_paper_probation_admission_blockers(candidate)
+    ]
+    if not admitted_candidates:
         return None
 
     def rank(row: Mapping[str, Any]) -> tuple[Any, ...]:
@@ -8288,8 +8484,8 @@ def _candidate_board_paper_probation_candidate(
             _string(row.get("candidate_spec_id")),
         )
 
-    candidates.sort(key=rank, reverse=True)
-    candidate = dict(candidates[0])
+    admitted_candidates.sort(key=rank, reverse=True)
+    candidate = dict(admitted_candidates[0])
     lower_bound = _candidate_board_lower_bound_net_pnl(candidate)
     deployable_missing_count = deployable_lower_bound_missing_count(candidate)
     deployable_failed_gate_count = deployable_proof_failed_gate_count(candidate)
@@ -8793,6 +8989,15 @@ def _candidate_board_payload(
         raw_scorecard = (
             dict(evidence.objective_scorecard) if evidence is not None else {}
         )
+        mechanism_overlay_ids = _string_list_from_value(
+            spec.parameter_space.get("mechanism_overlay_ids")
+        )
+        if mechanism_overlay_ids:
+            raw_scorecard.setdefault("mechanism_overlay_ids", mechanism_overlay_ids)
+        if evidence is not None:
+            raw_scorecard.setdefault(
+                "replay_artifact_refs", list(evidence.replay_artifact_refs)
+            )
         scorecard = _candidate_board_scorecard_with_evidence_blockers(
             raw_scorecard, evidence
         )
@@ -8816,6 +9021,11 @@ def _candidate_board_payload(
                 replay_artifact_refs=evidence.replay_artifact_refs
                 if evidence is not None
                 else (),
+            )
+        )
+        scorecard, predictability_decay_summary = (
+            _candidate_board_scorecard_with_predictability_decay_blockers(
+                spec, scorecard, target=target
             )
         )
         selected_for_replay = bool(selection.get("selected_for_replay"))
@@ -8844,6 +9054,7 @@ def _candidate_board_payload(
                 "family_template_id": spec.family_template_id,
                 "runtime_family": spec.runtime_family,
                 "runtime_strategy_name": spec.runtime_strategy_name,
+                "mechanism_overlay_ids": mechanism_overlay_ids,
                 "pre_replay_rank": _rank_sort_value(pre_replay.get("rank")),
                 "pre_replay_proposal_score": str(
                     pre_replay.get("proposal_score") or ""
@@ -9047,6 +9258,7 @@ def _candidate_board_payload(
                 "regime_specialist_validation": regime_specialist_validation,
                 "rejected_signal_outcome_learning": rejected_signal_summary,
                 "order_type_execution_quality": order_type_summary,
+                "predictability_decay_stress": predictability_decay_summary,
                 "evidence_lineage": evidence_lineage,
                 "replay_window_coverage": replay_window_coverage,
                 "blockers": blockers,
