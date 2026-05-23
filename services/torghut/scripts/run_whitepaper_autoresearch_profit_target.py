@@ -358,6 +358,53 @@ def _parse_args() -> argparse.Namespace:
             "frontier run. 0 uses the research program replay budget."
         ),
     )
+    parser.add_argument(
+        "--capture-rejected-seed-full-window-ledger",
+        action="store_true",
+        help=(
+            "Forward proof-only rejected seed ledger capture to strategy factory. "
+            "Captured candidates remain non-promotable."
+        ),
+    )
+    parser.add_argument(
+        "--capture-positive-rejected-full-window-ledgers",
+        dest="capture_positive_rejected_full_window_ledgers",
+        type=int,
+        default=0,
+        help=(
+            "Forward proof-only full-window ledger capture for positive train-screen "
+            "rejects or over-budget positives. Captured candidates remain blocked."
+        ),
+    )
+    parser.add_argument(
+        "--capture-top-rejected-full-window-ledgers",
+        dest="capture_positive_rejected_full_window_ledgers",
+        type=int,
+        default=argparse.SUPPRESS,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--symbol-prune-iterations",
+        type=int,
+        default=0,
+        help="Override program symbol-prune repair iterations for real replay.",
+    )
+    parser.add_argument("--symbol-prune-candidates", type=int, default=0)
+    parser.add_argument("--symbol-prune-min-universe-size", type=int, default=0)
+    parser.add_argument(
+        "--loss-repair-iterations",
+        type=int,
+        default=0,
+        help="Override program loss-repair iterations for real replay.",
+    )
+    parser.add_argument("--loss-repair-candidates", type=int, default=0)
+    parser.add_argument(
+        "--consistency-repair-iterations",
+        type=int,
+        default=0,
+        help="Override program consistency-repair iterations for real replay.",
+    )
+    parser.add_argument("--consistency-repair-candidates", type=int, default=0)
     parser.add_argument("--real-replay-timeout-seconds", type=int, default=0)
     parser.add_argument(
         "--real-replay-shard-size",
@@ -6289,6 +6336,34 @@ def _run_real_replay(
         staged_train_screen_multiplier=max(
             1, int(getattr(args, "staged_train_screen_multiplier", 1) or 1)
         ),
+        capture_rejected_seed_full_window_ledger=bool(
+            getattr(args, "capture_rejected_seed_full_window_ledger", False)
+        ),
+        capture_positive_rejected_full_window_ledgers=max(
+            0,
+            int(getattr(args, "capture_positive_rejected_full_window_ledgers", 0) or 0),
+        ),
+        symbol_prune_iterations=max(
+            0, int(getattr(args, "symbol_prune_iterations", 0) or 0)
+        ),
+        symbol_prune_candidates=max(
+            1, int(getattr(args, "symbol_prune_candidates", 1) or 1)
+        ),
+        symbol_prune_min_universe_size=max(
+            1, int(getattr(args, "symbol_prune_min_universe_size", 2) or 2)
+        ),
+        loss_repair_iterations=max(
+            0, int(getattr(args, "loss_repair_iterations", 0) or 0)
+        ),
+        loss_repair_candidates=max(
+            1, int(getattr(args, "loss_repair_candidates", 1) or 1)
+        ),
+        consistency_repair_iterations=max(
+            0, int(getattr(args, "consistency_repair_iterations", 0) or 0)
+        ),
+        consistency_repair_candidates=max(
+            1, int(getattr(args, "consistency_repair_candidates", 2) or 2)
+        ),
         persist_results=args.persist_results,
     )
     factory_payload = (
@@ -6923,6 +6998,59 @@ def _resolved_staged_train_screen_multiplier(
     if override > 0:
         return max(1, override)
     return max(1, int(program.replay_budget.staged_train_screen_multiplier))
+
+
+def _resolved_program_family_int_arg(
+    args: argparse.Namespace,
+    program: StrategyAutoresearchProgram,
+    name: str,
+    *,
+    default: int,
+    minimum: int,
+) -> int:
+    override = int(getattr(args, name, 0) or 0)
+    if override > 0:
+        return max(minimum, override)
+    program_value = max(
+        (int(getattr(family, name, default)) for family in program.families),
+        default=default,
+    )
+    return max(minimum, program_value)
+
+
+def _resolved_real_replay_frontier_controls(
+    args: argparse.Namespace, program: StrategyAutoresearchProgram
+) -> dict[str, Any]:
+    return {
+        "symbol_prune_iterations": _resolved_program_family_int_arg(
+            args, program, "symbol_prune_iterations", default=0, minimum=0
+        ),
+        "symbol_prune_candidates": _resolved_program_family_int_arg(
+            args, program, "symbol_prune_candidates", default=1, minimum=1
+        ),
+        "symbol_prune_min_universe_size": _resolved_program_family_int_arg(
+            args, program, "symbol_prune_min_universe_size", default=2, minimum=1
+        ),
+        "loss_repair_iterations": _resolved_program_family_int_arg(
+            args, program, "loss_repair_iterations", default=0, minimum=0
+        ),
+        "loss_repair_candidates": _resolved_program_family_int_arg(
+            args, program, "loss_repair_candidates", default=1, minimum=1
+        ),
+        "consistency_repair_iterations": _resolved_program_family_int_arg(
+            args, program, "consistency_repair_iterations", default=0, minimum=0
+        ),
+        "consistency_repair_candidates": _resolved_program_family_int_arg(
+            args, program, "consistency_repair_candidates", default=2, minimum=1
+        ),
+        "capture_rejected_seed_full_window_ledger": bool(
+            getattr(args, "capture_rejected_seed_full_window_ledger", False)
+        ),
+        "capture_positive_rejected_full_window_ledgers": max(
+            0,
+            int(getattr(args, "capture_positive_rejected_full_window_ledgers", 0) or 0),
+        ),
+    }
 
 
 def _epoch_mlx_snapshot_manifest(
@@ -9962,6 +10090,7 @@ def run_whitepaper_autoresearch_profit_target(
             "staged_train_screen_multiplier": _resolved_staged_train_screen_multiplier(
                 args, program
             ),
+            **_resolved_real_replay_frontier_controls(args, program),
         }
     )
     target = _decimal(args.target_net_pnl_per_day, default=_DEFAULT_DAILY_PROFIT_TARGET)

@@ -138,6 +138,62 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--staged-train-screen-multiplier",
+        type=int,
+        default=1,
+        help=(
+            "When train screening is enabled, evaluate this multiple of the "
+            "full-replay budget through the cheaper train screen."
+        ),
+    )
+    parser.add_argument(
+        "--capture-rejected-seed-full-window-ledger",
+        action="store_true",
+        help=(
+            "Capture proof-only exact full-window ledgers for checked-in "
+            "candidate-record seeds rejected by train screening."
+        ),
+    )
+    parser.add_argument(
+        "--capture-positive-rejected-full-window-ledgers",
+        dest="capture_positive_rejected_full_window_ledgers",
+        type=int,
+        default=0,
+        help=(
+            "Capture up to N proof-only exact full-window ledgers for positive "
+            "train-screen rejects or candidates over the full-replay budget."
+        ),
+    )
+    parser.add_argument(
+        "--capture-top-rejected-full-window-ledgers",
+        dest="capture_positive_rejected_full_window_ledgers",
+        type=int,
+        default=argparse.SUPPRESS,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--symbol-prune-iterations",
+        type=int,
+        default=0,
+        help="Generate bounded child candidates by pruning downside symbols.",
+    )
+    parser.add_argument("--symbol-prune-candidates", type=int, default=1)
+    parser.add_argument("--symbol-prune-min-universe-size", type=int, default=2)
+    parser.add_argument(
+        "--loss-repair-iterations",
+        type=int,
+        default=0,
+        help="Generate bounded child candidates that tighten loss controls.",
+    )
+    parser.add_argument("--loss-repair-candidates", type=int, default=1)
+    parser.add_argument(
+        "--consistency-repair-iterations",
+        type=int,
+        default=0,
+        help="Generate bounded child candidates that repair positive near-misses.",
+    )
+    parser.add_argument("--consistency-repair-candidates", type=int, default=2)
+    parser.add_argument(
         "--persist-results",
         dest="persist_results",
         action="store_true",
@@ -479,10 +535,38 @@ def _frontier_args(
             if max_candidates_to_evaluate is not None
             else int(getattr(args, "max_candidates_to_evaluate", 0))
         ),
+        staged_train_screen_multiplier=max(
+            1, int(getattr(args, "staged_train_screen_multiplier", 1) or 1)
+        ),
         json_output=json_output,
-        symbol_prune_iterations=0,
-        symbol_prune_candidates=1,
-        symbol_prune_min_universe_size=2,
+        capture_rejected_seed_full_window_ledger=bool(
+            getattr(args, "capture_rejected_seed_full_window_ledger", False)
+        ),
+        capture_positive_rejected_full_window_ledgers=max(
+            0,
+            int(getattr(args, "capture_positive_rejected_full_window_ledgers", 0) or 0),
+        ),
+        symbol_prune_iterations=max(
+            0, int(getattr(args, "symbol_prune_iterations", 0) or 0)
+        ),
+        symbol_prune_candidates=max(
+            1, int(getattr(args, "symbol_prune_candidates", 1) or 1)
+        ),
+        symbol_prune_min_universe_size=max(
+            1, int(getattr(args, "symbol_prune_min_universe_size", 2) or 2)
+        ),
+        loss_repair_iterations=max(
+            0, int(getattr(args, "loss_repair_iterations", 0) or 0)
+        ),
+        loss_repair_candidates=max(
+            1, int(getattr(args, "loss_repair_candidates", 1) or 1)
+        ),
+        consistency_repair_iterations=max(
+            0, int(getattr(args, "consistency_repair_iterations", 0) or 0)
+        ),
+        consistency_repair_candidates=max(
+            1, int(getattr(args, "consistency_repair_candidates", 2) or 2)
+        ),
     )
 
 
