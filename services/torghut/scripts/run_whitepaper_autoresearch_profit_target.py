@@ -9,6 +9,7 @@ import json
 import os
 import signal
 import socket
+import subprocess
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
@@ -131,6 +132,14 @@ _REJECTED_SIGNAL_OUTCOME_REQUIRED_FIELDS = (
     "route_tca",
     "post_cost_net_pnl",
     "executable_quote",
+)
+_CODE_COMMIT_ENV_VARS = (
+    "TORGHUT_CODE_COMMIT",
+    "GITHUB_SHA",
+    "BUILDKITE_COMMIT",
+    "SOURCE_COMMIT",
+    "GIT_COMMIT",
+    "REVISION",
 )
 _PROGRAM_SOURCE_DEFAULT_CONFIDENCE = "0.70"
 _SECOND_OOS_WINDOW_ID = "second_oos"
@@ -1528,6 +1537,49 @@ def _mapping(value: Any) -> dict[str, Any]:
 
 def _string(value: Any) -> str:
     return str(value if value is not None else "").strip()
+
+
+def _current_code_commit() -> str:
+    for name in _CODE_COMMIT_ENV_VARS:
+        value = _string(os.getenv(name))
+        if value:
+            return value
+
+    repo_root = Path(__file__).resolve().parents[3]
+    try:
+        rev = subprocess.run(
+            ("git", "-C", str(repo_root), "rev-parse", "HEAD"),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return "unknown"
+    commit = _string(rev.stdout)
+    if rev.returncode != 0 or not commit:
+        return "unknown"
+
+    dirty = False
+    for args in (
+        ("git", "-C", str(repo_root), "diff", "--quiet"),
+        ("git", "-C", str(repo_root), "diff", "--cached", "--quiet"),
+    ):
+        try:
+            result = subprocess.run(
+                args,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            dirty = True
+            break
+        if result.returncode != 0:
+            dirty = True
+            break
+    return f"{commit}-dirty" if dirty else commit
 
 
 def _list_of_mappings(value: Any) -> list[Mapping[str, Any]]:
@@ -6125,6 +6177,7 @@ def _run_synthetic_replay(
 ) -> EpochReplayResult:
     evidence_bundles: list[CandidateEvidenceBundle] = []
     replay_results: list[Mapping[str, Any]] = []
+    code_commit = _current_code_commit()
     for rank, spec in enumerate(specs[: max(1, max_candidates)], start=1):
         candidate = _synthetic_candidate_payload(spec, rank=rank)
         result_path = (
@@ -6144,6 +6197,7 @@ def _run_synthetic_replay(
                 candidate=candidate,
                 dataset_snapshot_id="synthetic-recent-whitepaper-2025-2026",
                 result_path=str(result_path),
+                code_commit=code_commit,
             )
         )
         replay_results.append(result_payload)
@@ -6246,6 +6300,8 @@ def _real_replay_result_from_factory_payload(
 ) -> EpochReplayResult:
     specs_by_id = specs_by_id or {}
     evidence_bundles: list[CandidateEvidenceBundle] = []
+    build = _mapping(factory_payload.get("build"))
+    code_commit = _string(build.get("commit")) or _current_code_commit()
     for item in _list_of_mappings(factory_payload.get("experiments")):
         result_path = str(item.get("result_path") or "")
         if not result_path:
@@ -6287,6 +6343,7 @@ def _real_replay_result_from_factory_payload(
                     candidate=candidate,
                     dataset_snapshot_id=dataset_snapshot_id,
                     result_path=result_path,
+                    code_commit=code_commit,
                 )
             )
     return EpochReplayResult(
@@ -8218,6 +8275,8 @@ def _candidate_board_evidence_lineage_summary(
         blockers.append("feature_spec_hash_missing")
     if not code_commit or code_commit.lower() == "unknown":
         blockers.append("code_commit_missing_or_unknown")
+    elif code_commit.endswith("-dirty"):
+        blockers.append("code_commit_dirty")
     if not replay_artifact_refs:
         blockers.append("replay_artifact_missing")
 
