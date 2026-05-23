@@ -629,6 +629,89 @@ class TestCandidateSpecs(TestCase):
             specs[0].promotion_contract["rejects_queue_position_free_fill_assumptions"]
         )
 
+    def test_mpc_execution_claim_adds_dynamic_schedule_contract(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-mpc-trade-execution",
+            claims=[
+                {
+                    "claim_id": "dynamic-execution-schedule-control",
+                    "claim_type": "feature_recipe",
+                    "claim_text": (
+                        "Model predictive control can adapt a dynamic execution "
+                        "schedule to liquidity forecasts, inventory path, and "
+                        "execution shortfall."
+                    ),
+                    "data_requirements": [
+                        "execution_schedule_trace",
+                        "liquidity_forecast",
+                        "inventory_path",
+                        "execution_shortfall",
+                        "route_tca",
+                    ],
+                    "confidence": "0.71",
+                },
+                {
+                    "claim_id": "mpc-execution-stress-required",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Dynamic execution schedules remain validation-only until "
+                        "replay shows lower shortfall after latency and market-impact "
+                        "stress."
+                    ),
+                    "data_requirements": [
+                        "latency_stress",
+                        "market_impact_stress",
+                        "post_cost_net_pnl",
+                    ],
+                    "confidence": "0.72",
+                },
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+
+        self.assertIn(
+            "mpc_dynamic_execution_schedule",
+            specs[0].parameter_space["mechanism_overlay_ids"],
+        )
+        self.assertTrue(specs[0].hard_vetoes["required_execution_schedule_trace"])
+        self.assertTrue(
+            specs[0].hard_vetoes["required_mpc_schedule_shortfall_ablation_passed"]
+        )
+        self.assertEqual(
+            specs[0].hard_vetoes["required_min_mpc_schedule_trace_sample_count"],
+            "60",
+        )
+        self.assertTrue(specs[0].hard_vetoes["required_latency_stress"])
+        self.assertTrue(specs[0].hard_vetoes["required_market_impact_stress"])
+        mechanism_overlays = candidate_specs_module._mechanism_overlays_for_card(
+            cards[0]
+        )
+        mpc_contract = next(
+            contract
+            for contract in mechanism_overlays["feature_contract"]["mechanism_overlays"]
+            if contract["overlay_id"] == "mpc_dynamic_execution_schedule"
+        )
+        self.assertEqual(
+            mpc_contract["rank_metric"],
+            "post_cost_net_pnl_after_mpc_schedule_shortfall_stress",
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["requires_mpc_dynamic_execution_schedule"]
+        )
+        self.assertTrue(specs[0].promotion_contract["requires_execution_shortfall"])
+        self.assertTrue(
+            specs[0].promotion_contract[
+                "rejects_dynamic_schedule_without_shortfall_ablation"
+            ]
+        )
+        self.assertEqual(
+            specs[0].promotion_contract["execution_policy"],
+            "mpc_dynamic_schedule_validation_only",
+        )
+
     def test_alpha_decay_claim_adds_predictability_stress_contract(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-tkan-alpha-decay",

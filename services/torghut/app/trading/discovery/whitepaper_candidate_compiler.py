@@ -78,6 +78,7 @@ FEATURE_ALIASES = {
     "informed_flow_score": "order_flow_imbalance",
     "ingestion_delay": "transaction_cost_stress",
     "engine_sensitivity": "transaction_cost_stress",
+    "execution_schedule_trace": "transaction_cost_stress",
     "implementation_uncertainty_interval": "transaction_cost_stress",
     "conclusion_stability": "transaction_cost_stress",
     "divergence_amplification": "transaction_cost_stress",

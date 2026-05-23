@@ -3425,6 +3425,75 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
 
     if has_any(
         (
+            "model predictive control",
+            "model-predictive control",
+            "mpc trade execution",
+            "mpc execution",
+            "mpc_execution",
+            "dynamic execution schedule",
+            "dynamic_execution_schedule",
+            "execution schedule control",
+            "execution_schedule_trace",
+            "liquidity forecast",
+            "liquidity_forecast",
+            "inventory path",
+            "inventory_path",
+            "execution shortfall",
+            "execution_shortfall",
+        )
+    ):
+        overlay_ids.append("mpc_dynamic_execution_schedule")
+        overlay_contracts.append(
+            {
+                "overlay_id": "mpc_dynamic_execution_schedule",
+                "required_evidence": [
+                    "execution_schedule_trace",
+                    "liquidity_forecast",
+                    "inventory_path",
+                    "execution_shortfall",
+                    "route_tca",
+                    "latency_stress",
+                    "market_impact_stress",
+                    "post_cost_net_pnl",
+                ],
+                "rank_metric": "post_cost_net_pnl_after_mpc_schedule_shortfall_stress",
+                "evidence_policy": (
+                    "dynamic_execution_schedule_requires_replay_shortfall_ablation"
+                ),
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_mpc_dynamic_execution_schedule": True,
+                "required_execution_schedule_trace": True,
+                "required_liquidity_forecast": True,
+                "required_inventory_path_trace": True,
+                "required_execution_shortfall_evidence": True,
+                "required_mpc_schedule_shortfall_ablation_passed": True,
+                "required_min_mpc_schedule_trace_sample_count": "60",
+                "required_latency_stress": True,
+                "required_market_impact_stress": True,
+                "required_max_mpc_schedule_shortfall_bps": "8",
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_mpc_dynamic_execution_schedule": True,
+                "requires_execution_schedule_trace": True,
+                "requires_liquidity_forecast": True,
+                "requires_inventory_path_trace": True,
+                "requires_execution_shortfall": True,
+                "requires_route_tca": True,
+                "requires_latency_stress": True,
+                "requires_market_impact_stress": True,
+                "rejects_static_schedule_free_mpc_claims": True,
+                "rejects_dynamic_schedule_without_shortfall_ablation": True,
+                "execution_policy": "mpc_dynamic_schedule_validation_only",
+            }
+        )
+
+    if has_any(
+        (
             "alpha decay",
             "alpha_decay",
             "predictability decay",
