@@ -14,6 +14,7 @@ import { resolveImplementation, resolveParameters } from './run-utils'
 import { buildRuntimeRef, parseRuntimeRef, type RuntimeRef } from './runtime-resources'
 import { resolveSystemPrompt } from './system-prompt'
 import { collectBlockedSecrets, resolveAuthSecretConfig, resolveVcsContext } from './vcs-context'
+import { extractRunnerStatusFromJobPods, mergeAgentRunArtifacts, runnerStatusOutputArtifacts } from './runner-status'
 import {
   normalizeWorkflowStatus,
   parseWorkflowSteps,
@@ -1134,6 +1135,25 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
       }
     }
 
+    let completedJobOutputArtifacts: Record<string, unknown>[] = []
+    for (const entry of completedJobs) {
+      const jobName = asString(readNested(entry.job, ['metadata', 'name']))
+      if (!jobName) continue
+      const runnerStatus = await extractRunnerStatusFromJobPods(kube, entry.namespace, jobName, [
+        'succeeded',
+        'failed',
+        'cancelled',
+      ])
+      const runnerArtifacts = runnerStatus ? runnerStatusOutputArtifacts(runnerStatus) : []
+      if (runnerArtifacts.length > 0) {
+        completedJobOutputArtifacts = mergeAgentRunArtifacts(completedJobOutputArtifacts, runnerArtifacts)
+      }
+    }
+    const artifactStatusUpdate =
+      completedJobOutputArtifacts.length > 0
+        ? { artifacts: mergeAgentRunArtifacts(status.artifacts, completedJobOutputArtifacts) }
+        : {}
+
     if (workflowFailure) {
       setWorkflowPhase(workflowStatus, 'Failed')
       const failureType =
@@ -1165,6 +1185,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
         conditions: updated,
         vcs: vcsStatus ?? undefined,
         contract: workflowContractStatus,
+        ...artifactStatusUpdate,
         ...(systemPromptHashUpdate ? { systemPromptHash: systemPromptHashUpdate } : {}),
       })
       for (const entry of completedJobs) {
@@ -1199,6 +1220,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
         workflow: workflowStatus,
         conditions: updated,
         vcs: vcsStatus ?? undefined,
+        ...artifactStatusUpdate,
         ...(systemPromptHashUpdate ? { systemPromptHash: systemPromptHashUpdate } : {}),
       })
       for (const entry of completedJobs) {
@@ -1232,6 +1254,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
         conditions: updated,
         vcs: vcsStatus ?? undefined,
         contract: workflowContractStatus,
+        ...artifactStatusUpdate,
         ...(options.initialSubmit ? { specHash: hashAgentRunImmutableSpec(agentRun) } : {}),
         ...(systemPromptHashUpdate ? { systemPromptHash: systemPromptHashUpdate } : {}),
       })
