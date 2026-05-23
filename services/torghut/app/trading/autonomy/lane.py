@@ -6116,15 +6116,12 @@ def _resolve_hypothesis_window_evidence(
     runtime_observation_has_runtime_ledger_profit_proof = (
         _runtime_observation_has_ledger_profit_proof(runtime_observation_payload)
     )
-    simulation_observation_without_runtime_ledger_profit_proof = (
-        runtime_observation_source_kind.startswith('simulation_')
-        and not runtime_observation_has_runtime_ledger_profit_proof
-    )
+    simulation_observation = runtime_observation_source_kind.startswith('simulation_')
     qualified_runtime_observation = (
         runtime_observation_authoritative
         and runtime_observation_stage == observed_stage
         and runtime_observation_provenance == expected_provenance
-        and not simulation_observation_without_runtime_ledger_profit_proof
+        and not simulation_observation
     )
     if qualified_runtime_observation:
         evidence_provenance = expected_provenance
@@ -6151,8 +6148,8 @@ def _resolve_hypothesis_window_evidence(
         )
         capital_stage = 'shadow'
         qualification_reason = (
-            'simulation_runtime_without_runtime_ledger_profit_proof'
-            if simulation_observation_without_runtime_ledger_profit_proof
+            'simulation_source_replay_only'
+            if simulation_observation
             else 'runtime_observation_contract_missing_or_ineligible'
         )
     return (

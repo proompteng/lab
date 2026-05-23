@@ -185,6 +185,27 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(payload["promotion_authority"], "runtime_ledger")
         self.assertEqual(payload["runtime_ledger_profit_proof_present"], True)
 
+    def test_runtime_observation_authority_keeps_simulation_replay_only(
+        self,
+    ) -> None:
+        payload = _runtime_observation_authority_payload(
+            source_kind="simulation_paper_runtime",
+            tca_rows=[
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "post_cost_expectancy_bps": Decimal("40"),
+                    "post_cost_expectancy_basis": POST_COST_BASIS_RUNTIME_LEDGER,
+                    "post_cost_promotion_eligible": True,
+                    "runtime_ledger_bucket": _complete_runtime_ledger_bucket(),
+                }
+            ],
+        )
+
+        self.assertEqual(payload["authoritative"], False)
+        self.assertEqual(payload["authority_reason"], "simulation_source_replay_only")
+        self.assertEqual(payload["promotion_authority"], "blocked")
+        self.assertEqual(payload["runtime_ledger_profit_proof_present"], True)
+
     def test_parse_args_accepts_dataset_snapshot_ref(self) -> None:
         with patch(
             "sys.argv",
@@ -1687,7 +1708,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(runtime_payload["authoritative"], False)
         self.assertEqual(
             runtime_payload["authority_reason"],
-            "simulation_runtime_without_runtime_ledger_profit_proof",
+            "simulation_source_replay_only",
         )
         self.assertEqual(runtime_payload["promotion_authority"], "blocked")
         self.assertEqual(runtime_payload["runtime_ledger_profit_proof_present"], False)
@@ -1796,7 +1817,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(runtime_payload["authoritative"], False)
         self.assertEqual(
             runtime_payload["authority_reason"],
-            "simulation_runtime_without_runtime_ledger_profit_proof",
+            "simulation_source_replay_only",
         )
         self.assertEqual(runtime_payload["promotion_authority"], "blocked")
         self.assertEqual(runtime_payload["runtime_ledger_profit_proof_present"], False)

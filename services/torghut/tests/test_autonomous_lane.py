@@ -135,7 +135,7 @@ class TestAutonomousLane(TestCase):
         self.assertEqual(capital_stage, "shadow")
         self.assertEqual(
             qualification["qualification_reason"],
-            "simulation_runtime_without_runtime_ledger_profit_proof",
+            "simulation_source_replay_only",
         )
         self.assertEqual(
             qualification["runtime_observation_has_runtime_ledger_profit_proof"],
@@ -143,7 +143,7 @@ class TestAutonomousLane(TestCase):
         )
         self.assertFalse(qualification["qualified_runtime_observation"])
 
-    def test_runtime_observation_evidence_accepts_simulation_with_ledger_profit_proof(
+    def test_runtime_observation_evidence_keeps_simulation_replay_only_with_ledger_profit_proof(
         self,
     ) -> None:
         provenance, maturity, capital_stage, qualification = (
@@ -163,16 +163,20 @@ class TestAutonomousLane(TestCase):
             )
         )
 
-        self.assertEqual(provenance, "paper_runtime_observed")
-        self.assertEqual(maturity, "empirically_validated")
+        self.assertEqual(provenance, "historical_market_replay")
+        self.assertEqual(maturity, "calibrated")
         self.assertEqual(capital_stage, "shadow")
         self.assertEqual(
             qualification["runtime_observation_has_runtime_ledger_profit_proof"],
             True,
         )
-        self.assertTrue(qualification["qualified_runtime_observation"])
+        self.assertFalse(qualification["qualified_runtime_observation"])
+        self.assertEqual(
+            qualification["qualification_reason"],
+            "simulation_source_replay_only",
+        )
 
-    def test_runtime_observation_evidence_accepts_explicit_ledger_profit_proof_flag(
+    def test_runtime_observation_evidence_keeps_simulation_replay_only_with_explicit_ledger_profit_proof_flag(
         self,
     ) -> None:
         provenance, _, _, qualification = _resolve_hypothesis_window_evidence(
@@ -189,12 +193,16 @@ class TestAutonomousLane(TestCase):
             min_sample_count_for_scale_up=20,
         )
 
-        self.assertEqual(provenance, "paper_runtime_observed")
+        self.assertEqual(provenance, "historical_market_replay")
         self.assertEqual(
             qualification["runtime_observation_has_runtime_ledger_profit_proof"],
             True,
         )
-        self.assertTrue(qualification["qualified_runtime_observation"])
+        self.assertFalse(qualification["qualified_runtime_observation"])
+        self.assertEqual(
+            qualification["qualification_reason"],
+            "simulation_source_replay_only",
+        )
 
     def test_gate_forecast_metrics_fail_closed_for_non_authoritative_router_outputs(self) -> None:
         signals = [

@@ -1098,7 +1098,7 @@ class TestRuntimeWindowImport(TestCase):
         )
         self.assertEqual(decision.allowed, False)
 
-    def test_persist_observed_runtime_windows_allows_h_micro_with_fresh_delay_depth_stress(
+    def test_persist_observed_runtime_windows_keeps_paper_depth_evidence_only(
         self,
     ) -> None:
         buckets = build_observed_runtime_buckets(
@@ -1193,8 +1193,11 @@ class TestRuntimeWindowImport(TestCase):
             session.commit()
             decision = session.execute(select(StrategyPromotionDecision)).scalar_one()
 
-        self.assertEqual(summary["promotion_allowed"], True)
-        self.assertEqual(summary["promotion_blocking_reasons"], [])
+        self.assertEqual(summary["promotion_allowed"], False)
+        self.assertEqual(
+            summary["promotion_blocking_reasons"],
+            ["paper_stage_evidence_collection_only"],
+        )
         self.assertEqual(
             summary["delay_adjusted_depth_stress"],
             {
@@ -1220,7 +1223,7 @@ class TestRuntimeWindowImport(TestCase):
                 "queue_ahead_depletion_sample_count": 44,
             },
         )
-        self.assertEqual(decision.allowed, True)
+        self.assertEqual(decision.allowed, False)
         self.assertEqual(
             decision.payload_json["delay_adjusted_depth_stress"],
             summary["delay_adjusted_depth_stress"],

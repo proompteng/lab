@@ -2540,6 +2540,44 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             shortlist[0]["probation_blockers"],
         )
 
+    def test_paper_probation_shortlist_blocks_proof_only_exact_replay_ledger(
+        self,
+    ) -> None:
+        shortlist = frontier._build_paper_probation_shortlist(
+            [
+                {
+                    "candidate_id": "positive-proof-only",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "225",
+                        "net_pnl": "450",
+                        "max_gross_exposure_pct_equity": "0.5",
+                        "min_cash": "100",
+                    },
+                    "full_window": {"net_per_day": "225", "net_pnl": "450"},
+                    "runtime_ledger_artifact_ref": "/tmp/proof-only-ledger.json",
+                    "runtime_ledger_artifact_row_count": 12,
+                    "runtime_ledger_artifact_fill_count": 4,
+                    "exact_replay_ledger_artifact_proof_only": True,
+                    "screening": {"proof_only_full_window_replay_captured": True},
+                    "staged_search": {
+                        "stage": "full_replay_budget_exhausted_full_window_proof"
+                    },
+                    "hard_vetoes": [],
+                }
+            ],
+            top_n=1,
+            objective_veto_policy=frontier.ObjectiveVetoPolicy(
+                required_max_gross_exposure_pct_equity=Decimal("1"),
+                required_min_cash=Decimal("0"),
+            ),
+        )
+
+        self.assertFalse(shortlist[0]["paper_probation_allowed"])
+        self.assertIn(
+            "proof_only_full_window_replay_not_probation_authority",
+            shortlist[0]["probation_blockers"],
+        )
+
     def test_generate_symbol_prune_children_removes_worst_symbols_from_universe(
         self,
     ) -> None:
