@@ -685,6 +685,7 @@ class TestMaterializeReplayTapeCli(TestCase):
         )
         query_payload = str(query.call_args.kwargs["query"])
         self.assertIn("symbol IN ('META')", query_payload)
+        self.assertIn("toUInt64OrZero(toString(raw_signal_rows))", query_payload)
         self.assertEqual(query.call_args.kwargs["timeout_seconds"], 7)
         self.assertEqual(diagnostics["missing_raw_signal_days"], ["2026-03-27"])
         self.assertEqual(diagnostics["missing_executable_signal_days"], ["2026-03-27"])
@@ -945,6 +946,62 @@ class TestMaterializeReplayTapeCli(TestCase):
         self.assertEqual(
             receipt_payload["materialized_manifest"]["row_count"],
             2,
+        )
+
+    def test_latest_complete_window_failure_writes_diagnostics(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            diagnostic_output = root / "coverage.json"
+            receipt_output = root / "window.json"
+            args = Namespace(
+                coverage_diagnostic_output=diagnostic_output,
+                latest_complete_window_receipt_output=receipt_output,
+                latest_complete_window_min_days=2,
+                min_executable_rows_per_symbol_day=10,
+                min_quote_valid_ratio="0.90",
+                max_executable_gap_seconds=120,
+            )
+            coverage = {
+                "schema_version": "torghut.replay-coverage-diagnostic.v1",
+                "requested_trading_days": ["2026-03-26", "2026-03-27"],
+                "rows_by_trading_day": {
+                    "2026-03-26": self._coverage_row(
+                        raw=10,
+                        executable=0,
+                        microbar=10,
+                    ),
+                    "2026-03-27": self._coverage_row(
+                        raw=10,
+                        executable=10,
+                        microbar=10,
+                    ),
+                },
+            }
+            with patch(
+                "scripts.materialize_replay_tape._fetch_coverage_diagnostics",
+                return_value=coverage,
+            ):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "latest_complete_replay_window_missing:min_days=2",
+                ):
+                    materialize_cli._select_effective_window(
+                        args=args,
+                        symbols=("META",),
+                        requested_start_date=date(2026, 3, 26),
+                        requested_end_date=date(2026, 3, 27),
+                    )
+
+            diagnostic_payload = json.loads(
+                diagnostic_output.read_text(encoding="utf-8")
+            )
+            receipt_payload = json.loads(receipt_output.read_text(encoding="utf-8"))
+
+        self.assertEqual(receipt_payload["status"], "missing")
+        self.assertEqual(receipt_payload["selected_trading_days"], [])
+        self.assertEqual(
+            diagnostic_payload["latest_complete_window"]["failure_reason"],
+            "latest_complete_replay_window_missing:min_days=2",
         )
 
     def test_main_fails_closed_on_incomplete_coverage_by_default(self) -> None:

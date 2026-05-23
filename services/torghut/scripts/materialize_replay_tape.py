@@ -340,30 +340,41 @@ WHERE source = 'ta'
     return f"""
 SELECT
   toString(trading_day) AS trading_day,
-  toString(sum(raw_signal_rows)) AS raw_signal_rows,
-  toString(sum(executable_signal_rows)) AS executable_signal_rows,
-  toString(sum(quote_sane_signal_rows)) AS quote_sane_signal_rows,
-  toString(sum(spread_sane_signal_rows)) AS spread_sane_signal_rows,
-  toString(sum(microbar_rows)) AS microbar_rows,
-  toString(countIf(raw_signal_rows > 0)) AS raw_signal_symbol_count,
-  toString(countIf(executable_signal_rows > 0)) AS executable_signal_symbol_count,
-  toString(countIf(microbar_rows > 0)) AS microbar_symbol_count,
-  toString(minIf(executable_signal_rows, raw_signal_rows > 0)) AS min_executable_rows_per_symbol_day,
-  toString(minIf(spread_sane_signal_rows, raw_signal_rows > 0)) AS min_spread_sane_rows_per_symbol_day,
-  toString(if(sum(executable_signal_rows) = 0, 0, sum(spread_sane_signal_rows) / sum(executable_signal_rows))) AS quote_valid_ratio,
-  toString(minIf(if(executable_signal_rows = 0, 0, spread_sane_signal_rows / executable_signal_rows), raw_signal_rows > 0)) AS min_quote_valid_ratio_by_symbol_day,
-  toString(max(max_executable_gap_seconds)) AS max_executable_gap_seconds
+  toString(sum(raw_signal_rows_by_symbol)) AS raw_signal_rows,
+  toString(sum(executable_signal_rows_by_symbol)) AS executable_signal_rows,
+  toString(sum(quote_sane_signal_rows_by_symbol)) AS quote_sane_signal_rows,
+  toString(sum(spread_sane_signal_rows_by_symbol)) AS spread_sane_signal_rows,
+  toString(sum(microbar_rows_by_symbol)) AS microbar_rows,
+  toString(countIf(raw_signal_rows_by_symbol > 0)) AS raw_signal_symbol_count,
+  toString(countIf(executable_signal_rows_by_symbol > 0)) AS executable_signal_symbol_count,
+  toString(countIf(microbar_rows_by_symbol > 0)) AS microbar_symbol_count,
+  toString(minIf(executable_signal_rows_by_symbol, raw_signal_rows_by_symbol > 0)) AS min_executable_rows_per_symbol_day,
+  toString(minIf(spread_sane_signal_rows_by_symbol, raw_signal_rows_by_symbol > 0)) AS min_spread_sane_rows_per_symbol_day,
+  toString(if(
+    sum(executable_signal_rows_by_symbol) = 0,
+    0,
+    sum(spread_sane_signal_rows_by_symbol) / sum(executable_signal_rows_by_symbol)
+  )) AS quote_valid_ratio,
+  toString(minIf(
+    if(
+      executable_signal_rows_by_symbol = 0,
+      0,
+      spread_sane_signal_rows_by_symbol / executable_signal_rows_by_symbol
+    ),
+    raw_signal_rows_by_symbol > 0
+  )) AS min_quote_valid_ratio_by_symbol_day,
+  toString(max(max_executable_gap_seconds_by_symbol)) AS max_executable_gap_seconds
 FROM
 (
   SELECT
     trading_day,
     symbol,
-    sum(raw_signal_rows) AS raw_signal_rows,
-    sum(executable_signal_rows) AS executable_signal_rows,
-    sum(quote_sane_signal_rows) AS quote_sane_signal_rows,
-    sum(spread_sane_signal_rows) AS spread_sane_signal_rows,
-    sum(microbar_rows) AS microbar_rows,
-    max(max_executable_gap_seconds) AS max_executable_gap_seconds
+    sum(toUInt64OrZero(toString(raw_signal_rows))) AS raw_signal_rows_by_symbol,
+    sum(toUInt64OrZero(toString(executable_signal_rows))) AS executable_signal_rows_by_symbol,
+    sum(toUInt64OrZero(toString(quote_sane_signal_rows))) AS quote_sane_signal_rows_by_symbol,
+    sum(toUInt64OrZero(toString(spread_sane_signal_rows))) AS spread_sane_signal_rows_by_symbol,
+    sum(toUInt64OrZero(toString(microbar_rows))) AS microbar_rows_by_symbol,
+    max(toUInt64OrZero(toString(max_executable_gap_seconds))) AS max_executable_gap_seconds_by_symbol
   FROM
   (
     SELECT
@@ -750,18 +761,48 @@ def _select_effective_window(
         end_date=requested_end_date,
     )
     policy = _executable_day_policy(args=args)
-    selected_start, selected_end, selected_days = _latest_complete_window(
-        diagnostics,
-        min_days=min_days,
-        expected_symbol_count=len(symbols),
-        min_executable_rows_per_symbol_day=int(
-            policy["min_executable_rows_per_symbol_day"]
-        ),
-        min_quote_valid_ratio=Decimal(str(policy["min_quote_valid_ratio"])),
-        max_executable_gap_seconds=int(policy["max_executable_gap_seconds"]),
-    )
+    try:
+        selected_start, selected_end, selected_days = _latest_complete_window(
+            diagnostics,
+            min_days=min_days,
+            expected_symbol_count=len(symbols),
+            min_executable_rows_per_symbol_day=int(
+                policy["min_executable_rows_per_symbol_day"]
+            ),
+            min_quote_valid_ratio=Decimal(str(policy["min_quote_valid_ratio"])),
+            max_executable_gap_seconds=int(policy["max_executable_gap_seconds"]),
+        )
+    except ValueError as exc:
+        receipt = {
+            "schema_version": "torghut.replay-latest-complete-window.v1",
+            "status": "missing",
+            "failure_reason": str(exc),
+            "requested_start_date": requested_start_date.isoformat(),
+            "requested_end_date": requested_end_date.isoformat(),
+            "selected_trading_days": [],
+            "min_days": min_days,
+            "symbols": list(symbols),
+            "source_coverage": diagnostics,
+            "executable_day_policy": policy,
+        }
+        receipt_output = getattr(args, "latest_complete_window_receipt_output", None)
+        if receipt_output:
+            _write_diagnostics_payload(Path(receipt_output).resolve(), receipt)
+        diagnostic_output = getattr(args, "coverage_diagnostic_output", None)
+        if diagnostic_output:
+            enriched = dict(diagnostics)
+            enriched["latest_complete_window"] = {
+                "schema_version": "torghut.replay-latest-complete-window-selection.v1",
+                "status": "missing",
+                "failure_reason": str(exc),
+                "selected_trading_days": [],
+                "min_days": min_days,
+            }
+            _write_diagnostics_payload(Path(diagnostic_output).resolve(), enriched)
+        raise
     receipt = {
         "schema_version": "torghut.replay-latest-complete-window.v1",
+        "status": "selected",
         "requested_start_date": requested_start_date.isoformat(),
         "requested_end_date": requested_end_date.isoformat(),
         "effective_start_date": selected_start.isoformat(),
