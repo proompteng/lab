@@ -68,6 +68,9 @@ from app.trading.discovery.replay_ledger_ranker import (
     build_replay_ledger_ranking_report,
     default_replay_ledger_ranking_policy,
 )
+from app.trading.discovery.replay_ledger_remediation import (
+    build_replay_ledger_remediation_report,
+)
 from app.trading.discovery.replay_tape import (
     ReplayTapeManifest,
     build_source_query_digest,
@@ -1640,6 +1643,7 @@ def _live_progress_payload(
     descriptors: list[MlxCandidateDescriptor],
     proposal_scores: list[ProposalScore],
     best_exact_replay_ledger_candidate: Mapping[str, Any] | None = None,
+    exact_replay_ledger_remediation: Mapping[str, Any] | None = None,
     selected_for_replay: ProposalSelectionEntry | None = None,
     selected_descriptor: MlxCandidateDescriptor | None = None,
 ) -> dict[str, Any]:
@@ -1656,6 +1660,11 @@ def _live_progress_payload(
         "best_exact_replay_ledger_candidate": (
             dict(best_exact_replay_ledger_candidate)
             if best_exact_replay_ledger_candidate is not None
+            else None
+        ),
+        "exact_replay_ledger_remediation": (
+            dict(exact_replay_ledger_remediation)
+            if exact_replay_ledger_remediation is not None
             else None
         ),
     }
@@ -1768,6 +1777,20 @@ def _write_exact_replay_ledger_ranking(
     }
 
 
+def _write_exact_replay_ledger_remediation(
+    *,
+    run_root: Path,
+    ranking_report: Mapping[str, Any],
+) -> dict[str, Any]:
+    path = run_root / "exact-replay-ledger-remediation.json"
+    report = build_replay_ledger_remediation_report(ranking_report)
+    path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+    return {
+        "path": str(path),
+        "report": report,
+    }
+
+
 def _persist_run_outputs(
     *,
     run_root: Path,
@@ -1818,6 +1841,10 @@ def _persist_run_outputs(
         run_root=run_root,
         program=program,
     )
+    exact_replay_ledger_remediation = _write_exact_replay_ledger_remediation(
+        run_root=run_root,
+        ranking_report=cast(Mapping[str, Any], exact_replay_ledger_ranking["report"]),
+    )
     summary: dict[str, Any] = {
         "status": status,
         "runner_run_id": runner_run_id,
@@ -1833,6 +1860,8 @@ def _persist_run_outputs(
         "snapshot_manifest_path": str(snapshot_manifest_path),
         "exact_replay_ledger_ranking_path": exact_replay_ledger_ranking["path"],
         "exact_replay_ledger_ranking": exact_replay_ledger_ranking["report"],
+        "exact_replay_ledger_remediation_path": exact_replay_ledger_remediation["path"],
+        "exact_replay_ledger_remediation": exact_replay_ledger_remediation["report"],
         "best_exact_replay_ledger_candidate": exact_replay_ledger_ranking[
             "best_candidate"
         ],
@@ -1849,6 +1878,10 @@ def _persist_run_outputs(
             best_exact_replay_ledger_candidate=cast(
                 Mapping[str, Any] | None,
                 exact_replay_ledger_ranking["best_candidate"],
+            ),
+            exact_replay_ledger_remediation=cast(
+                Mapping[str, Any] | None,
+                exact_replay_ledger_remediation["report"],
             ),
             selected_for_replay=selected_for_replay,
             selected_descriptor=selected_descriptor,
