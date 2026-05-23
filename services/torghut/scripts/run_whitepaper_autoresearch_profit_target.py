@@ -11,7 +11,7 @@ import signal
 import socket
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, replace
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Mapping, Sequence, cast
@@ -75,7 +75,11 @@ from app.trading.discovery.profit_target_oracle import (
     ProfitTargetOraclePolicy,
     evaluate_profit_target_oracle,
 )
-from app.trading.runtime_ledger import POST_COST_PNL_BASIS
+from app.trading.runtime_ledger import (
+    POST_COST_PNL_BASIS,
+    RuntimeLedgerBucket,
+    build_runtime_ledger_buckets,
+)
 from app.trading.discovery.replay_tape import (
     build_source_query_digest,
     materialize_signal_tape,
@@ -6996,6 +7000,82 @@ _EXACT_REPLAY_LEDGER_SCHEMA_VERSIONS = frozenset(
 _EXACT_REPLAY_RUNTIME_LEDGER_PNL_SOURCE = "exact_replay_runtime_ledger"
 
 
+def _runtime_closure_ledger_datetime(value: Any, *, date_end: bool = False) -> datetime | None:
+    text = _string(value)
+    if not text:
+        return None
+    try:
+        if "T" not in text and len(text) == 10:
+            parsed_date = date.fromisoformat(text)
+            parsed = datetime.combine(parsed_date, time.min, tzinfo=UTC)
+            return parsed + timedelta(days=1) if date_end else parsed
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _runtime_closure_exact_replay_bucket_range(
+    ledger: Mapping[str, Any],
+) -> tuple[datetime, datetime] | None:
+    start = _runtime_closure_ledger_datetime(
+        ledger.get("window_start")
+        or ledger.get("bucket_started_at")
+        or ledger.get("started_at")
+        or ledger.get("start"),
+    )
+    end = _runtime_closure_ledger_datetime(
+        ledger.get("window_end")
+        or ledger.get("bucket_ended_at")
+        or ledger.get("ended_at")
+        or ledger.get("end"),
+        date_end=True,
+    )
+    if start is None or end is None or end <= start:
+        return None
+    return (start, end)
+
+
+def _runtime_closure_replay_bucket_has_authority(bucket: RuntimeLedgerBucket) -> bool:
+    return (
+        not bucket.blockers
+        and bucket.fill_count > 0
+        and bucket.decision_count > 0
+        and bucket.submitted_order_count > 0
+        and bucket.closed_trade_count > 0
+        and bucket.open_position_count == 0
+        and bucket.filled_notional > 0
+        and bool(bucket.cost_basis_counts)
+        and bool(bucket.execution_policy_hash_counts)
+        and bool(bucket.cost_model_hash_counts)
+        and bool(bucket.lineage_hash_counts)
+        and bucket.pnl_basis == POST_COST_PNL_BASIS
+    )
+
+
+def _runtime_closure_exact_replay_bucket(
+    *,
+    ledger: Mapping[str, Any],
+    rows: Sequence[Mapping[str, object]],
+) -> RuntimeLedgerBucket | None:
+    bucket_range = _runtime_closure_exact_replay_bucket_range(ledger)
+    if bucket_range is None:
+        return None
+    buckets = build_runtime_ledger_buckets(
+        rows,
+        bucket_ranges=[bucket_range],
+        require_order_lifecycle=True,
+    )
+    if len(buckets) != 1:
+        return None
+    bucket = buckets[0]
+    if not _runtime_closure_replay_bucket_has_authority(bucket):
+        return None
+    return bucket
+
+
 def _runtime_report_source_markers(report: Mapping[str, Any]) -> list[str]:
     return sorted(set(_string_list_from_value(report.get("source_markers"))))
 
@@ -7054,12 +7134,25 @@ def _runtime_closure_exact_replay_ledger_update(
         return {}
     if not all(isinstance(row, Mapping) for row in raw_rows):
         return {}
+    runtime_rows = [
+        cast(Mapping[str, object], row)
+        for row in cast(Sequence[object], raw_rows)
+        if isinstance(row, Mapping)
+    ]
+    runtime_bucket = _runtime_closure_exact_replay_bucket(
+        ledger=ledger,
+        rows=runtime_rows,
+    )
+    if runtime_bucket is None:
+        return {}
     row_count = len(raw_rows)
     fill_count = _runtime_report_int(
         ledger.get("runtime_ledger_artifact_fill_count")
         or ledger.get("exact_replay_ledger_artifact_fill_count")
         or ledger.get("fill_row_count")
     )
+    if fill_count != runtime_bucket.fill_count:
+        return {}
     return {
         "exact_replay_ledger_artifact_ref": artifact_ref,
         "runtime_ledger_artifact_ref": artifact_ref,
@@ -7067,6 +7160,17 @@ def _runtime_closure_exact_replay_ledger_update(
         "runtime_ledger_artifact_row_count": row_count,
         "exact_replay_ledger_artifact_fill_count": fill_count,
         "runtime_ledger_artifact_fill_count": fill_count,
+        "runtime_ledger_closed_trade_count": runtime_bucket.closed_trade_count,
+        "runtime_ledger_open_position_count": runtime_bucket.open_position_count,
+        "runtime_ledger_filled_notional": str(runtime_bucket.filled_notional),
+        "runtime_ledger_net_strategy_pnl_after_costs": str(
+            runtime_bucket.net_strategy_pnl_after_costs
+        ),
+        "runtime_ledger_post_cost_expectancy_bps": str(
+            runtime_bucket.post_cost_expectancy_bps
+        )
+        if runtime_bucket.post_cost_expectancy_bps is not None
+        else None,
         "portfolio_post_cost_net_pnl_basis": POST_COST_PNL_BASIS,
         "portfolio_post_cost_net_pnl_source": _EXACT_REPLAY_RUNTIME_LEDGER_PNL_SOURCE,
         "runtime_ledger_pnl_basis": POST_COST_PNL_BASIS,
