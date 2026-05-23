@@ -318,7 +318,6 @@ def test_capital_replay_board_prioritizes_runtime_ledger_economic_repair_candida
                     "pnl_basis": "realized_strategy_pnl_after_explicit_costs",
                     "reason_codes": [
                         "runtime_ledger_stage_not_live",
-                        "runtime_ledger_candidate_mismatch",
                     ],
                     "runtime_ledger_bucket": {
                         "run_id": "pairs-realized-runtime",
@@ -348,6 +347,11 @@ def test_capital_replay_board_prioritizes_runtime_ledger_economic_repair_candida
     assert ledger_replay["replay_class"] == "runtime_ledger_economic_repair"
     assert ledger_replay["max_notional"] == "0"
     assert ledger_replay["expected_profit_unlock"]["after_cost_edge_bps"] == 44.64923238
+    assert ledger_replay["paper_probation_eligible"] is True
+    assert ledger_replay["paper_probation_scope"] == "evidence_collection_only"
+    assert ledger_replay["paper_probation_reason_codes"] == [
+        "runtime_ledger_stage_not_live"
+    ]
     assert "runtime_ledger_stage_not_live" in ledger_replay["remaining_blockers"]
     runtime_ref = cast(Mapping[str, Any], ledger_replay["before_refs"])[
         "runtime_ledger_candidate"
@@ -357,13 +361,17 @@ def test_capital_replay_board_prioritizes_runtime_ledger_economic_repair_candida
         guardrail["code"] == "promotion_certificate_required"
         for guardrail in cast(list[Mapping[str, Any]], ledger_replay["guardrails"])
     )
+    assert (
+        cast(Mapping[str, Any], board["summary"])["paper_replay_candidate_count"] == 1
+    )
 
     receipts = cast(
         list[Mapping[str, Any]],
         cast(Mapping[str, Any], projection["executable_alpha_receipts"])["receipts"],
     )
     assert receipts[0]["hypothesis_id"] == "H-PAIRS-01"
-    assert receipts[0]["graduation_state"] == "candidate"
+    assert receipts[0]["graduation_state"] == "paper_replay_candidate"
+    assert receipts[0]["paper_probation_eligible"] is True
     assert receipts[0]["capital_effect"]["max_notional"] == "0"
 
 

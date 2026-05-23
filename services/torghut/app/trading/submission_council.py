@@ -1118,6 +1118,55 @@ def _runtime_ledger_repair_score(
     )
 
 
+_RUNTIME_LEDGER_PAPER_PROBATION_REASON = "runtime_ledger_stage_not_live"
+_RUNTIME_LEDGER_PAPER_PROBATION_ALLOWED_REASONS = {
+    _RUNTIME_LEDGER_PAPER_PROBATION_REASON
+}
+
+
+def _runtime_ledger_paper_probation_eligible(
+    candidate: Mapping[str, object],
+) -> bool:
+    reasons = {
+        str(reason).strip()
+        for reason in cast(Sequence[object], candidate.get("reason_codes") or [])
+        if str(reason).strip()
+    }
+    return (
+        _safe_text(candidate.get("observed_stage")) == "paper"
+        and reasons == _RUNTIME_LEDGER_PAPER_PROBATION_ALLOWED_REASONS
+        and _safe_text(candidate.get("pnl_basis"))
+        == _PROMOTION_GRADE_RUNTIME_LEDGER_PNL_BASIS
+        and (_safe_decimal(candidate.get("filled_notional")) or Decimal("0")) > 0
+        and _safe_int(candidate.get("fill_count")) > 0
+        and _safe_int(candidate.get("closed_trade_count")) > 0
+        and _safe_int(candidate.get("open_position_count")) == 0
+        and (
+            _safe_decimal(candidate.get("net_strategy_pnl_after_costs")) or Decimal("0")
+        )
+        > 0
+        and (_safe_decimal(candidate.get("post_cost_expectancy_bps")) or Decimal("0"))
+        > 0
+    )
+
+
+def _runtime_ledger_paper_probation_candidates(
+    candidates: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    return [
+        {
+            **dict(candidate),
+            "paper_probation_eligible": True,
+            "paper_probation_scope": "evidence_collection_only",
+            "paper_probation_reason_codes": [_RUNTIME_LEDGER_PAPER_PROBATION_REASON],
+            "paper_probation_target_capital_stage": "shadow",
+            "max_notional": "0",
+        }
+        for candidate in candidates
+        if _runtime_ledger_paper_probation_eligible(candidate)
+    ]
+
+
 def _load_runtime_ledger_repair_candidates(
     session: Session,
     *,
@@ -2609,6 +2658,9 @@ def build_live_submission_gate_payload(
         if session is not None
         else []
     )
+    runtime_ledger_paper_probation_candidates = (
+        _runtime_ledger_paper_probation_candidates(runtime_ledger_repair_candidates)
+    )
     evidence_rows = (
         [dict(item) for item in promotion_certificate_evidence]
         if promotion_certificate_evidence is not None
@@ -2745,6 +2797,12 @@ def build_live_submission_gate_payload(
             "lineage_ref": _default_lineage_ref(),
             "evaluated_tuples": [],
             "runtime_ledger_repair_candidates": runtime_ledger_repair_candidates,
+            "runtime_ledger_paper_probation_candidates": (
+                runtime_ledger_paper_probation_candidates
+            ),
+            "runtime_ledger_paper_probation_eligible_total": len(
+                runtime_ledger_paper_probation_candidates
+            ),
             "profit_window_contract": profit_window_contract,
             "profit_lease_projection": profit_lease_projection,
         }
@@ -2926,6 +2984,12 @@ def build_live_submission_gate_payload(
         "lineage_ref": lineage_ref,
         "evaluated_tuples": evaluated_tuples,
         "runtime_ledger_repair_candidates": runtime_ledger_repair_candidates,
+        "runtime_ledger_paper_probation_candidates": (
+            runtime_ledger_paper_probation_candidates
+        ),
+        "runtime_ledger_paper_probation_eligible_total": len(
+            runtime_ledger_paper_probation_candidates
+        ),
         "profit_window_contract": profit_window_contract,
         "profit_lease_projection": profit_lease_projection,
     }
