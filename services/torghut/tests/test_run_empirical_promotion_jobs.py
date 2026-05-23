@@ -373,7 +373,7 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                 json.dumps(
                     {
                         "hypothesis-id": "H-PAIRS-01",
-                        "candidate_id": "spec-d74b07b2aaab8d0cfa8a4c38",
+                        "candidate_id": "c88421d619759b2cfaa6f4d0",
                         "strategy_family": "microbar_cross_sectional_pairs",
                         "strategy_name": "microbar-cross-sectional-pairs-v1",
                         "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",

@@ -33,7 +33,7 @@ from app.trading.runtime_ledger import (
 _MANIFEST_CANDIDATE_IDS = {
     "H-CONT-01": "chip-paper-microbar-composite@execution-proof",
     "H-MICRO-01": "chip-paper-microbar-composite@execution-proof",
-    "H-PAIRS-01": "spec-d74b07b2aaab8d0cfa8a4c38",
+    "H-PAIRS-01": "c88421d619759b2cfaa6f4d0",
     "H-REV-01": "chip-paper-microbar-composite@execution-proof",
     "H-TSMOM-01": "spec-83161ae16d17828eabcc58cc",
     "H-TSMOM-LIQ-01": "H-TSMOM-LIQ-01",
