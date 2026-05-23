@@ -30,6 +30,7 @@ from scripts.import_hypothesis_runtime_windows import (
     _runtime_ledger_bucket_profit_proof_present,
     _runtime_ledger_event_type,
     _runtime_ledger_profit_proof_present,
+    _runtime_observation_authority_payload,
     _runtime_ledger_target_metadata_blockers,
     _runtime_ledger_tca_rows_from_durable_buckets,
     _runtime_ledger_tca_rows_from_artifacts,
@@ -139,6 +140,51 @@ def _complete_runtime_ledger_bucket(**overrides: object) -> dict[str, object]:
 
 
 class TestImportHypothesisRuntimeWindows(TestCase):
+    def test_runtime_observation_authority_requires_runtime_ledger_profit_proof(
+        self,
+    ) -> None:
+        payload = _runtime_observation_authority_payload(
+            source_kind="live_runtime_observed",
+            tca_rows=[
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("4"),
+                    "post_cost_expectancy_bps": Decimal("12"),
+                    "post_cost_expectancy_basis": POST_COST_BASIS_TCA_PROXY,
+                    "post_cost_promotion_eligible": False,
+                }
+            ],
+        )
+
+        self.assertEqual(payload["authoritative"], False)
+        self.assertEqual(
+            payload["authority_reason"],
+            "runtime_without_runtime_ledger_profit_proof",
+        )
+        self.assertEqual(payload["promotion_authority"], "blocked")
+        self.assertEqual(payload["runtime_ledger_profit_proof_present"], False)
+
+    def test_runtime_observation_authority_accepts_runtime_ledger_profit_proof(
+        self,
+    ) -> None:
+        payload = _runtime_observation_authority_payload(
+            source_kind="live_runtime_observed",
+            tca_rows=[
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "post_cost_expectancy_bps": Decimal("40"),
+                    "post_cost_expectancy_basis": POST_COST_BASIS_RUNTIME_LEDGER,
+                    "post_cost_promotion_eligible": True,
+                    "runtime_ledger_bucket": _complete_runtime_ledger_bucket(),
+                }
+            ],
+        )
+
+        self.assertEqual(payload["authoritative"], True)
+        self.assertEqual(payload["authority_reason"], "runtime_ledger_profit_proof")
+        self.assertEqual(payload["promotion_authority"], "runtime_ledger")
+        self.assertEqual(payload["runtime_ledger_profit_proof_present"], True)
+
     def test_parse_args_accepts_dataset_snapshot_ref(self) -> None:
         with patch(
             "sys.argv",
