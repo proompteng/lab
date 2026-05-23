@@ -290,6 +290,77 @@ class TestProfitTargetOracle(TestCase):
 
         self.assertTrue(result["passed"])
 
+    def test_profit_target_oracle_rejects_alpha_decay_overlay_without_stress(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "mechanism_overlay_ids": ["alpha_decay_predictability_stress"],
+            "predictability_decay_stress_passed": False,
+            "horizon_decay_curve_present": False,
+            "spread_adjusted_label_replay_present": False,
+            "predictability_decay_stress_horizon_count": 2,
+            "tight_spread_regime_slice_count": 19,
+            "predictability_decay_stress_split_pass_rate": "0.59",
+            "predictability_decay_stress_best_split_share": "0.36",
+            "post_cost_net_pnl_after_predictability_decay_stress": "499.99",
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn("predictability_decay_stress_passed_failed", result["blockers"])
+        self.assertIn(
+            "predictability_decay_stress_artifact_present_failed",
+            result["blockers"],
+        )
+        self.assertIn("horizon_decay_curve_present_failed", result["blockers"])
+        self.assertIn("spread_adjusted_label_replay_present_failed", result["blockers"])
+        self.assertIn(
+            "predictability_decay_stress_horizon_count_failed",
+            result["blockers"],
+        )
+        self.assertIn("tight_spread_regime_slice_count_failed", result["blockers"])
+        self.assertIn(
+            "predictability_decay_stress_split_pass_rate_failed",
+            result["blockers"],
+        )
+        self.assertIn(
+            "predictability_decay_stress_best_split_share_failed",
+            result["blockers"],
+        )
+        self.assertIn(
+            "post_cost_net_pnl_after_predictability_decay_stress_failed",
+            result["blockers"],
+        )
+
+    def test_profit_target_oracle_accepts_alpha_decay_stress_contract(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "requires_predictability_decay_stress": True,
+            "predictability_decay_stress_passed": True,
+            "predictability_decay_stress_artifact_ref": "/tmp/alpha-decay.json",
+            "horizon_decay_curve_present": True,
+            "spread_adjusted_label_replay_present": True,
+            "predictability_decay_stress_horizon_count": 3,
+            "tight_spread_regime_slice_count": 20,
+            "predictability_decay_stress_split_pass_rate": "0.60",
+            "predictability_decay_stress_best_split_share": "0.35",
+            "post_cost_net_pnl_after_predictability_decay_stress": "505",
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertTrue(result["passed"])
+
     def test_profit_target_oracle_rejects_market_limit_policy_without_order_type_tca_evidence(
         self,
     ) -> None:
