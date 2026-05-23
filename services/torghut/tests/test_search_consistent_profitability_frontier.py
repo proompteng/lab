@@ -5011,11 +5011,11 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 replay_calls,
                 [
                     ("2026-03-18", "2026-03-20", False),
+                    ("2026-03-18", "2026-03-20", False),
+                    ("2026-03-18", "2026-03-20", False),
                     ("2026-03-21", "2026-03-23", False),
                     ("2026-03-18", "2026-03-23", True),
-                    ("2026-03-18", "2026-03-20", False),
                     ("2026-03-18", "2026-03-23", True),
-                    ("2026-03-18", "2026-03-20", False),
                 ],
             )
             staged = payload["progress"]["staged_search"]
@@ -5183,6 +5183,170 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 ["full_replay", "train_screen_only", "train_screen_only"],
             )
             self.assertEqual(len(replay_calls), 5)
+
+    def test_staged_search_ranks_train_survivors_before_full_replay(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            strategy_configmap = self._write_strategy_configmap(root)
+            sweep_config = root / "sweep.yaml"
+            sweep_config.write_text(
+                yaml.safe_dump(
+                    {
+                        "schema_version": "torghut.replay-frontier-sweep.v1",
+                        "family": "intraday_tsmom_consistent",
+                        "strategy_name": "intraday-tsmom-profit-v3",
+                        "disable_other_strategies": True,
+                        "constraints": {
+                            "holdout_target_net_per_day": "1",
+                            "min_active_holdout_days": 1,
+                            "max_worst_holdout_day_loss": "200",
+                            "min_profit_factor": "1.0",
+                        },
+                        "consistency_constraints": {
+                            "target_net_per_day": "1",
+                            "min_active_days": 1,
+                            "max_worst_day_loss": "300",
+                            "max_negative_days": 1,
+                            "max_drawdown": "400",
+                            "require_every_day_active": False,
+                        },
+                        "strategy_overrides": {
+                            "universe_symbols": [["NVDA"]],
+                        },
+                        "parameters": {
+                            "long_stop_loss_bps": ["12", "14", "16"],
+                        },
+                    },
+                    sort_keys=False,
+                ),
+                encoding="utf-8",
+            )
+            args = self._make_args(
+                strategy_configmap=strategy_configmap,
+                sweep_config=sweep_config,
+                json_output=root / "frontier.json",
+            )
+            args.max_candidates_to_evaluate = 1
+            args.staged_train_screen_multiplier = 3
+            args.min_train_screen_net_per_day = "1"
+            recent_days = tuple(
+                date(2026, 3, 18) + timedelta(days=index) for index in range(6)
+            )
+            snapshot_receipt = SimpleNamespace(
+                snapshot_id="snap-ranked-staged",
+                is_fresh=True,
+                stale_override_used=False,
+                to_payload=lambda: {
+                    "snapshot_id": "snap-ranked-staged",
+                    "source": "ta",
+                    "window_size": "PT1S",
+                    "start_day": "2026-03-18",
+                    "end_day": "2026-03-23",
+                    "expected_last_trading_day": "2026-03-23",
+                    "is_fresh": True,
+                    "missing_days": [],
+                    "row_count": 123,
+                    "stale_override_used": False,
+                    "witnesses": [],
+                },
+            )
+            full_replay_bps: list[str] = []
+
+            def candidate_bps(config: object) -> str:
+                configmap_path = Path(str(getattr(config, "strategy_configmap_path")))
+                configmap = yaml.safe_load(configmap_path.read_text(encoding="utf-8"))
+                strategy_payload = yaml.safe_load(configmap["data"]["strategies.yaml"])
+                strategy = next(
+                    item
+                    for item in strategy_payload["strategies"]
+                    if item["name"] == "intraday-tsmom-profit-v3"
+                )
+                return str(strategy["params"]["long_stop_loss_bps"])
+
+            def fake_run_replay(config: object) -> dict[str, object]:
+                start_date = str(getattr(config, "start_date"))
+                end_date = str(getattr(config, "end_date"))
+                bps = candidate_bps(config)
+                train_net_per_day = {"12": "10", "14": "150", "16": "75"}[bps]
+                daily_value = train_net_per_day if end_date == "2026-03-20" else "50"
+                if end_date != "2026-03-20":
+                    full_replay_bps.append(bps)
+                daily_net = {
+                    day.isoformat(): daily_value
+                    for day in (
+                        date.fromisoformat(start_date) + timedelta(days=index)
+                        for index in range(
+                            (
+                                date.fromisoformat(end_date)
+                                - date.fromisoformat(start_date)
+                            ).days
+                            + 1
+                        )
+                    )
+                }
+                payload = self._payload(
+                    start_date=start_date,
+                    end_date=end_date,
+                    daily_net=daily_net,
+                    decision_count=len(daily_net),
+                    filled_count=len(daily_net),
+                    wins=len(daily_net),
+                    losses=0,
+                )
+                if bool(getattr(config, "capture_exact_replay_ledger", False)):
+                    payload["exact_replay_ledger"] = {
+                        "schema_version": "torghut.exact_replay_ledger.rows.v1",
+                        "account_label": "TORGHUT_REPLAY",
+                        "execution_policy_hash": "policy-sha",
+                        "cost_model_hash": "cost-sha",
+                        "lineage_hash": "ledger-lineage-sha",
+                        "fill_row_count": 2,
+                        "runtime_ledger_rows": _authoritative_exact_replay_rows(),
+                    }
+                return payload
+
+            with (
+                patch(
+                    "scripts.search_consistent_profitability_frontier._resolve_recent_trading_days",
+                    return_value=recent_days,
+                ),
+                patch(
+                    "scripts.search_consistent_profitability_frontier.build_dataset_snapshot_receipt",
+                    return_value=snapshot_receipt,
+                ),
+                patch(
+                    "scripts.search_consistent_profitability_frontier.ensure_fresh_snapshot"
+                ),
+                patch(
+                    "scripts.search_consistent_profitability_frontier.run_replay",
+                    side_effect=fake_run_replay,
+                ),
+            ):
+                payload = frontier.run_consistent_profitability_frontier(args)
+
+            self.assertEqual(full_replay_bps, ["14", "14"])
+            staged = payload["progress"]["staged_search"]
+            self.assertEqual(staged["train_screen_candidates_started"], 3)
+            self.assertEqual(staged["full_replay_candidates_started"], 1)
+            full_replay_items = [
+                item
+                for item in payload["top"]
+                if item["staged_search"]["stage"] == "full_replay"
+            ]
+            self.assertEqual(len(full_replay_items), 1)
+            self.assertEqual(
+                full_replay_items[0]["replay_config"]["params"]["long_stop_loss_bps"],
+                "14",
+            )
+            self.assertEqual(
+                full_replay_items[0]["staged_search"]["train_screen_survivor_rank"],
+                1,
+            )
+            self.assertTrue(
+                full_replay_items[0]["staged_search"][
+                    "full_replay_selected_after_train_rank"
+                ]
+            )
 
     def test_run_frontier_respects_candidate_budget(self) -> None:
         with TemporaryDirectory() as tmpdir:
