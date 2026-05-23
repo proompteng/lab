@@ -428,6 +428,9 @@ class TestStrategyAutoresearch(TestCase):
         self.assertTrue(args.materialize_replay_tape)
         self.assertEqual(args.replay_tape_path, Path("/tmp/tape.jsonl"))
         self.assertEqual(args.replay_tape_manifest, Path("/tmp/tape.manifest.json"))
+        self.assertEqual(args.latest_complete_window_min_days, 0)
+        self.assertIsNone(args.latest_complete_window_receipt_output)
+        self.assertIsNone(args.coverage_diagnostic_output)
 
     def test_parse_args_prefers_clickhouse_http_url_env(self) -> None:
         with (
@@ -578,6 +581,95 @@ class TestStrategyAutoresearch(TestCase):
         self.assertEqual(receipt["row_count"], 1)
         self.assertTrue(tape_exists)
         self.assertTrue(manifest_exists)
+
+    def test_materialize_run_replay_tape_selects_latest_complete_window(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            configmap_path = root / "strategy-configmap.yaml"
+            configmap_path.write_text("apiVersion: v1\nkind: ConfigMap\n")
+            bundle_paths = runner._mlx_bundle_paths(root)
+            args = Namespace(
+                strategy_configmap=configmap_path,
+                clickhouse_http_url="http://example.invalid:8123",
+                clickhouse_username="torghut",
+                clickhouse_password="secret",
+                start_equity="31590.02",
+                chunk_minutes=10,
+                progress_log_seconds=30,
+                materialize_replay_tape=True,
+                replay_tape_path=None,
+                allow_stale_tape=False,
+                latest_complete_window_min_days=1,
+                latest_complete_window_receipt_output=None,
+                coverage_diagnostic_output=None,
+            )
+            signal_rows = [
+                SignalEnvelope(
+                    event_ts=datetime(2026, 3, 23, 13, 30, tzinfo=UTC),
+                    symbol="AMAT",
+                    seq=1,
+                    source="ta",
+                    timeframe="1Sec",
+                    payload={"price": "180.10"},
+                )
+            ]
+            latest_window_receipt = {
+                "schema_version": "torghut.replay-latest-complete-window.v1",
+                "requested_start_date": "2026-03-20",
+                "requested_end_date": "2026-03-23",
+                "effective_start_date": "2026-03-23",
+                "effective_end_date": "2026-03-23",
+                "selected_trading_days": ["2026-03-23"],
+            }
+
+            with (
+                patch(
+                    "scripts.run_strategy_autoresearch_loop._select_effective_replay_tape_window",
+                    return_value=(
+                        date(2026, 3, 23),
+                        date(2026, 3, 23),
+                        latest_window_receipt,
+                    ),
+                ) as select_window,
+                patch(
+                    "scripts.run_strategy_autoresearch_loop.replay_mod._iter_signal_rows",
+                    return_value=iter(signal_rows),
+                ),
+            ):
+                stats, receipt = runner._maybe_materialize_run_replay_tape(
+                    args=args,
+                    runner_run_id="strategy-autoresearch-test",
+                    snapshot_symbols=("AMAT",),
+                    bundle_paths=bundle_paths,
+                    full_window_start_date="2026-03-20",
+                    full_window_end_date="2026-03-23",
+                    existing_signal_bundle=None,
+                )
+
+            select_kwargs = select_window.call_args.kwargs
+            self.assertEqual(select_kwargs["requested_start_date"], date(2026, 3, 20))
+            self.assertEqual(select_kwargs["requested_end_date"], date(2026, 3, 23))
+            self.assertEqual(select_kwargs["symbols"], ("AMAT",))
+            self.assertEqual(
+                select_kwargs["args"].latest_complete_window_receipt_output,
+                Path(bundle_paths["replay_tape_latest_complete_window_receipt_json"]),
+            )
+            self.assertEqual(
+                select_kwargs["args"].coverage_diagnostic_output,
+                Path(bundle_paths["replay_tape_coverage_diagnostics_json"]),
+            )
+
+        assert stats is not None
+        assert receipt is not None
+        self.assertEqual(stats.row_count, 1)
+        self.assertEqual(receipt["requested_full_window_start_date"], "2026-03-20")
+        self.assertEqual(receipt["requested_full_window_end_date"], "2026-03-23")
+        self.assertEqual(receipt["effective_full_window_start_date"], "2026-03-23")
+        self.assertEqual(receipt["effective_full_window_end_date"], "2026-03-23")
+        self.assertEqual(receipt["latest_complete_window"], latest_window_receipt)
+        self.assertEqual(receipt["row_count"], 1)
 
     def test_materialize_run_replay_tape_fails_closed_on_missing_days(self) -> None:
         with TemporaryDirectory() as tmpdir:

@@ -76,6 +76,9 @@ import scripts.local_intraday_tsmom_replay as replay_mod
 from scripts.search_consistent_profitability_frontier import (
     run_consistent_profitability_frontier,
 )
+from scripts.materialize_replay_tape import (
+    _select_effective_window as _select_effective_replay_tape_window,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _CAPITAL_LIMIT_SAFETY_MULTIPLIER = Decimal("0.98")
@@ -172,6 +175,27 @@ def _parse_args() -> argparse.Namespace:
             "Fetch the resolved full-window signal rows once, write a run-scoped "
             "replay tape, and pass it into every exact frontier run."
         ),
+    )
+    parser.add_argument(
+        "--latest-complete-window-min-days",
+        type=int,
+        default=0,
+        help=(
+            "When materializing a replay tape, select the latest consecutive complete "
+            "sub-window with at least this many trading days."
+        ),
+    )
+    parser.add_argument(
+        "--latest-complete-window-receipt-output",
+        type=Path,
+        default=None,
+        help="Optional JSON receipt path for latest complete replay-window selection.",
+    )
+    parser.add_argument(
+        "--coverage-diagnostic-output",
+        type=Path,
+        default=None,
+        help="Optional JSON diagnostics path for replay source coverage.",
     )
     parser.add_argument(
         "--max-frontier-runs",
@@ -376,6 +400,12 @@ def _mlx_bundle_paths(run_root: Path) -> dict[str, str]:
         "signal_rows_jsonl": str(run_root / "mlx-snapshot-signals.jsonl"),
         "replay_tape_jsonl": str(run_root / "replay-tape.jsonl"),
         "replay_tape_manifest_json": str(run_root / "replay-tape.jsonl.manifest.json"),
+        "replay_tape_latest_complete_window_receipt_json": str(
+            run_root / "latest-complete-window-receipt.json"
+        ),
+        "replay_tape_coverage_diagnostics_json": str(
+            run_root / "replay-tape-coverage-diagnostics.json"
+        ),
         "descriptors_jsonl": str(run_root / "mlx-candidate-descriptors.jsonl"),
         "proposal_scores_jsonl": str(run_root / "mlx-proposal-scores.jsonl"),
         "history_jsonl": str(run_root / "history.jsonl"),
@@ -704,6 +734,39 @@ def _maybe_materialize_run_replay_tape(
         return existing_signal_bundle, None
     if getattr(args, "replay_tape_path", None) is not None:
         return existing_signal_bundle, None
+    requested_full_window_start_date = full_window_start_date
+    requested_full_window_end_date = full_window_end_date
+    latest_window_receipt: dict[str, Any] | None = None
+    if (
+        int(getattr(args, "latest_complete_window_min_days", 0) or 0) > 0
+        and full_window_start_date
+        and full_window_end_date
+    ):
+        window_args = argparse.Namespace(
+            **{
+                **vars(args),
+                "latest_complete_window_receipt_output": (
+                    getattr(args, "latest_complete_window_receipt_output", None)
+                    or Path(
+                        bundle_paths["replay_tape_latest_complete_window_receipt_json"]
+                    )
+                ),
+                "coverage_diagnostic_output": (
+                    getattr(args, "coverage_diagnostic_output", None)
+                    or Path(bundle_paths["replay_tape_coverage_diagnostics_json"])
+                ),
+            }
+        )
+        selected_start, selected_end, latest_window_receipt = (
+            _select_effective_replay_tape_window(
+                args=window_args,
+                symbols=snapshot_symbols,
+                requested_start_date=_iso_date(full_window_start_date),
+                requested_end_date=_iso_date(full_window_end_date),
+            )
+        )
+        full_window_start_date = selected_start.isoformat()
+        full_window_end_date = selected_end.isoformat()
     signal_bundle_config = _full_window_signal_config(
         args=args,
         snapshot_symbols=snapshot_symbols,
@@ -735,12 +798,19 @@ def _maybe_materialize_run_replay_tape(
         Path(bundle_paths["signal_rows_jsonl"]),
         rows,
     )
-    return signal_bundle_stats, _replay_tape_receipt(
+    receipt = _replay_tape_receipt(
         status="materialized",
         tape_path=tape_path,
         manifest_path=manifest_path,
         manifest=manifest,
     )
+    receipt["requested_full_window_start_date"] = requested_full_window_start_date
+    receipt["requested_full_window_end_date"] = requested_full_window_end_date
+    receipt["effective_full_window_start_date"] = full_window_start_date
+    receipt["effective_full_window_end_date"] = full_window_end_date
+    if latest_window_receipt is not None:
+        receipt["latest_complete_window"] = latest_window_receipt
+    return signal_bundle_stats, receipt
 
 
 def _history_record(
@@ -1756,6 +1826,18 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
         effective_replay_tape_path = Path(materialized_replay_tape_receipt["tape_path"])
         effective_replay_tape_manifest = Path(
             materialized_replay_tape_receipt["manifest_path"]
+        )
+        resolved_full_window_start_date = (
+            _string(
+                materialized_replay_tape_receipt.get("effective_full_window_start_date")
+            )
+            or resolved_full_window_start_date
+        )
+        resolved_full_window_end_date = (
+            _string(
+                materialized_replay_tape_receipt.get("effective_full_window_end_date")
+            )
+            or resolved_full_window_end_date
         )
     signal_bundle_stats = _maybe_write_signal_bundle(
         args=args,
