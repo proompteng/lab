@@ -2842,6 +2842,125 @@ describe('agents controller reconcileAgentRun', () => {
     expect(thirdSteps[1]?.phase).toBe('Succeeded')
   })
 
+  it('propagates workflow step output artifacts from runner pods', async () => {
+    const runnerMessage = JSON.stringify({
+      status: 'succeeded',
+      adapter: 'codex-app-server',
+      provider: 'torghut-health-report',
+      exitCode: 0,
+      artifacts: {
+        outputArtifacts: [
+          {
+            name: 'torghut-health-report',
+            path: '/workspace/.agentrun/torghut-health/report.md',
+            key: 'torghut/health/run-1/report.md',
+            url: 's3://agents-artifacts/torghut/health/run-1/report.md',
+          },
+        ],
+      },
+    })
+    const jobStatuses = new Map<string, Record<string, unknown>>()
+    const apply = vi.fn(async (resource: Record<string, unknown>) => {
+      const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+      const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+      const applied = { ...resource, metadata: { ...metadata, uid } }
+      if (resource.kind === 'Job') {
+        const name = (resource.metadata as Record<string, unknown> | undefined)?.name as string | undefined
+        if (name) {
+          jobStatuses.set(name, applied)
+        }
+      }
+      return applied
+    })
+    const kube = buildKube({
+      apply,
+      get: vi.fn(async (resource: string, name: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+          }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return {
+            metadata: { name: 'provider-1' },
+            spec: { binary: '/usr/local/bin/agent-runner' },
+          }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        if (resource === 'job') {
+          return jobStatuses.get(name) ?? null
+        }
+        return null
+      }),
+      list: vi.fn(async (resource: string, _namespace: string, labelSelector?: string) => {
+        if (resource === 'pods' && labelSelector?.startsWith('job-name=')) {
+          return {
+            items: [
+              {
+                metadata: { name: 'workflow-step-pod' },
+                status: {
+                  startTime: '2026-05-23T21:39:00Z',
+                  containerStatuses: [{ name: 'agent-runner', state: { terminated: { message: runnerMessage } } }],
+                },
+              },
+            ],
+          }
+        }
+        return { items: [] }
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'workflow', config: {} },
+        workload: { image: defaultRunnerImage },
+        workflow: {
+          steps: [{ name: 'health-report' }],
+        },
+      },
+    })
+
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+    const runningStatus = getLastStatus(kube)
+    const workflow = (runningStatus.workflow as Record<string, unknown>) ?? {}
+    const steps = (workflow.steps as Record<string, unknown>[]) ?? []
+    const jobName = (steps[0]?.jobRef as Record<string, unknown> | undefined)?.name as string | undefined
+    expect(jobName).toBeTruthy()
+
+    jobStatuses.set(jobName ?? '', {
+      ...jobStatuses.get(jobName ?? ''),
+      status: { succeeded: 1, startTime: '2026-05-23T21:39:00Z', completionTime: '2026-05-23T21:40:00Z' },
+    })
+
+    await __test.reconcileAgentRun(
+      kube as never,
+      { ...agentRun, status: runningStatus },
+      'agents',
+      [],
+      [],
+      defaultConcurrency,
+      buildInFlight(),
+      0,
+    )
+
+    const status = getLastStatus(kube)
+    expect(status.phase).toBe('Succeeded')
+    expect(status.artifacts).toEqual([
+      {
+        name: 'torghut-health-report',
+        path: '/workspace/.agentrun/torghut-health/report.md',
+        key: 'torghut/health/run-1/report.md',
+        url: 's3://agents-artifacts/torghut/health/run-1/report.md',
+      },
+    ])
+  })
+
   it('continues and stops loop workflow steps with CEL expressions', async () => {
     const previousLoopsEnabled = process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED
     process.env.AGENTS_CONTROLLER_WORKFLOW_LOOPS_ENABLED = 'true'
