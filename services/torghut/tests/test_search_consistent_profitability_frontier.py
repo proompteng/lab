@@ -120,6 +120,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                     "3",
                     "--candidate-record",
                     str(root / "candidate.json"),
+                    "--capture-rejected-seed-full-window-ledger",
                     "--no-train-screening",
                     "--min-train-screen-net-per-day",
                     "-50",
@@ -143,6 +144,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(args.max_candidates_to_evaluate, 12)
         self.assertEqual(args.staged_train_screen_multiplier, 3)
         self.assertEqual(args.candidate_record, [root / "candidate.json"])
+        self.assertTrue(args.capture_rejected_seed_full_window_ledger)
         self.assertFalse(args.train_screening)
         self.assertEqual(args.min_train_screen_net_per_day, "-50")
         self.assertEqual(args.min_train_screen_active_ratio, "0.25")
@@ -696,8 +698,10 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
 
         self.assertEqual(first.params_candidate, {"entry_start_minute_utc": "810"})
         self.assertEqual(first.strategy_overrides, {"max_notional_per_trade": "50000"})
+        self.assertTrue(first.candidate_record_seed)
         self.assertEqual(second.params_candidate, {"long_stop_loss_bps": "10"})
         self.assertEqual(second.strategy_overrides, {"max_notional_per_trade": "63180"})
+        self.assertFalse(second.candidate_record_seed)
 
     def test_candidate_symbols_prefers_cli_filter_then_universe_override(self) -> None:
         self.assertEqual(
@@ -1458,6 +1462,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             min_train_screen_net_per_day="0",
             min_train_screen_active_ratio="0.50",
             max_train_screen_worst_day_loss="",
+            capture_rejected_seed_full_window_ledger=False,
         )
 
     def test_resolve_frontier_replay_windows_keeps_second_oos_independent(
@@ -4197,6 +4202,197 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             self.assertTrue(top["screening"]["full_window_replay_skipped"])
             self.assertIn("train_no_decisions", top["hard_vetoes"])
             self.assertIn("train_net_per_day_below_screen", top["hard_vetoes"])
+
+    def test_rejected_candidate_record_can_capture_full_window_exact_ledger(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            strategy_configmap = self._write_strategy_configmap(root)
+            sweep_config = self._write_sweep_config(root)
+            candidate_record = root / "candidate.json"
+            candidate_record.write_text(
+                json.dumps(
+                    {
+                        "candidate_id": "H-TSMOM-LIQ-01",
+                        "candidate_strategy": {
+                            "strategy_name": "intraday-tsmom-profit-v3",
+                            "universe_symbols": ["NVDA"],
+                            "max_notional_per_trade": "50000",
+                            "params": {"long_stop_loss_bps": "12"},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            json_output = root / "frontier.json"
+            args = self._make_args(
+                strategy_configmap=strategy_configmap,
+                sweep_config=sweep_config,
+                json_output=json_output,
+            )
+            args.candidate_record = [candidate_record]
+            args.capture_rejected_seed_full_window_ledger = True
+            args.max_candidates_to_evaluate = 1
+            args.min_train_screen_net_per_day = "1"
+            recent_days = tuple(
+                date(2026, 3, 18) + timedelta(days=index) for index in range(6)
+            )
+            snapshot_receipt = SimpleNamespace(
+                snapshot_id="snap-rejected-seed-proof",
+                is_fresh=True,
+                stale_override_used=False,
+                to_payload=lambda: {
+                    "snapshot_id": "snap-rejected-seed-proof",
+                    "source": "ta",
+                    "window_size": "PT1S",
+                    "start_day": "2026-03-18",
+                    "end_day": "2026-03-23",
+                    "expected_last_trading_day": "2026-03-23",
+                    "is_fresh": True,
+                    "missing_days": [],
+                    "row_count": 123,
+                    "stale_override_used": False,
+                    "witnesses": [],
+                },
+            )
+            replay_calls: list[tuple[str, str, bool]] = []
+
+            def fake_run_replay(config: object) -> dict[str, object]:
+                start_date = str(getattr(config, "start_date"))
+                end_date = str(getattr(config, "end_date"))
+                capture_ledger = bool(
+                    getattr(config, "capture_exact_replay_ledger", False)
+                )
+                replay_calls.append((start_date, end_date, capture_ledger))
+                if capture_ledger:
+                    payload = self._payload(
+                        start_date=start_date,
+                        end_date=end_date,
+                        daily_net={
+                            "2026-03-18": "25",
+                            "2026-03-19": "25",
+                            "2026-03-20": "25",
+                            "2026-03-21": "25",
+                            "2026-03-22": "25",
+                            "2026-03-23": "25",
+                        },
+                        decision_count=2,
+                        filled_count=2,
+                        wins=2,
+                        losses=0,
+                    )
+                    payload["exact_replay_ledger"] = {
+                        "schema_version": "torghut.exact_replay_ledger.rows.v1",
+                        "account_label": "TORGHUT_REPLAY",
+                        "execution_policy_hash": "policy-sha",
+                        "cost_model_hash": "cost-sha",
+                        "lineage_hash": "ledger-lineage-sha",
+                        "fill_row_count": 2,
+                        "runtime_ledger_rows": [
+                            {
+                                "event_type": "decision",
+                                "executed_at": "2026-03-18T14:35:00+00:00",
+                                "decision_id": "decision-buy",
+                                "order_id": "order-buy",
+                            },
+                            {
+                                "event_type": "order_submitted",
+                                "executed_at": "2026-03-18T14:35:01+00:00",
+                                "decision_id": "decision-buy",
+                                "order_id": "order-buy",
+                            },
+                            {
+                                "event_type": "fill",
+                                "executed_at": "2026-03-18T14:35:02+00:00",
+                                "decision_id": "decision-buy",
+                                "order_id": "order-buy",
+                                "symbol": "NVDA",
+                                "side": "buy",
+                                "filled_qty": "1",
+                                "avg_fill_price": "100",
+                                "cost_amount": "0.10",
+                                "cost_basis": "local_replay_transaction_cost_model",
+                            },
+                        ],
+                    }
+                    return payload
+                return self._payload(
+                    start_date=start_date,
+                    end_date=end_date,
+                    daily_net={
+                        "2026-03-18": "0",
+                        "2026-03-19": "0",
+                        "2026-03-20": "0",
+                    },
+                    decision_count=0,
+                    filled_count=0,
+                    wins=0,
+                    losses=0,
+                )
+
+            with (
+                patch(
+                    "scripts.search_consistent_profitability_frontier._resolve_recent_trading_days",
+                    return_value=recent_days,
+                ),
+                patch(
+                    "scripts.search_consistent_profitability_frontier.build_dataset_snapshot_receipt",
+                    return_value=snapshot_receipt,
+                ),
+                patch(
+                    "scripts.search_consistent_profitability_frontier.ensure_fresh_snapshot"
+                ),
+                patch(
+                    "scripts.search_consistent_profitability_frontier.run_replay",
+                    side_effect=fake_run_replay,
+                ),
+            ):
+                payload = frontier.run_consistent_profitability_frontier(args)
+
+            self.assertEqual(
+                replay_calls,
+                [
+                    ("2026-03-18", "2026-03-20", False),
+                    ("2026-03-18", "2026-03-23", True),
+                ],
+            )
+            top = payload["top"][0]
+            self.assertEqual(top["screening"]["status"], "rejected")
+            self.assertTrue(top["screening"]["holdout_replay_skipped"])
+            self.assertFalse(top["screening"]["full_window_replay_skipped"])
+            self.assertTrue(top["screening"]["proof_only_full_window_replay_captured"])
+            self.assertEqual(
+                top["staged_search"]["stage"],
+                "train_screen_rejected_full_window_proof",
+            )
+            self.assertTrue(top["staged_search"]["candidate_record_seed"])
+            self.assertIn("train_no_decisions", top["hard_vetoes"])
+            exact_ledger_ref = Path(
+                top["objective_scorecard"]["exact_replay_ledger_artifact_ref"]
+            )
+            self.assertTrue(exact_ledger_ref.exists())
+            artifact = json.loads(exact_ledger_ref.read_text(encoding="utf-8"))
+            self.assertTrue(artifact["proof_only"])
+            self.assertEqual(
+                artifact["proof_only_reason"],
+                "train_screen_rejected_candidate_record_seed",
+            )
+            self.assertEqual(
+                artifact["dataset_snapshot_id"], "snap-rejected-seed-proof"
+            )
+            self.assertEqual(
+                artifact["candidate_evaluation_key"], top["candidate_evaluation_key"]
+            )
+            self.assertEqual(
+                artifact["replay_lineage_hash"],
+                top["replay_lineage"]["lineage_hash"],
+            )
+            self.assertEqual(
+                artifact["full_window"],
+                {"start_date": "2026-03-18", "end_date": "2026-03-23"},
+            )
+            self.assertEqual(artifact["candidate_symbols"], ["NVDA"])
 
     def test_run_frontier_staged_train_screen_expands_cheap_stage(self) -> None:
         with TemporaryDirectory() as tmpdir:

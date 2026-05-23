@@ -191,6 +191,7 @@ _CONSISTENCY_REPAIR_MAX_SIGNAL_THRESHOLD_RELAXATIONS = 2
 class _WorklistItem:
     params_candidate: dict[str, Any]
     strategy_overrides: dict[str, Any]
+    candidate_record_seed: bool = False
     symbol_prune_iteration: int = 0
     loss_repair_iteration: int = 0
     consistency_repair_iteration: int = 0
@@ -698,6 +699,15 @@ def _parse_args() -> argparse.Namespace:
             "This replays known candidate params exactly before exploring variants."
         ),
     )
+    parser.add_argument(
+        "--capture-rejected-seed-full-window-ledger",
+        action="store_true",
+        help=(
+            "For checked-in candidate-record seeds rejected by the train screen, "
+            "still run a full-window exact replay ledger capture as proof-only evidence. "
+            "The candidate remains train-screen rejected and non-promotable."
+        ),
+    )
     parser.add_argument("--json-output", type=Path)
     parser.add_argument(
         "--symbol-prune-iterations",
@@ -1133,6 +1143,7 @@ def _iter_initial_worklist_candidates(
         yield _WorklistItem(
             params_candidate=dict(params_candidate),
             strategy_overrides=dict(override_candidate),
+            candidate_record_seed=True,
         )
     for override_candidate in override_candidates:
         for params_candidate in _iter_parameter_candidates(parameter_grid):
@@ -1950,6 +1961,15 @@ def _exact_replay_ledger_artifact_update(
     candidate_index: int,
     candidate_id: str,
     full_window_payload: Mapping[str, Any],
+    dataset_snapshot_id: str = "",
+    replay_lineage: Mapping[str, Any] | None = None,
+    candidate_evaluation_key: Mapping[str, Any] | None = None,
+    replay_tape_validation: Mapping[str, Any] | None = None,
+    candidate_search_key: str = "",
+    candidate_symbols: Sequence[str] = (),
+    full_window_start: date | None = None,
+    full_window_end: date | None = None,
+    proof_only_reason: str = "",
 ) -> dict[str, Any]:
     ledger_payload = _mapping(full_window_payload.get("exact_replay_ledger"))
     raw_rows = ledger_payload.get("runtime_ledger_rows")
@@ -1966,6 +1986,60 @@ def _exact_replay_ledger_artifact_update(
         "artifact_kind": "exact_replay_ledger",
         "candidate_id": candidate_id,
     }
+    if dataset_snapshot_id:
+        artifact_payload["dataset_snapshot_id"] = dataset_snapshot_id
+    if replay_lineage:
+        artifact_payload["replay_lineage"] = dict(replay_lineage)
+        artifact_payload["replay_lineage_hash"] = str(
+            replay_lineage.get("lineage_hash") or ""
+        )
+    if candidate_evaluation_key:
+        artifact_payload["candidate_evaluation_key_payload"] = dict(
+            candidate_evaluation_key
+        )
+        artifact_payload["candidate_evaluation_key"] = str(
+            candidate_evaluation_key.get("candidate_evaluation_key") or ""
+        )
+    if replay_tape_validation:
+        artifact_payload["replay_tape"] = {
+            "status": str(replay_tape_validation.get("status") or ""),
+            "tape_path": str(replay_tape_validation.get("tape_path") or ""),
+            "manifest_path": str(replay_tape_validation.get("manifest_path") or ""),
+            "selected_row_count": int(
+                replay_tape_validation.get("selected_row_count") or 0
+            ),
+            "selected_symbols": list(
+                cast(
+                    Sequence[Any], replay_tape_validation.get("selected_symbols") or ()
+                )
+            ),
+            "source_query_digest": str(
+                replay_tape_validation.get("source_query_digest") or ""
+            ),
+            "source_table_versions": dict(
+                cast(
+                    Mapping[str, Any],
+                    replay_tape_validation.get("source_table_versions") or {},
+                )
+            ),
+            "artifact_refs": dict(
+                cast(
+                    Mapping[str, Any], replay_tape_validation.get("artifact_refs") or {}
+                )
+            ),
+        }
+    if candidate_search_key:
+        artifact_payload["candidate_search_key"] = candidate_search_key
+    if candidate_symbols:
+        artifact_payload["candidate_symbols"] = list(candidate_symbols)
+    if full_window_start is not None and full_window_end is not None:
+        artifact_payload["full_window"] = {
+            "start_date": full_window_start.isoformat(),
+            "end_date": full_window_end.isoformat(),
+        }
+    if proof_only_reason:
+        artifact_payload["proof_only"] = True
+        artifact_payload["proof_only_reason"] = proof_only_reason
     _write_json_output(artifact_path, artifact_payload)
     return {
         "exact_replay_ledger_artifact_ref": artifact_ref,
@@ -4751,6 +4825,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                 )
                 holdout_replay_skipped = bool(train_screen_failures)
                 full_window_replay_skipped = bool(train_screen_failures)
+                proof_only_full_window_replay_captured = False
                 if train_screen_failures:
                     train_screen_only_candidates += 1
                     second_oos_start = window.second_oos_start
@@ -4767,7 +4842,41 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                         if second_oos_start is not None and second_oos_end is not None
                         else None
                     )
-                    full_window_payload = train_payload
+                    if (
+                        bool(
+                            getattr(
+                                args,
+                                "capture_rejected_seed_full_window_ledger",
+                                False,
+                            )
+                        )
+                        and worklist_item.candidate_record_seed
+                    ):
+                        full_replay_candidates_started += 1
+                        proof_only_full_window_replay_captured = True
+                        full_window_replay_skipped = False
+                        full_window_payload = run_replay(
+                            _build_replay_config(
+                                strategy_configmap_path=candidate_configmap_path,
+                                clickhouse_http_url=str(args.clickhouse_http_url),
+                                clickhouse_username=(
+                                    str(args.clickhouse_username).strip() or None
+                                ),
+                                clickhouse_password=clickhouse_password,
+                                start_date=full_window_start,
+                                end_date=full_window_end,
+                                start_equity=Decimal(str(args.start_equity)),
+                                chunk_minutes=max(1, int(args.chunk_minutes)),
+                                symbols=candidate_symbols,
+                                progress_log_interval_seconds=max(
+                                    1, int(args.progress_log_seconds)
+                                ),
+                                capture_trace_funnel=collect_train_gate_diagnostics,
+                                capture_exact_replay_ledger=True,
+                            )
+                        )
+                    else:
+                        full_window_payload = train_payload
                 else:
                     full_replay_candidates_started += 1
                     holdout_payload = run_replay(
@@ -4871,33 +4980,12 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     - second_oos_penalty
                 )
                 candidate_payload = base_result.to_payload()
-                exact_replay_ledger_update = _exact_replay_ledger_artifact_update(
-                    args=args,
-                    root=root,
-                    candidate_index=candidate_index,
-                    candidate_id=str(candidate_payload["candidate_id"]),
-                    full_window_payload=full_window_payload,
-                )
-                if exact_replay_ledger_update:
-                    artifact_ref = str(
-                        exact_replay_ledger_update["exact_replay_ledger_artifact_ref"]
-                    )
-                    candidate_payload.update(exact_replay_ledger_update)
-                    candidate_payload["replay_artifact_refs"] = list(
-                        dict.fromkeys(
-                            [
-                                *cast(
-                                    Sequence[Any],
-                                    candidate_payload.get("replay_artifact_refs") or (),
-                                ),
-                                artifact_ref,
-                            ]
-                        )
-                    )
+                exact_replay_ledger_update: dict[str, Any] = {}
                 order_type_ablation_update: dict[str, Any] = {}
                 if (
                     order_type_ablation_policy.enabled
                     and not full_window_replay_skipped
+                    and not proof_only_full_window_replay_captured
                     and order_type_ablation_evaluated
                     < order_type_ablation_policy.max_candidates
                 ):
@@ -5025,6 +5113,42 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                 candidate_payload["candidate_evaluation_key_payload"] = (
                     candidate_evaluation_key
                 )
+                exact_replay_ledger_update = _exact_replay_ledger_artifact_update(
+                    args=args,
+                    root=root,
+                    candidate_index=candidate_index,
+                    candidate_id=str(candidate_payload["candidate_id"]),
+                    full_window_payload=full_window_payload,
+                    dataset_snapshot_id=dataset_snapshot_receipt.snapshot_id,
+                    replay_lineage=replay_lineage,
+                    candidate_evaluation_key=candidate_evaluation_key,
+                    replay_tape_validation=replay_tape_validation,
+                    candidate_search_key=candidate_key,
+                    candidate_symbols=candidate_symbols,
+                    full_window_start=full_window_start,
+                    full_window_end=full_window_end,
+                    proof_only_reason=(
+                        "train_screen_rejected_candidate_record_seed"
+                        if proof_only_full_window_replay_captured
+                        else ""
+                    ),
+                )
+                if exact_replay_ledger_update:
+                    artifact_ref = str(
+                        exact_replay_ledger_update["exact_replay_ledger_artifact_ref"]
+                    )
+                    candidate_payload.update(exact_replay_ledger_update)
+                    candidate_payload["replay_artifact_refs"] = list(
+                        dict.fromkeys(
+                            [
+                                *cast(
+                                    Sequence[Any],
+                                    candidate_payload.get("replay_artifact_refs") or (),
+                                ),
+                                artifact_ref,
+                            ]
+                        )
+                    )
                 candidate_payload["screening"] = {
                     "schema_version": "torghut.frontier-train-screen.v1",
                     "enabled": bool(getattr(args, "train_screening", True)),
@@ -5036,6 +5160,9 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     "max_train_worst_day_loss": str(max_train_screen_worst_day_loss),
                     "holdout_replay_skipped": holdout_replay_skipped,
                     "full_window_replay_skipped": full_window_replay_skipped,
+                    "proof_only_full_window_replay_captured": (
+                        proof_only_full_window_replay_captured
+                    ),
                     "second_oos_replay_skipped": bool(
                         train_screen_failures and window.second_oos_days
                     ),
@@ -5043,13 +5170,20 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                 candidate_payload["staged_search"] = {
                     "schema_version": "torghut.frontier-candidate-staged-search.v1",
                     "stage": (
-                        "train_screen_only" if holdout_replay_skipped else "full_replay"
+                        "train_screen_rejected_full_window_proof"
+                        if proof_only_full_window_replay_captured
+                        else (
+                            "train_screen_only"
+                            if holdout_replay_skipped
+                            else "full_replay"
+                        )
                     ),
                     "train_screen_multiplier": int(
                         staged_search["train_screen_multiplier"]
                     ),
                     "full_replay_candidate_budget": full_replay_candidate_budget,
                     "full_replay_candidates_started": full_replay_candidates_started,
+                    "candidate_record_seed": worklist_item.candidate_record_seed,
                 }
                 if worklist_item.pruned_symbol is not None:
                     candidate_payload["pruned_symbol"] = worklist_item.pruned_symbol
