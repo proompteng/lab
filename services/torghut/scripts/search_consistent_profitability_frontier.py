@@ -203,6 +203,11 @@ class _WorklistItem:
     pruned_symbol: str | None = None
     repair_reason: str | None = None
     parent_candidate_id: str | None = None
+    deferred_candidate_index: int | None = None
+    deferred_candidate_key: str | None = None
+    deferred_train_payload: Mapping[str, Any] | None = None
+    deferred_full_replay_selected: bool = False
+    deferred_train_rank: int | None = None
 
     @property
     def search_iteration(self) -> int:
@@ -353,6 +358,7 @@ def _staged_search_budget_payload(
     *,
     args: argparse.Namespace,
     candidate_budget: int,
+    train_screen_candidates_started: int = 0,
     full_replay_candidates_started: int = 0,
     train_screen_only_candidates: int = 0,
     full_replay_budget_discarded_candidates: int = 0,
@@ -380,6 +386,7 @@ def _staged_search_budget_payload(
         "train_screen_multiplier": train_screen_multiplier,
         "train_screen_candidate_budget": train_screen_budget,
         "full_replay_candidate_budget": full_replay_budget,
+        "train_screen_candidates_started": max(0, int(train_screen_candidates_started)),
         "full_replay_candidates_started": max(0, int(full_replay_candidates_started)),
         "train_screen_only_candidates": max(0, int(train_screen_only_candidates)),
         "full_replay_budget_discarded_candidates": max(
@@ -3243,6 +3250,74 @@ def _positive_train_screen_candidate(train_payload: Mapping[str, Any]) -> bool:
     return summary.decision_count > 0 and summary.net_per_day > Decimal("0")
 
 
+def _train_screen_active_ratio(train_payload: Mapping[str, Any]) -> Decimal:
+    summary = summarize_replay_profitability(train_payload)
+    if summary.trading_day_count <= 0:
+        return Decimal("0")
+    return Decimal(summary.active_days) / Decimal(summary.trading_day_count)
+
+
+def _train_screen_worst_day_loss(train_payload: Mapping[str, Any]) -> Decimal:
+    summary = summarize_replay_profitability(train_payload)
+    if summary.worst_day_net >= Decimal("0"):
+        return Decimal("0")
+    return abs(summary.worst_day_net)
+
+
+def _rank_train_screen_survivors(
+    survivors: Sequence[_WorklistItem],
+) -> list[_WorklistItem]:
+    ranked = list(survivors)
+    ranked.sort(
+        key=lambda item: (
+            -summarize_replay_profitability(
+                cast(Mapping[str, Any], item.deferred_train_payload or {})
+            ).net_per_day,
+            -_train_screen_active_ratio(
+                cast(Mapping[str, Any], item.deferred_train_payload or {})
+            ),
+            _train_screen_worst_day_loss(
+                cast(Mapping[str, Any], item.deferred_train_payload or {})
+            ),
+            int(item.deferred_candidate_index or 0),
+        )
+    )
+    return ranked
+
+
+def _enqueue_ranked_train_screen_survivors(
+    *,
+    worklist: deque[_WorklistItem],
+    survivors: Sequence[_WorklistItem],
+    full_replay_candidate_budget: int,
+) -> None:
+    ranked_survivors = _rank_train_screen_survivors(survivors)
+    selected_count = min(
+        max(0, int(full_replay_candidate_budget)), len(ranked_survivors)
+    )
+    queued: list[_WorklistItem] = []
+    for rank, survivor in enumerate(ranked_survivors, start=1):
+        queued.append(
+            _WorklistItem(
+                params_candidate=dict(survivor.params_candidate),
+                strategy_overrides=dict(survivor.strategy_overrides),
+                candidate_record_seed=survivor.candidate_record_seed,
+                symbol_prune_iteration=survivor.symbol_prune_iteration,
+                loss_repair_iteration=survivor.loss_repair_iteration,
+                consistency_repair_iteration=survivor.consistency_repair_iteration,
+                pruned_symbol=survivor.pruned_symbol,
+                repair_reason=survivor.repair_reason,
+                parent_candidate_id=survivor.parent_candidate_id,
+                deferred_candidate_index=survivor.deferred_candidate_index,
+                deferred_candidate_key=survivor.deferred_candidate_key,
+                deferred_train_payload=survivor.deferred_train_payload,
+                deferred_full_replay_selected=rank <= selected_count,
+                deferred_train_rank=rank,
+            )
+        )
+    worklist.extendleft(reversed(queued))
+
+
 def _symbol_contributions_from_replay_payload(
     payload: Mapping[str, Any],
 ) -> dict[str, dict[str, Any]]:
@@ -4908,10 +4983,14 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
         full_replay_candidate_budget = int(
             staged_search["full_replay_candidate_budget"]
         )
+        staged_train_survivor_ranking_enabled = bool(staged_search["enabled"])
+        train_screen_candidates_started = 0
         full_replay_candidates_started = 0
         train_screen_only_candidates = 0
         full_replay_budget_discarded_candidates = 0
         proof_only_full_window_replay_captures = 0
+        deferred_train_survivors: list[_WorklistItem] = []
+        deferred_train_survivors_enqueued = False
         initial_candidates = _iter_initial_worklist_candidates(
             parameter_grid=parameter_grid,
             override_candidates=override_candidates,
@@ -4929,8 +5008,34 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
         with cache_context:
             budget_exhausted = False
             while True:
-                seed_initial_candidate = not initial_candidates_exhausted and (
-                    not worklist or len(scored) % 2 == 0
+                fresh_train_budget_exhausted = (
+                    train_screen_candidate_budget > 0
+                    and train_screen_candidates_started >= train_screen_candidate_budget
+                )
+                if (
+                    staged_train_survivor_ranking_enabled
+                    and not deferred_train_survivors_enqueued
+                    and (
+                        fresh_train_budget_exhausted
+                        or (initial_candidates_exhausted and not worklist)
+                    )
+                ):
+                    _enqueue_ranked_train_screen_survivors(
+                        worklist=worklist,
+                        survivors=deferred_train_survivors,
+                        full_replay_candidate_budget=full_replay_candidate_budget,
+                    )
+                    deferred_train_survivors_enqueued = True
+                    budget_exhausted = fresh_train_budget_exhausted
+
+                allow_fresh_train_candidate = (
+                    not staged_train_survivor_ranking_enabled
+                    or not fresh_train_budget_exhausted
+                )
+                seed_initial_candidate = (
+                    allow_fresh_train_candidate
+                    and not initial_candidates_exhausted
+                    and (not worklist or len(scored) % 2 == 0)
                 )
                 if seed_initial_candidate:
                     try:
@@ -4945,22 +5050,45 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                 if not worklist:
                     break
                 if (
-                    train_screen_candidate_budget > 0
-                    and len(scored) >= train_screen_candidate_budget
+                    staged_train_survivor_ranking_enabled
+                    and fresh_train_budget_exhausted
+                    and deferred_train_survivors_enqueued
+                    and worklist[0].deferred_train_payload is None
+                ):
+                    budget_exhausted = True
+                    break
+                if (
+                    not staged_train_survivor_ranking_enabled
+                    and train_screen_candidate_budget > 0
+                    and train_screen_candidates_started >= train_screen_candidate_budget
                 ):
                     budget_exhausted = True
                     break
                 worklist_item = worklist.popleft()
                 params_candidate = worklist_item.params_candidate
                 override_candidate = worklist_item.strategy_overrides
-                candidate_key = _candidate_search_key(
-                    params_candidate=params_candidate,
-                    strategy_overrides=override_candidate,
+                deferred_train_survivor = (
+                    worklist_item.deferred_train_payload is not None
                 )
-                if candidate_key in seen_candidate_keys:
-                    continue
-                seen_candidate_keys.add(candidate_key)
-                candidate_index += 1
+                candidate_key = (
+                    str(worklist_item.deferred_candidate_key)
+                    if deferred_train_survivor
+                    and worklist_item.deferred_candidate_key is not None
+                    else _candidate_search_key(
+                        params_candidate=params_candidate,
+                        strategy_overrides=override_candidate,
+                    )
+                )
+                if deferred_train_survivor:
+                    current_candidate_index = int(
+                        worklist_item.deferred_candidate_index or candidate_index + 1
+                    )
+                else:
+                    if candidate_key in seen_candidate_keys:
+                        continue
+                    seen_candidate_keys.add(candidate_key)
+                    candidate_index += 1
+                    current_candidate_index = candidate_index
                 candidate_symbols = _candidate_symbols(
                     cli_symbols=symbols,
                     strategy_overrides=override_candidate,
@@ -4973,48 +5101,87 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     disable_other_strategies=disable_other_strategies,
                 )
                 candidate_configmap_path = (
-                    root / f"candidate-{candidate_index:04d}.yaml"
+                    root / f"candidate-{current_candidate_index:04d}.yaml"
                 )
                 candidate_configmap_path.write_text(
                     yaml.safe_dump(candidate_configmap, sort_keys=False),
                     encoding="utf-8",
                 )
 
-                train_payload = run_replay(
-                    _build_replay_config(
-                        strategy_configmap_path=candidate_configmap_path,
-                        clickhouse_http_url=str(args.clickhouse_http_url),
-                        clickhouse_username=(
-                            str(args.clickhouse_username).strip() or None
-                        ),
-                        clickhouse_password=clickhouse_password,
-                        start_date=window.train_start,
-                        end_date=window.train_end,
-                        start_equity=Decimal(str(args.start_equity)),
-                        chunk_minutes=max(1, int(args.chunk_minutes)),
-                        symbols=candidate_symbols,
-                        progress_log_interval_seconds=max(
-                            1, int(args.progress_log_seconds)
-                        ),
-                        capture_trace_funnel=collect_train_gate_diagnostics,
+                if deferred_train_survivor:
+                    train_payload = dict(
+                        cast(Mapping[str, Any], worklist_item.deferred_train_payload)
                     )
-                )
-                train_screen_failures = (
-                    _train_screen_failures(
-                        train_payload=train_payload,
-                        holdout_policy=holdout_policy,
-                        consistency_policy=consistency_policy,
-                        min_train_net_per_day=min_train_screen_net_per_day,
-                        min_train_active_ratio=min_train_screen_active_ratio,
-                        max_train_worst_day_loss=max_train_screen_worst_day_loss,
+                    train_screen_failures: list[str] = []
+                else:
+                    train_payload = run_replay(
+                        _build_replay_config(
+                            strategy_configmap_path=candidate_configmap_path,
+                            clickhouse_http_url=str(args.clickhouse_http_url),
+                            clickhouse_username=(
+                                str(args.clickhouse_username).strip() or None
+                            ),
+                            clickhouse_password=clickhouse_password,
+                            start_date=window.train_start,
+                            end_date=window.train_end,
+                            start_equity=Decimal(str(args.start_equity)),
+                            chunk_minutes=max(1, int(args.chunk_minutes)),
+                            symbols=candidate_symbols,
+                            progress_log_interval_seconds=max(
+                                1, int(args.progress_log_seconds)
+                            ),
+                            capture_trace_funnel=collect_train_gate_diagnostics,
+                        )
                     )
-                    if bool(getattr(args, "train_screening", True))
-                    else []
-                )
+                    train_screen_candidates_started += 1
+                    train_screen_failures = (
+                        _train_screen_failures(
+                            train_payload=train_payload,
+                            holdout_policy=holdout_policy,
+                            consistency_policy=consistency_policy,
+                            min_train_net_per_day=min_train_screen_net_per_day,
+                            min_train_active_ratio=min_train_screen_active_ratio,
+                            max_train_worst_day_loss=max_train_screen_worst_day_loss,
+                        )
+                        if bool(getattr(args, "train_screening", True))
+                        else []
+                    )
+                    if (
+                        staged_train_survivor_ranking_enabled
+                        and not train_screen_failures
+                    ):
+                        deferred_train_survivors.append(
+                            _WorklistItem(
+                                params_candidate=dict(params_candidate),
+                                strategy_overrides=dict(override_candidate),
+                                candidate_record_seed=worklist_item.candidate_record_seed,
+                                symbol_prune_iteration=(
+                                    worklist_item.symbol_prune_iteration
+                                ),
+                                loss_repair_iteration=(
+                                    worklist_item.loss_repair_iteration
+                                ),
+                                consistency_repair_iteration=(
+                                    worklist_item.consistency_repair_iteration
+                                ),
+                                pruned_symbol=worklist_item.pruned_symbol,
+                                repair_reason=worklist_item.repair_reason,
+                                parent_candidate_id=worklist_item.parent_candidate_id,
+                                deferred_candidate_index=current_candidate_index,
+                                deferred_candidate_key=candidate_key,
+                                deferred_train_payload=train_payload,
+                            )
+                        )
+                        continue
                 full_replay_budget_exhausted = (
-                    not train_screen_failures
-                    and full_replay_candidate_budget > 0
-                    and full_replay_candidates_started >= full_replay_candidate_budget
+                    not worklist_item.deferred_full_replay_selected
+                    if deferred_train_survivor
+                    else (
+                        not train_screen_failures
+                        and full_replay_candidate_budget > 0
+                        and full_replay_candidates_started
+                        >= full_replay_candidate_budget
+                    )
                 )
                 full_replay_skip_reasons = (
                     ["full_replay_candidate_budget_exhausted"]
@@ -5183,7 +5350,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     family=family,
                     strategy_name=strategy_name,
                     replay_config={
-                        "candidate_index": candidate_index,
+                        "candidate_index": current_candidate_index,
                         "params": params_candidate,
                         "strategy_overrides": override_candidate,
                         "train_start_date": window.train_start.isoformat(),
@@ -5238,7 +5405,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                         )
                         arm_configmap_path = (
                             root
-                            / f"candidate-{candidate_index:04d}-order-type-{forced_order_type}.yaml"
+                            / f"candidate-{current_candidate_index:04d}-order-type-{forced_order_type}.yaml"
                         )
                         arm_configmap_path.write_text(
                             yaml.safe_dump(arm_configmap, sort_keys=False),
@@ -5264,7 +5431,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                         )
                     artifact_payload, order_type_ablation_update = (
                         _order_type_ablation_payload(
-                            candidate_index=candidate_index,
+                            candidate_index=current_candidate_index,
                             candidate_id=str(candidate_payload["candidate_id"]),
                             policy=order_type_ablation_policy,
                             candidate_params=params_candidate,
@@ -5277,7 +5444,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     )
                     artifact_path = (
                         order_type_ablation_artifact_dir
-                        / f"candidate-{candidate_index:04d}-order-type-ablation.json"
+                        / f"candidate-{current_candidate_index:04d}-order-type-ablation.json"
                     )
                     artifact_ref = str(artifact_path)
                     artifact_payload["artifact_ref"] = artifact_ref
@@ -5356,7 +5523,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                 exact_replay_ledger_update = _exact_replay_ledger_artifact_update(
                     args=args,
                     root=root,
-                    candidate_index=candidate_index,
+                    candidate_index=current_candidate_index,
                     candidate_id=str(candidate_payload["candidate_id"]),
                     full_window_payload=full_window_payload,
                     dataset_snapshot_id=dataset_snapshot_receipt.snapshot_id,
@@ -5438,6 +5605,11 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                         proof_only_full_window_replay_captures
                     ),
                     "candidate_record_seed": worklist_item.candidate_record_seed,
+                    "ranked_train_screen_survivor": deferred_train_survivor,
+                    "train_screen_survivor_rank": worklist_item.deferred_train_rank,
+                    "full_replay_selected_after_train_rank": bool(
+                        worklist_item.deferred_full_replay_selected
+                    ),
                 }
                 if worklist_item.pruned_symbol is not None:
                     candidate_payload["pruned_symbol"] = worklist_item.pruned_symbol
@@ -6165,6 +6337,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                         staged_search=_staged_search_budget_payload(
                             args=args,
                             candidate_budget=candidate_budget,
+                            train_screen_candidates_started=train_screen_candidates_started,
                             full_replay_candidates_started=full_replay_candidates_started,
                             train_screen_only_candidates=train_screen_only_candidates,
                             full_replay_budget_discarded_candidates=full_replay_budget_discarded_candidates,
@@ -6199,6 +6372,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
         staged_search=_staged_search_budget_payload(
             args=args,
             candidate_budget=candidate_budget,
+            train_screen_candidates_started=train_screen_candidates_started,
             full_replay_candidates_started=full_replay_candidates_started,
             train_screen_only_candidates=train_screen_only_candidates,
             full_replay_budget_discarded_candidates=full_replay_budget_discarded_candidates,
