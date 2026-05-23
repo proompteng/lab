@@ -75,6 +75,7 @@ from app.trading.discovery.profit_target_oracle import (
     ProfitTargetOraclePolicy,
     evaluate_profit_target_oracle,
 )
+from app.trading.runtime_ledger import POST_COST_PNL_BASIS
 from app.trading.discovery.replay_tape import (
     build_source_query_digest,
     materialize_signal_tape,
@@ -6992,6 +6993,7 @@ _EXACT_REPLAY_LEDGER_SCHEMA_VERSIONS = frozenset(
         "torghut.exact_replay_ledger.v1",
     }
 )
+_EXACT_REPLAY_RUNTIME_LEDGER_PNL_SOURCE = "exact_replay_runtime_ledger"
 
 
 def _runtime_report_source_markers(report: Mapping[str, Any]) -> list[str]:
@@ -7065,6 +7067,12 @@ def _runtime_closure_exact_replay_ledger_update(
         "runtime_ledger_artifact_row_count": row_count,
         "exact_replay_ledger_artifact_fill_count": fill_count,
         "runtime_ledger_artifact_fill_count": fill_count,
+        "portfolio_post_cost_net_pnl_basis": POST_COST_PNL_BASIS,
+        "portfolio_post_cost_net_pnl_source": _EXACT_REPLAY_RUNTIME_LEDGER_PNL_SOURCE,
+        "runtime_ledger_pnl_basis": POST_COST_PNL_BASIS,
+        "runtime_ledger_pnl_source": _EXACT_REPLAY_RUNTIME_LEDGER_PNL_SOURCE,
+        "exact_replay_ledger_pnl_basis": POST_COST_PNL_BASIS,
+        "exact_replay_ledger_pnl_source": _EXACT_REPLAY_RUNTIME_LEDGER_PNL_SOURCE,
     }
 
 

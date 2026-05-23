@@ -27,6 +27,10 @@ def _executable_scorecard_fields(index: int | str = 0) -> dict[str, object]:
         "exact_replay_ledger_artifact_ref": f"/tmp/exact-replay-ledger-{index}.json",
         "exact_replay_ledger_artifact_row_count": 5,
         "exact_replay_ledger_artifact_fill_count": 5,
+        "portfolio_post_cost_net_pnl_basis": "realized_strategy_pnl_after_explicit_costs",
+        "portfolio_post_cost_net_pnl_source": "runtime_ledger",
+        "runtime_ledger_pnl_basis": "realized_strategy_pnl_after_explicit_costs",
+        "runtime_ledger_pnl_source": "runtime_ledger",
         "market_impact_stress_passed": True,
         "market_impact_stress_artifact_ref": f"/tmp/market-impact-stress-{index}.json",
         "market_impact_stress_model": "square_root",
@@ -738,6 +742,14 @@ class TestPortfolioOptimizer(TestCase):
         self.assertEqual(
             portfolio.objective_scorecard["exact_replay_ledger_artifact_fill_count"],
             10,
+        )
+        self.assertEqual(
+            portfolio.objective_scorecard["portfolio_post_cost_net_pnl_basis"],
+            "realized_strategy_pnl_after_explicit_costs",
+        )
+        self.assertEqual(
+            portfolio.objective_scorecard["portfolio_post_cost_net_pnl_source"],
+            "exact_replay_runtime_ledger",
         )
         self.assertEqual(
             portfolio.objective_scorecard["market_impact_stress_components"][

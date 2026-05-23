@@ -6,8 +6,22 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Mapping, Sequence, cast
 
+from app.trading.runtime_ledger import POST_COST_PNL_BASIS
+
 
 PROFIT_TARGET_ORACLE_SCHEMA_VERSION = "torghut.profit-target-oracle.v1"
+_ACCEPTED_LEDGER_PNL_BASES = frozenset({POST_COST_PNL_BASIS})
+_ACCEPTED_LEDGER_PNL_SOURCES = frozenset(
+    {
+        "exact_replay_ledger",
+        "exact_replay_runtime_ledger",
+        "runtime_execution_ledger",
+        "runtime_ledger",
+        "strategy_runtime_ledger",
+        "strategy_runtime_ledger_bucket",
+        "strategy_runtime_ledger_buckets",
+    }
+)
 _ACCEPTED_MARKET_IMPACT_STRESS_MODELS = frozenset(
     {
         "almgren_chriss",
@@ -255,6 +269,14 @@ def _boolish(value: Any) -> bool:
 
 def _string(value: Any) -> str:
     return str(value if value is not None else "").strip()
+
+
+def _first_normalized_scorecard_text(scorecard: Mapping[str, Any], *keys: str) -> str:
+    for key in keys:
+        normalized = _string(scorecard.get(key)).lower()
+        if normalized:
+            return normalized
+    return ""
 
 
 def _numeric_check(
@@ -860,6 +882,28 @@ def evaluate_profit_target_oracle(
         scorecard.get("exact_replay_ledger_artifact_fill_count")
         or scorecard.get("runtime_ledger_artifact_fill_count")
     )
+    portfolio_post_cost_net_pnl_basis = _first_normalized_scorecard_text(
+        scorecard,
+        "portfolio_post_cost_net_pnl_basis",
+        "portfolio_post_cost_net_pnl_per_day_basis",
+        "post_cost_net_pnl_basis",
+        "net_pnl_basis",
+        "runtime_ledger_pnl_basis",
+        "exact_replay_ledger_pnl_basis",
+        "post_cost_expectancy_basis",
+        "pnl_basis",
+    )
+    portfolio_post_cost_net_pnl_source = _first_normalized_scorecard_text(
+        scorecard,
+        "portfolio_post_cost_net_pnl_source",
+        "portfolio_post_cost_net_pnl_per_day_source",
+        "post_cost_net_pnl_source",
+        "net_pnl_source",
+        "runtime_ledger_pnl_source",
+        "exact_replay_ledger_pnl_source",
+        "post_cost_expectancy_source",
+        "pnl_source",
+    )
     checks.extend(
         (
             {
@@ -888,6 +932,32 @@ def evaluate_profit_target_oracle(
                 if policy.require_exact_replay_ledger
                 else Decimal("0"),
             ),
+            {
+                "metric": "portfolio_post_cost_net_pnl_basis",
+                "observed": portfolio_post_cost_net_pnl_basis,
+                "operator": "in",
+                "threshold": sorted(_ACCEPTED_LEDGER_PNL_BASES),
+                "source_marker": "exact_replay_runtime_ledger_authority",
+                "passed": (
+                    portfolio_post_cost_net_pnl_basis
+                    in _ACCEPTED_LEDGER_PNL_BASES
+                )
+                if policy.require_exact_replay_ledger
+                else True,
+            },
+            {
+                "metric": "portfolio_post_cost_net_pnl_source",
+                "observed": portfolio_post_cost_net_pnl_source,
+                "operator": "in",
+                "threshold": sorted(_ACCEPTED_LEDGER_PNL_SOURCES),
+                "source_marker": "exact_replay_runtime_ledger_authority",
+                "passed": (
+                    portfolio_post_cost_net_pnl_source
+                    in _ACCEPTED_LEDGER_PNL_SOURCES
+                )
+                if policy.require_exact_replay_ledger
+                else True,
+            },
         )
     )
     market_impact_artifact_refs = _artifact_refs(
