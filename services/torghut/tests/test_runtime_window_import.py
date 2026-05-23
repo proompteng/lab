@@ -183,6 +183,43 @@ class TestRuntimeWindowImport(TestCase):
             {"realized_strategy_pnl": 1},
         )
 
+    def test_build_observed_runtime_buckets_requires_runtime_ledger_bucket_for_pnl_basis(
+        self,
+    ) -> None:
+        buckets = build_observed_runtime_buckets(
+            bucket_ranges=[
+                (
+                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    6,
+                )
+            ],
+            decision_times=[datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
+            execution_times=[datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+            tca_rows=[
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("4"),
+                    "post_cost_expectancy_bps": Decimal("50"),
+                    **_runtime_pnl_basis(),
+                }
+            ],
+            continuity_ok=True,
+            drift_ok=True,
+            dependency_quorum_decision="allow",
+        )
+
+        self.assertEqual(buckets[0].post_cost_expectancy_bps, Decimal("0"))
+        self.assertEqual(buckets[0].post_cost_promotion_sample_count, 0)
+        self.assertEqual(
+            buckets[0].payload_json["post_cost_expectancy_aggregation"],
+            "no_runtime_ledger_post_cost_rows",
+        )
+        self.assertEqual(
+            buckets[0].post_cost_basis_counts,
+            {"realized_strategy_pnl_after_explicit_costs": 1},
+        )
+
     def test_build_observed_runtime_buckets_weights_runtime_ledger_by_notional(
         self,
     ) -> None:
@@ -827,6 +864,76 @@ class TestRuntimeWindowImport(TestCase):
         )
         self.assertEqual(decision.allowed, False)
 
+    def test_persist_observed_runtime_windows_blocks_paper_without_runtime_ledger_pnl(
+        self,
+    ) -> None:
+        buckets = build_observed_runtime_buckets(
+            bucket_ranges=[
+                (
+                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    40,
+                ),
+                (
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 30, tzinfo=timezone.utc),
+                    40,
+                ),
+            ],
+            decision_times=[
+                datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                datetime(2026, 3, 6, 15, 5, tzinfo=timezone.utc),
+            ],
+            execution_times=[
+                datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                datetime(2026, 3, 6, 15, 6, tzinfo=timezone.utc),
+            ],
+            tca_rows=[
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("1"),
+                    "post_cost_expectancy_bps": Decimal("80"),
+                    **_runtime_pnl_basis(),
+                },
+                {
+                    "computed_at": datetime(2026, 3, 6, 15, 6, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("1"),
+                    "post_cost_expectancy_bps": Decimal("80"),
+                    **_runtime_pnl_basis(),
+                },
+            ],
+            continuity_ok=True,
+            drift_ok=True,
+            dependency_quorum_decision="allow",
+        )
+
+        with self.session_local() as session:
+            summary = persist_observed_runtime_windows(
+                session=session,
+                run_id="import-paper-no-runtime-ledger-pnl",
+                candidate_id="cand-paper-no-runtime-ledger",
+                hypothesis_id="H-CONT-01",
+                observed_stage="paper",
+                strategy_family="intraday_continuation",
+                source_manifest_ref="config/trading/hypotheses/h-cont-01.json",
+                buckets=buckets,
+            )
+            session.commit()
+            decision = session.execute(select(StrategyPromotionDecision)).scalar_one()
+
+        self.assertEqual(summary["promotion_allowed"], False)
+        self.assertEqual(summary["post_cost_promotion_sample_count"], 0)
+        self.assertEqual(summary["avg_post_cost_expectancy_bps"], "0")
+        self.assertEqual(
+            summary["post_cost_expectancy_aggregation"],
+            "no_runtime_ledger_post_cost_rows",
+        )
+        self.assertIn(
+            "runtime_ledger_pnl_basis_missing",
+            summary["promotion_blocking_reasons"],
+        )
+        self.assertEqual(decision.allowed, False)
+
     def test_build_observed_runtime_buckets_cannot_upgrade_tca_basis_to_promotion_grade(
         self,
     ) -> None:
@@ -942,12 +1049,26 @@ class TestRuntimeWindowImport(TestCase):
                     "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
                     "abs_slippage_bps": Decimal("4"),
                     "post_cost_expectancy_bps": Decimal("12"),
+                    "runtime_ledger_bucket": _runtime_ledger_bucket(
+                        filled_notional="1000",
+                        gross_strategy_pnl="1.4",
+                        cost_amount="0.2",
+                        net_strategy_pnl_after_costs="1.2",
+                        post_cost_expectancy_bps="12",
+                    ),
                     **_runtime_pnl_basis(),
                 },
                 {
                     "computed_at": datetime(2026, 3, 6, 15, 6, tzinfo=timezone.utc),
                     "abs_slippage_bps": Decimal("5"),
                     "post_cost_expectancy_bps": Decimal("12"),
+                    "runtime_ledger_bucket": _runtime_ledger_bucket(
+                        filled_notional="1000",
+                        gross_strategy_pnl="1.4",
+                        cost_amount="0.2",
+                        net_strategy_pnl_after_costs="1.2",
+                        post_cost_expectancy_bps="12",
+                    ),
                     **_runtime_pnl_basis(),
                 },
             ],
@@ -1006,12 +1127,26 @@ class TestRuntimeWindowImport(TestCase):
                     "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
                     "abs_slippage_bps": Decimal("4"),
                     "post_cost_expectancy_bps": Decimal("12"),
+                    "runtime_ledger_bucket": _runtime_ledger_bucket(
+                        filled_notional="1000",
+                        gross_strategy_pnl="1.4",
+                        cost_amount="0.2",
+                        net_strategy_pnl_after_costs="1.2",
+                        post_cost_expectancy_bps="12",
+                    ),
                     **_runtime_pnl_basis(),
                 },
                 {
                     "computed_at": datetime(2026, 3, 6, 15, 6, tzinfo=timezone.utc),
                     "abs_slippage_bps": Decimal("5"),
                     "post_cost_expectancy_bps": Decimal("12"),
+                    "runtime_ledger_bucket": _runtime_ledger_bucket(
+                        filled_notional="1000",
+                        gross_strategy_pnl="1.4",
+                        cost_amount="0.2",
+                        net_strategy_pnl_after_costs="1.2",
+                        post_cost_expectancy_bps="12",
+                    ),
                     **_runtime_pnl_basis(),
                 },
             ],
@@ -1362,8 +1497,17 @@ class TestRuntimeWindowImport(TestCase):
             summary["promotion_blocking_reasons"],
         )
         self.assertIn(
-            "post_cost_expectancy_below_manifest_threshold",
+            "runtime_ledger_pnl_basis_missing",
             summary["promotion_blocking_reasons"],
+        )
+        self.assertIn(
+            "post_cost_expectancy_non_positive",
+            summary["promotion_blocking_reasons"],
+        )
+        self.assertEqual(summary["avg_post_cost_expectancy_bps"], "0")
+        self.assertEqual(
+            summary["post_cost_expectancy_aggregation"],
+            "no_runtime_ledger_post_cost_rows",
         )
         self.assertEqual(decision.allowed, False)
         self.assertEqual(decision.state, "shadow")

@@ -36,9 +36,6 @@ PROMOTION_GRADE_POST_COST_BASES = frozenset(
         "realized_strategy_pnl_after_explicit_costs",
     }
 )
-LIVE_PROMOTION_GRADE_POST_COST_BASES = frozenset(
-    {"realized_strategy_pnl_after_explicit_costs"}
-)
 RUNTIME_LEDGER_BUCKET_SCHEMAS = frozenset(
     {
         EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
@@ -259,6 +256,16 @@ def _runtime_ledger_bucket_payload(value: Any) -> dict[str, Any]:
     return {**bucket, "blockers": _runtime_ledger_bucket_blockers(bucket)}
 
 
+def _runtime_ledger_row_is_promotion_grade(row: _NormalizedTcaRow) -> bool:
+    return (
+        row.post_cost_expectancy_bps is not None
+        and row.post_cost_promotion_eligible
+        and row.post_cost_expectancy_basis == POST_COST_PNL_BASIS
+        and bool(row.runtime_ledger_bucket)
+        and not _runtime_ledger_bucket_blockers(row.runtime_ledger_bucket)
+    )
+
+
 def _runtime_ledger_post_cost_from_rows(
     rows: Sequence[_NormalizedTcaRow],
 ) -> tuple[Decimal | None, Decimal, Decimal, int]:
@@ -266,13 +273,7 @@ def _runtime_ledger_post_cost_from_rows(
     total_notional = Decimal("0")
     sample_count = 0
     for row in rows:
-        if (
-            not row.post_cost_promotion_eligible
-            or row.post_cost_expectancy_basis
-            != "realized_strategy_pnl_after_explicit_costs"
-            or not row.runtime_ledger_bucket
-            or _runtime_ledger_bucket_blockers(row.runtime_ledger_bucket)
-        ):
+        if not _runtime_ledger_row_is_promotion_grade(row):
             continue
         net_pnl = _optional_decimal(
             row.runtime_ledger_bucket.get("net_strategy_pnl_after_costs")
@@ -611,12 +612,8 @@ def _runtime_promotion_blocking_reasons(
         reasons.append("recent_slippage_budget_exceeded")
     if total_post_cost_promotion_sample_count <= 0:
         reasons.append("post_cost_pnl_basis_missing")
-    if observed_stage == "live" and (
-        sum(
-            total_post_cost_basis_counts.get(basis, 0)
-            for basis in LIVE_PROMOTION_GRADE_POST_COST_BASES
-        )
-        <= 0
+    if (
+        runtime_ledger_notional_weighted_sample_count <= 0
         or runtime_ledger_notional_weighted_sample_count
         < total_post_cost_promotion_sample_count
     ):
@@ -775,10 +772,7 @@ def build_observed_runtime_buckets(
             if row.abs_slippage_bps is not None
         ]
         promotion_post_cost_rows = [
-            row
-            for row in bucket_tca
-            if row.post_cost_expectancy_bps is not None
-            and row.post_cost_promotion_eligible
+            row for row in bucket_tca if _runtime_ledger_row_is_promotion_grade(row)
         ]
         runtime_ledger_post_cost_bps: Decimal | None
         runtime_ledger_net: Decimal
@@ -805,19 +799,9 @@ def build_observed_runtime_buckets(
         if runtime_ledger_post_cost_bps is not None:
             post_cost_expectancy_bps = runtime_ledger_post_cost_bps
             post_cost_expectancy_aggregation = "runtime_ledger_notional_weighted"
-        elif promotion_post_cost_rows:
-            post_cost_expectancy_bps = sum(
-                (
-                    row.post_cost_expectancy_bps
-                    for row in promotion_post_cost_rows
-                    if row.post_cost_expectancy_bps is not None
-                ),
-                Decimal("0"),
-            ) / Decimal(len(promotion_post_cost_rows))
-            post_cost_expectancy_aggregation = "promotion_bps_average"
         else:
             post_cost_expectancy_bps = Decimal("0")
-            post_cost_expectancy_aggregation = "no_promotion_grade_post_cost_rows"
+            post_cost_expectancy_aggregation = "no_runtime_ledger_post_cost_rows"
         buckets.append(
             ObservedRuntimeBucket(
                 window_started_at=bucket_start,
@@ -1060,20 +1044,10 @@ def persist_observed_runtime_windows(
     for bucket in sorted_buckets:
         total_post_cost_basis_counter.update(bucket.post_cost_basis_counts)
     total_post_cost_basis_counts = dict(sorted(total_post_cost_basis_counter.items()))
-    total_post_cost = sum(
-        (
-            bucket.post_cost_expectancy_bps * Decimal(bucket.market_session_count)
-            for bucket in sorted_buckets
-        ),
-        Decimal("0"),
-    )
     latest_three_budget_ok = (
         all(bucket.avg_abs_slippage_bps <= budget for bucket in sorted_buckets[-3:])
         if sorted_buckets
         else False
-    )
-    average_post_cost = (
-        (total_post_cost / total_weight) if total_weight > 0 else Decimal("0")
     )
     (
         runtime_ledger_average_post_cost,
@@ -1085,7 +1059,8 @@ def persist_observed_runtime_windows(
         average_post_cost = runtime_ledger_average_post_cost
         post_cost_expectancy_aggregation = "runtime_ledger_notional_weighted"
     else:
-        post_cost_expectancy_aggregation = "promotion_bps_session_weighted_average"
+        average_post_cost = Decimal("0")
+        post_cost_expectancy_aggregation = "no_runtime_ledger_post_cost_rows"
     average_slippage = (
         sum(
             (
