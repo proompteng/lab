@@ -208,12 +208,14 @@ class ReplayBudget:
     max_candidates_per_round: int
     exploration_slots: int
     max_candidates_per_frontier_run: int
+    staged_train_screen_multiplier: int = 1
 
     def to_payload(self) -> dict[str, Any]:
         return {
             'max_candidates_per_round': self.max_candidates_per_round,
             'exploration_slots': self.exploration_slots,
             'max_candidates_per_frontier_run': self.max_candidates_per_frontier_run,
+            'staged_train_screen_multiplier': self.staged_train_screen_multiplier,
         }
 
 
@@ -587,6 +589,10 @@ def load_strategy_autoresearch_program(
         max_candidates_per_frontier_run=max(
             0,
             int(replay_budget_payload.get('max_candidates_per_frontier_run', 96)),
+        ),
+        staged_train_screen_multiplier=max(
+            1,
+            int(replay_budget_payload.get('staged_train_screen_multiplier', 1)),
         ),
     )
     runtime_closure_policy = _load_runtime_closure_policy(_mapping(payload.get('runtime_closure_policy')))
