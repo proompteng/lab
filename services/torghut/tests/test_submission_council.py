@@ -539,7 +539,7 @@ class TestSubmissionCouncil(TestCase):
                 ),
                 _RegistryItem(
                     hypothesis_id="H-PAIRS-01",
-                    candidate_id="spec-d74b07b2aaab8d0cfa8a4c38",
+                    candidate_id="c88421d619759b2cfaa6f4d0",
                     strategy_id="microbar_cross_sectional_pairs_v1@research",
                     strategy_family="microbar_cross_sectional_pairs",
                 ),
@@ -660,7 +660,7 @@ class TestSubmissionCouncil(TestCase):
             candidates[0]["promotion_authority"], "runtime_ledger_candidate_only"
         )
         self.assertIn("runtime_ledger_stage_not_live", candidates[0]["reason_codes"])
-        self.assertIn(
+        self.assertNotIn(
             "runtime_ledger_candidate_mismatch", candidates[0]["reason_codes"]
         )
         self.assertEqual(candidates[1]["hypothesis_id"], "H-CONT-01")
