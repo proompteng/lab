@@ -6504,6 +6504,31 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             ),
             objective_scorecard={
                 "net_pnl_per_day": "82.50",
+                "market_impact_stress_passed": True,
+                "market_impact_stress_net_pnl_per_day": "82.50",
+                "delay_adjusted_depth_stress_passed": True,
+                "delay_adjusted_depth_stress_net_pnl_per_day": "82.50",
+                "post_cost_net_pnl_after_queue_position_survival_fill_stress": "82.50",
+                "double_oos_passed": True,
+                "double_oos_net_pnl_per_day": "82.50",
+                "double_oos_cost_shock_net_pnl_per_day": "82.50",
+                "implementation_uncertainty_stability_passed": True,
+                "implementation_uncertainty_lower_net_pnl_per_day": "82.50",
+                "conformal_tail_risk_passed": True,
+                "conformal_tail_risk_adjusted_net_pnl_per_day": "82.50",
+                "delay_adjusted_depth_fill_survival_evidence_present": True,
+                "delay_adjusted_depth_fill_survival_sample_count": 7,
+                "delay_adjusted_depth_fill_survival_rate": "0.85",
+                "queue_position_survival_fill_curve_evidence_present": True,
+                "queue_position_survival_sample_count": 7,
+                "queue_position_survival_fill_rate": "0.85",
+                "queue_position_survival_queue_ratio_p95": "0.25",
+                "queue_position_survival_queue_ahead_depletion_evidence_present": True,
+                "queue_position_survival_queue_ahead_depletion_sample_count": 7,
+                "delay_adjusted_depth_queue_ahead_depletion_evidence_present": True,
+                "delay_adjusted_depth_queue_ahead_depletion_sample_count": 7,
+                "queue_ahead_depletion_evidence_present": True,
+                "queue_ahead_depletion_sample_count": 7,
                 "target_met": False,
                 "oracle_passed": False,
                 "trading_day_count": 3,
@@ -6696,6 +6721,30 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             ),
             objective_scorecard={
                 "net_pnl_per_day": "525",
+                "market_impact_stress_passed": True,
+                "market_impact_stress_net_pnl_per_day": "525",
+                "delay_adjusted_depth_stress_passed": True,
+                "delay_adjusted_depth_stress_net_pnl_per_day": "525",
+                "post_cost_net_pnl_after_queue_position_survival_fill_stress": "525",
+                "double_oos_passed": True,
+                "double_oos_cost_shock_net_pnl_per_day": "525",
+                "implementation_uncertainty_stability_passed": True,
+                "implementation_uncertainty_lower_net_pnl_per_day": "525",
+                "conformal_tail_risk_passed": True,
+                "conformal_tail_risk_adjusted_net_pnl_per_day": "525",
+                "delay_adjusted_depth_fill_survival_evidence_present": True,
+                "delay_adjusted_depth_fill_survival_sample_count": 9,
+                "delay_adjusted_depth_fill_survival_rate": "0.85",
+                "queue_position_survival_fill_curve_evidence_present": True,
+                "queue_position_survival_sample_count": 9,
+                "queue_position_survival_fill_rate": "0.85",
+                "queue_position_survival_queue_ratio_p95": "0.25",
+                "queue_position_survival_queue_ahead_depletion_evidence_present": True,
+                "queue_position_survival_queue_ahead_depletion_sample_count": 9,
+                "delay_adjusted_depth_queue_ahead_depletion_evidence_present": True,
+                "delay_adjusted_depth_queue_ahead_depletion_sample_count": 9,
+                "queue_ahead_depletion_evidence_present": True,
+                "queue_ahead_depletion_sample_count": 9,
                 "target_met": True,
                 "oracle_passed": False,
                 "trade_decision_count": 9,
@@ -6850,6 +6899,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
     ) -> None:
         weak_spec = self._candidate_spec("spec-weak-probation")
         close_spec = self._candidate_spec("spec-close-probation")
+        bridge_spec = self._candidate_spec("spec-bridge-probation")
         raw_only_spec = self._candidate_spec("spec-raw-only-probation")
         weak_evidence = runner.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
@@ -7008,12 +7058,39 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             null_comparator={},
             promotion_readiness={},
         )
+        bridge_scorecard = {
+            **close_evidence.objective_scorecard,
+            "net_pnl_per_day": "315",
+            "market_impact_stress_net_pnl_per_day": "290",
+            "delay_adjusted_depth_stress_net_pnl_per_day": "280",
+            "post_cost_net_pnl_after_queue_position_survival_fill_stress": "260",
+            "double_oos_net_pnl_per_day": "270",
+            "double_oos_cost_shock_net_pnl_per_day": "270",
+            "implementation_uncertainty_lower_net_pnl_per_day": "260",
+            "conformal_tail_risk_adjusted_net_pnl_per_day": "260",
+            "exact_replay_ledger_artifact_ref": "bridge-probation-exact-replay-ledger.json",
+            "runtime_ledger_artifact_row_count": 18,
+            "runtime_ledger_artifact_fill_count": 6,
+        }
+        bridge_evidence = replace(
+            close_evidence,
+            evidence_bundle_id="ev-bridge-probation",
+            candidate_id="cand-bridge-probation",
+            candidate_spec_id=bridge_spec.candidate_spec_id,
+            dataset_snapshot_id="snapshot-bridge-probation",
+            feature_spec_hash="hash-bridge-probation",
+            replay_artifact_refs=(
+                "bridge-probation.json",
+                "bridge-probation-exact-replay-ledger.json",
+            ),
+            objective_scorecard=bridge_scorecard,
+        )
 
         board = runner._candidate_board_payload(
             epoch_id="epoch-paper-probation-economics",
             output_dir=Path("/tmp/epoch-paper-probation-economics"),
             target=Decimal("500"),
-            candidate_specs=(weak_spec, close_spec, raw_only_spec),
+            candidate_specs=(weak_spec, close_spec, bridge_spec, raw_only_spec),
             candidate_selection={
                 "rows": [
                     {
@@ -7022,6 +7099,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     },
                     {
                         "candidate_spec_id": close_spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                    },
+                    {
+                        "candidate_spec_id": bridge_spec.candidate_spec_id,
                         "selected_for_replay": True,
                     },
                     {
@@ -7046,16 +7127,35 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     "rank": 3,
                     "proposal_score": "7.0",
                 },
+                {
+                    "candidate_spec_id": bridge_spec.candidate_spec_id,
+                    "rank": 4,
+                    "proposal_score": "6.0",
+                },
             ),
             proposal_rows=(),
-            evidence_bundles=(weak_evidence, close_evidence, raw_only_evidence),
+            evidence_bundles=(
+                weak_evidence,
+                close_evidence,
+                bridge_evidence,
+                raw_only_evidence,
+            ),
             portfolio=None,
             promotion_readiness={"promotable": False},
             runtime_closure={},
+            paper_probation_target_limit=2,
         )
 
         probation_candidate = board["paper_probation_candidate"]
         self.assertEqual(probation_candidate["candidate_id"], "cand-close-probation")
+        self.assertEqual(board["paper_probation_target_limit"], 2)
+        self.assertEqual(
+            [
+                candidate["candidate_id"]
+                for candidate in board["paper_probation_candidates"]
+            ],
+            ["cand-close-probation", "cand-bridge-probation"],
+        )
         self.assertEqual(
             probation_candidate["selection_reason"],
             "closest_lower_bound_economics_below_target",
@@ -7069,6 +7169,14 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             0,
         )
         self.assertFalse(probation_candidate["final_promotion_allowed"])
+        self.assertEqual(board["runtime_window_import_plan"]["target_count"], 2)
+        self.assertEqual(
+            [
+                target["candidate_id"]
+                for target in board["runtime_window_import_plan"]["targets"]
+            ],
+            ["cand-close-probation", "cand-bridge-probation"],
+        )
 
     def test_candidate_board_paper_probation_requires_runtime_ledger_admission(
         self,
@@ -7104,6 +7212,72 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(
             runner._candidate_board_paper_probation_admission_blockers(ledger_row),
             [],
+        )
+
+    def test_candidate_board_single_paper_probation_fallback_blocker(self) -> None:
+        row = {
+            "candidate_spec_id": "spec-single-probation",
+            "candidate_id": "cand-single-probation",
+            "hypothesis_id": "H-MICRO-01",
+            "runtime_family": "microstructure_breakout",
+            "runtime_strategy_name": "microbar-volume-continuation-long-top2-chip-v1",
+            "has_replay_evidence": True,
+            "oracle_passed": False,
+            "target_met": False,
+            "decision_count": 4,
+            "submitted_order_count": 4,
+            "filled_order_count": 4,
+            "exact_replay_ledger_artifact_ref": "single-exact-replay-ledger.json",
+            "runtime_ledger_artifact_row_count": 12,
+            "runtime_ledger_artifact_fill_count": 4,
+            "runtime_window_start": "2026-05-18",
+            "runtime_window_end": "2026-05-20",
+            "net_pnl_per_day": "215",
+            "market_impact_stress_passed": True,
+            "market_impact_stress_net_pnl_per_day": "190",
+            "delay_adjusted_depth_stress_passed": True,
+            "delay_adjusted_depth_stress_net_pnl_per_day": "180",
+            "post_cost_net_pnl_after_queue_position_survival_fill_stress": "170",
+            "double_oos_passed": True,
+            "double_oos_cost_shock_net_pnl_per_day": "175",
+            "implementation_uncertainty_stability_passed": True,
+            "implementation_uncertainty_lower_net_pnl_per_day": "165",
+            "conformal_tail_risk_passed": True,
+            "conformal_tail_risk_adjusted_net_pnl_per_day": "160",
+            "delay_adjusted_depth_fill_survival_evidence_present": True,
+            "delay_adjusted_depth_fill_survival_sample_count": 4,
+            "delay_adjusted_depth_fill_survival_rate": "0.85",
+            "queue_position_survival_fill_curve_evidence_present": True,
+            "queue_position_survival_sample_count": 4,
+            "queue_position_survival_fill_rate": "0.85",
+            "queue_position_survival_queue_ratio_p95": "0.25",
+            "queue_position_survival_queue_ahead_depletion_evidence_present": True,
+            "queue_position_survival_queue_ahead_depletion_sample_count": 4,
+            "delay_adjusted_depth_queue_ahead_depletion_evidence_present": True,
+            "delay_adjusted_depth_queue_ahead_depletion_sample_count": 4,
+            "queue_ahead_depletion_evidence_present": True,
+            "queue_ahead_depletion_sample_count": 4,
+            "blockers": [],
+        }
+
+        candidate = runner._candidate_board_paper_probation_candidate(
+            [row],
+            target=Decimal("500"),
+        )
+
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+        self.assertEqual(candidate["candidate_id"], "cand-single-probation")
+        self.assertEqual(
+            candidate["final_promotion_blockers"],
+            ["final_promotion_requires_runtime_governance"],
+        )
+        self.assertFalse(candidate["final_promotion_allowed"])
+        self.assertIsNone(
+            runner._candidate_board_paper_probation_candidate(
+                [],
+                target=Decimal("500"),
+            )
         )
 
     def test_candidate_board_runtime_window_plan_dedupes_and_blocks_incomplete_targets(
