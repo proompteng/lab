@@ -23,7 +23,7 @@ spec:
             kubernetes.io/arch: arm64
           containers:
             - name: refresh-execution-tca
-              image: registry.ide-newton.ts.net/lab/torghut@sha256:06686f82140a6fbb4e9ae560749ae138fb1c88ebb3644dd3e1263199d9aba89e
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:f42c61184751c9d4c16b78dcab293f6cc772ea1b11fd5bd3347c7bcfeb747152
               imagePullPolicy: IfNotPresent
               env:
                 - name: DB_DSN
