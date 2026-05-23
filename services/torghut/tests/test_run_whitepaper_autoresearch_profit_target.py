@@ -43,6 +43,79 @@ from app.trading.models import SignalEnvelope
 _CHIP_UNIVERSE = list(runner.LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE)
 
 
+def _authoritative_exact_replay_ledger_rows() -> list[dict[str, object]]:
+    base_row: dict[str, object] = {
+        "account_label": "paper",
+        "strategy_id": "intraday-tsmom-profit-v3",
+        "symbol": "AAPL",
+        "source": "exact_replay",
+        "execution_policy_hash": "execution-policy-hash",
+        "cost_model_hash": "cost-model-hash",
+        "lineage_hash": "lineage-hash",
+        "replay_data_hash": "replay-data-hash",
+    }
+    return [
+        {
+            **base_row,
+            "event_type": "decision",
+            "executed_at": "2026-05-20T14:00:00Z",
+            "side": "buy",
+            "decision_id": "decision-1",
+            "order_id": "order-1",
+        },
+        {
+            **base_row,
+            "event_type": "order_submitted",
+            "executed_at": "2026-05-20T14:00:01Z",
+            "side": "buy",
+            "decision_id": "decision-1",
+            "order_id": "order-1",
+        },
+        {
+            **base_row,
+            "event_type": "fill",
+            "executed_at": "2026-05-20T14:00:02Z",
+            "side": "buy",
+            "decision_id": "decision-1",
+            "order_id": "order-1",
+            "filled_qty": "1",
+            "avg_fill_price": "100",
+            "filled_notional": "100",
+            "cost_amount": "0.10",
+            "cost_basis": "explicit_replay_fee_model",
+        },
+        {
+            **base_row,
+            "event_type": "decision",
+            "executed_at": "2026-05-20T14:10:00Z",
+            "side": "sell",
+            "decision_id": "decision-2",
+            "order_id": "order-2",
+        },
+        {
+            **base_row,
+            "event_type": "order_submitted",
+            "executed_at": "2026-05-20T14:10:01Z",
+            "side": "sell",
+            "decision_id": "decision-2",
+            "order_id": "order-2",
+        },
+        {
+            **base_row,
+            "event_type": "fill",
+            "executed_at": "2026-05-20T14:10:02Z",
+            "side": "sell",
+            "decision_id": "decision-2",
+            "order_id": "order-2",
+            "filled_qty": "1",
+            "avg_fill_price": "101",
+            "filled_notional": "101",
+            "cost_amount": "0.10",
+            "cost_basis": "explicit_replay_fee_model",
+        },
+    ]
+
+
 def _source_jsonl_payload() -> dict[str, object]:
     return {
         "run_id": "paper-jsonl-2026",
@@ -4807,6 +4880,32 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
     def test_runtime_closure_exact_replay_ledger_rejects_summary_counts_without_rows(
         self,
     ) -> None:
+        self.assertIsNone(runner._runtime_closure_ledger_datetime(None))
+        self.assertIsNone(runner._runtime_closure_ledger_datetime("not-a-date"))
+        self.assertEqual(
+            runner._runtime_closure_ledger_datetime("2026-05-20T14:00:00"),
+            datetime(2026, 5, 20, 14, tzinfo=timezone.utc),
+        )
+        self.assertEqual(
+            runner._runtime_closure_ledger_datetime("2026-05-20T14:00:00-04:00"),
+            datetime(2026, 5, 20, 18, tzinfo=timezone.utc),
+        )
+        self.assertIsNone(
+            runner._runtime_closure_exact_replay_bucket(
+                ledger={"window_start": "2026-05-20", "window_end": "2026-05-19"},
+                rows=_authoritative_exact_replay_ledger_rows(),
+            )
+        )
+        with patch.object(runner, "build_runtime_ledger_buckets", return_value=[]):
+            self.assertIsNone(
+                runner._runtime_closure_exact_replay_bucket(
+                    ledger={
+                        "window_start": "2026-05-20",
+                        "window_end": "2026-05-20",
+                    },
+                    rows=_authoritative_exact_replay_ledger_rows(),
+                )
+            )
         with TemporaryDirectory() as tmpdir:
             artifact_path = Path(tmpdir) / "ledger.json"
             artifact_path.write_text(
@@ -4896,9 +4995,54 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                         "artifact_kind": "exact_replay_ledger",
                         "schema_version": "torghut.exact_replay_ledger.rows.v1",
                         "runtime_ledger_rows": [{"id": 1}],
+                        "window_start": "2026-05-20",
+                        "window_end": "2026-05-20",
                         "row_count": 99,
-                        "filled_count": 99,
-                        "summary": {"filled_count": 99},
+                        "fill_row_count": 1,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                runner._runtime_closure_exact_replay_ledger_update(
+                    {"exact_replay_ledger_artifact_path": str(artifact_path)}
+                ),
+                {},
+            )
+
+            artifact_path.write_text(
+                json.dumps(
+                    {
+                        "artifact_kind": "exact_replay_ledger",
+                        "schema_version": "torghut.exact_replay_ledger.rows.v1",
+                        "window_start": "2026-05-20",
+                        "window_end": "2026-05-20",
+                        "fill_row_count": 1,
+                        "runtime_ledger_rows": _authoritative_exact_replay_ledger_rows(),
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                runner._runtime_closure_exact_replay_ledger_update(
+                    {"exact_replay_ledger_artifact_path": str(artifact_path)}
+                ),
+                {},
+            )
+
+            artifact_path.write_text(
+                json.dumps(
+                    {
+                        "artifact_kind": "exact_replay_ledger",
+                        "schema_version": "torghut.exact_replay_ledger.rows.v1",
+                        "window_start": "2026-05-20",
+                        "window_end": "2026-05-20",
+                        "fill_row_count": 2,
+                        "runtime_ledger_rows": _authoritative_exact_replay_ledger_rows(),
                     }
                 )
                 + "\n",
@@ -4909,10 +5053,16 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 {"exact_replay_ledger_artifact_path": str(artifact_path)}
             )
 
-        self.assertEqual(update["exact_replay_ledger_artifact_row_count"], 1)
-        self.assertEqual(update["runtime_ledger_artifact_row_count"], 1)
-        self.assertEqual(update["exact_replay_ledger_artifact_fill_count"], 0)
-        self.assertEqual(update["runtime_ledger_artifact_fill_count"], 0)
+        self.assertEqual(update["exact_replay_ledger_artifact_row_count"], 6)
+        self.assertEqual(update["runtime_ledger_artifact_row_count"], 6)
+        self.assertEqual(update["exact_replay_ledger_artifact_fill_count"], 2)
+        self.assertEqual(update["runtime_ledger_artifact_fill_count"], 2)
+        self.assertEqual(update["runtime_ledger_closed_trade_count"], 1)
+        self.assertEqual(update["runtime_ledger_open_position_count"], 0)
+        self.assertEqual(update["runtime_ledger_filled_notional"], "201")
+        self.assertEqual(
+            update["runtime_ledger_net_strategy_pnl_after_costs"], "0.80"
+        )
         self.assertEqual(
             update["portfolio_post_cost_net_pnl_basis"],
             "realized_strategy_pnl_after_explicit_costs",
@@ -4994,7 +5144,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     {
                         "artifact_kind": "exact_replay_ledger",
                         "schema_version": "torghut.exact_replay_ledger.rows.v1",
-                        "runtime_ledger_rows": [{"id": 1}, {"id": 2}],
+                        "window_start": "2026-05-20",
+                        "window_end": "2026-05-20",
+                        "runtime_ledger_rows": _authoritative_exact_replay_ledger_rows(),
                         "fill_row_count": 2,
                     }
                 )
@@ -5161,7 +5313,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertEqual(
             updated.objective_scorecard["exact_replay_ledger_artifact_row_count"],
-            2,
+            6,
         )
         self.assertEqual(
             updated.objective_scorecard["exact_replay_ledger_artifact_fill_count"],
