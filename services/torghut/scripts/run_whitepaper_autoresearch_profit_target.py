@@ -2410,6 +2410,18 @@ def _replay_diagnostic_proposal_rows(
                 "proposal_score": pre_replay.get("proposal_score"),
                 "rank": _rank_sort_value(selection.get("rank")),
                 "pre_replay_score": _string(selection.get("pre_replay_score")),
+                "paper_contract_prior_score": _string(
+                    selection.get("paper_contract_prior_score")
+                ),
+                "paper_mechanism_overlay_ids": _string_list_from_value(
+                    selection.get("paper_mechanism_overlay_ids")
+                ),
+                "paper_required_evidence_tokens": _string_list_from_value(
+                    selection.get("paper_required_evidence_tokens")
+                ),
+                "paper_required_evidence_count": _candidate_board_int_field(
+                    selection, "paper_required_evidence_count"
+                ),
                 "selected_for_replay": bool(selection.get("selected_for_replay")),
                 "replay_selection_reason": _string(selection.get("selection_reason"))
                 or "not_selected_budget",
@@ -2452,6 +2464,18 @@ def _best_false_negative_table(
                 "candidate_id": None,
                 "rank": _rank_sort_value(selection.get("rank")),
                 "pre_replay_score": _string(selection.get("pre_replay_score")),
+                "paper_contract_prior_score": _string(
+                    selection.get("paper_contract_prior_score")
+                ),
+                "paper_mechanism_overlay_ids": _string_list_from_value(
+                    selection.get("paper_mechanism_overlay_ids")
+                ),
+                "paper_required_evidence_tokens": _string_list_from_value(
+                    selection.get("paper_required_evidence_tokens")
+                ),
+                "paper_required_evidence_count": _candidate_board_int_field(
+                    selection, "paper_required_evidence_count"
+                ),
                 "proposal_score": pre_replay.get("proposal_score"),
                 "selection_reason": _string(selection.get("selection_reason"))
                 or "not_selected_budget",
@@ -3056,6 +3080,88 @@ def _candidate_family_goal_rows(
     return payload_rows
 
 
+def _candidate_sleeve_goal_proof_handoff_fields(
+    *,
+    selection: Mapping[str, Any],
+    spec: CandidateSpec | None,
+    scorecard: Mapping[str, Any],
+    evidence: CandidateEvidenceBundle | None,
+    selected_for_replay: bool,
+) -> dict[str, Any]:
+    artifact_refs = list(evidence.replay_artifact_refs) if evidence is not None else []
+    runtime_ledger_row = {**dict(scorecard), "replay_artifact_refs": artifact_refs}
+    runtime_ledger_artifact_refs = _candidate_board_runtime_ledger_refs(
+        runtime_ledger_row
+    )
+    exact_replay_ledger_artifact_ref = _string(
+        scorecard.get("exact_replay_ledger_artifact_ref")
+    )
+    runtime_ledger_artifact_ref = _string(
+        scorecard.get("runtime_ledger_artifact_ref") or exact_replay_ledger_artifact_ref
+    )
+    runtime_window_start, runtime_window_end = _candidate_board_runtime_window_bounds(
+        scorecard
+    )
+    paper_contract_prior_score = _string(selection.get("paper_contract_prior_score"))
+    if not paper_contract_prior_score and spec is not None:
+        paper_contract_prior_score = str(_paper_mechanism_prior_score(spec))
+    paper_mechanism_overlay_ids = _string_list_from_value(
+        selection.get("paper_mechanism_overlay_ids")
+    )
+    if not paper_mechanism_overlay_ids and spec is not None:
+        paper_mechanism_overlay_ids = sorted(
+            _candidate_spec_mechanism_overlay_ids(spec)
+        )
+    paper_required_evidence_tokens = _string_list_from_value(
+        selection.get("paper_required_evidence_tokens")
+    )
+    if not paper_required_evidence_tokens and spec is not None:
+        paper_required_evidence_tokens = sorted(
+            _candidate_spec_required_evidence_tokens(spec)
+        )
+    paper_required_evidence_count = _candidate_board_int_field(
+        selection, "paper_required_evidence_count"
+    )
+    if paper_required_evidence_count <= 0:
+        paper_required_evidence_count = len(paper_required_evidence_tokens)
+    paper_contract_candidate = bool(
+        _decimal(paper_contract_prior_score) > 0
+        or paper_mechanism_overlay_ids
+        or paper_required_evidence_tokens
+    )
+    return {
+        "replay_selection_reason": _string(selection.get("selection_reason"))
+        or ("selected_for_replay" if selected_for_replay else "not_selected_budget"),
+        "paper_contract_candidate": paper_contract_candidate,
+        "paper_contract_selected_for_replay": bool(
+            selected_for_replay and paper_contract_candidate
+        ),
+        "paper_contract_prior_score": paper_contract_prior_score,
+        "paper_mechanism_overlay_ids": paper_mechanism_overlay_ids,
+        "paper_required_evidence_tokens": paper_required_evidence_tokens,
+        "paper_required_evidence_count": paper_required_evidence_count,
+        "runtime_window_start": runtime_window_start,
+        "runtime_window_end": runtime_window_end,
+        "runtime_ledger_artifact_refs": list(runtime_ledger_artifact_refs),
+        "exact_replay_ledger_artifact_ref": exact_replay_ledger_artifact_ref,
+        "runtime_ledger_artifact_ref": runtime_ledger_artifact_ref,
+        "runtime_ledger_artifact_row_count": _candidate_board_first_int_field(
+            scorecard,
+            (
+                "runtime_ledger_artifact_row_count",
+                "exact_replay_ledger_artifact_row_count",
+            ),
+        ),
+        "runtime_ledger_artifact_fill_count": _candidate_board_first_int_field(
+            scorecard,
+            (
+                "runtime_ledger_artifact_fill_count",
+                "exact_replay_ledger_artifact_fill_count",
+            ),
+        ),
+    }
+
+
 def _candidate_sleeve_goal_rows(
     *,
     candidate_specs: Sequence[CandidateSpec],
@@ -3068,6 +3174,11 @@ def _candidate_sleeve_goal_rows(
 ) -> list[dict[str, Any]]:
     spec_by_id = {spec.candidate_spec_id: spec for spec in candidate_specs}
     evidence_by_spec = {bundle.candidate_spec_id: bundle for bundle in evidence_bundles}
+    selection_by_spec = {
+        _string(row.get("candidate_spec_id")): row
+        for row in _list_of_mappings(candidate_selection.get("rows"))
+        if _string(row.get("candidate_spec_id"))
+    }
     if portfolio is not None:
         rows: list[dict[str, Any]] = []
         for sleeve in portfolio.sleeves[:limit]:
@@ -3076,6 +3187,7 @@ def _candidate_sleeve_goal_rows(
             spec = spec_by_id.get(candidate_spec_id)
             evidence = evidence_by_spec.get(candidate_spec_id)
             scorecard = evidence.objective_scorecard if evidence is not None else {}
+            selection = selection_by_spec.get(candidate_spec_id, {})
             if spec is not None:
                 row["family_template_id"] = spec.family_template_id
                 row["runtime_family"] = spec.runtime_family
@@ -3100,6 +3212,15 @@ def _candidate_sleeve_goal_rows(
             )
             row["replay_artifact_refs"] = (
                 list(evidence.replay_artifact_refs) if evidence is not None else []
+            )
+            row.update(
+                _candidate_sleeve_goal_proof_handoff_fields(
+                    selection=selection,
+                    spec=spec,
+                    scorecard=scorecard,
+                    evidence=evidence,
+                    selected_for_replay=True,
+                )
             )
             rows.append(row)
         return rows
@@ -3128,6 +3249,13 @@ def _candidate_sleeve_goal_rows(
         replay_window_coverage = _candidate_board_replay_window_coverage_summary(
             scorecard
         )
+        proof_handoff = _candidate_sleeve_goal_proof_handoff_fields(
+            selection=selection,
+            spec=spec,
+            scorecard=scorecard,
+            evidence=evidence,
+            selected_for_replay=True,
+        )
         rows.append(
             {
                 "candidate_spec_id": candidate_spec_id,
@@ -3151,6 +3279,7 @@ def _candidate_sleeve_goal_rows(
                 "evidence_lineage": evidence_lineage,
                 "replay_window_coverage": replay_window_coverage,
                 "order_type_execution_quality": order_type_summary,
+                **proof_handoff,
                 "failure_reasons": [
                     _string(item)
                     for item in failure_by_spec.get(candidate_spec_id, ())
@@ -3167,6 +3296,7 @@ def _candidate_sleeve_goal_rows(
             if not candidate_spec_id:
                 continue
             spec = spec_by_id.get(candidate_spec_id)
+            selection = selection_by_spec.get(candidate_spec_id, row)
             rows.append(
                 {
                     "candidate_spec_id": candidate_spec_id,
@@ -3182,6 +3312,13 @@ def _candidate_sleeve_goal_rows(
                     "pre_replay_score": _string(row.get("pre_replay_score")),
                     "evidence_status": "not_replayed",
                     "reason": _string(row.get("reason")) or "not_replayed_budget",
+                    **_candidate_sleeve_goal_proof_handoff_fields(
+                        selection=selection,
+                        spec=spec,
+                        scorecard={},
+                        evidence=None,
+                        selected_for_replay=False,
+                    ),
                     "failure_reasons": ["not_replayed_budget"],
                 }
             )
@@ -5989,6 +6126,16 @@ def _candidate_selection_for_direct_replay(
                 "execution_signature": _candidate_spec_execution_signature(spec),
                 "duplicate_of_candidate_spec_id": None,
                 "pre_replay_score": str(_pre_replay_candidate_score(spec)),
+                "paper_contract_prior_score": str(_paper_mechanism_prior_score(spec)),
+                "paper_mechanism_overlay_ids": sorted(
+                    _candidate_spec_mechanism_overlay_ids(spec)
+                ),
+                "paper_required_evidence_tokens": sorted(
+                    _candidate_spec_required_evidence_tokens(spec)
+                ),
+                "paper_required_evidence_count": len(
+                    _candidate_spec_required_evidence_tokens(spec)
+                ),
                 "proposal_score": proposal.get("proposal_score"),
                 "proposal_training_source": proposal.get("training_source")
                 or "direct_candidate_specs_handoff",
@@ -9586,6 +9733,38 @@ def _candidate_board_runtime_window_import_plan(
                     ],
                 }
             )
+        paper_required_evidence_tokens = _string_list_from_value(
+            row.get("paper_required_evidence_tokens")
+        )
+        paper_mechanism_overlay_ids = _string_list_from_value(
+            row.get("paper_mechanism_overlay_ids")
+        )
+        paper_contract_prior_score = _string(row.get("paper_contract_prior_score"))
+        if (
+            _boolish(row.get("paper_contract_candidate"))
+            or paper_contract_prior_score
+            or paper_required_evidence_tokens
+            or paper_mechanism_overlay_ids
+        ):
+            target.update(
+                {
+                    "replay_selection_reason": _string(
+                        row.get("replay_selection_reason")
+                    ),
+                    "paper_contract_candidate": bool(
+                        row.get("paper_contract_candidate")
+                    ),
+                    "paper_contract_selected_for_replay": bool(
+                        row.get("paper_contract_selected_for_replay")
+                    ),
+                    "paper_contract_prior_score": paper_contract_prior_score,
+                    "paper_mechanism_overlay_ids": paper_mechanism_overlay_ids,
+                    "paper_required_evidence_tokens": paper_required_evidence_tokens,
+                    "paper_required_evidence_count": _candidate_board_int_field(
+                        row, "paper_required_evidence_count"
+                    ),
+                }
+            )
         target["target_metadata"] = {
             key: value
             for key, value in target.items()
@@ -9686,6 +9865,30 @@ def _candidate_board_payload(
             )
         )
         selected_for_replay = bool(selection.get("selected_for_replay"))
+        replay_selection_reason = _string(selection.get("selection_reason")) or (
+            "not_selected_budget"
+        )
+        paper_contract_prior_score = _string(
+            selection.get("paper_contract_prior_score")
+        )
+        paper_mechanism_overlay_ids = _string_list_from_value(
+            selection.get("paper_mechanism_overlay_ids")
+        )
+        if not paper_mechanism_overlay_ids:
+            paper_mechanism_overlay_ids = mechanism_overlay_ids
+        paper_required_evidence_tokens = _string_list_from_value(
+            selection.get("paper_required_evidence_tokens")
+        )
+        paper_required_evidence_count = _candidate_board_int_field(
+            selection, "paper_required_evidence_count"
+        )
+        if paper_required_evidence_tokens and paper_required_evidence_count == 0:
+            paper_required_evidence_count = len(paper_required_evidence_tokens)
+        paper_contract_candidate = bool(
+            _decimal(paper_contract_prior_score) > 0
+            or paper_required_evidence_tokens
+            or paper_mechanism_overlay_ids
+        )
         in_best_portfolio = spec.candidate_spec_id in portfolio_sleeve_spec_ids
         blockers = _candidate_board_blockers(
             selected_for_replay=selected_for_replay,
@@ -9719,6 +9922,15 @@ def _candidate_board_payload(
                 "rank": _rank_sort_value(proposal.get("rank")),
                 "proposal_score": str(proposal.get("proposal_score") or ""),
                 "selected_for_replay": selected_for_replay,
+                "replay_selection_reason": replay_selection_reason,
+                "paper_contract_candidate": paper_contract_candidate,
+                "paper_contract_selected_for_replay": bool(
+                    selected_for_replay and paper_contract_candidate
+                ),
+                "paper_contract_prior_score": paper_contract_prior_score,
+                "paper_mechanism_overlay_ids": paper_mechanism_overlay_ids,
+                "paper_required_evidence_tokens": paper_required_evidence_tokens,
+                "paper_required_evidence_count": paper_required_evidence_count,
                 "has_replay_evidence": evidence is not None,
                 "in_best_portfolio": in_best_portfolio,
                 "dataset_snapshot_id": evidence.dataset_snapshot_id
