@@ -238,6 +238,15 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             max_frontier_candidates_per_spec=runner._DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
             max_total_frontier_candidates=0,
             staged_train_screen_multiplier=0,
+            capture_rejected_seed_full_window_ledger=False,
+            capture_positive_rejected_full_window_ledgers=0,
+            symbol_prune_iterations=0,
+            symbol_prune_candidates=0,
+            symbol_prune_min_universe_size=0,
+            loss_repair_iterations=0,
+            loss_repair_candidates=0,
+            consistency_repair_iterations=0,
+            consistency_repair_candidates=0,
             real_replay_timeout_seconds=0,
             real_replay_shard_size=0,
             real_replay_shard_timeout_seconds=0,
@@ -9485,6 +9494,23 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     "7",
                     "--staged-train-screen-multiplier",
                     "4",
+                    "--capture-rejected-seed-full-window-ledger",
+                    "--capture-positive-rejected-full-window-ledgers",
+                    "3",
+                    "--symbol-prune-iterations",
+                    "1",
+                    "--symbol-prune-candidates",
+                    "2",
+                    "--symbol-prune-min-universe-size",
+                    "4",
+                    "--loss-repair-iterations",
+                    "1",
+                    "--loss-repair-candidates",
+                    "2",
+                    "--consistency-repair-iterations",
+                    "1",
+                    "--consistency-repair-candidates",
+                    "5",
                     "--replay-tape-path",
                     str(Path(tmpdir) / "tape.jsonl"),
                     "--replay-tape-manifest",
@@ -9512,6 +9538,15 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertEqual(parsed.max_total_frontier_candidates, 7)
         self.assertEqual(parsed.staged_train_screen_multiplier, 4)
+        self.assertTrue(parsed.capture_rejected_seed_full_window_ledger)
+        self.assertEqual(parsed.capture_positive_rejected_full_window_ledgers, 3)
+        self.assertEqual(parsed.symbol_prune_iterations, 1)
+        self.assertEqual(parsed.symbol_prune_candidates, 2)
+        self.assertEqual(parsed.symbol_prune_min_universe_size, 4)
+        self.assertEqual(parsed.loss_repair_iterations, 1)
+        self.assertEqual(parsed.loss_repair_candidates, 2)
+        self.assertEqual(parsed.consistency_repair_iterations, 1)
+        self.assertEqual(parsed.consistency_repair_candidates, 5)
         self.assertEqual(parsed.real_replay_shard_size, 0)
         self.assertEqual(parsed.real_replay_shard_timeout_seconds, 0)
         self.assertEqual(parsed.real_replay_shard_workers, 1)
@@ -10020,7 +10055,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(captured_budget, [24])
         self.assertEqual(len(result.evidence_bundles), 0)
 
-    def test_real_replay_forwards_staged_train_screen_multiplier(self) -> None:
+    def test_real_replay_forwards_frontier_repair_and_proof_capture_controls(
+        self,
+    ) -> None:
         with TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "epoch"
             result_path = output_dir / "result.json"
@@ -10039,12 +10076,44 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 ]
             }
             captured_multiplier: list[int] = []
+            captured_controls: list[dict[str, object]] = []
 
             def fake_run(
                 factory_args: Namespace, *, source_specs: object
             ) -> dict[str, object]:
                 captured_multiplier.append(
                     int(factory_args.staged_train_screen_multiplier)
+                )
+                captured_controls.append(
+                    {
+                        "capture_rejected_seed_full_window_ledger": bool(
+                            factory_args.capture_rejected_seed_full_window_ledger
+                        ),
+                        "capture_positive_rejected_full_window_ledgers": int(
+                            factory_args.capture_positive_rejected_full_window_ledgers
+                        ),
+                        "symbol_prune_iterations": int(
+                            factory_args.symbol_prune_iterations
+                        ),
+                        "symbol_prune_candidates": int(
+                            factory_args.symbol_prune_candidates
+                        ),
+                        "symbol_prune_min_universe_size": int(
+                            factory_args.symbol_prune_min_universe_size
+                        ),
+                        "loss_repair_iterations": int(
+                            factory_args.loss_repair_iterations
+                        ),
+                        "loss_repair_candidates": int(
+                            factory_args.loss_repair_candidates
+                        ),
+                        "consistency_repair_iterations": int(
+                            factory_args.consistency_repair_iterations
+                        ),
+                        "consistency_repair_candidates": int(
+                            factory_args.consistency_repair_candidates
+                        ),
+                    }
                 )
                 return factory_payload
 
@@ -10063,6 +10132,15 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 )
                 args = self._args(output_dir)
                 args.staged_train_screen_multiplier = 3
+                args.capture_rejected_seed_full_window_ledger = True
+                args.capture_positive_rejected_full_window_ledgers = 2
+                args.symbol_prune_iterations = 1
+                args.symbol_prune_candidates = 2
+                args.symbol_prune_min_universe_size = 4
+                args.loss_repair_iterations = 1
+                args.loss_repair_candidates = 1
+                args.consistency_repair_iterations = 1
+                args.consistency_repair_candidates = 2
                 result = runner._run_real_replay(
                     args,
                     output_dir=output_dir,
@@ -10070,6 +10148,22 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 )
 
         self.assertEqual(captured_multiplier, [3])
+        self.assertEqual(
+            captured_controls,
+            [
+                {
+                    "capture_rejected_seed_full_window_ledger": True,
+                    "capture_positive_rejected_full_window_ledgers": 2,
+                    "symbol_prune_iterations": 1,
+                    "symbol_prune_candidates": 2,
+                    "symbol_prune_min_universe_size": 4,
+                    "loss_repair_iterations": 1,
+                    "loss_repair_candidates": 1,
+                    "consistency_repair_iterations": 1,
+                    "consistency_repair_candidates": 2,
+                }
+            ],
+        )
         self.assertEqual(len(result.evidence_bundles), 0)
 
     def test_program_replay_budget_supplies_staged_train_screen_multiplier(
@@ -10077,15 +10171,34 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
     ) -> None:
         args = self._args(Path("/tmp/epoch"))
         program = runner._load_epoch_program(args)
+        controls = runner._resolved_real_replay_frontier_controls(args, program)
 
         self.assertEqual(
             runner._resolved_staged_train_screen_multiplier(args, program),
             3,
         )
+        self.assertEqual(controls["symbol_prune_iterations"], 1)
+        self.assertEqual(controls["symbol_prune_candidates"], 2)
+        self.assertEqual(controls["symbol_prune_min_universe_size"], 5)
+        self.assertEqual(controls["loss_repair_iterations"], 1)
+        self.assertEqual(controls["loss_repair_candidates"], 1)
+        self.assertEqual(controls["consistency_repair_iterations"], 1)
+        self.assertEqual(controls["consistency_repair_candidates"], 2)
+        self.assertFalse(controls["capture_rejected_seed_full_window_ledger"])
+        self.assertEqual(controls["capture_positive_rejected_full_window_ledgers"], 0)
         args.staged_train_screen_multiplier = 4
+        args.symbol_prune_candidates = 5
+        args.capture_positive_rejected_full_window_ledgers = 6
+        override_controls = runner._resolved_real_replay_frontier_controls(
+            args, program
+        )
         self.assertEqual(
             runner._resolved_staged_train_screen_multiplier(args, program),
             4,
+        )
+        self.assertEqual(override_controls["symbol_prune_candidates"], 5)
+        self.assertEqual(
+            override_controls["capture_positive_rejected_full_window_ledgers"], 6
         )
 
     def test_sharded_real_replay_continues_after_candidate_timeout(self) -> None:

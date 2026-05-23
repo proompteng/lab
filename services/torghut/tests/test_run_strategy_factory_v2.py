@@ -227,6 +227,24 @@ class TestRunStrategyFactoryV2(TestCase):
                     str(seed_dir / "tape.jsonl"),
                     "--replay-tape-manifest",
                     str(seed_dir / "tape.manifest.json"),
+                    "--staged-train-screen-multiplier",
+                    "4",
+                    "--capture-positive-rejected-full-window-ledgers",
+                    "2",
+                    "--symbol-prune-iterations",
+                    "1",
+                    "--symbol-prune-candidates",
+                    "3",
+                    "--symbol-prune-min-universe-size",
+                    "5",
+                    "--loss-repair-iterations",
+                    "1",
+                    "--loss-repair-candidates",
+                    "2",
+                    "--consistency-repair-iterations",
+                    "1",
+                    "--consistency-repair-candidates",
+                    "4",
                     "--no-persist-results",
                 ],
             ):
@@ -247,6 +265,15 @@ class TestRunStrategyFactoryV2(TestCase):
         self.assertTrue(parsed.prefetch_full_window_rows)
         self.assertEqual(parsed.replay_tape_path, seed_dir / "tape.jsonl")
         self.assertEqual(parsed.replay_tape_manifest, seed_dir / "tape.manifest.json")
+        self.assertEqual(parsed.staged_train_screen_multiplier, 4)
+        self.assertEqual(parsed.capture_positive_rejected_full_window_ledgers, 2)
+        self.assertEqual(parsed.symbol_prune_iterations, 1)
+        self.assertEqual(parsed.symbol_prune_candidates, 3)
+        self.assertEqual(parsed.symbol_prune_min_universe_size, 5)
+        self.assertEqual(parsed.loss_repair_iterations, 1)
+        self.assertEqual(parsed.loss_repair_candidates, 2)
+        self.assertEqual(parsed.consistency_repair_iterations, 1)
+        self.assertEqual(parsed.consistency_repair_candidates, 4)
         self.assertFalse(parsed.persist_results)
         self.assertEqual(runner._list_of_strings("not-a-list"), [])
         self.assertEqual(
@@ -293,6 +320,44 @@ class TestRunStrategyFactoryV2(TestCase):
 
         self.assertEqual(parsed.clickhouse_http_url, "http://127.0.0.1:8123")
         self.assertEqual(parsed.clickhouse_username, "reader")
+
+    def test_frontier_args_forwards_repair_and_proof_capture_controls(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            args = self._args(
+                output_dir=root / "out",
+                strategy_configmap=root / "strategy-configmap.yaml",
+                family_template_dir=root / "families",
+                seed_sweep_dir=root / "seed",
+            )
+            args.staged_train_screen_multiplier = 5
+            args.capture_rejected_seed_full_window_ledger = True
+            args.capture_positive_rejected_full_window_ledgers = 3
+            args.symbol_prune_iterations = 1
+            args.symbol_prune_candidates = 2
+            args.symbol_prune_min_universe_size = 4
+            args.loss_repair_iterations = 1
+            args.loss_repair_candidates = 2
+            args.consistency_repair_iterations = 1
+            args.consistency_repair_candidates = 3
+
+            frontier_args = runner._frontier_args(
+                args=args,
+                strategy_configmap=args.strategy_configmap,
+                sweep_config=root / "compiled-sweep.yaml",
+                json_output=root / "result.json",
+            )
+
+        self.assertEqual(frontier_args.staged_train_screen_multiplier, 5)
+        self.assertTrue(frontier_args.capture_rejected_seed_full_window_ledger)
+        self.assertEqual(frontier_args.capture_positive_rejected_full_window_ledgers, 3)
+        self.assertEqual(frontier_args.symbol_prune_iterations, 1)
+        self.assertEqual(frontier_args.symbol_prune_candidates, 2)
+        self.assertEqual(frontier_args.symbol_prune_min_universe_size, 4)
+        self.assertEqual(frontier_args.loss_repair_iterations, 1)
+        self.assertEqual(frontier_args.loss_repair_candidates, 2)
+        self.assertEqual(frontier_args.consistency_repair_iterations, 1)
+        self.assertEqual(frontier_args.consistency_repair_candidates, 3)
 
     def test_frontier_args_forwards_replay_tape_paths(self) -> None:
         with TemporaryDirectory() as tmpdir:
