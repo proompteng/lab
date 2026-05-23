@@ -119,6 +119,7 @@ class StrategyObjective:
     require_every_day_active: bool
     min_regime_slice_pass_rate: Decimal
     stop_when_objective_met: bool
+    min_observed_trading_days: int = 0
     min_daily_net_pnl: Decimal = Decimal('0')
     min_profit_factor: Decimal = Decimal('1.50')
     max_gross_exposure_pct_equity: Decimal = Decimal('999999999')
@@ -148,6 +149,7 @@ class StrategyObjective:
             'require_every_day_active': self.require_every_day_active,
             'min_regime_slice_pass_rate': str(self.min_regime_slice_pass_rate),
             'stop_when_objective_met': self.stop_when_objective_met,
+            'min_observed_trading_days': self.min_observed_trading_days,
             'max_gross_exposure_pct_equity': str(self.max_gross_exposure_pct_equity),
             'min_cash': str(self.min_cash),
             'default_start_equity': str(self.default_start_equity),
@@ -518,6 +520,10 @@ def load_strategy_autoresearch_program(
             default='0.35',
         ),
         stop_when_objective_met=bool(objective_payload.get('stop_when_objective_met', False)),
+        min_observed_trading_days=max(
+            0,
+            int(objective_payload.get('min_observed_trading_days', 0)),
+        ),
         max_gross_exposure_pct_equity=_coerce_decimal(
             objective_payload.get('max_gross_exposure_pct_equity'),
             default='999999999',
@@ -993,6 +999,8 @@ def candidate_meets_objective(
     min_cash = _coerce_decimal(scorecard.get('min_cash') or full_window.get('min_cash'), default='0')
     trading_day_count = int(full_window.get('trading_day_count') or 0)
     active_days = int(full_window.get('active_days') or 0)
+    if objective.min_observed_trading_days > 0 and trading_day_count < objective.min_observed_trading_days:
+        return False
     start_equity = _objective_start_equity(scorecard, full_window, objective)
     total_net_pnl = _objective_total_net_pnl(
         scorecard=scorecard,
