@@ -6985,6 +6985,15 @@ def _runtime_report_int(value: Any, *, default: int = 0) -> int:
         return default
 
 
+_EXACT_REPLAY_LEDGER_ARTIFACT_KIND = "exact_replay_ledger"
+_EXACT_REPLAY_LEDGER_SCHEMA_VERSIONS = frozenset(
+    {
+        "torghut.exact_replay_ledger.rows.v1",
+        "torghut.exact_replay_ledger.v1",
+    }
+)
+
+
 def _runtime_report_source_markers(report: Mapping[str, Any]) -> list[str]:
     return sorted(set(_string_list_from_value(report.get("source_markers"))))
 
@@ -7029,19 +7038,25 @@ def _runtime_closure_exact_replay_ledger_update(
     if not artifact_ref:
         return {}
     ledger = _load_json_mapping_artifact(artifact_ref)
-    raw_rows = ledger.get("runtime_ledger_rows")
-    row_count = _runtime_report_int(
-        ledger.get("runtime_ledger_artifact_row_count")
-        or ledger.get("exact_replay_ledger_artifact_row_count")
-        or ledger.get("row_count")
-        or (len(raw_rows) if isinstance(raw_rows, list) else 0)
+    if _string(ledger.get("artifact_kind")) != _EXACT_REPLAY_LEDGER_ARTIFACT_KIND:
+        return {}
+    schema_version = _string(
+        ledger.get("schema_version")
+        or ledger.get("ledger_schema_version")
+        or ledger.get("runtime_ledger_schema_version")
     )
+    if schema_version not in _EXACT_REPLAY_LEDGER_SCHEMA_VERSIONS:
+        return {}
+    raw_rows = ledger.get("runtime_ledger_rows")
+    if not isinstance(raw_rows, list) or not raw_rows:
+        return {}
+    if not all(isinstance(row, Mapping) for row in raw_rows):
+        return {}
+    row_count = len(raw_rows)
     fill_count = _runtime_report_int(
         ledger.get("runtime_ledger_artifact_fill_count")
         or ledger.get("exact_replay_ledger_artifact_fill_count")
         or ledger.get("fill_row_count")
-        or ledger.get("filled_count")
-        or _mapping(ledger.get("summary")).get("filled_count")
     )
     return {
         "exact_replay_ledger_artifact_ref": artifact_ref,
