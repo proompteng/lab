@@ -89,6 +89,11 @@ def apply_replay_ledger_remediation_guidance(
             actions.append("exposure")
 
     if _WINDOW_BLOCKER in blockers:
+        _require_min_window_weekday_count(
+            payload=payload,
+            policy=policy,
+            parameter_changes=parameter_changes,
+        )
         actions.append("window")
 
     if actions:
@@ -188,6 +193,7 @@ def _policy_from_report(remediation_report: Mapping[str, Any]) -> dict[str, str]
         "max_gross_exposure_pct_equity",
         "target_net_pnl_per_day",
         "min_avg_filled_notional_per_day",
+        "min_window_weekday_count",
         "start_equity",
     ):
         value = _string(adjustments.get(key)) or _string(metric_snapshot.get(key))
@@ -357,6 +363,39 @@ def _tighten_exposure_caps(
         payload["parameters"] = parameters
         payload["strategy_overrides"] = strategy_overrides
     return changed
+
+
+def _require_min_window_weekday_count(
+    *,
+    payload: dict[str, Any],
+    policy: Mapping[str, str],
+    parameter_changes: list[dict[str, str]],
+) -> bool:
+    threshold = _positive_int(policy.get("min_window_weekday_count"))
+    if threshold is None:
+        return False
+    consistency = _mapping(payload.get("consistency_constraints"))
+    before = _string(consistency.get("min_window_weekday_count"))
+    before_int = _positive_int(before) or 0
+    if before_int >= threshold:
+        return False
+    consistency["min_window_weekday_count"] = threshold
+    payload["consistency_constraints"] = consistency
+    parameter_changes.append(
+        {
+            "key": "consistency_constraints.min_window_weekday_count",
+            "before": before,
+            "after": str(threshold),
+        }
+    )
+    return True
+
+
+def _positive_int(value: object) -> int | None:
+    parsed = _decimal(value)
+    if parsed is None or parsed <= 0:
+        return None
+    return _ceil_to_int(parsed)
 
 
 def _cap_grid(

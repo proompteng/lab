@@ -1233,6 +1233,42 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(summary["active_days"], 3)
         self.assertEqual(penalties, Decimal("0"))
 
+    def test_consistency_penalty_penalizes_short_policy_window(self) -> None:
+        penalties, summary = frontier._consistency_penalty(
+            full_window_payload=self._payload(
+                start_date="2026-04-01",
+                end_date="2026-04-03",
+                daily_net={
+                    "2026-04-01": "20",
+                    "2026-04-02": "30",
+                    "2026-04-03": "40",
+                },
+                decision_count=3,
+                filled_count=3,
+                wins=3,
+                losses=0,
+            ),
+            policy=frontier.FullWindowConsistencyPolicy(
+                target_net_per_day=Decimal("0"),
+                min_daily_net_pnl=Decimal("-1000"),
+                min_active_days=0,
+                min_active_ratio=Decimal("0"),
+                min_positive_days=0,
+                max_worst_day_loss=Decimal("1000"),
+                max_negative_days=3,
+                max_drawdown=Decimal("1000"),
+                max_best_day_share_of_total_pnl=Decimal("1"),
+                min_avg_filled_notional_per_day=Decimal("0"),
+                min_avg_filled_notional_per_active_day=Decimal("0"),
+                require_every_day_active=False,
+                min_window_weekday_count=5,
+            ),
+        )
+
+        self.assertEqual(summary["trading_day_count"], 3)
+        self.assertEqual(summary["min_window_weekday_count_required"], 5)
+        self.assertGreaterEqual(penalties, Decimal("2000"))
+
     def test_objective_veto_policy_caps_min_active_day_ratio_at_one(self) -> None:
         policy = frontier._objective_veto_policy(
             consistency_policy=frontier.FullWindowConsistencyPolicy(

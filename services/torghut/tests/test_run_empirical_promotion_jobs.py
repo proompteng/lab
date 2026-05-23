@@ -876,6 +876,60 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertEqual(len(targets), 1)
         self.assertEqual(targets[0].candidate_id, "cand-explicit")
 
+    def test_runtime_window_targets_from_plan_keep_same_hypothesis_candidate_lanes(
+        self,
+    ) -> None:
+        plan_path = Path(self.tmp_dir) / "candidate-board.json"
+        plan_path.write_text(
+            json.dumps(
+                {
+                    "runtime_window_import_plan": {
+                        "targets": [
+                            {
+                                "candidate_id": "cand-plan-a",
+                                "hypothesis_id": "H-MICRO-01",
+                                "strategy_family": "microstructure_breakout",
+                                "strategy_name": "microbar-volume-continuation-long-top2-chip-v1",
+                            },
+                            {
+                                "candidate_id": "cand-plan-b",
+                                "hypothesis_id": "H-MICRO-01",
+                                "strategy_family": "microstructure_breakout",
+                                "strategy_name": "microbar-volume-continuation-long-top2-chip-v1",
+                            },
+                        ],
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        args = SimpleNamespace(
+            runtime_window_target=[],
+            runtime_window_target_plan_ref=[str(plan_path)],
+            runtime_window_targets_from_registry=False,
+            runtime_window_hypothesis_id="",
+            runtime_window_candidate_id="",
+            runtime_window_observed_stage="paper",
+            runtime_window_strategy_family="",
+            runtime_window_source_dsn_env="SIM_DB_DSN",
+            runtime_window_strategy_name="",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_dataset_snapshot_ref="",
+            runtime_window_source_manifest_ref="",
+            runtime_window_source_kind="paper_runtime_observed",
+        )
+
+        targets = renewal._runtime_window_targets(args)
+
+        self.assertEqual(
+            [target.candidate_id for target in targets],
+            ["cand-plan-a", "cand-plan-b"],
+        )
+        self.assertEqual(
+            [target.hypothesis_id for target in targets],
+            ["H-MICRO-01", "H-MICRO-01"],
+        )
+
     def test_runtime_window_targets_from_registry_imports_all_hypotheses(
         self,
     ) -> None:
@@ -1192,6 +1246,108 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertEqual(metadata["evidence_collection_stage"], "paper")
         self.assertFalse(metadata["promotion_allowed"])
         self.assertFalse(metadata["final_promotion_authorized"])
+
+    def test_runtime_window_import_runs_same_hypothesis_plan_candidate_lanes(
+        self,
+    ) -> None:
+        manifest_path = self.tmp_dir / "empirical-promotion-manifest.yaml"
+        manifest_path.write_text("run_id: renew-1\n", encoding="utf-8")
+        first_path = self.tmp_dir / "h-micro-first.json"
+        first_path.write_text(
+            json.dumps(
+                {
+                    "candidate_id": "cand-plan-a",
+                    "dataset_snapshot_ref": "snapshot-plan-a",
+                }
+            ),
+            encoding="utf-8",
+        )
+        second_path = self.tmp_dir / "h-micro-second.json"
+        second_path.write_text(
+            json.dumps(
+                {
+                    "candidate_id": "cand-plan-b",
+                    "dataset_snapshot_ref": "snapshot-plan-b",
+                }
+            ),
+            encoding="utf-8",
+        )
+        plan_path = self.tmp_dir / "candidate-board.json"
+        plan_path.write_text(
+            json.dumps(
+                {
+                    "runtime_window_import_plan": {
+                        "targets": [
+                            {
+                                "candidate_id": "cand-plan-a",
+                                "hypothesis_id": "H-MICRO-01",
+                                "observed_stage": "paper",
+                                "strategy_family": "microstructure_breakout",
+                                "strategy_name": "microbar-volume-continuation-long-top2-chip-v1",
+                                "source_manifest_ref": str(first_path),
+                            },
+                            {
+                                "candidate_id": "cand-plan-b",
+                                "hypothesis_id": "H-MICRO-01",
+                                "observed_stage": "paper",
+                                "strategy_family": "microstructure_breakout",
+                                "strategy_name": "microbar-volume-continuation-long-top2-chip-v1",
+                                "source_manifest_ref": str(second_path),
+                            },
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        completed = SimpleNamespace(
+            stdout=json.dumps({"inserted_windows": 1, "promotion_decision": "blocked"})
+        )
+        args = SimpleNamespace(
+            runtime_window_import=True,
+            runtime_window_target=[],
+            runtime_window_target_plan_ref=[str(plan_path)],
+            runtime_window_targets_from_latest_autoresearch=False,
+            runtime_window_targets_from_registry=False,
+            runtime_window_hypothesis_id="",
+            runtime_window_candidate_id="",
+            runtime_window_observed_stage="paper",
+            runtime_window_strategy_family="",
+            runtime_window_source_dsn_env="SIM_DB_DSN",
+            runtime_window_strategy_name="",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_start="2026-05-18T13:30:00Z",
+            runtime_window_end="2026-05-18T20:00:00Z",
+            runtime_window_dataset_snapshot_ref="",
+            runtime_window_bucket_minutes=30,
+            runtime_window_sample_minutes=5,
+            runtime_window_source_manifest_ref="",
+            runtime_window_source_kind="paper_runtime_observed",
+        )
+
+        with patch.object(
+            renewal.subprocess, "run", return_value=completed
+        ) as run_mock:
+            payload = renewal._run_runtime_window_import(
+                args=args,
+                manifest={},
+                run_id="renew-1",
+                manifest_path=manifest_path,
+                now=datetime(2026, 5, 18, 21, 23, tzinfo=timezone.utc),
+            )
+
+        self.assertIsNotNone(payload)
+        assert payload is not None
+        self.assertEqual(payload["target_count"], 2)
+        self.assertEqual(
+            [item["candidate_id"] for item in payload["imports"]],
+            ["cand-plan-a", "cand-plan-b"],
+        )
+        commands = [call.args[0] for call in run_mock.call_args_list]
+        self.assertEqual(len(commands), 2)
+        joined = "\n".join(" ".join(command) for command in commands)
+        self.assertIn("cand-plan-a", joined)
+        self.assertIn("cand-plan-b", joined)
 
     def test_runtime_window_import_runs_multiple_observed_paper_imports(self) -> None:
         manifest_path = self.tmp_dir / "empirical-promotion-manifest.yaml"

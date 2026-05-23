@@ -114,13 +114,33 @@ class TestReplayLedgerGuidedSearch(TestCase):
                     "window_weekday_count_below_min_observed_trading_days"
                 ],
                 "runtime_ledger_blockers": [],
-                "metric_snapshot": {"window_weekday_count": "2"},
+                "recommended_objective_adjustments": {"min_window_weekday_count": "20"},
+                "metric_snapshot": {
+                    "min_window_weekday_count": "20",
+                    "window_weekday_count": "2",
+                },
             },
         )
 
         self.assertTrue(result.applied)
         self.assertEqual(result.applied_actions, ("window",))
         self.assertEqual(
+            result.sweep_config["consistency_constraints"]["min_window_weekday_count"],
+            20,
+        )
+        self.assertEqual(
             result.sweep_config["metadata"]["replay_ledger_guided_search"]["blockers"],
             ["window_weekday_count_below_min_observed_trading_days"],
+        )
+        self.assertEqual(
+            result.sweep_config["metadata"]["replay_ledger_guided_search"][
+                "parameter_changes"
+            ],
+            [
+                {
+                    "key": "consistency_constraints.min_window_weekday_count",
+                    "before": "",
+                    "after": "20",
+                }
+            ],
         )
