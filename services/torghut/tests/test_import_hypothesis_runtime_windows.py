@@ -23,6 +23,7 @@ from scripts.import_hypothesis_runtime_windows import (
     _parse_target_metadata,
     _query_timestamps,
     _runtime_ledger_event_type,
+    _runtime_ledger_profit_proof_present,
     _runtime_ledger_tca_rows_from_artifacts,
     _strategy_name_candidates,
     main,
@@ -148,6 +149,41 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             args.target_metadata_json, '{"paper_probation_authorized":true}'
         )
         self.assertEqual(args.json, True)
+
+    def test_runtime_ledger_profit_proof_rejects_malformed_bucket_payload(
+        self,
+    ) -> None:
+        self.assertEqual(
+            _runtime_ledger_profit_proof_present(
+                [
+                    {
+                        "post_cost_expectancy_basis": POST_COST_BASIS_RUNTIME_LEDGER,
+                        "runtime_ledger_bucket": "not-a-bucket",
+                    }
+                ]
+            ),
+            False,
+        )
+
+    def test_runtime_ledger_profit_proof_rejects_incomplete_bucket_payload(
+        self,
+    ) -> None:
+        self.assertEqual(
+            _runtime_ledger_profit_proof_present(
+                [
+                    {
+                        "post_cost_expectancy_basis": POST_COST_BASIS_RUNTIME_LEDGER,
+                        "runtime_ledger_bucket": {
+                            "fill_count": 0,
+                            "filled_notional": "0",
+                            "post_cost_expectancy_bps": None,
+                            "blockers": ["runtime_ledger_filled_notional_zero"],
+                        },
+                    }
+                ]
+            ),
+            False,
+        )
 
     def test_parse_target_metadata_requires_json_mapping(self) -> None:
         self.assertEqual(_parse_target_metadata(""), {})
@@ -1062,6 +1098,13 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             runtime_payload["runtime_ledger_artifact_refs"], [str(artifact_path)]
         )
         self.assertEqual(runtime_payload["runtime_ledger_artifact_row_count"], 6)
+        self.assertEqual(runtime_payload["runtime_ledger_artifact_fill_count"], 2)
+        self.assertEqual(
+            runtime_payload["authority_reason"], "runtime_ledger_profit_proof"
+        )
+        self.assertEqual(runtime_payload["promotion_authority"], "runtime_ledger")
+        self.assertEqual(runtime_payload["runtime_ledger_profit_proof_present"], True)
+        self.assertEqual(runtime_payload["authoritative"], True)
 
     def test_main_attaches_delay_adjusted_depth_report_to_runtime_payload(
         self,
@@ -1160,6 +1203,13 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             "2026-03-06T15:20:00Z",
         )
         self.assertIn(str(report_path), runtime_payload["artifact_refs"])
+        self.assertEqual(runtime_payload["authoritative"], False)
+        self.assertEqual(
+            runtime_payload["authority_reason"],
+            "simulation_runtime_without_runtime_ledger_profit_proof",
+        )
+        self.assertEqual(runtime_payload["promotion_authority"], "blocked")
+        self.assertEqual(runtime_payload["runtime_ledger_profit_proof_present"], False)
 
     def test_main_quarantines_report_runtime_pnl_when_tca_rows_are_empty(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -1262,3 +1312,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             runtime_payload["report_post_cost_expectancy_basis"],
             POST_COST_BASIS_SIMULATION_REPORT,
         )
+        self.assertEqual(runtime_payload["authoritative"], False)
+        self.assertEqual(
+            runtime_payload["authority_reason"],
+            "simulation_runtime_without_runtime_ledger_profit_proof",
+        )
+        self.assertEqual(runtime_payload["promotion_authority"], "blocked")
+        self.assertEqual(runtime_payload["runtime_ledger_profit_proof_present"], False)

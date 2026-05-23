@@ -25,6 +25,7 @@ from app.trading.autonomy.lane import (
     _resolve_paper_patch_path,
     _resolve_gate_forecast_metrics,
     _resolve_gate_fragility_inputs,
+    _resolve_hypothesis_window_evidence,
     run_autonomous_lane,
     upsert_autonomy_no_signal_run,
 )
@@ -114,6 +115,86 @@ class TestAutonomousLane(TestCase):
         train.to_csv(train_path)
         test.to_csv(test_path)
         return train_path, test_path
+
+    def test_runtime_observation_evidence_blocks_simulation_without_ledger_profit_proof(
+        self,
+    ) -> None:
+        _, _, capital_stage, qualification = _resolve_hypothesis_window_evidence(
+            promotion_target="paper",
+            runtime_observation_payload={
+                "authoritative": True,
+                "observed_stage": "paper",
+                "evidence_provenance": "paper_runtime_observed",
+                "source_kind": "simulation_paper_runtime",
+            },
+            effective_promotion_allowed=True,
+            order_count=24,
+            min_sample_count_for_scale_up=20,
+        )
+
+        self.assertEqual(capital_stage, "shadow")
+        self.assertEqual(
+            qualification["qualification_reason"],
+            "simulation_runtime_without_runtime_ledger_profit_proof",
+        )
+        self.assertEqual(
+            qualification["runtime_observation_has_runtime_ledger_profit_proof"],
+            False,
+        )
+        self.assertFalse(qualification["qualified_runtime_observation"])
+
+    def test_runtime_observation_evidence_accepts_simulation_with_ledger_profit_proof(
+        self,
+    ) -> None:
+        provenance, maturity, capital_stage, qualification = (
+            _resolve_hypothesis_window_evidence(
+                promotion_target="paper",
+                runtime_observation_payload={
+                    "authoritative": True,
+                    "observed_stage": "paper",
+                    "evidence_provenance": "paper_runtime_observed",
+                    "source_kind": "simulation_exact_replay_runtime_ledger",
+                    "runtime_ledger_artifact_row_count": 8,
+                    "runtime_ledger_artifact_fill_count": 2,
+                },
+                effective_promotion_allowed=True,
+                order_count=24,
+                min_sample_count_for_scale_up=20,
+            )
+        )
+
+        self.assertEqual(provenance, "paper_runtime_observed")
+        self.assertEqual(maturity, "empirically_validated")
+        self.assertEqual(capital_stage, "shadow")
+        self.assertEqual(
+            qualification["runtime_observation_has_runtime_ledger_profit_proof"],
+            True,
+        )
+        self.assertTrue(qualification["qualified_runtime_observation"])
+
+    def test_runtime_observation_evidence_accepts_explicit_ledger_profit_proof_flag(
+        self,
+    ) -> None:
+        provenance, _, _, qualification = _resolve_hypothesis_window_evidence(
+            promotion_target="paper",
+            runtime_observation_payload={
+                "authoritative": True,
+                "observed_stage": "paper",
+                "evidence_provenance": "paper_runtime_observed",
+                "source_kind": "simulation_exact_replay_runtime_ledger",
+                "runtime_ledger_profit_proof_present": True,
+            },
+            effective_promotion_allowed=False,
+            order_count=0,
+            min_sample_count_for_scale_up=20,
+        )
+
+        self.assertEqual(provenance, "paper_runtime_observed")
+        self.assertEqual(
+            qualification["runtime_observation_has_runtime_ledger_profit_proof"],
+            True,
+        )
+        self.assertTrue(qualification["qualified_runtime_observation"])
 
     def test_gate_forecast_metrics_fail_closed_for_non_authoritative_router_outputs(self) -> None:
         signals = [
