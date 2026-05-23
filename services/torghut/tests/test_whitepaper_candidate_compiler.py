@@ -1663,6 +1663,84 @@ class TestWhitepaperCandidateCompiler(TestCase):
             )
         )
 
+    def test_mpc_execution_claims_compile_to_dynamic_schedule_overlay(self) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-arxiv-2603.28898",
+            claims=[
+                {
+                    "claim_id": "dynamic-execution-schedule-control",
+                    "claim_type": "feature_recipe",
+                    "claim_text": (
+                        "Model-predictive execution control can adapt participation "
+                        "and urgency to liquidity forecasts, inventory path, and "
+                        "execution shortfall."
+                    ),
+                    "asset_scope": "us_equities_execution",
+                    "horizon_scope": "intraday_execution",
+                    "expected_direction": "neutral",
+                    "data_requirements": [
+                        "execution_schedule_trace",
+                        "liquidity_forecast",
+                        "inventory_path",
+                        "execution_shortfall",
+                    ],
+                    "confidence": "0.71",
+                },
+                {
+                    "claim_id": "mpc-execution-stress-required",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Dynamic execution schedules should remain validation-only "
+                        "until replay shows lower shortfall after latency, spread, "
+                        "and market-impact stress."
+                    ),
+                    "asset_scope": "us_equities_execution",
+                    "horizon_scope": "intraday_execution",
+                    "expected_direction": "neutral",
+                    "data_requirements": [
+                        "latency_stress",
+                        "market_impact_stress",
+                        "post_cost_net_pnl",
+                    ],
+                    "confidence": "0.72",
+                },
+            ],
+            relations=[
+                {
+                    "relation_id": "mpc-execution-validates-dynamic-schedule",
+                    "relation_type": "requires_validation",
+                    "source_claim_id": "mpc-execution-stress-required",
+                    "target_claim_id": "dynamic-execution-schedule-control",
+                }
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        self.assertTrue(compilation.executable_specs)
+        self.assertTrue(
+            any(
+                "mpc_dynamic_execution_schedule"
+                in spec.parameter_space.get("mechanism_overlay_ids", [])
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.hard_vetoes.get("required_execution_schedule_trace")
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract.get(
+                    "rejects_dynamic_schedule_without_shortfall_ablation"
+                )
+                for spec in compilation.executable_specs
+            )
+        )
+
     def test_deployment_consistency_claims_compile_to_semantic_parity_overlay(
         self,
     ) -> None:
