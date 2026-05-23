@@ -77,6 +77,10 @@ from scripts.search_consistent_profitability_frontier import (
     run_consistent_profitability_frontier,
 )
 from scripts.materialize_replay_tape import (
+    _DEFAULT_MAX_COVERAGE_SPREAD_BPS,
+    _DEFAULT_MAX_EXECUTABLE_GAP_SECONDS,
+    _DEFAULT_MIN_EXECUTABLE_ROWS_PER_SYMBOL_DAY,
+    _DEFAULT_MIN_QUOTE_VALID_RATIO,
     _select_effective_window as _select_effective_replay_tape_window,
 )
 
@@ -196,6 +200,44 @@ def _parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help="Optional JSON diagnostics path for replay source coverage.",
+    )
+    parser.add_argument(
+        "--min-executable-rows-per-symbol-day",
+        type=int,
+        default=int(
+            os.environ.get(
+                "TORGHUT_REPLAY_MIN_EXECUTABLE_ROWS_PER_SYMBOL_DAY",
+                str(_DEFAULT_MIN_EXECUTABLE_ROWS_PER_SYMBOL_DAY),
+            )
+        ),
+        help="Minimum executable quote-backed rows per symbol/day for complete-window selection.",
+    )
+    parser.add_argument(
+        "--min-quote-valid-ratio",
+        default=os.environ.get(
+            "TORGHUT_REPLAY_MIN_QUOTE_VALID_RATIO",
+            str(_DEFAULT_MIN_QUOTE_VALID_RATIO),
+        ),
+        help="Minimum spread-sane/executable quote ratio for complete-window selection.",
+    )
+    parser.add_argument(
+        "--max-coverage-spread-bps",
+        default=os.environ.get(
+            "TORGHUT_REPLAY_MAX_COVERAGE_SPREAD_BPS",
+            str(_DEFAULT_MAX_COVERAGE_SPREAD_BPS),
+        ),
+        help="Maximum bid/ask spread in bps for coverage rows to count as quote-valid.",
+    )
+    parser.add_argument(
+        "--max-executable-gap-seconds",
+        type=int,
+        default=int(
+            os.environ.get(
+                "TORGHUT_REPLAY_MAX_EXECUTABLE_GAP_SECONDS",
+                str(_DEFAULT_MAX_EXECUTABLE_GAP_SECONDS),
+            )
+        ),
+        help="Maximum quote-valid row gap per symbol/day for complete-window selection.",
     )
     parser.add_argument(
         "--max-frontier-runs",

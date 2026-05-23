@@ -505,6 +505,32 @@ class TestReplayTape(TestCase):
 
 
 class TestMaterializeReplayTapeCli(TestCase):
+    def _coverage_row(
+        self,
+        *,
+        raw: int,
+        executable: int,
+        microbar: int,
+        symbols: int = 1,
+        quote_valid_ratio: str = "1",
+        max_gap_seconds: int = 1,
+    ) -> dict[str, object]:
+        return {
+            "raw_signal_rows": raw,
+            "executable_signal_rows": executable,
+            "quote_sane_signal_rows": executable,
+            "spread_sane_signal_rows": executable,
+            "microbar_rows": microbar,
+            "raw_signal_symbol_count": symbols,
+            "executable_signal_symbol_count": symbols if executable > 0 else 0,
+            "microbar_symbol_count": symbols,
+            "min_executable_rows_per_symbol_day": executable,
+            "min_spread_sane_rows_per_symbol_day": executable,
+            "quote_valid_ratio": quote_valid_ratio,
+            "min_quote_valid_ratio_by_symbol_day": quote_valid_ratio,
+            "max_executable_gap_seconds": max_gap_seconds,
+        }
+
     def _signal(self, *, day: int, seq: int) -> SignalEnvelope:
         return SignalEnvelope(
             event_ts=datetime(2026, 3, day, 17, 30, seq, tzinfo=timezone.utc),
@@ -555,6 +581,10 @@ class TestMaterializeReplayTapeCli(TestCase):
         symbols = materialize_cli._parse_symbols(str(args.symbols))
         self.assertEqual(symbols, ("NVDA", "META"))
         self.assertEqual(args.clickhouse_query_timeout_seconds, 9)
+        self.assertEqual(args.min_executable_rows_per_symbol_day, 18000)
+        self.assertEqual(args.min_quote_valid_ratio, "0.90")
+        self.assertEqual(args.max_coverage_spread_bps, "50")
+        self.assertEqual(args.max_executable_gap_seconds, 120)
         self.assertEqual(
             args.coverage_diagnostic_output,
             output.with_suffix(".coverage.json"),
@@ -606,13 +636,30 @@ class TestMaterializeReplayTapeCli(TestCase):
                 "2026-03-26": {
                     "raw_signal_rows": 10,
                     "executable_signal_rows": 5,
+                    "quote_sane_signal_rows": 5,
+                    "spread_sane_signal_rows": 5,
                     "microbar_rows": 7,
                     "raw_signal_symbol_count": 2,
                     "executable_signal_symbol_count": 1,
                     "microbar_symbol_count": 2,
+                    "min_executable_rows_per_symbol_day": 5,
+                    "min_spread_sane_rows_per_symbol_day": 5,
+                    "quote_valid_ratio": "1",
+                    "min_quote_valid_ratio_by_symbol_day": "1",
+                    "max_executable_gap_seconds": 0,
                 },
             },
         )
+
+        diagnostics = materialize_cli._parse_coverage_diagnostics(
+            "2026-03-27\t100\t90\t89\t88\t95\t2\t2\t2\t44\t43\t0.9777777778\t0.95\t7\n"
+        )
+        self.assertEqual(diagnostics["2026-03-27"]["spread_sane_signal_rows"], 88)
+        self.assertEqual(
+            diagnostics["2026-03-27"]["min_quote_valid_ratio_by_symbol_day"],
+            "0.95",
+        )
+        self.assertEqual(diagnostics["2026-03-27"]["max_executable_gap_seconds"], 7)
 
     def test_fetch_coverage_diagnostics_marks_missing_source_layers(self) -> None:
         args = Namespace(
@@ -654,38 +701,18 @@ class TestMaterializeReplayTapeCli(TestCase):
                 "2026-03-31",
             ],
             "rows_by_trading_day": {
-                "2026-03-26": {
-                    "raw_signal_rows": 10,
-                    "executable_signal_rows": 10,
-                    "microbar_rows": 10,
-                    "raw_signal_symbol_count": 2,
-                    "executable_signal_symbol_count": 2,
-                    "microbar_symbol_count": 2,
-                },
-                "2026-03-27": {
-                    "raw_signal_rows": 10,
-                    "executable_signal_rows": 0,
-                    "microbar_rows": 10,
-                    "raw_signal_symbol_count": 2,
-                    "executable_signal_symbol_count": 0,
-                    "microbar_symbol_count": 2,
-                },
-                "2026-03-30": {
-                    "raw_signal_rows": 10,
-                    "executable_signal_rows": 10,
-                    "microbar_rows": 10,
-                    "raw_signal_symbol_count": 2,
-                    "executable_signal_symbol_count": 2,
-                    "microbar_symbol_count": 2,
-                },
-                "2026-03-31": {
-                    "raw_signal_rows": 11,
-                    "executable_signal_rows": 11,
-                    "microbar_rows": 11,
-                    "raw_signal_symbol_count": 2,
-                    "executable_signal_symbol_count": 2,
-                    "microbar_symbol_count": 2,
-                },
+                "2026-03-26": self._coverage_row(
+                    raw=10, executable=10, microbar=10, symbols=2
+                ),
+                "2026-03-27": self._coverage_row(
+                    raw=10, executable=0, microbar=10, symbols=2
+                ),
+                "2026-03-30": self._coverage_row(
+                    raw=10, executable=10, microbar=10, symbols=2
+                ),
+                "2026-03-31": self._coverage_row(
+                    raw=11, executable=11, microbar=11, symbols=2
+                ),
             },
         }
 
@@ -694,6 +721,9 @@ class TestMaterializeReplayTapeCli(TestCase):
                 diagnostics,
                 min_days=2,
                 expected_symbol_count=2,
+                min_executable_rows_per_symbol_day=10,
+                min_quote_valid_ratio=Decimal("0.90"),
+                max_executable_gap_seconds=120,
             )
         )
 
@@ -708,6 +738,33 @@ class TestMaterializeReplayTapeCli(TestCase):
                 diagnostics,
                 min_days=3,
                 expected_symbol_count=2,
+                min_executable_rows_per_symbol_day=10,
+                min_quote_valid_ratio=Decimal("0.90"),
+                max_executable_gap_seconds=120,
+            )
+
+        stale_gap_diagnostics = {
+            "requested_trading_days": ["2026-03-30", "2026-03-31"],
+            "rows_by_trading_day": {
+                "2026-03-30": self._coverage_row(
+                    raw=10, executable=10, microbar=10, max_gap_seconds=121
+                ),
+                "2026-03-31": self._coverage_row(
+                    raw=10, executable=10, microbar=10, quote_valid_ratio="0.89"
+                ),
+            },
+        }
+        with self.assertRaisesRegex(
+            ValueError,
+            "latest_complete_replay_window_missing:min_days=1",
+        ):
+            materialize_cli._latest_complete_window(
+                stale_gap_diagnostics,
+                min_days=1,
+                expected_symbol_count=1,
+                min_executable_rows_per_symbol_day=10,
+                min_quote_valid_ratio=Decimal("0.90"),
+                max_executable_gap_seconds=120,
             )
 
     def test_main_materializes_manifest_from_replay_rows(self) -> None:
@@ -817,6 +874,10 @@ class TestMaterializeReplayTapeCli(TestCase):
                 coverage_diagnostic_output=diagnostic_output,
                 latest_complete_window_min_days=2,
                 latest_complete_window_receipt_output=receipt_output,
+                min_executable_rows_per_symbol_day=10,
+                min_quote_valid_ratio="0.90",
+                max_coverage_spread_bps="50",
+                max_executable_gap_seconds=120,
                 source_table_version=[],
                 allow_incomplete_coverage=False,
                 log_level="WARNING",
@@ -830,38 +891,16 @@ class TestMaterializeReplayTapeCli(TestCase):
                     "2026-03-31",
                 ],
                 "rows_by_trading_day": {
-                    "2026-03-26": {
-                        "raw_signal_rows": 10,
-                        "executable_signal_rows": 10,
-                        "microbar_rows": 10,
-                        "raw_signal_symbol_count": 1,
-                        "executable_signal_symbol_count": 1,
-                        "microbar_symbol_count": 1,
-                    },
-                    "2026-03-27": {
-                        "raw_signal_rows": 10,
-                        "executable_signal_rows": 0,
-                        "microbar_rows": 10,
-                        "raw_signal_symbol_count": 1,
-                        "executable_signal_symbol_count": 0,
-                        "microbar_symbol_count": 1,
-                    },
-                    "2026-03-30": {
-                        "raw_signal_rows": 10,
-                        "executable_signal_rows": 10,
-                        "microbar_rows": 10,
-                        "raw_signal_symbol_count": 1,
-                        "executable_signal_symbol_count": 1,
-                        "microbar_symbol_count": 1,
-                    },
-                    "2026-03-31": {
-                        "raw_signal_rows": 11,
-                        "executable_signal_rows": 11,
-                        "microbar_rows": 11,
-                        "raw_signal_symbol_count": 1,
-                        "executable_signal_symbol_count": 1,
-                        "microbar_symbol_count": 1,
-                    },
+                    "2026-03-26": self._coverage_row(
+                        raw=10, executable=10, microbar=10
+                    ),
+                    "2026-03-27": self._coverage_row(raw=10, executable=0, microbar=10),
+                    "2026-03-30": self._coverage_row(
+                        raw=10, executable=10, microbar=10
+                    ),
+                    "2026-03-31": self._coverage_row(
+                        raw=11, executable=11, microbar=11
+                    ),
                 },
                 "missing_executable_signal_days": ["2026-03-27"],
             }

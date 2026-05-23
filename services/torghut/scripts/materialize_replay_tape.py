@@ -23,6 +23,12 @@ import scripts.local_intraday_tsmom_replay as replay_mod
 
 logger = logging.getLogger(__name__)
 
+_REGULAR_SESSION_SECONDS = 23_400
+_DEFAULT_MIN_EXECUTABLE_ROWS_PER_SYMBOL_DAY = 18_000
+_DEFAULT_MIN_QUOTE_VALID_RATIO = Decimal("0.90")
+_DEFAULT_MAX_COVERAGE_SPREAD_BPS = Decimal("50")
+_DEFAULT_MAX_EXECUTABLE_GAP_SECONDS = 120
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -132,6 +138,53 @@ def _parse_args() -> argparse.Namespace:
         help="Optional JSON receipt path for --latest-complete-window-min-days.",
     )
     parser.add_argument(
+        "--min-executable-rows-per-symbol-day",
+        type=int,
+        default=int(
+            os.environ.get(
+                "TORGHUT_REPLAY_MIN_EXECUTABLE_ROWS_PER_SYMBOL_DAY",
+                str(_DEFAULT_MIN_EXECUTABLE_ROWS_PER_SYMBOL_DAY),
+            )
+        ),
+        help=(
+            "Minimum executable quote-backed PT1S rows required for every present "
+            "symbol/day before a day can be selected as complete."
+        ),
+    )
+    parser.add_argument(
+        "--min-quote-valid-ratio",
+        default=os.environ.get(
+            "TORGHUT_REPLAY_MIN_QUOTE_VALID_RATIO",
+            str(_DEFAULT_MIN_QUOTE_VALID_RATIO),
+        ),
+        help=(
+            "Minimum spread-sane/executable quote ratio required by the latest "
+            "complete replay-window selector."
+        ),
+    )
+    parser.add_argument(
+        "--max-coverage-spread-bps",
+        default=os.environ.get(
+            "TORGHUT_REPLAY_MAX_COVERAGE_SPREAD_BPS",
+            str(_DEFAULT_MAX_COVERAGE_SPREAD_BPS),
+        ),
+        help="Maximum bid/ask spread in bps for a coverage row to count as quote-valid.",
+    )
+    parser.add_argument(
+        "--max-executable-gap-seconds",
+        type=int,
+        default=int(
+            os.environ.get(
+                "TORGHUT_REPLAY_MAX_EXECUTABLE_GAP_SECONDS",
+                str(_DEFAULT_MAX_EXECUTABLE_GAP_SECONDS),
+            )
+        ),
+        help=(
+            "Maximum gap between executable quote-backed rows for a symbol/day. "
+            "Larger gaps are treated as stale coverage."
+        ),
+    )
+    parser.add_argument(
         "--log-level",
         default=os.environ.get("TORGHUT_REPLAY_LOG_LEVEL", "INFO"),
     )
@@ -154,6 +207,63 @@ def _parse_source_table_versions(values: list[str]) -> dict[str, str]:
             raise ValueError(f"source_table_version_invalid:{value}")
         parsed[key.strip()] = item.strip()
     return parsed
+
+
+def _executable_day_policy(args: argparse.Namespace) -> dict[str, Any]:
+    min_rows = max(
+        0,
+        int(
+            getattr(
+                args,
+                "min_executable_rows_per_symbol_day",
+                _DEFAULT_MIN_EXECUTABLE_ROWS_PER_SYMBOL_DAY,
+            )
+            or 0
+        ),
+    )
+    return {
+        "schema_version": "torghut.replay-executable-day-policy.v1",
+        "regular_session_seconds": _REGULAR_SESSION_SECONDS,
+        "min_executable_rows_per_symbol_day": min_rows,
+        "min_regular_session_density_ratio": str(
+            Decimal(min_rows) / Decimal(_REGULAR_SESSION_SECONDS)
+        ),
+        "min_quote_valid_ratio": str(
+            Decimal(
+                str(
+                    getattr(
+                        args,
+                        "min_quote_valid_ratio",
+                        str(_DEFAULT_MIN_QUOTE_VALID_RATIO),
+                    )
+                    or "0"
+                )
+            )
+        ),
+        "max_coverage_spread_bps": str(
+            Decimal(
+                str(
+                    getattr(
+                        args,
+                        "max_coverage_spread_bps",
+                        str(_DEFAULT_MAX_COVERAGE_SPREAD_BPS),
+                    )
+                    or "0"
+                )
+            )
+        ),
+        "max_executable_gap_seconds": max(
+            0,
+            int(
+                getattr(
+                    args,
+                    "max_executable_gap_seconds",
+                    _DEFAULT_MAX_EXECUTABLE_GAP_SECONDS,
+                )
+                or 0
+            ),
+        ),
+    }
 
 
 def _source_query_payload(
@@ -189,6 +299,7 @@ def _coverage_diagnostics_query(
     start_date: date,
     end_date: date,
     symbols: tuple[str, ...],
+    max_spread_bps: Decimal,
 ) -> str:
     start_ts = datetime.combine(start_date, time.min, tzinfo=timezone.utc)
     end_ts = datetime.combine(
@@ -212,24 +323,58 @@ WHERE source = 'ta'
   AND isNotNull(imbalance_bid_px)
   AND isNotNull(imbalance_ask_px)
 """.rstrip()
+    sane_quote_where = f"""
+{executable_where}
+  AND imbalance_bid_px > 0
+  AND imbalance_ask_px > 0
+  AND imbalance_ask_px >= imbalance_bid_px
+""".rstrip()
+    spread_sane_where = f"""
+{sane_quote_where}
+  AND if(
+    (imbalance_bid_px + imbalance_ask_px) <= 0,
+    1000000000,
+    abs(imbalance_ask_px - imbalance_bid_px) / ((imbalance_bid_px + imbalance_ask_px) / 2) * 10000
+  ) <= {str(max_spread_bps)}
+""".rstrip()
     return f"""
 SELECT
   toString(trading_day) AS trading_day,
   toString(sum(raw_signal_rows)) AS raw_signal_rows,
   toString(sum(executable_signal_rows)) AS executable_signal_rows,
+  toString(sum(quote_sane_signal_rows)) AS quote_sane_signal_rows,
+  toString(sum(spread_sane_signal_rows)) AS spread_sane_signal_rows,
   toString(sum(microbar_rows)) AS microbar_rows,
-  toString(uniqExactIf(symbol, source_kind = 'raw_signal')) AS raw_signal_symbol_count,
-  toString(uniqExactIf(symbol, source_kind = 'executable_signal')) AS executable_signal_symbol_count,
-  toString(uniqExactIf(symbol, source_kind = 'microbar')) AS microbar_symbol_count
+  toString(countIf(raw_signal_rows > 0)) AS raw_signal_symbol_count,
+  toString(countIf(executable_signal_rows > 0)) AS executable_signal_symbol_count,
+  toString(countIf(microbar_rows > 0)) AS microbar_symbol_count,
+  toString(minIf(executable_signal_rows, raw_signal_rows > 0)) AS min_executable_rows_per_symbol_day,
+  toString(minIf(spread_sane_signal_rows, raw_signal_rows > 0)) AS min_spread_sane_rows_per_symbol_day,
+  toString(if(sum(executable_signal_rows) = 0, 0, sum(spread_sane_signal_rows) / sum(executable_signal_rows))) AS quote_valid_ratio,
+  toString(minIf(if(executable_signal_rows = 0, 0, spread_sane_signal_rows / executable_signal_rows), raw_signal_rows > 0)) AS min_quote_valid_ratio_by_symbol_day,
+  toString(max(max_executable_gap_seconds)) AS max_executable_gap_seconds
 FROM
 (
   SELECT
+    trading_day,
+    symbol,
+    sum(raw_signal_rows) AS raw_signal_rows,
+    sum(executable_signal_rows) AS executable_signal_rows,
+    sum(quote_sane_signal_rows) AS quote_sane_signal_rows,
+    sum(spread_sane_signal_rows) AS spread_sane_signal_rows,
+    sum(microbar_rows) AS microbar_rows,
+    max(max_executable_gap_seconds) AS max_executable_gap_seconds
+  FROM
+  (
+    SELECT
     toDate(event_ts, 'UTC') AS trading_day,
     symbol,
-    'raw_signal' AS source_kind,
     count() AS raw_signal_rows,
     0 AS executable_signal_rows,
-    0 AS microbar_rows
+    0 AS quote_sane_signal_rows,
+    0 AS spread_sane_signal_rows,
+    0 AS microbar_rows,
+    0 AS max_executable_gap_seconds
   FROM torghut.ta_signals
   {shared_where}
   GROUP BY trading_day, symbol
@@ -237,10 +382,12 @@ FROM
   SELECT
     toDate(event_ts, 'UTC') AS trading_day,
     symbol,
-    'executable_signal' AS source_kind,
     0 AS raw_signal_rows,
     count() AS executable_signal_rows,
-    0 AS microbar_rows
+    0 AS quote_sane_signal_rows,
+    0 AS spread_sane_signal_rows,
+    0 AS microbar_rows,
+    0 AS max_executable_gap_seconds
   FROM torghut.ta_signals
   {executable_where}
   GROUP BY trading_day, symbol
@@ -248,12 +395,73 @@ FROM
   SELECT
     toDate(event_ts, 'UTC') AS trading_day,
     symbol,
-    'microbar' AS source_kind,
     0 AS raw_signal_rows,
     0 AS executable_signal_rows,
-    count() AS microbar_rows
+    count() AS quote_sane_signal_rows,
+    0 AS spread_sane_signal_rows,
+    0 AS microbar_rows,
+    0 AS max_executable_gap_seconds
+  FROM torghut.ta_signals
+  {sane_quote_where}
+  GROUP BY trading_day, symbol
+  UNION ALL
+  SELECT
+    toDate(event_ts, 'UTC') AS trading_day,
+    symbol,
+    0 AS raw_signal_rows,
+    0 AS executable_signal_rows,
+    0 AS quote_sane_signal_rows,
+    count() AS spread_sane_signal_rows,
+    0 AS microbar_rows,
+    0 AS max_executable_gap_seconds
+  FROM torghut.ta_signals
+  {spread_sane_where}
+  GROUP BY trading_day, symbol
+  UNION ALL
+  SELECT
+    trading_day,
+    symbol,
+    0 AS raw_signal_rows,
+    0 AS executable_signal_rows,
+    0 AS quote_sane_signal_rows,
+    0 AS spread_sane_signal_rows,
+    0 AS microbar_rows,
+    max(gap_seconds) AS max_executable_gap_seconds
+  FROM
+  (
+    SELECT
+      toDate(event_ts, 'UTC') AS trading_day,
+      symbol,
+      greatest(
+        0,
+        dateDiff(
+          'second',
+          lagInFrame(event_ts, 1, event_ts) OVER (
+            PARTITION BY symbol, toDate(event_ts, 'UTC')
+            ORDER BY event_ts
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+          ),
+          event_ts
+        )
+      ) AS gap_seconds
+    FROM torghut.ta_signals
+    {spread_sane_where}
+  )
+  GROUP BY trading_day, symbol
+  UNION ALL
+  SELECT
+    toDate(event_ts, 'UTC') AS trading_day,
+    symbol,
+    0 AS raw_signal_rows,
+    0 AS executable_signal_rows,
+    0 AS quote_sane_signal_rows,
+    0 AS spread_sane_signal_rows,
+    count() AS microbar_rows,
+    0 AS max_executable_gap_seconds
   FROM torghut.ta_microbars
   {shared_where}
+  GROUP BY trading_day, symbol
+  )
   GROUP BY trading_day, symbol
 )
 GROUP BY trading_day
@@ -264,28 +472,66 @@ FORMAT TSVRaw
 
 def _parse_coverage_diagnostics(
     raw: str,
-) -> dict[str, dict[str, int]]:
-    diagnostics: dict[str, dict[str, int]] = {}
+) -> dict[str, dict[str, Any]]:
+    diagnostics: dict[str, dict[str, Any]] = {}
     reader = csv.reader(raw.splitlines(), delimiter="\t")
     for parts in reader:
-        if len(parts) != 7:
+        if len(parts) == 7:
+            (
+                trading_day,
+                raw_signal_rows,
+                executable_signal_rows,
+                microbar_rows,
+                raw_signal_symbol_count,
+                executable_signal_symbol_count,
+                microbar_symbol_count,
+            ) = parts
+            quote_sane_signal_rows = executable_signal_rows
+            spread_sane_signal_rows = executable_signal_rows
+            min_executable_rows_per_symbol_day = executable_signal_rows
+            min_spread_sane_rows_per_symbol_day = executable_signal_rows
+            quote_valid_ratio = "1"
+            min_quote_valid_ratio_by_symbol_day = "1"
+            max_executable_gap_seconds = "0"
+        elif len(parts) == 14:
+            (
+                trading_day,
+                raw_signal_rows,
+                executable_signal_rows,
+                quote_sane_signal_rows,
+                spread_sane_signal_rows,
+                microbar_rows,
+                raw_signal_symbol_count,
+                executable_signal_symbol_count,
+                microbar_symbol_count,
+                min_executable_rows_per_symbol_day,
+                min_spread_sane_rows_per_symbol_day,
+                quote_valid_ratio,
+                min_quote_valid_ratio_by_symbol_day,
+                max_executable_gap_seconds,
+            ) = parts
+        else:
             continue
-        (
-            trading_day,
-            raw_signal_rows,
-            executable_signal_rows,
-            microbar_rows,
-            raw_signal_symbol_count,
-            executable_signal_symbol_count,
-            microbar_symbol_count,
-        ) = parts
         diagnostics[str(trading_day)] = {
             "raw_signal_rows": int(raw_signal_rows or 0),
             "executable_signal_rows": int(executable_signal_rows or 0),
+            "quote_sane_signal_rows": int(quote_sane_signal_rows or 0),
+            "spread_sane_signal_rows": int(spread_sane_signal_rows or 0),
             "microbar_rows": int(microbar_rows or 0),
             "raw_signal_symbol_count": int(raw_signal_symbol_count or 0),
             "executable_signal_symbol_count": int(executable_signal_symbol_count or 0),
             "microbar_symbol_count": int(microbar_symbol_count or 0),
+            "min_executable_rows_per_symbol_day": int(
+                min_executable_rows_per_symbol_day or 0
+            ),
+            "min_spread_sane_rows_per_symbol_day": int(
+                min_spread_sane_rows_per_symbol_day or 0
+            ),
+            "quote_valid_ratio": str(quote_valid_ratio or "0"),
+            "min_quote_valid_ratio_by_symbol_day": str(
+                min_quote_valid_ratio_by_symbol_day or "0"
+            ),
+            "max_executable_gap_seconds": int(max_executable_gap_seconds or 0),
         }
     return diagnostics
 
@@ -294,12 +540,36 @@ def _is_complete_coverage_day(
     row: Mapping[str, Any],
     *,
     expected_symbol_count: int,
+    min_executable_rows_per_symbol_day: int,
+    min_quote_valid_ratio: Decimal,
+    max_executable_gap_seconds: int,
 ) -> bool:
     if int(row.get("raw_signal_rows") or 0) <= 0:
         return False
     if int(row.get("executable_signal_rows") or 0) <= 0:
         return False
     if int(row.get("microbar_rows") or 0) <= 0:
+        return False
+    if int(row.get("quote_sane_signal_rows") or 0) <= 0:
+        return False
+    if int(row.get("spread_sane_signal_rows") or 0) <= 0:
+        return False
+    if (
+        int(row.get("min_executable_rows_per_symbol_day") or 0)
+        < min_executable_rows_per_symbol_day
+    ):
+        return False
+    if (
+        int(row.get("min_spread_sane_rows_per_symbol_day") or 0)
+        < min_executable_rows_per_symbol_day
+    ):
+        return False
+    if (
+        Decimal(str(row.get("min_quote_valid_ratio_by_symbol_day") or "0"))
+        < min_quote_valid_ratio
+    ):
+        return False
+    if int(row.get("max_executable_gap_seconds") or 0) > max_executable_gap_seconds:
         return False
     if expected_symbol_count <= 0:
         return True
@@ -315,6 +585,9 @@ def _latest_complete_window(
     *,
     min_days: int,
     expected_symbol_count: int,
+    min_executable_rows_per_symbol_day: int,
+    min_quote_valid_ratio: Decimal,
+    max_executable_gap_seconds: int,
 ) -> tuple[date, date, tuple[str, ...]]:
     requested_days = tuple(
         str(day) for day in diagnostics.get("requested_trading_days") or ()
@@ -331,6 +604,9 @@ def _latest_complete_window(
         if isinstance(row, Mapping) and _is_complete_coverage_day(
             row,
             expected_symbol_count=expected_symbol_count,
+            min_executable_rows_per_symbol_day=min_executable_rows_per_symbol_day,
+            min_quote_valid_ratio=min_quote_valid_ratio,
+            max_executable_gap_seconds=max_executable_gap_seconds,
         ):
             latest_run.append(day)
             continue
@@ -360,6 +636,15 @@ def _fetch_coverage_diagnostics(
         start_date=start_date,
         end_date=end_date,
         symbols=symbols,
+        max_spread_bps=Decimal(
+            str(
+                getattr(
+                    args,
+                    "max_coverage_spread_bps",
+                    str(_DEFAULT_MAX_COVERAGE_SPREAD_BPS),
+                )
+            )
+        ),
     )
     raw = replay_mod._http_query(
         url=str(args.clickhouse_http_url),
@@ -400,12 +685,14 @@ def _fetch_coverage_diagnostics(
         "missing_raw_signal_days": list(missing_raw_signal_days),
         "missing_executable_signal_days": list(missing_executable_signal_days),
         "missing_microbar_days": list(missing_microbar_days),
+        "executable_day_policy": _executable_day_policy(args=args),
         "source_query_digest": build_source_query_digest(
             {
                 "query_family": "torghut.ta_replay_source_coverage",
                 "start_date": start_date,
                 "end_date": end_date,
                 "symbols": list(symbols),
+                "executable_day_policy": _executable_day_policy(args=args),
             }
         ),
     }
@@ -462,10 +749,16 @@ def _select_effective_window(
         start_date=requested_start_date,
         end_date=requested_end_date,
     )
+    policy = _executable_day_policy(args=args)
     selected_start, selected_end, selected_days = _latest_complete_window(
         diagnostics,
         min_days=min_days,
         expected_symbol_count=len(symbols),
+        min_executable_rows_per_symbol_day=int(
+            policy["min_executable_rows_per_symbol_day"]
+        ),
+        min_quote_valid_ratio=Decimal(str(policy["min_quote_valid_ratio"])),
+        max_executable_gap_seconds=int(policy["max_executable_gap_seconds"]),
     )
     receipt = {
         "schema_version": "torghut.replay-latest-complete-window.v1",
@@ -477,6 +770,7 @@ def _select_effective_window(
         "min_days": min_days,
         "symbols": list(symbols),
         "source_coverage": diagnostics,
+        "executable_day_policy": policy,
     }
     receipt_output = getattr(args, "latest_complete_window_receipt_output", None)
     if receipt_output:
