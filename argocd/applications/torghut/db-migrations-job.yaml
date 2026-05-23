@@ -25,7 +25,7 @@ spec:
       containers:
         - name: migrate
           imagePullPolicy: IfNotPresent
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:2846b26386e3a9522b5d11c26dbdb12b0ae1930a80cf6f601ba6cd1ebd9edaf5
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:eed0a56f589a1a8d67fbf3b1917e2e7886bbdb9287842919fd5fb8ca2fa30d12
           command:
             - /bin/sh
             - -ec
