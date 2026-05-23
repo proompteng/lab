@@ -542,10 +542,27 @@ class TestStrategyAutoresearch(TestCase):
                 )
 
             ranking_path = Path(summary["exact_replay_ledger_ranking_path"])
+            remediation_path = Path(summary["exact_replay_ledger_remediation_path"])
             ranking = json.loads(ranking_path.read_text(encoding="utf-8"))
+            remediation = json.loads(remediation_path.read_text(encoding="utf-8"))
 
             self.assertEqual(ranking["candidate_count"], 1)
             self.assertEqual(ranking["failure_count"], 0)
+            self.assertEqual(
+                remediation["candidate_id"],
+                "ledger-ranked-1",
+            )
+            self.assertFalse(remediation["promotion_allowed"])
+            self.assertEqual(
+                summary["exact_replay_ledger_remediation"]["candidate_id"],
+                "ledger-ranked-1",
+            )
+            self.assertEqual(
+                summary["live_progress"]["exact_replay_ledger_remediation"][
+                    "candidate_id"
+                ],
+                "ledger-ranked-1",
+            )
             self.assertEqual(
                 summary["best_exact_replay_ledger_candidate"]["candidate_id"],
                 "ledger-ranked-1",
