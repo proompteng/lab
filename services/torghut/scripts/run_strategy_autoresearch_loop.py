@@ -297,6 +297,8 @@ class WorkItem:
 class LatestCompleteWindowRequirement:
     min_days: int
     source: str
+    cli_min_days: int = 0
+    objective_min_days: int = 0
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -839,15 +841,35 @@ def _latest_complete_window_requirement(
     objective_min_observed_trading_days: int,
 ) -> LatestCompleteWindowRequirement:
     cli_min_days = max(0, int(getattr(args, "latest_complete_window_min_days", 0) or 0))
-    if cli_min_days > 0:
-        return LatestCompleteWindowRequirement(min_days=cli_min_days, source="cli")
     objective_min_days = max(0, int(objective_min_observed_trading_days or 0))
-    if objective_min_days > 0:
+    min_days = max(cli_min_days, objective_min_days)
+    if min_days <= 0:
         return LatestCompleteWindowRequirement(
-            min_days=objective_min_days,
-            source="objective_min_observed_trading_days",
+            min_days=0,
+            source="disabled",
+            cli_min_days=cli_min_days,
+            objective_min_days=objective_min_days,
         )
-    return LatestCompleteWindowRequirement(min_days=0, source="disabled")
+    if cli_min_days > 0 and cli_min_days >= objective_min_days:
+        return LatestCompleteWindowRequirement(
+            min_days=min_days,
+            source="cli",
+            cli_min_days=cli_min_days,
+            objective_min_days=objective_min_days,
+        )
+    if cli_min_days > 0 and cli_min_days < objective_min_days:
+        return LatestCompleteWindowRequirement(
+            min_days=min_days,
+            source="objective_min_observed_trading_days_floor",
+            cli_min_days=cli_min_days,
+            objective_min_days=objective_min_days,
+        )
+    return LatestCompleteWindowRequirement(
+        min_days=min_days,
+        source="objective_min_observed_trading_days",
+        cli_min_days=cli_min_days,
+        objective_min_days=objective_min_days,
+    )
 
 
 def _maybe_materialize_run_replay_tape(
@@ -949,6 +971,10 @@ def _maybe_materialize_run_replay_tape(
     )
     receipt["latest_complete_window_min_days"] = window_requirement.min_days
     receipt["latest_complete_window_min_days_source"] = window_requirement.source
+    receipt["latest_complete_window_cli_min_days"] = window_requirement.cli_min_days
+    receipt["latest_complete_window_objective_min_days"] = (
+        window_requirement.objective_min_days
+    )
     if latest_window_receipt is not None:
         receipt["latest_complete_window"] = latest_window_receipt
     return signal_bundle_stats, receipt
