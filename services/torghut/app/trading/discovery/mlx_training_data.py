@@ -25,6 +25,7 @@ _MECHANISM_OVERLAY_IDS = (
     "queue_position_survival_fill_curve",
     "mpc_dynamic_execution_schedule",
     "alpha_decay_predictability_stress",
+    "regime_weighted_conformal_cost_buffer",
     "nonlinear_market_impact_tca",
     "simulation_reality_gap_implementation_risk",
     "implementation_risk_backtest_stability",
@@ -60,6 +61,10 @@ _PAPER_CONTRACT_FEATURE_NAMES = (
     "paper_requires_implementation_uncertainty",
     "paper_requires_rejected_signal_labels",
     "paper_requires_executable_quote",
+    "paper_requires_conformal_tail_risk",
+    "paper_requires_regime_tail_exceedance",
+    "paper_requires_breakeven_cost_buffer",
+    "paper_requires_seed_model_family_robustness",
     "paper_promotion_requires_count",
     "paper_promotion_rejects_count",
 )
@@ -431,6 +436,41 @@ def _paper_contract_feature_values(spec: CandidateSpec) -> Mapping[str, float]:
         "paper_requires_executable_quote": _requirement_present(
             contract_requirements,
             ("executable_quote", "executable_quote_evidence"),
+        ),
+        "paper_requires_conformal_tail_risk": _requirement_present(
+            contract_requirements,
+            (
+                "conformal_tail_risk",
+                "conformal_var",
+                "conformal_risk_control",
+                "regime_weighted_conformal_var",
+            ),
+        ),
+        "paper_requires_regime_tail_exceedance": _requirement_present(
+            contract_requirements,
+            (
+                "regime_tail_exceedance",
+                "tail_exceedance",
+                "regime_similarity_weights",
+            ),
+        ),
+        "paper_requires_breakeven_cost_buffer": _requirement_present(
+            contract_requirements,
+            (
+                "breakeven_transaction_cost_buffer",
+                "breakeven_cost_buffer",
+                "transaction_cost_buffer",
+                "cost_buffer",
+            ),
+        ),
+        "paper_requires_seed_model_family_robustness": _requirement_present(
+            contract_requirements,
+            (
+                "seed_robustness",
+                "multi_seed_replay",
+                "model_family_robustness",
+                "seed_model_family_robustness",
+            ),
         ),
         "paper_promotion_requires_count": _truthy_contract_key_count(
             spec.promotion_contract, "requires_"
@@ -838,6 +878,12 @@ def build_mlx_training_rows(
             "history_deployable_lower_bound_target_shortfall",
             "history_deployable_lower_bound_missing_count",
             "history_deployable_lower_bound_failed_gate_count",
+            "history_conformal_tail_risk_required",
+            "history_conformal_tail_risk_passed",
+            "history_conformal_tail_risk_sample_count",
+            "history_conformal_tail_risk_buffer_per_day",
+            "history_conformal_tail_risk_adjusted_net_pnl_per_day",
+            "history_conformal_tail_risk_target_shortfall",
             *_PAPER_CONTRACT_FEATURE_NAMES,
             *_MECHANISM_OVERLAY_FEATURE_NAMES,
         )
@@ -879,6 +925,11 @@ def build_mlx_training_rows(
             scorecard,
             target_net_pnl_per_day=target_net_pnl_per_day,
             keys=("delay_adjusted_depth_stress_net_pnl_per_day",),
+        )
+        conformal_tail_risk_target_shortfall = _proof_target_shortfall(
+            scorecard,
+            target_net_pnl_per_day=target_net_pnl_per_day,
+            keys=("conformal_tail_risk_adjusted_net_pnl_per_day",),
         )
         double_oos_target_shortfall = _proof_target_shortfall(
             scorecard,
@@ -1020,6 +1071,12 @@ def build_mlx_training_rows(
             deployable_lower_bound_target_shortfall,
             deployable_lower_bound_missing_count,
             deployable_lower_bound_failed_gate_count,
+            _truthy_feature(scorecard.get("conformal_tail_risk_required")),
+            _truthy_feature(scorecard.get("conformal_tail_risk_passed")),
+            _float(scorecard.get("conformal_tail_risk_sample_count")),
+            _float(scorecard.get("conformal_tail_risk_buffer_per_day")),
+            _float(scorecard.get("conformal_tail_risk_adjusted_net_pnl_per_day")),
+            conformal_tail_risk_target_shortfall,
             *(
                 _float(paper_contract_features.get(feature_name))
                 for feature_name in _PAPER_CONTRACT_FEATURE_NAMES

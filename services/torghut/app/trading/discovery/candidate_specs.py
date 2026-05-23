@@ -3562,6 +3562,76 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
 
     if has_any(
         (
+            "regime-weighted conformal",
+            "regime weighted conformal",
+            "regime_weighted_conformal",
+            "conformal var",
+            "conformal_var",
+            "conformal value-at-risk",
+            "conformal risk control",
+            "conformal_risk_control",
+            "conformal tail risk",
+            "conformal_tail_risk",
+            "tail risk buffer",
+            "breakeven cost buffer",
+            "breakeven transaction-cost",
+            "breakeven_transaction_cost",
+            "transaction cost buffer",
+            "regime-similarity weight",
+            "regime similarity weight",
+            "tail exceedance",
+            "tail_exceedance",
+        )
+    ):
+        overlay_ids.append("regime_weighted_conformal_cost_buffer")
+        overlay_contracts.append(
+            {
+                "overlay_id": "regime_weighted_conformal_cost_buffer",
+                "required_evidence": [
+                    "regime_weighted_conformal_var",
+                    "conformal_tail_risk",
+                    "regime_tail_exceedance",
+                    "regime_similarity_weights",
+                    "breakeven_transaction_cost_buffer",
+                    "transaction_cost_stress",
+                    "seed_robustness",
+                    "model_family_robustness",
+                    "walk_forward_replay",
+                    "post_cost_net_pnl",
+                ],
+                "rank_metric": "conformal_tail_risk_adjusted_net_pnl_per_day",
+                "evidence_policy": (
+                    "regime_weighted_conformal_buffer_is_ranking_stress_not_promotion_proof"
+                ),
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_conformal_tail_risk": True,
+                "required_regime_weighted_conformal_cost_buffer": True,
+                "required_min_conformal_tail_risk_sample_count": "20",
+                "required_regime_tail_exceedance_report": True,
+                "required_breakeven_transaction_cost_buffer": True,
+                "required_seed_model_family_robustness": True,
+                "required_conformal_tail_risk_adjusted_net_above_target": True,
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_conformal_tail_risk": True,
+                "requires_conformal_var_cost_buffer": True,
+                "requires_regime_tail_exceedance_report": True,
+                "requires_breakeven_transaction_cost_buffer": True,
+                "requires_seed_model_family_robustness": True,
+                "requires_walk_forward_replay": True,
+                "rejects_unbuffered_tail_risk_promotion": True,
+                "rejects_single_seed_conformal_var_proof": True,
+                "risk_policy": "regime_weighted_conformal_cost_buffer_validation_only",
+            }
+        )
+
+    if has_any(
+        (
             "nonlinear impact",
             "nonlinear_impact",
             "square-root",
