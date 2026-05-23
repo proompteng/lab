@@ -127,6 +127,36 @@ _CONSISTENCY_REPAIR_UNSAFE_REASONS = frozenset(
         "negative_cash_observation_count_above_max",
     }
 )
+_PAPER_PROBATION_CAPITAL_REPAIR_REASONS = frozenset(
+    {
+        "gross_exposure_pct_equity_above_max",
+        "min_cash_below_min",
+        "negative_cash_observation_count_above_max",
+    }
+)
+_PAPER_PROBATION_LOSS_REPAIR_REASONS = frozenset(
+    {
+        "daily_net_below_min",
+        "max_drawdown_above_max",
+        "worst_day_loss_above_max",
+    }
+)
+_PAPER_PROBATION_ACTIVITY_REPAIR_REASONS = frozenset(
+    {
+        "active_day_ratio_below_min",
+        "avg_daily_notional_below_min",
+        "best_day_share_above_max",
+        "profit_factor_below_min",
+        "second_oos_net_per_day_below_target",
+    }
+)
+_PAPER_PROBATION_TAIL_RISK_REASONS = frozenset(
+    {
+        "conformal_tail_risk_below_target",
+        "fill_survival_sample_count_below_min",
+        "fill_survival_rate_below_min",
+    }
+)
 _CONSISTENCY_REPAIR_ENTRY_KEYS = (
     "max_entries_per_session",
     "max_entries_per_day",
@@ -3899,6 +3929,203 @@ def _build_economic_shortlist(
     return shortlist
 
 
+def _candidate_artifact_refs(item: Mapping[str, Any]) -> list[str]:
+    refs: list[str] = []
+    runtime_ref = str(item.get("runtime_ledger_artifact_ref") or "").strip()
+    if runtime_ref:
+        refs.append(runtime_ref)
+    refs.extend(
+        str(ref).strip()
+        for ref in cast(Sequence[Any], item.get("replay_artifact_refs") or ())
+        if str(ref).strip()
+    )
+    return list(dict.fromkeys(refs))
+
+
+def _paper_probation_required_actions(hard_vetoes: Sequence[str]) -> list[str]:
+    reasons = {str(reason) for reason in hard_vetoes}
+    actions = ["collect_runtime_ledger_paper_evidence"]
+    if reasons & _PAPER_PROBATION_CAPITAL_REPAIR_REASONS:
+        actions.append("apply_capital_repair_sizing_before_paper_orders")
+    if reasons & _PAPER_PROBATION_LOSS_REPAIR_REASONS:
+        actions.append("tighten_loss_controls_before_paper_orders")
+    if reasons & _PAPER_PROBATION_ACTIVITY_REPAIR_REASONS:
+        actions.append("collect_consistency_and_activity_evidence")
+    if reasons & _PAPER_PROBATION_TAIL_RISK_REASONS:
+        actions.append("collect_tail_risk_and_fill_survival_evidence")
+    if "stale_dataset_snapshot" in reasons:
+        actions.append("refresh_dataset_snapshot_before_paper_orders")
+    return actions
+
+
+def _paper_probation_notional_scale(
+    *,
+    item: Mapping[str, Any],
+    objective_veto_policy: ObjectiveVetoPolicy,
+    hard_vetoes: Sequence[str],
+) -> str:
+    if not (
+        {str(reason) for reason in hard_vetoes}
+        & _PAPER_PROBATION_CAPITAL_REPAIR_REASONS
+    ):
+        return "1"
+    scale = _capital_repair_exposure_scale(
+        {
+            "max_gross_exposure_pct_equity": _candidate_metric_value(
+                item,
+                scorecard_key="max_gross_exposure_pct_equity",
+                full_window_key="max_gross_exposure_pct_equity",
+            ),
+            "max_gross_exposure_pct_equity_required": str(
+                objective_veto_policy.required_max_gross_exposure_pct_equity
+            ),
+            "min_cash": _candidate_metric_value(
+                item,
+                scorecard_key="min_cash",
+                full_window_key="min_cash",
+            ),
+            "min_cash_required": str(objective_veto_policy.required_min_cash),
+        },
+        policy_required_max_gross_exposure_pct_equity=(
+            objective_veto_policy.required_max_gross_exposure_pct_equity
+        ),
+        policy_required_min_cash=objective_veto_policy.required_min_cash,
+    )
+    return _decimal_payload(scale)
+
+
+def _build_paper_probation_shortlist(
+    ranked_items: Sequence[Mapping[str, Any]],
+    *,
+    top_n: int,
+    objective_veto_policy: ObjectiveVetoPolicy,
+) -> list[dict[str, Any]]:
+    visible_items = [
+        item
+        for item in ranked_items
+        if _safe_decimal(
+            _candidate_metric_value(
+                item,
+                scorecard_key="net_pnl_per_day",
+                full_window_key="net_per_day",
+            )
+        )
+        > Decimal("0")
+    ]
+    visible_items.sort(
+        key=lambda item: (
+            -_safe_decimal(
+                _candidate_metric_value(
+                    item,
+                    scorecard_key="net_pnl_per_day",
+                    full_window_key="net_per_day",
+                )
+            ),
+            -_safe_decimal(
+                _candidate_metric_value(
+                    item,
+                    scorecard_key="net_pnl",
+                    full_window_key="net_pnl",
+                )
+            ),
+            str(item.get("candidate_id") or ""),
+        )
+    )
+
+    shortlist: list[dict[str, Any]] = []
+    for item in visible_items[: max(1, int(top_n))]:
+        hard_vetoes = [
+            str(reason) for reason in cast(Sequence[Any], item.get("hard_vetoes") or ())
+        ]
+        artifact_refs = _candidate_artifact_refs(item)
+        blockers: list[str] = []
+        if not artifact_refs:
+            blockers.append("missing_runtime_or_replay_ledger_artifact")
+        paper_probation_allowed = not blockers
+        shortlist.append(
+            {
+                "candidate_id": str(item.get("candidate_id") or ""),
+                "strategy_name": str(item.get("strategy_name") or ""),
+                "family": str(item.get("family") or ""),
+                "stage": "paper_evidence_collection_only",
+                "paper_probation_allowed": paper_probation_allowed,
+                "promotion_allowed": False,
+                "final_promotion_authorized": False,
+                "probation_blockers": blockers,
+                "required_actions_before_or_during_probation": (
+                    _paper_probation_required_actions(hard_vetoes)
+                ),
+                "recommended_notional_scale": _paper_probation_notional_scale(
+                    item=item,
+                    objective_veto_policy=objective_veto_policy,
+                    hard_vetoes=hard_vetoes,
+                ),
+                "net_pnl_per_day": str(
+                    _candidate_metric_value(
+                        item,
+                        scorecard_key="net_pnl_per_day",
+                        full_window_key="net_per_day",
+                    )
+                ),
+                "net_pnl": str(
+                    _candidate_metric_value(
+                        item,
+                        scorecard_key="net_pnl",
+                        full_window_key="net_pnl",
+                    )
+                ),
+                "active_day_ratio": str(
+                    _candidate_metric_value(
+                        item,
+                        scorecard_key="active_day_ratio",
+                        full_window_key="active_ratio",
+                    )
+                ),
+                "positive_day_ratio": str(
+                    _candidate_metric_value(
+                        item,
+                        scorecard_key="positive_day_ratio",
+                        full_window_key="positive_day_ratio",
+                    )
+                ),
+                "max_drawdown": str(
+                    _candidate_metric_value(
+                        item,
+                        scorecard_key="max_drawdown",
+                        full_window_key="max_drawdown",
+                    )
+                ),
+                "worst_day_loss": str(
+                    _candidate_metric_value(
+                        item,
+                        scorecard_key="worst_day_loss",
+                        full_window_key="worst_day_loss",
+                    )
+                ),
+                "max_gross_exposure_pct_equity": str(
+                    _candidate_metric_value(
+                        item,
+                        scorecard_key="max_gross_exposure_pct_equity",
+                        full_window_key="max_gross_exposure_pct_equity",
+                    )
+                ),
+                "min_cash": str(
+                    _candidate_metric_value(
+                        item,
+                        scorecard_key="min_cash",
+                        full_window_key="min_cash",
+                    )
+                ),
+                "runtime_ledger_artifact_ref": str(
+                    item.get("runtime_ledger_artifact_ref") or ""
+                ),
+                "replay_artifact_refs": artifact_refs,
+                "hard_vetoes": hard_vetoes,
+            }
+        )
+    return shortlist
+
+
 def _build_frontier_payload(
     *,
     scored: list[dict[str, Any]],
@@ -3970,6 +4197,19 @@ def _build_frontier_payload(
             "items": _build_economic_shortlist(
                 ranked_items,
                 top_n=max(1, int(top_n)),
+            ),
+        },
+        "paper_probation_shortlist": {
+            "schema_version": "torghut.frontier-paper-probation-shortlist.v1",
+            "purpose": (
+                "surface close positive candidates for controlled paper evidence "
+                "collection without authorizing final promotion"
+            ),
+            "ranking_basis": "positive_full_window_net_pnl_per_day_desc",
+            "items": _build_paper_probation_shortlist(
+                ranked_items,
+                top_n=max(3, int(top_n)),
+                objective_veto_policy=objective_veto_policy,
             ),
         },
         "top": ranked_items[: max(1, int(top_n))],

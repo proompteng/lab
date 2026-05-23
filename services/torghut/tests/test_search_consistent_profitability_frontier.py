@@ -2075,6 +2075,94 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(shortlist[0]["candidate_id"], "artifact-only")
         self.assertEqual(shortlist[0]["net_pnl_per_day"], "0")
 
+    def test_paper_probation_shortlist_labels_vetoed_candidate_as_paper_only(
+        self,
+    ) -> None:
+        items = [
+            {
+                "candidate_id": "microbar-close",
+                "strategy_name": "strategy",
+                "family": "microbar",
+                "objective_scorecard": {
+                    "net_pnl_per_day": "406.58",
+                    "net_pnl": "813.16",
+                    "active_day_ratio": "1",
+                    "positive_day_ratio": "0.5",
+                    "max_drawdown": "239.02",
+                    "worst_day_loss": "239.02",
+                    "max_gross_exposure_pct_equity": "6",
+                    "min_cash": "-161171.80",
+                },
+                "full_window": {"net_per_day": "406.58", "net_pnl": "813.16"},
+                "runtime_ledger_artifact_ref": "/tmp/microbar-ledger.json",
+                "replay_artifact_refs": ["/tmp/microbar-ledger.json"],
+                "hard_vetoes": [
+                    "gross_exposure_pct_equity_above_max",
+                    "min_cash_below_min",
+                    "daily_net_below_min",
+                    "conformal_tail_risk_below_target",
+                ],
+            }
+        ]
+
+        shortlist = frontier._build_paper_probation_shortlist(
+            items,
+            top_n=1,
+            objective_veto_policy=frontier.ObjectiveVetoPolicy(
+                required_max_gross_exposure_pct_equity=Decimal("1"),
+                required_min_cash=Decimal("0"),
+            ),
+        )
+
+        item = shortlist[0]
+        self.assertEqual(item["candidate_id"], "microbar-close")
+        self.assertTrue(item["paper_probation_allowed"])
+        self.assertFalse(item["promotion_allowed"])
+        self.assertFalse(item["final_promotion_authorized"])
+        self.assertEqual(item["stage"], "paper_evidence_collection_only")
+        self.assertEqual(item["recommended_notional_scale"], "0.158333")
+        self.assertIn(
+            "apply_capital_repair_sizing_before_paper_orders",
+            item["required_actions_before_or_during_probation"],
+        )
+        self.assertIn(
+            "tighten_loss_controls_before_paper_orders",
+            item["required_actions_before_or_during_probation"],
+        )
+        self.assertIn(
+            "collect_tail_risk_and_fill_survival_evidence",
+            item["required_actions_before_or_during_probation"],
+        )
+
+    def test_paper_probation_shortlist_blocks_missing_ledger_artifact(self) -> None:
+        shortlist = frontier._build_paper_probation_shortlist(
+            [
+                {
+                    "candidate_id": "positive-but-unproved",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "75",
+                        "net_pnl": "150",
+                        "max_gross_exposure_pct_equity": "0.5",
+                        "min_cash": "100",
+                    },
+                    "full_window": {"net_per_day": "75", "net_pnl": "150"},
+                    "hard_vetoes": ["active_day_ratio_below_min"],
+                }
+            ],
+            top_n=1,
+            objective_veto_policy=frontier.ObjectiveVetoPolicy(
+                required_max_gross_exposure_pct_equity=Decimal("1"),
+                required_min_cash=Decimal("0"),
+            ),
+        )
+
+        self.assertFalse(shortlist[0]["paper_probation_allowed"])
+        self.assertEqual(
+            shortlist[0]["probation_blockers"],
+            ["missing_runtime_or_replay_ledger_artifact"],
+        )
+        self.assertFalse(shortlist[0]["promotion_allowed"])
+
     def test_generate_symbol_prune_children_removes_worst_symbols_from_universe(
         self,
     ) -> None:
