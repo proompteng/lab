@@ -1171,6 +1171,7 @@ class TestStrategyAutoresearch(TestCase):
             program.objective.max_gross_exposure_pct_equity, Decimal("1.0")
         )
         self.assertEqual(program.objective.min_cash, Decimal("0"))
+        self.assertEqual(program.objective.min_observed_trading_days, 20)
         self.assertEqual(program.replay_budget.staged_train_screen_multiplier, 3)
 
         policy = runner._portfolio_oracle_policy(program)
@@ -1185,6 +1186,7 @@ class TestStrategyAutoresearch(TestCase):
         self.assertEqual(policy.min_total_net_pnl_to_drawdown_ratio, Decimal("3.00"))
         self.assertEqual(policy.max_gross_exposure_pct_equity, Decimal("1.0"))
         self.assertEqual(policy.min_cash, Decimal("0"))
+        self.assertEqual(policy.min_observed_trading_days, 20)
 
     def test_checked_in_500_portfolio_profit_program_includes_reversal_surfaces(
         self,
@@ -1771,6 +1773,47 @@ class TestStrategyAutoresearch(TestCase):
         weak_day = copy.deepcopy(candidate)
         weak_day["full_window"]["daily_net"]["2026-04-02"] = "299.99"
         self.assertFalse(candidate_meets_objective(weak_day, objective=objective))
+
+    def test_candidate_meets_objective_requires_configured_observed_days(
+        self,
+    ) -> None:
+        objective = StrategyObjective(
+            target_net_pnl_per_day=Decimal("500"),
+            min_active_day_ratio=Decimal("0.80"),
+            min_positive_day_ratio=Decimal("0.55"),
+            min_daily_notional=Decimal("300000"),
+            max_best_day_share=Decimal("0.35"),
+            max_worst_day_loss=Decimal("450"),
+            max_drawdown=Decimal("1000"),
+            require_every_day_active=False,
+            min_regime_slice_pass_rate=Decimal("0.40"),
+            stop_when_objective_met=False,
+            min_observed_trading_days=20,
+            max_gross_exposure_pct_equity=Decimal("1.50"),
+            min_cash=Decimal("0"),
+        )
+        candidate = {
+            "hard_vetoes": [],
+            "objective_scorecard": {
+                "net_pnl_per_day": "600",
+                "active_day_ratio": "0.90",
+                "positive_day_ratio": "0.60",
+                "avg_filled_notional_per_day": "350000",
+                "best_day_share": "0.30",
+                "worst_day_loss": "300",
+                "max_drawdown": "900",
+                "regime_slice_pass_rate": "0.45",
+                "max_gross_exposure_pct_equity": "1.25",
+                "min_cash": "2500",
+            },
+            "full_window": {"trading_day_count": 4, "active_days": 4},
+        }
+        self.assertFalse(candidate_meets_objective(candidate, objective=objective))
+
+        enough_days = copy.deepcopy(candidate)
+        enough_days["full_window"]["trading_day_count"] = 20
+        enough_days["full_window"]["active_days"] = 18
+        self.assertTrue(candidate_meets_objective(enough_days, objective=objective))
 
     def test_write_autoresearch_notebooks_outputs_ipynb_files(self) -> None:
         with TemporaryDirectory() as tmpdir:

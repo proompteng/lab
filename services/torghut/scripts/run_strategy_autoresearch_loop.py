@@ -1380,6 +1380,7 @@ def _portfolio_oracle_policy(
         max_gross_exposure_pct_equity=objective.max_gross_exposure_pct_equity,
         min_cash=objective.min_cash,
         min_avg_filled_notional_per_day=objective.min_daily_notional,
+        min_observed_trading_days=objective.min_observed_trading_days,
         min_regime_slice_pass_rate=objective.min_regime_slice_pass_rate,
         require_shadow_parity_within_budget=True,
         require_executable_replay=True,
