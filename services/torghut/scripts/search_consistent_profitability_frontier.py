@@ -355,6 +355,8 @@ def _staged_search_budget_payload(
     candidate_budget: int,
     full_replay_candidates_started: int = 0,
     train_screen_only_candidates: int = 0,
+    full_replay_budget_discarded_candidates: int = 0,
+    proof_only_full_window_replay_captures: int = 0,
 ) -> dict[str, Any]:
     train_screening_enabled = bool(getattr(args, "train_screening", True))
     train_screen_multiplier = max(
@@ -380,6 +382,16 @@ def _staged_search_budget_payload(
         "full_replay_candidate_budget": full_replay_budget,
         "full_replay_candidates_started": max(0, int(full_replay_candidates_started)),
         "train_screen_only_candidates": max(0, int(train_screen_only_candidates)),
+        "full_replay_budget_discarded_candidates": max(
+            0, int(full_replay_budget_discarded_candidates)
+        ),
+        "positive_rejected_full_window_ledger_capture_budget": max(
+            0,
+            int(getattr(args, "capture_positive_rejected_full_window_ledgers", 0) or 0),
+        ),
+        "proof_only_full_window_replay_captures": max(
+            0, int(proof_only_full_window_replay_captures)
+        ),
     }
 
 
@@ -712,6 +724,25 @@ def _parse_args() -> argparse.Namespace:
             "still run a full-window exact replay ledger capture as proof-only evidence. "
             "The candidate remains train-screen rejected and non-promotable."
         ),
+    )
+    parser.add_argument(
+        "--capture-positive-rejected-full-window-ledgers",
+        dest="capture_positive_rejected_full_window_ledgers",
+        type=int,
+        default=0,
+        help=(
+            "Capture up to N proof-only full-window exact replay ledgers for "
+            "positive train-screen rejects or candidates that pass the train "
+            "screen after the full-replay budget is exhausted. Candidates remain "
+            "blocked by their train/budget vetoes and non-promotable."
+        ),
+    )
+    parser.add_argument(
+        "--capture-top-rejected-full-window-ledgers",
+        dest="capture_positive_rejected_full_window_ledgers",
+        type=int,
+        default=argparse.SUPPRESS,
+        help=argparse.SUPPRESS,
     )
     parser.add_argument("--json-output", type=Path)
     parser.add_argument(
@@ -3207,6 +3238,11 @@ def _train_screen_failures(
     return list(dict.fromkeys(failures))
 
 
+def _positive_train_screen_candidate(train_payload: Mapping[str, Any]) -> bool:
+    summary = summarize_replay_profitability(train_payload)
+    return summary.decision_count > 0 and summary.net_per_day > Decimal("0")
+
+
 def _symbol_contributions_from_replay_payload(
     payload: Mapping[str, Any],
 ) -> dict[str, dict[str, Any]]:
@@ -4874,6 +4910,8 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
         )
         full_replay_candidates_started = 0
         train_screen_only_candidates = 0
+        full_replay_budget_discarded_candidates = 0
+        proof_only_full_window_replay_captures = 0
         initial_candidates = _iter_initial_worklist_candidates(
             parameter_grid=parameter_grid,
             override_candidates=override_candidates,
@@ -4909,12 +4947,6 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                 if (
                     train_screen_candidate_budget > 0
                     and len(scored) >= train_screen_candidate_budget
-                ):
-                    budget_exhausted = True
-                    break
-                if (
-                    full_replay_candidate_budget > 0
-                    and full_replay_candidates_started >= full_replay_candidate_budget
                 ):
                     budget_exhausted = True
                     break
@@ -4979,11 +5011,30 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     if bool(getattr(args, "train_screening", True))
                     else []
                 )
-                holdout_replay_skipped = bool(train_screen_failures)
-                full_window_replay_skipped = bool(train_screen_failures)
+                full_replay_budget_exhausted = (
+                    not train_screen_failures
+                    and full_replay_candidate_budget > 0
+                    and full_replay_candidates_started >= full_replay_candidate_budget
+                )
+                full_replay_skip_reasons = (
+                    ["full_replay_candidate_budget_exhausted"]
+                    if full_replay_budget_exhausted
+                    else []
+                )
+                holdout_replay_skipped = bool(
+                    train_screen_failures or full_replay_skip_reasons
+                )
+                full_window_replay_skipped = bool(
+                    train_screen_failures or full_replay_skip_reasons
+                )
                 proof_only_full_window_replay_captured = False
-                if train_screen_failures:
-                    train_screen_only_candidates += 1
+                proof_only_full_window_reason = ""
+                if holdout_replay_skipped:
+                    if train_screen_failures:
+                        train_screen_only_candidates += 1
+                    if full_replay_skip_reasons:
+                        full_replay_budget_discarded_candidates += 1
+                        budget_exhausted = True
                     second_oos_start = window.second_oos_start
                     second_oos_end = window.second_oos_end
                     holdout_payload = _empty_replay_payload(
@@ -4998,7 +5049,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                         if second_oos_start is not None and second_oos_end is not None
                         else None
                     )
-                    if (
+                    capture_rejected_seed_ledger = (
                         bool(
                             getattr(
                                 args,
@@ -5007,10 +5058,38 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                             )
                         )
                         and worklist_item.candidate_record_seed
-                    ):
+                        and bool(train_screen_failures)
+                    )
+                    top_rejected_capture_budget = max(
+                        0,
+                        int(
+                            getattr(
+                                args,
+                                "capture_positive_rejected_full_window_ledgers",
+                                0,
+                            )
+                            or 0
+                        ),
+                    )
+                    capture_ranked_rejected_ledger = (
+                        proof_only_full_window_replay_captures
+                        < top_rejected_capture_budget
+                        and _positive_train_screen_candidate(train_payload)
+                    )
+                    if capture_rejected_seed_ledger or capture_ranked_rejected_ledger:
                         full_replay_candidates_started += 1
+                        proof_only_full_window_replay_captures += 1
                         proof_only_full_window_replay_captured = True
                         full_window_replay_skipped = False
+                        proof_only_full_window_reason = (
+                            "train_screen_rejected_candidate_record_seed"
+                            if capture_rejected_seed_ledger
+                            else (
+                                "full_replay_budget_exhausted_positive_train_screen"
+                                if full_replay_skip_reasons
+                                else "positive_train_screen_reject"
+                            )
+                        )
                         full_window_payload = run_replay(
                             _build_replay_config(
                                 strategy_configmap_path=candidate_configmap_path,
@@ -5284,7 +5363,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     full_window_start=full_window_start,
                     full_window_end=full_window_end,
                     proof_only_reason=(
-                        "train_screen_rejected_candidate_record_seed"
+                        proof_only_full_window_reason
                         if proof_only_full_window_replay_captured
                         else ""
                     ),
@@ -5316,20 +5395,28 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     "max_train_worst_day_loss": str(max_train_screen_worst_day_loss),
                     "holdout_replay_skipped": holdout_replay_skipped,
                     "full_window_replay_skipped": full_window_replay_skipped,
+                    "full_replay_skip_reasons": full_replay_skip_reasons,
                     "proof_only_full_window_replay_captured": (
                         proof_only_full_window_replay_captured
                     ),
                     "second_oos_replay_skipped": bool(
-                        train_screen_failures and window.second_oos_days
+                        (train_screen_failures or full_replay_skip_reasons)
+                        and window.second_oos_days
                     ),
                 }
                 candidate_payload["staged_search"] = {
                     "schema_version": "torghut.frontier-candidate-staged-search.v1",
                     "stage": (
-                        "train_screen_rejected_full_window_proof"
+                        (
+                            "full_replay_budget_exhausted_full_window_proof"
+                            if full_replay_skip_reasons
+                            else "train_screen_rejected_full_window_proof"
+                        )
                         if proof_only_full_window_replay_captured
                         else (
-                            "train_screen_only"
+                            "train_screen_passed_full_replay_budget_exhausted"
+                            if full_replay_skip_reasons
+                            else "train_screen_only"
                             if holdout_replay_skipped
                             else "full_replay"
                         )
@@ -5339,6 +5426,12 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     ),
                     "full_replay_candidate_budget": full_replay_candidate_budget,
                     "full_replay_candidates_started": full_replay_candidates_started,
+                    "full_replay_budget_discarded_candidates": (
+                        full_replay_budget_discarded_candidates
+                    ),
+                    "proof_only_full_window_replay_captures": (
+                        proof_only_full_window_replay_captures
+                    ),
                     "candidate_record_seed": worklist_item.candidate_record_seed,
                 }
                 if worklist_item.pruned_symbol is not None:
@@ -5471,6 +5564,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     )
                 )
                 hard_vetoes.extend(train_screen_failures)
+                hard_vetoes.extend(full_replay_skip_reasons)
                 if second_oos_summary is not None:
                     hard_vetoes.extend(
                         str(reason)
@@ -6052,6 +6146,8 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                             candidate_budget=candidate_budget,
                             full_replay_candidates_started=full_replay_candidates_started,
                             train_screen_only_candidates=train_screen_only_candidates,
+                            full_replay_budget_discarded_candidates=full_replay_budget_discarded_candidates,
+                            proof_only_full_window_replay_captures=proof_only_full_window_replay_captures,
                         ),
                     )
                     _write_json_output(args.json_output, partial_payload)
@@ -6070,7 +6166,12 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
         objective_veto_policy=objective_veto_policy,
         top_n=max(1, int(args.top_n)),
         status="candidate_budget_exhausted"
-        if budget_exhausted and (worklist or not initial_candidates_exhausted)
+        if budget_exhausted
+        and (
+            worklist
+            or not initial_candidates_exhausted
+            or full_replay_budget_discarded_candidates > 0
+        )
         else "completed",
         pending_candidates=len(worklist) + (0 if initial_candidates_exhausted else 1),
         replay_tape_validation=replay_tape_validation,
@@ -6079,6 +6180,8 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
             candidate_budget=candidate_budget,
             full_replay_candidates_started=full_replay_candidates_started,
             train_screen_only_candidates=train_screen_only_candidates,
+            full_replay_budget_discarded_candidates=full_replay_budget_discarded_candidates,
+            proof_only_full_window_replay_captures=proof_only_full_window_replay_captures,
         ),
     )
     if args.json_output is not None:
