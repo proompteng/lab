@@ -31,6 +31,7 @@ resources:
   - agents-primitives-approvalpolicy.yaml
   - agents-primitives-signal.yaml
   - agents-primitives-signal-delivery.yaml
+  - agents-artifacts-objectbucketclaim.yaml
   - agents-primitives-artifact.yaml
   - agents-primitives-budget.yaml
   - agents-primitives-workspace.yaml
