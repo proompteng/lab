@@ -587,6 +587,12 @@ def _runtime_window_target_metadata(payload: Mapping[str, Any]) -> dict[str, Any
     return metadata
 
 
+def _runtime_window_target_identity(
+    target: RuntimeWindowImportTarget,
+) -> tuple[str, str, str]:
+    return (target.hypothesis_id, target.candidate_id, target.strategy_name)
+
+
 def _runtime_window_autoresearch_statuses(args: argparse.Namespace) -> set[str]:
     statuses = {
         str(item).strip()
@@ -709,16 +715,17 @@ def _runtime_window_targets(
                 window_end=value("window_end", "runtime_window_end"),
             )
         )
-    seen_hypothesis_ids = {target.hypothesis_id for target in targets}
-    for target in plan_targets:
-        if target.hypothesis_id in seen_hypothesis_ids:
+    explicit_hypothesis_ids = {target.hypothesis_id for target in targets}
+    seen_hypothesis_ids = set(explicit_hypothesis_ids)
+    seen_target_keys = {_runtime_window_target_identity(target) for target in targets}
+    for target in (*plan_targets, *autoresearch_targets):
+        if target.hypothesis_id in explicit_hypothesis_ids:
+            continue
+        target_key = _runtime_window_target_identity(target)
+        if target_key in seen_target_keys:
             continue
         targets.append(target)
-        seen_hypothesis_ids.add(target.hypothesis_id)
-    for target in autoresearch_targets:
-        if target.hypothesis_id in seen_hypothesis_ids:
-            continue
-        targets.append(target)
+        seen_target_keys.add(target_key)
         seen_hypothesis_ids.add(target.hypothesis_id)
     for target in registry_targets:
         if target.hypothesis_id in seen_hypothesis_ids:

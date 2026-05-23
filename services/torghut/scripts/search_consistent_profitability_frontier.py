@@ -237,6 +237,7 @@ class FullWindowConsistencyPolicy:
     max_entry_family_contribution_share: Decimal = Decimal("1")
     max_gross_exposure_pct_equity: Decimal = Decimal("999999999")
     min_cash: Decimal = Decimal("-999999999")
+    min_window_weekday_count: int = 0
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -265,6 +266,7 @@ class FullWindowConsistencyPolicy:
             ),
             "max_gross_exposure_pct_equity": str(self.max_gross_exposure_pct_equity),
             "min_cash": str(self.min_cash),
+            "min_window_weekday_count": self.min_window_weekday_count,
         }
 
 
@@ -2925,6 +2927,13 @@ def _consistency_penalty(
     )
     penalties = Decimal("0")
 
+    if (
+        policy.min_window_weekday_count > 0
+        and summary.trading_day_count < policy.min_window_weekday_count
+    ):
+        penalties += Decimal(
+            policy.min_window_weekday_count - summary.trading_day_count
+        ) * Decimal("1000")
     if summary.net_per_day < policy.target_net_per_day:
         penalties += policy.target_net_per_day - summary.net_per_day
     if policy.min_daily_net_pnl > 0 and daily_net_below_min_count > 0:
@@ -3020,6 +3029,7 @@ def _consistency_penalty(
             "start_date": summary.start_date,
             "end_date": summary.end_date,
             "trading_day_count": summary.trading_day_count,
+            "min_window_weekday_count_required": policy.min_window_weekday_count,
             "net_pnl": str(summary.net_pnl),
             "net_per_day": str(summary.net_per_day),
             "min_daily_net_pnl": str(min_daily_net_pnl),
@@ -4873,6 +4883,10 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
             )
         ),
         min_cash=Decimal(str(consistency_constraints.get("min_cash", "-999999999"))),
+        min_window_weekday_count=_optional_int(
+            consistency_constraints.get("min_window_weekday_count"),
+            default=0,
+        ),
     )
     order_type_ablation_policy = _order_type_ablation_policy(sweep_config)
     max_train_screen_worst_day_loss = Decimal(
@@ -5770,6 +5784,14 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     > 0
                 ):
                     hard_vetoes.append("daily_net_below_min")
+                if (
+                    consistency_policy.min_window_weekday_count > 0
+                    and int(full_window_summary.get("trading_day_count") or 0)
+                    < consistency_policy.min_window_weekday_count
+                ):
+                    hard_vetoes.append(
+                        "window_weekday_count_below_min_observed_trading_days"
+                    )
                 if not bool(full_window_summary.get("conformal_tail_risk_passed")):
                     hard_vetoes.append("conformal_tail_risk_below_target")
                 if (

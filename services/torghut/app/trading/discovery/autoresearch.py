@@ -12,9 +12,13 @@ from typing import Any, Mapping, cast
 
 import yaml
 
-from app.trading.discovery.family_templates import FamilyTemplate, family_template_dir, load_family_template
+from app.trading.discovery.family_templates import (
+    FamilyTemplate,
+    family_template_dir,
+    load_family_template,
+)
 
-_SCHEMA_VERSION = 'torghut.strategy-autoresearch.v1'
+_SCHEMA_VERSION = "torghut.strategy-autoresearch.v1"
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -25,7 +29,7 @@ def _mapping(value: Any) -> dict[str, Any]:
 
 
 def _string(value: Any) -> str:
-    return str(value or '').strip()
+    return str(value or "").strip()
 
 
 def _string_list(value: Any) -> tuple[str, ...]:
@@ -55,7 +59,7 @@ def _json_clone(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 def _stable_value_key(value: Any) -> str:
     if isinstance(value, list | dict):
-        return json.dumps(value, sort_keys=True, separators=(',', ':'))
+        return json.dumps(value, sort_keys=True, separators=(",", ":"))
     return str(value)
 
 
@@ -89,21 +93,21 @@ def _decimal_from_candidate(value: Any) -> Decimal | None:
     if value is None:
         return None
     try:
-        return _coerce_decimal(value, default='')
+        return _coerce_decimal(value, default="")
     except (InvalidOperation, ValueError):
         return None
 
 
 def _format_numeric_like(value: Decimal, *, current_value: Any) -> str:
     current_text = _string(current_value)
-    if current_text and '.' not in current_text:
+    if current_text and "." not in current_text:
         return str(int(value))
-    if current_text and '.' in current_text:
-        decimals = len(current_text.split('.', 1)[1])
-        return f'{value:.{decimals}f}'
-    text = format(value, 'f')
-    if '.' in text:
-        return text.rstrip('0').rstrip('.') or '0'
+    if current_text and "." in current_text:
+        decimals = len(current_text.split(".", 1)[1])
+        return f"{value:.{decimals}f}"
+    text = format(value, "f")
+    if "." in text:
+        return text.rstrip("0").rstrip(".") or "0"
     return text
 
 
@@ -120,48 +124,54 @@ class StrategyObjective:
     min_regime_slice_pass_rate: Decimal
     stop_when_objective_met: bool
     min_observed_trading_days: int = 0
-    min_daily_net_pnl: Decimal = Decimal('0')
-    min_profit_factor: Decimal = Decimal('1.50')
-    max_gross_exposure_pct_equity: Decimal = Decimal('999999999')
-    min_cash: Decimal = Decimal('-999999999')
-    default_start_equity: Decimal = Decimal('31590.02')
-    max_worst_day_loss_pct_equity: Decimal = Decimal('0.05')
-    max_drawdown_pct_equity: Decimal = Decimal('0.08')
-    extended_max_worst_day_loss_pct_equity: Decimal = Decimal('0.08')
-    extended_max_drawdown_pct_equity: Decimal = Decimal('0.12')
-    min_total_net_pnl_to_drawdown_ratio: Decimal = Decimal('3.00')
+    min_daily_net_pnl: Decimal = Decimal("0")
+    min_profit_factor: Decimal = Decimal("1.50")
+    max_gross_exposure_pct_equity: Decimal = Decimal("999999999")
+    min_cash: Decimal = Decimal("-999999999")
+    default_start_equity: Decimal = Decimal("31590.02")
+    max_worst_day_loss_pct_equity: Decimal = Decimal("0.05")
+    max_drawdown_pct_equity: Decimal = Decimal("0.08")
+    extended_max_worst_day_loss_pct_equity: Decimal = Decimal("0.08")
+    extended_max_drawdown_pct_equity: Decimal = Decimal("0.12")
+    min_total_net_pnl_to_drawdown_ratio: Decimal = Decimal("3.00")
     require_double_oos: bool = True
     min_double_oos_independent_window_count: int = 2
-    min_double_oos_pass_rate: Decimal = Decimal('1.00')
+    min_double_oos_pass_rate: Decimal = Decimal("1.00")
     require_double_oos_cost_shock_above_target: bool = True
 
     def to_payload(self) -> dict[str, Any]:
         return {
-            'target_net_pnl_per_day': str(self.target_net_pnl_per_day),
-            'min_daily_net_pnl': str(self.min_daily_net_pnl),
-            'min_active_day_ratio': str(self.min_active_day_ratio),
-            'min_positive_day_ratio': str(self.min_positive_day_ratio),
-            'min_profit_factor': str(self.min_profit_factor),
-            'min_daily_notional': str(self.min_daily_notional),
-            'max_best_day_share': str(self.max_best_day_share),
-            'max_worst_day_loss': str(self.max_worst_day_loss),
-            'max_drawdown': str(self.max_drawdown),
-            'require_every_day_active': self.require_every_day_active,
-            'min_regime_slice_pass_rate': str(self.min_regime_slice_pass_rate),
-            'stop_when_objective_met': self.stop_when_objective_met,
-            'min_observed_trading_days': self.min_observed_trading_days,
-            'max_gross_exposure_pct_equity': str(self.max_gross_exposure_pct_equity),
-            'min_cash': str(self.min_cash),
-            'default_start_equity': str(self.default_start_equity),
-            'max_worst_day_loss_pct_equity': str(self.max_worst_day_loss_pct_equity),
-            'max_drawdown_pct_equity': str(self.max_drawdown_pct_equity),
-            'extended_max_worst_day_loss_pct_equity': str(self.extended_max_worst_day_loss_pct_equity),
-            'extended_max_drawdown_pct_equity': str(self.extended_max_drawdown_pct_equity),
-            'min_total_net_pnl_to_drawdown_ratio': str(self.min_total_net_pnl_to_drawdown_ratio),
-            'require_double_oos': self.require_double_oos,
-            'min_double_oos_independent_window_count': self.min_double_oos_independent_window_count,
-            'min_double_oos_pass_rate': str(self.min_double_oos_pass_rate),
-            'require_double_oos_cost_shock_above_target': self.require_double_oos_cost_shock_above_target,
+            "target_net_pnl_per_day": str(self.target_net_pnl_per_day),
+            "min_daily_net_pnl": str(self.min_daily_net_pnl),
+            "min_active_day_ratio": str(self.min_active_day_ratio),
+            "min_positive_day_ratio": str(self.min_positive_day_ratio),
+            "min_profit_factor": str(self.min_profit_factor),
+            "min_daily_notional": str(self.min_daily_notional),
+            "max_best_day_share": str(self.max_best_day_share),
+            "max_worst_day_loss": str(self.max_worst_day_loss),
+            "max_drawdown": str(self.max_drawdown),
+            "require_every_day_active": self.require_every_day_active,
+            "min_regime_slice_pass_rate": str(self.min_regime_slice_pass_rate),
+            "stop_when_objective_met": self.stop_when_objective_met,
+            "min_observed_trading_days": self.min_observed_trading_days,
+            "max_gross_exposure_pct_equity": str(self.max_gross_exposure_pct_equity),
+            "min_cash": str(self.min_cash),
+            "default_start_equity": str(self.default_start_equity),
+            "max_worst_day_loss_pct_equity": str(self.max_worst_day_loss_pct_equity),
+            "max_drawdown_pct_equity": str(self.max_drawdown_pct_equity),
+            "extended_max_worst_day_loss_pct_equity": str(
+                self.extended_max_worst_day_loss_pct_equity
+            ),
+            "extended_max_drawdown_pct_equity": str(
+                self.extended_max_drawdown_pct_equity
+            ),
+            "min_total_net_pnl_to_drawdown_ratio": str(
+                self.min_total_net_pnl_to_drawdown_ratio
+            ),
+            "require_double_oos": self.require_double_oos,
+            "min_double_oos_independent_window_count": self.min_double_oos_independent_window_count,
+            "min_double_oos_pass_rate": str(self.min_double_oos_pass_rate),
+            "require_double_oos_cost_shock_above_target": self.require_double_oos_cost_shock_above_target,
         }
 
 
@@ -176,12 +186,12 @@ class SnapshotPolicy:
 
     def to_payload(self) -> dict[str, Any]:
         return {
-            'bar_interval': self.bar_interval,
-            'feature_set_id': self.feature_set_id,
-            'quote_quality_policy_id': self.quote_quality_policy_id,
-            'symbol_policy': self.symbol_policy,
-            'allow_prior_day_features': self.allow_prior_day_features,
-            'allow_cross_sectional_features': self.allow_cross_sectional_features,
+            "bar_interval": self.bar_interval,
+            "feature_set_id": self.feature_set_id,
+            "quote_quality_policy_id": self.quote_quality_policy_id,
+            "symbol_policy": self.symbol_policy,
+            "allow_prior_day_features": self.allow_prior_day_features,
+            "allow_cross_sectional_features": self.allow_cross_sectional_features,
         }
 
 
@@ -196,12 +206,12 @@ class ProposalModelPolicy:
 
     def to_payload(self) -> dict[str, Any]:
         return {
-            'enabled': self.enabled,
-            'mode': self.mode,
-            'backend_preference': self.backend_preference,
-            'top_k': self.top_k,
-            'exploration_slots': self.exploration_slots,
-            'minimum_history_rows': self.minimum_history_rows,
+            "enabled": self.enabled,
+            "mode": self.mode,
+            "backend_preference": self.backend_preference,
+            "top_k": self.top_k,
+            "exploration_slots": self.exploration_slots,
+            "minimum_history_rows": self.minimum_history_rows,
         }
 
 
@@ -214,10 +224,10 @@ class ReplayBudget:
 
     def to_payload(self) -> dict[str, Any]:
         return {
-            'max_candidates_per_round': self.max_candidates_per_round,
-            'exploration_slots': self.exploration_slots,
-            'max_candidates_per_frontier_run': self.max_candidates_per_frontier_run,
-            'staged_train_screen_multiplier': self.staged_train_screen_multiplier,
+            "max_candidates_per_round": self.max_candidates_per_round,
+            "exploration_slots": self.exploration_slots,
+            "max_candidates_per_frontier_run": self.max_candidates_per_frontier_run,
+            "staged_train_screen_multiplier": self.staged_train_screen_multiplier,
         }
 
 
@@ -233,13 +243,13 @@ class RuntimeClosurePolicy:
 
     def to_payload(self) -> dict[str, Any]:
         return {
-            'enabled': self.enabled,
-            'execute_parity_replay': self.execute_parity_replay,
-            'execute_approval_replay': self.execute_approval_replay,
-            'parity_window': self.parity_window,
-            'approval_window': self.approval_window,
-            'shadow_validation_mode': self.shadow_validation_mode,
-            'promotion_target': self.promotion_target,
+            "enabled": self.enabled,
+            "execute_parity_replay": self.execute_parity_replay,
+            "execute_approval_replay": self.execute_approval_replay,
+            "parity_window": self.parity_window,
+            "approval_window": self.approval_window,
+            "shadow_validation_mode": self.shadow_validation_mode,
+            "promotion_target": self.promotion_target,
         }
 
 
@@ -248,31 +258,31 @@ class ResearchClaim:
     claim_id: str
     summary: str
     implication: str
-    claim_text: str = ''
-    claim_type: str = ''
+    claim_text: str = ""
+    claim_type: str = ""
     data_requirements: tuple[str, ...] = ()
-    asset_scope: str = ''
-    horizon_scope: str = ''
-    expected_direction: str = ''
+    asset_scope: str = ""
+    horizon_scope: str = ""
+    expected_direction: str = ""
 
     def to_payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
-            'claim_id': self.claim_id,
-            'summary': self.summary,
-            'implication': self.implication,
+            "claim_id": self.claim_id,
+            "summary": self.summary,
+            "implication": self.implication,
         }
         if self.claim_text:
-            payload['claim_text'] = self.claim_text
+            payload["claim_text"] = self.claim_text
         if self.claim_type:
-            payload['claim_type'] = self.claim_type
+            payload["claim_type"] = self.claim_type
         if self.data_requirements:
-            payload['data_requirements'] = list(self.data_requirements)
+            payload["data_requirements"] = list(self.data_requirements)
         if self.asset_scope:
-            payload['asset_scope'] = self.asset_scope
+            payload["asset_scope"] = self.asset_scope
         if self.horizon_scope:
-            payload['horizon_scope'] = self.horizon_scope
+            payload["horizon_scope"] = self.horizon_scope
         if self.expected_direction:
-            payload['expected_direction'] = self.expected_direction
+            payload["expected_direction"] = self.expected_direction
         return payload
 
 
@@ -286,11 +296,11 @@ class ResearchSource:
 
     def to_payload(self) -> dict[str, Any]:
         return {
-            'source_id': self.source_id,
-            'title': self.title,
-            'url': self.url,
-            'published_at': self.published_at,
-            'claims': [item.to_payload() for item in self.claims],
+            "source_id": self.source_id,
+            "title": self.title,
+            "url": self.url,
+            "published_at": self.published_at,
+            "claims": [item.to_payload() for item in self.claims],
         }
 
 
@@ -305,17 +315,17 @@ class MutationSpace:
 
     def to_payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
-            'mode': self.mode,
-            'include_current': self.include_current,
+            "mode": self.mode,
+            "include_current": self.include_current,
         }
         if self.values:
-            payload['values'] = list(self.values)
+            payload["values"] = list(self.values)
         if self.deltas:
-            payload['deltas'] = [str(item) for item in self.deltas]
+            payload["deltas"] = [str(item) for item in self.deltas]
         if self.minimum is not None:
-            payload['minimum'] = str(self.minimum)
+            payload["minimum"] = str(self.minimum)
         if self.maximum is not None:
-            payload['maximum'] = str(self.maximum)
+            payload["maximum"] = str(self.maximum)
         return payload
 
 
@@ -339,24 +349,26 @@ class FamilyAutoresearchPlan:
 
     def to_payload(self) -> dict[str, Any]:
         return {
-            'family_template_id': self.family_template.family_id,
-            'seed_sweep_config': str(self.seed_sweep_config),
-            'max_iterations': self.max_iterations,
-            'keep_top_candidates': self.keep_top_candidates,
-            'frontier_top_n': self.frontier_top_n,
-            'force_keep_top_candidate_if_all_vetoed': self.force_keep_top_candidate_if_all_vetoed,
-            'symbol_prune_iterations': self.symbol_prune_iterations,
-            'symbol_prune_candidates': self.symbol_prune_candidates,
-            'symbol_prune_min_universe_size': self.symbol_prune_min_universe_size,
-            'loss_repair_iterations': self.loss_repair_iterations,
-            'loss_repair_candidates': self.loss_repair_candidates,
-            'consistency_repair_iterations': self.consistency_repair_iterations,
-            'consistency_repair_candidates': self.consistency_repair_candidates,
-            'parameter_mutations': {
-                key: value.to_payload() for key, value in self.parameter_mutations.items()
+            "family_template_id": self.family_template.family_id,
+            "seed_sweep_config": str(self.seed_sweep_config),
+            "max_iterations": self.max_iterations,
+            "keep_top_candidates": self.keep_top_candidates,
+            "frontier_top_n": self.frontier_top_n,
+            "force_keep_top_candidate_if_all_vetoed": self.force_keep_top_candidate_if_all_vetoed,
+            "symbol_prune_iterations": self.symbol_prune_iterations,
+            "symbol_prune_candidates": self.symbol_prune_candidates,
+            "symbol_prune_min_universe_size": self.symbol_prune_min_universe_size,
+            "loss_repair_iterations": self.loss_repair_iterations,
+            "loss_repair_candidates": self.loss_repair_candidates,
+            "consistency_repair_iterations": self.consistency_repair_iterations,
+            "consistency_repair_candidates": self.consistency_repair_candidates,
+            "parameter_mutations": {
+                key: value.to_payload()
+                for key, value in self.parameter_mutations.items()
             },
-            'strategy_override_mutations': {
-                key: value.to_payload() for key, value in self.strategy_override_mutations.items()
+            "strategy_override_mutations": {
+                key: value.to_payload()
+                for key, value in self.strategy_override_mutations.items()
             },
         }
 
@@ -380,46 +392,48 @@ class StrategyAutoresearchProgram:
 
     def to_payload(self) -> dict[str, Any]:
         return {
-            'schema_version': self.schema_version,
-            'program_id': self.program_id,
-            'description': self.description,
-            'objective': self.objective.to_payload(),
-            'snapshot_policy': self.snapshot_policy.to_payload(),
-            'forbidden_mutations': list(self.forbidden_mutations),
-            'proposal_model_policy': self.proposal_model_policy.to_payload(),
-            'replay_budget': self.replay_budget.to_payload(),
-            'runtime_closure_policy': self.runtime_closure_policy.to_payload(),
-            'parity_requirements': list(self.parity_requirements),
-            'promotion_policy': self.promotion_policy,
-            'ledger_policy': dict(self.ledger_policy),
-            'research_sources': [item.to_payload() for item in self.research_sources],
-            'families': [item.to_payload() for item in self.families],
+            "schema_version": self.schema_version,
+            "program_id": self.program_id,
+            "description": self.description,
+            "objective": self.objective.to_payload(),
+            "snapshot_policy": self.snapshot_policy.to_payload(),
+            "forbidden_mutations": list(self.forbidden_mutations),
+            "proposal_model_policy": self.proposal_model_policy.to_payload(),
+            "replay_budget": self.replay_budget.to_payload(),
+            "runtime_closure_policy": self.runtime_closure_policy.to_payload(),
+            "parity_requirements": list(self.parity_requirements),
+            "promotion_policy": self.promotion_policy,
+            "ledger_policy": dict(self.ledger_policy),
+            "research_sources": [item.to_payload() for item in self.research_sources],
+            "families": [item.to_payload() for item in self.families],
         }
 
 
 def _load_mutation_space(payload: Mapping[str, Any]) -> MutationSpace:
-    mode = _string(payload.get('mode'))
-    if mode not in {'explicit_values', 'numeric_step', 'allowed_normalizations'}:
-        raise ValueError(f'autoresearch_mutation_mode_invalid:{mode or "missing"}')
-    values = _string_list(payload.get('values'))
+    mode = _string(payload.get("mode"))
+    if mode not in {"explicit_values", "numeric_step", "allowed_normalizations"}:
+        raise ValueError(f"autoresearch_mutation_mode_invalid:{mode or 'missing'}")
+    values = _string_list(payload.get("values"))
     delta_values: tuple[Decimal, ...] = ()
-    raw_deltas = payload.get('deltas')
+    raw_deltas = payload.get("deltas")
     if isinstance(raw_deltas, list):
         raw_delta_values = cast(list[Any], raw_deltas)
-        delta_values = tuple(_coerce_decimal(item, default='0') for item in raw_delta_values)
+        delta_values = tuple(
+            _coerce_decimal(item, default="0") for item in raw_delta_values
+        )
     minimum = None
-    if payload.get('minimum') is not None:
-        minimum = _coerce_decimal(payload.get('minimum'), default='0')
+    if payload.get("minimum") is not None:
+        minimum = _coerce_decimal(payload.get("minimum"), default="0")
     maximum = None
-    if payload.get('maximum') is not None:
-        maximum = _coerce_decimal(payload.get('maximum'), default='0')
+    if payload.get("maximum") is not None:
+        maximum = _coerce_decimal(payload.get("maximum"), default="0")
     return MutationSpace(
         mode=mode,
         values=values,
         deltas=delta_values,
         minimum=minimum,
         maximum=maximum,
-        include_current=bool(payload.get('include_current', True)),
+        include_current=bool(payload.get("include_current", True)),
     )
 
 
@@ -435,26 +449,32 @@ def _resolve_seed_sweep_path(*, program_path: Path, raw_path: str) -> Path:
 
 
 def _load_runtime_closure_policy(payload: Mapping[str, Any]) -> RuntimeClosurePolicy:
-    parity_window = _string(payload.get('parity_window')) or 'full_window'
-    approval_window = _string(payload.get('approval_window')) or 'holdout'
-    if parity_window not in {'train', 'holdout', 'full_window'}:
-        raise ValueError(f'autoresearch_runtime_closure_parity_window_invalid:{parity_window}')
-    if approval_window not in {'train', 'holdout', 'full_window'}:
-        raise ValueError(f'autoresearch_runtime_closure_approval_window_invalid:{approval_window}')
-    shadow_validation_mode = (
-        _string(payload.get('shadow_validation_mode')) or 'require_live_evidence'
-    )
-    if shadow_validation_mode not in {'require_live_evidence', 'skip'}:
+    parity_window = _string(payload.get("parity_window")) or "full_window"
+    approval_window = _string(payload.get("approval_window")) or "holdout"
+    if parity_window not in {"train", "holdout", "full_window"}:
         raise ValueError(
-            f'autoresearch_runtime_closure_shadow_validation_mode_invalid:{shadow_validation_mode}'
+            f"autoresearch_runtime_closure_parity_window_invalid:{parity_window}"
         )
-    promotion_target = _string(payload.get('promotion_target')) or 'shadow'
-    if promotion_target not in {'shadow', 'paper', 'live'}:
-        raise ValueError(f'autoresearch_runtime_closure_promotion_target_invalid:{promotion_target}')
+    if approval_window not in {"train", "holdout", "full_window"}:
+        raise ValueError(
+            f"autoresearch_runtime_closure_approval_window_invalid:{approval_window}"
+        )
+    shadow_validation_mode = (
+        _string(payload.get("shadow_validation_mode")) or "require_live_evidence"
+    )
+    if shadow_validation_mode not in {"require_live_evidence", "skip"}:
+        raise ValueError(
+            f"autoresearch_runtime_closure_shadow_validation_mode_invalid:{shadow_validation_mode}"
+        )
+    promotion_target = _string(payload.get("promotion_target")) or "shadow"
+    if promotion_target not in {"shadow", "paper", "live"}:
+        raise ValueError(
+            f"autoresearch_runtime_closure_promotion_target_invalid:{promotion_target}"
+        )
     return RuntimeClosurePolicy(
-        enabled=bool(payload.get('enabled', False)),
-        execute_parity_replay=bool(payload.get('execute_parity_replay', True)),
-        execute_approval_replay=bool(payload.get('execute_approval_replay', True)),
+        enabled=bool(payload.get("enabled", False)),
+        execute_parity_replay=bool(payload.get("execute_parity_replay", True)),
+        execute_approval_replay=bool(payload.get("execute_approval_replay", True)),
         parity_window=parity_window,
         approval_window=approval_window,
         shadow_validation_mode=shadow_validation_mode,
@@ -468,158 +488,181 @@ def load_strategy_autoresearch_program(
     family_dir: Path | None = None,
 ) -> StrategyAutoresearchProgram:
     program_path = _resolve_program_path(path)
-    raw_payload = yaml.safe_load(program_path.read_text(encoding='utf-8'))
+    raw_payload = yaml.safe_load(program_path.read_text(encoding="utf-8"))
     if not isinstance(raw_payload, Mapping):
-        raise ValueError('autoresearch_program_not_mapping')
+        raise ValueError("autoresearch_program_not_mapping")
     payload = cast(Mapping[str, Any], raw_payload)
-    schema_version = _string(payload.get('schema_version'))
+    schema_version = _string(payload.get("schema_version"))
     if schema_version != _SCHEMA_VERSION:
-        raise ValueError(f'autoresearch_program_schema_invalid:{schema_version}')
+        raise ValueError(f"autoresearch_program_schema_invalid:{schema_version}")
 
-    objective_payload = _mapping(payload.get('objective'))
+    objective_payload = _mapping(payload.get("objective"))
     objective = StrategyObjective(
         target_net_pnl_per_day=_coerce_decimal(
-            objective_payload.get('target_net_pnl_per_day'),
-            default='500',
+            objective_payload.get("target_net_pnl_per_day"),
+            default="500",
         ),
         min_daily_net_pnl=_coerce_decimal(
-            objective_payload.get('min_daily_net_pnl'),
-            default='0',
+            objective_payload.get("min_daily_net_pnl"),
+            default="0",
         ),
         min_active_day_ratio=_coerce_decimal(
-            objective_payload.get('min_active_day_ratio'),
-            default='0.80',
+            objective_payload.get("min_active_day_ratio"),
+            default="0.80",
         ),
         min_positive_day_ratio=_coerce_decimal(
-            objective_payload.get('min_positive_day_ratio'),
-            default='0.55',
+            objective_payload.get("min_positive_day_ratio"),
+            default="0.55",
         ),
         min_profit_factor=_coerce_decimal(
-            objective_payload.get('min_profit_factor'),
-            default='1.50',
+            objective_payload.get("min_profit_factor"),
+            default="1.50",
         ),
         min_daily_notional=_coerce_decimal(
-            objective_payload.get('min_daily_notional'),
-            default='250000',
+            objective_payload.get("min_daily_notional"),
+            default="250000",
         ),
         max_best_day_share=_coerce_decimal(
-            objective_payload.get('max_best_day_share'),
-            default='0.40',
+            objective_payload.get("max_best_day_share"),
+            default="0.40",
         ),
         max_worst_day_loss=_coerce_decimal(
-            objective_payload.get('max_worst_day_loss'),
-            default='500',
+            objective_payload.get("max_worst_day_loss"),
+            default="500",
         ),
         max_drawdown=_coerce_decimal(
-            objective_payload.get('max_drawdown'),
-            default='1200',
+            objective_payload.get("max_drawdown"),
+            default="1200",
         ),
-        require_every_day_active=bool(objective_payload.get('require_every_day_active', False)),
+        require_every_day_active=bool(
+            objective_payload.get("require_every_day_active", False)
+        ),
         min_regime_slice_pass_rate=_coerce_decimal(
-            objective_payload.get('min_regime_slice_pass_rate'),
-            default='0.35',
+            objective_payload.get("min_regime_slice_pass_rate"),
+            default="0.35",
         ),
-        stop_when_objective_met=bool(objective_payload.get('stop_when_objective_met', False)),
+        stop_when_objective_met=bool(
+            objective_payload.get("stop_when_objective_met", False)
+        ),
         min_observed_trading_days=max(
             0,
-            int(objective_payload.get('min_observed_trading_days', 0)),
+            int(objective_payload.get("min_observed_trading_days", 0)),
         ),
         max_gross_exposure_pct_equity=_coerce_decimal(
-            objective_payload.get('max_gross_exposure_pct_equity'),
-            default='999999999',
+            objective_payload.get("max_gross_exposure_pct_equity"),
+            default="999999999",
         ),
         min_cash=_coerce_decimal(
-            objective_payload.get('min_cash'),
-            default='-999999999',
+            objective_payload.get("min_cash"),
+            default="-999999999",
         ),
         default_start_equity=_coerce_decimal(
-            objective_payload.get('default_start_equity'),
-            default='31590.02',
+            objective_payload.get("default_start_equity"),
+            default="31590.02",
         ),
         max_worst_day_loss_pct_equity=_coerce_decimal(
-            objective_payload.get('max_worst_day_loss_pct_equity'),
-            default='0.05',
+            objective_payload.get("max_worst_day_loss_pct_equity"),
+            default="0.05",
         ),
         max_drawdown_pct_equity=_coerce_decimal(
-            objective_payload.get('max_drawdown_pct_equity'),
-            default='0.08',
+            objective_payload.get("max_drawdown_pct_equity"),
+            default="0.08",
         ),
         extended_max_worst_day_loss_pct_equity=_coerce_decimal(
-            objective_payload.get('extended_max_worst_day_loss_pct_equity'),
-            default='0.08',
+            objective_payload.get("extended_max_worst_day_loss_pct_equity"),
+            default="0.08",
         ),
         extended_max_drawdown_pct_equity=_coerce_decimal(
-            objective_payload.get('extended_max_drawdown_pct_equity'),
-            default='0.12',
+            objective_payload.get("extended_max_drawdown_pct_equity"),
+            default="0.12",
         ),
         min_total_net_pnl_to_drawdown_ratio=_coerce_decimal(
-            objective_payload.get('min_total_net_pnl_to_drawdown_ratio'),
-            default='3.00',
+            objective_payload.get("min_total_net_pnl_to_drawdown_ratio"),
+            default="3.00",
         ),
-        require_double_oos=bool(objective_payload.get('require_double_oos', True)),
+        require_double_oos=bool(objective_payload.get("require_double_oos", True)),
         min_double_oos_independent_window_count=max(
             0,
-            int(objective_payload.get('min_double_oos_independent_window_count', 2)),
+            int(objective_payload.get("min_double_oos_independent_window_count", 2)),
         ),
         min_double_oos_pass_rate=_coerce_decimal(
-            objective_payload.get('min_double_oos_pass_rate'),
-            default='1.00',
+            objective_payload.get("min_double_oos_pass_rate"),
+            default="1.00",
         ),
         require_double_oos_cost_shock_above_target=bool(
-            objective_payload.get('require_double_oos_cost_shock_above_target', True)
+            objective_payload.get("require_double_oos_cost_shock_above_target", True)
         ),
     )
-    snapshot_policy_payload = _mapping(payload.get('snapshot_policy'))
+    snapshot_policy_payload = _mapping(payload.get("snapshot_policy"))
     snapshot_policy = SnapshotPolicy(
-        bar_interval=_string(snapshot_policy_payload.get('bar_interval')) or 'PT1S',
-        feature_set_id=_string(snapshot_policy_payload.get('feature_set_id')) or 'torghut.mlx-autoresearch.v1',
-        quote_quality_policy_id=_string(snapshot_policy_payload.get('quote_quality_policy_id'))
-        or 'scheduler_v3_default',
-        symbol_policy=_string(snapshot_policy_payload.get('symbol_policy')) or 'args_or_sweep',
-        allow_prior_day_features=bool(snapshot_policy_payload.get('allow_prior_day_features', True)),
-        allow_cross_sectional_features=bool(snapshot_policy_payload.get('allow_cross_sectional_features', True)),
+        bar_interval=_string(snapshot_policy_payload.get("bar_interval")) or "PT1S",
+        feature_set_id=_string(snapshot_policy_payload.get("feature_set_id"))
+        or "torghut.mlx-autoresearch.v1",
+        quote_quality_policy_id=_string(
+            snapshot_policy_payload.get("quote_quality_policy_id")
+        )
+        or "scheduler_v3_default",
+        symbol_policy=_string(snapshot_policy_payload.get("symbol_policy"))
+        or "args_or_sweep",
+        allow_prior_day_features=bool(
+            snapshot_policy_payload.get("allow_prior_day_features", True)
+        ),
+        allow_cross_sectional_features=bool(
+            snapshot_policy_payload.get("allow_cross_sectional_features", True)
+        ),
     )
-    proposal_model_payload = _mapping(payload.get('proposal_model_policy'))
+    proposal_model_payload = _mapping(payload.get("proposal_model_policy"))
     proposal_model_policy = ProposalModelPolicy(
-        enabled=bool(proposal_model_payload.get('enabled', True)),
-        mode=_string(proposal_model_payload.get('mode')) or 'ranking_only',
-        backend_preference=_string(proposal_model_payload.get('backend_preference')) or 'mlx',
-        top_k=max(1, int(proposal_model_payload.get('top_k', 4))),
-        exploration_slots=max(0, int(proposal_model_payload.get('exploration_slots', 1))),
-        minimum_history_rows=max(0, int(proposal_model_payload.get('minimum_history_rows', 3))),
+        enabled=bool(proposal_model_payload.get("enabled", True)),
+        mode=_string(proposal_model_payload.get("mode")) or "ranking_only",
+        backend_preference=_string(proposal_model_payload.get("backend_preference"))
+        or "mlx",
+        top_k=max(1, int(proposal_model_payload.get("top_k", 4))),
+        exploration_slots=max(
+            0, int(proposal_model_payload.get("exploration_slots", 1))
+        ),
+        minimum_history_rows=max(
+            0, int(proposal_model_payload.get("minimum_history_rows", 3))
+        ),
     )
-    replay_budget_payload = _mapping(payload.get('replay_budget'))
+    replay_budget_payload = _mapping(payload.get("replay_budget"))
     replay_budget = ReplayBudget(
-        max_candidates_per_round=max(1, int(replay_budget_payload.get('max_candidates_per_round', 8))),
-        exploration_slots=max(0, int(replay_budget_payload.get('exploration_slots', 1))),
+        max_candidates_per_round=max(
+            1, int(replay_budget_payload.get("max_candidates_per_round", 8))
+        ),
+        exploration_slots=max(
+            0, int(replay_budget_payload.get("exploration_slots", 1))
+        ),
         max_candidates_per_frontier_run=max(
             0,
-            int(replay_budget_payload.get('max_candidates_per_frontier_run', 96)),
+            int(replay_budget_payload.get("max_candidates_per_frontier_run", 96)),
         ),
         staged_train_screen_multiplier=max(
             1,
-            int(replay_budget_payload.get('staged_train_screen_multiplier', 1)),
+            int(replay_budget_payload.get("staged_train_screen_multiplier", 1)),
         ),
     )
-    runtime_closure_policy = _load_runtime_closure_policy(_mapping(payload.get('runtime_closure_policy')))
+    runtime_closure_policy = _load_runtime_closure_policy(
+        _mapping(payload.get("runtime_closure_policy"))
+    )
     forbidden_mutations = _string_list(
-        payload.get('forbidden_mutations')
-        or ['runtime_code_path', 'evaluator_logic', 'live_strategy_config']
+        payload.get("forbidden_mutations")
+        or ["runtime_code_path", "evaluator_logic", "live_strategy_config"]
     )
     parity_requirements = _string_list(
-        payload.get('parity_requirements')
+        payload.get("parity_requirements")
         or [
-            'checked_in_runtime_family',
-            'scheduler_v3_parity_replay',
-            'scheduler_v3_approval_replay',
-            'live_shadow_validation',
+            "checked_in_runtime_family",
+            "scheduler_v3_parity_replay",
+            "scheduler_v3_approval_replay",
+            "live_shadow_validation",
         ]
     )
-    promotion_policy = _string(payload.get('promotion_policy')) or 'research_only'
-    ledger_policy = _mapping(payload.get('ledger_policy')) or {'append_only': True}
+    promotion_policy = _string(payload.get("promotion_policy")) or "research_only"
+    ledger_policy = _mapping(payload.get("ledger_policy")) or {"append_only": True}
 
     research_sources: list[ResearchSource] = []
-    raw_sources = payload.get('research_sources')
+    raw_sources = payload.get("research_sources")
     if isinstance(raw_sources, list):
         raw_source_values = cast(list[Any], raw_sources)
         for raw_source in raw_source_values:
@@ -627,97 +670,117 @@ def load_strategy_autoresearch_program(
                 continue
             source_payload = cast(Mapping[str, Any], raw_source)
             claims: list[ResearchClaim] = []
-            raw_claims = source_payload.get('claims')
+            raw_claims = source_payload.get("claims")
             if isinstance(raw_claims, list):
                 raw_claim_values = cast(list[Any], raw_claims)
                 for raw_claim in raw_claim_values:
                     if not isinstance(raw_claim, Mapping):
                         continue
                     claim_payload = cast(Mapping[str, Any], raw_claim)
-                    claim_id = _string(claim_payload.get('claim_id'))
+                    claim_id = _string(claim_payload.get("claim_id"))
                     if not claim_id:
                         continue
                     claims.append(
                         ResearchClaim(
                             claim_id=claim_id,
-                            summary=_string(claim_payload.get('summary')),
-                            implication=_string(claim_payload.get('implication')),
-                            claim_text=_string(claim_payload.get('claim_text')),
-                            claim_type=_string(claim_payload.get('claim_type')),
+                            summary=_string(claim_payload.get("summary")),
+                            implication=_string(claim_payload.get("implication")),
+                            claim_text=_string(claim_payload.get("claim_text")),
+                            claim_type=_string(claim_payload.get("claim_type")),
                             data_requirements=_string_list(
-                                claim_payload.get('data_requirements')
+                                claim_payload.get("data_requirements")
                             ),
-                            asset_scope=_string(claim_payload.get('asset_scope')),
-                            horizon_scope=_string(claim_payload.get('horizon_scope')),
+                            asset_scope=_string(claim_payload.get("asset_scope")),
+                            horizon_scope=_string(claim_payload.get("horizon_scope")),
                             expected_direction=_string(
-                                claim_payload.get('expected_direction')
+                                claim_payload.get("expected_direction")
                             ),
                         )
                     )
-            source_id = _string(source_payload.get('source_id'))
+            source_id = _string(source_payload.get("source_id"))
             if not source_id:
                 continue
             research_sources.append(
                 ResearchSource(
                     source_id=source_id,
-                    title=_string(source_payload.get('title')),
-                    url=_string(source_payload.get('url')),
-                    published_at=_string(source_payload.get('published_at')),
+                    title=_string(source_payload.get("title")),
+                    url=_string(source_payload.get("url")),
+                    published_at=_string(source_payload.get("published_at")),
                     claims=tuple(claims),
                 )
             )
 
     resolved_family_dir = family_template_dir(family_dir)
     family_plans: list[FamilyAutoresearchPlan] = []
-    raw_families = payload.get('families')
+    raw_families = payload.get("families")
     if not isinstance(raw_families, list) or not raw_families:
-        raise ValueError('autoresearch_program_missing_families')
+        raise ValueError("autoresearch_program_missing_families")
     raw_family_values = cast(list[Any], raw_families)
     for raw_family in raw_family_values:
         if not isinstance(raw_family, Mapping):
             continue
         family_payload = cast(Mapping[str, Any], raw_family)
-        template_id = _string(family_payload.get('family_template_id'))
+        template_id = _string(family_payload.get("family_template_id"))
         if not template_id:
-            raise ValueError('autoresearch_family_template_missing')
+            raise ValueError("autoresearch_family_template_missing")
         template = load_family_template(template_id, directory=resolved_family_dir)
         seed_sweep_config = _resolve_seed_sweep_path(
             program_path=program_path,
-            raw_path=_string(family_payload.get('seed_sweep_config')),
+            raw_path=_string(family_payload.get("seed_sweep_config")),
         )
         parameter_mutations = {
             key: _load_mutation_space(_mapping(value))
-            for key, value in _mapping(family_payload.get('parameter_mutations')).items()
+            for key, value in _mapping(
+                family_payload.get("parameter_mutations")
+            ).items()
         }
         strategy_override_mutations = {
             key: _load_mutation_space(_mapping(value))
-            for key, value in _mapping(family_payload.get('strategy_override_mutations')).items()
+            for key, value in _mapping(
+                family_payload.get("strategy_override_mutations")
+            ).items()
         }
         family_plans.append(
             FamilyAutoresearchPlan(
                 family_template=template,
                 seed_sweep_config=seed_sweep_config,
-                max_iterations=max(1, int(family_payload.get('max_iterations', 2))),
-                keep_top_candidates=max(1, int(family_payload.get('keep_top_candidates', 1))),
-                frontier_top_n=max(1, int(family_payload.get('frontier_top_n', 5))),
-                force_keep_top_candidate_if_all_vetoed=bool(
-                    family_payload.get('force_keep_top_candidate_if_all_vetoed', True)
+                max_iterations=max(1, int(family_payload.get("max_iterations", 2))),
+                keep_top_candidates=max(
+                    1, int(family_payload.get("keep_top_candidates", 1))
                 ),
-                symbol_prune_iterations=max(0, int(family_payload.get('symbol_prune_iterations', 0))),
-                symbol_prune_candidates=max(1, int(family_payload.get('symbol_prune_candidates', 1))),
-                symbol_prune_min_universe_size=max(1, int(family_payload.get('symbol_prune_min_universe_size', 2))),
-                loss_repair_iterations=max(0, int(family_payload.get('loss_repair_iterations', 0))),
-                loss_repair_candidates=max(1, int(family_payload.get('loss_repair_candidates', 1))),
-                consistency_repair_iterations=max(0, int(family_payload.get('consistency_repair_iterations', 0))),
-                consistency_repair_candidates=max(1, int(family_payload.get('consistency_repair_candidates', 2))),
+                frontier_top_n=max(1, int(family_payload.get("frontier_top_n", 5))),
+                force_keep_top_candidate_if_all_vetoed=bool(
+                    family_payload.get("force_keep_top_candidate_if_all_vetoed", True)
+                ),
+                symbol_prune_iterations=max(
+                    0, int(family_payload.get("symbol_prune_iterations", 0))
+                ),
+                symbol_prune_candidates=max(
+                    1, int(family_payload.get("symbol_prune_candidates", 1))
+                ),
+                symbol_prune_min_universe_size=max(
+                    1, int(family_payload.get("symbol_prune_min_universe_size", 2))
+                ),
+                loss_repair_iterations=max(
+                    0, int(family_payload.get("loss_repair_iterations", 0))
+                ),
+                loss_repair_candidates=max(
+                    1, int(family_payload.get("loss_repair_candidates", 1))
+                ),
+                consistency_repair_iterations=max(
+                    0, int(family_payload.get("consistency_repair_iterations", 0))
+                ),
+                consistency_repair_candidates=max(
+                    1, int(family_payload.get("consistency_repair_candidates", 2))
+                ),
                 parameter_mutations=parameter_mutations,
                 strategy_override_mutations=strategy_override_mutations,
             )
         )
 
     return StrategyAutoresearchProgram(
-        program_id=_string(payload.get('program_id')) or program_path.stem,
-        description=_string(payload.get('description')),
+        program_id=_string(payload.get("program_id")) or program_path.stem,
+        description=_string(payload.get("description")),
         objective=objective,
         snapshot_policy=snapshot_policy,
         forbidden_mutations=forbidden_mutations,
@@ -740,8 +803,8 @@ def apply_program_objective(
     full_window_day_count: int | None = None,
 ) -> dict[str, Any]:
     payload = _json_clone(sweep_config)
-    constraints = _mapping(payload.get('constraints'))
-    consistency = _mapping(payload.get('consistency_constraints'))
+    constraints = _mapping(payload.get("constraints"))
+    consistency = _mapping(payload.get("consistency_constraints"))
     min_holdout_active_days = max(
         1,
         int(
@@ -750,45 +813,72 @@ def apply_program_objective(
             ).to_integral_value(rounding=ROUND_CEILING)
         ),
     )
-    constraints['holdout_target_net_per_day'] = str(objective.target_net_pnl_per_day)
-    constraints['min_active_holdout_days'] = min_holdout_active_days
-    consistency['target_net_per_day'] = str(objective.target_net_pnl_per_day)
-    consistency['min_daily_net_pnl'] = str(objective.min_daily_net_pnl)
-    consistency['min_active_ratio'] = str(objective.min_active_day_ratio)
-    consistency['max_worst_day_loss'] = str(objective.max_worst_day_loss)
-    consistency['max_drawdown'] = str(objective.max_drawdown)
-    consistency['max_best_day_share_of_total_pnl'] = str(objective.max_best_day_share)
-    consistency['min_avg_filled_notional_per_day'] = str(objective.min_daily_notional)
+    constraints["holdout_target_net_per_day"] = str(objective.target_net_pnl_per_day)
+    constraints["min_active_holdout_days"] = min_holdout_active_days
+    consistency["target_net_per_day"] = str(objective.target_net_pnl_per_day)
+    consistency["min_daily_net_pnl"] = str(objective.min_daily_net_pnl)
+    consistency["min_active_ratio"] = str(objective.min_active_day_ratio)
+    consistency["max_worst_day_loss"] = str(objective.max_worst_day_loss)
+    consistency["max_drawdown"] = str(objective.max_drawdown)
+    consistency["max_best_day_share_of_total_pnl"] = str(objective.max_best_day_share)
+    consistency["min_avg_filled_notional_per_day"] = str(objective.min_daily_notional)
+    if objective.min_observed_trading_days > 0:
+        consistency["min_window_weekday_count"] = max(
+            int(
+                _coerce_decimal(
+                    consistency.get("min_window_weekday_count"), default="0"
+                ).to_integral_value(rounding=ROUND_CEILING)
+            ),
+            int(objective.min_observed_trading_days),
+        )
     if full_window_day_count is not None:
         total_days = max(1, int(full_window_day_count))
-        consistency['min_active_days'] = max(
+        consistency["min_active_days"] = max(
             1,
-            int((objective.min_active_day_ratio * Decimal(total_days)).to_integral_value(rounding=ROUND_CEILING)),
+            int(
+                (
+                    objective.min_active_day_ratio * Decimal(total_days)
+                ).to_integral_value(rounding=ROUND_CEILING)
+            ),
         )
-        consistency['min_positive_days'] = max(
+        consistency["min_positive_days"] = max(
             1,
-            int((objective.min_positive_day_ratio * Decimal(total_days)).to_integral_value(rounding=ROUND_CEILING)),
+            int(
+                (
+                    objective.min_positive_day_ratio * Decimal(total_days)
+                ).to_integral_value(rounding=ROUND_CEILING)
+            ),
         )
     if objective.min_active_day_ratio > 0:
-        consistency['min_avg_filled_notional_per_active_day'] = str(
-            (objective.min_daily_notional / objective.min_active_day_ratio).quantize(Decimal('1'))
+        consistency["min_avg_filled_notional_per_active_day"] = str(
+            (objective.min_daily_notional / objective.min_active_day_ratio).quantize(
+                Decimal("1")
+            )
         )
-    consistency['require_every_day_active'] = bool(objective.require_every_day_active)
-    consistency['min_regime_slice_pass_rate'] = str(objective.min_regime_slice_pass_rate)
-    consistency['max_gross_exposure_pct_equity'] = str(objective.max_gross_exposure_pct_equity)
-    consistency['min_cash'] = str(objective.min_cash)
-    consistency['default_start_equity'] = str(objective.default_start_equity)
-    consistency['max_worst_day_loss_pct_equity'] = str(objective.max_worst_day_loss_pct_equity)
-    consistency['max_drawdown_pct_equity'] = str(objective.max_drawdown_pct_equity)
-    consistency['extended_max_worst_day_loss_pct_equity'] = str(
+    consistency["require_every_day_active"] = bool(objective.require_every_day_active)
+    consistency["min_regime_slice_pass_rate"] = str(
+        objective.min_regime_slice_pass_rate
+    )
+    consistency["max_gross_exposure_pct_equity"] = str(
+        objective.max_gross_exposure_pct_equity
+    )
+    consistency["min_cash"] = str(objective.min_cash)
+    consistency["default_start_equity"] = str(objective.default_start_equity)
+    consistency["max_worst_day_loss_pct_equity"] = str(
+        objective.max_worst_day_loss_pct_equity
+    )
+    consistency["max_drawdown_pct_equity"] = str(objective.max_drawdown_pct_equity)
+    consistency["extended_max_worst_day_loss_pct_equity"] = str(
         objective.extended_max_worst_day_loss_pct_equity
     )
-    consistency['extended_max_drawdown_pct_equity'] = str(objective.extended_max_drawdown_pct_equity)
-    consistency['min_total_net_pnl_to_drawdown_ratio'] = str(
+    consistency["extended_max_drawdown_pct_equity"] = str(
+        objective.extended_max_drawdown_pct_equity
+    )
+    consistency["min_total_net_pnl_to_drawdown_ratio"] = str(
         objective.min_total_net_pnl_to_drawdown_ratio
     )
-    payload['constraints'] = constraints
-    payload['consistency_constraints'] = consistency
+    payload["constraints"] = constraints
+    payload["consistency_constraints"] = consistency
     return payload
 
 
@@ -808,10 +898,10 @@ def _resolved_mutation_values(
     values: list[Any] = []
     if mutation.include_current and current_value is not None:
         values.append(current_value)
-    if mutation.mode == 'explicit_values':
+    if mutation.mode == "explicit_values":
         values.extend(mutation.values)
         return _dedupe_preserve_order(values)
-    if mutation.mode == 'allowed_normalizations':
+    if mutation.mode == "allowed_normalizations":
         values.extend(family_template.allowed_normalizations)
         return _dedupe_preserve_order(values)
     current_decimal = _decimal_from_candidate(current_value)
@@ -819,14 +909,18 @@ def _resolved_mutation_values(
         return _dedupe_preserve_order(values)
     numeric_values: list[Any] = []
     if mutation.include_current:
-        numeric_values.append(_format_numeric_like(current_decimal, current_value=current_value))
+        numeric_values.append(
+            _format_numeric_like(current_decimal, current_value=current_value)
+        )
     for delta in mutation.deltas:
         next_value = current_decimal + delta
         if mutation.minimum is not None and next_value < mutation.minimum:
             continue
         if mutation.maximum is not None and next_value > mutation.maximum:
             continue
-        numeric_values.append(_format_numeric_like(next_value, current_value=current_value))
+        numeric_values.append(
+            _format_numeric_like(next_value, current_value=current_value)
+        )
     return _dedupe_preserve_order(numeric_values)
 
 
@@ -837,15 +931,17 @@ def build_mutated_sweep_config(
     family_plan: FamilyAutoresearchPlan,
 ) -> tuple[dict[str, Any], str]:
     payload = _json_clone(base_sweep_config)
-    replay_config = _mapping(candidate_payload.get('replay_config'))
-    current_params = _mapping(replay_config.get('params'))
-    current_overrides = _mapping(replay_config.get('strategy_overrides'))
-    parameter_grid = _mapping(payload.get('parameters'))
-    strategy_override_grid = _mapping(payload.get('strategy_overrides'))
+    replay_config = _mapping(candidate_payload.get("replay_config"))
+    current_params = _mapping(replay_config.get("params"))
+    current_overrides = _mapping(replay_config.get("strategy_overrides"))
+    parameter_grid = _mapping(payload.get("parameters"))
+    strategy_override_grid = _mapping(payload.get("strategy_overrides"))
 
     mutated_keys: list[str] = []
     next_parameters: dict[str, Any] = {}
-    parameter_keys = set(parameter_grid) | set(current_params) | set(family_plan.parameter_mutations)
+    parameter_keys = (
+        set(parameter_grid) | set(current_params) | set(family_plan.parameter_mutations)
+    )
     for key in sorted(parameter_keys):
         mutation = family_plan.parameter_mutations.get(key)
         if mutation is None:
@@ -879,7 +975,11 @@ def build_mutated_sweep_config(
         mutated_keys.append(key)
 
     next_strategy_overrides: dict[str, Any] = {}
-    override_keys = set(strategy_override_grid) | set(current_overrides) | set(family_plan.strategy_override_mutations)
+    override_keys = (
+        set(strategy_override_grid)
+        | set(current_overrides)
+        | set(family_plan.strategy_override_mutations)
+    )
     for key in sorted(override_keys):
         mutation = family_plan.strategy_override_mutations.get(key)
         if mutation is None:
@@ -912,13 +1012,13 @@ def build_mutated_sweep_config(
         next_strategy_overrides[key] = values
         mutated_keys.append(key)
 
-    payload['parameters'] = next_parameters
-    payload['strategy_overrides'] = next_strategy_overrides
-    parent_candidate_id = _string(candidate_payload.get('candidate_id'))
+    payload["parameters"] = next_parameters
+    payload["strategy_overrides"] = next_strategy_overrides
+    parent_candidate_id = _string(candidate_payload.get("candidate_id"))
     description = (
-        f'parent={parent_candidate_id}; mutate={",".join(sorted(set(mutated_keys)))}'
+        f"parent={parent_candidate_id}; mutate={','.join(sorted(set(mutated_keys)))}"
         if mutated_keys
-        else f'parent={parent_candidate_id}; mutate=none'
+        else f"parent={parent_candidate_id}; mutate=none"
     )
     return payload, description
 
@@ -930,13 +1030,13 @@ def _objective_start_equity(
 ) -> Decimal:
     for payload in (scorecard, full_window):
         for key in (
-            'start_equity',
-            'account_start_equity',
-            'execution_start_equity',
-            'executable_replay_start_equity',
-            'runtime_start_equity',
+            "start_equity",
+            "account_start_equity",
+            "execution_start_equity",
+            "executable_replay_start_equity",
+            "runtime_start_equity",
         ):
-            value = _coerce_decimal(payload.get(key), default='0')
+            value = _coerce_decimal(payload.get(key), default="0")
             if value > 0:
                 return value
     return objective.default_start_equity
@@ -949,9 +1049,17 @@ def _objective_total_net_pnl(
     net_pnl_per_day: Decimal,
     trading_day_count: int,
 ) -> Decimal:
-    daily_net_payload = _mapping(full_window.get('daily_net')) or _mapping(scorecard.get('daily_net'))
+    daily_net_payload = _mapping(full_window.get("daily_net")) or _mapping(
+        scorecard.get("daily_net")
+    )
     if daily_net_payload:
-        return sum((_coerce_decimal(value, default='0') for value in daily_net_payload.values()), Decimal('0'))
+        return sum(
+            (
+                _coerce_decimal(value, default="0")
+                for value in daily_net_payload.values()
+            ),
+            Decimal("0"),
+        )
     return net_pnl_per_day * Decimal(max(1, trading_day_count))
 
 
@@ -965,9 +1073,11 @@ def _objective_drawdown_passes(
     total_net_pnl: Decimal,
     min_total_net_pnl_to_drawdown_ratio: Decimal,
 ) -> bool:
-    normal_limit = max(Decimal('0'), start_equity * normal_pct)
+    normal_limit = max(Decimal("0"), start_equity * normal_pct)
     percent_limit = max(normal_limit, start_equity * extended_pct)
-    extended_limit = percent_limit if absolute_cap <= 0 else min(absolute_cap, percent_limit)
+    extended_limit = (
+        percent_limit if absolute_cap <= 0 else min(absolute_cap, percent_limit)
+    )
     if observed <= normal_limit:
         return True
     if observed <= extended_limit and observed > 0:
@@ -980,26 +1090,40 @@ def candidate_meets_objective(
     *,
     objective: StrategyObjective,
 ) -> bool:
-    if list(candidate_payload.get('hard_vetoes') or []):
+    if list(candidate_payload.get("hard_vetoes") or []):
         return False
-    scorecard = _mapping(candidate_payload.get('objective_scorecard'))
-    full_window = _mapping(candidate_payload.get('full_window'))
-    net_pnl_per_day = _coerce_decimal(scorecard.get('net_pnl_per_day'), default='0')
-    active_day_ratio = _coerce_decimal(scorecard.get('active_day_ratio'), default='0')
-    positive_day_ratio = _coerce_decimal(scorecard.get('positive_day_ratio'), default='0')
-    avg_daily_notional = _coerce_decimal(scorecard.get('avg_filled_notional_per_day'), default='0')
-    best_day_share = _coerce_decimal(scorecard.get('best_day_share'), default='1')
-    worst_day_loss = _coerce_decimal(scorecard.get('worst_day_loss'), default='999999999')
-    max_drawdown = _coerce_decimal(scorecard.get('max_drawdown'), default='999999999')
-    regime_slice_pass_rate = _coerce_decimal(scorecard.get('regime_slice_pass_rate'), default='0')
-    max_gross_exposure_pct_equity = _coerce_decimal(
-        scorecard.get('max_gross_exposure_pct_equity') or full_window.get('max_gross_exposure_pct_equity'),
-        default='0',
+    scorecard = _mapping(candidate_payload.get("objective_scorecard"))
+    full_window = _mapping(candidate_payload.get("full_window"))
+    net_pnl_per_day = _coerce_decimal(scorecard.get("net_pnl_per_day"), default="0")
+    active_day_ratio = _coerce_decimal(scorecard.get("active_day_ratio"), default="0")
+    positive_day_ratio = _coerce_decimal(
+        scorecard.get("positive_day_ratio"), default="0"
     )
-    min_cash = _coerce_decimal(scorecard.get('min_cash') or full_window.get('min_cash'), default='0')
-    trading_day_count = int(full_window.get('trading_day_count') or 0)
-    active_days = int(full_window.get('active_days') or 0)
-    if objective.min_observed_trading_days > 0 and trading_day_count < objective.min_observed_trading_days:
+    avg_daily_notional = _coerce_decimal(
+        scorecard.get("avg_filled_notional_per_day"), default="0"
+    )
+    best_day_share = _coerce_decimal(scorecard.get("best_day_share"), default="1")
+    worst_day_loss = _coerce_decimal(
+        scorecard.get("worst_day_loss"), default="999999999"
+    )
+    max_drawdown = _coerce_decimal(scorecard.get("max_drawdown"), default="999999999")
+    regime_slice_pass_rate = _coerce_decimal(
+        scorecard.get("regime_slice_pass_rate"), default="0"
+    )
+    max_gross_exposure_pct_equity = _coerce_decimal(
+        scorecard.get("max_gross_exposure_pct_equity")
+        or full_window.get("max_gross_exposure_pct_equity"),
+        default="0",
+    )
+    min_cash = _coerce_decimal(
+        scorecard.get("min_cash") or full_window.get("min_cash"), default="0"
+    )
+    trading_day_count = int(full_window.get("trading_day_count") or 0)
+    active_days = int(full_window.get("active_days") or 0)
+    if (
+        objective.min_observed_trading_days > 0
+        and trading_day_count < objective.min_observed_trading_days
+    ):
         return False
     start_equity = _objective_start_equity(scorecard, full_window, objective)
     total_net_pnl = _objective_total_net_pnl(
@@ -1026,16 +1150,22 @@ def candidate_meets_objective(
         total_net_pnl=total_net_pnl,
         min_total_net_pnl_to_drawdown_ratio=objective.min_total_net_pnl_to_drawdown_ratio,
     )
-    if objective.require_every_day_active and trading_day_count > 0 and active_days != trading_day_count:
+    if (
+        objective.require_every_day_active
+        and trading_day_count > 0
+        and active_days != trading_day_count
+    ):
         return False
     if objective.min_daily_net_pnl > 0:
-        daily_net_payload = _mapping(full_window.get('daily_net')) or _mapping(scorecard.get('daily_net'))
+        daily_net_payload = _mapping(full_window.get("daily_net")) or _mapping(
+            scorecard.get("daily_net")
+        )
         if not daily_net_payload:
             return False
         if trading_day_count > 0 and len(daily_net_payload) < trading_day_count:
             return False
         if any(
-            _coerce_decimal(value, default='-999999999') < objective.min_daily_net_pnl
+            _coerce_decimal(value, default="-999999999") < objective.min_daily_net_pnl
             for value in daily_net_payload.values()
         ):
             return False
@@ -1056,9 +1186,9 @@ def candidate_meets_objective(
 
 
 def stable_payload_hash(payload: Mapping[str, Any]) -> str:
-    encoded = json.dumps(payload, sort_keys=True, separators=(',', ':'))
-    return hashlib.sha256(encoded.encode('utf-8')).hexdigest()
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def run_id(prefix: str = 'strategy-autoresearch') -> str:
-    return f'{prefix}-{datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")}'
+def run_id(prefix: str = "strategy-autoresearch") -> str:
+    return f"{prefix}-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
