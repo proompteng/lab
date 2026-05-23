@@ -804,6 +804,8 @@ families:
     symbol_prune_min_universe_size: 4
     loss_repair_iterations: 1
     loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
     parameter_mutations:
       max_entries_per_session:
         mode: numeric_step
@@ -835,6 +837,8 @@ families:
     symbol_prune_min_universe_size: 4
     loss_repair_iterations: 1
     loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
     parameter_mutations:
       min_cross_section_continuation_rank:
         mode: numeric_step
@@ -866,6 +870,8 @@ families:
     symbol_prune_min_universe_size: 5
     loss_repair_iterations: 1
     loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
     parameter_mutations:
       entry_minute_after_open:
         mode: numeric_step
@@ -904,6 +910,8 @@ families:
     symbol_prune_min_universe_size: 5
     loss_repair_iterations: 1
     loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
     parameter_mutations:
       entry_minute_after_open:
         mode: numeric_step
@@ -942,6 +950,8 @@ families:
     symbol_prune_min_universe_size: 5
     loss_repair_iterations: 1
     loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
     parameter_mutations:
       entry_minute_after_open:
         mode: numeric_step
@@ -980,6 +990,8 @@ families:
     symbol_prune_min_universe_size: 5
     loss_repair_iterations: 1
     loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
     parameter_mutations:
       entry_minute_after_open:
         mode: numeric_step
@@ -1018,6 +1030,8 @@ families:
     symbol_prune_min_universe_size: 5
     loss_repair_iterations: 1
     loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
     parameter_mutations:
       entry_minute_after_open:
         mode: numeric_step
@@ -1056,6 +1070,8 @@ families:
     symbol_prune_min_universe_size: 5
     loss_repair_iterations: 1
     loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
     parameter_mutations:
       entry_minute_after_open:
         mode: numeric_step
@@ -1103,6 +1119,8 @@ families:
     symbol_prune_min_universe_size: 5
     loss_repair_iterations: 1
     loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
     parameter_mutations:
       entry_minute_after_open:
         mode: numeric_step
@@ -1150,6 +1168,8 @@ families:
     symbol_prune_min_universe_size: 5
     loss_repair_iterations: 1
     loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
     parameter_mutations:
       entry_minute_after_open:
         mode: numeric_step
@@ -1195,6 +1215,8 @@ families:
     symbol_prune_min_universe_size: 3
     loss_repair_iterations: 1
     loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
     parameter_mutations:
       long_stop_loss_bps:
         mode: numeric_step
@@ -1226,6 +1248,8 @@ families:
     symbol_prune_min_universe_size: 5
     loss_repair_iterations: 1
     loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
     parameter_mutations:
       exit_macd_hist_max:
         mode: numeric_step
@@ -1258,6 +1282,8 @@ families:
     symbol_prune_min_universe_size: 5
     loss_repair_iterations: 1
     loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
     parameter_mutations:
       min_cross_section_continuation_rank:
         mode: numeric_step
@@ -1295,6 +1321,8 @@ families:
     symbol_prune_min_universe_size: 5
     loss_repair_iterations: 1
     loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
     parameter_mutations:
       min_cross_section_reversal_rank:
         mode: numeric_step
@@ -1332,6 +1360,8 @@ families:
     symbol_prune_min_universe_size: 5
     loss_repair_iterations: 1
     loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
     parameter_mutations:
       max_entries_per_session:
         mode: numeric_step
@@ -1366,6 +1396,8 @@ families:
     symbol_prune_min_universe_size: 5
     loss_repair_iterations: 1
     loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
     parameter_mutations:
       min_bull_rsi:
         mode: numeric_step
@@ -1398,6 +1430,8 @@ families:
     symbol_prune_min_universe_size: 3
     loss_repair_iterations: 1
     loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
     parameter_mutations:
       min_price_vs_session_open_bps:
         mode: numeric_step
