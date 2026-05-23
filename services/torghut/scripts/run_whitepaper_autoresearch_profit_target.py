@@ -119,6 +119,7 @@ _CANDIDATE_BOARD_RUNTIME_SESSION_TZ = ZoneInfo("America/New_York")
 _CANDIDATE_BOARD_RUNTIME_SESSION_OPEN = time(hour=9, minute=30)
 _CANDIDATE_BOARD_RUNTIME_SESSION_CLOSE = time(hour=16, minute=0)
 _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC = 8
+_DEFAULT_REAL_REPLAY_MAX_PARALLEL_FRONTIER_CANDIDATES = 16
 _DEFAULT_CLICKHOUSE_HTTP_URL = (
     "http://torghut-clickhouse.torghut.svc.cluster.local:8123"
 )
@@ -365,6 +366,16 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "Maximum number of bounded real-replay shards to run concurrently. "
             "Defaults to 1 for the legacy sequential behavior."
+        ),
+    )
+    parser.add_argument(
+        "--real-replay-max-parallel-frontier-candidates",
+        type=int,
+        default=_DEFAULT_REAL_REPLAY_MAX_PARALLEL_FRONTIER_CANDIDATES,
+        help=(
+            "Safety cap on concurrent exact-frontier candidate budget across "
+            "real-replay shards. Requested workers are reduced when their "
+            "combined shard budgets would exceed this value."
         ),
     )
     parser.add_argument(
@@ -6693,6 +6704,44 @@ def _retry_real_replay_failed_shard_specs(
     return deduped_retry_evidence, tuple(replay_results), remaining_failures, summary
 
 
+def _replay_shard_frontier_candidate_budget(plan: _ReplayShardPlan) -> int:
+    return max(1, int(getattr(plan.args, "max_total_frontier_candidates", 1) or 1))
+
+
+def _bounded_real_replay_shard_workers(
+    *,
+    args: argparse.Namespace,
+    plans: Sequence[_ReplayShardPlan],
+) -> int:
+    requested_workers = max(
+        1,
+        min(
+            len(plans) or 1,
+            int(getattr(args, "real_replay_shard_workers", 1) or 1),
+        ),
+    )
+    max_parallel_frontier_candidates = max(
+        0,
+        int(
+            getattr(
+                args,
+                "real_replay_max_parallel_frontier_candidates",
+                _DEFAULT_REAL_REPLAY_MAX_PARALLEL_FRONTIER_CANDIDATES,
+            )
+            or 0
+        ),
+    )
+    if not plans or max_parallel_frontier_candidates <= 0:
+        return requested_workers
+    largest_shard_budget = max(
+        _replay_shard_frontier_candidate_budget(plan) for plan in plans
+    )
+    budget_capped_workers = max(
+        1, max_parallel_frontier_candidates // largest_shard_budget
+    )
+    return max(1, min(requested_workers, budget_capped_workers))
+
+
 def _run_real_replay_shards(
     *,
     args: argparse.Namespace,
@@ -6712,12 +6761,9 @@ def _run_real_replay_shards(
         shard_timeout_seconds=shard_timeout_seconds,
     )
     bounded_shard_size = max(1, int(shard_size))
-    shard_workers = max(
-        1,
-        min(
-            len(plans) or 1,
-            int(getattr(args, "real_replay_shard_workers", 1) or 1),
-        ),
+    shard_workers = _bounded_real_replay_shard_workers(
+        args=args,
+        plans=plans,
     )
     if shard_workers <= 1:
         outcomes = [_execute_real_replay_shard(plan) for plan in plans]
@@ -7000,7 +7046,9 @@ _EXACT_REPLAY_LEDGER_SCHEMA_VERSIONS = frozenset(
 _EXACT_REPLAY_RUNTIME_LEDGER_PNL_SOURCE = "exact_replay_runtime_ledger"
 
 
-def _runtime_closure_ledger_datetime(value: Any, *, date_end: bool = False) -> datetime | None:
+def _runtime_closure_ledger_datetime(
+    value: Any, *, date_end: bool = False
+) -> datetime | None:
     text = _string(value)
     if not text:
         return None
@@ -10574,6 +10622,14 @@ def run_whitepaper_autoresearch_profit_target(
             ),
             "real_replay_shard_workers": int(
                 getattr(args, "real_replay_shard_workers", 1) or 1
+            ),
+            "real_replay_max_parallel_frontier_candidates": int(
+                getattr(
+                    args,
+                    "real_replay_max_parallel_frontier_candidates",
+                    _DEFAULT_REAL_REPLAY_MAX_PARALLEL_FRONTIER_CANDIDATES,
+                )
+                or _DEFAULT_REAL_REPLAY_MAX_PARALLEL_FRONTIER_CANDIDATES
             ),
             "real_replay_failed_spec_retries": int(
                 getattr(args, "real_replay_failed_spec_retries", 1) or 0

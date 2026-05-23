@@ -241,6 +241,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             real_replay_shard_size=0,
             real_replay_shard_timeout_seconds=0,
             real_replay_shard_workers=1,
+            real_replay_max_parallel_frontier_candidates=runner._DEFAULT_REAL_REPLAY_MAX_PARALLEL_FRONTIER_CANDIDATES,
             real_replay_failed_spec_retries=1,
             real_replay_retry_timeout_seconds=0,
             real_replay_retry_max_frontier_candidates_per_spec=1,
@@ -5060,9 +5061,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(update["runtime_ledger_closed_trade_count"], 1)
         self.assertEqual(update["runtime_ledger_open_position_count"], 0)
         self.assertEqual(update["runtime_ledger_filled_notional"], "201")
-        self.assertEqual(
-            update["runtime_ledger_net_strategy_pnl_after_costs"], "0.80"
-        )
+        self.assertEqual(update["runtime_ledger_net_strategy_pnl_after_costs"], "0.80")
         self.assertEqual(
             update["portfolio_post_cost_net_pnl_basis"],
             "realized_strategy_pnl_after_explicit_costs",
@@ -9195,6 +9194,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(parsed.real_replay_shard_size, 0)
         self.assertEqual(parsed.real_replay_shard_timeout_seconds, 0)
         self.assertEqual(parsed.real_replay_shard_workers, 1)
+        self.assertEqual(
+            parsed.real_replay_max_parallel_frontier_candidates,
+            runner._DEFAULT_REAL_REPLAY_MAX_PARALLEL_FRONTIER_CANDIDATES,
+        )
         self.assertEqual(parsed.replay_tape_path, Path(tmpdir) / "tape.jsonl")
         self.assertEqual(
             parsed.replay_tape_manifest, Path(tmpdir) / "tape.manifest.json"
@@ -10161,6 +10164,43 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(
             [item["shard_index"] for item in result.replay_results],
             [1, 2, 3],
+        )
+
+    def test_real_replay_shards_caps_workers_by_parallel_frontier_budget(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
+                [runner.RECENT_WHITEPAPER_SEEDS[0]]
+            )
+            compilation = runner.compile_whitepaper_candidate_specs(
+                hypothesis_cards=cards,
+                family_template_dir=Path("config/trading/families"),
+                seed_sweep_dir=Path("config/trading"),
+            )
+            specs = compilation.executable_specs[:6]
+            args = self._args(output_dir)
+            args.max_frontier_candidates_per_spec = 4
+            args.max_total_frontier_candidates = 24
+            args.real_replay_shard_workers = 8
+            args.real_replay_max_parallel_frontier_candidates = 10
+
+            plans = runner._build_real_replay_shards(
+                args=args,
+                output_dir=output_dir,
+                specs=specs,
+                shard_size=2,
+                shard_timeout_seconds=7,
+            )
+
+        self.assertEqual(
+            [runner._replay_shard_frontier_candidate_budget(plan) for plan in plans],
+            [8, 8, 8],
+        )
+        self.assertEqual(
+            runner._bounded_real_replay_shard_workers(args=args, plans=plans),
+            1,
         )
 
     def test_incomplete_sharded_replay_cannot_report_oracle_candidate_found(
