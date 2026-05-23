@@ -98,7 +98,7 @@ def _executable_scorecard_fields(index: int | str = 0) -> dict[str, object]:
 
 
 class TestPortfolioOptimizer(TestCase):
-    def test_exact_replay_ledger_helpers_accept_list_refs_and_runtime_alias_counts(
+    def test_exact_replay_ledger_helpers_accept_list_refs_and_runtime_artifact_counts(
         self,
     ) -> None:
         bundle = evidence_bundle_from_frontier_candidate(
@@ -134,6 +134,33 @@ class TestPortfolioOptimizer(TestCase):
         self.assertEqual(
             portfolio_optimizer_module._exact_replay_ledger_fill_count(bundle),
             6,
+        )
+
+    def test_exact_replay_ledger_helpers_reject_non_artifact_count_aliases(
+        self,
+    ) -> None:
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id="spec-ledger-summary-alias",
+            candidate={
+                "candidate_id": "cand-ledger-summary-alias",
+                "objective_scorecard": {
+                    "exact_replay_ledger_row_count": "7",
+                    "runtime_ledger_row_count": "7",
+                    "exact_replay_ledger_fill_count": "6",
+                    "runtime_ledger_fill_count": "6",
+                },
+            },
+            dataset_snapshot_id="snapshot-ledger-summary-alias",
+            result_path="/tmp/cand-ledger-summary-alias.json",
+        )
+
+        self.assertEqual(
+            portfolio_optimizer_module._exact_replay_ledger_row_count(bundle),
+            0,
+        )
+        self.assertEqual(
+            portfolio_optimizer_module._exact_replay_ledger_fill_count(bundle),
+            0,
         )
 
     def test_oracle_blocker_count_treats_malformed_payloads_as_unblocked(

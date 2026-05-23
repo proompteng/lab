@@ -404,8 +404,6 @@ def _exact_replay_ledger_row_count(bundle: CandidateEvidenceBundle) -> int:
             _decimal(
                 scorecard.get("exact_replay_ledger_artifact_row_count")
                 or scorecard.get("runtime_ledger_artifact_row_count")
-                or scorecard.get("exact_replay_ledger_row_count")
-                or scorecard.get("runtime_ledger_row_count")
             )
         ),
     )
@@ -419,8 +417,6 @@ def _exact_replay_ledger_fill_count(bundle: CandidateEvidenceBundle) -> int:
             _decimal(
                 scorecard.get("exact_replay_ledger_artifact_fill_count")
                 or scorecard.get("runtime_ledger_artifact_fill_count")
-                or scorecard.get("exact_replay_ledger_fill_count")
-                or scorecard.get("runtime_ledger_fill_count")
             )
         ),
     )
