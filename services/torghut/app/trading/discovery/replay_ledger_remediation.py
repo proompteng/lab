@@ -287,6 +287,7 @@ def _metric_snapshot(
         "max_single_fill_notional_pct_equity": best_candidate.get(
             "max_single_fill_notional_pct_equity"
         ),
+        "start_equity": policy.get("start_equity"),
     }
     return {key: _string(value) for key, value in keys.items() if _string(value)}
 

@@ -18,6 +18,7 @@ class TestReplayLedgerRemediation(TestCase):
                     "min_avg_filled_notional_per_day": "300000",
                     "max_best_day_share": "0.25",
                     "max_gross_exposure_pct_equity": "0.05",
+                    "start_equity": "31590.02",
                 },
                 "candidates": [
                     {
@@ -57,6 +58,7 @@ class TestReplayLedgerRemediation(TestCase):
             ],
             "300000",
         )
+        self.assertEqual(report["metric_snapshot"]["start_equity"], "31590.02")
         actions = {item["action"] for item in report["recommended_search_actions"]}
         self.assertIn(
             "run_runtime_closure_then_live_paper_ledger_validation",
