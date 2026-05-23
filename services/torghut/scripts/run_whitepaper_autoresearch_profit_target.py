@@ -9704,6 +9704,37 @@ def _candidate_board_payload(
     }
 
 
+def _paper_probation_handoff_payload(
+    candidate_board: Mapping[str, Any],
+) -> dict[str, Any]:
+    candidates = _list_of_mappings(candidate_board.get("paper_probation_candidates"))
+    import_plan = _mapping(candidate_board.get("runtime_window_import_plan"))
+    import_plan_ready = _string(import_plan.get("status")) == "ready"
+    blockers: list[str] = []
+    if not candidates:
+        blockers.append("paper_probation_candidate_missing")
+    if not import_plan_ready:
+        blockers.append("runtime_window_import_plan_not_ready")
+    status = "ready" if candidates and import_plan_ready else "not_ready"
+    return {
+        "schema_version": "torghut.paper-probation-handoff.v1",
+        "status": status,
+        "current_answer": _string(candidate_board.get("current_answer")),
+        "evidence_collection_stage": "paper",
+        "authorization_scope": "evidence_collection_only",
+        "paper_probation_authorized": status == "ready",
+        "probation_allowed": status == "ready",
+        "promotion_allowed": False,
+        "final_promotion_authorized": False,
+        "final_promotion_allowed": False,
+        "promotion_gate": "existing_runtime_governance_fail_closed",
+        "blockers": blockers,
+        "candidate_count": len(candidates),
+        "candidates": candidates,
+        "runtime_window_import_plan": import_plan,
+    }
+
+
 def _portfolio_with_runtime_closure_proof(
     *,
     portfolio: PortfolioCandidateSpec,
@@ -10594,6 +10625,9 @@ def run_whitepaper_autoresearch_profit_target(
     )
     candidate_board_path = output_dir / "candidate-board.json"
     _write_json(candidate_board_path, candidate_board)
+    paper_probation_handoff = _paper_probation_handoff_payload(candidate_board)
+    paper_probation_handoff_path = output_dir / "paper-probation-handoff.json"
+    _write_json(paper_probation_handoff_path, paper_probation_handoff)
     profitability_goal = _profitability_search_goal(
         args=args,
         output_dir=output_dir,
@@ -10654,6 +10688,7 @@ def run_whitepaper_autoresearch_profit_target(
         "false_positive_table": false_positive_table,
         "best_false_negative_table": best_false_negative_table,
         "candidate_board": candidate_board,
+        "paper_probation_handoff": paper_probation_handoff,
         "candidate_search_remediation": candidate_search_remediation,
         "profitability_search_goal": profitability_goal,
         "best_portfolio_candidate": portfolio.to_payload()
@@ -10697,6 +10732,7 @@ def run_whitepaper_autoresearch_profit_target(
                 output_dir / "portfolio-optimizer-report.json"
             ),
             "candidate_board": str(candidate_board_path),
+            "paper_probation_handoff": str(paper_probation_handoff_path),
             "candidate_search_remediation": str(remediation_path)
             if candidate_search_remediation is not None
             else None,
