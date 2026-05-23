@@ -24,7 +24,284 @@ from app.trading.models import SignalEnvelope
 import scripts.search_consistent_profitability_frontier as frontier
 
 
+def _authoritative_exact_replay_rows() -> list[dict[str, object]]:
+    return [
+        {
+            "event_type": "decision",
+            "executed_at": "2026-03-18T14:35:00+00:00",
+            "decision_id": "decision-buy",
+            "order_id": "order-buy",
+            "symbol": "NVDA",
+            "side": "buy",
+        },
+        {
+            "event_type": "order_submitted",
+            "executed_at": "2026-03-18T14:35:01+00:00",
+            "decision_id": "decision-buy",
+            "order_id": "order-buy",
+            "symbol": "NVDA",
+            "side": "buy",
+        },
+        {
+            "event_type": "fill",
+            "executed_at": "2026-03-18T14:35:02+00:00",
+            "decision_id": "decision-buy",
+            "order_id": "order-buy",
+            "symbol": "NVDA",
+            "side": "buy",
+            "filled_qty": "1",
+            "avg_fill_price": "100",
+            "cost_amount": "0.10",
+            "cost_basis": "local_replay_transaction_cost_model",
+        },
+        {
+            "event_type": "decision",
+            "executed_at": "2026-03-18T14:40:00+00:00",
+            "decision_id": "decision-sell",
+            "order_id": "order-sell",
+            "symbol": "NVDA",
+            "side": "sell",
+        },
+        {
+            "event_type": "order_submitted",
+            "executed_at": "2026-03-18T14:40:01+00:00",
+            "decision_id": "decision-sell",
+            "order_id": "order-sell",
+            "symbol": "NVDA",
+            "side": "sell",
+        },
+        {
+            "event_type": "fill",
+            "executed_at": "2026-03-18T14:40:02+00:00",
+            "decision_id": "decision-sell",
+            "order_id": "order-sell",
+            "symbol": "NVDA",
+            "side": "sell",
+            "filled_qty": "1",
+            "avg_fill_price": "101",
+            "cost_amount": "0.10",
+            "cost_basis": "local_replay_transaction_cost_model",
+        },
+    ]
+
+
+def _authoritative_exact_replay_ledger_payload(
+    *,
+    rows: list[dict[str, object]] | None = None,
+    fill_row_count: int = 2,
+) -> dict[str, object]:
+    return {
+        "schema_version": "torghut.exact_replay_ledger.rows.v1",
+        "account_label": "TORGHUT_REPLAY",
+        "execution_policy_hash": "policy-sha",
+        "cost_model_hash": "cost-sha",
+        "lineage_hash": "ledger-lineage-sha",
+        "fill_row_count": fill_row_count,
+        "runtime_ledger_rows": rows if rows is not None else _authoritative_exact_replay_rows(),
+    }
+
+
 class TestSearchConsistentProfitabilityFrontier(TestCase):
+    def test_exact_replay_ledger_artifact_update_stamps_authoritative_bucket(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            args = Namespace(json_output=root / "frontier.json")
+
+            update = frontier._exact_replay_ledger_artifact_update(
+                args=args,
+                root=root,
+                candidate_index=3,
+                candidate_id="candidate-ledger-authority",
+                full_window_payload={
+                    "exact_replay_ledger": _authoritative_exact_replay_ledger_payload()
+                },
+                dataset_snapshot_id="snapshot-ledger",
+                replay_lineage={"lineage_hash": "lineage-sha"},
+                candidate_evaluation_key={"candidate_evaluation_key": "eval-key"},
+                candidate_symbols=("NVDA",),
+                full_window_start=date(2026, 3, 18),
+                full_window_end=date(2026, 3, 23),
+            )
+
+            exact_ledger_ref = Path(update["exact_replay_ledger_artifact_ref"])
+
+            self.assertTrue(exact_ledger_ref.exists())
+            self.assertEqual(update["exact_replay_ledger_artifact_row_count"], 6)
+            self.assertEqual(update["exact_replay_ledger_artifact_fill_count"], 2)
+            self.assertEqual(update["runtime_ledger_artifact_row_count"], 6)
+            self.assertEqual(update["runtime_ledger_artifact_fill_count"], 2)
+            self.assertEqual(update["runtime_ledger_closed_trade_count"], 1)
+            self.assertEqual(update["runtime_ledger_open_position_count"], 0)
+            self.assertEqual(update["runtime_ledger_filled_notional"], "201")
+            self.assertEqual(
+                update["runtime_ledger_net_strategy_pnl_after_costs"], "0.80"
+            )
+            self.assertGreater(
+                Decimal(str(update["runtime_ledger_post_cost_expectancy_bps"])),
+                Decimal("0"),
+            )
+            self.assertEqual(
+                update["runtime_ledger_pnl_basis"],
+                "realized_strategy_pnl_after_explicit_costs",
+            )
+            self.assertEqual(
+                update["runtime_ledger_pnl_source"],
+                "exact_replay_runtime_ledger",
+            )
+
+    def test_exact_replay_ledger_artifact_update_rejects_weak_bucket(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            args = Namespace(json_output=root / "frontier.json")
+
+            update = frontier._exact_replay_ledger_artifact_update(
+                args=args,
+                root=root,
+                candidate_index=4,
+                candidate_id="candidate-placeholder-ledger",
+                full_window_payload={
+                    "exact_replay_ledger": _authoritative_exact_replay_ledger_payload(
+                        rows=[
+                            {
+                                "event_type": "fill",
+                                "executed_at": "2026-03-18T14:35:02+00:00",
+                                "decision_id": "decision-buy",
+                                "order_id": "order-buy",
+                                "symbol": "NVDA",
+                                "side": "buy",
+                                "filled_qty": "1",
+                                "avg_fill_price": "100",
+                                "cost_amount": "0.10",
+                                "cost_basis": "local_replay_transaction_cost_model",
+                            },
+                        ],
+                        fill_row_count=1,
+                    )
+                },
+                full_window_start=date(2026, 3, 18),
+                full_window_end=date(2026, 3, 23),
+            )
+
+        self.assertEqual(update, {})
+
+    def test_exact_replay_ledger_artifact_update_rejects_fill_count_mismatch(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            args = Namespace(json_output=root / "frontier.json")
+
+            update = frontier._exact_replay_ledger_artifact_update(
+                args=args,
+                root=root,
+                candidate_index=5,
+                candidate_id="candidate-mismatched-ledger",
+                full_window_payload={
+                    "exact_replay_ledger": _authoritative_exact_replay_ledger_payload(
+                        fill_row_count=1
+                    )
+                },
+                full_window_start=date(2026, 3, 18),
+                full_window_end=date(2026, 3, 23),
+            )
+
+        self.assertEqual(update, {})
+
+    def test_exact_replay_ledger_artifact_update_rejects_malformed_fill_count(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            args = Namespace(json_output=root / "frontier.json")
+            ledger_payload = _authoritative_exact_replay_ledger_payload()
+            ledger_payload["fill_row_count"] = "not-an-int"
+
+            update = frontier._exact_replay_ledger_artifact_update(
+                args=args,
+                root=root,
+                candidate_index=6,
+                candidate_id="candidate-malformed-ledger",
+                full_window_payload={"exact_replay_ledger": ledger_payload},
+                full_window_start=date(2026, 3, 18),
+                full_window_end=date(2026, 3, 23),
+            )
+
+        self.assertEqual(update, {})
+
+    def test_exact_replay_ledger_artifact_update_rejects_missing_bucket_range(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            args = Namespace(json_output=root / "frontier.json")
+
+            update = frontier._exact_replay_ledger_artifact_update(
+                args=args,
+                root=root,
+                candidate_index=7,
+                candidate_id="candidate-missing-window-ledger",
+                full_window_payload={
+                    "exact_replay_ledger": _authoritative_exact_replay_ledger_payload()
+                },
+            )
+
+        self.assertEqual(update, {})
+
+    def test_exact_replay_ledger_artifact_update_rejects_non_mapping_rows(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            args = Namespace(json_output=root / "frontier.json")
+
+            update = frontier._exact_replay_ledger_artifact_update(
+                args=args,
+                root=root,
+                candidate_index=8,
+                candidate_id="candidate-bad-row-ledger",
+                full_window_payload={
+                    "exact_replay_ledger": _authoritative_exact_replay_ledger_payload(
+                        rows=cast(list[dict[str, object]], ["bad-row"])
+                    )
+                },
+                full_window_start=date(2026, 3, 18),
+                full_window_end=date(2026, 3, 23),
+            )
+
+        self.assertEqual(update, {})
+
+    def test_frontier_ledger_datetime_handles_empty_invalid_and_timezone_forms(
+        self,
+    ) -> None:
+        self.assertIsNone(frontier._frontier_ledger_datetime(""))
+        self.assertIsNone(frontier._frontier_ledger_datetime("not-a-date"))
+        self.assertEqual(
+            frontier._frontier_ledger_datetime("2026-03-18T14:35:00"),
+            datetime(2026, 3, 18, 14, 35, tzinfo=timezone.utc),
+        )
+        self.assertEqual(
+            frontier._frontier_ledger_datetime("2026-03-18T14:35:00Z"),
+            datetime(2026, 3, 18, 14, 35, tzinfo=timezone.utc),
+        )
+
+    def test_frontier_exact_replay_bucket_rejects_empty_bucket_build(self) -> None:
+        with patch(
+            "scripts.search_consistent_profitability_frontier.build_runtime_ledger_buckets",
+            return_value=[],
+        ):
+            bucket = frontier._frontier_exact_replay_bucket(
+                ledger_payload=_authoritative_exact_replay_ledger_payload(),
+                raw_rows=_authoritative_exact_replay_rows(),
+                full_window_start=date(2026, 3, 18),
+                full_window_end=date(2026, 3, 23),
+            )
+
+        self.assertIsNone(bucket)
+
     def test_candidate_replay_lineage_payload_hashes_window_coverage(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -1290,6 +1567,21 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 exact_ledger_artifact["artifact_kind"], "exact_replay_ledger"
             )
             self.assertEqual(scorecard["runtime_ledger_artifact_row_count"], 6)
+            self.assertEqual(scorecard["runtime_ledger_artifact_fill_count"], 2)
+            self.assertEqual(scorecard["runtime_ledger_closed_trade_count"], 1)
+            self.assertEqual(scorecard["runtime_ledger_open_position_count"], 0)
+            self.assertEqual(scorecard["runtime_ledger_filled_notional"], "201")
+            self.assertEqual(
+                scorecard["runtime_ledger_net_strategy_pnl_after_costs"], "0.80"
+            )
+            self.assertEqual(
+                scorecard["runtime_ledger_pnl_basis"],
+                "realized_strategy_pnl_after_explicit_costs",
+            )
+            self.assertEqual(
+                scorecard["runtime_ledger_pnl_source"],
+                "exact_replay_runtime_ledger",
+            )
             artifact = json.loads(artifact_ref.read_text(encoding="utf-8"))
             self.assertEqual(
                 artifact["schema_version"], "torghut.order-type-ablation.v1"
@@ -4289,32 +4581,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                         "cost_model_hash": "cost-sha",
                         "lineage_hash": "ledger-lineage-sha",
                         "fill_row_count": 2,
-                        "runtime_ledger_rows": [
-                            {
-                                "event_type": "decision",
-                                "executed_at": "2026-03-18T14:35:00+00:00",
-                                "decision_id": "decision-buy",
-                                "order_id": "order-buy",
-                            },
-                            {
-                                "event_type": "order_submitted",
-                                "executed_at": "2026-03-18T14:35:01+00:00",
-                                "decision_id": "decision-buy",
-                                "order_id": "order-buy",
-                            },
-                            {
-                                "event_type": "fill",
-                                "executed_at": "2026-03-18T14:35:02+00:00",
-                                "decision_id": "decision-buy",
-                                "order_id": "order-buy",
-                                "symbol": "NVDA",
-                                "side": "buy",
-                                "filled_qty": "1",
-                                "avg_fill_price": "100",
-                                "cost_amount": "0.10",
-                                "cost_basis": "local_replay_transaction_cost_model",
-                            },
-                        ],
+                        "runtime_ledger_rows": _authoritative_exact_replay_rows(),
                     }
                     return payload
                 return self._payload(
