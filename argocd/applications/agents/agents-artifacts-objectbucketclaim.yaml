@@ -1,0 +1,8 @@
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: agents-artifacts
+  namespace: agents
+spec:
+  bucketName: agents-artifacts
+  storageClassName: rook-ceph-bucket

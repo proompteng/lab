@@ -126,15 +126,18 @@ describe('Agents domain scheduled AgentRun templates', () => {
       expect.arrayContaining([
         expect.objectContaining({
           name: 'AGENTS_ARTIFACTS_ACCESS_KEY_ID',
-          secretName: 'observability-minio-creds',
-          key: 'accesskey',
+          secretName: 'agents-artifacts',
+          key: 'AWS_ACCESS_KEY_ID',
         }),
         expect.objectContaining({
           name: 'AGENTS_ARTIFACTS_SECRET_ACCESS_KEY',
-          secretName: 'observability-minio-creds',
-          key: 'secretkey',
+          secretName: 'agents-artifacts',
+          key: 'AWS_SECRET_ACCESS_KEY',
         }),
       ]),
+    )
+    expect(objectAt(objectAt(providerSpec, 'envTemplate'), 'AGENTS_ARTIFACTS_ENDPOINT')).toBe(
+      'http://rook-ceph-rgw-objectstore.rook-ceph.svc:80',
     )
     expect(healthArtifact).toEqual({
       name: 'torghut-health-report',
@@ -151,7 +154,7 @@ describe('Agents domain scheduled AgentRun templates', () => {
       'argocd/applications/torghut/agents-domain/torghut-health-secretbinding.yaml',
     ).find((manifest) => objectAt(manifest, 'kind') === 'SecretBinding')
     const allowedSecrets = objectAt(objectAt(secretBinding, 'spec'), 'allowedSecrets') as string[] | undefined
-    expect(allowedSecrets).toEqual(expect.arrayContaining(['codex-auth', 'observability-minio-creds']))
+    expect(allowedSecrets).toEqual(expect.arrayContaining(['codex-auth', 'agents-artifacts']))
 
     const healthSpec = readYamlObjects('argocd/applications/torghut/agents-domain/torghut-agentruns.yaml').find(
       (manifest) =>

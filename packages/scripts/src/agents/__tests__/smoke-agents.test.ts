@@ -364,6 +364,54 @@ describe('scheduled AgentRun templates', () => {
     }
   })
 
+  it('wires Codex artifact uploads to the Agents-owned Rook bucket claim', () => {
+    const kustomization = readYamlObjects('argocd/applications/agents/kustomization.yaml')[0]
+    const resources = objectAt(kustomization, 'resources') as string[] | undefined
+    expect(resources).toContain('agents-artifacts-objectbucketclaim.yaml')
+
+    const bucketClaim = readYamlObjects('argocd/applications/agents/agents-artifacts-objectbucketclaim.yaml').find(
+      (manifest) => objectAt(manifest, 'kind') === 'ObjectBucketClaim',
+    )
+    expect(objectAt(objectAt(bucketClaim, 'metadata'), 'name')).toBe('agents-artifacts')
+    expect(objectAt(objectAt(bucketClaim, 'spec'), 'bucketName')).toBe('agents-artifacts')
+    expect(objectAt(objectAt(bucketClaim, 'spec'), 'storageClassName')).toBe('rook-ceph-bucket')
+
+    const provider = readYamlObjects('argocd/applications/agents/graf-codex-agentprovider.yaml').find(
+      (manifest) => objectAt(manifest, 'kind') === 'AgentProvider',
+    )
+    const providerSpec = objectAt(provider, 'spec')
+    const adapter = objectAt(providerSpec, 'adapter')
+    const codex = objectAt(adapter, 'codex')
+    const secretEnv = objectAt(codex, 'secretEnv') as Record<string, unknown>[] | undefined
+
+    expect(secretEnv).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'AGENTS_ARTIFACTS_ACCESS_KEY_ID',
+          secretName: 'agents-artifacts',
+          key: 'AWS_ACCESS_KEY_ID',
+        }),
+        expect.objectContaining({
+          name: 'AGENTS_ARTIFACTS_SECRET_ACCESS_KEY',
+          secretName: 'agents-artifacts',
+          key: 'AWS_SECRET_ACCESS_KEY',
+        }),
+      ]),
+    )
+    expect(objectAt(objectAt(providerSpec, 'envTemplate'), 'AGENTS_ARTIFACTS_ENDPOINT')).toBe(
+      'http://rook-ceph-rgw-objectstore.rook-ceph.svc:80',
+    )
+
+    const agent = readYamlObjects('argocd/applications/agents/graf-codex-agent.yaml').find(
+      (manifest) => objectAt(manifest, 'kind') === 'Agent',
+    )
+    const allowedSecrets = objectAt(objectAt(objectAt(agent, 'spec'), 'security'), 'allowedSecrets') as
+      | string[]
+      | undefined
+    expect(allowedSecrets).toEqual(expect.arrayContaining(['codex-auth', 'agents-artifacts']))
+    expect(allowedSecrets).not.toContain('observability-minio-creds')
+  })
+
   it('keeps the chart workflow smoke provider on the fake app-server', () => {
     const provider = readYamlObjects('charts/agents/examples/agentprovider-smoke.yaml').find(
       (manifest) => objectAt(manifest, 'kind') === 'AgentProvider',

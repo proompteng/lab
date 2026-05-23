@@ -15,5 +15,5 @@ spec:
       - codex-auth
       - github-token
       - graf-api
-      - observability-minio-creds
+      - agents-artifacts
       - nats-agents-credentials
