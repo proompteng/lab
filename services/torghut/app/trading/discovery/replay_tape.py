@@ -328,8 +328,9 @@ def validate_tape_freshness(
         )
 
     requested_symbols = set(_normalize_symbols(symbols))
-    if requested_symbols and manifest.symbols:
-        missing = sorted(requested_symbols - set(manifest.symbols))
+    coverage_symbols = set(manifest.symbols or manifest.row_symbols)
+    if requested_symbols:
+        missing = sorted(requested_symbols - coverage_symbols)
         if missing:
             reasons.append(f"symbols_not_covered:{','.join(missing)}")
 
@@ -342,7 +343,19 @@ def validate_tape_freshness(
             + ",".join(day.isoformat() for day in missing_trading_days)
         )
 
-    missing_symbol_trading_days = tuple(
+    requested_trading_days = _business_days(start_date, end_date)
+    observed_day_set = {
+        day for day in manifest.observed_trading_days if start_date <= day <= end_date
+    }
+    for raw_day, raw_count in manifest.row_count_by_trading_day.items():
+        try:
+            day = date.fromisoformat(str(raw_day))
+        except ValueError:
+            continue
+        if start_date <= day <= end_date and int(raw_count or 0) > 0:
+            observed_day_set.add(day)
+    observed_trading_days = tuple(sorted(observed_day_set))
+    missing_symbol_entries = set(
         entry
         for entry in manifest.missing_symbol_trading_days
         if _symbol_day_entry_in_window(
@@ -352,6 +365,15 @@ def validate_tape_freshness(
             requested_symbols=requested_symbols,
         )
     )
+    missing_symbol_entries.update(
+        _missing_symbol_trading_days(
+            row_count_by_symbol_trading_day=manifest.row_count_by_symbol_trading_day,
+            requested_symbols=tuple(sorted(requested_symbols)),
+            requested_trading_days=requested_trading_days,
+            observed_trading_days=observed_trading_days,
+        )
+    )
+    missing_symbol_trading_days = tuple(sorted(missing_symbol_entries))
     if missing_symbol_trading_days:
         reasons.append(
             "symbol_trading_days_missing:" + ",".join(missing_symbol_trading_days)
@@ -368,24 +390,23 @@ def validate_tape_freshness(
         "dataset_snapshot_ref": manifest.dataset_snapshot_ref,
         "row_count": manifest.row_count,
         "trading_day_count": manifest.trading_day_count,
+        "requested_symbols": sorted(requested_symbols),
         "requested_trading_days": [
             item.isoformat() for item in manifest.requested_trading_days
         ],
         "observed_trading_days": [
             item.isoformat() for item in manifest.observed_trading_days
         ],
-        "missing_trading_days": [
-            item.isoformat() for item in manifest.missing_trading_days
-        ],
+        "missing_trading_days": [item.isoformat() for item in missing_trading_days],
         "row_count_by_trading_day": dict(manifest.row_count_by_trading_day),
-        "missing_symbol_trading_days": list(manifest.missing_symbol_trading_days),
+        "missing_symbol_trading_days": list(missing_symbol_trading_days),
         "row_count_by_symbol_trading_day": {
             symbol: dict(days)
             for symbol, days in manifest.row_count_by_symbol_trading_day.items()
         },
         "coverage_status": _coverage_status(
-            missing_trading_days=manifest.missing_trading_days,
-            missing_symbol_trading_days=manifest.missing_symbol_trading_days,
+            missing_trading_days=missing_trading_days,
+            missing_symbol_trading_days=missing_symbol_trading_days,
         ),
     }
 

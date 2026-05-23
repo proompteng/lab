@@ -402,6 +402,46 @@ class TestReplayTape(TestCase):
             ["AAPL:2026-03-27"],
         )
 
+    def test_validate_tape_freshness_rejects_requested_symbol_absent_from_unscoped_manifest(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            manifest = materialize_signal_tape(
+                rows=[
+                    self._signal(day=26, seq=1, symbol="META"),
+                    self._signal(day=27, seq=2, symbol="META"),
+                ],
+                tape_path=Path(tmpdir) / "tape.jsonl",
+                dataset_snapshot_ref="snapshot-a",
+                symbols=(),
+                start_date=date(2026, 3, 26),
+                end_date=date(2026, 3, 27),
+                source_query_digest=build_source_query_digest({"window": "a"}),
+            )
+
+        with self.assertRaisesRegex(ValueError, "symbols_not_covered:AAPL"):
+            validate_tape_freshness(
+                manifest,
+                start_date=date(2026, 3, 26),
+                end_date=date(2026, 3, 27),
+                symbols=("AAPL",),
+            )
+
+        receipt = validate_tape_freshness(
+            manifest,
+            start_date=date(2026, 3, 26),
+            end_date=date(2026, 3, 27),
+            symbols=("AAPL",),
+            allow_stale_tape=True,
+        )
+        self.assertEqual(receipt["status"], "stale_override")
+        self.assertEqual(receipt["requested_symbols"], ["AAPL"])
+        self.assertIn("symbols_not_covered:AAPL", receipt["reasons"])
+        self.assertEqual(
+            receipt["missing_symbol_trading_days"],
+            ["AAPL:2026-03-26", "AAPL:2026-03-27"],
+        )
+
     def test_materialize_tape_requires_symbol_day_coverage_when_strict(
         self,
     ) -> None:

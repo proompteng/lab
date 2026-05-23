@@ -554,6 +554,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
 
         self.assertEqual([row.symbol for row in rows], ["NVDA"])
         self.assertEqual(validation["status"], "valid")
+        self.assertEqual(validation["requested_symbols"], ["NVDA"])
         self.assertEqual(validation["selected_row_count"], 1)
         self.assertEqual(validation["selected_symbols"], ["NVDA"])
         self.assertEqual(
@@ -561,6 +562,41 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             build_source_query_digest({"query": "frontier"}),
         )
         self.assertEqual(validation["manifest_path"], "")
+
+    def test_load_replay_tape_rows_rejects_absent_requested_symbol_from_unscoped_manifest(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            tape_path = root / "frontier-tape.jsonl"
+            materialize_signal_tape(
+                rows=[
+                    SignalEnvelope(
+                        event_ts=datetime(2026, 3, 18, 17, 30, tzinfo=timezone.utc),
+                        symbol="META",
+                        timeframe="1Sec",
+                        seq=1,
+                        source="ta",
+                        payload={"price": Decimal("500.00")},
+                    ),
+                ],
+                tape_path=tape_path,
+                dataset_snapshot_ref="snapshot-frontier",
+                symbols=(),
+                start_date=date(2026, 3, 18),
+                end_date=date(2026, 3, 18),
+                source_query_digest=build_source_query_digest({"query": "frontier"}),
+            )
+
+            with self.assertRaisesRegex(ValueError, "symbols_not_covered:NVDA"):
+                frontier._load_replay_tape_rows(
+                    tape_path=tape_path,
+                    manifest_path=None,
+                    start_date=date(2026, 3, 18),
+                    end_date=date(2026, 3, 18),
+                    symbols=("NVDA",),
+                    allow_stale_tape=False,
+                )
 
     def test_clickhouse_password_env_resolution_keeps_secret_out_of_argv(self) -> None:
         with patch.dict("os.environ", {"TORGHUT_CLICKHOUSE_PASSWORD": "from-env"}):

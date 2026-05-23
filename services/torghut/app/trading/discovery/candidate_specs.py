@@ -3198,6 +3198,33 @@ def _requires_synthetic_validation_only_policy(card: HypothesisCard) -> bool:
     )
 
 
+def _is_validation_or_execution_constraint_only(card: HypothesisCard) -> bool:
+    source_claims = _list_of_mappings(
+        card.implementation_constraints.get("source_claims")
+    )
+    claim_types = {
+        str(item.get("claim_type") or "").strip().lower()
+        for item in source_claims
+        if str(item.get("claim_type") or "").strip()
+    }
+    if not claim_types:
+        return False
+    signal_claim_types = {
+        "feature_recipe",
+        "signal_mechanism",
+        "strategy_mechanism",
+        "portfolio_construction",
+    }
+    if claim_types & signal_claim_types:
+        return False
+    return claim_types <= {
+        "execution_assumption",
+        "market_regime",
+        "risk_constraint",
+        "validation_requirement",
+    }
+
+
 def _paper_mechanism_haystack(card: HypothesisCard) -> str:
     validation_requirements = _list_of_mappings(
         card.implementation_constraints.get("validation_requirements")
@@ -4632,7 +4659,7 @@ def _families_for_hypothesis(
 ) -> tuple[tuple[str, int, tuple[str, ...]], ...]:
     scored = _family_scores_for_hypothesis(card)
     rejected_signal_rescue = _has_rejected_signal_outcome_calibration(card)
-    if rejected_signal_rescue:
+    if rejected_signal_rescue or _is_validation_or_execution_constraint_only(card):
         family_limit = _MAX_FAMILIES_PER_HYPOTHESIS
     else:
         family_limit = (

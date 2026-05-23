@@ -693,6 +693,55 @@ class TestCandidateSpecs(TestCase):
             specs[0].promotion_contract["rejects_classification_accuracy_without_costs"]
         )
 
+    def test_validation_only_lob_stress_does_not_portfolio_fanout(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-tlob-validation-only",
+            claims=[
+                {
+                    "claim_id": "tlob-alpha-decay-validation",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "TLOB dual attention limit order book forecasting shows "
+                        "predictability decay under tight spreads and high-volume "
+                        "algorithmic activity."
+                    ),
+                    "data_requirements": [
+                        "horizon_decay_curve",
+                        "spread_adjusted_labels",
+                        "tight_spread_regime_slices",
+                        "high_volume_regime_slices",
+                        "route_tca",
+                    ],
+                    "confidence": "0.78",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+        family_ids = {spec.family_template_id for spec in specs}
+        family_reasons = {
+            reason
+            for spec in specs
+            for reason in spec.feature_contract["family_selection"]["reasons"]
+        }
+
+        self.assertIn("intraday_tsmom_v2", family_ids)
+        self.assertIn("microbar_cross_sectional_pairs_v1", family_ids)
+        self.assertLessEqual(
+            len(family_ids),
+            candidate_specs_module._MAX_FAMILIES_PER_HYPOTHESIS,
+        )
+        self.assertNotIn("portfolio_sleeve_diversification", family_reasons)
+        self.assertTrue(
+            all(
+                "alpha_decay_predictability_stress"
+                in spec.parameter_space["mechanism_overlay_ids"]
+                for spec in specs
+            )
+        )
+
     def test_ohlcv_only_claim_adds_falsification_contract(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-ohlcv-falsification",

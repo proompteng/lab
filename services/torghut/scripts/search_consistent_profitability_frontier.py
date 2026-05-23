@@ -5316,6 +5316,11 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                 candidate_payload["dataset_snapshot_id"] = (
                     dataset_snapshot_receipt.snapshot_id
                 )
+                candidate_payload["dataset_snapshot_receipt"] = (
+                    dataset_snapshot_receipt.to_payload()
+                )
+                if replay_tape_validation is not None:
+                    candidate_payload["replay_tape"] = dict(replay_tape_validation)
                 replay_lineage = _candidate_replay_lineage_payload(
                     candidate_configmap_path=candidate_configmap_path,
                     candidate_search_key=candidate_key,
@@ -5593,8 +5598,24 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                 candidate_payload["decomposition"] = decomposition.to_payload()
                 candidate_payload["normalization_regime"] = normalization_regime
                 objective_scorecard_payload = objective_scorecard.to_payload()
+                replay_tape_validation_status = str(
+                    (replay_tape_validation or {}).get("status") or ""
+                ).lower()
+                tape_freshness_status = replay_tape_validation_status
+                if replay_tape_validation_status in {"stale_override", "stale"}:
+                    tape_freshness_status = "stale"
+                elif replay_tape_validation_status == "valid":
+                    tape_freshness_status = "fresh"
                 objective_scorecard_payload.update(
                     {
+                        "dataset_freshness_status": (
+                            "fresh" if dataset_snapshot_receipt.is_fresh else "stale"
+                        ),
+                        "stale_override_used": bool(
+                            dataset_snapshot_receipt.stale_override_used
+                        ),
+                        "replay_tape_validation_status": replay_tape_validation_status,
+                        "tape_freshness_status": tape_freshness_status,
                         "market_impact_liquidity_evidence_present": bool(
                             full_window_summary.get(
                                 "market_impact_liquidity_evidence_present"
