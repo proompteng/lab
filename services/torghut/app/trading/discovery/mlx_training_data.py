@@ -17,7 +17,52 @@ from app.trading.discovery.objectives import (
     deployable_proof_failed_gate_count,
 )
 
-MLX_RANKER_SCHEMA_VERSION = "torghut.mlx-ranker.v2"
+MLX_RANKER_SCHEMA_VERSION = "torghut.mlx-ranker.v3"
+
+_MECHANISM_OVERLAY_IDS = (
+    "cluster_lob_event_clustering",
+    "mixed_market_limit_execution_policy",
+    "queue_position_survival_fill_curve",
+    "mpc_dynamic_execution_schedule",
+    "alpha_decay_predictability_stress",
+    "nonlinear_market_impact_tca",
+    "simulation_reality_gap_implementation_risk",
+    "implementation_risk_backtest_stability",
+    "replay_paper_live_semantic_parity",
+    "intraday_volume_periodicity_execution",
+    "macro_announcement_dvar_momentum",
+    "ofi_lob_continuation_response",
+    "order_flow_filtration_parent_trade_obi",
+    "rejected_signal_outcome_calibration",
+    "delay_adjusted_depth_stress",
+    "ohlcv_only_falsification",
+)
+_MECHANISM_OVERLAY_FEATURE_NAMES = tuple(
+    f"paper_overlay_{overlay_id}" for overlay_id in _MECHANISM_OVERLAY_IDS
+)
+_PAPER_CONTRACT_FEATURE_NAMES = (
+    "paper_source_claim_count",
+    "paper_signal_claim_count",
+    "paper_execution_claim_count",
+    "paper_validation_claim_count",
+    "paper_risk_claim_count",
+    "paper_avg_claim_confidence",
+    "paper_source_data_requirement_count",
+    "paper_validation_requirement_count",
+    "paper_validation_data_requirement_count",
+    "paper_mechanism_overlay_count",
+    "paper_mechanism_required_evidence_count",
+    "paper_requires_route_tca",
+    "paper_requires_live_paper_parity",
+    "paper_requires_lob_event_stream",
+    "paper_requires_fill_outcomes",
+    "paper_requires_execution_shortfall",
+    "paper_requires_implementation_uncertainty",
+    "paper_requires_rejected_signal_labels",
+    "paper_requires_executable_quote",
+    "paper_promotion_requires_count",
+    "paper_promotion_rejects_count",
+)
 
 
 def _stable_hash(payload: Mapping[str, Any]) -> str:
@@ -159,6 +204,16 @@ def _mapping(value: Any) -> Mapping[str, Any]:
     return {}
 
 
+def _mapping_sequence(value: Any) -> tuple[Mapping[str, Any], ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        return ()
+    return tuple(
+        cast(Mapping[str, Any], item)
+        for item in cast(Sequence[Any], value)
+        if isinstance(item, Mapping)
+    )
+
+
 def _positive_or_default(value: float, default: float) -> float:
     return value if value > 0.0 else default
 
@@ -226,6 +281,171 @@ def _sequence_strings(value: Any) -> tuple[str, ...]:
     return tuple(
         str(item).strip() for item in cast(Sequence[Any], value) if str(item).strip()
     )
+
+
+def _strings(value: Any) -> tuple[str, ...]:
+    if isinstance(value, (str, bytes, bytearray)):
+        normalized = str(value).strip()
+        return (normalized,) if normalized else ()
+    if isinstance(value, Sequence):
+        return tuple(
+            str(item).strip()
+            for item in cast(Sequence[Any], value)
+            if str(item).strip()
+        )
+    return ()
+
+
+def _unique_string_count(items: Sequence[Mapping[str, Any]], key: str) -> float:
+    values: set[str] = set()
+    for item in items:
+        values.update(_strings(item.get(key)))
+    return float(len(values))
+
+
+def _unique_strings(items: Sequence[Mapping[str, Any]], key: str) -> set[str]:
+    values: set[str] = set()
+    for mapping_item in items:
+        values.update(value.lower() for value in _strings(mapping_item.get(key)))
+    return values
+
+
+def _claim_type_count(
+    claims: Sequence[Mapping[str, Any]], claim_types: set[str]
+) -> float:
+    return float(
+        sum(
+            1
+            for item in claims
+            if str(item.get("claim_type") or "").strip().lower() in claim_types
+        )
+    )
+
+
+def _average_claim_confidence(claims: Sequence[Mapping[str, Any]]) -> float:
+    values = [
+        _float(item.get("confidence"))
+        for item in claims
+        if _float(item.get("confidence")) > 0.0
+    ]
+    return _mean(values)
+
+
+def _truthy_contract_key_count(contract: Mapping[str, Any], prefix: str) -> float:
+    return float(
+        sum(
+            1
+            for key, value in contract.items()
+            if str(key).startswith(prefix) and _truthy_feature(value) > 0.0
+        )
+    )
+
+
+def _requirement_present(requirements: set[str], tokens: Sequence[str]) -> float:
+    return 1.0 if any(token in requirements for token in tokens) else 0.0
+
+
+def _mechanism_overlay_ids(spec: CandidateSpec) -> set[str]:
+    overlay_ids = set(_strings(spec.parameter_space.get("mechanism_overlay_ids")))
+    for contract in _mapping_sequence(spec.feature_contract.get("mechanism_overlays")):
+        overlay_ids.update(_strings(contract.get("overlay_id")))
+    return overlay_ids
+
+
+def _paper_contract_feature_values(spec: CandidateSpec) -> Mapping[str, float]:
+    source_claims = _mapping_sequence(spec.feature_contract.get("source_claims"))
+    validation_requirements = _mapping_sequence(
+        spec.feature_contract.get("validation_requirements")
+    )
+    mechanism_overlays = _mapping_sequence(
+        spec.feature_contract.get("mechanism_overlays")
+    )
+    overlay_ids = _mechanism_overlay_ids(spec)
+    contract_requirements = (
+        _unique_strings(source_claims, "data_requirements")
+        | _unique_strings(validation_requirements, "data_requirements")
+        | _unique_strings(mechanism_overlays, "required_evidence")
+    )
+    mechanism_required_evidence_count = _unique_string_count(
+        mechanism_overlays, "required_evidence"
+    )
+    feature_values = {
+        "paper_source_claim_count": float(len(source_claims)),
+        "paper_signal_claim_count": _claim_type_count(
+            source_claims,
+            {
+                "feature_recipe",
+                "signal_mechanism",
+                "strategy_mechanism",
+                "portfolio_construction",
+            },
+        ),
+        "paper_execution_claim_count": _claim_type_count(
+            source_claims, {"execution_assumption"}
+        ),
+        "paper_validation_claim_count": _claim_type_count(
+            source_claims, {"validation_requirement"}
+        ),
+        "paper_risk_claim_count": _claim_type_count(
+            source_claims, {"risk_constraint", "market_regime"}
+        ),
+        "paper_avg_claim_confidence": _average_claim_confidence(source_claims),
+        "paper_source_data_requirement_count": _unique_string_count(
+            source_claims, "data_requirements"
+        ),
+        "paper_validation_requirement_count": float(len(validation_requirements)),
+        "paper_validation_data_requirement_count": _unique_string_count(
+            validation_requirements, "data_requirements"
+        ),
+        "paper_mechanism_overlay_count": float(len(overlay_ids)),
+        "paper_mechanism_required_evidence_count": mechanism_required_evidence_count,
+        "paper_requires_route_tca": _requirement_present(
+            contract_requirements, ("route_tca",)
+        ),
+        "paper_requires_live_paper_parity": _requirement_present(
+            contract_requirements, ("live_paper_parity",)
+        ),
+        "paper_requires_lob_event_stream": _requirement_present(
+            contract_requirements,
+            ("lob_event_stream", "lob_events", "clustered_order_events"),
+        ),
+        "paper_requires_fill_outcomes": _requirement_present(
+            contract_requirements,
+            ("fill_outcomes", "order_lifecycle_fill_evidence"),
+        ),
+        "paper_requires_execution_shortfall": _requirement_present(
+            contract_requirements, ("execution_shortfall",)
+        ),
+        "paper_requires_implementation_uncertainty": _requirement_present(
+            contract_requirements,
+            (
+                "implementation_uncertainty_interval",
+                "implementation_uncertainty_stability",
+                "multi_engine_replay",
+            ),
+        ),
+        "paper_requires_rejected_signal_labels": _requirement_present(
+            contract_requirements,
+            ("rejected_signal_log", "outcome_labels", "counterfactual_return"),
+        ),
+        "paper_requires_executable_quote": _requirement_present(
+            contract_requirements,
+            ("executable_quote", "executable_quote_evidence"),
+        ),
+        "paper_promotion_requires_count": _truthy_contract_key_count(
+            spec.promotion_contract, "requires_"
+        ),
+        "paper_promotion_rejects_count": _truthy_contract_key_count(
+            spec.promotion_contract, "rejects_"
+        ),
+    }
+    for overlay_id, feature_name in zip(
+        _MECHANISM_OVERLAY_IDS,
+        _MECHANISM_OVERLAY_FEATURE_NAMES,
+        strict=True,
+    ):
+        feature_values[feature_name] = 1.0 if overlay_id in overlay_ids else 0.0
+    return feature_values
 
 
 def _capital_rank_count_floor(
@@ -618,7 +838,10 @@ def build_mlx_training_rows(
             "history_deployable_lower_bound_target_shortfall",
             "history_deployable_lower_bound_missing_count",
             "history_deployable_lower_bound_failed_gate_count",
+            *_PAPER_CONTRACT_FEATURE_NAMES,
+            *_MECHANISM_OVERLAY_FEATURE_NAMES,
         )
+        paper_contract_features = _paper_contract_feature_values(spec)
         capital_features = candidate_spec_capital_features(spec)
         params = _params(spec)
         target_net_pnl_per_day = _float(spec.objective.get("target_net_pnl_per_day"))
@@ -797,6 +1020,14 @@ def build_mlx_training_rows(
             deployable_lower_bound_target_shortfall,
             deployable_lower_bound_missing_count,
             deployable_lower_bound_failed_gate_count,
+            *(
+                _float(paper_contract_features.get(feature_name))
+                for feature_name in _PAPER_CONTRACT_FEATURE_NAMES
+            ),
+            *(
+                _float(paper_contract_features.get(feature_name))
+                for feature_name in _MECHANISM_OVERLAY_FEATURE_NAMES
+            ),
         )
         target = (
             deployable_lower_bound_net_pnl_per_day

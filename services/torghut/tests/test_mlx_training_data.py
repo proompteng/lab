@@ -320,6 +320,132 @@ class TestMlxTrainingData(TestCase):
         self.assertEqual(first_row["entry_order_type_prefer_limit"], 1.0)
         self.assertEqual(first_row["market_order_spread_bps_max"], 6.0)
 
+    def test_training_rows_encode_whitepaper_mechanism_contract_features(
+        self,
+    ) -> None:
+        spec = CandidateSpec(
+            schema_version="torghut.candidate-spec.v1",
+            candidate_spec_id="spec-paper-contract",
+            hypothesis_id="H-PAPER-CONTRACT",
+            family_template_id="microbar_cross_sectional_pairs_v1",
+            candidate_kind="configuration",
+            runtime_family="microbar_cross_sectional_pairs",
+            runtime_strategy_name="microbar-cross-sectional-pairs-v1",
+            feature_contract={
+                "source_claims": [
+                    {
+                        "claim_id": "claim-fill-survival",
+                        "claim_type": "execution_assumption",
+                        "confidence": "0.70",
+                        "data_requirements": [
+                            "queue_position",
+                            "time_to_fill_quantiles",
+                        ],
+                    },
+                    {
+                        "claim_id": "claim-sim-reality-gap",
+                        "claim_type": "validation_requirement",
+                        "confidence": "0.80",
+                        "data_requirements": [
+                            "simulation_live_parity_metrics",
+                            "fill_outcomes",
+                        ],
+                    },
+                    {
+                        "claim_id": "claim-ofi-response",
+                        "claim_type": "signal_mechanism",
+                        "confidence": "0.90",
+                        "data_requirements": [
+                            "order_flow_imbalance",
+                            "microprice_bias",
+                        ],
+                    },
+                ],
+                "validation_requirements": [
+                    {
+                        "claim_id": "claim-sim-reality-gap",
+                        "data_requirements": [
+                            "live_paper_parity",
+                            "route_tca",
+                        ],
+                    }
+                ],
+                "mechanism_overlays": [
+                    {
+                        "overlay_id": "simulation_reality_gap_implementation_risk",
+                        "required_evidence": [
+                            "simulation_live_parity_metrics",
+                            "fill_outcomes",
+                            "route_tca",
+                        ],
+                    },
+                    {
+                        "overlay_id": "queue_position_survival_fill_curve",
+                        "required_evidence": [
+                            "queue_position",
+                            "survival_fill_curve",
+                        ],
+                    },
+                ],
+            },
+            parameter_space={
+                "mechanism_overlay_ids": [
+                    "simulation_reality_gap_implementation_risk",
+                    "queue_position_survival_fill_curve",
+                    "ofi_lob_continuation_response",
+                ]
+            },
+            strategy_overrides={
+                "max_notional_per_trade": "25000",
+                "max_position_pct_equity": "0.25",
+                "params": {
+                    "capital_profile": "initial_equity_cash_constrained_1x",
+                    "max_entries_per_session": "2",
+                    "max_gross_exposure_pct_equity": "1.0",
+                },
+            },
+            objective={"target_net_pnl_per_day": "500"},
+            hard_vetoes={"required_min_daily_notional": "250000"},
+            expected_failure_modes=(),
+            promotion_contract={
+                "requires_simulation_live_parity_metrics": True,
+                "requires_fill_outcomes": True,
+                "rejects_synthetic_lob_fillability_as_capital_gate": True,
+            },
+        )
+
+        rows = build_mlx_training_rows(candidate_specs=[spec], evidence_bundles=[])
+        features = rows[0].to_payload()["features"]
+
+        self.assertEqual(features["paper_source_claim_count"], 3.0)
+        self.assertEqual(features["paper_signal_claim_count"], 1.0)
+        self.assertEqual(features["paper_execution_claim_count"], 1.0)
+        self.assertEqual(features["paper_validation_claim_count"], 1.0)
+        self.assertAlmostEqual(features["paper_avg_claim_confidence"], 0.8)
+        self.assertEqual(features["paper_source_data_requirement_count"], 6.0)
+        self.assertEqual(features["paper_validation_requirement_count"], 1.0)
+        self.assertEqual(features["paper_validation_data_requirement_count"], 2.0)
+        self.assertEqual(features["paper_mechanism_overlay_count"], 3.0)
+        self.assertEqual(features["paper_mechanism_required_evidence_count"], 5.0)
+        self.assertEqual(features["paper_requires_route_tca"], 1.0)
+        self.assertEqual(features["paper_requires_live_paper_parity"], 1.0)
+        self.assertEqual(features["paper_requires_fill_outcomes"], 1.0)
+        self.assertEqual(features["paper_requires_executable_quote"], 0.0)
+        self.assertEqual(features["paper_promotion_requires_count"], 2.0)
+        self.assertEqual(features["paper_promotion_rejects_count"], 1.0)
+        self.assertEqual(
+            features["paper_overlay_simulation_reality_gap_implementation_risk"],
+            1.0,
+        )
+        self.assertEqual(
+            features["paper_overlay_queue_position_survival_fill_curve"],
+            1.0,
+        )
+        self.assertEqual(features["paper_overlay_ofi_lob_continuation_response"], 1.0)
+        self.assertEqual(
+            features["paper_overlay_mixed_market_limit_execution_policy"], 0.0
+        )
+
     def test_negative_rank_bucket_lift_demotes_to_heuristic_order(self) -> None:
         rows = [
             MlxTrainingRow(
