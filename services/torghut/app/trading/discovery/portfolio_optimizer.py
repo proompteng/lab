@@ -18,6 +18,7 @@ from app.trading.discovery.portfolio_candidates import (
 from app.trading.discovery.objectives import deployable_lower_bound_net_pnl_per_day
 from app.trading.discovery.profit_target_oracle import evaluate_profit_target_oracle
 from app.trading.discovery.profit_target_oracle import ProfitTargetOraclePolicy
+from app.trading.runtime_ledger import POST_COST_PNL_BASIS
 
 MAX_ALLOWED_PAIRWISE_CORRELATION = Decimal("0.85")
 CONFORMAL_TAIL_RISK_ALPHA = Decimal("0.20")
@@ -25,6 +26,18 @@ PORTFOLIO_SEARCH_BEAM_WIDTH = 256
 PORTFOLIO_WEIGHTING_EQUAL_COUNT = "equal_count"
 PORTFOLIO_WEIGHTING_GROSS_EXPOSURE_BUDGET = "gross_exposure_budget"
 PORTFOLIO_WEIGHTING_EDGE_RISK_GROSS_EXPOSURE_BUDGET = "edge_risk_gross_exposure_budget"
+PORTFOLIO_RUNTIME_LEDGER_PNL_SOURCE = "exact_replay_runtime_ledger"
+_ACCEPTED_LEDGER_PNL_SOURCES = frozenset(
+    {
+        "exact_replay_ledger",
+        "exact_replay_runtime_ledger",
+        "runtime_execution_ledger",
+        "runtime_ledger",
+        "strategy_runtime_ledger",
+        "strategy_runtime_ledger_bucket",
+        "strategy_runtime_ledger_buckets",
+    }
+)
 PORTFOLIO_COMPOSABLE_SINGLE_SLEEVE_VETOES = frozenset(
     {
         "active_day_ratio_below_min",
@@ -410,6 +423,42 @@ def _exact_replay_ledger_fill_count(bundle: CandidateEvidenceBundle) -> int:
                 or scorecard.get("runtime_ledger_fill_count")
             )
         ),
+    )
+
+
+def _first_normalized_scorecard_text(scorecard: Mapping[str, Any], *keys: str) -> str:
+    for key in keys:
+        normalized = _string(scorecard.get(key)).lower()
+        if normalized:
+            return normalized
+    return ""
+
+
+def _ledger_pnl_basis(bundle: CandidateEvidenceBundle) -> str:
+    return _first_normalized_scorecard_text(
+        _scorecard(bundle),
+        "portfolio_post_cost_net_pnl_basis",
+        "portfolio_post_cost_net_pnl_per_day_basis",
+        "post_cost_net_pnl_basis",
+        "net_pnl_basis",
+        "runtime_ledger_pnl_basis",
+        "exact_replay_ledger_pnl_basis",
+        "post_cost_expectancy_basis",
+        "pnl_basis",
+    )
+
+
+def _ledger_pnl_source(bundle: CandidateEvidenceBundle) -> str:
+    return _first_normalized_scorecard_text(
+        _scorecard(bundle),
+        "portfolio_post_cost_net_pnl_source",
+        "portfolio_post_cost_net_pnl_per_day_source",
+        "post_cost_net_pnl_source",
+        "net_pnl_source",
+        "runtime_ledger_pnl_source",
+        "exact_replay_ledger_pnl_source",
+        "post_cost_expectancy_source",
+        "pnl_source",
     )
 
 
@@ -1312,6 +1361,13 @@ def _portfolio_scorecard(
     exact_replay_ledger_fill_count = sum(
         _exact_replay_ledger_fill_count(bundle) for bundle in selected
     )
+    all_selected_have_ledger_pnl_basis = bool(selected) and all(
+        _ledger_pnl_basis(bundle) == POST_COST_PNL_BASIS for bundle in selected
+    )
+    all_selected_have_ledger_pnl_source = bool(selected) and all(
+        _ledger_pnl_source(bundle) in _ACCEPTED_LEDGER_PNL_SOURCES
+        for bundle in selected
+    )
     executable_order_count = sum(
         _executable_replay_order_count(bundle) for bundle in selected
     )
@@ -1497,6 +1553,18 @@ def _portfolio_scorecard(
     scorecard = {
         "net_pnl_per_day": str(net_per_day),
         "portfolio_post_cost_net_pnl_per_day": str(net_per_day),
+        "portfolio_post_cost_net_pnl_basis": POST_COST_PNL_BASIS
+        if all_selected_have_ledger_pnl_basis
+        else "",
+        "portfolio_post_cost_net_pnl_source": PORTFOLIO_RUNTIME_LEDGER_PNL_SOURCE
+        if all_selected_have_ledger_pnl_source
+        else "",
+        "runtime_ledger_pnl_basis": POST_COST_PNL_BASIS
+        if all_selected_have_ledger_pnl_basis
+        else "",
+        "runtime_ledger_pnl_source": PORTFOLIO_RUNTIME_LEDGER_PNL_SOURCE
+        if all_selected_have_ledger_pnl_source
+        else "",
         "target_net_pnl_per_day": str(target_net_pnl_per_day),
         "target_met": net_per_day >= target_net_pnl_per_day,
         "portfolio_weighting_mode": _portfolio_weighting_mode(

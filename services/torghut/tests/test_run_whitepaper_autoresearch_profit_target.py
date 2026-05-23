@@ -4913,6 +4913,14 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(update["runtime_ledger_artifact_row_count"], 1)
         self.assertEqual(update["exact_replay_ledger_artifact_fill_count"], 0)
         self.assertEqual(update["runtime_ledger_artifact_fill_count"], 0)
+        self.assertEqual(
+            update["portfolio_post_cost_net_pnl_basis"],
+            "realized_strategy_pnl_after_explicit_costs",
+        )
+        self.assertEqual(
+            update["portfolio_post_cost_net_pnl_source"],
+            "exact_replay_runtime_ledger",
+        )
 
     def test_runtime_closure_proof_updates_portfolio_oracle_from_real_artifacts(
         self,

@@ -19,6 +19,10 @@ def _executable_scorecard_fields() -> dict[str, object]:
         "exact_replay_ledger_artifact_ref": "/tmp/exact-replay-ledger.json",
         "exact_replay_ledger_artifact_row_count": 20,
         "exact_replay_ledger_artifact_fill_count": 20,
+        "portfolio_post_cost_net_pnl_basis": "realized_strategy_pnl_after_explicit_costs",
+        "portfolio_post_cost_net_pnl_source": "exact_replay_runtime_ledger",
+        "runtime_ledger_pnl_basis": "realized_strategy_pnl_after_explicit_costs",
+        "runtime_ledger_pnl_source": "runtime_ledger",
         "market_impact_stress_passed": True,
         "market_impact_stress_artifact_ref": "/tmp/market-impact-stress.json",
         "market_impact_stress_model": "square_root",
@@ -1080,6 +1084,48 @@ class TestProfitTargetOracle(TestCase):
         self.assertIn(
             "exact_replay_ledger_artifact_fill_count_failed", result["blockers"]
         )
+
+    def test_profit_target_oracle_rejects_proxy_pnl_with_copied_ledger_counts(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "portfolio_post_cost_net_pnl_basis": "simulation_report_net_pnl",
+            "portfolio_post_cost_net_pnl_source": "simulation_report",
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn("portfolio_post_cost_net_pnl_basis_failed", result["blockers"])
+        self.assertIn("portfolio_post_cost_net_pnl_source_failed", result["blockers"])
+
+    def test_profit_target_oracle_rejects_missing_ledger_pnl_authority(
+        self,
+    ) -> None:
+        scorecard = {
+            key: value
+            for key, value in _passing_scorecard().items()
+            if key
+            not in {
+                "portfolio_post_cost_net_pnl_basis",
+                "portfolio_post_cost_net_pnl_source",
+                "runtime_ledger_pnl_basis",
+                "runtime_ledger_pnl_source",
+            }
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn("portfolio_post_cost_net_pnl_basis_failed", result["blockers"])
+        self.assertIn("portfolio_post_cost_net_pnl_source_failed", result["blockers"])
 
     def test_profit_target_oracle_accepts_runtime_ledger_aliases(self) -> None:
         scorecard = {
