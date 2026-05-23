@@ -26,6 +26,7 @@ from .hypotheses import (
     HypothesisRegistryLoadResult,
     load_hypothesis_registry,
 )
+from .runtime_ledger import EXACT_REPLAY_LEDGER_SCHEMA_VERSION, POST_COST_PNL_BASIS
 
 US_EQUITIES_REGULAR_TIMEZONE = "America/New_York"
 US_EQUITIES_REGULAR_OPEN = time(hour=9, minute=30)
@@ -37,6 +38,12 @@ PROMOTION_GRADE_POST_COST_BASES = frozenset(
 )
 LIVE_PROMOTION_GRADE_POST_COST_BASES = frozenset(
     {"realized_strategy_pnl_after_explicit_costs"}
+)
+RUNTIME_LEDGER_BUCKET_SCHEMAS = frozenset(
+    {
+        EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
+        "torghut.runtime-ledger-bucket.v1",
+    }
 )
 
 
@@ -195,6 +202,63 @@ def _mapping(value: Any) -> dict[str, Any]:
     return {str(key): item for key, item in mapping.items()}
 
 
+def _hash_count(value: Any) -> int:
+    if not isinstance(value, Mapping):
+        return 0
+    mapping = cast(Mapping[object, object], value)
+    return sum(1 for key in mapping.keys() if str(key).strip())
+
+
+def _runtime_ledger_bucket_blockers(bucket: Mapping[str, Any]) -> list[str]:
+    blockers = _string_list(bucket.get("blockers"))
+    ledger_schema_version = _text(bucket.get("ledger_schema_version"))
+    pnl_basis = _text(bucket.get("pnl_basis"))
+    filled_notional = _optional_decimal(bucket.get("filled_notional"))
+    cost_amount = _optional_decimal(bucket.get("cost_amount"))
+    post_cost_expectancy = _optional_decimal(bucket.get("post_cost_expectancy_bps"))
+
+    if ledger_schema_version is None:
+        blockers.append("runtime_ledger_schema_version_missing")
+    elif ledger_schema_version not in RUNTIME_LEDGER_BUCKET_SCHEMAS:
+        blockers.append("runtime_ledger_schema_version_invalid")
+    if pnl_basis is None:
+        blockers.append("runtime_ledger_pnl_basis_missing")
+    elif pnl_basis != POST_COST_PNL_BASIS:
+        blockers.append("runtime_ledger_pnl_basis_invalid")
+    if _observation_int(bucket.get("fill_count")) <= 0:
+        blockers.append("runtime_fills_missing")
+    if _observation_int(bucket.get("decision_count")) <= 0:
+        blockers.append("runtime_decision_lifecycle_missing")
+    if _observation_int(bucket.get("submitted_order_count")) <= 0:
+        blockers.append("submitted_order_lifecycle_missing")
+    if _observation_int(bucket.get("closed_trade_count")) <= 0:
+        blockers.append("closed_round_trip_missing")
+    if bucket.get("open_position_count") is None:
+        blockers.append("runtime_ledger_open_position_count_missing")
+    elif _observation_int(bucket.get("open_position_count")) > 0:
+        blockers.append("unclosed_position")
+    if filled_notional is None or filled_notional <= 0:
+        blockers.append("filled_notional_missing")
+    if cost_amount is None or cost_amount < 0:
+        blockers.append("explicit_cost_missing")
+    if post_cost_expectancy is None:
+        blockers.append("runtime_ledger_expectancy_missing")
+    if _hash_count(bucket.get("execution_policy_hash_counts")) <= 0:
+        blockers.append("runtime_ledger_execution_policy_hash_missing")
+    if _hash_count(bucket.get("cost_model_hash_counts")) <= 0:
+        blockers.append("runtime_ledger_cost_model_hash_missing")
+    if _hash_count(bucket.get("lineage_hash_counts")) <= 0:
+        blockers.append("runtime_ledger_lineage_hash_missing")
+    return list(dict.fromkeys(blockers))
+
+
+def _runtime_ledger_bucket_payload(value: Any) -> dict[str, Any]:
+    bucket = _mapping(value)
+    if not bucket:
+        return {}
+    return {**bucket, "blockers": _runtime_ledger_bucket_blockers(bucket)}
+
+
 def _runtime_ledger_post_cost_from_rows(
     rows: Sequence[_NormalizedTcaRow],
 ) -> tuple[Decimal | None, Decimal, Decimal, int]:
@@ -207,7 +271,7 @@ def _runtime_ledger_post_cost_from_rows(
             or row.post_cost_expectancy_basis
             != "realized_strategy_pnl_after_explicit_costs"
             or not row.runtime_ledger_bucket
-            or _string_list(row.runtime_ledger_bucket.get("blockers"))
+            or _runtime_ledger_bucket_blockers(row.runtime_ledger_bucket)
         ):
             continue
         net_pnl = _optional_decimal(
@@ -656,7 +720,9 @@ def build_observed_runtime_buckets(
                     basis=basis,
                     explicit_value=row.get("post_cost_promotion_eligible"),
                 ),
-                runtime_ledger_bucket=_mapping(row.get("runtime_ledger_bucket")),
+                runtime_ledger_bucket=_runtime_ledger_bucket_payload(
+                    row.get("runtime_ledger_bucket")
+                ),
             )
         )
 
@@ -673,9 +739,24 @@ def build_observed_runtime_buckets(
             for row in normalized_tca_rows
             if bucket_start <= row.computed_at < bucket_end
         ]
-        decision_count = len(decisions)
-        trade_count = len(executions)
-        order_count = len(executions)
+        runtime_ledger_decision_count = sum(
+            _observation_int(row.runtime_ledger_bucket.get("decision_count"))
+            for row in bucket_tca
+            if row.runtime_ledger_bucket
+        )
+        runtime_ledger_trade_count = sum(
+            _observation_int(row.runtime_ledger_bucket.get("fill_count"))
+            for row in bucket_tca
+            if row.runtime_ledger_bucket
+        )
+        runtime_ledger_order_count = sum(
+            _observation_int(row.runtime_ledger_bucket.get("submitted_order_count"))
+            for row in bucket_tca
+            if row.runtime_ledger_bucket
+        )
+        decision_count = max(len(decisions), runtime_ledger_decision_count)
+        trade_count = max(len(executions), runtime_ledger_trade_count)
+        order_count = max(len(executions), runtime_ledger_order_count)
         if decision_count <= 0 and trade_count <= 0:
             decision_alignment_ratio = Decimal("1")
         elif decision_count <= 0:
@@ -776,12 +857,15 @@ def _runtime_ledger_bucket_payloads(payload: Mapping[str, Any]) -> list[dict[str
     if isinstance(raw_payloads, Sequence) and not isinstance(
         raw_payloads, (str, bytes, bytearray)
     ):
-        return [
-            _mapping(item)
-            for item in cast(Sequence[object], raw_payloads)
-            if _mapping(item)
-        ]
-    single_payload = _mapping(payload.get("runtime_ledger_bucket"))
+        payloads: list[dict[str, Any]] = []
+        for item in cast(Sequence[object], raw_payloads):
+            payload = _runtime_ledger_bucket_payload(item)
+            if payload:
+                payloads.append(payload)
+        return payloads
+    single_payload = _runtime_ledger_bucket_payload(
+        payload.get("runtime_ledger_bucket")
+    )
     return [single_payload] if single_payload else []
 
 
@@ -793,11 +877,7 @@ def _runtime_ledger_post_cost_from_observed_buckets(
     sample_count = 0
     for bucket in buckets:
         for ledger_payload in _runtime_ledger_bucket_payloads(bucket.payload_json):
-            if _text(
-                ledger_payload.get("pnl_basis")
-            ) != "realized_strategy_pnl_after_explicit_costs" or _string_list(
-                ledger_payload.get("blockers")
-            ):
+            if _runtime_ledger_bucket_blockers(ledger_payload):
                 continue
             net_pnl = _optional_decimal(
                 ledger_payload.get("net_strategy_pnl_after_costs")

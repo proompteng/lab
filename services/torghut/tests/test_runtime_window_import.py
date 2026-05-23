@@ -24,6 +24,8 @@ from app.trading.runtime_window_import import (
     _observation_decimal,
     _observation_int,
     _parse_observation_datetime,
+    _runtime_ledger_bucket_blockers,
+    _runtime_ledger_bucket_payloads,
     build_observed_runtime_buckets,
     build_regular_session_buckets,
     persist_observed_runtime_windows,
@@ -43,6 +45,29 @@ def _simulation_report_pnl_basis() -> dict[str, object]:
         "post_cost_expectancy_basis": "simulation_report_net_pnl",
         "post_cost_promotion_eligible": True,
     }
+
+
+def _runtime_ledger_bucket(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "fill_count": 2,
+        "decision_count": 2,
+        "submitted_order_count": 2,
+        "closed_trade_count": 1,
+        "open_position_count": 0,
+        "filled_notional": "200",
+        "gross_strategy_pnl": "1",
+        "cost_amount": "0.20",
+        "net_strategy_pnl_after_costs": "0.80",
+        "post_cost_expectancy_bps": "40",
+        "ledger_schema_version": "torghut.exact_replay_ledger.v1",
+        "pnl_basis": "realized_strategy_pnl_after_explicit_costs",
+        "execution_policy_hash_counts": {"policy-sha": 2},
+        "cost_model_hash_counts": {"cost-sha": 2},
+        "lineage_hash_counts": {"lineage-sha": 2},
+        "blockers": [],
+    }
+    payload.update(overrides)
+    return payload
 
 
 class TestRuntimeWindowImport(TestCase):
@@ -182,22 +207,24 @@ class TestRuntimeWindowImport(TestCase):
                     "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
                     "abs_slippage_bps": Decimal("1"),
                     "post_cost_expectancy_bps": Decimal("100"),
-                    "runtime_ledger_bucket": {
-                        "filled_notional": "100",
-                        "net_strategy_pnl_after_costs": "1",
-                        "blockers": [],
-                    },
+                    "runtime_ledger_bucket": _runtime_ledger_bucket(
+                        filled_notional="100",
+                        net_strategy_pnl_after_costs="1",
+                        cost_amount="0.01",
+                        post_cost_expectancy_bps="100",
+                    ),
                     **_runtime_pnl_basis(),
                 },
                 {
                     "computed_at": datetime(2026, 3, 6, 14, 41, tzinfo=timezone.utc),
                     "abs_slippage_bps": Decimal("1"),
                     "post_cost_expectancy_bps": Decimal("1"),
-                    "runtime_ledger_bucket": {
-                        "filled_notional": "10000",
-                        "net_strategy_pnl_after_costs": "1",
-                        "blockers": [],
-                    },
+                    "runtime_ledger_bucket": _runtime_ledger_bucket(
+                        filled_notional="10000",
+                        net_strategy_pnl_after_costs="1",
+                        cost_amount="0.01",
+                        post_cost_expectancy_bps="1",
+                    ),
                     **_runtime_pnl_basis(),
                 },
             ],
@@ -219,6 +246,57 @@ class TestRuntimeWindowImport(TestCase):
             buckets[0].payload_json["runtime_ledger_net_strategy_pnl_after_costs"],
             "2",
         )
+
+    def test_runtime_ledger_bucket_blockers_require_complete_lifecycle_proof(
+        self,
+    ) -> None:
+        missing_blockers = _runtime_ledger_bucket_blockers({})
+
+        self.assertIn("runtime_ledger_schema_version_missing", missing_blockers)
+        self.assertIn("runtime_ledger_pnl_basis_missing", missing_blockers)
+        self.assertIn("runtime_ledger_open_position_count_missing", missing_blockers)
+
+        invalid_blockers = _runtime_ledger_bucket_blockers(
+            {
+                "ledger_schema_version": "torghut.loose_runtime_ledger.v0",
+                "pnl_basis": "simulation_report_net_pnl",
+                "fill_count": 0,
+                "decision_count": 0,
+                "submitted_order_count": 0,
+                "closed_trade_count": 0,
+                "open_position_count": 1,
+                "filled_notional": "0",
+                "cost_amount": "-0.01",
+                "post_cost_expectancy_bps": None,
+                "execution_policy_hash_counts": "not-a-map",
+                "cost_model_hash_counts": {},
+                "lineage_hash_counts": {},
+            }
+        )
+
+        self.assertIn("runtime_ledger_schema_version_invalid", invalid_blockers)
+        self.assertIn("runtime_ledger_pnl_basis_invalid", invalid_blockers)
+        self.assertIn("runtime_fills_missing", invalid_blockers)
+        self.assertIn("runtime_decision_lifecycle_missing", invalid_blockers)
+        self.assertIn("submitted_order_lifecycle_missing", invalid_blockers)
+        self.assertIn("closed_round_trip_missing", invalid_blockers)
+        self.assertIn("unclosed_position", invalid_blockers)
+        self.assertIn("filled_notional_missing", invalid_blockers)
+        self.assertIn("explicit_cost_missing", invalid_blockers)
+        self.assertIn("runtime_ledger_expectancy_missing", invalid_blockers)
+        self.assertIn("runtime_ledger_execution_policy_hash_missing", invalid_blockers)
+        self.assertIn("runtime_ledger_cost_model_hash_missing", invalid_blockers)
+        self.assertIn("runtime_ledger_lineage_hash_missing", invalid_blockers)
+
+    def test_runtime_ledger_bucket_payloads_accept_single_bucket_payload(
+        self,
+    ) -> None:
+        payloads = _runtime_ledger_bucket_payloads(
+            {"runtime_ledger_bucket": _runtime_ledger_bucket()}
+        )
+
+        self.assertEqual(len(payloads), 1)
+        self.assertEqual(payloads[0]["blockers"], [])
 
     def test_runtime_observation_parsers_handle_edge_inputs(self) -> None:
         parsed = _parse_observation_datetime(
@@ -470,24 +548,24 @@ class TestRuntimeWindowImport(TestCase):
                     "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
                     "abs_slippage_bps": Decimal("1"),
                     "post_cost_expectancy_bps": Decimal("100"),
-                    "runtime_ledger_bucket": {
-                        "filled_notional": "100",
-                        "net_strategy_pnl_after_costs": "1",
-                        "pnl_basis": "realized_strategy_pnl_after_explicit_costs",
-                        "blockers": [],
-                    },
+                    "runtime_ledger_bucket": _runtime_ledger_bucket(
+                        filled_notional="100",
+                        net_strategy_pnl_after_costs="1",
+                        cost_amount="0.01",
+                        post_cost_expectancy_bps="100",
+                    ),
                     **_runtime_pnl_basis(),
                 },
                 {
                     "computed_at": datetime(2026, 3, 6, 15, 6, tzinfo=timezone.utc),
                     "abs_slippage_bps": Decimal("1"),
                     "post_cost_expectancy_bps": Decimal("1"),
-                    "runtime_ledger_bucket": {
-                        "filled_notional": "10000",
-                        "net_strategy_pnl_after_costs": "1",
-                        "pnl_basis": "realized_strategy_pnl_after_explicit_costs",
-                        "blockers": [],
-                    },
+                    "runtime_ledger_bucket": _runtime_ledger_bucket(
+                        filled_notional="10000",
+                        net_strategy_pnl_after_costs="1",
+                        cost_amount="0.01",
+                        post_cost_expectancy_bps="1",
+                    ),
                     **_runtime_pnl_basis(),
                 },
             ],
@@ -558,24 +636,24 @@ class TestRuntimeWindowImport(TestCase):
                     "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
                     "abs_slippage_bps": Decimal("4"),
                     "post_cost_expectancy_bps": Decimal("8"),
-                    "runtime_ledger_bucket": {
-                        "filled_notional": "1000",
-                        "net_strategy_pnl_after_costs": "0.8",
-                        "pnl_basis": "realized_strategy_pnl_after_explicit_costs",
-                        "blockers": [],
-                    },
+                    "runtime_ledger_bucket": _runtime_ledger_bucket(
+                        filled_notional="1000",
+                        net_strategy_pnl_after_costs="0.8",
+                        cost_amount="0.40",
+                        post_cost_expectancy_bps="8",
+                    ),
                     **_runtime_pnl_basis(),
                 },
                 {
                     "computed_at": datetime(2026, 3, 6, 15, 6, tzinfo=timezone.utc),
                     "abs_slippage_bps": Decimal("5"),
                     "post_cost_expectancy_bps": Decimal("8"),
-                    "runtime_ledger_bucket": {
-                        "filled_notional": "1000",
-                        "net_strategy_pnl_after_costs": "0.8",
-                        "pnl_basis": "realized_strategy_pnl_after_explicit_costs",
-                        "blockers": [],
-                    },
+                    "runtime_ledger_bucket": _runtime_ledger_bucket(
+                        filled_notional="1000",
+                        net_strategy_pnl_after_costs="0.8",
+                        cost_amount="0.50",
+                        post_cost_expectancy_bps="8",
+                    ),
                     **_runtime_pnl_basis(),
                 },
             ],
