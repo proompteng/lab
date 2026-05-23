@@ -3743,6 +3743,29 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 summary["artifacts"]["candidate_board"],
                 str((output_dir / "candidate-board.json").resolve()),
             )
+            paper_probation_handoff = json.loads(
+                (output_dir / "paper-probation-handoff.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(
+                paper_probation_handoff["schema_version"],
+                "torghut.paper-probation-handoff.v1",
+            )
+            self.assertFalse(paper_probation_handoff["promotion_allowed"])
+            self.assertFalse(paper_probation_handoff["final_promotion_allowed"])
+            self.assertEqual(
+                paper_probation_handoff["runtime_window_import_plan"],
+                candidate_board["runtime_window_import_plan"],
+            )
+            self.assertEqual(
+                summary["paper_probation_handoff"],
+                paper_probation_handoff,
+            )
+            self.assertEqual(
+                summary["artifacts"]["paper_probation_handoff"],
+                str((output_dir / "paper-probation-handoff.json").resolve()),
+            )
             self.assertEqual(
                 summary["false_positive_table"], payload["false_positive_table"]
             )
@@ -6998,6 +7021,22 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertFalse(target["final_promotion_authorized"])
         self.assertFalse(target["final_promotion_allowed"])
         self.assertEqual(target["selection_reason"], "target_met_but_oracle_blocked")
+        handoff = runner._paper_probation_handoff_payload(board)
+        self.assertEqual(
+            handoff["schema_version"], "torghut.paper-probation-handoff.v1"
+        )
+        self.assertEqual(handoff["status"], "ready")
+        self.assertTrue(handoff["paper_probation_authorized"])
+        self.assertFalse(handoff["promotion_allowed"])
+        self.assertFalse(handoff["final_promotion_allowed"])
+        self.assertEqual(handoff["candidate_count"], 1)
+        self.assertEqual(
+            handoff["candidates"][0]["candidate_id"], "cand-paper-probation"
+        )
+        self.assertEqual(
+            handoff["runtime_window_import_plan"]["target_count"],
+            1,
+        )
 
     def test_candidate_board_paper_probation_prefers_lower_bound_economics(
         self,
