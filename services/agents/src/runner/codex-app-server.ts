@@ -986,6 +986,7 @@ export const runCodexAppServerAdapterEffect = ({
     yield* validateCodexAdapterEffect(adapter)
     const runPayload = yield* loadRunPayloadEffect(spec)
     state.outputArtifacts = renderOutputArtifacts(spec.providerSpec?.outputArtifacts, {
+      ...runPayload,
       ...buildTemplateContext(spec),
       run: runPayload,
     })
