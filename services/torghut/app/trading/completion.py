@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping, Sequence, cast
@@ -15,11 +16,13 @@ from sqlalchemy.orm import Session
 from ..models import (
     StrategyHypothesisMetricWindow,
     StrategyPromotionDecision,
+    StrategyRuntimeLedgerBucket,
     VNextCompletionGateResult,
     VNextEmpiricalJobRun,
 )
 from .empirical_jobs import EMPIRICAL_JOB_TYPES, build_empirical_jobs_status
 from .hypotheses import HypothesisManifest, load_hypothesis_registry
+from .runtime_ledger import EXACT_REPLAY_LEDGER_SCHEMA_VERSION, POST_COST_PNL_BASIS
 
 
 def _runtime_matrix_path() -> Path:
@@ -101,7 +104,7 @@ def _safe_int(value: Any, *, default: int = 0) -> int:
 def _safe_float(value: Any, *, default: float = 0.0) -> float:
     if isinstance(value, bool):
         return float(int(value))
-    if isinstance(value, (int, float)):
+    if isinstance(value, (Decimal, int, float)):
         return float(value)
     if isinstance(value, str):
         stripped = value.strip()
@@ -564,6 +567,142 @@ def _windows_with_allowed_promotion_decisions(
     return [row for row in rows if (key := _promotion_decision_key_for_window(row)) is not None and key in allowed_keys]
 
 
+_RUNTIME_LEDGER_BUCKET_SCHEMAS = frozenset(
+    {
+        EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
+        'torghut.runtime-ledger-bucket.v1',
+    }
+)
+
+
+def _utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _positive_hash_count(value: Any) -> bool:
+    mapping = _as_dict(value)
+    return bool(mapping) and any(_safe_int(count) > 0 for count in mapping.values())
+
+
+def _runtime_ledger_bucket_matches_window(
+    bucket: StrategyRuntimeLedgerBucket,
+    window: StrategyHypothesisMetricWindow,
+) -> bool:
+    identity_matches = (
+        _as_text(bucket.run_id) == _as_text(window.run_id)
+        and _as_text(bucket.hypothesis_id) == _as_text(window.hypothesis_id)
+        and _as_text(bucket.candidate_id) == _as_text(window.candidate_id)
+        and _as_text(bucket.observed_stage) == _as_text(window.observed_stage)
+    )
+    if not identity_matches:
+        return False
+    window_started = _utc(window.window_started_at)
+    window_ended = _utc(window.window_ended_at)
+    bucket_started = _utc(bucket.bucket_started_at)
+    bucket_ended = _utc(bucket.bucket_ended_at)
+    if window_started is None or window_ended is None or bucket_started is None or bucket_ended is None:
+        return True
+    return bucket_started <= window_ended and bucket_ended >= window_started
+
+
+def _runtime_ledger_bucket_is_promotion_grade(bucket: StrategyRuntimeLedgerBucket) -> bool:
+    blockers = [item for item in _as_list(bucket.blockers_json) if str(item).strip()]
+    return (
+        _as_text(bucket.ledger_schema_version) in _RUNTIME_LEDGER_BUCKET_SCHEMAS
+        and _as_text(bucket.pnl_basis) == POST_COST_PNL_BASIS
+        and not blockers
+        and _safe_int(bucket.fill_count) > 0
+        and _safe_int(bucket.decision_count) > 0
+        and _safe_int(bucket.submitted_order_count) > 0
+        and _safe_int(bucket.closed_trade_count) > 0
+        and _safe_int(bucket.open_position_count) == 0
+        and bucket.filled_notional > 0
+        and _positive_hash_count(bucket.execution_policy_hash_counts)
+        and _positive_hash_count(bucket.cost_model_hash_counts)
+        and _positive_hash_count(bucket.lineage_hash_counts)
+    )
+
+
+def _runtime_ledger_bucket_summary(
+    rows: Sequence[StrategyRuntimeLedgerBucket],
+) -> dict[str, Any]:
+    total_filled_notional = sum(
+        (row.filled_notional for row in rows),
+        Decimal('0'),
+    )
+    total_net_pnl = sum(
+        (row.net_strategy_pnl_after_costs for row in rows),
+        Decimal('0'),
+    )
+    expectancy_bps = (
+        float((total_net_pnl / total_filled_notional) * Decimal('10000'))
+        if total_filled_notional > 0
+        else 0.0
+    )
+    return {
+        'runtime_ledger_bucket_count': len(rows),
+        'runtime_ledger_fill_count': sum(max(0, _safe_int(row.fill_count)) for row in rows),
+        'runtime_ledger_submitted_order_count': sum(
+            max(0, _safe_int(row.submitted_order_count)) for row in rows
+        ),
+        'runtime_ledger_closed_trade_count': sum(max(0, _safe_int(row.closed_trade_count)) for row in rows),
+        'runtime_ledger_filled_notional': float(total_filled_notional),
+        'runtime_ledger_net_strategy_pnl_after_costs': float(total_net_pnl),
+        'runtime_ledger_post_cost_expectancy_bps': expectancy_bps,
+        'db_row_refs': [str(row.id) for row in rows],
+    }
+
+
+def _runtime_ledger_bucket_refs_for_windows(
+    session: Session,
+    rows: Sequence[StrategyHypothesisMetricWindow],
+) -> tuple[list[StrategyHypothesisMetricWindow], list[StrategyRuntimeLedgerBucket], list[str]]:
+    hypothesis_ids = sorted(
+        {hypothesis_id for row in rows if (hypothesis_id := _as_text(row.hypothesis_id)) is not None}
+    )
+    run_ids = sorted({run_id for row in rows if (run_id := _as_text(row.run_id)) is not None})
+    if not hypothesis_ids or not run_ids:
+        return [], [], [str(row.id) for row in rows]
+    buckets = list(
+        session.execute(
+            select(StrategyRuntimeLedgerBucket)
+            .where(StrategyRuntimeLedgerBucket.hypothesis_id.in_(hypothesis_ids))
+            .where(StrategyRuntimeLedgerBucket.run_id.in_(run_ids))
+            .order_by(
+                StrategyRuntimeLedgerBucket.bucket_ended_at.desc(),
+                StrategyRuntimeLedgerBucket.created_at.desc(),
+            )
+        ).scalars()
+    )
+    backed_windows: list[StrategyHypothesisMetricWindow] = []
+    matched_buckets: list[StrategyRuntimeLedgerBucket] = []
+    unbacked_window_refs: list[str] = []
+    used_bucket_ids: set[str] = set()
+    for window in rows:
+        matched_bucket: StrategyRuntimeLedgerBucket | None = None
+        for bucket in buckets:
+            bucket_id = str(bucket.id)
+            if bucket_id in used_bucket_ids:
+                continue
+            if not _runtime_ledger_bucket_matches_window(bucket, window):
+                continue
+            if not _runtime_ledger_bucket_is_promotion_grade(bucket):
+                continue
+            matched_bucket = bucket
+            used_bucket_ids.add(bucket_id)
+            break
+        if matched_bucket is None:
+            unbacked_window_refs.append(str(window.id))
+            continue
+        backed_windows.append(window)
+        matched_buckets.append(matched_bucket)
+    return backed_windows, matched_buckets, unbacked_window_refs
+
+
 def _window_gate_summary(
     rows: Sequence[StrategyHypothesisMetricWindow],
 ) -> dict[str, Any]:
@@ -873,6 +1012,7 @@ def _evaluate_live_canary_gate(
 
 def _evaluate_live_scale_gate(
     *,
+    session: Session,
     canary_gate: Mapping[str, Any],
     live_rows: Sequence[StrategyHypothesisMetricWindow],
     allowed_promotion_decision_keys: set[_PromotionDecisionKey],
@@ -914,16 +1054,24 @@ def _evaluate_live_scale_gate(
         candidate_rows,
         allowed_keys=allowed_promotion_decision_keys,
     )
-    summary = _window_gate_summary(qualifying)
+    ledger_qualifying, runtime_ledger_buckets, unbacked_window_refs = _runtime_ledger_bucket_refs_for_windows(
+        session,
+        qualifying,
+    )
+    summary = _window_gate_summary(ledger_qualifying)
+    ledger_summary = _runtime_ledger_bucket_summary(runtime_ledger_buckets)
+    summary['avg_post_cost_expectancy_bps'] = ledger_summary['runtime_ledger_post_cost_expectancy_bps']
     min_market_session_samples = _manifest_runtime_session_threshold(
         candidate_id=candidate_id,
-        rows=qualifying,
+        rows=ledger_qualifying,
         policy_parameters=_gate_policy_parameters(gate_definition),
         fallback_key='fallback_min_market_session_samples',
         default=120,
         manifest_attr='min_sample_count_for_scale_up',
     )
-    if summary['market_session_count'] < min_market_session_samples:
+    if not ledger_qualifying:
+        blocked_reason = 'runtime_ledger_profit_proof_missing'
+    elif summary['market_session_count'] < min_market_session_samples:
         blocked_reason = 'insufficient_live_runtime_sessions'
     elif summary['window_count'] < 10:
         blocked_reason = 'insufficient_live_runtime_windows'
@@ -943,7 +1091,12 @@ def _evaluate_live_scale_gate(
         'status': TRACE_STATUS_SATISFIED if blocked_reason is None else TRACE_STATUS_BLOCKED,
         'blocked_reason': blocked_reason,
         'artifact_refs': cast(list[str], canary_gate.get('artifact_refs') or []),
-        'db_row_refs': {'hypothesis_metric_windows': summary['db_row_refs']},
+        'db_row_refs': {
+            'hypothesis_metric_windows': summary['db_row_refs'],
+            'strategy_runtime_ledger_buckets': ledger_summary['db_row_refs'],
+            'runtime_ledger_unbacked_hypothesis_metric_windows': unbacked_window_refs,
+        },
+        'runtime_ledger_summary': ledger_summary,
         'dataset_snapshot_ref': canary_gate.get('dataset_snapshot_ref'),
         'candidate_id': canary_gate.get('candidate_id'),
     }
@@ -1132,6 +1285,7 @@ def build_doc29_completion_status(
                 gate_definition=gate_definition_by_id.get(DOC29_LIVE_CANARY_GATE),
             )
             scale = _evaluate_live_scale_gate(
+                session=session,
                 canary_gate=derived_canary,
                 live_rows=live_windows,
                 allowed_promotion_decision_keys=live_allowed_promotion_decisions,
@@ -1147,6 +1301,7 @@ def build_doc29_completion_status(
                 'candidate_id': scale.get('candidate_id'),
                 'artifact_refs': cast(list[str], scale.get('artifact_refs') or []),
                 'db_row_refs': cast(dict[str, Any], scale.get('db_row_refs') or {}),
+                'runtime_ledger_summary': cast(dict[str, Any], scale.get('runtime_ledger_summary') or {}),
                 'persisted_result_id': None,
                 'measured_at': None,
                 'freshness_state': 'fresh' if scale['status'] == TRACE_STATUS_SATISFIED else 'blocked',
