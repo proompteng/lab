@@ -9,6 +9,11 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import patch
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.models import Base, StrategyRuntimeLedgerBucket
 from scripts.import_hypothesis_runtime_windows import (
     EXECUTION_ELIGIBLE_DECISION_STATUSES,
     POST_COST_BASIS_RUNTIME_LEDGER,
@@ -22,8 +27,10 @@ from scripts.import_hypothesis_runtime_windows import (
     _parse_dt_or_none,
     _parse_target_metadata,
     _query_timestamps,
+    _runtime_ledger_bucket_profit_proof_present,
     _runtime_ledger_event_type,
     _runtime_ledger_profit_proof_present,
+    _runtime_ledger_tca_rows_from_durable_buckets,
     _runtime_ledger_tca_rows_from_artifacts,
     _strategy_name_candidates,
     main,
@@ -107,6 +114,29 @@ class _FakeSession:
         self.committed = True
 
 
+def _complete_runtime_ledger_bucket(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "fill_count": 2,
+        "decision_count": 2,
+        "submitted_order_count": 2,
+        "closed_trade_count": 1,
+        "open_position_count": 0,
+        "filled_notional": "200",
+        "gross_strategy_pnl": "1",
+        "cost_amount": "0.20",
+        "net_strategy_pnl_after_costs": "0.80",
+        "post_cost_expectancy_bps": "40",
+        "ledger_schema_version": "torghut.exact_replay_ledger.v1",
+        "pnl_basis": POST_COST_BASIS_RUNTIME_LEDGER,
+        "execution_policy_hash_counts": {"policy-sha": 2},
+        "cost_model_hash_counts": {"cost-sha": 2},
+        "lineage_hash_counts": {"lineage-sha": 2},
+        "blockers": [],
+    }
+    payload.update(overrides)
+    return payload
+
+
 class TestImportHypothesisRuntimeWindows(TestCase):
     def test_parse_args_accepts_dataset_snapshot_ref(self) -> None:
         with patch(
@@ -185,6 +215,165 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             False,
         )
 
+    def test_runtime_ledger_profit_proof_requires_lifecycle_and_lineage(
+        self,
+    ) -> None:
+        incomplete = _complete_runtime_ledger_bucket(lineage_hash_counts={})
+        complete = _complete_runtime_ledger_bucket()
+
+        self.assertFalse(_runtime_ledger_bucket_profit_proof_present(incomplete))
+        self.assertTrue(_runtime_ledger_bucket_profit_proof_present(complete))
+        self.assertFalse(
+            _runtime_ledger_profit_proof_present(
+                [
+                    {
+                        "post_cost_expectancy_basis": POST_COST_BASIS_RUNTIME_LEDGER,
+                        "runtime_ledger_bucket": incomplete,
+                    }
+                ]
+            )
+        )
+        self.assertTrue(
+            _runtime_ledger_profit_proof_present(
+                [
+                    {
+                        "post_cost_expectancy_basis": POST_COST_BASIS_RUNTIME_LEDGER,
+                        "runtime_ledger_bucket": complete,
+                    }
+                ]
+            )
+        )
+
+    def test_runtime_ledger_profit_proof_rejects_each_incomplete_proof_field(
+        self,
+    ) -> None:
+        invalid_cases = {
+            "invalid_pnl_basis": {"pnl_basis": POST_COST_BASIS_SIMULATION_REPORT},
+            "invalid_schema": {"ledger_schema_version": "torghut.loose_ledger.v0"},
+            "explicit_blocker": {"blockers": ["runtime_ledger_incomplete"]},
+            "missing_fills": {"fill_count": 0},
+            "missing_decisions": {"decision_count": 0},
+            "missing_submitted_orders": {"submitted_order_count": 0},
+            "missing_closed_trades": {"closed_trade_count": 0},
+            "missing_open_position_count": {"open_position_count": None},
+            "unclosed_position": {"open_position_count": 1},
+            "missing_filled_notional": {"filled_notional": "0"},
+            "missing_cost": {"cost_amount": None},
+            "negative_cost": {"cost_amount": "-0.01"},
+            "missing_expectancy": {"post_cost_expectancy_bps": None},
+            "missing_execution_hash": {"execution_policy_hash_counts": "bad-shape"},
+            "missing_cost_hash": {"cost_model_hash_counts": {}},
+            "missing_lineage_hash": {"lineage_hash_counts": {}},
+        }
+
+        for name, overrides in invalid_cases.items():
+            with self.subTest(name=name):
+                self.assertFalse(
+                    _runtime_ledger_bucket_profit_proof_present(
+                        _complete_runtime_ledger_bucket(**overrides)
+                    )
+                )
+
+    def test_runtime_ledger_tca_rows_from_durable_buckets_queries_matching_proof(
+        self,
+    ) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+        with session_local() as session:
+            session.add(
+                StrategyRuntimeLedgerBucket(
+                    run_id="runtime-proof-1",
+                    candidate_id="H-TSMOM-LIQ-01",
+                    hypothesis_id="H-TSMOM-LIQ-01",
+                    observed_stage="paper",
+                    bucket_started_at=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    bucket_ended_at=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    account_label="TORGHUT_SIM",
+                    runtime_strategy_name="intraday-tsmom-profit-v3",
+                    strategy_family="intraday_tsmom_consistent",
+                    fill_count=2,
+                    decision_count=2,
+                    submitted_order_count=2,
+                    cancelled_order_count=0,
+                    rejected_order_count=0,
+                    unfilled_order_count=0,
+                    closed_trade_count=1,
+                    open_position_count=0,
+                    filled_notional=Decimal("200"),
+                    gross_strategy_pnl=Decimal("1"),
+                    cost_amount=Decimal("0.20"),
+                    net_strategy_pnl_after_costs=Decimal("0.80"),
+                    post_cost_expectancy_bps=Decimal("40"),
+                    ledger_schema_version="torghut.exact_replay_ledger.v1",
+                    pnl_basis=POST_COST_BASIS_RUNTIME_LEDGER,
+                    execution_policy_hash_counts={"policy-sha": 2},
+                    cost_model_hash_counts={"cost-sha": 2},
+                    lineage_hash_counts={"lineage-sha": 2},
+                    blockers_json=[],
+                    payload_json={},
+                )
+            )
+            session.add(
+                StrategyRuntimeLedgerBucket(
+                    run_id="runtime-proof-other",
+                    candidate_id="other-candidate",
+                    hypothesis_id="H-TSMOM-LIQ-01",
+                    observed_stage="paper",
+                    bucket_started_at=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    bucket_ended_at=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    runtime_strategy_name="intraday-tsmom-profit-v3",
+                    fill_count=2,
+                    decision_count=2,
+                    submitted_order_count=2,
+                    closed_trade_count=1,
+                    open_position_count=0,
+                    filled_notional=Decimal("200"),
+                    gross_strategy_pnl=Decimal("1"),
+                    cost_amount=Decimal("0.20"),
+                    net_strategy_pnl_after_costs=Decimal("0.80"),
+                    post_cost_expectancy_bps=Decimal("40"),
+                    ledger_schema_version="torghut.exact_replay_ledger.v1",
+                    pnl_basis=POST_COST_BASIS_RUNTIME_LEDGER,
+                )
+            )
+            session.commit()
+
+            rows, metadata = _runtime_ledger_tca_rows_from_durable_buckets(
+                session=session,
+                candidate_id="H-TSMOM-LIQ-01",
+                hypothesis_id="H-TSMOM-LIQ-01",
+                observed_stage="paper",
+                strategy_names=["intraday-tsmom-profit-v3"],
+                account_label="TORGHUT_SIM",
+                window_start=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                window_end=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(metadata["runtime_ledger_durable_bucket_count"], 1)
+        self.assertEqual(
+            metadata["runtime_ledger_durable_bucket_run_ids"],
+            ["runtime-proof-1"],
+        )
+        self.assertEqual(metadata["runtime_ledger_durable_bucket_fill_count"], 2)
+        self.assertEqual(
+            metadata["runtime_ledger_durable_bucket_profit_proof_count"],
+            1,
+        )
+        self.assertEqual(rows[0]["post_cost_promotion_eligible"], True)
+        bucket = rows[0]["runtime_ledger_bucket"]
+        self.assertIsInstance(bucket, dict)
+        assert isinstance(bucket, dict)
+        self.assertEqual(bucket["run_id"], "runtime-proof-1")
+        self.assertEqual(bucket["closed_trade_count"], 1)
+
     def test_parse_target_metadata_requires_json_mapping(self) -> None:
         self.assertEqual(_parse_target_metadata(""), {})
         self.assertEqual(
@@ -196,16 +385,66 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         with self.assertRaisesRegex(RuntimeError, "target_metadata_json_not_mapping"):
             _parse_target_metadata("[]")
 
-    def test_main_requires_source_dsn(self) -> None:
+    def test_main_requires_source_dsn_or_durable_runtime_ledger_bucket(self) -> None:
         args = SimpleNamespace(
+            run_id="run-missing-source",
+            candidate_id="cand-missing-source",
+            hypothesis_id="H-CONT-01",
+            observed_stage="paper",
+            strategy_family="",
             source_dsn="",
             source_dsn_env="TORGHUT_TEST_MISSING_DSN",
+            strategy_name="intraday-tsmom-profit-v2",
+            account_label="TORGHUT_SIM",
+            window_start="2026-03-06T14:30:00Z",
+            window_end="2026-03-06T15:00:00Z",
+            bucket_minutes=30,
+            sample_minutes=5,
+            source_manifest_ref="",
+            source_kind="",
+            artifact_ref=[],
+            delay_adjusted_depth_stress_report_ref="",
+            dataset_snapshot_ref="",
+            target_metadata_json="",
+            dependency_quorum_decision="allow",
+            continuity_ok="true",
+            drift_ok="true",
+            json=False,
+        )
+        manifest = SimpleNamespace(
+            strategy_family="intraday_continuation",
+            strategy_id="intraday_tsmom_v2@paper",
+            max_allowed_slippage_bps=Decimal("12"),
         )
 
         with (
             patch(
                 "scripts.import_hypothesis_runtime_windows._parse_args",
                 return_value=args,
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows.resolve_hypothesis_manifest",
+                return_value=(
+                    SimpleNamespace(path="config/trading/hypotheses/h-cont-01.json"),
+                    manifest,
+                ),
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows._runtime_ledger_tca_rows_from_durable_buckets",
+                return_value=(
+                    [],
+                    {
+                        "runtime_ledger_durable_bucket_count": 0,
+                        "runtime_ledger_durable_bucket_run_ids": [],
+                        "runtime_ledger_durable_bucket_fill_count": 0,
+                        "runtime_ledger_durable_bucket_tca_row_count": 0,
+                        "runtime_ledger_durable_bucket_profit_proof_count": 0,
+                    },
+                ),
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows.SessionLocal",
+                return_value=_FakeSession(),
             ),
             patch.dict("os.environ", {}, clear=True),
         ):
@@ -684,6 +923,23 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                         manifest,
                     ),
                 ),
+                patch(
+                    "scripts.import_hypothesis_runtime_windows._runtime_ledger_tca_rows_from_durable_buckets",
+                    return_value=(
+                        [],
+                        {
+                            "runtime_ledger_durable_bucket_count": 0,
+                            "runtime_ledger_durable_bucket_run_ids": [],
+                            "runtime_ledger_durable_bucket_fill_count": 0,
+                            "runtime_ledger_durable_bucket_tca_row_count": 0,
+                            "runtime_ledger_durable_bucket_profit_proof_count": 0,
+                        },
+                    ),
+                ),
+                patch(
+                    "scripts.import_hypothesis_runtime_windows.SessionLocal",
+                    return_value=_FakeSession(),
+                ),
                 patch.dict("os.environ", {}, clear=True),
             ):
                 with self.assertRaisesRegex(RuntimeError, "source_dsn_not_configured"):
@@ -1105,6 +1361,128 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(runtime_payload["promotion_authority"], "runtime_ledger")
         self.assertEqual(runtime_payload["runtime_ledger_profit_proof_present"], True)
         self.assertEqual(runtime_payload["authoritative"], True)
+
+    def test_main_imports_durable_runtime_ledger_bucket_without_source_dsn(
+        self,
+    ) -> None:
+        args = SimpleNamespace(
+            run_id="run-durable-ledger",
+            candidate_id="H-TSMOM-LIQ-01",
+            hypothesis_id="H-TSMOM-LIQ-01",
+            observed_stage="paper",
+            strategy_family="intraday_tsmom_consistent",
+            source_dsn="",
+            source_dsn_env="DB_DSN",
+            strategy_name="intraday-tsmom-profit-v3",
+            account_label="TORGHUT_SIM",
+            window_start="2026-03-06T14:30:00Z",
+            window_end="2026-03-06T15:00:00Z",
+            bucket_minutes=30,
+            sample_minutes=5,
+            source_manifest_ref="config/trading/hypotheses/h-tsmom-liq-01.json",
+            source_kind="paper_runtime_observed",
+            artifact_ref=[],
+            delay_adjusted_depth_stress_report_ref="",
+            dataset_snapshot_ref="durable-runtime-ledger-snapshot",
+            target_metadata_json="",
+            dependency_quorum_decision="allow",
+            continuity_ok="true",
+            drift_ok="true",
+            json=False,
+        )
+        fake_session = _FakeSession()
+        manifest = SimpleNamespace(
+            strategy_family="intraday_tsmom_consistent",
+            strategy_id="intraday_tsmom_v2@research",
+            max_allowed_slippage_bps=Decimal("6"),
+        )
+        durable_tca_row = {
+            "computed_at": datetime(2026, 3, 6, 14, 59, 59, tzinfo=timezone.utc),
+            "abs_slippage_bps": Decimal("10"),
+            "post_cost_expectancy_bps": Decimal("40"),
+            "post_cost_expectancy_basis": POST_COST_BASIS_RUNTIME_LEDGER,
+            "post_cost_promotion_eligible": True,
+            "runtime_ledger_bucket": _complete_runtime_ledger_bucket(
+                run_id="runtime-proof-1",
+                candidate_id="H-TSMOM-LIQ-01",
+                hypothesis_id="H-TSMOM-LIQ-01",
+                observed_stage="paper",
+                account_label="TORGHUT_SIM",
+                strategy_id="intraday-tsmom-profit-v3",
+                bucket_started_at="2026-03-06T14:30:00+00:00",
+                bucket_ended_at="2026-03-06T15:00:00+00:00",
+            ),
+        }
+
+        with (
+            patch(
+                "scripts.import_hypothesis_runtime_windows._parse_args",
+                return_value=args,
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows.resolve_hypothesis_manifest",
+                return_value=(
+                    SimpleNamespace(
+                        path="config/trading/hypotheses/h-tsmom-liq-01.json"
+                    ),
+                    manifest,
+                ),
+            ),
+            patch.dict("os.environ", {}, clear=True),
+            patch(
+                "scripts.import_hypothesis_runtime_windows._query_timestamps",
+            ) as query_timestamps,
+            patch(
+                "scripts.import_hypothesis_runtime_windows._runtime_ledger_tca_rows_from_durable_buckets",
+                return_value=(
+                    [durable_tca_row],
+                    {
+                        "runtime_ledger_durable_bucket_count": 1,
+                        "runtime_ledger_durable_bucket_run_ids": ["runtime-proof-1"],
+                        "runtime_ledger_durable_bucket_fill_count": 2,
+                        "runtime_ledger_durable_bucket_tca_row_count": 1,
+                        "runtime_ledger_durable_bucket_profit_proof_count": 1,
+                    },
+                ),
+            ) as durable_buckets,
+            patch(
+                "scripts.import_hypothesis_runtime_windows.build_observed_runtime_buckets",
+                return_value=[],
+            ) as build_buckets,
+            patch(
+                "scripts.import_hypothesis_runtime_windows.persist_observed_runtime_windows",
+                return_value={"run_id": "run-durable-ledger"},
+            ) as persist_windows,
+            patch(
+                "scripts.import_hypothesis_runtime_windows.SessionLocal",
+                return_value=fake_session,
+            ),
+            patch("builtins.print"),
+        ):
+            exit_code = main()
+
+        self.assertEqual(exit_code, 0)
+        query_timestamps.assert_not_called()
+        durable_buckets.assert_called_once()
+        tca_rows = build_buckets.call_args.kwargs["tca_rows"]
+        self.assertEqual(tca_rows, [durable_tca_row])
+        runtime_payload = persist_windows.call_args.kwargs[
+            "runtime_observation_payload"
+        ]
+        self.assertEqual(runtime_payload["runtime_ledger_durable_bucket_count"], 1)
+        self.assertEqual(
+            runtime_payload["runtime_ledger_durable_bucket_run_ids"],
+            ["runtime-proof-1"],
+        )
+        self.assertEqual(
+            runtime_payload["runtime_ledger_durable_bucket_profit_proof_count"],
+            1,
+        )
+        self.assertEqual(
+            runtime_payload["authority_reason"], "runtime_ledger_profit_proof"
+        )
+        self.assertEqual(runtime_payload["promotion_authority"], "runtime_ledger")
+        self.assertEqual(runtime_payload["runtime_ledger_profit_proof_present"], True)
 
     def test_main_attaches_delay_adjusted_depth_report_to_runtime_payload(
         self,
