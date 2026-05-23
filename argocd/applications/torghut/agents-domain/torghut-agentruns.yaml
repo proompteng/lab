@@ -18,6 +18,8 @@ spec:
     - Do not mutate cluster state.
     - Do not open PRs.
     - Assume kubectl is unavailable or unreliable.
+    - Persist the final report exactly at `/workspace/.agentrun/torghut-health/report.md`.
+    - Do not finish until that Markdown report file exists and contains the verdict.
 
     Inputs (from AgentRun parameters):
     - torghutNamespace
@@ -51,6 +53,7 @@ spec:
     Output:
     - Produce a concise Markdown report with sections: Summary, WS, Flink, Trading, Guardrails, Freshness.
     - Conclude with a single health verdict: healthy | degraded | down.
+    - Write the same Markdown report to `/workspace/.agentrun/torghut-health/report.md`; create the parent directory first if needed.
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: ImplementationSpec

@@ -12,6 +12,9 @@ resources:
   - codex-research-secretbinding.yaml
   - codex-research-agent.yaml
   - codex-research-agent-system-prompt-configmap.yaml
+  - torghut-health-agentprovider.yaml
+  - torghut-health-agent.yaml
+  - torghut-health-secretbinding.yaml
   - torghut-market-context-agentprovider.yaml
   - torghut-fundamentals-agent.yaml
   - torghut-news-agent.yaml

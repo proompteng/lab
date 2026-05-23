@@ -69,6 +69,7 @@ describe('codex app-server runner adapter', () => {
       runPath,
       `${JSON.stringify({
         implementation: { text: 'implement the feature' },
+        agentRun: { name: 'run-1' },
         systemPrompt: 'system instructions',
         parameters: { artifactName: 'research-result' },
         goal: { objective: 'ship the feature', tokenBudget: 1234 },
@@ -110,7 +111,7 @@ describe('codex app-server runner adapter', () => {
             {
               name: 'codex-artifact',
               path: '/workspace/{{ inputs.stage }}/{{ run.parameters.artifactName }}.json',
-              key: 'codex-research/{{ run.parameters.artifactName }}.json',
+              key: 'codex-research/{{ agentRun.name }}/{{ run.parameters.artifactName }}.json',
             },
           ],
         },
@@ -173,8 +174,8 @@ describe('codex app-server runner adapter', () => {
         {
           name: 'codex-artifact',
           path: '/workspace/research/research-result.json',
-          key: 'codex-research/research-result.json',
-          url: 's3://argo-workflows/codex-research/research-result.json',
+          key: 'codex-research/run-1/research-result.json',
+          url: 's3://argo-workflows/codex-research/run-1/research-result.json',
         },
       ],
     })

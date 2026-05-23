@@ -104,6 +104,64 @@ describe('Agents domain scheduled AgentRun templates', () => {
     expect(objectAt(health, 'capacityFailurePolicy')).toBe('block')
   })
 
+  it('wires Torghut health reports to durable AgentRun artifacts', () => {
+    const kustomization = readYamlObjects('argocd/applications/torghut/agents-domain/kustomization.yaml')[0]
+    const resources = objectAt(kustomization, 'resources') as string[] | undefined
+    expect(resources).toContain('torghut-health-agentprovider.yaml')
+    expect(resources).toContain('torghut-health-agent.yaml')
+    expect(resources).toContain('torghut-health-secretbinding.yaml')
+
+    const provider = readYamlObjects(
+      'argocd/applications/torghut/agents-domain/torghut-health-agentprovider.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'AgentProvider')
+    const providerSpec = objectAt(provider, 'spec')
+    const adapter = objectAt(providerSpec, 'adapter')
+    const codex = objectAt(adapter, 'codex')
+    const secretEnv = objectAt(codex, 'secretEnv') as Record<string, unknown>[] | undefined
+    const outputArtifacts = objectAt(providerSpec, 'outputArtifacts') as Record<string, unknown>[] | undefined
+    const healthArtifact = outputArtifacts?.find((artifact) => objectAt(artifact, 'name') === 'torghut-health-report')
+
+    expect(objectAt(objectAt(provider, 'metadata'), 'name')).toBe('torghut-health-report')
+    expect(secretEnv).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'AGENTS_ARTIFACTS_ACCESS_KEY_ID',
+          secretName: 'observability-minio-creds',
+          key: 'accesskey',
+        }),
+        expect.objectContaining({
+          name: 'AGENTS_ARTIFACTS_SECRET_ACCESS_KEY',
+          secretName: 'observability-minio-creds',
+          key: 'secretkey',
+        }),
+      ]),
+    )
+    expect(healthArtifact).toEqual({
+      name: 'torghut-health-report',
+      path: '/workspace/.agentrun/torghut-health/report.md',
+      key: 'torghut/health/{{ agentRun.name }}/report.md',
+    })
+
+    const agent = readYamlObjects('argocd/applications/torghut/agents-domain/torghut-health-agent.yaml').find(
+      (manifest) => objectAt(manifest, 'kind') === 'Agent',
+    )
+    expect(objectAt(objectAt(objectAt(agent, 'spec'), 'providerRef'), 'name')).toBe('torghut-health-report')
+
+    const secretBinding = readYamlObjects(
+      'argocd/applications/torghut/agents-domain/torghut-health-secretbinding.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'SecretBinding')
+    const allowedSecrets = objectAt(objectAt(secretBinding, 'spec'), 'allowedSecrets') as string[] | undefined
+    expect(allowedSecrets).toEqual(expect.arrayContaining(['codex-auth', 'observability-minio-creds']))
+
+    const healthSpec = readYamlObjects('argocd/applications/torghut/agents-domain/torghut-agentruns.yaml').find(
+      (manifest) =>
+        objectAt(manifest, 'kind') === 'ImplementationSpec' && nameOf(manifest) === 'torghut-health-report-v1',
+    )
+    const healthText = stringAt(objectAt(healthSpec, 'spec'), 'text')
+    expect(healthText).toContain('/workspace/.agentrun/torghut-health/report.md')
+    expect(healthText).toContain('Do not finish until that Markdown report file exists')
+  })
+
   it('keeps scheduled template retention aligned with the swarm brownout window', () => {
     const manifestPaths = [
       ...swarmAgentRunTemplatePaths,
