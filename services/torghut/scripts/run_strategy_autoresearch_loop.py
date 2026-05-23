@@ -64,6 +64,10 @@ from app.trading.discovery.promotion_contract import (
 from app.trading.discovery.portfolio_candidates import PortfolioCandidateSpec
 from app.trading.discovery.portfolio_optimizer import optimize_portfolio_candidate
 from app.trading.discovery.profit_target_oracle import ProfitTargetOraclePolicy
+from app.trading.discovery.replay_ledger_ranker import (
+    build_replay_ledger_ranking_report,
+    default_replay_ledger_ranking_policy,
+)
 from app.trading.discovery.replay_tape import (
     ReplayTapeManifest,
     build_source_query_digest,
@@ -1635,6 +1639,7 @@ def _live_progress_payload(
     history: list[dict[str, Any]],
     descriptors: list[MlxCandidateDescriptor],
     proposal_scores: list[ProposalScore],
+    best_exact_replay_ledger_candidate: Mapping[str, Any] | None = None,
     selected_for_replay: ProposalSelectionEntry | None = None,
     selected_descriptor: MlxCandidateDescriptor | None = None,
 ) -> dict[str, Any]:
@@ -1648,6 +1653,11 @@ def _live_progress_payload(
         "experiment_result_count": len(snapshots),
         "latest_experiment": snapshots[-1] if snapshots else None,
         "best_experiment_candidate": _best_experiment_snapshot(snapshots),
+        "best_exact_replay_ledger_candidate": (
+            dict(best_exact_replay_ledger_candidate)
+            if best_exact_replay_ledger_candidate is not None
+            else None
+        ),
     }
     if selected_for_replay is not None:
         payload["selected_for_replay"] = {
@@ -1670,6 +1680,92 @@ def _live_progress_payload(
             ),
         }
     return payload
+
+
+def _exact_replay_ledger_refs(value: Any) -> list[str]:
+    refs: list[str] = []
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            if key in {
+                "exact_replay_ledger_artifact_ref",
+                "runtime_ledger_artifact_ref",
+            }:
+                ref = _string(item)
+                if ref:
+                    refs.append(ref)
+                continue
+            if key in {
+                "exact_replay_ledger_artifact_refs",
+                "runtime_ledger_artifact_refs",
+            }:
+                if isinstance(item, (list, tuple)):
+                    refs.extend(ref for raw in item if (ref := _string(raw)))
+                else:
+                    ref = _string(item)
+                    if ref:
+                        refs.append(ref)
+                continue
+            refs.extend(_exact_replay_ledger_refs(item))
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            refs.extend(_exact_replay_ledger_refs(item))
+    return refs
+
+
+def _resolve_run_artifact_ref(ref: str, *, base_dir: Path) -> Path:
+    path = Path(ref).expanduser()
+    if path.is_absolute():
+        return path
+    return base_dir / path
+
+
+def _exact_replay_ledger_paths(run_root: Path) -> tuple[Path, ...]:
+    paths: list[Path] = []
+    seen: set[str] = set()
+
+    def add(path: Path) -> None:
+        key = str(path.expanduser().resolve(strict=False))
+        if key in seen:
+            return
+        seen.add(key)
+        paths.append(path)
+
+    for path in sorted(run_root.glob("**/*exact-replay-ledger.json")):
+        if path.is_file():
+            add(path)
+
+    for result_path in sorted((run_root / "experiments").glob("*/result.json")):
+        try:
+            payload = json.loads(result_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError):
+            continue
+        for ref in _exact_replay_ledger_refs(payload):
+            add(_resolve_run_artifact_ref(ref, base_dir=result_path.parent))
+    return tuple(paths)
+
+
+def _write_exact_replay_ledger_ranking(
+    *,
+    run_root: Path,
+    program: StrategyAutoresearchProgram,
+) -> dict[str, Any]:
+    path = run_root / "exact-replay-ledger-ranking.json"
+    policy = default_replay_ledger_ranking_policy(
+        target_net_pnl_per_day=program.objective.target_net_pnl_per_day,
+        start_equity=program.objective.default_start_equity,
+    )
+    report = build_replay_ledger_ranking_report(
+        _exact_replay_ledger_paths(run_root),
+        policy=policy,
+        limit=20,
+    )
+    path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+    candidates = cast(list[dict[str, Any]], report.get("candidates") or [])
+    return {
+        "path": str(path),
+        "report": report,
+        "best_candidate": candidates[0] if candidates else None,
+    }
 
 
 def _persist_run_outputs(
@@ -1718,6 +1814,10 @@ def _persist_run_outputs(
         proposal_diagnostics=proposal_diagnostics,
     )
     notebook_paths = write_autoresearch_notebooks(run_root)
+    exact_replay_ledger_ranking = _write_exact_replay_ledger_ranking(
+        run_root=run_root,
+        program=program,
+    )
     summary: dict[str, Any] = {
         "status": status,
         "runner_run_id": runner_run_id,
@@ -1731,6 +1831,11 @@ def _persist_run_outputs(
         "research_dossier_path": str(research_dossier_path),
         "promotion_readiness_path": str(promotion_readiness_path),
         "snapshot_manifest_path": str(snapshot_manifest_path),
+        "exact_replay_ledger_ranking_path": exact_replay_ledger_ranking["path"],
+        "exact_replay_ledger_ranking": exact_replay_ledger_ranking["report"],
+        "best_exact_replay_ledger_candidate": exact_replay_ledger_ranking[
+            "best_candidate"
+        ],
         "mlx_exports": dict(mlx_exports),
         "notebooks": [str(path) for path in notebook_paths],
         "best_candidate": _best_history_record(history),
@@ -1741,6 +1846,10 @@ def _persist_run_outputs(
             history=history,
             descriptors=descriptors,
             proposal_scores=proposal_scores,
+            best_exact_replay_ledger_candidate=cast(
+                Mapping[str, Any] | None,
+                exact_replay_ledger_ranking["best_candidate"],
+            ),
             selected_for_replay=selected_for_replay,
             selected_descriptor=selected_descriptor,
         ),
