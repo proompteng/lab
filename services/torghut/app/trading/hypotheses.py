@@ -1038,6 +1038,18 @@ def _runtime_ledger_provenance_blockers(
     return tuple(blockers)
 
 
+def _runtime_ledger_window_bound_blockers(
+    *,
+    bucket_started_at: datetime | None,
+    bucket_ended_at: datetime | None,
+) -> tuple[str, ...]:
+    if bucket_started_at is None or bucket_ended_at is None:
+        return ("runtime_ledger_window_bounds_missing",)
+    if bucket_ended_at < bucket_started_at:
+        return ("runtime_ledger_window_bounds_mismatch",)
+    return ()
+
+
 def _runtime_ledger_blockers(row: Mapping[str, Any]) -> tuple[str, ...]:
     raw: object = (
         row.get("blockers")
@@ -1102,6 +1114,8 @@ def _resolve_runtime_ledger_readiness_inputs(
     lineage_hash_count = _hash_count(row.get("lineage_hash_counts"))
     ledger_schema_version = _runtime_text(row.get("ledger_schema_version"))
     pnl_basis = _runtime_text(row.get("pnl_basis"))
+    bucket_started_at = _parse_iso8601(row.get("bucket_started_at"))
+    bucket_ended_at = _parse_iso8601(row.get("bucket_ended_at"))
     blockers = _dedupe_runtime_ledger_blockers(
         (
             *_runtime_ledger_blockers(row),
@@ -1116,6 +1130,10 @@ def _resolve_runtime_ledger_readiness_inputs(
                 execution_policy_hash_count=execution_policy_hash_count,
                 cost_model_hash_count=cost_model_hash_count,
                 lineage_hash_count=lineage_hash_count,
+            ),
+            *_runtime_ledger_window_bound_blockers(
+                bucket_started_at=bucket_started_at,
+                bucket_ended_at=bucket_ended_at,
             ),
         )
     )
@@ -1137,8 +1155,8 @@ def _resolve_runtime_ledger_readiness_inputs(
             row.get("net_strategy_pnl_after_costs")
         ),
         post_cost_expectancy_bps=_optional_decimal(row.get("post_cost_expectancy_bps")),
-        bucket_started_at=_parse_iso8601(row.get("bucket_started_at")),
-        bucket_ended_at=_parse_iso8601(row.get("bucket_ended_at")),
+        bucket_started_at=bucket_started_at,
+        bucket_ended_at=bucket_ended_at,
         blockers=blockers,
         execution_policy_hash_count=execution_policy_hash_count,
         cost_model_hash_count=cost_model_hash_count,
@@ -1567,6 +1585,12 @@ def compile_hypothesis_runtime_statuses(
             runtime_ledger_summary,
             manifest=manifest,
         )
+        runtime_ledger_age_minutes: int | None = None
+        if runtime_ledger_inputs.bucket_ended_at is not None:
+            runtime_ledger_age_minutes = max(
+                0,
+                int((now - runtime_ledger_inputs.bucket_ended_at).total_seconds() / 60),
+            )
         tca_age_minutes: int | None = None
         if tca_inputs.last_computed_at is not None:
             tca_age_minutes = max(
@@ -1616,6 +1640,18 @@ def compile_hypothesis_runtime_statuses(
                 and evidence_age_minutes > requirements.max_evidence_age_minutes
             ):
                 reasons.append("evidence_continuity_stale")
+        if (
+            runtime_ledger_inputs.proof_present
+            and requirements.max_evidence_age_minutes is not None
+            and runtime_ledger_age_minutes is not None
+            and runtime_ledger_age_minutes > requirements.max_evidence_age_minutes
+        ):
+            if market_session_open is False:
+                informational_reasons.append(
+                    "closed_session_runtime_ledger_evidence_hold"
+                )
+            else:
+                reasons.append("runtime_ledger_evidence_stale")
         if requirements.require_delay_adjusted_depth_stress:
             if (
                 delay_depth_stress.check_count
@@ -1863,6 +1899,7 @@ def compile_hypothesis_runtime_statuses(
                 if runtime_ledger_inputs.bucket_ended_at is not None
                 else None
             ),
+            "runtime_ledger_age_minutes": runtime_ledger_age_minutes,
             "runtime_ledger_blockers": list(runtime_ledger_inputs.blockers),
             "runtime_ledger_execution_policy_hash_count": (
                 runtime_ledger_inputs.execution_policy_hash_count

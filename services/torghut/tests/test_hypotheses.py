@@ -446,6 +446,106 @@ class TestHypothesisReadiness(TestCase):
         self.assertEqual(cont["observed"]["runtime_ledger_observed_stage"], "paper")
         self.assertNotIn("post_cost_expectancy_non_positive", cont["reasons"])
 
+    def test_compile_hypothesis_runtime_statuses_blocks_stale_runtime_ledger_profit_authority(
+        self,
+    ) -> None:
+        registry = load_hypothesis_registry()
+        state = _state(
+            feature_rows=5,
+            drift_checks=3,
+            evidence_checks=2,
+            signal_lag_seconds=15,
+            evidence_report={
+                "ok": True,
+                "checked_at": "2026-03-06T16:35:00+00:00",
+            },
+        )
+        statuses = compile_hypothesis_runtime_statuses(
+            registry=registry,
+            state=state,
+            tca_summary={
+                "order_count": 45,
+                "avg_abs_slippage_bps": 4,
+                "avg_realized_shortfall_bps": -8,
+                "last_computed_at": "2026-03-06T16:35:00+00:00",
+            },
+            runtime_ledger_summary=_runtime_ledger_summary(
+                "H-CONT-01",
+                submitted_order_count=45,
+                post_cost_expectancy_bps="8",
+            ),
+            market_context_status={"last_freshness_seconds": 60},
+            jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                decision="allow",
+                reasons=[],
+                message="ok",
+            ),
+            now=datetime(2026, 3, 6, 16, 40, tzinfo=timezone.utc),
+        )
+
+        cont = next(item for item in statuses if item["hypothesis_id"] == "H-CONT-01")
+        self.assertFalse(cont["promotion_eligible"])
+        self.assertEqual(cont["state"], "shadow")
+        self.assertIn("runtime_ledger_evidence_stale", cont["reasons"])
+        self.assertEqual(cont["observed"]["runtime_ledger_age_minutes"], 45)
+
+    def test_compile_hypothesis_runtime_statuses_blocks_runtime_ledger_missing_window_bounds(
+        self,
+    ) -> None:
+        registry = load_hypothesis_registry()
+        state = _state(
+            feature_rows=5,
+            drift_checks=3,
+            evidence_checks=2,
+            signal_lag_seconds=15,
+            evidence_report={
+                "ok": True,
+                "checked_at": "2026-03-06T15:45:00+00:00",
+            },
+        )
+        statuses = compile_hypothesis_runtime_statuses(
+            registry=registry,
+            state=state,
+            tca_summary={
+                "order_count": 45,
+                "avg_abs_slippage_bps": 4,
+                "avg_realized_shortfall_bps": -8,
+                "last_computed_at": "2026-03-06T15:50:00+00:00",
+            },
+            runtime_ledger_summary={
+                "by_hypothesis": {
+                    "H-CONT-01": {
+                        "hypothesis_id": "H-CONT-01",
+                        "candidate_id": _MANIFEST_CANDIDATE_IDS["H-CONT-01"],
+                        "observed_stage": "live",
+                        "strategy_family": _MANIFEST_STRATEGY_FAMILIES["H-CONT-01"],
+                        "submitted_order_count": 45,
+                        "closed_trade_count": 8,
+                        "filled_notional": "100000",
+                        "post_cost_expectancy_bps": "8",
+                        "ledger_schema_version": EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
+                        "pnl_basis": POST_COST_PNL_BASIS,
+                        "execution_policy_hash_counts": {"policy-sha": 1},
+                        "cost_model_hash_counts": {"cost-sha": 1},
+                        "lineage_hash_counts": {"lineage-sha": 1},
+                    }
+                }
+            },
+            market_context_status={"last_freshness_seconds": 60},
+            jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                decision="allow",
+                reasons=[],
+                message="ok",
+            ),
+            now=datetime(2026, 3, 6, 16, 0, tzinfo=timezone.utc),
+        )
+
+        cont = next(item for item in statuses if item["hypothesis_id"] == "H-CONT-01")
+        self.assertFalse(cont["promotion_eligible"])
+        self.assertIn("runtime_ledger_window_bounds_missing", cont["reasons"])
+        self.assertIsNone(cont["observed"]["runtime_ledger_bucket_started_at"])
+        self.assertIsNone(cont["observed"]["runtime_ledger_bucket_ended_at"])
+
     def test_htsmom_liq_manifest_keeps_candidate_identity_but_blocks_paper_ledger(
         self,
     ) -> None:
@@ -528,6 +628,7 @@ class TestHypothesisReadiness(TestCase):
                         "candidate_id": candidate_id,
                         "observed_stage": "paper",
                         "strategy_family": strategy_family,
+                        "bucket_started_at": "2026-03-06T15:45:00+00:00",
                         "bucket_ended_at": "2026-03-06T15:55:00+00:00",
                         "submitted_order_count": 45,
                         "post_cost_expectancy_bps": "8",
@@ -544,6 +645,7 @@ class TestHypothesisReadiness(TestCase):
                         "candidate_id": candidate_id,
                         "observed_stage": "live",
                         "strategy_family": strategy_family,
+                        "bucket_started_at": "2026-03-06T15:15:00+00:00",
                         "bucket_ended_at": "2026-03-06T15:30:00+00:00",
                         "submitted_order_count": 45,
                         "closed_trade_count": 8,
@@ -647,6 +749,7 @@ class TestHypothesisReadiness(TestCase):
                         "candidate_id": _MANIFEST_CANDIDATE_IDS["H-CONT-01"],
                         "observed_stage": "live",
                         "strategy_family": _MANIFEST_STRATEGY_FAMILIES["H-CONT-01"],
+                        "bucket_started_at": "2026-03-06T15:45:00+00:00",
                         "bucket_ended_at": "2026-03-06T15:55:00+00:00",
                         "submitted_order_count": 45,
                         "post_cost_expectancy_bps": "8",
@@ -715,6 +818,7 @@ class TestHypothesisReadiness(TestCase):
                         "candidate_id": _MANIFEST_CANDIDATE_IDS["H-CONT-01"],
                         "observed_stage": "live",
                         "strategy_family": _MANIFEST_STRATEGY_FAMILIES["H-CONT-01"],
+                        "bucket_started_at": "2026-03-06T15:45:00+00:00",
                         "bucket_ended_at": "2026-03-06T15:55:00+00:00",
                         "submitted_order_count": 45,
                         "closed_trade_count": 5,
@@ -1295,6 +1399,10 @@ class TestHypothesisReadiness(TestCase):
         self.assertIn("slippage_budget_exceeded", cont["reasons"])
         self.assertIn("closed_session_signal_hold", cont["informational_reasons"])
         self.assertIn("closed_session_tca_evidence_hold", cont["informational_reasons"])
+        self.assertIn(
+            "closed_session_runtime_ledger_evidence_hold",
+            cont["informational_reasons"],
+        )
         self.assertNotIn("market_context_stale", rev["reasons"])
         self.assertIn(
             "closed_session_market_context_hold", rev["informational_reasons"]
