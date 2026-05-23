@@ -4804,6 +4804,116 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertTrue(runtime_program.runtime_closure_policy.execute_parity_replay)
         self.assertTrue(runtime_program.runtime_closure_policy.execute_approval_replay)
 
+    def test_runtime_closure_exact_replay_ledger_rejects_summary_counts_without_rows(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            artifact_path = Path(tmpdir) / "ledger.json"
+            artifact_path.write_text(
+                json.dumps(
+                    {
+                        "artifact_kind": "runtime_summary",
+                        "row_count": 99,
+                        "filled_count": 99,
+                        "summary": {"filled_count": 99},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                runner._runtime_closure_exact_replay_ledger_update(
+                    {"exact_replay_ledger_artifact_path": str(artifact_path)}
+                ),
+                {},
+            )
+
+            artifact_path.write_text(
+                json.dumps(
+                    {
+                        "artifact_kind": "exact_replay_ledger",
+                        "schema_version": "torghut.runtime_summary.v1",
+                        "runtime_ledger_rows": [{"id": 1}],
+                        "fill_row_count": 1,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                runner._runtime_closure_exact_replay_ledger_update(
+                    {"exact_replay_ledger_artifact_path": str(artifact_path)}
+                ),
+                {},
+            )
+
+            artifact_path.write_text(
+                json.dumps(
+                    {
+                        "artifact_kind": "exact_replay_ledger",
+                        "schema_version": "torghut.exact_replay_ledger.rows.v1",
+                        "row_count": 99,
+                        "filled_count": 99,
+                        "summary": {"filled_count": 99},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                runner._runtime_closure_exact_replay_ledger_update(
+                    {"exact_replay_ledger_artifact_path": str(artifact_path)}
+                ),
+                {},
+            )
+
+            artifact_path.write_text(
+                json.dumps(
+                    {
+                        "artifact_kind": "exact_replay_ledger",
+                        "schema_version": "torghut.exact_replay_ledger.rows.v1",
+                        "runtime_ledger_rows": ["not-a-row"],
+                        "fill_row_count": 1,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                runner._runtime_closure_exact_replay_ledger_update(
+                    {"exact_replay_ledger_artifact_path": str(artifact_path)}
+                ),
+                {},
+            )
+
+            artifact_path.write_text(
+                json.dumps(
+                    {
+                        "artifact_kind": "exact_replay_ledger",
+                        "schema_version": "torghut.exact_replay_ledger.rows.v1",
+                        "runtime_ledger_rows": [{"id": 1}],
+                        "row_count": 99,
+                        "filled_count": 99,
+                        "summary": {"filled_count": 99},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            update = runner._runtime_closure_exact_replay_ledger_update(
+                {"exact_replay_ledger_artifact_path": str(artifact_path)}
+            )
+
+        self.assertEqual(update["exact_replay_ledger_artifact_row_count"], 1)
+        self.assertEqual(update["runtime_ledger_artifact_row_count"], 1)
+        self.assertEqual(update["exact_replay_ledger_artifact_fill_count"], 0)
+        self.assertEqual(update["runtime_ledger_artifact_fill_count"], 0)
+
     def test_runtime_closure_proof_updates_portfolio_oracle_from_real_artifacts(
         self,
     ) -> None:
@@ -4875,6 +4985,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 json.dumps(
                     {
                         "artifact_kind": "exact_replay_ledger",
+                        "schema_version": "torghut.exact_replay_ledger.rows.v1",
                         "runtime_ledger_rows": [{"id": 1}, {"id": 2}],
                         "fill_row_count": 2,
                     }
