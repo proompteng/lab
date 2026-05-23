@@ -696,6 +696,18 @@ def _full_window_signal_config(
         flatten_eod=True,
         start_equity=Decimal(str(args.start_equity)),
         symbols=snapshot_symbols,
+        replay_tape_path=(
+            Path(replay_tape_path).resolve()
+            if (replay_tape_path := getattr(args, "replay_tape_path", None)) is not None
+            else None
+        ),
+        replay_tape_manifest_path=(
+            Path(replay_tape_manifest).resolve()
+            if (replay_tape_manifest := getattr(args, "replay_tape_manifest", None))
+            is not None
+            else None
+        ),
+        allow_stale_tape=bool(getattr(args, "allow_stale_tape", False)),
         progress_log_interval_seconds=max(1, int(args.progress_log_seconds)),
     )
 
