@@ -776,6 +776,92 @@ class TestCandidateSpecs(TestCase):
             specs[0].promotion_contract["rejects_classification_accuracy_without_costs"]
         )
 
+    def test_conformal_var_claim_adds_regime_weighted_cost_buffer_contract(
+        self,
+    ) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-regime-weighted-conformal-var",
+            claims=[
+                {
+                    "claim_id": "regime-weighted-conformal-var-buffer",
+                    "claim_type": "feature_recipe",
+                    "claim_text": (
+                        "Regime-weighted conformal VaR calibrates a tail risk buffer "
+                        "from regime-similarity weights and tail exceedance errors."
+                    ),
+                    "data_requirements": [
+                        "regime_similarity_weights",
+                        "conformal_tail_risk",
+                        "regime_tail_exceedance",
+                        "var_forecast_error",
+                    ],
+                    "confidence": "0.76",
+                },
+                {
+                    "claim_id": "breakeven-cost-buffer-validation",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Promotion requires a breakeven transaction cost buffer, "
+                        "seed robustness, and model-family robustness."
+                    ),
+                    "data_requirements": [
+                        "breakeven_transaction_cost_buffer",
+                        "transaction_cost_buffer",
+                        "transaction_cost_stress",
+                        "post_cost_net_pnl",
+                        "seed_robustness",
+                        "model_family_robustness",
+                    ],
+                    "confidence": "0.76",
+                },
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+
+        self.assertIn(
+            "regime_weighted_conformal_cost_buffer",
+            specs[0].parameter_space["mechanism_overlay_ids"],
+        )
+        self.assertTrue(specs[0].hard_vetoes["required_conformal_tail_risk"])
+        self.assertTrue(
+            specs[0].hard_vetoes["required_regime_weighted_conformal_cost_buffer"]
+        )
+        self.assertEqual(
+            specs[0].hard_vetoes["required_min_conformal_tail_risk_sample_count"],
+            "20",
+        )
+        self.assertTrue(
+            specs[0].hard_vetoes["required_breakeven_transaction_cost_buffer"]
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["requires_conformal_var_cost_buffer"]
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["requires_seed_model_family_robustness"]
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["rejects_unbuffered_tail_risk_promotion"]
+        )
+        mechanism_overlays = candidate_specs_module._mechanism_overlays_for_card(
+            cards[0]
+        )
+        conformal_contract = next(
+            contract
+            for contract in mechanism_overlays["feature_contract"]["mechanism_overlays"]
+            if contract["overlay_id"] == "regime_weighted_conformal_cost_buffer"
+        )
+        self.assertEqual(
+            conformal_contract["rank_metric"],
+            "conformal_tail_risk_adjusted_net_pnl_per_day",
+        )
+        self.assertEqual(
+            conformal_contract["evidence_policy"],
+            "regime_weighted_conformal_buffer_is_ranking_stress_not_promotion_proof",
+        )
+
     def test_validation_only_lob_stress_does_not_portfolio_fanout(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-tlob-validation-only",

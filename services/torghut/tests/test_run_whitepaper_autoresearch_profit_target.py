@@ -4983,6 +4983,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertIn("unified_order_flow_impact_volatility_2026", source_ids)
         self.assertIn("closing_auction_market_making_2026", source_ids)
         self.assertIn("mixed_market_limit_execution_2026", source_ids)
+        self.assertIn("regime_weighted_conformal_var_2026", source_ids)
         self.assertIn("retail_limit_orders_2025", source_ids)
         self.assertIn("retail_order_flow_segmentation_2026", source_ids)
         self.assertIn("lobdiff_event_stream_prediction_2026", source_ids)

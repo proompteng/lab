@@ -446,6 +446,125 @@ class TestMlxTrainingData(TestCase):
             features["paper_overlay_mixed_market_limit_execution_policy"], 0.0
         )
 
+    def test_training_rows_encode_conformal_cost_buffer_contract_and_evidence(
+        self,
+    ) -> None:
+        spec = CandidateSpec(
+            schema_version="torghut.candidate-spec.v1",
+            candidate_spec_id="spec-conformal-buffer",
+            hypothesis_id="H-CONFORMAL-BUFFER",
+            family_template_id="intraday_tsmom_v2",
+            candidate_kind="configuration",
+            runtime_family="intraday_tsmom_consistent",
+            runtime_strategy_name="intraday-tsmom-profit-v3",
+            feature_contract={
+                "source_claims": [
+                    {
+                        "claim_id": "regime-weighted-conformal-var-buffer",
+                        "claim_type": "risk_constraint",
+                        "confidence": "0.76",
+                        "data_requirements": [
+                            "regime_similarity_weights",
+                            "conformal_tail_risk",
+                            "regime_tail_exceedance",
+                        ],
+                    }
+                ],
+                "validation_requirements": [
+                    {
+                        "claim_id": "breakeven-cost-buffer-validation",
+                        "data_requirements": [
+                            "breakeven_transaction_cost_buffer",
+                            "transaction_cost_buffer",
+                            "seed_robustness",
+                            "model_family_robustness",
+                        ],
+                    }
+                ],
+                "mechanism_overlays": [
+                    {
+                        "overlay_id": "regime_weighted_conformal_cost_buffer",
+                        "required_evidence": [
+                            "regime_weighted_conformal_var",
+                            "conformal_tail_risk",
+                            "regime_tail_exceedance",
+                            "breakeven_transaction_cost_buffer",
+                            "seed_robustness",
+                            "model_family_robustness",
+                        ],
+                    }
+                ],
+            },
+            parameter_space={
+                "mechanism_overlay_ids": ["regime_weighted_conformal_cost_buffer"]
+            },
+            strategy_overrides={
+                "max_notional_per_trade": "25000",
+                "max_position_pct_equity": "0.25",
+                "params": {
+                    "capital_profile": "initial_equity_cash_constrained_1x",
+                    "max_entries_per_session": "2",
+                    "max_gross_exposure_pct_equity": "1.0",
+                },
+            },
+            objective={"target_net_pnl_per_day": "500"},
+            hard_vetoes={"required_min_daily_notional": "250000"},
+            expected_failure_modes=(),
+            promotion_contract={
+                "requires_conformal_tail_risk": True,
+                "requires_conformal_var_cost_buffer": True,
+                "requires_seed_model_family_robustness": True,
+                "rejects_unbuffered_tail_risk_promotion": True,
+            },
+        )
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=spec.candidate_spec_id,
+            candidate={
+                "candidate_id": "cand-conformal-buffer",
+                "objective_scorecard": {
+                    "net_pnl_per_day": "650",
+                    "active_day_ratio": "1.0",
+                    "positive_day_ratio": "0.70",
+                    "conformal_tail_risk_required": True,
+                    "conformal_tail_risk_passed": True,
+                    "conformal_tail_risk_sample_count": 24,
+                    "conformal_tail_risk_buffer_per_day": "125",
+                    "conformal_tail_risk_adjusted_net_pnl_per_day": "525",
+                },
+            },
+            dataset_snapshot_id="snapshot-conformal-buffer",
+            result_path="/tmp/cand-conformal-buffer.json",
+        )
+
+        rows = build_mlx_training_rows(
+            candidate_specs=[spec], evidence_bundles=[bundle]
+        )
+        features = rows[0].to_payload()["features"]
+
+        self.assertEqual(
+            features["paper_overlay_regime_weighted_conformal_cost_buffer"],
+            1.0,
+        )
+        self.assertEqual(features["paper_requires_conformal_tail_risk"], 1.0)
+        self.assertEqual(features["paper_requires_regime_tail_exceedance"], 1.0)
+        self.assertEqual(features["paper_requires_breakeven_cost_buffer"], 1.0)
+        self.assertEqual(
+            features["paper_requires_seed_model_family_robustness"],
+            1.0,
+        )
+        self.assertEqual(features["history_conformal_tail_risk_required"], 1.0)
+        self.assertEqual(features["history_conformal_tail_risk_passed"], 1.0)
+        self.assertEqual(features["history_conformal_tail_risk_sample_count"], 24.0)
+        self.assertEqual(features["history_conformal_tail_risk_buffer_per_day"], 125.0)
+        self.assertEqual(
+            features["history_conformal_tail_risk_adjusted_net_pnl_per_day"],
+            525.0,
+        )
+        self.assertEqual(
+            features["history_conformal_tail_risk_target_shortfall"],
+            0.0,
+        )
+
     def test_negative_rank_bucket_lift_demotes_to_heuristic_order(self) -> None:
         rows = [
             MlxTrainingRow(

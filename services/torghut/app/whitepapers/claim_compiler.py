@@ -117,6 +117,61 @@ RECENT_WHITEPAPER_SEEDS: tuple[WhitepaperResearchSource, ...] = (
         ),
     ),
     WhitepaperResearchSource(
+        run_id="seed-arxiv-2602-03903",
+        title="Taming Tail Risk in Financial Markets: Conformal Risk Control for Nonstationary Portfolio VaR",
+        source_url="https://arxiv.org/abs/2602.03903",
+        published_at="2026-02-03",
+        claims=(
+            {
+                "claim_id": "regime-weighted-conformal-var-buffer",
+                "claim_type": "feature_recipe",
+                "claim_text": (
+                    "Regime-weighted conformal risk control calibrates a safety buffer from "
+                    "recent VaR forecast errors and regime-similarity weights."
+                ),
+                "asset_scope": "us_equities_portfolio",
+                "horizon_scope": "portfolio_risk_control",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "regime_state",
+                    "regime_similarity_weights",
+                    "conformal_tail_risk",
+                    "regime_tail_exceedance",
+                    "var_forecast_error",
+                ],
+                "confidence": "0.76",
+            },
+            {
+                "claim_id": "breakeven-cost-buffer-validation",
+                "claim_type": "validation_requirement",
+                "claim_text": (
+                    "Candidates should clear the target after conformal tail-risk and "
+                    "breakeven transaction-cost buffers, with seed and model-family robustness."
+                ),
+                "asset_scope": "us_equities_portfolio",
+                "horizon_scope": "portfolio_risk_control",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "breakeven_transaction_cost_buffer",
+                    "transaction_cost_buffer",
+                    "transaction_cost_stress",
+                    "post_cost_net_pnl",
+                    "seed_robustness",
+                    "model_family_robustness",
+                ],
+                "confidence": "0.76",
+            },
+        ),
+        claim_relations=(
+            {
+                "relation_id": "conformal-buffer-requires-breakeven-cost-proof",
+                "relation_type": "requires_validation",
+                "source_claim_id": "breakeven-cost-buffer-validation",
+                "target_claim_id": "regime-weighted-conformal-var-buffer",
+            },
+        ),
+    ),
+    WhitepaperResearchSource(
         run_id="seed-arxiv-2601-23172",
         title="A unified theory of order flow, market impact, and volatility",
         source_url="https://arxiv.org/abs/2601.23172",

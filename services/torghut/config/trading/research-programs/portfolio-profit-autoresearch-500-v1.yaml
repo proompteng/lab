@@ -82,6 +82,38 @@ research_sources:
       - claim_id: synthetic_rollout_stress
         summary: Generated trade-flow rollouts are useful for stress testing.
         implication: Treat model-generated signals as research evidence only until replay and shadow gates pass.
+  - source_id: regime_weighted_conformal_var_2026
+    title: 'Taming Tail Risk in Financial Markets: Conformal Risk Control for Nonstationary Portfolio VaR'
+    url: https://arxiv.org/abs/2602.03903
+    published_at: '2026-02-03'
+    claims:
+      - claim_id: regime_weighted_conformal_var_buffer
+        claim_type: feature_recipe
+        summary: Regime-weighted conformal risk control calibrates a VaR safety buffer from recent forecast errors and regime-similarity weights.
+        implication: Rank candidates by post-cost edge after a regime-tail exceedance buffer instead of raw average replay PnL.
+        data_requirements:
+          - regime_state
+          - regime_similarity_weights
+          - conformal_tail_risk
+          - regime_tail_exceedance
+          - var_forecast_error
+        asset_scope: us_equities_portfolio
+        horizon_scope: portfolio_risk_control
+        expected_direction: neutral
+      - claim_id: breakeven_cost_buffer_validation
+        claim_type: validation_requirement
+        summary: A candidate should clear the $500 target after conformal tail-risk and breakeven transaction-cost buffers.
+        implication: Keep conformal VaR evidence as replay-ranking and proof-capture input, not final promotion authority.
+        data_requirements:
+          - breakeven_transaction_cost_buffer
+          - transaction_cost_buffer
+          - transaction_cost_stress
+          - post_cost_net_pnl
+          - seed_robustness
+          - model_family_robustness
+        asset_scope: us_equities_portfolio
+        horizon_scope: portfolio_risk_control
+        expected_direction: neutral
   - source_id: ofi_response_ratio_2025
     title: 'Stochastic Price Dynamics in Response to Order Flow Imbalance: Evidence from CSI 300 Index Futures'
     url: https://arxiv.org/abs/2505.17388
