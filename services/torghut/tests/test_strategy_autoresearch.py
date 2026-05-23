@@ -533,6 +533,8 @@ class TestStrategyAutoresearch(TestCase):
         )
         self.assertEqual(frontier_args.loss_repair_iterations, 1)
         self.assertEqual(frontier_args.loss_repair_candidates, 1)
+        self.assertEqual(frontier_args.consistency_repair_iterations, 1)
+        self.assertEqual(frontier_args.consistency_repair_candidates, 2)
 
     def test_materialize_run_replay_tape_writes_bundle_and_receipt(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -916,6 +918,8 @@ class TestStrategyAutoresearch(TestCase):
                             "symbol_prune_min_universe_size": 2,
                             "loss_repair_iterations": 1,
                             "loss_repair_candidates": 1,
+                            "consistency_repair_iterations": 1,
+                            "consistency_repair_candidates": 2,
                             "parameter_mutations": {
                                 "max_entries_per_session": {
                                     "mode": "numeric_step",
@@ -1397,6 +1401,8 @@ class TestStrategyAutoresearch(TestCase):
             symbol_prune_min_universe_size=2,
             loss_repair_iterations=1,
             loss_repair_candidates=1,
+            consistency_repair_iterations=1,
+            consistency_repair_candidates=2,
             parameter_mutations={
                 "max_entries_per_session": MutationSpace(
                     mode="numeric_step",
@@ -1467,6 +1473,8 @@ class TestStrategyAutoresearch(TestCase):
             symbol_prune_min_universe_size=2,
             loss_repair_iterations=0,
             loss_repair_candidates=1,
+            consistency_repair_iterations=0,
+            consistency_repair_candidates=2,
             parameter_mutations={
                 "entry_cooldown_seconds": MutationSpace(
                     mode="numeric_step",
