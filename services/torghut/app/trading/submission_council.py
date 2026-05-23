@@ -77,6 +77,9 @@ _AUTORESEARCH_PORTFOLIO_READY_STATUSES = (
     "accepted",
     "promoted",
 )
+_PROMOTION_GRADE_RUNTIME_LEDGER_PNL_BASIS = "realized_strategy_pnl_after_explicit_costs"
+_RUNTIME_LEDGER_REPAIR_SCAN_LIMIT = 256
+_RUNTIME_LEDGER_REPAIR_CANDIDATE_LIMIT = 8
 
 
 def _autoresearch_portfolio_current_oracle_passed(
@@ -976,6 +979,233 @@ def _runtime_ledger_selection_score(payload: Mapping[str, object] | None) -> int
     ):
         score += 1
     return score
+
+
+def _runtime_ledger_target_reason_codes(
+    payload: Mapping[str, object],
+    *,
+    manifest: Mapping[str, object],
+) -> list[str]:
+    reasons: list[str] = []
+    expected_candidate = _safe_text(manifest.get("candidate_id"))
+    actual_candidate = _safe_text(payload.get("candidate_id"))
+    if expected_candidate is not None:
+        if actual_candidate is None:
+            reasons.append("runtime_ledger_candidate_missing")
+        elif actual_candidate != expected_candidate:
+            reasons.append("runtime_ledger_candidate_mismatch")
+
+    expected_family = _normalized_strategy_family(manifest.get("strategy_family"))
+    actual_family = _normalized_strategy_family(payload.get("strategy_family"))
+    if (
+        expected_family is not None
+        and actual_family is not None
+        and actual_family != expected_family
+    ):
+        reasons.append("runtime_ledger_strategy_family_mismatch")
+    return reasons
+
+
+def _runtime_ledger_repair_reason_codes(
+    payload: Mapping[str, object],
+    *,
+    manifest: Mapping[str, object],
+) -> list[str]:
+    reasons = [
+        str(reason).strip()
+        for reason in cast(Sequence[object], payload.get("blockers") or [])
+        if str(reason).strip()
+    ]
+    reasons.extend(_runtime_ledger_target_reason_codes(payload, manifest=manifest))
+    if _safe_text(payload.get("observed_stage")) != "live":
+        reasons.append("runtime_ledger_stage_not_live")
+    if (
+        _safe_text(payload.get("pnl_basis"))
+        != _PROMOTION_GRADE_RUNTIME_LEDGER_PNL_BASIS
+    ):
+        reasons.append("runtime_ledger_pnl_basis_missing")
+    if (_safe_decimal(payload.get("filled_notional")) or Decimal("0")) <= 0:
+        reasons.append("runtime_ledger_filled_notional_missing")
+    if _safe_int(payload.get("fill_count")) <= 0:
+        reasons.append("runtime_ledger_fills_missing")
+    if _safe_int(payload.get("closed_trade_count")) <= 0:
+        reasons.append("runtime_ledger_closed_trades_missing")
+    if _safe_int(payload.get("open_position_count")) > 0:
+        reasons.append("unclosed_position")
+    if (
+        _safe_decimal(payload.get("net_strategy_pnl_after_costs")) or Decimal("0")
+    ) <= 0:
+        reasons.append("post_cost_pnl_non_positive")
+    expectancy_bps = _safe_decimal(payload.get("post_cost_expectancy_bps"))
+    if expectancy_bps is None:
+        reasons.append("runtime_ledger_expectancy_missing")
+    elif expectancy_bps <= 0:
+        reasons.append("post_cost_expectancy_non_positive")
+    if (
+        _runtime_ledger_hash_count(
+            payload,
+            payload_key="execution_policy_hash_counts",
+            observed={},
+            observed_key="runtime_ledger_execution_policy_hash_count",
+        )
+        <= 0
+    ):
+        reasons.append("runtime_ledger_execution_policy_hash_missing")
+    if (
+        _runtime_ledger_hash_count(
+            payload,
+            payload_key="cost_model_hash_counts",
+            observed={},
+            observed_key="runtime_ledger_cost_model_hash_count",
+        )
+        <= 0
+    ):
+        reasons.append("runtime_ledger_cost_model_hash_missing")
+    if (
+        _runtime_ledger_hash_count(
+            payload,
+            payload_key="lineage_hash_counts",
+            observed={},
+            observed_key="runtime_ledger_lineage_hash_count",
+        )
+        <= 0
+    ):
+        reasons.append("runtime_ledger_lineage_hash_missing")
+    return _normalize_reason_codes(reasons)
+
+
+def _runtime_ledger_repair_score(
+    candidate: Mapping[str, object],
+) -> tuple[int, int, int, int, int, Decimal, Decimal, Decimal, float]:
+    reason_codes = set(
+        str(reason).strip()
+        for reason in cast(Sequence[object], candidate.get("reason_codes") or [])
+        if str(reason).strip()
+    )
+    filled_notional = _safe_decimal(candidate.get("filled_notional")) or Decimal("0")
+    net_pnl = _safe_decimal(candidate.get("net_strategy_pnl_after_costs")) or Decimal(
+        "0"
+    )
+    expectancy_bps = _safe_decimal(
+        candidate.get("post_cost_expectancy_bps")
+    ) or Decimal("0")
+    ended_at = _coerce_aware_datetime(candidate.get("bucket_ended_at"))
+    observed_stage = _safe_text(candidate.get("observed_stage"))
+    return (
+        (
+            int(filled_notional > 0),
+            int(_safe_int(candidate.get("fill_count")) > 0),
+            int(_safe_int(candidate.get("closed_trade_count")) > 0),
+            int(net_pnl > 0),
+            int(expectancy_bps > 0),
+            net_pnl,
+            expectancy_bps,
+            filled_notional,
+            ended_at.timestamp() if ended_at is not None else 0.0,
+        )
+        if observed_stage != "live" or reason_codes
+        else (
+            2,
+            2,
+            2,
+            2,
+            2,
+            net_pnl,
+            expectancy_bps,
+            filled_notional,
+            ended_at.timestamp() if ended_at is not None else 0.0,
+        )
+    )
+
+
+def _load_runtime_ledger_repair_candidates(
+    session: Session,
+    *,
+    registry_items: Sequence[Mapping[str, object]],
+    limit: int = _RUNTIME_LEDGER_REPAIR_CANDIDATE_LIMIT,
+) -> list[dict[str, object]]:
+    manifests = {
+        str(item.get("hypothesis_id") or "").strip(): item
+        for item in registry_items
+        if str(item.get("hypothesis_id") or "").strip()
+    }
+    hypothesis_ids = sorted(manifests)
+    if not hypothesis_ids or limit <= 0:
+        return []
+
+    rows = (
+        session.execute(
+            select(StrategyRuntimeLedgerBucket)
+            .where(StrategyRuntimeLedgerBucket.hypothesis_id.in_(hypothesis_ids))
+            .order_by(
+                StrategyRuntimeLedgerBucket.bucket_ended_at.desc(),
+                StrategyRuntimeLedgerBucket.created_at.desc(),
+            )
+            .limit(_RUNTIME_LEDGER_REPAIR_SCAN_LIMIT)
+        )
+        .scalars()
+        .all()
+    )
+
+    candidates: list[dict[str, object]] = []
+    seen: set[tuple[str, str, str, str, str]] = set()
+    for row in rows:
+        payload = _runtime_ledger_bucket_payload(row)
+        if (
+            _safe_int(payload.get("submitted_order_count")) <= 0
+            and _safe_int(payload.get("fill_count")) <= 0
+            and _safe_int(payload.get("closed_trade_count")) <= 0
+        ):
+            continue
+        manifest = manifests.get(row.hypothesis_id) or {}
+        candidate_key = (
+            str(payload.get("hypothesis_id") or ""),
+            str(payload.get("candidate_id") or ""),
+            str(payload.get("run_id") or ""),
+            str(payload.get("bucket_started_at") or ""),
+            str(payload.get("bucket_ended_at") or ""),
+        )
+        if candidate_key in seen:
+            continue
+        seen.add(candidate_key)
+        reason_codes = _runtime_ledger_repair_reason_codes(
+            payload,
+            manifest=manifest,
+        )
+        candidates.append(
+            {
+                "source": "strategy_runtime_ledger_buckets",
+                "promotion_authority": "runtime_ledger_candidate_only",
+                "hypothesis_id": payload.get("hypothesis_id"),
+                "candidate_id": payload.get("candidate_id"),
+                "strategy_id": manifest.get("strategy_id")
+                or payload.get("runtime_strategy_name"),
+                "strategy_family": payload.get("strategy_family")
+                or manifest.get("strategy_family"),
+                "runtime_strategy_name": payload.get("runtime_strategy_name"),
+                "observed_stage": payload.get("observed_stage"),
+                "run_id": payload.get("run_id"),
+                "bucket_started_at": payload.get("bucket_started_at"),
+                "bucket_ended_at": payload.get("bucket_ended_at"),
+                "account": payload.get("account_label"),
+                "fill_count": payload.get("fill_count"),
+                "decision_count": payload.get("decision_count"),
+                "submitted_order_count": payload.get("submitted_order_count"),
+                "closed_trade_count": payload.get("closed_trade_count"),
+                "open_position_count": payload.get("open_position_count"),
+                "filled_notional": payload.get("filled_notional"),
+                "net_strategy_pnl_after_costs": payload.get(
+                    "net_strategy_pnl_after_costs"
+                ),
+                "post_cost_expectancy_bps": payload.get("post_cost_expectancy_bps"),
+                "ledger_schema_version": payload.get("ledger_schema_version"),
+                "pnl_basis": payload.get("pnl_basis"),
+                "reason_codes": reason_codes,
+                "runtime_ledger_bucket": payload,
+            }
+        )
+
+    return sorted(candidates, key=_runtime_ledger_repair_score, reverse=True)[:limit]
 
 
 def _certificate_evidence_selection_key(
@@ -2370,6 +2600,15 @@ def build_live_submission_gate_payload(
     )
     now = datetime.now(timezone.utc)
     registry = load_hypothesis_registry()
+    registry_item_payloads = [item.model_dump(mode="json") for item in registry.items]
+    runtime_ledger_repair_candidates = (
+        _load_runtime_ledger_repair_candidates(
+            session,
+            registry_items=registry_item_payloads,
+        )
+        if session is not None
+        else []
+    )
     evidence_rows = (
         [dict(item) for item in promotion_certificate_evidence]
         if promotion_certificate_evidence is not None
@@ -2505,6 +2744,7 @@ def build_live_submission_gate_payload(
             },
             "lineage_ref": _default_lineage_ref(),
             "evaluated_tuples": [],
+            "runtime_ledger_repair_candidates": runtime_ledger_repair_candidates,
             "profit_window_contract": profit_window_contract,
             "profit_lease_projection": profit_lease_projection,
         }
@@ -2527,7 +2767,7 @@ def build_live_submission_gate_payload(
         evidence=evidence_rows,
         segment_summary=segment_summary,
         runtime_items=runtime_items,
-        registry_items=[item.model_dump(mode="json") for item in registry.items],
+        registry_items=registry_item_payloads,
         max_age_seconds=max_age_seconds,
         now=now,
         window=_safe_text(quant_evidence.get("window")),
@@ -2685,6 +2925,7 @@ def build_live_submission_gate_payload(
         "evidence_tuple": evidence_tuple,
         "lineage_ref": lineage_ref,
         "evaluated_tuples": evaluated_tuples,
+        "runtime_ledger_repair_candidates": runtime_ledger_repair_candidates,
         "profit_window_contract": profit_window_contract,
         "profit_lease_projection": profit_lease_projection,
     }

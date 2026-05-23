@@ -490,6 +490,181 @@ class TestSubmissionCouncil(TestCase):
         self.assertIsNone(rev["post_cost_expectancy_bps"])
         self.assertGreaterEqual(len(summary["runtime_ledger_buckets"]), 4)
 
+    def test_build_live_submission_gate_payload_surfaces_runtime_ledger_repair_candidates(
+        self,
+    ) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        now = datetime.now(timezone.utc)
+
+        class _RegistryItem:
+            def __init__(
+                self,
+                *,
+                hypothesis_id: str,
+                candidate_id: str,
+                strategy_id: str,
+                strategy_family: str,
+            ) -> None:
+                self.hypothesis_id = hypothesis_id
+                self._payload = {
+                    "hypothesis_id": hypothesis_id,
+                    "candidate_id": candidate_id,
+                    "strategy_id": strategy_id,
+                    "strategy_family": strategy_family,
+                    "lane_id": strategy_family,
+                    "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
+                    "segment_dependencies": [],
+                }
+
+            def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+                return dict(self._payload)
+
+        registry = SimpleNamespace(
+            loaded=True,
+            path="test-registry",
+            errors=[],
+            items=[
+                _RegistryItem(
+                    hypothesis_id="H-CONT-01",
+                    candidate_id="chip-paper-microbar-composite@execution-proof",
+                    strategy_id="microbar_volume_continuation_long_top2_chip_v1@paper",
+                    strategy_family="intraday_continuation",
+                ),
+                _RegistryItem(
+                    hypothesis_id="H-PAIRS-01",
+                    candidate_id="spec-d74b07b2aaab8d0cfa8a4c38",
+                    strategy_id="microbar_cross_sectional_pairs_v1@research",
+                    strategy_family="microbar_cross_sectional_pairs",
+                ),
+            ],
+        )
+
+        with session_local() as session:
+            session.add_all(
+                [
+                    StrategyRuntimeLedgerBucket(
+                        run_id="cont-zero-fill",
+                        candidate_id="chip-paper-microbar-composite@execution-proof",
+                        hypothesis_id="H-CONT-01",
+                        observed_stage="paper",
+                        bucket_started_at=now - timedelta(minutes=30),
+                        bucket_ended_at=now - timedelta(minutes=15),
+                        account_label="TORGHUT_SIM",
+                        runtime_strategy_name="microbar-volume-continuation-long-top2-chip-v1",
+                        strategy_family="intraday_continuation",
+                        fill_count=0,
+                        decision_count=9,
+                        submitted_order_count=9,
+                        cancelled_order_count=0,
+                        rejected_order_count=0,
+                        unfilled_order_count=9,
+                        closed_trade_count=0,
+                        open_position_count=0,
+                        filled_notional=Decimal("0"),
+                        gross_strategy_pnl=Decimal("0"),
+                        cost_amount=Decimal("0"),
+                        net_strategy_pnl_after_costs=Decimal("0"),
+                        post_cost_expectancy_bps=None,
+                        ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+                        pnl_basis="realized_strategy_pnl_after_explicit_costs",
+                        execution_policy_hash_counts={},
+                        cost_model_hash_counts={},
+                        lineage_hash_counts={},
+                        blockers_json=["zero_fill_runtime_ledger"],
+                    ),
+                    StrategyRuntimeLedgerBucket(
+                        run_id="pairs-realized-runtime",
+                        candidate_id="c88421d619759b2cfaa6f4d0",
+                        hypothesis_id="H-PAIRS-01",
+                        observed_stage="paper",
+                        bucket_started_at=now - timedelta(minutes=45),
+                        bucket_ended_at=now - timedelta(minutes=30),
+                        account_label="TORGHUT_SIM",
+                        runtime_strategy_name="microbar-pairs-vwap-cap-safe",
+                        strategy_family="microbar_cross_sectional_pairs",
+                        fill_count=2,
+                        decision_count=2,
+                        submitted_order_count=2,
+                        cancelled_order_count=0,
+                        rejected_order_count=0,
+                        unfilled_order_count=0,
+                        closed_trade_count=2,
+                        open_position_count=0,
+                        filled_notional=Decimal("127090.02495200"),
+                        gross_strategy_pnl=Decimal("581.44720578"),
+                        cost_amount=Decimal("14"),
+                        net_strategy_pnl_after_costs=Decimal("567.44720578"),
+                        post_cost_expectancy_bps=Decimal("44.64923238"),
+                        ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+                        pnl_basis="realized_strategy_pnl_after_explicit_costs",
+                        execution_policy_hash_counts={"policy": 2},
+                        cost_model_hash_counts={"cost": 2},
+                        lineage_hash_counts={"lineage": 2},
+                        blockers_json=[],
+                    ),
+                ]
+            )
+            session.commit()
+
+            with patch(
+                "app.trading.submission_council.load_hypothesis_registry",
+                return_value=registry,
+            ):
+                gate = build_live_submission_gate_payload(
+                    SimpleNamespace(
+                        market_session_open=True,
+                        last_autonomy_promotion_eligible=False,
+                        last_autonomy_promotion_action=None,
+                        drift_live_promotion_eligible=False,
+                        last_market_context_freshness_seconds=45,
+                        metrics=SimpleNamespace(
+                            feature_batch_rows_total=9,
+                            feature_null_rate={"price": 0.0},
+                            feature_staleness_ms_p95=250,
+                            feature_duplicate_ratio=0.0,
+                            decision_state_total={},
+                        ),
+                    ),
+                    hypothesis_summary={
+                        "summary": {
+                            "promotion_eligible_total": 0,
+                            "capital_stage_totals": {"shadow": 2},
+                            "dependency_quorum": {
+                                "decision": "allow",
+                                "reasons": [],
+                                "message": "ready",
+                            },
+                        },
+                        "items": [],
+                    },
+                    empirical_jobs_status={"ready": True, "status": "healthy"},
+                    dspy_runtime_status={"mode": "inactive"},
+                    quant_health_status=self._healthy_quant_status(),
+                    promotion_certificate_evidence=[],
+                    session=session,
+                )
+
+        candidates = gate["runtime_ledger_repair_candidates"]
+        self.assertIsInstance(candidates, list)
+        self.assertEqual(candidates[0]["hypothesis_id"], "H-PAIRS-01")
+        self.assertEqual(candidates[0]["candidate_id"], "c88421d619759b2cfaa6f4d0")
+        self.assertEqual(candidates[0]["net_strategy_pnl_after_costs"], "567.44720578")
+        self.assertEqual(
+            candidates[0]["promotion_authority"], "runtime_ledger_candidate_only"
+        )
+        self.assertIn("runtime_ledger_stage_not_live", candidates[0]["reason_codes"])
+        self.assertIn(
+            "runtime_ledger_candidate_mismatch", candidates[0]["reason_codes"]
+        )
+        self.assertEqual(candidates[1]["hypothesis_id"], "H-CONT-01")
+
     def test_metric_window_activity_rejects_tca_proxy_expectancy(self) -> None:
         metric_window = SimpleNamespace(
             market_session_count=3,

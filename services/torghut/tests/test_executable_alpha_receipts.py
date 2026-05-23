@@ -259,6 +259,114 @@ def test_capital_replay_board_prioritizes_live_alpha_runtime_tuple() -> None:
     assert receipts[0]["guardrail_result"]["passed"] is False
 
 
+def test_capital_replay_board_prioritizes_runtime_ledger_economic_repair_candidate() -> (
+    None
+):
+    projection = _projection(
+        live_submission_gate={
+            "allowed": False,
+            "blocked_reasons": [
+                "alpha_readiness_not_promotion_eligible",
+                "simple_submit_disabled",
+            ],
+            "runtime_ledger_repair_candidates": [
+                {
+                    "source": "strategy_runtime_ledger_buckets",
+                    "promotion_authority": "runtime_ledger_candidate_only",
+                    "hypothesis_id": "H-CONT-01",
+                    "candidate_id": "chip-paper-microbar-composite@execution-proof",
+                    "strategy_id": "microbar_volume_continuation_long_top2_chip_v1@paper",
+                    "strategy_family": "intraday_continuation",
+                    "runtime_strategy_name": "microbar-volume-continuation-long-top2-chip-v1",
+                    "observed_stage": "paper",
+                    "run_id": "cont-zero-fill",
+                    "account": "TORGHUT_SIM",
+                    "fill_count": 0,
+                    "submitted_order_count": 9,
+                    "closed_trade_count": 0,
+                    "open_position_count": 0,
+                    "filled_notional": "0",
+                    "net_strategy_pnl_after_costs": "0",
+                    "post_cost_expectancy_bps": None,
+                    "reason_codes": [
+                        "runtime_ledger_stage_not_live",
+                        "zero_fill_runtime_ledger",
+                    ],
+                    "runtime_ledger_bucket": {"run_id": "cont-zero-fill"},
+                },
+                {
+                    "source": "strategy_runtime_ledger_buckets",
+                    "promotion_authority": "runtime_ledger_candidate_only",
+                    "hypothesis_id": "H-PAIRS-01",
+                    "candidate_id": "c88421d619759b2cfaa6f4d0",
+                    "strategy_id": "microbar_cross_sectional_pairs_v1@research",
+                    "strategy_family": "microbar_cross_sectional_pairs",
+                    "runtime_strategy_name": "microbar-pairs-vwap-cap-safe",
+                    "observed_stage": "paper",
+                    "run_id": "pairs-realized-runtime",
+                    "bucket_started_at": "2026-05-13T17:00:00+00:00",
+                    "bucket_ended_at": "2026-05-13T17:30:00+00:00",
+                    "account": "TORGHUT_SIM",
+                    "fill_count": 2,
+                    "submitted_order_count": 2,
+                    "closed_trade_count": 2,
+                    "open_position_count": 0,
+                    "filled_notional": "127090.02495200",
+                    "net_strategy_pnl_after_costs": "567.44720578",
+                    "post_cost_expectancy_bps": "44.64923238",
+                    "ledger_schema_version": "torghut.runtime-ledger-bucket.v1",
+                    "pnl_basis": "realized_strategy_pnl_after_explicit_costs",
+                    "reason_codes": [
+                        "runtime_ledger_stage_not_live",
+                        "runtime_ledger_candidate_mismatch",
+                    ],
+                    "runtime_ledger_bucket": {
+                        "run_id": "pairs-realized-runtime",
+                        "filled_notional": "127090.02495200",
+                    },
+                },
+            ],
+            "evaluated_tuples": [
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "candidate_id": "chip-paper-microbar-composite@execution-proof",
+                    "strategy_id": "microbar_volume_continuation_long_top2_chip_v1@paper",
+                    "capital_state": "shadow",
+                    "capital_stage": "shadow",
+                    "window": "15m",
+                    "reason_codes": ["hypothesis_window_evidence_stale"],
+                }
+            ],
+        }
+    )
+    board = cast(Mapping[str, Any], projection["capital_replay_board"])
+    replay_items = cast(list[Mapping[str, Any]], board["replay_items"])
+    ledger_replay = replay_items[0]
+
+    assert ledger_replay["hypothesis_id"] == "H-PAIRS-01"
+    assert ledger_replay["candidate_id"] == "c88421d619759b2cfaa6f4d0"
+    assert ledger_replay["replay_class"] == "runtime_ledger_economic_repair"
+    assert ledger_replay["max_notional"] == "0"
+    assert ledger_replay["expected_profit_unlock"]["after_cost_edge_bps"] == 44.64923238
+    assert "runtime_ledger_stage_not_live" in ledger_replay["remaining_blockers"]
+    runtime_ref = cast(Mapping[str, Any], ledger_replay["before_refs"])[
+        "runtime_ledger_candidate"
+    ]
+    assert runtime_ref["net_strategy_pnl_after_costs"] == "567.44720578"
+    assert any(
+        guardrail["code"] == "promotion_certificate_required"
+        for guardrail in cast(list[Mapping[str, Any]], ledger_replay["guardrails"])
+    )
+
+    receipts = cast(
+        list[Mapping[str, Any]],
+        cast(Mapping[str, Any], projection["executable_alpha_receipts"])["receipts"],
+    )
+    assert receipts[0]["hypothesis_id"] == "H-PAIRS-01"
+    assert receipts[0]["graduation_state"] == "candidate"
+    assert receipts[0]["capital_effect"]["max_notional"] == "0"
+
+
 def test_receipts_keep_superficially_good_route_out_of_paper_candidate() -> None:
     proof_floor = _proof_floor(blocking_reasons=[])
     projection = _projection(
