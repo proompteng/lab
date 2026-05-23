@@ -177,6 +177,107 @@ class TestStrategyAutoresearch(TestCase):
             "parent=candidate-1; mutate=max_entries_per_session",
         )
 
+    def test_runtime_window_plan_helpers_surface_missing_handoffs(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            with patch.object(runner, "_REPO_ROOT", root):
+                self.assertEqual(runner._hypothesis_manifest_rows(), [])
+
+            hypothesis_dir = root / "services/torghut/config/trading/hypotheses"
+            hypothesis_dir.mkdir(parents=True)
+            (hypothesis_dir / "bad.json").write_text("{", encoding="utf-8")
+            (hypothesis_dir / "missing-id.json").write_text(
+                json.dumps({"strategy_id": "ignored_v1@research"}),
+                encoding="utf-8",
+            )
+            (hypothesis_dir / "by-family.json").write_text(
+                json.dumps(
+                    {
+                        "hypothesis_id": "H-BY-FAMILY",
+                        "strategy_id": "other_v1@research",
+                        "strategy_family": "runtime_family_match",
+                        "dataset_snapshot_ref": "snapshot-family",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (hypothesis_dir / "by-name.json").write_text(
+                json.dumps(
+                    {
+                        "hypothesis_id": "H-BY-NAME",
+                        "strategy_id": "name_match_v1@research",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.object(runner, "_REPO_ROOT", root):
+                rows = runner._hypothesis_manifest_rows()
+                self.assertEqual(
+                    [row["hypothesis_id"] for row in rows],
+                    ["H-BY-FAMILY", "H-BY-NAME"],
+                )
+                self.assertEqual(
+                    runner._hypothesis_manifest_for_history_row(
+                        {
+                            "family_template_id": "",
+                            "runtime_family": "runtime_family_match",
+                            "runtime_strategy_name": "",
+                        }
+                    )["hypothesis_id"],
+                    "H-BY-FAMILY",
+                )
+                self.assertEqual(
+                    runner._hypothesis_manifest_for_history_row(
+                        {
+                            "family_template_id": "",
+                            "runtime_family": "",
+                            "runtime_strategy_name": "name-match-v1",
+                        }
+                    )["hypothesis_id"],
+                    "H-BY-NAME",
+                )
+
+        self.assertIsNone(
+            runner._exact_replay_history_row(history=[], candidate_id="missing")
+        )
+        no_candidate_blockers = runner._exact_replay_runtime_window_blockers(
+            best_exact_replay_ledger_candidate=None,
+            history_row=None,
+            hypothesis_manifest={},
+            artifact_refs=[],
+            promotion_blockers=[],
+            runtime_ledger_blockers=[],
+        )
+        self.assertEqual(
+            no_candidate_blockers[0]["blocker"],
+            "exact_replay_ledger_candidate_missing",
+        )
+        missing_handoff_blockers = runner._exact_replay_runtime_window_blockers(
+            best_exact_replay_ledger_candidate={"candidate_id": "candidate-1"},
+            history_row={},
+            hypothesis_manifest={},
+            artifact_refs=[],
+            promotion_blockers=[],
+            runtime_ledger_blockers=[],
+        )
+        blocker_names = {item["blocker"] for item in missing_handoff_blockers}
+        self.assertIn("hypothesis_manifest_missing", blocker_names)
+        self.assertIn("runtime_harness_metadata_missing", blocker_names)
+        self.assertIn("runtime_ledger_artifact_ref_missing", blocker_names)
+        missing_history_blockers = runner._exact_replay_runtime_window_blockers(
+            best_exact_replay_ledger_candidate={"candidate_id": "candidate-1"},
+            history_row=None,
+            hypothesis_manifest={},
+            artifact_refs=[],
+            promotion_blockers=[],
+            runtime_ledger_blockers=[],
+        )
+        self.assertIn(
+            "candidate_history_row_missing",
+            {item["blocker"] for item in missing_history_blockers},
+        )
+
     def test_runtime_closure_candidate_rejects_failed_or_vetoed_candidates(
         self,
     ) -> None:
@@ -572,7 +673,49 @@ class TestStrategyAutoresearch(TestCase):
                     program_id=program.program_id,
                     frontier_runs=1,
                     objective_met=False,
-                    history=[],
+                    history=[
+                        {
+                            "runner_run_id": "strategy-autoresearch-test",
+                            "experiment_index": 1,
+                            "iteration": 1,
+                            "family_template_id": "microbar_cross_sectional_pairs_v1",
+                            "candidate_id": "ledger-ranked-1",
+                            "parent_candidate_id": None,
+                            "status": "keep",
+                            "objective_met": False,
+                            "mutation_label": "seed",
+                            "dataset_snapshot_id": "snapshot-exact",
+                            "sweep_config_path": "sweep.yaml",
+                            "result_path": "result.json",
+                            "candidate_params": {},
+                            "candidate_strategy_overrides": {},
+                            "disable_other_strategies": True,
+                            "train_start_date": "",
+                            "train_end_date": "",
+                            "holdout_start_date": "",
+                            "holdout_end_date": "",
+                            "full_window_start_date": "2026-05-18",
+                            "full_window_end_date": "2026-05-22",
+                            "normalization_regime": "",
+                            "net_pnl_per_day": "59.6",
+                            "deployable_lower_bound_net_pnl_per_day": "59.6",
+                            "deployable_lower_bound_missing_count": 0,
+                            "deployable_lower_bound_failed_gate_count": 0,
+                            "active_day_ratio": "0.2",
+                            "best_day_share": "1",
+                            "max_drawdown": "0",
+                            "hard_vetoes": [],
+                            "pareto_tier": 1,
+                            "runtime_family": "microbar_cross_sectional_pairs",
+                            "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                            "exact_replay_ledger_artifact_ref": str(artifact_path),
+                            "runtime_ledger_artifact_ref": str(artifact_path),
+                            "exact_replay_ledger_artifact_row_count": "6",
+                            "exact_replay_ledger_artifact_fill_count": "2",
+                            "runtime_ledger_artifact_row_count": "6",
+                            "runtime_ledger_artifact_fill_count": "2",
+                        }
+                    ],
                     manifest=manifest,
                     descriptors=[],
                     proposal_scores=[],
@@ -615,6 +758,29 @@ class TestStrategyAutoresearch(TestCase):
             self.assertIn(
                 "replay_artifact_only_not_live",
                 summary["best_exact_replay_ledger_candidate"]["promotion_blockers"],
+            )
+            plan = summary["runtime_window_import_plan"]
+            self.assertFalse(plan["promotion_allowed"])
+            self.assertEqual(len(plan["targets"]), 1)
+            target = plan["targets"][0]
+            self.assertEqual(target["candidate_id"], "ledger-ranked-1")
+            self.assertEqual(target["hypothesis_id"], "H-PAIRS-01")
+            self.assertEqual(len(target["artifact_refs"]), 1)
+            self.assertEqual(
+                Path(target["artifact_refs"][0]).resolve(strict=False),
+                artifact_path.resolve(strict=False),
+            )
+            self.assertEqual(
+                target["runtime_ledger_artifact_row_count"],
+                "6",
+            )
+            self.assertFalse(target["promotion_allowed"])
+            self.assertFalse(target["final_promotion_authorized"])
+            self.assertEqual(
+                summary["candidate_board"]["runtime_window_import_plan"]["targets"][
+                    0
+                ]["candidate_id"],
+                "ledger-ranked-1",
             )
 
     def test_exact_replay_ledger_paths_collects_refs_and_skips_bad_results(

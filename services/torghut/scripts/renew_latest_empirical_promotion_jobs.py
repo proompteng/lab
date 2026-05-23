@@ -45,6 +45,15 @@ DEFAULT_AUTORESEARCH_RUNTIME_WINDOW_STATUSES = (
 RUNTIME_WINDOW_TARGET_METADATA_KEYS = (
     "candidate_spec_id",
     "candidate_selection",
+    "runtime_ledger_artifact_refs",
+    "runtime_ledger_artifact_ref",
+    "exact_replay_ledger_artifact_refs",
+    "exact_replay_ledger_artifact_ref",
+    "runtime_ledger_artifact_row_count",
+    "runtime_ledger_artifact_fill_count",
+    "runtime_ledger_target_metadata_blockers",
+    "window_start",
+    "window_end",
     "paper_probation_authorized",
     "paper_probation_authorization_scope",
     "evidence_collection_stage",
@@ -287,6 +296,8 @@ class RuntimeWindowImportTarget:
     source_manifest_ref: str
     source_kind: str
     delay_adjusted_depth_stress_report_ref: str
+    window_start: str = ""
+    window_end: str = ""
     artifact_refs: tuple[str, ...] = ()
     target_metadata: Mapping[str, Any] | None = None
 
@@ -432,6 +443,8 @@ def _registry_runtime_window_targets(
                 ).strip()
                 or "paper_runtime_observed",
                 delay_adjusted_depth_stress_report_ref="",
+                window_start="",
+                window_end="",
             )
         )
     return targets
@@ -515,6 +528,8 @@ def _runtime_window_targets_from_plan(
                     "delay_adjusted_depth_stress_report_ref",
                     "runtime_window_delay_adjusted_depth_stress_report_ref",
                 ),
+                window_start=str(payload.get("window_start") or "").strip(),
+                window_end=str(payload.get("window_end") or "").strip(),
                 artifact_refs=_runtime_window_target_artifact_refs(payload),
                 target_metadata=_runtime_window_target_metadata(payload),
             )
@@ -523,14 +538,23 @@ def _runtime_window_targets_from_plan(
 
 
 def _runtime_window_target_artifact_refs(payload: Mapping[str, Any]) -> tuple[str, ...]:
-    raw_refs = payload.get("artifact_refs")
-    if not isinstance(raw_refs, Sequence) or isinstance(
-        raw_refs, (str, bytes, bytearray)
-    ):
-        return ()
     refs: list[str] = []
-    for item in raw_refs:
-        ref = _as_text(item)
+    for key in (
+        "artifact_refs",
+        "runtime_ledger_artifact_refs",
+        "exact_replay_ledger_artifact_refs",
+    ):
+        raw_refs = payload.get(key)
+        if not isinstance(raw_refs, Sequence) or isinstance(
+            raw_refs, (str, bytes, bytearray)
+        ):
+            continue
+        for item in raw_refs:
+            ref = _as_text(item)
+            if ref is not None and ref not in refs:
+                refs.append(ref)
+    for key in ("runtime_ledger_artifact_ref", "exact_replay_ledger_artifact_ref"):
+        ref = _as_text(payload.get(key))
         if ref is not None and ref not in refs:
             refs.append(ref)
     return tuple(refs)
@@ -674,6 +698,8 @@ def _runtime_window_targets(
                     "delay_adjusted_depth_stress_report_ref",
                     "runtime_window_delay_adjusted_depth_stress_report_ref",
                 ),
+                window_start=value("window_start", "runtime_window_start"),
+                window_end=value("window_end", "runtime_window_end"),
             )
         )
     seen_hypothesis_ids = {target.hypothesis_id for target in targets}
@@ -736,6 +762,28 @@ def _runtime_window_bounds(
             raise RuntimeError("runtime_window_end_must_be_after_start")
         return start, end
     return _latest_completed_regular_session(now)
+
+
+def _runtime_window_target_plan_bounds(
+    target: RuntimeWindowImportTarget,
+) -> tuple[datetime, datetime] | None:
+    start_arg = str(target.window_start or "").strip()
+    end_arg = str(target.window_end or "").strip()
+    if bool(start_arg) != bool(end_arg):
+        raise RuntimeError(
+            "runtime_window_target_plan_bounds_require_start_and_end:"
+            f"{target.hypothesis_id}:{target.candidate_id}"
+        )
+    if not start_arg or not end_arg:
+        return None
+    start = _parse_dt(start_arg)
+    end = _parse_dt(end_arg)
+    if end <= start:
+        raise RuntimeError(
+            "runtime_window_target_plan_end_must_be_after_start:"
+            f"{target.hypothesis_id}:{target.candidate_id}"
+        )
+    return start, end
 
 
 def _explicit_runtime_window_bounds(
@@ -998,7 +1046,11 @@ def _run_runtime_window_import_target(
 ) -> dict[str, Any]:
     runtime_manifest = _read_runtime_window_manifest(target.source_manifest_ref)
     window_selection = "explicit_or_default"
-    if allow_source_activity_window:
+    target_plan_window = _runtime_window_target_plan_bounds(target)
+    if target_plan_window is not None:
+        window_start, window_end = target_plan_window
+        window_selection = "target_plan_window"
+    elif allow_source_activity_window:
         source_activity_window = _latest_source_activity_window(
             target=target,
             runtime_manifest=runtime_manifest,

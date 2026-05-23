@@ -540,6 +540,84 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             },
         )
 
+    def test_runtime_window_targets_from_plan_preserve_exact_replay_artifact_handoff(
+        self,
+    ) -> None:
+        plan_path = Path(self.tmp_dir) / "candidate-board.json"
+        plan_path.write_text(
+            json.dumps(
+                {
+                    "runtime_window_import_plan": {
+                        "schema_version": "torghut.runtime-window-import-plan.v1",
+                        "targets": [
+                            {
+                                "candidate_id": "cand-exact-replay",
+                                "hypothesis_id": "H-PAIRS-01",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_cross_sectional_pairs",
+                                "strategy_name": "microbar-cross-sectional-pairs-v1",
+                                "source_kind": "simulation_exact_replay_runtime_ledger",
+                                "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+                                "dataset_snapshot_ref": "snapshot-exact",
+                                "artifact_refs": ["proof/replay-summary.json"],
+                                "runtime_ledger_artifact_ref": "proof/exact-replay-ledger.json",
+                                "runtime_ledger_artifact_row_count": 12,
+                                "runtime_ledger_artifact_fill_count": 4,
+                                "window_start": "2026-05-18T13:30:00Z",
+                                "window_end": "2026-05-18T20:00:00Z",
+                                "runtime_ledger_target_metadata_blockers": [
+                                    "replay_artifact_only_not_live"
+                                ],
+                                "paper_probation_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                                "final_promotion_allowed": False,
+                            }
+                        ],
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        args = SimpleNamespace(
+            runtime_window_target=[],
+            runtime_window_target_plan_ref=[str(plan_path)],
+            runtime_window_targets_from_registry=False,
+            runtime_window_hypothesis_id="",
+            runtime_window_candidate_id="",
+            runtime_window_observed_stage="paper",
+            runtime_window_strategy_family="",
+            runtime_window_source_dsn_env="SIM_DB_DSN",
+            runtime_window_strategy_name="",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_dataset_snapshot_ref="",
+            runtime_window_source_manifest_ref="",
+            runtime_window_source_kind="paper_runtime_observed",
+        )
+
+        targets = renewal._runtime_window_targets(args)
+
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(
+            targets[0].artifact_refs,
+            ("proof/replay-summary.json", "proof/exact-replay-ledger.json"),
+        )
+        self.assertEqual(targets[0].window_start, "2026-05-18T13:30:00Z")
+        self.assertEqual(targets[0].window_end, "2026-05-18T20:00:00Z")
+        assert targets[0].target_metadata is not None
+        self.assertEqual(
+            targets[0].target_metadata["runtime_ledger_artifact_ref"],
+            "proof/exact-replay-ledger.json",
+        )
+        self.assertEqual(
+            targets[0].target_metadata["runtime_ledger_artifact_row_count"],
+            12,
+        )
+        self.assertEqual(
+            targets[0].target_metadata["window_start"],
+            "2026-05-18T13:30:00Z",
+        )
+
     def test_runtime_window_targets_from_latest_autoresearch_epoch(self) -> None:
         args = SimpleNamespace(
             runtime_window_autoresearch_status=[],
@@ -1325,6 +1403,135 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         assert payload is not None
         self.assertEqual(payload["window_start"], "2026-05-18T13:30:00Z")
         self.assertEqual(payload["window_end"], "2026-05-18T20:00:00Z")
+
+    def test_runtime_window_import_uses_target_plan_window_and_artifacts(
+        self,
+    ) -> None:
+        manifest_path = self.tmp_dir / "empirical-promotion-manifest.yaml"
+        manifest_path.write_text("run_id: renew-1\n", encoding="utf-8")
+        hypothesis_path = self.tmp_dir / "h-pairs-01.json"
+        hypothesis_path.write_text(
+            json.dumps({"candidate_id": "cand-exact-replay"}),
+            encoding="utf-8",
+        )
+        plan_path = self.tmp_dir / "candidate-board.json"
+        plan_path.write_text(
+            json.dumps(
+                {
+                    "runtime_window_import_plan": {
+                        "targets": [
+                            {
+                                "candidate_id": "cand-exact-replay",
+                                "hypothesis_id": "H-PAIRS-01",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_cross_sectional_pairs",
+                                "strategy_name": "microbar-cross-sectional-pairs-v1",
+                                "source_manifest_ref": str(hypothesis_path),
+                                "source_kind": "simulation_exact_replay_runtime_ledger",
+                                "runtime_ledger_artifact_ref": "proof/exact-replay-ledger.json",
+                                "window_start": "2026-05-18T13:30:00Z",
+                                "window_end": "2026-05-18T20:00:00Z",
+                            }
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        completed = SimpleNamespace(
+            stdout=json.dumps({"inserted_windows": 1, "promotion_decision": "blocked"})
+        )
+        args = SimpleNamespace(
+            runtime_window_import=True,
+            runtime_window_target=[],
+            runtime_window_target_plan_ref=[str(plan_path)],
+            runtime_window_targets_from_latest_autoresearch=False,
+            runtime_window_targets_from_registry=False,
+            runtime_window_hypothesis_id="",
+            runtime_window_candidate_id="",
+            runtime_window_observed_stage="paper",
+            runtime_window_strategy_family="",
+            runtime_window_source_dsn_env="SIM_DB_DSN",
+            runtime_window_strategy_name="",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_start="",
+            runtime_window_end="",
+            runtime_window_dataset_snapshot_ref="",
+            runtime_window_bucket_minutes=30,
+            runtime_window_sample_minutes=5,
+            runtime_window_source_manifest_ref="",
+            runtime_window_source_kind="paper_runtime_observed",
+        )
+
+        with (
+            patch.object(renewal.subprocess, "run", return_value=completed) as run_mock,
+            patch.object(
+                renewal,
+                "_latest_source_activity_window",
+                return_value=(
+                    datetime(2026, 5, 15, 13, 30, tzinfo=timezone.utc),
+                    datetime(2026, 5, 15, 20, 0, tzinfo=timezone.utc),
+                ),
+            ) as source_window_mock,
+        ):
+            payload = renewal._run_runtime_window_import(
+                args=args,
+                manifest={},
+                run_id="renew-1",
+                manifest_path=manifest_path,
+                now=datetime(2026, 5, 19, 21, 23, tzinfo=timezone.utc),
+            )
+
+        source_window_mock.assert_not_called()
+        self.assertIsNotNone(payload)
+        assert payload is not None
+        self.assertEqual(payload["window_selection"], "target_plan_window")
+        command = run_mock.call_args.args[0]
+        self.assertEqual(
+            command[command.index("--window-start") + 1],
+            "2026-05-18T13:30:00Z",
+        )
+        self.assertEqual(
+            command[command.index("--window-end") + 1],
+            "2026-05-18T20:00:00Z",
+        )
+        self.assertIn("proof/exact-replay-ledger.json", command)
+
+    def test_runtime_window_target_plan_bounds_fail_closed(self) -> None:
+        base = {
+            "hypothesis_id": "H-PAIRS-01",
+            "candidate_id": "candidate-1",
+            "observed_stage": "paper",
+            "strategy_family": "microbar_cross_sectional_pairs",
+            "source_dsn_env": "SIM_DB_DSN",
+            "strategy_name": "microbar-cross-sectional-pairs-v1",
+            "account_label": "TORGHUT_REPLAY",
+            "dataset_snapshot_ref": "snapshot-1",
+            "source_manifest_ref": "h-pairs-01.json",
+            "source_kind": "simulation_exact_replay_runtime_ledger",
+            "delay_adjusted_depth_stress_report_ref": "",
+        }
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "runtime_window_target_plan_bounds_require_start_and_end",
+        ):
+            renewal._runtime_window_target_plan_bounds(
+                renewal.RuntimeWindowImportTarget(
+                    **base,
+                    window_start="2026-05-18T13:30:00Z",
+                )
+            )
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "runtime_window_target_plan_end_must_be_after_start",
+        ):
+            renewal._runtime_window_target_plan_bounds(
+                renewal.RuntimeWindowImportTarget(
+                    **base,
+                    window_start="2026-05-18T20:00:00Z",
+                    window_end="2026-05-18T13:30:00Z",
+                )
+            )
 
     def test_latest_source_activity_window_uses_execution_eligible_decisions(
         self,
