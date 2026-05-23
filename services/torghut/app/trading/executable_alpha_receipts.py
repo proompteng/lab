@@ -153,6 +153,7 @@ _CLOSED_SESSION_REPAIR_REASONS = {
     "closed_session_tca_evidence_hold",
 }
 _ALPHA_RUNTIME_REPLAY_CLASS = "alpha_runtime_window_refresh"
+_RUNTIME_LEDGER_ECONOMIC_REPAIR_CLASS = "runtime_ledger_economic_repair"
 _ZERO_RUNTIME_EVIDENCE_REASONS = {
     "hypothesis_window_decisions_missing",
     "hypothesis_window_orders_missing",
@@ -1337,6 +1338,45 @@ def _top_alpha_runtime_replay_target(
     return sorted(candidates, key=_alpha_runtime_replay_key)[0]
 
 
+def _runtime_ledger_repair_candidates(
+    live_submission_gate: Mapping[str, Any],
+) -> list[Mapping[str, Any]]:
+    return [
+        _mapping(item)
+        for item in _sequence(
+            live_submission_gate.get("runtime_ledger_repair_candidates")
+        )
+        if _text(_mapping(item).get("hypothesis_id"))
+    ]
+
+
+def _runtime_ledger_repair_key(
+    item: Mapping[str, Any],
+) -> tuple[int, int, int, int, float, float, float, str]:
+    filled_notional = _float(item.get("filled_notional")) or 0.0
+    net_pnl = _float(item.get("net_strategy_pnl_after_costs")) or 0.0
+    expectancy_bps = _float(item.get("post_cost_expectancy_bps")) or 0.0
+    return (
+        int(filled_notional > 0),
+        int(_int(item.get("fill_count")) > 0),
+        int(_int(item.get("closed_trade_count")) > 0),
+        int(net_pnl > 0 and expectancy_bps > 0),
+        net_pnl,
+        expectancy_bps,
+        filled_notional,
+        _text(item.get("hypothesis_id")),
+    )
+
+
+def _top_runtime_ledger_economic_repair_candidate(
+    live_submission_gate: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    candidates = _runtime_ledger_repair_candidates(live_submission_gate)
+    if not candidates:
+        return {}
+    return sorted(candidates, key=_runtime_ledger_repair_key, reverse=True)[0]
+
+
 def _alpha_runtime_confidence(item: Mapping[str, Any]) -> str:
     reasons = set(_alpha_runtime_repair_reason_codes(item))
     if reasons.intersection(_ZERO_RUNTIME_EVIDENCE_REASONS):
@@ -1344,6 +1384,180 @@ def _alpha_runtime_confidence(item: Mapping[str, Any]) -> str:
     if reasons.intersection(_HARD_ALPHA_ECONOMIC_REASONS):
         return "low"
     return "medium"
+
+
+def _runtime_ledger_economic_repair_item(
+    *,
+    item: Mapping[str, Any],
+    account_label: str | None,
+    trading_mode: str,
+    proof_floor_receipt: Mapping[str, Any],
+    live_submission_gate: Mapping[str, Any],
+    empirical_jobs_status: Mapping[str, Any],
+    quant_evidence: Mapping[str, Any],
+    market_context_status: Mapping[str, Any],
+    jangar_contract_graduation_ref: Mapping[str, Any],
+) -> dict[str, object]:
+    hypothesis_id = _text(item.get("hypothesis_id"), "unknown")
+    candidate_id = _text(item.get("candidate_id"))
+    strategy_id = _text(item.get("strategy_id")) or _text(
+        item.get("runtime_strategy_name")
+    )
+    reasons = _string_list(item.get("reason_codes"))
+    blockers = set(_string_list(proof_floor_receipt.get("blocking_reasons")))
+    blockers.update(_string_list(live_submission_gate.get("blocked_reasons")))
+    blockers.update(reasons)
+    blockers.update(_empirical_blockers(empirical_jobs_status))
+    blockers.update(_quant_blockers(quant_evidence))
+    blockers.update(_market_context_blockers(market_context_status))
+    graduation_state, graduation_reasons = _graduation_state(
+        jangar_contract_graduation_ref
+    )
+    if graduation_state != "current":
+        blockers.update(graduation_reasons)
+
+    runtime_bucket = _mapping(item.get("runtime_ledger_bucket"))
+    replay_id = "replay:" + _stable_hash(
+        "runtime-ledger-economic-repair",
+        {
+            "hypothesis_id": hypothesis_id,
+            "candidate_id": candidate_id,
+            "strategy_id": strategy_id,
+            "run_id": item.get("run_id"),
+            "bucket_started_at": item.get("bucket_started_at"),
+            "bucket_ended_at": item.get("bucket_ended_at"),
+            "account_label": account_label,
+            "trading_mode": trading_mode,
+            "proof_floor_generated_at": proof_floor_receipt.get("generated_at"),
+        },
+    )
+    after_cost_edge_bps = _float(item.get("post_cost_expectancy_bps"))
+    return {
+        "replay_id": replay_id,
+        "hypothesis_id": hypothesis_id,
+        "candidate_id": candidate_id or None,
+        "strategy_id": strategy_id or None,
+        "target_symbols": _string_list(item.get("target_symbols")),
+        "replay_class": _RUNTIME_LEDGER_ECONOMIC_REPAIR_CLASS,
+        "before_refs": {
+            "runtime_ledger_candidate": {
+                "source": item.get("source"),
+                "promotion_authority": item.get("promotion_authority"),
+                "run_id": item.get("run_id"),
+                "candidate_id": candidate_id or None,
+                "strategy_id": strategy_id or None,
+                "strategy_family": item.get("strategy_family"),
+                "runtime_strategy_name": item.get("runtime_strategy_name"),
+                "observed_stage": item.get("observed_stage"),
+                "account": item.get("account"),
+                "bucket_started_at": item.get("bucket_started_at"),
+                "bucket_ended_at": item.get("bucket_ended_at"),
+                "fill_count": item.get("fill_count"),
+                "submitted_order_count": item.get("submitted_order_count"),
+                "closed_trade_count": item.get("closed_trade_count"),
+                "open_position_count": item.get("open_position_count"),
+                "filled_notional": item.get("filled_notional"),
+                "net_strategy_pnl_after_costs": item.get(
+                    "net_strategy_pnl_after_costs"
+                ),
+                "post_cost_expectancy_bps": item.get("post_cost_expectancy_bps"),
+                "reason_codes": reasons,
+                "ledger_schema_version": item.get("ledger_schema_version"),
+                "pnl_basis": item.get("pnl_basis"),
+                "runtime_ledger_bucket": dict(runtime_bucket),
+            },
+            "proof_floor": {
+                "schema_version": proof_floor_receipt.get("schema_version"),
+                "generated_at": proof_floor_receipt.get("generated_at"),
+                "route_state": proof_floor_receipt.get("route_state"),
+                "capital_state": proof_floor_receipt.get("capital_state"),
+                "blocking_reasons": _string_list(
+                    proof_floor_receipt.get("blocking_reasons")
+                ),
+            },
+            "empirical_jobs": {
+                "ready": bool(empirical_jobs_status.get("ready")),
+                "status": empirical_jobs_status.get("status"),
+                "authority": empirical_jobs_status.get("authority"),
+            },
+            "quant_evidence": {
+                "status": quant_evidence.get("status"),
+                "source_url": quant_evidence.get("source_url"),
+                "latest_metrics_count": quant_evidence.get("latest_metrics_count"),
+            },
+            "market_context": {
+                "status": market_context_status.get("status"),
+                "state": market_context_status.get("state")
+                or market_context_status.get("overallState")
+                or market_context_status.get("overall_state"),
+                "alert_active": bool(market_context_status.get("alert_active")),
+                "alert_reason": market_context_status.get("alert_reason"),
+            },
+            "jangar_contract_graduation": dict(jangar_contract_graduation_ref),
+        },
+        "required_after_refs": [
+            "live_runtime_ledger_receipt",
+            "runtime_window_ledger_receipt",
+            "promotion_grade_post_cost_pnl_receipt",
+            "promotion_decision_receipt",
+            "alpha_readiness_receipt",
+            "empirical_job_receipt",
+            "jangar_contract_graduation_receipt",
+        ],
+        "expected_profit_unlock": {
+            "expected_blocker_delta": max(1, len(set(reasons))),
+            "expected_profit_effect": "convert_runtime_ledger_economic_bucket_into_promotion_certificate",
+            "after_cost_edge_bps": after_cost_edge_bps,
+            "observed_net_pnl_after_costs": item.get("net_strategy_pnl_after_costs"),
+        },
+        "expected_cost": {
+            "class": "runtime_ledger_economic_repair",
+            "max_runtime_seconds": 900,
+        },
+        "confidence": "medium"
+        if after_cost_edge_bps is not None and after_cost_edge_bps > 0
+        else "low",
+        "max_runtime_seconds": 900,
+        "max_notional": "0",
+        "guardrails": [
+            {
+                "code": "zero_notional_required",
+                "status": "pass",
+                "limit": "0",
+            },
+            {
+                "code": "runtime_ledger_authority_required",
+                "status": "blocked",
+                "required_stage": "live",
+                "observed_stage": item.get("observed_stage"),
+                "required_basis": "realized_strategy_pnl_after_explicit_costs",
+            },
+            {
+                "code": "promotion_certificate_required",
+                "status": "blocked",
+                "blocking_reason_codes": sorted(set(blockers)),
+            },
+        ],
+        "falsification_rules": [
+            "runtime_ledger_bucket_not_reproducible",
+            "live_runtime_ledger_missing",
+            "post_cost_pnl_non_positive_after_refresh",
+            "promotion_decision_still_not_allowed",
+        ],
+        "owner": "torghut",
+        "remaining_blockers": sorted(blocker for blocker in blockers if blocker),
+        "capital_effect": {
+            "capital_state": "zero_notional",
+            "max_notional": "0",
+            "paper_canary": "held",
+            "live_micro_canary": "blocked",
+        },
+        "rollback_target": {
+            "capital_state": "zero_notional",
+            "live_submit_enabled": False,
+            "replay_class": _RUNTIME_LEDGER_ECONOMIC_REPAIR_CLASS,
+        },
+    }
 
 
 def _alpha_runtime_blockers(
@@ -1637,6 +1851,24 @@ def _candidate_replays(
     route_records = _route_records(proof_floor_receipt)
     replays: list[dict[str, object]] = []
 
+    runtime_ledger_target = _top_runtime_ledger_economic_repair_candidate(
+        live_submission_gate
+    )
+    if runtime_ledger_target:
+        replays.append(
+            _runtime_ledger_economic_repair_item(
+                item=runtime_ledger_target,
+                account_label=account_label,
+                trading_mode=trading_mode,
+                proof_floor_receipt=proof_floor_receipt,
+                live_submission_gate=live_submission_gate,
+                empirical_jobs_status=empirical_jobs_status,
+                quant_evidence=quant_evidence,
+                market_context_status=market_context_status,
+                jangar_contract_graduation_ref=jangar_contract_graduation_ref,
+            )
+        )
+
     alpha_target = _top_alpha_runtime_replay_target(live_submission_gate)
     if alpha_target:
         replays.append(
@@ -1753,7 +1985,14 @@ def _receipt_for_replay(
     graduation_state: GraduationState = (
         "candidate"
         if target_symbols
-        or (replay_class == _ALPHA_RUNTIME_REPLAY_CLASS and replay.get("hypothesis_id"))
+        or (
+            replay_class
+            in {
+                _ALPHA_RUNTIME_REPLAY_CLASS,
+                _RUNTIME_LEDGER_ECONOMIC_REPAIR_CLASS,
+            }
+            and replay.get("hypothesis_id")
+        )
         else "failed"
     )
     receipt_id = "receipt:" + _stable_hash(
