@@ -1166,6 +1166,38 @@ def _history_record(
             or full_window.get("max_gross_exposure_pct_equity")
         ),
         "min_cash": _string(scorecard.get("min_cash") or full_window.get("min_cash")),
+        "exact_replay_ledger_artifact_ref": _string(
+            scorecard.get("exact_replay_ledger_artifact_ref")
+            or candidate_payload.get("exact_replay_ledger_artifact_ref")
+        ),
+        "runtime_ledger_artifact_ref": _string(
+            scorecard.get("runtime_ledger_artifact_ref")
+            or candidate_payload.get("runtime_ledger_artifact_ref")
+        ),
+        "exact_replay_ledger_artifact_row_count": _string(
+            scorecard.get("exact_replay_ledger_artifact_row_count")
+            or candidate_payload.get("exact_replay_ledger_artifact_row_count")
+        ),
+        "exact_replay_ledger_artifact_fill_count": _string(
+            scorecard.get("exact_replay_ledger_artifact_fill_count")
+            or candidate_payload.get("exact_replay_ledger_artifact_fill_count")
+        ),
+        "runtime_ledger_artifact_row_count": _string(
+            scorecard.get("runtime_ledger_artifact_row_count")
+            or candidate_payload.get("runtime_ledger_artifact_row_count")
+        ),
+        "runtime_ledger_artifact_fill_count": _string(
+            scorecard.get("runtime_ledger_artifact_fill_count")
+            or candidate_payload.get("runtime_ledger_artifact_fill_count")
+        ),
+        "runtime_ledger_pnl_basis": _string(
+            scorecard.get("runtime_ledger_pnl_basis")
+            or candidate_payload.get("runtime_ledger_pnl_basis")
+        ),
+        "runtime_ledger_pnl_source": _string(
+            scorecard.get("runtime_ledger_pnl_source")
+            or candidate_payload.get("runtime_ledger_pnl_source")
+        ),
         "negative_cash_observation_count": int(
             scorecard.get("negative_cash_observation_count")
             or full_window.get("negative_cash_observation_count")
@@ -1252,6 +1284,310 @@ def _best_history_record(history: list[dict[str, Any]]) -> dict[str, Any] | None
         ),
     )
     return sorted_history[0]
+
+
+def _strategy_name_from_strategy_id(strategy_id: str) -> str:
+    base = strategy_id.split("@", 1)[0].strip()
+    return base.replace("_", "-") if base else ""
+
+
+def _hypothesis_manifest_rows() -> list[dict[str, str]]:
+    hypothesis_dir = _REPO_ROOT / "services/torghut/config/trading/hypotheses"
+    rows: list[dict[str, str]] = []
+    if not hypothesis_dir.exists():
+        return rows
+    for path in sorted(hypothesis_dir.glob("*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        data = _mapping(payload)
+        hypothesis_id = _string(data.get("hypothesis_id"))
+        if not hypothesis_id:
+            continue
+        strategy_id = _string(data.get("strategy_id"))
+        rows.append(
+            {
+                "hypothesis_id": hypothesis_id,
+                "strategy_id": strategy_id,
+                "strategy_id_base": strategy_id.split("@", 1)[0].strip(),
+                "strategy_name": _string(data.get("strategy_name"))
+                or _strategy_name_from_strategy_id(strategy_id),
+                "strategy_family": _string(data.get("strategy_family")),
+                "candidate_id": _string(data.get("candidate_id")),
+                "dataset_snapshot_ref": _string(data.get("dataset_snapshot_ref")),
+                "source_manifest_ref": str(path),
+            }
+        )
+    return rows
+
+
+def _hypothesis_manifest_for_history_row(
+    row: Mapping[str, Any],
+) -> dict[str, str]:
+    family_template_id = _string(row.get("family_template_id"))
+    runtime_family = _string(row.get("runtime_family"))
+    runtime_strategy_name = _string(row.get("runtime_strategy_name"))
+    for manifest in _hypothesis_manifest_rows():
+        if family_template_id and manifest["strategy_id_base"] == family_template_id:
+            return manifest
+    for manifest in _hypothesis_manifest_rows():
+        if runtime_family and manifest["strategy_family"] == runtime_family:
+            return manifest
+    for manifest in _hypothesis_manifest_rows():
+        if runtime_strategy_name and manifest["strategy_name"] == runtime_strategy_name:
+            return manifest
+    return {}
+
+
+def _dedupe_nonempty_strings(values: list[Any]) -> list[str]:
+    items: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = _string(value)
+        if not text:
+            continue
+        key = (
+            str(Path(text).expanduser().resolve(strict=False))
+            if text.startswith("/")
+            else text
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(text)
+    return items
+
+
+def _exact_replay_history_row(
+    *,
+    history: list[dict[str, Any]],
+    candidate_id: str,
+) -> dict[str, Any] | None:
+    for row in history:
+        if _string(row.get("candidate_id")) == candidate_id:
+            return row
+    return None
+
+
+def _exact_replay_runtime_window_blockers(
+    *,
+    best_exact_replay_ledger_candidate: Mapping[str, Any] | None,
+    history_row: Mapping[str, Any] | None,
+    hypothesis_manifest: Mapping[str, str],
+    artifact_refs: list[str],
+    promotion_blockers: list[str],
+    runtime_ledger_blockers: list[str],
+) -> list[dict[str, Any]]:
+    blockers: list[dict[str, Any]] = []
+    if best_exact_replay_ledger_candidate is None:
+        blockers.append(
+            {
+                "blocker": "exact_replay_ledger_candidate_missing",
+                "remediation": "produce_exact_replay_ledger_artifacts",
+            }
+        )
+        return blockers
+    candidate_id = _string(best_exact_replay_ledger_candidate.get("candidate_id"))
+    if history_row is None:
+        blockers.append(
+            {
+                "blocker": "candidate_history_row_missing",
+                "candidate_id": candidate_id,
+                "remediation": "rerun_strategy_autoresearch_with_history_persistence",
+            }
+        )
+    if not hypothesis_manifest:
+        blockers.append(
+            {
+                "blocker": "hypothesis_manifest_missing",
+                "candidate_id": candidate_id,
+                "remediation": (
+                    "add or select a checked-in hypothesis manifest before runtime "
+                    "paper evidence can be imported"
+                ),
+            }
+        )
+    if history_row is not None:
+        missing_fields = [
+            field
+            for field in ("runtime_family", "runtime_strategy_name")
+            if not _string(history_row.get(field))
+        ]
+        if missing_fields:
+            blockers.append(
+                {
+                    "blocker": "runtime_harness_metadata_missing",
+                    "candidate_id": candidate_id,
+                    "missing_fields": missing_fields,
+                }
+            )
+    if not artifact_refs:
+        blockers.append(
+            {
+                "blocker": "runtime_ledger_artifact_ref_missing",
+                "candidate_id": candidate_id,
+                "remediation": "enable exact replay ledger artifact output",
+            }
+        )
+    blocker_names = _dedupe_nonempty_strings(
+        [*promotion_blockers, *runtime_ledger_blockers]
+    )
+    search_blockers = [
+        blocker
+        for blocker in blocker_names
+        if blocker != "replay_artifact_only_not_live"
+    ]
+    if search_blockers:
+        blockers.append(
+            {
+                "blocker": "exact_replay_search_blockers_remaining",
+                "candidate_id": candidate_id,
+                "blocking_reasons": search_blockers,
+                "remediation": (
+                    "keep search remediation active; any runtime-window target is "
+                    "evidence collection only and cannot authorize promotion"
+                ),
+            }
+        )
+    return blockers
+
+
+def _strategy_autoresearch_runtime_window_import_plan(
+    *,
+    history: list[dict[str, Any]],
+    best_exact_replay_ledger_candidate: Mapping[str, Any] | None,
+    exact_replay_ledger_remediation: Mapping[str, Any],
+) -> dict[str, Any]:
+    candidate_id = (
+        _string(best_exact_replay_ledger_candidate.get("candidate_id"))
+        if best_exact_replay_ledger_candidate is not None
+        else ""
+    )
+    history_row = (
+        _exact_replay_history_row(history=history, candidate_id=candidate_id)
+        if candidate_id
+        else None
+    )
+    hypothesis_manifest = (
+        _hypothesis_manifest_for_history_row(history_row)
+        if history_row is not None
+        else {}
+    )
+    promotion_blockers = [
+        _string(item)
+        for item in cast(
+            list[Any],
+            exact_replay_ledger_remediation.get("promotion_blockers") or [],
+        )
+        if _string(item)
+    ]
+    runtime_ledger_blockers = [
+        _string(item)
+        for item in cast(
+            list[Any],
+            exact_replay_ledger_remediation.get("runtime_ledger_blockers") or [],
+        )
+        if _string(item)
+    ]
+    artifact_refs = _dedupe_nonempty_strings(
+        [
+            best_exact_replay_ledger_candidate.get("artifact_ref")
+            if best_exact_replay_ledger_candidate is not None
+            else "",
+            history_row.get("runtime_ledger_artifact_ref") if history_row else "",
+            history_row.get("exact_replay_ledger_artifact_ref") if history_row else "",
+        ]
+    )
+    blockers = _exact_replay_runtime_window_blockers(
+        best_exact_replay_ledger_candidate=best_exact_replay_ledger_candidate,
+        history_row=history_row,
+        hypothesis_manifest=hypothesis_manifest,
+        artifact_refs=artifact_refs,
+        promotion_blockers=promotion_blockers,
+        runtime_ledger_blockers=runtime_ledger_blockers,
+    )
+    targets: list[dict[str, Any]] = []
+    if (
+        best_exact_replay_ledger_candidate is not None
+        and history_row is not None
+        and hypothesis_manifest
+        and artifact_refs
+    ):
+        target_metadata_blockers = _dedupe_nonempty_strings(
+            [
+                *promotion_blockers,
+                *runtime_ledger_blockers,
+                "paper_probation_evidence_collection_only",
+            ]
+        )
+        row_count = _string(history_row.get("runtime_ledger_artifact_row_count"))
+        fill_count = _string(history_row.get("runtime_ledger_artifact_fill_count"))
+        search_blockers = [
+            blocker
+            for blocker in _dedupe_nonempty_strings(
+                [*promotion_blockers, *runtime_ledger_blockers]
+            )
+            if blocker != "replay_artifact_only_not_live"
+        ]
+        probation_allowed = not search_blockers
+        window_start = _string(best_exact_replay_ledger_candidate.get("window_start"))
+        window_end = _string(best_exact_replay_ledger_candidate.get("window_end"))
+        target = {
+            "run_id": _string(history_row.get("runner_run_id"))
+            or "strategy-autoresearch-runtime-window-import",
+            "candidate_id": candidate_id,
+            "hypothesis_id": hypothesis_manifest["hypothesis_id"],
+            "observed_stage": "paper",
+            "strategy_family": _string(history_row.get("runtime_family")),
+            "strategy_name": _string(history_row.get("runtime_strategy_name")),
+            "account_label": "TORGHUT_REPLAY",
+            "source_kind": "simulation_exact_replay_runtime_ledger",
+            "source_manifest_ref": hypothesis_manifest["source_manifest_ref"],
+            "dataset_snapshot_ref": _string(history_row.get("dataset_snapshot_id"))
+            or hypothesis_manifest["dataset_snapshot_ref"],
+            "artifact_refs": artifact_refs,
+            "runtime_ledger_artifact_refs": artifact_refs,
+            "runtime_ledger_artifact_ref": artifact_refs[0],
+            "exact_replay_ledger_artifact_ref": artifact_refs[0],
+            "window_start": window_start,
+            "window_end": window_end,
+            "candidate_selection": "exact_replay_ledger_best_candidate",
+            "selected_by": "strategy_autoresearch_exact_replay_ledger_ranking",
+            "selection_reason": _string(
+                exact_replay_ledger_remediation.get("status")
+            ),
+            "paper_probation_authorized": probation_allowed,
+            "paper_probation_authorization_scope": "evidence_collection_only",
+            "evidence_collection_stage": "paper",
+            "probation_allowed": probation_allowed,
+            "probation_reason": "exact_replay_policy_checks_passed"
+            if probation_allowed
+            else "exact_replay_search_blockers_remaining",
+            "promotion_allowed": False,
+            "final_promotion_authorized": False,
+            "final_promotion_allowed": False,
+            "final_promotion_blockers": target_metadata_blockers,
+            "runtime_ledger_target_metadata_blockers": target_metadata_blockers,
+            "handoff": "runtime_window_import_from_exact_replay_ledger",
+            "promotion_gate": "runtime_ledger_live_or_live_paper_required",
+        }
+        if row_count:
+            target["runtime_ledger_artifact_row_count"] = row_count
+        if fill_count:
+            target["runtime_ledger_artifact_fill_count"] = fill_count
+        targets.append(target)
+    return {
+        "schema_version": "torghut.runtime-window-import-plan.v1",
+        "source": "strategy_autoresearch_exact_replay_ledger",
+        "purpose": (
+            "handoff exact replay-ledger winners into bounded paper/runtime-window "
+            "evidence collection without authorizing final promotion"
+        ),
+        "promotion_allowed": False,
+        "targets": targets,
+        "blockers": blockers,
+    }
 
 
 def _runtime_closure_candidate(
@@ -1934,6 +2270,33 @@ def _persist_run_outputs(
         portfolio=portfolio,
         runtime_closure=summary["runtime_closure"],
     )
+    runtime_window_import_plan = _strategy_autoresearch_runtime_window_import_plan(
+        history=history,
+        best_exact_replay_ledger_candidate=cast(
+            Mapping[str, Any] | None,
+            exact_replay_ledger_ranking["best_candidate"],
+        ),
+        exact_replay_ledger_remediation=cast(
+            Mapping[str, Any],
+            exact_replay_ledger_remediation["report"],
+        ),
+    )
+    summary["runtime_window_import_plan"] = runtime_window_import_plan
+    summary["candidate_board"] = {
+        "schema_version": "torghut.strategy-autoresearch-candidate-board.v1",
+        "current_answer": "promotion_candidate_found"
+        if bool(_mapping(summary["promotion_readiness"]).get("promotable"))
+        else "no_promotion_ready_candidate",
+        "promotion_allowed": False,
+        "best_research_candidate": best_candidate,
+        "best_exact_replay_ledger_candidate": summary[
+            "best_exact_replay_ledger_candidate"
+        ],
+        "exact_replay_ledger_remediation": summary[
+            "exact_replay_ledger_remediation"
+        ],
+        "runtime_window_import_plan": runtime_window_import_plan,
+    }
     if error is not None:
         summary["error"] = dict(error)
     promotion_readiness_path.write_text(
