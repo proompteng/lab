@@ -387,6 +387,235 @@ class TestStrategyAutoresearch(TestCase):
             self.assertTrue(summary["promotion_readiness"]["promotable"])
             self.assertEqual(promotion_readiness_file["candidate_id"], "port-1")
 
+    def test_persist_run_outputs_surfaces_exact_replay_ledger_ranking(self) -> None:
+        class RuntimeSummary:
+            def to_payload(self) -> dict[str, object]:
+                return {
+                    "status": "pending_runtime_parity",
+                    "next_required_steps": ["scheduler_v3_parity_replay"],
+                    "promotion_prerequisites": {
+                        "allowed": False,
+                        "reasons": ["gate_report_missing"],
+                    },
+                    "rollback_readiness": {"ready": False},
+                }
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            program_path, family_dir = self._write_program_fixture(root)
+            program_payload = yaml.safe_load(program_path.read_text(encoding="utf-8"))
+            program = load_strategy_autoresearch_program(
+                program_path, family_dir=family_dir
+            )
+            run_root = root / "run"
+            artifact_path = (
+                run_root
+                / "experiments"
+                / "001-breakout-iter-1"
+                / "frontier-artifacts"
+                / "result"
+                / "candidate-0001-exact-replay-ledger.json"
+            )
+            artifact_path.parent.mkdir(parents=True)
+            artifact_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "torghut.exact_replay_ledger.rows.v1",
+                        "candidate_id": "ledger-ranked-1",
+                        "window_start": "2026-05-18",
+                        "window_end": "2026-05-22",
+                        "account_label": "TORGHUT_REPLAY",
+                        "cost_basis": "local_replay_transaction_cost_model",
+                        "execution_policy_hash": "policy-sha",
+                        "cost_model_hash": "cost-sha",
+                        "lineage_hash": "lineage-sha",
+                        "promotion_authority": "replay_artifact_only_not_live",
+                        "stage": "replay",
+                        "source": "local_intraday_tsmom_replay",
+                        "runtime_ledger_rows": [
+                            {
+                                "event_type": "decision",
+                                "executed_at": "2026-05-18T14:30:00+00:00",
+                                "decision_id": "buy-decision",
+                                "symbol": "NVDA",
+                            },
+                            {
+                                "event_type": "order_submitted",
+                                "executed_at": "2026-05-18T14:31:00+00:00",
+                                "decision_id": "buy-decision",
+                                "order_id": "buy-order",
+                                "symbol": "NVDA",
+                            },
+                            {
+                                "event_type": "fill",
+                                "executed_at": "2026-05-18T14:32:00+00:00",
+                                "decision_id": "buy-decision",
+                                "order_id": "buy-order",
+                                "symbol": "NVDA",
+                                "side": "buy",
+                                "filled_qty": "10",
+                                "avg_fill_price": "100",
+                                "cost_amount": "1",
+                            },
+                            {
+                                "event_type": "decision",
+                                "executed_at": "2026-05-18T14:40:00+00:00",
+                                "decision_id": "sell-decision",
+                                "symbol": "NVDA",
+                            },
+                            {
+                                "event_type": "order_submitted",
+                                "executed_at": "2026-05-18T14:41:00+00:00",
+                                "decision_id": "sell-decision",
+                                "order_id": "sell-order",
+                                "symbol": "NVDA",
+                            },
+                            {
+                                "event_type": "fill",
+                                "executed_at": "2026-05-18T14:42:00+00:00",
+                                "decision_id": "sell-decision",
+                                "order_id": "sell-order",
+                                "symbol": "NVDA",
+                                "side": "sell",
+                                "filled_qty": "10",
+                                "avg_fill_price": "130",
+                                "cost_amount": "1",
+                            },
+                        ],
+                    },
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
+            manifest = runner.MlxSnapshotManifest(
+                snapshot_id="snap-1",
+                created_at="2026-05-20T00:00:00+00:00",
+                source_window_start="2026-05-01",
+                source_window_end="2026-05-15",
+                train_days=6,
+                holdout_days=3,
+                full_window_days=9,
+                symbols=("NVDA",),
+                bar_interval="1Sec",
+                quote_quality_policy_id="quote-quality-v1",
+                feature_set_id="torghut.mlx-autoresearch.v1",
+                cross_sectional_feature_flags={},
+                prior_day_feature_flags={},
+                tape_freshness_receipts=(),
+                row_counts={},
+                tensor_bundle_paths={},
+                manifest_hash="hash-1",
+            )
+
+            with (
+                patch(
+                    "scripts.run_strategy_autoresearch_loop._write_portfolio_outputs",
+                    return_value=(None, {}),
+                ),
+                patch(
+                    "scripts.run_strategy_autoresearch_loop.write_runtime_closure_bundle",
+                    return_value=RuntimeSummary(),
+                ),
+                patch(
+                    "scripts.run_strategy_autoresearch_loop.write_mlx_notebook_exports",
+                    return_value={},
+                ),
+                patch(
+                    "scripts.run_strategy_autoresearch_loop.write_autoresearch_notebooks",
+                    return_value=[],
+                ),
+            ):
+                summary = runner._persist_run_outputs(
+                    run_root=run_root,
+                    program=program,
+                    program_payload=program_payload,
+                    runner_run_id="strategy-autoresearch-test",
+                    program_id=program.program_id,
+                    frontier_runs=1,
+                    objective_met=False,
+                    history=[],
+                    manifest=manifest,
+                    descriptors=[],
+                    proposal_scores=[],
+                    worklist=[],
+                    status="ok",
+                )
+
+            ranking_path = Path(summary["exact_replay_ledger_ranking_path"])
+            ranking = json.loads(ranking_path.read_text(encoding="utf-8"))
+
+            self.assertEqual(ranking["candidate_count"], 1)
+            self.assertEqual(ranking["failure_count"], 0)
+            self.assertEqual(
+                summary["best_exact_replay_ledger_candidate"]["candidate_id"],
+                "ledger-ranked-1",
+            )
+            self.assertEqual(
+                summary["live_progress"]["best_exact_replay_ledger_candidate"][
+                    "candidate_id"
+                ],
+                "ledger-ranked-1",
+            )
+            self.assertIn(
+                "replay_artifact_only_not_live",
+                summary["best_exact_replay_ledger_candidate"]["promotion_blockers"],
+            )
+
+    def test_exact_replay_ledger_paths_collects_refs_and_skips_bad_results(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            run_root = root / "run"
+            experiment_root = run_root / "experiments" / "001-breakout"
+            artifact_path = (
+                experiment_root
+                / "frontier-artifacts"
+                / "result"
+                / "candidate-0001-exact-replay-ledger.json"
+            )
+            artifact_path.parent.mkdir(parents=True)
+            artifact_path.write_text("{}", encoding="utf-8")
+            absolute_path = root / "absolute-exact-replay-ledger.json"
+            relative_runtime_ref = "runtime-ledger.json"
+            result_path = experiment_root / "result.json"
+            result_path.write_text(
+                json.dumps(
+                    {
+                        "top": [
+                            {
+                                "exact_replay_ledger_artifact_ref": str(artifact_path),
+                                "exact_replay_ledger_artifact_refs": [
+                                    str(absolute_path),
+                                    "",
+                                ],
+                                "nested": {
+                                    "runtime_ledger_artifact_ref": relative_runtime_ref,
+                                    "runtime_ledger_artifact_refs": "scalar-runtime-ledger.json",
+                                },
+                            }
+                        ],
+                    },
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
+            bad_result_path = run_root / "experiments" / "bad" / "result.json"
+            bad_result_path.parent.mkdir(parents=True)
+            bad_result_path.write_text("{", encoding="utf-8")
+
+            paths = runner._exact_replay_ledger_paths(run_root)
+
+            self.assertEqual(
+                paths,
+                (
+                    artifact_path,
+                    absolute_path,
+                    experiment_root / relative_runtime_ref,
+                    experiment_root / "scalar-runtime-ledger.json",
+                ),
+            )
+
     def test_load_mutation_space_rejects_invalid_mode(self) -> None:
         with self.assertRaisesRegex(ValueError, "autoresearch_mutation_mode_invalid"):
             autoresearch._load_mutation_space({"mode": "bad-mode"})
