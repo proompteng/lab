@@ -8,7 +8,7 @@ import tempfile
 from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import Mock, patch
-from typing import Any, Callable, cast
+from typing import Any, Callable, Mapping, cast
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.exc import SQLAlchemyError
@@ -60,6 +60,7 @@ from app.trading.scheduler.pipeline_helpers import (
     _project_open_orders_onto_positions,
 )
 from app.trading.scheduler.state import TradingState
+from app.trading.submission_council import build_hypothesis_runtime_summary
 from app.trading.tca import AdaptiveExecutionPolicyDecision
 from app.trading.universe import UniverseResolver
 
@@ -1480,6 +1481,82 @@ class TestTradingPipeline(TestCase):
                 )
             )
             session.commit()
+
+    def test_hypothesis_runtime_summary_counts_valid_live_runtime_window_certificate(
+        self,
+    ) -> None:
+        self._seed_promotion_certificate_evidence(
+            strategy_family="intraday_continuation",
+        )
+
+        with self.session_local() as session:
+            summary = build_hypothesis_runtime_summary(
+                session,
+                state=TradingState(),
+                market_context_status={},
+                tca_summary={"ready": True},
+            )
+
+        self.assertEqual(summary.get("promotion_eligible_total"), 1)
+        self.assertEqual(
+            summary.get("capital_stage_totals"), {"0.10x canary": 1, "shadow": 5}
+        )
+        items = [
+            cast(Mapping[str, object], item)
+            for item in cast(list[object], summary.get("items") or [])
+            if isinstance(item, Mapping)
+        ]
+        continuation = next(
+            item for item in items if item.get("hypothesis_id") == "H-CONT-01"
+        )
+        self.assertEqual(continuation.get("state"), "canary_live")
+        self.assertEqual(continuation.get("capital_stage"), "0.10x canary")
+        self.assertEqual(continuation.get("capital_multiplier"), "0.10")
+        self.assertTrue(continuation.get("promotion_eligible"))
+        self.assertEqual(continuation.get("reasons"), [])
+        observed = continuation.get("observed")
+        self.assertIsInstance(observed, Mapping)
+        self.assertTrue(
+            cast(Mapping[str, object], observed).get(
+                "runtime_window_certificate_applied"
+            )
+        )
+
+    def test_hypothesis_runtime_summary_rejects_mismatched_runtime_ledger_family(
+        self,
+    ) -> None:
+        self._seed_promotion_certificate_evidence(strategy_family="unregistered_demo")
+
+        with self.session_local() as session:
+            summary = build_hypothesis_runtime_summary(
+                session,
+                state=TradingState(),
+                market_context_status={},
+                tca_summary={"ready": True},
+            )
+
+        self.assertEqual(summary.get("promotion_eligible_total"), 0)
+        items = [
+            cast(Mapping[str, object], item)
+            for item in cast(list[object], summary.get("items") or [])
+            if isinstance(item, Mapping)
+        ]
+        continuation = next(
+            item for item in items if item.get("hypothesis_id") == "H-CONT-01"
+        )
+        self.assertFalse(continuation.get("promotion_eligible"))
+        self.assertIn(
+            "runtime_ledger_strategy_family_mismatch",
+            continuation.get("reasons") or [],
+        )
+        observed = continuation.get("observed")
+        self.assertIsInstance(observed, Mapping)
+        observed_map = cast(Mapping[str, object], observed)
+        self.assertTrue(observed_map.get("runtime_window_certificate_rejected"))
+        self.assertEqual(
+            observed_map.get("runtime_window_rejection_reasons"),
+            ["runtime_ledger_strategy_family_mismatch"],
+        )
 
     def _build_warmup_pipeline(
         self,

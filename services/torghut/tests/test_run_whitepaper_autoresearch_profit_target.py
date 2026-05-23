@@ -3279,20 +3279,22 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 encoding="utf-8",
             )
 
-            replay = runner._real_replay_result_from_factory_payload(
-                {
-                    "experiments": [
-                        {
-                            "candidate_spec_id": spec.candidate_spec_id,
-                            "result_path": str(result_path),
-                            "dataset_snapshot_id": "snap-real-replay-shape",
-                        }
-                    ]
-                },
-                specs_by_id={spec.candidate_spec_id: spec},
-            )
+            with patch.object(runner, "_current_code_commit", return_value="abc123"):
+                replay = runner._real_replay_result_from_factory_payload(
+                    {
+                        "experiments": [
+                            {
+                                "candidate_spec_id": spec.candidate_spec_id,
+                                "result_path": str(result_path),
+                                "dataset_snapshot_id": "snap-real-replay-shape",
+                            }
+                        ]
+                    },
+                    specs_by_id={spec.candidate_spec_id: spec},
+                )
 
         self.assertEqual(len(replay.evidence_bundles), 1)
+        self.assertEqual(replay.evidence_bundles[0].code_commit, "abc123")
         scorecard = replay.evidence_bundles[0].objective_scorecard
         self.assertEqual(
             scorecard["feedback_shape_key"],
@@ -3306,6 +3308,104 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             scorecard["execution_signature"],
             runner._candidate_spec_execution_signature(spec),
         )
+
+    def test_current_code_commit_uses_git_when_env_commit_is_missing(self) -> None:
+        rev_parse = runner.subprocess.CompletedProcess(
+            args=("git", "rev-parse", "HEAD"),
+            returncode=0,
+            stdout="abc123\n",
+        )
+        clean_diff = runner.subprocess.CompletedProcess(
+            args=("git", "diff", "--quiet"),
+            returncode=0,
+            stdout="",
+        )
+        with (
+            patch.object(runner.os, "getenv", return_value=""),
+            patch.object(
+                runner.subprocess,
+                "run",
+                side_effect=[rev_parse, clean_diff, clean_diff],
+            ) as run,
+        ):
+            self.assertEqual(runner._current_code_commit(), "abc123")
+
+        self.assertEqual(run.call_count, 3)
+
+    def test_current_code_commit_prefers_env_commit(self) -> None:
+        with (
+            patch.object(
+                runner.os,
+                "getenv",
+                side_effect=lambda name: (
+                    "env123" if name == "TORGHUT_CODE_COMMIT" else ""
+                ),
+            ),
+            patch.object(runner.subprocess, "run") as run,
+        ):
+            self.assertEqual(runner._current_code_commit(), "env123")
+
+        run.assert_not_called()
+
+    def test_current_code_commit_marks_dirty_or_unknown_git_state(self) -> None:
+        rev_parse = runner.subprocess.CompletedProcess(
+            args=("git", "rev-parse", "HEAD"),
+            returncode=0,
+            stdout="abc123\n",
+        )
+        dirty_diff = runner.subprocess.CompletedProcess(
+            args=("git", "diff", "--quiet"),
+            returncode=1,
+            stdout="",
+        )
+        bad_rev_parse = runner.subprocess.CompletedProcess(
+            args=("git", "rev-parse", "HEAD"),
+            returncode=128,
+            stdout="",
+        )
+        with (
+            patch.object(runner.os, "getenv", return_value=""),
+            patch.object(
+                runner.subprocess,
+                "run",
+                side_effect=[rev_parse, dirty_diff],
+            ),
+        ):
+            self.assertEqual(runner._current_code_commit(), "abc123-dirty")
+        with (
+            patch.object(runner.os, "getenv", return_value=""),
+            patch.object(runner.subprocess, "run", side_effect=OSError("git missing")),
+        ):
+            self.assertEqual(runner._current_code_commit(), "unknown")
+        with (
+            patch.object(runner.os, "getenv", return_value=""),
+            patch.object(runner.subprocess, "run", return_value=bad_rev_parse),
+        ):
+            self.assertEqual(runner._current_code_commit(), "unknown")
+        with (
+            patch.object(runner.os, "getenv", return_value=""),
+            patch.object(
+                runner.subprocess,
+                "run",
+                side_effect=[rev_parse, OSError("diff missing")],
+            ),
+        ):
+            self.assertEqual(runner._current_code_commit(), "abc123-dirty")
+
+    def test_synthetic_replay_evidence_carries_code_commit(self) -> None:
+        spec = self._candidate_spec("spec-synthetic-replay-code-commit")
+        with TemporaryDirectory() as tmpdir:
+            with patch.object(
+                runner, "_current_code_commit", return_value="synthetic123"
+            ):
+                replay = runner._run_synthetic_replay(
+                    specs=(spec,),
+                    output_dir=Path(tmpdir),
+                    max_candidates=1,
+                )
+
+        self.assertEqual(len(replay.evidence_bundles), 1)
+        self.assertEqual(replay.evidence_bundles[0].code_commit, "synthetic123")
 
     def test_candidate_selection_blocks_synthetic_nonpositive_expected_value(
         self,
@@ -5593,6 +5693,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             ),
             ["profit_target_oracle_failed"],
         )
+        dirty_lineage = runner._candidate_board_evidence_lineage_summary(
+            replace(evidence, code_commit="commit-test-dirty")
+        )
+        self.assertEqual(dirty_lineage["blockers"], ["code_commit_dirty"])
         self.assertEqual(
             runner._candidate_board_status(
                 selected_for_replay=True,
