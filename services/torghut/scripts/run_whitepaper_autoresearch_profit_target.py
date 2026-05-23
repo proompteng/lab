@@ -8617,11 +8617,58 @@ def _candidate_board_paper_probation_admission_blockers(
     return blockers
 
 
-def _candidate_board_paper_probation_candidate(
+def _paper_probation_candidate_payload(
+    *,
+    candidate: Mapping[str, Any],
+    target: Decimal,
+    rank: int,
+) -> dict[str, Any]:
+    payload = dict(candidate)
+    lower_bound = _candidate_board_lower_bound_net_pnl(payload)
+    deployable_missing_count = deployable_lower_bound_missing_count(payload)
+    deployable_failed_gate_count = deployable_proof_failed_gate_count(payload)
+    final_promotion_blockers = [
+        _string(blocker)
+        for blocker in cast(Sequence[Any], payload.get("blockers") or ())
+        if _string(blocker)
+    ]
+    if not final_promotion_blockers:
+        final_promotion_blockers.append("final_promotion_requires_runtime_governance")
+    payload.update(
+        {
+            "candidate_selection": "oracle_recommended_paper_probation",
+            "paper_probation_tier": "paper_probation",
+            "paper_probation_rank": rank,
+            "paper_probation_authorized": True,
+            "probation_allowed": True,
+            "paper_probation_authorization_scope": "evidence_collection_only",
+            "evidence_collection_stage": "paper",
+            "probation_reason": "runtime_evidence_collection_only",
+            "selection_reason": "target_met_but_oracle_blocked"
+            if bool(payload.get("target_met"))
+            else "closest_lower_bound_economics_below_target",
+            "selected_by": "candidate_board_paper_probation_candidate",
+            "probation_lower_bound_net_pnl_per_day": str(lower_bound),
+            "probation_target_shortfall": str(max(target - lower_bound, Decimal("0"))),
+            "deployable_lower_bound_missing_count": deployable_missing_count,
+            "deployable_lower_bound_failed_gate_count": deployable_failed_gate_count,
+            "promotion_allowed": False,
+            "promotion_gate": "existing_runtime_governance_fail_closed",
+            "final_promotion_authorized": False,
+            "final_promotion_allowed": False,
+            "promotion_blockers": list(dict.fromkeys(final_promotion_blockers)),
+            "final_promotion_blockers": list(dict.fromkeys(final_promotion_blockers)),
+        }
+    )
+    return payload
+
+
+def _candidate_board_paper_probation_candidates(
     rows: Sequence[Mapping[str, Any]],
     *,
     target: Decimal,
-) -> dict[str, Any] | None:
+    limit: int = 1,
+) -> tuple[dict[str, Any], ...]:
     candidates = [
         dict(row)
         for row in rows
@@ -8634,15 +8681,16 @@ def _candidate_board_paper_probation_candidate(
         and _string(row.get("runtime_strategy_name"))
     ]
     if not candidates:
-        return None
+        return ()
 
     admitted_candidates = [
         candidate
         for candidate in candidates
         if not _candidate_board_paper_probation_admission_blockers(candidate)
+        and _candidate_board_lower_bound_net_pnl(candidate) > 0
     ]
     if not admitted_candidates:
-        return None
+        return ()
 
     def rank(row: Mapping[str, Any]) -> tuple[Any, ...]:
         lower_bound = _candidate_board_lower_bound_net_pnl(row)
@@ -8664,43 +8712,28 @@ def _candidate_board_paper_probation_candidate(
         )
 
     admitted_candidates.sort(key=rank, reverse=True)
-    candidate = dict(admitted_candidates[0])
-    lower_bound = _candidate_board_lower_bound_net_pnl(candidate)
-    deployable_missing_count = deployable_lower_bound_missing_count(candidate)
-    deployable_failed_gate_count = deployable_proof_failed_gate_count(candidate)
-    final_promotion_blockers = [
-        _string(blocker)
-        for blocker in cast(Sequence[Any], candidate.get("blockers") or ())
-        if _string(blocker)
-    ]
-    if not final_promotion_blockers:
-        final_promotion_blockers.append("final_promotion_requires_runtime_governance")
-    candidate.update(
-        {
-            "candidate_selection": "oracle_recommended_paper_probation",
-            "paper_probation_tier": "paper_probation",
-            "paper_probation_authorized": True,
-            "probation_allowed": True,
-            "paper_probation_authorization_scope": "evidence_collection_only",
-            "evidence_collection_stage": "paper",
-            "probation_reason": "runtime_evidence_collection_only",
-            "selection_reason": "target_met_but_oracle_blocked"
-            if bool(candidate.get("target_met"))
-            else "closest_lower_bound_economics_below_target",
-            "selected_by": "candidate_board_paper_probation_candidate",
-            "probation_lower_bound_net_pnl_per_day": str(lower_bound),
-            "probation_target_shortfall": str(max(target - lower_bound, Decimal("0"))),
-            "deployable_lower_bound_missing_count": deployable_missing_count,
-            "deployable_lower_bound_failed_gate_count": deployable_failed_gate_count,
-            "promotion_allowed": False,
-            "promotion_gate": "existing_runtime_governance_fail_closed",
-            "final_promotion_authorized": False,
-            "final_promotion_allowed": False,
-            "promotion_blockers": list(dict.fromkeys(final_promotion_blockers)),
-            "final_promotion_blockers": list(dict.fromkeys(final_promotion_blockers)),
-        }
+    selected = admitted_candidates[: max(1, int(limit))]
+    return tuple(
+        _paper_probation_candidate_payload(
+            candidate=candidate,
+            target=target,
+            rank=index,
+        )
+        for index, candidate in enumerate(selected, start=1)
     )
-    return candidate
+
+
+def _candidate_board_paper_probation_candidate(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    target: Decimal,
+) -> dict[str, Any] | None:
+    candidates = _candidate_board_paper_probation_candidates(
+        rows,
+        target=target,
+        limit=1,
+    )
+    return candidates[0] if candidates else None
 
 
 def _candidate_board_status_digest(rows: Sequence[Mapping[str, Any]]) -> str:
@@ -9018,11 +9051,13 @@ def _candidate_board_runtime_window_import_plan(
     *,
     rows: Sequence[Mapping[str, Any]],
     paper_probation_candidate: Mapping[str, Any] | None,
-    promotion_subject: Mapping[str, Any] | None,
+    paper_probation_candidates: Sequence[Mapping[str, Any]] = (),
+    promotion_subject: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     source_rows: list[Mapping[str, Any]] = []
     if paper_probation_candidate is not None:
         source_rows.append(paper_probation_candidate)
+    source_rows.extend(paper_probation_candidates)
 
     if promotion_subject is not None and _boolish(promotion_subject.get("target_met")):
         portfolio_spec_ids = {
@@ -9198,6 +9233,7 @@ def _candidate_board_payload(
     portfolio: PortfolioCandidateSpec | None,
     promotion_readiness: Mapping[str, Any],
     runtime_closure: Mapping[str, Any],
+    paper_probation_target_limit: int = 1,
 ) -> dict[str, Any]:
     pre_replay_by_spec = _candidate_board_score_rows(pre_replay_proposal_rows)
     proposal_by_spec = _candidate_board_score_rows(proposal_rows)
@@ -9530,9 +9566,13 @@ def _candidate_board_payload(
     best_research_candidate = rows[0] if rows else None
     best_executed_candidate = _candidate_board_best_executed_candidate(rows)
     closest_promotion_candidate = _candidate_board_closest_promotion_candidate(rows)
-    paper_probation_candidate = _candidate_board_paper_probation_candidate(
+    paper_probation_candidates = _candidate_board_paper_probation_candidates(
         rows,
         target=target,
+        limit=paper_probation_target_limit,
+    )
+    paper_probation_candidate = (
+        paper_probation_candidates[0] if paper_probation_candidates else None
     )
     promotion_ready = _boolish(promotion_readiness.get("promotable"))
     promotion_subject = _candidate_board_portfolio_promotion_subject(
@@ -9564,10 +9604,13 @@ def _candidate_board_payload(
         "best_executed_candidate": best_executed_candidate,
         "closest_promotion_candidate": closest_promotion_candidate,
         "paper_probation_candidate": paper_probation_candidate,
+        "paper_probation_candidates": list(paper_probation_candidates),
+        "paper_probation_target_limit": max(1, int(paper_probation_target_limit)),
         "promotion_subject": promotion_subject,
         "runtime_window_import_plan": _candidate_board_runtime_window_import_plan(
             rows=rows,
-            paper_probation_candidate=paper_probation_candidate,
+            paper_probation_candidate=None,
+            paper_probation_candidates=paper_probation_candidates,
             promotion_subject=promotion_subject,
         ),
         "double_oos_summary": _candidate_board_double_oos_summary(rows),
@@ -10464,6 +10507,7 @@ def run_whitepaper_autoresearch_profit_target(
         portfolio=portfolio,
         promotion_readiness=promotion_readiness,
         runtime_closure=runtime_closure,
+        paper_probation_target_limit=program.replay_budget.exploration_slots,
     )
     candidate_board_path = output_dir / "candidate-board.json"
     _write_json(candidate_board_path, candidate_board)
