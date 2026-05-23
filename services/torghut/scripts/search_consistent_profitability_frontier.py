@@ -343,6 +343,40 @@ def _write_json_output(path: Path, payload: Mapping[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
 
+def _staged_search_budget_payload(
+    *,
+    args: argparse.Namespace,
+    candidate_budget: int,
+    full_replay_candidates_started: int = 0,
+    train_screen_only_candidates: int = 0,
+) -> dict[str, Any]:
+    train_screening_enabled = bool(getattr(args, "train_screening", True))
+    train_screen_multiplier = max(
+        1,
+        int(getattr(args, "staged_train_screen_multiplier", 1) or 1),
+    )
+    full_replay_budget = max(0, int(candidate_budget))
+    train_screen_budget = (
+        full_replay_budget * train_screen_multiplier
+        if train_screening_enabled and full_replay_budget > 0
+        else full_replay_budget
+    )
+    return {
+        "schema_version": "torghut.frontier-staged-search-budget.v1",
+        "enabled": bool(
+            train_screening_enabled
+            and train_screen_multiplier > 1
+            and full_replay_budget > 0
+        ),
+        "train_screening_enabled": train_screening_enabled,
+        "train_screen_multiplier": train_screen_multiplier,
+        "train_screen_candidate_budget": train_screen_budget,
+        "full_replay_candidate_budget": full_replay_budget,
+        "full_replay_candidates_started": max(0, int(full_replay_candidates_started)),
+        "train_screen_only_candidates": max(0, int(train_screen_only_candidates)),
+    }
+
+
 def _frontier_error_payload(exc: Exception) -> dict[str, Any]:
     message = str(exc)
     payload: dict[str, Any] = {
@@ -644,6 +678,15 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=0,
         help="Optional cap on evaluated candidates inside one frontier run. 0 means unbounded.",
+    )
+    parser.add_argument(
+        "--staged-train-screen-multiplier",
+        type=int,
+        default=1,
+        help=(
+            "When train screening is enabled, allow this multiple of the expensive "
+            "full-replay budget to be evaluated through the cheap train screen."
+        ),
     )
     parser.add_argument(
         "--candidate-record",
@@ -4143,6 +4186,7 @@ def _build_frontier_payload(
     status: str,
     pending_candidates: int,
     replay_tape_validation: Mapping[str, Any] | None = None,
+    staged_search: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     ranked_items = _rank_scored_candidates(scored)
     return {
@@ -4189,6 +4233,7 @@ def _build_frontier_payload(
         "progress": {
             "evaluated_candidates": len(scored),
             "pending_candidates": pending_candidates,
+            "staged_search": dict(staged_search or {}),
         },
         "candidate_count": len(scored),
         "economic_shortlist": {
@@ -4524,6 +4569,18 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
             )
         candidate_index = 0
         candidate_budget = int(args.max_candidates_to_evaluate)
+        staged_search = _staged_search_budget_payload(
+            args=args,
+            candidate_budget=candidate_budget,
+        )
+        train_screen_candidate_budget = int(
+            staged_search["train_screen_candidate_budget"]
+        )
+        full_replay_candidate_budget = int(
+            staged_search["full_replay_candidate_budget"]
+        )
+        full_replay_candidates_started = 0
+        train_screen_only_candidates = 0
         initial_candidates = _iter_initial_worklist_candidates(
             parameter_grid=parameter_grid,
             override_candidates=override_candidates,
@@ -4556,7 +4613,16 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                             worklist.append(next_initial)
                 if not worklist:
                     break
-                if candidate_budget > 0 and len(scored) >= candidate_budget:
+                if (
+                    train_screen_candidate_budget > 0
+                    and len(scored) >= train_screen_candidate_budget
+                ):
+                    budget_exhausted = True
+                    break
+                if (
+                    full_replay_candidate_budget > 0
+                    and full_replay_candidates_started >= full_replay_candidate_budget
+                ):
                     budget_exhausted = True
                     break
                 worklist_item = worklist.popleft()
@@ -4623,6 +4689,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                 holdout_replay_skipped = bool(train_screen_failures)
                 full_window_replay_skipped = bool(train_screen_failures)
                 if train_screen_failures:
+                    train_screen_only_candidates += 1
                     second_oos_start = window.second_oos_start
                     second_oos_end = window.second_oos_end
                     holdout_payload = _empty_replay_payload(
@@ -4639,6 +4706,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     )
                     full_window_payload = train_payload
                 else:
+                    full_replay_candidates_started += 1
                     holdout_payload = run_replay(
                         _build_replay_config(
                             strategy_configmap_path=candidate_configmap_path,
@@ -4908,6 +4976,17 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     "second_oos_replay_skipped": bool(
                         train_screen_failures and window.second_oos_days
                     ),
+                }
+                candidate_payload["staged_search"] = {
+                    "schema_version": "torghut.frontier-candidate-staged-search.v1",
+                    "stage": (
+                        "train_screen_only" if holdout_replay_skipped else "full_replay"
+                    ),
+                    "train_screen_multiplier": int(
+                        staged_search["train_screen_multiplier"]
+                    ),
+                    "full_replay_candidate_budget": full_replay_candidate_budget,
+                    "full_replay_candidates_started": full_replay_candidates_started,
                 }
                 if worklist_item.pruned_symbol is not None:
                     candidate_payload["pruned_symbol"] = worklist_item.pruned_symbol
@@ -5615,6 +5694,12 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                         pending_candidates=len(worklist)
                         + (0 if initial_candidates_exhausted else 1),
                         replay_tape_validation=replay_tape_validation,
+                        staged_search=_staged_search_budget_payload(
+                            args=args,
+                            candidate_budget=candidate_budget,
+                            full_replay_candidates_started=full_replay_candidates_started,
+                            train_screen_only_candidates=train_screen_only_candidates,
+                        ),
                     )
                     _write_json_output(args.json_output, partial_payload)
 
@@ -5636,6 +5721,12 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
         else "completed",
         pending_candidates=len(worklist) + (0 if initial_candidates_exhausted else 1),
         replay_tape_validation=replay_tape_validation,
+        staged_search=_staged_search_budget_payload(
+            args=args,
+            candidate_budget=candidate_budget,
+            full_replay_candidates_started=full_replay_candidates_started,
+            train_screen_only_candidates=train_screen_only_candidates,
+        ),
     )
     if args.json_output is not None:
         _write_json_output(args.json_output, payload)

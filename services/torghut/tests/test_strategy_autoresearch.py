@@ -31,6 +31,7 @@ from app.trading.discovery.autoresearch_notebooks import (
 )
 from app.trading.discovery.family_templates import FamilyTemplate
 from app.trading.models import SignalEnvelope
+import scripts.search_consistent_profitability_frontier as frontier
 import scripts.run_strategy_autoresearch_loop as runner
 
 
@@ -435,6 +436,7 @@ class TestStrategyAutoresearch(TestCase):
         self.assertEqual(args.min_quote_valid_ratio, "0.90")
         self.assertEqual(args.max_coverage_spread_bps, "50")
         self.assertEqual(args.max_executable_gap_seconds, 120)
+        self.assertEqual(args.staged_train_screen_multiplier, 0)
 
     def test_parse_args_prefers_clickhouse_http_url_env(self) -> None:
         with (
@@ -483,12 +485,18 @@ class TestStrategyAutoresearch(TestCase):
         self.assertEqual(program.runtime_closure_policy.parity_window, "full_window")
         self.assertEqual(program.runtime_closure_policy.approval_window, "holdout")
         self.assertEqual(program.replay_budget.max_candidates_per_frontier_run, 96)
+        self.assertEqual(program.replay_budget.staged_train_screen_multiplier, 1)
         self.assertTrue(program.ledger_policy["append_only"])
 
     def test_frontier_args_forwards_second_oos_days(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             program_path, family_dir = self._write_program_fixture(root)
+            program_payload = yaml.safe_load(program_path.read_text(encoding="utf-8"))
+            program_payload["replay_budget"] = {"staged_train_screen_multiplier": 3}
+            program_path.write_text(
+                yaml.safe_dump(program_payload, sort_keys=False), encoding="utf-8"
+            )
             program = load_strategy_autoresearch_program(
                 program_path, family_dir=family_dir
             )
@@ -513,6 +521,7 @@ class TestStrategyAutoresearch(TestCase):
                 replay_tape_path=root / "tape.jsonl",
                 replay_tape_manifest=root / "tape.manifest.json",
                 max_candidates_per_frontier_run=0,
+                staged_train_screen_multiplier=0,
             )
 
             frontier_args = runner._frontier_args(
@@ -521,6 +530,14 @@ class TestStrategyAutoresearch(TestCase):
                 family_plan=program.families[0],
                 sweep_config_path=root / "sweep.yaml",
                 json_output_path=root / "result.json",
+            )
+            args.staged_train_screen_multiplier = 5
+            override_frontier_args = runner._frontier_args(
+                args=args,
+                program=program,
+                family_plan=program.families[0],
+                sweep_config_path=root / "sweep.yaml",
+                json_output_path=root / "override-result.json",
             )
 
         self.assertEqual(frontier_args.second_oos_days, 4)
@@ -535,6 +552,99 @@ class TestStrategyAutoresearch(TestCase):
         self.assertEqual(frontier_args.loss_repair_candidates, 1)
         self.assertEqual(frontier_args.consistency_repair_iterations, 1)
         self.assertEqual(frontier_args.consistency_repair_candidates, 2)
+        self.assertEqual(frontier_args.staged_train_screen_multiplier, 3)
+        self.assertEqual(override_frontier_args.staged_train_screen_multiplier, 5)
+
+    def test_frontier_staged_search_budget_expands_train_screen_only_stage(
+        self,
+    ) -> None:
+        payload = frontier._staged_search_budget_payload(
+            args=Namespace(train_screening=True, staged_train_screen_multiplier=3),
+            candidate_budget=96,
+            full_replay_candidates_started=12,
+            train_screen_only_candidates=40,
+        )
+
+        self.assertTrue(payload["enabled"])
+        self.assertEqual(payload["train_screen_candidate_budget"], 288)
+        self.assertEqual(payload["full_replay_candidate_budget"], 96)
+        self.assertEqual(payload["full_replay_candidates_started"], 12)
+        self.assertEqual(payload["train_screen_only_candidates"], 40)
+
+    def test_frontier_staged_search_budget_does_not_expand_without_train_screen(
+        self,
+    ) -> None:
+        payload = frontier._staged_search_budget_payload(
+            args=Namespace(train_screening=False, staged_train_screen_multiplier=3),
+            candidate_budget=96,
+        )
+
+        self.assertFalse(payload["enabled"])
+        self.assertEqual(payload["train_screen_candidate_budget"], 96)
+        self.assertEqual(payload["full_replay_candidate_budget"], 96)
+
+    def test_frontier_staged_search_budget_marks_unbounded_as_disabled(
+        self,
+    ) -> None:
+        payload = frontier._staged_search_budget_payload(
+            args=Namespace(train_screening=True, staged_train_screen_multiplier=3),
+            candidate_budget=0,
+        )
+
+        self.assertFalse(payload["enabled"])
+        self.assertEqual(payload["train_screen_candidate_budget"], 0)
+        self.assertEqual(payload["full_replay_candidate_budget"], 0)
+
+    def test_history_record_flattens_staged_search_metadata(self) -> None:
+        record = runner._history_record(
+            runner_run_id="run-1",
+            experiment_index=1,
+            family_plan=FamilyAutoresearchPlan(
+                family_template=_family_template(),
+                seed_sweep_config=Path("/tmp/example.yaml"),
+                max_iterations=1,
+                keep_top_candidates=1,
+                frontier_top_n=1,
+                force_keep_top_candidate_if_all_vetoed=True,
+                symbol_prune_iterations=0,
+                symbol_prune_candidates=1,
+                symbol_prune_min_universe_size=2,
+                loss_repair_iterations=0,
+                loss_repair_candidates=1,
+                consistency_repair_iterations=0,
+                consistency_repair_candidates=2,
+                parameter_mutations={},
+                strategy_override_mutations={},
+            ),
+            iteration=1,
+            mutation_label="seed",
+            parent_candidate_id=None,
+            sweep_config_path=Path("/tmp/sweep.yaml"),
+            result_path=Path("/tmp/result.json"),
+            candidate_payload={
+                "candidate_id": "candidate-1",
+                "hard_vetoes": [],
+                "ranking": {"pareto_tier": 1, "tie_breaker_score": "10"},
+                "objective_scorecard": {"net_pnl_per_day": "500"},
+                "full_window": {},
+                "replay_config": {},
+                "staged_search": {
+                    "stage": "full_replay",
+                    "train_screen_multiplier": 3,
+                    "full_replay_candidate_budget": 96,
+                    "full_replay_candidates_started": 7,
+                },
+            },
+            rank=1,
+            status="keep",
+            objective_met=False,
+            dataset_snapshot_id="snap-1",
+        )
+
+        self.assertEqual(record["staged_search_stage"], "full_replay")
+        self.assertEqual(record["staged_train_screen_multiplier"], 3)
+        self.assertEqual(record["staged_full_replay_candidate_budget"], "96")
+        self.assertEqual(record["staged_full_replay_candidates_started"], 7)
 
     def test_materialize_run_replay_tape_writes_bundle_and_receipt(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -1059,6 +1169,7 @@ class TestStrategyAutoresearch(TestCase):
             program.objective.max_gross_exposure_pct_equity, Decimal("1.0")
         )
         self.assertEqual(program.objective.min_cash, Decimal("0"))
+        self.assertEqual(program.replay_budget.staged_train_screen_multiplier, 3)
 
         policy = runner._portfolio_oracle_policy(program)
         self.assertEqual(policy.min_profit_factor, Decimal("1.50"))

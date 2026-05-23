@@ -254,6 +254,15 @@ def _parse_args() -> argparse.Namespace:
             "execution. 0 uses the program replay budget."
         ),
     )
+    parser.add_argument(
+        "--staged-train-screen-multiplier",
+        type=int,
+        default=0,
+        help=(
+            "Optional override for cheap train-screen candidate breadth per frontier "
+            "run. 0 uses the program replay budget."
+        ),
+    )
     parser.add_argument("--json-output", type=Path)
     return parser.parse_args()
 
@@ -591,6 +600,11 @@ def _frontier_args(
             replay_budget_max_candidates_per_frontier_run=replay_budget_max_candidates_per_frontier_run,
         )
     )
+    staged_train_screen_multiplier = (
+        max(1, int(args.staged_train_screen_multiplier))
+        if int(getattr(args, "staged_train_screen_multiplier", 0)) > 0
+        else max(1, int(program.replay_budget.staged_train_screen_multiplier))
+    )
     return argparse.Namespace(
         strategy_configmap=args.strategy_configmap.resolve(),
         sweep_config=sweep_config_path,
@@ -623,6 +637,7 @@ def _frontier_args(
         ),
         top_n=top_n,
         max_candidates_to_evaluate=max_candidates_to_evaluate,
+        staged_train_screen_multiplier=staged_train_screen_multiplier,
         json_output=json_output_path,
         symbol_prune_iterations=family_plan.symbol_prune_iterations,
         symbol_prune_candidates=family_plan.symbol_prune_candidates,
@@ -883,6 +898,7 @@ def _history_record(
     scorecard = _mapping(candidate_payload.get("objective_scorecard"))
     ranking = _mapping(candidate_payload.get("ranking"))
     replay_config = _mapping(candidate_payload.get("replay_config"))
+    staged_search = _mapping(candidate_payload.get("staged_search"))
     promotion_readiness = _promotion_readiness_payload(family_plan=family_plan)
     deployable_lower_bound = deployable_lower_bound_net_pnl_per_day(scorecard)
     return {
@@ -1026,6 +1042,16 @@ def _history_record(
         "daily_net": _mapping(full_window.get("daily_net")),
         "daily_filled_notional": _mapping(full_window.get("daily_filled_notional")),
         "pruned_symbol": _string(candidate_payload.get("pruned_symbol")),
+        "staged_search_stage": _string(staged_search.get("stage")),
+        "staged_train_screen_multiplier": int(
+            staged_search.get("train_screen_multiplier") or 1
+        ),
+        "staged_full_replay_candidate_budget": _string(
+            staged_search.get("full_replay_candidate_budget")
+        ),
+        "staged_full_replay_candidates_started": int(
+            staged_search.get("full_replay_candidates_started") or 0
+        ),
         "objective_scope": "research_only",
         "promotion_stage": promotion_readiness["stage"],
         "promotion_status": promotion_readiness["status"],
@@ -1131,6 +1157,8 @@ def _write_results_tsv(path: Path, history: list[dict[str, Any]]) -> None:
         "best_day_share",
         "max_drawdown",
         "status",
+        "staged_search_stage",
+        "staged_full_replay_candidates_started",
         "description",
     ]
     rows = ["\t".join(header)]
@@ -1147,6 +1175,10 @@ def _write_results_tsv(path: Path, history: list[dict[str, Any]]) -> None:
                     _sanitize_tsv_field(item["best_day_share"]),
                     _sanitize_tsv_field(item["max_drawdown"]),
                     _sanitize_tsv_field(item["status"]),
+                    _sanitize_tsv_field(item.get("staged_search_stage", "")),
+                    _sanitize_tsv_field(
+                        item.get("staged_full_replay_candidates_started", "")
+                    ),
                     _sanitize_tsv_field(item["mutation_label"]),
                 ]
             )
