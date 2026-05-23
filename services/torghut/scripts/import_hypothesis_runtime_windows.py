@@ -298,6 +298,25 @@ def _runtime_ledger_tca_row_from_bucket(
     }
 
 
+def _append_runtime_ledger_tca_row_blocker(
+    *,
+    tca_rows: list[dict[str, object]],
+    blocker: str,
+) -> None:
+    for row in tca_rows:
+        bucket = row.get("runtime_ledger_bucket")
+        if not isinstance(bucket, Mapping):
+            continue
+        bucket_payload = {str(key): item for key, item in bucket.items()}
+        blockers = _metadata_text_list(bucket_payload.get("blockers"))
+        if blocker not in blockers:
+            blockers.append(blocker)
+        bucket_payload["blockers"] = blockers
+        row["runtime_ledger_bucket"] = bucket_payload
+        row["runtime_ledger_blockers"] = blockers
+        row["post_cost_promotion_eligible"] = False
+
+
 def _nonnegative_int(value: Any) -> int:
     try:
         return max(0, int(Decimal(str(value))))
@@ -389,15 +408,22 @@ def _runtime_ledger_target_metadata_blockers(
             break
 
     expected_candidate_id = _text_or_none(metadata.get("candidate_id"))
+    loaded_candidate_ids = _metadata_text_list(
+        runtime_ledger_artifact_metadata.get("runtime_ledger_artifact_candidate_ids")
+    )
     loaded_candidate_id = _text_or_none(
         runtime_ledger_artifact_metadata.get("runtime_ledger_artifact_candidate_id")
     )
-    if (
-        expected_candidate_id is not None
-        and loaded_candidate_id is not None
-        and expected_candidate_id != loaded_candidate_id
-    ):
-        blockers.append("runtime_ledger_artifact_candidate_id_mismatch")
+    if expected_candidate_id is not None:
+        if loaded_candidate_ids:
+            if expected_candidate_id not in loaded_candidate_ids:
+                blockers.append("runtime_ledger_artifact_candidate_id_mismatch")
+            elif len(loaded_candidate_ids) > 1:
+                blockers.append("runtime_ledger_artifact_candidate_id_ambiguous")
+        elif loaded_candidate_id is None:
+            blockers.append("runtime_ledger_artifact_candidate_id_missing")
+        elif expected_candidate_id != loaded_candidate_id:
+            blockers.append("runtime_ledger_artifact_candidate_id_mismatch")
 
     planned_window_weekdays = _metadata_nonnegative_int_or_none(
         metadata.get("replay_window_weekday_count")
@@ -839,6 +865,32 @@ def _window_weekday_count(*, start: datetime, end: datetime) -> int:
     return count
 
 
+def _runtime_ledger_artifact_candidate_ids(
+    *,
+    payload: Mapping[str, Any],
+    rows: Sequence[Mapping[str, Any]],
+) -> list[str]:
+    candidates: list[str] = []
+    for key in (
+        "candidate_id",
+        "candidateId",
+        "strategy_candidate_id",
+        "strategyCandidateId",
+    ):
+        if candidate_id := _text_or_none(payload.get(key)):
+            candidates.append(candidate_id)
+    for row in rows:
+        for key in (
+            "candidate_id",
+            "candidateId",
+            "strategy_candidate_id",
+            "strategyCandidateId",
+        ):
+            if candidate_id := _text_or_none(row.get(key)):
+                candidates.append(candidate_id)
+    return sorted(dict.fromkeys(candidates))
+
+
 def _runtime_ledger_tca_rows_from_artifacts(
     *,
     artifact_refs: list[str],
@@ -861,8 +913,9 @@ def _runtime_ledger_tca_rows_from_artifacts(
             continue
         loaded_refs.append(ref)
         ledger_rows.extend(rows)
-        if candidate_id := _text_or_none(payload.get("candidate_id")):
-            artifact_candidates.append(candidate_id)
+        artifact_candidates.extend(
+            _runtime_ledger_artifact_candidate_ids(payload=payload, rows=rows)
+        )
         if metadata := _runtime_ledger_artifact_window_metadata(
             payload=payload,
             rows=rows,
@@ -897,8 +950,20 @@ def _runtime_ledger_tca_rows_from_artifacts(
         ),
         "runtime_ledger_artifact_tca_row_count": len(tca_rows),
     }
-    if len(set(artifact_candidates)) == 1:
-        metadata["runtime_ledger_artifact_candidate_id"] = artifact_candidates[0]
+    unique_artifact_candidates = sorted(dict.fromkeys(artifact_candidates))
+    if unique_artifact_candidates:
+        metadata["runtime_ledger_artifact_candidate_ids"] = unique_artifact_candidates
+    if len(unique_artifact_candidates) == 1:
+        metadata["runtime_ledger_artifact_candidate_id"] = unique_artifact_candidates[0]
+    elif loaded_refs:
+        _append_runtime_ledger_tca_row_blocker(
+            tca_rows=tca_rows,
+            blocker=(
+                "runtime_ledger_artifact_candidate_id_missing"
+                if not unique_artifact_candidates
+                else "runtime_ledger_artifact_candidate_id_ambiguous"
+            ),
+        )
     if len(artifact_window_metadata) == 1:
         metadata.update(artifact_window_metadata[0])
     return decision_times, execution_times, tca_rows, metadata

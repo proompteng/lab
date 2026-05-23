@@ -511,6 +511,58 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             ],
         )
 
+    def test_runtime_ledger_target_metadata_blocks_missing_or_mixed_candidate_ids(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
+        target_metadata = {
+            "runtime_ledger_artifact_refs": ["exact-ledger.json"],
+            "candidate_id": "cand-one",
+        }
+
+        self.assertEqual(
+            _runtime_ledger_target_metadata_blockers(
+                target_metadata=target_metadata,
+                runtime_ledger_artifact_metadata={
+                    "runtime_ledger_artifact_refs": ["exact-ledger.json"],
+                    "runtime_ledger_artifact_row_count": 6,
+                },
+                window_start=window_start,
+                window_end=window_end,
+            ),
+            ["runtime_ledger_artifact_candidate_id_missing"],
+        )
+        self.assertEqual(
+            _runtime_ledger_target_metadata_blockers(
+                target_metadata=target_metadata,
+                runtime_ledger_artifact_metadata={
+                    "runtime_ledger_artifact_refs": ["exact-ledger.json"],
+                    "runtime_ledger_artifact_candidate_ids": [
+                        "cand-one",
+                        "cand-two",
+                    ],
+                    "runtime_ledger_artifact_row_count": 6,
+                },
+                window_start=window_start,
+                window_end=window_end,
+            ),
+            ["runtime_ledger_artifact_candidate_id_ambiguous"],
+        )
+        self.assertEqual(
+            _runtime_ledger_target_metadata_blockers(
+                target_metadata=target_metadata,
+                runtime_ledger_artifact_metadata={
+                    "runtime_ledger_artifact_refs": ["exact-ledger.json"],
+                    "runtime_ledger_artifact_candidate_ids": ["different-cand"],
+                    "runtime_ledger_artifact_row_count": 6,
+                },
+                window_start=window_start,
+                window_end=window_end,
+            ),
+            ["runtime_ledger_artifact_candidate_id_mismatch"],
+        )
+
     def test_main_requires_source_dsn_or_durable_runtime_ledger_bucket(self) -> None:
         args = SimpleNamespace(
             run_id="run-missing-source",
@@ -919,7 +971,104 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(
             metadata["runtime_ledger_artifact_candidate_id"], "artifact-candidate-1"
         )
+        self.assertEqual(
+            metadata["runtime_ledger_artifact_candidate_ids"],
+            ["artifact-candidate-1"],
+        )
         self.assertEqual(metadata["runtime_ledger_artifact_window_weekday_count"], 1)
+
+    def test_runtime_ledger_artifacts_derive_candidate_ids_from_rows(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            artifact_path = Path(temp_dir) / "exact-ledger-row-candidates.json"
+            artifact_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "torghut.exact_replay_ledger.rows.v1",
+                        "account_label": "TORGHUT_SIM",
+                        "strategy_id": "intraday-tsmom-profit-v3",
+                        "execution_policy_hash": "policy-sha",
+                        "cost_model_hash": "cost-sha",
+                        "lineage_hash": "lineage-sha",
+                        "runtime_ledger_rows": [
+                            {
+                                "candidate_id": "row-candidate-1",
+                                "event_type": "decision",
+                                "executed_at": "2026-03-06T14:35:00Z",
+                                "decision_id": "decision-buy",
+                            },
+                            {
+                                "candidate_id": "row-candidate-1",
+                                "event_type": "order_submitted",
+                                "executed_at": "2026-03-06T14:35:01Z",
+                                "decision_id": "decision-buy",
+                                "order_id": "order-buy",
+                            },
+                            {
+                                "candidate_id": "row-candidate-1",
+                                "event_type": "fill",
+                                "executed_at": "2026-03-06T14:35:02Z",
+                                "decision_id": "decision-buy",
+                                "order_id": "order-buy",
+                                "symbol": "AAPL",
+                                "side": "buy",
+                                "filled_qty": "1",
+                                "avg_fill_price": "100",
+                                "cost_amount": "0.10",
+                                "cost_basis": "broker_reported_commission_and_fees",
+                            },
+                            {
+                                "candidate_id": "row-candidate-2",
+                                "event_type": "decision",
+                                "executed_at": "2026-03-06T14:40:00Z",
+                                "decision_id": "decision-sell",
+                            },
+                            {
+                                "candidate_id": "row-candidate-2",
+                                "event_type": "order_submitted",
+                                "executed_at": "2026-03-06T14:40:01Z",
+                                "decision_id": "decision-sell",
+                                "order_id": "order-sell",
+                            },
+                            {
+                                "candidate_id": "row-candidate-2",
+                                "event_type": "fill",
+                                "executed_at": "2026-03-06T14:40:02Z",
+                                "decision_id": "decision-sell",
+                                "order_id": "order-sell",
+                                "symbol": "AAPL",
+                                "side": "sell",
+                                "filled_qty": "1",
+                                "avg_fill_price": "101",
+                                "cost_amount": "0.10",
+                                "cost_basis": "broker_reported_commission_and_fees",
+                            },
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            _, _, tca_rows, metadata = _runtime_ledger_tca_rows_from_artifacts(
+                artifact_refs=[str(artifact_path)],
+                bucket_ranges=[
+                    (
+                        datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                        datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                        6,
+                    )
+                ],
+            )
+
+        self.assertEqual(
+            metadata["runtime_ledger_artifact_candidate_ids"],
+            ["row-candidate-1", "row-candidate-2"],
+        )
+        self.assertNotIn("runtime_ledger_artifact_candidate_id", metadata)
+        self.assertEqual(tca_rows[0]["post_cost_promotion_eligible"], False)
+        self.assertIn(
+            "runtime_ledger_artifact_candidate_id_ambiguous",
+            tca_rows[0]["runtime_ledger_blockers"],
+        )
 
     def test_runtime_ledger_artifact_helpers_fail_closed_on_loose_rows(self) -> None:
         aware_time = datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)
@@ -1344,6 +1493,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 json.dumps(
                     {
                         "schema_version": "torghut.exact_replay_ledger.rows.v1",
+                        "candidate_id": "H-TSMOM-LIQ-01",
                         "account_label": "TORGHUT_SIM",
                         "strategy_id": "intraday-tsmom-profit-v3",
                         "execution_policy_hash": "policy-sha",
@@ -1425,6 +1575,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 target_metadata_json=json.dumps(
                     {
                         "runtime_ledger_artifact_refs": [str(artifact_path)],
+                        "candidate_id": "H-TSMOM-LIQ-01",
                         "runtime_ledger_artifact_row_count": 6,
                         "runtime_ledger_artifact_fill_count": 2,
                         "window_start": "2026-03-06T14:30:00+00:00",
@@ -1496,6 +1647,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         )
         self.assertEqual(runtime_payload["runtime_ledger_artifact_row_count"], 6)
         self.assertEqual(runtime_payload["runtime_ledger_artifact_fill_count"], 2)
+        self.assertEqual(
+            runtime_payload["runtime_ledger_artifact_candidate_id"],
+            "H-TSMOM-LIQ-01",
+        )
         self.assertEqual(runtime_payload["runtime_ledger_target_metadata_blockers"], [])
         self.assertEqual(
             runtime_payload["authority_reason"], "runtime_ledger_profit_proof"
