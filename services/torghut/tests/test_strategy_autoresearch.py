@@ -918,7 +918,7 @@ class TestStrategyAutoresearch(TestCase):
         self.assertEqual(args.clickhouse_username, "reader")
         self.assertEqual(args.clickhouse_password, "reader-secret")
 
-    def test_latest_complete_window_requirement_prefers_cli_then_objective(
+    def test_latest_complete_window_requirement_keeps_objective_as_floor(
         self,
     ) -> None:
         self.assertEqual(
@@ -926,7 +926,24 @@ class TestStrategyAutoresearch(TestCase):
                 Namespace(latest_complete_window_min_days=2),
                 objective_min_observed_trading_days=20,
             ),
-            runner.LatestCompleteWindowRequirement(min_days=2, source="cli"),
+            runner.LatestCompleteWindowRequirement(
+                min_days=20,
+                source="objective_min_observed_trading_days_floor",
+                cli_min_days=2,
+                objective_min_days=20,
+            ),
+        )
+        self.assertEqual(
+            runner._latest_complete_window_requirement(
+                Namespace(latest_complete_window_min_days=30),
+                objective_min_observed_trading_days=20,
+            ),
+            runner.LatestCompleteWindowRequirement(
+                min_days=30,
+                source="cli",
+                cli_min_days=30,
+                objective_min_days=20,
+            ),
         )
         self.assertEqual(
             runner._latest_complete_window_requirement(
@@ -936,6 +953,8 @@ class TestStrategyAutoresearch(TestCase):
             runner.LatestCompleteWindowRequirement(
                 min_days=20,
                 source="objective_min_observed_trading_days",
+                cli_min_days=0,
+                objective_min_days=20,
             ),
         )
         self.assertEqual(
@@ -943,7 +962,12 @@ class TestStrategyAutoresearch(TestCase):
                 Namespace(),
                 objective_min_observed_trading_days=0,
             ),
-            runner.LatestCompleteWindowRequirement(min_days=0, source="disabled"),
+            runner.LatestCompleteWindowRequirement(
+                min_days=0,
+                source="disabled",
+                cli_min_days=0,
+                objective_min_days=0,
+            ),
         )
 
     def test_program_defaults_include_mlx_contract(self) -> None:
@@ -1421,6 +1445,106 @@ class TestStrategyAutoresearch(TestCase):
             receipt["latest_complete_window_min_days_source"],
             "objective_min_observed_trading_days",
         )
+        self.assertEqual(receipt["latest_complete_window_cli_min_days"], 0)
+        self.assertEqual(receipt["latest_complete_window_objective_min_days"], 20)
+
+    def test_materialize_run_replay_tape_does_not_let_cli_lower_objective_window(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            configmap_path = root / "strategy-configmap.yaml"
+            configmap_path.write_text("apiVersion: v1\nkind: ConfigMap\n")
+            bundle_paths = runner._mlx_bundle_paths(root)
+            selected_days: list[date] = []
+            current_day = date(2026, 3, 2)
+            while current_day <= date(2026, 3, 27):
+                if current_day.weekday() < 5:
+                    selected_days.append(current_day)
+                current_day += timedelta(days=1)
+            self.assertEqual(len(selected_days), 20)
+            args = Namespace(
+                strategy_configmap=configmap_path,
+                clickhouse_http_url="http://example.invalid:8123",
+                clickhouse_username="torghut",
+                clickhouse_password="secret",
+                start_equity="31590.02",
+                chunk_minutes=10,
+                progress_log_seconds=30,
+                materialize_replay_tape=True,
+                replay_tape_path=None,
+                allow_stale_tape=False,
+                latest_complete_window_min_days=2,
+                latest_complete_window_receipt_output=None,
+                coverage_diagnostic_output=None,
+            )
+            signal_rows = [
+                SignalEnvelope(
+                    event_ts=datetime(
+                        trading_day.year,
+                        trading_day.month,
+                        trading_day.day,
+                        13,
+                        30,
+                        tzinfo=UTC,
+                    ),
+                    symbol="AMAT",
+                    seq=index,
+                    source="ta",
+                    timeframe="1Sec",
+                    payload={"price": "180.10"},
+                )
+                for index, trading_day in enumerate(selected_days, start=1)
+            ]
+            latest_window_receipt = {
+                "schema_version": "torghut.replay-latest-complete-window.v1",
+                "requested_start_date": "2026-03-02",
+                "requested_end_date": "2026-03-27",
+                "effective_start_date": "2026-03-02",
+                "effective_end_date": "2026-03-27",
+                "selected_trading_days": [
+                    trading_day.isoformat() for trading_day in selected_days
+                ],
+            }
+
+            with (
+                patch(
+                    "scripts.run_strategy_autoresearch_loop._select_effective_replay_tape_window",
+                    return_value=(
+                        date(2026, 3, 2),
+                        date(2026, 3, 27),
+                        latest_window_receipt,
+                    ),
+                ) as select_window,
+                patch(
+                    "scripts.run_strategy_autoresearch_loop.replay_mod._iter_signal_rows",
+                    return_value=iter(signal_rows),
+                ),
+            ):
+                stats, receipt = runner._maybe_materialize_run_replay_tape(
+                    args=args,
+                    runner_run_id="strategy-autoresearch-test",
+                    snapshot_symbols=("AMAT",),
+                    bundle_paths=bundle_paths,
+                    full_window_start_date="2026-03-02",
+                    full_window_end_date="2026-03-27",
+                    existing_signal_bundle=None,
+                    objective_min_observed_trading_days=20,
+                )
+
+            select_kwargs = select_window.call_args.kwargs
+            self.assertEqual(select_kwargs["args"].latest_complete_window_min_days, 20)
+
+        assert stats is not None
+        assert receipt is not None
+        self.assertEqual(stats.row_count, 20)
+        self.assertEqual(receipt["latest_complete_window_min_days"], 20)
+        self.assertEqual(
+            receipt["latest_complete_window_min_days_source"],
+            "objective_min_observed_trading_days_floor",
+        )
+        self.assertEqual(receipt["latest_complete_window_cli_min_days"], 2)
+        self.assertEqual(receipt["latest_complete_window_objective_min_days"], 20)
 
     def test_materialize_run_replay_tape_fails_closed_on_missing_days(self) -> None:
         with TemporaryDirectory() as tmpdir:
