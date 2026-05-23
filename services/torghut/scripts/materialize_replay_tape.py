@@ -11,7 +11,7 @@ import os
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from app.trading.discovery.replay_tape import (
     ReplayTapeCoverageError,
@@ -114,6 +114,22 @@ def _parse_args() -> argparse.Namespace:
             "materialization fails closed, this records raw TA signal, executable "
             "quote-backed signal, and microbar row counts without relaxing the failure."
         ),
+    )
+    parser.add_argument(
+        "--latest-complete-window-min-days",
+        type=int,
+        default=0,
+        help=(
+            "When greater than zero, first inspect source coverage and materialize the "
+            "latest consecutive sub-window with at least this many complete executable "
+            "trading days. The manifest is bound to the selected sub-window; incomplete "
+            "requested days are recorded only in diagnostics/receipt output."
+        ),
+    )
+    parser.add_argument(
+        "--latest-complete-window-receipt-output",
+        type=Path,
+        help="Optional JSON receipt path for --latest-complete-window-min-days.",
     )
     parser.add_argument(
         "--log-level",
@@ -274,6 +290,62 @@ def _parse_coverage_diagnostics(
     return diagnostics
 
 
+def _is_complete_coverage_day(
+    row: Mapping[str, Any],
+    *,
+    expected_symbol_count: int,
+) -> bool:
+    if int(row.get("raw_signal_rows") or 0) <= 0:
+        return False
+    if int(row.get("executable_signal_rows") or 0) <= 0:
+        return False
+    if int(row.get("microbar_rows") or 0) <= 0:
+        return False
+    if expected_symbol_count <= 0:
+        return True
+    return (
+        int(row.get("raw_signal_symbol_count") or 0) >= expected_symbol_count
+        and int(row.get("executable_signal_symbol_count") or 0) >= expected_symbol_count
+        and int(row.get("microbar_symbol_count") or 0) >= expected_symbol_count
+    )
+
+
+def _latest_complete_window(
+    diagnostics: Mapping[str, Any],
+    *,
+    min_days: int,
+    expected_symbol_count: int,
+) -> tuple[date, date, tuple[str, ...]]:
+    requested_days = tuple(
+        str(day) for day in diagnostics.get("requested_trading_days") or ()
+    )
+    rows_by_day = (
+        diagnostics.get("rows_by_trading_day")
+        if isinstance(diagnostics.get("rows_by_trading_day"), Mapping)
+        else {}
+    )
+    latest_run: list[str] = []
+    runs: list[tuple[str, ...]] = []
+    for day in requested_days:
+        row = rows_by_day.get(day) if isinstance(rows_by_day, Mapping) else None
+        if isinstance(row, Mapping) and _is_complete_coverage_day(
+            row,
+            expected_symbol_count=expected_symbol_count,
+        ):
+            latest_run.append(day)
+            continue
+        if latest_run:
+            runs.append(tuple(latest_run))
+            latest_run = []
+    if latest_run:
+        runs.append(tuple(latest_run))
+    eligible = tuple(run for run in runs if len(run) >= max(1, min_days))
+    if not eligible:
+        raise ValueError(f"latest_complete_replay_window_missing:min_days={min_days}")
+    selected = eligible[-1]
+    return date.fromisoformat(selected[0]), date.fromisoformat(selected[-1]), selected
+
+
 def _fetch_coverage_diagnostics(
     *,
     args: argparse.Namespace,
@@ -339,6 +411,14 @@ def _fetch_coverage_diagnostics(
     }
 
 
+def _write_diagnostics_payload(output_path: Path, payload: Mapping[str, Any]) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(dict(payload), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _write_coverage_diagnostics(
     *,
     output_path: Path,
@@ -348,22 +428,71 @@ def _write_coverage_diagnostics(
     end_date: date,
     failure_reason: str | None = None,
     materialization_diagnostics: dict[str, Any] | None = None,
+    precomputed_diagnostics: Mapping[str, Any] | None = None,
 ) -> None:
-    diagnostics = _fetch_coverage_diagnostics(
-        args=args,
-        symbols=symbols,
-        start_date=start_date,
-        end_date=end_date,
+    diagnostics = dict(
+        precomputed_diagnostics
+        or _fetch_coverage_diagnostics(
+            args=args,
+            symbols=symbols,
+            start_date=start_date,
+            end_date=end_date,
+        )
     )
     if failure_reason:
         diagnostics["materialization_failure_reason"] = failure_reason
     if materialization_diagnostics is not None:
         diagnostics["materialization_diagnostics"] = dict(materialization_diagnostics)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        json.dumps(diagnostics, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    _write_diagnostics_payload(output_path, diagnostics)
+
+
+def _select_effective_window(
+    *,
+    args: argparse.Namespace,
+    symbols: tuple[str, ...],
+    requested_start_date: date,
+    requested_end_date: date,
+) -> tuple[date, date, dict[str, Any] | None]:
+    min_days = max(0, int(getattr(args, "latest_complete_window_min_days", 0) or 0))
+    if min_days <= 0:
+        return requested_start_date, requested_end_date, None
+    diagnostics = _fetch_coverage_diagnostics(
+        args=args,
+        symbols=symbols,
+        start_date=requested_start_date,
+        end_date=requested_end_date,
     )
+    selected_start, selected_end, selected_days = _latest_complete_window(
+        diagnostics,
+        min_days=min_days,
+        expected_symbol_count=len(symbols),
+    )
+    receipt = {
+        "schema_version": "torghut.replay-latest-complete-window.v1",
+        "requested_start_date": requested_start_date.isoformat(),
+        "requested_end_date": requested_end_date.isoformat(),
+        "effective_start_date": selected_start.isoformat(),
+        "effective_end_date": selected_end.isoformat(),
+        "selected_trading_days": list(selected_days),
+        "min_days": min_days,
+        "symbols": list(symbols),
+        "source_coverage": diagnostics,
+    }
+    receipt_output = getattr(args, "latest_complete_window_receipt_output", None)
+    if receipt_output:
+        _write_diagnostics_payload(Path(receipt_output).resolve(), receipt)
+    diagnostic_output = getattr(args, "coverage_diagnostic_output", None)
+    if diagnostic_output:
+        enriched = dict(diagnostics)
+        enriched["latest_complete_window"] = {
+            "schema_version": "torghut.replay-latest-complete-window-selection.v1",
+            "effective_start_date": selected_start.isoformat(),
+            "effective_end_date": selected_end.isoformat(),
+            "selected_trading_days": list(selected_days),
+            "min_days": min_days,
+        }
+        _write_diagnostics_payload(Path(diagnostic_output).resolve(), enriched)
+    return selected_start, selected_end, receipt
 
 
 def main() -> int:
@@ -373,10 +502,20 @@ def main() -> int:
         format="%(asctime)s %(levelname)s %(message)s",
     )
     symbols = _parse_symbols(str(args.symbols or ""))
-    start_date = date.fromisoformat(str(args.start_date))
-    end_date = date.fromisoformat(str(args.end_date))
+    requested_start_date = date.fromisoformat(str(args.start_date))
+    requested_end_date = date.fromisoformat(str(args.end_date))
+    start_date, end_date, window_receipt = _select_effective_window(
+        args=args,
+        symbols=symbols,
+        requested_start_date=requested_start_date,
+        requested_end_date=requested_end_date,
+    )
     source_query_digest = build_source_query_digest(
         _source_query_payload(args=args, symbols=symbols)
+        | {
+            "effective_start_date": start_date,
+            "effective_end_date": end_date,
+        }
     )
     config = replay_mod.ReplayConfig(
         strategy_configmap_path=Path(args.strategy_configmap).resolve(),
@@ -424,14 +563,14 @@ def main() -> int:
                 output_path=Path(diagnostic_output).resolve(),
                 args=args,
                 symbols=symbols,
-                start_date=start_date,
-                end_date=end_date,
+                start_date=requested_start_date,
+                end_date=requested_end_date,
                 failure_reason=str(exc),
                 materialization_diagnostics=exc.diagnostics,
             )
         raise
     diagnostic_output = getattr(args, "coverage_diagnostic_output", None)
-    if diagnostic_output:
+    if diagnostic_output and window_receipt is None:
         _write_coverage_diagnostics(
             output_path=Path(diagnostic_output).resolve(),
             args=args,
@@ -439,6 +578,18 @@ def main() -> int:
             start_date=start_date,
             end_date=end_date,
         )
+    if window_receipt is not None:
+        manifest_payload = {
+            "dataset_snapshot_ref": manifest.dataset_snapshot_ref,
+            "row_count": manifest.row_count,
+            "content_sha256": manifest.content_sha256,
+            "manifest_path": str(Path(manifest_path).resolve()),
+            "tape_path": str(Path(args.output).resolve()),
+        }
+        window_receipt["materialized_manifest"] = manifest_payload
+        receipt_output = getattr(args, "latest_complete_window_receipt_output", None)
+        if receipt_output:
+            _write_diagnostics_payload(Path(receipt_output).resolve(), window_receipt)
     logger.info(
         "replay_tape_materialized output=%s manifest=%s rows=%s digest=%s",
         args.output,
