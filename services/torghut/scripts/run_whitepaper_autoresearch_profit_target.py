@@ -194,6 +194,41 @@ _RISK_PROFILE_FEEDBACK_ORACLE_BLOCKERS = frozenset(
         "max_cluster_contribution_share_failed",
     }
 )
+_PAPER_MECHANISM_PRIOR_SCORE_CAP = Decimal("42")
+_PAPER_MECHANISM_PRIOR_WEIGHTS: Mapping[str, Decimal] = {
+    "mixed_market_limit_execution_policy": Decimal("9"),
+    "queue_position_survival_fill_curve": Decimal("9"),
+    "mpc_dynamic_execution_schedule": Decimal("8"),
+    "delay_adjusted_depth_stress": Decimal("8"),
+    "simulation_reality_gap_implementation_risk": Decimal("8"),
+    "implementation_risk_backtest_stability": Decimal("8"),
+    "replay_paper_live_semantic_parity": Decimal("7"),
+    "rejected_signal_outcome_calibration": Decimal("7"),
+    "nonlinear_market_impact_tca": Decimal("6"),
+    "ofi_lob_continuation_response": Decimal("6"),
+    "order_flow_filtration_parent_trade_obi": Decimal("6"),
+    "alpha_decay_predictability_stress": Decimal("5"),
+    "cluster_lob_event_clustering": Decimal("5"),
+    "intraday_volume_periodicity_execution": Decimal("5"),
+    "macro_announcement_dvar_momentum": Decimal("4"),
+    "ohlcv_only_falsification": Decimal("3"),
+}
+_PAPER_EVIDENCE_REQUIREMENT_PRIOR_WEIGHTS: Mapping[str, Decimal] = {
+    "route_tca": Decimal("2"),
+    "execution_shortfall": Decimal("2"),
+    "market_impact_stress": Decimal("2"),
+    "live_paper_parity": Decimal("2"),
+    "runtime_ledger": Decimal("2"),
+    "fill_outcomes": Decimal("2"),
+    "order_lifecycle_fill_evidence": Decimal("2"),
+    "queue_position_survival_fill_curve": Decimal("2"),
+    "delay_adjusted_depth_stress": Decimal("2"),
+    "implementation_uncertainty_interval": Decimal("2"),
+    "implementation_uncertainty_stability": Decimal("2"),
+    "rejected_signal_log": Decimal("2"),
+    "counterfactual_return": Decimal("2"),
+    "executable_quote": Decimal("1"),
+}
 
 
 def _default_strategy_config_path() -> Path:
@@ -1643,6 +1678,16 @@ def _list_of_mappings(value: Any) -> list[Mapping[str, Any]]:
         return []
     return [
         cast(Mapping[str, Any], item) for item in value if isinstance(item, Mapping)
+    ]
+
+
+def _sequence_of_mappings(value: Any) -> list[Mapping[str, Any]]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        return []
+    return [
+        cast(Mapping[str, Any], item)
+        for item in cast(Sequence[Any], value)
+        if isinstance(item, Mapping)
     ]
 
 
@@ -3578,7 +3623,74 @@ def _pre_replay_candidate_score(spec: CandidateSpec) -> Decimal:
     capital_penalty = Decimal(
         str(capital_budget_penalty(candidate_spec_capital_features(spec)))
     )
-    return family_score + Decimal(feature_count) - failure_penalty - capital_penalty
+    return (
+        family_score
+        + Decimal(feature_count)
+        + _paper_mechanism_prior_score(spec)
+        - failure_penalty
+        - capital_penalty
+    )
+
+
+def _candidate_spec_mechanism_overlay_ids(spec: CandidateSpec) -> set[str]:
+    overlay_ids = set(
+        _string_list_from_value(spec.parameter_space.get("mechanism_overlay_ids"))
+    )
+    for overlay in _sequence_of_mappings(
+        spec.feature_contract.get("mechanism_overlays")
+    ):
+        overlay_id = _string(overlay.get("overlay_id"))
+        if overlay_id:
+            overlay_ids.add(overlay_id)
+    return overlay_ids
+
+
+def _candidate_spec_required_evidence_tokens(spec: CandidateSpec) -> set[str]:
+    tokens: set[str] = set()
+    contract_rows = (
+        *_sequence_of_mappings(spec.feature_contract.get("source_claims")),
+        *_sequence_of_mappings(spec.feature_contract.get("validation_requirements")),
+        *_sequence_of_mappings(spec.feature_contract.get("mechanism_overlays")),
+    )
+    for row in contract_rows:
+        for key in ("data_requirements", "required_evidence"):
+            tokens.update(
+                _string(item) for item in _string_list_from_value(row.get(key))
+            )
+    for key, value in spec.promotion_contract.items():
+        if key.startswith("requires_") and _boolish(value):
+            tokens.add(key.removeprefix("requires_"))
+    return {token for token in tokens if token}
+
+
+def _paper_mechanism_prior_score(spec: CandidateSpec) -> Decimal:
+    source_claims = _sequence_of_mappings(spec.feature_contract.get("source_claims"))
+    validation_requirements = _sequence_of_mappings(
+        spec.feature_contract.get("validation_requirements")
+    )
+    overlay_ids = _candidate_spec_mechanism_overlay_ids(spec)
+    evidence_tokens = _candidate_spec_required_evidence_tokens(spec)
+    promotion_requires_count = sum(
+        1
+        for key, value in spec.promotion_contract.items()
+        if key.startswith("requires_") and _boolish(value)
+    )
+    promotion_rejects_count = sum(
+        1
+        for key, value in spec.promotion_contract.items()
+        if key.startswith("rejects_") and _boolish(value)
+    )
+    score = (
+        Decimal(min(len(source_claims), 8)) * Decimal("1.25")
+        + Decimal(min(len(validation_requirements), 5)) * Decimal("2")
+        + Decimal(min(promotion_requires_count, 8)) * Decimal("1.5")
+        + Decimal(min(promotion_rejects_count, 6)) * Decimal("0.75")
+    )
+    for overlay_id in sorted(overlay_ids):
+        score += _PAPER_MECHANISM_PRIOR_WEIGHTS.get(overlay_id, Decimal("1"))
+    for token in sorted(evidence_tokens):
+        score += _PAPER_EVIDENCE_REQUIREMENT_PRIOR_WEIGHTS.get(token, Decimal("0"))
+    return min(_PAPER_MECHANISM_PRIOR_SCORE_CAP, score)
 
 
 def _candidate_spec_universe_key(spec: CandidateSpec) -> str:
@@ -5332,12 +5444,47 @@ def _select_candidate_specs_for_replay(
     runtime_strategy_floor_ids = {
         spec.candidate_spec_id for spec in runtime_strategy_floor
     }
+    paper_contract_candidates = [
+        spec
+        for spec in ordered_eligible
+        if spec.candidate_spec_id not in active_loss_counter_ids
+        if spec.candidate_spec_id not in consistency_repair_ids
+        if spec.candidate_spec_id not in runtime_strategy_floor_ids
+        if _paper_mechanism_prior_score(spec) > Decimal("0")
+    ]
+    paper_contract_count = min(
+        3,
+        max(
+            0,
+            requested_exploration_slots
+            - len(active_loss_counter)
+            - len(consistency_repair),
+        ),
+        replay_budget
+        - len(active_loss_counter)
+        - len(consistency_repair)
+        - len(runtime_strategy_floor),
+        len(paper_contract_candidates),
+    )
+    paper_contract_exploration = take_diverse(
+        paper_contract_candidates,
+        count=paper_contract_count,
+        selected_so_far=[
+            *active_loss_counter,
+            *consistency_repair,
+            *runtime_strategy_floor,
+        ],
+    )
+    paper_contract_exploration_ids = {
+        spec.candidate_spec_id for spec in paper_contract_exploration
+    }
     false_negative_rescue_candidates = [
         spec
         for spec in ordered_eligible
         if spec.candidate_spec_id not in runtime_strategy_floor_ids
         if spec.candidate_spec_id not in active_loss_counter_ids
         if spec.candidate_spec_id not in consistency_repair_ids
+        if spec.candidate_spec_id not in paper_contract_exploration_ids
         if _candidate_spec_is_false_negative_rescue(spec)
     ]
     false_negative_rescue_count = min(
@@ -5346,7 +5493,8 @@ def _select_candidate_specs_for_replay(
         replay_budget
         - len(active_loss_counter)
         - len(consistency_repair)
-        - len(runtime_strategy_floor),
+        - len(runtime_strategy_floor)
+        - len(paper_contract_exploration),
         len(false_negative_rescue_candidates),
     )
     false_negative_rescue_exploration = take_diverse(
@@ -5356,6 +5504,7 @@ def _select_candidate_specs_for_replay(
             *active_loss_counter,
             *consistency_repair,
             *runtime_strategy_floor,
+            *paper_contract_exploration,
         ],
     )
     false_negative_rescue_ids = {
@@ -5368,6 +5517,7 @@ def _select_candidate_specs_for_replay(
         not in active_loss_counter_ids
         | consistency_repair_ids
         | runtime_strategy_floor_ids
+        | paper_contract_exploration_ids
         | false_negative_rescue_ids
     ]
     exploitation_count = min(
@@ -5376,6 +5526,7 @@ def _select_candidate_specs_for_replay(
         - len(active_loss_counter)
         - len(consistency_repair)
         - len(runtime_strategy_floor)
+        - len(paper_contract_exploration)
         - len(false_negative_rescue_exploration),
         len(exploitation_candidates),
     )
@@ -5386,6 +5537,7 @@ def _select_candidate_specs_for_replay(
             *active_loss_counter,
             *consistency_repair,
             *runtime_strategy_floor,
+            *paper_contract_exploration,
             *false_negative_rescue_exploration,
         ],
     )
@@ -5399,6 +5551,7 @@ def _select_candidate_specs_for_replay(
                     *active_loss_counter,
                     *consistency_repair,
                     *runtime_strategy_floor,
+                    *paper_contract_exploration,
                     *false_negative_rescue_exploration,
                     *exploitation,
                 ],
@@ -5411,6 +5564,7 @@ def _select_candidate_specs_for_replay(
                 *runtime_strategy_floor,
                 *active_loss_counter,
                 *consistency_repair,
+                *paper_contract_exploration,
                 *false_negative_rescue_exploration,
                 *exploitation,
             )
@@ -5422,6 +5576,7 @@ def _select_candidate_specs_for_replay(
         - len(active_loss_counter)
         - len(consistency_repair)
         - len(runtime_strategy_floor)
+        - len(paper_contract_exploration)
         - len(false_negative_rescue_exploration)
         - len(exploitation),
         len(remaining),
@@ -5433,6 +5588,7 @@ def _select_candidate_specs_for_replay(
             *runtime_strategy_floor,
             *active_loss_counter,
             *consistency_repair,
+            *paper_contract_exploration,
             *false_negative_rescue_exploration,
             *exploitation,
         ],
@@ -5443,6 +5599,7 @@ def _select_candidate_specs_for_replay(
         - len(active_loss_counter)
         - len(consistency_repair)
         - len(runtime_strategy_floor)
+        - len(paper_contract_exploration)
         - len(false_negative_rescue_exploration)
         - len(exploitation)
         - len(exploration),
@@ -5455,6 +5612,7 @@ def _select_candidate_specs_for_replay(
             *runtime_strategy_floor,
             *active_loss_counter,
             *consistency_repair,
+            *paper_contract_exploration,
             *false_negative_rescue_exploration,
             *exploitation,
             *exploration,
@@ -5466,6 +5624,7 @@ def _select_candidate_specs_for_replay(
         - len(active_loss_counter)
         - len(consistency_repair)
         - len(runtime_strategy_floor)
+        - len(paper_contract_exploration)
         - len(false_negative_rescue_exploration)
         - len(exploitation)
         - len(exploration)
@@ -5479,6 +5638,7 @@ def _select_candidate_specs_for_replay(
             *runtime_strategy_floor,
             *active_loss_counter,
             *consistency_repair,
+            *paper_contract_exploration,
             *false_negative_rescue_exploration,
             *exploitation,
             *exploration,
@@ -5489,6 +5649,7 @@ def _select_candidate_specs_for_replay(
         len(runtime_strategy_floor)
         + len(active_loss_counter)
         + len(consistency_repair)
+        + len(paper_contract_exploration)
         + len(false_negative_rescue_exploration)
         + len(exploitation)
         + len(exploration)
@@ -5500,6 +5661,7 @@ def _select_candidate_specs_for_replay(
                 *runtime_strategy_floor,
                 *active_loss_counter,
                 *consistency_repair,
+                *paper_contract_exploration,
                 *false_negative_rescue_exploration,
                 *exploitation,
                 *exploration,
@@ -5518,6 +5680,7 @@ def _select_candidate_specs_for_replay(
             - len(active_loss_counter)
             - len(consistency_repair)
             - len(runtime_strategy_floor)
+            - len(paper_contract_exploration)
             - len(false_negative_rescue_exploration)
             - len(exploitation)
             - len(exploration)
@@ -5527,6 +5690,7 @@ def _select_candidate_specs_for_replay(
                 *runtime_strategy_floor,
                 *active_loss_counter,
                 *consistency_repair,
+                *paper_contract_exploration,
                 *false_negative_rescue_exploration,
                 *exploitation,
                 *exploration,
@@ -5548,6 +5712,10 @@ def _select_candidate_specs_for_replay(
         | {
             item.candidate_spec_id: "runtime_strategy_floor"
             for item in runtime_strategy_floor
+        }
+        | {
+            item.candidate_spec_id: "paper_contract_exploration"
+            for item in paper_contract_exploration
         }
         | {
             item.candidate_spec_id: "false_negative_rescue_exploration"
@@ -5575,6 +5743,7 @@ def _select_candidate_specs_for_replay(
         *active_loss_counter,
         *consistency_repair,
         *runtime_strategy_floor,
+        *paper_contract_exploration,
         *false_negative_rescue_exploration,
         *exploitation,
         *exploration,
@@ -5628,6 +5797,16 @@ def _select_candidate_specs_for_replay(
             != spec.candidate_spec_id
             else None,
             "pre_replay_score": str(_pre_replay_candidate_score(spec)),
+            "paper_contract_prior_score": str(_paper_mechanism_prior_score(spec)),
+            "paper_mechanism_overlay_ids": sorted(
+                _candidate_spec_mechanism_overlay_ids(spec)
+            ),
+            "paper_required_evidence_tokens": sorted(
+                _candidate_spec_required_evidence_tokens(spec)
+            ),
+            "paper_required_evidence_count": len(
+                _candidate_spec_required_evidence_tokens(spec)
+            ),
             "proposal_score": proposal_by_spec.get(spec.candidate_spec_id, {}).get(
                 "proposal_score"
             ),
@@ -5715,6 +5894,7 @@ def _select_candidate_specs_for_replay(
             "active_loss_counter_candidate_selected_count": len(active_loss_counter),
             "consistency_repair_candidate_selected_count": len(consistency_repair),
             "runtime_strategy_floor_selected_count": len(runtime_strategy_floor),
+            "paper_contract_candidate_selected_count": len(paper_contract_exploration),
             "portfolio_size_min": max(1, int(portfolio_size_min)),
             "selected_count": len(selected),
             "compiled_candidate_count": len(specs),
@@ -5748,7 +5928,7 @@ def _select_candidate_specs_for_replay(
                 for candidate_spec_id in block_reason_by_spec
                 if candidate_spec_id not in selected_pre_replay_blocked_ids
             ),
-            "replay_order_policy": "quality_gated_diversity_pick_order_with_consistency_repair_synthetic_prior_probe_and_feedback_reaudit",
+            "replay_order_policy": "quality_gated_diversity_pick_order_with_consistency_repair_paper_contract_probe_synthetic_prior_probe_and_feedback_reaudit",
             "capital_feasible_candidate_count": sum(
                 1
                 for features in capital_features_by_spec.values()

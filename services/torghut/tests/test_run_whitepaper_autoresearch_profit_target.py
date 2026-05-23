@@ -494,6 +494,175 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             evidence_bundle_blockers(bundle),
         )
 
+    def test_paper_mechanism_contract_prior_selects_replay_only_candidate(
+        self,
+    ) -> None:
+        control_spec = self._candidate_spec(
+            "spec-paper-control",
+            family_template_id="breakout_reclaim_v2",
+            entry_minute_after_open="75",
+            selection_mode="continuation",
+        )
+        paper_spec_base = self._candidate_spec(
+            "spec-paper-contract",
+            family_template_id="breakout_reclaim_v2",
+            entry_minute_after_open="75",
+            selection_mode="continuation",
+        )
+        paper_spec = replace(
+            paper_spec_base,
+            feature_contract={
+                **paper_spec_base.feature_contract,
+                "source_claims": [
+                    {
+                        "claim_id": "claim-route-tca",
+                        "claim_type": "execution_assumption",
+                        "data_requirements": ["route_tca", "execution_shortfall"],
+                    },
+                    {
+                        "claim_id": "claim-live-parity",
+                        "claim_type": "validation_requirement",
+                        "data_requirements": ["live_paper_parity"],
+                    },
+                ],
+                "validation_requirements": [
+                    {
+                        "claim_id": "validate-fill-curve",
+                        "claim_type": "validation_requirement",
+                        "data_requirements": [
+                            "fill_outcomes",
+                            "runtime_ledger",
+                        ],
+                    }
+                ],
+                "mechanism_overlays": [
+                    {
+                        "overlay_id": "queue_position_survival_fill_curve",
+                        "required_evidence": [
+                            "queue_position_survival_fill_curve",
+                            "order_lifecycle_fill_evidence",
+                        ],
+                    }
+                ],
+            },
+            parameter_space={
+                "mechanism_overlay_ids": [
+                    "mixed_market_limit_execution_policy",
+                    "queue_position_survival_fill_curve",
+                ]
+            },
+            promotion_contract={
+                "requires_route_tca": True,
+                "requires_live_paper_parity": True,
+                "requires_runtime_ledger": True,
+                "rejects_synthetic_evidence": True,
+            },
+        )
+
+        self.assertGreater(
+            runner._pre_replay_candidate_score(paper_spec),
+            runner._pre_replay_candidate_score(control_spec),
+        )
+
+        prior_bundle = runner._pre_replay_prior_bundle(paper_spec)
+        self.assertFalse(prior_bundle.promotion_readiness["promotable"])
+        self.assertIn(
+            "runtime_replay_required", prior_bundle.promotion_readiness["blockers"]
+        )
+        self.assertIn(
+            "validation_live_paper_parity_pending",
+            prior_bundle.promotion_readiness["blockers"],
+        )
+
+        _model, rows = runner._pre_replay_proposal_model_and_rows(
+            specs=(control_spec, paper_spec),
+        )
+        row_by_spec = {row["candidate_spec_id"]: row for row in rows}
+
+        self.assertGreater(
+            Decimal(str(row_by_spec[paper_spec.candidate_spec_id]["proposal_score"])),
+            Decimal(str(row_by_spec[control_spec.candidate_spec_id]["proposal_score"])),
+        )
+        self.assertLess(
+            row_by_spec[paper_spec.candidate_spec_id]["rank"],
+            row_by_spec[control_spec.candidate_spec_id]["rank"],
+        )
+
+        selected, selection = runner._select_candidate_specs_for_replay(
+            specs=(control_spec, paper_spec),
+            proposal_rows=rows,
+            top_k=1,
+            exploration_slots=0,
+            max_candidates=1,
+            portfolio_size_min=1,
+        )
+
+        self.assertEqual(selected, [paper_spec])
+        self.assertEqual(
+            selection["selected_candidate_spec_ids"], [paper_spec.candidate_spec_id]
+        )
+        paper_selection_row = next(
+            row
+            for row in selection["rows"]
+            if row["candidate_spec_id"] == paper_spec.candidate_spec_id
+        )
+        control_selection_row = next(
+            row
+            for row in selection["rows"]
+            if row["candidate_spec_id"] == control_spec.candidate_spec_id
+        )
+        self.assertTrue(paper_selection_row["selected_for_replay"])
+        self.assertEqual(paper_selection_row["selection_reason"], "exploitation")
+        self.assertEqual(
+            control_selection_row["selection_reason"], "duplicate_execution_signature"
+        )
+        self.assertGreater(
+            Decimal(str(paper_selection_row["paper_contract_prior_score"])),
+            Decimal("0"),
+        )
+        self.assertEqual(
+            paper_selection_row["paper_mechanism_overlay_ids"],
+            [
+                "mixed_market_limit_execution_policy",
+                "queue_position_survival_fill_curve",
+            ],
+        )
+        self.assertIn(
+            "route_tca", paper_selection_row["paper_required_evidence_tokens"]
+        )
+        self.assertIn(
+            "live_paper_parity", paper_selection_row["paper_required_evidence_tokens"]
+        )
+        self.assertGreaterEqual(paper_selection_row["paper_required_evidence_count"], 6)
+        self.assertEqual(
+            selection["budget"]["paper_contract_candidate_selected_count"], 0
+        )
+
+        exploration_selected, exploration_selection = (
+            runner._select_candidate_specs_for_replay(
+                specs=(control_spec, paper_spec),
+                proposal_rows=rows,
+                top_k=0,
+                exploration_slots=1,
+                max_candidates=1,
+                portfolio_size_min=1,
+            )
+        )
+
+        self.assertEqual(exploration_selected, [paper_spec])
+        self.assertEqual(
+            exploration_selection["budget"]["paper_contract_candidate_selected_count"],
+            1,
+        )
+        exploration_paper_row = next(
+            row
+            for row in exploration_selection["rows"]
+            if row["candidate_spec_id"] == paper_spec.candidate_spec_id
+        )
+        self.assertEqual(
+            exploration_paper_row["selection_reason"], "paper_contract_exploration"
+        )
+
     def test_parse_args_defaults_to_500_daily_profit_program(self) -> None:
         with TemporaryDirectory() as tmpdir:
             with patch.object(
