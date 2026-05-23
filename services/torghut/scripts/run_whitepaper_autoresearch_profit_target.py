@@ -11,11 +11,12 @@ import signal
 import socket
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Mapping, Sequence, cast
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
@@ -109,6 +110,9 @@ _DEFAULT_DAILY_PROFIT_TARGET = "500"
 _DEFAULT_PORTFOLIO_PROFIT_PROGRAM = Path(
     "config/trading/research-programs/portfolio-profit-autoresearch-500-v1.yaml"
 )
+_CANDIDATE_BOARD_RUNTIME_SESSION_TZ = ZoneInfo("America/New_York")
+_CANDIDATE_BOARD_RUNTIME_SESSION_OPEN = time(hour=9, minute=30)
+_CANDIDATE_BOARD_RUNTIME_SESSION_CLOSE = time(hour=16, minute=0)
 _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC = 8
 _DEFAULT_CLICKHOUSE_HTTP_URL = (
     "http://torghut-clickhouse.torghut.svc.cluster.local:8123"
@@ -8700,6 +8704,50 @@ def _candidate_board_runtime_window_bounds(
     return "", ""
 
 
+def _candidate_board_date_only(value: str) -> date | None:
+    text = _string(value)
+    if not text or "T" in text or " " in text:
+        return None
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _candidate_board_regular_session_bound(value: str, *, end: bool) -> str:
+    text = _string(value)
+    trading_day = _candidate_board_date_only(text)
+    if trading_day is None:
+        return text
+    session_time = (
+        _CANDIDATE_BOARD_RUNTIME_SESSION_CLOSE
+        if end
+        else _CANDIDATE_BOARD_RUNTIME_SESSION_OPEN
+    )
+    return (
+        datetime.combine(
+            trading_day,
+            session_time,
+            tzinfo=_CANDIDATE_BOARD_RUNTIME_SESSION_TZ,
+        )
+        .astimezone(UTC)
+        .isoformat()
+    )
+
+
+def _candidate_board_runtime_window_import_bounds(
+    row: Mapping[str, Any],
+) -> tuple[str, str]:
+    window_start = _string(row.get("runtime_window_start") or row.get("window_start"))
+    window_end = _string(row.get("runtime_window_end") or row.get("window_end"))
+    if not window_start or not window_end:
+        window_start, window_end = _candidate_board_runtime_window_bounds(row)
+    return (
+        _candidate_board_regular_session_bound(window_start, end=False),
+        _candidate_board_regular_session_bound(window_end, end=True),
+    )
+
+
 def _candidate_board_runtime_ledger_refs(row: Mapping[str, Any]) -> tuple[str, ...]:
     refs: list[str] = []
     for key in (
@@ -8774,6 +8822,19 @@ def _candidate_board_runtime_import_args(target: Mapping[str, Any]) -> list[str]
         ref = _string(artifact_ref)
         if ref:
             args.extend(["--artifact-ref", ref])
+    target_metadata = _mapping(target.get("target_metadata"))
+    if target_metadata:
+        args.extend(
+            [
+                "--target-metadata-json",
+                json.dumps(
+                    target_metadata,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                ),
+            ]
+        )
     args.append("--json")
     return args
 
@@ -8822,10 +8883,7 @@ def _candidate_board_runtime_window_import_plan(
         runtime_ledger_artifact_ref = _string(row.get("runtime_ledger_artifact_ref"))
         if not runtime_ledger_artifact_ref and runtime_ledger_artifact_refs:
             runtime_ledger_artifact_ref = runtime_ledger_artifact_refs[0]
-        window_start = _string(
-            row.get("runtime_window_start") or row.get("window_start")
-        )
-        window_end = _string(row.get("runtime_window_end") or row.get("window_end"))
+        window_start, window_end = _candidate_board_runtime_window_import_bounds(row)
         account_label = _string(row.get("account_label"))
         if not account_label and runtime_ledger_artifact_refs:
             account_label = "TORGHUT_REPLAY"
@@ -8930,7 +8988,6 @@ def _candidate_board_runtime_window_import_plan(
                     ],
                 }
             )
-        target["import_command_args"] = _candidate_board_runtime_import_args(target)
         target["target_metadata"] = {
             key: value
             for key, value in target.items()
@@ -8940,6 +8997,7 @@ def _candidate_board_runtime_window_import_plan(
                 "target_metadata",
             }
         }
+        target["import_command_args"] = _candidate_board_runtime_import_args(target)
         targets.append(target)
 
     return {
