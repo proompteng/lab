@@ -152,6 +152,29 @@ _CLOSED_SESSION_REPAIR_REASONS = {
     "closed_session_signal_hold",
     "closed_session_tca_evidence_hold",
 }
+_ALPHA_RUNTIME_REPLAY_CLASS = "alpha_runtime_window_refresh"
+_ZERO_RUNTIME_EVIDENCE_REASONS = {
+    "hypothesis_window_decisions_missing",
+    "hypothesis_window_orders_missing",
+    "hypothesis_window_trades_missing",
+    "runtime_decision_count_zero",
+    "runtime_order_count_zero",
+    "runtime_trade_count_zero",
+}
+_HARD_ALPHA_ECONOMIC_REASONS = {
+    "post_cost_expectancy_below_manifest_threshold",
+    "post_cost_expectancy_non_positive",
+    "hypothesis_window_post_cost_expectancy_non_positive",
+    "slippage_budget_exceeded",
+}
+_ALPHA_RUNTIME_REPAIR_REASONS = {
+    "hypothesis_window_evidence_stale",
+    "hypothesis_window_evidence_missing",
+    "sample_count_below_canary_minimum",
+    "recent_slippage_budget_exceeded",
+    "delay_adjusted_depth_stress_missing",
+    "drift_checks_missing",
+}
 
 
 def _text(value: object, default: str = "") -> str:
@@ -1256,6 +1279,250 @@ def _guardrails(
     ]
 
 
+def _live_gate_evaluated_hypotheses(
+    live_submission_gate: Mapping[str, Any],
+) -> list[Mapping[str, Any]]:
+    evaluated = [
+        _mapping(item)
+        for item in _sequence(live_submission_gate.get("evaluated_tuples"))
+    ]
+    if not evaluated:
+        segment_summary = _mapping(live_submission_gate.get("segment_summary"))
+        evaluated = [
+            _mapping(item)
+            for item in _sequence(segment_summary.get("evaluated_hypotheses"))
+        ]
+    seen: set[str] = set()
+    unique: list[Mapping[str, Any]] = []
+    for item in evaluated:
+        hypothesis_id = _text(item.get("hypothesis_id"))
+        if not hypothesis_id or hypothesis_id in seen:
+            continue
+        unique.append(item)
+        seen.add(hypothesis_id)
+    return unique
+
+
+def _alpha_runtime_repair_reason_codes(item: Mapping[str, Any]) -> list[str]:
+    reasons = _string_list(item.get("reason_codes"))
+    if not reasons:
+        reasons = _string_list(item.get("reasons"))
+    return reasons
+
+
+def _alpha_runtime_replay_key(
+    item: Mapping[str, Any],
+) -> tuple[int, int, int, int, str]:
+    reasons = set(_alpha_runtime_repair_reason_codes(item))
+    blocked_segments = len(_sequence(item.get("blocked_segments")))
+    return (
+        len(reasons.intersection(_ZERO_RUNTIME_EVIDENCE_REASONS)),
+        len(reasons.intersection(_HARD_ALPHA_ECONOMIC_REASONS)),
+        blocked_segments,
+        len(reasons),
+        _text(item.get("hypothesis_id")),
+    )
+
+
+def _top_alpha_runtime_replay_target(
+    live_submission_gate: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    candidates = [
+        item
+        for item in _live_gate_evaluated_hypotheses(live_submission_gate)
+        if _text(item.get("hypothesis_id"))
+    ]
+    if not candidates:
+        return {}
+    return sorted(candidates, key=_alpha_runtime_replay_key)[0]
+
+
+def _alpha_runtime_confidence(item: Mapping[str, Any]) -> str:
+    reasons = set(_alpha_runtime_repair_reason_codes(item))
+    if reasons.intersection(_ZERO_RUNTIME_EVIDENCE_REASONS):
+        return "low"
+    if reasons.intersection(_HARD_ALPHA_ECONOMIC_REASONS):
+        return "low"
+    return "medium"
+
+
+def _alpha_runtime_blockers(
+    *,
+    item: Mapping[str, Any],
+    proof_floor_receipt: Mapping[str, Any],
+    live_submission_gate: Mapping[str, Any],
+    empirical_jobs_status: Mapping[str, Any],
+    quant_evidence: Mapping[str, Any],
+    market_context_status: Mapping[str, Any],
+    jangar_contract_graduation_ref: Mapping[str, Any],
+) -> list[str]:
+    blockers = set(_string_list(proof_floor_receipt.get("blocking_reasons")))
+    blockers.update(_string_list(live_submission_gate.get("blocked_reasons")))
+    blockers.update(_alpha_runtime_repair_reason_codes(item))
+    blockers.update(_empirical_blockers(empirical_jobs_status))
+    blockers.update(_quant_blockers(quant_evidence))
+    blockers.update(_market_context_blockers(market_context_status))
+    graduation_state, graduation_reasons = _graduation_state(
+        jangar_contract_graduation_ref
+    )
+    if graduation_state != "current":
+        blockers.update(graduation_reasons)
+    return sorted(blocker for blocker in blockers if blocker)
+
+
+def _alpha_runtime_replay_item(
+    *,
+    item: Mapping[str, Any],
+    account_label: str | None,
+    trading_mode: str,
+    proof_floor_receipt: Mapping[str, Any],
+    live_submission_gate: Mapping[str, Any],
+    empirical_jobs_status: Mapping[str, Any],
+    quant_evidence: Mapping[str, Any],
+    market_context_status: Mapping[str, Any],
+    jangar_contract_graduation_ref: Mapping[str, Any],
+) -> dict[str, object]:
+    hypothesis_id = _text(item.get("hypothesis_id"), "unknown")
+    candidate_id = _text(item.get("candidate_id"))
+    strategy_id = _text(item.get("strategy_id"))
+    reasons = _alpha_runtime_repair_reason_codes(item)
+    blockers = _alpha_runtime_blockers(
+        item=item,
+        proof_floor_receipt=proof_floor_receipt,
+        live_submission_gate=live_submission_gate,
+        empirical_jobs_status=empirical_jobs_status,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+        jangar_contract_graduation_ref=jangar_contract_graduation_ref,
+    )
+    replay_id = "replay:" + _stable_hash(
+        "alpha-runtime-window-replay",
+        {
+            "hypothesis_id": hypothesis_id,
+            "candidate_id": candidate_id,
+            "strategy_id": strategy_id,
+            "account_label": account_label,
+            "trading_mode": trading_mode,
+            "proof_floor_generated_at": proof_floor_receipt.get("generated_at"),
+        },
+    )
+    return {
+        "replay_id": replay_id,
+        "hypothesis_id": hypothesis_id,
+        "candidate_id": candidate_id or None,
+        "strategy_id": strategy_id or None,
+        "target_symbols": _string_list(item.get("target_symbols")),
+        "replay_class": _ALPHA_RUNTIME_REPLAY_CLASS,
+        "before_refs": {
+            "runtime_alpha_tuple": {
+                "candidate_id": candidate_id or None,
+                "strategy_id": strategy_id or None,
+                "capital_state": item.get("capital_state"),
+                "capital_stage": item.get("capital_stage"),
+                "window": item.get("window"),
+                "metric_window_id": item.get("metric_window_id"),
+                "promotion_decision_id": item.get("promotion_decision_id"),
+                "blocked_segments": _string_list(item.get("blocked_segments")),
+                "reason_codes": reasons,
+                "lineage_ref": dict(_mapping(item.get("lineage_ref"))),
+            },
+            "proof_floor": {
+                "schema_version": proof_floor_receipt.get("schema_version"),
+                "generated_at": proof_floor_receipt.get("generated_at"),
+                "route_state": proof_floor_receipt.get("route_state"),
+                "capital_state": proof_floor_receipt.get("capital_state"),
+                "blocking_reasons": _string_list(
+                    proof_floor_receipt.get("blocking_reasons")
+                ),
+            },
+            "empirical_jobs": {
+                "ready": bool(empirical_jobs_status.get("ready")),
+                "status": empirical_jobs_status.get("status"),
+                "authority": empirical_jobs_status.get("authority"),
+                "dataset_snapshot_refs": _string_list(
+                    empirical_jobs_status.get("dataset_snapshot_refs")
+                ),
+            },
+            "quant_evidence": {
+                "status": quant_evidence.get("status"),
+                "source_url": quant_evidence.get("source_url"),
+                "latest_metrics_count": quant_evidence.get("latest_metrics_count"),
+                "latest_metrics_updated_at": quant_evidence.get(
+                    "latest_metrics_updated_at"
+                ),
+                "stage_count": quant_evidence.get("stage_count"),
+            },
+            "market_context": {
+                "status": market_context_status.get("status"),
+                "state": market_context_status.get("state")
+                or market_context_status.get("overallState")
+                or market_context_status.get("overall_state"),
+                "alert_active": bool(market_context_status.get("alert_active")),
+                "alert_reason": market_context_status.get("alert_reason"),
+                "last_reason": market_context_status.get("last_reason"),
+            },
+            "jangar_contract_graduation": dict(jangar_contract_graduation_ref),
+        },
+        "required_after_refs": [
+            "runtime_window_ledger_receipt",
+            "promotion_grade_post_cost_pnl_receipt",
+            "fresh_hypothesis_window_receipt",
+            "promotion_decision_receipt",
+            "alpha_readiness_receipt",
+            "empirical_job_receipt",
+            "jangar_contract_graduation_receipt",
+        ],
+        "expected_profit_unlock": {
+            "expected_blocker_delta": max(1, len(set(reasons))),
+            "expected_profit_effect": "can_unlock_alpha_readiness_after_runtime_ledger_receipts",
+            "after_cost_edge_bps": None,
+        },
+        "expected_cost": {
+            "class": "runtime_window_replay_refresh",
+            "max_runtime_seconds": 900,
+        },
+        "confidence": _alpha_runtime_confidence(item),
+        "max_runtime_seconds": 900,
+        "max_notional": "0",
+        "guardrails": [
+            {
+                "code": "zero_notional_required",
+                "status": "pass",
+                "limit": "0",
+            },
+            {
+                "code": "runtime_ledger_authority_required",
+                "status": "blocked",
+                "required_basis": "promotion_grade_post_cost_pnl",
+            },
+            {
+                "code": "fresh_scoped_proof_required",
+                "status": "blocked" if blockers else "pending",
+                "blocking_reason_codes": sorted(set(blockers)),
+            },
+        ],
+        "falsification_rules": [
+            "runtime_ledger_missing_or_non_authoritative",
+            "post_cost_pnl_non_positive",
+            "hypothesis_window_stale_after_refresh",
+            "promotion_decision_still_not_allowed",
+        ],
+        "owner": "torghut",
+        "remaining_blockers": blockers,
+        "capital_effect": {
+            "capital_state": "zero_notional",
+            "max_notional": "0",
+            "paper_canary": "held",
+            "live_micro_canary": "blocked",
+        },
+        "rollback_target": {
+            "capital_state": "zero_notional",
+            "live_submit_enabled": False,
+            "replay_class": _ALPHA_RUNTIME_REPLAY_CLASS,
+        },
+    }
+
+
 def _replay_item(
     *,
     hypothesis_id: str,
@@ -1370,6 +1637,22 @@ def _candidate_replays(
     route_records = _route_records(proof_floor_receipt)
     replays: list[dict[str, object]] = []
 
+    alpha_target = _top_alpha_runtime_replay_target(live_submission_gate)
+    if alpha_target:
+        replays.append(
+            _alpha_runtime_replay_item(
+                item=alpha_target,
+                account_label=account_label,
+                trading_mode=trading_mode,
+                proof_floor_receipt=proof_floor_receipt,
+                live_submission_gate=live_submission_gate,
+                empirical_jobs_status=empirical_jobs_status,
+                quant_evidence=quant_evidence,
+                market_context_status=market_context_status,
+                jangar_contract_graduation_ref=jangar_contract_graduation_ref,
+            )
+        )
+
     aapl_row = _find_by_symbol(route_rows, "AAPL") or _first_with_state(
         route_rows, {"probing", "routeable"}
     )
@@ -1466,7 +1749,13 @@ def _receipt_for_replay(
     target_symbols = _string_list(replay.get("target_symbols"))
     blockers = _string_list(replay.get("remaining_blockers"))
     replay_id = _text(replay.get("replay_id"))
-    graduation_state: GraduationState = "candidate" if target_symbols else "failed"
+    replay_class = _text(replay.get("replay_class"))
+    graduation_state: GraduationState = (
+        "candidate"
+        if target_symbols
+        or (replay_class == _ALPHA_RUNTIME_REPLAY_CLASS and replay.get("hypothesis_id"))
+        else "failed"
+    )
     receipt_id = "receipt:" + _stable_hash(
         "executable-alpha",
         {
@@ -1479,6 +1768,8 @@ def _receipt_for_replay(
         "receipt_id": receipt_id,
         "replay_id": replay_id,
         "hypothesis_id": replay.get("hypothesis_id"),
+        "candidate_id": replay.get("candidate_id"),
+        "strategy_id": replay.get("strategy_id"),
         "account_label": account_label,
         "trading_mode": trading_mode,
         "target_symbols": target_symbols,

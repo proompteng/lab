@@ -87,6 +87,7 @@ def _projection(
     quant_latest_count: int = 0,
     market_alert: bool = True,
     jangar_current: bool = False,
+    live_submission_gate: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
     proof = proof_floor or _proof_floor()
     board = build_route_reacquisition_board(
@@ -99,7 +100,8 @@ def _projection(
         torghut_revision="torghut-00285",
         proof_floor_receipt=proof,
         route_reacquisition_board=board,
-        live_submission_gate={
+        live_submission_gate=live_submission_gate
+        or {
             "allowed": False,
             "blocked_reasons": ["simple_submit_disabled"],
         },
@@ -154,6 +156,107 @@ def test_capital_replay_board_seeds_live_aapl_nvda_and_breadth_probe() -> None:
     summary = cast(Mapping[str, Any], board["summary"])
     assert summary["paper_replay_candidate_count"] == 0
     assert summary["capital_ready"] is False
+
+
+def test_capital_replay_board_prioritizes_live_alpha_runtime_tuple() -> None:
+    projection = _projection(
+        live_submission_gate={
+            "allowed": False,
+            "blocked_reasons": [
+                "alpha_readiness_not_promotion_eligible",
+                "simple_submit_disabled",
+            ],
+            "evaluated_tuples": [
+                {
+                    "hypothesis_id": "H-TSMOM-01",
+                    "candidate_id": "spec-83161ae16d17828eabcc58cc",
+                    "strategy_id": "intraday_tsmom_v2@research",
+                    "capital_state": "shadow",
+                    "capital_stage": "shadow",
+                    "window": "15m",
+                    "reason_codes": [
+                        "hypothesis_window_evidence_stale",
+                        "runtime_decision_count_zero",
+                        "runtime_order_count_zero",
+                        "runtime_trade_count_zero",
+                        "post_cost_expectancy_non_positive",
+                    ],
+                },
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "candidate_id": "chip-paper-microbar-composite@execution-proof",
+                    "strategy_id": "microbar_volume_continuation_long_top2_chip_v1@paper",
+                    "capital_state": "shadow",
+                    "capital_stage": "shadow",
+                    "window": "15m",
+                    "metric_window_id": "metrics-cont",
+                    "promotion_decision_id": "decision-cont",
+                    "reason_codes": [
+                        "promotion_certificate_not_live_runtime",
+                        "hypothesis_window_evidence_stale",
+                        "sample_count_below_canary_minimum",
+                        "recent_slippage_budget_exceeded",
+                        "promotion_decision_not_allowed",
+                        "promotion_certificate_shadow_only",
+                        "alpha_hypothesis_not_promotion_eligible",
+                        "alpha_hypothesis_shadow_only",
+                    ],
+                    "lineage_ref": {
+                        "status": "ready",
+                        "dataset_snapshot_ref": "torghut-chip-full-day-20260505",
+                    },
+                },
+                {
+                    "hypothesis_id": "H-MICRO-01",
+                    "candidate_id": "chip-paper-microbar-composite@execution-proof",
+                    "strategy_id": "microbar_volume_continuation_long_top2_chip_v1@paper",
+                    "capital_state": "shadow",
+                    "capital_stage": "shadow",
+                    "window": "15m",
+                    "reason_codes": [
+                        "hypothesis_window_evidence_stale",
+                        "slippage_budget_exceeded",
+                        "post_cost_expectancy_below_manifest_threshold",
+                    ],
+                },
+            ],
+        }
+    )
+    board = cast(Mapping[str, Any], projection["capital_replay_board"])
+    replay_items = cast(list[Mapping[str, Any]], board["replay_items"])
+    alpha_replay = replay_items[0]
+
+    assert alpha_replay["hypothesis_id"] == "H-CONT-01"
+    assert alpha_replay["candidate_id"] == (
+        "chip-paper-microbar-composite@execution-proof"
+    )
+    assert alpha_replay["replay_class"] == "alpha_runtime_window_refresh"
+    assert alpha_replay["max_notional"] == "0"
+    assert alpha_replay["confidence"] == "medium"
+    assert board["selected_replays"][0] == alpha_replay["replay_id"]
+    assert "runtime_window_ledger_receipt" in alpha_replay["required_after_refs"]
+    runtime_ref = cast(Mapping[str, Any], alpha_replay["before_refs"])[
+        "runtime_alpha_tuple"
+    ]
+    assert runtime_ref["metric_window_id"] == "metrics-cont"
+    assert "runtime_decision_count_zero" not in alpha_replay["remaining_blockers"]
+    assert "hypothesis_window_evidence_stale" in alpha_replay["remaining_blockers"]
+    assert any(
+        guardrail["code"] == "runtime_ledger_authority_required"
+        for guardrail in cast(list[Mapping[str, Any]], alpha_replay["guardrails"])
+    )
+
+    receipts = cast(
+        list[Mapping[str, Any]],
+        cast(Mapping[str, Any], projection["executable_alpha_receipts"])["receipts"],
+    )
+    assert receipts[0]["hypothesis_id"] == "H-CONT-01"
+    assert receipts[0]["candidate_id"] == (
+        "chip-paper-microbar-composite@execution-proof"
+    )
+    assert receipts[0]["graduation_state"] == "candidate"
+    assert receipts[0]["capital_effect"]["max_notional"] == "0"
+    assert receipts[0]["guardrail_result"]["passed"] is False
 
 
 def test_receipts_keep_superficially_good_route_out_of_paper_candidate() -> None:
