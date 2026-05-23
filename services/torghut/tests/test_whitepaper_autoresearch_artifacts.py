@@ -230,7 +230,7 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
         model = train_mlx_ranker(rows, backend_preference="numpy-fallback", steps=128)
         ranked = rank_training_rows(model=model, rows=rows)
 
-        self.assertEqual(model.schema_version, "torghut.mlx-ranker.v2")
+        self.assertEqual(model.schema_version, "torghut.mlx-ranker.v3")
         self.assertEqual(model.backend, "numpy-fallback")
         self.assertEqual(model.row_count, 2)
         self.assertEqual(ranked[0].candidate_spec_id, high_spec.candidate_spec_id)
