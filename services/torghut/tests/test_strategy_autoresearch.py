@@ -700,6 +700,62 @@ class TestStrategyAutoresearch(TestCase):
         self.assertTrue(tape_exists)
         self.assertTrue(manifest_exists)
 
+    def test_write_signal_bundle_uses_supplied_replay_tape_without_clickhouse(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            configmap_path = root / "strategy-configmap.yaml"
+            configmap_path.write_text("apiVersion: v1\nkind: ConfigMap\n")
+            bundle_paths = runner._mlx_bundle_paths(root)
+            tape_path = root / "provided-tape.jsonl"
+            signal_row = SignalEnvelope(
+                event_ts=datetime(2026, 3, 20, 13, 30, tzinfo=UTC),
+                symbol="AMAT",
+                seq=1,
+                source="ta",
+                timeframe="1Sec",
+                payload={"price": "180.10"},
+            )
+            manifest = runner.materialize_signal_tape(
+                rows=[signal_row],
+                tape_path=tape_path,
+                dataset_snapshot_ref="provided-snapshot",
+                symbols=("AMAT",),
+                start_date=date(2026, 3, 20),
+                end_date=date(2026, 3, 20),
+                source_query_digest="digest",
+            )
+            args = Namespace(
+                strategy_configmap=configmap_path,
+                clickhouse_http_url="http://example.invalid:8123",
+                clickhouse_username="torghut",
+                clickhouse_password="secret",
+                start_equity="31590.02",
+                chunk_minutes=10,
+                progress_log_seconds=30,
+                replay_tape_path=tape_path,
+                replay_tape_manifest=runner.default_manifest_path(tape_path),
+                allow_stale_tape=False,
+            )
+
+            with patch(
+                "scripts.run_strategy_autoresearch_loop.replay_mod._http_query",
+                side_effect=AssertionError("clickhouse should not be queried"),
+            ):
+                stats = runner._maybe_write_signal_bundle(
+                    args=args,
+                    snapshot_symbols=("AMAT",),
+                    bundle_paths=bundle_paths,
+                    full_window_start_date="2026-03-20",
+                    full_window_end_date="2026-03-20",
+                    existing=None,
+                )
+
+        assert stats is not None
+        self.assertEqual(stats.row_count, manifest.row_count)
+        self.assertEqual(stats.symbol_count, 1)
+
     def test_materialize_run_replay_tape_selects_latest_complete_window(
         self,
     ) -> None:
