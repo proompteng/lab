@@ -9,7 +9,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence, cast
 
 import psycopg
 from sqlalchemy import select
@@ -303,6 +303,92 @@ def _nonnegative_int(value: Any) -> int:
         return max(0, int(Decimal(str(value))))
     except Exception:
         return 0
+
+
+def _metadata_text_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if not isinstance(value, Sequence) or isinstance(value, (bytes, bytearray)):
+        return []
+    return [
+        text for item in cast(Sequence[Any], value) if (text := str(item or "").strip())
+    ]
+
+
+def _runtime_ledger_target_metadata_artifact_refs(
+    target_metadata: Mapping[str, Any],
+) -> list[str]:
+    refs: list[str] = []
+    for key in (
+        "runtime_ledger_artifact_refs",
+        "exact_replay_ledger_artifact_refs",
+    ):
+        refs.extend(_metadata_text_list(target_metadata.get(key)))
+    for key in (
+        "runtime_ledger_artifact_ref",
+        "exact_replay_ledger_artifact_ref",
+    ):
+        refs.extend(_metadata_text_list(target_metadata.get(key)))
+    return list(dict.fromkeys(refs))
+
+
+def _metadata_nonnegative_int_or_none(value: Any) -> int | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return _nonnegative_int(value)
+
+
+def _runtime_ledger_target_metadata_blockers(
+    *,
+    target_metadata: Mapping[str, Any],
+    runtime_ledger_artifact_metadata: Mapping[str, Any],
+    window_start: datetime,
+    window_end: datetime,
+) -> list[str]:
+    metadata = _as_mapping(target_metadata)
+    if not metadata:
+        return []
+
+    blockers: list[str] = []
+    planned_refs = _runtime_ledger_target_metadata_artifact_refs(metadata)
+    if planned_refs:
+        loaded_refs = _metadata_text_list(
+            runtime_ledger_artifact_metadata.get("runtime_ledger_artifact_refs")
+        )
+        if set(planned_refs) != set(loaded_refs):
+            blockers.append("runtime_ledger_artifact_refs_mismatch")
+
+    for key, blocker in (
+        (
+            "runtime_ledger_artifact_row_count",
+            "runtime_ledger_artifact_row_count_mismatch",
+        ),
+        (
+            "runtime_ledger_artifact_fill_count",
+            "runtime_ledger_artifact_fill_count_mismatch",
+        ),
+    ):
+        planned_count = _metadata_nonnegative_int_or_none(metadata.get(key))
+        if planned_count is None:
+            continue
+        loaded_count = _nonnegative_int(runtime_ledger_artifact_metadata.get(key))
+        if planned_count != loaded_count:
+            blockers.append(blocker)
+
+    for key, actual_bound in (
+        ("window_start", window_start),
+        ("window_end", window_end),
+    ):
+        expected_bound = _parse_dt_or_none(metadata.get(key))
+        if metadata.get(key) is not None and expected_bound != actual_bound:
+            blockers.append("runtime_ledger_window_bounds_mismatch")
+            break
+
+    return list(dict.fromkeys(blockers))
 
 
 def _runtime_ledger_profit_proof_present(
@@ -1132,6 +1218,12 @@ def main() -> int:
     target_metadata = _parse_target_metadata(
         str(getattr(args, "target_metadata_json", "") or "")
     )
+    runtime_ledger_target_metadata_blockers = _runtime_ledger_target_metadata_blockers(
+        target_metadata=target_metadata,
+        runtime_ledger_artifact_metadata=runtime_ledger_artifact_metadata,
+        window_start=window_start,
+        window_end=window_end,
+    )
     if not decisions and not executions and not tca_rows:
         summary = _source_activity_missing_summary(
             run_id=args.run_id,
@@ -1216,6 +1308,7 @@ def main() -> int:
         "artifact_refs": artifact_refs,
         "dataset_snapshot_ref": dataset_snapshot_ref,
         "target_metadata": target_metadata,
+        "runtime_ledger_target_metadata_blockers": runtime_ledger_target_metadata_blockers,
         **runtime_ledger_artifact_metadata,
         **runtime_ledger_durable_metadata,
         "report_post_cost_expectancy_bps": (

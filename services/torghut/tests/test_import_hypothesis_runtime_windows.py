@@ -30,6 +30,7 @@ from scripts.import_hypothesis_runtime_windows import (
     _runtime_ledger_bucket_profit_proof_present,
     _runtime_ledger_event_type,
     _runtime_ledger_profit_proof_present,
+    _runtime_ledger_target_metadata_blockers,
     _runtime_ledger_tca_rows_from_durable_buckets,
     _runtime_ledger_tca_rows_from_artifacts,
     _strategy_name_candidates,
@@ -384,6 +385,53 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             _parse_target_metadata("{")
         with self.assertRaisesRegex(RuntimeError, "target_metadata_json_not_mapping"):
             _parse_target_metadata("[]")
+
+    def test_runtime_ledger_target_metadata_blockers_fail_closed_on_mismatch(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
+        artifact_metadata = {
+            "runtime_ledger_artifact_refs": ["exact-ledger.json"],
+            "runtime_ledger_artifact_row_count": 6,
+            "runtime_ledger_artifact_fill_count": 2,
+        }
+
+        self.assertEqual(
+            _runtime_ledger_target_metadata_blockers(
+                target_metadata={
+                    "runtime_ledger_artifact_refs": ["exact-ledger.json"],
+                    "runtime_ledger_artifact_row_count": 6,
+                    "runtime_ledger_artifact_fill_count": 2,
+                    "window_start": "2026-03-06T14:30:00+00:00",
+                    "window_end": "2026-03-06T15:00:00+00:00",
+                },
+                runtime_ledger_artifact_metadata=artifact_metadata,
+                window_start=window_start,
+                window_end=window_end,
+            ),
+            [],
+        )
+        self.assertEqual(
+            _runtime_ledger_target_metadata_blockers(
+                target_metadata={
+                    "runtime_ledger_artifact_refs": ["different-ledger.json"],
+                    "runtime_ledger_artifact_row_count": 7,
+                    "runtime_ledger_artifact_fill_count": 3,
+                    "window_start": "2026-03-06T14:35:00+00:00",
+                    "window_end": "2026-03-06T15:00:00+00:00",
+                },
+                runtime_ledger_artifact_metadata=artifact_metadata,
+                window_start=window_start,
+                window_end=window_end,
+            ),
+            [
+                "runtime_ledger_artifact_refs_mismatch",
+                "runtime_ledger_artifact_row_count_mismatch",
+                "runtime_ledger_artifact_fill_count_mismatch",
+                "runtime_ledger_window_bounds_mismatch",
+            ],
+        )
 
     def test_main_requires_source_dsn_or_durable_runtime_ledger_bucket(self) -> None:
         args = SimpleNamespace(
@@ -1289,7 +1337,15 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 artifact_ref=[str(artifact_path)],
                 delay_adjusted_depth_stress_report_ref="",
                 dataset_snapshot_ref="runtime-ledger-artifact-snapshot",
-                target_metadata_json="",
+                target_metadata_json=json.dumps(
+                    {
+                        "runtime_ledger_artifact_refs": [str(artifact_path)],
+                        "runtime_ledger_artifact_row_count": 6,
+                        "runtime_ledger_artifact_fill_count": 2,
+                        "window_start": "2026-03-06T14:30:00+00:00",
+                        "window_end": "2026-03-06T15:00:00+00:00",
+                    }
+                ),
                 dependency_quorum_decision="allow",
                 continuity_ok="true",
                 drift_ok="true",
@@ -1355,6 +1411,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         )
         self.assertEqual(runtime_payload["runtime_ledger_artifact_row_count"], 6)
         self.assertEqual(runtime_payload["runtime_ledger_artifact_fill_count"], 2)
+        self.assertEqual(runtime_payload["runtime_ledger_target_metadata_blockers"], [])
         self.assertEqual(
             runtime_payload["authority_reason"], "runtime_ledger_profit_proof"
         )

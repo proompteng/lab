@@ -297,10 +297,16 @@ def _runtime_ledger_post_cost_from_rows(
 
 def _paper_probation_blocking_reasons(runtime_payload: Mapping[str, Any]) -> list[str]:
     target_metadata = _mapping(runtime_payload.get("target_metadata"))
-    if not target_metadata:
-        return []
-
     reasons: list[str] = []
+    reasons.extend(
+        _string_list(runtime_payload.get("runtime_ledger_target_metadata_blockers"))
+    )
+    reasons.extend(
+        _string_list(target_metadata.get("runtime_ledger_target_metadata_blockers"))
+    )
+    if not target_metadata:
+        return list(dict.fromkeys(reasons))
+
     paper_probation_authorized = _observation_bool(
         target_metadata.get("paper_probation_authorized")
     )
@@ -313,7 +319,7 @@ def _paper_probation_blocking_reasons(runtime_payload: Mapping[str, Any]) -> lis
         reasons.append("final_promotion_not_authorized")
     if _observation_bool(target_metadata.get("final_promotion_allowed")) is False:
         reasons.append("final_promotion_not_allowed")
-    return reasons
+    return list(dict.fromkeys(reasons))
 
 
 def _delay_adjusted_depth_stress_blocking_reasons(

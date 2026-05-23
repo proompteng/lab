@@ -1145,6 +1145,9 @@ class TestRuntimeWindowImport(TestCase):
                 source_manifest_ref="config/trading/hypotheses/h-micro-01.json",
                 buckets=buckets,
                 runtime_observation_payload={
+                    "runtime_ledger_target_metadata_blockers": [
+                        "runtime_ledger_artifact_refs_mismatch"
+                    ],
                     "target_metadata": {
                         "paper_probation_authorized": True,
                         "evidence_collection_stage": "paper",
@@ -1173,6 +1176,10 @@ class TestRuntimeWindowImport(TestCase):
         self.assertEqual(summary["promotion_allowed"], False)
         self.assertIn(
             "paper_probation_evidence_collection_only",
+            summary["promotion_blocking_reasons"],
+        )
+        self.assertIn(
+            "runtime_ledger_artifact_refs_mismatch",
             summary["promotion_blocking_reasons"],
         )
         self.assertIn(

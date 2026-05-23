@@ -6523,8 +6523,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             target["source_kind"], "simulation_exact_replay_runtime_ledger"
         )
         self.assertEqual(target["account_label"], "TORGHUT_REPLAY")
-        self.assertEqual(target["window_start"], "2026-05-18")
-        self.assertEqual(target["window_end"], "2026-05-20")
+        self.assertEqual(target["window_start"], "2026-05-18T13:30:00+00:00")
+        self.assertEqual(target["window_end"], "2026-05-20T20:00:00+00:00")
         self.assertEqual(target["dataset_snapshot_ref"], "snapshot-paper-probation")
         self.assertEqual(
             target["artifact_refs"],
@@ -6544,6 +6544,26 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertIn(
             "paper-probation-exact-ledger.json", target["import_command_args"]
         )
+        self.assertIn("--target-metadata-json", target["import_command_args"])
+        metadata_arg_index = (
+            target["import_command_args"].index("--target-metadata-json") + 1
+        )
+        import_metadata = json.loads(target["import_command_args"][metadata_arg_index])
+        self.assertEqual(
+            import_metadata["runtime_ledger_artifact_refs"],
+            ["paper-probation-exact-ledger.json"],
+        )
+        self.assertEqual(import_metadata["runtime_ledger_artifact_row_count"], 27)
+        self.assertEqual(import_metadata["runtime_ledger_artifact_fill_count"], 9)
+        self.assertEqual(
+            import_metadata["exact_replay_ledger_artifact_ref"],
+            "paper-probation-exact-ledger.json",
+        )
+        self.assertEqual(import_metadata["window_start"], target["window_start"])
+        self.assertEqual(import_metadata["window_end"], target["window_end"])
+        self.assertTrue(import_metadata["paper_probation_authorized"])
+        self.assertFalse(import_metadata["promotion_allowed"])
+        self.assertFalse(import_metadata["final_promotion_authorized"])
         self.assertEqual(target["handoff"], "runtime_window_import_only")
         self.assertEqual(
             target["promotion_gate"], "existing_runtime_governance_fail_closed"
@@ -6911,6 +6931,25 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "paper-runtime-plan-exact-replay-ledger.json",
             plan["targets"][0]["import_command_args"],
         )
+        self.assertIn(
+            "--target-metadata-json",
+            plan["targets"][0]["import_command_args"],
+        )
+        metadata_arg_index = (
+            plan["targets"][0]["import_command_args"].index("--target-metadata-json")
+            + 1
+        )
+        import_metadata = json.loads(
+            plan["targets"][0]["import_command_args"][metadata_arg_index]
+        )
+        self.assertEqual(
+            import_metadata["runtime_ledger_artifact_refs"],
+            ["paper-runtime-plan-exact-replay-ledger.json"],
+        )
+        self.assertEqual(import_metadata["runtime_ledger_artifact_row_count"], 36)
+        self.assertEqual(import_metadata["runtime_ledger_artifact_fill_count"], 12)
+        self.assertEqual(import_metadata["window_start"], "2026-05-18T13:30:00+00:00")
+        self.assertEqual(import_metadata["window_end"], "2026-05-20T20:00:00+00:00")
         self.assertEqual(fallback_plan["status"], "ready")
         self.assertEqual(fallback_plan["target_count"], 1)
         self.assertEqual(
