@@ -58,6 +58,7 @@ def build_replay_runtime_window_handoff(
     runtime_plan = _build_runtime_window_import_plan(
         best_candidate=best_candidate,
         remediation_report=remediation_report,
+        ranking_policy=policy.to_payload(),
         hypothesis_id=_text(hypothesis_id) or "",
         source_manifest_ref=_text(source_manifest_ref) or "",
         run_id=_text(run_id) or "",
@@ -100,6 +101,7 @@ def _build_runtime_window_import_plan(
     *,
     best_candidate: Mapping[str, Any] | None,
     remediation_report: Mapping[str, Any],
+    ranking_policy: Mapping[str, Any],
     hypothesis_id: str,
     source_manifest_ref: str,
     run_id: str,
@@ -145,6 +147,10 @@ def _build_runtime_window_import_plan(
         )
         probation_allowed = not search_blockers
         artifact_counts = _runtime_ledger_artifact_counts(artifact_ref)
+        replay_window_metadata = _target_replay_window_metadata(
+            best_candidate=best_candidate,
+            ranking_policy=ranking_policy,
+        )
         window_start = _text(best_candidate.get("window_start"))
         window_end = _text(best_candidate.get("window_end"))
         target: dict[str, Any] = {
@@ -164,6 +170,7 @@ def _build_runtime_window_import_plan(
             "exact_replay_ledger_artifact_ref": artifact_ref,
             "window_start": window_start,
             "window_end": window_end,
+            **replay_window_metadata,
             "candidate_selection": "exact_replay_ledger_best_candidate",
             "selected_by": "replay_runtime_window_handoff_ranking",
             "selection_reason": _text(remediation_report.get("status")),
@@ -279,6 +286,44 @@ def _target_metadata_blockers(
             "paper_probation_evidence_collection_only",
         ]
     )
+
+
+def _target_replay_window_metadata(
+    *,
+    best_candidate: Mapping[str, Any],
+    ranking_policy: Mapping[str, Any],
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    for source_key, target_key in (
+        ("window_weekday_count", "replay_window_weekday_count"),
+        ("active_day_count", "replay_active_day_count"),
+        ("positive_day_count", "replay_positive_day_count"),
+        ("negative_day_count", "replay_negative_day_count"),
+        ("window_net_pnl_per_day", "replay_window_net_pnl_per_day"),
+        ("active_net_pnl_per_day", "replay_active_net_pnl_per_day"),
+        ("total_net_pnl_after_costs", "replay_total_net_pnl_after_costs"),
+        (
+            "avg_filled_notional_per_window_weekday",
+            "replay_avg_filled_notional_per_window_weekday",
+        ),
+        ("best_day_share", "replay_best_day_share"),
+    ):
+        if (value := best_candidate.get(source_key)) is not None:
+            metadata[target_key] = value
+    for source_key, target_key in (
+        ("min_window_weekday_count", "replay_min_window_weekday_count"),
+        ("target_net_pnl_per_day", "replay_target_net_pnl_per_day"),
+        (
+            "min_avg_filled_notional_per_day",
+            "replay_min_avg_filled_notional_per_day",
+        ),
+        ("max_best_day_share", "replay_max_best_day_share"),
+        ("max_gross_exposure_pct_equity", "replay_max_gross_exposure_pct_equity"),
+        ("start_equity", "replay_start_equity"),
+    ):
+        if (value := ranking_policy.get(source_key)) is not None:
+            metadata[target_key] = value
+    return metadata
 
 
 def _search_blockers(
