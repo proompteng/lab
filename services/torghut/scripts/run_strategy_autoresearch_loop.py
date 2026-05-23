@@ -293,6 +293,12 @@ class WorkItem:
     parent_candidate_id: str | None
 
 
+@dataclass(frozen=True)
+class LatestCompleteWindowRequirement:
+    min_days: int
+    source: str
+
+
 def _mapping(value: Any) -> dict[str, Any]:
     return (
         {str(key): item for key, item in value.items()}
@@ -827,6 +833,23 @@ def _maybe_write_signal_bundle(
     )
 
 
+def _latest_complete_window_requirement(
+    args: argparse.Namespace,
+    *,
+    objective_min_observed_trading_days: int,
+) -> LatestCompleteWindowRequirement:
+    cli_min_days = max(0, int(getattr(args, "latest_complete_window_min_days", 0) or 0))
+    if cli_min_days > 0:
+        return LatestCompleteWindowRequirement(min_days=cli_min_days, source="cli")
+    objective_min_days = max(0, int(objective_min_observed_trading_days or 0))
+    if objective_min_days > 0:
+        return LatestCompleteWindowRequirement(
+            min_days=objective_min_days,
+            source="objective_min_observed_trading_days",
+        )
+    return LatestCompleteWindowRequirement(min_days=0, source="disabled")
+
+
 def _maybe_materialize_run_replay_tape(
     *,
     args: argparse.Namespace,
@@ -836,6 +859,7 @@ def _maybe_materialize_run_replay_tape(
     full_window_start_date: str,
     full_window_end_date: str,
     existing_signal_bundle: MlxSignalBundleStats | None,
+    objective_min_observed_trading_days: int = 0,
 ) -> tuple[MlxSignalBundleStats | None, dict[str, Any] | None]:
     if not bool(getattr(args, "materialize_replay_tape", False)):
         return existing_signal_bundle, None
@@ -843,15 +867,20 @@ def _maybe_materialize_run_replay_tape(
         return existing_signal_bundle, None
     requested_full_window_start_date = full_window_start_date
     requested_full_window_end_date = full_window_end_date
+    window_requirement = _latest_complete_window_requirement(
+        args,
+        objective_min_observed_trading_days=objective_min_observed_trading_days,
+    )
     latest_window_receipt: dict[str, Any] | None = None
     if (
-        int(getattr(args, "latest_complete_window_min_days", 0) or 0) > 0
+        window_requirement.min_days > 0
         and full_window_start_date
         and full_window_end_date
     ):
         window_args = argparse.Namespace(
             **{
                 **vars(args),
+                "latest_complete_window_min_days": window_requirement.min_days,
                 "latest_complete_window_receipt_output": (
                     getattr(args, "latest_complete_window_receipt_output", None)
                     or Path(
@@ -915,6 +944,11 @@ def _maybe_materialize_run_replay_tape(
     receipt["requested_full_window_end_date"] = requested_full_window_end_date
     receipt["effective_full_window_start_date"] = full_window_start_date
     receipt["effective_full_window_end_date"] = full_window_end_date
+    receipt["objective_min_observed_trading_days"] = max(
+        0, int(objective_min_observed_trading_days or 0)
+    )
+    receipt["latest_complete_window_min_days"] = window_requirement.min_days
+    receipt["latest_complete_window_min_days_source"] = window_requirement.source
     if latest_window_receipt is not None:
         receipt["latest_complete_window"] = latest_window_receipt
     return signal_bundle_stats, receipt
@@ -1554,9 +1588,7 @@ def _strategy_autoresearch_runtime_window_import_plan(
             "window_end": window_end,
             "candidate_selection": "exact_replay_ledger_best_candidate",
             "selected_by": "strategy_autoresearch_exact_replay_ledger_ranking",
-            "selection_reason": _string(
-                exact_replay_ledger_remediation.get("status")
-            ),
+            "selection_reason": _string(exact_replay_ledger_remediation.get("status")),
             "paper_probation_authorized": probation_allowed,
             "paper_probation_authorization_scope": "evidence_collection_only",
             "evidence_collection_stage": "paper",
@@ -2292,9 +2324,7 @@ def _persist_run_outputs(
         "best_exact_replay_ledger_candidate": summary[
             "best_exact_replay_ledger_candidate"
         ],
-        "exact_replay_ledger_remediation": summary[
-            "exact_replay_ledger_remediation"
-        ],
+        "exact_replay_ledger_remediation": summary["exact_replay_ledger_remediation"],
         "runtime_window_import_plan": runtime_window_import_plan,
     }
     if error is not None:
@@ -2445,6 +2475,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
             full_window_start_date=resolved_full_window_start_date,
             full_window_end_date=resolved_full_window_end_date,
             existing_signal_bundle=signal_bundle_stats,
+            objective_min_observed_trading_days=program.objective.min_observed_trading_days,
         )
     )
     if materialized_replay_tape_receipt is not None:
