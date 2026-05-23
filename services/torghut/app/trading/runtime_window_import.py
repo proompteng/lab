@@ -32,7 +32,6 @@ US_EQUITIES_REGULAR_OPEN = time(hour=9, minute=30)
 US_EQUITIES_REGULAR_CLOSE = time(hour=16, minute=0)
 PROMOTION_GRADE_POST_COST_BASES = frozenset(
     {
-        "realized_strategy_pnl",
         "realized_strategy_pnl_after_explicit_costs",
     }
 )

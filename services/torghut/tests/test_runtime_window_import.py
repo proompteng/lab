@@ -124,6 +124,40 @@ class TestRuntimeWindowImport(TestCase):
             {"simulation_report_net_pnl": 1},
         )
 
+    def test_build_observed_runtime_buckets_rejects_legacy_realized_pnl_basis(
+        self,
+    ) -> None:
+        buckets = build_observed_runtime_buckets(
+            bucket_ranges=[
+                (
+                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    6,
+                )
+            ],
+            decision_times=[datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
+            execution_times=[datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+            tca_rows=[
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("4"),
+                    "post_cost_expectancy_bps": Decimal("50"),
+                    "post_cost_expectancy_basis": "realized_strategy_pnl",
+                    "post_cost_promotion_eligible": True,
+                }
+            ],
+            continuity_ok=True,
+            drift_ok=True,
+            dependency_quorum_decision="allow",
+        )
+
+        self.assertEqual(buckets[0].post_cost_expectancy_bps, Decimal("0"))
+        self.assertEqual(buckets[0].post_cost_promotion_sample_count, 0)
+        self.assertEqual(
+            buckets[0].post_cost_basis_counts,
+            {"realized_strategy_pnl": 1},
+        )
+
     def test_build_observed_runtime_buckets_weights_runtime_ledger_by_notional(
         self,
     ) -> None:
