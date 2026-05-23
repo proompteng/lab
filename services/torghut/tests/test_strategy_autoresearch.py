@@ -431,6 +431,10 @@ class TestStrategyAutoresearch(TestCase):
         self.assertEqual(args.latest_complete_window_min_days, 0)
         self.assertIsNone(args.latest_complete_window_receipt_output)
         self.assertIsNone(args.coverage_diagnostic_output)
+        self.assertEqual(args.min_executable_rows_per_symbol_day, 18000)
+        self.assertEqual(args.min_quote_valid_ratio, "0.90")
+        self.assertEqual(args.max_coverage_spread_bps, "50")
+        self.assertEqual(args.max_executable_gap_seconds, 120)
 
     def test_parse_args_prefers_clickhouse_http_url_env(self) -> None:
         with (
