@@ -853,6 +853,44 @@ class TestSubmissionCouncil(TestCase):
             ["runtime_window_certificate_applied"],
         )
 
+    def test_runtime_certificate_merge_rejects_explicit_missing_runtime_ledger_bucket(
+        self,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        result = _merge_runtime_certificate_evidence(
+            [
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "candidate_id": "cand-1",
+                    "strategy_family": "intraday_continuation",
+                    "capital_stage": "shadow",
+                    "capital_multiplier": "0",
+                    "promotion_eligible": False,
+                    "rollback_required": False,
+                    "reasons": ["drift_checks_missing"],
+                    "informational_reasons": [],
+                    "observed": self._runtime_ledger_observed(),
+                }
+            ],
+            evidence=[
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "metric_window": self._metric_window(),
+                    "promotion_decision": self._promotion_decision(),
+                    "runtime_ledger_bucket": None,
+                }
+            ],
+            now=now,
+            max_age_seconds=3600,
+        )
+
+        self.assertFalse(result[0]["promotion_eligible"])
+        self.assertEqual(result[0]["capital_stage"], "shadow")
+        self.assertEqual(
+            result[0]["observed"]["runtime_window_rejection_reasons"],
+            ["runtime_ledger_proof_missing"],
+        )
+
     def test_runtime_certificate_merge_rejects_invalid_runtime_ledger_payloads(
         self,
     ) -> None:
@@ -981,6 +1019,51 @@ class TestSubmissionCouncil(TestCase):
                 ]
                 for reason in expected_reasons:
                     self.assertIn(reason, rejection_reasons)
+
+    def test_runtime_certificate_merge_rejects_runtime_ledger_bucket_outside_metric_window(
+        self,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        metric_window = self._metric_window()
+        metric_window.window_started_at = now - timedelta(minutes=10)
+        metric_window.window_ended_at = now
+        payload = self._runtime_ledger_bucket_payload()
+        payload["bucket_started_at"] = (now + timedelta(minutes=1)).isoformat()
+        payload["bucket_ended_at"] = (now + timedelta(minutes=2)).isoformat()
+
+        result = _merge_runtime_certificate_evidence(
+            [
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "candidate_id": None,
+                    "strategy_family": "intraday_continuation",
+                    "capital_stage": "shadow",
+                    "capital_multiplier": "0",
+                    "promotion_eligible": False,
+                    "rollback_required": False,
+                    "reasons": ["drift_checks_missing"],
+                    "informational_reasons": [],
+                    "observed": {},
+                }
+            ],
+            evidence=[
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "metric_window": metric_window,
+                    "promotion_decision": self._promotion_decision(),
+                    "runtime_ledger_bucket": payload,
+                }
+            ],
+            now=now,
+            max_age_seconds=3600,
+        )
+
+        self.assertFalse(result[0]["promotion_eligible"])
+        self.assertEqual(result[0]["capital_stage"], "shadow")
+        self.assertIn(
+            "runtime_ledger_window_bounds_mismatch",
+            result[0]["observed"]["runtime_window_rejection_reasons"],
+        )
 
     def test_hypothesis_runtime_summary_uses_fresh_imported_runtime_proof(
         self,
@@ -1500,6 +1583,15 @@ class TestSubmissionCouncil(TestCase):
                     run_id="runtime-proof-1",
                     candidate_id="cand-runtime",
                     hypothesis_id="H-CONT-01",
+                    strategy_family="mean_reversion",
+                    bucket_at=now + timedelta(seconds=1),
+                )
+            )
+            session.add(
+                self._runtime_ledger_bucket_row(
+                    run_id="runtime-proof-1",
+                    candidate_id="cand-runtime",
+                    hypothesis_id="H-CONT-01",
                     bucket_at=now,
                 )
             )
@@ -1514,6 +1606,9 @@ class TestSubmissionCouncil(TestCase):
         runtime_ledger_bucket = evidence[0]["runtime_ledger_bucket"]
         self.assertIsInstance(runtime_ledger_bucket, dict)
         self.assertEqual(runtime_ledger_bucket["run_id"], "runtime-proof-1")
+        self.assertEqual(
+            runtime_ledger_bucket["strategy_family"], "intraday_continuation"
+        )
 
     def test_hypothesis_runtime_summary_counts_allowed_paper_runtime_readiness_without_capital_promotion(
         self,

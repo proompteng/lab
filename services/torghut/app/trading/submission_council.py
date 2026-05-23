@@ -604,12 +604,74 @@ def _runtime_ledger_payload_from_runtime_item(
     }
 
 
+def _runtime_ledger_bucket_within_metric_window(
+    *,
+    bucket_started_at: object,
+    bucket_ended_at: object,
+    metric_window: StrategyHypothesisMetricWindow,
+) -> bool:
+    window_started_at = _coerce_aware_datetime(
+        cast(object, getattr(metric_window, "window_started_at", None))
+    )
+    window_ended_at = _coerce_aware_datetime(
+        cast(object, getattr(metric_window, "window_ended_at", None))
+    )
+    bucket_start = _coerce_aware_datetime(bucket_started_at)
+    bucket_end = _coerce_aware_datetime(bucket_ended_at)
+    if (
+        window_started_at is None
+        or window_ended_at is None
+        or bucket_start is None
+        or bucket_end is None
+    ):
+        return False
+    if window_ended_at < window_started_at or bucket_end < bucket_start:
+        return False
+    return window_started_at <= bucket_start and bucket_end <= window_ended_at
+
+
+def _runtime_ledger_bucket_matches_metric_window(
+    ledger: StrategyRuntimeLedgerBucket,
+    *,
+    metric_window: StrategyHypothesisMetricWindow,
+) -> bool:
+    return _runtime_ledger_bucket_within_metric_window(
+        bucket_started_at=ledger.bucket_started_at,
+        bucket_ended_at=ledger.bucket_ended_at,
+        metric_window=metric_window,
+    )
+
+
+def _runtime_ledger_bucket_window_reason_code(
+    payload: Mapping[str, object],
+    *,
+    metric_window: StrategyHypothesisMetricWindow,
+) -> str | None:
+    window_started_at = cast(object, getattr(metric_window, "window_started_at", None))
+    window_ended_at = cast(object, getattr(metric_window, "window_ended_at", None))
+    if window_started_at is None or window_ended_at is None:
+        return None
+    bucket_started_at = payload.get("bucket_started_at")
+    bucket_ended_at = payload.get("bucket_ended_at")
+    if bucket_started_at is None or bucket_ended_at is None:
+        return "runtime_ledger_window_bounds_missing"
+    if not _runtime_ledger_bucket_within_metric_window(
+        bucket_started_at=bucket_started_at,
+        bucket_ended_at=bucket_ended_at,
+        metric_window=metric_window,
+    ):
+        return "runtime_ledger_window_bounds_mismatch"
+    return None
+
+
 def _certificate_runtime_ledger_payload(
     *,
     evidence_row: Mapping[str, object],
     runtime_item: Mapping[str, object],
 ) -> dict[str, object]:
     payload = evidence_row.get("runtime_ledger_bucket")
+    if "runtime_ledger_bucket" in evidence_row and not isinstance(payload, Mapping):
+        return {}
     if isinstance(payload, Mapping):
         return dict(cast(Mapping[str, object], payload))
     return _runtime_ledger_payload_from_runtime_item(runtime_item)
@@ -655,6 +717,12 @@ def _certificate_runtime_ledger_reason_codes(
         and ledger_run_id != metric_run_id
     ):
         reasons.append("runtime_ledger_run_id_mismatch")
+    window_reason = _runtime_ledger_bucket_window_reason_code(
+        ledger_payload,
+        metric_window=metric_window,
+    )
+    if window_reason is not None:
+        reasons.append(window_reason)
 
     certificate_candidate_id = (
         _safe_attr_text(metric_window, "candidate_id")
@@ -877,26 +945,35 @@ def _runtime_ledger_selection_score(payload: Mapping[str, object] | None) -> int
         score += 1
     if _safe_int(payload.get("open_position_count")) == 0:
         score += 1
-    if _runtime_ledger_hash_count(
-        payload,
-        payload_key="execution_policy_hash_counts",
-        observed={},
-        observed_key="runtime_ledger_execution_policy_hash_count",
-    ) > 0:
+    if (
+        _runtime_ledger_hash_count(
+            payload,
+            payload_key="execution_policy_hash_counts",
+            observed={},
+            observed_key="runtime_ledger_execution_policy_hash_count",
+        )
+        > 0
+    ):
         score += 1
-    if _runtime_ledger_hash_count(
-        payload,
-        payload_key="cost_model_hash_counts",
-        observed={},
-        observed_key="runtime_ledger_cost_model_hash_count",
-    ) > 0:
+    if (
+        _runtime_ledger_hash_count(
+            payload,
+            payload_key="cost_model_hash_counts",
+            observed={},
+            observed_key="runtime_ledger_cost_model_hash_count",
+        )
+        > 0
+    ):
         score += 1
-    if _runtime_ledger_hash_count(
-        payload,
-        payload_key="lineage_hash_counts",
-        observed={},
-        observed_key="runtime_ledger_lineage_hash_count",
-    ) > 0:
+    if (
+        _runtime_ledger_hash_count(
+            payload,
+            payload_key="lineage_hash_counts",
+            observed={},
+            observed_key="runtime_ledger_lineage_hash_count",
+        )
+        > 0
+    ):
         score += 1
     return score
 
@@ -926,7 +1003,8 @@ def _certificate_evidence_selection_key(
     fresh_score = 1
     if now is not None and max_age_seconds is not None and max_age_seconds > 0:
         fresh_score = int(
-            issued_at is not None and issued_at >= now - timedelta(seconds=max_age_seconds)
+            issued_at is not None
+            and issued_at >= now - timedelta(seconds=max_age_seconds)
         )
     observed_stage = _safe_text(getattr(metric_window, "observed_stage", None))
     stage_score = {"live": 2, "paper": 1}.get(observed_stage or "", 0)
@@ -1150,6 +1228,10 @@ def _load_latest_certificate_evidence(
                     != _safe_text(metric_window.candidate_id)
                     or _safe_text(ledger.observed_stage)
                     != _safe_text(metric_window.observed_stage)
+                    or not _runtime_ledger_bucket_matches_metric_window(
+                        ledger,
+                        metric_window=metric_window,
+                    )
                 ):
                     continue
                 runtime_ledger_bucket = _runtime_ledger_bucket_payload(ledger)
@@ -2316,7 +2398,9 @@ def build_live_submission_gate_payload(
         }:
             continue
         runtime_evidence_rows.append(row)
-    claimed_promotion_eligible_total = _safe_int(summary.get("promotion_eligible_total"))
+    claimed_promotion_eligible_total = _safe_int(
+        summary.get("promotion_eligible_total")
+    )
     if runtime_items and runtime_evidence_rows:
         runtime_items = _merge_runtime_certificate_evidence(
             runtime_items,
