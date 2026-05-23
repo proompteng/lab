@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any
 from unittest import TestCase
 
@@ -12,6 +13,7 @@ from app.models import (
     Base,
     StrategyHypothesisMetricWindow,
     StrategyPromotionDecision,
+    StrategyRuntimeLedgerBucket,
     VNextEmpiricalJobRun,
 )
 from app.trading.completion import (
@@ -67,6 +69,48 @@ def _promotion_decision(
         state=state,
         allowed=allowed,
         reason_summary='runtime_evidence_thresholds_satisfied' if allowed else 'runtime_evidence_denied',
+    )
+
+
+def _runtime_ledger_bucket(
+    *,
+    run_id: str,
+    candidate_id: str = 'cand-1',
+    hypothesis_id: str = 'legacy_macd_rsi',
+    observed_stage: str = 'live',
+    bucket_started_at: datetime,
+    bucket_ended_at: datetime,
+    ledger_schema_version: str = 'torghut.runtime-ledger-bucket.v1',
+) -> StrategyRuntimeLedgerBucket:
+    return StrategyRuntimeLedgerBucket(
+        run_id=run_id,
+        candidate_id=candidate_id,
+        hypothesis_id=hypothesis_id,
+        observed_stage=observed_stage,
+        bucket_started_at=bucket_started_at,
+        bucket_ended_at=bucket_ended_at,
+        runtime_strategy_name='legacy-macd-rsi',
+        strategy_family='breakout_continuation_consistent',
+        fill_count=12,
+        decision_count=24,
+        submitted_order_count=12,
+        cancelled_order_count=0,
+        rejected_order_count=0,
+        unfilled_order_count=0,
+        closed_trade_count=6,
+        open_position_count=0,
+        filled_notional=Decimal('120000'),
+        gross_strategy_pnl=Decimal('20'),
+        cost_amount=Decimal('3.2'),
+        net_strategy_pnl_after_costs=Decimal('16.8'),
+        post_cost_expectancy_bps=Decimal('1.4'),
+        ledger_schema_version=ledger_schema_version,
+        pnl_basis='realized_strategy_pnl_after_explicit_costs',
+        execution_policy_hash_counts={'policy-hash': 12},
+        cost_model_hash_counts={'cost-hash': 12},
+        lineage_hash_counts={'lineage-hash': 12},
+        blockers_json=[],
+        payload_json={'source': 'test-runtime-ledger'},
     )
 
 
@@ -468,6 +512,7 @@ class TestCompletionTrace(TestCase):
             live_window_start = now - timedelta(days=1)
             for index in range(10):
                 run_id = f'live-run-{index}'
+                live_window_end = live_window_start + timedelta(minutes=index + 1)
                 session.add(
                     StrategyHypothesisMetricWindow(
                         run_id=run_id,
@@ -475,7 +520,7 @@ class TestCompletionTrace(TestCase):
                         hypothesis_id='legacy_macd_rsi',
                         observed_stage='live',
                         window_started_at=live_window_start,
-                        window_ended_at=live_window_start,
+                        window_ended_at=live_window_end,
                         market_session_count=12,
                         decision_count=220,
                         trade_count=215,
@@ -502,6 +547,13 @@ class TestCompletionTrace(TestCase):
                         state='0.50x live',
                     )
                 )
+                session.add(
+                    _runtime_ledger_bucket(
+                        run_id=run_id,
+                        bucket_started_at=live_window_start,
+                        bucket_ended_at=live_window_end,
+                    )
+                )
             session.commit()
 
             status = build_doc29_completion_status(
@@ -515,6 +567,162 @@ class TestCompletionTrace(TestCase):
         scale_gate = next(item for item in status['gates'] if item['gate_id'] == DOC29_LIVE_SCALE_GATE)
         self.assertEqual(canary_gate['status'], 'satisfied')
         self.assertEqual(scale_gate['status'], 'satisfied')
+        self.assertEqual(
+            len(scale_gate['db_row_refs']['strategy_runtime_ledger_buckets']),
+            10,
+        )
+        self.assertEqual(
+            scale_gate['runtime_ledger_summary']['runtime_ledger_post_cost_expectancy_bps'],
+            1.4,
+        )
+
+    def test_doc29_live_scale_blocks_non_runtime_ledger_window_pnl(self) -> None:
+        trace = build_completion_trace(
+            doc_id='doc29',
+            gate_ids_attempted=[DOC29_SIMULATION_FULL_DAY_GATE],
+            run_id='sim-2026-03-06-full-day',
+            dataset_snapshot_ref='snapshot-1',
+            candidate_id='cand-1',
+            workflow_name='torghut-historical-simulation',
+            analysis_run_names=[],
+            artifact_refs=['s3://artifacts/run-full-lifecycle-manifest.json'],
+            db_row_refs={},
+            status_snapshot={},
+            result_by_gate={
+                DOC29_SIMULATION_FULL_DAY_GATE: {
+                    'status': TRACE_STATUS_SATISFIED,
+                    'artifact_ref': 's3://artifacts/run-full-lifecycle-manifest.json',
+                    'acceptance_snapshot': {
+                        'trade_decisions': 640,
+                        'executions': 320,
+                        'execution_tca_metrics': 320,
+                        'execution_order_events': 320,
+                        'coverage_ratio': 0.99,
+                        'fill_price_error_budget_status': 'within_budget',
+                    },
+                }
+            },
+            blocked_reasons={},
+            git_revision='abc123',
+            image_digest='sha256:test',
+        )
+        with self.session_local() as session:
+            persist_completion_trace(session=session, trace_payload=trace)
+            _add_truthful_empirical_jobs(session)
+
+            now = datetime.now(timezone.utc)
+            paper_window_start = now - timedelta(days=2)
+            for index in range(4):
+                run_id = f'paper-ledger-missing-{index}'
+                session.add(
+                    StrategyHypothesisMetricWindow(
+                        run_id=run_id,
+                        candidate_id='cand-1',
+                        hypothesis_id='legacy_macd_rsi',
+                        observed_stage='paper',
+                        window_started_at=paper_window_start,
+                        window_ended_at=paper_window_start,
+                        market_session_count=10,
+                        decision_count=200,
+                        trade_count=194,
+                        order_count=194,
+                        evidence_provenance='paper_runtime_observed',
+                        evidence_maturity='empirically_validated',
+                        decision_alignment_ratio='0.97',
+                        avg_abs_slippage_bps='4.2',
+                        slippage_budget_bps='8.0',
+                        post_cost_expectancy_bps='1.1',
+                        continuity_ok=True,
+                        drift_ok=True,
+                        dependency_quorum_decision='allow',
+                        capital_stage='shadow',
+                        payload_json={},
+                    )
+                )
+                session.add(
+                    _promotion_decision(
+                        run_id=run_id,
+                        candidate_id='cand-1',
+                        hypothesis_id='legacy_macd_rsi',
+                        promotion_target='paper',
+                        state='0.10x canary',
+                    )
+                )
+
+            live_window_start = now - timedelta(days=1)
+            for index in range(10):
+                run_id = f'live-ledger-missing-{index}'
+                session.add(
+                    StrategyHypothesisMetricWindow(
+                        run_id=run_id,
+                        candidate_id='cand-1',
+                        hypothesis_id='legacy_macd_rsi',
+                        observed_stage='live',
+                        window_started_at=live_window_start,
+                        window_ended_at=live_window_start + timedelta(minutes=index + 1),
+                        market_session_count=12,
+                        decision_count=220,
+                        trade_count=215,
+                        order_count=215,
+                        evidence_provenance='live_runtime_observed',
+                        evidence_maturity='empirically_validated',
+                        decision_alignment_ratio='0.98',
+                        avg_abs_slippage_bps='4.5',
+                        slippage_budget_bps='8.0',
+                        post_cost_expectancy_bps='1.4',
+                        continuity_ok=True,
+                        drift_ok=True,
+                        dependency_quorum_decision='allow',
+                        capital_stage='0.50x live',
+                        payload_json={},
+                    )
+                )
+                session.add(
+                    _promotion_decision(
+                        run_id=run_id,
+                        candidate_id='cand-1',
+                        hypothesis_id='legacy_macd_rsi',
+                        promotion_target='live',
+                        state='0.50x live',
+                    )
+                )
+                if index == 0:
+                    session.add(
+                        _runtime_ledger_bucket(
+                            run_id=run_id,
+                            candidate_id='other-candidate',
+                            bucket_started_at=live_window_start,
+                            bucket_ended_at=live_window_start + timedelta(minutes=index + 1),
+                        )
+                    )
+                if index == 1:
+                    session.add(
+                        _runtime_ledger_bucket(
+                            run_id=run_id,
+                            bucket_started_at=live_window_start,
+                            bucket_ended_at=live_window_start + timedelta(minutes=index + 1),
+                            ledger_schema_version='torghut.loose_runtime_ledger.v0',
+                        )
+                    )
+            session.commit()
+
+            status = build_doc29_completion_status(
+                session=session,
+                stale_after_seconds=86400,
+                current_git_revision='abc123',
+                current_image_digest='sha256:test',
+            )
+
+        canary_gate = next(item for item in status['gates'] if item['gate_id'] == DOC29_LIVE_CANARY_GATE)
+        scale_gate = next(item for item in status['gates'] if item['gate_id'] == DOC29_LIVE_SCALE_GATE)
+        self.assertEqual(canary_gate['status'], 'satisfied')
+        self.assertEqual(scale_gate['status'], 'blocked')
+        self.assertEqual(scale_gate['blocked_reason'], 'runtime_ledger_profit_proof_missing')
+        self.assertEqual(scale_gate['db_row_refs']['strategy_runtime_ledger_buckets'], [])
+        self.assertEqual(
+            len(scale_gate['db_row_refs']['runtime_ledger_unbacked_hypothesis_metric_windows']),
+            10,
+        )
 
     def test_doc29_live_canary_requires_allowed_promotion_decision(self) -> None:
         trace = build_completion_trace(
