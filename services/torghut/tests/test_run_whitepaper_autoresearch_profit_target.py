@@ -4710,8 +4710,29 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         with TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "epoch"
             selected_specs_path = Path(tmpdir) / "selected-candidate-specs.jsonl"
+            direct_a_base = self._candidate_spec("spec-direct-a")
+            direct_a_spec = replace(
+                direct_a_base,
+                feature_contract={
+                    **direct_a_base.feature_contract,
+                    "source_claims": [
+                        {
+                            "claim_id": "direct-route-tca-required",
+                            "claim_type": "execution_assumption",
+                            "data_requirements": ["route_tca"],
+                        }
+                    ],
+                },
+                parameter_space={
+                    "mechanism_overlay_ids": ["queue_position_survival_fill_curve"]
+                },
+                promotion_contract={
+                    "requires_route_tca": True,
+                    "requires_runtime_ledger": True,
+                },
+            )
             specs = (
-                self._candidate_spec("spec-direct-a"),
+                direct_a_spec,
                 self._candidate_spec(
                     "spec-direct-b",
                     family_template_id="momentum_pullback_v1",
@@ -4743,6 +4764,12 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                             "net_pnl_per_day": "25",
                             "active_day_ratio": "1",
                             "positive_day_ratio": "1",
+                            "exact_replay_ledger_artifact_ref": "direct-exact-ledger.json",
+                            "runtime_ledger_artifact_ref": "direct-runtime-ledger.json",
+                            "runtime_ledger_artifact_row_count": 12,
+                            "runtime_ledger_artifact_fill_count": 4,
+                            "runtime_window_start": "2026-05-18T13:30:00+00:00",
+                            "runtime_window_end": "2026-05-18T20:00:00+00:00",
                         },
                     },
                     dataset_snapshot_id="snap-direct",
@@ -4817,6 +4844,22 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             selection["selected_candidate_spec_ids"],
             ["spec-direct-a", "spec-direct-b"],
         )
+        direct_selection_row = next(
+            row
+            for row in selection["rows"]
+            if row["candidate_spec_id"] == "spec-direct-a"
+        )
+        self.assertGreater(
+            Decimal(str(direct_selection_row["paper_contract_prior_score"])),
+            Decimal("0"),
+        )
+        self.assertEqual(
+            direct_selection_row["paper_mechanism_overlay_ids"],
+            ["queue_position_survival_fill_curve"],
+        )
+        self.assertIn(
+            "runtime_ledger", direct_selection_row["paper_required_evidence_tokens"]
+        )
         self.assertEqual(
             [spec["candidate_spec_id"] for spec in selected_candidate_specs],
             ["spec-direct-a", "spec-direct-b"],
@@ -4838,6 +4881,30 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             str(selected_specs_path),
             profitability_goal["recommended_next_epoch"]["argv"],
         )
+        direct_sleeve_row = next(
+            row
+            for row in profitability_goal["sleeve_plan"]["rows"]
+            if row["candidate_spec_id"] == "spec-direct-a"
+        )
+        self.assertEqual(
+            direct_sleeve_row["replay_selection_reason"],
+            "direct_candidate_specs_handoff",
+        )
+        self.assertTrue(direct_sleeve_row["paper_contract_candidate"])
+        self.assertTrue(direct_sleeve_row["paper_contract_selected_for_replay"])
+        self.assertEqual(
+            direct_sleeve_row["paper_mechanism_overlay_ids"],
+            ["queue_position_survival_fill_curve"],
+        )
+        self.assertIn(
+            "runtime_ledger", direct_sleeve_row["paper_required_evidence_tokens"]
+        )
+        self.assertEqual(
+            direct_sleeve_row["runtime_ledger_artifact_refs"],
+            ["direct-exact-ledger.json", "direct-runtime-ledger.json"],
+        )
+        self.assertEqual(direct_sleeve_row["runtime_ledger_artifact_row_count"], 12)
+        self.assertEqual(direct_sleeve_row["runtime_ledger_artifact_fill_count"], 4)
         source_compiler_mock.assert_not_called()
         candidate_compiler_mock.assert_not_called()
         selection_mock.assert_not_called()
@@ -5971,8 +6038,19 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(allowed_readiness["status"], "promotion_ready")
 
     def test_candidate_sleeve_goal_rows_carry_order_type_proof_refs(self) -> None:
+        base_spec = self._candidate_spec("spec-sleeve-order-type-proof")
         spec = replace(
-            self._candidate_spec("spec-sleeve-order-type-proof"),
+            base_spec,
+            feature_contract={
+                **base_spec.feature_contract,
+                "source_claims": [
+                    {
+                        "claim_id": "route-tca-required",
+                        "claim_type": "execution_assumption",
+                        "data_requirements": ["route_tca"],
+                    }
+                ],
+            },
             parameter_space={
                 "mechanism_overlay_ids": ["mixed_market_limit_execution_policy"]
             },
@@ -6013,6 +6091,12 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 "route_tca_artifact_ref": "route-tca.json",
                 "order_type_opportunity_cost_bps": "4",
                 "market_order_spread_bps": "4",
+                "exact_replay_ledger_artifact_ref": "sleeve-exact-replay-ledger.json",
+                "runtime_ledger_artifact_ref": "sleeve-runtime-ledger.json",
+                "runtime_ledger_artifact_row_count": 30,
+                "runtime_ledger_artifact_fill_count": 10,
+                "runtime_window_start": "2026-05-18T13:30:00+00:00",
+                "runtime_window_end": "2026-05-18T20:00:00+00:00",
             },
             fold_metrics=(),
             stress_metrics=(),
@@ -6020,18 +6104,29 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             null_comparator={},
             promotion_readiness={},
         )
+        candidate_selection = {
+            "rows": [
+                {
+                    "candidate_spec_id": spec.candidate_spec_id,
+                    "selected_for_replay": True,
+                    "rank": 1,
+                    "selection_reason": "paper_contract_exploration",
+                    "paper_contract_prior_score": "29",
+                    "paper_mechanism_overlay_ids": [
+                        "mixed_market_limit_execution_policy"
+                    ],
+                    "paper_required_evidence_tokens": [
+                        "route_tca",
+                        "runtime_ledger",
+                    ],
+                    "paper_required_evidence_count": 2,
+                }
+            ]
+        }
 
         rows = runner._candidate_sleeve_goal_rows(
             candidate_specs=(spec,),
-            candidate_selection={
-                "rows": [
-                    {
-                        "candidate_spec_id": spec.candidate_spec_id,
-                        "selected_for_replay": True,
-                        "rank": 1,
-                    }
-                ]
-            },
+            candidate_selection=candidate_selection,
             evidence_bundles=(evidence,),
             false_positive_table=(),
             best_false_negative_table=(),
@@ -6050,6 +6145,61 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertEqual(rows[0]["order_type_execution_quality"]["sample_count"], 60)
         self.assertTrue(rows[0]["order_type_execution_quality"]["passed"])
+        self.assertEqual(
+            rows[0]["replay_selection_reason"], "paper_contract_exploration"
+        )
+        self.assertTrue(rows[0]["paper_contract_candidate"])
+        self.assertTrue(rows[0]["paper_contract_selected_for_replay"])
+        self.assertEqual(rows[0]["paper_contract_prior_score"], "29")
+        self.assertEqual(
+            rows[0]["paper_mechanism_overlay_ids"],
+            ["mixed_market_limit_execution_policy"],
+        )
+        self.assertEqual(
+            rows[0]["paper_required_evidence_tokens"],
+            ["route_tca", "runtime_ledger"],
+        )
+        self.assertEqual(rows[0]["paper_required_evidence_count"], 2)
+        self.assertEqual(
+            rows[0]["runtime_ledger_artifact_refs"],
+            ["sleeve-exact-replay-ledger.json", "sleeve-runtime-ledger.json"],
+        )
+        self.assertEqual(
+            rows[0]["exact_replay_ledger_artifact_ref"],
+            "sleeve-exact-replay-ledger.json",
+        )
+        self.assertEqual(
+            rows[0]["runtime_ledger_artifact_ref"], "sleeve-runtime-ledger.json"
+        )
+        self.assertEqual(rows[0]["runtime_ledger_artifact_row_count"], 30)
+        self.assertEqual(rows[0]["runtime_ledger_artifact_fill_count"], 10)
+        self.assertEqual(rows[0]["runtime_window_start"], "2026-05-18T13:30:00+00:00")
+        fallback_rows = runner._candidate_sleeve_goal_rows(
+            candidate_specs=(spec,),
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                        "rank": 1,
+                    }
+                ]
+            },
+            evidence_bundles=(evidence,),
+            false_positive_table=(),
+            best_false_negative_table=(),
+            portfolio=None,
+        )
+        self.assertGreater(
+            Decimal(str(fallback_rows[0]["paper_contract_prior_score"])),
+            Decimal("0"),
+        )
+        self.assertEqual(
+            fallback_rows[0]["paper_mechanism_overlay_ids"],
+            ["mixed_market_limit_execution_policy"],
+        )
+        self.assertIn("route_tca", fallback_rows[0]["paper_required_evidence_tokens"])
+        self.assertGreater(fallback_rows[0]["paper_required_evidence_count"], 0)
 
         portfolio = runner.PortfolioCandidateSpec(
             schema_version="torghut.portfolio-candidate-spec.v1",
@@ -6072,7 +6222,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         portfolio_rows = runner._candidate_sleeve_goal_rows(
             candidate_specs=(spec,),
-            candidate_selection={"rows": []},
+            candidate_selection=candidate_selection,
             evidence_bundles=(evidence,),
             false_positive_table=(),
             best_false_negative_table=(),
@@ -6087,6 +6237,14 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertTrue(portfolio_rows[0]["evidence_lineage"]["passed"])
         self.assertTrue(portfolio_rows[0]["order_type_execution_quality"]["passed"])
         self.assertEqual(portfolio_rows[0]["market_impact_proof"]["state"], "blocked")
+        self.assertEqual(
+            portfolio_rows[0]["replay_selection_reason"], "paper_contract_exploration"
+        )
+        self.assertTrue(portfolio_rows[0]["paper_contract_selected_for_replay"])
+        self.assertEqual(
+            portfolio_rows[0]["runtime_ledger_artifact_refs"],
+            ["sleeve-exact-replay-ledger.json", "sleeve-runtime-ledger.json"],
+        )
 
     def test_candidate_board_marks_portfolio_promotion_found_when_portfolio_oracle_passes(
         self,
@@ -7088,6 +7246,17 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     {
                         "candidate_spec_id": spec.candidate_spec_id,
                         "selected_for_replay": True,
+                        "selection_reason": "paper_contract_exploration",
+                        "paper_contract_prior_score": "31.5",
+                        "paper_mechanism_overlay_ids": [
+                            "mixed_market_limit_execution_policy",
+                            "queue_position_survival_fill_curve",
+                        ],
+                        "paper_required_evidence_tokens": [
+                            "live_paper_parity",
+                            "route_tca",
+                            "runtime_ledger",
+                        ],
                     }
                 ]
             },
@@ -7106,6 +7275,23 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
 
         self.assertEqual(board["current_answer"], "no_promotion_ready_candidate")
+        row = board["rows"][0]
+        self.assertEqual(row["replay_selection_reason"], "paper_contract_exploration")
+        self.assertTrue(row["paper_contract_candidate"])
+        self.assertTrue(row["paper_contract_selected_for_replay"])
+        self.assertEqual(row["paper_contract_prior_score"], "31.5")
+        self.assertEqual(
+            row["paper_mechanism_overlay_ids"],
+            [
+                "mixed_market_limit_execution_policy",
+                "queue_position_survival_fill_curve",
+            ],
+        )
+        self.assertEqual(
+            row["paper_required_evidence_tokens"],
+            ["live_paper_parity", "route_tca", "runtime_ledger"],
+        )
+        self.assertEqual(row["paper_required_evidence_count"], 3)
         self.assertEqual(
             board["paper_probation_candidate"]["candidate_id"], "cand-paper-probation"
         )
@@ -7165,6 +7351,16 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertEqual(target["runtime_ledger_artifact_row_count"], 27)
         self.assertEqual(target["runtime_ledger_artifact_fill_count"], 9)
+        self.assertEqual(
+            target["replay_selection_reason"], "paper_contract_exploration"
+        )
+        self.assertTrue(target["paper_contract_candidate"])
+        self.assertTrue(target["paper_contract_selected_for_replay"])
+        self.assertEqual(target["paper_contract_prior_score"], "31.5")
+        self.assertEqual(
+            target["paper_required_evidence_tokens"],
+            ["live_paper_parity", "route_tca", "runtime_ledger"],
+        )
         self.assertIn("--artifact-ref", target["import_command_args"])
         self.assertIn(
             "paper-probation-exact-ledger.json", target["import_command_args"]
@@ -7186,6 +7382,20 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertEqual(import_metadata["window_start"], target["window_start"])
         self.assertEqual(import_metadata["window_end"], target["window_end"])
+        self.assertEqual(
+            import_metadata["replay_selection_reason"], "paper_contract_exploration"
+        )
+        self.assertEqual(
+            import_metadata["paper_mechanism_overlay_ids"],
+            [
+                "mixed_market_limit_execution_policy",
+                "queue_position_survival_fill_curve",
+            ],
+        )
+        self.assertEqual(
+            import_metadata["paper_required_evidence_tokens"],
+            ["live_paper_parity", "route_tca", "runtime_ledger"],
+        )
         self.assertTrue(import_metadata["paper_probation_authorized"])
         self.assertFalse(import_metadata["promotion_allowed"])
         self.assertFalse(import_metadata["final_promotion_authorized"])
