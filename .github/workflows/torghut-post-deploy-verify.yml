@@ -213,6 +213,24 @@ jobs:
             echo "Knative Service torghut is not Ready"
             exit 1
           fi
+          set +e
+          SIM_KNSVC_READY="$(kubectl get ksvc torghut-sim -n torghut -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2> /tmp/torghut-sim-ksvc-ready.err)"
+          SIM_KNSVC_READY_STATUS=$?
+          set -e
+          if [ "${SIM_KNSVC_READY_STATUS}" -ne 0 ]; then
+            if grep -qi 'not found' /tmp/torghut-sim-ksvc-ready.err; then
+              echo "Knative Service torghut-sim was not found"
+              cat /tmp/torghut-sim-ksvc-ready.err
+              exit 1
+            else
+              echo "Failed to read Knative Service torghut-sim"
+              cat /tmp/torghut-sim-ksvc-ready.err
+              exit 1
+            fi
+          elif [ "${SIM_KNSVC_READY}" != 'True' ]; then
+            echo "Knative Service torghut-sim is not Ready"
+            exit 1
+          fi
 
           EVIDENCE_DIR="${RUNNER_TEMP}/torghut-post-deploy"
           mkdir -p "${EVIDENCE_DIR}"
@@ -235,6 +253,10 @@ jobs:
             >"${EVIDENCE_DIR}/torghut-status.json"
           curl -fsS http://torghut.torghut.svc.cluster.local/trading/revenue-repair \
             >"${EVIDENCE_DIR}/torghut-revenue-repair-digest.json"
+          curl -fsS http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence \
+            >"${EVIDENCE_DIR}/torghut-paper-route-evidence.json"
+          curl -fsS http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence \
+            >"${EVIDENCE_DIR}/torghut-sim-paper-route-evidence.json"
           curl -fsS http://torghut-ws.torghut.svc.cluster.local/readyz \
             >"${EVIDENCE_DIR}/torghut-ws-ready.json"
 
@@ -242,6 +264,8 @@ jobs:
           export TORGHUT_STATUS_PAYLOAD="${EVIDENCE_DIR}/torghut-status.json"
           export TORGHUT_READYZ_HTTP_STATUS
           export TORGHUT_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-readyz.json"
+          export TORGHUT_PAPER_ROUTE_EVIDENCE="${EVIDENCE_DIR}/torghut-paper-route-evidence.json"
+          export TORGHUT_SIM_PAPER_ROUTE_EVIDENCE="${EVIDENCE_DIR}/torghut-sim-paper-route-evidence.json"
           bun run packages/scripts/src/torghut/post-deploy-evidence.ts
 
       - name: Close superseded Torghut rollback pull requests

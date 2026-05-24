@@ -4,6 +4,8 @@ import { appendFileSync, readFileSync } from 'node:fs'
 import process from 'node:process'
 
 const ROUTE_BOARD_SCHEMA_VERSION = 'torghut.route-reacquisition-board.v1'
+const PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION = 'torghut.paper-route-evidence.v1'
+const PAPER_ROUTE_TARGETS_SCHEMA_VERSION = 'torghut.next-paper-route-runtime-window-targets.v1'
 
 type JsonObject = Record<string, unknown>
 
@@ -12,6 +14,8 @@ type PostDeployEvidenceInput = {
   readyz: unknown
   revenueRepairDigest: unknown
   tradingStatus: unknown
+  paperRouteEvidence?: unknown
+  simPaperRouteEvidence?: unknown
 }
 
 export type PostDeployEvidenceResult = {
@@ -53,6 +57,13 @@ const requireDependencyOk = (dependencies: JsonObject, name: string) => {
   if (dependency.ok !== true) {
     throw new Error(`readyz dependencies.${name}.ok must be true for repair-only rollout acceptance`)
   }
+}
+
+const requireArray = (value: unknown, label: string): unknown[] => {
+  if (!Array.isArray(value)) {
+    throw new Error(`${label} must be an array`)
+  }
+  return value
 }
 
 const collectDependencyFailureNames = (digest: JsonObject): Set<string> => {
@@ -130,6 +141,77 @@ const assertRepairOnlyZeroNotionalReadyz = (readyz: JsonObject, digest: JsonObje
       throw new Error(`missing expected repair-only dependency failure: ${requiredFailure}`)
     }
   }
+}
+
+const targetIdentity = (target: unknown, label: string): string => {
+  const targetObject = requireObject(target, label)
+  const hypothesisId = formatScalar(targetObject.hypothesis_id, '')
+  const candidateId = formatScalar(targetObject.candidate_id, '')
+  const strategyName = formatScalar(targetObject.strategy_name ?? targetObject.strategy_id, '')
+  const windowStart = formatScalar(targetObject.window_start, '')
+  const windowEnd = formatScalar(targetObject.window_end, '')
+  if (!hypothesisId || !candidateId || !strategyName || !windowStart || !windowEnd) {
+    throw new Error(`${label} missing target identity fields`)
+  }
+  return [hypothesisId, candidateId, strategyName, windowStart, windowEnd].join('|')
+}
+
+const requireNotTrue = (value: unknown, label: string) => {
+  if (value === true || value === 'true') {
+    throw new Error(`${label} must not be true for paper-route evidence collection`)
+  }
+}
+
+const parsePaperRouteTargets = (evidence: unknown, label: string): { targetCount: number; identities: Set<string> } => {
+  const payload = requireObject(evidence, `${label} payload`)
+  const schemaVersion = formatScalar(payload.schema_version, 'missing')
+  if (schemaVersion !== PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION) {
+    throw new Error(`${label} schema mismatch: expected ${PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION}, got ${schemaVersion}`)
+  }
+  const plan = requireObject(
+    payload.next_paper_route_runtime_window_targets,
+    `${label} next_paper_route_runtime_window_targets`,
+  )
+  const planSchemaVersion = formatScalar(plan.schema_version, 'missing')
+  if (planSchemaVersion !== PAPER_ROUTE_TARGETS_SCHEMA_VERSION) {
+    throw new Error(
+      `${label} target plan schema mismatch: expected ${PAPER_ROUTE_TARGETS_SCHEMA_VERSION}, got ${planSchemaVersion}`,
+    )
+  }
+  const targets = requireArray(plan.targets, `${label} target plan targets`)
+  const targetCount = requireNonNegativeInteger(plan.target_count, `${label} target plan target_count`)
+  if (targets.length !== targetCount) {
+    throw new Error(`${label} target_count mismatch: count=${targetCount}, targets=${targets.length}`)
+  }
+  requireNotTrue(plan.promotion_allowed, `${label} target plan promotion_allowed`)
+  requireNotTrue(plan.final_promotion_allowed, `${label} target plan final_promotion_allowed`)
+  requireNotTrue(plan.final_promotion_authorized, `${label} target plan final_promotion_authorized`)
+  targets.forEach((target, index) => {
+    const targetObject = requireObject(target, `${label} target ${index}`)
+    requireNotTrue(targetObject.promotion_allowed, `${label} target ${index} promotion_allowed`)
+    requireNotTrue(targetObject.final_promotion_allowed, `${label} target ${index} final_promotion_allowed`)
+    requireNotTrue(targetObject.final_promotion_authorized, `${label} target ${index} final_promotion_authorized`)
+  })
+  return {
+    targetCount,
+    identities: new Set(targets.map((target, index) => targetIdentity(target, `${label} target ${index}`))),
+  }
+}
+
+const validatePaperRouteMirror = (
+  paperRouteEvidence: unknown,
+  simPaperRouteEvidence: unknown,
+): { liveTargetCount: number; simTargetCount: number } => {
+  const liveTargets = parsePaperRouteTargets(paperRouteEvidence, 'torghut paper-route evidence')
+  const simTargets = parsePaperRouteTargets(simPaperRouteEvidence, 'torghut-sim paper-route evidence')
+  if (liveTargets.targetCount > 0 && simTargets.targetCount === 0) {
+    throw new Error('torghut-sim paper-route target plan is empty while live torghut exposes targets')
+  }
+  const missingSimTargets = [...liveTargets.identities].filter((identity) => !simTargets.identities.has(identity))
+  if (missingSimTargets.length > 0) {
+    throw new Error(`torghut-sim paper-route target plan missing live target(s): ${missingSimTargets.join(', ')}`)
+  }
+  return { liveTargetCount: liveTargets.targetCount, simTargetCount: simTargets.targetCount }
 }
 
 export const validatePostDeployEvidence = (input: PostDeployEvidenceInput): PostDeployEvidenceResult => {
@@ -243,6 +325,20 @@ export const validatePostDeployEvidence = (input: PostDeployEvidenceInput): Post
     lines.push(`- Top repair symbols: ${topRepairSymbols.map((symbol) => `\`${symbol}\``).join(', ')}`)
   }
 
+  if (input.paperRouteEvidence !== undefined || input.simPaperRouteEvidence !== undefined) {
+    if (input.paperRouteEvidence === undefined || input.simPaperRouteEvidence === undefined) {
+      throw new Error('both torghut and torghut-sim paper-route evidence payloads are required for mirror validation')
+    }
+    const mirror = validatePaperRouteMirror(input.paperRouteEvidence, input.simPaperRouteEvidence)
+    lines.push(
+      '',
+      '## Torghut Paper Route Target Mirror',
+      '',
+      `- Live target count: \`${mirror.liveTargetCount}\``,
+      `- Sim target count: \`${mirror.simTargetCount}\``,
+    )
+  }
+
   return { readyzAcceptedReason, readyzStatusCode, summaryLines: lines }
 }
 
@@ -260,6 +356,12 @@ export const runPostDeployEvidenceCli = (env: NodeJS.ProcessEnv = process.env): 
     readyz: loadJsonFile(env.TORGHUT_READYZ_PAYLOAD ?? '', 'TORGHUT_READYZ_PAYLOAD'),
     revenueRepairDigest: loadJsonFile(env.TORGHUT_REVENUE_REPAIR_DIGEST ?? '', 'TORGHUT_REVENUE_REPAIR_DIGEST'),
     tradingStatus: loadJsonFile(env.TORGHUT_STATUS_PAYLOAD ?? '', 'TORGHUT_STATUS_PAYLOAD'),
+    paperRouteEvidence: env.TORGHUT_PAPER_ROUTE_EVIDENCE
+      ? loadJsonFile(env.TORGHUT_PAPER_ROUTE_EVIDENCE, 'TORGHUT_PAPER_ROUTE_EVIDENCE')
+      : undefined,
+    simPaperRouteEvidence: env.TORGHUT_SIM_PAPER_ROUTE_EVIDENCE
+      ? loadJsonFile(env.TORGHUT_SIM_PAPER_ROUTE_EVIDENCE, 'TORGHUT_SIM_PAPER_ROUTE_EVIDENCE')
+      : undefined,
   })
 
   const summaryPath = env.GITHUB_STEP_SUMMARY

@@ -21,6 +21,26 @@ const baseTradingStatus = {
   route_reacquisition_board: baseRouteBoard,
 }
 
+const paperRouteTarget = {
+  hypothesis_id: 'H-PAIRS-01',
+  candidate_id: 'candidate-paper-route',
+  strategy_name: 'paper-route-candidate-v1',
+  window_start: '2026-05-26T13:30:00+00:00',
+  window_end: '2026-05-26T20:00:00+00:00',
+}
+
+const buildPaperRouteEvidence = (targets: Array<Record<string, unknown>>) => ({
+  schema_version: 'torghut.paper-route-evidence.v1',
+  next_paper_route_runtime_window_targets: {
+    schema_version: 'torghut.next-paper-route-runtime-window-targets.v1',
+    promotion_allowed: false,
+    final_promotion_allowed: false,
+    final_promotion_authorized: false,
+    target_count: targets.length,
+    targets,
+  },
+})
+
 const baseDigest = {
   business_state: 'repair_only',
   revenue_ready: false,
@@ -109,5 +129,78 @@ describe('validatePostDeployEvidence', () => {
         tradingStatus: baseTradingStatus,
       }),
     ).toThrow('max_notional=0')
+  })
+
+  it('accepts matching live and sim paper-route target plans', () => {
+    const result = validatePostDeployEvidence({
+      readyzHttpStatus: '200',
+      readyz: { status: 'ok' },
+      revenueRepairDigest: { ...baseDigest, repair_queue: [] },
+      tradingStatus: baseTradingStatus,
+      paperRouteEvidence: buildPaperRouteEvidence([paperRouteTarget]),
+      simPaperRouteEvidence: buildPaperRouteEvidence([{ ...paperRouteTarget, source_account_label: 'TORGHUT_SIM' }]),
+    })
+
+    expect(result.summaryLines.join('\n')).toContain('Torghut Paper Route Target Mirror')
+    expect(result.summaryLines.join('\n')).toContain('Live target count: `1`')
+    expect(result.summaryLines.join('\n')).toContain('Sim target count: `1`')
+  })
+
+  it('rejects an empty sim paper-route plan when live torghut exposes a target', () => {
+    expect(() =>
+      validatePostDeployEvidence({
+        readyzHttpStatus: '200',
+        readyz: { status: 'ok' },
+        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
+        tradingStatus: baseTradingStatus,
+        paperRouteEvidence: buildPaperRouteEvidence([paperRouteTarget]),
+        simPaperRouteEvidence: buildPaperRouteEvidence([]),
+      }),
+    ).toThrow('torghut-sim paper-route target plan is empty while live torghut exposes targets')
+  })
+
+  it('rejects a sim paper-route plan missing the live target identity', () => {
+    expect(() =>
+      validatePostDeployEvidence({
+        readyzHttpStatus: '200',
+        readyz: { status: 'ok' },
+        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
+        tradingStatus: baseTradingStatus,
+        paperRouteEvidence: buildPaperRouteEvidence([paperRouteTarget]),
+        simPaperRouteEvidence: buildPaperRouteEvidence([{ ...paperRouteTarget, candidate_id: 'other-candidate' }]),
+      }),
+    ).toThrow('torghut-sim paper-route target plan missing live target')
+  })
+
+  it('rejects paper-route target plans that accidentally authorize promotion', () => {
+    expect(() =>
+      validatePostDeployEvidence({
+        readyzHttpStatus: '200',
+        readyz: { status: 'ok' },
+        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
+        tradingStatus: baseTradingStatus,
+        paperRouteEvidence: {
+          ...buildPaperRouteEvidence([paperRouteTarget]),
+          next_paper_route_runtime_window_targets: {
+            ...buildPaperRouteEvidence([paperRouteTarget]).next_paper_route_runtime_window_targets,
+            final_promotion_authorized: true,
+          },
+        },
+        simPaperRouteEvidence: buildPaperRouteEvidence([paperRouteTarget]),
+      }),
+    ).toThrow('final_promotion_authorized must not be true')
+  })
+
+  it('rejects paper-route targets that accidentally authorize promotion', () => {
+    expect(() =>
+      validatePostDeployEvidence({
+        readyzHttpStatus: '200',
+        readyz: { status: 'ok' },
+        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
+        tradingStatus: baseTradingStatus,
+        paperRouteEvidence: buildPaperRouteEvidence([{ ...paperRouteTarget, promotion_allowed: true }]),
+        simPaperRouteEvidence: buildPaperRouteEvidence([paperRouteTarget]),
+      }),
+    ).toThrow('target 0 promotion_allowed must not be true')
   })
 })
