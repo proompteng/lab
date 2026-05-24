@@ -68,6 +68,18 @@ def _as_mapping_items(value: object) -> list[dict[str, Any]]:
     ]
 
 
+def _dedupe_texts(items: Sequence[object]) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        text = str(item).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        values.append(text)
+    return values
+
+
 def _safe_text(value: object) -> str | None:
     if value is None:
         return None
@@ -361,11 +373,9 @@ def _target_identity(target: Mapping[str, Any]) -> dict[str, object]:
         "dataset_snapshot_ref": _safe_text(target.get("dataset_snapshot_ref")),
         "window_start": _safe_text(target.get("window_start")),
         "window_end": _safe_text(target.get("window_end")),
-        "paper_route_probe_symbols": [
-            str(item).strip()
-            for item in _as_sequence(target.get("paper_route_probe_symbols"))
-            if str(item).strip()
-        ],
+        "paper_route_probe_symbols": _dedupe_texts(
+            _as_sequence(target.get("paper_route_probe_symbols"))
+        ),
         "runtime_ledger_bucket_ref": _safe_text(
             target.get("runtime_ledger_bucket_ref")
         ),
@@ -378,23 +388,15 @@ def _target_identity(target: Mapping[str, Any]) -> dict[str, object]:
         "promotion_allowed": False,
         "final_promotion_allowed": False,
         "max_notional": _safe_text(target.get("max_notional")) or "0",
-        "final_promotion_blockers": [
-            str(item).strip()
-            for item in _as_sequence(target.get("final_promotion_blockers"))
-            if str(item).strip()
-        ],
-        "candidate_blockers": [
-            str(item).strip()
-            for item in _as_sequence(target.get("candidate_blockers"))
-            if str(item).strip()
-        ],
-        "runtime_ledger_target_metadata_blockers": [
-            str(item).strip()
-            for item in _as_sequence(
-                target.get("runtime_ledger_target_metadata_blockers")
-            )
-            if str(item).strip()
-        ],
+        "final_promotion_blockers": _dedupe_texts(
+            _as_sequence(target.get("final_promotion_blockers"))
+        ),
+        "candidate_blockers": _dedupe_texts(
+            _as_sequence(target.get("candidate_blockers"))
+        ),
+        "runtime_ledger_target_metadata_blockers": _dedupe_texts(
+            _as_sequence(target.get("runtime_ledger_target_metadata_blockers"))
+        ),
     }
 
 
@@ -434,11 +436,9 @@ def _next_paper_route_runtime_window_targets(
         probe_ready=probe_ready,
     )
     import_ready = bool(session_readiness.get("import_ready"))
-    import_blockers = [
-        str(item).strip()
-        for item in _as_sequence(session_readiness.get("import_blockers"))
-        if str(item).strip()
-    ]
+    import_blockers = _dedupe_texts(
+        _as_sequence(session_readiness.get("import_blockers"))
+    )
     import_handoff = {
         "runner": "scripts/renew_latest_empirical_promotion_jobs.py",
         "target_plan_endpoint": "/trading/paper-route-evidence",
@@ -535,23 +535,29 @@ def _next_paper_route_runtime_window_targets(
             "promotion_allowed": False,
             "final_promotion_authorized": False,
             "final_promotion_allowed": False,
-            "final_promotion_blockers": [
-                "paper_probation_evidence_collection_only",
-                "paper_route_runtime_ledger_import_pending",
-                "live_runtime_ledger_required",
-            ],
-            "candidate_blockers": [
-                "paper_route_runtime_ledger_import_pending",
-                *[
-                    str(item).strip()
-                    for item in _as_sequence(target.get("candidate_blockers"))
-                    if str(item).strip()
-                ],
-            ],
-            "runtime_ledger_target_metadata_blockers": [
-                "paper_route_runtime_ledger_import_pending",
-                "live_runtime_ledger_required",
-            ],
+            "final_promotion_blockers": _dedupe_texts(
+                [
+                    "paper_probation_evidence_collection_only",
+                    "paper_route_runtime_ledger_import_pending",
+                    "live_runtime_ledger_required",
+                ]
+            ),
+            "candidate_blockers": _dedupe_texts(
+                [
+                    "paper_route_runtime_ledger_import_pending",
+                    *[
+                        str(item).strip()
+                        for item in _as_sequence(target.get("candidate_blockers"))
+                        if str(item).strip()
+                    ],
+                ]
+            ),
+            "runtime_ledger_target_metadata_blockers": _dedupe_texts(
+                [
+                    "paper_route_runtime_ledger_import_pending",
+                    "live_runtime_ledger_required",
+                ]
+            ),
             "handoff": "next_paper_route_runtime_window_import",
             "promotion_gate": "runtime_ledger_live_or_live_paper_required",
             "max_notional": "0",
