@@ -219,6 +219,53 @@ def _next_regular_equities_session_window(
     return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
 
 
+def _seconds_until(*, generated_at: datetime, target: datetime) -> int:
+    return max(0, int((target - generated_at).total_seconds()))
+
+
+def _paper_route_session_readiness(
+    *,
+    generated_at: datetime,
+    window_start: datetime,
+    window_end: datetime,
+    probe_ready: bool,
+) -> dict[str, object]:
+    window_open = window_start <= generated_at <= window_end
+    window_closed = generated_at > window_end
+    import_blockers: list[str] = []
+    if generated_at < window_start:
+        state = "waiting_for_session_open"
+        import_blockers.append("paper_route_session_window_not_open")
+    elif window_open:
+        state = "collecting_session_evidence"
+        import_blockers.append("paper_route_session_window_not_closed")
+    else:
+        state = "window_closed_import_ready"
+    if not probe_ready:
+        state = "window_closed_import_blocked" if window_closed else state
+        import_blockers.append("paper_route_probe_not_ready")
+    return {
+        "state": state,
+        "session_window": {
+            "start": _isoformat(window_start),
+            "end": _isoformat(window_end),
+        },
+        "window_open": window_open,
+        "window_closed": window_closed,
+        "probe_ready": probe_ready,
+        "import_ready": window_closed and probe_ready,
+        "seconds_until_window_start": _seconds_until(
+            generated_at=generated_at,
+            target=window_start,
+        ),
+        "seconds_until_window_end": _seconds_until(
+            generated_at=generated_at,
+            target=window_end,
+        ),
+        "import_blockers": import_blockers,
+    }
+
+
 def _paper_route_probe_summary(
     route_reacquisition_book: Mapping[str, Any],
 ) -> dict[str, object]:
@@ -380,6 +427,12 @@ def _next_paper_route_runtime_window_targets(
         and _safe_decimal(next_notional) > 0
         and bool(probe_symbols)
     )
+    session_readiness = _paper_route_session_readiness(
+        generated_at=generated_at,
+        window_start=window_start,
+        window_end=window_end,
+        probe_ready=probe_ready,
+    )
     planned_targets: list[dict[str, object]] = []
     skipped_targets: list[dict[str, object]] = []
     planned_keys: set[tuple[object, ...]] = set()
@@ -507,6 +560,7 @@ def _next_paper_route_runtime_window_targets(
             "start": _isoformat(window_start),
             "end": _isoformat(window_end),
         },
+        "session_readiness": session_readiness,
         "paper_route_probe": {
             "configured_enabled": bool(probe.get("configured_enabled")),
             "active": bool(probe.get("active")),
