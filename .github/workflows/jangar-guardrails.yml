@@ -65,7 +65,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.13
+          bun-version: 1.3.14
 
       - name: Enforce Jangar automation mode
         run: bun run packages/scripts/src/jangar/check-automation-policy.ts --require jangar=auto

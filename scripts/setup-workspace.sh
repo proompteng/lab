@@ -33,7 +33,7 @@ nvm install
 
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
-BUN_VERSION="1.3.13"
+BUN_VERSION="1.3.14"
 
 if ! command -v bun >/dev/null 2>&1; then
     echo "Installing Bun ${BUN_VERSION}..."

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.6
 
-FROM oven/bun:1.3.13 AS install
+FROM oven/bun:1.3.14 AS install
 WORKDIR /app
 
 COPY packages/temporal-bun-sdk/package.json package.json
@@ -12,7 +12,7 @@ COPY packages/temporal-bun-sdk/skills skills
 RUN bun install --ignore-scripts
 RUN bun run build
 
-FROM oven/bun:1.3.13 AS runner
+FROM oven/bun:1.3.14 AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 

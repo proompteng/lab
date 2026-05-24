@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 # This Dockerfile is intended to be built from a Turbo-pruned context:
 # `bunx turbo prune --scope=@proompteng/bumba --docker --out-dir <dir>`
-ARG BUN_VERSION=1.3.13
+ARG BUN_VERSION=1.3.14
 ARG BUN_BASE_IMAGE=mirror.gcr.io/oven/bun
 ARG LAB_GIT_SHA=dev
 
