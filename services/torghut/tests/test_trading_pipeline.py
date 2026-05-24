@@ -2901,6 +2901,110 @@ class TestTradingPipeline(TestCase):
             self.assertEqual(paper_route_probe.get("capped_qty"), "0.2500")
             self.assertEqual(simple_lane.get("paper_route_probe_cap_applied"), True)
 
+    def test_simple_pipeline_paper_route_probe_can_repair_symbol_outside_candidates(
+        self,
+    ) -> None:
+        from app import config
+
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_pipeline_mode = "simple"
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_fractional_equities_enabled = True
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_simple_paper_route_probe_max_notional = 25.0
+        config.settings.trading_universe_source = "jangar"
+        config.settings.trading_universe_static_fallback_enabled = True
+        config.settings.trading_universe_static_fallback_symbols_raw = "NVDA"
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="simple-paper-route-probe-repair-symbol",
+                description="simple paper lane route probe repair symbol",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["NVDA"],
+                max_notional_per_trade=Decimal("1000"),
+            )
+            session.add(strategy)
+            session.commit()
+
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+            ingest_ts=datetime(2026, 3, 26, 13, 30, 5, tzinfo=timezone.utc),
+            symbol="NVDA",
+            timeframe="1Min",
+            seq=1,
+            payload={
+                "feature_schema_version": "3.0.0",
+                "macd": {"macd": 1.2, "signal": 0.5},
+                "rsi14": 25,
+                "price": 100,
+            },
+        )
+
+        alpaca_client = FakeAlpacaClient()
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=alpaca_client,
+            order_firewall=OrderFirewall(alpaca_client),
+            ingestor=FakeIngestor([signal]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=alpaca_client,
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+
+        proof_floor = {
+            "route_state": "repair_only",
+            "capital_state": "zero_notional",
+            "max_notional": "0",
+            "market_window": {"session_open": True},
+            "blocking_reasons": [
+                "alpha_readiness_not_promotion_eligible",
+                "execution_tca_symbol_missing",
+            ],
+            "route_reacquisition_book": {
+                "summary": {
+                    "candidate_symbols": ["AAPL"],
+                    "repair_candidate_symbols": ["NVDA"],
+                    "repair_candidates": [
+                        {
+                            "symbol": "NVDA",
+                            "state": "missing",
+                            "reason": "execution_tca_symbol_missing",
+                        }
+                    ],
+                }
+            },
+        }
+        with patch.object(
+            SimpleTradingPipeline,
+            "_profitability_proof_floor",
+            return_value=proof_floor,
+        ):
+            pipeline.run_once()
+
+        self.assertEqual(len(alpaca_client.submitted), 1)
+        with self.session_local() as session:
+            decision = session.execute(select(TradeDecision)).scalar_one()
+            decision_json = cast(dict[str, Any], decision.decision_json)
+            params = cast(dict[str, Any], decision_json.get("params"))
+            paper_route_probe = cast(dict[str, Any], params.get("paper_route_probe"))
+            simple_lane = cast(dict[str, Any], params.get("simple_lane"))
+
+            self.assertEqual(decision.status, "submitted")
+            self.assertEqual(paper_route_probe.get("symbol"), "NVDA")
+            self.assertEqual(paper_route_probe.get("mode"), "paper_route_acquisition")
+            self.assertEqual(simple_lane.get("paper_route_probe_cap_applied"), True)
+
     def test_paper_route_probe_helpers_handle_missing_repair_metadata(self) -> None:
         self.assertFalse(SimpleTradingPipeline._proof_floor_market_session_open({}))
         self.assertEqual(

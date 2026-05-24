@@ -813,6 +813,7 @@ class SimpleTradingPipeline(TradingPipeline):
         proof_floor_block_reason = self._proof_floor_submission_block_reason(
             proof_floor
         )
+        paper_route_probe_applied = False
         if proof_floor_block_reason is not None:
             probe_context = self._paper_route_probe_context(
                 proof_floor=proof_floor,
@@ -837,9 +838,14 @@ class SimpleTradingPipeline(TradingPipeline):
                     extra_metadata={"profitability_proof_floor": dict(proof_floor)},
                 )
                 return False
-        proof_floor_symbol_block_reason = self._proof_floor_symbol_block_reason(
-            proof_floor,
-            decision.symbol,
+            paper_route_probe_applied = True
+        proof_floor_symbol_block_reason = (
+            self._proof_floor_symbol_block_reason(
+                proof_floor,
+                decision.symbol,
+            )
+            if not paper_route_probe_applied
+            else None
         )
         if proof_floor_symbol_block_reason is not None:
             self._block_decision_submission(
