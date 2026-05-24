@@ -562,6 +562,38 @@ class SimpleTradingPipeline(TradingPipeline):
         return repair_symbols
 
     @staticmethod
+    def _proof_floor_symbol_route_probe_reasons(
+        proof_floor: Mapping[str, object],
+        symbol: str,
+    ) -> set[str]:
+        route_book = proof_floor.get("route_reacquisition_book")
+        if not isinstance(route_book, Mapping):
+            return set()
+        summary = cast(Mapping[str, Any], route_book).get("summary")
+        if not isinstance(summary, Mapping):
+            return set()
+        repair_candidates = cast(Mapping[str, Any], summary).get("repair_candidates")
+        if not isinstance(repair_candidates, list):
+            return set()
+
+        normalized_symbol = symbol.strip().upper()
+        reasons: set[str] = set()
+        for raw_candidate in cast(list[object], repair_candidates):
+            if not isinstance(raw_candidate, Mapping):
+                continue
+            candidate = cast(Mapping[str, Any], raw_candidate)
+            candidate_symbol = str(candidate.get("symbol") or "").strip().upper()
+            if not candidate_symbol or candidate_symbol != normalized_symbol:
+                continue
+            state = str(candidate.get("state") or "").strip()
+            if state not in {"missing", "probing"}:
+                continue
+            reason = str(candidate.get("reason") or "").strip()
+            if reason in _PAPER_ROUTE_PROBE_REASONS:
+                reasons.add(reason)
+        return reasons
+
+    @staticmethod
     def _paper_route_probe_reference_price(
         decision: StrategyDecision,
     ) -> Decimal | None:
@@ -645,11 +677,18 @@ class SimpleTradingPipeline(TradingPipeline):
             for item in cast(list[object], proof_floor.get("blocking_reasons") or [])
             if str(item).strip()
         }
-        if not (blocking_reasons & _PAPER_ROUTE_PROBE_REASONS):
+        symbol = decision.symbol.strip().upper()
+        symbol_route_probe_reasons = self._proof_floor_symbol_route_probe_reasons(
+            proof_floor,
+            symbol,
+        )
+        if not (
+            (blocking_reasons & _PAPER_ROUTE_PROBE_REASONS)
+            or symbol_route_probe_reasons
+        ):
             return None
 
         repair_symbols = self._proof_floor_route_repair_symbols(proof_floor)
-        symbol = decision.symbol.strip().upper()
         if repair_symbols and symbol not in repair_symbols:
             return None
 
@@ -659,7 +698,7 @@ class SimpleTradingPipeline(TradingPipeline):
             "max_notional": str(cap),
             "symbol": symbol,
             "side": decision.action,
-            "blocking_reasons": sorted(blocking_reasons),
+            "blocking_reasons": sorted(blocking_reasons | symbol_route_probe_reasons),
             "route_repair_symbols": sorted(repair_symbols),
         }
 

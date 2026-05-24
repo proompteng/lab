@@ -2907,8 +2907,19 @@ class TestTradingPipeline(TestCase):
             SimpleTradingPipeline._proof_floor_route_repair_symbols({}), set()
         )
         self.assertEqual(
+            SimpleTradingPipeline._proof_floor_symbol_route_probe_reasons({}, "NVDA"),
+            set(),
+        )
+        self.assertEqual(
             SimpleTradingPipeline._proof_floor_route_repair_symbols(
                 {"route_reacquisition_book": {}}
+            ),
+            set(),
+        )
+        self.assertEqual(
+            SimpleTradingPipeline._proof_floor_symbol_route_probe_reasons(
+                {"route_reacquisition_book": {}},
+                "NVDA",
             ),
             set(),
         )
@@ -2924,6 +2935,31 @@ class TestTradingPipeline(TestCase):
                 }
             ),
             {"NVDA", "MU"},
+        )
+        self.assertEqual(
+            SimpleTradingPipeline._proof_floor_symbol_route_probe_reasons(
+                {
+                    "route_reacquisition_book": {
+                        "summary": {
+                            "repair_candidates": [
+                                object(),
+                                {
+                                    "symbol": "MU",
+                                    "state": "missing",
+                                    "reason": "execution_tca_symbol_missing",
+                                },
+                                {
+                                    "symbol": "NVDA",
+                                    "state": "blocked",
+                                    "reason": "execution_tca_symbol_missing",
+                                },
+                            ]
+                        }
+                    }
+                },
+                "NVDA",
+            ),
+            set(),
         )
 
         decision = StrategyDecision(
@@ -3066,6 +3102,36 @@ class TestTradingPipeline(TestCase):
                 proof_floor=no_route_reason_floor,
                 decision=decision,
             )
+        )
+
+        symbol_level_route_repair_floor = {
+            **proof_floor,
+            "blocking_reasons": ["alpha_readiness_not_promotion_eligible"],
+            "route_reacquisition_book": {
+                "summary": {
+                    "repair_candidate_symbols": ["NVDA"],
+                    "repair_candidates": [
+                        {
+                            "symbol": "NVDA",
+                            "state": "missing",
+                            "reason": "execution_tca_symbol_missing",
+                        }
+                    ],
+                }
+            },
+        }
+        symbol_level_probe_context = pipeline._paper_route_probe_context(
+            proof_floor=symbol_level_route_repair_floor,
+            decision=decision,
+        )
+        self.assertIsNotNone(symbol_level_probe_context)
+        assert symbol_level_probe_context is not None
+        self.assertEqual(
+            symbol_level_probe_context.get("mode"), "paper_route_acquisition"
+        )
+        self.assertIn(
+            "execution_tca_symbol_missing",
+            cast(list[str], symbol_level_probe_context.get("blocking_reasons")),
         )
 
         wrong_symbol_floor = {
