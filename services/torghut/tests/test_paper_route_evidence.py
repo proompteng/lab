@@ -18,7 +18,10 @@ from app.models import (
     StrategyRuntimeLedgerBucket,
     TradeDecision,
 )
-from app.trading.paper_route_evidence import build_paper_route_evidence_audit
+from app.trading.paper_route_evidence import (
+    _next_regular_equities_session_window,
+    build_paper_route_evidence_audit,
+)
 
 
 class TestPaperRouteEvidenceAudit(TestCase):
@@ -30,6 +33,42 @@ class TestPaperRouteEvidenceAudit(TestCase):
             poolclass=StaticPool,
         )
         Base.metadata.create_all(self.engine)
+
+    def test_next_paper_route_window_stays_on_current_session_for_import(
+        self,
+    ) -> None:
+        cases = [
+            (
+                datetime(2026, 5, 24, 14, 38, tzinfo=timezone.utc),
+                "2026-05-26T13:30:00+00:00",
+                "2026-05-26T20:00:00+00:00",
+            ),
+            (
+                datetime(2026, 5, 26, 12, 0, tzinfo=timezone.utc),
+                "2026-05-26T13:30:00+00:00",
+                "2026-05-26T20:00:00+00:00",
+            ),
+            (
+                datetime(2026, 5, 26, 15, 0, tzinfo=timezone.utc),
+                "2026-05-26T13:30:00+00:00",
+                "2026-05-26T20:00:00+00:00",
+            ),
+            (
+                datetime(2026, 5, 26, 21, 23, tzinfo=timezone.utc),
+                "2026-05-26T13:30:00+00:00",
+                "2026-05-26T20:00:00+00:00",
+            ),
+            (
+                datetime(2026, 5, 27, 4, 1, tzinfo=timezone.utc),
+                "2026-05-27T13:30:00+00:00",
+                "2026-05-27T20:00:00+00:00",
+            ),
+        ]
+        for generated_at, expected_start, expected_end in cases:
+            with self.subTest(generated_at=generated_at):
+                start, end = _next_regular_equities_session_window(generated_at)
+                self.assertEqual(start.isoformat(), expected_start)
+                self.assertEqual(end.isoformat(), expected_end)
 
     def test_builder_reports_missing_import_plan_without_promotion_authority(
         self,

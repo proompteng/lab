@@ -201,12 +201,17 @@ def _regular_equities_session_date(value: date) -> bool:
 def _next_regular_equities_session_window(
     generated_at: datetime,
 ) -> tuple[datetime, datetime]:
+    """Return the current local trading date, or the next regular session.
+
+    The empirical renewal job reads this dynamic plan after the close to import
+    the just-finished paper-route window. Keep the current regular session until
+    the New York calendar date rolls over, otherwise the importer chases the
+    following session before it can ledger the one that just closed.
+    """
+
     zone = ZoneInfo(US_EQUITIES_TIMEZONE)
     local_generated_at = generated_at.astimezone(zone)
     candidate_date = local_generated_at.date()
-    session_open = datetime.combine(candidate_date, US_EQUITIES_OPEN, tzinfo=zone)
-    if local_generated_at >= session_open:
-        candidate_date += timedelta(days=1)
     while not _regular_equities_session_date(candidate_date):
         candidate_date += timedelta(days=1)
     start = datetime.combine(candidate_date, US_EQUITIES_OPEN, tzinfo=zone)
