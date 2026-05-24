@@ -4427,6 +4427,9 @@ def trading_paper_route_evidence(
         ),
         quant_health_status=quant_evidence,
     )
+    live_submission_gate = _merge_external_paper_route_target_plan(
+        cast(Mapping[str, Any], live_submission_gate)
+    )
     simple_lane_status = _build_simple_lane_status_payload()
     proof_floor = _build_profitability_proof_floor_payload(
         state=scheduler.state,
@@ -4448,6 +4451,123 @@ def trading_paper_route_evidence(
         ),
     )
     return JSONResponse(status_code=200, content=jsonable_encoder(payload))
+
+
+def _mapping_items(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        return []
+    return [
+        _to_str_map(cast(object, item))
+        for item in cast(Sequence[object], value)
+        if isinstance(item, Mapping)
+    ]
+
+
+def _paper_route_target_plan_targets(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
+    return _mapping_items(plan.get("targets"))
+
+
+def _paper_route_target_plan_from_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    live_gate = _to_str_map(payload.get("live_submission_gate"))
+    candidate_plans = [
+        _to_str_map(payload.get("runtime_window_import_plan")),
+        _to_str_map(live_gate.get("runtime_ledger_paper_probation_import_plan")),
+        _to_str_map(payload.get("runtime_ledger_paper_probation_import_plan")),
+        _to_str_map(payload.get("next_paper_route_runtime_window_targets")),
+        dict(payload) if _paper_route_target_plan_targets(payload) else {},
+    ]
+    for plan in candidate_plans:
+        if _paper_route_target_plan_targets(plan):
+            return plan
+    return {}
+
+
+def _fetch_paper_route_target_plan_url(
+    url: str,
+    *,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    parsed = urlsplit(url)
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https"}:
+        return {
+            "load_error": f"paper_route_target_plan_invalid_scheme:{scheme or 'missing'}"
+        }
+    if not parsed.hostname:
+        return {"load_error": "paper_route_target_plan_invalid_host"}
+
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+    connection_class = HTTPSConnection if scheme == "https" else HTTPConnection
+    connection = connection_class(
+        parsed.hostname,
+        parsed.port,
+        timeout=max(float(timeout_seconds), 0.1),
+    )
+    try:
+        connection.request("GET", path, headers={"Accept": "application/json"})
+        response = connection.getresponse()
+        if response.status < 200 or response.status >= 300:
+            return {
+                "load_error": f"paper_route_target_plan_http_status:{response.status}"
+            }
+        raw = response.read(5_000_001)
+    except Exception as exc:  # pragma: no cover - depends on network
+        return {"load_error": f"paper_route_target_plan_fetch_failed:{exc}"}
+    finally:
+        connection.close()
+
+    if len(raw) > 5_000_000:
+        return {"load_error": "paper_route_target_plan_response_too_large"}
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        return {"load_error": f"paper_route_target_plan_invalid_json:{exc}"}
+    if not isinstance(payload, Mapping):
+        return {"load_error": "paper_route_target_plan_invalid_payload"}
+    plan = _paper_route_target_plan_from_payload(cast(Mapping[str, Any], payload))
+    if not plan:
+        return {"load_error": "paper_route_target_plan_missing"}
+    plan = dict(plan)
+    plan.setdefault("source", "external_paper_route_target_plan")
+    return plan
+
+
+def _load_external_paper_route_target_plan() -> dict[str, Any]:
+    url = str(settings.trading_paper_route_target_plan_url or "").strip()
+    if not url:
+        return {}
+    return _fetch_paper_route_target_plan_url(
+        url,
+        timeout_seconds=settings.trading_paper_route_target_plan_timeout_seconds,
+    )
+
+
+def _merge_external_paper_route_target_plan(
+    live_submission_gate: Mapping[str, Any],
+) -> dict[str, object]:
+    gate = dict(live_submission_gate)
+    local_plan = _to_str_map(gate.get("runtime_ledger_paper_probation_import_plan"))
+    if _paper_route_target_plan_targets(local_plan):
+        return gate
+
+    external_plan = _load_external_paper_route_target_plan()
+    if not external_plan:
+        return gate
+    if _paper_route_target_plan_targets(external_plan):
+        merged_plan = dict(external_plan)
+        merged_plan["promotion_allowed"] = False
+        merged_plan["final_promotion_allowed"] = False
+        merged_plan["final_promotion_authorized"] = False
+        gate["runtime_ledger_paper_probation_import_plan"] = merged_plan
+        gate["paper_route_target_plan_source"] = "external_target_plan_url"
+        return gate
+
+    load_error = str(external_plan.get("load_error") or "").strip()
+    if load_error:
+        gate["paper_route_target_plan_error"] = load_error
+    return gate
 
 
 @app.get("/trading/tca")

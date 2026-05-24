@@ -1404,6 +1404,20 @@ class Settings(BaseSettings):
         alias="TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL",
         description="Maximum notional per paper route-acquisition probe order.",
     )
+    trading_paper_route_target_plan_url: Optional[str] = Field(
+        default=None,
+        alias="TRADING_PAPER_ROUTE_TARGET_PLAN_URL",
+        description=(
+            "Optional paper-route target-plan URL used when this service has no "
+            "local runtime-ledger paper-probation plan. Intended for paper services "
+            "that execute bounded route probes from the live gate's authoritative plan."
+        ),
+    )
+    trading_paper_route_target_plan_timeout_seconds: float = Field(
+        default=3.0,
+        alias="TRADING_PAPER_ROUTE_TARGET_PLAN_TIMEOUT_SECONDS",
+        description="Timeout for fetching TRADING_PAPER_ROUTE_TARGET_PLAN_URL.",
+    )
     trading_emergency_stop_enabled: bool = Field(
         default=False,
         alias="TRADING_EMERGENCY_STOP_ENABLED",
@@ -2308,6 +2322,10 @@ class Settings(BaseSettings):
             (
                 self.trading_simple_paper_route_probe_max_notional,
                 "TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL must be >= 0",
+            ),
+            (
+                self.trading_paper_route_target_plan_timeout_seconds,
+                "TRADING_PAPER_ROUTE_TARGET_PLAN_TIMEOUT_SECONDS must be >= 0",
             ),
             (
                 self.trading_readiness_dependency_cache_stale_tolerance_seconds,
