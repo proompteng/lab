@@ -15,6 +15,7 @@ from urllib.request import urlopen
 
 SCHEMA_VERSION = 'torghut.trading-readiness-verification.v1'
 ROUTE_REACQUISITION_BOARD_SCHEMA_VERSION = 'torghut.route-reacquisition-board.v1'
+ROUTE_REACQUISITION_BOOK_SCHEMA_VERSION = 'torghut.route-reacquisition-book.v1'
 _MISSING_QUANT_REASONS = {
     'quant_health_fetch_failed',
     'quant_health_missing',
@@ -65,6 +66,11 @@ def _decimal(value: object) -> Decimal | None:
         return None
 
 
+def _decimal_positive(value: object) -> bool:
+    parsed = _decimal(value)
+    return parsed is not None and parsed > 0
+
+
 def _mapping(value: object) -> Mapping[str, Any]:
     if isinstance(value, Mapping):
         return cast(Mapping[str, Any], value)
@@ -111,7 +117,9 @@ def _dimension_is_required(dimension: Mapping[str, Any]) -> bool:
     return True
 
 
-def _market_session_open(status: Mapping[str, Any], proof_floor: Mapping[str, Any]) -> bool:
+def _market_session_open(
+    status: Mapping[str, Any], proof_floor: Mapping[str, Any]
+) -> bool:
     metrics = _mapping(status.get('metrics'))
     if 'market_session_open' in metrics:
         return _bool(metrics.get('market_session_open'))
@@ -154,6 +162,45 @@ def _expected_floor_states(profile: str) -> tuple[set[str], set[str], set[str]]:
     )
 
 
+def _paper_route_probe_summary(
+    status: Mapping[str, Any],
+    proof_floor: Mapping[str, Any],
+) -> dict[str, Any]:
+    route_book = _mapping(status.get('route_reacquisition_book')) or _mapping(
+        proof_floor.get('route_reacquisition_book')
+    )
+    route_summary = _mapping(route_book.get('summary'))
+    probe = _mapping(route_book.get('paper_route_probe'))
+    eligible_symbols = _sequence(probe.get('eligible_symbols')) or _sequence(
+        route_summary.get('paper_route_probe_eligible_symbols')
+    )
+    active_symbols = _sequence(probe.get('active_symbols')) or _sequence(
+        route_summary.get('paper_route_probe_active_symbols')
+    )
+    return {
+        'route_book_present': bool(route_book),
+        'route_book_schema_version': _text(route_book.get('schema_version')),
+        'configured_enabled': _bool(probe.get('configured_enabled')),
+        'configured_max_notional': _text(probe.get('configured_max_notional'), '0'),
+        'active': _bool(probe.get('active')),
+        'effective_max_notional': _text(probe.get('effective_max_notional'), '0'),
+        'next_session_max_notional': _text(probe.get('next_session_max_notional'), '0'),
+        'eligible_symbol_count': _int(
+            probe.get('eligible_symbol_count'), default=len(eligible_symbols)
+        ),
+        'eligible_symbols': [
+            _text(symbol) for symbol in eligible_symbols if _text(symbol)
+        ],
+        'active_symbols': [_text(symbol) for symbol in active_symbols if _text(symbol)],
+        'blocking_reasons': [
+            _text(reason)
+            for reason in _sequence(probe.get('blocking_reasons'))
+            if _text(reason)
+        ],
+        'capital_authority': _text(probe.get('capital_authority'), 'none'),
+    }
+
+
 def evaluate_trading_readiness(
     status: Mapping[str, Any],
     *,
@@ -163,6 +210,7 @@ def evaluate_trading_readiness(
     min_orders: int = 0,
     require_market_open: bool = True,
     require_quant_fresh: bool = True,
+    require_paper_route_probe_candidate: bool = False,
 ) -> dict[str, Any]:
     """Return a strict readiness verdict from a Torghut trading status payload."""
 
@@ -170,6 +218,7 @@ def evaluate_trading_readiness(
     metrics = _mapping(status.get('metrics'))
     proof_floor = _mapping(status.get('proof_floor'))
     dimensions = _dimension_by_name(proof_floor)
+    paper_route_probe = _paper_route_probe_summary(status, proof_floor)
 
     mode = _text(status.get('mode') or status.get('trading_mode')).lower()
     if profile in {'paper', 'live'}:
@@ -276,7 +325,9 @@ def evaluate_trading_readiness(
     quant_reason = _text(quant_dimension.get('reason'))
     quant_required = _dimension_is_required(quant_dimension)
     quant_passed = quant_state == 'pass' or (
-        not require_quant_fresh and not quant_required and quant_state == 'informational'
+        not require_quant_fresh
+        and not quant_required
+        and quant_state == 'informational'
     )
     if require_quant_fresh and quant_reason in _MISSING_QUANT_REASONS:
         quant_passed = False
@@ -284,7 +335,11 @@ def evaluate_trading_readiness(
         checks,
         'quant_ingestion_ready',
         passed=quant_passed,
-        observed={'state': quant_state, 'reason': quant_reason, 'required': quant_required},
+        observed={
+            'state': quant_state,
+            'reason': quant_reason,
+            'required': quant_required,
+        },
         expected={'state': 'pass'}
         if require_quant_fresh or quant_required
         else {'state': 'pass|optional_informational'},
@@ -382,6 +437,68 @@ def evaluate_trading_readiness(
         detail=route_board_summary,
     )
 
+    if require_paper_route_probe_candidate:
+        allowed_probe_blockers = (
+            set() if require_market_open else {'market_session_closed'}
+        )
+        unexpected_probe_blockers = [
+            reason
+            for reason in paper_route_probe['blocking_reasons']
+            if reason not in allowed_probe_blockers
+        ]
+        _add_check(
+            checks,
+            'paper_route_probe_book_present',
+            passed=paper_route_probe['route_book_present'],
+            observed=paper_route_probe['route_book_present'],
+            expected=True,
+        )
+        _add_check(
+            checks,
+            'paper_route_probe_book_schema_version',
+            passed=paper_route_probe['route_book_schema_version']
+            == ROUTE_REACQUISITION_BOOK_SCHEMA_VERSION,
+            observed=paper_route_probe['route_book_schema_version'],
+            expected=ROUTE_REACQUISITION_BOOK_SCHEMA_VERSION,
+        )
+        _add_check(
+            checks,
+            'paper_route_probe_configured',
+            passed=paper_route_probe['configured_enabled'],
+            observed=paper_route_probe['configured_enabled'],
+            expected=True,
+        )
+        _add_check(
+            checks,
+            'paper_route_probe_candidate_symbols',
+            passed=paper_route_probe['eligible_symbol_count'] > 0,
+            observed={
+                'eligible_symbol_count': paper_route_probe['eligible_symbol_count'],
+                'eligible_symbols': paper_route_probe['eligible_symbols'],
+            },
+            expected='>=1',
+        )
+        _add_check(
+            checks,
+            'paper_route_probe_notional_positive',
+            passed=_decimal_positive(paper_route_probe['effective_max_notional'])
+            or _decimal_positive(paper_route_probe['next_session_max_notional']),
+            observed={
+                'effective_max_notional': paper_route_probe['effective_max_notional'],
+                'next_session_max_notional': paper_route_probe[
+                    'next_session_max_notional'
+                ],
+            },
+            expected='effective_or_next_session_>0',
+        )
+        _add_check(
+            checks,
+            'paper_route_probe_blockers',
+            passed=not unexpected_probe_blockers,
+            observed=paper_route_probe['blocking_reasons'],
+            expected=sorted(allowed_probe_blockers),
+        )
+
     decisions_total = _int(metrics.get('decisions_total'))
     orders_submitted_total = _int(metrics.get('orders_submitted_total'))
     _add_check(
@@ -406,20 +523,32 @@ def evaluate_trading_readiness(
         'profile': profile,
         'failed_checks': failed_checks,
         'checks': checks,
+        'paper_route_probe': paper_route_probe,
     }
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument('--status-file', type=Path, help='Path to a /trading/status JSON payload.')
-    source.add_argument('--status-url', help='URL returning a /trading/status JSON payload.')
-    parser.add_argument('--profile', choices=('paper', 'live', 'either'), default='paper')
+    source.add_argument(
+        '--status-file', type=Path, help='Path to a /trading/status JSON payload.'
+    )
+    source.add_argument(
+        '--status-url', help='URL returning a /trading/status JSON payload.'
+    )
+    parser.add_argument(
+        '--profile', choices=('paper', 'live', 'either'), default='paper'
+    )
     parser.add_argument('--min-routeable-symbols', type=int, default=2)
     parser.add_argument('--min-decisions', type=int, default=0)
     parser.add_argument('--min-orders', type=int, default=0)
     parser.add_argument('--allow-closed-session', action='store_true')
     parser.add_argument('--allow-informational-quant', action='store_true')
+    parser.add_argument(
+        '--require-paper-route-probe-candidate',
+        action='store_true',
+        help='Require a bounded paper-route probe candidate in route_reacquisition_book.',
+    )
     parser.add_argument('--timeout-seconds', type=float, default=10.0)
     return parser
 
@@ -429,7 +558,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     status = (
         _load_json_object(args.status_file)
         if args.status_file is not None
-        else _load_status_url(str(args.status_url), timeout_seconds=args.timeout_seconds)
+        else _load_status_url(
+            str(args.status_url), timeout_seconds=args.timeout_seconds
+        )
     )
     result = evaluate_trading_readiness(
         status,
@@ -439,6 +570,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         min_orders=max(0, int(args.min_orders)),
         require_market_open=not bool(args.allow_closed_session),
         require_quant_fresh=not bool(args.allow_informational_quant),
+        require_paper_route_probe_candidate=bool(
+            args.require_paper_route_probe_candidate
+        ),
     )
     result['evaluated_at'] = datetime.now(timezone.utc).isoformat()
     print(json.dumps(result, indent=2, sort_keys=True))
