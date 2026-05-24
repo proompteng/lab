@@ -433,6 +433,31 @@ def _next_paper_route_runtime_window_targets(
         window_end=window_end,
         probe_ready=probe_ready,
     )
+    import_ready = bool(session_readiness.get("import_ready"))
+    import_blockers = [
+        str(item).strip()
+        for item in _as_sequence(session_readiness.get("import_blockers"))
+        if str(item).strip()
+    ]
+    import_handoff = {
+        "runner": "scripts/renew_latest_empirical_promotion_jobs.py",
+        "target_plan_endpoint": "/trading/paper-route-evidence",
+        "required_flags": [
+            "--runtime-window-import",
+            "--runtime-window-target-plan-url",
+            "--runtime-window-target-plan-exclusive",
+            "--runtime-window-target-plan-required",
+            "--runtime-window-target-plan-settlement-seconds",
+        ],
+        "source_dsn_env": "SIM_DB_DSN",
+        "account_label": PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+        "observed_stage": "paper",
+        "import_ready": import_ready,
+        "import_blockers": import_blockers,
+        "promotion_allowed": False,
+        "final_promotion_authorized": False,
+        "promotion_gate": "runtime_ledger_live_or_live_paper_required",
+    }
     planned_targets: list[dict[str, object]] = []
     skipped_targets: list[dict[str, object]] = []
     planned_keys: set[tuple[object, ...]] = set()
@@ -492,6 +517,14 @@ def _next_paper_route_runtime_window_targets(
             "paper_route_probe_next_session_max_notional": next_notional,
             "paper_route_probe_window_start": _isoformat(window_start),
             "paper_route_probe_window_end": _isoformat(window_end),
+            "paper_route_session_readiness_state": _safe_text(
+                session_readiness.get("state")
+            )
+            or "unknown",
+            "paper_route_session_import_ready": import_ready,
+            "paper_route_session_import_blockers": import_blockers,
+            "paper_route_runtime_window_import_not_before": _isoformat(window_end),
+            "paper_route_runtime_import_handoff": import_handoff,
             "paper_probation_authorized": True,
             "paper_probation_authorization_scope": "evidence_collection_only",
             "evidence_collection_stage": "paper",
@@ -561,6 +594,13 @@ def _next_paper_route_runtime_window_targets(
             "end": _isoformat(window_end),
         },
         "session_readiness": session_readiness,
+        "runtime_window_import_handoff": {
+            **import_handoff,
+            "target_count": len(planned_targets),
+            "skipped_target_count": len(skipped_targets),
+            "window_start": _isoformat(window_start),
+            "window_end": _isoformat(window_end),
+        },
         "paper_route_probe": {
             "configured_enabled": bool(probe.get("configured_enabled")),
             "active": bool(probe.get("active")),

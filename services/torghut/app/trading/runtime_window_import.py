@@ -578,6 +578,58 @@ def _capital_multiplier_for_stage(stage: str) -> str:
     }.get(stage, "0")
 
 
+def _runtime_window_import_proof_blockers(
+    *,
+    promotion_blocking_reasons: Sequence[str],
+    runtime_payload: Mapping[str, Any],
+    candidate_id: str | None,
+    hypothesis_id: str,
+    observed_stage: str,
+    window_start: datetime,
+    window_end: datetime,
+) -> list[dict[str, Any]]:
+    blockers: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def add_blocker(reason: str) -> None:
+        code = _text(reason)
+        if not code or code in seen:
+            return
+        seen.add(code)
+        blockers.append(
+            {
+                "blocker": code,
+                "hypothesis_id": hypothesis_id,
+                "candidate_id": candidate_id,
+                "observed_stage": observed_stage,
+                "window_start": window_start.isoformat(),
+                "window_end": window_end.isoformat(),
+                "promotion_authority": _text(runtime_payload.get("promotion_authority"))
+                or "unknown",
+                "authority_reason": _text(runtime_payload.get("authority_reason")),
+                "runtime_ledger_profit_proof_present": bool(
+                    runtime_payload.get("runtime_ledger_profit_proof_present")
+                ),
+                "remediation": (
+                    "Inspect the imported runtime-window ledger rows and repair route, "
+                    "TCA, fill, cost, or lineage evidence before treating this target as "
+                    "promotion proof."
+                ),
+            }
+        )
+
+    for reason in promotion_blocking_reasons:
+        add_blocker(reason)
+
+    if runtime_payload and runtime_payload.get("authoritative") is False:
+        add_blocker(
+            _text(runtime_payload.get("authority_reason"))
+            or "runtime_observation_not_authoritative"
+        )
+
+    return blockers
+
+
 def _runtime_promotion_blocking_reasons(
     *,
     observed_stage: str,
@@ -1098,6 +1150,14 @@ def persist_observed_runtime_windows(
             default=datetime.now(timezone.utc),
         ),
     )
+    import_window_start = min(
+        (bucket.window_started_at for bucket in raw_buckets),
+        default=latest_observation_at,
+    )
+    import_window_end = max(
+        (bucket.window_ended_at for bucket in raw_buckets),
+        default=latest_observation_at,
+    )
     promotion_blocking_reasons = list(
         dict.fromkeys(
             [
@@ -1112,6 +1172,16 @@ def persist_observed_runtime_windows(
         )
     )
     promotion_allowed = not promotion_blocking_reasons
+    proof_blockers = _runtime_window_import_proof_blockers(
+        promotion_blocking_reasons=promotion_blocking_reasons,
+        runtime_payload=runtime_payload,
+        candidate_id=candidate_id,
+        hypothesis_id=hypothesis_id,
+        observed_stage=observed_stage,
+        window_start=import_window_start,
+        window_end=import_window_end,
+    )
+    proof_status = "blocked" if proof_blockers else "ok"
     running_session_samples = 0
     for bucket in sorted_buckets:
         running_session_samples += bucket.market_session_count
@@ -1338,6 +1408,9 @@ def persist_observed_runtime_windows(
         "slippage_budget_bps": str(budget),
         "promotion_allowed": promotion_allowed,
         "promotion_blocking_reasons": promotion_blocking_reasons,
+        "proof_status": proof_status,
+        "proof_blockers": proof_blockers,
+        "runtime_observation": runtime_payload,
         "delay_adjusted_depth_stress": delay_depth_stress_summary,
     }
 

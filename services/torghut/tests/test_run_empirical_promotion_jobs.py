@@ -796,6 +796,29 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                             "paper_route_probe_next_session_max_notional": "25",
                             "paper_route_probe_window_start": "2026-05-26T13:30:00+00:00",
                             "paper_route_probe_window_end": "2026-05-26T20:00:00+00:00",
+                            "paper_route_session_readiness_state": "waiting_for_session_open",
+                            "paper_route_session_import_ready": False,
+                            "paper_route_session_import_blockers": [
+                                "paper_route_session_window_not_open"
+                            ],
+                            "paper_route_runtime_window_import_not_before": "2026-05-26T20:00:00+00:00",
+                            "paper_route_runtime_import_handoff": {
+                                "runner": "scripts/renew_latest_empirical_promotion_jobs.py",
+                                "target_plan_endpoint": "/trading/paper-route-evidence",
+                                "required_flags": [
+                                    "--runtime-window-import",
+                                    "--runtime-window-target-plan-url",
+                                    "--runtime-window-target-plan-exclusive",
+                                    "--runtime-window-target-plan-required",
+                                    "--runtime-window-target-plan-settlement-seconds",
+                                ],
+                                "source_dsn_env": "SIM_DB_DSN",
+                                "account_label": "TORGHUT_SIM",
+                                "import_ready": False,
+                                "import_blockers": [
+                                    "paper_route_session_window_not_open"
+                                ],
+                            },
                             "paper_probation_authorized": True,
                             "promotion_allowed": False,
                             "final_promotion_authorized": False,
@@ -863,6 +886,25 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertEqual(
             targets[0].target_metadata["paper_route_probe_next_session_max_notional"],
             "25",
+        )
+        self.assertEqual(
+            targets[0].target_metadata["paper_route_session_readiness_state"],
+            "waiting_for_session_open",
+        )
+        self.assertFalse(targets[0].target_metadata["paper_route_session_import_ready"])
+        self.assertEqual(
+            targets[0].target_metadata["paper_route_session_import_blockers"],
+            ["paper_route_session_window_not_open"],
+        )
+        self.assertEqual(
+            targets[0].target_metadata["paper_route_runtime_window_import_not_before"],
+            "2026-05-26T20:00:00+00:00",
+        )
+        self.assertEqual(
+            targets[0].target_metadata["paper_route_runtime_import_handoff"][
+                "target_plan_endpoint"
+            ],
+            "/trading/paper-route-evidence",
         )
         self.assertFalse(targets[0].target_metadata["promotion_allowed"])
         self.assertFalse(targets[0].target_metadata["final_promotion_allowed"])
@@ -2417,6 +2459,249 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             command[command.index("--window-end") + 1],
             "2026-05-26T20:00:00Z",
         )
+
+    def test_runtime_window_import_blocks_non_authoritative_import_summary(
+        self,
+    ) -> None:
+        manifest_path = self.tmp_dir / "empirical-promotion-manifest.yaml"
+        manifest_path.write_text("run_id: renew-1\n", encoding="utf-8")
+        hypothesis_path = self.tmp_dir / "h-pairs-01.json"
+        hypothesis_path.write_text(
+            json.dumps({"candidate_id": "cand-paper-route"}),
+            encoding="utf-8",
+        )
+        plan_path = self.tmp_dir / "paper-route-plan.json"
+        plan_path.write_text(
+            json.dumps(
+                {
+                    "runtime_window_import_plan": {
+                        "targets": [
+                            {
+                                "candidate_id": "cand-paper-route",
+                                "hypothesis_id": "H-PAIRS-01",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_cross_sectional_pairs",
+                                "strategy_name": "paper-route-candidate-v1",
+                                "source_manifest_ref": str(hypothesis_path),
+                                "source_dsn_env": "SIM_DB_DSN",
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "window_start": "2026-05-26T13:30:00Z",
+                                "window_end": "2026-05-26T20:00:00Z",
+                            }
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        completed = SimpleNamespace(
+            stdout=json.dumps(
+                {
+                    "status": "ok",
+                    "promotion_allowed": False,
+                    "promotion_blocking_reasons": [
+                        "paper_stage_evidence_collection_only",
+                        "runtime_ledger_pnl_basis_missing",
+                    ],
+                    "runtime_observation": {
+                        "authoritative": False,
+                        "authority_reason": "runtime_without_runtime_ledger_profit_proof",
+                        "promotion_authority": "blocked",
+                        "runtime_ledger_profit_proof_present": False,
+                    },
+                }
+            )
+        )
+        args = SimpleNamespace(
+            runtime_window_import=True,
+            runtime_window_target=[],
+            runtime_window_target_plan_ref=[str(plan_path)],
+            runtime_window_target_plan_url=[],
+            runtime_window_target_plan_url_timeout_seconds=2.0,
+            runtime_window_target_plan_exclusive=True,
+            runtime_window_target_plan_required=True,
+            runtime_window_target_plan_settlement_seconds=3600,
+            runtime_window_targets_from_latest_autoresearch=False,
+            runtime_window_targets_from_registry=False,
+            runtime_window_hypothesis_id="",
+            runtime_window_candidate_id="",
+            runtime_window_observed_stage="paper",
+            runtime_window_strategy_family="",
+            runtime_window_source_dsn_env="SIM_DB_DSN",
+            runtime_window_strategy_name="",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_start="",
+            runtime_window_end="",
+            runtime_window_dataset_snapshot_ref="",
+            runtime_window_bucket_minutes=30,
+            runtime_window_sample_minutes=5,
+            runtime_window_source_manifest_ref="",
+            runtime_window_source_kind="paper_runtime_observed",
+        )
+
+        with patch.object(renewal.subprocess, "run", return_value=completed):
+            payload = renewal._run_runtime_window_import(
+                args=args,
+                manifest={},
+                run_id="renew-1",
+                manifest_path=manifest_path,
+                now=datetime(2026, 5, 26, 21, 23, tzinfo=timezone.utc),
+            )
+
+        self.assertIsNotNone(payload)
+        assert payload is not None
+        self.assertEqual(payload["proof_status"], "blocked")
+        blocker_codes = [item["blocker"] for item in payload["proof_blockers"]]
+        self.assertEqual(
+            blocker_codes,
+            [
+                "paper_stage_evidence_collection_only",
+                "runtime_ledger_pnl_basis_missing",
+                "runtime_without_runtime_ledger_profit_proof",
+            ],
+        )
+
+    def test_runtime_window_import_payload_keeps_existing_proof_blockers(
+        self,
+    ) -> None:
+        target = renewal.RuntimeWindowImportTarget(
+            hypothesis_id="H-PAIRS-01",
+            candidate_id="cand-paper-route",
+            observed_stage="paper",
+            strategy_family="microbar_cross_sectional_pairs",
+            source_dsn_env="SIM_DB_DSN",
+            strategy_name="paper-route-candidate-v1",
+            account_label="TORGHUT_SIM",
+            dataset_snapshot_ref="",
+            source_manifest_ref="manifest.json",
+            source_kind="paper_route_probe_runtime_observed",
+            delay_adjusted_depth_stress_report_ref="",
+        )
+
+        blockers = renewal._runtime_window_import_payload_proof_blockers(
+            payload={
+                "proof_blockers": [
+                    {
+                        "blocker": "runtime_ledger_pnl_basis_missing",
+                        "candidate_id": "cand-paper-route",
+                    }
+                ],
+                "promotion_allowed": False,
+                "promotion_blocking_reasons": ["ignored_when_blockers_exist"],
+            },
+            target=target,
+            candidate_id="cand-paper-route",
+            window_start=datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc),
+            window_end=datetime(2026, 5, 26, 20, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(
+            blockers,
+            [
+                {
+                    "blocker": "runtime_ledger_pnl_basis_missing",
+                    "candidate_id": "cand-paper-route",
+                }
+            ],
+        )
+
+    def test_runtime_window_import_payload_deduplicates_fallback_blockers(
+        self,
+    ) -> None:
+        target = renewal.RuntimeWindowImportTarget(
+            hypothesis_id="H-PAIRS-01",
+            candidate_id="cand-paper-route",
+            observed_stage="paper",
+            strategy_family="microbar_cross_sectional_pairs",
+            source_dsn_env="SIM_DB_DSN",
+            strategy_name="paper-route-candidate-v1",
+            account_label="TORGHUT_SIM",
+            dataset_snapshot_ref="",
+            source_manifest_ref="manifest.json",
+            source_kind="paper_route_probe_runtime_observed",
+            delay_adjusted_depth_stress_report_ref="",
+        )
+
+        blockers = renewal._runtime_window_import_payload_proof_blockers(
+            payload={
+                "promotion_allowed": False,
+                "promotion_blocking_reasons": [
+                    "",
+                    "paper_stage_evidence_collection_only",
+                    "paper_stage_evidence_collection_only",
+                ],
+                "runtime_observation": {
+                    "authoritative": False,
+                    "authority_reason": "",
+                    "promotion_authority": "blocked",
+                    "runtime_ledger_profit_proof_present": False,
+                },
+            },
+            target=target,
+            candidate_id="cand-paper-route",
+            window_start=datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc),
+            window_end=datetime(2026, 5, 26, 20, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(
+            [item["blocker"] for item in blockers],
+            [
+                "paper_stage_evidence_collection_only",
+                "runtime_observation_not_authoritative",
+            ],
+        )
+
+    def test_runtime_window_import_rejects_non_mapping_import_payload(
+        self,
+    ) -> None:
+        manifest_path = self.tmp_dir / "empirical-promotion-manifest.yaml"
+        manifest_path.write_text("run_id: renew-1\n", encoding="utf-8")
+        hypothesis_path = self.tmp_dir / "h-pairs-01.json"
+        hypothesis_path.write_text(
+            json.dumps({"candidate_id": "cand-paper-route"}),
+            encoding="utf-8",
+        )
+        target = renewal.RuntimeWindowImportTarget(
+            hypothesis_id="H-PAIRS-01",
+            candidate_id="cand-paper-route",
+            observed_stage="paper",
+            strategy_family="microbar_cross_sectional_pairs",
+            source_dsn_env="SIM_DB_DSN",
+            strategy_name="paper-route-candidate-v1",
+            account_label="TORGHUT_SIM",
+            dataset_snapshot_ref="",
+            source_manifest_ref=str(hypothesis_path),
+            source_kind="paper_route_probe_runtime_observed",
+            delay_adjusted_depth_stress_report_ref="",
+        )
+        completed = SimpleNamespace(stdout=json.dumps(["not", "a", "mapping"]))
+        args = SimpleNamespace(
+            runtime_window_bucket_minutes=30,
+            runtime_window_sample_minutes=5,
+            runtime_window_target_plan_settlement_seconds=0,
+        )
+
+        with (
+            patch.object(renewal.subprocess, "run", return_value=completed),
+            self.assertRaisesRegex(
+                RuntimeError,
+                "runtime_window_import_payload_not_mapping",
+            ),
+        ):
+            renewal._run_runtime_window_import_target(
+                args=args,
+                target=target,
+                manifest={},
+                run_id="renew-1",
+                manifest_path=manifest_path,
+                window_start=datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc),
+                window_end=datetime(2026, 5, 26, 20, 0, tzinfo=timezone.utc),
+                now=datetime(2026, 5, 26, 21, 23, tzinfo=timezone.utc),
+            )
+
+    def test_as_text_list_rejects_scalar_values(self) -> None:
+        self.assertEqual(renewal._as_text_list("single-reason"), [])
+        self.assertEqual(renewal._as_text_list({"reason": "value"}), [])
 
     def test_runtime_window_import_rejects_negative_target_plan_settlement_grace(
         self,
