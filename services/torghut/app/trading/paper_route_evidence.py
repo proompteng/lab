@@ -13,7 +13,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..models import (
@@ -274,6 +274,20 @@ def _paper_route_probe_symbols(probe: Mapping[str, object]) -> list[str]:
     return symbols
 
 
+def _target_probe_symbols(
+    target: Mapping[str, object],
+    probe: Mapping[str, object],
+) -> list[str]:
+    symbols: list[str] = []
+    for item in _as_sequence(target.get("paper_route_probe_symbols")):
+        symbol = str(item).strip().upper()
+        if symbol and symbol not in symbols:
+            symbols.append(symbol)
+    if symbols:
+        return symbols
+    return _paper_route_probe_symbols(probe)
+
+
 def _next_session_probe_notional(probe: Mapping[str, object]) -> str:
     next_notional = _safe_decimal(probe.get("next_session_max_notional"))
     if next_notional > 0:
@@ -300,6 +314,11 @@ def _target_identity(target: Mapping[str, Any]) -> dict[str, object]:
         "dataset_snapshot_ref": _safe_text(target.get("dataset_snapshot_ref")),
         "window_start": _safe_text(target.get("window_start")),
         "window_end": _safe_text(target.get("window_end")),
+        "paper_route_probe_symbols": [
+            str(item).strip()
+            for item in _as_sequence(target.get("paper_route_probe_symbols"))
+            if str(item).strip()
+        ],
         "runtime_ledger_bucket_ref": _safe_text(
             target.get("runtime_ledger_bucket_ref")
         ),
@@ -511,11 +530,19 @@ def _strategy_source_activity(
     session: Session,
     *,
     strategy_name: str | None,
+    account_label: str | None,
+    symbols: Sequence[str],
     window_start: datetime,
+    window_end: datetime,
 ) -> dict[str, object]:
+    symbol_filters = [
+        str(item).strip().upper() for item in symbols if str(item).strip()
+    ]
     if strategy_name is None:
         return {
             "strategy_name": None,
+            "account_label": account_label,
+            "symbols": symbol_filters,
             "decision_count": 0,
             "execution_count": 0,
             "filled_execution_count": 0,
@@ -527,37 +554,73 @@ def _strategy_source_activity(
             "missing_reasons": ["strategy_name_missing"],
         }
 
+    decision_stmt = (
+        select(TradeDecision)
+        .join(Strategy, TradeDecision.strategy_id == Strategy.id)
+        .where(Strategy.name == strategy_name)
+        .where(TradeDecision.created_at >= window_start)
+        .where(TradeDecision.created_at <= window_end)
+    )
+    if account_label:
+        decision_stmt = decision_stmt.where(
+            TradeDecision.alpaca_account_label == account_label
+        )
+    if symbol_filters:
+        decision_stmt = decision_stmt.where(
+            func.upper(TradeDecision.symbol).in_(symbol_filters)
+        )
     decision_rows = list(
         session.execute(
-            select(TradeDecision)
-            .join(Strategy, TradeDecision.strategy_id == Strategy.id)
-            .where(Strategy.name == strategy_name)
-            .where(TradeDecision.created_at >= window_start)
-            .order_by(TradeDecision.created_at.desc())
-            .limit(500)
+            decision_stmt.order_by(TradeDecision.created_at.desc()).limit(500)
         ).scalars()
     )
     decision_ids = [row.id for row in decision_rows]
     execution_rows: list[Execution] = []
     if decision_ids:
+        execution_stmt = (
+            select(Execution)
+            .where(Execution.trade_decision_id.in_(decision_ids))
+            .where(Execution.created_at >= window_start)
+            .where(Execution.created_at <= window_end)
+        )
+        if account_label:
+            execution_stmt = execution_stmt.where(
+                Execution.alpaca_account_label == account_label
+            )
+        if symbol_filters:
+            execution_stmt = execution_stmt.where(
+                func.upper(Execution.symbol).in_(symbol_filters)
+            )
         execution_rows = list(
             session.execute(
-                select(Execution)
-                .where(Execution.trade_decision_id.in_(decision_ids))
-                .order_by(Execution.created_at.desc())
-                .limit(500)
+                execution_stmt.order_by(Execution.created_at.desc()).limit(500)
             ).scalars()
         )
-    tca_rows = list(
-        session.execute(
+    tca_rows: list[ExecutionTCAMetric] = []
+    if decision_ids:
+        tca_stmt = (
             select(ExecutionTCAMetric)
             .join(Strategy, ExecutionTCAMetric.strategy_id == Strategy.id)
             .where(Strategy.name == strategy_name)
             .where(ExecutionTCAMetric.computed_at >= window_start)
-            .order_by(ExecutionTCAMetric.computed_at.desc())
-            .limit(500)
-        ).scalars()
-    )
+            .where(ExecutionTCAMetric.computed_at <= window_end)
+        )
+        tca_stmt = tca_stmt.where(
+            ExecutionTCAMetric.trade_decision_id.in_(decision_ids)
+        )
+        if account_label:
+            tca_stmt = tca_stmt.where(
+                ExecutionTCAMetric.alpaca_account_label == account_label
+            )
+        if symbol_filters:
+            tca_stmt = tca_stmt.where(
+                func.upper(ExecutionTCAMetric.symbol).in_(symbol_filters)
+            )
+        tca_rows = list(
+            session.execute(
+                tca_stmt.order_by(ExecutionTCAMetric.computed_at.desc()).limit(500)
+            ).scalars()
+        )
     decision_count = len(decision_rows)
     execution_count = len(execution_rows)
     tca_sample_count = len(tca_rows)
@@ -573,6 +636,8 @@ def _strategy_source_activity(
         missing_reasons.append("source_tca_missing")
     return {
         "strategy_name": strategy_name,
+        "account_label": account_label,
+        "symbols": symbol_filters,
         "decision_count": decision_count,
         "execution_count": execution_count,
         "filled_execution_count": filled_execution_count,
@@ -840,7 +905,10 @@ def _target_audit(
     source_activity = _strategy_source_activity(
         session,
         strategy_name=cast(str | None, target.get("strategy_name")),
+        account_label=cast(str | None, target.get("account_label")),
+        symbols=_target_probe_symbols(target, probe),
         window_start=window_start,
+        window_end=window_end,
     )
     runtime_ledger = _runtime_ledger_summary(
         session,
