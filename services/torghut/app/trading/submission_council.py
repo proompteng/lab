@@ -1316,6 +1316,26 @@ def _runtime_ledger_paper_probation_import_plan(
     }
 
 
+def _paper_probation_eligible_total_with_runtime_ledger(
+    *,
+    legacy_total: int,
+    runtime_items: Sequence[Mapping[str, Any]],
+    runtime_ledger_candidates: Sequence[Mapping[str, object]],
+) -> int:
+    keys: set[tuple[str, str]] = set()
+    for item in runtime_items:
+        if not bool(item.get("paper_probation_eligible")):
+            continue
+        hypothesis_id = _safe_text(item.get("hypothesis_id")) or ""
+        candidate_id = _safe_text(item.get("candidate_id")) or ""
+        keys.add((hypothesis_id, candidate_id))
+    for candidate in runtime_ledger_candidates:
+        hypothesis_id = _safe_text(candidate.get("hypothesis_id")) or ""
+        candidate_id = _safe_text(candidate.get("candidate_id")) or ""
+        keys.add((hypothesis_id, candidate_id))
+    return max(legacy_total, len(keys))
+
+
 def _load_runtime_ledger_repair_candidates(
     session: Session,
     *,
@@ -2861,6 +2881,13 @@ def build_live_submission_gate_payload(
     paper_probation_eligible_total = _safe_int(
         summary.get("paper_probation_eligible_total")
     )
+    paper_probation_eligible_total = (
+        _paper_probation_eligible_total_with_runtime_ledger(
+            legacy_total=paper_probation_eligible_total,
+            runtime_items=runtime_items,
+            runtime_ledger_candidates=runtime_ledger_paper_probation_candidates,
+        )
+    )
     active_capital_stage = resolve_active_capital_stage(summary)
     segment_summary = _segment_summary(
         state=state,
@@ -2972,6 +2999,8 @@ def build_live_submission_gate_payload(
         blocked_reasons.append("critical_toggle_parity_diverged")
     if promotion_eligible_total <= 0:
         blocked_reasons.append("alpha_readiness_not_promotion_eligible")
+        if runtime_ledger_paper_probation_candidates:
+            blocked_reasons.append("paper_probation_evidence_collection_only")
     if empirical_ready is False:
         blocked_reasons.append("empirical_jobs_not_ready")
     if dspy_live_ready is False:

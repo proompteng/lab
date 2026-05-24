@@ -665,7 +665,11 @@ class TestSubmissionCouncil(TestCase):
             "runtime_ledger_candidate_mismatch", candidates[0]["reason_codes"]
         )
         paper_candidates = gate["runtime_ledger_paper_probation_candidates"]
+        self.assertEqual(gate["paper_probation_eligible_total"], 1)
         self.assertEqual(gate["runtime_ledger_paper_probation_eligible_total"], 1)
+        self.assertIn(
+            "paper_probation_evidence_collection_only", gate["blocked_reasons"]
+        )
         self.assertEqual(len(paper_candidates), 1)
         self.assertEqual(paper_candidates[0]["hypothesis_id"], "H-PAIRS-01")
         self.assertEqual(
