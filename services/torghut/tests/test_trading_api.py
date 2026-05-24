@@ -6927,7 +6927,8 @@ class TestTradingApi(TestCase):
             }
         }
         try:
-            app.state.trading_scheduler = TradingScheduler()
+            if hasattr(app.state, "trading_scheduler"):
+                del app.state.trading_scheduler
             with (
                 patch(
                     "app.main._build_live_submission_gate_payload",
