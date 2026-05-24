@@ -71,7 +71,7 @@ spec:
                   name: torghut-options-alpaca
                   key: APCA_API_BASE_URL
             - name: TORGHUT_OPTIONS_VERSION
-              value: v0.571.1-771-gaaa18f989
+              value: v0.572.0
             - name: TORGHUT_OPTIONS_COMMIT
               value: 5562f77bf1a76256a9ccc39d45054b3a5789dd29
           ports:
