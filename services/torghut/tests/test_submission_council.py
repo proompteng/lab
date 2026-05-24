@@ -3295,6 +3295,108 @@ class TestSubmissionCouncil(TestCase):
             result["reason_codes"],
         )
 
+    def test_build_live_submission_gate_payload_scopes_paper_probation_blockers_to_runtime_candidate(
+        self,
+    ) -> None:
+        result = build_live_submission_gate_payload(
+            SimpleNamespace(
+                last_autonomy_promotion_eligible=False,
+                last_autonomy_promotion_action=None,
+                drift_live_promotion_eligible=False,
+                last_market_context_freshness_seconds=900,
+                last_market_context_domain_states={"news": "stale"},
+                market_context_alert_active=True,
+                market_context_alert_reason="market_context_stale",
+            ),
+            hypothesis_summary={
+                "summary": {
+                    "promotion_eligible_total": 0,
+                    "paper_probation_eligible_total": 1,
+                    "capital_stage_totals": {"shadow": 2},
+                    "dependency_quorum": {
+                        "decision": "allow",
+                        "reasons": [],
+                        "message": "ready",
+                    },
+                },
+                "items": [
+                    {
+                        "hypothesis_id": "H-PAIRS-01",
+                        "candidate_id": "c88421d619759b2cfaa6f4d0",
+                        "lane_id": "microbar-cross-sectional-pairs",
+                        "strategy_family": "microbar_cross_sectional_pairs",
+                        "strategy_id": "microbar_cross_sectional_pairs_v1@research",
+                        "promotion_eligible": False,
+                        "paper_probation_eligible": True,
+                        "capital_stage": "shadow",
+                        "reasons": ["paper_probation_evidence_collection_only"],
+                        "segment_dependencies": ["execution", "empirical", "ta-core"],
+                    },
+                    {
+                        "hypothesis_id": "H-REV-01",
+                        "candidate_id": "rev-candidate",
+                        "lane_id": "event-reversion",
+                        "strategy_family": "event_reversion",
+                        "strategy_id": "microbar_prev_day_open45_reversal_long_top1_chip_v1@paper",
+                        "promotion_eligible": False,
+                        "paper_probation_eligible": False,
+                        "capital_stage": "shadow",
+                        "reasons": [],
+                        "segment_dependencies": [
+                            "execution",
+                            "empirical",
+                            "llm-review",
+                            "market-context",
+                            "ta-core",
+                        ],
+                    },
+                ],
+            },
+            empirical_jobs_status={"ready": True, "status": "healthy"},
+            quant_health_status=self._healthy_quant_status(),
+            promotion_certificate_evidence=[
+                {
+                    "hypothesis_id": "H-PAIRS-01",
+                    "metric_window": self._metric_window(
+                        observed_stage="paper",
+                        run_id="pairs-paper-window",
+                        candidate_id="c88421d619759b2cfaa6f4d0",
+                        hypothesis_id="H-PAIRS-01",
+                    ),
+                    "promotion_decision": self._promotion_decision(
+                        run_id="pairs-paper-window",
+                        candidate_id="c88421d619759b2cfaa6f4d0",
+                        hypothesis_id="H-PAIRS-01",
+                    ),
+                },
+                {
+                    "hypothesis_id": "H-REV-01",
+                    "metric_window": self._metric_window(
+                        run_id="rev-live-window",
+                        candidate_id="rev-candidate",
+                        hypothesis_id="H-REV-01",
+                    ),
+                    "promotion_decision": self._promotion_decision(
+                        run_id="rev-live-window",
+                        candidate_id="rev-candidate",
+                        hypothesis_id="H-REV-01",
+                    ),
+                },
+            ],
+        )
+
+        self.assertFalse(result["allowed"])
+        self.assertIn(
+            "promotion_certificate_not_live_runtime",
+            result["blocked_reasons"],
+        )
+        self.assertNotIn("segment_market-context_blocked", result["blocked_reasons"])
+        self.assertNotIn("market_context_stale", result["blocked_reasons"])
+        self.assertNotIn(
+            "market_context_domain_news_stale",
+            result["blocked_reasons"],
+        )
+
     def test_build_live_submission_gate_payload_blocks_without_certificate_evidence(
         self,
     ) -> None:
