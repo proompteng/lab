@@ -35,6 +35,7 @@ from app.trading.submission_council import (
     _merge_runtime_certificate_evidence,
     _metric_window_activity_reason_codes,
     _refresh_runtime_summary_totals,
+    _runtime_ledger_paper_probation_import_plan,
     build_hypothesis_runtime_summary,
     build_live_submission_gate_payload,
     load_quant_evidence_status,
@@ -671,7 +672,84 @@ class TestSubmissionCouncil(TestCase):
             paper_candidates[0]["paper_probation_scope"], "evidence_collection_only"
         )
         self.assertEqual(paper_candidates[0]["max_notional"], "0")
+        import_plan = gate["runtime_ledger_paper_probation_import_plan"]
+        self.assertIsInstance(import_plan, dict)
+        self.assertEqual(
+            import_plan["schema_version"],
+            "torghut.runtime-ledger-paper-probation-import-plan.v1",
+        )
+        self.assertEqual(import_plan["target_count"], 1)
+        self.assertEqual(import_plan["skipped_target_count"], 0)
+        target = import_plan["targets"][0]
+        self.assertEqual(target["hypothesis_id"], "H-PAIRS-01")
+        self.assertEqual(target["candidate_id"], "c88421d619759b2cfaa6f4d0")
+        self.assertEqual(target["observed_stage"], "paper")
+        self.assertEqual(target["strategy_family"], "microbar_cross_sectional_pairs")
+        self.assertEqual(target["strategy_name"], "microbar-pairs-vwap-cap-safe")
+        self.assertEqual(target["account_label"], "TORGHUT_SIM")
+        self.assertEqual(
+            target["source_dsn_env"], "TORGHUT_DURABLE_RUNTIME_LEDGER_SOURCE_DSN"
+        )
+        self.assertEqual(target["source_kind"], "durable_runtime_ledger_bucket")
+        self.assertEqual(
+            target["source_manifest_ref"], "config/trading/hypotheses/h-pairs-01.json"
+        )
+        self.assertEqual(
+            target["dataset_snapshot_ref"], "portfolio-profit-autoresearch-500-v1"
+        )
+        self.assertEqual(target["paper_probation_authorized"], True)
+        self.assertEqual(
+            target["paper_probation_authorization_scope"],
+            "evidence_collection_only",
+        )
+        self.assertEqual(target["promotion_allowed"], False)
+        self.assertEqual(target["final_promotion_authorized"], False)
+        self.assertEqual(target["final_promotion_allowed"], False)
+        self.assertIn("runtime_ledger_stage_not_live", target["candidate_blockers"])
+        self.assertIn(
+            "live_runtime_ledger_required", target["final_promotion_blockers"]
+        )
+        self.assertNotIn("runtime_ledger_artifact_refs", target)
+        self.assertNotIn("runtime_ledger_artifact_row_count", target)
         self.assertEqual(candidates[1]["hypothesis_id"], "H-CONT-01")
+
+    def test_runtime_ledger_paper_probation_import_plan_falls_back_and_skips_incomplete_targets(
+        self,
+    ) -> None:
+        plan = _runtime_ledger_paper_probation_import_plan(
+            [
+                {
+                    "hypothesis_id": "H-FALLBACK-01",
+                    "candidate_id": "candidate-fallback",
+                    "strategy_id": "microbar_cross_sectional_pairs_v1@research",
+                    "strategy_family": "microbar_cross_sectional_pairs",
+                    "account": "TORGHUT_SIM",
+                    "bucket_started_at": "2026-05-13T17:00:00+00:00",
+                    "bucket_ended_at": "2026-05-13T17:30:00+00:00",
+                    "reason_codes": ["runtime_ledger_stage_not_live"],
+                },
+                {
+                    "candidate_id": "candidate-missing",
+                    "bucket_started_at": "2026-05-13T17:00:00+00:00",
+                    "bucket_ended_at": "2026-05-13T17:30:00+00:00",
+                },
+            ]
+        )
+
+        self.assertEqual(plan["target_count"], 1)
+        self.assertEqual(plan["skipped_target_count"], 1)
+        target = plan["targets"][0]
+        self.assertEqual(target["strategy_name"], "microbar-cross-sectional-pairs-v1")
+        self.assertEqual(
+            target["source_manifest_ref"],
+            "config/trading/hypotheses/h-fallback-01.json",
+        )
+        self.assertNotIn("runtime_ledger_bucket_ref", target)
+        skipped_target = plan["skipped_targets"][0]
+        self.assertEqual(skipped_target["candidate_id"], "candidate-missing")
+        self.assertIn("hypothesis_id", skipped_target["missing_fields"])
+        self.assertIn("strategy_name", skipped_target["missing_fields"])
+        self.assertIn("source_manifest_ref", skipped_target["missing_fields"])
 
     def test_metric_window_activity_rejects_tca_proxy_expectancy(self) -> None:
         metric_window = SimpleNamespace(
