@@ -1122,6 +1122,18 @@ _RUNTIME_LEDGER_PAPER_PROBATION_REASON = "runtime_ledger_stage_not_live"
 _RUNTIME_LEDGER_PAPER_PROBATION_ALLOWED_REASONS = {
     _RUNTIME_LEDGER_PAPER_PROBATION_REASON
 }
+_RUNTIME_LEDGER_PAPER_PROBATION_IMPORT_SCHEMA_VERSION = (
+    "torghut.runtime-ledger-paper-probation-import-plan.v1"
+)
+_RUNTIME_LEDGER_PAPER_PROBATION_SOURCE_KIND = "durable_runtime_ledger_bucket"
+_RUNTIME_LEDGER_PAPER_PROBATION_SOURCE_DSN_ENV = (
+    "TORGHUT_DURABLE_RUNTIME_LEDGER_SOURCE_DSN"
+)
+_RUNTIME_LEDGER_PAPER_PROBATION_PROMOTION_BLOCKERS = (
+    _RUNTIME_LEDGER_PAPER_PROBATION_REASON,
+    "paper_probation_evidence_collection_only",
+    "live_runtime_ledger_required",
+)
 
 
 def _runtime_ledger_paper_probation_eligible(
@@ -1165,6 +1177,143 @@ def _runtime_ledger_paper_probation_candidates(
         for candidate in candidates
         if _runtime_ledger_paper_probation_eligible(candidate)
     ]
+
+
+def _strategy_name_from_strategy_id(strategy_id: object) -> str | None:
+    text = _safe_text(strategy_id)
+    if text is None:
+        return None
+    base = text.split("@", 1)[0].strip()
+    return base.replace("_", "-") if base else None
+
+
+def _hypothesis_manifest_ref(hypothesis_id: object) -> str | None:
+    text = _safe_text(hypothesis_id)
+    if text is None:
+        return None
+    slug = text.lower().replace("_", "-")
+    return f"config/trading/hypotheses/{slug}.json"
+
+
+def _runtime_ledger_paper_probation_strategy_name(
+    candidate: Mapping[str, object],
+) -> str | None:
+    return _safe_text(candidate.get("runtime_strategy_name")) or (
+        _strategy_name_from_strategy_id(candidate.get("strategy_id"))
+    )
+
+
+def _runtime_ledger_paper_probation_bucket_ref(
+    candidate: Mapping[str, object],
+) -> str | None:
+    run_id = _safe_text(candidate.get("run_id"))
+    started_at = _safe_text(candidate.get("bucket_started_at"))
+    ended_at = _safe_text(candidate.get("bucket_ended_at"))
+    if run_id is None or started_at is None or ended_at is None:
+        return None
+    return f"strategy_runtime_ledger_buckets:{run_id}:{started_at}:{ended_at}"
+
+
+def _runtime_ledger_paper_probation_import_plan(
+    candidates: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    targets: list[dict[str, object]] = []
+    skipped_targets: list[dict[str, object]] = []
+    for candidate in candidates:
+        hypothesis_id = _safe_text(candidate.get("hypothesis_id"))
+        candidate_id = _safe_text(candidate.get("candidate_id"))
+        strategy_family = _safe_text(candidate.get("strategy_family"))
+        strategy_name = _runtime_ledger_paper_probation_strategy_name(candidate)
+        account_label = _safe_text(candidate.get("account")) or "TORGHUT_SIM"
+        window_start = _safe_text(candidate.get("bucket_started_at"))
+        window_end = _safe_text(candidate.get("bucket_ended_at"))
+        source_manifest_ref = _safe_text(candidate.get("source_manifest_ref")) or (
+            _hypothesis_manifest_ref(hypothesis_id)
+        )
+        dataset_snapshot_ref = _safe_text(candidate.get("dataset_snapshot_ref"))
+        missing = [
+            field
+            for field, value in (
+                ("hypothesis_id", hypothesis_id),
+                ("candidate_id", candidate_id),
+                ("strategy_family", strategy_family),
+                ("strategy_name", strategy_name),
+                ("window_start", window_start),
+                ("window_end", window_end),
+                ("source_manifest_ref", source_manifest_ref),
+            )
+            if value is None
+        ]
+        if missing:
+            skipped_targets.append(
+                {
+                    "hypothesis_id": hypothesis_id,
+                    "candidate_id": candidate_id,
+                    "missing_fields": missing,
+                    "reason": "runtime_ledger_paper_probation_target_missing_required_fields",
+                }
+            )
+            continue
+
+        reason_codes = _normalize_reason_codes(
+            [
+                str(reason).strip()
+                for reason in cast(
+                    Sequence[object], candidate.get("reason_codes") or []
+                )
+                if str(reason).strip()
+            ]
+        )
+        target: dict[str, object] = {
+            "hypothesis_id": hypothesis_id,
+            "candidate_id": candidate_id,
+            "observed_stage": "paper",
+            "strategy_family": strategy_family,
+            "strategy_name": strategy_name,
+            "account_label": account_label,
+            "source_dsn_env": _RUNTIME_LEDGER_PAPER_PROBATION_SOURCE_DSN_ENV,
+            "dataset_snapshot_ref": dataset_snapshot_ref or "",
+            "source_manifest_ref": source_manifest_ref,
+            "source_kind": _RUNTIME_LEDGER_PAPER_PROBATION_SOURCE_KIND,
+            "window_start": window_start,
+            "window_end": window_end,
+            "paper_probation_authorized": True,
+            "paper_probation_authorization_scope": "evidence_collection_only",
+            "evidence_collection_stage": "paper",
+            "probation_allowed": True,
+            "probation_reason": "paper_stage_runtime_ledger_positive_after_costs",
+            "promotion_allowed": False,
+            "final_promotion_authorized": False,
+            "final_promotion_allowed": False,
+            "final_promotion_blockers": list(
+                _RUNTIME_LEDGER_PAPER_PROBATION_PROMOTION_BLOCKERS
+            ),
+            "candidate_blockers": reason_codes,
+            "runtime_ledger_target_metadata_blockers": list(
+                _RUNTIME_LEDGER_PAPER_PROBATION_PROMOTION_BLOCKERS
+            ),
+            "handoff": "runtime_ledger_paper_probation_import",
+            "promotion_gate": "runtime_ledger_live_or_live_paper_required",
+            "selected_by": "runtime_ledger_paper_probation",
+            "selection_reason": "positive_post_cost_runtime_ledger_bucket",
+            "max_notional": "0",
+        }
+        if bucket_ref := _runtime_ledger_paper_probation_bucket_ref(candidate):
+            target["runtime_ledger_bucket_ref"] = bucket_ref
+        targets.append(target)
+
+    return {
+        "schema_version": _RUNTIME_LEDGER_PAPER_PROBATION_IMPORT_SCHEMA_VERSION,
+        "source": "runtime_ledger_paper_probation_candidates",
+        "purpose": "paper_stage_runtime_ledger_evidence_collection",
+        "promotion_allowed": False,
+        "final_promotion_authorized": False,
+        "final_promotion_allowed": False,
+        "target_count": len(targets),
+        "skipped_target_count": len(skipped_targets),
+        "targets": targets,
+        "skipped_targets": skipped_targets,
+    }
 
 
 def _load_runtime_ledger_repair_candidates(
@@ -1229,6 +1378,9 @@ def _load_runtime_ledger_repair_candidates(
                 "candidate_id": payload.get("candidate_id"),
                 "strategy_id": manifest.get("strategy_id")
                 or payload.get("runtime_strategy_name"),
+                "dataset_snapshot_ref": manifest.get("dataset_snapshot_ref"),
+                "source_manifest_ref": manifest.get("source_manifest_ref")
+                or _hypothesis_manifest_ref(payload.get("hypothesis_id")),
                 "strategy_family": payload.get("strategy_family")
                 or manifest.get("strategy_family"),
                 "runtime_strategy_name": payload.get("runtime_strategy_name"),
@@ -2661,6 +2813,11 @@ def build_live_submission_gate_payload(
     runtime_ledger_paper_probation_candidates = (
         _runtime_ledger_paper_probation_candidates(runtime_ledger_repair_candidates)
     )
+    runtime_ledger_paper_probation_import_plan = (
+        _runtime_ledger_paper_probation_import_plan(
+            runtime_ledger_paper_probation_candidates
+        )
+    )
     evidence_rows = (
         [dict(item) for item in promotion_certificate_evidence]
         if promotion_certificate_evidence is not None
@@ -2802,6 +2959,9 @@ def build_live_submission_gate_payload(
             ),
             "runtime_ledger_paper_probation_eligible_total": len(
                 runtime_ledger_paper_probation_candidates
+            ),
+            "runtime_ledger_paper_probation_import_plan": (
+                runtime_ledger_paper_probation_import_plan
             ),
             "profit_window_contract": profit_window_contract,
             "profit_lease_projection": profit_lease_projection,
@@ -2989,6 +3149,9 @@ def build_live_submission_gate_payload(
         ),
         "runtime_ledger_paper_probation_eligible_total": len(
             runtime_ledger_paper_probation_candidates
+        ),
+        "runtime_ledger_paper_probation_import_plan": (
+            runtime_ledger_paper_probation_import_plan
         ),
         "profit_window_contract": profit_window_contract,
         "profit_lease_projection": profit_lease_projection,
