@@ -5373,6 +5373,12 @@ def _build_simple_lane_status_payload() -> dict[str, object]:
         "order_feed_telemetry_enabled": (
             settings.trading_simple_order_feed_telemetry_enabled
         ),
+        "paper_route_probe_enabled": (
+            settings.trading_simple_paper_route_probe_enabled
+        ),
+        "paper_route_probe_max_notional": (
+            settings.trading_simple_paper_route_probe_max_notional
+        ),
         "route_symbol_filter_enabled": settings.trading_pipeline_mode == "simple",
         "max_notional_per_order": settings.trading_simple_max_notional_per_order,
         "max_notional_per_symbol": settings.trading_simple_max_notional_per_symbol,

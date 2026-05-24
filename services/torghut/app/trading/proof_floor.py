@@ -824,11 +824,24 @@ def build_profitability_proof_floor_receipt(
             "live_submit_enabled": False,
         },
     }
-    receipt["route_reacquisition_book"] = build_route_reacquisition_book(
+    paper_route_probe_enabled = False
+    paper_route_probe_max_notional: object | None = None
+    if isinstance(simple_lane_status, Mapping):
+        paper_route_probe_enabled = _truthy(
+            simple_lane_status.get("paper_route_probe_enabled")
+        )
+        paper_route_probe_max_notional = simple_lane_status.get(
+            "paper_route_probe_max_notional"
+        )
+    route_reacquisition_book = build_route_reacquisition_book(
         proof_floor_receipt=receipt,
         trading_mode=trading_mode,
         market_session_open=market_session_open,
+        paper_route_probe_enabled=paper_route_probe_enabled,
+        paper_route_probe_max_notional=paper_route_probe_max_notional,
     )
+    receipt["route_reacquisition_book"] = route_reacquisition_book
+    receipt["paper_route_probe"] = route_reacquisition_book.get("paper_route_probe")
     return receipt
 
 

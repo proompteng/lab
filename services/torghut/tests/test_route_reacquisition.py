@@ -289,6 +289,128 @@ def test_route_book_ranks_zero_notional_repair_candidates_from_live_shape() -> N
     )
 
 
+def test_route_book_surfaces_paper_route_probe_readiness_without_capital_authority() -> (
+    None
+):
+    book = build_route_reacquisition_book(
+        proof_floor_receipt={
+            "generated_at": "2026-05-24T06:42:27.532861+00:00",
+            "account_label": "TORGHUT_SIM",
+            "route_state": "repair_only",
+            "capital_state": "zero_notional",
+            "proof_dimensions": [
+                {
+                    "dimension": "execution_tca",
+                    "state": "pass",
+                    "reason": "execution_tca_route_universe_exclusions_applied",
+                    "source_ref": {
+                        "slippage_guardrail_bps": "6",
+                        "unsettled_execution_count": 0,
+                        "symbol_routes": {
+                            "scope_symbols": ["AAPL", "AMZN", "INTC", "NVDA"],
+                            "scope_symbol_count": 4,
+                            "routeable_symbols": [
+                                {
+                                    "symbol": "AMZN",
+                                    "order_count": 1,
+                                    "avg_abs_slippage_bps": "3.07908692",
+                                }
+                            ],
+                            "blocked_symbols": [
+                                {
+                                    "symbol": "NVDA",
+                                    "order_count": 6,
+                                    "avg_abs_slippage_bps": "92.210049075",
+                                }
+                            ],
+                            "missing_symbols": ["AAPL", "INTC"],
+                        },
+                    },
+                },
+                {"dimension": "market_context", "state": "pass"},
+                {"dimension": "quant_ingestion", "state": "pass"},
+                {"dimension": "alpha_readiness", "state": "fail"},
+            ],
+        },
+        trading_mode="paper",
+        market_session_open=False,
+        paper_route_probe_enabled=True,
+        paper_route_probe_max_notional=25.0,
+    )
+
+    probe = cast(Mapping[str, Any], book["paper_route_probe"])
+    assert probe["configured_enabled"] is True
+    assert probe["configured_max_notional"] == "25.0"
+    assert probe["active"] is False
+    assert probe["effective_max_notional"] == "0"
+    assert probe["next_session_max_notional"] == "25.0"
+    assert probe["eligible_symbols"] == ["AAPL", "INTC"]
+    assert probe["active_symbols"] == []
+    assert probe["blocking_reasons"] == ["market_session_closed"]
+    assert probe["capital_authority"] == "none"
+
+    summary = cast(Mapping[str, Any], book["summary"])
+    assert summary["paper_route_probe_eligible_symbols"] == ["AAPL", "INTC"]
+    assert summary["paper_route_probe_active_symbols"] == []
+    assert summary["repair_candidate_symbols"] == ["NVDA", "AAPL", "INTC"]
+
+    records = cast(list[Mapping[str, Any]], book["records"])
+    aapl = next(item for item in records if item["symbol"] == "AAPL")
+    aapl_probe = cast(Mapping[str, Any], aapl["paper_route_probe"])
+    assert aapl["paper_probe_notional_limit"] == "0"
+    assert aapl_probe["eligible"] is True
+    assert aapl_probe["active"] is False
+    assert aapl_probe["notional_limit"] == "0"
+    assert aapl_probe["next_session_notional_limit"] == "25.0"
+    assert aapl_probe["capital_authority"] == "none"
+
+    candidates = cast(list[Mapping[str, Any]], summary["repair_candidates"])
+    candidate = next(item for item in candidates if item["symbol"] == "AAPL")
+    candidate_probe = cast(Mapping[str, Any], candidate["paper_route_probe"])
+    assert candidate["paper_probe_notional_limit"] == "0"
+    assert candidate_probe["next_session_notional_limit"] == "25.0"
+
+
+def test_route_book_marks_paper_route_probe_active_only_when_market_open() -> None:
+    book = build_route_reacquisition_book(
+        proof_floor_receipt={
+            "generated_at": "2026-05-24T06:42:27.532861+00:00",
+            "account_label": "TORGHUT_SIM",
+            "route_state": "repair_only",
+            "capital_state": "zero_notional",
+            "proof_dimensions": [
+                {
+                    "dimension": "execution_tca",
+                    "state": "pass",
+                    "reason": "execution_tca_route_universe_exclusions_applied",
+                    "source_ref": {
+                        "symbol_routes": {
+                            "scope_symbols": ["AAPL"],
+                            "scope_symbol_count": 1,
+                            "routeable_symbols": [],
+                            "blocked_symbols": [],
+                            "missing_symbols": ["AAPL"],
+                        }
+                    },
+                },
+                {"dimension": "market_context", "state": "pass"},
+                {"dimension": "quant_ingestion", "state": "pass"},
+                {"dimension": "alpha_readiness", "state": "fail"},
+            ],
+        },
+        trading_mode="paper",
+        market_session_open=True,
+        paper_route_probe_enabled=True,
+        paper_route_probe_max_notional="25",
+    )
+
+    probe = cast(Mapping[str, Any], book["paper_route_probe"])
+    assert probe["active"] is True
+    assert probe["effective_max_notional"] == "25"
+    assert probe["active_symbols"] == ["AAPL"]
+    assert probe["blocking_reasons"] == []
+
+
 def test_route_reacquisition_board_keeps_live_repair_zero_notional() -> None:
     proof_floor = {
         "generated_at": "2026-05-07T22:11:12.125118+00:00",
