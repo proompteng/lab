@@ -7,6 +7,12 @@ from typing import Any, cast
 
 
 SCHEMA_VERSION = "torghut.route-reacquisition-book.v1"
+_PAPER_ROUTE_PROBE_REASONS = {
+    "execution_tca_route_universe_empty",
+    "execution_tca_symbol_missing",
+    "tca_evidence_stale",
+}
+_PAPER_ROUTE_PROBE_STATES = {"missing", "probing"}
 
 
 def _text(value: object, default: str = "") -> str:
@@ -42,6 +48,14 @@ def _float(value: object) -> float | None:
         except ValueError:
             return None
     return None
+
+
+def _positive_amount_text(value: object) -> str | None:
+    amount = _float(value)
+    if amount is None or amount <= 0:
+        return None
+    rendered = _text(value)
+    return rendered if rendered else str(amount)
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
@@ -195,7 +209,7 @@ def _repair_candidate_rank(record: Mapping[str, object]) -> tuple[int, float, in
 
 
 def _repair_candidate(record: Mapping[str, object], *, rank: int) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "rank": rank,
         "symbol": _text(record.get("symbol")),
         "state": _text(record.get("state")),
@@ -206,6 +220,43 @@ def _repair_candidate(record: Mapping[str, object], *, rank: int) -> dict[str, o
         "paper_probe_notional_limit": "0",
         "next_repair_action": _text(record.get("next_repair_action")),
     }
+    paper_route_probe = _mapping(record.get("paper_route_probe"))
+    if paper_route_probe and bool(paper_route_probe.get("eligible")):
+        payload["paper_route_probe"] = dict(paper_route_probe)
+    return payload
+
+
+def _paper_route_probe_eligible(record: Mapping[str, object]) -> bool:
+    return (
+        _text(record.get("state")) in _PAPER_ROUTE_PROBE_STATES
+        and _text(record.get("reason")) in _PAPER_ROUTE_PROBE_REASONS
+    )
+
+
+def _paper_route_probe_blockers(
+    *,
+    trading_mode: str,
+    market_session_open: bool | None,
+    enabled: bool,
+    configured_limit: str | None,
+    eligible_symbol_count: int,
+) -> list[str]:
+    blockers: list[str] = []
+    if trading_mode != "paper":
+        blockers.append("not_paper_mode")
+    if not enabled:
+        blockers.append("paper_route_probe_disabled")
+    if configured_limit is None:
+        blockers.append("paper_route_probe_max_notional_invalid")
+    if market_session_open is not True:
+        blockers.append(
+            "market_session_closed"
+            if market_session_open is False
+            else "market_session_unknown"
+        )
+    if eligible_symbol_count <= 0:
+        blockers.append("paper_route_probe_candidate_missing")
+    return blockers
 
 
 def build_route_reacquisition_book(
@@ -213,6 +264,8 @@ def build_route_reacquisition_book(
     proof_floor_receipt: Mapping[str, Any],
     trading_mode: str,
     market_session_open: bool | None,
+    paper_route_probe_enabled: bool = False,
+    paper_route_probe_max_notional: object | None = None,
 ) -> dict[str, object]:
     """Build a symbol-level route repair book from proof-floor source refs.
 
@@ -295,6 +348,42 @@ def build_route_reacquisition_book(
             )
         )
 
+    configured_probe_limit = _positive_amount_text(paper_route_probe_max_notional)
+    eligible_probe_symbols = [
+        _text(item.get("symbol"))
+        for item in records
+        if _paper_route_probe_eligible(item)
+    ]
+    probe_blockers = _paper_route_probe_blockers(
+        trading_mode=trading_mode,
+        market_session_open=market_session_open,
+        enabled=paper_route_probe_enabled,
+        configured_limit=configured_probe_limit,
+        eligible_symbol_count=len(eligible_probe_symbols),
+    )
+    probe_active = not probe_blockers
+    effective_probe_limit = configured_probe_limit if probe_active else "0"
+    next_session_probe_limit = (
+        configured_probe_limit
+        if paper_route_probe_enabled
+        and trading_mode == "paper"
+        and configured_probe_limit is not None
+        else "0"
+    )
+    active_probe_symbols = eligible_probe_symbols if probe_active else []
+    for record in records:
+        eligible = _paper_route_probe_eligible(record)
+        record["paper_route_probe"] = {
+            "eligible": eligible,
+            "active": probe_active and eligible,
+            "notional_limit": effective_probe_limit if eligible else "0",
+            "next_session_notional_limit": next_session_probe_limit
+            if eligible
+            else "0",
+            "blocking_reasons": probe_blockers if eligible else [],
+            "capital_authority": "none",
+        }
+
     counts = {
         "routeable": sum(1 for item in records if item["state"] == "routeable"),
         "probing": sum(1 for item in records if item["state"] == "probing"),
@@ -353,7 +442,21 @@ def build_route_reacquisition_book(
                 _text(item.get("symbol")) for item in repair_candidates
             ],
             "repair_candidates": repair_candidates,
+            "paper_route_probe_eligible_symbols": eligible_probe_symbols,
+            "paper_route_probe_active_symbols": active_probe_symbols,
             "expected_unblock_value": expected_unblock_value,
+        },
+        "paper_route_probe": {
+            "configured_enabled": paper_route_probe_enabled,
+            "configured_max_notional": configured_probe_limit or "0",
+            "active": probe_active,
+            "effective_max_notional": effective_probe_limit,
+            "next_session_max_notional": next_session_probe_limit,
+            "eligible_symbol_count": len(eligible_probe_symbols),
+            "eligible_symbols": eligible_probe_symbols,
+            "active_symbols": active_probe_symbols,
+            "blocking_reasons": probe_blockers,
+            "capital_authority": "none",
         },
         "source_refs": {
             "proof_floor_generated_at": generated_at,

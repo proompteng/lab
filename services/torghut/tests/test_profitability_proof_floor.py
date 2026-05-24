@@ -947,6 +947,82 @@ def test_sim_routeable_symbol_becomes_repair_probe_without_capital_unlock() -> N
     assert nvda["paper_probe_notional_limit"] == "0"
 
 
+def test_paper_route_probe_config_flows_into_proof_floor_route_book() -> None:
+    receipt = build_profitability_proof_floor_receipt(
+        account_label="TORGHUT_SIM",
+        torghut_revision="torghut-sim-00670",
+        trading_mode="paper",
+        market_session_open=False,
+        live_submission_gate={
+            "allowed": True,
+            "reason": "non_live_mode",
+            "blocked_reasons": [],
+            "capital_stage": "paper",
+        },
+        hypothesis_payload={
+            "summary": {
+                "hypotheses_total": 1,
+                "promotion_eligible_total": 0,
+                "rollback_required_total": 0,
+                "state_totals": {"blocked": 1},
+            },
+            "items": [
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "reasons": ["runtime_ledger_proof_missing"],
+                    "promotion_eligible": False,
+                    "promotion_contract": {"max_avg_abs_slippage_bps": "20"},
+                }
+            ],
+        },
+        empirical_jobs_status=_healthy_empirical_jobs(),
+        quant_evidence=_healthy_quant_evidence(),
+        market_context_status=_healthy_market_context(),
+        tca_summary={
+            **_fresh_tca_summary(avg_abs_slippage_bps="5"),
+            "scope_symbols": ["AAPL", "AMZN"],
+            "scope_symbol_count": 2,
+            "symbol_breakdown": [
+                {
+                    "symbol": "AAPL",
+                    "order_count": 0,
+                    "avg_abs_slippage_bps": None,
+                    "max_abs_slippage_bps": None,
+                    "last_computed_at": None,
+                },
+                {
+                    "symbol": "AMZN",
+                    "order_count": 1,
+                    "avg_abs_slippage_bps": "3.07908692",
+                    "max_abs_slippage_bps": "3.07908692",
+                    "last_computed_at": NOW.isoformat(),
+                },
+            ],
+        },
+        simple_lane_status={
+            **_simple_lane_status(),
+            "paper_route_probe_enabled": True,
+            "paper_route_probe_max_notional": "25",
+        },
+        now=NOW,
+    )
+
+    probe = cast(Mapping[str, Any], receipt["paper_route_probe"])
+    route_book = cast(Mapping[str, Any], receipt["route_reacquisition_book"])
+    route_probe = cast(Mapping[str, Any], route_book["paper_route_probe"])
+    summary = cast(Mapping[str, Any], route_book["summary"])
+
+    assert receipt["route_state"] == "repair_only"
+    assert receipt["capital_state"] == "zero_notional"
+    assert probe == route_probe
+    assert probe["configured_enabled"] is True
+    assert probe["active"] is False
+    assert probe["next_session_max_notional"] == "25"
+    assert probe["eligible_symbols"] == ["AAPL"]
+    assert probe["capital_authority"] == "none"
+    assert summary["paper_route_probe_eligible_symbols"] == ["AAPL"]
+
+
 def test_settled_old_tca_exposes_execution_quality_instead_of_staleness() -> None:
     settled_at = NOW - timedelta(days=34)
     latest_execution_at = settled_at - timedelta(seconds=1)
