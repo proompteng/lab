@@ -771,6 +771,56 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertEqual(top_level_plan["targets"][0]["hypothesis_id"], "H-PAIRS-01")
         self.assertEqual(fallback_plan["targets"][0]["hypothesis_id"], "H-FALLBACK-01")
 
+    def test_runtime_window_target_plan_payload_prefers_next_paper_route_plan(
+        self,
+    ) -> None:
+        plan = renewal._runtime_window_target_plan_from_payload(
+            {
+                "schema_version": "torghut.paper-route-evidence.v1",
+                "live_submission_gate": {
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "targets": [
+                            {
+                                "candidate_id": "cand-stale-paper",
+                                "hypothesis_id": "H-STALE-PAPER",
+                                "window_start": "2026-05-21T17:00:00+00:00",
+                                "window_end": "2026-05-21T17:30:00+00:00",
+                            }
+                        ],
+                    }
+                },
+                "next_paper_route_runtime_window_targets": {
+                    "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "target_count": 1,
+                    "targets": [
+                        {
+                            "candidate_id": "cand-paper-route",
+                            "hypothesis_id": "H-PAPER-ROUTE",
+                            "window_start": "2026-05-26T13:30:00+00:00",
+                            "window_end": "2026-05-26T20:00:00+00:00",
+                        }
+                    ],
+                },
+                "targets": [
+                    {
+                        "candidate_id": "cand-top-level-audit",
+                        "hypothesis_id": "H-TOP-LEVEL-AUDIT",
+                        "window_start": "2026-05-13T17:00:00+00:00",
+                        "window_end": "2026-05-13T17:30:00+00:00",
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(
+            plan["schema_version"], "torghut.next-paper-route-runtime-window-targets.v1"
+        )
+        self.assertEqual(plan["targets"][0]["hypothesis_id"], "H-PAPER-ROUTE")
+        self.assertEqual(
+            plan["targets"][0]["window_start"], "2026-05-26T13:30:00+00:00"
+        )
+
     def test_runtime_window_target_plan_payload_accepts_paper_route_evidence_plan(
         self,
     ) -> None:
