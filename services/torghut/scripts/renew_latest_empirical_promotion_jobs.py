@@ -156,6 +156,14 @@ def _parse_args() -> argparse.Namespace:
         default=5.0,
     )
     parser.add_argument(
+        "--runtime-window-target-plan-exclusive",
+        action="store_true",
+        help=(
+            "When a runtime-window target plan ref/url yields at least one target, "
+            "skip latest-autoresearch and registry fallback targets for this run."
+        ),
+    )
+    parser.add_argument(
         "--runtime-window-targets-from-latest-autoresearch",
         action="store_true",
         help=(
@@ -747,8 +755,14 @@ def _runtime_window_targets(
 ) -> list[RuntimeWindowImportTarget]:
     specs = [str(item) for item in getattr(args, "runtime_window_target", []) or []]
     plan_targets = _runtime_window_plan_targets(args)
-    autoresearch_targets = _latest_autoresearch_runtime_window_targets(args)
-    registry_targets = _registry_runtime_window_targets(args)
+    plan_exclusive = bool(getattr(args, "runtime_window_target_plan_exclusive", False))
+    fallback_enabled = not (plan_exclusive and plan_targets)
+    autoresearch_targets = (
+        _latest_autoresearch_runtime_window_targets(args) if fallback_enabled else []
+    )
+    registry_targets = (
+        _registry_runtime_window_targets(args) if fallback_enabled else []
+    )
     if (
         not specs
         and not plan_targets

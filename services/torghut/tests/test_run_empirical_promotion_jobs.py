@@ -522,6 +522,7 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             runtime_window_target_plan_ref=[],
             runtime_window_target_plan_url=[status_path.as_uri()],
             runtime_window_target_plan_url_timeout_seconds=2.0,
+            runtime_window_target_plan_exclusive=False,
             runtime_window_targets_from_latest_autoresearch=False,
             runtime_window_targets_from_registry=False,
             runtime_window_hypothesis_id="",
@@ -557,6 +558,120 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertEqual(targets[0].target_metadata["max_notional"], "0")
         self.assertEqual(targets[0].target_metadata["promotion_allowed"], False)
         self.assertEqual(targets[0].target_metadata["final_promotion_allowed"], False)
+
+    def test_runtime_window_target_plan_exclusive_skips_fallback_targets(
+        self,
+    ) -> None:
+        plan_path = Path(self.tmp_dir) / "candidate-board.json"
+        plan_path.write_text(
+            json.dumps(
+                {
+                    "runtime_window_import_plan": {
+                        "targets": [
+                            {
+                                "candidate_id": "cand-plan",
+                                "hypothesis_id": "H-PAIRS-01",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_cross_sectional_pairs",
+                                "strategy_name": "microbar-cross-sectional-pairs-v1",
+                            }
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        args = SimpleNamespace(
+            runtime_window_target=[],
+            runtime_window_target_plan_ref=[str(plan_path)],
+            runtime_window_target_plan_url=[],
+            runtime_window_target_plan_url_timeout_seconds=2.0,
+            runtime_window_target_plan_exclusive=True,
+            runtime_window_targets_from_latest_autoresearch=True,
+            runtime_window_targets_from_registry=True,
+            runtime_window_hypothesis_id="",
+            runtime_window_candidate_id="",
+            runtime_window_observed_stage="paper",
+            runtime_window_strategy_family="",
+            runtime_window_source_dsn_env="SIM_DB_DSN",
+            runtime_window_strategy_name="",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_dataset_snapshot_ref="",
+            runtime_window_source_manifest_ref="",
+            runtime_window_source_kind="paper_runtime_observed",
+        )
+
+        with (
+            patch.object(
+                renewal,
+                "_latest_autoresearch_runtime_window_targets",
+                side_effect=AssertionError("autoresearch fallback should be skipped"),
+            ),
+            patch.object(
+                renewal,
+                "_registry_runtime_window_targets",
+                side_effect=AssertionError("registry fallback should be skipped"),
+            ),
+        ):
+            targets = renewal._runtime_window_targets(args)
+
+        self.assertEqual([target.hypothesis_id for target in targets], ["H-PAIRS-01"])
+        self.assertEqual(targets[0].candidate_id, "cand-plan")
+
+    def test_runtime_window_target_plan_exclusive_allows_fallback_when_plan_empty(
+        self,
+    ) -> None:
+        plan_path = Path(self.tmp_dir) / "candidate-board.json"
+        plan_path.write_text(
+            json.dumps({"runtime_window_import_plan": {"targets": []}}),
+            encoding="utf-8",
+        )
+        fallback_target = renewal.RuntimeWindowImportTarget(
+            hypothesis_id="H-FALLBACK-01",
+            candidate_id="cand-fallback",
+            observed_stage="paper",
+            strategy_family="fallback_family",
+            source_dsn_env="SIM_DB_DSN",
+            strategy_name="fallback-strategy-v1",
+            account_label="TORGHUT_SIM",
+            dataset_snapshot_ref="",
+            source_manifest_ref="",
+            source_kind="paper_runtime_observed",
+            delay_adjusted_depth_stress_report_ref="",
+            window_start="",
+            window_end="",
+        )
+        args = SimpleNamespace(
+            runtime_window_target=[],
+            runtime_window_target_plan_ref=[str(plan_path)],
+            runtime_window_target_plan_url=[],
+            runtime_window_target_plan_url_timeout_seconds=2.0,
+            runtime_window_target_plan_exclusive=True,
+            runtime_window_targets_from_latest_autoresearch=True,
+            runtime_window_targets_from_registry=False,
+            runtime_window_hypothesis_id="",
+            runtime_window_candidate_id="",
+            runtime_window_observed_stage="paper",
+            runtime_window_strategy_family="",
+            runtime_window_source_dsn_env="SIM_DB_DSN",
+            runtime_window_strategy_name="",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_dataset_snapshot_ref="",
+            runtime_window_source_manifest_ref="",
+            runtime_window_source_kind="paper_runtime_observed",
+        )
+
+        with patch.object(
+            renewal,
+            "_latest_autoresearch_runtime_window_targets",
+            return_value=[fallback_target],
+        ):
+            targets = renewal._runtime_window_targets(args)
+
+        self.assertEqual(
+            [target.hypothesis_id for target in targets],
+            ["H-FALLBACK-01"],
+        )
 
     def test_runtime_window_target_plan_payload_accepts_top_level_gate_plan_and_fallback(
         self,
