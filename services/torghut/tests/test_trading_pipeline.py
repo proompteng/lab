@@ -3084,6 +3084,9 @@ class TestTradingPipeline(TestCase):
             SimpleTradingPipeline._proof_floor_route_repair_symbols({}), set()
         )
         self.assertEqual(
+            SimpleTradingPipeline._proof_floor_paper_route_probe_symbols({}), set()
+        )
+        self.assertEqual(
             SimpleTradingPipeline._proof_floor_symbol_route_probe_reasons({}, "NVDA"),
             set(),
         )
@@ -3112,6 +3115,27 @@ class TestTradingPipeline(TestCase):
                 }
             ),
             {"NVDA", "MU"},
+        )
+        self.assertEqual(
+            SimpleTradingPipeline._proof_floor_paper_route_probe_symbols(
+                {
+                    "route_reacquisition_book": {
+                        "summary": {
+                            "paper_route_probe_eligible_symbols": [
+                                " nvda ",
+                                "",
+                                "MU",
+                            ],
+                            "paper_route_probe_active_symbols": ["aapl"],
+                        },
+                        "paper_route_probe": {
+                            "eligible_symbols": ["INTC"],
+                            "active_symbols": ["AMZN"],
+                        },
+                    }
+                }
+            ),
+            {"AAPL", "AMZN", "INTC", "MU", "NVDA"},
         )
         self.assertEqual(
             SimpleTradingPipeline._proof_floor_symbol_route_probe_reasons(
@@ -3281,6 +3305,33 @@ class TestTradingPipeline(TestCase):
             )
         )
 
+        record_level_route_repair_floor = {
+            **proof_floor,
+            "blocking_reasons": ["alpha_readiness_not_promotion_eligible"],
+            "route_reacquisition_book": {
+                "summary": {"candidate_symbols": ["NVDA"]},
+                "records": [
+                    {
+                        "symbol": "NVDA",
+                        "state": "probing",
+                        "reason": (
+                            "route_tca_passed_but_dependency_receipts_block_capital"
+                        ),
+                    }
+                ],
+            },
+        }
+        record_level_probe_context = pipeline._paper_route_probe_context(
+            proof_floor=record_level_route_repair_floor,
+            decision=decision,
+        )
+        self.assertIsNotNone(record_level_probe_context)
+        assert record_level_probe_context is not None
+        self.assertIn(
+            "route_tca_passed_but_dependency_receipts_block_capital",
+            cast(list[str], record_level_probe_context.get("blocking_reasons")),
+        )
+
         symbol_level_route_repair_floor = {
             **proof_floor,
             "blocking_reasons": ["alpha_readiness_not_promotion_eligible"],
@@ -3309,6 +3360,29 @@ class TestTradingPipeline(TestCase):
         self.assertIn(
             "execution_tca_symbol_missing",
             cast(list[str], symbol_level_probe_context.get("blocking_reasons")),
+        )
+
+        paper_route_probe_symbol_floor = {
+            **proof_floor,
+            "blocking_reasons": ["alpha_readiness_not_promotion_eligible"],
+            "route_reacquisition_book": {
+                "summary": {
+                    "repair_candidate_symbols": ["MU"],
+                    "paper_route_probe_eligible_symbols": ["NVDA"],
+                }
+            },
+        }
+        eligible_symbol_probe_context = pipeline._paper_route_probe_context(
+            proof_floor=paper_route_probe_symbol_floor,
+            decision=decision,
+        )
+        self.assertIsNotNone(eligible_symbol_probe_context)
+        assert eligible_symbol_probe_context is not None
+        self.assertEqual(
+            eligible_symbol_probe_context.get("paper_route_probe_symbols"), ["NVDA"]
+        )
+        self.assertEqual(
+            eligible_symbol_probe_context.get("route_repair_symbols"), ["MU"]
         )
 
         wrong_symbol_floor = {

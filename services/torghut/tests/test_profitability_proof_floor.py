@@ -1018,9 +1018,9 @@ def test_paper_route_probe_config_flows_into_proof_floor_route_book() -> None:
     assert probe["configured_enabled"] is True
     assert probe["active"] is False
     assert probe["next_session_max_notional"] == "25"
-    assert probe["eligible_symbols"] == ["AAPL"]
+    assert probe["eligible_symbols"] == ["AMZN", "AAPL"]
     assert probe["capital_authority"] == "none"
-    assert summary["paper_route_probe_eligible_symbols"] == ["AAPL"]
+    assert summary["paper_route_probe_eligible_symbols"] == ["AMZN", "AAPL"]
 
 
 def test_settled_old_tca_exposes_execution_quality_instead_of_staleness() -> None:

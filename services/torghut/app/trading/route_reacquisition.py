@@ -10,6 +10,7 @@ SCHEMA_VERSION = "torghut.route-reacquisition-book.v1"
 _PAPER_ROUTE_PROBE_REASONS = {
     "execution_tca_route_universe_empty",
     "execution_tca_symbol_missing",
+    "route_tca_passed_but_dependency_receipts_block_capital",
     "tca_evidence_stale",
 }
 _PAPER_ROUTE_PROBE_STATES = {"missing", "probing"}
@@ -114,6 +115,8 @@ def _next_action(*, state: str, reason: str) -> str:
     if state == "blocked":
         return "repair_route_evidence_before_paper_probe"
     if state == "probing":
+        if reason == "route_tca_passed_but_dependency_receipts_block_capital":
+            return "collect_paper_runtime_ledger_receipts_before_capital"
         return "settle_market_context_quant_and_alpha_receipts_before_paper_probe"
     if state == "routeable":
         return "maintain_route_tca_and_wait_for_capital_gate"
