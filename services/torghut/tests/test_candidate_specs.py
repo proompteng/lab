@@ -936,6 +936,78 @@ class TestCandidateSpecs(TestCase):
             "regime_weighted_conformal_buffer_is_ranking_stress_not_promotion_proof",
         )
 
+    def test_bootstrap_robust_optimization_claim_adds_stability_contract(
+        self,
+    ) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-bootstrap-robust-optimization",
+            claims=[
+                {
+                    "claim_id": "bootstrap-robust-optimization",
+                    "claim_type": "strategy_mechanism",
+                    "claim_text": (
+                        "Non-parametric bootstrap robust optimization treats utility "
+                        "as a random variable and uses percentile-based optimization "
+                        "to reduce overfitting and selection bias."
+                    ),
+                    "data_requirements": [
+                        "bootstrap_confidence_interval",
+                        "utility_percentile",
+                        "resampled_strategy_optimization",
+                    ],
+                    "confidence": "0.78",
+                },
+                {
+                    "claim_id": "bootstrap-stability-validation",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Validation requires parameter instability stress, model "
+                        "misspecification stress, and out-of-sample generalization."
+                    ),
+                    "data_requirements": [
+                        "parameter_instability_stress",
+                        "selection_bias_stress",
+                        "model_misspecification_stress",
+                        "out_of_sample_generalization",
+                    ],
+                    "confidence": "0.78",
+                },
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+
+        self.assertIn(
+            "bootstrap_robust_optimization_stability",
+            specs[0].parameter_space["mechanism_overlay_ids"],
+        )
+        self.assertTrue(specs[0].hard_vetoes["required_bootstrap_robust_optimization"])
+        self.assertTrue(specs[0].hard_vetoes["required_bootstrap_confidence_interval"])
+        self.assertEqual(
+            specs[0].hard_vetoes["required_min_bootstrap_replicates"], "500"
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["requires_utility_percentile_optimization"]
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["rejects_point_estimate_only_optimization"]
+        )
+        mechanism_overlays = candidate_specs_module._mechanism_overlays_for_card(
+            cards[0]
+        )
+        bootstrap_contract = next(
+            contract
+            for contract in mechanism_overlays["feature_contract"]["mechanism_overlays"]
+            if contract["overlay_id"] == "bootstrap_robust_optimization_stability"
+        )
+        self.assertEqual(
+            bootstrap_contract["rank_metric"],
+            "bootstrap_percentile_robust_net_pnl_per_day",
+        )
+        self.assertIn("selection_bias_stress", bootstrap_contract["required_evidence"])
+
     def test_validation_only_lob_stress_does_not_portfolio_fanout(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-tlob-validation-only",

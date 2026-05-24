@@ -27,6 +27,7 @@ _MECHANISM_OVERLAY_IDS = (
     "alpha_decay_predictability_stress",
     "friction_aware_regime_conditioned_policy",
     "regime_weighted_conformal_cost_buffer",
+    "bootstrap_robust_optimization_stability",
     "crumbling_quote_liquidity_erosion",
     "nonlinear_market_impact_tca",
     "simulation_reality_gap_implementation_risk",
@@ -73,6 +74,10 @@ _PAPER_CONTRACT_FEATURE_NAMES = (
     "paper_requires_cost_misspecification_stress",
     "paper_requires_liquidity_proxy_cost_calibration",
     "paper_requires_scenario_level_inference",
+    "paper_requires_bootstrap_confidence_interval",
+    "paper_requires_utility_percentile_optimization",
+    "paper_requires_selection_bias_stress",
+    "paper_requires_parameter_instability_stress",
     "paper_requires_crumbling_quote_probability",
     "paper_requires_mechanical_liquidity_erosion",
     "paper_promotion_requires_count",
@@ -526,6 +531,38 @@ def _paper_contract_feature_values(spec: CandidateSpec) -> Mapping[str, float]:
                 "scenario_level_inference",
                 "multiple_testing_correction",
                 "bootstrap_confidence_interval",
+            ),
+        ),
+        "paper_requires_bootstrap_confidence_interval": _requirement_present(
+            contract_requirements,
+            (
+                "bootstrap_confidence_interval",
+                "bootstrap_confidence_intervals",
+                "resampled_confidence_interval",
+            ),
+        ),
+        "paper_requires_utility_percentile_optimization": _requirement_present(
+            contract_requirements,
+            (
+                "utility_percentile",
+                "percentile_based_optimization",
+                "utility_percentile_optimization",
+            ),
+        ),
+        "paper_requires_selection_bias_stress": _requirement_present(
+            contract_requirements,
+            (
+                "selection_bias_stress",
+                "selection_bias",
+                "overfitting_stress",
+            ),
+        ),
+        "paper_requires_parameter_instability_stress": _requirement_present(
+            contract_requirements,
+            (
+                "parameter_instability_stress",
+                "parameter_instability",
+                "model_misspecification_stress",
             ),
         ),
         "paper_requires_crumbling_quote_probability": _requirement_present(

@@ -3704,6 +3704,76 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
 
     if has_any(
         (
+            "non-parametric bootstrap",
+            "nonparametric bootstrap",
+            "bootstrap robust optimization",
+            "bootstrap robustness",
+            "bootstrap confidence interval",
+            "bootstrap confidence intervals",
+            "resampled confidence interval",
+            "resampled confidence intervals",
+            "utility percentile",
+            "percentile-based optimization",
+            "percentile based optimization",
+            "utility as a random variable",
+            "selection bias",
+            "overfitting and selection bias",
+            "parameter instability",
+            "model misspecification",
+            "distribution-free robust optimization",
+            "distribution free robust optimization",
+        )
+    ):
+        overlay_ids.append("bootstrap_robust_optimization_stability")
+        overlay_contracts.append(
+            {
+                "overlay_id": "bootstrap_robust_optimization_stability",
+                "required_evidence": [
+                    "bootstrap_confidence_interval",
+                    "utility_percentile",
+                    "resampled_strategy_optimization",
+                    "parameter_instability_stress",
+                    "selection_bias_stress",
+                    "model_misspecification_stress",
+                    "out_of_sample_generalization",
+                    "walk_forward_replay",
+                    "post_cost_net_pnl",
+                ],
+                "rank_metric": "bootstrap_percentile_robust_net_pnl_per_day",
+                "evidence_policy": (
+                    "bootstrap_robust_optimization_is_prefilter_not_promotion_proof"
+                ),
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_bootstrap_robust_optimization": True,
+                "required_bootstrap_confidence_interval": True,
+                "required_utility_percentile_optimization": True,
+                "required_selection_bias_stress": True,
+                "required_parameter_instability_stress": True,
+                "required_model_misspecification_stress": True,
+                "required_distribution_free_confidence_intervals": True,
+                "required_min_bootstrap_replicates": "500",
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_bootstrap_robust_optimization": True,
+                "requires_bootstrap_confidence_intervals": True,
+                "requires_utility_percentile_optimization": True,
+                "requires_selection_bias_stress": True,
+                "requires_parameter_instability_stress": True,
+                "requires_model_misspecification_stress": True,
+                "requires_walk_forward_replay": True,
+                "rejects_point_estimate_only_optimization": True,
+                "rejects_in_sample_selection_bias": True,
+                "risk_policy": "bootstrap_robust_optimization_validation_only",
+            }
+        )
+
+    if has_any(
+        (
             "crumbling quote",
             "crumbling quotes",
             "crumbling_quote",

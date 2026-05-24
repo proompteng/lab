@@ -565,6 +565,107 @@ class TestMlxTrainingData(TestCase):
             0.0,
         )
 
+    def test_training_rows_encode_bootstrap_robust_optimization_contract(
+        self,
+    ) -> None:
+        spec = CandidateSpec(
+            schema_version="torghut.candidate-spec.v1",
+            candidate_spec_id="spec-bootstrap-robust",
+            hypothesis_id="H-BOOTSTRAP-ROBUST",
+            family_template_id="intraday_tsmom_v2",
+            candidate_kind="configuration",
+            runtime_family="intraday_tsmom_consistent",
+            runtime_strategy_name="intraday-tsmom-profit-v3",
+            feature_contract={
+                "source_claims": [
+                    {
+                        "claim_id": "bootstrap-robust-optimization",
+                        "claim_type": "strategy_mechanism",
+                        "confidence": "0.78",
+                        "data_requirements": [
+                            "bootstrap_confidence_interval",
+                            "utility_percentile",
+                            "resampled_strategy_optimization",
+                        ],
+                    }
+                ],
+                "validation_requirements": [
+                    {
+                        "claim_id": "bootstrap-stability-validation",
+                        "data_requirements": [
+                            "parameter_instability_stress",
+                            "selection_bias_stress",
+                            "model_misspecification_stress",
+                            "out_of_sample_generalization",
+                        ],
+                    }
+                ],
+                "mechanism_overlays": [
+                    {
+                        "overlay_id": "bootstrap_robust_optimization_stability",
+                        "required_evidence": [
+                            "bootstrap_confidence_interval",
+                            "utility_percentile",
+                            "selection_bias_stress",
+                            "parameter_instability_stress",
+                            "model_misspecification_stress",
+                        ],
+                    }
+                ],
+            },
+            parameter_space={
+                "mechanism_overlay_ids": ["bootstrap_robust_optimization_stability"]
+            },
+            strategy_overrides={
+                "max_notional_per_trade": "25000",
+                "max_position_pct_equity": "0.25",
+                "params": {
+                    "capital_profile": "initial_equity_cash_constrained_1x",
+                    "max_entries_per_session": "2",
+                    "max_gross_exposure_pct_equity": "1.0",
+                },
+            },
+            objective={"target_net_pnl_per_day": "500"},
+            hard_vetoes={"required_min_daily_notional": "250000"},
+            expected_failure_modes=(),
+            promotion_contract={
+                "requires_bootstrap_robust_optimization": True,
+                "requires_bootstrap_confidence_intervals": True,
+                "requires_utility_percentile_optimization": True,
+                "rejects_point_estimate_only_optimization": True,
+            },
+        )
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=spec.candidate_spec_id,
+            candidate={
+                "candidate_id": "cand-bootstrap-robust",
+                "objective_scorecard": {
+                    "net_pnl_per_day": "650",
+                    "active_day_ratio": "1.0",
+                    "positive_day_ratio": "0.70",
+                    "bootstrap_percentile_robust_net_pnl_per_day": "520",
+                },
+            },
+            dataset_snapshot_id="snapshot-bootstrap-robust",
+            result_path="/tmp/cand-bootstrap-robust.json",
+        )
+
+        rows = build_mlx_training_rows(
+            candidate_specs=[spec], evidence_bundles=[bundle]
+        )
+        features = rows[0].to_payload()["features"]
+
+        self.assertEqual(
+            features["paper_overlay_bootstrap_robust_optimization_stability"],
+            1.0,
+        )
+        self.assertEqual(features["paper_requires_bootstrap_confidence_interval"], 1.0)
+        self.assertEqual(
+            features["paper_requires_utility_percentile_optimization"], 1.0
+        )
+        self.assertEqual(features["paper_requires_selection_bias_stress"], 1.0)
+        self.assertEqual(features["paper_requires_parameter_instability_stress"], 1.0)
+
     def test_training_rows_encode_friction_aware_regime_contract(self) -> None:
         spec = CandidateSpec(
             schema_version="torghut.candidate-spec.v1",
