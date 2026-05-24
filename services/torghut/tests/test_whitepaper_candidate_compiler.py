@@ -1018,6 +1018,65 @@ class TestWhitepaperCandidateCompiler(TestCase):
             ]
         )
 
+    def test_bootstrap_robust_optimization_aliases_compile_to_runtime_families(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-bootstrap-robust-optimization",
+            claims=[
+                {
+                    "claim_id": "bootstrap-robust-optimization",
+                    "claim_type": "strategy_mechanism",
+                    "claim_text": (
+                        "Non-parametric bootstrap robust optimization uses "
+                        "resampled confidence intervals and utility-percentile "
+                        "selection to reduce overfitting and selection bias."
+                    ),
+                    "data_requirements": [
+                        "bootstrap_confidence_interval",
+                        "utility_percentile",
+                        "resampled_strategy_optimization",
+                    ],
+                    "confidence": "0.78",
+                },
+                {
+                    "claim_id": "bootstrap-robust-validation",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Promotion requires parameter instability stress, "
+                        "model misspecification stress, and out-of-sample "
+                        "generalization."
+                    ),
+                    "data_requirements": [
+                        "parameter_instability_stress",
+                        "selection_bias_stress",
+                        "model_misspecification_stress",
+                        "out_of_sample_generalization",
+                    ],
+                    "confidence": "0.76",
+                },
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        self.assertTrue(compilation.executable_specs)
+        self.assertFalse(
+            [
+                blocker
+                for blocker in compilation.blockers
+                if blocker.reason == "required_features_missing_from_family_template"
+            ]
+        )
+        self.assertTrue(
+            any(
+                "bootstrap_robust_optimization_stability"
+                in spec.parameter_space.get("mechanism_overlay_ids", [])
+                for spec in compilation.executable_specs
+            )
+        )
+
     def test_missing_family_template_blocks_execution(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-run-2",
