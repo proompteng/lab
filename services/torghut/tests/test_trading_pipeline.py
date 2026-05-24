@@ -2800,6 +2800,79 @@ class TestTradingPipeline(TestCase):
             self.assertEqual(proof_floor.get("capital_state"), "zero_notional")
             self.assertEqual(control_plane.get("execution_lane"), "simple")
 
+    def test_simple_pipeline_proof_floor_includes_paper_route_probe_settings(
+        self,
+    ) -> None:
+        from app import config
+
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_pipeline_mode = "simple"
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_simple_order_feed_telemetry_enabled = True
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_simple_paper_route_probe_max_notional = 25.0
+
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        captured: dict[str, Any] = {}
+
+        def fake_proof_floor(**kwargs: Any) -> dict[str, object]:
+            captured.update(kwargs)
+            return {"schema_version": "test-proof-floor"}
+
+        with (
+            patch.object(pipeline, "_refresh_market_context_for_proof_floor"),
+            patch.object(pipeline, "_live_submission_gate", return_value={}),
+            patch(
+                "app.trading.scheduler.simple_pipeline.build_submission_gate_market_context_status",
+                return_value={},
+            ),
+            patch(
+                "app.trading.scheduler.simple_pipeline.build_hypothesis_runtime_summary",
+                return_value={},
+            ),
+            patch(
+                "app.trading.scheduler.simple_pipeline.build_empirical_jobs_status",
+                return_value={},
+            ),
+            patch(
+                "app.trading.scheduler.simple_pipeline.load_quant_evidence_status",
+                return_value={},
+            ),
+            patch(
+                "app.trading.scheduler.simple_pipeline.build_tca_gate_inputs",
+                return_value={},
+            ),
+            patch(
+                "app.trading.scheduler.simple_pipeline.build_profitability_proof_floor_receipt",
+                side_effect=fake_proof_floor,
+            ),
+            self.session_local() as session,
+        ):
+            proof_floor = pipeline._profitability_proof_floor(session=session)
+
+        self.assertEqual(proof_floor["schema_version"], "test-proof-floor")
+        simple_lane_status = cast(
+            Mapping[str, Any],
+            captured["simple_lane_status"],
+        )
+        self.assertTrue(simple_lane_status["paper_route_probe_enabled"])
+        self.assertEqual(simple_lane_status["paper_route_probe_max_notional"], 25.0)
+        self.assertTrue(simple_lane_status["order_feed_telemetry_enabled"])
+
     def test_simple_pipeline_allows_bounded_paper_route_probe_for_tca_repair(
         self,
     ) -> None:
