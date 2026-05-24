@@ -5334,20 +5334,24 @@ def _build_live_submission_gate_payload(
             cast(TradingScheduler | None, getattr(app.state, "trading_scheduler", None))
         )
     if settings.trading_pipeline_mode == "simple":
+        gate = build_live_submission_gate_payload(
+            state,
+            session=session,
+            hypothesis_summary=hypothesis_summary,
+            empirical_jobs_status=empirical_jobs_status,
+            dspy_runtime_status=dspy_runtime_status,
+            quant_health_status=quant_health_status,
+            clickhouse_ta_status=resolved_clickhouse_ta_status,
+        )
         if settings.trading_mode != "live":
-            return {
-                "allowed": True,
-                "reason": "non_live_mode",
+            gate["pipeline_mode"] = "simple"
+            gate["configured_live_promotion"] = settings.trading_simple_submit_enabled
+            gate["simple_lane"] = {
+                "submit_enabled": settings.trading_simple_submit_enabled,
+                "shared_gate_enforced": True,
                 "blocked_reasons": [],
-                "capital_stage": settings.trading_mode,
-                "configured_live_promotion": settings.trading_simple_submit_enabled,
-                "autonomy_promotion_eligible": False,
-                "drift_live_promotion_eligible": False,
-                "promotion_eligible_total": 0,
-                "dependency_quorum_decision": "informational_only",
-                "empirical_jobs_ready": None,
-                "dspy_live_ready": None,
             }
+            return gate
         blocked_reasons: list[str] = []
         if not settings.trading_enabled:
             blocked_reasons.append("trading_disabled")
@@ -5364,15 +5368,6 @@ def _build_live_submission_gate_payload(
                     or "emergency_stop_active"
                 )
             )
-        gate = build_live_submission_gate_payload(
-            state,
-            session=session,
-            hypothesis_summary=hypothesis_summary,
-            empirical_jobs_status=empirical_jobs_status,
-            dspy_runtime_status=dspy_runtime_status,
-            quant_health_status=quant_health_status,
-            clickhouse_ta_status=resolved_clickhouse_ta_status,
-        )
         merged_blocked_reasons = list(
             dict.fromkeys(
                 [
