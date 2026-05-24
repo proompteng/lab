@@ -26,6 +26,7 @@ from app.trading.runtime_window_import import (
     _parse_observation_datetime,
     _runtime_ledger_bucket_blockers,
     _runtime_ledger_bucket_payloads,
+    _runtime_window_import_proof_blockers,
     build_observed_runtime_buckets,
     build_regular_session_buckets,
     persist_observed_runtime_windows,
@@ -82,6 +83,38 @@ class TestRuntimeWindowImport(TestCase):
         self.session_local = sessionmaker(
             bind=engine, expire_on_commit=False, future=True
         )
+
+    def test_runtime_window_import_proof_blockers_dedupe_blank_and_authority_reason(
+        self,
+    ) -> None:
+        blockers = _runtime_window_import_proof_blockers(
+            promotion_blocking_reasons=[
+                "",
+                "paper_stage_evidence_collection_only",
+                "paper_stage_evidence_collection_only",
+            ],
+            runtime_payload={
+                "authoritative": False,
+                "authority_reason": "runtime_without_runtime_ledger_profit_proof",
+                "promotion_authority": "blocked",
+                "runtime_ledger_profit_proof_present": False,
+            },
+            candidate_id="cand-paper-route",
+            hypothesis_id="H-PAIRS-01",
+            observed_stage="paper",
+            window_start=datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc),
+            window_end=datetime(2026, 5, 26, 20, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(
+            [item["blocker"] for item in blockers],
+            [
+                "paper_stage_evidence_collection_only",
+                "runtime_without_runtime_ledger_profit_proof",
+            ],
+        )
+        self.assertEqual(blockers[0]["promotion_authority"], "blocked")
+        self.assertFalse(blockers[0]["runtime_ledger_profit_proof_present"])
 
     def test_build_regular_session_buckets_counts_session_samples(self) -> None:
         buckets = build_regular_session_buckets(
@@ -552,6 +585,11 @@ class TestRuntimeWindowImport(TestCase):
         self.assertIn(
             "runtime_ledger_pnl_basis_missing",
             summary["promotion_blocking_reasons"],
+        )
+        self.assertEqual(summary["proof_status"], "blocked")
+        self.assertIn(
+            "sample_count_below_canary_minimum",
+            [item["blocker"] for item in summary["proof_blockers"]],
         )
         self.assertEqual(decisions[0].allowed, False)
         self.assertEqual(decisions[0].state, "shadow")
@@ -1196,6 +1234,11 @@ class TestRuntimeWindowImport(TestCase):
         self.assertEqual(summary["promotion_allowed"], False)
         self.assertEqual(
             summary["promotion_blocking_reasons"],
+            ["paper_stage_evidence_collection_only"],
+        )
+        self.assertEqual(summary["proof_status"], "blocked")
+        self.assertEqual(
+            [item["blocker"] for item in summary["proof_blockers"]],
             ["paper_stage_evidence_collection_only"],
         )
         self.assertEqual(

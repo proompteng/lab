@@ -268,6 +268,25 @@ class TestPaperRouteEvidenceAudit(TestCase):
             plan["session_readiness"]["import_blockers"],
             ["paper_route_session_window_not_open"],
         )
+        handoff = plan["runtime_window_import_handoff"]
+        self.assertEqual(
+            handoff["runner"], "scripts/renew_latest_empirical_promotion_jobs.py"
+        )
+        self.assertEqual(
+            handoff["target_plan_endpoint"], "/trading/paper-route-evidence"
+        )
+        self.assertIn("--runtime-window-import", handoff["required_flags"])
+        self.assertIn(
+            "--runtime-window-target-plan-settlement-seconds",
+            handoff["required_flags"],
+        )
+        self.assertFalse(handoff["import_ready"])
+        self.assertEqual(
+            handoff["import_blockers"],
+            ["paper_route_session_window_not_open"],
+        )
+        self.assertFalse(handoff["promotion_allowed"])
+        self.assertFalse(handoff["final_promotion_authorized"])
         target = plan["targets"][0]
         self.assertEqual(target["account_label"], "TORGHUT_SIM")
         self.assertEqual(target["source_account_label"], "TORGHUT_REPLAY")
@@ -279,6 +298,22 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(
             plan["paper_route_probe"]["blocking_reasons"],
             ["not_paper_mode", "market_session_closed"],
+        )
+        self.assertEqual(
+            target["paper_route_session_readiness_state"], "waiting_for_session_open"
+        )
+        self.assertFalse(target["paper_route_session_import_ready"])
+        self.assertEqual(
+            target["paper_route_session_import_blockers"],
+            ["paper_route_session_window_not_open"],
+        )
+        self.assertEqual(
+            target["paper_route_runtime_window_import_not_before"],
+            "2026-05-26T20:00:00+00:00",
+        )
+        self.assertEqual(
+            target["paper_route_runtime_import_handoff"]["target_plan_endpoint"],
+            "/trading/paper-route-evidence",
         )
         self.assertFalse(target["promotion_allowed"])
         self.assertFalse(target["final_promotion_authorized"])
@@ -360,6 +395,15 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertTrue(import_readiness["probe_ready"])
         self.assertTrue(import_readiness["import_ready"])
         self.assertEqual(import_readiness["import_blockers"], [])
+        import_target = import_payload["next_paper_route_runtime_window_targets"][
+            "targets"
+        ][0]
+        self.assertEqual(
+            import_target["paper_route_session_readiness_state"],
+            "window_closed_import_ready",
+        )
+        self.assertTrue(import_target["paper_route_session_import_ready"])
+        self.assertEqual(import_target["paper_route_session_import_blockers"], [])
 
     def test_source_activity_is_bound_to_target_window_end(self) -> None:
         window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)

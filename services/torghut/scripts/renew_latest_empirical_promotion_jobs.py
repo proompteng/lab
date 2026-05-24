@@ -84,6 +84,11 @@ RUNTIME_WINDOW_TARGET_METADATA_KEYS = (
     "paper_route_probe_next_session_max_notional",
     "paper_route_probe_window_start",
     "paper_route_probe_window_end",
+    "paper_route_session_readiness_state",
+    "paper_route_session_import_ready",
+    "paper_route_session_import_blockers",
+    "paper_route_runtime_window_import_not_before",
+    "paper_route_runtime_import_handoff",
     "handoff",
     "promotion_gate",
 )
@@ -257,6 +262,12 @@ def _as_text(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _as_text_list(value: Any) -> list[str]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        return []
+    return [text for item in value if (text := str(item).strip())]
 
 
 def _runtime_version_ref() -> str:
@@ -1219,6 +1230,59 @@ def _run_runtime_window_import(
     }
 
 
+def _runtime_window_import_payload_proof_blockers(
+    *,
+    payload: Mapping[str, Any],
+    target: RuntimeWindowImportTarget,
+    candidate_id: str,
+    window_start: datetime,
+    window_end: datetime,
+) -> list[dict[str, Any]]:
+    blockers = [
+        dict(blocker)
+        for blocker in payload.get("proof_blockers", [])
+        if isinstance(blocker, Mapping)
+    ]
+    if blockers:
+        return blockers
+
+    seen: set[str] = set()
+
+    def add_blocker(reason: str) -> None:
+        code = str(reason or "").strip()
+        if not code or code in seen:
+            return
+        seen.add(code)
+        blockers.append(
+            {
+                "blocker": code,
+                "hypothesis_id": target.hypothesis_id,
+                "candidate_id": candidate_id,
+                "observed_stage": target.observed_stage,
+                "window_start": _utc_iso(window_start),
+                "window_end": _utc_iso(window_end),
+                "remediation": (
+                    "Inspect the runtime-window import summary and repair route, TCA, "
+                    "fill, cost, lineage, or post-cost ledger evidence before promotion."
+                ),
+            }
+        )
+
+    if payload.get("promotion_allowed") is False:
+        reasons = _as_text_list(payload.get("promotion_blocking_reasons"))
+        for reason in reasons or ["runtime_window_import_not_promotion_allowed"]:
+            add_blocker(reason)
+
+    runtime_observation = _as_dict(payload.get("runtime_observation"))
+    if runtime_observation.get("authoritative") is False:
+        add_blocker(
+            _as_text(runtime_observation.get("authority_reason"))
+            or "runtime_observation_not_authoritative"
+        )
+
+    return blockers
+
+
 def _run_runtime_window_import_target(
     *,
     args: argparse.Namespace,
@@ -1379,11 +1443,16 @@ def _run_runtime_window_import_target(
         )
     result = subprocess.run(command, check=True, capture_output=True, text=True)
     payload = json.loads(result.stdout)
-    payload_proof_blockers = [
-        blocker
-        for blocker in payload.get("proof_blockers", [])
-        if isinstance(blocker, Mapping)
-    ]
+    if not isinstance(payload, Mapping):
+        raise RuntimeError("runtime_window_import_payload_not_mapping")
+    payload = dict(payload)
+    payload_proof_blockers = _runtime_window_import_payload_proof_blockers(
+        payload=payload,
+        target=target,
+        candidate_id=candidate_id,
+        window_start=window_start,
+        window_end=window_end,
+    )
     proof_blockers.extend(payload_proof_blockers)
     return {
         "status": "ok",
