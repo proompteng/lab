@@ -344,17 +344,30 @@ def test_route_book_surfaces_paper_route_probe_readiness_without_capital_authori
     assert probe["active"] is False
     assert probe["effective_max_notional"] == "0"
     assert probe["next_session_max_notional"] == "25.0"
-    assert probe["eligible_symbols"] == ["AAPL", "INTC"]
+    assert probe["eligible_symbols"] == ["AMZN", "AAPL", "INTC"]
     assert probe["active_symbols"] == []
     assert probe["blocking_reasons"] == ["market_session_closed"]
     assert probe["capital_authority"] == "none"
 
     summary = cast(Mapping[str, Any], book["summary"])
-    assert summary["paper_route_probe_eligible_symbols"] == ["AAPL", "INTC"]
+    assert summary["paper_route_probe_eligible_symbols"] == ["AMZN", "AAPL", "INTC"]
     assert summary["paper_route_probe_active_symbols"] == []
     assert summary["repair_candidate_symbols"] == ["NVDA", "AAPL", "INTC"]
 
     records = cast(list[Mapping[str, Any]], book["records"])
+    amzn = next(item for item in records if item["symbol"] == "AMZN")
+    amzn_probe = cast(Mapping[str, Any], amzn["paper_route_probe"])
+    assert amzn["state"] == "probing"
+    assert amzn["reason"] == "route_tca_passed_but_dependency_receipts_block_capital"
+    assert (
+        amzn["next_repair_action"]
+        == "collect_paper_runtime_ledger_receipts_before_capital"
+    )
+    assert amzn_probe["eligible"] is True
+    assert amzn_probe["active"] is False
+    assert amzn_probe["notional_limit"] == "0"
+    assert amzn_probe["next_session_notional_limit"] == "25.0"
+
     aapl = next(item for item in records if item["symbol"] == "AAPL")
     aapl_probe = cast(Mapping[str, Any], aapl["paper_route_probe"])
     assert aapl["paper_probe_notional_limit"] == "0"

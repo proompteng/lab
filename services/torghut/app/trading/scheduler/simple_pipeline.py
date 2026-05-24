@@ -52,6 +52,7 @@ _SIMPLE_ALLOWED_REJECT_REASONS = {
 _PAPER_ROUTE_PROBE_REASONS = {
     "execution_tca_route_universe_empty",
     "execution_tca_symbol_missing",
+    "route_tca_passed_but_dependency_receipts_block_capital",
     "tca_evidence_stale",
 }
 _PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS = 86_400
@@ -571,6 +572,40 @@ class SimpleTradingPipeline(TradingPipeline):
         return repair_symbols
 
     @staticmethod
+    def _proof_floor_paper_route_probe_symbols(
+        proof_floor: Mapping[str, object],
+    ) -> set[str]:
+        route_book = proof_floor.get("route_reacquisition_book")
+        if not isinstance(route_book, Mapping):
+            return set()
+        route_book_mapping = cast(Mapping[str, Any], route_book)
+        probe = route_book_mapping.get("paper_route_probe")
+        summary = route_book_mapping.get("summary")
+        symbols: set[str] = set()
+        for source, keys in (
+            (probe, ("active_symbols", "eligible_symbols")),
+            (
+                summary,
+                (
+                    "paper_route_probe_active_symbols",
+                    "paper_route_probe_eligible_symbols",
+                ),
+            ),
+        ):
+            if not isinstance(source, Mapping):
+                continue
+            source_mapping = cast(Mapping[str, Any], source)
+            for key in keys:
+                raw_symbols = source_mapping.get(key)
+                if not isinstance(raw_symbols, list):
+                    continue
+                for raw_symbol in cast(list[object], raw_symbols):
+                    symbol = str(raw_symbol).strip().upper()
+                    if symbol:
+                        symbols.add(symbol)
+        return symbols
+
+    @staticmethod
     def _proof_floor_symbol_route_probe_reasons(
         proof_floor: Mapping[str, object],
         symbol: str,
@@ -578,28 +613,35 @@ class SimpleTradingPipeline(TradingPipeline):
         route_book = proof_floor.get("route_reacquisition_book")
         if not isinstance(route_book, Mapping):
             return set()
-        summary = cast(Mapping[str, Any], route_book).get("summary")
-        if not isinstance(summary, Mapping):
-            return set()
-        repair_candidates = cast(Mapping[str, Any], summary).get("repair_candidates")
-        if not isinstance(repair_candidates, list):
-            return set()
-
+        raw_summary = cast(Mapping[str, Any], route_book).get("summary")
+        summary: Mapping[str, Any]
+        if isinstance(raw_summary, Mapping):
+            summary = cast(Mapping[str, Any], raw_summary)
+        else:
+            summary = {}
         normalized_symbol = symbol.strip().upper()
         reasons: set[str] = set()
-        for raw_candidate in cast(list[object], repair_candidates):
-            if not isinstance(raw_candidate, Mapping):
+        route_book_mapping = cast(Mapping[str, Any], route_book)
+        candidate_sources: list[object] = [
+            summary.get("repair_candidates"),
+            route_book_mapping.get("records"),
+        ]
+        for raw_candidates in candidate_sources:
+            if not isinstance(raw_candidates, list):
                 continue
-            candidate = cast(Mapping[str, Any], raw_candidate)
-            candidate_symbol = str(candidate.get("symbol") or "").strip().upper()
-            if not candidate_symbol or candidate_symbol != normalized_symbol:
-                continue
-            state = str(candidate.get("state") or "").strip()
-            if state not in {"missing", "probing"}:
-                continue
-            reason = str(candidate.get("reason") or "").strip()
-            if reason in _PAPER_ROUTE_PROBE_REASONS:
-                reasons.add(reason)
+            for raw_candidate in cast(list[object], raw_candidates):
+                if not isinstance(raw_candidate, Mapping):
+                    continue
+                candidate = cast(Mapping[str, Any], raw_candidate)
+                candidate_symbol = str(candidate.get("symbol") or "").strip().upper()
+                if not candidate_symbol or candidate_symbol != normalized_symbol:
+                    continue
+                state = str(candidate.get("state") or "").strip()
+                if state not in {"missing", "probing"}:
+                    continue
+                reason = str(candidate.get("reason") or "").strip()
+                if reason in _PAPER_ROUTE_PROBE_REASONS:
+                    reasons.add(reason)
         return reasons
 
     @staticmethod
@@ -691,14 +733,23 @@ class SimpleTradingPipeline(TradingPipeline):
             proof_floor,
             symbol,
         )
+        paper_route_probe_symbols = self._proof_floor_paper_route_probe_symbols(
+            proof_floor
+        )
+        symbol_paper_route_probe_eligible = symbol in paper_route_probe_symbols
         if not (
             (blocking_reasons & _PAPER_ROUTE_PROBE_REASONS)
             or symbol_route_probe_reasons
+            or symbol_paper_route_probe_eligible
         ):
             return None
 
         repair_symbols = self._proof_floor_route_repair_symbols(proof_floor)
-        if repair_symbols and symbol not in repair_symbols:
+        if (
+            repair_symbols
+            and symbol not in repair_symbols
+            and not symbol_paper_route_probe_eligible
+        ):
             return None
 
         return {
@@ -709,6 +760,7 @@ class SimpleTradingPipeline(TradingPipeline):
             "side": decision.action,
             "blocking_reasons": sorted(blocking_reasons | symbol_route_probe_reasons),
             "route_repair_symbols": sorted(repair_symbols),
+            "paper_route_probe_symbols": sorted(paper_route_probe_symbols),
         }
 
     def _apply_paper_route_probe_cap(
