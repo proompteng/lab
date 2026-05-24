@@ -34,6 +34,7 @@ NEXT_PAPER_ROUTE_RUNTIME_WINDOW_TARGETS_SCHEMA_VERSION = (
 )
 DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS = 72
 DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT = 20
+PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL = "TORGHUT_SIM"
 US_EQUITIES_TIMEZONE = "America/New_York"
 US_EQUITIES_OPEN = time(hour=9, minute=30)
 US_EQUITIES_CLOSE = time(hour=16, minute=0)
@@ -393,13 +394,15 @@ def _next_paper_route_runtime_window_targets(
                 }
             )
             continue
+        source_account_label = _safe_text(target.get("account_label"))
         planned_target: dict[str, object] = {
             "hypothesis_id": hypothesis_id,
             "candidate_id": candidate_id,
             "observed_stage": "paper",
             "strategy_family": strategy_family,
             "strategy_name": strategy_name,
-            "account_label": _safe_text(target.get("account_label")) or "TORGHUT_SIM",
+            "account_label": PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+            "source_account_label": source_account_label or "",
             "source_dsn_env": "SIM_DB_DSN",
             "dataset_snapshot_ref": _safe_text(target.get("dataset_snapshot_ref"))
             or "",

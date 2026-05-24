@@ -156,7 +156,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                                 "observed_stage": "paper",
                                 "strategy_family": "microbar_pairs",
                                 "strategy_name": "paper-route-candidate-v1",
-                                "account_label": "TORGHUT_SIM",
+                                "account_label": "TORGHUT_REPLAY",
                                 "source_kind": "durable_runtime_ledger_bucket",
                                 "source_manifest_ref": "config/trading/hypotheses/h-paper-route.json",
                                 "dataset_snapshot_ref": "dataset://paper-route",
@@ -171,7 +171,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                                 "observed_stage": "paper",
                                 "strategy_family": "microbar_pairs",
                                 "strategy_name": "paper-route-candidate-v1",
-                                "account_label": "TORGHUT_SIM",
+                                "account_label": "TORGHUT_REPLAY",
                                 "source_kind": "durable_runtime_ledger_bucket",
                                 "source_manifest_ref": "config/trading/hypotheses/h-paper-route.json",
                                 "dataset_snapshot_ref": "dataset://paper-route",
@@ -222,6 +222,8 @@ class TestPaperRouteEvidenceAudit(TestCase):
             },
         )
         target = plan["targets"][0]
+        self.assertEqual(target["account_label"], "TORGHUT_SIM")
+        self.assertEqual(target["source_account_label"], "TORGHUT_REPLAY")
         self.assertEqual(target["source_dsn_env"], "SIM_DB_DSN")
         self.assertEqual(target["source_kind"], "paper_route_probe_runtime_observed")
         self.assertEqual(target["max_notional"], "0")
