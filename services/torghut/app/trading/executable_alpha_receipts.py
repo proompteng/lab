@@ -154,6 +154,11 @@ _CLOSED_SESSION_REPAIR_REASONS = {
 }
 _ALPHA_RUNTIME_REPLAY_CLASS = "alpha_runtime_window_refresh"
 _RUNTIME_LEDGER_ECONOMIC_REPAIR_CLASS = "runtime_ledger_economic_repair"
+_RUNTIME_LEDGER_PAPER_PROBATION_REASON = "runtime_ledger_stage_not_live"
+_RUNTIME_LEDGER_PAPER_PROBATION_ALLOWED_REASONS = {
+    _RUNTIME_LEDGER_PAPER_PROBATION_REASON
+}
+_RUNTIME_LEDGER_PROMOTION_PNL_BASIS = "realized_strategy_pnl_after_explicit_costs"
 _ZERO_RUNTIME_EVIDENCE_REASONS = {
     "hypothesis_window_decisions_missing",
     "hypothesis_window_orders_missing",
@@ -1386,6 +1391,25 @@ def _alpha_runtime_confidence(item: Mapping[str, Any]) -> str:
     return "medium"
 
 
+def _runtime_ledger_paper_probation_eligible(
+    item: Mapping[str, Any],
+    *,
+    reason_codes: Sequence[str],
+) -> bool:
+    reasons = {reason for reason in reason_codes if reason}
+    return (
+        _text(item.get("observed_stage")) == "paper"
+        and reasons == _RUNTIME_LEDGER_PAPER_PROBATION_ALLOWED_REASONS
+        and _text(item.get("pnl_basis")) == _RUNTIME_LEDGER_PROMOTION_PNL_BASIS
+        and (_float(item.get("filled_notional")) or 0.0) > 0.0
+        and _int(item.get("fill_count")) > 0
+        and _int(item.get("closed_trade_count")) > 0
+        and _int(item.get("open_position_count")) == 0
+        and (_float(item.get("net_strategy_pnl_after_costs")) or 0.0) > 0.0
+        and (_float(item.get("post_cost_expectancy_bps")) or 0.0) > 0.0
+    )
+
+
 def _runtime_ledger_economic_repair_item(
     *,
     item: Mapping[str, Any],
@@ -1432,6 +1456,10 @@ def _runtime_ledger_economic_repair_item(
         },
     )
     after_cost_edge_bps = _float(item.get("post_cost_expectancy_bps"))
+    paper_probation_eligible = _runtime_ledger_paper_probation_eligible(
+        item,
+        reason_codes=reasons,
+    )
     return {
         "replay_id": replay_id,
         "hypothesis_id": hypothesis_id,
@@ -1517,6 +1545,16 @@ def _runtime_ledger_economic_repair_item(
         "confidence": "medium"
         if after_cost_edge_bps is not None and after_cost_edge_bps > 0
         else "low",
+        "paper_probation_eligible": paper_probation_eligible,
+        "paper_probation_scope": "evidence_collection_only"
+        if paper_probation_eligible
+        else None,
+        "paper_probation_reason_codes": sorted(reasons)
+        if paper_probation_eligible
+        else [],
+        "paper_probation_target_capital_stage": "shadow"
+        if paper_probation_eligible
+        else None,
         "max_runtime_seconds": 900,
         "max_notional": "0",
         "guardrails": [
@@ -1982,19 +2020,20 @@ def _receipt_for_replay(
     blockers = _string_list(replay.get("remaining_blockers"))
     replay_id = _text(replay.get("replay_id"))
     replay_class = _text(replay.get("replay_class"))
-    graduation_state: GraduationState = (
-        "candidate"
-        if target_symbols
-        or (
-            replay_class
-            in {
-                _ALPHA_RUNTIME_REPLAY_CLASS,
-                _RUNTIME_LEDGER_ECONOMIC_REPAIR_CLASS,
-            }
-            and replay.get("hypothesis_id")
-        )
-        else "failed"
-    )
+    graduation_state: GraduationState
+    if bool(replay.get("paper_probation_eligible")):
+        graduation_state = "paper_replay_candidate"
+    elif target_symbols or (
+        replay_class
+        in {
+            _ALPHA_RUNTIME_REPLAY_CLASS,
+            _RUNTIME_LEDGER_ECONOMIC_REPAIR_CLASS,
+        }
+        and replay.get("hypothesis_id")
+    ):
+        graduation_state = "candidate"
+    else:
+        graduation_state = "failed"
     receipt_id = "receipt:" + _stable_hash(
         "executable-alpha",
         {
@@ -2027,6 +2066,13 @@ def _receipt_for_replay(
             "reason_codes": blockers or ["awaiting_zero_notional_replay"],
         },
         "graduation_state": graduation_state,
+        "paper_probation_eligible": bool(replay.get("paper_probation_eligible")),
+        "paper_probation_scope": replay.get("paper_probation_scope"),
+        "paper_probation_reason_codes": replay.get("paper_probation_reason_codes")
+        or [],
+        "paper_probation_target_capital_stage": replay.get(
+            "paper_probation_target_capital_stage"
+        ),
         "jangar_contract_graduation_ref": dict(jangar_contract_graduation_ref),
         "remaining_blockers": blockers,
         "capital_effect": replay.get("capital_effect"),
@@ -2101,6 +2147,9 @@ def build_capital_replay_projection(
     receipt_state_totals = Counter(
         _text(receipt.get("graduation_state"), "unknown") for receipt in receipts
     )
+    paper_replay_candidate_count = sum(
+        1 for replay in replays if bool(replay.get("paper_probation_eligible"))
+    )
     board = {
         "schema_version": CAPITAL_REPLAY_BOARD_SCHEMA_VERSION,
         "board_id": board_id,
@@ -2120,7 +2169,7 @@ def build_capital_replay_projection(
             "zero_notional_replay_count": sum(
                 1 for replay in replays if _text(replay.get("max_notional")) == "0"
             ),
-            "paper_replay_candidate_count": 0,
+            "paper_replay_candidate_count": paper_replay_candidate_count,
             "capital_ready": False,
         },
         "rollback_target": {
@@ -2137,7 +2186,7 @@ def build_capital_replay_projection(
             "summary": {
                 "receipts_total": len(receipts),
                 "graduation_state_totals": dict(sorted(receipt_state_totals.items())),
-                "paper_replay_candidate_count": 0,
+                "paper_replay_candidate_count": paper_replay_candidate_count,
                 "zero_notional_receipt_count": len(receipts),
                 "capital_ready": False,
             },
