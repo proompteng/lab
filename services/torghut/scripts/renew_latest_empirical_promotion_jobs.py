@@ -1188,6 +1188,7 @@ def _run_runtime_window_import(
                 manifest_path=manifest_path,
                 window_start=default_window_start,
                 window_end=default_window_end,
+                now=now,
                 allow_source_activity_window=explicit_window is None,
             )
         )
@@ -1217,6 +1218,7 @@ def _run_runtime_window_import_target(
     manifest_path: Path,
     window_start: datetime,
     window_end: datetime,
+    now: datetime,
     allow_source_activity_window: bool = False,
 ) -> dict[str, Any]:
     runtime_manifest = _read_runtime_window_manifest(target.source_manifest_ref)
@@ -1235,11 +1237,49 @@ def _run_runtime_window_import_target(
             window_selection = "source_execution_activity_span"
         else:
             window_selection = "latest_completed_regular_session_no_source_activity"
+    proof_blockers: list[dict[str, Any]] = []
+    candidate_id = (
+        _as_text(target.candidate_id)
+        or _as_text(runtime_manifest.get("candidate_id"))
+        or _as_text(manifest.get("candidate_id"))
+    )
+    if candidate_id is None:
+        raise RuntimeError("runtime_window_candidate_id_missing")
+    if target_plan_window is not None and window_end > now:
+        proof_blockers.append(
+            {
+                "type": "runtime_window_target_plan_window_not_closed",
+                "hypothesis_id": target.hypothesis_id,
+                "candidate_id": candidate_id,
+                "window_start": _utc_iso(window_start),
+                "window_end": _utc_iso(window_end),
+                "now": _utc_iso(now),
+                "remediation": (
+                    "wait_until_target_plan_window_closes_before_runtime_import"
+                ),
+            }
+        )
+        return {
+            "status": "deferred",
+            "reason": "runtime_window_target_plan_window_not_closed",
+            "window_start": _utc_iso(window_start),
+            "window_end": _utc_iso(window_end),
+            "window_selection": window_selection,
+            "hypothesis_id": target.hypothesis_id,
+            "candidate_id": candidate_id,
+            "strategy_name": target.strategy_name,
+            "account_label": target.account_label,
+            "source_kind": target.source_kind,
+            "artifact_refs": [str(manifest_path), *target.artifact_refs],
+            "target_metadata": dict(target.target_metadata or {}),
+            "proof_status": "deferred",
+            "proof_blockers": proof_blockers,
+            "summary": None,
+        }
     delay_depth_report_ref = _runtime_manifest_delay_depth_stress_report_ref(
         target=target,
         runtime_manifest=runtime_manifest,
     )
-    proof_blockers: list[dict[str, Any]] = []
     if (
         _runtime_manifest_requires_delay_depth_stress(runtime_manifest)
         and delay_depth_report_ref is None
@@ -1250,13 +1290,6 @@ def _run_runtime_window_import_target(
                 runtime_manifest=runtime_manifest,
             )
         )
-    candidate_id = (
-        _as_text(target.candidate_id)
-        or _as_text(runtime_manifest.get("candidate_id"))
-        or _as_text(manifest.get("candidate_id"))
-    )
-    if candidate_id is None:
-        raise RuntimeError("runtime_window_candidate_id_missing")
     command = [
         sys.executable,
         "scripts/import_hypothesis_runtime_windows.py",
