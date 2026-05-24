@@ -62,6 +62,7 @@ from app.models import (
     Strategy,
     StrategyHypothesisMetricWindow,
     StrategyPromotionDecision,
+    StrategyRuntimeLedgerBucket,
     TradeDecision,
     VNextEmpiricalJobRun,
 )
@@ -6789,6 +6790,180 @@ class TestTradingApi(TestCase):
             self.assertEqual(payload["realized_pnl_summary"]["tca_sample_count"], 0)
             caveat_codes = {item["code"] for item in payload["caveats"]}
             self.assertIn("empty_window_no_runtime_evidence", caveat_codes)
+        finally:
+            if original_scheduler is None:
+                if hasattr(app.state, "trading_scheduler"):
+                    del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
+
+    def test_trading_paper_route_evidence_endpoint_audits_probation_targets(
+        self,
+    ) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        now = datetime.now(timezone.utc)
+        window_start = now - timedelta(hours=2)
+        window_end = now
+        with self.session_local() as session:
+            bucket = StrategyRuntimeLedgerBucket(
+                run_id="paper-route-run-1",
+                candidate_id="candidate-paper-route",
+                hypothesis_id="H-PAPER-ROUTE",
+                observed_stage="paper",
+                bucket_started_at=window_start,
+                bucket_ended_at=window_end,
+                account_label="paper",
+                runtime_strategy_name="missing-paper-route-strategy",
+                strategy_family="microbar_pairs",
+                fill_count=4,
+                decision_count=5,
+                submitted_order_count=4,
+                closed_trade_count=2,
+                open_position_count=0,
+                filled_notional=Decimal("12500"),
+                gross_strategy_pnl=Decimal("83"),
+                cost_amount=Decimal("3"),
+                net_strategy_pnl_after_costs=Decimal("80"),
+                post_cost_expectancy_bps=Decimal("64"),
+                ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+                pnl_basis="realized_strategy_pnl_after_explicit_costs",
+                execution_policy_hash_counts={"policy-a": 4},
+                cost_model_hash_counts={"cost-a": 4},
+                lineage_hash_counts={"lineage-a": 4},
+                blockers_json=[],
+            )
+            metric_window = StrategyHypothesisMetricWindow(
+                run_id="paper-route-run-1",
+                candidate_id="candidate-paper-route",
+                hypothesis_id="H-PAPER-ROUTE",
+                observed_stage="paper",
+                window_started_at=window_start,
+                window_ended_at=window_end,
+                market_session_count=2,
+                decision_count=5,
+                trade_count=2,
+                order_count=4,
+                evidence_provenance="paper_runtime_observed",
+                evidence_maturity="empirically_validated",
+                decision_alignment_ratio="1",
+                avg_abs_slippage_bps="3",
+                slippage_budget_bps="10",
+                post_cost_expectancy_bps="64",
+                continuity_ok=True,
+                drift_ok=True,
+                dependency_quorum_decision="allow",
+                capital_stage="shadow",
+            )
+            promotion_decision = StrategyPromotionDecision(
+                run_id="paper-route-run-1",
+                candidate_id="candidate-paper-route",
+                hypothesis_id="H-PAPER-ROUTE",
+                promotion_target="paper",
+                state="blocked",
+                allowed=False,
+                reason_summary="paper_probation_evidence_collection_only",
+            )
+            session.add_all([bucket, metric_window, promotion_decision])
+            session.commit()
+
+        target = {
+            "hypothesis_id": "H-PAPER-ROUTE",
+            "candidate_id": "candidate-paper-route",
+            "observed_stage": "paper",
+            "strategy_family": "microbar_pairs",
+            "strategy_name": "missing-paper-route-strategy",
+            "account_label": "paper",
+            "source_kind": "durable_runtime_ledger_bucket",
+            "source_manifest_ref": "config/trading/hypotheses/h-paper-route.json",
+            "dataset_snapshot_ref": "dataset://paper-route",
+            "window_start": window_start.isoformat(),
+            "window_end": window_end.isoformat(),
+            "runtime_ledger_bucket_ref": (
+                "strategy_runtime_ledger_buckets:paper-route-run-1:"
+                f"{window_start.isoformat()}:{window_end.isoformat()}"
+            ),
+            "paper_probation_authorized": True,
+            "paper_probation_authorization_scope": "evidence_collection_only",
+            "promotion_allowed": False,
+            "final_promotion_allowed": False,
+            "final_promotion_blockers": [
+                "runtime_ledger_stage_not_live",
+                "paper_probation_evidence_collection_only",
+            ],
+            "max_notional": "0",
+        }
+        live_gate = {
+            "allowed": False,
+            "reason": "alpha_readiness_not_promotion_eligible",
+            "blocked_reasons": ["alpha_readiness_not_promotion_eligible"],
+            "promotion_eligible_total": 0,
+            "runtime_ledger_paper_probation_import_plan": {
+                "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                "target_count": 1,
+                "skipped_target_count": 0,
+                "promotion_allowed": False,
+                "final_promotion_allowed": False,
+                "targets": [target],
+            },
+        }
+        proof_floor = {
+            "route_reacquisition_book": {
+                "schema_version": "torghut.route-reacquisition-book.v1",
+                "state": "repair_only",
+                "summary": {
+                    "paper_route_probe_eligible_symbols": ["AAPL"],
+                    "paper_route_probe_active_symbols": [],
+                },
+                "paper_route_probe": {
+                    "configured_enabled": True,
+                    "active": False,
+                    "effective_max_notional": "0",
+                    "next_session_max_notional": "25",
+                    "eligible_symbol_count": 1,
+                    "eligible_symbols": ["AAPL"],
+                    "active_symbols": [],
+                    "blocking_reasons": ["market_session_closed"],
+                },
+            }
+        }
+        try:
+            app.state.trading_scheduler = TradingScheduler()
+            with (
+                patch(
+                    "app.main._build_live_submission_gate_payload",
+                    return_value=live_gate,
+                ),
+                patch(
+                    "app.main._build_profitability_proof_floor_payload",
+                    return_value=proof_floor,
+                ),
+            ):
+                response = self.client.get("/trading/paper-route-evidence")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(
+                payload["schema_version"], "torghut.paper-route-evidence.v1"
+            )
+            self.assertEqual(payload["summary"]["target_count"], 1)
+            self.assertEqual(payload["summary"]["target_with_runtime_ledger_count"], 1)
+            self.assertEqual(payload["summary"]["target_with_source_activity_count"], 0)
+            audit = payload["targets"][0]
+            self.assertFalse(audit["target"]["promotion_allowed"])
+            self.assertFalse(audit["target"]["final_promotion_allowed"])
+            self.assertTrue(audit["source_activity"]["missing"])
+            self.assertEqual(audit["runtime_ledger"]["bucket_count"], 1)
+            self.assertEqual(audit["runtime_ledger"]["fill_count"], 4)
+            self.assertEqual(audit["runtime_ledger"]["filled_notional"], "12500")
+            self.assertEqual(audit["hypothesis_windows"]["window_count"], 1)
+            self.assertEqual(audit["promotion_decisions"]["decision_count"], 1)
+            self.assertFalse(audit["promotion_decisions"]["latest"]["allowed"])
+            self.assertEqual(payload["paper_route_probe"]["eligible_symbols"], ["AAPL"])
+            blockers = set(audit["readiness"]["blockers"])
+            self.assertIn("source_decisions_missing", blockers)
+            self.assertIn("source_executions_missing", blockers)
+            self.assertIn("source_tca_missing", blockers)
+            self.assertIn("paper_probation_evidence_collection_only", blockers)
+            self.assertIn("promotion_decision_not_allowed", blockers)
         finally:
             if original_scheduler is None:
                 if hasattr(app.state, "trading_scheduler"):
