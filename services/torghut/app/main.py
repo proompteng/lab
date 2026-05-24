@@ -124,6 +124,7 @@ from .trading.profit_carry_passports import build_profit_carry_passport_ledger
 from .trading.profit_freshness_frontier import build_profit_freshness_frontier
 from .trading.profit_repair_settlement import build_profit_repair_settlement_ledger
 from .trading.profit_signal_quorum import build_profit_signal_quorum
+from .trading.paper_route_evidence import build_paper_route_evidence_audit
 from .trading.proof_floor import build_profitability_proof_floor_receipt
 from .trading.quality_adjusted_profit_frontier import (
     build_quality_adjusted_profit_frontier,
@@ -4388,6 +4389,64 @@ def trading_runtime_profitability(
         "live_submission_gate": live_submission_gate,
         "caveats": caveats,
     }
+    return JSONResponse(status_code=200, content=jsonable_encoder(payload))
+
+
+@app.get("/trading/paper-route-evidence")
+def trading_paper_route_evidence(
+    session: Session = Depends(get_session),
+) -> JSONResponse:
+    """Return target-by-target paper-route evidence collection status."""
+
+    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
+    if scheduler is None:
+        scheduler = TradingScheduler()
+        app.state.trading_scheduler = scheduler
+
+    empirical_jobs = _empirical_jobs_status()
+    quant_evidence = load_quant_evidence_status(
+        account_label=settings.trading_account_label,
+    )
+    tca_summary = _load_tca_summary(session, scheduler=scheduler)
+    market_context_status = scheduler.market_context_status()
+    hypothesis_payload, _hypothesis_summary, _dependency_quorum = (
+        _build_hypothesis_runtime_payload(
+            scheduler,
+            tca_summary=tca_summary,
+            market_context_status=market_context_status,
+        )
+    )
+    live_submission_gate = _build_live_submission_gate_payload(
+        scheduler.state,
+        session=session,
+        hypothesis_summary=hypothesis_payload,
+        empirical_jobs_status=empirical_jobs,
+        dspy_runtime_status=cast(
+            dict[str, object],
+            scheduler.llm_status().get("dspy_runtime", {}),
+        ),
+        quant_health_status=quant_evidence,
+    )
+    simple_lane_status = _build_simple_lane_status_payload()
+    proof_floor = _build_profitability_proof_floor_payload(
+        state=scheduler.state,
+        torghut_revision=BUILD_VERSION,
+        live_submission_gate=live_submission_gate,
+        hypothesis_payload=hypothesis_payload,
+        empirical_jobs_status=empirical_jobs,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+        tca_summary=tca_summary,
+        simple_lane_status=simple_lane_status,
+    )
+    payload = build_paper_route_evidence_audit(
+        session,
+        live_submission_gate=cast(Mapping[str, Any], live_submission_gate),
+        route_reacquisition_book=cast(
+            Mapping[str, Any],
+            proof_floor.get("route_reacquisition_book") or {},
+        ),
+    )
     return JSONResponse(status_code=200, content=jsonable_encoder(payload))
 
 
