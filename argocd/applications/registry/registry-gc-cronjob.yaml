@@ -23,6 +23,10 @@ spec:
               env:
                 - name: KUBECTL_VERSION
                   value: v1.33.0
+                - name: REGISTRY_GC_WAIT_TIMEOUT
+                  value: 2h
+                - name: REGISTRY_GC_ACTIVE_DEADLINE_SECONDS
+                  value: "7200"
               command:
                 - /bin/sh
                 - -c
@@ -50,12 +54,33 @@ spec:
                     registry_node="$(kubectl -n registry get pod "${registry_pod}" -o jsonpath='{.spec.nodeName}' 2>/dev/null || true)"
                   fi
 
+                  gc_job=""
+
+                  cleanup_gc_job() {
+                    if [ -z "${gc_job}" ]; then
+                      return
+                    fi
+                    if ! kubectl -n registry get job "${gc_job}" >/dev/null 2>&1; then
+                      return
+                    fi
+                    echo "Deleting registry GC worker job ${gc_job} before restoring registry service..."
+                    kubectl -n registry delete job "${gc_job}" --wait=true --timeout=10m || true
+                    if kubectl -n registry get pod -l job-name="${gc_job}" -o name | grep -q .; then
+                      kubectl -n registry wait --for=delete pod -l job-name="${gc_job}" --timeout=10m || true
+                    fi
+                  }
+
                   scale_up() {
                     echo "Scaling registry back up to ${desired_replicas}..."
                     kubectl -n registry scale deployment/registry --replicas="${desired_replicas}" || true
                     kubectl -n registry rollout status deployment/registry --timeout=5m || true
                   }
-                  trap scale_up EXIT
+
+                  restore_registry() {
+                    cleanup_gc_job
+                    scale_up
+                  }
+                  trap restore_registry EXIT
 
                   gc_job="registry-gc-${HOSTNAME}-$(date +%s)"
 
@@ -76,7 +101,9 @@ spec:
                   metadata:
                     name: ${gc_job}
                   spec:
+                    activeDeadlineSeconds: ${REGISTRY_GC_ACTIVE_DEADLINE_SECONDS}
                     backoffLimit: 0
+                    ttlSecondsAfterFinished: 3600
                     template:
                       spec:
                         ${node_name_line}
@@ -102,9 +129,10 @@ spec:
                               name: registry-config
                   JOB
 
-                  kubectl -n registry wait --for=condition=complete job/${gc_job} --timeout=2h
+                  kubectl -n registry wait --for=condition=complete job/${gc_job} --timeout="${REGISTRY_GC_WAIT_TIMEOUT}"
                   kubectl -n registry logs job/${gc_job}
-                  kubectl -n registry delete job/${gc_job}
+                  kubectl -n registry delete job/${gc_job} --wait=true --timeout=10m
                   if kubectl -n registry get pod -l job-name="${gc_job}" -o name | grep -q .; then
                     kubectl -n registry wait --for=delete pod -l job-name="${gc_job}" --timeout=10m || true
                   fi
+                  gc_job=""
