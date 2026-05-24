@@ -14,7 +14,12 @@ from app.trading.discovery.hypothesis_cards import (
 
 
 MECHANISM_CLAIM_TYPES = frozenset(
-    ("signal_mechanism", "feature_recipe", "normalization_rule")
+    (
+        "signal_mechanism",
+        "feature_recipe",
+        "normalization_rule",
+        "portfolio_construction",
+    )
 )
 FEATURE_RECIPE_CLAIM_TYPES = frozenset(("feature_recipe", "normalization_rule"))
 FEATURE_BLOCKER_CLAIM_TYPES = frozenset(

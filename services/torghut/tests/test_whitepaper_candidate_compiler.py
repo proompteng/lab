@@ -384,6 +384,68 @@ class TestWhitepaperCandidateCompiler(TestCase):
             )
         )
 
+    def test_double_selection_factor_claims_compile_to_factor_screen_overlay(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-arxiv-2601-06499",
+            claims=[
+                {
+                    "claim_id": "short-term-trading-factor-screen",
+                    "claim_type": "feature_recipe",
+                    "claim_text": (
+                        "Short-term trading-based factors can provide incremental "
+                        "explanatory power after double-selection LASSO controls."
+                    ),
+                    "data_requirements": [
+                        "short_term_trading_factors",
+                        "cross_sectional_ranks",
+                        "realized_volatility",
+                    ],
+                    "confidence": "0.70",
+                },
+                {
+                    "claim_id": "alpha191-us-incremental-explanatory-power",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "High-dimensional factor screens require strict out-of-sample "
+                        "and multiple-testing controls."
+                    ),
+                    "data_requirements": [
+                        "train_holdout_split",
+                        "factor_rank_panel",
+                        "multiple_testing_controls",
+                    ],
+                    "confidence": "0.72",
+                },
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        self.assertTrue(compilation.executable_specs)
+        self.assertFalse(
+            [
+                blocker
+                for blocker in compilation.blockers
+                if blocker.reason == "required_features_missing_from_family_template"
+            ]
+        )
+        self.assertTrue(
+            all(
+                "double_selection_factor_screen"
+                in spec.parameter_space.get("mechanism_overlay_ids", [])
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract.get("rejects_factor_screen_only_promotion")
+                for spec in compilation.executable_specs
+            )
+        )
+
     def test_may_2026_toxicity_and_options_aliases_compile_to_runtime_families(
         self,
     ) -> None:
@@ -1974,6 +2036,96 @@ class TestWhitepaperCandidateCompiler(TestCase):
         self.assertTrue(
             all(
                 spec.promotion_contract.get("rejects_adapter_only_execution_behavior")
+                for spec in compilation.executable_specs
+            )
+        )
+
+    def test_risk_aware_trading_portfolio_claims_compile_to_optimizer_overlay(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-arxiv-2503.04662",
+            claims=[
+                {
+                    "claim_id": "ratpo-risk-pnl-optimizer",
+                    "claim_type": "portfolio_construction",
+                    "claim_text": (
+                        "Risk-aware trading portfolio optimization uses a RATS "
+                        "algorithm over unique eligible instruments and eligible "
+                        "optimization strategy candidates."
+                    ),
+                    "asset_scope": "us_equities_portfolio",
+                    "horizon_scope": "portfolio_risk_control",
+                    "expected_direction": "positive",
+                    "data_requirements": [
+                        "risk_aware_trading_portfolio_optimization",
+                        "market_risk_var",
+                        "pnl_objective",
+                        "eligible_instrument_universe",
+                        "eligible_optimization_strategy",
+                        "transaction_cost_stress",
+                    ],
+                    "confidence": "0.76",
+                },
+                {
+                    "claim_id": "ratpo-risk-limit-validation",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Market sensitivity constraints, capital charge stress, "
+                        "and risk limit compliance are required before replay "
+                        "selection."
+                    ),
+                    "asset_scope": "us_equities_portfolio",
+                    "horizon_scope": "portfolio_risk_control",
+                    "expected_direction": "neutral",
+                    "data_requirements": [
+                        "market_sensitivity_constraints",
+                        "capital_charge_stress",
+                        "risk_limit_compliance",
+                        "portfolio_replay",
+                        "walk_forward_replay",
+                    ],
+                    "confidence": "0.75",
+                },
+            ],
+            relations=[
+                {
+                    "relation_id": (
+                        "ratpo-risk-constraints-require-cost-aware-optimization"
+                    ),
+                    "relation_type": "requires_validation",
+                    "source_claim_id": "ratpo-risk-limit-validation",
+                    "target_claim_id": "ratpo-risk-pnl-optimizer",
+                }
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        self.assertTrue(compilation.executable_specs)
+        self.assertTrue(
+            all(
+                "risk_aware_trading_portfolio_optimization"
+                in spec.parameter_space.get("mechanism_overlay_ids", [])
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.hard_vetoes.get("required_market_risk_var")
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.hard_vetoes.get("required_capital_charge_stress")
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract.get("rejects_optimizer_only_promotion")
                 for spec in compilation.executable_specs
             )
         )
