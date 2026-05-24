@@ -755,6 +755,47 @@ class TestSubmissionCouncil(TestCase):
         self.assertIn("strategy_name", skipped_target["missing_fields"])
         self.assertIn("source_manifest_ref", skipped_target["missing_fields"])
 
+    def test_runtime_ledger_paper_probation_import_plan_dedupes_same_window_targets(
+        self,
+    ) -> None:
+        base_candidate = {
+            "hypothesis_id": "H-PAIRS-01",
+            "candidate_id": "candidate-pairs",
+            "runtime_strategy_name": "microbar-pairs-vwap-cap-safe",
+            "strategy_family": "microbar_cross_sectional_pairs",
+            "account": "TORGHUT_REPLAY",
+            "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
+            "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+            "bucket_started_at": "2026-05-21T17:00:00+00:00",
+            "bucket_ended_at": "2026-05-21T17:30:00+00:00",
+            "reason_codes": ["runtime_ledger_stage_not_live"],
+        }
+
+        plan = _runtime_ledger_paper_probation_import_plan(
+            [
+                {**base_candidate, "run_id": "better-runtime-ledger"},
+                {**base_candidate, "run_id": "duplicate-runtime-ledger"},
+            ]
+        )
+
+        self.assertEqual(plan["target_count"], 1)
+        self.assertEqual(plan["skipped_target_count"], 1)
+        self.assertEqual(
+            plan["targets"][0]["runtime_ledger_bucket_ref"],
+            "strategy_runtime_ledger_buckets:better-runtime-ledger:"
+            "2026-05-21T17:00:00+00:00:2026-05-21T17:30:00+00:00",
+        )
+        skipped_target = plan["skipped_targets"][0]
+        self.assertEqual(
+            skipped_target["reason"],
+            "duplicate_runtime_ledger_paper_probation_target",
+        )
+        self.assertEqual(
+            skipped_target["runtime_ledger_bucket_ref"],
+            "strategy_runtime_ledger_buckets:duplicate-runtime-ledger:"
+            "2026-05-21T17:00:00+00:00:2026-05-21T17:30:00+00:00",
+        )
+
     def test_metric_window_activity_rejects_tca_proxy_expectancy(self) -> None:
         metric_window = SimpleNamespace(
             market_session_count=3,

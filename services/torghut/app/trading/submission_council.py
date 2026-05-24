@@ -1219,6 +1219,7 @@ def _runtime_ledger_paper_probation_import_plan(
 ) -> dict[str, object]:
     targets: list[dict[str, object]] = []
     skipped_targets: list[dict[str, object]] = []
+    seen_target_keys: set[tuple[str, ...]] = set()
     for candidate in candidates:
         hypothesis_id = _safe_text(candidate.get("hypothesis_id"))
         candidate_id = _safe_text(candidate.get("candidate_id"))
@@ -1254,6 +1255,35 @@ def _runtime_ledger_paper_probation_import_plan(
                 }
             )
             continue
+
+        target_key = (
+            hypothesis_id or "",
+            candidate_id or "",
+            strategy_family or "",
+            strategy_name or "",
+            account_label,
+            dataset_snapshot_ref or "",
+            source_manifest_ref or "",
+            _RUNTIME_LEDGER_PAPER_PROBATION_SOURCE_KIND,
+            window_start or "",
+            window_end or "",
+        )
+        bucket_ref = _runtime_ledger_paper_probation_bucket_ref(candidate)
+        if target_key in seen_target_keys:
+            skipped_targets.append(
+                {
+                    "hypothesis_id": hypothesis_id,
+                    "candidate_id": candidate_id,
+                    "strategy_family": strategy_family,
+                    "strategy_name": strategy_name,
+                    "window_start": window_start,
+                    "window_end": window_end,
+                    "runtime_ledger_bucket_ref": bucket_ref,
+                    "reason": "duplicate_runtime_ledger_paper_probation_target",
+                }
+            )
+            continue
+        seen_target_keys.add(target_key)
 
         reason_codes = _normalize_reason_codes(
             [
@@ -1298,7 +1328,7 @@ def _runtime_ledger_paper_probation_import_plan(
             "selection_reason": "positive_post_cost_runtime_ledger_bucket",
             "max_notional": "0",
         }
-        if bucket_ref := _runtime_ledger_paper_probation_bucket_ref(candidate):
+        if bucket_ref:
             target["runtime_ledger_bucket_ref"] = bucket_ref
         targets.append(target)
 
