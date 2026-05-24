@@ -1008,6 +1008,160 @@ class TestCandidateSpecs(TestCase):
         )
         self.assertIn("selection_bias_stress", bootstrap_contract["required_evidence"])
 
+    def test_risk_aware_trading_portfolio_claim_adds_portfolio_contract(
+        self,
+    ) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-risk-aware-trading-portfolio-optimization",
+            claims=[
+                {
+                    "claim_id": "ratpo-risk-pnl-optimizer",
+                    "claim_type": "portfolio_construction",
+                    "claim_text": (
+                        "Risk-aware trading portfolio optimization uses a RATS "
+                        "algorithm over unique eligible instruments and an eligible "
+                        "optimization strategy to improve market risk and PnL."
+                    ),
+                    "data_requirements": [
+                        "risk_aware_trading_portfolio_optimization",
+                        "market_risk_var",
+                        "pnl_objective",
+                        "eligible_instrument_universe",
+                        "transaction_cost_stress",
+                    ],
+                    "confidence": "0.76",
+                },
+                {
+                    "claim_id": "ratpo-risk-limit-validation",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Risk-aware trading swarm outputs require market sensitivity "
+                        "constraints, capital charge stress, and risk limit compliance."
+                    ),
+                    "data_requirements": [
+                        "market_sensitivity_constraints",
+                        "capital_charge_stress",
+                        "risk_limit_compliance",
+                        "portfolio_replay",
+                    ],
+                    "confidence": "0.75",
+                },
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+
+        self.assertIn(
+            "risk_aware_trading_portfolio_optimization",
+            specs[0].parameter_space["mechanism_overlay_ids"],
+        )
+        self.assertTrue(
+            specs[0].hard_vetoes["required_risk_aware_portfolio_optimization"]
+        )
+        self.assertTrue(specs[0].hard_vetoes["required_market_risk_var"])
+        self.assertTrue(specs[0].hard_vetoes["required_market_sensitivity_constraints"])
+        self.assertTrue(specs[0].hard_vetoes["required_capital_charge_stress"])
+        self.assertTrue(specs[0].hard_vetoes["required_risk_limit_compliance"])
+        self.assertTrue(
+            specs[0].promotion_contract[
+                "rejects_risk_only_objective_without_post_cost_pnl"
+            ]
+        )
+        self.assertTrue(specs[0].promotion_contract["rejects_optimizer_only_promotion"])
+        mechanism_overlays = candidate_specs_module._mechanism_overlays_for_card(
+            cards[0]
+        )
+        ratpo_contract = next(
+            contract
+            for contract in mechanism_overlays["feature_contract"]["mechanism_overlays"]
+            if contract["overlay_id"] == "risk_aware_trading_portfolio_optimization"
+        )
+        self.assertEqual(
+            ratpo_contract["rank_metric"],
+            "risk_adjusted_post_cost_net_pnl_per_day",
+        )
+        self.assertEqual(
+            ratpo_contract["evidence_policy"],
+            "risk_aware_portfolio_optimizer_is_prefilter_not_promotion_proof",
+        )
+        self.assertIn(
+            "market_sensitivity_constraints", ratpo_contract["required_evidence"]
+        )
+
+    def test_double_selection_factor_claim_adds_validation_only_contract(
+        self,
+    ) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-double-selection-factor-screen",
+            claims=[
+                {
+                    "claim_id": "short-term-trading-factor-screen",
+                    "claim_type": "feature_recipe",
+                    "claim_text": (
+                        "Double-selection LASSO identifies short-term trading "
+                        "factors after high-dimensional controls."
+                    ),
+                    "data_requirements": [
+                        "short_term_trading_factors",
+                        "cross_sectional_ranks",
+                        "realized_volatility",
+                    ],
+                    "confidence": "0.70",
+                },
+                {
+                    "claim_id": "alpha191-us-incremental-explanatory-power",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "High-dimensional factor screens require train holdout split "
+                        "and multiple-testing controls before executable sleeves."
+                    ),
+                    "data_requirements": [
+                        "train_holdout_split",
+                        "factor_rank_panel",
+                        "multiple_testing_controls",
+                    ],
+                    "confidence": "0.72",
+                },
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+
+        self.assertIn(
+            "double_selection_factor_screen",
+            specs[0].parameter_space["mechanism_overlay_ids"],
+        )
+        self.assertTrue(specs[0].hard_vetoes["required_double_selection_factor_screen"])
+        self.assertTrue(specs[0].hard_vetoes["required_cross_sectional_rank_panel"])
+        self.assertTrue(specs[0].hard_vetoes["required_train_holdout_split"])
+        self.assertTrue(specs[0].hard_vetoes["required_multiple_testing_controls"])
+        self.assertTrue(
+            specs[0].promotion_contract["rejects_factor_screen_only_promotion"]
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["rejects_in_sample_factor_selection"]
+        )
+        mechanism_overlays = candidate_specs_module._mechanism_overlays_for_card(
+            cards[0]
+        )
+        factor_contract = next(
+            contract
+            for contract in mechanism_overlays["feature_contract"]["mechanism_overlays"]
+            if contract["overlay_id"] == "double_selection_factor_screen"
+        )
+        self.assertEqual(
+            factor_contract["rank_metric"],
+            "double_selection_factor_post_cost_net_pnl_per_day",
+        )
+        self.assertEqual(
+            factor_contract["evidence_policy"],
+            "double_selection_factor_screen_is_prefilter_not_promotion_proof",
+        )
+
     def test_validation_only_lob_stress_does_not_portfolio_fanout(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-tlob-validation-only",

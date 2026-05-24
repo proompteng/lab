@@ -3704,6 +3704,137 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
 
     if has_any(
         (
+            "risk-aware trading portfolio optimization",
+            "risk aware trading portfolio optimization",
+            "risk-aware trading swarm",
+            "risk_aware_trading_swarm",
+            "ratpo",
+            "rats algorithm",
+            "eligible optimization strategy",
+            "unique eligible instrument",
+            "unique eligible instruments",
+            "market sensitivity constraints",
+            "market sensitivities",
+            "capital charge",
+            "portfolio objective value",
+            "market risk and pnl",
+            "market risk and profit",
+        )
+    ):
+        overlay_ids.append("risk_aware_trading_portfolio_optimization")
+        overlay_contracts.append(
+            {
+                "overlay_id": "risk_aware_trading_portfolio_optimization",
+                "required_evidence": [
+                    "portfolio_replay",
+                    "market_risk_var",
+                    "pnl_objective",
+                    "eligible_instrument_universe",
+                    "eligible_optimization_strategy",
+                    "market_sensitivity_constraints",
+                    "capital_charge_stress",
+                    "transaction_cost_stress",
+                    "risk_limit_compliance",
+                    "walk_forward_replay",
+                    "post_cost_net_pnl",
+                ],
+                "rank_metric": "risk_adjusted_post_cost_net_pnl_per_day",
+                "evidence_policy": (
+                    "risk_aware_portfolio_optimizer_is_prefilter_not_promotion_proof"
+                ),
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_risk_aware_portfolio_optimization": True,
+                "required_portfolio_replay": True,
+                "required_market_risk_var": True,
+                "required_market_sensitivity_constraints": True,
+                "required_capital_charge_stress": True,
+                "required_risk_limit_compliance": True,
+                "required_transaction_cost_stress": True,
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_risk_aware_portfolio_optimization": True,
+                "requires_portfolio_replay": True,
+                "requires_market_risk_var": True,
+                "requires_market_sensitivity_constraints": True,
+                "requires_capital_charge_stress": True,
+                "requires_risk_limit_compliance": True,
+                "requires_post_cost_net_pnl": True,
+                "rejects_risk_only_objective_without_post_cost_pnl": True,
+                "rejects_optimizer_only_promotion": True,
+                "risk_policy": "risk_aware_portfolio_optimization_validation_only",
+            }
+        )
+
+    if has_any(
+        (
+            "double-selection lasso",
+            "double selection lasso",
+            "double_selection_lasso",
+            "high-dimensional factor",
+            "high dimensional factor",
+            "short-term trading factor",
+            "short term trading factor",
+            "short_term_trading_factors",
+            "alpha191",
+            "factor_rank_panel",
+            "factor screen",
+            "factor-screen",
+            "multiple-testing controls",
+            "multiple_testing_controls",
+            "train_holdout_split",
+        )
+    ):
+        overlay_ids.append("double_selection_factor_screen")
+        overlay_contracts.append(
+            {
+                "overlay_id": "double_selection_factor_screen",
+                "required_evidence": [
+                    "short_term_trading_factors",
+                    "cross_sectional_ranks",
+                    "factor_rank_panel",
+                    "train_holdout_split",
+                    "multiple_testing_controls",
+                    "walk_forward_replay",
+                    "post_cost_net_pnl",
+                    "runtime_ledger_profit_proof",
+                ],
+                "rank_metric": "double_selection_factor_post_cost_net_pnl_per_day",
+                "evidence_policy": (
+                    "double_selection_factor_screen_is_prefilter_not_promotion_proof"
+                ),
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_double_selection_factor_screen": True,
+                "required_short_term_trading_factors": True,
+                "required_cross_sectional_rank_panel": True,
+                "required_train_holdout_split": True,
+                "required_multiple_testing_controls": True,
+                "required_post_cost_replay": True,
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_double_selection_factor_screen": True,
+                "requires_cross_sectional_rank_panel": True,
+                "requires_train_holdout_split": True,
+                "requires_multiple_testing_controls": True,
+                "requires_post_cost_net_pnl": True,
+                "requires_runtime_ledger_profit_proof": True,
+                "rejects_factor_screen_only_promotion": True,
+                "rejects_in_sample_factor_selection": True,
+                "risk_policy": "double_selection_factor_screen_validation_only",
+            }
+        )
+
+    if has_any(
+        (
             "non-parametric bootstrap",
             "nonparametric bootstrap",
             "bootstrap robust optimization",

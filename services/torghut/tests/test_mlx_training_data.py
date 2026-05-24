@@ -666,6 +666,205 @@ class TestMlxTrainingData(TestCase):
         self.assertEqual(features["paper_requires_selection_bias_stress"], 1.0)
         self.assertEqual(features["paper_requires_parameter_instability_stress"], 1.0)
 
+    def test_training_rows_encode_risk_aware_trading_portfolio_contract(
+        self,
+    ) -> None:
+        spec = CandidateSpec(
+            schema_version="torghut.candidate-spec.v1",
+            candidate_spec_id="spec-ratpo",
+            hypothesis_id="H-RATPO",
+            family_template_id="intraday_tsmom_v2",
+            candidate_kind="configuration",
+            runtime_family="intraday_tsmom_consistent",
+            runtime_strategy_name="intraday-tsmom-profit-v3",
+            feature_contract={
+                "source_claims": [
+                    {
+                        "claim_id": "ratpo-risk-pnl-optimizer",
+                        "claim_type": "portfolio_construction",
+                        "confidence": "0.76",
+                        "data_requirements": [
+                            "risk_aware_trading_portfolio_optimization",
+                            "market_risk_var",
+                            "pnl_objective",
+                            "eligible_instrument_universe",
+                        ],
+                    }
+                ],
+                "validation_requirements": [
+                    {
+                        "claim_id": "ratpo-risk-limit-validation",
+                        "data_requirements": [
+                            "market_sensitivity_constraints",
+                            "capital_charge_stress",
+                            "risk_limit_compliance",
+                            "portfolio_replay",
+                        ],
+                    }
+                ],
+                "mechanism_overlays": [
+                    {
+                        "overlay_id": "risk_aware_trading_portfolio_optimization",
+                        "required_evidence": [
+                            "portfolio_replay",
+                            "market_risk_var",
+                            "market_sensitivity_constraints",
+                            "capital_charge_stress",
+                            "risk_limit_compliance",
+                            "post_cost_net_pnl",
+                        ],
+                    }
+                ],
+            },
+            parameter_space={
+                "mechanism_overlay_ids": ["risk_aware_trading_portfolio_optimization"]
+            },
+            strategy_overrides={
+                "max_notional_per_trade": "25000",
+                "max_position_pct_equity": "0.25",
+                "params": {
+                    "capital_profile": "initial_equity_cash_constrained_1x",
+                    "max_entries_per_session": "2",
+                    "max_gross_exposure_pct_equity": "1.0",
+                },
+            },
+            objective={"target_net_pnl_per_day": "500"},
+            hard_vetoes={"required_min_daily_notional": "250000"},
+            expected_failure_modes=(),
+            promotion_contract={
+                "requires_risk_aware_portfolio_optimization": True,
+                "requires_market_risk_var": True,
+                "requires_market_sensitivity_constraints": True,
+                "requires_capital_charge_stress": True,
+                "rejects_optimizer_only_promotion": True,
+            },
+        )
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=spec.candidate_spec_id,
+            candidate={
+                "candidate_id": "cand-ratpo",
+                "objective_scorecard": {
+                    "net_pnl_per_day": "700",
+                    "active_day_ratio": "1.0",
+                    "positive_day_ratio": "0.72",
+                    "risk_adjusted_post_cost_net_pnl_per_day": "560",
+                },
+            },
+            dataset_snapshot_id="snapshot-ratpo",
+            result_path="/tmp/cand-ratpo.json",
+        )
+
+        rows = build_mlx_training_rows(
+            candidate_specs=[spec], evidence_bundles=[bundle]
+        )
+        features = rows[0].to_payload()["features"]
+
+        self.assertEqual(
+            features["paper_overlay_risk_aware_trading_portfolio_optimization"],
+            1.0,
+        )
+        self.assertEqual(features["paper_requires_portfolio_replay"], 1.0)
+        self.assertEqual(features["paper_requires_market_risk_var"], 1.0)
+        self.assertEqual(features["paper_requires_market_sensitivity_constraints"], 1.0)
+        self.assertEqual(features["paper_requires_capital_charge_stress"], 1.0)
+        self.assertEqual(features["paper_requires_risk_limit_compliance"], 1.0)
+
+    def test_training_rows_encode_double_selection_factor_screen_contract(
+        self,
+    ) -> None:
+        spec = CandidateSpec(
+            schema_version="torghut.candidate-spec.v1",
+            candidate_spec_id="spec-double-selection-factor",
+            hypothesis_id="H-DOUBLE-SELECTION",
+            family_template_id="microbar_cross_sectional_pairs_v1",
+            candidate_kind="configuration",
+            runtime_family="microbar_cross_sectional_pairs",
+            runtime_strategy_name="microbar-cross-sectional-pairs-v1",
+            feature_contract={
+                "source_claims": [
+                    {
+                        "claim_id": "short-term-trading-factor-screen",
+                        "claim_type": "feature_recipe",
+                        "confidence": "0.70",
+                        "data_requirements": [
+                            "short_term_trading_factors",
+                            "cross_sectional_ranks",
+                            "realized_volatility",
+                        ],
+                    }
+                ],
+                "validation_requirements": [
+                    {
+                        "claim_id": "alpha191-us-incremental-explanatory-power",
+                        "data_requirements": [
+                            "train_holdout_split",
+                            "factor_rank_panel",
+                            "multiple_testing_controls",
+                        ],
+                    }
+                ],
+                "mechanism_overlays": [
+                    {
+                        "overlay_id": "double_selection_factor_screen",
+                        "required_evidence": [
+                            "short_term_trading_factors",
+                            "cross_sectional_ranks",
+                            "factor_rank_panel",
+                            "train_holdout_split",
+                            "multiple_testing_controls",
+                            "post_cost_net_pnl",
+                        ],
+                    }
+                ],
+            },
+            parameter_space={
+                "mechanism_overlay_ids": ["double_selection_factor_screen"]
+            },
+            strategy_overrides={
+                "max_notional_per_trade": "25000",
+                "max_position_pct_equity": "0.25",
+                "params": {
+                    "capital_profile": "initial_equity_cash_constrained_1x",
+                    "max_entries_per_session": "2",
+                    "max_gross_exposure_pct_equity": "1.0",
+                },
+            },
+            objective={"target_net_pnl_per_day": "500"},
+            hard_vetoes={"required_min_daily_notional": "250000"},
+            expected_failure_modes=(),
+            promotion_contract={
+                "requires_double_selection_factor_screen": True,
+                "requires_cross_sectional_rank_panel": True,
+                "requires_train_holdout_split": True,
+                "requires_multiple_testing_controls": True,
+                "rejects_factor_screen_only_promotion": True,
+            },
+        )
+        bundle = evidence_bundle_from_frontier_candidate(
+            candidate_spec_id=spec.candidate_spec_id,
+            candidate={
+                "candidate_id": "cand-double-selection-factor",
+                "objective_scorecard": {
+                    "net_pnl_per_day": "640",
+                    "active_day_ratio": "1.0",
+                    "positive_day_ratio": "0.68",
+                    "double_selection_factor_post_cost_net_pnl_per_day": "530",
+                },
+            },
+            dataset_snapshot_id="snapshot-double-selection-factor",
+            result_path="/tmp/cand-double-selection-factor.json",
+        )
+
+        rows = build_mlx_training_rows(
+            candidate_specs=[spec], evidence_bundles=[bundle]
+        )
+        features = rows[0].to_payload()["features"]
+
+        self.assertEqual(features["paper_overlay_double_selection_factor_screen"], 1.0)
+        self.assertEqual(features["paper_requires_factor_rank_panel"], 1.0)
+        self.assertEqual(features["paper_requires_train_holdout_split"], 1.0)
+        self.assertEqual(features["paper_requires_multiple_testing_controls"], 1.0)
+
     def test_training_rows_encode_friction_aware_regime_contract(self) -> None:
         spec = CandidateSpec(
             schema_version="torghut.candidate-spec.v1",

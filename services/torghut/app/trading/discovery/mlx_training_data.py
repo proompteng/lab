@@ -17,7 +17,7 @@ from app.trading.discovery.objectives import (
     deployable_proof_failed_gate_count,
 )
 
-MLX_RANKER_SCHEMA_VERSION = "torghut.mlx-ranker.v5"
+MLX_RANKER_SCHEMA_VERSION = "torghut.mlx-ranker.v6"
 
 _MECHANISM_OVERLAY_IDS = (
     "cluster_lob_event_clustering",
@@ -27,6 +27,8 @@ _MECHANISM_OVERLAY_IDS = (
     "alpha_decay_predictability_stress",
     "friction_aware_regime_conditioned_policy",
     "regime_weighted_conformal_cost_buffer",
+    "risk_aware_trading_portfolio_optimization",
+    "double_selection_factor_screen",
     "bootstrap_robust_optimization_stability",
     "crumbling_quote_liquidity_erosion",
     "nonlinear_market_impact_tca",
@@ -74,6 +76,14 @@ _PAPER_CONTRACT_FEATURE_NAMES = (
     "paper_requires_cost_misspecification_stress",
     "paper_requires_liquidity_proxy_cost_calibration",
     "paper_requires_scenario_level_inference",
+    "paper_requires_portfolio_replay",
+    "paper_requires_market_risk_var",
+    "paper_requires_market_sensitivity_constraints",
+    "paper_requires_capital_charge_stress",
+    "paper_requires_risk_limit_compliance",
+    "paper_requires_factor_rank_panel",
+    "paper_requires_train_holdout_split",
+    "paper_requires_multiple_testing_controls",
     "paper_requires_bootstrap_confidence_interval",
     "paper_requires_utility_percentile_optimization",
     "paper_requires_selection_bias_stress",
@@ -531,6 +541,70 @@ def _paper_contract_feature_values(spec: CandidateSpec) -> Mapping[str, float]:
                 "scenario_level_inference",
                 "multiple_testing_correction",
                 "bootstrap_confidence_interval",
+            ),
+        ),
+        "paper_requires_portfolio_replay": _requirement_present(
+            contract_requirements,
+            (
+                "portfolio_replay",
+                "portfolio_weight_trace",
+                "eligible_optimization_strategy",
+            ),
+        ),
+        "paper_requires_market_risk_var": _requirement_present(
+            contract_requirements,
+            (
+                "market_risk_var",
+                "portfolio_var",
+                "var_forecast_error",
+            ),
+        ),
+        "paper_requires_market_sensitivity_constraints": _requirement_present(
+            contract_requirements,
+            (
+                "market_sensitivity_constraints",
+                "market_sensitivities",
+                "risk_limit_compliance",
+            ),
+        ),
+        "paper_requires_capital_charge_stress": _requirement_present(
+            contract_requirements,
+            (
+                "capital_charge_stress",
+                "capital_charge",
+                "economic_capital_stress",
+            ),
+        ),
+        "paper_requires_risk_limit_compliance": _requirement_present(
+            contract_requirements,
+            (
+                "risk_limit_compliance",
+                "market_sensitivity_constraints",
+                "capital_charge_stress",
+            ),
+        ),
+        "paper_requires_factor_rank_panel": _requirement_present(
+            contract_requirements,
+            (
+                "factor_rank_panel",
+                "cross_sectional_ranks",
+                "short_term_trading_factors",
+            ),
+        ),
+        "paper_requires_train_holdout_split": _requirement_present(
+            contract_requirements,
+            (
+                "train_holdout_split",
+                "walk_forward_replay",
+                "out_of_sample_generalization",
+            ),
+        ),
+        "paper_requires_multiple_testing_controls": _requirement_present(
+            contract_requirements,
+            (
+                "multiple_testing_controls",
+                "multiple_testing_correction",
+                "selection_bias_stress",
             ),
         ),
         "paper_requires_bootstrap_confidence_interval": _requirement_present(

@@ -261,6 +261,16 @@ class TestWhitepaperClaimCompiler(TestCase):
             source_by_id["paper-ssrn-5170318"].published_at,
             "2026-05-12",
         )
+        self.assertEqual(
+            source_by_id["paper-arxiv-2503.04662"].title,
+            "Risk-aware Trading Portfolio Optimization",
+        )
+        self.assertTrue(
+            any(
+                claim.get("claim_type") == "portfolio_construction"
+                for claim in source_by_id["paper-arxiv-2503.04662"].claims
+            )
+        )
 
     def test_sources_from_jsonl_rejects_invalid_rows(self) -> None:
         with TemporaryDirectory() as tmpdir:
