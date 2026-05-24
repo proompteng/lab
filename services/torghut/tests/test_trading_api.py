@@ -6959,6 +6959,21 @@ class TestTradingApi(TestCase):
             self.assertEqual(audit["promotion_decisions"]["decision_count"], 1)
             self.assertFalse(audit["promotion_decisions"]["latest"]["allowed"])
             self.assertEqual(payload["paper_route_probe"]["eligible_symbols"], ["AAPL"])
+            next_plan = payload["next_paper_route_runtime_window_targets"]
+            self.assertEqual(
+                next_plan["schema_version"],
+                "torghut.next-paper-route-runtime-window-targets.v1",
+            )
+            self.assertEqual(next_plan["target_count"], 1)
+            next_target = next_plan["targets"][0]
+            self.assertEqual(next_target["source_dsn_env"], "SIM_DB_DSN")
+            self.assertEqual(
+                next_target["source_kind"], "paper_route_probe_runtime_observed"
+            )
+            self.assertEqual(next_target["paper_route_probe_symbols"], ["AAPL"])
+            self.assertEqual(next_target["max_notional"], "0")
+            self.assertFalse(next_target["promotion_allowed"])
+            self.assertFalse(next_target["final_promotion_allowed"])
             blockers = set(audit["readiness"]["blockers"])
             self.assertIn("source_decisions_missing", blockers)
             self.assertIn("source_executions_missing", blockers)

@@ -79,6 +79,11 @@ RUNTIME_WINDOW_TARGET_METADATA_KEYS = (
     "final_promotion_allowed",
     "final_promotion_blockers",
     "candidate_blockers",
+    "paper_route_probe_symbols",
+    "paper_route_probe_symbol_count",
+    "paper_route_probe_next_session_max_notional",
+    "paper_route_probe_window_start",
+    "paper_route_probe_window_end",
     "handoff",
     "promotion_gate",
 )
@@ -147,7 +152,9 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "Repeatable URL returning either a runtime-window import plan or a "
             "/trading/status payload with live_submission_gate."
-            "runtime_ledger_paper_probation_import_plan."
+            "runtime_ledger_paper_probation_import_plan, or a "
+            "/trading/paper-route-evidence payload with "
+            "next_paper_route_runtime_window_targets."
         ),
     )
     parser.add_argument(
@@ -403,6 +410,9 @@ def _runtime_window_target_plan_from_payload(
     )
     if top_level_gate_plan:
         return top_level_gate_plan
+    paper_route_plan = _as_dict(payload.get("next_paper_route_runtime_window_targets"))
+    if paper_route_plan:
+        return paper_route_plan
     return _as_dict(payload)
 
 

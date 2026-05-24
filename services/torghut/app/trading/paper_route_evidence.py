@@ -8,9 +8,10 @@ of mutating any live submission gate.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, cast
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -28,8 +29,14 @@ from .runtime_ledger import POST_COST_PNL_BASIS
 
 
 PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION = "torghut.paper-route-evidence.v1"
+NEXT_PAPER_ROUTE_RUNTIME_WINDOW_TARGETS_SCHEMA_VERSION = (
+    "torghut.next-paper-route-runtime-window-targets.v1"
+)
 DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS = 72
 DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT = 20
+US_EQUITIES_TIMEZONE = "America/New_York"
+US_EQUITIES_OPEN = time(hour=9, minute=30)
+US_EQUITIES_CLOSE = time(hour=16, minute=0)
 
 
 def _as_mapping(value: object) -> dict[str, Any]:
@@ -123,6 +130,81 @@ def _parse_datetime(value: object) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _easter_date(year: int) -> date:
+    a = year % 19
+    b = year // 100
+    c = year % 100
+    d = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    correction = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * correction) // 451
+    month = (h + correction - 7 * m + 114) // 31
+    day = ((h + correction - 7 * m + 114) % 31) + 1
+    return date(year, month, day)
+
+
+def _nth_weekday(year: int, month: int, weekday: int, nth: int) -> date:
+    value = date(year, month, 1)
+    offset = (weekday - value.weekday()) % 7
+    return value + timedelta(days=offset + (nth - 1) * 7)
+
+
+def _last_weekday(year: int, month: int, weekday: int) -> date:
+    value = date(year + int(month == 12), 1 if month == 12 else month + 1, 1)
+    value -= timedelta(days=1)
+    return value - timedelta(days=(value.weekday() - weekday) % 7)
+
+
+def _observed_fixed_holiday(year: int, month: int, day: int) -> date | None:
+    value = date(year, month, day)
+    if value.weekday() == 5:
+        return None if month == 1 and day == 1 else value - timedelta(days=1)
+    if value.weekday() == 6:
+        return value + timedelta(days=1)
+    return value
+
+
+def _nyse_full_day_holidays(year: int) -> set[date]:
+    holidays = {
+        _nth_weekday(year, 1, 0, 3),
+        _nth_weekday(year, 2, 0, 3),
+        _easter_date(year) - timedelta(days=2),
+        _last_weekday(year, 5, 0),
+        _nth_weekday(year, 9, 0, 1),
+        _nth_weekday(year, 11, 3, 4),
+    }
+    for month, day in ((1, 1), (6, 19), (7, 4), (12, 25)):
+        observed = _observed_fixed_holiday(year, month, day)
+        if observed is not None:
+            holidays.add(observed)
+    return holidays
+
+
+def _regular_equities_session_date(value: date) -> bool:
+    return value.weekday() < 5 and value not in _nyse_full_day_holidays(value.year)
+
+
+def _next_regular_equities_session_window(
+    generated_at: datetime,
+) -> tuple[datetime, datetime]:
+    zone = ZoneInfo(US_EQUITIES_TIMEZONE)
+    local_generated_at = generated_at.astimezone(zone)
+    candidate_date = local_generated_at.date()
+    session_open = datetime.combine(candidate_date, US_EQUITIES_OPEN, tzinfo=zone)
+    if local_generated_at >= session_open:
+        candidate_date += timedelta(days=1)
+    while not _regular_equities_session_date(candidate_date):
+        candidate_date += timedelta(days=1)
+    start = datetime.combine(candidate_date, US_EQUITIES_OPEN, tzinfo=zone)
+    end = datetime.combine(candidate_date, US_EQUITIES_CLOSE, tzinfo=zone)
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+
+
 def _paper_route_probe_summary(
     route_reacquisition_book: Mapping[str, Any],
 ) -> dict[str, object]:
@@ -166,6 +248,23 @@ def _paper_route_probe_summary(
         "active_symbols": active_symbols,
         "blocking_reasons": blocking_reasons,
     }
+
+
+def _paper_route_probe_symbols(probe: Mapping[str, object]) -> list[str]:
+    symbols: list[str] = []
+    for key in ("active_symbols", "eligible_symbols"):
+        for item in _as_sequence(probe.get(key)):
+            symbol = str(item).strip().upper()
+            if symbol and symbol not in symbols:
+                symbols.append(symbol)
+    return symbols
+
+
+def _next_session_probe_notional(probe: Mapping[str, object]) -> str:
+    next_notional = _safe_decimal(probe.get("next_session_max_notional"))
+    if next_notional > 0:
+        return _decimal_text(next_notional)
+    return _decimal_text(probe.get("effective_max_notional"))
 
 
 def _target_identity(target: Mapping[str, Any]) -> dict[str, object]:
@@ -228,6 +327,141 @@ def _target_window(
     if window_end < window_start:
         return fallback_start, fallback_end
     return window_start, window_end
+
+
+def _next_paper_route_runtime_window_targets(
+    *,
+    targets: Sequence[Mapping[str, Any]],
+    probe: Mapping[str, object],
+    generated_at: datetime,
+) -> dict[str, object]:
+    window_start, window_end = _next_regular_equities_session_window(generated_at)
+    probe_symbols = _paper_route_probe_symbols(probe)
+    next_notional = _next_session_probe_notional(probe)
+    probe_ready = (
+        bool(probe.get("configured_enabled"))
+        and _safe_decimal(next_notional) > 0
+        and bool(probe_symbols)
+    )
+    planned_targets: list[dict[str, object]] = []
+    skipped_targets: list[dict[str, object]] = []
+    for target in targets:
+        hypothesis_id = _safe_text(target.get("hypothesis_id"))
+        candidate_id = _safe_text(target.get("candidate_id"))
+        strategy_family = _safe_text(target.get("strategy_family"))
+        strategy_name = _safe_text(target.get("strategy_name"))
+        source_manifest_ref = _safe_text(target.get("source_manifest_ref"))
+        missing = [
+            field
+            for field, value in (
+                ("hypothesis_id", hypothesis_id),
+                ("candidate_id", candidate_id),
+                ("strategy_family", strategy_family),
+                ("strategy_name", strategy_name),
+                ("source_manifest_ref", source_manifest_ref),
+            )
+            if value is None
+        ]
+        if missing or not probe_ready:
+            reasons = list(missing)
+            if not probe_ready:
+                if not bool(probe.get("configured_enabled")):
+                    reasons.append("paper_route_probe_disabled")
+                if _safe_decimal(next_notional) <= 0:
+                    reasons.append("paper_route_probe_notional_missing")
+                if not probe_symbols:
+                    reasons.append("paper_route_probe_symbol_missing")
+            skipped_targets.append(
+                {
+                    "hypothesis_id": hypothesis_id,
+                    "candidate_id": candidate_id,
+                    "reason": "next_paper_route_runtime_window_target_not_ready",
+                    "missing_or_blocking_fields": reasons,
+                }
+            )
+            continue
+        planned_targets.append(
+            {
+                "hypothesis_id": hypothesis_id,
+                "candidate_id": candidate_id,
+                "observed_stage": "paper",
+                "strategy_family": strategy_family,
+                "strategy_name": strategy_name,
+                "account_label": _safe_text(target.get("account_label"))
+                or "TORGHUT_SIM",
+                "source_dsn_env": "SIM_DB_DSN",
+                "dataset_snapshot_ref": _safe_text(target.get("dataset_snapshot_ref"))
+                or "",
+                "source_manifest_ref": source_manifest_ref,
+                "source_kind": "paper_route_probe_runtime_observed",
+                "window_start": _isoformat(window_start),
+                "window_end": _isoformat(window_end),
+                "paper_route_probe_symbols": probe_symbols,
+                "paper_route_probe_symbol_count": len(probe_symbols),
+                "paper_route_probe_next_session_max_notional": next_notional,
+                "paper_route_probe_window_start": _isoformat(window_start),
+                "paper_route_probe_window_end": _isoformat(window_end),
+                "paper_probation_authorized": True,
+                "paper_probation_authorization_scope": "evidence_collection_only",
+                "evidence_collection_stage": "paper",
+                "probation_allowed": True,
+                "probation_reason": "paper_route_probe_next_session_runtime_window",
+                "selection_reason": "paper_route_probe_next_session_evidence_collection",
+                "selected_by": "paper_route_evidence_audit",
+                "promotion_allowed": False,
+                "final_promotion_authorized": False,
+                "final_promotion_allowed": False,
+                "final_promotion_blockers": [
+                    "paper_probation_evidence_collection_only",
+                    "paper_route_runtime_ledger_import_pending",
+                    "live_runtime_ledger_required",
+                ],
+                "candidate_blockers": [
+                    "paper_route_runtime_ledger_import_pending",
+                    *[
+                        str(item).strip()
+                        for item in _as_sequence(target.get("candidate_blockers"))
+                        if str(item).strip()
+                    ],
+                ],
+                "runtime_ledger_target_metadata_blockers": [
+                    "paper_route_runtime_ledger_import_pending",
+                    "live_runtime_ledger_required",
+                ],
+                "handoff": "next_paper_route_runtime_window_import",
+                "promotion_gate": "runtime_ledger_live_or_live_paper_required",
+                "max_notional": "0",
+            }
+        )
+    return {
+        "schema_version": NEXT_PAPER_ROUTE_RUNTIME_WINDOW_TARGETS_SCHEMA_VERSION,
+        "source": "paper_route_evidence_audit",
+        "purpose": "next_session_paper_route_runtime_window_evidence_collection",
+        "promotion_allowed": False,
+        "final_promotion_authorized": False,
+        "final_promotion_allowed": False,
+        "session_timezone": US_EQUITIES_TIMEZONE,
+        "session_window": {
+            "start": _isoformat(window_start),
+            "end": _isoformat(window_end),
+        },
+        "paper_route_probe": {
+            "configured_enabled": bool(probe.get("configured_enabled")),
+            "active": bool(probe.get("active")),
+            "symbols": probe_symbols,
+            "symbol_count": len(probe_symbols),
+            "next_session_max_notional": next_notional,
+            "blocking_reasons": [
+                str(item).strip()
+                for item in _as_sequence(probe.get("blocking_reasons"))
+                if str(item).strip()
+            ],
+        },
+        "target_count": len(planned_targets),
+        "skipped_target_count": len(skipped_targets),
+        "targets": planned_targets,
+        "skipped_targets": skipped_targets,
+    }
 
 
 def _strategy_source_activity(
@@ -677,6 +911,13 @@ def build_paper_route_evidence_audit(
             },
         },
         "paper_route_probe": probe,
+        "next_paper_route_runtime_window_targets": (
+            _next_paper_route_runtime_window_targets(
+                targets=targets,
+                probe=probe,
+                generated_at=resolved_generated_at,
+            )
+        ),
         "summary": {
             "target_count": len(targets),
             "target_with_source_activity_count": sum(
@@ -731,6 +972,7 @@ def build_paper_route_evidence_audit(
 
 __all__ = [
     "DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS",
+    "NEXT_PAPER_ROUTE_RUNTIME_WINDOW_TARGETS_SCHEMA_VERSION",
     "PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION",
     "build_paper_route_evidence_audit",
 ]

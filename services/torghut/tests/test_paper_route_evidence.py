@@ -136,6 +136,82 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertIn("hypothesis_window_missing", blockers)
         self.assertIn("promotion_decision_missing", blockers)
 
+    def test_builder_exports_next_paper_route_runtime_window_targets(self) -> None:
+        generated_at = datetime(2026, 5, 24, 12, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "promotion_eligible_total": 0,
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAPER-ROUTE",
+                                "candidate_id": "candidate-paper-route",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": "paper-route-candidate-v1",
+                                "account_label": "TORGHUT_SIM",
+                                "source_kind": "durable_runtime_ledger_bucket",
+                                "source_manifest_ref": "config/trading/hypotheses/h-paper-route.json",
+                                "dataset_snapshot_ref": "dataset://paper-route",
+                                "paper_probation_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                                "max_notional": "0",
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["aapl"],
+                        "paper_route_probe_active_symbols": [],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": False,
+                        "next_session_max_notional": "25",
+                        "eligible_symbol_count": 1,
+                        "blocking_reasons": ["market_session_closed"],
+                    },
+                },
+                generated_at=generated_at,
+            )
+
+        plan = payload["next_paper_route_runtime_window_targets"]
+        self.assertEqual(
+            plan["schema_version"], "torghut.next-paper-route-runtime-window-targets.v1"
+        )
+        self.assertEqual(plan["target_count"], 1)
+        self.assertEqual(plan["skipped_target_count"], 0)
+        self.assertEqual(
+            plan["session_window"],
+            {
+                "start": "2026-05-26T13:30:00+00:00",
+                "end": "2026-05-26T20:00:00+00:00",
+            },
+        )
+        target = plan["targets"][0]
+        self.assertEqual(target["source_dsn_env"], "SIM_DB_DSN")
+        self.assertEqual(target["source_kind"], "paper_route_probe_runtime_observed")
+        self.assertEqual(target["max_notional"], "0")
+        self.assertEqual(target["paper_route_probe_symbols"], ["AAPL"])
+        self.assertEqual(target["paper_route_probe_next_session_max_notional"], "25")
+        self.assertFalse(target["promotion_allowed"])
+        self.assertFalse(target["final_promotion_authorized"])
+        self.assertIn(
+            "paper_route_runtime_ledger_import_pending",
+            target["runtime_ledger_target_metadata_blockers"],
+        )
+
     def test_builder_joins_source_activity_runtime_ledger_and_decisions(self) -> None:
         now = datetime(2026, 5, 24, 12, tzinfo=timezone.utc)
         window_start = now - timedelta(hours=2)
