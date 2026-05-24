@@ -202,6 +202,11 @@ class TestPaperRouteEvidenceAudit(TestCase):
                                 "paper_probation_authorized": True,
                                 "promotion_allowed": False,
                                 "final_promotion_authorized": False,
+                                "candidate_blockers": [
+                                    "paper_route_runtime_ledger_import_pending",
+                                    "source_tca_missing",
+                                    "source_tca_missing",
+                                ],
                                 "max_notional": "0",
                             },
                             {
@@ -317,9 +322,20 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertFalse(target["promotion_allowed"])
         self.assertFalse(target["final_promotion_authorized"])
+        self.assertEqual(
+            target["candidate_blockers"],
+            ["paper_route_runtime_ledger_import_pending", "source_tca_missing"],
+        )
         self.assertIn(
             "paper_route_runtime_ledger_import_pending",
             target["runtime_ledger_target_metadata_blockers"],
+        )
+        self.assertEqual(
+            target["runtime_ledger_target_metadata_blockers"],
+            [
+                "paper_route_runtime_ledger_import_pending",
+                "live_runtime_ledger_required",
+            ],
         )
 
     def test_next_paper_route_session_readiness_tracks_collection_and_import(
