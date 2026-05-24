@@ -171,6 +171,15 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--runtime-window-target-plan-required",
+        action="store_true",
+        help=(
+            "Fail closed when runtime-window target plan refs/urls are missing or "
+            "produce no targets instead of falling back to autoresearch or registry "
+            "targets."
+        ),
+    )
+    parser.add_argument(
         "--runtime-window-targets-from-latest-autoresearch",
         action="store_true",
         help=(
@@ -571,6 +580,20 @@ def _runtime_window_plan_targets(
     return targets
 
 
+def _runtime_window_target_plan_ref_count(args: argparse.Namespace) -> int:
+    file_refs = [
+        str(item).strip()
+        for item in getattr(args, "runtime_window_target_plan_ref", []) or []
+        if str(item).strip()
+    ]
+    url_refs = [
+        str(item).strip()
+        for item in getattr(args, "runtime_window_target_plan_url", []) or []
+        if str(item).strip()
+    ]
+    return len(file_refs) + len(url_refs)
+
+
 def _runtime_window_targets_from_plan(
     *,
     plan: Mapping[str, Any],
@@ -785,6 +808,13 @@ def _runtime_window_targets(
 ) -> list[RuntimeWindowImportTarget]:
     specs = [str(item) for item in getattr(args, "runtime_window_target", []) or []]
     plan_targets = _runtime_window_plan_targets(args)
+    plan_required = bool(getattr(args, "runtime_window_target_plan_required", False))
+    if plan_required:
+        plan_ref_count = _runtime_window_target_plan_ref_count(args)
+        if plan_ref_count <= 0:
+            raise RuntimeError("runtime_window_target_plan_required_without_ref")
+        if not plan_targets:
+            raise RuntimeError("runtime_window_target_plan_required_but_empty")
     plan_exclusive = bool(getattr(args, "runtime_window_target_plan_exclusive", False))
     fallback_enabled = not (plan_exclusive and plan_targets)
     autoresearch_targets = (

@@ -673,6 +673,87 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             ["H-FALLBACK-01"],
         )
 
+    def test_runtime_window_target_plan_required_fails_closed_when_plan_empty(
+        self,
+    ) -> None:
+        plan_path = Path(self.tmp_dir) / "empty-paper-route-plan.json"
+        plan_path.write_text(
+            json.dumps(
+                {
+                    "next_paper_route_runtime_window_targets": {
+                        "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                        "target_count": 0,
+                        "targets": [],
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        args = SimpleNamespace(
+            runtime_window_target=[],
+            runtime_window_target_plan_ref=[str(plan_path)],
+            runtime_window_target_plan_url=[],
+            runtime_window_target_plan_url_timeout_seconds=2.0,
+            runtime_window_target_plan_exclusive=True,
+            runtime_window_target_plan_required=True,
+            runtime_window_targets_from_latest_autoresearch=True,
+            runtime_window_targets_from_registry=True,
+            runtime_window_hypothesis_id="",
+            runtime_window_candidate_id="",
+            runtime_window_observed_stage="paper",
+            runtime_window_strategy_family="",
+            runtime_window_source_dsn_env="SIM_DB_DSN",
+            runtime_window_strategy_name="",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_dataset_snapshot_ref="",
+            runtime_window_source_manifest_ref="",
+            runtime_window_source_kind="paper_runtime_observed",
+        )
+
+        with (
+            patch.object(
+                renewal,
+                "_latest_autoresearch_runtime_window_targets",
+                side_effect=AssertionError("autoresearch fallback should not run"),
+            ),
+            patch.object(
+                renewal,
+                "_registry_runtime_window_targets",
+                side_effect=AssertionError("registry fallback should not run"),
+            ),
+            self.assertRaisesRegex(
+                RuntimeError, "runtime_window_target_plan_required_but_empty"
+            ),
+        ):
+            renewal._runtime_window_targets(args)
+
+    def test_runtime_window_target_plan_required_requires_ref(self) -> None:
+        args = SimpleNamespace(
+            runtime_window_target=[],
+            runtime_window_target_plan_ref=[],
+            runtime_window_target_plan_url=[],
+            runtime_window_target_plan_url_timeout_seconds=2.0,
+            runtime_window_target_plan_exclusive=True,
+            runtime_window_target_plan_required=True,
+            runtime_window_targets_from_latest_autoresearch=True,
+            runtime_window_targets_from_registry=True,
+            runtime_window_hypothesis_id="",
+            runtime_window_candidate_id="",
+            runtime_window_observed_stage="paper",
+            runtime_window_strategy_family="",
+            runtime_window_source_dsn_env="SIM_DB_DSN",
+            runtime_window_strategy_name="",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_dataset_snapshot_ref="",
+            runtime_window_source_manifest_ref="",
+            runtime_window_source_kind="paper_runtime_observed",
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError, "runtime_window_target_plan_required_without_ref"
+        ):
+            renewal._runtime_window_targets(args)
+
     def test_runtime_window_target_plan_payload_accepts_top_level_gate_plan_and_fallback(
         self,
     ) -> None:

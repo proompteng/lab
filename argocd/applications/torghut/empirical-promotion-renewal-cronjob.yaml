@@ -36,6 +36,7 @@ spec:
                     --runtime-window-import \
                     --runtime-window-target-plan-url http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence \
                     --runtime-window-target-plan-exclusive \
+                    --runtime-window-target-plan-required \
                     --runtime-window-targets-from-latest-autoresearch \
                     --runtime-window-targets-from-registry \
                     --runtime-window-hypothesis-id H-TSMOM-01 \

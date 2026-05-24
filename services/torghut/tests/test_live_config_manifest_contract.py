@@ -818,6 +818,7 @@ class TestLiveConfigManifestContract(TestCase):
             args,
         )
         self.assertIn("--runtime-window-target-plan-exclusive", args)
+        self.assertIn("--runtime-window-target-plan-required", args)
         self.assertIn("--runtime-window-targets-from-latest-autoresearch", args)
         self.assertIn("--runtime-window-targets-from-registry", args)
         self.assertIn("--runtime-window-hypothesis-id H-TSMOM-01", args)
