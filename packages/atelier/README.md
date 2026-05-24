@@ -13,7 +13,7 @@ Creates a Temporal namespace after temporarily port-forwarding to the cluster. T
 
 ### Prerequisites
 
-- Bun installed locally (tested with Bun 1.3.13).
+- Bun installed locally (tested with Bun 1.3.14).
 - A working kubeconfig for the cluster where Temporal runs.
 - `kubectl` on your PATH if the script needs to fall back from the client SDK.
 

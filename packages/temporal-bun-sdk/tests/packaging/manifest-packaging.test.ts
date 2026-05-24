@@ -159,7 +159,7 @@ describe('temporal-bun-sdk packaging manifest', () => {
     for (const fragment of forbiddenDockerfileFragments) {
       expect(dockerfile.toLowerCase()).not.toContain(fragment.toLowerCase())
     }
-    expect(dockerfile).toContain('oven/bun:1.3.13')
+    expect(dockerfile).toContain('oven/bun:1.3.14')
     expect(dockerfile).toContain('bun run build')
   })
 

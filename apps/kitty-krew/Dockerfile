@@ -1,4 +1,4 @@
-ARG BUN_VERSION=1.3.13
+ARG BUN_VERSION=1.3.14
 
 FROM oven/bun:${BUN_VERSION}-alpine AS builder
 

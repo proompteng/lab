@@ -6,7 +6,7 @@ _Last updated: May 6, 2026_
 
 | Surface         | Supported                                                                       | Notes                                                                                                                                   |
 | --------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Bun             | `>=1.3.13`                                                                      | CI pins Bun `1.3.13`; newer Bun releases must pass the SDK test, replay, and load gates before being documented as preferred.           |
+| Bun             | `>=1.3.14`                                                                      | CI pins Bun `1.3.14`; newer Bun releases must pass the SDK test, replay, and load gates before being documented as preferred.           |
 | Node            | Build tooling only                                                              | The worker runtime is Bun TypeScript. Node is used by repository tooling and GitHub Actions setup, not by the published worker runtime. |
 | Temporal Server | Current CI cluster plus pinned dev server histories                             | Additional server minor/version coverage requires replay-corpus and integration evidence before being documented as preferred.          |
 | Temporal Cloud  | Client/worker TLS and mTLS paths are supported when credentials are configured. | Cloud Ops tests remain optional unless credentials are present.                                                                         |
