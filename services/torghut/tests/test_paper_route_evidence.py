@@ -180,7 +180,10 @@ class TestPaperRouteEvidenceAudit(TestCase):
                         "active": False,
                         "next_session_max_notional": "25",
                         "eligible_symbol_count": 1,
-                        "blocking_reasons": ["market_session_closed"],
+                        "blocking_reasons": [
+                            "not_paper_mode",
+                            "market_session_closed",
+                        ],
                     },
                 },
                 generated_at=generated_at,
@@ -205,6 +208,10 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(target["max_notional"], "0")
         self.assertEqual(target["paper_route_probe_symbols"], ["AAPL"])
         self.assertEqual(target["paper_route_probe_next_session_max_notional"], "25")
+        self.assertEqual(
+            plan["paper_route_probe"]["blocking_reasons"],
+            ["not_paper_mode", "market_session_closed"],
+        )
         self.assertFalse(target["promotion_allowed"])
         self.assertFalse(target["final_promotion_authorized"])
         self.assertIn(

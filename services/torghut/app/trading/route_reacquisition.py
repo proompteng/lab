@@ -365,9 +365,7 @@ def build_route_reacquisition_book(
     effective_probe_limit = configured_probe_limit if probe_active else "0"
     next_session_probe_limit = (
         configured_probe_limit
-        if paper_route_probe_enabled
-        and trading_mode == "paper"
-        and configured_probe_limit is not None
+        if paper_route_probe_enabled and configured_probe_limit is not None
         else "0"
     )
     active_probe_symbols = eligible_probe_symbols if probe_active else []
