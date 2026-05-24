@@ -34,6 +34,7 @@ spec:
                     --output-dir /tmp/torghut-empirical-renewal \
                     --strategy-spec-ref intraday_tsmom_v2@research \
                     --runtime-window-import \
+                    --runtime-window-target-plan-url http://torghut.torghut.svc.cluster.local/trading/status \
                     --runtime-window-targets-from-latest-autoresearch \
                     --runtime-window-targets-from-registry \
                     --runtime-window-hypothesis-id H-TSMOM-01 \

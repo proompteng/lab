@@ -812,6 +812,11 @@ class TestLiveConfigManifestContract(TestCase):
 
         args = "\n".join(str(item) for item in container.get("args", []))
         self.assertIn("scripts/renew_latest_empirical_promotion_jobs.py", args)
+        self.assertIn(
+            "--runtime-window-target-plan-url "
+            "http://torghut.torghut.svc.cluster.local/trading/status",
+            args,
+        )
         self.assertIn("--runtime-window-targets-from-latest-autoresearch", args)
         self.assertIn("--runtime-window-targets-from-registry", args)
         self.assertIn("--runtime-window-hypothesis-id H-TSMOM-01", args)
