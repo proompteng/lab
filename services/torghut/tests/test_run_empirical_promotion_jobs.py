@@ -459,6 +459,186 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         )
         self.assertEqual(targets[0].dataset_snapshot_ref, "snapshot-paper-probation")
 
+    def test_runtime_window_targets_from_live_gate_plan_url_preserve_window_targets(
+        self,
+    ) -> None:
+        status_path = Path(self.tmp_dir) / "trading-status.json"
+        status_path.write_text(
+            json.dumps(
+                {
+                    "live_submission_gate": {
+                        "runtime_ledger_paper_probation_import_plan": {
+                            "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                            "targets": [
+                                {
+                                    "candidate_id": "c88421d619759b2cfaa6f4d0",
+                                    "hypothesis_id": "H-PAIRS-01",
+                                    "observed_stage": "paper",
+                                    "strategy_family": "microbar_cross_sectional_pairs",
+                                    "strategy_name": "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+                                    "account_label": "TORGHUT_REPLAY",
+                                    "source_dsn_env": "TORGHUT_DURABLE_RUNTIME_LEDGER_SOURCE_DSN",
+                                    "source_kind": "durable_runtime_ledger_bucket",
+                                    "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+                                    "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
+                                    "window_start": "2026-05-13T17:00:00+00:00",
+                                    "window_end": "2026-05-13T17:30:00+00:00",
+                                    "paper_probation_authorized": True,
+                                    "promotion_allowed": False,
+                                    "final_promotion_authorized": False,
+                                    "final_promotion_allowed": False,
+                                    "max_notional": "0",
+                                    "runtime_ledger_bucket_ref": "bucket:first",
+                                },
+                                {
+                                    "candidate_id": "c88421d619759b2cfaa6f4d0",
+                                    "hypothesis_id": "H-PAIRS-01",
+                                    "observed_stage": "paper",
+                                    "strategy_family": "microbar_cross_sectional_pairs",
+                                    "strategy_name": "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+                                    "account_label": "TORGHUT_REPLAY",
+                                    "source_dsn_env": "TORGHUT_DURABLE_RUNTIME_LEDGER_SOURCE_DSN",
+                                    "source_kind": "durable_runtime_ledger_bucket",
+                                    "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+                                    "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
+                                    "window_start": "2026-05-21T17:00:00+00:00",
+                                    "window_end": "2026-05-21T17:30:00+00:00",
+                                    "paper_probation_authorized": True,
+                                    "promotion_allowed": False,
+                                    "final_promotion_authorized": False,
+                                    "final_promotion_allowed": False,
+                                    "max_notional": "0",
+                                    "runtime_ledger_bucket_ref": "bucket:second",
+                                },
+                            ],
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        args = SimpleNamespace(
+            runtime_window_target=[],
+            runtime_window_target_plan_ref=[],
+            runtime_window_target_plan_url=[status_path.as_uri()],
+            runtime_window_target_plan_url_timeout_seconds=2.0,
+            runtime_window_targets_from_latest_autoresearch=False,
+            runtime_window_targets_from_registry=False,
+            runtime_window_hypothesis_id="",
+            runtime_window_candidate_id="",
+            runtime_window_observed_stage="paper",
+            runtime_window_strategy_family="",
+            runtime_window_source_dsn_env="SIM_DB_DSN",
+            runtime_window_strategy_name="",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_dataset_snapshot_ref="",
+            runtime_window_source_manifest_ref="",
+            runtime_window_source_kind="paper_runtime_observed",
+        )
+
+        targets = renewal._runtime_window_targets(args)
+
+        self.assertEqual(len(targets), 2)
+        self.assertEqual(
+            [target.window_start for target in targets],
+            [
+                "2026-05-13T17:00:00+00:00",
+                "2026-05-21T17:00:00+00:00",
+            ],
+        )
+        self.assertEqual(
+            targets[0].source_dsn_env,
+            "TORGHUT_DURABLE_RUNTIME_LEDGER_SOURCE_DSN",
+        )
+        assert targets[0].target_metadata is not None
+        self.assertEqual(
+            targets[0].target_metadata["runtime_ledger_bucket_ref"], "bucket:first"
+        )
+        self.assertEqual(targets[0].target_metadata["max_notional"], "0")
+        self.assertEqual(targets[0].target_metadata["promotion_allowed"], False)
+        self.assertEqual(targets[0].target_metadata["final_promotion_allowed"], False)
+
+    def test_runtime_window_target_plan_payload_accepts_top_level_gate_plan_and_fallback(
+        self,
+    ) -> None:
+        top_level_plan = renewal._runtime_window_target_plan_from_payload(
+            {
+                "runtime_ledger_paper_probation_import_plan": {
+                    "targets": [{"hypothesis_id": "H-PAIRS-01"}]
+                }
+            }
+        )
+        fallback_plan = renewal._runtime_window_target_plan_from_payload(
+            {"targets": [{"hypothesis_id": "H-FALLBACK-01"}]}
+        )
+
+        self.assertEqual(top_level_plan["targets"][0]["hypothesis_id"], "H-PAIRS-01")
+        self.assertEqual(fallback_plan["targets"][0]["hypothesis_id"], "H-FALLBACK-01")
+
+    def test_runtime_window_target_plan_url_failures_are_fail_closed(self) -> None:
+        with self.assertRaisesRegex(
+            RuntimeError, "runtime_window_target_plan_url_empty"
+        ):
+            renewal._read_runtime_window_target_plan_url("", timeout_seconds=1.0)
+
+        with (
+            patch.object(
+                renewal.urllib.request,
+                "urlopen",
+                side_effect=renewal.urllib.error.URLError("connection refused"),
+            ),
+            self.assertRaisesRegex(
+                RuntimeError,
+                "runtime_window_target_plan_url_fetch_failed",
+            ),
+        ):
+            renewal._read_runtime_window_target_plan_url(
+                "http://torghut.invalid/status",
+                timeout_seconds=1.0,
+            )
+
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = b"x" * 5_000_001
+        with (
+            patch.object(renewal.urllib.request, "urlopen", return_value=response),
+            self.assertRaisesRegex(
+                RuntimeError,
+                "runtime_window_target_plan_url_too_large",
+            ),
+        ):
+            renewal._read_runtime_window_target_plan_url(
+                "http://torghut.invalid/status",
+                timeout_seconds=1.0,
+            )
+
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = b"{"
+        with (
+            patch.object(renewal.urllib.request, "urlopen", return_value=response),
+            self.assertRaisesRegex(
+                RuntimeError,
+                "runtime_window_target_plan_url_invalid",
+            ),
+        ):
+            renewal._read_runtime_window_target_plan_url(
+                "http://torghut.invalid/status",
+                timeout_seconds=1.0,
+            )
+
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = b"[]"
+        with (
+            patch.object(renewal.urllib.request, "urlopen", return_value=response),
+            self.assertRaisesRegex(
+                RuntimeError,
+                "runtime_window_target_plan_url_invalid",
+            ),
+        ):
+            renewal._read_runtime_window_target_plan_url(
+                "http://torghut.invalid/status",
+                timeout_seconds=1.0,
+            )
+
     def test_runtime_window_targets_from_candidate_board_plan_preserve_probation_handoff(
         self,
     ) -> None:

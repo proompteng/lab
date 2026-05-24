@@ -8,6 +8,8 @@ import json
 import os
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
@@ -52,8 +54,10 @@ RUNTIME_WINDOW_TARGET_METADATA_KEYS = (
     "runtime_ledger_artifact_row_count",
     "runtime_ledger_artifact_fill_count",
     "runtime_ledger_target_metadata_blockers",
+    "runtime_ledger_bucket_ref",
     "window_start",
     "window_end",
+    "max_notional",
     "replay_selection_reason",
     "paper_contract_candidate",
     "paper_contract_selected_for_replay",
@@ -135,6 +139,21 @@ def _parse_args() -> argparse.Namespace:
             "artifact. Explicit --runtime-window-target entries take precedence "
             "over duplicate hypothesis_id values."
         ),
+    )
+    parser.add_argument(
+        "--runtime-window-target-plan-url",
+        action="append",
+        default=[],
+        help=(
+            "Repeatable URL returning either a runtime-window import plan or a "
+            "/trading/status payload with live_submission_gate."
+            "runtime_ledger_paper_probation_import_plan."
+        ),
+    )
+    parser.add_argument(
+        "--runtime-window-target-plan-url-timeout-seconds",
+        type=float,
+        default=5.0,
     )
     parser.add_argument(
         "--runtime-window-targets-from-latest-autoresearch",
@@ -357,8 +376,56 @@ def _read_runtime_window_target_plan(ref: str) -> dict[str, Any]:
     data = _as_dict(payload)
     if not data:
         raise RuntimeError(f"runtime_window_target_plan_ref_invalid:{path}")
-    plan = _as_dict(data.get("runtime_window_import_plan")) or data
+    plan = _runtime_window_target_plan_from_payload(data)
     return plan
+
+
+def _runtime_window_target_plan_from_payload(
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    direct_plan = _as_dict(payload.get("runtime_window_import_plan"))
+    if direct_plan:
+        return direct_plan
+    gate = _as_dict(payload.get("live_submission_gate"))
+    gate_plan = _as_dict(gate.get("runtime_ledger_paper_probation_import_plan"))
+    if gate_plan:
+        return gate_plan
+    top_level_gate_plan = _as_dict(
+        payload.get("runtime_ledger_paper_probation_import_plan")
+    )
+    if top_level_gate_plan:
+        return top_level_gate_plan
+    return _as_dict(payload)
+
+
+def _read_runtime_window_target_plan_url(
+    ref: str,
+    *,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    url = ref.strip()
+    if not url:
+        raise RuntimeError("runtime_window_target_plan_url_empty")
+    request = urllib.request.Request(url, headers={"Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(
+            request, timeout=max(timeout_seconds, 0.1)
+        ) as response:
+            raw = response.read(5_000_001)
+    except (OSError, TimeoutError, urllib.error.URLError) as exc:
+        raise RuntimeError(
+            f"runtime_window_target_plan_url_fetch_failed:{url}"
+        ) from exc
+    if len(raw) > 5_000_000:
+        raise RuntimeError(f"runtime_window_target_plan_url_too_large:{url}")
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"runtime_window_target_plan_url_invalid:{url}") from exc
+    data = _as_dict(payload)
+    if not data:
+        raise RuntimeError(f"runtime_window_target_plan_url_invalid:{url}")
+    return _runtime_window_target_plan_from_payload(data)
 
 
 def _runtime_family_harnesses(family_dir: str) -> dict[str, dict[str, str]]:
@@ -460,14 +527,28 @@ def _registry_runtime_window_targets(
 def _runtime_window_plan_targets(
     args: argparse.Namespace,
 ) -> list[RuntimeWindowImportTarget]:
-    refs = [
+    file_refs = [
         str(item).strip()
         for item in getattr(args, "runtime_window_target_plan_ref", []) or []
         if str(item).strip()
     ]
+    url_refs = [
+        str(item).strip()
+        for item in getattr(args, "runtime_window_target_plan_url", []) or []
+        if str(item).strip()
+    ]
     targets: list[RuntimeWindowImportTarget] = []
-    for ref in refs:
+    for ref in file_refs:
         plan = _read_runtime_window_target_plan(ref)
+        targets.extend(_runtime_window_targets_from_plan(plan=plan, ref=ref, args=args))
+    timeout_seconds = float(
+        getattr(args, "runtime_window_target_plan_url_timeout_seconds", 5.0) or 5.0
+    )
+    for ref in url_refs:
+        plan = _read_runtime_window_target_plan_url(
+            ref,
+            timeout_seconds=timeout_seconds,
+        )
         targets.extend(_runtime_window_targets_from_plan(plan=plan, ref=ref, args=args))
     return targets
 
@@ -589,8 +670,14 @@ def _runtime_window_target_metadata(payload: Mapping[str, Any]) -> dict[str, Any
 
 def _runtime_window_target_identity(
     target: RuntimeWindowImportTarget,
-) -> tuple[str, str, str]:
-    return (target.hypothesis_id, target.candidate_id, target.strategy_name)
+) -> tuple[str, str, str, str, str]:
+    return (
+        target.hypothesis_id,
+        target.candidate_id,
+        target.strategy_name,
+        target.window_start,
+        target.window_end,
+    )
 
 
 def _runtime_window_autoresearch_statuses(args: argparse.Namespace) -> set[str]:
