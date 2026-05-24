@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from datetime import date, datetime, time, timedelta, timezone
@@ -162,11 +163,20 @@ def _text_or_none(value: Any) -> str | None:
 
 
 def _row_payloads(row: Mapping[str, object]) -> list[Mapping[str, object]]:
-    payloads: list[Mapping[str, object]] = [row]
-    for key in ("execution_audit_json", "raw_order"):
-        payload = row.get(key)
-        if isinstance(payload, Mapping):
-            payloads.append({str(item_key): item for item_key, item in payload.items()})
+    payloads: list[Mapping[str, object]] = []
+
+    def append_payload(value: object, *, depth: int) -> None:
+        if not isinstance(value, Mapping):
+            return
+        payload = {str(item_key): item for item_key, item in value.items()}
+        payloads.append(payload)
+        if depth <= 0:
+            return
+        for nested in payload.values():
+            if isinstance(nested, Mapping):
+                append_payload(nested, depth=depth - 1)
+
+    append_payload(row, depth=4)
     return payloads
 
 
@@ -185,6 +195,66 @@ def _first_text(row: Mapping[str, object], *keys: str) -> str | None:
             text = str(payload.get(key) or "").strip()
             if text:
                 return text
+    return None
+
+
+def _json_default(value: object) -> str:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return str(value)
+    return str(value)
+
+
+def _stable_payload_digest(value: object) -> str | None:
+    if not isinstance(value, Mapping):
+        return None
+    payload = {str(item_key): item for item_key, item in value.items()}
+    if not payload:
+        return None
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=_json_default,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _first_payload_digest(row: Mapping[str, object], *keys: str) -> str | None:
+    for payload in _row_payloads(row):
+        for key in keys:
+            if digest := _stable_payload_digest(payload.get(key)):
+                return digest
+    return None
+
+
+_LINEAGE_CONTEXT_KEYS = (
+    "simulation_run_id",
+    "dataset_id",
+    "dataset_snapshot_ref",
+    "dataset_snapshot_hash",
+    "replay_data_hash",
+    "replay_tape_content_sha256",
+    "source_query_digest",
+    "source_topic",
+    "source_partition",
+)
+
+
+def _first_lineage_digest(row: Mapping[str, object]) -> str | None:
+    if digest := _first_payload_digest(
+        row, "lineage", "candidate_lineage", "source_lineage"
+    ):
+        return digest
+    for payload in _row_payloads(row):
+        lineage_payload = {
+            key: value
+            for key in _LINEAGE_CONTEXT_KEYS
+            if (value := payload.get(key)) is not None
+        }
+        if digest := _stable_payload_digest(lineage_payload):
+            return digest
     return None
 
 
@@ -575,9 +645,25 @@ def _build_realized_strategy_pnl_rows(
                 "execution_policy_sha256",
                 "policy_hash",
                 "execution_idempotency_key",
+            )
+            or _first_payload_digest(
+                row,
+                "execution_policy",
+                "execution_policy_context",
+                "execution_advisor",
+                "_execution_advice_provenance",
             ),
             "cost_model_hash": _first_text(
                 row, "cost_model_hash", "fee_model_hash", "cost_model_sha256"
+            )
+            or _first_payload_digest(
+                row,
+                "cost_model",
+                "cost_model_config",
+                "transaction_cost_model",
+                "fee_model",
+                "fees_model",
+                "model",
             ),
             "lineage_hash": _first_text(
                 row,
@@ -585,7 +671,8 @@ def _build_realized_strategy_pnl_rows(
                 "candidate_lineage_hash",
                 "replay_lineage_hash",
                 "candidate_evaluation_key",
-            ),
+            )
+            or _first_lineage_digest(row),
             "replay_data_hash": _first_text(
                 row,
                 "replay_data_hash",

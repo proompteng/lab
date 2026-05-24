@@ -20,6 +20,7 @@ from scripts.import_hypothesis_runtime_windows import (
     POST_COST_BASIS_SIMULATION_REPORT,
     POST_COST_BASIS_TCA_PROXY,
     _build_realized_strategy_pnl_rows,
+    _first_lineage_digest,
     _load_json_artifact,
     _load_report_post_cost_expectancy_bps,
     _nonnegative_int,
@@ -27,6 +28,7 @@ from scripts.import_hypothesis_runtime_windows import (
     _parse_dt_or_none,
     _parse_target_metadata,
     _query_timestamps,
+    _row_payloads,
     _runtime_ledger_bucket_profit_proof_present,
     _runtime_ledger_event_type,
     _runtime_ledger_profit_proof_present,
@@ -34,6 +36,7 @@ from scripts.import_hypothesis_runtime_windows import (
     _runtime_ledger_target_metadata_blockers,
     _runtime_ledger_tca_rows_from_durable_buckets,
     _runtime_ledger_tca_rows_from_artifacts,
+    _stable_payload_digest,
     _strategy_name_candidates,
     main,
 )
@@ -693,6 +696,63 @@ class TestImportHypothesisRuntimeWindows(TestCase):
     def test_strategy_name_candidates_drop_blank_values(self) -> None:
         self.assertEqual(_strategy_name_candidates("", "   ", None), [])
 
+    def test_row_payloads_recurses_to_limit_and_ignores_non_mappings(self) -> None:
+        self.assertEqual(_row_payloads("not-a-row"), [])
+
+        payloads = _row_payloads(
+            {
+                "level_1": {
+                    "level_2": {
+                        "level_3": {
+                            "level_4": {
+                                "level_5": {"ignored": True},
+                            },
+                        },
+                    },
+                },
+                "scalar": "ignored",
+            }
+        )
+
+        self.assertEqual(len(payloads), 5)
+        self.assertIn("level_5", payloads[-1])
+        self.assertNotIn({"ignored": True}, payloads)
+
+    def test_stable_payload_digest_normalizes_runtime_payload_values(self) -> None:
+        class CustomValue:
+            def __str__(self) -> str:
+                return "custom-value"
+
+        payload = {
+            "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+            "notional": Decimal("100.25"),
+            "custom": CustomValue(),
+        }
+
+        self.assertEqual(
+            _stable_payload_digest(payload),
+            _stable_payload_digest(
+                {
+                    "custom": CustomValue(),
+                    "notional": Decimal("100.25"),
+                    "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                }
+            ),
+        )
+
+    def test_first_lineage_digest_prefers_explicit_lineage_payload(self) -> None:
+        lineage_payload = {"source": "runtime-ledger", "snapshot": "sim-run-1"}
+
+        self.assertEqual(
+            _first_lineage_digest(
+                {
+                    "source_lineage": lineage_payload,
+                    "simulation_context": {"simulation_run_id": "ignored-context"},
+                }
+            ),
+            _stable_payload_digest(lineage_payload),
+        )
+
     def test_build_realized_strategy_pnl_rows_requires_costed_round_trip(
         self,
     ) -> None:
@@ -742,6 +802,77 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             rows[0]["post_cost_expectancy_bps"],
             Decimal("34.82587064676616915422885572"),
         )
+
+    def test_build_realized_strategy_pnl_rows_normalizes_nested_runtime_payloads(
+        self,
+    ) -> None:
+        rows = _build_realized_strategy_pnl_rows(
+            [
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("100"),
+                    "decision_hash": "decision-buy",
+                    "alpaca_order_id": "order-buy",
+                    "execution_audit_json": {
+                        "fees": {
+                            "cost_amount": "0.20",
+                            "cost_basis": "broker_reported_commission_and_fees",
+                        },
+                        "simulation_context": {
+                            "simulation_run_id": "sim-run-1",
+                            "dataset_event_id": "evt-buy",
+                        },
+                    },
+                    "raw_order": {
+                        "execution_policy": {
+                            "selected_order_type": "limit",
+                            "adaptive": {"max_participation_rate": "0.05"},
+                        },
+                        "cost_model": {"commission_bps": "0", "min_commission": "0"},
+                    },
+                },
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                    "symbol": "AAPL",
+                    "side": "sell",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("101"),
+                    "decision_hash": "decision-sell",
+                    "alpaca_order_id": "order-sell",
+                    "execution_audit_json": {
+                        "fees": {
+                            "cost_amount": "0.10",
+                            "cost_basis": "broker_reported_commission_and_fees",
+                        },
+                        "simulation_context": {
+                            "simulation_run_id": "sim-run-1",
+                            "dataset_event_id": "evt-sell",
+                        },
+                    },
+                    "raw_order": {
+                        "execution_policy": {
+                            "selected_order_type": "limit",
+                            "adaptive": {"max_participation_rate": "0.05"},
+                        },
+                        "cost_model": {"commission_bps": "0", "min_commission": "0"},
+                    },
+                },
+            ]
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["post_cost_promotion_eligible"], True)
+        self.assertEqual(rows[0]["realized_net_pnl"], Decimal("0.70"))
+        bucket = rows[0]["runtime_ledger_bucket"]
+        self.assertIsInstance(bucket, dict)
+        assert isinstance(bucket, dict)
+        self.assertEqual(bucket["blockers"], [])
+        self.assertGreaterEqual(len(bucket["execution_policy_hash_counts"]), 1)
+        self.assertGreaterEqual(len(bucket["cost_model_hash_counts"]), 1)
+        self.assertGreaterEqual(len(bucket["lineage_hash_counts"]), 1)
 
     def test_build_realized_strategy_pnl_rows_rejects_shortfall_only_costs(
         self,
