@@ -2325,6 +2325,38 @@ def _evaluate_certificate_candidates(
     return evaluated, valid
 
 
+def _runtime_hypothesis_ids_for_gate_scope(
+    runtime_items: Sequence[Mapping[str, Any]],
+    *,
+    eligibility_key: str,
+) -> set[str]:
+    return {
+        hypothesis_id
+        for item in runtime_items
+        if bool(item.get(eligibility_key))
+        for hypothesis_id in [str(item.get("hypothesis_id") or "").strip()]
+        if hypothesis_id
+    }
+
+
+def _candidate_reason_codes_for_gate_scope(
+    evaluated_tuples: Sequence[Mapping[str, object]],
+    *,
+    hypothesis_ids: set[str],
+) -> list[str]:
+    scoped_tuples = [
+        item
+        for item in evaluated_tuples
+        if str(item.get("hypothesis_id") or "").strip() in hypothesis_ids
+    ]
+    source_tuples = scoped_tuples if scoped_tuples else list(evaluated_tuples)
+    return [
+        reason
+        for item in source_tuples
+        for reason in cast(Sequence[str], item.get("reason_codes") or [])
+    ]
+
+
 def _default_lineage_ref(
     *,
     status: str = "unverified",
@@ -3029,11 +3061,14 @@ def build_live_submission_gate_payload(
             item for item in evaluated_tuples if not item.get("reason_codes")
         ]
 
-    candidate_reason_codes = [
-        reason
-        for item in evaluated_tuples
-        for reason in cast(Sequence[str], item.get("reason_codes") or [])
-    ]
+    promotion_scope_hypothesis_ids = _runtime_hypothesis_ids_for_gate_scope(
+        runtime_items,
+        eligibility_key="promotion_eligible",
+    )
+    paper_probation_scope_hypothesis_ids = _runtime_hypothesis_ids_for_gate_scope(
+        runtime_items,
+        eligibility_key="paper_probation_eligible",
+    )
     if (
         promotion_eligible_total > 0 or claimed_promotion_eligible_total > 0
     ) and not valid_candidates:
@@ -3041,10 +3076,20 @@ def build_live_submission_gate_payload(
             blocked_reasons.append("promotion_certificate_missing")
             blocked_reasons.append("hypothesis_window_evidence_missing")
         else:
-            blocked_reasons.extend(candidate_reason_codes)
+            blocked_reasons.extend(
+                _candidate_reason_codes_for_gate_scope(
+                    evaluated_tuples,
+                    hypothesis_ids=promotion_scope_hypothesis_ids,
+                )
+            )
             blocked_reasons.append("promotion_certificate_missing")
     elif paper_probation_eligible_total > 0 and evaluated_tuples:
-        blocked_reasons.extend(candidate_reason_codes)
+        blocked_reasons.extend(
+            _candidate_reason_codes_for_gate_scope(
+                evaluated_tuples,
+                hypothesis_ids=paper_probation_scope_hypothesis_ids,
+            )
+        )
 
     blocked_reasons = _normalize_reason_codes(blocked_reasons)
 
