@@ -154,6 +154,18 @@ def _repair_only_status() -> dict[str, object]:
                 "schema_version": "torghut.route-reacquisition-book.v1",
                 "state": "repair_only",
                 "capital_rule": "live_zero_notional_unchanged",
+                "paper_route_probe": {
+                    "configured_enabled": True,
+                    "configured_max_notional": "25.0",
+                    "active": False,
+                    "effective_max_notional": "0",
+                    "next_session_max_notional": "25.0",
+                    "eligible_symbol_count": 1,
+                    "eligible_symbols": ["AAPL"],
+                    "active_symbols": [],
+                    "blocking_reasons": ["market_session_closed"],
+                    "capital_authority": "none",
+                },
                 "summary": {
                     "routeable_symbol_count": 0,
                     "probing_symbol_count": 0,
@@ -169,8 +181,18 @@ def _repair_only_status() -> dict[str, object]:
                             "state": "blocked",
                             "next_repair_action": "repair_route_evidence_before_paper_probe",
                             "paper_probe_notional_limit": "0",
+                            "paper_route_probe": {
+                                "eligible": True,
+                                "active": False,
+                                "notional_limit": "0",
+                                "next_session_notional_limit": "25.0",
+                                "blocking_reasons": ["market_session_closed"],
+                                "capital_authority": "none",
+                            },
                         }
                     ],
+                    "paper_route_probe_eligible_symbols": ["AAPL"],
+                    "paper_route_probe_active_symbols": [],
                     "expected_unblock_value": 13,
                 },
             },
@@ -405,6 +427,24 @@ class TestBuildRevenueRepairDigest(TestCase):
             digest["repair_bid_settlement_held_lot_ids"],
             ["compacted-repair-lot:promotion"],
         )
+        evidence = digest["evidence"]
+        self.assertIsInstance(evidence, dict)
+        route_reacquisition = evidence["route_reacquisition"]
+        self.assertIsInstance(route_reacquisition, dict)
+        self.assertEqual(
+            route_reacquisition["paper_route_probe_eligible_symbols"], ["AAPL"]
+        )
+        self.assertEqual(route_reacquisition["paper_route_probe_active_symbols"], [])
+        paper_route_probe = route_reacquisition["paper_route_probe"]
+        self.assertIsInstance(paper_route_probe, dict)
+        self.assertTrue(paper_route_probe["configured_enabled"])
+        self.assertFalse(paper_route_probe["active"])
+        self.assertEqual(paper_route_probe["next_session_max_notional"], "25.0")
+        self.assertEqual(paper_route_probe["eligible_symbols"], ["AAPL"])
+        self.assertEqual(
+            paper_route_probe["blocking_reasons"], ["market_session_closed"]
+        )
+        self.assertEqual(paper_route_probe["capital_authority"], "none")
         self.assertIn(
             "jangar_material_evidence_settlement_ref_unavailable",
             digest["field_unavailable_reason_codes"],
@@ -689,6 +729,14 @@ class TestBuildRevenueRepairDigest(TestCase):
                     "state": "blocked",
                     "next_repair_action": "repair_route_evidence_before_paper_probe",
                     "paper_probe_notional_limit": "0",
+                    "paper_route_probe": {
+                        "eligible": True,
+                        "active": False,
+                        "notional_limit": "0",
+                        "next_session_notional_limit": "25.0",
+                        "blocking_reasons": ["market_session_closed"],
+                        "capital_authority": "none",
+                    },
                 }
             ],
         )

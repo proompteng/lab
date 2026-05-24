@@ -711,6 +711,7 @@ def _summarize_route_reacquisition(
         proof_floor.get("route_reacquisition_book"),
     )
     summary = _mapping(route_book.get("summary"))
+    paper_route_probe = _mapping(route_book.get("paper_route_probe"))
     return {
         "schema_version": _text(route_book.get("schema_version"), "missing"),
         "state": _text(route_book.get("state"), "unknown"),
@@ -727,6 +728,38 @@ def _summarize_route_reacquisition(
         "repair_candidates": [
             _mapping(item) for item in _sequence(summary.get("repair_candidates"))
         ],
+        "paper_route_probe": {
+            "configured_enabled": _bool(paper_route_probe.get("configured_enabled")),
+            "configured_max_notional": _text(
+                paper_route_probe.get("configured_max_notional"), "0"
+            ),
+            "active": _bool(paper_route_probe.get("active")),
+            "effective_max_notional": _text(
+                paper_route_probe.get("effective_max_notional"), "0"
+            ),
+            "next_session_max_notional": _text(
+                paper_route_probe.get("next_session_max_notional"), "0"
+            ),
+            "eligible_symbol_count": _int(
+                paper_route_probe.get("eligible_symbol_count")
+            ),
+            "eligible_symbols": _string_items(
+                paper_route_probe.get("eligible_symbols")
+            ),
+            "active_symbols": _string_items(paper_route_probe.get("active_symbols")),
+            "blocking_reasons": _string_items(
+                paper_route_probe.get("blocking_reasons")
+            ),
+            "capital_authority": _text(
+                paper_route_probe.get("capital_authority"), "none"
+            ),
+        },
+        "paper_route_probe_eligible_symbols": _string_items(
+            summary.get("paper_route_probe_eligible_symbols")
+        ),
+        "paper_route_probe_active_symbols": _string_items(
+            summary.get("paper_route_probe_active_symbols")
+        ),
         "expected_unblock_value": _int(summary.get("expected_unblock_value")),
     }
 

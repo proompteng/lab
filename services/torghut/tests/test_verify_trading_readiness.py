@@ -97,6 +97,26 @@ def _ready_status() -> dict[str, object]:
                 },
             ],
         },
+        'route_reacquisition_book': {
+            'schema_version': 'torghut.route-reacquisition-book.v1',
+            'state': 'paper_candidate',
+            'summary': {
+                'paper_route_probe_eligible_symbols': ['NVDA'],
+                'paper_route_probe_active_symbols': ['NVDA'],
+            },
+            'paper_route_probe': {
+                'configured_enabled': True,
+                'configured_max_notional': '25',
+                'active': True,
+                'effective_max_notional': '25',
+                'next_session_max_notional': '25',
+                'eligible_symbol_count': 1,
+                'eligible_symbols': ['NVDA'],
+                'active_symbols': ['NVDA'],
+                'blocking_reasons': [],
+                'capital_authority': 'none',
+            },
+        },
     }
 
 
@@ -126,7 +146,9 @@ def _load_from_test_server(payload: object) -> dict[str, object]:
     thread.start()
     try:
         host, port = server.server_address
-        return verifier._load_status_url(f'http://{host}:{port}/status', timeout_seconds=2.0)
+        return verifier._load_status_url(
+            f'http://{host}:{port}/status', timeout_seconds=2.0
+        )
     finally:
         server.shutdown()
         server.server_close()
@@ -146,7 +168,9 @@ class TestVerifyTradingReadiness(TestCase):
         self.assertTrue(result['ok'])
         self.assertEqual(result['failed_checks'], [])
 
-    def test_live_and_either_profiles_use_live_floor_states_and_market_window(self) -> None:
+    def test_live_and_either_profiles_use_live_floor_states_and_market_window(
+        self,
+    ) -> None:
         status = _ready_status()
         status['mode'] = 'live'
         metrics = status['metrics']
@@ -163,8 +187,12 @@ class TestVerifyTradingReadiness(TestCase):
             }
         )
 
-        live = evaluate_trading_readiness(status, profile='live', min_routeable_symbols=2)
-        either = evaluate_trading_readiness(status, profile='either', min_routeable_symbols=2)
+        live = evaluate_trading_readiness(
+            status, profile='live', min_routeable_symbols=2
+        )
+        either = evaluate_trading_readiness(
+            status, profile='either', min_routeable_symbols=2
+        )
 
         self.assertTrue(live['ok'], live)
         self.assertTrue(either['ok'], either)
@@ -254,14 +282,19 @@ class TestVerifyTradingReadiness(TestCase):
         self.assertIn('route_board_capital_eligible_symbols', result['failed_checks'])
         self.assertIn('route_board_zero_notional_rows', result['failed_checks'])
 
-    def test_optional_quant_empty_fails_unless_informational_quant_is_allowed(self) -> None:
+    def test_optional_quant_empty_fails_unless_informational_quant_is_allowed(
+        self,
+    ) -> None:
         status = _ready_status()
         proof_floor = status['proof_floor']
         assert isinstance(proof_floor, dict)
         dimensions = proof_floor['proof_dimensions']
         assert isinstance(dimensions, list)
         for dimension in dimensions:
-            if isinstance(dimension, dict) and dimension.get('dimension') == 'quant_ingestion':
+            if (
+                isinstance(dimension, dict)
+                and dimension.get('dimension') == 'quant_ingestion'
+            ):
                 dimension['state'] = 'informational'
                 dimension['reason'] = 'quant_latest_metrics_empty'
                 dimension['source_ref'] = {'required': False}
@@ -273,14 +306,19 @@ class TestVerifyTradingReadiness(TestCase):
         self.assertIn('quant_ingestion_ready', strict['failed_checks'])
         self.assertTrue(permissive['ok'])
 
-    def test_required_quant_empty_fails_even_when_informational_quant_is_allowed(self) -> None:
+    def test_required_quant_empty_fails_even_when_informational_quant_is_allowed(
+        self,
+    ) -> None:
         status = _ready_status()
         proof_floor = status['proof_floor']
         assert isinstance(proof_floor, dict)
         dimensions = proof_floor['proof_dimensions']
         assert isinstance(dimensions, list)
         for dimension in dimensions:
-            if isinstance(dimension, dict) and dimension.get('dimension') == 'quant_ingestion':
+            if (
+                isinstance(dimension, dict)
+                and dimension.get('dimension') == 'quant_ingestion'
+            ):
                 dimension['state'] = 'informational'
                 dimension['reason'] = 'quant_latest_metrics_empty'
                 dimension['source_ref'] = {'required': True}
@@ -290,14 +328,19 @@ class TestVerifyTradingReadiness(TestCase):
         self.assertFalse(result['ok'])
         self.assertIn('quant_ingestion_ready', result['failed_checks'])
 
-    def test_legacy_evidence_required_quant_empty_fails_when_informational_quant_is_allowed(self) -> None:
+    def test_legacy_evidence_required_quant_empty_fails_when_informational_quant_is_allowed(
+        self,
+    ) -> None:
         status = _ready_status()
         proof_floor = status['proof_floor']
         assert isinstance(proof_floor, dict)
         dimensions = proof_floor['proof_dimensions']
         assert isinstance(dimensions, list)
         for dimension in dimensions:
-            if isinstance(dimension, dict) and dimension.get('dimension') == 'quant_ingestion':
+            if (
+                isinstance(dimension, dict)
+                and dimension.get('dimension') == 'quant_ingestion'
+            ):
                 dimension['state'] = 'informational'
                 dimension['reason'] = 'quant_latest_metrics_empty'
                 dimension['source_ref'] = {'evidence_required': True}
@@ -306,6 +349,76 @@ class TestVerifyTradingReadiness(TestCase):
 
         self.assertFalse(result['ok'])
         self.assertIn('quant_ingestion_ready', result['failed_checks'])
+
+    def test_closed_session_paper_route_probe_candidate_can_be_required_for_next_session(
+        self,
+    ) -> None:
+        status = _ready_status()
+        metrics = status['metrics']
+        assert isinstance(metrics, dict)
+        metrics['market_session_open'] = 0
+        route_book = status['route_reacquisition_book']
+        assert isinstance(route_book, dict)
+        probe = route_book['paper_route_probe']
+        assert isinstance(probe, dict)
+        probe.update(
+            {
+                'active': False,
+                'effective_max_notional': '0',
+                'next_session_max_notional': '25',
+                'active_symbols': [],
+                'blocking_reasons': ['market_session_closed'],
+            }
+        )
+        summary = route_book['summary']
+        assert isinstance(summary, dict)
+        summary['paper_route_probe_active_symbols'] = []
+
+        result = evaluate_trading_readiness(
+            status,
+            require_market_open=False,
+            require_paper_route_probe_candidate=True,
+        )
+
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['paper_route_probe']['eligible_symbols'], ['NVDA'])
+        self.assertEqual(
+            result['paper_route_probe']['blocking_reasons'], ['market_session_closed']
+        )
+
+    def test_required_paper_route_probe_candidate_fails_without_bounded_candidate(
+        self,
+    ) -> None:
+        status = _ready_status()
+        route_book = status['route_reacquisition_book']
+        assert isinstance(route_book, dict)
+        probe = route_book['paper_route_probe']
+        assert isinstance(probe, dict)
+        probe.update(
+            {
+                'configured_enabled': False,
+                'effective_max_notional': '0',
+                'next_session_max_notional': '0',
+                'eligible_symbol_count': 0,
+                'eligible_symbols': [],
+                'active_symbols': [],
+                'blocking_reasons': ['paper_route_probe_disabled'],
+            }
+        )
+        summary = route_book['summary']
+        assert isinstance(summary, dict)
+        summary['paper_route_probe_eligible_symbols'] = []
+        summary['paper_route_probe_active_symbols'] = []
+
+        result = evaluate_trading_readiness(
+            status, require_paper_route_probe_candidate=True
+        )
+
+        self.assertFalse(result['ok'])
+        self.assertIn('paper_route_probe_configured', result['failed_checks'])
+        self.assertIn('paper_route_probe_candidate_symbols', result['failed_checks'])
+        self.assertIn('paper_route_probe_notional_positive', result['failed_checks'])
+        self.assertIn('paper_route_probe_blockers', result['failed_checks'])
 
     def test_payload_helpers_handle_runtime_payload_shapes(self) -> None:
         self.assertTrue(verifier._bool('open'))
@@ -323,7 +436,9 @@ class TestVerifyTradingReadiness(TestCase):
     def test_status_loaders_require_json_objects(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             status_path = Path(tmp_dir) / 'status.json'
-            status_path.write_text(json.dumps(['not', 'an', 'object']), encoding='utf-8')
+            status_path.write_text(
+                json.dumps(['not', 'an', 'object']), encoding='utf-8'
+            )
 
             with self.assertRaisesRegex(ValueError, 'json_object_required'):
                 verifier._load_json_object(status_path)
