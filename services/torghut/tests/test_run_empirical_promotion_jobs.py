@@ -690,6 +690,80 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertEqual(top_level_plan["targets"][0]["hypothesis_id"], "H-PAIRS-01")
         self.assertEqual(fallback_plan["targets"][0]["hypothesis_id"], "H-FALLBACK-01")
 
+    def test_runtime_window_target_plan_payload_accepts_paper_route_evidence_plan(
+        self,
+    ) -> None:
+        paper_route_plan = renewal._runtime_window_target_plan_from_payload(
+            {
+                "schema_version": "torghut.paper-route-evidence.v1",
+                "next_paper_route_runtime_window_targets": {
+                    "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "targets": [
+                        {
+                            "candidate_id": "cand-paper-route",
+                            "hypothesis_id": "H-PAPER-ROUTE",
+                            "observed_stage": "paper",
+                            "strategy_family": "microbar_pairs",
+                            "strategy_name": "paper-route-candidate-v1",
+                            "source_dsn_env": "SIM_DB_DSN",
+                            "source_kind": "paper_route_probe_runtime_observed",
+                            "source_manifest_ref": "config/trading/hypotheses/h-paper-route.json",
+                            "window_start": "2026-05-26T13:30:00+00:00",
+                            "window_end": "2026-05-26T20:00:00+00:00",
+                            "paper_route_probe_symbols": ["AAPL"],
+                            "paper_route_probe_symbol_count": 1,
+                            "paper_route_probe_next_session_max_notional": "25",
+                            "paper_route_probe_window_start": "2026-05-26T13:30:00+00:00",
+                            "paper_route_probe_window_end": "2026-05-26T20:00:00+00:00",
+                            "paper_probation_authorized": True,
+                            "promotion_allowed": False,
+                            "final_promotion_authorized": False,
+                            "final_promotion_allowed": False,
+                            "max_notional": "0",
+                        }
+                    ],
+                },
+            }
+        )
+        args = SimpleNamespace(
+            runtime_window_target=[],
+            runtime_window_target_plan_ref=[],
+            runtime_window_targets_from_registry=False,
+            runtime_window_hypothesis_id="",
+            runtime_window_candidate_id="",
+            runtime_window_observed_stage="paper",
+            runtime_window_strategy_family="",
+            runtime_window_source_dsn_env="DB_DSN",
+            runtime_window_strategy_name="",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_dataset_snapshot_ref="",
+            runtime_window_source_manifest_ref="",
+            runtime_window_source_kind="paper_runtime_observed",
+        )
+
+        targets = renewal._runtime_window_targets_from_plan(
+            plan=paper_route_plan,
+            ref="paper-route-evidence",
+            args=args,
+        )
+
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0].hypothesis_id, "H-PAPER-ROUTE")
+        self.assertEqual(targets[0].source_dsn_env, "SIM_DB_DSN")
+        self.assertEqual(targets[0].source_kind, "paper_route_probe_runtime_observed")
+        self.assertEqual(targets[0].window_start, "2026-05-26T13:30:00+00:00")
+        assert targets[0].target_metadata is not None
+        self.assertEqual(targets[0].target_metadata["max_notional"], "0")
+        self.assertEqual(
+            targets[0].target_metadata["paper_route_probe_symbols"], ["AAPL"]
+        )
+        self.assertEqual(
+            targets[0].target_metadata["paper_route_probe_next_session_max_notional"],
+            "25",
+        )
+        self.assertFalse(targets[0].target_metadata["promotion_allowed"])
+        self.assertFalse(targets[0].target_metadata["final_promotion_allowed"])
+
     def test_runtime_window_target_plan_url_failures_are_fail_closed(self) -> None:
         with self.assertRaisesRegex(
             RuntimeError, "runtime_window_target_plan_url_empty"
