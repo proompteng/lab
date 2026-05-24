@@ -335,6 +335,19 @@ def _metadata_text_list(value: Any) -> list[str]:
     ]
 
 
+def _metadata_symbol_list(value: Any) -> list[str]:
+    symbols: list[str] = []
+    for item in _metadata_text_list(value):
+        symbol = item.strip().upper()
+        if symbol:
+            symbols.append(symbol)
+    return list(dict.fromkeys(symbols))
+
+
+def _target_metadata_source_symbols(target_metadata: Mapping[str, Any]) -> list[str]:
+    return _metadata_symbol_list(target_metadata.get("paper_route_probe_symbols"))
+
+
 def _runtime_ledger_target_metadata_artifact_refs(
     target_metadata: Mapping[str, Any],
 ) -> list[str]:
@@ -1118,6 +1131,7 @@ def _query_timestamps(
     account_label: str,
     window_start: datetime,
     window_end: datetime,
+    symbols: Sequence[str] | None = None,
 ) -> tuple[list[datetime], list[datetime], list[dict[str, object]]]:
     if not strategy_names:
         raise RuntimeError("strategy_name_not_configured")
@@ -1125,10 +1139,26 @@ def _query_timestamps(
     executions: list[datetime] = []
     tca_rows: list[dict[str, object]] = []
     execution_rows: list[dict[str, object]] = []
+    symbol_filter = _metadata_symbol_list(symbols or ())
+    decision_symbol_clause = (
+        "\n                  and upper(d.symbol) = any(%s)" if symbol_filter else ""
+    )
+    execution_symbol_clause = (
+        "\n                  and upper(d.symbol) = any(%s)"
+        "\n                  and upper(e.symbol) = any(%s)"
+        if symbol_filter
+        else ""
+    )
+    decision_symbol_params: tuple[object, ...] = (
+        (symbol_filter,) if symbol_filter else ()
+    )
+    execution_symbol_params: tuple[object, ...] = (
+        (symbol_filter, symbol_filter) if symbol_filter else ()
+    )
     with psycopg.connect(dsn) as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 select d.created_at
                 from trade_decisions d
                 join strategies s on s.id = d.strategy_id
@@ -1137,6 +1167,7 @@ def _query_timestamps(
                   and d.status = any(%s)
                   and d.created_at >= %s
                   and d.created_at < %s
+                  {decision_symbol_clause}
                 order by d.created_at
                 """,
                 (
@@ -1145,11 +1176,12 @@ def _query_timestamps(
                     list(EXECUTION_ELIGIBLE_DECISION_STATUSES),
                     window_start,
                     window_end,
+                    *decision_symbol_params,
                 ),
             )
             decisions = [row[0] for row in cur.fetchall() if row[0] is not None]
             cur.execute(
-                """
+                f"""
                 select
                     d.created_at,
                     e.created_at,
@@ -1174,9 +1206,16 @@ def _query_timestamps(
                   and d.alpaca_account_label = %s
                   and d.created_at >= %s
                   and d.created_at < %s
+                  {execution_symbol_clause}
                 order by d.created_at
                 """,
-                (strategy_names, account_label, window_start, window_end),
+                (
+                    strategy_names,
+                    account_label,
+                    window_start,
+                    window_end,
+                    *execution_symbol_params,
+                ),
             )
             execution_rows = [
                 {
@@ -1205,7 +1244,7 @@ def _query_timestamps(
                 if isinstance(computed_at, datetime):
                     executions.append(computed_at)
             cur.execute(
-                """
+                f"""
                 select
                     d.created_at,
                     abs(coalesce(t.realized_shortfall_bps, t.slippage_bps)) as abs_slippage_bps,
@@ -1218,9 +1257,16 @@ def _query_timestamps(
                   and d.alpaca_account_label = %s
                   and d.created_at >= %s
                   and d.created_at < %s
+                  {execution_symbol_clause}
                 order by d.created_at
                 """,
-                (strategy_names, account_label, window_start, window_end),
+                (
+                    strategy_names,
+                    account_label,
+                    window_start,
+                    window_end,
+                    *execution_symbol_params,
+                ),
             )
             tca_rows = [
                 {
@@ -1251,9 +1297,11 @@ def _source_activity_missing_summary(
     source_manifest_ref: str,
     source_kind: str,
     dataset_snapshot_ref: str | None,
+    source_activity_symbols: Sequence[str] | None = None,
     target_metadata: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     metadata = _as_mapping(target_metadata)
+    symbol_filter = _metadata_symbol_list(source_activity_symbols or ())
     blocker = {
         "blocker": "runtime_window_source_activity_missing",
         "hypothesis_id": hypothesis_id,
@@ -1261,6 +1309,7 @@ def _source_activity_missing_summary(
         "strategy_name": strategy_name,
         "strategy_name_candidates": strategy_names,
         "account_label": account_label,
+        "source_activity_symbol_filter": symbol_filter,
         "window_start": window_start.isoformat(),
         "window_end": window_end.isoformat(),
         "remediation": (
@@ -1304,6 +1353,7 @@ def _source_activity_missing_summary(
             "strategy_name": strategy_name,
             "strategy_name_candidates": strategy_names,
             "account_label": account_label,
+            "source_activity_symbol_filter": symbol_filter,
             "window_start": window_start.isoformat(),
             "window_end": window_end.isoformat(),
             "dataset_snapshot_ref": dataset_snapshot_ref,
@@ -1331,6 +1381,10 @@ def main() -> int:
         args.strategy_name,
         getattr(manifest, "strategy_id", None),
     )
+    target_metadata = _parse_target_metadata(
+        str(getattr(args, "target_metadata_json", "") or "")
+    )
+    source_activity_symbols = _target_metadata_source_symbols(target_metadata)
     decisions: list[datetime] = []
     executions: list[datetime] = []
     tca_rows: list[dict[str, object]] = []
@@ -1341,6 +1395,7 @@ def main() -> int:
             account_label=args.account_label,
             window_start=window_start,
             window_end=window_end,
+            symbols=source_activity_symbols,
         )
     bucket_ranges: list[tuple[datetime, datetime, int]] = []
     runtime_ledger_artifact_metadata: dict[str, Any] = {
@@ -1403,9 +1458,6 @@ def main() -> int:
     dataset_snapshot_ref = (
         str(getattr(args, "dataset_snapshot_ref", "") or "").strip() or None
     )
-    target_metadata = _parse_target_metadata(
-        str(getattr(args, "target_metadata_json", "") or "")
-    )
     runtime_ledger_target_metadata_blockers = _runtime_ledger_target_metadata_blockers(
         target_metadata=target_metadata,
         runtime_ledger_artifact_metadata=runtime_ledger_artifact_metadata,
@@ -1426,6 +1478,7 @@ def main() -> int:
             source_manifest_ref=args.source_manifest_ref.strip(),
             source_kind=args.source_kind.strip(),
             dataset_snapshot_ref=dataset_snapshot_ref,
+            source_activity_symbols=source_activity_symbols,
             target_metadata=target_metadata,
         )
         if args.json:
@@ -1491,6 +1544,7 @@ def main() -> int:
         "strategy_name": args.strategy_name,
         "strategy_name_candidates": strategy_names,
         "account_label": args.account_label,
+        "source_activity_symbol_filter": source_activity_symbols,
         "window_start": window_start.isoformat(),
         "window_end": window_end.isoformat(),
         "artifact_refs": artifact_refs,

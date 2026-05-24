@@ -846,6 +846,40 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertNotIn("e.created_at >= %s", tca_query)
         self.assertNotIn("t.computed_at >= %s", tca_query)
 
+    def test_query_timestamps_filters_to_target_symbols_when_configured(
+        self,
+    ) -> None:
+        cursor = _FakeCursor()
+        connection = _FakeConnection(cursor)
+        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
+
+        with patch(
+            "scripts.import_hypothesis_runtime_windows.psycopg.connect",
+            return_value=connection,
+        ):
+            _query_timestamps(
+                dsn="postgresql://example",
+                strategy_names=["intraday_tsmom_v1@paper"],
+                account_label="TORGHUT_SIM",
+                window_start=window_start,
+                window_end=window_end,
+                symbols=[" aapl ", "AAPL"],
+            )
+
+        self.assertEqual(len(cursor.executed), 3)
+        decision_query, decision_params = cursor.executed[0]
+        execution_query, execution_params = cursor.executed[1]
+        tca_query, tca_params = cursor.executed[2]
+        self.assertIn("upper(d.symbol) = any(%s)", decision_query)
+        self.assertEqual(decision_params[-1], ["AAPL"])
+        self.assertIn("upper(d.symbol) = any(%s)", execution_query)
+        self.assertIn("upper(e.symbol) = any(%s)", execution_query)
+        self.assertEqual(execution_params[-2:], (["AAPL"], ["AAPL"]))
+        self.assertIn("upper(d.symbol) = any(%s)", tca_query)
+        self.assertIn("upper(e.symbol) = any(%s)", tca_query)
+        self.assertEqual(tca_params[-2:], (["AAPL"], ["AAPL"]))
+
     def test_query_timestamps_requires_strategy_name_candidates(self) -> None:
         window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
         window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
@@ -1341,6 +1375,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 {
                     "paper_probation_authorized": True,
                     "evidence_collection_stage": "paper",
+                    "paper_route_probe_symbols": ["aapl", "AAPL"],
                     "promotion_allowed": False,
                     "final_promotion_authorized": False,
                 }
@@ -1376,7 +1411,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     [datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
                     [],
                 ),
-            ),
+            ) as query_timestamps,
             patch(
                 "scripts.import_hypothesis_runtime_windows.build_regular_session_buckets",
                 return_value=[],
@@ -1406,10 +1441,13 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             {
                 "paper_probation_authorized": True,
                 "evidence_collection_stage": "paper",
+                "paper_route_probe_symbols": ["aapl", "AAPL"],
                 "promotion_allowed": False,
                 "final_promotion_authorized": False,
             },
         )
+        self.assertEqual(query_timestamps.call_args.kwargs["symbols"], ["AAPL"])
+        self.assertEqual(runtime_payload["source_activity_symbol_filter"], ["AAPL"])
 
     def test_main_skips_persist_when_source_activity_is_empty(self) -> None:
         args = SimpleNamespace(
