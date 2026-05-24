@@ -3632,6 +3632,69 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
 
     if has_any(
         (
+            "crumbling quote",
+            "crumbling quotes",
+            "crumbling_quote",
+            "quote crumble",
+            "quote_crumble",
+            "quote erosion",
+            "quote_erosion",
+            "mechanical liquidity erosion",
+            "mechanical_liquidity_erosion",
+            "mechanical liquidity withdrawal",
+            "liquidity withdrawal",
+            "liquidity_withdrawal",
+            "transient mechanical liquidity",
+            "transient liquidity erosion",
+        )
+    ):
+        overlay_ids.append("crumbling_quote_liquidity_erosion")
+        overlay_contracts.append(
+            {
+                "overlay_id": "crumbling_quote_liquidity_erosion",
+                "required_evidence": [
+                    "crumbling_quote_probability",
+                    "mechanical_liquidity_erosion",
+                    "lob_event_stream",
+                    "executable_quote",
+                    "route_tca",
+                    "live_paper_parity",
+                    "adverse_selection_stress",
+                ],
+                "rank_metric": "post_cost_net_pnl_after_crumbling_quote_liquidity_stress",
+                "evidence_policy": (
+                    "crumbling_quote_probability_is_validation_only_until_live_paper_route_tca"
+                ),
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_crumbling_quote_liquidity_erosion": True,
+                "required_crumbling_quote_probability": True,
+                "required_mechanical_liquidity_erosion_probability": True,
+                "required_min_crumbling_quote_sample_count": "60",
+                "required_max_crumbling_quote_probability": "0.90",
+                "required_route_tca": True,
+                "required_live_paper_parity": True,
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_crumbling_quote_liquidity_erosion": True,
+                "requires_crumbling_quote_probability": True,
+                "requires_mechanical_liquidity_erosion_probability": True,
+                "requires_lob_event_stream": True,
+                "requires_executable_quote_evidence": True,
+                "requires_route_tca": True,
+                "requires_live_paper_parity": True,
+                "requires_adverse_selection_stress": True,
+                "rejects_crumbling_quote_simulation_as_promotion_proof": True,
+                "risk_policy": "crumbling_quote_liquidity_erosion_validation_only",
+            }
+        )
+
+    if has_any(
+        (
             "nonlinear impact",
             "nonlinear_impact",
             "square-root",
@@ -4267,12 +4330,24 @@ def _apply_mechanism_overlay_strategy_params(
             )
         )
     )
-    if "mixed_market_limit_execution_policy" not in overlay_ids:
+    if not (
+        {
+            "mixed_market_limit_execution_policy",
+            "crumbling_quote_liquidity_erosion",
+        }
+        & overlay_ids
+    ):
         return dict(strategy_overrides)
     next_overrides = dict(strategy_overrides)
     params = _mapping(next_overrides.get("params"))
-    params.setdefault("entry_order_type", "prefer_limit")
-    params.setdefault("market_order_spread_bps_max", "6")
+    if "mixed_market_limit_execution_policy" in overlay_ids:
+        params.setdefault("entry_order_type", "prefer_limit")
+        params.setdefault("market_order_spread_bps_max", "6")
+    if "crumbling_quote_liquidity_erosion" in overlay_ids:
+        params.setdefault("entry_order_type", "prefer_limit")
+        params.setdefault("market_order_spread_bps_max", "6")
+        params.setdefault("max_recent_quote_invalid_ratio", "0.12")
+        params.setdefault("max_recent_quote_jump_bps", "40")
     next_overrides["params"] = params
     return next_overrides
 

@@ -1663,6 +1663,84 @@ class TestWhitepaperCandidateCompiler(TestCase):
             )
         )
 
+    def test_crumbling_quote_claims_compile_to_validation_only_overlay(self) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-arxiv-2604-21993",
+            claims=[
+                {
+                    "claim_id": "crumbling-quote-probability",
+                    "claim_type": "execution_assumption",
+                    "claim_text": (
+                        "Calibrated crumbling quote probabilities detect transient "
+                        "mechanical liquidity erosion before aggressive routing."
+                    ),
+                    "asset_scope": "us_equities_lob",
+                    "horizon_scope": "intraday_microstructure",
+                    "expected_direction": "down",
+                    "data_requirements": [
+                        "crumbling_quote_probability",
+                        "mechanical_liquidity_erosion",
+                        "lob_event_stream",
+                    ],
+                    "confidence": "0.78",
+                },
+                {
+                    "claim_id": "crumbling-live-paper-route-tca",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Crumbling quote detections can only tighten routing after "
+                        "executable quotes and route TCA match live-paper evidence."
+                    ),
+                    "asset_scope": "us_equities_lob",
+                    "horizon_scope": "intraday_microstructure",
+                    "expected_direction": "neutral",
+                    "data_requirements": [
+                        "executable_quote",
+                        "route_tca",
+                        "live_paper_parity",
+                    ],
+                    "confidence": "0.76",
+                },
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        self.assertTrue(compilation.executable_specs)
+        self.assertTrue(
+            all(
+                "crumbling_quote_liquidity_erosion"
+                in spec.parameter_space.get("mechanism_overlay_ids", [])
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.hard_vetoes.get("required_crumbling_quote_probability")
+                and spec.hard_vetoes.get(
+                    "required_mechanical_liquidity_erosion_probability"
+                )
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract.get(
+                    "rejects_crumbling_quote_simulation_as_promotion_proof"
+                )
+                and spec.promotion_contract.get("requires_live_paper_parity")
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.strategy_overrides["params"].get("entry_order_type")
+                == "prefer_limit"
+                for spec in compilation.executable_specs
+            )
+        )
+
     def test_mpc_execution_claims_compile_to_dynamic_schedule_overlay(self) -> None:
         compilation = compile_claim_payloads_to_whitepaper_experiments(
             run_id="paper-arxiv-2603.28898",

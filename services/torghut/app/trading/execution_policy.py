@@ -36,14 +36,17 @@ MICROSTRUCTURE_EXECUTION_SCALE_MAX = Decimal("3.0")
 MICROSTRUCTURE_SPREAD_BPS_PRESSURE = Decimal("8")
 MICROSTRUCTURE_DEPTH_USD_PRESSURE = Decimal("800000")
 MICROSTRUCTURE_HAZARD_PRESSURE = Decimal("0.8")
+MICROSTRUCTURE_CRUMBLING_QUOTE_PROBABILITY_PRESSURE = Decimal("0.70")
 MICROSTRUCTURE_LATENCY_PRESSURE_MS = 250
 MICROSTRUCTURE_STRESSED_RATE_SCALE = Decimal("0.40")
 MICROSTRUCTURE_COMPRESSED_RATE_SCALE = Decimal("0.65")
 MICROSTRUCTURE_HIGH_SPREAD_RATE_SCALE = Decimal("0.70")
 MICROSTRUCTURE_HAZARD_RATE_SCALE = Decimal("0.75")
+MICROSTRUCTURE_CRUMBLING_QUOTE_RATE_SCALE = Decimal("0.65")
 MICROSTRUCTURE_LOW_DEPTH_RATE_SCALE = Decimal("0.75")
 MICROSTRUCTURE_STRESS_EXECUTION_SCALE = Decimal("1.40")
 MICROSTRUCTURE_PRESSURE_EXECUTION_SCALE = Decimal("1.10")
+MICROSTRUCTURE_CRUMBLING_QUOTE_EXECUTION_SCALE = Decimal("1.15")
 MICROSTRUCTURE_EXECUTION_SCALE_EPSILON = Decimal("0.01")
 HIGH_CONVICTION_MARKET_SPREAD_BPS_MAX = Decimal("12")
 HIGH_CONVICTION_BREAKOUT_CONTINUATION_RANK_MIN = Decimal("0.70")
@@ -410,6 +413,8 @@ class ExecutionPolicy:
             "depth_top5_usd": None,
             "order_flow_imbalance": None,
             "fill_hazard": None,
+            "crumbling_quote_probability": None,
+            "mechanical_liquidity_withdrawal_probability": None,
             "latency_ms_estimate": None,
             "event_ts": None,
             "state_valid": False,
@@ -425,6 +430,12 @@ class ExecutionPolicy:
                 "depth_top5_usd": str(state.depth_top5_usd),
                 "order_flow_imbalance": str(state.order_flow_imbalance),
                 "fill_hazard": str(state.fill_hazard),
+                "crumbling_quote_probability": _stringify_decimal(
+                    state.crumbling_quote_probability
+                ),
+                "mechanical_liquidity_withdrawal_probability": _stringify_decimal(
+                    state.mechanical_liquidity_withdrawal_probability
+                ),
                 "latency_ms_estimate": state.latency_ms_estimate,
                 "event_ts": state.event_ts.isoformat(),
                 "state_valid": True,
@@ -468,6 +479,30 @@ class ExecutionPolicy:
             metadata["prefer_limit"] = True
             metadata["tightening_reasons"].append(
                 "microstructure_fill_hazard_above_pressure"
+            )
+
+        if (
+            state.crumbling_quote_probability is not None
+            and state.crumbling_quote_probability
+            >= MICROSTRUCTURE_CRUMBLING_QUOTE_PROBABILITY_PRESSURE
+        ):
+            participation_rate_scale *= MICROSTRUCTURE_CRUMBLING_QUOTE_RATE_SCALE
+            execution_seconds_scale *= MICROSTRUCTURE_CRUMBLING_QUOTE_EXECUTION_SCALE
+            metadata["prefer_limit"] = True
+            metadata["tightening_reasons"].append(
+                "microstructure_crumbling_quote_probability_above_pressure"
+            )
+
+        if (
+            state.mechanical_liquidity_withdrawal_probability is not None
+            and state.mechanical_liquidity_withdrawal_probability
+            >= MICROSTRUCTURE_CRUMBLING_QUOTE_PROBABILITY_PRESSURE
+        ):
+            participation_rate_scale *= MICROSTRUCTURE_CRUMBLING_QUOTE_RATE_SCALE
+            execution_seconds_scale *= MICROSTRUCTURE_CRUMBLING_QUOTE_EXECUTION_SCALE
+            metadata["prefer_limit"] = True
+            metadata["tightening_reasons"].append(
+                "microstructure_mechanical_liquidity_withdrawal_above_pressure"
             )
 
         if state.latency_ms_estimate >= MICROSTRUCTURE_LATENCY_PRESSURE_MS:

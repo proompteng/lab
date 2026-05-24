@@ -193,7 +193,9 @@ class TestRiskEngine(TestCase):
             "cash": "10000",
             "buying_power": "10000",
         }
-        positions = [{"symbol": "GOOG", "qty": "8", "market_value": "2412.9984492642377"}]
+        positions = [
+            {"symbol": "GOOG", "qty": "8", "market_value": "2412.9984492642377"}
+        ]
         with self.session_local() as session:
             verdict = self.risk_engine.evaluate(
                 session, decision, strategy, account, positions, {"GOOG"}
@@ -201,7 +203,9 @@ class TestRiskEngine(TestCase):
         self.assertTrue(verdict.approved)
         self.assertNotIn("max_position_pct_exceeded", verdict.reasons)
 
-    def test_stale_portfolio_sizing_audit_does_not_bypass_position_pct_reject(self) -> None:
+    def test_stale_portfolio_sizing_audit_does_not_bypass_position_pct_reject(
+        self,
+    ) -> None:
         decision = StrategyDecision(
             strategy_id="s1",
             symbol="GOOG",
@@ -410,6 +414,36 @@ class TestRiskEngine(TestCase):
             )
         self.assertFalse(verdict.approved)
         self.assertIn("adverse_selection_risk_exceeds_maximum", verdict.reasons)
+
+    def test_crumbling_quote_overlay_metadata_is_not_live_risk_reject(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            order_type="market",
+            time_in_force="day",
+            params={"price": Decimal("100")},
+        )
+        account = {"equity": "10000", "cash": "10000", "buying_power": "10000"}
+        positions: list[dict[str, str]] = []
+        with self.session_local() as session:
+            verdict = self.risk_engine.evaluate(
+                session,
+                decision,
+                self.strategy,
+                account,
+                positions,
+                {"AAPL"},
+                execution_advisor={
+                    "crumbling_quote_probability": "0.99",
+                    "mechanical_liquidity_withdrawal_probability": "0.99",
+                },
+            )
+        self.assertTrue(verdict.approved)
+        self.assertNotIn("adverse_selection_risk_exceeds_maximum", verdict.reasons)
 
     def test_crypto_trade_blocked_when_crypto_flags_disabled(self) -> None:
         config.settings.trading_ws_crypto_enabled = False

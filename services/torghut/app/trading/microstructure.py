@@ -20,6 +20,8 @@ class MicrostructureStateV5:
     latency_ms_estimate: int
     fill_hazard: Decimal
     liquidity_regime: str
+    crumbling_quote_probability: Decimal | None = None
+    mechanical_liquidity_withdrawal_probability: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -71,9 +73,7 @@ def _coalesce_int(raw: Mapping[str, Any], *paths: str) -> int | None:
     return None
 
 
-def _coalesce_payload_value(
-    raw: Mapping[str, Any], *paths: str
-) -> Any:
+def _coalesce_payload_value(raw: Mapping[str, Any], *paths: str) -> Any:
     for path in paths:
         value = raw.get(path)
         if value is not None:
@@ -86,7 +86,10 @@ def _normalize_deeplob_payload(payload: Mapping[str, Any]) -> Mapping[str, Any] 
         payload,
         "feature_quality_status",
     )
-    if feature_quality_status is None or feature_quality_status.strip().lower() != "pass":
+    if (
+        feature_quality_status is None
+        or feature_quality_status.strip().lower() != "pass"
+    ):
         return None
 
     quality_schema = _coalesce_text(payload, "uncertainty_band")
@@ -103,7 +106,9 @@ def _normalize_deeplob_payload(payload: Mapping[str, Any]) -> Mapping[str, Any] 
     if regime not in {"normal", "compressed", "stressed"}:
         regime = "normal"
 
-    direction_probabilities = _coalesce_payload_value(payload, "direction_probabilities")
+    direction_probabilities = _coalesce_payload_value(
+        payload, "direction_probabilities"
+    )
     direction_map = (
         cast(Mapping[str, Any], direction_probabilities)
         if isinstance(direction_probabilities, Mapping)
@@ -135,10 +140,22 @@ def _normalize_deeplob_payload(payload: Mapping[str, Any]) -> Mapping[str, Any] 
                 cast(Mapping[str, Any], raw_depth), "top5_usd", "top5", "usd"
             )
 
+    crumbling_quote_probability = _coalesce_numeric(
+        payload,
+        "crumbling_quote_probability",
+        "quote_crumble_probability",
+        "mechanical_liquidity_erosion_probability",
+    )
+    mechanical_liquidity_withdrawal_probability = _coalesce_numeric(
+        payload,
+        "mechanical_liquidity_withdrawal_probability",
+        "liquidity_withdrawal_probability",
+    )
     normalized_payload: dict[str, Any] = {
         "schema_version": "microstructure_state_v1",
         "symbol": _coalesce_text(payload, "symbol") or "",
-        "event_ts": _coalesce_text(payload, "event_ts") or _coalesce_text(payload, "ts"),
+        "event_ts": _coalesce_text(payload, "event_ts")
+        or _coalesce_text(payload, "ts"),
         "spread_bps": str(spread_bps) if spread_bps is not None else None,
         "depth_top5_usd": str(depth_top5_usd) if depth_top5_usd is not None else None,
         "order_flow_imbalance": str(order_flow_imbalance)
@@ -147,6 +164,14 @@ def _normalize_deeplob_payload(payload: Mapping[str, Any]) -> Mapping[str, Any] 
         "latency_ms_estimate": 0,
         "fill_hazard": str(fill_hazard) if fill_hazard is not None else None,
         "liquidity_regime": regime,
+        "crumbling_quote_probability": str(crumbling_quote_probability)
+        if crumbling_quote_probability is not None
+        else None,
+        "mechanical_liquidity_withdrawal_probability": str(
+            mechanical_liquidity_withdrawal_probability
+        )
+        if mechanical_liquidity_withdrawal_probability is not None
+        else None,
     }
     latency_ms_estimate = _coalesce_int(payload, "latency_ms_estimate", "latency_ms")
     if latency_ms_estimate is not None:
@@ -154,41 +179,65 @@ def _normalize_deeplob_payload(payload: Mapping[str, Any]) -> Mapping[str, Any] 
     return normalized_payload
 
 
-def parse_microstructure_state(payload: Any, *, expected_symbol: str | None = None) -> MicrostructureStateV5 | None:
+def parse_microstructure_state(
+    payload: Any, *, expected_symbol: str | None = None
+) -> MicrostructureStateV5 | None:
     if not isinstance(payload, Mapping):
         return None
     raw = cast(Mapping[str, Any], payload)
-    schema_version = str(raw.get('schema_version') or '').strip().lower()
+    schema_version = str(raw.get("schema_version") or "").strip().lower()
     data: Mapping[str, Any]
-    if schema_version == 'microstructure_signal_v1':
+    if schema_version == "microstructure_signal_v1":
         normalized = _normalize_deeplob_payload(raw)
         if normalized is None:
             return None
         data = normalized
-    elif schema_version == 'microstructure_state_v1':
+    elif schema_version == "microstructure_state_v1":
         data = raw
     else:
         return None
 
-    symbol = str(data.get('symbol') or '').strip().upper()
+    symbol = str(data.get("symbol") or "").strip().upper()
     if not symbol:
         return None
     if expected_symbol and symbol != expected_symbol.strip().upper():
         return None
 
-    event_ts = _dt(data.get('event_ts'))
-    spread_bps = _dec(data.get('spread_bps'))
-    depth_top5_usd = _dec(data.get('depth_top5_usd'))
-    imbalance = _dec(data.get('order_flow_imbalance'))
-    latency_ms_estimate = _int(data.get('latency_ms_estimate'))
-    fill_hazard = _dec(data.get('fill_hazard'))
-    liquidity_regime = str(data.get('liquidity_regime') or '').strip().lower()
-    if None in (event_ts, spread_bps, depth_top5_usd, imbalance, latency_ms_estimate, fill_hazard):
+    event_ts = _dt(data.get("event_ts"))
+    spread_bps = _dec(data.get("spread_bps"))
+    depth_top5_usd = _dec(data.get("depth_top5_usd"))
+    imbalance = _dec(data.get("order_flow_imbalance"))
+    latency_ms_estimate = _int(data.get("latency_ms_estimate"))
+    fill_hazard = _dec(data.get("fill_hazard"))
+    crumbling_quote_probability = _probability(
+        _coalesce_payload_value(
+            data,
+            "crumbling_quote_probability",
+            "quote_crumble_probability",
+            "mechanical_liquidity_erosion_probability",
+        )
+    )
+    mechanical_liquidity_withdrawal_probability = _probability(
+        _coalesce_payload_value(
+            data,
+            "mechanical_liquidity_withdrawal_probability",
+            "liquidity_withdrawal_probability",
+        )
+    )
+    liquidity_regime = str(data.get("liquidity_regime") or "").strip().lower()
+    if None in (
+        event_ts,
+        spread_bps,
+        depth_top5_usd,
+        imbalance,
+        latency_ms_estimate,
+        fill_hazard,
+    ):
         return None
-    if liquidity_regime not in {'normal', 'compressed', 'stressed'}:
+    if liquidity_regime not in {"normal", "compressed", "stressed"}:
         return None
     return MicrostructureStateV5(
-        'microstructure_state_v1',
+        "microstructure_state_v1",
         symbol,
         cast(datetime, event_ts),
         cast(Decimal, spread_bps),
@@ -197,37 +246,54 @@ def parse_microstructure_state(payload: Any, *, expected_symbol: str | None = No
         cast(int, latency_ms_estimate),
         cast(Decimal, fill_hazard),
         liquidity_regime,
+        crumbling_quote_probability,
+        mechanical_liquidity_withdrawal_probability,
     )
+
 
 def parse_execution_advice(payload: Any) -> ExecutionAdviceV1 | None:
     if not isinstance(payload, Mapping):
         return None
     data = cast(Mapping[str, Any], payload)
-    urgency = str(data.get('urgency_tier') or '').strip().lower()
-    preferred = data.get('preferred_order_type')
+    urgency = str(data.get("urgency_tier") or "").strip().lower()
+    preferred = data.get("preferred_order_type")
     preferred_str = str(preferred).strip().lower() if preferred is not None else None
-    if urgency not in {'low', 'normal', 'high'}:
+    if urgency not in {"low", "normal", "high"}:
         return None
-    if preferred_str is not None and preferred_str not in {'market', 'limit', 'stop', 'stop_limit'}:
+    if preferred_str is not None and preferred_str not in {
+        "market",
+        "limit",
+        "stop",
+        "stop_limit",
+    }:
         return None
     return ExecutionAdviceV1(
         urgency,
-        _dec(data.get('max_participation_rate')),
+        _dec(data.get("max_participation_rate")),
         preferred_str,
-        _dec(data.get('quote_offset_bps')),
-        _dec(data.get('adverse_selection_risk')),
-        _dt(data.get('event_ts')),
-        _int(data.get('latency_ms')),
-        _text(data.get('simulator_version')),
-        _dec(data.get('expected_shortfall_bps_p50')),
-        _dec(data.get('expected_shortfall_bps_p95')),
+        _dec(data.get("quote_offset_bps")),
+        _dec(data.get("adverse_selection_risk")),
+        _dt(data.get("event_ts")),
+        _int(data.get("latency_ms")),
+        _text(data.get("simulator_version")),
+        _dec(data.get("expected_shortfall_bps_p50")),
+        _dec(data.get("expected_shortfall_bps_p95")),
     )
 
-def is_microstructure_stale(state: MicrostructureStateV5 | None, *, reference_ts: datetime, max_staleness_seconds: int) -> bool:
+
+def is_microstructure_stale(
+    state: MicrostructureStateV5 | None,
+    *,
+    reference_ts: datetime,
+    max_staleness_seconds: int,
+) -> bool:
     if state is None:
         return True
-    age = (reference_ts.astimezone(timezone.utc) - state.event_ts.astimezone(timezone.utc)).total_seconds()
+    age = (
+        reference_ts.astimezone(timezone.utc) - state.event_ts.astimezone(timezone.utc)
+    ).total_seconds()
     return age > max(max_staleness_seconds, 0)
+
 
 def _dec(value: Any) -> Decimal | None:
     try:
@@ -235,11 +301,22 @@ def _dec(value: Any) -> Decimal | None:
     except (ArithmeticError, TypeError, ValueError):
         return None
 
+
+def _probability(value: Any) -> Decimal | None:
+    value_decimal = _dec(value)
+    if value_decimal is None:
+        return None
+    if value_decimal < Decimal("0") or value_decimal > Decimal("1"):
+        return None
+    return value_decimal
+
+
 def _int(value: Any) -> int | None:
     try:
         return None if value is None else int(value)
     except (TypeError, ValueError):
         return None
+
 
 def _dt(value: Any) -> datetime | None:
     if isinstance(value, datetime):
@@ -247,9 +324,10 @@ def _dt(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None
     try:
-        return datetime.fromisoformat(value.replace('Z', '+00:00'))
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+
 
 def _text(value: Any) -> str | None:
     if value is None:
@@ -257,4 +335,11 @@ def _text(value: Any) -> str | None:
     value_str = str(value).strip()
     return value_str or None
 
-__all__ = ['ExecutionAdviceV1', 'MicrostructureStateV5', 'is_microstructure_stale', 'parse_execution_advice', 'parse_microstructure_state']
+
+__all__ = [
+    "ExecutionAdviceV1",
+    "MicrostructureStateV5",
+    "is_microstructure_stale",
+    "parse_execution_advice",
+    "parse_microstructure_state",
+]
