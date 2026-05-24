@@ -431,6 +431,13 @@ def _runtime_window_target_plan_from_payload(
     direct_plan = _as_dict(payload.get("runtime_window_import_plan"))
     if direct_plan:
         return direct_plan
+    paper_route_plan = _as_dict(payload.get("next_paper_route_runtime_window_targets"))
+    if (
+        str(payload.get("schema_version") or "").strip()
+        == "torghut.paper-route-evidence.v1"
+        and paper_route_plan
+    ):
+        return paper_route_plan
     gate = _as_dict(payload.get("live_submission_gate"))
     gate_plan = _as_dict(gate.get("runtime_ledger_paper_probation_import_plan"))
     if gate_plan:
@@ -440,7 +447,6 @@ def _runtime_window_target_plan_from_payload(
     )
     if top_level_gate_plan:
         return top_level_gate_plan
-    paper_route_plan = _as_dict(payload.get("next_paper_route_runtime_window_targets"))
     if paper_route_plan:
         return paper_route_plan
     return _as_dict(payload)
