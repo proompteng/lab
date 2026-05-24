@@ -37,6 +37,14 @@ DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT = 20
 US_EQUITIES_TIMEZONE = "America/New_York"
 US_EQUITIES_OPEN = time(hour=9, minute=30)
 US_EQUITIES_CLOSE = time(hour=16, minute=0)
+PROMOTION_ONLY_READINESS_BLOCKERS = frozenset(
+    {
+        "paper_probation_evidence_collection_only",
+        "paper_route_evidence_audit_stripped_promotion_authority",
+        "runtime_ledger_stage_not_live",
+        "live_runtime_ledger_required",
+    }
+)
 
 
 def _as_mapping(value: object) -> dict[str, Any]:
@@ -268,6 +276,11 @@ def _next_session_probe_notional(probe: Mapping[str, object]) -> str:
 
 
 def _target_identity(target: Mapping[str, Any]) -> dict[str, object]:
+    source_promotion_allowed = bool(target.get("promotion_allowed"))
+    source_final_promotion_allowed = bool(
+        target.get("final_promotion_allowed")
+        or target.get("final_promotion_authorized")
+    )
     return {
         "hypothesis_id": _safe_text(target.get("hypothesis_id")),
         "candidate_id": _safe_text(target.get("candidate_id")),
@@ -288,11 +301,10 @@ def _target_identity(target: Mapping[str, Any]) -> dict[str, object]:
         "paper_probation_authorization_scope": _safe_text(
             target.get("paper_probation_authorization_scope")
         ),
-        "promotion_allowed": bool(target.get("promotion_allowed")),
-        "final_promotion_allowed": bool(
-            target.get("final_promotion_allowed")
-            or target.get("final_promotion_authorized")
-        ),
+        "source_promotion_allowed": source_promotion_allowed,
+        "source_final_promotion_allowed": source_final_promotion_allowed,
+        "promotion_allowed": False,
+        "final_promotion_allowed": False,
         "max_notional": _safe_text(target.get("max_notional")) or "0",
         "final_promotion_blockers": [
             str(item).strip()
@@ -744,6 +756,10 @@ def _readiness_blockers(
     }
     if not bool(target.get("promotion_allowed")):
         blockers.add("paper_probation_evidence_collection_only")
+    if bool(target.get("source_promotion_allowed")) or bool(
+        target.get("source_final_promotion_allowed")
+    ):
+        blockers.add("paper_route_evidence_audit_stripped_promotion_authority")
     if not bool(probe.get("configured_enabled")):
         blockers.add("paper_route_probe_disabled")
     if _safe_int(probe.get("eligible_symbol_count")) <= 0:
@@ -822,6 +838,11 @@ def _target_audit(
         hypothesis_windows=hypothesis_windows,
         promotion_decisions=promotion_decisions,
     )
+    evidence_collection_blockers = [
+        blocker
+        for blocker in blockers
+        if blocker not in PROMOTION_ONLY_READINESS_BLOCKERS
+    ]
     return {
         "target": target,
         "window": {
@@ -833,12 +854,26 @@ def _target_audit(
         "hypothesis_windows": hypothesis_windows,
         "promotion_decisions": promotion_decisions,
         "readiness": {
-            "state": "evidence_collection_blocked"
-            if blockers
-            else "paper_evidence_collecting",
+            "state": (
+                "evidence_collection_blocked"
+                if evidence_collection_blockers
+                else "paper_evidence_collecting"
+            ),
             "promotion_allowed": bool(target.get("promotion_allowed")),
             "final_promotion_allowed": bool(target.get("final_promotion_allowed")),
             "blockers": blockers,
+            "evidence_collection_blockers": evidence_collection_blockers,
+            "promotion_authority": {
+                "allowed": False,
+                "reason": "paper_route_evidence_audit_observability_only",
+                "source_promotion_allowed": bool(
+                    target.get("source_promotion_allowed")
+                ),
+                "source_final_promotion_allowed": bool(
+                    target.get("source_final_promotion_allowed")
+                ),
+                "blockers": blockers,
+            },
         },
     }
 
@@ -903,11 +938,13 @@ def build_paper_route_evidence_audit(
                 "schema_version": _safe_text(plan.get("schema_version")),
                 "target_count": _safe_int(plan.get("target_count") or len(targets)),
                 "skipped_target_count": _safe_int(plan.get("skipped_target_count")),
-                "promotion_allowed": bool(plan.get("promotion_allowed")),
-                "final_promotion_allowed": bool(
+                "source_promotion_allowed": bool(plan.get("promotion_allowed")),
+                "source_final_promotion_allowed": bool(
                     plan.get("final_promotion_allowed")
                     or plan.get("final_promotion_authorized")
                 ),
+                "promotion_allowed": False,
+                "final_promotion_allowed": False,
             },
         },
         "paper_route_probe": probe,
@@ -964,6 +1001,31 @@ def build_paper_route_evidence_audit(
                 )
                 for audit in target_audits
             ),
+            "source_promotion_allowed_count": sum(
+                int(
+                    bool(
+                        _as_mapping(_as_mapping(audit.get("target"))).get(
+                            "source_promotion_allowed"
+                        )
+                    )
+                )
+                for audit in target_audits
+            ),
+            "source_final_promotion_allowed_count": sum(
+                int(
+                    bool(
+                        _as_mapping(_as_mapping(audit.get("target"))).get(
+                            "source_final_promotion_allowed"
+                        )
+                    )
+                )
+                for audit in target_audits
+            ),
+            "promotion_authority": {
+                "allowed": False,
+                "reason": "paper_route_evidence_audit_observability_only",
+                "blockers": summary_blockers,
+            },
             "blockers": summary_blockers,
         },
         "targets": target_audits,

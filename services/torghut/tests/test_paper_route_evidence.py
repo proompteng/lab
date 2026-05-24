@@ -385,7 +385,16 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 generated_at=now,
             )
 
+        gate_plan = payload["live_submission_gate"][
+            "runtime_ledger_paper_probation_import_plan"
+        ]
+        self.assertFalse(gate_plan["promotion_allowed"])
+        self.assertFalse(gate_plan["final_promotion_allowed"])
         audit = payload["targets"][0]
+        self.assertFalse(audit["target"]["promotion_allowed"])
+        self.assertFalse(audit["target"]["final_promotion_allowed"])
+        self.assertTrue(audit["target"]["source_promotion_allowed"])
+        self.assertTrue(audit["target"]["source_final_promotion_allowed"])
         self.assertFalse(audit["source_activity"]["missing"])
         self.assertEqual(audit["source_activity"]["decision_count"], 1)
         self.assertEqual(audit["source_activity"]["execution_count"], 1)
@@ -399,7 +408,35 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertEqual(audit["promotion_decisions"]["allowed_count"], 1)
         self.assertEqual(audit["readiness"]["state"], "paper_evidence_collecting")
-        self.assertEqual(audit["readiness"]["blockers"], [])
+        self.assertEqual(audit["readiness"]["evidence_collection_blockers"], [])
+        self.assertEqual(
+            audit["readiness"]["promotion_authority"],
+            {
+                "allowed": False,
+                "reason": "paper_route_evidence_audit_observability_only",
+                "source_promotion_allowed": True,
+                "source_final_promotion_allowed": True,
+                "blockers": [
+                    "paper_probation_evidence_collection_only",
+                    "paper_route_evidence_audit_stripped_promotion_authority",
+                ],
+            },
+        )
+        self.assertEqual(
+            audit["readiness"]["blockers"],
+            [
+                "paper_probation_evidence_collection_only",
+                "paper_route_evidence_audit_stripped_promotion_authority",
+            ],
+        )
         self.assertEqual(payload["summary"]["target_with_source_activity_count"], 1)
         self.assertEqual(payload["summary"]["target_with_runtime_ledger_count"], 1)
         self.assertEqual(payload["summary"]["target_with_promotion_decision_count"], 1)
+        self.assertEqual(payload["summary"]["promotion_allowed_count"], 0)
+        self.assertEqual(payload["summary"]["final_promotion_allowed_count"], 0)
+        self.assertEqual(payload["summary"]["source_promotion_allowed_count"], 1)
+        self.assertEqual(payload["summary"]["source_final_promotion_allowed_count"], 1)
+        self.assertEqual(
+            payload["summary"]["promotion_authority"]["reason"],
+            "paper_route_evidence_audit_observability_only",
+        )
