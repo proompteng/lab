@@ -53,6 +53,13 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).not.toContain('expected 2xx')
   })
 
+  it('verifies torghut-sim paper-route target mirroring after deploy', () => {
+    expect(workflow).toContain('Knative Service torghut-sim is not Ready')
+    expect(workflow).toContain('http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence')
+    expect(workflow).toContain('http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence')
+    expect(workflow).toContain('TORGHUT_SIM_PAPER_ROUTE_EVIDENCE')
+  })
+
   it('requests Argo refresh before polling deployed revisions', () => {
     expect(workflow).toContain('argocd.argoproj.io/refresh=hard --overwrite')
     expect(workflow).toContain('for app in torghut torghut-options; do')
