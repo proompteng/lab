@@ -17,7 +17,7 @@ from app.trading.discovery.objectives import (
     deployable_proof_failed_gate_count,
 )
 
-MLX_RANKER_SCHEMA_VERSION = "torghut.mlx-ranker.v4"
+MLX_RANKER_SCHEMA_VERSION = "torghut.mlx-ranker.v5"
 
 _MECHANISM_OVERLAY_IDS = (
     "cluster_lob_event_clustering",
@@ -25,6 +25,7 @@ _MECHANISM_OVERLAY_IDS = (
     "queue_position_survival_fill_curve",
     "mpc_dynamic_execution_schedule",
     "alpha_decay_predictability_stress",
+    "friction_aware_regime_conditioned_policy",
     "regime_weighted_conformal_cost_buffer",
     "crumbling_quote_liquidity_erosion",
     "nonlinear_market_impact_tca",
@@ -66,6 +67,12 @@ _PAPER_CONTRACT_FEATURE_NAMES = (
     "paper_requires_regime_tail_exceedance",
     "paper_requires_breakeven_cost_buffer",
     "paper_requires_seed_model_family_robustness",
+    "paper_requires_regime_conditioning",
+    "paper_requires_trade_space_trust_region",
+    "paper_requires_turnover_budget",
+    "paper_requires_cost_misspecification_stress",
+    "paper_requires_liquidity_proxy_cost_calibration",
+    "paper_requires_scenario_level_inference",
     "paper_requires_crumbling_quote_probability",
     "paper_requires_mechanical_liquidity_erosion",
     "paper_promotion_requires_count",
@@ -473,6 +480,52 @@ def _paper_contract_feature_values(spec: CandidateSpec) -> Mapping[str, float]:
                 "multi_seed_replay",
                 "model_family_robustness",
                 "seed_model_family_robustness",
+            ),
+        ),
+        "paper_requires_regime_conditioning": _requirement_present(
+            contract_requirements,
+            (
+                "regime_state",
+                "regime_conditioned_policy",
+                "regime_conditioning",
+                "volatility_liquidity_regime",
+            ),
+        ),
+        "paper_requires_trade_space_trust_region": _requirement_present(
+            contract_requirements,
+            (
+                "trade_space_trust_region",
+                "inventory_flow_trust_region",
+                "kl_trust_region",
+            ),
+        ),
+        "paper_requires_turnover_budget": _requirement_present(
+            contract_requirements,
+            ("turnover_budget", "turnover_bounds", "inaction_bands"),
+        ),
+        "paper_requires_cost_misspecification_stress": _requirement_present(
+            contract_requirements,
+            (
+                "cost_misspecification_stress",
+                "cost_level_grid",
+                "transaction_cost_stress",
+            ),
+        ),
+        "paper_requires_liquidity_proxy_cost_calibration": _requirement_present(
+            contract_requirements,
+            (
+                "liquidity_proxy_cost_calibration",
+                "liquidity_proxy",
+                "proportional_cost_model",
+                "impact_cost_model",
+            ),
+        ),
+        "paper_requires_scenario_level_inference": _requirement_present(
+            contract_requirements,
+            (
+                "scenario_level_inference",
+                "multiple_testing_correction",
+                "bootstrap_confidence_interval",
             ),
         ),
         "paper_requires_crumbling_quote_probability": _requirement_present(

@@ -712,6 +712,80 @@ class TestCandidateSpecs(TestCase):
             "mpc_dynamic_schedule_validation_only",
         )
 
+    def test_friction_aware_regime_claim_adds_policy_overlay(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-frlux-regime-friction",
+            claims=[
+                {
+                    "claim_id": "frlux-regime-conditioned-policy",
+                    "claim_type": "feature_recipe",
+                    "claim_text": (
+                        "FR-LUX friction-aware, regime-conditioned policy optimization "
+                        "uses proportional and impact costs across volatility-liquidity regimes."
+                    ),
+                    "data_requirements": [
+                        "regime_state",
+                        "regime_conditioned_policy",
+                        "proportional_cost_model",
+                        "impact_cost_model",
+                    ],
+                    "confidence": "0.76",
+                },
+                {
+                    "claim_id": "frlux-turnover-budget-validation",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Trade-space trust region, turnover budget, cost misspecification stress, "
+                        "scenario-level inference, and live-paper parity must validate the policy."
+                    ),
+                    "data_requirements": [
+                        "trade_space_trust_region",
+                        "turnover_budget",
+                        "cost_misspecification_stress",
+                        "scenario_level_inference",
+                        "live_paper_parity",
+                    ],
+                    "confidence": "0.74",
+                },
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+        first = specs[0]
+
+        self.assertIn(
+            "friction_aware_regime_conditioned_policy",
+            first.parameter_space["mechanism_overlay_ids"],
+        )
+        params = first.strategy_overrides["params"]
+        self.assertEqual(params["cost_model_profile"], "proportional_plus_impact")
+        self.assertEqual(params["turnover_budget_profile"], "trade_space_trust_region")
+        self.assertEqual(params["regime_conditioning_profile"], "volatility_liquidity")
+        self.assertTrue(first.hard_vetoes["required_trade_space_trust_region"])
+        self.assertTrue(first.hard_vetoes["required_cost_misspecification_stress"])
+        self.assertTrue(first.promotion_contract["requires_turnover_budget"])
+        self.assertTrue(
+            first.promotion_contract["rejects_cost_blind_policy_optimization"]
+        )
+        mechanism_overlays = candidate_specs_module._mechanism_overlays_for_card(
+            cards[0]
+        )
+        friction_contract = next(
+            contract
+            for contract in mechanism_overlays["feature_contract"]["mechanism_overlays"]
+            if contract["overlay_id"] == "friction_aware_regime_conditioned_policy"
+        )
+        self.assertEqual(
+            friction_contract["rank_metric"],
+            "post_cost_net_pnl_after_regime_conditioned_friction_stress",
+        )
+        self.assertEqual(
+            friction_contract["evidence_policy"],
+            "friction_aware_regime_conditioned_policy_is_replay_ranking_not_promotion_proof",
+        )
+
     def test_alpha_decay_claim_adds_predictability_stress_contract(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-tkan-alpha-decay",

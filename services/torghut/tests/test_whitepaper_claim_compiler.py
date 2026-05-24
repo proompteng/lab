@@ -46,6 +46,7 @@ class TestWhitepaperClaimCompiler(TestCase):
                 "seed-arxiv-2604-10402",
                 "seed-arxiv-2604-09060",
                 "seed-arxiv-2603-29086",
+                "seed-arxiv-2510-02986",
                 "seed-arxiv-2603-16365",
                 "seed-arxiv-2602-07085",
                 "seed-arxiv-2505-17388",

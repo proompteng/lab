@@ -3562,6 +3562,78 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
 
     if has_any(
         (
+            "fr-lux",
+            "friction-aware",
+            "friction aware",
+            "regime-conditioned",
+            "regime conditioned",
+            "volatility-liquidity regime",
+            "volatility liquidity regime",
+            "trade-space trust region",
+            "trade space trust region",
+            "inventory flow trust region",
+            "turnover budget",
+            "turnover bounds",
+            "inaction band",
+            "convex frictions",
+            "cost misspecification",
+            "liquidity proxy",
+            "liquidity proxies",
+        )
+    ):
+        overlay_ids.append("friction_aware_regime_conditioned_policy")
+        overlay_contracts.append(
+            {
+                "overlay_id": "friction_aware_regime_conditioned_policy",
+                "required_evidence": [
+                    "regime_state",
+                    "regime_conditioned_policy",
+                    "proportional_cost_model",
+                    "impact_cost_model",
+                    "liquidity_proxy_cost_calibration",
+                    "trade_space_trust_region",
+                    "turnover_budget",
+                    "cost_misspecification_stress",
+                    "scenario_level_inference",
+                    "post_cost_net_pnl",
+                    "live_paper_parity",
+                ],
+                "rank_metric": "post_cost_net_pnl_after_regime_conditioned_friction_stress",
+                "evidence_policy": (
+                    "friction_aware_regime_conditioned_policy_is_replay_ranking_not_promotion_proof"
+                ),
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_friction_aware_regime_conditioning": True,
+                "required_proportional_and_impact_cost_model": True,
+                "required_liquidity_proxy_cost_calibration": True,
+                "required_trade_space_trust_region": True,
+                "required_turnover_budget": True,
+                "required_cost_misspecification_stress": True,
+                "required_scenario_level_inference": True,
+                "required_live_paper_parity": True,
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_regime_conditioned_policy": True,
+                "requires_proportional_and_impact_cost_model": True,
+                "requires_liquidity_proxy_cost_calibration": True,
+                "requires_trade_space_trust_region": True,
+                "requires_turnover_budget": True,
+                "requires_cost_misspecification_stress": True,
+                "requires_scenario_level_inference": True,
+                "requires_live_paper_parity": True,
+                "rejects_cost_blind_policy_optimization": True,
+                "rejects_single_regime_cost_backtest": True,
+                "risk_policy": "friction_aware_regime_conditioned_policy_validation_only",
+            }
+        )
+
+    if has_any(
+        (
             "regime-weighted conformal",
             "regime weighted conformal",
             "regime_weighted_conformal",
@@ -4334,6 +4406,7 @@ def _apply_mechanism_overlay_strategy_params(
         {
             "mixed_market_limit_execution_policy",
             "crumbling_quote_liquidity_erosion",
+            "friction_aware_regime_conditioned_policy",
         }
         & overlay_ids
     ):
@@ -4348,6 +4421,10 @@ def _apply_mechanism_overlay_strategy_params(
         params.setdefault("market_order_spread_bps_max", "6")
         params.setdefault("max_recent_quote_invalid_ratio", "0.12")
         params.setdefault("max_recent_quote_jump_bps", "40")
+    if "friction_aware_regime_conditioned_policy" in overlay_ids:
+        params.setdefault("cost_model_profile", "proportional_plus_impact")
+        params.setdefault("turnover_budget_profile", "trade_space_trust_region")
+        params.setdefault("regime_conditioning_profile", "volatility_liquidity")
     next_overrides["params"] = params
     return next_overrides
 
