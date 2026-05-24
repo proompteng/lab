@@ -822,12 +822,12 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("scripts/renew_latest_empirical_promotion_jobs.py", args)
         self.assertIn(
             "--runtime-window-target-plan-url "
-            "http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence",
             args,
         )
         self.assertNotIn(
             "--runtime-window-target-plan-url "
-            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence",
+            "http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence",
             args,
         )
         self.assertIn("--runtime-window-target-plan-exclusive", args)

@@ -7176,10 +7176,17 @@ class TestTradingApi(TestCase):
     ) -> None:
         plan = _paper_route_target_plan_from_payload(
             {
+                "schema_version": "torghut.paper-route-evidence.v1",
                 "live_submission_gate": {
                     "runtime_ledger_paper_probation_import_plan": {
                         "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
                         "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-OLD",
+                                "candidate_id": "stale-probation-target",
+                            }
+                        ],
                     }
                 },
                 "next_paper_route_runtime_window_targets": {
