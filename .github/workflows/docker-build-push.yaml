@@ -18,6 +18,16 @@ on:
         required: false
         type: boolean
         default: true
+      build_app:
+        description: 'Build and publish apps/app image'
+        required: false
+        type: boolean
+        default: true
+      build_docs:
+        description: 'Build and publish apps/docs image'
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   changes:
@@ -26,14 +36,8 @@ jobs:
       contents: read
     outputs:
       proompteng: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.proompteng || steps.filter.outputs.proompteng }}
-      app: ${{ steps.filter.outputs.app }}
-      cms: ${{ steps.filter.outputs.cms }}
-      docs: ${{ steps.filter.outputs.docs }}
-      kitty-krew: ${{ steps.filter.outputs.kitty-krew }}
-      reviseur: ${{ steps.filter.outputs.reviseur }}
-      alchimie: ${{ steps.filter.outputs.alchimie }}
-      bonjour: ${{ steps.filter.outputs.bonjour }}
-      khoshut: ${{ steps.filter.outputs.khoshut }}
+      app: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.app || steps.filter.outputs.app }}
+      docs: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.docs || steps.filter.outputs.docs }}
 
     steps:
       - name: Checkout
@@ -51,38 +55,26 @@ jobs:
             app:
               - 'apps/app/**'
               - 'packages/design/**'
-            cms:
-              - 'apps/cms/**'
             docs:
               - 'apps/docs/**'
               - 'packages/design/**'
-            kitty-krew:
-              - 'apps/kitty-krew/**'
-            reviseur:
-              - 'apps/reviseur/**'
-            alchimie:
-              - 'apps/alchimie/**'
-            bonjour:
-              - 'services/bonjour/**'
-            khoshut:
-              - 'services/khoshut/**'
 
       - name: Manual build selection
         id: manual
         if: github.event_name == 'workflow_dispatch'
         run: |
-          if [ "${{ github.event.inputs.build_proompteng }}" = "true" ]; then
-            echo "proompteng=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "proompteng=false" >> "$GITHUB_OUTPUT"
-          fi
+          {
+            echo "proompteng=${{ github.event.inputs.build_proompteng }}"
+            echo "app=${{ github.event.inputs.build_app }}"
+            echo "docs=${{ github.event.inputs.build_docs }}"
+          } >> "$GITHUB_OUTPUT"
 
   version:
     runs-on: arc-arm64
     permissions:
       contents: write
     needs: changes
-    if: ${{ needs.changes.outputs.proompteng == 'true' || needs.changes.outputs.app == 'true' || needs.changes.outputs.cms == 'true' || needs.changes.outputs.docs == 'true' || needs.changes.outputs.kitty-krew == 'true' || needs.changes.outputs.reviseur == 'true' || needs.changes.outputs.alchimie == 'true' || needs.changes.outputs.bonjour == 'true' || needs.changes.outputs.khoshut == 'true' }}
+    if: ${{ needs.changes.outputs.proompteng == 'true' || needs.changes.outputs.app == 'true' || needs.changes.outputs.docs == 'true' }}
     outputs:
       new_tag: ${{ steps.tag_version.outputs.new_tag }}
       changelog: ${{ steps.tag_version.outputs.changelog }}
@@ -134,70 +126,6 @@ jobs:
       context: .
       new_tag: ${{ needs.version.outputs.new_tag }}
 
-  build-cms:
-    needs: [changes, version]
-    if: ${{ needs.changes.outputs.cms == 'true' }}
-    uses: ./.github/workflows/docker-build-common.yaml
-    with:
-      image_name: cms
-      dockerfile: ./apps/cms/Dockerfile
-      context: .
-      new_tag: ${{ needs.version.outputs.new_tag }}
-
-  build-kitty-krew:
-    needs: [changes, version]
-    if: ${{ needs.changes.outputs.kitty-krew == 'true' }}
-    uses: ./.github/workflows/docker-build-common.yaml
-    with:
-      image_name: kitty-krew
-      dockerfile: ./apps/kitty-krew/Dockerfile
-      context: .
-      new_tag: ${{ needs.version.outputs.new_tag }}
-
-  build-reviseur:
-    needs: [changes, version]
-    if: ${{ needs.changes.outputs.reviseur == 'true' }}
-    uses: ./.github/workflows/docker-build-common.yaml
-    with:
-      image_name: reviseur
-      dockerfile: ./apps/reviseur/Dockerfile
-      context: .
-      new_tag: ${{ needs.version.outputs.new_tag }}
-
-  build-alchimie:
-    needs: [changes, version]
-    if: ${{ needs.changes.outputs.alchimie == 'true' }}
-    uses: ./.github/workflows/docker-build-common.yaml
-    with:
-      image_name: alchimie
-      dockerfile: ./apps/alchimie/Dockerfile
-      context: ./apps/alchimie
-      new_tag: ${{ needs.version.outputs.new_tag }}
-      platforms: linux/arm64
-
-  build-bonjour:
-    needs: [changes, version]
-    if: ${{ needs.changes.outputs.bonjour == 'true' }}
-    uses: ./.github/workflows/docker-build-common.yaml
-    with:
-      image_name: bonjour
-      dockerfile: ./services/bonjour/Dockerfile
-      context: .
-      new_tag: ${{ needs.version.outputs.new_tag }}
-
-  build-khoshut:
-    needs: [changes, version]
-    if: ${{ needs.changes.outputs.khoshut == 'true' }}
-    uses: ./.github/workflows/docker-build-common.yaml
-    with:
-      image_name: khoshut
-      dockerfile: ./services/khoshut/Dockerfile
-      context: .
-      new_tag: ${{ needs.version.outputs.new_tag }}
-      turbo_scope: '@proompteng/khoshut'
-      turbo_copy: 'tsconfig.base.json'
-      bun_version: 1.3.14
-
   cleanup-release:
     runs-on: arc-arm64
     permissions:
@@ -207,13 +135,7 @@ jobs:
         version,
         build-proompteng,
         build-app,
-        build-cms,
         build-docs,
-        build-kitty-krew,
-        build-reviseur,
-        build-alchimie,
-        build-bonjour,
-        build-khoshut,
       ]
     if: failure()
     steps:
