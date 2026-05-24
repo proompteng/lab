@@ -565,6 +565,92 @@ class TestMlxTrainingData(TestCase):
             0.0,
         )
 
+    def test_training_rows_encode_crumbling_quote_overlay_contract(self) -> None:
+        spec = CandidateSpec(
+            schema_version="torghut.candidate-spec.v1",
+            candidate_spec_id="spec-crumbling-quotes",
+            hypothesis_id="H-CRUMBLING-QUOTES",
+            family_template_id="microstructure_continuation_matched_filter_v1",
+            candidate_kind="configuration",
+            runtime_family="microstructure_continuation",
+            runtime_strategy_name="microstructure-continuation-matched-filter-v1",
+            feature_contract={
+                "source_claims": [
+                    {
+                        "claim_id": "crumbling-quote-probability",
+                        "claim_type": "execution_assumption",
+                        "confidence": "0.78",
+                        "data_requirements": [
+                            "crumbling_quote_probability",
+                            "mechanical_liquidity_erosion",
+                        ],
+                    }
+                ],
+                "validation_requirements": [
+                    {
+                        "claim_id": "crumbling-route-tca-validation",
+                        "data_requirements": [
+                            "executable_quote",
+                            "route_tca",
+                            "live_paper_parity",
+                        ],
+                    }
+                ],
+                "mechanism_overlays": [
+                    {
+                        "overlay_id": "crumbling_quote_liquidity_erosion",
+                        "required_evidence": [
+                            "crumbling_quote_probability",
+                            "mechanical_liquidity_erosion",
+                            "lob_event_stream",
+                            "executable_quote",
+                            "route_tca",
+                            "live_paper_parity",
+                        ],
+                    }
+                ],
+            },
+            parameter_space={
+                "mechanism_overlay_ids": ["crumbling_quote_liquidity_erosion"]
+            },
+            strategy_overrides={
+                "max_notional_per_trade": "25000",
+                "max_position_pct_equity": "0.25",
+                "params": {
+                    "capital_profile": "initial_equity_cash_constrained_1x",
+                    "max_entries_per_session": "2",
+                    "max_gross_exposure_pct_equity": "1.0",
+                },
+            },
+            objective={"target_net_pnl_per_day": "500"},
+            hard_vetoes={"required_crumbling_quote_probability": True},
+            expected_failure_modes=(),
+            promotion_contract={
+                "requires_crumbling_quote_probability": True,
+                "requires_mechanical_liquidity_erosion_probability": True,
+                "requires_live_paper_parity": True,
+                "rejects_crumbling_quote_simulation_as_promotion_proof": True,
+            },
+        )
+
+        rows = build_mlx_training_rows(candidate_specs=[spec], evidence_bundles=[])
+        features = rows[0].to_payload()["features"]
+
+        self.assertEqual(
+            features["paper_overlay_crumbling_quote_liquidity_erosion"],
+            1.0,
+        )
+        self.assertEqual(features["paper_requires_crumbling_quote_probability"], 1.0)
+        self.assertEqual(
+            features["paper_requires_mechanical_liquidity_erosion"],
+            1.0,
+        )
+        self.assertEqual(features["paper_requires_executable_quote"], 1.0)
+        self.assertEqual(features["paper_requires_route_tca"], 1.0)
+        self.assertEqual(features["paper_requires_live_paper_parity"], 1.0)
+        self.assertEqual(features["paper_promotion_requires_count"], 3.0)
+        self.assertEqual(features["paper_promotion_rejects_count"], 1.0)
+
     def test_negative_rank_bucket_lift_demotes_to_heuristic_order(self) -> None:
         rows = [
             MlxTrainingRow(

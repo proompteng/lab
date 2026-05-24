@@ -17,7 +17,7 @@ from app.trading.discovery.objectives import (
     deployable_proof_failed_gate_count,
 )
 
-MLX_RANKER_SCHEMA_VERSION = "torghut.mlx-ranker.v3"
+MLX_RANKER_SCHEMA_VERSION = "torghut.mlx-ranker.v4"
 
 _MECHANISM_OVERLAY_IDS = (
     "cluster_lob_event_clustering",
@@ -26,6 +26,7 @@ _MECHANISM_OVERLAY_IDS = (
     "mpc_dynamic_execution_schedule",
     "alpha_decay_predictability_stress",
     "regime_weighted_conformal_cost_buffer",
+    "crumbling_quote_liquidity_erosion",
     "nonlinear_market_impact_tca",
     "simulation_reality_gap_implementation_risk",
     "implementation_risk_backtest_stability",
@@ -65,6 +66,8 @@ _PAPER_CONTRACT_FEATURE_NAMES = (
     "paper_requires_regime_tail_exceedance",
     "paper_requires_breakeven_cost_buffer",
     "paper_requires_seed_model_family_robustness",
+    "paper_requires_crumbling_quote_probability",
+    "paper_requires_mechanical_liquidity_erosion",
     "paper_promotion_requires_count",
     "paper_promotion_rejects_count",
 )
@@ -470,6 +473,22 @@ def _paper_contract_feature_values(spec: CandidateSpec) -> Mapping[str, float]:
                 "multi_seed_replay",
                 "model_family_robustness",
                 "seed_model_family_robustness",
+            ),
+        ),
+        "paper_requires_crumbling_quote_probability": _requirement_present(
+            contract_requirements,
+            (
+                "crumbling_quote_probability",
+                "quote_crumble_probability",
+                "crumbling_quote_calibration",
+            ),
+        ),
+        "paper_requires_mechanical_liquidity_erosion": _requirement_present(
+            contract_requirements,
+            (
+                "mechanical_liquidity_erosion",
+                "mechanical_liquidity_withdrawal",
+                "liquidity_withdrawal_probability",
             ),
         ),
         "paper_promotion_requires_count": _truthy_contract_key_count(

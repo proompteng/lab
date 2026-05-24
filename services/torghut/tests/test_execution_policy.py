@@ -968,6 +968,79 @@ class TestExecutionPolicy(TestCase):
             102,
         )
 
+    def test_microstructure_crumbling_quote_pressure_tightens_validation_only(
+        self,
+    ) -> None:
+        config.settings.trading_execution_advisor_enabled = False
+        policy = ExecutionPolicy(
+            config=_config(max_participation_rate=Decimal("0.25"), prefer_limit=False)
+        )
+        decision = _decision(
+            qty=Decimal("10"), price=Decimal("100"), order_type="market"
+        ).model_copy(
+            update={
+                "params": {
+                    "price": Decimal("100"),
+                    "microstructure_state": {
+                        "schema_version": "microstructure_state_v1",
+                        "symbol": "AAPL",
+                        "event_ts": "2026-01-01T00:00:00Z",
+                        "spread_bps": "2",
+                        "depth_top5_usd": "1500000",
+                        "order_flow_imbalance": "0.10",
+                        "latency_ms_estimate": 20,
+                        "fill_hazard": "0.20",
+                        "liquidity_regime": "normal",
+                        "crumbling_quote_probability": "0.82",
+                        "mechanical_liquidity_withdrawal_probability": "0.78",
+                    },
+                }
+            }
+        )
+
+        outcome = policy.evaluate(
+            decision, strategy=None, positions=[], market_snapshot=None
+        )
+
+        self.assertTrue(outcome.approved)
+        self.assertEqual(outcome.decision.order_type, "limit")
+        self.assertTrue(outcome.microstructure_metadata["applied"])
+        self.assertEqual(
+            outcome.microstructure_metadata["crumbling_quote_probability"],
+            "0.82",
+        )
+        self.assertEqual(
+            outcome.microstructure_metadata[
+                "mechanical_liquidity_withdrawal_probability"
+            ],
+            "0.78",
+        )
+        self.assertEqual(
+            Decimal(outcome.microstructure_metadata["participation_rate_scale"]),
+            Decimal("0.4225"),
+        )
+        self.assertEqual(
+            Decimal(outcome.microstructure_metadata["execution_seconds_scale"]),
+            Decimal("1.3225"),
+        )
+        self.assertEqual(
+            outcome.impact_assumptions["inputs"].get("execution_seconds"),
+            79,
+        )
+        self.assertIn(
+            "microstructure_crumbling_quote_probability_above_pressure",
+            outcome.microstructure_metadata["tightening_reasons"],
+        )
+        self.assertIn(
+            "microstructure_mechanical_liquidity_withdrawal_above_pressure",
+            outcome.microstructure_metadata["tightening_reasons"],
+        )
+        params_update = outcome.params_update()
+        self.assertEqual(
+            params_update["execution_microstructure"]["crumbling_quote_probability"],
+            "0.82",
+        )
+
     def test_microstructure_missing_state_falls_back_to_baseline_safely(self) -> None:
         config.settings.trading_execution_advisor_enabled = False
         policy = ExecutionPolicy(config=_config(max_participation_rate=Decimal("0.25")))
