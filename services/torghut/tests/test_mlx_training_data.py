@@ -565,6 +565,99 @@ class TestMlxTrainingData(TestCase):
             0.0,
         )
 
+    def test_training_rows_encode_friction_aware_regime_contract(self) -> None:
+        spec = CandidateSpec(
+            schema_version="torghut.candidate-spec.v1",
+            candidate_spec_id="spec-frlux",
+            hypothesis_id="H-FRLUX",
+            family_template_id="intraday_tsmom_v2",
+            candidate_kind="configuration",
+            runtime_family="intraday_tsmom_consistent",
+            runtime_strategy_name="intraday-tsmom-profit-v3",
+            feature_contract={
+                "source_claims": [
+                    {
+                        "claim_id": "friction-aware-regime-conditioned-policy",
+                        "claim_type": "feature_recipe",
+                        "confidence": "0.76",
+                        "data_requirements": [
+                            "regime_state",
+                            "regime_conditioned_policy",
+                            "proportional_cost_model",
+                            "impact_cost_model",
+                        ],
+                    }
+                ],
+                "validation_requirements": [
+                    {
+                        "claim_id": "frlux-validation",
+                        "data_requirements": [
+                            "trade_space_trust_region",
+                            "turnover_budget",
+                            "cost_misspecification_stress",
+                            "liquidity_proxy_cost_calibration",
+                            "scenario_level_inference",
+                        ],
+                    }
+                ],
+                "mechanism_overlays": [
+                    {
+                        "overlay_id": "friction_aware_regime_conditioned_policy",
+                        "required_evidence": [
+                            "regime_state",
+                            "regime_conditioned_policy",
+                            "trade_space_trust_region",
+                            "turnover_budget",
+                            "cost_misspecification_stress",
+                            "liquidity_proxy_cost_calibration",
+                            "scenario_level_inference",
+                            "live_paper_parity",
+                        ],
+                    }
+                ],
+            },
+            parameter_space={
+                "mechanism_overlay_ids": ["friction_aware_regime_conditioned_policy"]
+            },
+            strategy_overrides={
+                "max_notional_per_trade": "25000",
+                "max_position_pct_equity": "0.25",
+                "params": {
+                    "capital_profile": "initial_equity_cash_constrained_1x",
+                    "max_entries_per_session": "2",
+                    "max_gross_exposure_pct_equity": "1.0",
+                },
+            },
+            objective={"target_net_pnl_per_day": "500"},
+            hard_vetoes={"required_min_daily_notional": "250000"},
+            expected_failure_modes=(),
+            promotion_contract={
+                "requires_regime_conditioned_policy": True,
+                "requires_turnover_budget": True,
+                "requires_cost_misspecification_stress": True,
+                "rejects_cost_blind_policy_optimization": True,
+            },
+        )
+
+        rows = build_mlx_training_rows(candidate_specs=[spec], evidence_bundles=[])
+        features = rows[0].to_payload()["features"]
+
+        self.assertEqual(
+            features["paper_overlay_friction_aware_regime_conditioned_policy"],
+            1.0,
+        )
+        self.assertEqual(features["paper_requires_regime_conditioning"], 1.0)
+        self.assertEqual(features["paper_requires_trade_space_trust_region"], 1.0)
+        self.assertEqual(features["paper_requires_turnover_budget"], 1.0)
+        self.assertEqual(features["paper_requires_cost_misspecification_stress"], 1.0)
+        self.assertEqual(
+            features["paper_requires_liquidity_proxy_cost_calibration"], 1.0
+        )
+        self.assertEqual(features["paper_requires_scenario_level_inference"], 1.0)
+        self.assertEqual(features["paper_requires_live_paper_parity"], 1.0)
+        self.assertEqual(features["paper_promotion_requires_count"], 3.0)
+        self.assertEqual(features["paper_promotion_rejects_count"], 1.0)
+
     def test_training_rows_encode_crumbling_quote_overlay_contract(self) -> None:
         spec = CandidateSpec(
             schema_version="torghut.candidate-spec.v1",

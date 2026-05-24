@@ -1092,6 +1092,87 @@ RECENT_WHITEPAPER_SEEDS: tuple[WhitepaperResearchSource, ...] = (
         ),
     ),
     WhitepaperResearchSource(
+        run_id="seed-arxiv-2510-02986",
+        title="FR-LUX: Friction-Aware, Regime-Conditioned Policy Optimization for Implementable Portfolio Management",
+        source_url="https://arxiv.org/abs/2510.02986",
+        published_at="2025-10-03",
+        claims=(
+            {
+                "claim_id": "friction-aware-regime-conditioned-policy",
+                "claim_type": "feature_recipe",
+                "claim_text": (
+                    "FR-LUX uses friction-aware, regime-conditioned policy optimization to learn "
+                    "after-cost trading policies across volatility-liquidity regimes."
+                ),
+                "asset_scope": "us_equities_portfolio",
+                "horizon_scope": "portfolio_execution",
+                "expected_direction": "positive",
+                "data_requirements": [
+                    "regime_state",
+                    "regime_conditioned_policy",
+                    "volatility_liquidity_regime",
+                    "proportional_cost_model",
+                    "impact_cost_model",
+                    "post_cost_net_pnl",
+                ],
+                "confidence": "0.76",
+            },
+            {
+                "claim_id": "trade-space-trust-region-turnover-budget",
+                "claim_type": "risk_constraint",
+                "claim_text": (
+                    "Trade-space trust regions, inaction bands, and turnover budgets are needed "
+                    "to avoid cost-blind inventory churn under convex frictions."
+                ),
+                "asset_scope": "us_equities_portfolio",
+                "horizon_scope": "portfolio_execution",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "trade_space_trust_region",
+                    "turnover_budget",
+                    "turnover_bounds",
+                    "cost_misspecification_stress",
+                    "transaction_cost_stress",
+                ],
+                "confidence": "0.75",
+            },
+            {
+                "claim_id": "scenario-level-cost-calibration-validation",
+                "claim_type": "validation_requirement",
+                "claim_text": (
+                    "Promotion candidates should prove liquidity-proxy cost calibration, "
+                    "scenario-level inference, and live-paper parity before a regime-conditioned "
+                    "friction model affects capital."
+                ),
+                "asset_scope": "us_equities_portfolio",
+                "horizon_scope": "portfolio_execution",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "liquidity_proxy_cost_calibration",
+                    "scenario_level_inference",
+                    "bootstrap_confidence_interval",
+                    "multiple_testing_correction",
+                    "live_paper_parity",
+                ],
+                "confidence": "0.74",
+            },
+        ),
+        claim_relations=(
+            {
+                "relation_id": "frlux-policy-requires-turnover-and-cost-validation",
+                "relation_type": "requires_validation",
+                "source_claim_id": "trade-space-trust-region-turnover-budget",
+                "target_claim_id": "friction-aware-regime-conditioned-policy",
+            },
+            {
+                "relation_id": "frlux-policy-requires-scenario-cost-calibration",
+                "relation_type": "requires_validation",
+                "source_claim_id": "scenario-level-cost-calibration-validation",
+                "target_claim_id": "friction-aware-regime-conditioned-policy",
+            },
+        ),
+    ),
+    WhitepaperResearchSource(
         run_id="seed-arxiv-2603-16365",
         title="FactorEngine: A Program-level Knowledge-Infused Factor Mining Framework for Quantitative Investment",
         source_url="https://arxiv.org/abs/2603.16365",
