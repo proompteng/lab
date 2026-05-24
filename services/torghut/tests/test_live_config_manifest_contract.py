@@ -560,6 +560,14 @@ class TestLiveConfigManifestContract(TestCase):
             sim_env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL"),
             "25",
         )
+        self.assertEqual(
+            sim_env.get("TRADING_PAPER_ROUTE_TARGET_PLAN_URL"),
+            "http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence",
+        )
+        self.assertEqual(
+            sim_env.get("TRADING_PAPER_ROUTE_TARGET_PLAN_TIMEOUT_SECONDS"),
+            "3",
+        )
         self.assertFalse(_manifest_bool(sim_env, "TRADING_SIMULATION_ENABLED"))
         self.assertEqual(sim_env.get("TRADING_UNIVERSE_SOURCE"), "static")
         self.assertEqual(
@@ -814,7 +822,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("scripts/renew_latest_empirical_promotion_jobs.py", args)
         self.assertIn(
             "--runtime-window-target-plan-url "
-            "http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence",
             args,
         )
         self.assertIn("--runtime-window-target-plan-exclusive", args)

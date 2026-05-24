@@ -27,10 +27,14 @@ from app.main import (
     _build_live_submission_gate_payload,
     _build_route_image_proof_summary,
     _check_alpaca,
+    _fetch_paper_route_target_plan_url,
     _forecast_service_status,
+    _load_external_paper_route_target_plan,
+    _paper_route_target_plan_from_payload,
     _load_rejected_signal_outcome_learning_summary,
     healthz,
     _load_options_catalog_freshness_summary,
+    _merge_external_paper_route_target_plan,
     _readiness_dependency_cache_key,
     _readiness_dependency_checks,
     _route_continuity_packet_for_proof_floor,
@@ -7050,6 +7054,351 @@ class TestTradingApi(TestCase):
                     del app.state.trading_scheduler
             else:
                 app.state.trading_scheduler = original_scheduler
+
+    def test_trading_paper_route_evidence_uses_external_plan_when_local_plan_empty(
+        self,
+    ) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        original_target_plan_url = settings.trading_paper_route_target_plan_url
+        settings.trading_paper_route_target_plan_url = (
+            "http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence"
+        )
+        target = {
+            "hypothesis_id": "H-PAIRS-01",
+            "candidate_id": "c88421d619759b2cfaa6f4d0",
+            "observed_stage": "paper",
+            "strategy_family": "microbar_cross_sectional_pairs",
+            "strategy_name": "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+            "account_label": "TORGHUT_REPLAY",
+            "source_kind": "runtime_ledger_paper_probation_candidates",
+            "source_manifest_ref": "config/trading/hypotheses/h-pairs.json",
+            "dataset_snapshot_ref": "torghut-chip-full-day-20260505-4c330ce9-r1",
+            "window_start": "2026-05-22T13:30:00+00:00",
+            "window_end": "2026-05-22T20:00:00+00:00",
+            "paper_probation_authorized": True,
+            "promotion_allowed": False,
+            "final_promotion_allowed": False,
+            "max_notional": "0",
+        }
+        live_gate = {
+            "allowed": True,
+            "reason": "non_live_mode",
+            "blocked_reasons": [],
+            "promotion_eligible_total": 0,
+            "runtime_ledger_paper_probation_import_plan": {
+                "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                "target_count": 0,
+                "skipped_target_count": 0,
+                "promotion_allowed": False,
+                "final_promotion_allowed": False,
+                "targets": [],
+            },
+        }
+        proof_floor = {
+            "route_reacquisition_book": {
+                "schema_version": "torghut.route-reacquisition-book.v1",
+                "state": "repair_only",
+                "paper_route_probe": {
+                    "configured_enabled": True,
+                    "active": False,
+                    "effective_max_notional": "0",
+                    "next_session_max_notional": "25",
+                    "eligible_symbol_count": 2,
+                    "eligible_symbols": ["AAPL", "AMZN"],
+                    "active_symbols": [],
+                    "blocking_reasons": ["market_session_closed"],
+                },
+            }
+        }
+        external_plan = {
+            "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+            "target_count": 1,
+            "skipped_target_count": 0,
+            "promotion_allowed": False,
+            "final_promotion_allowed": False,
+            "targets": [target],
+        }
+        try:
+            if hasattr(app.state, "trading_scheduler"):
+                del app.state.trading_scheduler
+            with (
+                patch(
+                    "app.main._build_live_submission_gate_payload",
+                    return_value=live_gate,
+                ),
+                patch(
+                    "app.main._build_profitability_proof_floor_payload",
+                    return_value=proof_floor,
+                ),
+                patch(
+                    "app.main._load_external_paper_route_target_plan",
+                    return_value=external_plan,
+                ) as external_loader,
+            ):
+                response = self.client.get("/trading/paper-route-evidence")
+            self.assertEqual(response.status_code, 200)
+            external_loader.assert_called_once()
+            payload = response.json()
+            self.assertEqual(payload["summary"]["target_count"], 1)
+            self.assertEqual(
+                payload["live_submission_gate"][
+                    "runtime_ledger_paper_probation_import_plan"
+                ]["target_count"],
+                1,
+            )
+            self.assertEqual(
+                payload["targets"][0]["target"]["candidate_id"],
+                "c88421d619759b2cfaa6f4d0",
+            )
+            next_plan = payload["next_paper_route_runtime_window_targets"]
+            self.assertEqual(next_plan["target_count"], 1)
+            next_target = next_plan["targets"][0]
+            self.assertEqual(next_target["hypothesis_id"], "H-PAIRS-01")
+            self.assertEqual(next_target["candidate_id"], "c88421d619759b2cfaa6f4d0")
+            self.assertEqual(next_target["source_dsn_env"], "SIM_DB_DSN")
+            self.assertEqual(
+                next_target["source_kind"], "paper_route_probe_runtime_observed"
+            )
+            self.assertEqual(next_target["paper_route_probe_symbols"], ["AAPL", "AMZN"])
+            self.assertEqual(next_target["max_notional"], "0")
+            self.assertFalse(next_target["promotion_allowed"])
+            self.assertFalse(next_target["final_promotion_allowed"])
+        finally:
+            settings.trading_paper_route_target_plan_url = original_target_plan_url
+            if original_scheduler is None:
+                if hasattr(app.state, "trading_scheduler"):
+                    del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
+
+    def test_paper_route_target_plan_from_payload_prefers_next_window_targets(
+        self,
+    ) -> None:
+        plan = _paper_route_target_plan_from_payload(
+            {
+                "live_submission_gate": {
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                    }
+                },
+                "next_paper_route_runtime_window_targets": {
+                    "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "target_count": 1,
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-PAIRS-01",
+                            "candidate_id": "c88421d619759b2cfaa6f4d0",
+                        }
+                    ],
+                },
+            }
+        )
+
+        self.assertEqual(plan["targets"][0]["candidate_id"], "c88421d619759b2cfaa6f4d0")
+
+    def test_paper_route_target_plan_from_payload_requires_targets(self) -> None:
+        self.assertEqual(
+            _paper_route_target_plan_from_payload(
+                {
+                    "runtime_window_import_plan": {
+                        "target_count": 1,
+                    },
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "targets": "not-a-target-list",
+                    },
+                }
+            ),
+            {},
+        )
+
+    def test_fetch_paper_route_target_plan_url_rejects_invalid_url(self) -> None:
+        self.assertEqual(
+            _fetch_paper_route_target_plan_url(
+                "file:///tmp/plan.json",
+                timeout_seconds=1,
+            ),
+            {"load_error": "paper_route_target_plan_invalid_scheme:file"},
+        )
+        self.assertEqual(
+            _fetch_paper_route_target_plan_url(
+                "http:///missing-host",
+                timeout_seconds=1,
+            ),
+            {"load_error": "paper_route_target_plan_invalid_host"},
+        )
+
+    def test_fetch_paper_route_target_plan_url_validates_response(self) -> None:
+        class FakeResponse:
+            def __init__(self, status: int, raw: bytes) -> None:
+                self.status = status
+                self._raw = raw
+
+            def read(self, size: int) -> bytes:
+                self.read_size = size
+                return self._raw
+
+        def connection_class(status: int, raw: bytes) -> type[Any]:
+            class FakeConnection:
+                instances: list["FakeConnection"] = []
+
+                def __init__(
+                    self,
+                    hostname: str,
+                    port: int | None,
+                    *,
+                    timeout: float,
+                ) -> None:
+                    self.hostname = hostname
+                    self.port = port
+                    self.timeout = timeout
+                    self.request_path: str | None = None
+                    self.closed = False
+                    self.instances.append(self)
+
+                def request(
+                    self,
+                    method: str,
+                    path: str,
+                    *,
+                    headers: dict[str, str],
+                ) -> None:
+                    self.request_method = method
+                    self.request_path = path
+                    self.request_headers = headers
+
+                def getresponse(self) -> FakeResponse:
+                    return FakeResponse(status, raw)
+
+                def close(self) -> None:
+                    self.closed = True
+
+            return FakeConnection
+
+        http_error_connection = connection_class(503, b"{}")
+        with patch("app.main.HTTPConnection", http_error_connection):
+            self.assertEqual(
+                _fetch_paper_route_target_plan_url(
+                    "http://torghut.example/plan?mode=paper",
+                    timeout_seconds=0,
+                ),
+                {"load_error": "paper_route_target_plan_http_status:503"},
+            )
+        self.assertEqual(http_error_connection.instances[0].hostname, "torghut.example")
+        self.assertEqual(
+            http_error_connection.instances[0].request_path, "/plan?mode=paper"
+        )
+        self.assertEqual(http_error_connection.instances[0].timeout, 0.1)
+        self.assertTrue(http_error_connection.instances[0].closed)
+
+        for raw, expected in (
+            (b"{", "paper_route_target_plan_invalid_json:"),
+            (b"[]", "paper_route_target_plan_invalid_payload"),
+            (
+                json.dumps({"runtime_window_import_plan": {"targets": []}}).encode(
+                    "utf-8"
+                ),
+                "paper_route_target_plan_missing",
+            ),
+            (b"x" * 5_000_001, "paper_route_target_plan_response_too_large"),
+        ):
+            fake_connection = connection_class(200, raw)
+            with patch("app.main.HTTPConnection", fake_connection):
+                result = _fetch_paper_route_target_plan_url(
+                    "http://torghut.example",
+                    timeout_seconds=1,
+                )
+            self.assertTrue(str(result["load_error"]).startswith(expected))
+
+        success_connection = connection_class(
+            200,
+            json.dumps(
+                {
+                    "runtime_window_import_plan": {
+                        "targets": [
+                            {
+                                "candidate_id": "c88421d619759b2cfaa6f4d0",
+                            }
+                        ]
+                    }
+                }
+            ).encode("utf-8"),
+        )
+        with patch("app.main.HTTPConnection", success_connection):
+            plan = _fetch_paper_route_target_plan_url(
+                "http://torghut.example",
+                timeout_seconds=3,
+            )
+        self.assertEqual(plan["source"], "external_paper_route_target_plan")
+        self.assertEqual(plan["targets"][0]["candidate_id"], "c88421d619759b2cfaa6f4d0")
+
+    def test_load_external_paper_route_target_plan_uses_configured_url(self) -> None:
+        original_target_plan_url = settings.trading_paper_route_target_plan_url
+        original_timeout = settings.trading_paper_route_target_plan_timeout_seconds
+        try:
+            settings.trading_paper_route_target_plan_url = "  "
+            self.assertEqual(_load_external_paper_route_target_plan(), {})
+
+            settings.trading_paper_route_target_plan_url = "http://torghut.example/plan"
+            settings.trading_paper_route_target_plan_timeout_seconds = 7
+            with patch(
+                "app.main._fetch_paper_route_target_plan_url",
+                return_value={"targets": [{"candidate_id": "candidate"}]},
+            ) as fetch:
+                plan = _load_external_paper_route_target_plan()
+            self.assertEqual(plan["targets"][0]["candidate_id"], "candidate")
+            fetch.assert_called_once_with(
+                "http://torghut.example/plan",
+                timeout_seconds=7,
+            )
+        finally:
+            settings.trading_paper_route_target_plan_url = original_target_plan_url
+            settings.trading_paper_route_target_plan_timeout_seconds = original_timeout
+
+    def test_merge_external_paper_route_target_plan_fails_closed(self) -> None:
+        local_gate = {
+            "runtime_ledger_paper_probation_import_plan": {
+                "targets": [{"candidate_id": "local"}],
+            }
+        }
+        with patch(
+            "app.main._load_external_paper_route_target_plan"
+        ) as external_loader:
+            self.assertEqual(
+                _merge_external_paper_route_target_plan(local_gate), local_gate
+            )
+        external_loader.assert_not_called()
+
+        with patch("app.main._load_external_paper_route_target_plan", return_value={}):
+            self.assertEqual(_merge_external_paper_route_target_plan({}), {})
+
+        with patch(
+            "app.main._load_external_paper_route_target_plan",
+            return_value={"load_error": "paper_route_target_plan_missing"},
+        ):
+            gate = _merge_external_paper_route_target_plan({})
+        self.assertEqual(
+            gate["paper_route_target_plan_error"],
+            "paper_route_target_plan_missing",
+        )
+
+        with patch(
+            "app.main._load_external_paper_route_target_plan",
+            return_value={
+                "promotion_allowed": True,
+                "final_promotion_allowed": True,
+                "final_promotion_authorized": True,
+                "targets": [{"candidate_id": "external"}],
+            },
+        ):
+            gate = _merge_external_paper_route_target_plan({})
+        plan = gate["runtime_ledger_paper_probation_import_plan"]
+        self.assertEqual(
+            gate["paper_route_target_plan_source"], "external_target_plan_url"
+        )
+        self.assertFalse(plan["promotion_allowed"])
+        self.assertFalse(plan["final_promotion_allowed"])
+        self.assertFalse(plan["final_promotion_authorized"])
 
     def test_trading_llm_evaluation_endpoint(self) -> None:
         response = self.client.get("/trading/llm-evaluation")
