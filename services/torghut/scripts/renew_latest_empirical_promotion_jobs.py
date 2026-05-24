@@ -583,6 +583,7 @@ def _runtime_window_targets_from_plan(
     ):
         raise RuntimeError(f"runtime_window_target_plan_targets_missing:{ref}")
     targets: list[RuntimeWindowImportTarget] = []
+    seen_target_keys: set[tuple[object, ...]] = set()
     for index, raw_target in enumerate(raw_targets):
         payload = _as_dict(raw_target)
 
@@ -608,38 +609,57 @@ def _runtime_window_targets_from_plan(
                 "runtime_window_target_plan_target_invalid:"
                 f"{ref}:{index}:{','.join(missing)}"
             )
-        targets.append(
-            RuntimeWindowImportTarget(
-                hypothesis_id=hypothesis_id,
-                candidate_id=candidate_id,
-                observed_stage=value("observed_stage", "runtime_window_observed_stage")
-                or "paper",
-                strategy_family=strategy_family,
-                source_dsn_env=value("source_dsn_env", "runtime_window_source_dsn_env")
-                or "DB_DSN",
-                strategy_name=strategy_name,
-                account_label=value("account_label", "runtime_window_account_label")
-                or "TORGHUT_SIM",
-                dataset_snapshot_ref=value(
-                    "dataset_snapshot_ref",
-                    "runtime_window_dataset_snapshot_ref",
-                ),
-                source_manifest_ref=value(
-                    "source_manifest_ref",
-                    "runtime_window_source_manifest_ref",
-                ),
-                source_kind=value("source_kind", "runtime_window_source_kind")
-                or "paper_runtime_observed",
-                delay_adjusted_depth_stress_report_ref=value(
-                    "delay_adjusted_depth_stress_report_ref",
-                    "runtime_window_delay_adjusted_depth_stress_report_ref",
-                ),
-                window_start=str(payload.get("window_start") or "").strip(),
-                window_end=str(payload.get("window_end") or "").strip(),
-                artifact_refs=_runtime_window_target_artifact_refs(payload),
-                target_metadata=_runtime_window_target_metadata(payload),
-            )
+        target = RuntimeWindowImportTarget(
+            hypothesis_id=hypothesis_id,
+            candidate_id=candidate_id,
+            observed_stage=value("observed_stage", "runtime_window_observed_stage")
+            or "paper",
+            strategy_family=strategy_family,
+            source_dsn_env=value("source_dsn_env", "runtime_window_source_dsn_env")
+            or "DB_DSN",
+            strategy_name=strategy_name,
+            account_label=value("account_label", "runtime_window_account_label")
+            or "TORGHUT_SIM",
+            dataset_snapshot_ref=value(
+                "dataset_snapshot_ref",
+                "runtime_window_dataset_snapshot_ref",
+            ),
+            source_manifest_ref=value(
+                "source_manifest_ref",
+                "runtime_window_source_manifest_ref",
+            ),
+            source_kind=value("source_kind", "runtime_window_source_kind")
+            or "paper_runtime_observed",
+            delay_adjusted_depth_stress_report_ref=value(
+                "delay_adjusted_depth_stress_report_ref",
+                "runtime_window_delay_adjusted_depth_stress_report_ref",
+            ),
+            window_start=str(payload.get("window_start") or "").strip(),
+            window_end=str(payload.get("window_end") or "").strip(),
+            artifact_refs=_runtime_window_target_artifact_refs(payload),
+            target_metadata=_runtime_window_target_metadata(payload),
         )
+        target_key = (
+            target.hypothesis_id,
+            target.candidate_id,
+            target.observed_stage,
+            target.strategy_family,
+            target.source_dsn_env,
+            target.strategy_name,
+            target.account_label,
+            target.dataset_snapshot_ref,
+            target.source_manifest_ref,
+            target.source_kind,
+            target.window_start,
+            target.window_end,
+            tuple(target.target_metadata.get("paper_route_probe_symbols", ()))
+            if target.target_metadata
+            else (),
+        )
+        if target_key in seen_target_keys:
+            continue
+        seen_target_keys.add(target_key)
+        targets.append(target)
     return targets
 
 

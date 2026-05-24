@@ -357,6 +357,7 @@ def _next_paper_route_runtime_window_targets(
     )
     planned_targets: list[dict[str, object]] = []
     skipped_targets: list[dict[str, object]] = []
+    planned_keys: set[tuple[object, ...]] = set()
     for target in targets:
         hypothesis_id = _safe_text(target.get("hypothesis_id"))
         candidate_id = _safe_text(target.get("candidate_id"))
@@ -392,59 +393,81 @@ def _next_paper_route_runtime_window_targets(
                 }
             )
             continue
-        planned_targets.append(
-            {
-                "hypothesis_id": hypothesis_id,
-                "candidate_id": candidate_id,
-                "observed_stage": "paper",
-                "strategy_family": strategy_family,
-                "strategy_name": strategy_name,
-                "account_label": _safe_text(target.get("account_label"))
-                or "TORGHUT_SIM",
-                "source_dsn_env": "SIM_DB_DSN",
-                "dataset_snapshot_ref": _safe_text(target.get("dataset_snapshot_ref"))
-                or "",
-                "source_manifest_ref": source_manifest_ref,
-                "source_kind": "paper_route_probe_runtime_observed",
-                "window_start": _isoformat(window_start),
-                "window_end": _isoformat(window_end),
-                "paper_route_probe_symbols": probe_symbols,
-                "paper_route_probe_symbol_count": len(probe_symbols),
-                "paper_route_probe_next_session_max_notional": next_notional,
-                "paper_route_probe_window_start": _isoformat(window_start),
-                "paper_route_probe_window_end": _isoformat(window_end),
-                "paper_probation_authorized": True,
-                "paper_probation_authorization_scope": "evidence_collection_only",
-                "evidence_collection_stage": "paper",
-                "probation_allowed": True,
-                "probation_reason": "paper_route_probe_next_session_runtime_window",
-                "selection_reason": "paper_route_probe_next_session_evidence_collection",
-                "selected_by": "paper_route_evidence_audit",
-                "promotion_allowed": False,
-                "final_promotion_authorized": False,
-                "final_promotion_allowed": False,
-                "final_promotion_blockers": [
-                    "paper_probation_evidence_collection_only",
-                    "paper_route_runtime_ledger_import_pending",
-                    "live_runtime_ledger_required",
+        planned_target: dict[str, object] = {
+            "hypothesis_id": hypothesis_id,
+            "candidate_id": candidate_id,
+            "observed_stage": "paper",
+            "strategy_family": strategy_family,
+            "strategy_name": strategy_name,
+            "account_label": _safe_text(target.get("account_label")) or "TORGHUT_SIM",
+            "source_dsn_env": "SIM_DB_DSN",
+            "dataset_snapshot_ref": _safe_text(target.get("dataset_snapshot_ref"))
+            or "",
+            "source_manifest_ref": source_manifest_ref,
+            "source_kind": "paper_route_probe_runtime_observed",
+            "window_start": _isoformat(window_start),
+            "window_end": _isoformat(window_end),
+            "paper_route_probe_symbols": probe_symbols,
+            "paper_route_probe_symbol_count": len(probe_symbols),
+            "paper_route_probe_next_session_max_notional": next_notional,
+            "paper_route_probe_window_start": _isoformat(window_start),
+            "paper_route_probe_window_end": _isoformat(window_end),
+            "paper_probation_authorized": True,
+            "paper_probation_authorization_scope": "evidence_collection_only",
+            "evidence_collection_stage": "paper",
+            "probation_allowed": True,
+            "probation_reason": "paper_route_probe_next_session_runtime_window",
+            "selection_reason": "paper_route_probe_next_session_evidence_collection",
+            "selected_by": "paper_route_evidence_audit",
+            "promotion_allowed": False,
+            "final_promotion_authorized": False,
+            "final_promotion_allowed": False,
+            "final_promotion_blockers": [
+                "paper_probation_evidence_collection_only",
+                "paper_route_runtime_ledger_import_pending",
+                "live_runtime_ledger_required",
+            ],
+            "candidate_blockers": [
+                "paper_route_runtime_ledger_import_pending",
+                *[
+                    str(item).strip()
+                    for item in _as_sequence(target.get("candidate_blockers"))
+                    if str(item).strip()
                 ],
-                "candidate_blockers": [
-                    "paper_route_runtime_ledger_import_pending",
-                    *[
-                        str(item).strip()
-                        for item in _as_sequence(target.get("candidate_blockers"))
-                        if str(item).strip()
-                    ],
-                ],
-                "runtime_ledger_target_metadata_blockers": [
-                    "paper_route_runtime_ledger_import_pending",
-                    "live_runtime_ledger_required",
-                ],
-                "handoff": "next_paper_route_runtime_window_import",
-                "promotion_gate": "runtime_ledger_live_or_live_paper_required",
-                "max_notional": "0",
-            }
+            ],
+            "runtime_ledger_target_metadata_blockers": [
+                "paper_route_runtime_ledger_import_pending",
+                "live_runtime_ledger_required",
+            ],
+            "handoff": "next_paper_route_runtime_window_import",
+            "promotion_gate": "runtime_ledger_live_or_live_paper_required",
+            "max_notional": "0",
+        }
+        planned_key = (
+            hypothesis_id,
+            candidate_id,
+            strategy_family,
+            strategy_name,
+            planned_target["account_label"],
+            planned_target["source_manifest_ref"],
+            planned_target["window_start"],
+            planned_target["window_end"],
+            tuple(probe_symbols),
         )
+        if planned_key in planned_keys:
+            skipped_targets.append(
+                {
+                    "hypothesis_id": hypothesis_id,
+                    "candidate_id": candidate_id,
+                    "reason": "duplicate_next_paper_route_runtime_window_target",
+                    "missing_or_blocking_fields": [
+                        "duplicate_next_paper_route_runtime_window_target"
+                    ],
+                }
+            )
+            continue
+        planned_keys.add(planned_key)
+        planned_targets.append(planned_target)
     return {
         "schema_version": NEXT_PAPER_ROUTE_RUNTIME_WINDOW_TARGETS_SCHEMA_VERSION,
         "source": "paper_route_evidence_audit",

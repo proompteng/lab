@@ -148,7 +148,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                     "promotion_eligible_total": 0,
                     "runtime_ledger_paper_probation_import_plan": {
                         "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
-                        "target_count": 1,
+                        "target_count": 2,
                         "targets": [
                             {
                                 "hypothesis_id": "H-PAPER-ROUTE",
@@ -164,7 +164,22 @@ class TestPaperRouteEvidenceAudit(TestCase):
                                 "promotion_allowed": False,
                                 "final_promotion_authorized": False,
                                 "max_notional": "0",
-                            }
+                            },
+                            {
+                                "hypothesis_id": "H-PAPER-ROUTE",
+                                "candidate_id": "candidate-paper-route",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": "paper-route-candidate-v1",
+                                "account_label": "TORGHUT_SIM",
+                                "source_kind": "durable_runtime_ledger_bucket",
+                                "source_manifest_ref": "config/trading/hypotheses/h-paper-route.json",
+                                "dataset_snapshot_ref": "dataset://paper-route",
+                                "paper_probation_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                                "max_notional": "0",
+                            },
                         ],
                     },
                 },
@@ -194,7 +209,11 @@ class TestPaperRouteEvidenceAudit(TestCase):
             plan["schema_version"], "torghut.next-paper-route-runtime-window-targets.v1"
         )
         self.assertEqual(plan["target_count"], 1)
-        self.assertEqual(plan["skipped_target_count"], 0)
+        self.assertEqual(plan["skipped_target_count"], 1)
+        self.assertEqual(
+            plan["skipped_targets"][0]["reason"],
+            "duplicate_next_paper_route_runtime_window_target",
+        )
         self.assertEqual(
             plan["session_window"],
             {
