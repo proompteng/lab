@@ -30,6 +30,18 @@ describe('torghut build-push workflow', () => {
     expect(cacheStep).toBe(-1)
   })
 
+  it('waits for the private registry before building the release image', () => {
+    const buildJob = workflow.indexOf('build-and-push:')
+    const registryWaitStep = workflow.indexOf('name: Wait for private registry', buildJob)
+    const buildStep = workflow.indexOf('name: Build and push torghut image', buildJob)
+
+    expect(workflow).toContain('timeout-minutes: 180')
+    expect(registryWaitStep).toBeGreaterThan(buildJob)
+    expect(buildStep).toBeGreaterThan(registryWaitStep)
+    expect(workflow).toContain('REGISTRY_URL: https://registry.ide-newton.ts.net/v2/')
+    expect(workflow).toContain('REGISTRY_WAIT_TIMEOUT_SECONDS: 7200')
+  })
+
   it('caches Bun downloads before manifest-only CI installs script dependencies', () => {
     const releaseManifestJob = ciWorkflow.indexOf('release-manifests:')
     const cacheStep = ciWorkflow.indexOf('name: Cache Bun downloads', releaseManifestJob)
