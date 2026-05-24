@@ -2300,6 +2300,167 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                 now=datetime(2026, 5, 24, 20, 23, tzinfo=timezone.utc),
             )
 
+    def test_runtime_window_import_defers_target_plan_settlement_grace(
+        self,
+    ) -> None:
+        manifest_path = self.tmp_dir / "empirical-promotion-manifest.yaml"
+        manifest_path.write_text("run_id: renew-1\n", encoding="utf-8")
+        hypothesis_path = self.tmp_dir / "h-pairs-01.json"
+        hypothesis_path.write_text(
+            json.dumps({"candidate_id": "cand-paper-route"}),
+            encoding="utf-8",
+        )
+        plan_path = self.tmp_dir / "paper-route-plan.json"
+        plan_path.write_text(
+            json.dumps(
+                {
+                    "runtime_window_import_plan": {
+                        "targets": [
+                            {
+                                "candidate_id": "cand-paper-route",
+                                "hypothesis_id": "H-PAIRS-01",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_cross_sectional_pairs",
+                                "strategy_name": "paper-route-candidate-v1",
+                                "source_manifest_ref": str(hypothesis_path),
+                                "source_dsn_env": "SIM_DB_DSN",
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "window_start": "2026-05-26T13:30:00Z",
+                                "window_end": "2026-05-26T20:00:00Z",
+                            }
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        args = SimpleNamespace(
+            runtime_window_import=True,
+            runtime_window_target=[],
+            runtime_window_target_plan_ref=[str(plan_path)],
+            runtime_window_target_plan_url=[],
+            runtime_window_target_plan_url_timeout_seconds=2.0,
+            runtime_window_target_plan_exclusive=True,
+            runtime_window_target_plan_required=True,
+            runtime_window_target_plan_settlement_seconds=3600,
+            runtime_window_targets_from_latest_autoresearch=False,
+            runtime_window_targets_from_registry=False,
+            runtime_window_hypothesis_id="",
+            runtime_window_candidate_id="",
+            runtime_window_observed_stage="paper",
+            runtime_window_strategy_family="",
+            runtime_window_source_dsn_env="SIM_DB_DSN",
+            runtime_window_strategy_name="",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_start="",
+            runtime_window_end="",
+            runtime_window_dataset_snapshot_ref="",
+            runtime_window_bucket_minutes=30,
+            runtime_window_sample_minutes=5,
+            runtime_window_source_manifest_ref="",
+            runtime_window_source_kind="paper_runtime_observed",
+        )
+
+        with patch.object(
+            renewal.subprocess,
+            "run",
+            side_effect=AssertionError("settlement grace should defer import"),
+        ):
+            payload = renewal._run_runtime_window_import(
+                args=args,
+                manifest={},
+                run_id="renew-1",
+                manifest_path=manifest_path,
+                now=datetime(2026, 5, 26, 20, 23, tzinfo=timezone.utc),
+            )
+
+        self.assertIsNotNone(payload)
+        assert payload is not None
+        self.assertEqual(payload["status"], "deferred")
+        self.assertEqual(
+            payload["reason"], "runtime_window_target_plan_window_settlement_pending"
+        )
+        self.assertEqual(payload["proof_status"], "deferred")
+        self.assertEqual(
+            payload["proof_blockers"][0]["type"],
+            "runtime_window_target_plan_window_settlement_pending",
+        )
+        self.assertEqual(payload["proof_blockers"][0]["settlement_seconds"], 3600)
+        self.assertEqual(
+            payload["proof_blockers"][0]["settlement_ready_at"],
+            "2026-05-26T21:00:00Z",
+        )
+        completed = SimpleNamespace(
+            stdout=json.dumps({"inserted_windows": 1, "promotion_decision": "blocked"})
+        )
+
+        with patch.object(
+            renewal.subprocess, "run", return_value=completed
+        ) as run_mock:
+            imported = renewal._run_runtime_window_import(
+                args=args,
+                manifest={},
+                run_id="renew-1",
+                manifest_path=manifest_path,
+                now=datetime(2026, 5, 26, 21, 23, tzinfo=timezone.utc),
+            )
+
+        self.assertIsNotNone(imported)
+        assert imported is not None
+        self.assertEqual(imported["status"], "ok")
+        command = run_mock.call_args.args[0]
+        self.assertEqual(
+            command[command.index("--window-start") + 1],
+            "2026-05-26T13:30:00Z",
+        )
+        self.assertEqual(
+            command[command.index("--window-end") + 1],
+            "2026-05-26T20:00:00Z",
+        )
+
+    def test_runtime_window_import_rejects_negative_target_plan_settlement_grace(
+        self,
+    ) -> None:
+        manifest_path = self.tmp_dir / "empirical-promotion-manifest.yaml"
+        manifest_path.write_text("run_id: renew-1\n", encoding="utf-8")
+        hypothesis_path = self.tmp_dir / "h-pairs-01.json"
+        hypothesis_path.write_text(
+            json.dumps({"candidate_id": "cand-paper-route"}),
+            encoding="utf-8",
+        )
+        target = renewal.RuntimeWindowImportTarget(
+            hypothesis_id="H-PAIRS-01",
+            candidate_id="cand-paper-route",
+            observed_stage="paper",
+            strategy_family="microbar_cross_sectional_pairs",
+            source_dsn_env="SIM_DB_DSN",
+            strategy_name="paper-route-candidate-v1",
+            account_label="TORGHUT_SIM",
+            dataset_snapshot_ref="",
+            source_manifest_ref=str(hypothesis_path),
+            source_kind="paper_route_probe_runtime_observed",
+            delay_adjusted_depth_stress_report_ref="",
+            window_start="2026-05-26T13:30:00Z",
+            window_end="2026-05-26T20:00:00Z",
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "runtime_window_target_plan_settlement_seconds_negative",
+        ):
+            renewal._run_runtime_window_import_target(
+                args=SimpleNamespace(
+                    runtime_window_target_plan_settlement_seconds=-1,
+                ),
+                target=target,
+                manifest={},
+                run_id="renew-1",
+                manifest_path=manifest_path,
+                window_start=datetime(2026, 5, 18, 13, 30, tzinfo=timezone.utc),
+                window_end=datetime(2026, 5, 18, 20, 0, tzinfo=timezone.utc),
+                now=datetime(2026, 5, 26, 20, 23, tzinfo=timezone.utc),
+            )
+
     def test_runtime_window_target_plan_bounds_fail_closed(self) -> None:
         base = {
             "hypothesis_id": "H-PAIRS-01",

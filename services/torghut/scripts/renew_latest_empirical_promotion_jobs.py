@@ -180,6 +180,16 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--runtime-window-target-plan-settlement-seconds",
+        type=int,
+        default=0,
+        help=(
+            "For target-plan windows, defer runtime-window import until this many "
+            "seconds after the target window end so fills, costs, and order lifecycle "
+            "rows can land before proof import."
+        ),
+    )
+    parser.add_argument(
         "--runtime-window-targets-from-latest-autoresearch",
         action="store_true",
         help=(
@@ -1245,23 +1255,39 @@ def _run_runtime_window_import_target(
     )
     if candidate_id is None:
         raise RuntimeError("runtime_window_candidate_id_missing")
-    if target_plan_window is not None and window_end > now:
+    target_plan_settlement_seconds = int(
+        getattr(args, "runtime_window_target_plan_settlement_seconds", 0) or 0
+    )
+    if target_plan_settlement_seconds < 0:
+        raise RuntimeError("runtime_window_target_plan_settlement_seconds_negative")
+    target_plan_ready_at = window_end + timedelta(
+        seconds=target_plan_settlement_seconds
+    )
+    if target_plan_window is not None and (
+        window_end > now or target_plan_ready_at > now
+    ):
+        if window_end > now:
+            blocker_type = "runtime_window_target_plan_window_not_closed"
+            remediation = "wait_until_target_plan_window_closes_before_runtime_import"
+        else:
+            blocker_type = "runtime_window_target_plan_window_settlement_pending"
+            remediation = "wait_until_target_plan_window_settlement_grace_elapses_before_runtime_import"
         proof_blockers.append(
             {
-                "type": "runtime_window_target_plan_window_not_closed",
+                "type": blocker_type,
                 "hypothesis_id": target.hypothesis_id,
                 "candidate_id": candidate_id,
                 "window_start": _utc_iso(window_start),
                 "window_end": _utc_iso(window_end),
                 "now": _utc_iso(now),
-                "remediation": (
-                    "wait_until_target_plan_window_closes_before_runtime_import"
-                ),
+                "settlement_seconds": target_plan_settlement_seconds,
+                "settlement_ready_at": _utc_iso(target_plan_ready_at),
+                "remediation": remediation,
             }
         )
         return {
             "status": "deferred",
-            "reason": "runtime_window_target_plan_window_not_closed",
+            "reason": blocker_type,
             "window_start": _utc_iso(window_start),
             "window_end": _utc_iso(window_end),
             "window_selection": window_selection,

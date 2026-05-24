@@ -4,7 +4,7 @@ metadata:
   name: torghut-empirical-promotion-renewal
   namespace: torghut
 spec:
-  schedule: "23 8,20 * * *"
+  schedule: "23 8,21 * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 2
   failedJobsHistoryLimit: 3
@@ -37,6 +37,7 @@ spec:
                     --runtime-window-target-plan-url http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence \
                     --runtime-window-target-plan-exclusive \
                     --runtime-window-target-plan-required \
+                    --runtime-window-target-plan-settlement-seconds 3600 \
                     --runtime-window-targets-from-latest-autoresearch \
                     --runtime-window-targets-from-registry \
                     --runtime-window-hypothesis-id H-TSMOM-01 \

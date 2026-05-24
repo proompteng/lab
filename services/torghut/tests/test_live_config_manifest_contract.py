@@ -782,7 +782,7 @@ class TestLiveConfigManifestContract(TestCase):
             "argocd/applications/torghut/empirical-promotion-renewal-cronjob.yaml"
         )
 
-        self.assertEqual(spec.get("schedule"), "23 8,20 * * *")
+        self.assertEqual(spec.get("schedule"), "23 8,21 * * *")
         env = {
             item.get("name"): item
             for item in cast(list[Mapping[str, object]], container.get("env", []))
@@ -819,6 +819,7 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertIn("--runtime-window-target-plan-exclusive", args)
         self.assertIn("--runtime-window-target-plan-required", args)
+        self.assertIn("--runtime-window-target-plan-settlement-seconds 3600", args)
         self.assertIn("--runtime-window-targets-from-latest-autoresearch", args)
         self.assertIn("--runtime-window-targets-from-registry", args)
         self.assertIn("--runtime-window-hypothesis-id H-TSMOM-01", args)
