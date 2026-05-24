@@ -25,7 +25,7 @@ concurrency:
 jobs:
   build-and-push:
     runs-on: arc-arm64
-    timeout-minutes: 60
+    timeout-minutes: 180
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -41,6 +41,41 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Wait for private registry
+        shell: bash
+        env:
+          REGISTRY_URL: https://registry.ide-newton.ts.net/v2/
+          REGISTRY_WAIT_TIMEOUT_SECONDS: 7200
+          REGISTRY_WAIT_INTERVAL_SECONDS: 60
+        run: |
+          set -euo pipefail
+
+          deadline=$((SECONDS + REGISTRY_WAIT_TIMEOUT_SECONDS))
+
+          while true; do
+            status="$(curl -sS -o /tmp/torghut-registry-health.txt -w '%{http_code}' "${REGISTRY_URL}" || true)"
+
+            case "${status}" in
+              200|401)
+                echo "Registry is reachable at ${REGISTRY_URL} (HTTP ${status})."
+                exit 0
+                ;;
+              502|503|504|000)
+                if (( SECONDS >= deadline )); then
+                  echo "Timed out waiting for ${REGISTRY_URL}; last HTTP status was ${status}."
+                  exit 1
+                fi
+
+                echo "Registry is temporarily unavailable at ${REGISTRY_URL} (HTTP ${status}); retrying in ${REGISTRY_WAIT_INTERVAL_SECONDS}s."
+                sleep "${REGISTRY_WAIT_INTERVAL_SECONDS}"
+                ;;
+              *)
+                echo "Registry returned unexpected HTTP status ${status} for ${REGISTRY_URL}."
+                exit 1
+                ;;
+            esac
+          done
 
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/scripts
