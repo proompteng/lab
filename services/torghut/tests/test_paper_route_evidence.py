@@ -260,6 +260,14 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 "end": "2026-05-26T20:00:00+00:00",
             },
         )
+        self.assertEqual(plan["session_readiness"]["state"], "waiting_for_session_open")
+        self.assertFalse(plan["session_readiness"]["window_open"])
+        self.assertFalse(plan["session_readiness"]["window_closed"])
+        self.assertFalse(plan["session_readiness"]["import_ready"])
+        self.assertEqual(
+            plan["session_readiness"]["import_blockers"],
+            ["paper_route_session_window_not_open"],
+        )
         target = plan["targets"][0]
         self.assertEqual(target["account_label"], "TORGHUT_SIM")
         self.assertEqual(target["source_account_label"], "TORGHUT_REPLAY")
@@ -278,6 +286,80 @@ class TestPaperRouteEvidenceAudit(TestCase):
             "paper_route_runtime_ledger_import_pending",
             target["runtime_ledger_target_metadata_blockers"],
         )
+
+    def test_next_paper_route_session_readiness_tracks_collection_and_import(
+        self,
+    ) -> None:
+        def build(generated_at: datetime) -> dict[str, object]:
+            with Session(self.engine) as session:
+                return build_paper_route_evidence_audit(
+                    session,
+                    live_submission_gate={
+                        "allowed": False,
+                        "reason": "paper_route_probe_only",
+                        "blocked_reasons": [],
+                        "promotion_eligible_total": 0,
+                        "runtime_ledger_paper_probation_import_plan": {
+                            "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                            "target_count": 1,
+                            "targets": [
+                                {
+                                    "hypothesis_id": "H-PAPER-ROUTE",
+                                    "candidate_id": "candidate-paper-route",
+                                    "observed_stage": "paper",
+                                    "strategy_family": "microbar_pairs",
+                                    "strategy_name": "paper-route-candidate-v1",
+                                    "account_label": "TORGHUT_REPLAY",
+                                    "source_manifest_ref": "config/trading/hypotheses/h-paper-route.json",
+                                    "dataset_snapshot_ref": "dataset://paper-route",
+                                    "paper_probation_authorized": True,
+                                    "promotion_allowed": False,
+                                    "final_promotion_authorized": False,
+                                    "max_notional": "0",
+                                }
+                            ],
+                        },
+                    },
+                    route_reacquisition_book={
+                        "schema_version": "torghut.route-reacquisition-book.v1",
+                        "state": "repair_only",
+                        "summary": {
+                            "paper_route_probe_eligible_symbols": ["AAPL"],
+                        },
+                        "paper_route_probe": {
+                            "configured_enabled": True,
+                            "active": True,
+                            "next_session_max_notional": "25",
+                            "eligible_symbol_count": 1,
+                            "blocking_reasons": [],
+                        },
+                    },
+                    generated_at=generated_at,
+                )
+
+        collecting_payload = build(datetime(2026, 5, 26, 15, tzinfo=timezone.utc))
+        collecting_readiness = collecting_payload[
+            "next_paper_route_runtime_window_targets"
+        ]["session_readiness"]
+        self.assertEqual(collecting_readiness["state"], "collecting_session_evidence")
+        self.assertTrue(collecting_readiness["window_open"])
+        self.assertFalse(collecting_readiness["window_closed"])
+        self.assertFalse(collecting_readiness["import_ready"])
+        self.assertEqual(
+            collecting_readiness["import_blockers"],
+            ["paper_route_session_window_not_closed"],
+        )
+
+        import_payload = build(datetime(2026, 5, 26, 21, tzinfo=timezone.utc))
+        import_readiness = import_payload["next_paper_route_runtime_window_targets"][
+            "session_readiness"
+        ]
+        self.assertEqual(import_readiness["state"], "window_closed_import_ready")
+        self.assertFalse(import_readiness["window_open"])
+        self.assertTrue(import_readiness["window_closed"])
+        self.assertTrue(import_readiness["probe_ready"])
+        self.assertTrue(import_readiness["import_ready"])
+        self.assertEqual(import_readiness["import_blockers"], [])
 
     def test_source_activity_is_bound_to_target_window_end(self) -> None:
         window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)

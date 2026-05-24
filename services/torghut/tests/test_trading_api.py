@@ -2122,6 +2122,70 @@ class TestTradingApi(TestCase):
             },
         )
 
+    def test_simple_lane_paper_mode_preserves_shared_runtime_import_plan(self) -> None:
+        original = {
+            "trading_pipeline_mode": settings.trading_pipeline_mode,
+            "trading_mode": settings.trading_mode,
+            "trading_simple_submit_enabled": settings.trading_simple_submit_enabled,
+        }
+        settings.trading_pipeline_mode = "simple"
+        settings.trading_mode = "paper"
+        settings.trading_simple_submit_enabled = True
+        shared_gate = {
+            "allowed": True,
+            "reason": "non_live_mode",
+            "blocked_reasons": [],
+            "capital_stage": "paper",
+            "promotion_eligible_total": 0,
+            "paper_probation_eligible_total": 1,
+            "runtime_ledger_paper_probation_import_plan": {
+                "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                "target_count": 1,
+                "targets": [
+                    {
+                        "hypothesis_id": "H-PAIRS-01",
+                        "candidate_id": "c88421d619759b2cfaa6f4d0",
+                        "paper_probation_authorized": True,
+                        "promotion_allowed": False,
+                        "final_promotion_authorized": False,
+                    }
+                ],
+            },
+        }
+        try:
+            with patch(
+                "app.main.build_live_submission_gate_payload",
+                return_value=shared_gate,
+            ) as shared_gate_builder:
+                gate = _build_live_submission_gate_payload(
+                    SimpleNamespace(emergency_stop_active=False),
+                    session=None,
+                    hypothesis_summary={},
+                )
+        finally:
+            settings.trading_pipeline_mode = original["trading_pipeline_mode"]
+            settings.trading_mode = original["trading_mode"]
+            settings.trading_simple_submit_enabled = original[
+                "trading_simple_submit_enabled"
+            ]
+
+        shared_gate_builder.assert_called_once()
+        self.assertTrue(gate["allowed"])
+        self.assertEqual(gate["reason"], "non_live_mode")
+        self.assertEqual(gate["pipeline_mode"], "simple")
+        self.assertEqual(
+            gate["runtime_ledger_paper_probation_import_plan"]["target_count"],
+            1,
+        )
+        self.assertEqual(
+            gate["simple_lane"],
+            {
+                "submit_enabled": True,
+                "shared_gate_enforced": True,
+                "blocked_reasons": [],
+            },
+        )
+
     def test_trading_status_and_health_include_profitability_proof_floor(
         self,
     ) -> None:
