@@ -4093,7 +4093,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             self.assertEqual(
                 pre_replay_model_payload["row_count"], payload["candidate_spec_count"]
             )
-            self.assertEqual(model_payload["schema_version"], "torghut.mlx-ranker.v6")
+            self.assertEqual(model_payload["schema_version"], "torghut.mlx-ranker.v7")
             self.assertEqual(
                 model_payload["row_count"], payload["candidate_spec_count"]
             )
@@ -8842,7 +8842,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 backend_preference="numpy-fallback",
             )
 
-        self.assertEqual(model_payload["schema_version"], "torghut.mlx-ranker.v6")
+        self.assertEqual(model_payload["schema_version"], "torghut.mlx-ranker.v7")
         self.assertEqual(model_payload["backend"], "numpy-fallback")
         self.assertIn("rank_bucket_lift", model_payload)
         self.assertIn(model_payload["model_status"], {"active", "demoted_to_heuristic"})

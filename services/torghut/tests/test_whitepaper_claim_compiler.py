@@ -41,6 +41,7 @@ class TestWhitepaperClaimCompiler(TestCase):
                 "seed-arxiv-2605-11423",
                 "seed-arxiv-2605-11180",
                 "seed-arxiv-2605-04004",
+                "seed-arxiv-2605-05580",
                 "seed-arxiv-2604-26747",
                 "seed-arxiv-2604-20949",
                 "seed-arxiv-2604-10402",
@@ -265,10 +266,20 @@ class TestWhitepaperClaimCompiler(TestCase):
             source_by_id["paper-arxiv-2503.04662"].title,
             "Risk-aware Trading Portfolio Optimization",
         )
+        self.assertEqual(
+            source_by_id["paper-arxiv-2605.05580"].title,
+            "AlphaCrafter: A Full-Stack Multi-Agent Framework for Cross-Sectional Quantitative Trading",
+        )
         self.assertTrue(
             any(
                 claim.get("claim_type") == "portfolio_construction"
                 for claim in source_by_id["paper-arxiv-2503.04662"].claims
+            )
+        )
+        self.assertTrue(
+            any(
+                claim.get("claim_id") == "adaptive-factor-to-execution-loop"
+                for claim in source_by_id["paper-arxiv-2605.05580"].claims
             )
         )
 

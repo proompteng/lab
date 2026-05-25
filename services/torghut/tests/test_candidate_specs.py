@@ -786,6 +786,81 @@ class TestCandidateSpecs(TestCase):
             "friction_aware_regime_conditioned_policy_is_replay_ranking_not_promotion_proof",
         )
 
+    def test_adaptive_factor_loop_claim_adds_validation_only_contract(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-alphacrafter-factor-loop",
+            claims=[
+                {
+                    "claim_id": "adaptive-factor-to-execution-loop",
+                    "claim_type": "portfolio_construction",
+                    "claim_text": (
+                        "AlphaCrafter adaptive factor-to-execution loop combines continuous "
+                        "factor mining, adaptive factor screener, and risk-constrained execution."
+                    ),
+                    "data_requirements": [
+                        "continuous_factor_mining",
+                        "factor_pool_expansion",
+                        "adaptive_factor_screener",
+                        "regime_adaptive_factor_ensemble",
+                        "risk_constrained_execution",
+                    ],
+                    "confidence": "0.74",
+                },
+                {
+                    "claim_id": "adaptive-loop-runtime-ledger-validation",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Agentic factor discovery can rank replay candidates only; promotion "
+                        "requires post-cost replay and runtime-ledger proof."
+                    ),
+                    "data_requirements": [
+                        "portfolio_replay",
+                        "walk_forward_replay",
+                        "transaction_cost_stress",
+                        "post_cost_net_pnl",
+                        "runtime_ledger_profit_proof",
+                    ],
+                    "confidence": "0.76",
+                },
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+        first = specs[0]
+
+        self.assertIn(
+            "adaptive_factor_to_execution_loop",
+            first.parameter_space["mechanism_overlay_ids"],
+        )
+        self.assertTrue(first.hard_vetoes["required_adaptive_factor_to_execution_loop"])
+        self.assertTrue(first.hard_vetoes["required_continuous_factor_mining"])
+        self.assertTrue(first.hard_vetoes["required_adaptive_factor_screener"])
+        self.assertTrue(first.hard_vetoes["required_risk_constrained_execution"])
+        self.assertTrue(
+            first.promotion_contract["rejects_agentic_search_only_promotion"]
+        )
+        self.assertTrue(
+            first.promotion_contract["requires_runtime_ledger_profit_proof"]
+        )
+        mechanism_overlays = candidate_specs_module._mechanism_overlays_for_card(
+            cards[0]
+        )
+        factor_loop_contract = next(
+            contract
+            for contract in mechanism_overlays["feature_contract"]["mechanism_overlays"]
+            if contract["overlay_id"] == "adaptive_factor_to_execution_loop"
+        )
+        self.assertEqual(
+            factor_loop_contract["rank_metric"],
+            "adaptive_factor_loop_post_cost_net_pnl_per_day",
+        )
+        self.assertEqual(
+            factor_loop_contract["evidence_policy"],
+            "adaptive_factor_loop_is_search_prefilter_not_promotion_proof",
+        )
+
     def test_alpha_decay_claim_adds_predictability_stress_contract(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-tkan-alpha-decay",
