@@ -26,6 +26,16 @@ FAILED_RUN_STATES = {
     'FAILED_FINISHED',
     'FAILED_RESTARTING',
 }
+MILLISECONDS_PER_DAY = 86_400_000
+DEFAULT_KAFKA_RETENTION_TOPICS: Mapping[str, str] = {
+    'trades': 'torghut.trades.v1',
+    'quotes': 'torghut.quotes.v1',
+    'bars1m': 'torghut.bars.1m.v1',
+    'ta_microbars': 'torghut.ta.bars.1s.v1',
+    'ta_signals': 'torghut.ta.signals.v1',
+}
+RAW_REPLAY_SOURCE_TOPIC_ROLES = frozenset({'trades', 'quotes', 'bars1m'})
+DERIVED_TA_TOPIC_ROLES = frozenset({'ta_microbars', 'ta_signals'})
 
 
 @dataclass(frozen=True)
@@ -88,6 +98,24 @@ def _kubectl_get_ta_deployment_json() -> dict[str, Any]:
             TA_DEPLOYMENT,
             '-o',
             'json',
+        ]
+    )
+    return json.loads(result.stdout)
+
+
+def _kubectl_get_kafka_topics_json(
+    namespace: str, topic_names: list[str]
+) -> dict[str, Any]:
+    result = _run_kubectl(
+        [
+            '-n',
+            namespace,
+            'get',
+            'kafkatopic',
+            *topic_names,
+            '-o',
+            'json',
+            '--ignore-not-found=true',
         ]
     )
     return json.loads(result.stdout)
@@ -214,6 +242,7 @@ def _build_plan_report(
     verify: bool,
     verification: dict[str, bool] | None = None,
     coverage: dict[str, Any] | None = None,
+    kafka_retention: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         'status': 'ok',
@@ -231,6 +260,7 @@ def _build_plan_report(
         'verify': verification,
         'verify_requested': verify,
         'coverage': coverage,
+        'kafka_retention': kafka_retention,
     }
 
 
@@ -241,6 +271,7 @@ def _print_plan_text(
     dry_run: bool,
     warnings: list[str],
     coverage: dict[str, Any] | None = None,
+    kafka_retention: dict[str, Any] | None = None,
 ) -> None:
     print('Current replay state:')
     print(f'  namespace: {namespace}')
@@ -277,6 +308,30 @@ def _print_plan_text(
             f'  missing-signal-days-vs-required: {summary.get("missing_signal_days_vs_required", 0)}'
         )
         print(f'  microbar-only-days: {summary.get("microbar_only_day_count", 0)}')
+    if kafka_retention is not None:
+        summary_payload = kafka_retention.get('summary')
+        summary: Mapping[str, Any] = (
+            summary_payload if isinstance(summary_payload, dict) else {}
+        )
+        print('Kafka retention preflight:')
+        print(f'  status: {kafka_retention.get("status")}')
+        print(f'  required-calendar-days: {summary.get("required_calendar_days", 0)}')
+        topics_payload = kafka_retention.get('topics')
+        topics = topics_payload if isinstance(topics_payload, list) else []
+        for topic in topics:
+            if not isinstance(topic, dict):
+                continue
+            retention_days = topic.get('retention_days')
+            retention_display = (
+                f'{retention_days}d' if retention_days is not None else 'unknown'
+            )
+            print(f'  {topic.get("role")}: {retention_display} ({topic.get("topic")})')
+        blockers_payload = kafka_retention.get('blockers')
+        blockers = blockers_payload if isinstance(blockers_payload, list) else []
+        if blockers:
+            print('  blockers:')
+            for blocker in blockers:
+                print(f'    - {blocker}')
     if dry_run:
         print(
             f'Use --mode=apply --confirm {APPLY_CONFIRMATION_PHRASE} to execute the plan.'
@@ -452,6 +507,206 @@ def _load_clickhouse_coverage(args: argparse.Namespace) -> dict[str, Any] | None
     }
 
 
+def _required_calendar_days_from_trading_days(required_trading_days: int) -> int:
+    if required_trading_days <= 0:
+        return 0
+    return (required_trading_days * 7 + 4) // 5
+
+
+def _parse_kafka_retention_topic_overrides(values: list[str]) -> dict[str, str]:
+    topics = dict(DEFAULT_KAFKA_RETENTION_TOPICS)
+    for raw_value in values:
+        if '=' not in raw_value:
+            raise SystemExit(
+                f'--kafka-retention-topic must be role=topic, got {raw_value!r}'
+            )
+        role, topic = raw_value.split('=', 1)
+        role = role.strip()
+        topic = topic.strip()
+        if role not in topics:
+            valid_roles = ', '.join(sorted(topics))
+            raise SystemExit(
+                f'unknown kafka retention topic role {role!r}; expected one of: {valid_roles}'
+            )
+        if not topic:
+            raise SystemExit(f'kafka retention topic for role {role!r} cannot be empty')
+        topics[role] = topic
+    return topics
+
+
+def _kafka_topic_items_by_name(
+    payload: Mapping[str, Any],
+) -> dict[str, Mapping[str, Any]]:
+    items_payload = payload.get('items')
+    if isinstance(items_payload, list):
+        items = items_payload
+    else:
+        items = [payload]
+    by_name: dict[str, Mapping[str, Any]] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        metadata = item.get('metadata')
+        if not isinstance(metadata, dict):
+            continue
+        name = metadata.get('name')
+        if isinstance(name, str) and name:
+            by_name[name] = item
+    return by_name
+
+
+def _kafka_topic_ready_status(item: Mapping[str, Any]) -> str:
+    status = item.get('status')
+    if not isinstance(status, dict):
+        return 'unknown'
+    conditions = status.get('conditions')
+    if not isinstance(conditions, list):
+        return 'unknown'
+    for condition in conditions:
+        if not isinstance(condition, dict):
+            continue
+        if condition.get('type') == 'Ready':
+            ready = condition.get('status')
+            return str(ready) if ready is not None else 'unknown'
+    return 'unknown'
+
+
+def _kafka_topic_config(item: Mapping[str, Any]) -> Mapping[str, Any]:
+    spec = item.get('spec')
+    if not isinstance(spec, dict):
+        return {}
+    config = spec.get('config')
+    return config if isinstance(config, dict) else {}
+
+
+def _parse_retention_ms(value: object) -> int | None:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _retention_days(retention_ms: int | None) -> float | None:
+    if retention_ms is None:
+        return None
+    return round(retention_ms / MILLISECONDS_PER_DAY, 2)
+
+
+def _topic_role_has_blocker(blocker: str, role: str) -> bool:
+    return (
+        (blocker.startswith('retention_') and f':{role}:' in blocker)
+        or blocker.startswith(f'kafka_topic_missing:{role}:')
+        or blocker.startswith(f'kafka_topic_not_ready:{role}:')
+    )
+
+
+def _load_kafka_retention(args: argparse.Namespace) -> dict[str, Any] | None:
+    if not bool(getattr(args, 'check_kafka_retention', False)):
+        return None
+
+    topic_by_role = _parse_kafka_retention_topic_overrides(
+        list(getattr(args, 'kafka_retention_topic', []) or [])
+    )
+    topic_names = list(dict.fromkeys(topic_by_role.values()))
+    payload = _kubectl_get_kafka_topics_json(
+        str(args.kafka_topic_namespace), topic_names
+    )
+    items_by_name = _kafka_topic_items_by_name(payload)
+
+    required_trading_days = max(0, int(getattr(args, 'required_trading_days', 0) or 0))
+    required_calendar_days = max(
+        0,
+        int(getattr(args, 'required_calendar_days', 0) or 0)
+        or _required_calendar_days_from_trading_days(required_trading_days),
+    )
+    blockers: list[str] = []
+    topics: list[dict[str, Any]] = []
+
+    for role, topic_name in topic_by_role.items():
+        item = items_by_name.get(topic_name)
+        if item is None:
+            blockers.append(f'kafka_topic_missing:{role}:{topic_name}')
+            topics.append(
+                {
+                    'role': role,
+                    'topic': topic_name,
+                    'retention_ms': None,
+                    'retention_days': None,
+                    'ready': 'missing',
+                    'partitions': None,
+                    'replicas': None,
+                }
+            )
+            continue
+
+        spec = item.get('spec')
+        spec_mapping = spec if isinstance(spec, dict) else {}
+        config = _kafka_topic_config(item)
+        retention_ms = _parse_retention_ms(config.get('retention.ms'))
+        retention_days = _retention_days(retention_ms)
+        ready = _kafka_topic_ready_status(item)
+        if ready not in {'True', 'unknown'}:
+            blockers.append(f'kafka_topic_not_ready:{role}:{topic_name}:{ready}')
+        if required_calendar_days and retention_days is None:
+            blockers.append(f'retention_missing:{role}:{topic_name}')
+        if (
+            required_calendar_days
+            and retention_days is not None
+            and retention_days < required_calendar_days
+        ):
+            blockers.append(
+                f'retention_shortfall:{role}:{retention_days:g}<{required_calendar_days}'
+            )
+
+        topics.append(
+            {
+                'role': role,
+                'topic': topic_name,
+                'retention_ms': retention_ms,
+                'retention_days': retention_days,
+                'ready': ready,
+                'partitions': spec_mapping.get('partitions'),
+                'replicas': spec_mapping.get('replicas'),
+            }
+        )
+
+    raw_source_blocked = any(
+        _topic_role_has_blocker(blocker, role)
+        for role in RAW_REPLAY_SOURCE_TOPIC_ROLES
+        for blocker in blockers
+    )
+    derived_topic_blocked = any(
+        _topic_role_has_blocker(blocker, role)
+        for role in DERIVED_TA_TOPIC_ROLES
+        for blocker in blockers
+    )
+    if raw_source_blocked:
+        status = 'insufficient_source_retention'
+    elif derived_topic_blocked:
+        status = 'insufficient_derived_topic_retention'
+    elif blockers:
+        status = 'kafka_topic_preflight_blocked'
+    else:
+        status = 'ok'
+
+    return {
+        'schema_version': 'torghut.kafka-retention-preflight.v1',
+        'status': status,
+        'blockers': blockers,
+        'summary': {
+            'required_trading_days': required_trading_days,
+            'required_calendar_days': required_calendar_days,
+            'raw_replay_source_roles': sorted(RAW_REPLAY_SOURCE_TOPIC_ROLES),
+            'derived_ta_topic_roles': sorted(DERIVED_TA_TOPIC_ROLES),
+        },
+        'topics': topics,
+    }
+
+
 def _apply_plan(
     state: ReplayState, plan: dict[str, str], namespace: str
 ) -> ReplayState:
@@ -520,6 +775,7 @@ def _handle_plan_mode(
         _verify_state(state, plan, state.flink_restart_nonce) if args.verify else None
     )
     coverage = _load_clickhouse_coverage(args)
+    kafka_retention = _load_kafka_retention(args)
     report = _build_plan_report(
         namespace=args.namespace,
         mode='plan',
@@ -529,13 +785,20 @@ def _handle_plan_mode(
         verify=args.verify,
         verification=verification,
         coverage=coverage,
+        kafka_retention=kafka_retention,
     )
     if args.json:
         print(json.dumps(report, sort_keys=True, indent=2))
         return _final_status(verification) if verification else 0
 
     _print_plan_text(
-        state, plan, args.namespace, dry_run=True, warnings=warnings, coverage=coverage
+        state,
+        plan,
+        args.namespace,
+        dry_run=True,
+        warnings=warnings,
+        coverage=coverage,
+        kafka_retention=kafka_retention,
     )
     return 0
 
@@ -549,6 +812,7 @@ def _handle_verify_mode(
 ) -> int:
     verification = _verify_state(state, plan, state.flink_restart_nonce)
     coverage = _load_clickhouse_coverage(args)
+    kafka_retention = _load_kafka_retention(args)
     report = _build_plan_report(
         namespace=args.namespace,
         mode='verify',
@@ -558,13 +822,20 @@ def _handle_verify_mode(
         verify=True,
         verification=verification,
         coverage=coverage,
+        kafka_retention=kafka_retention,
     )
     if args.json:
         print(json.dumps(report, sort_keys=True, indent=2))
         return _final_status(verification)
 
     _print_plan_text(
-        state, plan, args.namespace, dry_run=False, warnings=warnings, coverage=coverage
+        state,
+        plan,
+        args.namespace,
+        dry_run=False,
+        warnings=warnings,
+        coverage=coverage,
+        kafka_retention=kafka_retention,
     )
     print('')
     print('Verify results:')
@@ -590,6 +861,7 @@ def _handle_apply_mode(
         _verify_state(applied_state, plan, previous_nonce) if args.verify else None
     )
     coverage = _load_clickhouse_coverage(args)
+    kafka_retention = _load_kafka_retention(args)
 
     report = _build_plan_report(
         namespace=args.namespace,
@@ -600,6 +872,7 @@ def _handle_apply_mode(
         verify=args.verify,
         verification=verification,
         coverage=coverage,
+        kafka_retention=kafka_retention,
     )
     if args.json:
         print(json.dumps(report, sort_keys=True, indent=2))
@@ -613,6 +886,7 @@ def _handle_apply_mode(
         dry_run=False,
         warnings=warnings,
         coverage=coverage,
+        kafka_retention=kafka_retention,
     )
     if args.verify and verification is not None:
         print('Verify results:')
@@ -677,6 +951,22 @@ def parse_args() -> argparse.Namespace:
         help='Add a read-only ta_signals/ta_microbars coverage preflight to plan/verify/apply reports.',
     )
     parser.add_argument(
+        '--check-kafka-retention',
+        action='store_true',
+        help='Add a read-only KafkaTopic retention preflight for raw and derived TA replay topics.',
+    )
+    parser.add_argument(
+        '--kafka-topic-namespace',
+        default='kafka',
+        help='Kubernetes namespace containing Strimzi KafkaTopic resources.',
+    )
+    parser.add_argument(
+        '--kafka-retention-topic',
+        action='append',
+        default=[],
+        help='Override a retention topic by role, for example trades=torghut.trades.v1.',
+    )
+    parser.add_argument(
         '--clickhouse-http-url',
         default=os.environ.get(
             'TA_CLICKHOUSE_HTTP_URL',
@@ -721,6 +1011,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=0,
         help='Required replay proof trading-day count used to compute signal-day shortfall.',
+    )
+    parser.add_argument(
+        '--required-calendar-days',
+        type=int,
+        default=0,
+        help='Required source retention calendar-day count. Defaults to ceil(required-trading-days * 7 / 5).',
     )
     return parser.parse_args()
 
