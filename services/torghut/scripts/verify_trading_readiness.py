@@ -19,6 +19,9 @@ ROUTE_REACQUISITION_BOOK_SCHEMA_VERSION = 'torghut.route-reacquisition-book.v1'
 NEXT_PAPER_ROUTE_TARGET_PLAN_SCHEMA_VERSION = (
     'torghut.next-paper-route-runtime-window-targets.v1'
 )
+RUNTIME_LEDGER_PROOF_PACKET_SCHEMA_VERSION = (
+    'torghut.runtime-ledger-live-paper-proof-packet.v1'
+)
 DOC29_LIVE_SCALE_GATE = 'live_scale_observed'
 REQUIRED_RUNTIME_WINDOW_TARGET_PLAN_FLAGS = (
     '--runtime-window-import',
@@ -366,6 +369,46 @@ def _runtime_ledger_trading_day_count(
     return 0, None
 
 
+def _add_runtime_ledger_proof_packet_check(
+    checks: dict[str, dict[str, Any]],
+    runtime_ledger_proof_packet: Mapping[str, Any] | None,
+) -> None:
+    packet = _mapping(runtime_ledger_proof_packet)
+    authority = _mapping(packet.get('promotion_authority'))
+    schema_version = _text(packet.get('schema_version'))
+    allowed = authority.get('allowed') is True
+    packet_ok = packet.get('ok') is True and allowed
+    expected_schema = schema_version == RUNTIME_LEDGER_PROOF_PACKET_SCHEMA_VERSION
+    _add_check(
+        checks,
+        'runtime_ledger_proof_packet_authority',
+        passed=bool(packet) and expected_schema and packet_ok,
+        observed={
+            'present': bool(packet),
+            'schema_version': schema_version,
+            'ok': packet.get('ok'),
+            'verdict': _text(packet.get('verdict')),
+            'authority_allowed': authority.get('allowed'),
+            'authority_reason': _text(authority.get('reason')),
+            'blocking_reasons': [
+                _text(reason)
+                for reason in _sequence(authority.get('blocking_reasons'))
+                if _text(reason)
+            ],
+            'failed_checks': [
+                _text(check)
+                for check in _sequence(authority.get('failed_checks'))
+                if _text(check)
+            ],
+        },
+        expected={
+            'schema_version': RUNTIME_LEDGER_PROOF_PACKET_SCHEMA_VERSION,
+            'ok': True,
+            'promotion_authority.allowed': True,
+        },
+    )
+
+
 def _add_runtime_ledger_profit_proof_checks(
     checks: dict[str, dict[str, Any]],
     *,
@@ -498,6 +541,7 @@ def evaluate_trading_readiness(
     *,
     completion_status: Mapping[str, Any] | None = None,
     paper_route_evidence: Mapping[str, Any] | None = None,
+    runtime_ledger_proof_packet: Mapping[str, Any] | None = None,
     profile: str = 'paper',
     min_routeable_symbols: int = 2,
     min_decisions: int = 0,
@@ -511,6 +555,7 @@ def evaluate_trading_readiness(
     require_paper_route_target_plan: bool = False,
     require_paper_route_import_ready: bool = False,
     require_runtime_ledger_profit_proof: bool = False,
+    require_runtime_ledger_proof_packet: bool = False,
 ) -> dict[str, Any]:
     """Return a strict readiness verdict from a Torghut trading status payload."""
 
@@ -922,6 +967,11 @@ def evaluate_trading_readiness(
             min_runtime_ledger_trading_days=min_runtime_ledger_trading_days,
             min_runtime_ledger_daily_net_pnl=min_runtime_ledger_daily_net_pnl,
         )
+    if require_runtime_ledger_proof_packet:
+        _add_runtime_ledger_proof_packet_check(
+            checks,
+            runtime_ledger_proof_packet,
+        )
 
     failed_checks = [key for key, value in checks.items() if not value['passed']]
     return {
@@ -938,6 +988,12 @@ def evaluate_trading_readiness(
             'min_runtime_ledger_net_pnl': str(min_runtime_ledger_net_pnl),
             'min_runtime_ledger_trading_days': min_runtime_ledger_trading_days,
             'min_runtime_ledger_daily_net_pnl': str(min_runtime_ledger_daily_net_pnl),
+        },
+        'runtime_ledger_proof_packet': {
+            'required': require_runtime_ledger_proof_packet,
+            'schema_version': _text(
+                _mapping(runtime_ledger_proof_packet).get('schema_version')
+            ),
         },
     }
 
@@ -970,6 +1026,16 @@ def _parser() -> argparse.ArgumentParser:
     paper_route_evidence_source.add_argument(
         '--paper-route-evidence-url',
         help='URL returning a /trading/paper-route-evidence JSON payload.',
+    )
+    runtime_ledger_packet_source = parser.add_mutually_exclusive_group(required=False)
+    runtime_ledger_packet_source.add_argument(
+        '--runtime-ledger-proof-packet-file',
+        type=Path,
+        help='Path to an assemble_runtime_ledger_proof_packet.py JSON payload.',
+    )
+    runtime_ledger_packet_source.add_argument(
+        '--runtime-ledger-proof-packet-url',
+        help='URL returning an assemble_runtime_ledger_proof_packet.py JSON payload.',
     )
     parser.add_argument(
         '--profile', choices=('paper', 'live', 'either'), default='paper'
@@ -1015,6 +1081,11 @@ def _parser() -> argparse.ArgumentParser:
         action='store_true',
         help='Require doc29 live-scale runtime-ledger proof from /trading/completion/doc29.',
     )
+    parser.add_argument(
+        '--require-runtime-ledger-proof-packet',
+        action='store_true',
+        help='Require canonical runtime-ledger proof packet promotion authority.',
+    )
     parser.add_argument('--timeout-seconds', type=float, default=10.0)
     return parser
 
@@ -1038,6 +1109,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         url=args.paper_route_evidence_url,
         timeout_seconds=args.timeout_seconds,
     )
+    runtime_ledger_proof_packet = _load_optional_json_object(
+        path=args.runtime_ledger_proof_packet_file,
+        url=args.runtime_ledger_proof_packet_url,
+        timeout_seconds=args.timeout_seconds,
+    )
     min_runtime_ledger_net_pnl = _decimal(args.min_runtime_ledger_net_pnl)
     if min_runtime_ledger_net_pnl is None:
         raise SystemExit(
@@ -1053,6 +1129,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         status,
         completion_status=completion_status,
         paper_route_evidence=paper_route_evidence,
+        runtime_ledger_proof_packet=runtime_ledger_proof_packet,
         profile=str(args.profile),
         min_routeable_symbols=max(0, int(args.min_routeable_symbols)),
         min_decisions=max(0, int(args.min_decisions)),
@@ -1071,6 +1148,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         require_paper_route_import_ready=bool(args.require_paper_route_import_ready),
         require_runtime_ledger_profit_proof=bool(
             args.require_runtime_ledger_profit_proof
+        ),
+        require_runtime_ledger_proof_packet=bool(
+            args.require_runtime_ledger_proof_packet
         ),
     )
     result['evaluated_at'] = datetime.now(timezone.utc).isoformat()
