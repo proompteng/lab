@@ -367,9 +367,11 @@ def _check(
     expected: object,
     blockers: Sequence[str] = (),
     detail: object | None = None,
+    status: str | None = None,
 ) -> None:
     payload: dict[str, Any] = {
         "passed": bool(passed),
+        "status": status or ("passed" if passed else "failed"),
         "observed": observed,
         "expected": expected,
     }
@@ -896,6 +898,9 @@ def build_runtime_ledger_proof_packet(
     runtime_import_due = (
         import_ready and not paper_import_blockers and not health_gate_blockers
     )
+    deferred_until_runtime_import_due = (
+        "deferred_until_paper_route_runtime_window_import_is_due"
+    )
     _check(
         checks,
         "paper_route_runtime_window_import_audit",
@@ -911,6 +916,7 @@ def build_runtime_ledger_proof_packet(
         blockers=[]
         if (not runtime_import_due or bool(import_audit))
         else ["runtime_window_import_audit_missing"],
+        status=None if runtime_import_due else deferred_until_runtime_import_due,
     )
     if runtime_import_due and not import_audit:
         _extend_unique(blockers, ["runtime_window_import_audit_missing"])
@@ -941,6 +947,7 @@ def build_runtime_ledger_proof_packet(
         expected="paper-route source decisions, executions, and TCA exist for every import target when runtime import is due",
         blockers=source_activity_blockers
         or ([] if source_activity_ok else ["paper_route_source_activity_missing"]),
+        status=None if runtime_import_due else deferred_until_runtime_import_due,
     )
     if not source_activity_ok:
         _extend_unique(
@@ -998,6 +1005,9 @@ def build_runtime_ledger_proof_packet(
             if runtime_import_ok or not runtime_import_due
             else ["runtime_window_import_missing"]
         ),
+        status=None
+        if runtime_import_due
+        else "waiting_for_paper_route_runtime_window_import",
     )
     if runtime_import_blockers:
         _extend_unique(blockers, runtime_import_blockers)
@@ -1035,6 +1045,7 @@ def build_runtime_ledger_proof_packet(
             if gate_satisfied or not runtime_import_due
             else ["doc29_live_scale_gate_not_satisfied"]
         ),
+        status=None if runtime_import_due else deferred_until_runtime_import_due,
     )
     if completion_gate_blockers:
         _extend_unique(blockers, completion_gate_blockers)
@@ -1062,6 +1073,7 @@ def build_runtime_ledger_proof_packet(
         "runtime_ledger_db_refs",
         passed=(not runtime_import_due) or (bool(ledger_refs) and not unbacked_refs),
         observed={
+            "runtime_import_due": runtime_import_due,
             "strategy_runtime_ledger_buckets": ledger_refs,
             "unbacked_metric_windows": unbacked_refs,
         },
@@ -1069,6 +1081,7 @@ def build_runtime_ledger_proof_packet(
         blockers=[]
         if (bool(ledger_refs) and not unbacked_refs) or not runtime_import_due
         else ["runtime_ledger_db_refs_missing_or_unbacked"],
+        status=None if runtime_import_due else deferred_until_runtime_import_due,
     )
     if runtime_import_due and (not ledger_refs or unbacked_refs):
         _extend_unique(blockers, ["runtime_ledger_db_refs_missing_or_unbacked"])
@@ -1088,6 +1101,7 @@ def build_runtime_ledger_proof_packet(
         "runtime_ledger_lifecycle_counts",
         passed=not lifecycle_blockers,
         observed={
+            "runtime_import_due": runtime_import_due,
             "bucket_count": bucket_count,
             "fill_count": fill_count,
             "closed_trade_count": closed_trade_count,
@@ -1096,6 +1110,7 @@ def build_runtime_ledger_proof_packet(
         },
         expected="positive buckets, fills, closed trips, filled notional, and post-cost expectancy",
         blockers=lifecycle_blockers,
+        status=None if runtime_import_due else deferred_until_runtime_import_due,
     )
     _extend_unique(blockers, lifecycle_blockers)
     pnl_blockers: list[str] = []
@@ -1112,6 +1127,7 @@ def build_runtime_ledger_proof_packet(
         "runtime_ledger_post_cost_profit_target",
         passed=not pnl_blockers,
         observed={
+            "runtime_import_due": runtime_import_due,
             "net_pnl_after_costs": _decimal_text(net_pnl),
             "trading_days": trading_days,
             "daily_net_pnl_after_costs": _decimal_text(daily_net_pnl),
@@ -1124,6 +1140,7 @@ def build_runtime_ledger_proof_packet(
             ),
         },
         blockers=pnl_blockers,
+        status=None if runtime_import_due else deferred_until_runtime_import_due,
     )
     _extend_unique(blockers, pnl_blockers)
 
