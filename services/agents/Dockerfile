@@ -134,6 +134,7 @@ RUN bun --cwd=packages/cx-tools run build
 
 FROM agents-workspace-deps AS agents-build
 WORKDIR /app
+ENV NODE_ENV=production
 RUN rm -rf /app/packages /app/services
 COPY full/ .
 COPY --from=agent-contracts-build /app/packages/agent-contracts /app/packages/agent-contracts
