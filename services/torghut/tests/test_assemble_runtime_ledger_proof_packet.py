@@ -1017,6 +1017,24 @@ class TestRuntimeLedgerProofPacket(TestCase):
             self.assertEqual(exit_code, 1)
             payload = json.loads(output_path.read_text(encoding="utf-8"))
             self.assertEqual(payload["verdict"], "waiting_for_runtime_window")
+            self.assertEqual(
+                payload["checks"]["runtime_window_import_proof"]["status"],
+                "waiting_for_paper_route_runtime_window_import",
+            )
+            self.assertEqual(
+                payload["checks"]["runtime_ledger_post_cost_profit_target"]["status"],
+                "deferred_until_paper_route_runtime_window_import_is_due",
+            )
+            self.assertTrue(
+                payload["checks"]["runtime_ledger_post_cost_profit_target"]["observed"][
+                    "runtime_import_due"
+                ]
+                is False
+            )
+            self.assertEqual(
+                payload["checks"]["runtime_ledger_lifecycle_counts"]["status"],
+                "deferred_until_paper_route_runtime_window_import_is_due",
+            )
 
     def test_cli_can_assemble_from_service_base_url(self) -> None:
         class _Response:
