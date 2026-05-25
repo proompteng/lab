@@ -80,6 +80,95 @@ _AUTORESEARCH_PORTFOLIO_READY_STATUSES = (
 _PROMOTION_GRADE_RUNTIME_LEDGER_PNL_BASIS = "realized_strategy_pnl_after_explicit_costs"
 _RUNTIME_LEDGER_REPAIR_SCAN_LIMIT = 256
 _RUNTIME_LEDGER_REPAIR_CANDIDATE_LIMIT = 8
+_RUNTIME_WINDOW_IMPORT_CONTINUITY_READY_STATES = frozenset(
+    {
+        "signals_present",
+        "expected_market_closed_staleness",
+    }
+)
+
+
+def _runtime_window_import_continuity_signal(state: object) -> tuple[str, str, str]:
+    state_text = _safe_attr_text(state, "last_signal_continuity_state")
+    reason = _safe_attr_text(state, "last_signal_continuity_reason")
+    actionable = _safe_bool(getattr(state, "last_signal_continuity_actionable", None))
+    alert_active = bool(getattr(state, "signal_continuity_alert_active", False))
+    alert_reason = _safe_attr_text(state, "signal_continuity_alert_reason")
+    if alert_active:
+        return (
+            "false",
+            "signal_continuity",
+            alert_reason or "signal_continuity_alert_active",
+        )
+    if actionable is True:
+        return (
+            "false",
+            "signal_continuity",
+            reason or state_text or "signal_continuity_actionable",
+        )
+    if state_text in _RUNTIME_WINDOW_IMPORT_CONTINUITY_READY_STATES:
+        return "true", "signal_continuity", state_text
+    if actionable is False and state_text:
+        return "true", "signal_continuity", state_text
+    return "false", "missing", "signal_continuity_missing"
+
+
+def _runtime_window_import_drift_signal(state: object) -> tuple[str, str, str]:
+    if hasattr(state, "drift_live_promotion_eligible"):
+        eligible = bool(getattr(state, "drift_live_promotion_eligible", False))
+        return (
+            "true" if eligible else "false",
+            "drift_live_promotion_eligible",
+            "drift_live_promotion_eligible"
+            if eligible
+            else "drift_live_promotion_ineligible",
+        )
+    return "false", "missing", "drift_live_promotion_eligible_missing"
+
+
+def _runtime_window_import_health_gate_inputs(
+    state: object,
+    *,
+    dependency_quorum_decision: str,
+) -> dict[str, object]:
+    continuity_ok, continuity_source, continuity_reason = (
+        _runtime_window_import_continuity_signal(state)
+    )
+    drift_ok, drift_source, drift_reason = _runtime_window_import_drift_signal(state)
+    blockers: list[str] = []
+    if dependency_quorum_decision != "allow":
+        blockers.append("dependency_quorum_not_allow")
+    if continuity_source == "missing":
+        blockers.append("runtime_window_import_continuity_missing")
+    elif continuity_ok != "true":
+        blockers.append("evidence_continuity_not_ok")
+    if drift_source == "missing":
+        blockers.append("runtime_window_import_drift_missing")
+    elif drift_ok != "true":
+        blockers.append("drift_checks_not_ok")
+    return {
+        "continuity_ok": continuity_ok,
+        "continuity_source": continuity_source,
+        "continuity_reason": continuity_reason,
+        "drift_ok": drift_ok,
+        "drift_source": drift_source,
+        "drift_reason": drift_reason,
+        "runtime_window_import_health_gate": {
+            "schema_version": "torghut.runtime-window-import-health-gate.v1",
+            "source": "live_submission_gate",
+            "dependency_quorum_decision": dependency_quorum_decision,
+            "dependency_quorum_source": "dependency_quorum",
+            "continuity_ok": continuity_ok,
+            "continuity_source": continuity_source,
+            "continuity_reason": continuity_reason,
+            "drift_ok": drift_ok,
+            "drift_source": drift_source,
+            "drift_reason": drift_reason,
+            "ready": not blockers,
+            "blockers": blockers,
+        },
+        "runtime_window_import_health_gate_blockers": blockers,
+    }
 
 
 def _autoresearch_portfolio_current_oracle_passed(
@@ -2861,6 +2950,10 @@ def build_live_submission_gate_payload(
         str(dependency_quorum_payload.get("decision") or "").strip().lower()
         or "unknown"
     )
+    runtime_window_import_health_gate = _runtime_window_import_health_gate_inputs(
+        state,
+        dependency_quorum_decision=dependency_decision,
+    )
     empirical_ready = (
         bool(empirical_jobs_status.get("ready"))
         if isinstance(empirical_jobs_status, Mapping)
@@ -3043,6 +3136,7 @@ def build_live_submission_gate_payload(
             "promotion_eligible_total": promotion_eligible_total,
             "paper_probation_eligible_total": paper_probation_eligible_total,
             "dependency_quorum_decision": dependency_decision,
+            **runtime_window_import_health_gate,
             "empirical_jobs_ready": empirical_ready,
             "dspy_live_ready": dspy_live_ready,
             "critical_toggle_parity": critical_toggle_parity,
@@ -3257,6 +3351,7 @@ def build_live_submission_gate_payload(
         "promotion_eligible_total": promotion_eligible_total,
         "paper_probation_eligible_total": paper_probation_eligible_total,
         "dependency_quorum_decision": dependency_decision,
+        **runtime_window_import_health_gate,
         "empirical_jobs_ready": empirical_ready,
         "dspy_live_ready": dspy_live_ready,
         "critical_toggle_parity": critical_toggle_parity,
