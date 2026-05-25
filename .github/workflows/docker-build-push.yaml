@@ -23,6 +23,11 @@ on:
         required: false
         type: boolean
         default: true
+      build_synthesis:
+        description: 'Build and publish apps/synthesis image'
+        required: false
+        type: boolean
+        default: true
       build_docs:
         description: 'Build and publish apps/docs image'
         required: false
@@ -37,6 +42,7 @@ jobs:
     outputs:
       proompteng: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.proompteng || steps.filter.outputs.proompteng }}
       app: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.app || steps.filter.outputs.app }}
+      synthesis: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.synthesis || steps.filter.outputs.synthesis }}
       docs: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.docs || steps.filter.outputs.docs }}
 
     steps:
@@ -55,6 +61,9 @@ jobs:
             app:
               - 'apps/app/**'
               - 'packages/design/**'
+            synthesis:
+              - 'apps/synthesis/**'
+              - 'packages/design/**'
             docs:
               - 'apps/docs/**'
               - 'packages/design/**'
@@ -66,6 +75,7 @@ jobs:
           {
             echo "proompteng=${{ github.event.inputs.build_proompteng }}"
             echo "app=${{ github.event.inputs.build_app }}"
+            echo "synthesis=${{ github.event.inputs.build_synthesis }}"
             echo "docs=${{ github.event.inputs.build_docs }}"
           } >> "$GITHUB_OUTPUT"
 
@@ -74,7 +84,7 @@ jobs:
     permissions:
       contents: write
     needs: changes
-    if: ${{ needs.changes.outputs.proompteng == 'true' || needs.changes.outputs.app == 'true' || needs.changes.outputs.docs == 'true' }}
+    if: ${{ needs.changes.outputs.proompteng == 'true' || needs.changes.outputs.app == 'true' || needs.changes.outputs.synthesis == 'true' || needs.changes.outputs.docs == 'true' }}
     outputs:
       new_tag: ${{ steps.tag_version.outputs.new_tag }}
       changelog: ${{ steps.tag_version.outputs.changelog }}
@@ -116,6 +126,16 @@ jobs:
       context: .
       new_tag: ${{ needs.version.outputs.new_tag }}
 
+  build-synthesis:
+    needs: [changes, version]
+    if: ${{ needs.changes.outputs.synthesis == 'true' }}
+    uses: ./.github/workflows/docker-build-common.yaml
+    with:
+      image_name: synthesis
+      dockerfile: ./apps/synthesis/Dockerfile
+      context: .
+      new_tag: ${{ needs.version.outputs.new_tag }}
+
   build-docs:
     needs: [changes, version]
     if: ${{ needs.changes.outputs.docs == 'true' }}
@@ -130,13 +150,7 @@ jobs:
     runs-on: arc-arm64
     permissions:
       contents: write
-    needs:
-      [
-        version,
-        build-proompteng,
-        build-app,
-        build-docs,
-      ]
+    needs: [version, build-proompteng, build-app, build-synthesis, build-docs]
     if: failure()
     steps:
       - name: Delete release if any build failed

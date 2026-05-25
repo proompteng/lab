@@ -32,6 +32,14 @@ spec:
                   argocd.argoproj.io/sync-wave: "5"
                 automation: auto
                 enabled: "true"
+              - name: synthesis
+                path: argocd/applications/synthesis
+                namespace: synthesis
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                automation: auto
+                enabled: "true"
               - name: cms
                 path: argocd/applications/cms
                 namespace: cms

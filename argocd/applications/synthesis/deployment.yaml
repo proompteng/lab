@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: synthesis
+  namespace: synthesis
+spec:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: synthesis
+  template:
+    metadata:
+      labels:
+        app: synthesis
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      containers:
+        - name: synthesis
+          image: registry.ide-newton.ts.net/lab/synthesis
+          resources:
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "3000"
+            - name: HOSTNAME
+              value: "0.0.0.0"
+            - name: NITRO_PORT
+              value: "3000"
+            - name: SYNTHESIS_STORAGE
+              value: "postgres"
+            - name: SYNTHESIS_ENGAGEMENT_MODE
+              value: "queue"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: synthesis-db-synthesis
+                  key: uri
+          envFrom:
+            - secretRef:
+                name: synthesis-env
+          readinessProbe:
+            httpGet:
+              path: /api/feed
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/feed
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
