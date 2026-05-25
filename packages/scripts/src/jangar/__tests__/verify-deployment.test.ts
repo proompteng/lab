@@ -4,7 +4,7 @@ import { parseArgoApplicationStatus } from '../../shared/argo'
 import { __private } from '../verify-deployment'
 
 describe('verify-deployment', () => {
-  const expectedDigest = 'sha256:415bbe76d4b15dd5cad4ebfe02d6ba41fcb8ca7068540d101d2bf4dd95c83222'
+  const agentsRuntimeDigest = 'sha256:9bb9bf86d0ebffceae8424d68e7b20db62ba395f56dcf3923a2f58c5e0b391a5'
   const futureFreshUntil = '2999-01-01T00:00:00.000Z'
 
   const buildAuthorityProvenanceSettlement = (overrides: Record<string, unknown> = {}) => ({
@@ -74,7 +74,7 @@ describe('verify-deployment', () => {
         execution_class: 'serving',
         admission_passport_id: 'passport:serving:1',
         runtime_kit_digest: 'runtime-serving',
-        admitted_image_digest: expectedDigest,
+        admitted_image_digest: agentsRuntimeDigest,
         required_proof_cell_ids: ['runtime-proof-cell:serving:image'],
         projection_watermark_ids: ['projection-watermark:serving:deploy'],
         status: 'sealed',
@@ -86,7 +86,7 @@ describe('verify-deployment', () => {
         execution_class: 'plan',
         admission_passport_id: 'passport:swarm_plan:1',
         runtime_kit_digest: 'runtime-plan',
-        admitted_image_digest: expectedDigest,
+        admitted_image_digest: agentsRuntimeDigest,
         required_proof_cell_ids: ['runtime-proof-cell:plan:image'],
         projection_watermark_ids: ['projection-watermark:plan:deploy'],
         status: 'sealed',
@@ -98,7 +98,7 @@ describe('verify-deployment', () => {
         execution_class: 'implement',
         admission_passport_id: 'passport:swarm_implement:1',
         runtime_kit_digest: 'runtime-implement',
-        admitted_image_digest: expectedDigest,
+        admitted_image_digest: agentsRuntimeDigest,
         required_proof_cell_ids: ['runtime-proof-cell:implement:image'],
         projection_watermark_ids: ['projection-watermark:implement:deploy'],
         status: 'sealed',
@@ -110,7 +110,7 @@ describe('verify-deployment', () => {
         execution_class: 'verify',
         admission_passport_id: 'passport:swarm_verify:1',
         runtime_kit_digest: 'runtime-verify',
-        admitted_image_digest: expectedDigest,
+        admitted_image_digest: agentsRuntimeDigest,
         required_proof_cell_ids: ['runtime-proof-cell:verify:image'],
         projection_watermark_ids: ['projection-watermark:verify:deploy'],
         status: 'sealed',
@@ -273,22 +273,7 @@ describe('verify-deployment', () => {
     )
   })
 
-  it('accepts runtime image refs that cite the expected rollout digest', () => {
-    expect(
-      __private.imageRefMatchesExpectedDigest(
-        'registry.ide-newton.ts.net/lab/jangar:000d3b97@sha256:415bbe76d4b15dd5cad4ebfe02d6ba41fcb8ca7068540d101d2bf4dd95c83222',
-        'sha256:415bbe76d4b15dd5cad4ebfe02d6ba41fcb8ca7068540d101d2bf4dd95c83222',
-      ),
-    ).toBe(true)
-    expect(
-      __private.imageRefMatchesExpectedDigest(
-        'runtime:local',
-        'sha256:415bbe76d4b15dd5cad4ebfe02d6ba41fcb8ca7068540d101d2bf4dd95c83222',
-      ),
-    ).toBe(false)
-  })
-
-  it('verifies allowed passport digests against runtime kits on the promoted image digest', () => {
+  it('verifies allowed passport digests against healthy referenced runtime kits', () => {
     const evidence = __private.verifyAdmissionPassportParity({
       status: {
         serving_passport_id: 'passport:serving:1',
@@ -296,14 +281,14 @@ describe('verify-deployment', () => {
           {
             runtime_kit_id: 'runtime-kit:serving:1',
             image_ref:
-              'registry.ide-newton.ts.net/lab/jangar:000d3b97@sha256:415bbe76d4b15dd5cad4ebfe02d6ba41fcb8ca7068540d101d2bf4dd95c83222',
+              'registry.ide-newton.ts.net/lab/agents-control-plane:41c9e32e@sha256:9bb9bf86d0ebffceae8424d68e7b20db62ba395f56dcf3923a2f58c5e0b391a5',
             decision: 'healthy',
             fresh_until: '2999-01-01T00:00:00.000Z',
           },
           {
             runtime_kit_id: 'runtime-kit:collaboration:1',
             image_ref:
-              'registry.ide-newton.ts.net/lab/jangar:000d3b97@sha256:415bbe76d4b15dd5cad4ebfe02d6ba41fcb8ca7068540d101d2bf4dd95c83222',
+              'registry.ide-newton.ts.net/lab/agents-control-plane:41c9e32e@sha256:9bb9bf86d0ebffceae8424d68e7b20db62ba395f56dcf3923a2f58c5e0b391a5',
             decision: 'healthy',
             fresh_until: '2999-01-01T00:00:00.000Z',
           },
@@ -327,7 +312,6 @@ describe('verify-deployment', () => {
           },
         ],
       },
-      expectedDigest: 'sha256:415bbe76d4b15dd5cad4ebfe02d6ba41fcb8ca7068540d101d2bf4dd95c83222',
       consumers: ['serving', 'swarm_plan'],
       now: new Date('2026-05-06T00:00:00.000Z'),
     })
@@ -335,9 +319,12 @@ describe('verify-deployment', () => {
     expect(evidence.passportIds).toEqual(['passport:serving:1', 'passport:swarm_plan:1'])
     expect(evidence.runtimeKitSetDigests).toEqual(['runtime-serving', 'runtime-collaboration'])
     expect(evidence.runtimeKitIds).toEqual(['runtime-kit:serving:1', 'runtime-kit:collaboration:1'])
+    expect(evidence.runtimeImageRefs).toEqual([
+      'registry.ide-newton.ts.net/lab/agents-control-plane:41c9e32e@sha256:9bb9bf86d0ebffceae8424d68e7b20db62ba395f56dcf3923a2f58c5e0b391a5',
+    ])
   })
 
-  it('fails verification when a required runtime kit is from another image digest', () => {
+  it('fails verification when a required runtime kit omits its image ref', () => {
     expect(() =>
       __private.verifyAdmissionPassportParity({
         status: {
@@ -345,8 +332,6 @@ describe('verify-deployment', () => {
           runtime_kits: [
             {
               runtime_kit_id: 'runtime-kit:serving:1',
-              image_ref:
-                'registry.ide-newton.ts.net/lab/jangar:old@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
               decision: 'healthy',
               fresh_until: '2999-01-01T00:00:00.000Z',
             },
@@ -362,11 +347,10 @@ describe('verify-deployment', () => {
             },
           ],
         },
-        expectedDigest: 'sha256:415bbe76d4b15dd5cad4ebfe02d6ba41fcb8ca7068540d101d2bf4dd95c83222',
         consumers: ['serving'],
         now: new Date('2026-05-06T00:00:00.000Z'),
       }),
-    ).toThrow('does not match expected rollout digest')
+    ).toThrow('does not include image_ref')
   })
 
   it('fails verification when a required passport is held', () => {
@@ -395,7 +379,6 @@ describe('verify-deployment', () => {
             },
           ],
         },
-        expectedDigest: 'sha256:415bbe76d4b15dd5cad4ebfe02d6ba41fcb8ca7068540d101d2bf4dd95c83222',
         consumers: ['serving'],
         now: new Date('2026-05-06T00:00:00.000Z'),
       }),
@@ -405,7 +388,6 @@ describe('verify-deployment', () => {
   it('verifies sealed deployment warrants, proof cells, and deploy watermarks', () => {
     const evidence = __private.verifyRuntimeProofSurfaceParity({
       status: buildRuntimeProofStatus(),
-      expectedDigest,
       consumers: ['serving', 'swarm_plan'],
       now: new Date('2026-05-07T00:00:00.000Z'),
     })
@@ -421,7 +403,6 @@ describe('verify-deployment', () => {
   it('includes verify warrants in the default deploy proof gate', () => {
     const evidence = __private.verifyRuntimeProofSurfaceParity({
       status: buildRuntimeProofStatus(),
-      expectedDigest,
       consumers: __private.defaultAdmissionPassportConsumers,
       now: new Date('2026-05-07T00:00:00.000Z'),
     })
@@ -450,7 +431,6 @@ describe('verify-deployment', () => {
     expect(() =>
       __private.verifyRuntimeProofSurfaceParity({
         status: { ...status, recovery_warrants: recoveryWarrants },
-        expectedDigest,
         consumers: __private.defaultAdmissionPassportConsumers,
         now: new Date('2026-05-07T00:00:00.000Z'),
       }),
@@ -473,11 +453,27 @@ describe('verify-deployment', () => {
             },
           ],
         }),
-        expectedDigest,
         consumers: ['serving'],
         now: new Date('2026-05-07T00:00:00.000Z'),
       }),
     ).toThrow('Missing deploy verification projection watermark')
+  })
+
+  it('fails runtime proof verification when a recovery warrant omits the admitted runtime image digest', () => {
+    const status = buildRuntimeProofStatus()
+    const recoveryWarrants = (status.recovery_warrants as Record<string, unknown>[]).map((warrant) =>
+      warrant.recovery_warrant_id === 'recovery-warrant:serving:1'
+        ? { ...warrant, admitted_image_digest: null }
+        : warrant,
+    )
+
+    expect(() =>
+      __private.verifyRuntimeProofSurfaceParity({
+        status: buildRuntimeProofStatus({ recovery_warrants: recoveryWarrants }),
+        consumers: ['serving'],
+        now: new Date('2026-05-07T00:00:00.000Z'),
+      }),
+    ).toThrow('Recovery warrant recovery-warrant:serving:1 is missing admitted_image_digest')
   })
 
   it('fails runtime proof verification when a superseded warrant still has runnable seats', () => {
@@ -495,7 +491,6 @@ describe('verify-deployment', () => {
     expect(() =>
       __private.verifyRuntimeProofSurfaceParity({
         status: buildRuntimeProofStatus({ recovery_warrants: recoveryWarrants }),
-        expectedDigest,
         consumers: ['swarm_plan'],
         now: new Date('2026-05-07T00:00:00.000Z'),
       }),

@@ -289,9 +289,6 @@ const parseFreshUntilMs = (value: unknown, context: string) => {
   return parsed
 }
 
-const imageRefMatchesExpectedDigest = (imageRef: string, expectedDigest: string) =>
-  imageRef === expectedDigest || imageRef.includes(`@${expectedDigest}`) || imageRef.endsWith(expectedDigest)
-
 export const extractExpectedDigest = (kustomizationSource: string, imageName: string): string => {
   return extractImageDigestFromKustomizationSource(kustomizationSource, imageName)
 }
@@ -698,7 +695,6 @@ const readControlPlaneStatus = async (options: ResolvedOptions): Promise<Control
 
 const verifyAdmissionPassportParity = (input: {
   status: ControlPlaneStatusPayload
-  expectedDigest: string
   consumers: AdmissionPassportConsumer[]
   now?: Date
 }): AdmissionPassportParityEvidence => {
@@ -804,13 +800,6 @@ const verifyAdmissionPassportParity = (input: {
     if (!imageRef) {
       throw new Error(`Runtime kit ${runtimeKitId} does not include image_ref`)
     }
-    if (!imageRefMatchesExpectedDigest(imageRef, input.expectedDigest)) {
-      throw new Error(
-        `Runtime kit ${runtimeKitId} image_ref ${imageRef} does not match expected rollout digest ${
-          input.expectedDigest
-        }`,
-      )
-    }
     runtimeImageRefs.push(imageRef)
   }
 
@@ -825,7 +814,6 @@ const verifyAdmissionPassportParity = (input: {
 
 const verifyRuntimeProofSurfaceParity = (input: {
   status: ControlPlaneStatusPayload
-  expectedDigest: string
   consumers: AdmissionPassportConsumer[]
   now?: Date
 }): RuntimeProofSurfaceParityEvidence => {
@@ -946,11 +934,8 @@ const verifyRuntimeProofSurfaceParity = (input: {
     }
 
     const admittedImageDigest = asString(warrant.admitted_image_digest)
-    if (!admittedImageDigest || !imageRefMatchesExpectedDigest(admittedImageDigest, input.expectedDigest)) {
-      throw new Error(
-        `Recovery warrant ${warrantId} admitted_image_digest=${admittedImageDigest ?? 'missing'} does not match ` +
-          `expected rollout digest ${input.expectedDigest}`,
-      )
+    if (!admittedImageDigest) {
+      throw new Error(`Recovery warrant ${warrantId} is missing admitted_image_digest`)
     }
 
     const requiredProofCellIds = stringList(warrant.required_proof_cell_ids)
@@ -1280,7 +1265,6 @@ export const main = async (cliOptions?: CliOptions) => {
   } else {
     const passportEvidence = verifyAdmissionPassportParity({
       status: requireControlPlaneStatus(),
-      expectedDigest,
       consumers: resolvedOptions.admissionPassportConsumers,
     })
     console.log(`Admission passports verified: ${passportEvidence.passportIds.join(', ')}`)
@@ -1314,7 +1298,6 @@ export const main = async (cliOptions?: CliOptions) => {
 
   const runtimeProofEvidence = verifyRuntimeProofSurfaceParity({
     status: requireControlPlaneStatus(),
-    expectedDigest,
     consumers: resolvedOptions.admissionPassportConsumers,
   })
   console.log(`Recovery warrants verified: ${runtimeProofEvidence.warrantIds.join(', ')}`)
@@ -1331,7 +1314,6 @@ export const __private = {
   extractExpectedDigest,
   buildControlPlaneStatusProxyPath,
   getArgoWaitReason,
-  imageRefMatchesExpectedDigest,
   isExpectedRevisionSatisfied,
   parseArgs,
   parseAdmissionPassportConsumers,
