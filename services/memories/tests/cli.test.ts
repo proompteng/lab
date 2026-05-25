@@ -75,7 +75,8 @@ describe('resolveAgentsBaseUrl', () => {
     ).toBe(DEFAULT_K8S_AGENTS_BASE_URL)
   })
 
-  it('uses public Agents API default outside Kubernetes', () => {
+  it('uses Tailscale Agents API default outside Kubernetes', () => {
+    expect(DEFAULT_AGENTS_BASE_URL).toBe('http://agents.ide-newton.ts.net')
     expect(
       resolveAgentsBaseUrl({
         env: {},
