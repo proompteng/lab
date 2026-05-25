@@ -19,6 +19,7 @@ from app.models import (
     TradeDecision,
 )
 from app.trading.paper_route_evidence import (
+    RUNTIME_LEDGER_PROOF_PACKET_HANDOFF_SCHEMA_VERSION,
     _next_regular_equities_session_window,
     build_paper_route_evidence_audit,
 )
@@ -342,6 +343,49 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(import_audit["counts"]["source_plan_target_count"], 2)
         self.assertEqual(import_audit["counts"]["next_runtime_window_target_count"], 1)
         self.assertFalse(import_audit["promotion_authority"]["allowed"])
+        proof_handoff = payload["runtime_ledger_proof_packet_handoff"]
+        self.assertEqual(
+            proof_handoff["schema_version"],
+            RUNTIME_LEDGER_PROOF_PACKET_HANDOFF_SCHEMA_VERSION,
+        )
+        self.assertFalse(proof_handoff["promotion_allowed"])
+        self.assertFalse(proof_handoff["final_promotion_authorized"])
+        self.assertEqual(
+            proof_handoff["source_endpoints"],
+            {
+                "status": "/trading/status",
+                "paper_route_evidence": "/trading/paper-route-evidence",
+                "completion_doc29": "/trading/completion/doc29",
+            },
+        )
+        self.assertEqual(
+            proof_handoff["targets"],
+            {
+                "min_runtime_ledger_net_pnl_after_costs": "500",
+                "min_runtime_ledger_daily_net_pnl_after_costs": "500",
+                "min_runtime_ledger_trading_days": 1,
+            },
+        )
+        self.assertEqual(
+            proof_handoff["runtime_window"]["import_audit_state"],
+            "waiting_for_session_open",
+        )
+        self.assertEqual(
+            proof_handoff["runtime_window"]["import_blockers"],
+            ["paper_route_session_window_not_open"],
+        )
+        waiting_argv = proof_handoff["commands"]["waiting_packet"]["argv"]
+        self.assertIn("--service-base-url", waiting_argv)
+        self.assertIn("--min-runtime-ledger-net-pnl", waiting_argv)
+        authority_argv = proof_handoff["commands"]["authority_packet_after_import"][
+            "argv"
+        ]
+        self.assertIn("--runtime-window-import-file", authority_argv)
+        self.assertIn("artifacts/runtime-window-import.json", authority_argv)
+        self.assertEqual(
+            proof_handoff["required_inputs"]["runtime_window_import"]["required_when"],
+            "runtime_window.import_ready",
+        )
         self.assertFalse(target["promotion_allowed"])
         self.assertFalse(target["final_promotion_authorized"])
         self.assertEqual(
@@ -482,6 +526,23 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 "source_executions_missing",
                 "source_tca_missing",
             ],
+        )
+        import_handoff = import_payload["runtime_ledger_proof_packet_handoff"]
+        self.assertTrue(import_handoff["runtime_window"]["import_ready"])
+        self.assertEqual(
+            import_handoff["runtime_window"]["import_audit_state"],
+            "import_due_source_activity_missing",
+        )
+        self.assertEqual(
+            import_handoff["commands"]["authority_packet_after_import"][
+                "expected_verdict"
+            ],
+            "promotion_authority_allowed",
+        )
+        self.assertTrue(
+            import_handoff["commands"]["authority_packet_after_import"][
+                "allowed_only_if_packet_ok"
+            ]
         )
 
     def test_runtime_window_import_audit_tracks_missing_and_non_grade_ledger(

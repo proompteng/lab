@@ -17,21 +17,25 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urljoin
 from urllib.request import urlopen
 
 
-SCHEMA_VERSION = 'torghut.runtime-ledger-live-paper-proof-packet.v1'
-DOC29_LIVE_SCALE_GATE = 'live_scale_observed'
-DEFAULT_MIN_RUNTIME_LEDGER_NET_PNL = Decimal('500')
-DEFAULT_MIN_RUNTIME_LEDGER_DAILY_NET_PNL = Decimal('500')
+SCHEMA_VERSION = "torghut.runtime-ledger-live-paper-proof-packet.v1"
+DOC29_LIVE_SCALE_GATE = "live_scale_observed"
+DEFAULT_MIN_RUNTIME_LEDGER_NET_PNL = Decimal("500")
+DEFAULT_MIN_RUNTIME_LEDGER_DAILY_NET_PNL = Decimal("500")
 DEFAULT_MIN_RUNTIME_LEDGER_TRADING_DAYS = 1
+STATUS_ENDPOINT = "/trading/status"
+PAPER_ROUTE_EVIDENCE_ENDPOINT = "/trading/paper-route-evidence"
+COMPLETION_DOC29_ENDPOINT = "/trading/completion/doc29"
 
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _text(value: object, default: str = '') -> str:
+def _text(value: object, default: str = "") -> str:
     if value is None:
         return default
     normalized = str(value).strip()
@@ -45,15 +49,15 @@ def _bool(value: object) -> bool:
         return value != 0
     if isinstance(value, str):
         return value.strip().lower() in {
-            '1',
-            'true',
-            'yes',
-            'y',
-            'ok',
-            'pass',
-            'passed',
-            'allowed',
-            'satisfied',
+            "1",
+            "true",
+            "yes",
+            "y",
+            "ok",
+            "pass",
+            "passed",
+            "allowed",
+            "satisfied",
         }
     return False
 
@@ -89,8 +93,8 @@ def _decimal(value: object) -> Decimal | None:
 def _decimal_text(value: Decimal | None) -> str | None:
     if value is None:
         return None
-    text = format(value, 'f')
-    return text.rstrip('0').rstrip('.') if '.' in text else text
+    text = format(value, "f")
+    return text.rstrip("0").rstrip(".") if "." in text else text
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
@@ -122,17 +126,17 @@ def _extend_unique(items: list[str], additions: Sequence[str]) -> None:
 
 
 def _load_json_object(path: Path) -> dict[str, Any]:
-    payload = json.loads(path.read_text(encoding='utf-8'))
+    payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, Mapping):
-        raise ValueError(f'json_object_required:{path}')
+        raise ValueError(f"json_object_required:{path}")
     return {str(key): value for key, value in cast(Mapping[str, Any], payload).items()}
 
 
 def _load_json_url(url: str, *, timeout_seconds: float) -> dict[str, Any]:
     with urlopen(url, timeout=timeout_seconds) as response:
-        payload = json.loads(response.read().decode('utf-8'))
+        payload = json.loads(response.read().decode("utf-8"))
     if not isinstance(payload, Mapping):
-        raise ValueError(f'json_object_required:{url}')
+        raise ValueError(f"json_object_required:{url}")
     return {str(key): value for key, value in cast(Mapping[str, Any], payload).items()}
 
 
@@ -149,6 +153,38 @@ def _load_optional_json_object(
     return None
 
 
+def _service_endpoint_url(service_base_url: str, endpoint: str) -> str:
+    base = service_base_url.strip()
+    if not base:
+        raise SystemExit("--service-base-url must not be empty")
+    return urljoin(f"{base.rstrip('/')}/", endpoint.lstrip("/"))
+
+
+def _apply_service_base_url_defaults(args: argparse.Namespace) -> dict[str, str]:
+    service_base_url = _text(getattr(args, "service_base_url", None))
+    if not service_base_url:
+        return {}
+
+    defaults = {
+        "status_url": _service_endpoint_url(service_base_url, STATUS_ENDPOINT),
+        "paper_route_evidence_url": _service_endpoint_url(
+            service_base_url,
+            PAPER_ROUTE_EVIDENCE_ENDPOINT,
+        ),
+        "completion_url": _service_endpoint_url(
+            service_base_url,
+            COMPLETION_DOC29_ENDPOINT,
+        ),
+    }
+    if args.status_file is None and not args.status_url:
+        args.status_url = defaults["status_url"]
+    if args.paper_route_evidence_file is None and not args.paper_route_evidence_url:
+        args.paper_route_evidence_url = defaults["paper_route_evidence_url"]
+    if args.completion_file is None and not args.completion_url:
+        args.completion_url = defaults["completion_url"]
+    return defaults
+
+
 def _check(
     checks: dict[str, dict[str, Any]],
     key: str,
@@ -160,30 +196,30 @@ def _check(
     detail: object | None = None,
 ) -> None:
     payload: dict[str, Any] = {
-        'passed': bool(passed),
-        'observed': observed,
-        'expected': expected,
+        "passed": bool(passed),
+        "observed": observed,
+        "expected": expected,
     }
     if blockers:
-        payload['blockers'] = list(blockers)
+        payload["blockers"] = list(blockers)
     if detail is not None:
-        payload['detail'] = detail
+        payload["detail"] = detail
     checks[key] = payload
 
 
 def _completion_live_scale_gate(
     completion_status: Mapping[str, Any],
 ) -> Mapping[str, Any]:
-    for raw_gate in _sequence(completion_status.get('gates')):
+    for raw_gate in _sequence(completion_status.get("gates")):
         gate = _mapping(raw_gate)
-        if _text(gate.get('gate_id')) == DOC29_LIVE_SCALE_GATE:
+        if _text(gate.get("gate_id")) == DOC29_LIVE_SCALE_GATE:
             return gate
-    gates_by_id = _mapping(completion_status.get('gates_by_id'))
+    gates_by_id = _mapping(completion_status.get("gates_by_id"))
     return _mapping(gates_by_id.get(DOC29_LIVE_SCALE_GATE))
 
 
 def _runtime_ledger_refs(gate: Mapping[str, Any], key: str) -> list[str]:
-    db_refs = _mapping(gate.get('db_row_refs'))
+    db_refs = _mapping(gate.get("db_row_refs"))
     refs = _text_list(db_refs.get(key))
     if refs:
         return refs
@@ -192,12 +228,12 @@ def _runtime_ledger_refs(gate: Mapping[str, Any], key: str) -> list[str]:
 
 def _runtime_ledger_trading_day_count(summary: Mapping[str, Any]) -> int:
     for key in (
-        'runtime_ledger_observed_trading_day_count',
-        'runtime_ledger_trading_day_count',
-        'observed_trading_day_count',
-        'trading_day_count',
-        'runtime_ledger_session_count',
-        'session_count',
+        "runtime_ledger_observed_trading_day_count",
+        "runtime_ledger_trading_day_count",
+        "observed_trading_day_count",
+        "trading_day_count",
+        "runtime_ledger_session_count",
+        "session_count",
     ):
         if key in summary:
             return _int(summary.get(key))
@@ -208,38 +244,38 @@ def _paper_route_target_plan(
     paper_route_evidence: Mapping[str, Any] | None,
 ) -> Mapping[str, Any]:
     evidence = paper_route_evidence or {}
-    plan = _mapping(evidence.get('next_paper_route_runtime_window_targets'))
+    plan = _mapping(evidence.get("next_paper_route_runtime_window_targets"))
     if plan:
         return plan
-    return _mapping(evidence.get('runtime_window_import_plan'))
+    return _mapping(evidence.get("runtime_window_import_plan"))
 
 
 def _paper_route_import_blockers(plan: Mapping[str, Any]) -> list[str]:
-    session_readiness = _mapping(plan.get('session_readiness'))
-    handoff = _mapping(plan.get('runtime_window_import_handoff'))
-    blockers = _text_list(session_readiness.get('import_blockers'))
-    _extend_unique(blockers, _text_list(handoff.get('import_blockers')))
-    for raw_target in _sequence(plan.get('targets')):
+    session_readiness = _mapping(plan.get("session_readiness"))
+    handoff = _mapping(plan.get("runtime_window_import_handoff"))
+    blockers = _text_list(session_readiness.get("import_blockers"))
+    _extend_unique(blockers, _text_list(handoff.get("import_blockers")))
+    for raw_target in _sequence(plan.get("targets")):
         target = _mapping(raw_target)
         _extend_unique(
-            blockers, _text_list(target.get('paper_route_session_import_blockers'))
+            blockers, _text_list(target.get("paper_route_session_import_blockers"))
         )
     return blockers
 
 
 def _paper_route_targets(plan: Mapping[str, Any]) -> list[Mapping[str, Any]]:
-    return [_mapping(item) for item in _sequence(plan.get('targets')) if _mapping(item)]
+    return [_mapping(item) for item in _sequence(plan.get("targets")) if _mapping(item)]
 
 
 def _missing_target_identity_count(targets: Sequence[Mapping[str, Any]]) -> int:
     required = (
-        'hypothesis_id',
-        'candidate_id',
-        'strategy_family',
-        'strategy_name',
-        'source_manifest_ref',
-        'window_start',
-        'window_end',
+        "hypothesis_id",
+        "candidate_id",
+        "strategy_family",
+        "strategy_name",
+        "source_manifest_ref",
+        "window_start",
+        "window_end",
     )
     missing_count = 0
     for target in targets:
@@ -252,13 +288,13 @@ def _runtime_window_import_payload(
     runtime_window_import: Mapping[str, Any] | None,
 ) -> Mapping[str, Any]:
     payload = runtime_window_import or {}
-    nested = _mapping(payload.get('runtime_window_import'))
+    nested = _mapping(payload.get("runtime_window_import"))
     return nested if nested else payload
 
 
 def _runtime_window_import_items(payload: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     imports = [
-        _mapping(item) for item in _sequence(payload.get('imports')) if _mapping(item)
+        _mapping(item) for item in _sequence(payload.get("imports")) if _mapping(item)
     ]
     if imports:
         return imports
@@ -267,11 +303,11 @@ def _runtime_window_import_items(payload: Mapping[str, Any]) -> list[Mapping[str
 
 def _runtime_import_blockers(payload: Mapping[str, Any]) -> list[str]:
     blockers: list[str] = []
-    for raw_blocker in _sequence(payload.get('proof_blockers')):
+    for raw_blocker in _sequence(payload.get("proof_blockers")):
         blocker = _mapping(raw_blocker)
         if blocker:
             _extend_unique(
-                blockers, [_text(blocker.get('blocker') or blocker.get('type'))]
+                blockers, [_text(blocker.get("blocker") or blocker.get("type"))]
             )
         else:
             text = _text(raw_blocker)
@@ -287,9 +323,9 @@ def _runtime_import_blockers(payload: Mapping[str, Any]) -> list[str]:
 def _runtime_import_authoritative_observation_count(payload: Mapping[str, Any]) -> int:
     count = 0
     for item in _runtime_window_import_items(payload):
-        summary = _mapping(item.get('summary'))
-        observation = _mapping(summary.get('runtime_observation'))
-        if observation and observation.get('authoritative') is True:
+        summary = _mapping(item.get("summary"))
+        observation = _mapping(summary.get("runtime_observation"))
+        if observation and observation.get("authoritative") is True:
             count += 1
     return count
 
@@ -307,14 +343,14 @@ def _first_identity(
         candidates.append(completion_gate)
     identity: dict[str, object] = {}
     for key in (
-        'candidate_id',
-        'hypothesis_id',
-        'observed_stage',
-        'strategy_family',
-        'strategy_name',
-        'account_label',
-        'window_start',
-        'window_end',
+        "candidate_id",
+        "hypothesis_id",
+        "observed_stage",
+        "strategy_family",
+        "strategy_name",
+        "account_label",
+        "window_start",
+        "window_end",
     ):
         for candidate in candidates:
             value = _text(candidate.get(key))
@@ -327,26 +363,26 @@ def _first_identity(
 def _status_blockers(status: Mapping[str, Any]) -> list[str]:
     blockers: list[str] = []
     gate = (
-        _mapping(status.get('live_submission_gate'))
-        or _mapping(status.get('live_gate'))
-        or _mapping(status.get('submission_gate'))
+        _mapping(status.get("live_submission_gate"))
+        or _mapping(status.get("live_gate"))
+        or _mapping(status.get("submission_gate"))
     )
     if gate:
-        _extend_unique(blockers, _text_list(gate.get('blocked_reasons')))
-        _extend_unique(blockers, _text_list(gate.get('blocking_reasons')))
-        if gate.get('allowed') is False:
+        _extend_unique(blockers, _text_list(gate.get("blocked_reasons")))
+        _extend_unique(blockers, _text_list(gate.get("blocking_reasons")))
+        if gate.get("allowed") is False:
             _extend_unique(
                 blockers,
-                [_text(gate.get('reason'), 'live_submission_gate_not_allowed')],
+                [_text(gate.get("reason"), "live_submission_gate_not_allowed")],
             )
-    proof_floor = _mapping(status.get('proof_floor'))
-    _extend_unique(blockers, _text_list(proof_floor.get('blocking_reasons')))
+    proof_floor = _mapping(status.get("proof_floor"))
+    _extend_unique(blockers, _text_list(proof_floor.get("blocking_reasons")))
     return blockers
 
 
 def _completion_blockers(gate: Mapping[str, Any]) -> list[str]:
-    blockers = _text_list(gate.get('blocking_reasons'))
-    blocked_reason = _text(gate.get('blocked_reason'))
+    blockers = _text_list(gate.get("blocking_reasons"))
+    blocked_reason = _text(gate.get("blocked_reason"))
     if blocked_reason:
         _extend_unique(blockers, [blocked_reason])
     return blockers
@@ -356,46 +392,46 @@ def _required_actions(blockers: Sequence[str], *, verdict: str) -> list[str]:
     actions: list[str] = []
     for blocker in blockers:
         if blocker in {
-            'paper_route_session_window_not_open',
-            'paper_route_session_window_not_closed',
+            "paper_route_session_window_not_open",
+            "paper_route_session_window_not_closed",
         }:
-            _extend_unique(actions, ['wait_for_regular_session_runtime_window'])
-        elif blocker == 'paper_route_session_settlement_pending':
-            _extend_unique(actions, ['wait_for_paper_route_settlement_grace'])
+            _extend_unique(actions, ["wait_for_regular_session_runtime_window"])
+        elif blocker == "paper_route_session_settlement_pending":
+            _extend_unique(actions, ["wait_for_paper_route_settlement_grace"])
         elif blocker in {
-            'runtime_window_import_missing',
-            'runtime_ledger_bucket_missing',
-            'paper_route_runtime_ledger_import_pending',
+            "runtime_window_import_missing",
+            "runtime_ledger_bucket_missing",
+            "paper_route_runtime_ledger_import_pending",
         }:
             _extend_unique(
-                actions, ['run_runtime_window_import_from_paper_route_target_plan']
-            )
-        elif blocker in {
-            'runtime_ledger_net_pnl_below_target',
-            'runtime_ledger_daily_net_pnl_below_target',
-        }:
-            _extend_unique(
-                actions, ['collect_or_improve_post_cost_runtime_profit_evidence']
-            )
-        elif blocker.startswith('runtime_ledger_') or blocker in {
-            'filled_notional_missing',
-            'closed_round_trip_missing',
-            'submitted_order_lifecycle_missing',
-            'runtime_decision_lifecycle_missing',
-        }:
-            _extend_unique(
-                actions, ['repair_runtime_ledger_lifecycle_cost_or_lineage_evidence']
+                actions, ["run_runtime_window_import_from_paper_route_target_plan"]
             )
         elif blocker in {
-            'runtime_ledger_trading_days_below_target',
+            "runtime_ledger_net_pnl_below_target",
+            "runtime_ledger_daily_net_pnl_below_target",
         }:
-            _extend_unique(actions, ['collect_more_runtime_ledger_trading_days'])
-        elif blocker in {'simple_submit_disabled', 'live_submission_gate_not_allowed'}:
             _extend_unique(
-                actions, ['keep_promotion_blocked_until_live_gate_and_proof_floor_pass']
+                actions, ["collect_or_improve_post_cost_runtime_profit_evidence"]
             )
-    if not actions and verdict != 'promotion_authority_allowed':
-        actions.append('inspect_packet_checks_and_repair_failed_proof_dimension')
+        elif blocker.startswith("runtime_ledger_") or blocker in {
+            "filled_notional_missing",
+            "closed_round_trip_missing",
+            "submitted_order_lifecycle_missing",
+            "runtime_decision_lifecycle_missing",
+        }:
+            _extend_unique(
+                actions, ["repair_runtime_ledger_lifecycle_cost_or_lineage_evidence"]
+            )
+        elif blocker in {
+            "runtime_ledger_trading_days_below_target",
+        }:
+            _extend_unique(actions, ["collect_more_runtime_ledger_trading_days"])
+        elif blocker in {"simple_submit_disabled", "live_submission_gate_not_allowed"}:
+            _extend_unique(
+                actions, ["keep_promotion_blocked_until_live_gate_and_proof_floor_pass"]
+            )
+    if not actions and verdict != "promotion_authority_allowed":
+        actions.append("inspect_packet_checks_and_repair_failed_proof_dimension")
     return actions
 
 
@@ -417,10 +453,10 @@ def build_runtime_ledger_proof_packet(
     live_blockers = _status_blockers(status)
     _check(
         checks,
-        'live_status_gate',
+        "live_status_gate",
         passed=not live_blockers,
         observed=live_blockers,
-        expected='no live submission gate or proof-floor blockers',
+        expected="no live submission gate or proof-floor blockers",
         blockers=live_blockers,
     )
     _extend_unique(blockers, live_blockers)
@@ -428,52 +464,52 @@ def build_runtime_ledger_proof_packet(
     plan = _paper_route_target_plan(paper_route_evidence)
     paper_targets = _paper_route_targets(plan)
     paper_import_blockers = _paper_route_import_blockers(plan)
-    handoff = _mapping(plan.get('runtime_window_import_handoff'))
-    session_readiness = _mapping(plan.get('session_readiness'))
-    import_ready = _bool(session_readiness.get('import_ready')) or _bool(
-        handoff.get('import_ready')
+    handoff = _mapping(plan.get("runtime_window_import_handoff"))
+    session_readiness = _mapping(plan.get("session_readiness"))
+    import_ready = _bool(session_readiness.get("import_ready")) or _bool(
+        handoff.get("import_ready")
     )
     missing_identity_count = _missing_target_identity_count(paper_targets)
     _check(
         checks,
-        'paper_route_target_plan_present',
+        "paper_route_target_plan_present",
         passed=bool(plan) and bool(paper_targets),
-        observed={'plan_present': bool(plan), 'target_count': len(paper_targets)},
-        expected='paper-route runtime-window target plan with at least one target',
+        observed={"plan_present": bool(plan), "target_count": len(paper_targets)},
+        expected="paper-route runtime-window target plan with at least one target",
         blockers=[]
         if bool(plan) and bool(paper_targets)
-        else ['paper_route_target_plan_missing'],
+        else ["paper_route_target_plan_missing"],
     )
     if not plan or not paper_targets:
-        _extend_unique(blockers, ['paper_route_target_plan_missing'])
+        _extend_unique(blockers, ["paper_route_target_plan_missing"])
     _check(
         checks,
-        'paper_route_target_identity',
+        "paper_route_target_identity",
         passed=bool(paper_targets) and missing_identity_count == 0,
-        observed={'missing_identity_count': missing_identity_count},
-        expected='all targets carry candidate, hypothesis, strategy, source manifest, and window identity',
+        observed={"missing_identity_count": missing_identity_count},
+        expected="all targets carry candidate, hypothesis, strategy, source manifest, and window identity",
         blockers=[]
         if missing_identity_count == 0
-        else ['paper_route_target_identity_incomplete'],
+        else ["paper_route_target_identity_incomplete"],
     )
     if missing_identity_count:
-        _extend_unique(blockers, ['paper_route_target_identity_incomplete'])
+        _extend_unique(blockers, ["paper_route_target_identity_incomplete"])
     _check(
         checks,
-        'paper_route_import_ready',
+        "paper_route_import_ready",
         passed=import_ready and not paper_import_blockers,
         observed={
-            'import_ready': import_ready,
-            'import_blockers': paper_import_blockers,
+            "import_ready": import_ready,
+            "import_blockers": paper_import_blockers,
         },
-        expected='paper-route target window closed, settled, and import-ready',
+        expected="paper-route target window closed, settled, and import-ready",
         blockers=paper_import_blockers
-        or ([] if import_ready else ['paper_route_import_not_ready']),
+        or ([] if import_ready else ["paper_route_import_not_ready"]),
     )
     if paper_import_blockers:
         _extend_unique(blockers, paper_import_blockers)
     elif not import_ready:
-        _extend_unique(blockers, ['paper_route_import_not_ready'])
+        _extend_unique(blockers, ["paper_route_import_not_ready"])
 
     runtime_import_due = import_ready and not paper_import_blockers
     runtime_import = _runtime_window_import_payload(runtime_window_import)
@@ -485,83 +521,83 @@ def build_runtime_ledger_proof_packet(
     runtime_import_ok = (
         runtime_import_due
         and bool(runtime_import)
-        and _text(runtime_import.get('proof_status'), 'blocked') == 'ok'
+        and _text(runtime_import.get("proof_status"), "blocked") == "ok"
         and not runtime_import_blockers
         and authoritative_observation_count > 0
         and all(
-            _text(item.get('proof_status'), 'blocked') == 'ok'
+            _text(item.get("proof_status"), "blocked") == "ok"
             for item in runtime_import_items
         )
     )
     _check(
         checks,
-        'runtime_window_import_proof',
+        "runtime_window_import_proof",
         passed=runtime_import_ok,
         observed={
-            'present': bool(runtime_import),
-            'proof_status': _text(runtime_import.get('proof_status'), 'missing'),
-            'target_count': len(runtime_import_items),
-            'runtime_import_due': runtime_import_due,
-            'authoritative_observation_count': authoritative_observation_count,
-            'proof_blockers': runtime_import_blockers,
+            "present": bool(runtime_import),
+            "proof_status": _text(runtime_import.get("proof_status"), "missing"),
+            "target_count": len(runtime_import_items),
+            "runtime_import_due": runtime_import_due,
+            "authoritative_observation_count": authoritative_observation_count,
+            "proof_blockers": runtime_import_blockers,
         },
-        expected='runtime-window import proof_status ok with authoritative runtime observations and no proof blockers',
+        expected="runtime-window import proof_status ok with authoritative runtime observations and no proof blockers",
         blockers=runtime_import_blockers
         or (
             []
             if runtime_import_ok or not runtime_import_due
-            else ['runtime_window_import_missing']
+            else ["runtime_window_import_missing"]
         ),
     )
     if runtime_import_blockers:
         _extend_unique(blockers, runtime_import_blockers)
     elif runtime_import_due and not runtime_import_ok:
-        _extend_unique(blockers, ['runtime_window_import_missing'])
+        _extend_unique(blockers, ["runtime_window_import_missing"])
 
     completion = completion_status or {}
     live_scale_gate = _completion_live_scale_gate(completion)
     completion_gate_blockers = _completion_blockers(live_scale_gate)
-    runtime_summary = _mapping(live_scale_gate.get('runtime_ledger_summary'))
+    runtime_summary = _mapping(live_scale_gate.get("runtime_ledger_summary"))
     ledger_refs = _runtime_ledger_refs(
-        live_scale_gate, 'strategy_runtime_ledger_buckets'
+        live_scale_gate, "strategy_runtime_ledger_buckets"
     )
     unbacked_refs = _runtime_ledger_refs(
-        live_scale_gate, 'runtime_ledger_unbacked_hypothesis_metric_windows'
+        live_scale_gate, "runtime_ledger_unbacked_hypothesis_metric_windows"
     )
-    gate_satisfied = _text(live_scale_gate.get('status')) == 'satisfied'
+    gate_satisfied = _text(live_scale_gate.get("status")) == "satisfied"
     _check(
         checks,
-        'doc29_live_scale_gate',
+        "doc29_live_scale_gate",
         passed=(not runtime_import_due)
         or (gate_satisfied and not completion_gate_blockers),
         observed={
-            'gate_present': bool(live_scale_gate),
-            'status': _text(live_scale_gate.get('status'), 'missing'),
-            'runtime_import_due': runtime_import_due,
-            'blockers': completion_gate_blockers,
+            "gate_present": bool(live_scale_gate),
+            "status": _text(live_scale_gate.get("status"), "missing"),
+            "runtime_import_due": runtime_import_due,
+            "blockers": completion_gate_blockers,
         },
-        expected='doc29 live_scale_observed gate satisfied',
+        expected="doc29 live_scale_observed gate satisfied",
         blockers=completion_gate_blockers
         or (
             []
             if gate_satisfied or not runtime_import_due
-            else ['doc29_live_scale_gate_not_satisfied']
+            else ["doc29_live_scale_gate_not_satisfied"]
         ),
     )
     if completion_gate_blockers:
         _extend_unique(blockers, completion_gate_blockers)
     elif runtime_import_due and not gate_satisfied:
-        _extend_unique(blockers, ['doc29_live_scale_gate_not_satisfied'])
+        _extend_unique(blockers, ["doc29_live_scale_gate_not_satisfied"])
 
-    bucket_count = _int(runtime_summary.get('runtime_ledger_bucket_count'))
-    fill_count = _int(runtime_summary.get('runtime_ledger_fill_count'))
-    closed_trade_count = _int(runtime_summary.get('runtime_ledger_closed_trade_count'))
-    filled_notional = _decimal(runtime_summary.get('runtime_ledger_filled_notional'))
+    bucket_count = _int(runtime_summary.get("runtime_ledger_bucket_count"))
+    fill_count = _int(runtime_summary.get("runtime_ledger_fill_count"))
+    closed_trade_count = _int(runtime_summary.get("runtime_ledger_closed_trade_count"))
+    filled_notional = _decimal(runtime_summary.get("runtime_ledger_filled_notional"))
     net_pnl = _decimal(
-        runtime_summary.get('runtime_ledger_net_strategy_pnl_after_costs')
+        runtime_summary.get("runtime_ledger_net_strategy_pnl_after_costs")
     )
     expectancy_bps = _decimal(
-        runtime_summary.get('runtime_ledger_post_cost_expectancy_bps')
+        runtime_summary.get("runtime_ledger_post_cost_expectancy_bps")
     )
     trading_days = _runtime_ledger_trading_day_count(runtime_summary)
     daily_net_pnl = (
@@ -571,67 +607,67 @@ def build_runtime_ledger_proof_packet(
     )
     _check(
         checks,
-        'runtime_ledger_db_refs',
+        "runtime_ledger_db_refs",
         passed=(not runtime_import_due) or (bool(ledger_refs) and not unbacked_refs),
         observed={
-            'strategy_runtime_ledger_buckets': ledger_refs,
-            'unbacked_metric_windows': unbacked_refs,
+            "strategy_runtime_ledger_buckets": ledger_refs,
+            "unbacked_metric_windows": unbacked_refs,
         },
-        expected='runtime ledger bucket db refs present and unbacked windows empty',
+        expected="runtime ledger bucket db refs present and unbacked windows empty",
         blockers=[]
         if (bool(ledger_refs) and not unbacked_refs) or not runtime_import_due
-        else ['runtime_ledger_db_refs_missing_or_unbacked'],
+        else ["runtime_ledger_db_refs_missing_or_unbacked"],
     )
     if runtime_import_due and (not ledger_refs or unbacked_refs):
-        _extend_unique(blockers, ['runtime_ledger_db_refs_missing_or_unbacked'])
+        _extend_unique(blockers, ["runtime_ledger_db_refs_missing_or_unbacked"])
     lifecycle_blockers: list[str] = []
     if runtime_import_due and bucket_count <= 0:
-        lifecycle_blockers.append('runtime_ledger_bucket_count_zero')
+        lifecycle_blockers.append("runtime_ledger_bucket_count_zero")
     if runtime_import_due and fill_count <= 0:
-        lifecycle_blockers.append('runtime_ledger_fill_count_zero')
+        lifecycle_blockers.append("runtime_ledger_fill_count_zero")
     if runtime_import_due and closed_trade_count <= 0:
-        lifecycle_blockers.append('runtime_ledger_closed_trade_count_zero')
+        lifecycle_blockers.append("runtime_ledger_closed_trade_count_zero")
     if runtime_import_due and (filled_notional is None or filled_notional <= 0):
-        lifecycle_blockers.append('runtime_ledger_filled_notional_missing')
+        lifecycle_blockers.append("runtime_ledger_filled_notional_missing")
     if runtime_import_due and (expectancy_bps is None or expectancy_bps <= 0):
-        lifecycle_blockers.append('runtime_ledger_post_cost_expectancy_not_positive')
+        lifecycle_blockers.append("runtime_ledger_post_cost_expectancy_not_positive")
     _check(
         checks,
-        'runtime_ledger_lifecycle_counts',
+        "runtime_ledger_lifecycle_counts",
         passed=not lifecycle_blockers,
         observed={
-            'bucket_count': bucket_count,
-            'fill_count': fill_count,
-            'closed_trade_count': closed_trade_count,
-            'filled_notional': _decimal_text(filled_notional),
-            'post_cost_expectancy_bps': _decimal_text(expectancy_bps),
+            "bucket_count": bucket_count,
+            "fill_count": fill_count,
+            "closed_trade_count": closed_trade_count,
+            "filled_notional": _decimal_text(filled_notional),
+            "post_cost_expectancy_bps": _decimal_text(expectancy_bps),
         },
-        expected='positive buckets, fills, closed trips, filled notional, and post-cost expectancy',
+        expected="positive buckets, fills, closed trips, filled notional, and post-cost expectancy",
         blockers=lifecycle_blockers,
     )
     _extend_unique(blockers, lifecycle_blockers)
     pnl_blockers: list[str] = []
     if runtime_import_due and (net_pnl is None or net_pnl < min_runtime_ledger_net_pnl):
-        pnl_blockers.append('runtime_ledger_net_pnl_below_target')
+        pnl_blockers.append("runtime_ledger_net_pnl_below_target")
     if runtime_import_due and trading_days < min_runtime_ledger_trading_days:
-        pnl_blockers.append('runtime_ledger_trading_days_below_target')
+        pnl_blockers.append("runtime_ledger_trading_days_below_target")
     if runtime_import_due and (
         daily_net_pnl is None or daily_net_pnl < min_runtime_ledger_daily_net_pnl
     ):
-        pnl_blockers.append('runtime_ledger_daily_net_pnl_below_target')
+        pnl_blockers.append("runtime_ledger_daily_net_pnl_below_target")
     _check(
         checks,
-        'runtime_ledger_post_cost_profit_target',
+        "runtime_ledger_post_cost_profit_target",
         passed=not pnl_blockers,
         observed={
-            'net_pnl_after_costs': _decimal_text(net_pnl),
-            'trading_days': trading_days,
-            'daily_net_pnl_after_costs': _decimal_text(daily_net_pnl),
+            "net_pnl_after_costs": _decimal_text(net_pnl),
+            "trading_days": trading_days,
+            "daily_net_pnl_after_costs": _decimal_text(daily_net_pnl),
         },
         expected={
-            'min_net_pnl_after_costs': _decimal_text(min_runtime_ledger_net_pnl),
-            'min_trading_days': min_runtime_ledger_trading_days,
-            'min_daily_net_pnl_after_costs': _decimal_text(
+            "min_net_pnl_after_costs": _decimal_text(min_runtime_ledger_net_pnl),
+            "min_trading_days": min_runtime_ledger_trading_days,
+            "min_daily_net_pnl_after_costs": _decimal_text(
                 min_runtime_ledger_daily_net_pnl
             ),
         },
@@ -639,75 +675,75 @@ def build_runtime_ledger_proof_packet(
     )
     _extend_unique(blockers, pnl_blockers)
 
-    failed_checks = [key for key, value in checks.items() if not value['passed']]
+    failed_checks = [key for key, value in checks.items() if not value["passed"]]
     waiting_blockers = {
-        'paper_route_session_window_not_open',
-        'paper_route_session_window_not_closed',
-        'paper_route_session_settlement_pending',
-        'paper_route_import_not_ready',
+        "paper_route_session_window_not_open",
+        "paper_route_session_window_not_closed",
+        "paper_route_session_settlement_pending",
+        "paper_route_import_not_ready",
     }
     if not failed_checks:
-        verdict = 'promotion_authority_allowed'
-        reason = 'runtime_ledger_live_paper_post_cost_proof_satisfied'
+        verdict = "promotion_authority_allowed"
+        reason = "runtime_ledger_live_paper_post_cost_proof_satisfied"
     elif set(blockers).issubset(waiting_blockers):
-        verdict = 'waiting_for_runtime_window'
-        reason = 'paper_route_runtime_window_not_importable_yet'
+        verdict = "waiting_for_runtime_window"
+        reason = "paper_route_runtime_window_not_importable_yet"
     else:
-        verdict = 'blocked'
-        reason = 'runtime_ledger_live_paper_post_cost_proof_blocked'
+        verdict = "blocked"
+        reason = "runtime_ledger_live_paper_post_cost_proof_blocked"
 
     return {
-        'schema_version': SCHEMA_VERSION,
-        'generated_at': generated_at,
-        'verdict': verdict,
-        'ok': verdict == 'promotion_authority_allowed',
-        'promotion_authority': {
-            'allowed': verdict == 'promotion_authority_allowed',
-            'reason': reason,
-            'blocking_reasons': blockers,
-            'failed_checks': failed_checks,
+        "schema_version": SCHEMA_VERSION,
+        "generated_at": generated_at,
+        "verdict": verdict,
+        "ok": verdict == "promotion_authority_allowed",
+        "promotion_authority": {
+            "allowed": verdict == "promotion_authority_allowed",
+            "reason": reason,
+            "blocking_reasons": blockers,
+            "failed_checks": failed_checks,
         },
-        'target': {
-            'min_runtime_ledger_net_pnl_after_costs': _decimal_text(
+        "target": {
+            "min_runtime_ledger_net_pnl_after_costs": _decimal_text(
                 min_runtime_ledger_net_pnl
             ),
-            'min_runtime_ledger_daily_net_pnl_after_costs': _decimal_text(
+            "min_runtime_ledger_daily_net_pnl_after_costs": _decimal_text(
                 min_runtime_ledger_daily_net_pnl
             ),
-            'min_runtime_ledger_trading_days': min_runtime_ledger_trading_days,
+            "min_runtime_ledger_trading_days": min_runtime_ledger_trading_days,
         },
-        'candidate': _first_identity(
+        "candidate": _first_identity(
             paper_targets=paper_targets,
             runtime_import=runtime_import,
             completion_gate=live_scale_gate,
         ),
-        'required_actions': _required_actions(blockers, verdict=verdict),
-        'checks': checks,
-        'evidence': {
-            'status': {
-                'mode': status.get('mode'),
-                'running': status.get('running'),
-                'live_status_blockers': live_blockers,
+        "required_actions": _required_actions(blockers, verdict=verdict),
+        "checks": checks,
+        "evidence": {
+            "status": {
+                "mode": status.get("mode"),
+                "running": status.get("running"),
+                "live_status_blockers": live_blockers,
             },
-            'paper_route_target_plan': {
-                'schema_version': plan.get('schema_version'),
-                'target_count': len(paper_targets),
-                'import_ready': import_ready,
-                'import_blockers': paper_import_blockers,
-                'session_window': _mapping(plan.get('session_window')),
+            "paper_route_target_plan": {
+                "schema_version": plan.get("schema_version"),
+                "target_count": len(paper_targets),
+                "import_ready": import_ready,
+                "import_blockers": paper_import_blockers,
+                "session_window": _mapping(plan.get("session_window")),
             },
-            'runtime_window_import': {
-                'present': bool(runtime_import),
-                'proof_status': runtime_import.get('proof_status'),
-                'target_count': len(runtime_import_items),
-                'proof_blockers': runtime_import_blockers,
-                'authoritative_observation_count': authoritative_observation_count,
+            "runtime_window_import": {
+                "present": bool(runtime_import),
+                "proof_status": runtime_import.get("proof_status"),
+                "target_count": len(runtime_import_items),
+                "proof_blockers": runtime_import_blockers,
+                "authoritative_observation_count": authoritative_observation_count,
             },
-            'completion_live_scale': {
-                'gate_status': live_scale_gate.get('status'),
-                'runtime_ledger_summary': dict(runtime_summary),
-                'strategy_runtime_ledger_bucket_refs': ledger_refs,
-                'unbacked_metric_window_refs': unbacked_refs,
+            "completion_live_scale": {
+                "gate_status": live_scale_gate.get("status"),
+                "runtime_ledger_summary": dict(runtime_summary),
+                "strategy_runtime_ledger_bucket_refs": ledger_refs,
+                "unbacked_metric_window_refs": unbacked_refs,
             },
         },
     }
@@ -716,78 +752,91 @@ def build_runtime_ledger_proof_packet(
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        '--status-file', type=Path, help='Path to a /trading/status JSON payload.'
+        "--service-base-url",
+        help="Base Torghut service URL used to fetch /trading/status, /trading/paper-route-evidence, and /trading/completion/doc29.",
     )
     parser.add_argument(
-        '--status-url', help='URL returning a /trading/status JSON payload.'
+        "--status-file", type=Path, help="Path to a /trading/status JSON payload."
     )
     parser.add_argument(
-        '--paper-route-evidence-file',
+        "--status-url", help="URL returning a /trading/status JSON payload."
+    )
+    parser.add_argument(
+        "--paper-route-evidence-file",
         type=Path,
-        help='Path to a /trading/paper-route-evidence JSON payload.',
+        help="Path to a /trading/paper-route-evidence JSON payload.",
     )
     parser.add_argument(
-        '--paper-route-evidence-url',
-        help='URL returning a /trading/paper-route-evidence JSON payload.',
+        "--paper-route-evidence-url",
+        help="URL returning a /trading/paper-route-evidence JSON payload.",
     )
     parser.add_argument(
-        '--runtime-window-import-file',
+        "--runtime-window-import-file",
         type=Path,
-        help='Path to renew_latest_empirical_promotion_jobs.py runtime_window_import JSON output.',
+        help="Path to renew_latest_empirical_promotion_jobs.py runtime_window_import JSON output.",
     )
     parser.add_argument(
-        '--runtime-window-import-url',
-        help='URL returning runtime-window import JSON output.',
+        "--runtime-window-import-url",
+        help="URL returning runtime-window import JSON output.",
     )
     parser.add_argument(
-        '--completion-file',
+        "--completion-file",
         type=Path,
-        help='Path to a /trading/completion/doc29 JSON payload.',
+        help="Path to a /trading/completion/doc29 JSON payload.",
     )
     parser.add_argument(
-        '--completion-url', help='URL returning /trading/completion/doc29 JSON.'
+        "--completion-url", help="URL returning /trading/completion/doc29 JSON."
     )
     parser.add_argument(
-        '--min-runtime-ledger-net-pnl',
+        "--min-runtime-ledger-net-pnl",
         default=str(DEFAULT_MIN_RUNTIME_LEDGER_NET_PNL),
-        help='Minimum total runtime-ledger net strategy PnL after costs.',
+        help="Minimum total runtime-ledger net strategy PnL after costs.",
     )
     parser.add_argument(
-        '--min-runtime-ledger-daily-net-pnl',
+        "--min-runtime-ledger-daily-net-pnl",
         default=str(DEFAULT_MIN_RUNTIME_LEDGER_DAILY_NET_PNL),
-        help='Minimum runtime-ledger net strategy PnL after costs per observed trading day.',
+        help="Minimum runtime-ledger net strategy PnL after costs per observed trading day.",
     )
     parser.add_argument(
-        '--min-runtime-ledger-trading-days',
+        "--min-runtime-ledger-trading-days",
         type=int,
         default=DEFAULT_MIN_RUNTIME_LEDGER_TRADING_DAYS,
-        help='Minimum observed runtime-ledger trading days.',
+        help="Minimum observed runtime-ledger trading days.",
     )
-    parser.add_argument('--generated-at', default=None)
-    parser.add_argument('--timeout-seconds', type=float, default=10.0)
-    parser.add_argument('--output-file', type=Path, default=None)
+    parser.add_argument("--generated-at", default=None)
+    parser.add_argument("--timeout-seconds", type=float, default=10.0)
+    parser.add_argument("--output-file", type=Path, default=None)
     return parser
 
 
 def _required_source_args(args: argparse.Namespace) -> None:
     if (args.status_file is None) == (not args.status_url):
-        raise SystemExit('exactly_one_status_source_required')
+        raise SystemExit("exactly_one_status_source_required")
     if (args.paper_route_evidence_file is None) == (not args.paper_route_evidence_url):
-        raise SystemExit('exactly_one_paper_route_evidence_source_required')
+        raise SystemExit("exactly_one_paper_route_evidence_source_required")
+
+
+def _source_kind(path: Path | None, url: str | None) -> str:
+    if path is not None:
+        return "file"
+    if url:
+        return "url"
+    return "missing"
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    service_default_urls = _apply_service_base_url_defaults(args)
     _required_source_args(args)
     min_net_pnl = _decimal(args.min_runtime_ledger_net_pnl)
     if min_net_pnl is None:
         raise SystemExit(
-            f'--min-runtime-ledger-net-pnl must be decimal: {args.min_runtime_ledger_net_pnl!r}'
+            f"--min-runtime-ledger-net-pnl must be decimal: {args.min_runtime_ledger_net_pnl!r}"
         )
     min_daily_net_pnl = _decimal(args.min_runtime_ledger_daily_net_pnl)
     if min_daily_net_pnl is None:
         raise SystemExit(
-            f'--min-runtime-ledger-daily-net-pnl must be decimal: {args.min_runtime_ledger_daily_net_pnl!r}'
+            f"--min-runtime-ledger-daily-net-pnl must be decimal: {args.min_runtime_ledger_daily_net_pnl!r}"
         )
     status = _load_optional_json_object(
         path=args.status_file,
@@ -822,13 +871,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
         generated_at=args.generated_at,
     )
+    if service_default_urls:
+        packet["assembly"] = {
+            "service_base_url": args.service_base_url,
+            "defaulted_urls": service_default_urls,
+            "status_source": _source_kind(args.status_file, args.status_url),
+            "paper_route_evidence_source": _source_kind(
+                args.paper_route_evidence_file,
+                args.paper_route_evidence_url,
+            ),
+            "runtime_window_import_source": _source_kind(
+                args.runtime_window_import_file,
+                args.runtime_window_import_url,
+            ),
+            "completion_source": _source_kind(
+                args.completion_file, args.completion_url
+            ),
+        }
     body = json.dumps(packet, indent=2, sort_keys=True)
     if args.output_file is not None:
         args.output_file.parent.mkdir(parents=True, exist_ok=True)
-        args.output_file.write_text(body + '\n', encoding='utf-8')
+        args.output_file.write_text(body + "\n", encoding="utf-8")
     print(body)
-    return 0 if packet['ok'] else 1
+    return 0 if packet["ok"] else 1
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     raise SystemExit(main())
