@@ -408,6 +408,159 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
         self.assertIn("trades: 7.0d (torghut.trades.v1)", text)
         self.assertIn("retention_shortfall:trades:7<35", text)
 
+    def test_replay_state_and_plan_helpers_cover_edge_branches(self) -> None:
+        with patch.object(runner.shutil, "which", return_value=None):
+            with self.assertRaisesRegex(SystemExit, "kubectl not found"):
+                runner._require_kubectl()
+            with self.assertRaisesRegex(SystemExit, "kubectl not found"):
+                runner._kubectl_binary()
+
+        with patch.object(runner.shutil, "which", return_value="/usr/bin/kubectl"):
+            runner._require_kubectl()
+            self.assertEqual(runner._kubectl_binary(), "/usr/bin/kubectl")
+
+        with self.assertRaisesRegex(SystemExit, "unsupported namespace"):
+            runner._require_supported_namespace("agents")
+        with self.assertRaisesRegex(SystemExit, "replay-id must be provided"):
+            runner._plan_command("", "prefix", "earliest")
+        with self.assertRaisesRegex(SystemExit, "replay-id cannot be empty"):
+            runner._validate_plan_args("", "prefix")
+        with self.assertRaisesRegex(SystemExit, "group-prefix cannot be empty"):
+            runner._validate_plan_args("proof", "")
+
+        self.assertEqual(
+            runner._plan_command(" proof__id ", " prefix__ ", ""),
+            {
+                "replay_group_id": "prefix-proof-id",
+                "ta_auto_offset_reset": "earliest",
+            },
+        )
+        replay_state = runner.ReplayState(
+            namespace="torghut",
+            ta_group_id="torghut-ta-replay-profit-proof",
+            ta_auto_offset_reset="earliest",
+            flink_job_state=None,
+            flink_restart_nonce=7,
+            flink_status_state=None,
+        )
+        self.assertEqual(
+            runner._validate_apply_preconditions(
+                state=replay_state,
+                plan=self._plan(),
+                allow_existing_group=False,
+            ),
+            [
+                "planned TA_GROUP_ID already equals current value; pass --allow-existing-group-id to continue",
+                "TA_AUTO_OFFSET_RESET already matches the replay target",
+            ],
+        )
+
+    def test_load_state_parses_kubernetes_payloads_and_error_shapes(self) -> None:
+        config = {
+            "data": {
+                "TA_GROUP_ID": "torghut-ta-2025-12-23",
+                "TA_AUTO_OFFSET_RESET": "latest",
+            }
+        }
+        deployment = {
+            "spec": {
+                "job": {"state": "running"},
+                "restartNonce": "8",
+            },
+            "status": {"jobStatus": {"state": "RUNNING"}},
+        }
+        with patch.object(runner, "_kubectl_get_ta_config_json", return_value=config):
+            with patch.object(
+                runner, "_kubectl_get_ta_deployment_json", return_value=deployment
+            ):
+                state = runner._load_state("torghut")
+
+        self.assertEqual(state.ta_group_id, "torghut-ta-2025-12-23")
+        self.assertEqual(state.ta_auto_offset_reset, "latest")
+        self.assertEqual(state.flink_job_state, "running")
+        self.assertEqual(state.flink_restart_nonce, 8)
+        self.assertEqual(state.flink_status_state, "RUNNING")
+
+        with patch.object(runner, "_kubectl_get_ta_config_json", return_value={}):
+            with self.assertRaisesRegex(SystemExit, "configmap data"):
+                runner._load_state("torghut")
+        with patch.object(
+            runner, "_kubectl_get_ta_config_json", return_value={"data": {}}
+        ):
+            with self.assertRaisesRegex(SystemExit, "TA_GROUP_ID missing"):
+                runner._load_state("torghut")
+        with patch.object(runner, "_kubectl_get_ta_config_json", return_value=config):
+            with patch.object(
+                runner, "_kubectl_get_ta_deployment_json", return_value={}
+            ):
+                with self.assertRaisesRegex(SystemExit, "flinkdeployment spec"):
+                    runner._load_state("torghut")
+
+    def test_main_dispatches_modes_and_requires_apply_confirmation(self) -> None:
+        base_args = self._args(
+            replay_id="proof",
+            group_prefix="torghut-ta-replay",
+            auto_offset_reset="earliest",
+            allow_existing_group_id=False,
+            mode="plan",
+            confirm="",
+        )
+        with patch.object(runner, "parse_args", return_value=base_args):
+            with patch.object(runner, "_require_kubectl"):
+                with patch.object(runner, "_load_state", return_value=self._state()):
+                    with patch.object(
+                        runner, "_handle_plan_mode", return_value=4
+                    ) as handle_plan:
+                        self.assertEqual(runner.main(), 4)
+        handle_plan.assert_called_once()
+
+        verify_args = self._args(
+            replay_id="proof",
+            group_prefix="torghut-ta-replay",
+            auto_offset_reset="earliest",
+            allow_existing_group_id=False,
+            mode="verify",
+            confirm="",
+        )
+        with patch.object(runner, "parse_args", return_value=verify_args):
+            with patch.object(runner, "_require_kubectl"):
+                with patch.object(runner, "_load_state", return_value=self._state()):
+                    with patch.object(
+                        runner, "_handle_verify_mode", return_value=5
+                    ) as handle_verify:
+                        self.assertEqual(runner.main(), 5)
+        handle_verify.assert_called_once()
+
+        apply_args = self._args(
+            replay_id="proof",
+            group_prefix="torghut-ta-replay",
+            auto_offset_reset="earliest",
+            allow_existing_group_id=False,
+            mode="apply",
+            confirm=runner.APPLY_CONFIRMATION_PHRASE,
+        )
+        with patch.object(runner, "parse_args", return_value=apply_args):
+            with patch.object(runner, "_require_kubectl"):
+                with patch.object(runner, "_load_state", return_value=self._state()):
+                    with patch.object(
+                        runner, "_handle_apply_mode", return_value=6
+                    ) as handle_apply:
+                        self.assertEqual(runner.main(), 6)
+        handle_apply.assert_called_once()
+
+        unconfirmed_apply_args = self._args(
+            replay_id="proof",
+            group_prefix="torghut-ta-replay",
+            auto_offset_reset="earliest",
+            allow_existing_group_id=False,
+            mode="apply",
+            confirm="",
+        )
+        with patch.object(runner, "parse_args", return_value=unconfirmed_apply_args):
+            with patch.object(runner, "_require_kubectl"):
+                with self.assertRaisesRegex(SystemExit, "requires --confirm"):
+                    runner.main()
+
     def test_verify_text_mode_renders_coverage_and_failed_checks(self) -> None:
         state = runner.ReplayState(
             namespace="torghut",
