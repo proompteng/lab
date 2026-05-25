@@ -48,6 +48,7 @@ DEFAULT_TORGHUT_PAPER_ROUTE_SERVICE_BASE_URL = (
 )
 RUNTIME_LEDGER_PROOF_PACKET_OUTPUT_FILE = "artifacts/runtime-ledger-proof-packet.json"
 RUNTIME_WINDOW_IMPORT_OUTPUT_FILE = "artifacts/runtime-window-import.json"
+RUNTIME_LEDGER_PROOF_PACKET_ARTIFACT_PREFIX = "runtime-ledger-proof-packets/{run_id}"
 MIN_RUNTIME_LEDGER_PROOF_NET_PNL = "500"
 MIN_RUNTIME_LEDGER_PROOF_DAILY_NET_PNL = "500"
 MIN_RUNTIME_LEDGER_PROOF_TRADING_DAYS = 1
@@ -1334,6 +1335,9 @@ def _runtime_ledger_proof_packet_handoff(
         RUNTIME_WINDOW_IMPORT_OUTPUT_FILE,
         "--output-file",
         RUNTIME_LEDGER_PROOF_PACKET_OUTPUT_FILE,
+        "--artifact-prefix",
+        RUNTIME_LEDGER_PROOF_PACKET_ARTIFACT_PREFIX,
+        "--require-artifact-upload",
     ]
     return {
         "schema_version": RUNTIME_LEDGER_PROOF_PACKET_HANDOFF_SCHEMA_VERSION,
@@ -1399,6 +1403,12 @@ def _runtime_ledger_proof_packet_handoff(
                 "endpoint": "/trading/completion/doc29",
                 "required_when": "runtime_window.import_ready",
             },
+            "durable_artifact_upload": {
+                "artifact_prefix": RUNTIME_LEDGER_PROOF_PACKET_ARTIFACT_PREFIX,
+                "artifact_name": "runtime-ledger-proof-packet.json",
+                "bucket_env": "TORGHUT_EMPIRICAL_CEPH_BUCKET",
+                "required_when": "runtime_window_import file is provided",
+            },
         },
         "commands": {
             "waiting_packet": {
@@ -1409,6 +1419,7 @@ def _runtime_ledger_proof_packet_handoff(
                 "argv": authority_args,
                 "expected_verdict": "promotion_authority_allowed",
                 "allowed_only_if_packet_ok": True,
+                "requires_durable_artifact_upload": True,
             },
         },
         "runtime_window_import_handoff": runtime_import_handoff,

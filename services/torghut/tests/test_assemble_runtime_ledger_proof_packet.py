@@ -1,14 +1,43 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from argparse import Namespace
 from decimal import Decimal
 from pathlib import Path
+from typing import Any, cast
 from unittest import TestCase
 from unittest.mock import patch
 
 from scripts import assemble_runtime_ledger_proof_packet as packet
+
+
+class _FakeObjectStoreClient:
+    def __init__(self) -> None:
+        self.uploads: list[dict[str, object]] = []
+
+    def put_object(
+        self,
+        *,
+        bucket: str,
+        key: str,
+        body: bytes,
+        content_type: str,
+    ) -> dict[str, object]:
+        self.uploads.append(
+            {
+                "bucket": bucket,
+                "key": key,
+                "body": body,
+                "content_type": content_type,
+            }
+        )
+        return {
+            "bucket": bucket,
+            "key": key,
+            "uri": f"s3://{bucket}/{key}",
+        }
 
 
 def _status(*, blockers: list[str] | None = None) -> dict[str, object]:
@@ -165,6 +194,81 @@ class TestRuntimeLedgerProofPacket(TestCase):
         self.assertEqual(packet._decimal(Decimal("12.5")), Decimal("12.5"))
         self.assertIsNone(packet._decimal("not-a-number"))
 
+    def test_ceph_client_from_env_uses_direct_empirical_endpoint(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "TORGHUT_EMPIRICAL_CEPH_ENDPOINT": "https://rgw.torghut.internal/",
+                "TORGHUT_EMPIRICAL_CEPH_ACCESS_KEY": "direct-access",
+                "TORGHUT_EMPIRICAL_CEPH_SECRET_KEY": "direct-secret",
+                "TORGHUT_EMPIRICAL_CEPH_BUCKET": "direct-bucket",
+                "TORGHUT_EMPIRICAL_CEPH_REGION": "us-west-2",
+                "TORGHUT_EMPIRICAL_CEPH_TIMEOUT_SECONDS": "35",
+            },
+            clear=True,
+        ):
+            client, bucket = packet._ceph_client_from_env()
+
+        self.assertEqual(bucket, "direct-bucket")
+        self.assertIsNotNone(client)
+        assert client is not None
+        concrete_client = cast(Any, client)
+        self.assertEqual(concrete_client.endpoint, "https://rgw.torghut.internal")
+        self.assertEqual(concrete_client.access_key, "direct-access")
+        self.assertEqual(concrete_client.secret_key, "direct-secret")
+        self.assertEqual(concrete_client.region, "us-west-2")
+        self.assertEqual(concrete_client.timeout_seconds, 35)
+
+    def test_ceph_client_from_env_uses_bucket_host_fallbacks(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "TORGHUT_EMPIRICAL_CEPH_BUCKET_HOST": "rook-ceph-rgw",
+                "TORGHUT_EMPIRICAL_CEPH_BUCKET_PORT": "8080",
+                "TORGHUT_EMPIRICAL_CEPH_USE_TLS": "true",
+                "AWS_ACCESS_KEY_ID": "aws-access",
+                "AWS_SECRET_ACCESS_KEY": "aws-secret",
+                "BUCKET_NAME": "fallback-bucket",
+                "TORGHUT_EMPIRICAL_CEPH_TIMEOUT_SECONDS": "0",
+            },
+            clear=True,
+        ):
+            client, bucket = packet._ceph_client_from_env()
+
+        self.assertEqual(bucket, "fallback-bucket")
+        self.assertIsNotNone(client)
+        assert client is not None
+        concrete_client = cast(Any, client)
+        self.assertEqual(concrete_client.endpoint, "https://rook-ceph-rgw:8080")
+        self.assertEqual(concrete_client.access_key, "aws-access")
+        self.assertEqual(concrete_client.secret_key, "aws-secret")
+        self.assertEqual(concrete_client.region, "us-east-1")
+        self.assertEqual(concrete_client.timeout_seconds, 1)
+
+    def test_ceph_client_from_env_returns_bucket_without_credentials(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "TORGHUT_EMPIRICAL_CEPH_BUCKET_HOST": "rook-ceph-rgw",
+                "TORGHUT_EMPIRICAL_CEPH_BUCKET": "configured-bucket",
+            },
+            clear=True,
+        ):
+            client, bucket = packet._ceph_client_from_env()
+
+        self.assertIsNone(client)
+        self.assertEqual(bucket, "configured-bucket")
+
+    def test_resolve_artifact_prefix_defaults_missing_runtime_run_id(self) -> None:
+        self.assertEqual(
+            packet._resolve_artifact_prefix(
+                "runtime-ledger-proof-packets/{run_id}/{generated_at}",
+                runtime_window_import=None,
+                generated_at="2026-05-26T21:30:00+00:00",
+            ),
+            "runtime-ledger-proof-packets/unknown-run/2026-05-26T21-30-00-00-00",
+        )
+
     def test_packet_allows_only_complete_post_cost_runtime_ledger_proof(self) -> None:
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
@@ -188,6 +292,125 @@ class TestRuntimeLedgerProofPacket(TestCase):
             ],
             "650",
         )
+
+    def test_cli_uploads_durable_proof_packet_artifact_with_runtime_run_id(
+        self,
+    ) -> None:
+        fake_client = _FakeObjectStoreClient()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            status_path = root / "status.json"
+            paper_path = root / "paper.json"
+            runtime_path = root / "runtime.json"
+            completion_path = root / "completion.json"
+            output_path = root / "packet.json"
+            status_path.write_text(json.dumps(_status()), encoding="utf-8")
+            paper_path.write_text(json.dumps(_paper_route_evidence()), encoding="utf-8")
+            runtime_path.write_text(
+                json.dumps(
+                    {
+                        "run_id": "sim-2026-05-05-chip-renew-20260526T212300Z",
+                        "runtime_window_import": _runtime_import(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            completion_path.write_text(json.dumps(_completion()), encoding="utf-8")
+
+            with patch.object(
+                packet,
+                "_ceph_client_from_env",
+                return_value=(fake_client, "torghut-empirical-artifacts"),
+            ):
+                exit_code = packet.main(
+                    [
+                        "--status-file",
+                        str(status_path),
+                        "--paper-route-evidence-file",
+                        str(paper_path),
+                        "--runtime-window-import-file",
+                        str(runtime_path),
+                        "--completion-file",
+                        str(completion_path),
+                        "--output-file",
+                        str(output_path),
+                        "--generated-at",
+                        "2026-05-26T21:30:00+00:00",
+                        "--artifact-prefix",
+                        "runtime-ledger-proof-packets/{run_id}",
+                        "--artifact-name",
+                        "authority-packet.json",
+                        "--require-artifact-upload",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(fake_client.uploads), 1)
+            upload = fake_client.uploads[0]
+            self.assertEqual(upload["bucket"], "torghut-empirical-artifacts")
+            self.assertEqual(
+                upload["key"],
+                "runtime-ledger-proof-packets/"
+                "sim-2026-05-05-chip-renew-20260526T212300Z/"
+                "authority-packet.json",
+            )
+            uploaded_payload = json.loads(cast(bytes, upload["body"]).decode("utf-8"))
+            local_payload = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(uploaded_payload, local_payload)
+            self.assertEqual(
+                local_payload["artifact"]["uri"],
+                "s3://torghut-empirical-artifacts/"
+                "runtime-ledger-proof-packets/"
+                "sim-2026-05-05-chip-renew-20260526T212300Z/"
+                "authority-packet.json",
+            )
+            self.assertTrue(local_payload["artifact"]["uploaded"])
+            self.assertTrue(local_payload["artifact"]["upload_required"])
+
+    def test_cli_fails_closed_when_required_artifact_upload_is_not_configured(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            status_path = root / "status.json"
+            paper_path = root / "paper.json"
+            output_path = root / "packet.json"
+            status_path.write_text(json.dumps(_status()), encoding="utf-8")
+            paper_path.write_text(
+                json.dumps(
+                    _paper_route_evidence(
+                        import_ready=False,
+                        import_blockers=["paper_route_session_window_not_open"],
+                    )
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.object(
+                packet,
+                "_ceph_client_from_env",
+                return_value=(None, "torghut-empirical-artifacts"),
+            ):
+                with self.assertRaisesRegex(
+                    SystemExit,
+                    "runtime_ledger_proof_artifact_upload_not_configured",
+                ):
+                    packet.main(
+                        [
+                            "--status-file",
+                            str(status_path),
+                            "--paper-route-evidence-file",
+                            str(paper_path),
+                            "--output-file",
+                            str(output_path),
+                            "--artifact-prefix",
+                            "runtime-ledger-proof-packets/{run_id}",
+                            "--require-artifact-upload",
+                            "--allow-blocked-exit-zero",
+                        ]
+                    )
+
+            self.assertFalse(output_path.exists())
 
     def test_packet_waits_before_paper_route_window_is_importable(self) -> None:
         result = packet.build_runtime_ledger_proof_packet(
