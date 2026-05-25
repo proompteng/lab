@@ -981,6 +981,18 @@ def _runtime_ledger_selection_score(payload: Mapping[str, object] | None) -> int
     return score
 
 
+def _certificate_evidence_authority_score(
+    *,
+    observed_stage: str | None,
+    runtime_ledger_bucket: Mapping[str, object] | None,
+) -> int:
+    if observed_stage == "live":
+        return 2 if _runtime_ledger_selection_score(runtime_ledger_bucket) >= 9 else 0
+    if observed_stage == "paper":
+        return 1
+    return 0
+
+
 def _runtime_ledger_target_reason_codes(
     payload: Mapping[str, object],
     *,
@@ -1464,7 +1476,7 @@ def _certificate_evidence_selection_key(
     *,
     now: datetime | None,
     max_age_seconds: int | None,
-) -> tuple[int, int, int, int, int, int, int, Decimal, float]:
+) -> tuple[int, int, int, int, int, int, int, int, Decimal, float]:
     metric_window = cast(
         StrategyHypothesisMetricWindow | None, row.get("metric_window")
     )
@@ -1475,7 +1487,7 @@ def _certificate_evidence_selection_key(
         Mapping[str, object] | None, row.get("runtime_ledger_bucket")
     )
     if metric_window is None:
-        return (0, 0, 0, 0, 0, 0, 0, Decimal("0"), 0.0)
+        return (0, 0, 0, 0, 0, 0, 0, 0, Decimal("0"), 0.0)
 
     issued_at = _coerce_aware_datetime(
         getattr(metric_window, "window_ended_at", None)
@@ -1489,6 +1501,11 @@ def _certificate_evidence_selection_key(
         )
     observed_stage = _safe_text(getattr(metric_window, "observed_stage", None))
     stage_score = {"live": 2, "paper": 1}.get(observed_stage or "", 0)
+    runtime_ledger_score = _runtime_ledger_selection_score(runtime_ledger_bucket)
+    authority_score = _certificate_evidence_authority_score(
+        observed_stage=observed_stage,
+        runtime_ledger_bucket=runtime_ledger_bucket,
+    )
     decision_score = 0
     if promotion_decision is not None:
         decision_score = int(
@@ -1510,11 +1527,12 @@ def _certificate_evidence_selection_key(
     issued_ts = issued_at.timestamp() if issued_at is not None else 0.0
     return (
         fresh_score,
-        stage_score,
         decision_score,
         activity_score,
         continuity_score,
-        _runtime_ledger_selection_score(runtime_ledger_bucket),
+        authority_score,
+        stage_score,
+        runtime_ledger_score,
         capital_rank + sample_count,
         expectancy_bps,
         issued_ts,
