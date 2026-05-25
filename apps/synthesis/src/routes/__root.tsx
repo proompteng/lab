@@ -28,7 +28,7 @@ function RootDocument({ children }: { children: ReactNode }) {
       <head>
         <HeadContent />
       </head>
-      <body className="h-dvh overflow-hidden bg-[#f4f1ea] text-[#201c18]">
+      <body className="h-dvh overflow-hidden bg-black text-[#e7e9ea]">
         {children}
         <Scripts />
       </body>
