@@ -269,6 +269,11 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertFalse(plan["session_readiness"]["window_open"])
         self.assertFalse(plan["session_readiness"]["window_closed"])
         self.assertFalse(plan["session_readiness"]["import_ready"])
+        self.assertEqual(plan["session_readiness"]["settlement_seconds"], 3600)
+        self.assertEqual(
+            plan["session_readiness"]["settlement_ready_at"],
+            "2026-05-26T21:00:00+00:00",
+        )
         self.assertEqual(
             plan["session_readiness"]["import_blockers"],
             ["paper_route_session_window_not_open"],
@@ -285,6 +290,8 @@ class TestPaperRouteEvidenceAudit(TestCase):
             "--runtime-window-target-plan-settlement-seconds",
             handoff["required_flags"],
         )
+        self.assertEqual(handoff["target_plan_settlement_seconds"], 3600)
+        self.assertEqual(handoff["settlement_ready_at"], "2026-05-26T21:00:00+00:00")
         self.assertFalse(handoff["import_ready"])
         self.assertEqual(
             handoff["import_blockers"],
@@ -314,7 +321,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertEqual(
             target["paper_route_runtime_window_import_not_before"],
-            "2026-05-26T20:00:00+00:00",
+            "2026-05-26T21:00:00+00:00",
         )
         self.assertEqual(
             target["paper_route_runtime_import_handoff"]["target_plan_endpoint"],
@@ -397,6 +404,34 @@ class TestPaperRouteEvidenceAudit(TestCase):
             ["paper_route_session_window_not_closed"],
         )
 
+        settlement_payload = build(datetime(2026, 5, 26, 20, 30, tzinfo=timezone.utc))
+        settlement_readiness = settlement_payload[
+            "next_paper_route_runtime_window_targets"
+        ]["session_readiness"]
+        self.assertEqual(
+            settlement_readiness["state"], "window_closed_settlement_pending"
+        )
+        self.assertFalse(settlement_readiness["window_open"])
+        self.assertTrue(settlement_readiness["window_closed"])
+        self.assertFalse(settlement_readiness["settlement_ready"])
+        self.assertFalse(settlement_readiness["import_ready"])
+        self.assertEqual(settlement_readiness["seconds_until_import_ready"], 1800)
+        self.assertEqual(
+            settlement_readiness["import_blockers"],
+            ["paper_route_session_settlement_pending"],
+        )
+        settlement_target = settlement_payload[
+            "next_paper_route_runtime_window_targets"
+        ]["targets"][0]
+        self.assertEqual(
+            settlement_target["paper_route_session_readiness_state"],
+            "window_closed_settlement_pending",
+        )
+        self.assertEqual(
+            settlement_target["paper_route_runtime_window_import_not_before"],
+            "2026-05-26T21:00:00+00:00",
+        )
+
         import_payload = build(datetime(2026, 5, 26, 21, tzinfo=timezone.utc))
         import_readiness = import_payload["next_paper_route_runtime_window_targets"][
             "session_readiness"
@@ -404,6 +439,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(import_readiness["state"], "window_closed_import_ready")
         self.assertFalse(import_readiness["window_open"])
         self.assertTrue(import_readiness["window_closed"])
+        self.assertTrue(import_readiness["settlement_ready"])
         self.assertTrue(import_readiness["probe_ready"])
         self.assertTrue(import_readiness["import_ready"])
         self.assertEqual(import_readiness["import_blockers"], [])
