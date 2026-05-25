@@ -269,6 +269,7 @@ def _attach_and_upload_artifact(
     client, bucket = _ceph_client_from_env()
     if client is None and require_artifact_upload:
         raise SystemExit("runtime_ledger_proof_artifact_upload_not_configured")
+    run_id = _runtime_window_import_run_id(runtime_window_import)
     prefix = _resolve_artifact_prefix(
         artifact_prefix,
         runtime_window_import=runtime_window_import,
@@ -280,6 +281,11 @@ def _attach_and_upload_artifact(
         "uri": f"s3://{bucket}/{key}" if client is not None else None,
         "bucket": bucket,
         "key": key,
+        "prefix": prefix,
+        "artifact_name": _safe_artifact_path_part(
+            artifact_name, default="runtime-ledger-proof-packet.json"
+        ),
+        "runtime_window_import_run_id": run_id,
         "content_type": "application/json",
         "uploaded": client is not None,
         "upload_required": require_artifact_upload,
@@ -590,6 +596,40 @@ def _runtime_window_import_items(payload: Mapping[str, Any]) -> list[Mapping[str
     if imports:
         return imports
     return [payload] if payload else []
+
+
+def _runtime_window_import_lineage(
+    *,
+    raw_payload: Mapping[str, Any] | None,
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    raw = _mapping(raw_payload)
+    nested = _mapping(raw.get("runtime_window_import"))
+    run_ids: list[str] = []
+    for candidate in (
+        raw.get("run_id"),
+        raw.get("runtime_window_import_run_id"),
+        nested.get("run_id"),
+        payload.get("run_id"),
+    ):
+        _extend_unique(run_ids, [_text(candidate)])
+    for item in _runtime_window_import_items(payload):
+        _extend_unique(run_ids, [_text(item.get("run_id"))])
+
+    empirical_promotion = _mapping(raw.get("empirical_promotion"))
+    return {
+        "run_id": run_ids[0] if run_ids else "",
+        "run_ids": run_ids,
+        "status": _text(raw.get("status") or payload.get("status")),
+        "output_dir": _text(raw.get("output_dir") or payload.get("output_dir")),
+        "manifest_path": _text(
+            raw.get("manifest_path") or payload.get("manifest_path")
+        ),
+        "empirical_promotion_status": _text(empirical_promotion.get("status")),
+        "wrapped_payload_present": bool(raw),
+        "nested_runtime_window_import_present": bool(nested),
+        "runtime_window_import_item_count": len(_runtime_window_import_items(payload)),
+    }
 
 
 def _runtime_import_blockers(payload: Mapping[str, Any]) -> list[str]:
@@ -910,6 +950,10 @@ def build_runtime_ledger_proof_packet(
 
     runtime_import = _runtime_window_import_payload(runtime_window_import)
     runtime_import_items = _runtime_window_import_items(runtime_import)
+    runtime_import_lineage = _runtime_window_import_lineage(
+        raw_payload=runtime_window_import,
+        payload=runtime_import,
+    )
     runtime_import_blockers = _runtime_import_blockers(runtime_import)
     runtime_import_check_blockers = list(runtime_import_blockers)
     if (
@@ -1155,6 +1199,7 @@ def build_runtime_ledger_proof_packet(
                 "target_count": len(runtime_import_items),
                 "proof_blockers": runtime_import_blockers,
                 "authoritative_observation_count": authoritative_observation_count,
+                "lineage": runtime_import_lineage,
             },
             "completion_live_scale": {
                 "gate_status": live_scale_gate.get("status"),

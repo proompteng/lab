@@ -349,6 +349,17 @@ class TestRuntimeLedgerProofPacket(TestCase):
                 json.dumps(
                     {
                         "run_id": "sim-2026-05-05-chip-renew-20260526T212300Z",
+                        "manifest_path": (
+                            "/tmp/torghut-empirical-renewal/"
+                            "sim-2026-05-05-chip-renew-20260526T212300Z/"
+                            "empirical-promotion-manifest.yaml"
+                        ),
+                        "output_dir": (
+                            "/tmp/torghut-empirical-renewal/"
+                            "sim-2026-05-05-chip-renew-20260526T212300Z"
+                        ),
+                        "status": "ok",
+                        "empirical_promotion": {"status": "ok"},
                         "runtime_window_import": _runtime_import(),
                     }
                 ),
@@ -397,6 +408,15 @@ class TestRuntimeLedgerProofPacket(TestCase):
             local_payload = json.loads(output_path.read_text(encoding="utf-8"))
             self.assertEqual(uploaded_payload, local_payload)
             self.assertEqual(
+                local_payload["artifact"]["runtime_window_import_run_id"],
+                "sim-2026-05-05-chip-renew-20260526T212300Z",
+            )
+            self.assertEqual(
+                local_payload["artifact"]["prefix"],
+                "runtime-ledger-proof-packets/"
+                "sim-2026-05-05-chip-renew-20260526T212300Z",
+            )
+            self.assertEqual(
                 local_payload["artifact"]["uri"],
                 "s3://torghut-empirical-artifacts/"
                 "runtime-ledger-proof-packets/"
@@ -405,6 +425,26 @@ class TestRuntimeLedgerProofPacket(TestCase):
             )
             self.assertTrue(local_payload["artifact"]["uploaded"])
             self.assertTrue(local_payload["artifact"]["upload_required"])
+            lineage = local_payload["evidence"]["runtime_window_import"]["lineage"]
+            self.assertEqual(
+                lineage["run_id"],
+                "sim-2026-05-05-chip-renew-20260526T212300Z",
+            )
+            self.assertEqual(lineage["status"], "ok")
+            self.assertEqual(lineage["empirical_promotion_status"], "ok")
+            self.assertEqual(
+                lineage["manifest_path"],
+                "/tmp/torghut-empirical-renewal/"
+                "sim-2026-05-05-chip-renew-20260526T212300Z/"
+                "empirical-promotion-manifest.yaml",
+            )
+            self.assertEqual(
+                lineage["output_dir"],
+                "/tmp/torghut-empirical-renewal/"
+                "sim-2026-05-05-chip-renew-20260526T212300Z",
+            )
+            self.assertTrue(lineage["nested_runtime_window_import_present"])
+            self.assertEqual(lineage["runtime_window_import_item_count"], 1)
 
     def test_cli_fails_closed_when_required_artifact_upload_is_not_configured(
         self,
