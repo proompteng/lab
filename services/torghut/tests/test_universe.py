@@ -78,6 +78,8 @@ class TestUniverseResolver(TestCase):
     def test_jangar_failure_fails_closed(self) -> None:
         config.settings.trading_universe_source = "jangar"
         config.settings.trading_jangar_symbols_url = "http://example"
+        config.settings.trading_universe_static_fallback_enabled = False
+        config.settings.trading_universe_static_fallback_symbols_raw = ""
         resolver = UniverseResolver()
         with patch("app.trading.universe.urlopen", side_effect=RuntimeError("boom")):
             self.assertEqual(resolver.get_symbols(), set())
@@ -345,6 +347,8 @@ class TestUniverseResolver(TestCase):
         config.settings.trading_jangar_symbols_url = "http://example"
         config.settings.trading_universe_max_stale_seconds = 5
         config.settings.trading_universe_cache_seconds = 1
+        config.settings.trading_universe_static_fallback_enabled = False
+        config.settings.trading_universe_static_fallback_symbols_raw = ""
         resolver = UniverseResolver()
         resolver._cache = UniverseCache(
             symbols={"MSFT"},
@@ -405,6 +409,8 @@ class TestUniverseResolver(TestCase):
     def test_jangar_empty_payload_with_no_cache_fails_closed(self) -> None:
         config.settings.trading_universe_source = "jangar"
         config.settings.trading_jangar_symbols_url = "http://example"
+        config.settings.trading_universe_static_fallback_enabled = False
+        config.settings.trading_universe_static_fallback_symbols_raw = ""
         resolver = UniverseResolver()
 
         with patch("app.trading.universe.urlopen") as mock_urlopen:
@@ -442,6 +448,8 @@ class TestUniverseResolver(TestCase):
         config.settings.trading_jangar_symbols_url = "http://example"
         config.settings.trading_universe_max_stale_seconds = 5
         config.settings.trading_universe_cache_seconds = 1
+        config.settings.trading_universe_static_fallback_enabled = False
+        config.settings.trading_universe_static_fallback_symbols_raw = ""
         resolver = UniverseResolver()
         resolver._cache = UniverseCache(
             symbols={"MSFT"},
