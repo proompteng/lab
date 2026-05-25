@@ -434,6 +434,72 @@ def _paper_route_targets(plan: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return [_mapping(item) for item in _sequence(plan.get("targets")) if _mapping(item)]
 
 
+def _health_gate_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return _text(value).lower() == "true"
+
+
+def _runtime_window_import_health_gate_summary(
+    *,
+    plan: Mapping[str, Any],
+    targets: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    plan_gate = _mapping(plan.get("runtime_window_import_health_gate"))
+    blockers = _text_list(plan_gate.get("blockers"))
+    target_summaries: list[dict[str, Any]] = []
+    ready_count = 0
+    for index, target in enumerate(targets):
+        gate = _mapping(target.get("runtime_window_import_health_gate"))
+        target_blockers = _text_list(
+            target.get("runtime_window_import_health_gate_blockers")
+        )
+        _extend_unique(target_blockers, _text_list(gate.get("blockers")))
+        dependency_quorum_decision = _text(
+            target.get("dependency_quorum_decision")
+            or gate.get("dependency_quorum_decision")
+        )
+        continuity_ok = target.get("continuity_ok", gate.get("continuity_ok"))
+        drift_ok = target.get("drift_ok", gate.get("drift_ok"))
+        if not gate:
+            _extend_unique(
+                target_blockers, ["runtime_window_import_health_gate_missing"]
+            )
+        if dependency_quorum_decision != "allow":
+            _extend_unique(target_blockers, ["dependency_quorum_not_allow"])
+        if not _health_gate_bool(continuity_ok):
+            _extend_unique(target_blockers, ["continuity_not_ok"])
+        if not _health_gate_bool(drift_ok):
+            _extend_unique(target_blockers, ["drift_not_ok"])
+        ready = not target_blockers
+        if ready:
+            ready_count += 1
+        _extend_unique(blockers, target_blockers)
+        target_summaries.append(
+            {
+                "index": index,
+                "hypothesis_id": _text(target.get("hypothesis_id")),
+                "candidate_id": _text(target.get("candidate_id")),
+                "dependency_quorum_decision": dependency_quorum_decision,
+                "continuity_ok": _text(continuity_ok),
+                "drift_ok": _text(drift_ok),
+                "ready": ready,
+                "blockers": target_blockers,
+            }
+        )
+    target_count = len(targets)
+    return {
+        "schema_version": "torghut.runtime-window-import-health-gate-proof-summary.v1",
+        "plan_schema_version": _text(plan_gate.get("schema_version")),
+        "target_count": target_count,
+        "ready_target_count": ready_count,
+        "blocked_target_count": max(0, target_count - ready_count),
+        "ready": target_count > 0 and ready_count == target_count and not blockers,
+        "blockers": blockers,
+        "targets": target_summaries,
+    }
+
+
 def _missing_target_identity_count(targets: Sequence[Mapping[str, Any]]) -> int:
     required = (
         "hypothesis_id",
@@ -597,6 +663,13 @@ def _required_actions(blockers: Sequence[str], *, verdict: str) -> list[str]:
             _extend_unique(
                 actions, ["keep_promotion_blocked_until_live_gate_and_proof_floor_pass"]
             )
+        elif blocker in {
+            "runtime_window_import_health_gate_missing",
+            "dependency_quorum_not_allow",
+            "continuity_not_ok",
+            "drift_not_ok",
+        } or blocker.startswith("runtime_window_import_health_gate"):
+            _extend_unique(actions, ["repair_runtime_window_import_health_gate"])
     if not actions and verdict != "promotion_authority_allowed":
         actions.append("inspect_packet_checks_and_repair_failed_proof_dimension")
     return actions
@@ -631,6 +704,11 @@ def build_runtime_ledger_proof_packet(
     plan = _paper_route_target_plan(paper_route_evidence)
     paper_targets = _paper_route_targets(plan)
     paper_import_blockers = _paper_route_import_blockers(plan)
+    health_gate_summary = _runtime_window_import_health_gate_summary(
+        plan=plan,
+        targets=paper_targets,
+    )
+    health_gate_blockers = _text_list(health_gate_summary.get("blockers"))
     handoff = _mapping(plan.get("runtime_window_import_handoff"))
     session_readiness = _mapping(plan.get("session_readiness"))
     import_ready = _bool(session_readiness.get("import_ready")) or _bool(
@@ -663,14 +741,33 @@ def build_runtime_ledger_proof_packet(
         _extend_unique(blockers, ["paper_route_target_identity_incomplete"])
     _check(
         checks,
+        "paper_route_import_health_gate",
+        passed=bool(paper_targets) and bool(health_gate_summary.get("ready")),
+        observed=health_gate_summary,
+        expected="every paper-route runtime-window target has allow quorum, continuity_ok true, and drift_ok true",
+        blockers=health_gate_blockers
+        or (
+            []
+            if bool(paper_targets) and bool(health_gate_summary.get("ready"))
+            else ["runtime_window_import_health_gate_missing"]
+        ),
+    )
+    if health_gate_blockers:
+        _extend_unique(blockers, health_gate_blockers)
+    elif paper_targets and not bool(health_gate_summary.get("ready")):
+        _extend_unique(blockers, ["runtime_window_import_health_gate_missing"])
+    _check(
+        checks,
         "paper_route_import_ready",
-        passed=import_ready and not paper_import_blockers,
+        passed=import_ready and not paper_import_blockers and not health_gate_blockers,
         observed={
             "import_ready": import_ready,
             "import_blockers": paper_import_blockers,
+            "health_gate_blockers": health_gate_blockers,
         },
         expected="paper-route target window closed, settled, and import-ready",
         blockers=paper_import_blockers
+        or health_gate_blockers
         or ([] if import_ready else ["paper_route_import_not_ready"]),
     )
     if paper_import_blockers:
@@ -678,7 +775,9 @@ def build_runtime_ledger_proof_packet(
     elif not import_ready:
         _extend_unique(blockers, ["paper_route_import_not_ready"])
 
-    runtime_import_due = import_ready and not paper_import_blockers
+    runtime_import_due = (
+        import_ready and not paper_import_blockers and not health_gate_blockers
+    )
     runtime_import = _runtime_window_import_payload(runtime_window_import)
     runtime_import_items = _runtime_window_import_items(runtime_import)
     runtime_import_blockers = _runtime_import_blockers(runtime_import)
@@ -898,6 +997,7 @@ def build_runtime_ledger_proof_packet(
                 "import_ready": import_ready,
                 "import_blockers": paper_import_blockers,
                 "session_window": _mapping(plan.get("session_window")),
+                "runtime_window_import_health_gate": health_gate_summary,
             },
             "runtime_window_import": {
                 "present": bool(runtime_import),
