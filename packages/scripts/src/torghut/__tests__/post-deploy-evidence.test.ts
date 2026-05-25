@@ -27,6 +27,8 @@ const paperRouteTarget = {
   strategy_name: 'paper-route-candidate-v1',
   window_start: '2026-05-26T13:30:00+00:00',
   window_end: '2026-05-26T20:00:00+00:00',
+  paper_route_probe_symbols: ['AAPL', 'AMZN'],
+  paper_route_probe_next_session_max_notional: '25',
 }
 
 const buildPaperRouteEvidence = (targets: Array<Record<string, unknown>>) => ({
@@ -170,6 +172,36 @@ describe('validatePostDeployEvidence', () => {
         simPaperRouteEvidence: buildPaperRouteEvidence([{ ...paperRouteTarget, candidate_id: 'other-candidate' }]),
       }),
     ).toThrow('torghut-sim paper-route target plan missing live target')
+  })
+
+  it('rejects a sim paper-route plan with a broader symbol envelope than live', () => {
+    expect(() =>
+      validatePostDeployEvidence({
+        readyzHttpStatus: '200',
+        readyz: { status: 'ok' },
+        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
+        tradingStatus: baseTradingStatus,
+        paperRouteEvidence: buildPaperRouteEvidence([paperRouteTarget]),
+        simPaperRouteEvidence: buildPaperRouteEvidence([
+          { ...paperRouteTarget, paper_route_probe_symbols: ['AMZN', 'AAPL', 'INTC'] },
+        ]),
+      }),
+    ).toThrow('torghut-sim paper-route target symbols differ from live target')
+  })
+
+  it('rejects a sim paper-route plan with a different notional envelope than live', () => {
+    expect(() =>
+      validatePostDeployEvidence({
+        readyzHttpStatus: '200',
+        readyz: { status: 'ok' },
+        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
+        tradingStatus: baseTradingStatus,
+        paperRouteEvidence: buildPaperRouteEvidence([paperRouteTarget]),
+        simPaperRouteEvidence: buildPaperRouteEvidence([
+          { ...paperRouteTarget, paper_route_probe_next_session_max_notional: '50' },
+        ]),
+      }),
+    ).toThrow('torghut-sim paper-route target notional differs from live target')
   })
 
   it('rejects paper-route target plans that accidentally authorize promotion', () => {
