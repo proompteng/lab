@@ -1,9 +1,25 @@
 import { Effect, pipe } from 'effect'
 import { describe, expect, it } from 'vitest'
 
-import type { AgentsMemoryNoteRecord } from '@proompteng/agent-contracts'
+import type {
+  AgentsAgentRunGetInput,
+  AgentsAgentRunListInput,
+  AgentsAgentRunLogsInput,
+  AgentsAgentRunResourceListInput,
+  AgentsAgentRunRerunSubmitInput,
+  AgentsAgentRunSubmitInput,
+  AgentsAgentRunTerminalEventAckInput,
+  AgentsAgentRunTerminalEventsListInput,
+  AgentsMemoryNoteRecord,
+} from '@proompteng/agent-contracts'
 
-import { handleMcpRequestEffect, MemoryNotesMcp, type MemoryNotesMcpService } from './mcp'
+import {
+  AgentRunsMcp,
+  handleMcpRequestEffect,
+  MemoryNotesMcp,
+  type AgentRunsMcpService,
+  type MemoryNotesMcpService,
+} from './mcp'
 
 const makeService = (): { service: MemoryNotesMcpService; saved: AgentsMemoryNoteRecord[] } => {
   const saved: AgentsMemoryNoteRecord[] = []
@@ -35,7 +51,89 @@ const makeService = (): { service: MemoryNotesMcpService; saved: AgentsMemoryNot
   return { service, saved }
 }
 
-const post = async (service: MemoryNotesMcpService, body: unknown, headers: Record<string, string> = {}) => {
+const makeAgentRunsService = () => {
+  const calls: Record<string, unknown[]> = {
+    create: [],
+    list: [],
+    get: [],
+    listResources: [],
+    getLogs: [],
+    listTerminalEvents: [],
+    ackTerminalEvent: [],
+    rerun: [],
+  }
+
+  const service: AgentRunsMcpService = {
+    create: (input: AgentsAgentRunSubmitInput) =>
+      Effect.sync(() => {
+        calls.create.push(input)
+        return {
+          ok: true,
+          agentRun: { id: 'run-1', deliveryId: input.deliveryId, externalRunId: 'mcp-smoke-run' },
+          resource: { kind: 'AgentRun', metadata: { name: 'mcp-smoke-run', namespace: 'agents' } },
+        }
+      }),
+    list: (input: AgentsAgentRunListInput) =>
+      Effect.sync(() => {
+        calls.list.push(input)
+        return { ok: true, runs: [{ id: 'run-1', status: 'Running', externalRunId: 'mcp-smoke-run' }] }
+      }),
+    get: (input: AgentsAgentRunGetInput) =>
+      Effect.sync(() => {
+        calls.get.push(input)
+        return { ok: true, agentRun: { id: input.id, externalRunId: 'mcp-smoke-run' }, resource: null }
+      }),
+    listResources: (input: AgentsAgentRunResourceListInput) =>
+      Effect.sync(() => {
+        calls.listResources.push(input)
+        return { ok: true, items: [{ kind: 'AgentRun', metadata: { name: 'mcp-smoke-run' } }] }
+      }),
+    getLogs: (input: AgentsAgentRunLogsInput) =>
+      Effect.sync(() => {
+        calls.getLogs.push(input)
+        return {
+          ok: true,
+          name: input.name,
+          namespace: input.namespace,
+          pod: 'mcp-smoke-pod',
+          container: 'agent-runner',
+          tailLines: input.tailLines ?? null,
+          pods: [],
+          logs: 'line-4\nline-5\n',
+        }
+      }),
+    listTerminalEvents: (input: AgentsAgentRunTerminalEventsListInput) =>
+      Effect.sync(() => {
+        calls.listTerminalEvents.push(input)
+        return {
+          ok: true,
+          namespace: input.namespace ?? 'agents',
+          consumer: input.consumer ?? null,
+          total: 1,
+          events: [{ eventId: 'agents/mcp-smoke-run/uid/Succeeded', phase: 'Succeeded' }],
+        }
+      }),
+    ackTerminalEvent: (input: AgentsAgentRunTerminalEventAckInput) =>
+      Effect.sync(() => {
+        calls.ackTerminalEvent.push(input)
+        return { ok: true, eventId: input.eventId, consumer: input.consumer }
+      }),
+    rerun: (input: AgentsAgentRunRerunSubmitInput) =>
+      Effect.sync(() => {
+        calls.rerun.push(input)
+        return { ok: true, idempotent: false, agentRun: { id: input.agentRunId } }
+      }),
+  }
+
+  return { service, calls }
+}
+
+const post = async (
+  service: MemoryNotesMcpService,
+  body: unknown,
+  headers: Record<string, string> = {},
+  agentRunsService: AgentRunsMcpService = makeAgentRunsService().service,
+) => {
   const request = new Request('http://agents.local/mcp', {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...headers },
@@ -43,26 +141,40 @@ const post = async (service: MemoryNotesMcpService, body: unknown, headers: Reco
   })
 
   const response = await Effect.runPromise(
-    pipe(handleMcpRequestEffect(request), Effect.provideService(MemoryNotesMcp, service)),
+    pipe(
+      handleMcpRequestEffect(request),
+      Effect.provideService(MemoryNotesMcp, service),
+      Effect.provideService(AgentRunsMcp, agentRunsService),
+    ),
   )
   const json = response.status === 202 || response.status === 204 ? null : await response.json()
   return { response, json }
 }
 
-describe('Agents memory MCP handler', () => {
+describe('Agents MCP handler', () => {
   it('supports initialize + tools/list', async () => {
     const { service } = makeService()
 
     const init = await post(service, { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} })
     expect(init.response.status).toBe(200)
-    expect(init.json?.result?.serverInfo?.name).toBe('agents-memory-notes')
+    expect(init.json?.result?.serverInfo?.name).toBe('agents-control-plane')
 
     const list = await post(service, { jsonrpc: '2.0', id: 2, method: 'tools/list' })
     expect(list.response.status).toBe(200)
-    expect(list.json?.result?.tools?.map((tool: { name: string }) => tool.name)).toEqual([
-      'persist_memory',
-      'retrieve_memory',
-    ])
+    expect(list.json?.result?.tools?.map((tool: { name: string }) => tool.name)).toEqual(
+      expect.arrayContaining([
+        'persist_memory',
+        'retrieve_memory',
+        'create_agent_run',
+        'list_agent_runs',
+        'get_agent_run',
+        'list_agent_run_resources',
+        'get_agent_run_logs',
+        'list_agent_run_terminal_events',
+        'ack_agent_run_terminal_event',
+        'rerun_agent_run',
+      ]),
+    )
   })
 
   it('supports resources/list + resources/templates/list', async () => {
@@ -70,7 +182,7 @@ describe('Agents memory MCP handler', () => {
 
     const resources = await post(service, { jsonrpc: '2.0', id: 1, method: 'resources/list' })
     expect(resources.response.status).toBe(200)
-    expect(resources.json?.result?.resources?.[0]?.uri).toBe('memories://config')
+    expect(resources.json?.result?.resources?.[0]?.uri).toBe('agents://config')
 
     const templates = await post(service, { jsonrpc: '2.0', id: 2, method: 'resources/templates/list' })
     expect(templates.response.status).toBe(200)
@@ -84,12 +196,12 @@ describe('Agents memory MCP handler', () => {
       jsonrpc: '2.0',
       id: 1,
       method: 'resources/read',
-      params: { uri: 'memories://config' },
+      params: { uri: 'agents://config' },
     })
     expect(resource.response.status).toBe(200)
     const text = resource.json?.result?.contents?.[0]?.text as string
     expect(text).toContain('"serverInfo"')
-    expect(text).toContain('"agents-memory-notes"')
+    expect(text).toContain('"agents-control-plane"')
   })
 
   it('supports persist_memory + retrieve_memory', async () => {
@@ -135,6 +247,146 @@ describe('Agents memory MCP handler', () => {
     })
     expect(retrieve.response.status).toBe(200)
     expect(retrieve.json?.error?.code).toBe(-32602)
+  })
+
+  it('supports AgentRun create, read, logs, terminal ack, and rerun tools', async () => {
+    const { service } = makeService()
+    const { service: agentRunsService, calls } = makeAgentRunsService()
+
+    const create = await post(
+      service,
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'create_agent_run',
+          arguments: {
+            deliveryId: 'delivery-1',
+            payload: {
+              agentRef: { name: 'codex-spark-agent' },
+              runtime: { type: 'workflow' },
+              goal: { objective: 'prove mcp AgentRun creation' },
+            },
+          },
+        },
+      },
+      {},
+      agentRunsService,
+    )
+    expect(create.response.status).toBe(200)
+    expect(create.json?.result?.content?.[0]?.text).toContain('mcp-smoke-run')
+    expect(calls.create).toEqual([
+      {
+        deliveryId: 'delivery-1',
+        payload: {
+          agentRef: { name: 'codex-spark-agent' },
+          runtime: { type: 'workflow' },
+          goal: { objective: 'prove mcp AgentRun creation' },
+        },
+        dryRun: null,
+      },
+    ])
+
+    await post(
+      service,
+      {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: { name: 'list_agent_runs', arguments: { statuses: ['Running'], limit: 5 } },
+      },
+      {},
+      agentRunsService,
+    )
+    await post(
+      service,
+      {
+        jsonrpc: '2.0',
+        id: 3,
+        method: 'tools/call',
+        params: { name: 'get_agent_run', arguments: { id: 'run-1' } },
+      },
+      {},
+      agentRunsService,
+    )
+    await post(
+      service,
+      {
+        jsonrpc: '2.0',
+        id: 4,
+        method: 'tools/call',
+        params: { name: 'get_agent_run_logs', arguments: { name: 'mcp-smoke-run', namespace: 'agents', tailLines: 5 } },
+      },
+      {},
+      agentRunsService,
+    )
+    await post(
+      service,
+      {
+        jsonrpc: '2.0',
+        id: 5,
+        method: 'tools/call',
+        params: {
+          name: 'list_agent_run_terminal_events',
+          arguments: { namespace: 'agents', consumer: 'codex-mcp-smoke', limit: 5 },
+        },
+      },
+      {},
+      agentRunsService,
+    )
+    await post(
+      service,
+      {
+        jsonrpc: '2.0',
+        id: 6,
+        method: 'tools/call',
+        params: {
+          name: 'ack_agent_run_terminal_event',
+          arguments: {
+            eventId: 'agents/mcp-smoke-run/uid/Succeeded',
+            consumer: 'codex-mcp-smoke',
+            outcome: 'checked',
+          },
+        },
+      },
+      {},
+      agentRunsService,
+    )
+    await post(
+      service,
+      {
+        jsonrpc: '2.0',
+        id: 7,
+        method: 'tools/call',
+        params: {
+          name: 'rerun_agent_run',
+          arguments: { agentRunId: 'run-1', deliveryId: 'rerun-1', payload: { reason: 'mcp smoke' } },
+        },
+      },
+      {},
+      agentRunsService,
+    )
+
+    expect(calls.list).toEqual([{ agentName: null, statuses: ['Running'], limit: 5 }])
+    expect(calls.get).toEqual([{ id: 'run-1', namespace: 'agents' }])
+    expect(calls.getLogs).toEqual([
+      { name: 'mcp-smoke-run', namespace: 'agents', pod: null, container: null, tailLines: 5 },
+    ])
+    expect(calls.listTerminalEvents).toEqual([
+      { namespace: 'agents', runIdPrefix: null, consumer: 'codex-mcp-smoke', includeAcked: null, limit: 5 },
+    ])
+    expect(calls.ackTerminalEvent).toEqual([
+      {
+        eventId: 'agents/mcp-smoke-run/uid/Succeeded',
+        consumer: 'codex-mcp-smoke',
+        outcome: 'checked',
+        message: null,
+        receiptRef: null,
+        annotations: null,
+      },
+    ])
+    expect(calls.rerun).toEqual([{ agentRunId: 'run-1', deliveryId: 'rerun-1', payload: { reason: 'mcp smoke' } }])
   })
 
   it('returns JSON-RPC tool errors when the underlying service fails', async () => {
@@ -194,7 +446,7 @@ describe('Agents memory MCP handler', () => {
     expect(Array.isArray(batch.json)).toBe(true)
     expect(batch.json?.map((item: { id: number }) => item.id)).toEqual([1, 2, 3])
     expect(batch.json?.find((item: { id: number }) => item.id === 1)?.result?.serverInfo?.name).toBe(
-      'agents-memory-notes',
+      'agents-control-plane',
     )
     expect(batch.json?.find((item: { id: number }) => item.id === 2)?.error?.code).toBe(-32000)
     expect(batch.json?.find((item: { id: number }) => item.id === 3)?.error?.code).toBe(-32000)
