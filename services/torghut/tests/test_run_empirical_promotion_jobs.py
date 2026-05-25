@@ -839,6 +839,22 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                             "source_dsn_env": "SIM_DB_DSN",
                             "source_kind": "paper_route_probe_runtime_observed",
                             "source_manifest_ref": "config/trading/hypotheses/h-paper-route.json",
+                            "dependency_quorum_decision": "missing",
+                            "continuity_ok": "false",
+                            "drift_ok": "false",
+                            "runtime_window_import_health_gate": {
+                                "schema_version": "torghut.runtime-window-import-health-gate.v1",
+                                "dependency_quorum_decision": "missing",
+                                "continuity_ok": "false",
+                                "drift_ok": "false",
+                                "ready": False,
+                                "blockers": [
+                                    "runtime_window_import_dependency_quorum_missing"
+                                ],
+                            },
+                            "runtime_window_import_health_gate_blockers": [
+                                "runtime_window_import_dependency_quorum_missing"
+                            ],
                             "window_start": "2026-05-26T13:30:00+00:00",
                             "window_end": "2026-05-26T20:00:00+00:00",
                             "paper_route_probe_symbols": ["AAPL"],
@@ -927,8 +943,21 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertEqual(targets[0].hypothesis_id, "H-PAPER-ROUTE")
         self.assertEqual(targets[0].source_dsn_env, "SIM_DB_DSN")
         self.assertEqual(targets[0].source_kind, "paper_route_probe_runtime_observed")
+        self.assertEqual(targets[0].dependency_quorum_decision, "missing")
+        self.assertEqual(targets[0].continuity_ok, "false")
+        self.assertEqual(targets[0].drift_ok, "false")
         self.assertEqual(targets[0].window_start, "2026-05-26T13:30:00+00:00")
         assert targets[0].target_metadata is not None
+        self.assertEqual(
+            targets[0].target_metadata["runtime_window_import_health_gate"][
+                "schema_version"
+            ],
+            "torghut.runtime-window-import-health-gate.v1",
+        )
+        self.assertEqual(
+            targets[0].target_metadata["runtime_window_import_health_gate_blockers"],
+            ["runtime_window_import_dependency_quorum_missing"],
+        )
         self.assertEqual(targets[0].target_metadata["max_notional"], "0")
         self.assertEqual(
             targets[0].target_metadata["paper_route_probe_symbols"], ["AAPL"]

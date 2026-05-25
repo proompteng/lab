@@ -6,8 +6,16 @@ import process from 'node:process'
 const ROUTE_BOARD_SCHEMA_VERSION = 'torghut.route-reacquisition-board.v1'
 const PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION = 'torghut.paper-route-evidence.v1'
 const PAPER_ROUTE_TARGETS_SCHEMA_VERSION = 'torghut.next-paper-route-runtime-window-targets.v1'
+const RUNTIME_WINDOW_IMPORT_HEALTH_GATE_SCHEMA_VERSION = 'torghut.runtime-window-import-health-gate.v1'
+const RUNTIME_WINDOW_IMPORT_HEALTH_GATE_SUMMARY_SCHEMA_VERSION = 'torghut.runtime-window-import-health-gate-summary.v1'
 
 type JsonObject = Record<string, unknown>
+
+type RuntimeWindowImportHealthGate = {
+  dependencyQuorumDecision: string
+  continuityOk: string
+  driftOk: string
+}
 
 type PostDeployEvidenceInput = {
   readyzHttpStatus: string
@@ -171,6 +179,7 @@ const targetEnvelope = (target: unknown, label: string): PaperRouteTargetEnvelop
   if (probeSymbols.length === 0) {
     throw new Error(`${label} paper_route_probe_symbols must not be empty`)
   }
+  requireRuntimeWindowImportHealthGate(targetObject, label)
   return {
     identity,
     probeSymbols,
@@ -182,6 +191,47 @@ const requireNotTrue = (value: unknown, label: string) => {
   if (value === true || value === 'true') {
     throw new Error(`${label} must not be true for paper-route evidence collection`)
   }
+}
+
+const requireRuntimeWindowImportHealthGate = (
+  targetObject: JsonObject,
+  label: string,
+): RuntimeWindowImportHealthGate => {
+  const dependencyQuorumDecision = formatScalar(targetObject.dependency_quorum_decision, '').trim().toLowerCase()
+  const continuityOk = formatScalar(targetObject.continuity_ok, '').trim().toLowerCase()
+  const driftOk = formatScalar(targetObject.drift_ok, '').trim().toLowerCase()
+  if (!dependencyQuorumDecision || !continuityOk || !driftOk) {
+    throw new Error(`${label} missing runtime-window import health gate fields`)
+  }
+  if (!['true', 'false'].includes(continuityOk)) {
+    throw new Error(`${label} continuity_ok must be true or false`)
+  }
+  if (!['true', 'false'].includes(driftOk)) {
+    throw new Error(`${label} drift_ok must be true or false`)
+  }
+
+  const gate = requireObject(
+    targetObject.runtime_window_import_health_gate,
+    `${label} runtime_window_import_health_gate`,
+  )
+  const schemaVersion = formatScalar(gate.schema_version, 'missing')
+  if (schemaVersion !== RUNTIME_WINDOW_IMPORT_HEALTH_GATE_SCHEMA_VERSION) {
+    throw new Error(
+      `${label} runtime-window health gate schema mismatch: expected ${RUNTIME_WINDOW_IMPORT_HEALTH_GATE_SCHEMA_VERSION}, got ${schemaVersion}`,
+    )
+  }
+  if (formatScalar(gate.dependency_quorum_decision, '').trim().toLowerCase() !== dependencyQuorumDecision) {
+    throw new Error(`${label} runtime-window health gate dependency_quorum_decision mismatch`)
+  }
+  if (formatScalar(gate.continuity_ok, '').trim().toLowerCase() !== continuityOk) {
+    throw new Error(`${label} runtime-window health gate continuity_ok mismatch`)
+  }
+  if (formatScalar(gate.drift_ok, '').trim().toLowerCase() !== driftOk) {
+    throw new Error(`${label} runtime-window health gate drift_ok mismatch`)
+  }
+  requireArray(gate.blockers, `${label} runtime-window health gate blockers`)
+
+  return { dependencyQuorumDecision, continuityOk, driftOk }
 }
 
 const parsePaperRouteTargets = (
@@ -211,6 +261,39 @@ const parsePaperRouteTargets = (
   requireNotTrue(plan.promotion_allowed, `${label} target plan promotion_allowed`)
   requireNotTrue(plan.final_promotion_allowed, `${label} target plan final_promotion_allowed`)
   requireNotTrue(plan.final_promotion_authorized, `${label} target plan final_promotion_authorized`)
+  const planHealthGate = requireObject(
+    plan.runtime_window_import_health_gate,
+    `${label} target plan runtime_window_import_health_gate`,
+  )
+  const planHealthGateSchemaVersion = formatScalar(planHealthGate.schema_version, 'missing')
+  if (planHealthGateSchemaVersion !== RUNTIME_WINDOW_IMPORT_HEALTH_GATE_SUMMARY_SCHEMA_VERSION) {
+    throw new Error(
+      `${label} target plan runtime-window health gate schema mismatch: expected ${RUNTIME_WINDOW_IMPORT_HEALTH_GATE_SUMMARY_SCHEMA_VERSION}, got ${planHealthGateSchemaVersion}`,
+    )
+  }
+  const healthGateTargetCount = requireNonNegativeInteger(
+    planHealthGate.target_count,
+    `${label} target plan runtime-window health gate target_count`,
+  )
+  if (healthGateTargetCount !== targetCount) {
+    throw new Error(
+      `${label} target plan runtime-window health gate target_count mismatch: gate=${healthGateTargetCount}, targets=${targetCount}`,
+    )
+  }
+  const healthGateReadyCount = requireNonNegativeInteger(
+    planHealthGate.ready_target_count,
+    `${label} target plan runtime-window health gate ready_target_count`,
+  )
+  const healthGateBlockedCount = requireNonNegativeInteger(
+    planHealthGate.blocked_target_count,
+    `${label} target plan runtime-window health gate blocked_target_count`,
+  )
+  if (healthGateReadyCount + healthGateBlockedCount !== targetCount) {
+    throw new Error(
+      `${label} target plan runtime-window health gate count mismatch: ready=${healthGateReadyCount}, blocked=${healthGateBlockedCount}, targets=${targetCount}`,
+    )
+  }
+  requireArray(planHealthGate.blockers, `${label} target plan runtime-window health gate blockers`)
   targets.forEach((target, index) => {
     const targetObject = requireObject(target, `${label} target ${index}`)
     requireNotTrue(targetObject.promotion_allowed, `${label} target ${index} promotion_allowed`)

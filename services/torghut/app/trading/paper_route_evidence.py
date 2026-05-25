@@ -101,6 +101,18 @@ def _safe_text(value: object) -> str | None:
     return text or None
 
 
+def _health_gate_bool_text(value: object) -> str | None:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    text = _safe_text(value)
+    if text is None:
+        return None
+    normalized = text.lower()
+    if normalized in {"true", "false"}:
+        return normalized
+    return None
+
+
 def _safe_int(value: object) -> int:
     if isinstance(value, bool):
         return int(value)
@@ -467,10 +479,106 @@ def _target_window(
     return window_start, window_end
 
 
+def _runtime_window_import_health_gate(
+    *,
+    target: Mapping[str, Any],
+    live_submission_gate: Mapping[str, Any],
+) -> dict[str, object]:
+    nested_gate = _as_mapping(target.get("runtime_window_import_health_gate"))
+
+    def text_value(*items: tuple[str, object]) -> tuple[str, str]:
+        for source, value in items:
+            text = _safe_text(value)
+            if text is not None:
+                return text.lower(), source
+        return "missing", "missing"
+
+    def bool_value(*items: tuple[str, object]) -> tuple[str, str]:
+        for source, value in items:
+            text = _health_gate_bool_text(value)
+            if text is not None:
+                return text, source
+        return "false", "missing"
+
+    dependency_quorum_decision, dependency_quorum_source = text_value(
+        ("target_plan", target.get("dependency_quorum_decision")),
+        (
+            "target_plan.runtime_window_import_health_gate",
+            nested_gate.get("dependency_quorum_decision"),
+        ),
+        (
+            "live_submission_gate",
+            live_submission_gate.get("dependency_quorum_decision"),
+        ),
+    )
+    continuity_ok, continuity_source = bool_value(
+        ("target_plan", target.get("continuity_ok")),
+        (
+            "target_plan.runtime_window_import_health_gate",
+            nested_gate.get("continuity_ok"),
+        ),
+        ("live_submission_gate", live_submission_gate.get("continuity_ok")),
+    )
+    drift_ok, drift_source = bool_value(
+        ("target_plan", target.get("drift_ok")),
+        ("target_plan.runtime_window_import_health_gate", nested_gate.get("drift_ok")),
+        ("live_submission_gate", live_submission_gate.get("drift_ok")),
+    )
+
+    blockers: list[str] = []
+    if dependency_quorum_source == "missing":
+        blockers.append("runtime_window_import_dependency_quorum_missing")
+    elif dependency_quorum_decision != "allow":
+        blockers.append("dependency_quorum_not_allow")
+    if continuity_source == "missing":
+        blockers.append("runtime_window_import_continuity_missing")
+    elif continuity_ok != "true":
+        blockers.append("evidence_continuity_not_ok")
+    if drift_source == "missing":
+        blockers.append("runtime_window_import_drift_missing")
+    elif drift_ok != "true":
+        blockers.append("drift_checks_not_ok")
+
+    return {
+        "schema_version": "torghut.runtime-window-import-health-gate.v1",
+        "source": "live_submission_gate_and_target_plan",
+        "dependency_quorum_decision": dependency_quorum_decision,
+        "dependency_quorum_source": dependency_quorum_source,
+        "continuity_ok": continuity_ok,
+        "continuity_source": continuity_source,
+        "drift_ok": drift_ok,
+        "drift_source": drift_source,
+        "ready": not blockers,
+        "blockers": blockers,
+    }
+
+
+def _runtime_window_import_health_gate_summary(
+    targets: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    blockers: list[str] = []
+    ready_count = 0
+    for target in targets:
+        gate = _as_mapping(target.get("runtime_window_import_health_gate"))
+        if bool(gate.get("ready")):
+            ready_count += 1
+        blockers.extend(_unique_text_items(gate.get("blockers")))
+    return {
+        "schema_version": "torghut.runtime-window-import-health-gate-summary.v1",
+        "source": "paper_route_runtime_window_targets",
+        "required": True,
+        "target_count": len(targets),
+        "ready_target_count": ready_count,
+        "blocked_target_count": max(0, len(targets) - ready_count),
+        "blockers": _unique_text_items(blockers),
+    }
+
+
 def _next_paper_route_runtime_window_targets(
     *,
     targets: Sequence[Mapping[str, Any]],
     probe: Mapping[str, object],
+    live_submission_gate: Mapping[str, Any],
     generated_at: datetime,
 ) -> dict[str, object]:
     window_start, window_end = _next_regular_equities_session_window(generated_at)
@@ -560,6 +668,11 @@ def _next_paper_route_runtime_window_targets(
             )
             continue
         source_account_label = _safe_text(target.get("account_label"))
+        health_gate = _runtime_window_import_health_gate(
+            target=target,
+            live_submission_gate=live_submission_gate,
+        )
+        health_gate_blockers = _unique_text_items(health_gate.get("blockers"))
         planned_target: dict[str, object] = {
             "hypothesis_id": hypothesis_id,
             "candidate_id": candidate_id,
@@ -573,6 +686,11 @@ def _next_paper_route_runtime_window_targets(
             or "",
             "source_manifest_ref": source_manifest_ref,
             "source_kind": "paper_route_probe_runtime_observed",
+            "dependency_quorum_decision": health_gate["dependency_quorum_decision"],
+            "continuity_ok": health_gate["continuity_ok"],
+            "drift_ok": health_gate["drift_ok"],
+            "runtime_window_import_health_gate": health_gate,
+            "runtime_window_import_health_gate_blockers": health_gate_blockers,
             "window_start": _isoformat(window_start),
             "window_end": _isoformat(window_end),
             "paper_route_probe_symbols": target_probe_symbols,
@@ -610,12 +728,16 @@ def _next_paper_route_runtime_window_targets(
                 [
                     "paper_route_runtime_ledger_import_pending",
                     *_unique_text_items(target.get("candidate_blockers")),
+                    *health_gate_blockers,
                 ]
             ),
-            "runtime_ledger_target_metadata_blockers": [
-                "paper_route_runtime_ledger_import_pending",
-                "live_runtime_ledger_required",
-            ],
+            "runtime_ledger_target_metadata_blockers": _unique_text_items(
+                [
+                    "paper_route_runtime_ledger_import_pending",
+                    "live_runtime_ledger_required",
+                    *health_gate_blockers,
+                ]
+            ),
             "handoff": "next_paper_route_runtime_window_import",
             "promotion_gate": "runtime_ledger_live_or_live_paper_required",
             "max_notional": "0",
@@ -645,6 +767,7 @@ def _next_paper_route_runtime_window_targets(
             continue
         planned_keys.add(planned_key)
         planned_targets.append(planned_target)
+    health_gate_summary = _runtime_window_import_health_gate_summary(planned_targets)
     return {
         "schema_version": NEXT_PAPER_ROUTE_RUNTIME_WINDOW_TARGETS_SCHEMA_VERSION,
         "source": "paper_route_evidence_audit",
@@ -664,7 +787,9 @@ def _next_paper_route_runtime_window_targets(
             "skipped_target_count": len(skipped_targets),
             "window_start": _isoformat(window_start),
             "window_end": _isoformat(window_end),
+            "runtime_window_import_health_gate": health_gate_summary,
         },
+        "runtime_window_import_health_gate": health_gate_summary,
         "paper_route_probe": {
             "configured_enabled": bool(probe.get("configured_enabled")),
             "active": bool(probe.get("active")),
@@ -1375,6 +1500,9 @@ def _runtime_ledger_proof_packet_handoff(
         "runtime_window": {
             "import_ready": import_ready,
             "import_blockers": sorted(dict.fromkeys(import_blockers)),
+            "health_gate": _as_mapping(
+                next_targets.get("runtime_window_import_health_gate")
+            ),
             "session_window": _as_mapping(next_targets.get("session_window")),
             "settlement_ready_at": session_readiness.get("settlement_ready_at"),
             "target_count": _safe_int(next_targets.get("target_count")),
@@ -1456,6 +1584,7 @@ def build_paper_route_evidence_audit(
     next_targets = _next_paper_route_runtime_window_targets(
         targets=targets,
         probe=probe,
+        live_submission_gate=live_submission_gate,
         generated_at=resolved_generated_at,
     )
     runtime_window_import_audit = _runtime_window_import_audit(
