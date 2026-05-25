@@ -2633,6 +2633,37 @@ def _candidate_search_remediation(
     recent_day_shortfall = _recent_trading_days_shortfall(failure_reason)
     recent_day_diagnostics: dict[str, Any] | None = None
     if recent_day_shortfall is not None:
+        signal_recent_days_query = (
+            "SELECT toDate(event_ts) AS trading_day, count() AS rows, "
+            "min(event_ts) AS first_event_ts, max(event_ts) AS last_event_ts "
+            "FROM torghut.ta_signals WHERE source = 'ta' AND window_size = 'PT1S' "
+            "GROUP BY trading_day ORDER BY trading_day DESC LIMIT 20"
+        )
+        signal_microbar_coverage_query = (
+            "SELECT table_name, countDistinct(trading_day) AS days, "
+            "min(trading_day) AS first_day, max(trading_day) AS last_day, sum(rows) AS rows "
+            "FROM ("
+            "SELECT 'ta_signals' AS table_name, toDate(event_ts) AS trading_day, count() AS rows "
+            "FROM torghut.ta_signals WHERE source = 'ta' AND window_size = 'PT1S' "
+            "GROUP BY trading_day UNION ALL "
+            "SELECT 'ta_microbars' AS table_name, toDate(event_ts) AS trading_day, count() AS rows "
+            "FROM torghut.ta_microbars WHERE source = 'ta' AND window_size = 'PT1S' "
+            "GROUP BY trading_day"
+            ") GROUP BY table_name ORDER BY table_name"
+        )
+        signal_microbar_day_gap_query = (
+            "SELECT trading_day, "
+            "sumIf(rows, table_name = 'ta_signals') AS signal_rows, "
+            "sumIf(rows, table_name = 'ta_microbars') AS microbar_rows "
+            "FROM ("
+            "SELECT 'ta_signals' AS table_name, toDate(event_ts) AS trading_day, count() AS rows "
+            "FROM torghut.ta_signals WHERE source = 'ta' AND window_size = 'PT1S' "
+            "GROUP BY trading_day UNION ALL "
+            "SELECT 'ta_microbars' AS table_name, toDate(event_ts) AS trading_day, count() AS rows "
+            "FROM torghut.ta_microbars WHERE source = 'ta' AND window_size = 'PT1S' "
+            "GROUP BY trading_day"
+            ") GROUP BY trading_day ORDER BY trading_day DESC LIMIT 40"
+        )
         recent_day_diagnostics = {
             **recent_day_shortfall,
             "required_window": {
@@ -2640,12 +2671,14 @@ def _candidate_search_remediation(
                 "holdout_days": max(1, int(current_holdout_days)),
                 "second_oos_days": max(0, int(current_second_oos_days)),
             },
-            "clickhouse_recent_days_query": (
-                "SELECT toDate(event_ts) AS trading_day, count() AS rows, "
-                "min(event_ts) AS first_event_ts, max(event_ts) AS last_event_ts "
-                "FROM torghut.ta_signals WHERE source = 'ta' AND window_size = 'PT1S' "
-                "GROUP BY trading_day ORDER BY trading_day DESC LIMIT 20"
-            ),
+            "clickhouse_recent_days_query": signal_recent_days_query,
+            "clickhouse_signal_microbar_coverage_query": signal_microbar_coverage_query,
+            "clickhouse_signal_microbar_day_gap_query": signal_microbar_day_gap_query,
+            "clickhouse_coverage_probe_queries": {
+                "ta_signals_recent_days": signal_recent_days_query,
+                "signal_microbar_coverage": signal_microbar_coverage_query,
+                "signal_microbar_day_gap": signal_microbar_day_gap_query,
+            },
         }
         next_actions.append(
             {
@@ -2658,6 +2691,12 @@ def _candidate_search_remediation(
                 "recent_trading_days": recent_day_diagnostics,
                 "recommended_operator_probe": recent_day_diagnostics[
                     "clickhouse_recent_days_query"
+                ],
+                "recommended_coverage_probe": recent_day_diagnostics[
+                    "clickhouse_signal_microbar_coverage_query"
+                ],
+                "recommended_day_gap_probe": recent_day_diagnostics[
+                    "clickhouse_signal_microbar_day_gap_query"
                 ],
                 "recommended_archive_probe": (
                     "python services/torghut/scripts/archive_recent_kafka_trading_days.py "

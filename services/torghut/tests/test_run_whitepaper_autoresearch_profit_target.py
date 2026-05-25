@@ -8997,6 +8997,30 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             day_action["action"], "inspect_or_backfill_recent_ta_signal_days"
         )
         self.assertIn("torghut.ta_signals", day_action["recommended_operator_probe"])
+        self.assertIn(
+            "torghut.ta_microbars",
+            remediation["recent_trading_days"][
+                "clickhouse_signal_microbar_coverage_query"
+            ],
+        )
+        self.assertIn(
+            "torghut.ta_microbars",
+            remediation["recent_trading_days"][
+                "clickhouse_signal_microbar_day_gap_query"
+            ],
+        )
+        self.assertEqual(
+            day_action["recommended_coverage_probe"],
+            remediation["recent_trading_days"][
+                "clickhouse_coverage_probe_queries"
+            ]["signal_microbar_coverage"],
+        )
+        self.assertEqual(
+            day_action["recommended_day_gap_probe"],
+            remediation["recent_trading_days"][
+                "clickhouse_coverage_probe_queries"
+            ]["signal_microbar_day_gap"],
+        )
 
     def test_remediation_surfaces_stale_tape_shortfall(self) -> None:
         remediation = runner._candidate_search_remediation(
