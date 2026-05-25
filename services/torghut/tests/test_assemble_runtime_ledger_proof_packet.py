@@ -547,6 +547,77 @@ class TestRuntimeLedgerProofPacket(TestCase):
                 "file",
             )
 
+    def test_cli_can_assemble_from_split_live_and_paper_route_services(self) -> None:
+        class _Response:
+            def __init__(self, body: object) -> None:
+                self.body = body
+
+            def __enter__(self) -> "_Response":
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps(self.body).encode("utf-8")
+
+        def open_url(url: str, *, timeout: float) -> _Response:
+            self.assertEqual(timeout, 10.0)
+            payloads = {
+                "http://torghut-live.local/trading/status": _status(),
+                "http://torghut-sim.local/trading/paper-route-evidence": (
+                    _paper_route_evidence()
+                ),
+                "http://torghut-live.local/trading/completion/doc29": _completion(),
+            }
+            return _Response(payloads[url])
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            import_path = tmp_path / "import.json"
+            output_path = tmp_path / "packet.json"
+            import_path.write_text(json.dumps(_runtime_import()), encoding="utf-8")
+
+            with patch.object(packet, "urlopen", side_effect=open_url):
+                exit_code = packet.main(
+                    [
+                        "--status-service-base-url",
+                        "http://torghut-live.local/",
+                        "--paper-route-service-base-url",
+                        "http://torghut-sim.local/",
+                        "--completion-service-base-url",
+                        "http://torghut-live.local/",
+                        "--runtime-window-import-file",
+                        str(import_path),
+                        "--output-file",
+                        str(output_path),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["verdict"], "promotion_authority_allowed")
+            self.assertEqual(
+                payload["assembly"]["service_base_urls"],
+                {
+                    "status": "http://torghut-live.local/",
+                    "paper_route_evidence": "http://torghut-sim.local/",
+                    "completion": "http://torghut-live.local/",
+                },
+            )
+            self.assertEqual(
+                payload["assembly"]["defaulted_urls"],
+                {
+                    "status_url": "http://torghut-live.local/trading/status",
+                    "paper_route_evidence_url": (
+                        "http://torghut-sim.local/trading/paper-route-evidence"
+                    ),
+                    "completion_url": (
+                        "http://torghut-live.local/trading/completion/doc29"
+                    ),
+                },
+            )
+
     def test_cli_rejects_missing_duplicate_and_invalid_sources(self) -> None:
         with self.assertRaisesRegex(SystemExit, "exactly_one_status_source_required"):
             packet.main([])

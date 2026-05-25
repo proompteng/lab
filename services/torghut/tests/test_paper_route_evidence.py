@@ -374,8 +374,28 @@ class TestPaperRouteEvidenceAudit(TestCase):
             proof_handoff["runtime_window"]["import_blockers"],
             ["paper_route_session_window_not_open"],
         )
+        self.assertEqual(
+            proof_handoff["default_live_service_base_url"],
+            "http://torghut.torghut.svc.cluster.local",
+        )
+        self.assertEqual(
+            proof_handoff["default_paper_route_service_base_url"],
+            "http://torghut-sim.torghut.svc.cluster.local",
+        )
+        self.assertEqual(
+            proof_handoff["source_service_authority"],
+            {
+                "status": "live_torghut_service",
+                "paper_route_evidence": "paper_route_sim_service",
+                "completion_doc29": "live_torghut_service",
+            },
+        )
         waiting_argv = proof_handoff["commands"]["waiting_packet"]["argv"]
-        self.assertIn("--service-base-url", waiting_argv)
+        self.assertIn("--status-service-base-url", waiting_argv)
+        self.assertIn("--paper-route-service-base-url", waiting_argv)
+        self.assertIn("--completion-service-base-url", waiting_argv)
+        self.assertIn("$TORGHUT_LIVE_SERVICE_BASE_URL", waiting_argv)
+        self.assertIn("$TORGHUT_PAPER_ROUTE_SERVICE_BASE_URL", waiting_argv)
         self.assertIn("--min-runtime-ledger-net-pnl", waiting_argv)
         authority_argv = proof_handoff["commands"]["authority_packet_after_import"][
             "argv"
