@@ -1165,6 +1165,45 @@ def _runtime_ledger_tca_row_from_payload(
     }
 
 
+def _runtime_ledger_bucket_metadata(
+    *,
+    prefix: str,
+    payloads: Sequence[Mapping[str, object]],
+    tca_rows: Sequence[Mapping[str, object]],
+) -> dict[str, Any]:
+    candidate_ids = sorted(
+        {
+            candidate_id
+            for payload in payloads
+            if (candidate_id := _text_or_none(payload.get("candidate_id"))) is not None
+        }
+    )
+    metadata: dict[str, Any] = {
+        f"runtime_ledger_{prefix}_bucket_count": len(payloads),
+        f"runtime_ledger_{prefix}_bucket_run_ids": sorted(
+            {
+                run_id
+                for payload in payloads
+                if (run_id := _text_or_none(payload.get("run_id"))) is not None
+            }
+        ),
+        f"runtime_ledger_{prefix}_bucket_fill_count": sum(
+            _nonnegative_int(payload.get("fill_count")) for payload in payloads
+        ),
+        f"runtime_ledger_{prefix}_bucket_tca_row_count": len(tca_rows),
+        f"runtime_ledger_{prefix}_bucket_profit_proof_count": sum(
+            1
+            for payload in payloads
+            if _runtime_ledger_bucket_profit_proof_present(payload)
+        ),
+    }
+    if candidate_ids:
+        metadata[f"runtime_ledger_{prefix}_bucket_candidate_ids"] = candidate_ids
+    if len(candidate_ids) == 1:
+        metadata[f"runtime_ledger_{prefix}_bucket_candidate_id"] = candidate_ids[0]
+    return metadata
+
+
 def _runtime_ledger_tca_rows_from_durable_buckets(
     *,
     session: Session,
@@ -1204,26 +1243,135 @@ def _runtime_ledger_tca_rows_from_durable_buckets(
     tca_rows = [
         _runtime_ledger_tca_row_from_payload(payload=payload) for payload in payloads
     ]
-    metadata = {
-        "runtime_ledger_durable_bucket_count": len(payloads),
-        "runtime_ledger_durable_bucket_run_ids": sorted(
-            {
-                run_id
-                for payload in payloads
-                if (run_id := _text_or_none(payload.get("run_id"))) is not None
-            }
-        ),
-        "runtime_ledger_durable_bucket_fill_count": sum(
-            _nonnegative_int(payload.get("fill_count")) for payload in payloads
-        ),
-        "runtime_ledger_durable_bucket_tca_row_count": len(tca_rows),
-        "runtime_ledger_durable_bucket_profit_proof_count": sum(
-            1
-            for payload in payloads
-            if _runtime_ledger_bucket_profit_proof_present(payload)
-        ),
-    }
+    metadata = _runtime_ledger_bucket_metadata(
+        prefix="durable",
+        payloads=payloads,
+        tca_rows=tca_rows,
+    )
     return tca_rows, metadata
+
+
+_SOURCE_RUNTIME_LEDGER_COLUMNS = (
+    "run_id",
+    "candidate_id",
+    "hypothesis_id",
+    "observed_stage",
+    "bucket_started_at",
+    "bucket_ended_at",
+    "account_label",
+    "runtime_strategy_name",
+    "strategy_family",
+    "fill_count",
+    "decision_count",
+    "submitted_order_count",
+    "cancelled_order_count",
+    "rejected_order_count",
+    "unfilled_order_count",
+    "closed_trade_count",
+    "open_position_count",
+    "filled_notional",
+    "gross_strategy_pnl",
+    "cost_amount",
+    "net_strategy_pnl_after_costs",
+    "post_cost_expectancy_bps",
+    "execution_policy_hash_counts",
+    "cost_model_hash_counts",
+    "lineage_hash_counts",
+    "blockers_json",
+    "ledger_schema_version",
+    "pnl_basis",
+)
+
+
+def _source_runtime_ledger_payload_from_row(
+    row: Sequence[object],
+) -> dict[str, object]:
+    payload = dict(zip(_SOURCE_RUNTIME_LEDGER_COLUMNS, row, strict=True))
+    started_at = _parse_dt_or_none(payload.get("bucket_started_at"))
+    ended_at = _parse_dt_or_none(payload.get("bucket_ended_at"))
+    return {
+        **payload,
+        "bucket_started_at": started_at.isoformat()
+        if started_at is not None
+        else payload.get("bucket_started_at"),
+        "bucket_ended_at": ended_at.isoformat()
+        if ended_at is not None
+        else payload.get("bucket_ended_at"),
+        "strategy_id": payload.get("runtime_strategy_name"),
+        "execution_policy_hash_counts": _as_mapping(
+            payload.get("execution_policy_hash_counts")
+        ),
+        "cost_model_hash_counts": _as_mapping(payload.get("cost_model_hash_counts")),
+        "lineage_hash_counts": _as_mapping(payload.get("lineage_hash_counts")),
+        "blockers": _metadata_text_list(payload.get("blockers_json")),
+    }
+
+
+def _runtime_ledger_tca_rows_from_source_dsn(
+    *,
+    dsn: str,
+    candidate_id: str | None,
+    hypothesis_id: str,
+    observed_stage: str,
+    strategy_names: list[str],
+    account_label: str,
+    window_start: datetime,
+    window_end: datetime,
+) -> tuple[list[dict[str, object]], dict[str, Any]]:
+    if not strategy_names:
+        raise RuntimeError("strategy_name_not_configured")
+    where_clauses = [
+        "hypothesis_id = %s",
+        "observed_stage = %s",
+        "bucket_started_at < %s",
+        "bucket_ended_at > %s",
+    ]
+    params: list[object] = [hypothesis_id, observed_stage, window_end, window_start]
+    if candidate_id:
+        where_clauses.append("candidate_id = %s")
+        params.append(candidate_id)
+    if account_label:
+        where_clauses.append("account_label = %s")
+        params.append(account_label)
+    where_clauses.append("runtime_strategy_name = any(%s)")
+    params.append(strategy_names)
+    empty_metadata = _runtime_ledger_bucket_metadata(
+        prefix="source",
+        payloads=[],
+        tca_rows=[],
+    )
+    try:
+        with psycopg.connect(dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    select {", ".join(_SOURCE_RUNTIME_LEDGER_COLUMNS)}
+                    from strategy_runtime_ledger_buckets
+                    where {" and ".join(where_clauses)}
+                    order by bucket_ended_at asc, created_at asc
+                    limit 500
+                    """,
+                    tuple(params),
+                )
+                rows = cur.fetchall()
+    except (
+        psycopg.OperationalError,
+        psycopg.errors.UndefinedTable,
+        psycopg.errors.UndefinedColumn,
+    ) as exc:
+        return [], {
+            **empty_metadata,
+            "runtime_ledger_source_bucket_unavailable": type(exc).__name__,
+        }
+    payloads = [_source_runtime_ledger_payload_from_row(row) for row in rows]
+    tca_rows = [
+        _runtime_ledger_tca_row_from_payload(payload=payload) for payload in payloads
+    ]
+    return tca_rows, _runtime_ledger_bucket_metadata(
+        prefix="source",
+        payloads=payloads,
+        tca_rows=tca_rows,
+    )
 
 
 def _query_timestamps(
@@ -1514,6 +1662,27 @@ def main() -> int:
         "runtime_ledger_durable_bucket_tca_row_count": 0,
         "runtime_ledger_durable_bucket_profit_proof_count": 0,
     }
+    runtime_ledger_source_metadata: dict[str, Any] = {
+        "runtime_ledger_source_bucket_count": 0,
+        "runtime_ledger_source_bucket_run_ids": [],
+        "runtime_ledger_source_bucket_fill_count": 0,
+        "runtime_ledger_source_bucket_tca_row_count": 0,
+        "runtime_ledger_source_bucket_profit_proof_count": 0,
+    }
+    if source_dsn:
+        source_runtime_ledger_tca_rows, runtime_ledger_source_metadata = (
+            _runtime_ledger_tca_rows_from_source_dsn(
+                dsn=source_dsn,
+                candidate_id=args.candidate_id.strip() or None,
+                hypothesis_id=args.hypothesis_id,
+                observed_stage=args.observed_stage,
+                strategy_names=strategy_names,
+                account_label=args.account_label,
+                window_start=window_start,
+                window_end=window_end,
+            )
+        )
+        tca_rows.extend(source_runtime_ledger_tca_rows)
     if artifact_refs:
         bucket_ranges = build_regular_session_buckets(
             window_start=window_start,
@@ -1655,6 +1824,7 @@ def main() -> int:
         "runtime_ledger_target_metadata_blockers": runtime_ledger_target_metadata_blockers,
         **runtime_ledger_artifact_metadata,
         **runtime_ledger_durable_metadata,
+        **runtime_ledger_source_metadata,
         "report_post_cost_expectancy_bps": (
             str(report_post_cost_expectancy_bps)
             if report_post_cost_expectancy_bps is not None
