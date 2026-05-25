@@ -29,7 +29,7 @@ export type { MarketContextDispatchResult } from '~/server/torghut-market-contex
 export { resolveFailureSignal } from '~/server/torghut-market-context-failures'
 export type { MarketContextFailureCategory } from '~/server/torghut-market-context-failures'
 
-export type MarketContextProviderDomain = 'fundamentals' | 'news'
+export type MarketContextProviderDomain = 'news'
 
 export type MarketContextProviderCitation = {
   source: string
@@ -326,7 +326,6 @@ const coerceEvidenceItems = (value: unknown): RunEvidenceItem[] => {
 const resolveSettings = () => {
   const config = resolveMarketContextRuntimeConfig(process.env)
   return {
-    fundamentalsMaxFreshnessSeconds: config.fundamentalsMaxFreshnessSeconds,
     newsMaxFreshnessSeconds: config.newsMaxFreshnessSeconds,
     batchRequireOpenSession: config.batchRequireOpenSession,
     batchTradingStatusUrl: config.batchTradingStatusUrl,
@@ -348,9 +347,6 @@ const resolveSettings = () => {
     onDemandDispatchVcsRefName: config.onDemandDispatchVcsRefName,
   }
 }
-
-const resolveDomainMaxFreshness = (domain: MarketContextProviderDomain, settings: ReturnType<typeof resolveSettings>) =>
-  domain === 'fundamentals' ? settings.fundamentalsMaxFreshnessSeconds : settings.newsMaxFreshnessSeconds
 
 const resolveFreshnessSeconds = (now: Date, asOf: Date) =>
   Math.max(0, Math.floor((now.getTime() - asOf.getTime()) / 1000))
@@ -375,7 +371,7 @@ const buildMissingContext = (params: { domain: MarketContextProviderDomain; symb
 const asDomain = (value: unknown): MarketContextProviderDomain | null => {
   if (typeof value !== 'string') return null
   const normalized = value.trim().toLowerCase()
-  if (normalized === 'fundamentals' || normalized === 'news') return normalized
+  if (normalized === 'news') return normalized
   return null
 }
 
@@ -614,7 +610,7 @@ export const getMarketContextProviderResult = async (params: {
   const symbol = normalizeTorghutSymbol(params.symbolInput)
   const now = new Date()
   const settings = resolveSettings()
-  const maxFreshnessSeconds = resolveDomainMaxFreshness(params.domain, settings)
+  const maxFreshnessSeconds = settings.newsMaxFreshnessSeconds
   const db = await resolveDbWithMigrations()
   const latestRun = await readLatestRun({ symbol, domain: params.domain })
 
@@ -885,7 +881,7 @@ export const startMarketContextProviderRun = async (input: RunStartPayload) => {
   if (!db) throw new Error('DATABASE_URL is not configured')
 
   const domain = asDomain(input.domain)
-  if (!domain) throw new Error('domain must be fundamentals or news')
+  if (!domain) throw new Error('domain must be news; fundamentals market-context runs are retired')
   const symbol = normalizeTorghutSymbol(parseNonEmptyString(input.symbol) ?? '')
   if (!symbol) throw new Error('symbol is required')
   const requestId = parseNonEmptyString(input.requestId) ?? randomUUID()
@@ -1049,7 +1045,7 @@ export const recordMarketContextProviderEvidence = async (input: RunEvidencePayl
   if (!symbol) throw new Error('symbol is required')
   const payloadDomain = asDomain(input.domain)
   const domain = payloadDomain ?? context.domain
-  if (!domain) throw new Error('domain must be fundamentals or news')
+  if (!domain) throw new Error('domain must be news; fundamentals market-context runs are retired')
   const now = new Date()
 
   await sql`
@@ -1491,7 +1487,7 @@ export const ingestMarketContextProviderResult = async (input: IngestPayload) =>
 
   const settings = resolveSettings()
   const domain = asDomain(input.domain)
-  if (!domain) throw new Error('domain must be fundamentals or news')
+  if (!domain) throw new Error('domain must be news; fundamentals market-context runs are retired')
 
   const provider =
     typeof input.provider === 'string' && input.provider.trim().length > 0 ? input.provider.trim() : 'codex-spark'

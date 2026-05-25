@@ -45,7 +45,6 @@ export type MarketContextRuntimeConfig = {
   providerTimeoutMs: number
   newsSourceUrl: string
   technicalsMaxFreshnessSeconds: number
-  fundamentalsMaxFreshnessSeconds: number
   newsMaxFreshnessSeconds: number
   newsTradingHoursMaxFreshnessSeconds: number
   regimeMaxFreshnessSeconds: number
@@ -87,10 +86,6 @@ export const resolveMarketContextRuntimeConfig = (env: EnvSource = process.env):
   providerTimeoutMs: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_PROVIDER_TIMEOUT_MS, 10_000),
   newsSourceUrl: normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_NEWS_URL) ?? '',
   technicalsMaxFreshnessSeconds: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_TECHNICALS_MAX_FRESHNESS_SECONDS, 60),
-  fundamentalsMaxFreshnessSeconds: parsePositiveInt(
-    env.JANGAR_MARKET_CONTEXT_FUNDAMENTALS_MAX_FRESHNESS_SECONDS,
-    24 * 60 * 60,
-  ),
   newsMaxFreshnessSeconds: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_NEWS_MAX_FRESHNESS_SECONDS, 300),
   newsTradingHoursMaxFreshnessSeconds: parsePositiveInt(
     env.JANGAR_MARKET_CONTEXT_NEWS_TRADING_HOURS_MAX_FRESHNESS_SECONDS,

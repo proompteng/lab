@@ -184,17 +184,14 @@ export const recordTorghutMarketContextRunEvent = (params: {
 }
 
 export const recordTorghutMarketContextBatchRun = (params: {
-  domain: 'fundamentals' | 'news'
+  domain: 'news'
   outcome: 'succeeded' | 'partial' | 'failed' | 'skipped_market_closed'
 }) => {
   if (!metricsState.enabled) return
   recordCounter(metricsState.metrics?.torghutMarketContextBatchRuns, 1, params)
 }
 
-export const recordTorghutMarketContextBatchRunDurationMs = (
-  durationMs: number,
-  params: { domain: 'fundamentals' | 'news' },
-) => {
+export const recordTorghutMarketContextBatchRunDurationMs = (durationMs: number, params: { domain: 'news' }) => {
   if (!metricsState.enabled) return
   if (Number.isFinite(durationMs) && durationMs >= 0) {
     recordHistogram(metricsState.metrics?.torghutMarketContextBatchRunDurationMs, durationMs, params)
@@ -204,7 +201,7 @@ export const recordTorghutMarketContextBatchRunDurationMs = (
 export const recordTorghutMarketContextBatchRunSymbols = (
   count: number,
   params: {
-    domain: 'fundamentals' | 'news'
+    domain: 'news'
     category: 'processed' | 'updated' | 'failed'
   },
 ) => {
@@ -214,10 +211,7 @@ export const recordTorghutMarketContextBatchRunSymbols = (
   }
 }
 
-export const recordTorghutMarketContextBatchFreshnessLagSeconds = (
-  lagSeconds: number,
-  params: { domain: 'fundamentals' | 'news' },
-) => {
+export const recordTorghutMarketContextBatchFreshnessLagSeconds = (lagSeconds: number, params: { domain: 'news' }) => {
   if (!metricsState.enabled) return
   if (Number.isFinite(lagSeconds) && lagSeconds >= 0) {
     recordHistogram(metricsState.metrics?.torghutMarketContextBatchFreshnessLagSeconds, lagSeconds, params)

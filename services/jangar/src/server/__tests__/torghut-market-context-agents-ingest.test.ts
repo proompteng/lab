@@ -71,6 +71,32 @@ describe('ingestMarketContextProviderResult', () => {
     vi.unstubAllGlobals()
   })
 
+  it('rejects retired fundamentals provider payloads', async () => {
+    const tracker = buildInsertTracker()
+
+    vi.doMock('~/server/db', () => ({
+      getDb: () => tracker.db,
+    }))
+    vi.doMock('~/server/kysely-migrations', () => ({
+      ensureMigrations: async () => undefined,
+    }))
+    vi.doMock('~/server/torghut-market-context', () => ({
+      clearMarketContextCache: vi.fn(),
+    }))
+
+    const { ingestMarketContextProviderResult } = await import('../torghut-market-context-agents')
+
+    await expect(
+      ingestMarketContextProviderResult({
+        symbol: 'AAPL',
+        domain: 'fundamentals',
+        runStatus: 'succeeded',
+        payload: { peRatio: 21.4 },
+      }),
+    ).rejects.toThrow('domain must be news; fundamentals market-context runs are retired')
+    expect(tracker.tableCalls).toEqual([])
+  })
+
   it('does not overwrite snapshots when runStatus is failed', async () => {
     const tracker = buildInsertTracker()
     const clearMarketContextCache = vi.fn()
@@ -117,12 +143,12 @@ describe('ingestMarketContextProviderResult', () => {
 
     await ingestMarketContextProviderResult({
       symbol: 'AAPL',
-      domain: 'fundamentals',
+      domain: 'news',
       payload: { peRatio: 21.4 },
     })
     await ingestMarketContextProviderResult({
       symbol: 'AAPL',
-      domain: 'fundamentals',
+      domain: 'news',
       runStatus: 'cancelled',
       payload: { peRatio: 22.1 },
     })
@@ -157,7 +183,7 @@ describe('ingestMarketContextProviderResult', () => {
     const { ingestMarketContextProviderResult } = await import('../torghut-market-context-agents')
     await ingestMarketContextProviderResult({
       symbol: 'AAPL',
-      domain: 'fundamentals',
+      domain: 'news',
       runStatus: 'succeeded',
       sourceCount: 3,
       qualityScore: 0.7,
@@ -197,7 +223,7 @@ describe('ingestMarketContextProviderResult', () => {
     const { ingestMarketContextProviderResult } = await import('../torghut-market-context-agents')
     await ingestMarketContextProviderResult({
       symbol: 'AAPL',
-      domain: 'fundamentals',
+      domain: 'news',
       runStatus: 'succeeded',
       asOfUtc: '2026-02-26T12:00:00.000Z',
       payload: { peRatio: 21.4 },
@@ -287,7 +313,7 @@ describe('ingestMarketContextProviderResult', () => {
 
     await expect(
       ingestMarketContextProviderResult({
-        domain: 'fundamentals',
+        domain: 'news',
         runStatus: 'succeeded',
         items: [],
       }),
