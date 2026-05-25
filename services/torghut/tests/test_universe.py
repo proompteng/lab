@@ -220,6 +220,8 @@ class TestUniverseResolver(TestCase):
         config.settings.trading_jangar_symbols_url = "http://example"
         config.settings.trading_universe_cache_seconds = 1
         config.settings.trading_universe_max_stale_seconds = 1200
+        config.settings.trading_universe_static_fallback_enabled = False
+        config.settings.trading_universe_static_fallback_symbols_raw = ""
         config.settings.trading_universe_symbol_allowlist_raw = "NVDA,AVGO"
         resolver = UniverseResolver()
         resolver._cache = UniverseCache(
@@ -244,6 +246,8 @@ class TestUniverseResolver(TestCase):
         config.settings.trading_jangar_symbols_url = "http://example"
         config.settings.trading_universe_cache_seconds = 1
         config.settings.trading_universe_max_stale_seconds = 1200
+        config.settings.trading_universe_static_fallback_enabled = False
+        config.settings.trading_universe_static_fallback_symbols_raw = ""
         config.settings.trading_universe_symbol_allowlist_raw = "NVDA,AVGO"
         resolver = UniverseResolver()
         resolver._cache = UniverseCache(

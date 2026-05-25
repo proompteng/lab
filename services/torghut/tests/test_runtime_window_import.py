@@ -1429,6 +1429,75 @@ class TestRuntimeWindowImport(TestCase):
             True,
         )
 
+    def test_persist_observed_runtime_windows_clears_import_pending_after_ledger_proof(
+        self,
+    ) -> None:
+        buckets = build_observed_runtime_buckets(
+            bucket_ranges=[
+                (
+                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    30,
+                ),
+            ],
+            decision_times=[],
+            execution_times=[],
+            tca_rows=[
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("4"),
+                    "post_cost_expectancy_bps": Decimal("40"),
+                    **_runtime_pnl_basis(),
+                    "runtime_ledger_bucket": _runtime_ledger_bucket(),
+                },
+            ],
+            continuity_ok=True,
+            drift_ok=True,
+            dependency_quorum_decision="allow",
+        )
+
+        with self.session_local() as session:
+            summary = persist_observed_runtime_windows(
+                session=session,
+                run_id="import-source-ledger-paper-route",
+                candidate_id="cand-paper-route",
+                hypothesis_id="H-PAIRS-01",
+                observed_stage="paper",
+                strategy_family="microbar_cross_sectional_pairs",
+                source_manifest_ref="config/trading/hypotheses/h-pairs-01.json",
+                buckets=buckets,
+                runtime_observation_payload={
+                    "runtime_ledger_profit_proof_present": True,
+                    "runtime_ledger_target_metadata_blockers": [
+                        "paper_route_runtime_ledger_import_pending",
+                        "live_runtime_ledger_required",
+                    ],
+                    "target_metadata": {
+                        "paper_probation_authorized": True,
+                        "evidence_collection_stage": "paper",
+                        "runtime_ledger_target_metadata_blockers": [
+                            "paper_route_runtime_ledger_import_pending"
+                        ],
+                        "promotion_allowed": False,
+                        "final_promotion_authorized": False,
+                    },
+                },
+            )
+            session.commit()
+
+        self.assertNotIn(
+            "paper_route_runtime_ledger_import_pending",
+            summary["promotion_blocking_reasons"],
+        )
+        self.assertIn(
+            "live_runtime_ledger_required",
+            summary["promotion_blocking_reasons"],
+        )
+        self.assertIn(
+            "paper_probation_evidence_collection_only",
+            summary["promotion_blocking_reasons"],
+        )
+
     def test_persist_observed_runtime_windows_blocks_zero_activity_evidence(
         self,
     ) -> None:

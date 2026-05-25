@@ -36,6 +36,11 @@ PROMOTION_GRADE_POST_COST_BASES = frozenset(
         "realized_strategy_pnl_after_explicit_costs",
     }
 )
+_RUNTIME_LEDGER_PROOF_SATISFIED_METADATA_BLOCKERS = frozenset(
+    {
+        "paper_route_runtime_ledger_import_pending",
+    }
+)
 RUNTIME_LEDGER_BUCKET_SCHEMAS = frozenset(
     {
         EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
@@ -298,12 +303,26 @@ def _runtime_ledger_post_cost_from_rows(
 
 def _paper_probation_blocking_reasons(runtime_payload: Mapping[str, Any]) -> list[str]:
     target_metadata = _mapping(runtime_payload.get("target_metadata"))
+    runtime_ledger_import_satisfied = (
+        runtime_payload.get("runtime_ledger_profit_proof_present") is True
+    )
+
+    def target_blockers(value: Any) -> list[str]:
+        blockers = _string_list(value)
+        if not runtime_ledger_import_satisfied:
+            return blockers
+        return [
+            blocker
+            for blocker in blockers
+            if blocker not in _RUNTIME_LEDGER_PROOF_SATISFIED_METADATA_BLOCKERS
+        ]
+
     reasons: list[str] = []
     reasons.extend(
-        _string_list(runtime_payload.get("runtime_ledger_target_metadata_blockers"))
+        target_blockers(runtime_payload.get("runtime_ledger_target_metadata_blockers"))
     )
     reasons.extend(
-        _string_list(target_metadata.get("runtime_ledger_target_metadata_blockers"))
+        target_blockers(target_metadata.get("runtime_ledger_target_metadata_blockers"))
     )
     if not target_metadata:
         return list(dict.fromkeys(reasons))
