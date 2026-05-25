@@ -26,6 +26,7 @@ const submitItemRequest = (runId: string, index: number) =>
       runId,
       originalUrl: `https://x.com/example/status/${1000 + index}`,
       observedText: `observed post ${index} about semis and devtools`,
+      mediaUrls: [`https://pbs.twimg.com/media/example-${index}.jpg`],
       summary: `semis/devtools summary ${index}`,
       topicTags: ['semis', 'devtools'],
       score: 0.8 + index * 0.01,
@@ -70,6 +71,7 @@ describe('synthesis REST auth', () => {
     const firstResponse = await handleListFeed(new Request('http://synthesis.test/api/feed?limit=2&minScore=0'))
     const firstPage = await firstResponse.json()
     expect(firstPage.items).toHaveLength(2)
+    expect(firstPage.items[0].mediaUrls[0]).toContain('pbs.twimg.com/media')
     expect(firstPage.nextCursor).toEqual(expect.any(String))
 
     const secondResponse = await handleListFeed(

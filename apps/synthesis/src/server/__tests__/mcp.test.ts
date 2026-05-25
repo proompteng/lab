@@ -76,6 +76,7 @@ describe('synthesis MCP', () => {
             runId: runPayload.run.id,
             originalUrl: 'https://twitter.com/example/status/12345?ref=feed',
             observedText: 'semi stack integration notes with actionable edge ai packaging detail',
+            mediaUrls: ['data:image/png;base64,AAAA'],
             summary: 'edge ai packaging is becoming a tighter semiconductor integration bottleneck.',
             whyValuable: 'connects packaging constraints to model deployment economics.',
             evidence: ['mentions packaging yield', 'ties inference latency to board-level integration'],
@@ -90,6 +91,7 @@ describe('synthesis MCP', () => {
     )
 
     expect(submitPayload.item.originalUrl).toBe('https://x.com/example/status/12345')
+    expect(submitPayload.item.mediaUrls).toEqual(['data:image/png;base64,AAAA'])
     expect(submitPayload.engagementAction.action).toBe('like')
 
     const feedPayload = await parseToolJson(await handleMcpRequest(callTool('synthesis_list_feed', { limit: 10 })))

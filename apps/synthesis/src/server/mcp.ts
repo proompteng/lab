@@ -75,6 +75,12 @@ const toolsListResult = {
           postedAt: { type: 'string' },
           observedAt: { type: 'string' },
           observedText: { type: 'string' },
+          mediaUrls: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Observed media from the original post: direct image URLs, X photo URLs, or browser screenshots of actual visible post media. Do not submit generated placeholders.',
+          },
           summary: { type: 'string' },
           whyValuable: { type: 'string' },
           evidence: { type: 'array', items: { type: 'string' } },
