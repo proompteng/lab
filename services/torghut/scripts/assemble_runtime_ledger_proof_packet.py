@@ -434,6 +434,41 @@ def _paper_route_targets(plan: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return [_mapping(item) for item in _sequence(plan.get("targets")) if _mapping(item)]
 
 
+def _paper_route_runtime_window_import_audit(
+    paper_route_evidence: Mapping[str, Any] | None,
+) -> Mapping[str, Any]:
+    return _mapping((paper_route_evidence or {}).get("runtime_window_import_audit"))
+
+
+def _paper_route_runtime_window_import_audit_counts(
+    audit: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    return _mapping(audit.get("counts"))
+
+
+def _paper_route_runtime_window_import_audit_blockers(
+    audit: Mapping[str, Any],
+) -> list[str]:
+    return _text_list(audit.get("blockers"))
+
+
+def _paper_route_source_activity_blockers(
+    audit_blockers: Sequence[str],
+) -> list[str]:
+    source_blocker_names = {
+        "paper_route_source_activity_missing",
+        "strategy_name_missing",
+        "source_decisions_missing",
+        "source_executions_missing",
+        "source_tca_missing",
+    }
+    return [
+        blocker
+        for blocker in audit_blockers
+        if blocker in source_blocker_names or blocker.startswith("source_")
+    ]
+
+
 def _health_gate_bool(value: object) -> bool:
     if isinstance(value, bool):
         return value
@@ -659,6 +694,18 @@ def _required_actions(blockers: Sequence[str], *, verdict: str) -> list[str]:
             "runtime_ledger_trading_days_below_target",
         }:
             _extend_unique(actions, ["collect_more_runtime_ledger_trading_days"])
+        elif blocker in {
+            "paper_route_source_activity_missing",
+            "strategy_name_missing",
+            "source_decisions_missing",
+            "source_executions_missing",
+            "source_tca_missing",
+        } or blocker.startswith("source_"):
+            _extend_unique(
+                actions, ["inspect_paper_route_source_activity_before_import"]
+            )
+        elif blocker == "runtime_window_import_audit_missing":
+            _extend_unique(actions, ["inspect_paper_route_evidence_audit"])
         elif blocker in {"simple_submit_disabled", "live_submission_gate_not_allowed"}:
             _extend_unique(
                 actions, ["keep_promotion_blocked_until_live_gate_and_proof_floor_pass"]
@@ -704,6 +751,14 @@ def build_runtime_ledger_proof_packet(
     plan = _paper_route_target_plan(paper_route_evidence)
     paper_targets = _paper_route_targets(plan)
     paper_import_blockers = _paper_route_import_blockers(plan)
+    import_audit = _paper_route_runtime_window_import_audit(paper_route_evidence)
+    import_audit_counts = _paper_route_runtime_window_import_audit_counts(import_audit)
+    import_audit_blockers = _paper_route_runtime_window_import_audit_blockers(
+        import_audit
+    )
+    source_activity_blockers = _paper_route_source_activity_blockers(
+        import_audit_blockers
+    )
     health_gate_summary = _runtime_window_import_health_gate_summary(
         plan=plan,
         targets=paper_targets,
@@ -778,9 +833,69 @@ def build_runtime_ledger_proof_packet(
     runtime_import_due = (
         import_ready and not paper_import_blockers and not health_gate_blockers
     )
+    _check(
+        checks,
+        "paper_route_runtime_window_import_audit",
+        passed=not runtime_import_due or bool(import_audit),
+        observed={
+            "present": bool(import_audit),
+            "state": _text(import_audit.get("state"), "missing"),
+            "next_action": _text(import_audit.get("next_action")),
+            "import_ready": import_audit.get("import_ready"),
+            "blockers": import_audit_blockers,
+        },
+        expected="paper-route evidence includes runtime_window_import_audit when import is due",
+        blockers=[]
+        if (not runtime_import_due or bool(import_audit))
+        else ["runtime_window_import_audit_missing"],
+    )
+    if runtime_import_due and not import_audit:
+        _extend_unique(blockers, ["runtime_window_import_audit_missing"])
+
+    source_target_count = _int(import_audit_counts.get("source_plan_target_count"))
+    targets_with_source_activity = _int(
+        import_audit_counts.get("targets_with_source_activity")
+    )
+    source_activity_ok = (
+        not runtime_import_due
+        or not import_audit
+        or (
+            source_target_count > 0
+            and targets_with_source_activity >= source_target_count
+            and not source_activity_blockers
+        )
+    )
+    _check(
+        checks,
+        "paper_route_source_activity",
+        passed=source_activity_ok,
+        observed={
+            "runtime_import_due": runtime_import_due,
+            "source_plan_target_count": source_target_count,
+            "targets_with_source_activity": targets_with_source_activity,
+            "blockers": source_activity_blockers,
+        },
+        expected="paper-route source decisions, executions, and TCA exist for every import target when runtime import is due",
+        blockers=source_activity_blockers
+        or ([] if source_activity_ok else ["paper_route_source_activity_missing"]),
+    )
+    if not source_activity_ok:
+        _extend_unique(
+            blockers,
+            source_activity_blockers or ["paper_route_source_activity_missing"],
+        )
+
     runtime_import = _runtime_window_import_payload(runtime_window_import)
     runtime_import_items = _runtime_window_import_items(runtime_import)
     runtime_import_blockers = _runtime_import_blockers(runtime_import)
+    runtime_import_check_blockers = list(runtime_import_blockers)
+    if (
+        runtime_import_due
+        and import_audit
+        and not runtime_import_check_blockers
+        and import_audit_blockers
+    ):
+        runtime_import_check_blockers = list(import_audit_blockers)
     authoritative_observation_count = _runtime_import_authoritative_observation_count(
         runtime_import
     )
@@ -806,9 +921,11 @@ def build_runtime_ledger_proof_packet(
             "runtime_import_due": runtime_import_due,
             "authoritative_observation_count": authoritative_observation_count,
             "proof_blockers": runtime_import_blockers,
+            "import_audit_state": _text(import_audit.get("state"), "missing"),
+            "import_audit_blockers": import_audit_blockers,
         },
         expected="runtime-window import proof_status ok with authoritative runtime observations and no proof blockers",
-        blockers=runtime_import_blockers
+        blockers=runtime_import_check_blockers
         or (
             []
             if runtime_import_ok or not runtime_import_due
@@ -817,6 +934,8 @@ def build_runtime_ledger_proof_packet(
     )
     if runtime_import_blockers:
         _extend_unique(blockers, runtime_import_blockers)
+    elif runtime_import_due and import_audit_blockers:
+        _extend_unique(blockers, import_audit_blockers)
     elif runtime_import_due and not runtime_import_ok:
         _extend_unique(blockers, ["runtime_window_import_missing"])
 
@@ -998,6 +1117,14 @@ def build_runtime_ledger_proof_packet(
                 "import_blockers": paper_import_blockers,
                 "session_window": _mapping(plan.get("session_window")),
                 "runtime_window_import_health_gate": health_gate_summary,
+            },
+            "paper_route_runtime_window_import_audit": {
+                "present": bool(import_audit),
+                "state": import_audit.get("state"),
+                "next_action": import_audit.get("next_action"),
+                "import_ready": import_audit.get("import_ready"),
+                "blockers": import_audit_blockers,
+                "counts": dict(import_audit_counts),
             },
             "runtime_window_import": {
                 "present": bool(runtime_import),

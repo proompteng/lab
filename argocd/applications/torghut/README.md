@@ -21,6 +21,15 @@ The empirical workflow depends on the namespace-local sealed secret
 `rook-ceph-rgw-argo-workflows` for Argo archive-log uploads. Keep that secret managed here so
 workflow submissions in `torghut` do not rely on manual secret copies from `argo-workflows`.
 
+The `torghut-empirical-promotion-renewal` CronJob is also the scheduled runtime-ledger proof packet conductor for the
+paper-route proof lane. It first runs `renew_latest_empirical_promotion_jobs.py` with the live
+`/trading/paper-route-evidence` target plan, then runs `assemble_runtime_ledger_proof_packet.py` and uploads the packet
+under `runtime-ledger-proof-packets/{run_id}`. When the paper-route window is import-ready, the packet now requires the
+live `runtime_window_import_audit` from `/trading/paper-route-evidence` and carries source-activity blockers such as
+`paper_route_source_activity_missing`, `source_decisions_missing`, `source_executions_missing`, and `source_tca_missing`
+into the final verdict. Treat those as the next repair target before rerunning import; do not collapse them into a
+generic runtime-ledger-missing diagnosis.
+
 Trigger a simulation run via Argo:
 
 ```bash
