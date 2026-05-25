@@ -94,6 +94,17 @@ def _paper_route_evidence(
                     "window_end": "2026-05-26T20:00:00+00:00",
                     "promotion_allowed": False,
                     "final_promotion_authorized": False,
+                    "dependency_quorum_decision": "allow",
+                    "continuity_ok": "true",
+                    "drift_ok": "true",
+                    "runtime_window_import_health_gate": {
+                        "schema_version": "torghut.runtime-window-import-health-gate.v1",
+                        "dependency_quorum_decision": "allow",
+                        "continuity_ok": "true",
+                        "drift_ok": "true",
+                        "blockers": [],
+                    },
+                    "runtime_window_import_health_gate_blockers": [],
                 }
             ],
         },
@@ -437,6 +448,56 @@ class TestRuntimeLedgerProofPacket(TestCase):
                 "runtime_import_due"
             ]
         )
+
+    def test_packet_blocks_when_paper_route_import_health_gate_is_not_ready(
+        self,
+    ) -> None:
+        evidence = _paper_route_evidence(import_ready=True)
+        plan = evidence["next_paper_route_runtime_window_targets"]
+        assert isinstance(plan, dict)
+        target = plan["targets"][0]
+        assert isinstance(target, dict)
+        target["dependency_quorum_decision"] = "missing"
+        target["continuity_ok"] = "false"
+        target["runtime_window_import_health_gate"] = {
+            "schema_version": "torghut.runtime-window-import-health-gate.v1",
+            "dependency_quorum_decision": "missing",
+            "continuity_ok": "false",
+            "drift_ok": "true",
+            "blockers": ["dependency_quorum_not_allow", "continuity_not_ok"],
+        }
+        target["runtime_window_import_health_gate_blockers"] = [
+            "dependency_quorum_not_allow",
+            "continuity_not_ok",
+        ]
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            paper_route_evidence=evidence,
+            runtime_window_import=_runtime_import(),
+            completion_status=_completion(),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["verdict"], "blocked")
+        self.assertIn(
+            "paper_route_import_health_gate",
+            result["promotion_authority"]["failed_checks"],
+        )
+        self.assertIn(
+            "dependency_quorum_not_allow",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+        self.assertIn(
+            "repair_runtime_window_import_health_gate",
+            result["required_actions"],
+        )
+        health_gate = result["evidence"]["paper_route_target_plan"][
+            "runtime_window_import_health_gate"
+        ]
+        self.assertEqual(health_gate["ready_target_count"], 0)
+        self.assertEqual(health_gate["blocked_target_count"], 1)
 
     def test_packet_blocks_non_authoritative_import_and_weak_daily_profit(self) -> None:
         result = packet.build_runtime_ledger_proof_packet(
