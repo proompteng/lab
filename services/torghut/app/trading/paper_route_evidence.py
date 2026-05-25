@@ -42,7 +42,10 @@ DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS = 72
 DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT = 20
 PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL = "TORGHUT_SIM"
 PAPER_ROUTE_RUNTIME_IMPORT_SETTLEMENT_SECONDS = 3600
-DEFAULT_TORGHUT_SERVICE_BASE_URL = "http://torghut.torghut.svc.cluster.local"
+DEFAULT_TORGHUT_LIVE_SERVICE_BASE_URL = "http://torghut.torghut.svc.cluster.local"
+DEFAULT_TORGHUT_PAPER_ROUTE_SERVICE_BASE_URL = (
+    "http://torghut-sim.torghut.svc.cluster.local"
+)
 RUNTIME_LEDGER_PROOF_PACKET_OUTPUT_FILE = "artifacts/runtime-ledger-proof-packet.json"
 RUNTIME_WINDOW_IMPORT_OUTPUT_FILE = "artifacts/runtime-window-import.json"
 MIN_RUNTIME_LEDGER_PROOF_NET_PNL = "500"
@@ -1299,8 +1302,12 @@ def _runtime_ledger_proof_packet_handoff(
         "--frozen",
         "python",
         "scripts/assemble_runtime_ledger_proof_packet.py",
-        "--service-base-url",
-        "$TORGHUT_SERVICE_BASE_URL",
+        "--status-service-base-url",
+        "$TORGHUT_LIVE_SERVICE_BASE_URL",
+        "--paper-route-service-base-url",
+        "$TORGHUT_PAPER_ROUTE_SERVICE_BASE_URL",
+        "--completion-service-base-url",
+        "$TORGHUT_LIVE_SERVICE_BASE_URL",
         "--min-runtime-ledger-net-pnl",
         MIN_RUNTIME_LEDGER_PROOF_NET_PNL,
         "--min-runtime-ledger-daily-net-pnl",
@@ -1314,8 +1321,6 @@ def _runtime_ledger_proof_packet_handoff(
         *base_args[:-2],
         "--runtime-window-import-file",
         RUNTIME_WINDOW_IMPORT_OUTPUT_FILE,
-        "--completion-url",
-        "$TORGHUT_SERVICE_BASE_URL/trading/completion/doc29",
         "--output-file",
         RUNTIME_LEDGER_PROOF_PACKET_OUTPUT_FILE,
     ]
@@ -1326,8 +1331,18 @@ def _runtime_ledger_proof_packet_handoff(
         "promotion_allowed": False,
         "final_promotion_authorized": False,
         "promotion_gate": "runtime_ledger_live_or_live_paper_required",
-        "service_base_url_env": "TORGHUT_SERVICE_BASE_URL",
-        "default_service_base_url": DEFAULT_TORGHUT_SERVICE_BASE_URL,
+        "service_base_url_env": "TORGHUT_LIVE_SERVICE_BASE_URL",
+        "paper_route_service_base_url_env": "TORGHUT_PAPER_ROUTE_SERVICE_BASE_URL",
+        "default_service_base_url": DEFAULT_TORGHUT_LIVE_SERVICE_BASE_URL,
+        "default_live_service_base_url": DEFAULT_TORGHUT_LIVE_SERVICE_BASE_URL,
+        "default_paper_route_service_base_url": (
+            DEFAULT_TORGHUT_PAPER_ROUTE_SERVICE_BASE_URL
+        ),
+        "source_service_authority": {
+            "status": "live_torghut_service",
+            "paper_route_evidence": "paper_route_sim_service",
+            "completion_doc29": "live_torghut_service",
+        },
         "source_endpoints": {
             "status": "/trading/status",
             "paper_route_evidence": "/trading/paper-route-evidence",

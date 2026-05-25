@@ -161,27 +161,39 @@ def _service_endpoint_url(service_base_url: str, endpoint: str) -> str:
 
 
 def _apply_service_base_url_defaults(args: argparse.Namespace) -> dict[str, str]:
-    service_base_url = _text(getattr(args, "service_base_url", None))
-    if not service_base_url:
-        return {}
-
-    defaults = {
-        "status_url": _service_endpoint_url(service_base_url, STATUS_ENDPOINT),
-        "paper_route_evidence_url": _service_endpoint_url(
-            service_base_url,
+    shared_service_base_url = _text(getattr(args, "service_base_url", None))
+    status_service_base_url = (
+        _text(getattr(args, "status_service_base_url", None)) or shared_service_base_url
+    )
+    paper_route_service_base_url = (
+        _text(getattr(args, "paper_route_service_base_url", None))
+        or shared_service_base_url
+    )
+    completion_service_base_url = (
+        _text(getattr(args, "completion_service_base_url", None))
+        or shared_service_base_url
+    )
+    defaults = {}
+    if status_service_base_url:
+        defaults["status_url"] = _service_endpoint_url(
+            status_service_base_url, STATUS_ENDPOINT
+        )
+    if paper_route_service_base_url:
+        defaults["paper_route_evidence_url"] = _service_endpoint_url(
+            paper_route_service_base_url,
             PAPER_ROUTE_EVIDENCE_ENDPOINT,
-        ),
-        "completion_url": _service_endpoint_url(
-            service_base_url,
+        )
+    if completion_service_base_url:
+        defaults["completion_url"] = _service_endpoint_url(
+            completion_service_base_url,
             COMPLETION_DOC29_ENDPOINT,
-        ),
-    }
+        )
     if args.status_file is None and not args.status_url:
-        args.status_url = defaults["status_url"]
+        args.status_url = defaults.get("status_url")
     if args.paper_route_evidence_file is None and not args.paper_route_evidence_url:
-        args.paper_route_evidence_url = defaults["paper_route_evidence_url"]
+        args.paper_route_evidence_url = defaults.get("paper_route_evidence_url")
     if args.completion_file is None and not args.completion_url:
-        args.completion_url = defaults["completion_url"]
+        args.completion_url = defaults.get("completion_url")
     return defaults
 
 
@@ -753,7 +765,19 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--service-base-url",
-        help="Base Torghut service URL used to fetch /trading/status, /trading/paper-route-evidence, and /trading/completion/doc29.",
+        help="Base Torghut service URL used for any source endpoint without a more specific service base URL.",
+    )
+    parser.add_argument(
+        "--status-service-base-url",
+        help="Base Torghut live service URL used to fetch /trading/status.",
+    )
+    parser.add_argument(
+        "--paper-route-service-base-url",
+        help="Base Torghut paper/sim service URL used to fetch /trading/paper-route-evidence.",
+    )
+    parser.add_argument(
+        "--completion-service-base-url",
+        help="Base Torghut live service URL used to fetch /trading/completion/doc29.",
     )
     parser.add_argument(
         "--status-file", type=Path, help="Path to a /trading/status JSON payload."
@@ -874,6 +898,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if service_default_urls:
         packet["assembly"] = {
             "service_base_url": args.service_base_url,
+            "service_base_urls": {
+                "status": args.status_service_base_url or args.service_base_url,
+                "paper_route_evidence": (
+                    args.paper_route_service_base_url or args.service_base_url
+                ),
+                "completion": args.completion_service_base_url or args.service_base_url,
+            },
             "defaulted_urls": service_default_urls,
             "status_source": _source_kind(args.status_file, args.status_url),
             "paper_route_evidence_source": _source_kind(
