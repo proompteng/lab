@@ -142,12 +142,81 @@ const toolsListResult = {
     },
     {
       name: 'create_agent_run',
-      description: 'Create a real AgentRun through the Agents v1 API. Requires an idempotent deliveryId.',
+      description:
+        'Create a real AgentRun through the Agents v1 API. Requires an idempotent deliveryId. When payload.secrets are requested or VCS credentials are required, pass secretBindingRef or payload.policy.secretBindingRef.',
       inputSchema: {
         type: 'object',
         properties: {
           deliveryId: { type: 'string', description: 'Required idempotency key for the AgentRun submission' },
-          payload: { type: 'object', description: 'AgentRun submission payload accepted by POST /v1/agent-runs' },
+          secretBindingRef: {
+            type: 'string',
+            description:
+              'Optional convenience value injected into payload.policy.secretBindingRef; required when payload.secrets are non-empty or vcsRef/vcsPolicy needs credentials.',
+          },
+          payload: {
+            type: 'object',
+            description:
+              'AgentRun submission payload accepted by POST /v1/agent-runs. Use top-level goal for Codex goals, omit goal.tokenBudget for no-budget runs, and never set parameters.prompt.',
+            properties: {
+              agentRef: {
+                type: 'object',
+                properties: { name: { type: 'string' } },
+                required: ['name'],
+                additionalProperties: true,
+              },
+              implementationSpecRef: {
+                type: 'object',
+                properties: { name: { type: 'string' } },
+                additionalProperties: true,
+              },
+              implementation: {
+                type: 'object',
+                description: 'Inline implementation source; the API wraps this as spec.implementation.inline.',
+                additionalProperties: true,
+              },
+              goal: {
+                type: 'object',
+                description: 'Optional Codex goal. Omit tokenBudget entirely for a goal with no token budget.',
+                additionalProperties: true,
+              },
+              parameters: {
+                type: 'object',
+                description:
+                  'Run parameters such as repository/base/head/stage. parameters.prompt is rejected; use implementation text or ImplementationSpec text.',
+                additionalProperties: true,
+              },
+              secrets: {
+                type: 'array',
+                items: { type: 'string' },
+                description:
+                  'Secret names to mount. If non-empty, secretBindingRef or payload.policy.secretBindingRef is required.',
+              },
+              policy: {
+                type: 'object',
+                properties: {
+                  secretBindingRef: {
+                    type: 'string',
+                    description: 'SecretBinding authorizing requested secrets and VCS credentials.',
+                  },
+                },
+                additionalProperties: true,
+              },
+              vcsRef: {
+                type: 'object',
+                properties: { name: { type: 'string' } },
+                additionalProperties: true,
+              },
+              vcsPolicy: {
+                type: 'object',
+                properties: {
+                  required: { type: 'boolean' },
+                  mode: { type: 'string', enum: ['read-write', 'read-only', 'none'] },
+                },
+                additionalProperties: true,
+              },
+            },
+            additionalProperties: true,
+          },
           dryRun: { type: ['string', 'boolean'], description: 'Optional dryRun query value' },
         },
         required: ['deliveryId', 'payload'],
@@ -394,6 +463,65 @@ const parseWithErrors = <T>(parse: () => T): ParsedToolInput<T> => {
   }
 }
 
+const recordString = (record: Record<string, unknown> | null | undefined, key: string) => {
+  const value = record?.[key]
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : null
+}
+
+const payloadRequestsSecrets = (payload: Record<string, unknown>) =>
+  Array.isArray(payload.secrets) &&
+  payload.secrets.some((entry) => typeof entry === 'string' && entry.trim().length > 0)
+
+const payloadRequestsVcsCredentials = (payload: Record<string, unknown>) => {
+  const vcsRef = isRecord(payload.vcsRef) ? payload.vcsRef : null
+  const vcsPolicy = isRecord(payload.vcsPolicy) ? payload.vcsPolicy : null
+  if (!recordString(vcsRef, 'name')) return false
+  if (recordString(vcsPolicy, 'mode') === 'none') return false
+  return true
+}
+
+const payloadSecretBindingRef = (payload: Record<string, unknown>) => {
+  const policy = isRecord(payload.policy) ? payload.policy : null
+  return recordString(policy, 'secretBindingRef')
+}
+
+const withSecretBindingRef = (payload: Record<string, unknown>, secretBindingRef: string | null) => {
+  const current = payloadSecretBindingRef(payload)
+  if (secretBindingRef && current && current !== secretBindingRef) {
+    throw new Error('secretBindingRef must match payload.policy.secretBindingRef when both are provided')
+  }
+  if (!secretBindingRef) return payload
+  const policy = isRecord(payload.policy) ? payload.policy : {}
+  return {
+    ...payload,
+    policy: {
+      ...policy,
+      secretBindingRef,
+    },
+  }
+}
+
+const validateCreateAgentRunPayloadForMcp = (payload: Record<string, unknown>) => {
+  const parameters = isRecord(payload.parameters) ? payload.parameters : {}
+  const forbiddenPromptKey = Object.keys(parameters).find((key) => key.trim().toLowerCase() === 'prompt')
+  if (forbiddenPromptKey) {
+    throw new Error(
+      `payload.parameters.${forbiddenPromptKey} is not allowed; use implementation text or ImplementationSpec text`,
+    )
+  }
+
+  if (
+    (payloadRequestsSecrets(payload) || payloadRequestsVcsCredentials(payload)) &&
+    !payloadSecretBindingRef(payload)
+  ) {
+    throw new Error(
+      'payload.policy.secretBindingRef is required when payload.secrets are requested or vcsRef/vcsPolicy needs credentials; pass secretBindingRef or payload.policy.secretBindingRef',
+    )
+  }
+}
+
 const parseCreateAgentRunInput = (args: Record<string, unknown>) =>
   parseWithErrors<AgentsAgentRunSubmitInput>(() => {
     const rawDryRun = args.dryRun
@@ -405,9 +533,11 @@ const parseCreateAgentRunInput = (args: Record<string, unknown>) =>
     } else {
       dryRun = requiredString(args, 'dryRun')
     }
+    const payload = withSecretBindingRef(requiredRecord(args, 'payload'), optionalString(args, 'secretBindingRef'))
+    validateCreateAgentRunPayloadForMcp(payload)
     return {
       deliveryId: requiredString(args, 'deliveryId'),
-      payload: requiredRecord(args, 'payload'),
+      payload,
       dryRun,
     }
   })
