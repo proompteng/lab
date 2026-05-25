@@ -1,4 +1,4 @@
-import { Link, useLocation } from '@tanstack/react-router'
+import { Link, useLocation, useNavigate } from '@tanstack/react-router'
 import {
   BotIcon,
   BoxesIcon,
@@ -29,6 +29,12 @@ import { Fragment, type ReactNode } from 'react'
 
 import { getPrimitiveGroups } from '../../control-plane/primitive-groups'
 import { findPrimitiveDefinition } from '../../control-plane/registry'
+import {
+  AgentRunStatusFilter,
+  parseAgentRunStatusSearch,
+  serializeAgentRunStatusSearch,
+  type AgentRunStatus,
+} from './agent-run-status-filter'
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -115,6 +121,11 @@ const breadcrumbEntries = (pathname: string): BreadcrumbEntry[] => {
   return entries
 }
 
+const isAgentRunListPath = (pathname: string) => {
+  const segments = pathname.split('/').filter(Boolean)
+  return segments.length === 2 && segments[0] === 'primitives' && segments[1] === 'agent-run'
+}
+
 const headerPrimaryAction = (pathname: string): HeaderPrimaryAction | null => {
   const segments = pathname.split('/').filter(Boolean)
   if (segments.length === 0) {
@@ -127,10 +138,32 @@ const headerPrimaryAction = (pathname: string): HeaderPrimaryAction | null => {
 
 export function ControlPlaneShell({ children }: { children: ReactNode }) {
   const location = useLocation()
+  const navigate = useNavigate()
   const [sectionSegment, primitiveSegment] = location.pathname.split('/').filter(Boolean)
   const entries = breadcrumbEntries(location.pathname)
   const primaryAction = headerPrimaryAction(location.pathname)
+  const showAgentRunStatusFilter = isAgentRunListPath(location.pathname)
+  const selectedAgentRunStatuses = showAgentRunStatusFilter
+    ? parseAgentRunStatusSearch((location.search as Record<string, unknown>).status)
+    : []
   const sidebarGroups = getPrimitiveGroups()
+
+  const updateAgentRunStatuses = (statuses: AgentRunStatus[]) => {
+    const nextSearch: Record<string, unknown> = { ...(location.search as Record<string, unknown>) }
+    const serialized = serializeAgentRunStatusSearch(statuses)
+    if (serialized) {
+      nextSearch.status = serialized
+    } else {
+      delete nextSearch.status
+    }
+
+    void navigate({
+      to: '/primitives/$kind',
+      params: { kind: 'agent-run' },
+      search: nextSearch,
+      replace: true,
+    })
+  }
 
   return (
     <TooltipProvider delayDuration={150}>
@@ -203,14 +236,22 @@ export function ControlPlaneShell({ children }: { children: ReactNode }) {
                 </BreadcrumbList>
               </Breadcrumb>
             </div>
-            {primaryAction ? (
-              <Button asChild size="sm">
-                <Link to="/primitives/$kind/new" params={{ kind: primaryAction.kind }}>
-                  <PlusIcon data-icon="inline-start" />
-                  {primaryAction.label}
-                </Link>
-              </Button>
-            ) : null}
+            <div className="flex shrink-0 items-center gap-2">
+              {showAgentRunStatusFilter ? (
+                <AgentRunStatusFilter
+                  selectedStatuses={selectedAgentRunStatuses}
+                  onSelectedStatusesChange={updateAgentRunStatuses}
+                />
+              ) : null}
+              {primaryAction ? (
+                <Button asChild size="sm">
+                  <Link to="/primitives/$kind/new" params={{ kind: primaryAction.kind }}>
+                    <PlusIcon data-icon="inline-start" />
+                    {primaryAction.label}
+                  </Link>
+                </Button>
+              ) : null}
+            </div>
           </header>
           <main className="min-w-0 flex-1 bg-background">{children}</main>
         </SidebarInset>

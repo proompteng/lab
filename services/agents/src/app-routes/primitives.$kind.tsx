@@ -3,6 +3,10 @@ import { useEffect, useState } from 'react'
 
 import { fetchPrimitiveResources, type PrimitiveResourceSummary } from '../control-plane/api-client'
 import { findPrimitiveDefinition } from '../control-plane/registry'
+import {
+  filterAgentRunsByStatuses,
+  parseAgentRunStatusSearch,
+} from '../components/control-plane/agent-run-status-filter'
 import { ControlPlanePage } from '../components/control-plane/control-plane-page'
 import { Alert, AlertDescription } from '../components/ui/alert'
 import { Badge } from '../components/ui/badge'
@@ -28,11 +32,15 @@ function PrimitiveKindRoute() {
 }
 
 function PrimitiveListPage() {
+  const location = useLocation()
   const { kind } = Route.useParams()
   const primitive = findPrimitiveDefinition(kind)
   const [items, setItems] = useState<PrimitiveResourceSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const selectedStatuses =
+    primitive?.kind === 'AgentRun' ? parseAgentRunStatusSearch((location.search as Record<string, unknown>).status) : []
+  const visibleItems = primitive?.kind === 'AgentRun' ? filterAgentRunsByStatuses(items, selectedStatuses) : items
 
   const load = async () => {
     if (!primitive) return
@@ -80,7 +88,7 @@ function PrimitiveListPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {items.map((item) => {
+            {visibleItems.map((item) => {
               const name = metadataValue(item, 'name')
               const namespace = metadataValue(item, 'namespace') || 'agents'
               const creationTimestamp = metadataValue(item, 'creationTimestamp')
@@ -108,10 +116,19 @@ function PrimitiveListPage() {
                 </TableRow>
               )
             })}
-            {!loading && items.length === 0 ? (
+            {!loading && visibleItems.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
-                  No resources found.
+                  {primitive.kind === 'AgentRun' && selectedStatuses.length > 0 ? (
+                    <span>
+                      No AgentRuns match the selected statuses: {selectedStatuses.join(', ')}. Clear the status filter
+                      to see all AgentRuns.
+                    </span>
+                  ) : primitive.kind === 'AgentRun' ? (
+                    'No AgentRuns found.'
+                  ) : (
+                    'No resources found.'
+                  )}
                 </TableCell>
               </TableRow>
             ) : null}
