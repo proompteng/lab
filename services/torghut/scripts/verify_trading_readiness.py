@@ -272,6 +272,7 @@ def _paper_route_target_plan_summary(
     promotion_blocked_count = 0
     health_gate_ready_count = 0
     health_gate_blockers: list[str] = []
+    health_gate_promotion_blockers: list[str] = []
     for target in targets:
         missing_identity = [
             field
@@ -320,6 +321,17 @@ def _paper_route_target_plan_summary(
             blocker = _text(reason)
             if blocker and blocker not in target_health_blockers:
                 target_health_blockers.append(blocker)
+        target_health_promotion_blockers = [
+            _text(reason)
+            for reason in _sequence(
+                target.get("runtime_window_import_promotion_blockers")
+            )
+            if _text(reason)
+        ]
+        for reason in _sequence(health_gate.get("promotion_blockers")):
+            blocker = _text(reason)
+            if blocker and blocker not in target_health_promotion_blockers:
+                target_health_promotion_blockers.append(blocker)
         dependency_quorum_decision = _text(
             target.get("dependency_quorum_decision")
             or health_gate.get("dependency_quorum_decision")
@@ -332,14 +344,18 @@ def _paper_route_target_plan_summary(
             target_health_blockers.append("dependency_quorum_not_allow")
         if not _health_gate_bool(continuity_ok):
             target_health_blockers.append("continuity_not_ok")
-        if not _health_gate_bool(drift_ok):
-            target_health_blockers.append("drift_not_ok")
+        if not _health_gate_bool(drift_ok) and not target_health_promotion_blockers:
+            target_health_promotion_blockers.append("drift_not_ok")
         target_health_blockers = sorted(set(target_health_blockers))
+        target_health_promotion_blockers = sorted(set(target_health_promotion_blockers))
         if not target_health_blockers:
             health_gate_ready_count += 1
         for blocker in target_health_blockers:
             if blocker not in health_gate_blockers:
                 health_gate_blockers.append(blocker)
+        for blocker in target_health_promotion_blockers:
+            if blocker not in health_gate_promotion_blockers:
+                health_gate_promotion_blockers.append(blocker)
         target_summaries.append(
             {
                 "hypothesis_id": _text(target.get("hypothesis_id")),
@@ -359,6 +375,9 @@ def _paper_route_target_plan_summary(
                 "continuity_ok": _text(continuity_ok),
                 "drift_ok": _text(drift_ok),
                 "runtime_window_import_health_gate_blockers": target_health_blockers,
+                "runtime_window_import_promotion_blockers": (
+                    target_health_promotion_blockers
+                ),
                 "missing_identity_fields": missing_identity,
             }
         )
@@ -390,6 +409,7 @@ def _paper_route_target_plan_summary(
             "ready_target_count": health_gate_ready_count,
             "blocked_target_count": max(0, len(targets) - health_gate_ready_count),
             "blockers": health_gate_blockers,
+            "promotion_blockers": health_gate_promotion_blockers,
         },
     }
 

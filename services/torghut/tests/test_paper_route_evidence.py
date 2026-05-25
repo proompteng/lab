@@ -506,8 +506,11 @@ class TestPaperRouteEvidenceAudit(TestCase):
             [
                 "runtime_window_import_dependency_quorum_missing",
                 "runtime_window_import_continuity_missing",
-                "runtime_window_import_drift_missing",
             ],
+        )
+        self.assertEqual(
+            target["runtime_window_import_health_gate"]["promotion_blockers"],
+            ["runtime_window_import_drift_missing"],
         )
         self.assertIn(
             "runtime_window_import_dependency_quorum_missing",
@@ -522,6 +525,10 @@ class TestPaperRouteEvidenceAudit(TestCase):
         ]
         self.assertEqual(health_gate["ready_target_count"], 0)
         self.assertEqual(health_gate["blocked_target_count"], 1)
+        self.assertEqual(
+            health_gate["promotion_blockers"],
+            ["runtime_window_import_drift_missing"],
+        )
 
     def test_builder_exports_non_allow_runtime_window_health_gate_blockers(
         self,
@@ -588,8 +595,12 @@ class TestPaperRouteEvidenceAudit(TestCase):
             [
                 "dependency_quorum_not_allow",
                 "evidence_continuity_not_ok",
-                "drift_checks_not_ok",
             ],
+        )
+        self.assertEqual(gate["promotion_blockers"], ["drift_checks_not_ok"])
+        self.assertEqual(
+            target["runtime_window_import_promotion_blockers"],
+            ["drift_checks_not_ok"],
         )
 
     def test_next_paper_route_session_readiness_tracks_collection_and_import(

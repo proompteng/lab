@@ -855,6 +855,9 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                             "runtime_window_import_health_gate_blockers": [
                                 "runtime_window_import_dependency_quorum_missing"
                             ],
+                            "runtime_window_import_promotion_blockers": [
+                                "runtime_window_import_drift_missing"
+                            ],
                             "window_start": "2026-05-26T13:30:00+00:00",
                             "window_end": "2026-05-26T20:00:00+00:00",
                             "paper_route_probe_symbols": ["AAPL"],
@@ -957,6 +960,10 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertEqual(
             targets[0].target_metadata["runtime_window_import_health_gate_blockers"],
             ["runtime_window_import_dependency_quorum_missing"],
+        )
+        self.assertEqual(
+            targets[0].target_metadata["runtime_window_import_promotion_blockers"],
+            ["runtime_window_import_drift_missing"],
         )
         self.assertEqual(targets[0].target_metadata["max_notional"], "0")
         self.assertEqual(

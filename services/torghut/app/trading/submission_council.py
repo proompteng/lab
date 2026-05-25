@@ -136,6 +136,7 @@ def _runtime_window_import_health_gate_inputs(
     )
     drift_ok, drift_source, drift_reason = _runtime_window_import_drift_signal(state)
     blockers: list[str] = []
+    promotion_blockers: list[str] = []
     if dependency_quorum_decision != "allow":
         blockers.append("dependency_quorum_not_allow")
     if continuity_source == "missing":
@@ -143,9 +144,9 @@ def _runtime_window_import_health_gate_inputs(
     elif continuity_ok != "true":
         blockers.append("evidence_continuity_not_ok")
     if drift_source == "missing":
-        blockers.append("runtime_window_import_drift_missing")
+        promotion_blockers.append("runtime_window_import_drift_missing")
     elif drift_ok != "true":
-        blockers.append("drift_checks_not_ok")
+        promotion_blockers.append("drift_checks_not_ok")
     return {
         "continuity_ok": continuity_ok,
         "continuity_source": continuity_source,
@@ -166,8 +167,10 @@ def _runtime_window_import_health_gate_inputs(
             "drift_reason": drift_reason,
             "ready": not blockers,
             "blockers": blockers,
+            "promotion_blockers": promotion_blockers,
         },
         "runtime_window_import_health_gate_blockers": blockers,
+        "runtime_window_import_promotion_blockers": promotion_blockers,
     }
 
 
