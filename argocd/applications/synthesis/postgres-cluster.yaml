@@ -23,4 +23,4 @@ spec:
       reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "pgadmin"
   monitoring:
     enablePodMonitor: true
-# CNPG will emit application credentials in the secret `synthesis-db-synthesis`
+# CNPG emits application credentials in the secret `synthesis-db-app`
