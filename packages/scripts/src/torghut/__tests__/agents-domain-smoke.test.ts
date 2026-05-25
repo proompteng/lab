@@ -81,17 +81,14 @@ describe('Agents domain scheduled AgentRun templates', () => {
     expect(envMap.get('JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_ENABLED')).toBe('false')
   })
 
-  it('schedules only batch market-context refresh templates', () => {
+  it('does not schedule market-context refresh AgentRuns', () => {
     const manifests = readYamlObjects('argocd/applications/torghut/agents-domain/torghut-market-context-batch.yaml')
     const scheduleTargets = manifests
       .filter((manifest) => manifest.kind === 'Schedule')
       .map((schedule) => objectAt(objectAt(objectAt(schedule, 'spec'), 'targetRef'), 'name'))
       .sort()
 
-    expect(scheduleTargets).toEqual([
-      'torghut-market-context-fundamentals-batch-template',
-      'torghut-market-context-fundamentals-preopen-probe-template',
-    ])
+    expect(scheduleTargets).toEqual([])
   })
 
   it('keeps dedicated Torghut capacity pools blocking while shared providers only degrade by default', () => {

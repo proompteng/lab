@@ -419,7 +419,7 @@ spec:
             parser.add_argument('--callback-url', required=True)
             parser.add_argument('--request-id')
             parser.add_argument('--symbol')
-            parser.add_argument('--domain', choices=['fundamentals', 'news'])
+            parser.add_argument('--domain', choices=['news'])
             parser.add_argument('--run-name')
             parser.add_argument('--reason')
             parser.add_argument('--provider', default='codex-spark')
@@ -555,11 +555,6 @@ spec:
                 headlines = body.get('headlines')
                 if not isinstance(headlines, list):
                     raise ValueError('news payload.headlines must be an array')
-            if domain == 'fundamentals':
-                for key in ('valuation', 'growth', 'profitability', 'balanceSheet'):
-                    if key not in body:
-                        raise ValueError(f'fundamentals payload must contain {key}')
-
             _expect_string(payload, 'provider')
 
             _ = symbol
@@ -568,7 +563,7 @@ spec:
 
         def main() -> int:
             parser = argparse.ArgumentParser(description='Validate market-context payload JSON')
-            parser.add_argument('--domain', choices=['fundamentals', 'news'], required=True)
+            parser.add_argument('--domain', choices=['news'], required=True)
             parser.add_argument('--file', required=True)
             args = parser.parse_args()
 

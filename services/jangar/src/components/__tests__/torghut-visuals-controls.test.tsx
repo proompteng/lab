@@ -1,8 +1,25 @@
 // @vitest-environment jsdom
 import { render, screen } from '@testing-library/react'
+import type { ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { TorghutVisualsControls } from '@/components/torghut-visuals-controls'
+
+vi.mock('@proompteng/design/ui', async () => {
+  const React = await import('react')
+  type MockProps = Record<string, unknown> & { children?: ReactNode }
+
+  return {
+    Button: ({ children, variant: _variant, size: _size, ...props }: MockProps) =>
+      React.createElement('button', props, children),
+    Select: ({ children }: MockProps) => React.createElement('div', null, children),
+    SelectContent: ({ children, align: _align, ...props }: MockProps) => React.createElement('div', props, children),
+    SelectItem: ({ children, value: _value, ...props }: MockProps) => React.createElement('div', props, children),
+    SelectTrigger: ({ children, ...props }: MockProps) =>
+      React.createElement('button', { ...props, role: 'combobox', type: 'button' }, children),
+    SelectValue: ({ placeholder }: { placeholder?: string }) => React.createElement('span', null, placeholder ?? null),
+  }
+})
 
 describe('TorghutVisualsControls', () => {
   it('uses themed select triggers instead of native select elements', () => {
@@ -12,10 +29,10 @@ describe('TorghutVisualsControls', () => {
         selectedSymbol="MSFT"
         onSymbolChange={vi.fn()}
         rangeOptions={[
-          { id: '15m', label: 'Last 15m', seconds: 900 },
-          { id: '1h', label: 'Last 1h', seconds: 3600 },
+          { id: '15m', label: '15m', seconds: 900 },
+          { id: '1h', label: '1h', seconds: 3600 },
         ]}
-        range={{ id: '1h', label: 'Last 1h', seconds: 3600 }}
+        range={{ id: '1h', label: '1h', seconds: 3600 }}
         onRangeChange={vi.fn()}
         resolutionOptions={[
           { id: '15s', label: '15s', seconds: 15 },

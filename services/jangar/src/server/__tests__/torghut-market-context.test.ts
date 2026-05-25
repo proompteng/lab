@@ -13,7 +13,6 @@ const restoreEnv = () => {
   delete process.env.JANGAR_MARKET_CONTEXT_MAX_STALENESS_SECONDS
   delete process.env.JANGAR_MARKET_CONTEXT_PROVIDER_TIMEOUT_MS
   delete process.env.JANGAR_MARKET_CONTEXT_PROVIDER_CHAIN
-  delete process.env.JANGAR_MARKET_CONTEXT_FUNDAMENTALS_URL
   delete process.env.JANGAR_MARKET_CONTEXT_NEWS_URL
   delete process.env.JANGAR_MARKET_CONTEXT_REQUIRE_TECHNICALS_SOURCE_HEALTH
   delete process.env.JANGAR_MARKET_CONTEXT_TECHNICALS_MAX_FRESHNESS_SECONDS
@@ -195,33 +194,20 @@ describe('torghut market context', () => {
     expect(contextC.riskFlags).toContain('market_context_stale')
   })
 
-  it('ingests fundamentals and news providers with freshness contracts', async () => {
-    process.env.JANGAR_MARKET_CONTEXT_FUNDAMENTALS_URL = 'https://fundamentals.test/context'
+  it('ingests the news provider while fundamentals collection is retired', async () => {
     process.env.JANGAR_MARKET_CONTEXT_NEWS_URL = 'https://news.test/context'
     process.env.JANGAR_MARKET_CONTEXT_PROVIDER_TIMEOUT_MS = '500'
 
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          asOfUtc: '2026-02-19T11:00:00.000Z',
-          sourceCount: 2,
-          qualityScore: 0.9,
-          payload: { peRatio: 28.1 },
-          citations: [{ source: 'sec', publishedAt: '2026-02-18T21:00:00.000Z', url: 'https://sec.test/10q' }],
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          asOfUtc: '2026-02-19T11:58:00.000Z',
-          sourceCount: 4,
-          qualityScore: 0.7,
-          payload: { sentimentScore: 0.12, itemCount: 4 },
-          citations: [{ source: 'wire', publishedAt: '2026-02-19T11:57:00.000Z', url: 'https://wire.test/n1' }],
-        }),
-      })
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        asOfUtc: '2026-02-19T11:58:00.000Z',
+        sourceCount: 4,
+        qualityScore: 0.7,
+        payload: { sentimentScore: 0.12, itemCount: 4 },
+        citations: [{ source: 'wire', publishedAt: '2026-02-19T11:57:00.000Z', url: 'https://wire.test/n1' }],
+      }),
+    })
     vi.stubGlobal('fetch', fetchMock)
 
     const context = await getTorghutMarketContext('AAPL', {
@@ -231,18 +217,17 @@ describe('torghut market context', () => {
       },
     })
 
-    expect(context.domains.fundamentals.state).toBe('ok')
-    expect(context.domains.fundamentals.sourceCount).toBe(2)
-    expect(context.domains.fundamentals.payload.peRatio).toBe(28.1)
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(context.domains.fundamentals.state).toBe('missing')
+    expect(context.domains.fundamentals.payload.provider).toBe('fundamentals_provider_retired')
     expect(context.domains.news.state).toBe('ok')
     expect(context.domains.news.freshnessSeconds).toBe(120)
     expect(context.domains.news.payload.sentimentScore).toBe(0.12)
-    expect(context.riskFlags).not.toContain('fundamentals_missing')
+    expect(context.riskFlags).toContain('fundamentals_missing')
     expect(context.riskFlags).not.toContain('news_missing')
   })
 
   it('reports provider failures in health and domain state', async () => {
-    process.env.JANGAR_MARKET_CONTEXT_FUNDAMENTALS_URL = 'https://fundamentals.test/context'
     process.env.JANGAR_MARKET_CONTEXT_NEWS_URL = 'https://news.test/context'
 
     const fetchMock = vi.fn().mockRejectedValue(new Error('upstream timeout'))
@@ -256,48 +241,34 @@ describe('torghut market context', () => {
     })
 
     expect(health.overallState).toBe('down')
-    expect(health.domainHealth.find((d) => d.domain === 'fundamentals')?.state).toBe('error')
+    expect(health.domainHealth.find((d) => d.domain === 'fundamentals')?.state).toBe('missing')
     expect(health.domainHealth.find((d) => d.domain === 'news')?.state).toBe('error')
-    expect(health.providerHealth.find((d) => d.provider === 'fundamentals')?.lastError).toBe('upstream timeout')
+    expect(health.providerHealth.map((d) => d.provider)).not.toContain('fundamentals')
     expect(health.providerHealth.find((d) => d.provider === 'news')?.consecutiveFailures).toBe(1)
   })
 
   it('preserves degraded last-good provider metadata in the bundle', async () => {
-    process.env.JANGAR_MARKET_CONTEXT_FUNDAMENTALS_URL = 'https://fundamentals.test/context'
     process.env.JANGAR_MARKET_CONTEXT_NEWS_URL = 'https://news.test/context'
     process.env.JANGAR_MARKET_CONTEXT_PROVIDER_CHAIN = 'codex-spark,codex'
 
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          asOfUtc: '2026-02-19T11:00:00.000Z',
-          sourceCount: 1,
-          qualityScore: 0.9,
-          payload: { peRatio: 28.1, provider: 'codex-spark' },
-          citations: [],
-          riskFlags: [],
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          asOfUtc: '2026-02-19T11:40:00.000Z',
-          sourceCount: 2,
-          qualityScore: 0.35,
-          payload: {
-            provider: 'codex',
-            providerChain: ['codex-spark', 'codex'],
-            fallbackUsed: true,
-            generationFailed: true,
-            degradedReason: 'all_provider_attempts_failed',
-            lastSuccessfulAsOfUtc: '2026-02-19T11:40:00.000Z',
-          },
-          citations: [],
-          riskFlags: ['news_generation_failed_all_models', 'market_context_degraded_last_good'],
-        }),
-      })
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        asOfUtc: '2026-02-19T11:40:00.000Z',
+        sourceCount: 2,
+        qualityScore: 0.35,
+        payload: {
+          provider: 'codex',
+          providerChain: ['codex-spark', 'codex'],
+          fallbackUsed: true,
+          generationFailed: true,
+          degradedReason: 'all_provider_attempts_failed',
+          lastSuccessfulAsOfUtc: '2026-02-19T11:40:00.000Z',
+        },
+        citations: [],
+        riskFlags: ['news_generation_failed_all_models', 'market_context_degraded_last_good'],
+      }),
+    })
     vi.stubGlobal('fetch', fetchMock)
 
     const context = await getTorghutMarketContext('AAPL', {
@@ -315,30 +286,18 @@ describe('torghut market context', () => {
   })
 
   it('uses 10-minute news freshness during US regular trading hours', async () => {
-    process.env.JANGAR_MARKET_CONTEXT_FUNDAMENTALS_URL = 'https://fundamentals.test/context'
     process.env.JANGAR_MARKET_CONTEXT_NEWS_URL = 'https://news.test/context'
     process.env.JANGAR_MARKET_CONTEXT_NEWS_MAX_FRESHNESS_SECONDS = '300'
 
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          asOfUtc: '2026-02-19T14:00:00.000Z',
-          sourceCount: 1,
-          qualityScore: 0.9,
-          payload: { peRatio: 28.1 },
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          asOfUtc: '2026-02-19T14:58:00.000Z',
-          sourceCount: 2,
-          qualityScore: 0.8,
-          payload: { sentimentScore: 0.12 },
-        }),
-      })
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        asOfUtc: '2026-02-19T14:58:00.000Z',
+        sourceCount: 2,
+        qualityScore: 0.8,
+        payload: { sentimentScore: 0.12 },
+      }),
+    })
     vi.stubGlobal('fetch', fetchMock)
 
     const context = await getTorghutMarketContext('AAPL', {
@@ -354,30 +313,18 @@ describe('torghut market context', () => {
   })
 
   it('applies 10-minute news freshness at the 16:00 ET close boundary', async () => {
-    process.env.JANGAR_MARKET_CONTEXT_FUNDAMENTALS_URL = 'https://fundamentals.test/context'
     process.env.JANGAR_MARKET_CONTEXT_NEWS_URL = 'https://news.test/context'
     process.env.JANGAR_MARKET_CONTEXT_NEWS_MAX_FRESHNESS_SECONDS = '300'
 
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          asOfUtc: '2026-02-19T20:00:00.000Z',
-          sourceCount: 1,
-          qualityScore: 0.9,
-          payload: { peRatio: 28.1 },
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          asOfUtc: '2026-02-19T20:53:00.000Z',
-          sourceCount: 2,
-          qualityScore: 0.8,
-          payload: { sentimentScore: 0.12 },
-        }),
-      })
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        asOfUtc: '2026-02-19T20:53:00.000Z',
+        sourceCount: 2,
+        qualityScore: 0.8,
+        payload: { sentimentScore: 0.12 },
+      }),
+    })
     vi.stubGlobal('fetch', fetchMock)
 
     const context = await getTorghutMarketContext('AAPL', {
@@ -393,30 +340,18 @@ describe('torghut market context', () => {
   })
 
   it('keeps base news freshness outside US regular trading hours', async () => {
-    process.env.JANGAR_MARKET_CONTEXT_FUNDAMENTALS_URL = 'https://fundamentals.test/context'
     process.env.JANGAR_MARKET_CONTEXT_NEWS_URL = 'https://news.test/context'
     process.env.JANGAR_MARKET_CONTEXT_NEWS_MAX_FRESHNESS_SECONDS = '300'
 
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          asOfUtc: '2026-02-19T21:00:00.000Z',
-          sourceCount: 1,
-          qualityScore: 0.9,
-          payload: { peRatio: 28.1 },
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          asOfUtc: '2026-02-19T21:58:00.000Z',
-          sourceCount: 2,
-          qualityScore: 0.8,
-          payload: { sentimentScore: 0.12 },
-        }),
-      })
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        asOfUtc: '2026-02-19T21:58:00.000Z',
+        sourceCount: 2,
+        qualityScore: 0.8,
+        payload: { sentimentScore: 0.12 },
+      }),
+    })
     vi.stubGlobal('fetch', fetchMock)
 
     const context = await getTorghutMarketContext('AAPL', {

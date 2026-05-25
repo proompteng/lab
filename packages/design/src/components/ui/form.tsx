@@ -15,7 +15,7 @@ import {
 import { Label } from './label'
 import { cn } from '../../lib/utils'
 
-const Form = FormProvider
+const Form: typeof FormProvider = FormProvider
 
 type FormFieldContextValue<
   TFieldValues extends FieldValues = FieldValues,
