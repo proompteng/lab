@@ -29,6 +29,21 @@ const paperRouteTarget = {
   window_end: '2026-05-26T20:00:00+00:00',
   paper_route_probe_symbols: ['AAPL', 'AMZN'],
   paper_route_probe_next_session_max_notional: '25',
+  dependency_quorum_decision: 'missing',
+  continuity_ok: 'false',
+  drift_ok: 'false',
+  runtime_window_import_health_gate: {
+    schema_version: 'torghut.runtime-window-import-health-gate.v1',
+    dependency_quorum_decision: 'missing',
+    continuity_ok: 'false',
+    drift_ok: 'false',
+    ready: false,
+    blockers: [
+      'runtime_window_import_dependency_quorum_missing',
+      'runtime_window_import_continuity_missing',
+      'runtime_window_import_drift_missing',
+    ],
+  },
 }
 
 const buildPaperRouteEvidence = (targets: Array<Record<string, unknown>>) => ({
@@ -39,6 +54,13 @@ const buildPaperRouteEvidence = (targets: Array<Record<string, unknown>>) => ({
     final_promotion_allowed: false,
     final_promotion_authorized: false,
     target_count: targets.length,
+    runtime_window_import_health_gate: {
+      schema_version: 'torghut.runtime-window-import-health-gate-summary.v1',
+      target_count: targets.length,
+      ready_target_count: 0,
+      blocked_target_count: targets.length,
+      blockers: [],
+    },
     targets,
   },
 })
@@ -234,5 +256,62 @@ describe('validatePostDeployEvidence', () => {
         simPaperRouteEvidence: buildPaperRouteEvidence([paperRouteTarget]),
       }),
     ).toThrow('target 0 promotion_allowed must not be true')
+  })
+
+  it('rejects paper-route targets that omit runtime-window import health gates', () => {
+    const target: Record<string, unknown> = { ...paperRouteTarget }
+    delete target.runtime_window_import_health_gate
+    delete target.dependency_quorum_decision
+    delete target.continuity_ok
+    delete target.drift_ok
+
+    expect(() =>
+      validatePostDeployEvidence({
+        readyzHttpStatus: '200',
+        readyz: { status: 'ok' },
+        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
+        tradingStatus: baseTradingStatus,
+        paperRouteEvidence: buildPaperRouteEvidence([target]),
+        simPaperRouteEvidence: buildPaperRouteEvidence([paperRouteTarget]),
+      }),
+    ).toThrow('target 0 missing runtime-window import health gate fields')
+  })
+
+  it('rejects paper-route target plans that omit runtime-window health gate summary', () => {
+    const paperRouteEvidence = buildPaperRouteEvidence([paperRouteTarget])
+    delete (paperRouteEvidence.next_paper_route_runtime_window_targets as Record<string, unknown>)
+      .runtime_window_import_health_gate
+
+    expect(() =>
+      validatePostDeployEvidence({
+        readyzHttpStatus: '200',
+        readyz: { status: 'ok' },
+        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
+        tradingStatus: baseTradingStatus,
+        paperRouteEvidence,
+        simPaperRouteEvidence: buildPaperRouteEvidence([paperRouteTarget]),
+      }),
+    ).toThrow('target plan runtime_window_import_health_gate must be an object')
+  })
+
+  it('rejects paper-route targets with inconsistent runtime-window health gate envelopes', () => {
+    expect(() =>
+      validatePostDeployEvidence({
+        readyzHttpStatus: '200',
+        readyz: { status: 'ok' },
+        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
+        tradingStatus: baseTradingStatus,
+        paperRouteEvidence: buildPaperRouteEvidence([
+          {
+            ...paperRouteTarget,
+            runtime_window_import_health_gate: {
+              ...paperRouteTarget.runtime_window_import_health_gate,
+              drift_ok: 'true',
+            },
+          },
+        ]),
+        simPaperRouteEvidence: buildPaperRouteEvidence([paperRouteTarget]),
+      }),
+    ).toThrow('target 0 runtime-window health gate drift_ok mismatch')
   })
 })

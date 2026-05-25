@@ -186,6 +186,9 @@ class TestPaperRouteEvidenceAudit(TestCase):
                     "reason": "paper_route_probe_only",
                     "blocked_reasons": [],
                     "promotion_eligible_total": 0,
+                    "dependency_quorum_decision": "allow",
+                    "continuity_ok": True,
+                    "drift_ok": True,
                     "runtime_ledger_paper_probation_import_plan": {
                         "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
                         "target_count": 2,
@@ -305,6 +308,11 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(target["source_account_label"], "TORGHUT_REPLAY")
         self.assertEqual(target["source_dsn_env"], "SIM_DB_DSN")
         self.assertEqual(target["source_kind"], "paper_route_probe_runtime_observed")
+        self.assertEqual(target["dependency_quorum_decision"], "allow")
+        self.assertEqual(target["continuity_ok"], "true")
+        self.assertEqual(target["drift_ok"], "true")
+        self.assertEqual(target["runtime_window_import_health_gate"]["ready"], True)
+        self.assertEqual(target["runtime_window_import_health_gate"]["blockers"], [])
         self.assertEqual(target["max_notional"], "0")
         self.assertEqual(target["paper_route_probe_symbols"], ["AAPL"])
         self.assertEqual(target["paper_route_probe_next_session_max_notional"], "25")
@@ -375,6 +383,10 @@ class TestPaperRouteEvidenceAudit(TestCase):
             ["paper_route_session_window_not_open"],
         )
         self.assertEqual(
+            proof_handoff["runtime_window"]["health_gate"]["ready_target_count"],
+            1,
+        )
+        self.assertEqual(
             proof_handoff["default_live_service_base_url"],
             "http://torghut.torghut.svc.cluster.local",
         )
@@ -432,6 +444,152 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertIn(
             "paper_route_runtime_ledger_import_pending",
             target["runtime_ledger_target_metadata_blockers"],
+        )
+
+    def test_builder_exports_missing_runtime_window_health_gate_as_blockers(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 5, 24, 12, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "promotion_eligible_total": 0,
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAPER-ROUTE",
+                                "candidate_id": "candidate-paper-route",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": "paper-route-candidate-v1",
+                                "account_label": "TORGHUT_REPLAY",
+                                "source_kind": "durable_runtime_ledger_bucket",
+                                "source_manifest_ref": "config/trading/hypotheses/h-paper-route.json",
+                                "dataset_snapshot_ref": "dataset://paper-route",
+                                "paper_probation_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                                "max_notional": "0",
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": False,
+                        "next_session_max_notional": "25",
+                        "eligible_symbol_count": 1,
+                        "blocking_reasons": [],
+                    },
+                },
+                generated_at=generated_at,
+            )
+
+        target = payload["next_paper_route_runtime_window_targets"]["targets"][0]
+        self.assertEqual(target["dependency_quorum_decision"], "missing")
+        self.assertEqual(target["continuity_ok"], "false")
+        self.assertEqual(target["drift_ok"], "false")
+        self.assertEqual(
+            target["runtime_window_import_health_gate"]["blockers"],
+            [
+                "runtime_window_import_dependency_quorum_missing",
+                "runtime_window_import_continuity_missing",
+                "runtime_window_import_drift_missing",
+            ],
+        )
+        self.assertIn(
+            "runtime_window_import_dependency_quorum_missing",
+            target["candidate_blockers"],
+        )
+        self.assertIn(
+            "runtime_window_import_drift_missing",
+            target["runtime_ledger_target_metadata_blockers"],
+        )
+        health_gate = payload["next_paper_route_runtime_window_targets"][
+            "runtime_window_import_health_gate"
+        ]
+        self.assertEqual(health_gate["ready_target_count"], 0)
+        self.assertEqual(health_gate["blocked_target_count"], 1)
+
+    def test_builder_exports_non_allow_runtime_window_health_gate_blockers(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 5, 24, 12, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "promotion_eligible_total": 0,
+                    "dependency_quorum_decision": "block",
+                    "continuity_ok": "false",
+                    "drift_ok": "false",
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAPER-ROUTE",
+                                "candidate_id": "candidate-paper-route",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": "paper-route-candidate-v1",
+                                "account_label": "TORGHUT_REPLAY",
+                                "source_manifest_ref": "config/trading/hypotheses/h-paper-route.json",
+                                "continuity_ok": "unknown",
+                                "paper_probation_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                                "max_notional": "0",
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": False,
+                        "next_session_max_notional": "25",
+                        "eligible_symbol_count": 1,
+                        "blocking_reasons": [],
+                    },
+                },
+                generated_at=generated_at,
+            )
+
+        target = payload["next_paper_route_runtime_window_targets"]["targets"][0]
+        gate = target["runtime_window_import_health_gate"]
+        self.assertEqual(gate["dependency_quorum_decision"], "block")
+        self.assertEqual(gate["dependency_quorum_source"], "live_submission_gate")
+        self.assertEqual(gate["continuity_ok"], "false")
+        self.assertEqual(gate["continuity_source"], "live_submission_gate")
+        self.assertEqual(gate["drift_ok"], "false")
+        self.assertEqual(
+            gate["blockers"],
+            [
+                "dependency_quorum_not_allow",
+                "evidence_continuity_not_ok",
+                "drift_checks_not_ok",
+            ],
         )
 
     def test_next_paper_route_session_readiness_tracks_collection_and_import(
