@@ -7,6 +7,8 @@ vi.mock('crossws/adapters/bun', () => ({
   })),
 }))
 
+import wsAdapter from 'crossws/adapters/bun'
+
 import { createAgentsHttpRuntime } from './http-runtime'
 
 const allowedBrowserOrigin = 'https://control-plane.example.test'
@@ -46,6 +48,33 @@ const buildRouteRuntime = () =>
   })
 
 describe('Agents HTTP runtime', () => {
+  it('can disable the Bun WebSocket adapter for TanStack Start delegation', async () => {
+    const mockedAdapter = wsAdapter as unknown as { mockClear: () => void }
+    mockedAdapter.mockClear()
+
+    const runtime = await createAgentsHttpRuntime({
+      enableWebSocket: false,
+      routeModules: {},
+    })
+
+    expect(mockedAdapter).not.toHaveBeenCalled()
+
+    const upgrade = await runtime.handleUpgrade(
+      new Request('http://agents.local/v1/control-plane/stream', {
+        headers: {
+          connection: 'upgrade',
+          upgrade: 'websocket',
+        },
+      }),
+      {} as Bun.Server<unknown>,
+    )
+
+    expect(upgrade).toMatchObject({
+      kind: 'response',
+      response: expect.objectContaining({ status: 426 }),
+    })
+  })
+
   it('registers TanStack-style server route modules with decoded params', async () => {
     const runtime = await buildRouteRuntime()
 

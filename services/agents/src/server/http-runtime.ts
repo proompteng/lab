@@ -11,6 +11,7 @@ export type AgentsServerRouteHandler = (args: {
 
 export type AgentsServerRouteModule = {
   Route?: {
+    path?: string
     options?: {
       server?: {
         handlers?: Partial<Record<string, AgentsServerRouteHandler>>
@@ -42,7 +43,8 @@ export type AgentsHttpRuntimeMetrics = {
 
 export type AgentsHttpRuntimeOptions = {
   routeModules: Record<string, () => Promise<unknown>>
-  routeSources: Record<string, string>
+  routeSources?: Record<string, string>
+  enableWebSocket?: boolean
   serveClient?: boolean
   clientOutputDirCandidates?: () => string[]
   clientMissingMessage?: string
@@ -239,22 +241,22 @@ const serveClientResponse = async (
 
 const loadServerRoutes = async (
   routeModules: AgentsHttpRuntimeOptions['routeModules'],
-  routeSources: AgentsHttpRuntimeOptions['routeSources'],
+  routeSources: AgentsHttpRuntimeOptions['routeSources'] = {},
 ): Promise<AgentsServerRouteDefinition[]> => {
   const definitions: AgentsServerRouteDefinition[] = []
 
-  for (const [file, source] of Object.entries(routeSources)) {
+  for (const file of Object.keys(routeModules)) {
     if (file.includes('.test.') || file.includes('.spec.')) continue
-    if (!source.includes('server:')) continue
 
     const load = routeModules[file]
     if (!load) continue
 
-    const match = serverRoutePattern.exec(source)
-    const routePath = match?.[2]
+    const module = (await load()) as AgentsServerRouteModule
+    const source = routeSources[file]
+    const match = source ? serverRoutePattern.exec(source) : null
+    const routePath = module.Route?.path ?? match?.[2]
     if (!routePath) continue
 
-    const module = (await load()) as AgentsServerRouteModule
     const handlers = module.Route?.options?.server?.handlers
     if (!handlers || Object.keys(handlers).length === 0) continue
 
@@ -366,15 +368,24 @@ export const createAgentsHttpRuntime = async (options: AgentsHttpRuntimeOptions)
     if (!isCorsManagedRequest(request, serverRouteRoots)) return response
     return withCorsHeaders(response, request, corsAllowedOrigins)
   }
-  const adapter = wsAdapter({
-    resolve: (request) => getResolvedWebSocketHooks(request) ?? {},
-  })
+  const adapter =
+    options.enableWebSocket === false
+      ? null
+      : wsAdapter({
+          resolve: (request) => getResolvedWebSocketHooks(request) ?? {},
+        })
 
   return {
     handleRequest,
     async handleUpgrade(request, server) {
       if (!isWebSocketUpgradeRequest(request)) {
         return { kind: 'skip' }
+      }
+      if (!adapter) {
+        return {
+          kind: 'response',
+          response: new Response('WebSocket upgrades are not available in this runtime', { status: 426 }),
+        }
       }
 
       const upgradeProbeResponse = (await handleRequest(request)) as WebSocketRouteProbeResponse
@@ -392,7 +403,7 @@ export const createAgentsHttpRuntime = async (options: AgentsHttpRuntimeOptions)
 
       return { kind: 'handled' }
     },
-    websocket: adapter.websocket,
+    websocket: (adapter?.websocket ?? {}) as Bun.WebSocketHandler<unknown>,
   }
 }
 

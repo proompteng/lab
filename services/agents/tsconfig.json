@@ -2,6 +2,7 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
+    "jsx": "react-jsx",
     "strict": true,
     "strictNullChecks": true,
     "types": ["bun-types"],
@@ -20,5 +21,5 @@
       ]
     }
   },
-  "include": ["./src/**/*", "./scripts/**/*", "./vitest.config.ts"]
+  "include": ["./src/**/*", "./scripts/**/*", "./vite.config.ts", "./vitest.config.ts"]
 }

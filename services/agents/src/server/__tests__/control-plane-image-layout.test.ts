@@ -32,7 +32,8 @@ describe('Agents control-plane image layout', () => {
 
     expect(content).toContain('WORKDIR /app/services/agents')
     expect(content).toContain('COPY --from=agents-build /app/services/agents/src ./src')
-    expect(content).toContain('CMD ["bun", "run", "src/server/index.ts"]')
+    expect(content).toContain('COPY --from=agents-build /app/services/agents/.output ./.output')
+    expect(content).toContain('CMD ["bun", "run", "start"]')
     expect(content).not.toContain('services/jangar')
     expect(content).not.toContain('.output/server/index.mjs')
   })
