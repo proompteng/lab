@@ -273,6 +273,8 @@ def _paper_route_target_plan_summary(
     health_gate_ready_count = 0
     health_gate_blockers: list[str] = []
     health_gate_promotion_blockers: list[str] = []
+    health_gate_continuity_reasons: list[str] = []
+    health_gate_drift_reasons: list[str] = []
     for target in targets:
         missing_identity = [
             field
@@ -338,6 +340,12 @@ def _paper_route_target_plan_summary(
         )
         continuity_ok = target.get("continuity_ok", health_gate.get("continuity_ok"))
         drift_ok = target.get("drift_ok", health_gate.get("drift_ok"))
+        continuity_reason = _text(
+            target.get("continuity_reason") or health_gate.get("continuity_reason")
+        )
+        drift_reason = _text(
+            target.get("drift_reason") or health_gate.get("drift_reason")
+        )
         if not health_gate:
             target_health_blockers.append("runtime_window_import_health_gate_missing")
         if dependency_quorum_decision != "allow":
@@ -356,6 +364,13 @@ def _paper_route_target_plan_summary(
         for blocker in target_health_promotion_blockers:
             if blocker not in health_gate_promotion_blockers:
                 health_gate_promotion_blockers.append(blocker)
+        if (
+            continuity_reason
+            and continuity_reason not in health_gate_continuity_reasons
+        ):
+            health_gate_continuity_reasons.append(continuity_reason)
+        if drift_reason and drift_reason not in health_gate_drift_reasons:
+            health_gate_drift_reasons.append(drift_reason)
         target_summaries.append(
             {
                 "hypothesis_id": _text(target.get("hypothesis_id")),
@@ -373,7 +388,9 @@ def _paper_route_target_plan_summary(
                 "promotion_blocked": promotion_blocked,
                 "dependency_quorum_decision": dependency_quorum_decision,
                 "continuity_ok": _text(continuity_ok),
+                "continuity_reason": continuity_reason,
                 "drift_ok": _text(drift_ok),
+                "drift_reason": drift_reason,
                 "runtime_window_import_health_gate_blockers": target_health_blockers,
                 "runtime_window_import_promotion_blockers": (
                     target_health_promotion_blockers
@@ -410,6 +427,8 @@ def _paper_route_target_plan_summary(
             "blocked_target_count": max(0, len(targets) - health_gate_ready_count),
             "blockers": health_gate_blockers,
             "promotion_blockers": health_gate_promotion_blockers,
+            "continuity_reasons": health_gate_continuity_reasons,
+            "drift_reasons": health_gate_drift_reasons,
         },
     }
 

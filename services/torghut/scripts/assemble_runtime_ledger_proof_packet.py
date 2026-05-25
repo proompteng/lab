@@ -483,6 +483,8 @@ def _runtime_window_import_health_gate_summary(
     plan_gate = _mapping(plan.get("runtime_window_import_health_gate"))
     blockers = _text_list(plan_gate.get("blockers"))
     promotion_blockers = _text_list(plan_gate.get("promotion_blockers"))
+    continuity_reasons = _text_list(plan_gate.get("continuity_reasons"))
+    drift_reasons = _text_list(plan_gate.get("drift_reasons"))
     target_summaries: list[dict[str, Any]] = []
     ready_count = 0
     for index, target in enumerate(targets):
@@ -504,6 +506,10 @@ def _runtime_window_import_health_gate_summary(
         )
         continuity_ok = target.get("continuity_ok", gate.get("continuity_ok"))
         drift_ok = target.get("drift_ok", gate.get("drift_ok"))
+        continuity_reason = _text(
+            target.get("continuity_reason") or gate.get("continuity_reason")
+        )
+        drift_reason = _text(target.get("drift_reason") or gate.get("drift_reason"))
         if not gate:
             _extend_unique(
                 target_blockers, ["runtime_window_import_health_gate_missing"]
@@ -519,6 +525,8 @@ def _runtime_window_import_health_gate_summary(
             ready_count += 1
         _extend_unique(blockers, target_blockers)
         _extend_unique(promotion_blockers, target_promotion_blockers)
+        _extend_unique(continuity_reasons, [continuity_reason])
+        _extend_unique(drift_reasons, [drift_reason])
         target_summaries.append(
             {
                 "index": index,
@@ -526,7 +534,9 @@ def _runtime_window_import_health_gate_summary(
                 "candidate_id": _text(target.get("candidate_id")),
                 "dependency_quorum_decision": dependency_quorum_decision,
                 "continuity_ok": _text(continuity_ok),
+                "continuity_reason": continuity_reason,
                 "drift_ok": _text(drift_ok),
+                "drift_reason": drift_reason,
                 "ready": ready,
                 "blockers": target_blockers,
                 "promotion_blockers": target_promotion_blockers,
@@ -542,6 +552,8 @@ def _runtime_window_import_health_gate_summary(
         "ready": target_count > 0 and ready_count == target_count and not blockers,
         "blockers": blockers,
         "promotion_blockers": promotion_blockers,
+        "continuity_reasons": continuity_reasons,
+        "drift_reasons": drift_reasons,
         "targets": target_summaries,
     }
 

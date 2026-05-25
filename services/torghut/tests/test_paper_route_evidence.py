@@ -188,7 +188,9 @@ class TestPaperRouteEvidenceAudit(TestCase):
                     "promotion_eligible_total": 0,
                     "dependency_quorum_decision": "allow",
                     "continuity_ok": True,
+                    "continuity_reason": "signal_continuity_nominal",
                     "drift_ok": True,
+                    "drift_reason": "drift_live_promotion_eligible",
                     "runtime_ledger_paper_probation_import_plan": {
                         "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
                         "target_count": 2,
@@ -310,9 +312,19 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(target["source_kind"], "paper_route_probe_runtime_observed")
         self.assertEqual(target["dependency_quorum_decision"], "allow")
         self.assertEqual(target["continuity_ok"], "true")
+        self.assertEqual(target["continuity_reason"], "signal_continuity_nominal")
         self.assertEqual(target["drift_ok"], "true")
+        self.assertEqual(target["drift_reason"], "drift_live_promotion_eligible")
         self.assertEqual(target["runtime_window_import_health_gate"]["ready"], True)
         self.assertEqual(target["runtime_window_import_health_gate"]["blockers"], [])
+        self.assertEqual(
+            plan["runtime_window_import_health_gate"]["continuity_reasons"],
+            ["signal_continuity_nominal"],
+        )
+        self.assertEqual(
+            plan["runtime_window_import_health_gate"]["drift_reasons"],
+            ["drift_live_promotion_eligible"],
+        )
         self.assertEqual(target["max_notional"], "0")
         self.assertEqual(target["paper_route_probe_symbols"], ["AAPL"])
         self.assertEqual(target["paper_route_probe_next_session_max_notional"], "25")
@@ -544,7 +556,9 @@ class TestPaperRouteEvidenceAudit(TestCase):
                     "promotion_eligible_total": 0,
                     "dependency_quorum_decision": "block",
                     "continuity_ok": "false",
+                    "continuity_reason": "signal_continuity_alert_active",
                     "drift_ok": "false",
+                    "drift_reason": "drift_live_promotion_ineligible",
                     "runtime_ledger_paper_probation_import_plan": {
                         "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
                         "target_count": 1,
@@ -589,7 +603,9 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(gate["dependency_quorum_source"], "live_submission_gate")
         self.assertEqual(gate["continuity_ok"], "false")
         self.assertEqual(gate["continuity_source"], "live_submission_gate")
+        self.assertEqual(gate["continuity_reason"], "signal_continuity_alert_active")
         self.assertEqual(gate["drift_ok"], "false")
+        self.assertEqual(gate["drift_reason"], "drift_live_promotion_ineligible")
         self.assertEqual(
             gate["blockers"],
             [
@@ -602,6 +618,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             target["runtime_window_import_promotion_blockers"],
             ["drift_checks_not_ok"],
         )
+        self.assertEqual(target["drift_reason"], "drift_live_promotion_ineligible")
 
     def test_next_paper_route_session_readiness_tracks_collection_and_import(
         self,
