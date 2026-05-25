@@ -18,7 +18,7 @@ const DEFAULT_HTTP_CHECK_TIMEOUT_MS = 5_000
 const DEFAULT_KUBERNETES_REQUEST_TIMEOUT_MS = 10_000
 const DEFAULT_TRANSIENT_HEALTH_GRACE_MS = 120_000
 
-type KubernetesResponse = {
+export type KubernetesResponse = {
   status: number
   body: string
 }
@@ -58,6 +58,33 @@ type TargetHealthMemory = {
   lastReadyAtMs: number | null
 }
 
+export interface TargetHealthDependenciesDefinition {
+  readonly now: Effect.Effect<Date>
+  readonly readServiceAccountToken: Effect.Effect<string | null, OrchestratorError>
+  readonly readServiceAccountCa: Effect.Effect<string | null, OrchestratorError>
+  readonly githubToken: Effect.Effect<string | null>
+  readonly requestKubernetes: (
+    method: 'GET',
+    path: string,
+    token: string,
+    ca: string,
+    timeoutMs: number,
+  ) => Effect.Effect<KubernetesResponse, OrchestratorError, never>
+  readonly fetchHttpStatus: (url: string, timeoutMs: number) => Effect.Effect<number, OrchestratorError, never>
+  readonly fetchOpenPromotionPrCount: (
+    repo: string,
+    defaultBranch: string,
+    promotionBranchPrefix: string,
+    token: string | null,
+    timeoutMs: number,
+  ) => Effect.Effect<number, OrchestratorError, never>
+}
+
+export class TargetHealthDependencies extends Context.Tag('symphony/TargetHealthDependencies')<
+  TargetHealthDependencies,
+  TargetHealthDependenciesDefinition
+>() {}
+
 const isTransientArgoObservation = (observed: string | null): boolean =>
   observed === 'Synced/Progressing' || observed === 'OutOfSync/Healthy' || observed === 'OutOfSync/Progressing'
 
@@ -70,7 +97,7 @@ const isTransientTargetCheckFailure = (check: TargetHealthCheckResult): boolean 
   return false
 }
 
-const requestKubernetes = (
+const requestKubernetesLive = (
   method: 'GET',
   path: string,
   token: string,
@@ -182,6 +209,7 @@ const evaluateArgoApplicationCheck = (
   token: string,
   ca: string,
   timeoutMs: number,
+  dependencies: TargetHealthDependenciesDefinition,
 ): Effect.Effect<TargetHealthCheckResult, OrchestratorError, never> => {
   const namespace = check.namespace ?? 'argocd'
   const application = check.application ?? ''
@@ -192,51 +220,53 @@ const evaluateArgoApplicationCheck = (
     return Effect.fail(new OrchestratorError('target_health_check_failed', `${check.name} is missing application`))
   }
 
-  return requestKubernetes(
-    'GET',
-    `/apis/argoproj.io/v1alpha1/namespaces/${namespace}/applications/${application}`,
-    token,
-    ca,
-    timeoutMs,
-  ).pipe(
-    Effect.flatMap((response) => {
-      if (response.status !== 200) {
-        return Effect.fail(
-          new OrchestratorError(
-            'target_health_check_failed',
-            `argo application read returned ${response.status}`,
-            response.body,
-          ),
-        )
-      }
-      return parseJson<ArgoApplicationPayload>(response.body, 'failed to parse argo application response')
-    }),
-    Effect.map((payload) => {
-      const syncStatus = payload.status?.sync?.status ?? 'Unknown'
-      const healthStatus = payload.status?.health?.status ?? 'Unknown'
-      const effectivelySynced =
-        syncStatus === expectedSync ||
-        (expectedSync === 'Synced' &&
-          expectedHealth === 'Healthy' &&
-          isEffectivelySyncedAfterSuccessfulOperation(payload))
-      const ok = effectivelySynced && healthStatus === expectedHealth
-      const observed =
-        effectivelySynced && syncStatus !== expectedSync
-          ? `EffectiveSynced/${healthStatus}`
-          : `${syncStatus}/${healthStatus}`
-      return {
-        name: check.name,
-        type: check.type,
-        ok,
-        observed,
-        message: ok
-          ? effectivelySynced && syncStatus !== expectedSync
-            ? `${application} is effectively ${expectedSync}/${healthStatus} after a successful Argo sync`
-            : `${application} is ${syncStatus}/${healthStatus}`
-          : `${application} expected ${expectedSync}/${expectedHealth} but was ${syncStatus}/${healthStatus}`,
-      } satisfies TargetHealthCheckResult
-    }),
-  )
+  return dependencies
+    .requestKubernetes(
+      'GET',
+      `/apis/argoproj.io/v1alpha1/namespaces/${namespace}/applications/${application}`,
+      token,
+      ca,
+      timeoutMs,
+    )
+    .pipe(
+      Effect.flatMap((response) => {
+        if (response.status !== 200) {
+          return Effect.fail(
+            new OrchestratorError(
+              'target_health_check_failed',
+              `argo application read returned ${response.status}`,
+              response.body,
+            ),
+          )
+        }
+        return parseJson<ArgoApplicationPayload>(response.body, 'failed to parse argo application response')
+      }),
+      Effect.map((payload) => {
+        const syncStatus = payload.status?.sync?.status ?? 'Unknown'
+        const healthStatus = payload.status?.health?.status ?? 'Unknown'
+        const effectivelySynced =
+          syncStatus === expectedSync ||
+          (expectedSync === 'Synced' &&
+            expectedHealth === 'Healthy' &&
+            isEffectivelySyncedAfterSuccessfulOperation(payload))
+        const ok = effectivelySynced && healthStatus === expectedHealth
+        const observed =
+          effectivelySynced && syncStatus !== expectedSync
+            ? `EffectiveSynced/${healthStatus}`
+            : `${syncStatus}/${healthStatus}`
+        return {
+          name: check.name,
+          type: check.type,
+          ok,
+          observed,
+          message: ok
+            ? effectivelySynced && syncStatus !== expectedSync
+              ? `${application} is effectively ${expectedSync}/${healthStatus} after a successful Argo sync`
+              : `${application} is ${syncStatus}/${healthStatus}`
+            : `${application} expected ${expectedSync}/${expectedHealth} but was ${syncStatus}/${healthStatus}`,
+        } satisfies TargetHealthCheckResult
+      }),
+    )
 }
 
 const evaluateKnativeServiceCheck = (
@@ -244,6 +274,7 @@ const evaluateKnativeServiceCheck = (
   token: string,
   ca: string,
   timeoutMs: number,
+  dependencies: TargetHealthDependenciesDefinition,
 ): Effect.Effect<TargetHealthCheckResult, OrchestratorError, never> => {
   const namespace = check.namespace ?? ''
   const serviceName = check.resourceName ?? ''
@@ -253,40 +284,42 @@ const evaluateKnativeServiceCheck = (
     )
   }
 
-  return requestKubernetes(
-    'GET',
-    `/apis/serving.knative.dev/v1/namespaces/${namespace}/services/${serviceName}`,
-    token,
-    ca,
-    timeoutMs,
-  ).pipe(
-    Effect.flatMap((response) => {
-      if (response.status !== 200) {
-        return Effect.fail(
-          new OrchestratorError(
-            'target_health_check_failed',
-            `knative service read returned ${response.status}`,
-            response.body,
-          ),
-        )
-      }
-      return parseJson<{
-        status?: {
-          conditions?: Array<{ type?: string; status?: string }>
+  return dependencies
+    .requestKubernetes(
+      'GET',
+      `/apis/serving.knative.dev/v1/namespaces/${namespace}/services/${serviceName}`,
+      token,
+      ca,
+      timeoutMs,
+    )
+    .pipe(
+      Effect.flatMap((response) => {
+        if (response.status !== 200) {
+          return Effect.fail(
+            new OrchestratorError(
+              'target_health_check_failed',
+              `knative service read returned ${response.status}`,
+              response.body,
+            ),
+          )
         }
-      }>(response.body, 'failed to parse knative service response')
-    }),
-    Effect.map((payload) => {
-      const ready = payload.status?.conditions?.find((condition) => condition.type === 'Ready')?.status === 'True'
-      return {
-        name: check.name,
-        type: check.type,
-        ok: ready,
-        observed: ready ? 'Ready=True' : 'Ready!=True',
-        message: ready ? `${serviceName} is Ready` : `${serviceName} is not Ready`,
-      } satisfies TargetHealthCheckResult
-    }),
-  )
+        return parseJson<{
+          status?: {
+            conditions?: Array<{ type?: string; status?: string }>
+          }
+        }>(response.body, 'failed to parse knative service response')
+      }),
+      Effect.map((payload) => {
+        const ready = payload.status?.conditions?.find((condition) => condition.type === 'Ready')?.status === 'True'
+        return {
+          name: check.name,
+          type: check.type,
+          ok: ready,
+          observed: ready ? 'Ready=True' : 'Ready!=True',
+          message: ready ? `${serviceName} is Ready` : `${serviceName} is not Ready`,
+        } satisfies TargetHealthCheckResult
+      }),
+    )
 }
 
 const deriveResourcePath = (check: HealthCheckConfig): string => {
@@ -332,6 +365,7 @@ const evaluateKubernetesResourceCheck = (
   token: string,
   ca: string,
   timeoutMs: number,
+  dependencies: TargetHealthDependenciesDefinition,
 ): Effect.Effect<TargetHealthCheckResult, OrchestratorError, never> =>
   Effect.try({
     try: () => deriveResourcePath(check),
@@ -340,7 +374,7 @@ const evaluateKubernetesResourceCheck = (
         ? error
         : new OrchestratorError('target_health_check_failed', 'failed to resolve kubernetes resource path', error),
   }).pipe(
-    Effect.flatMap((resourcePath) => requestKubernetes('GET', resourcePath, token, ca, timeoutMs)),
+    Effect.flatMap((resourcePath) => dependencies.requestKubernetes('GET', resourcePath, token, ca, timeoutMs)),
     Effect.flatMap((response) => {
       if (response.status !== 200) {
         return Effect.fail(
@@ -429,28 +463,14 @@ const evaluateKubernetesResourceCheck = (
 const evaluateHttpCheck = (
   check: HealthCheckConfig,
   timeoutMs: number,
+  dependencies: TargetHealthDependenciesDefinition,
 ): Effect.Effect<TargetHealthCheckResult, OrchestratorError, never> => {
   const url = check.url ?? ''
   if (!url) {
     return Effect.fail(new OrchestratorError('target_health_check_failed', `${check.name} is missing url`))
   }
 
-  return Effect.tryPromise({
-    try: async () => {
-      const controller = new AbortController()
-      const timeout = setTimeout(() => {
-        controller.abort(`http check timed out after ${timeoutMs}ms`)
-      }, timeoutMs)
-
-      try {
-        const response = await fetch(url, { signal: controller.signal })
-        return response.status
-      } finally {
-        clearTimeout(timeout)
-      }
-    },
-    catch: (error) => new OrchestratorError('target_health_check_failed', `failed to fetch ${url}`, error),
-  }).pipe(
+  return dependencies.fetchHttpStatus(url, timeoutMs).pipe(
     Effect.map((status) => {
       const expectedStatus = check.expectedStatus ?? 200
       return {
@@ -473,20 +493,21 @@ const evaluateCheck = (
   ca: string,
   httpCheckTimeoutMs: number,
   kubernetesRequestTimeoutMs: number,
+  dependencies: TargetHealthDependenciesDefinition,
 ): Effect.Effect<TargetHealthCheckResult, OrchestratorError, never> => {
   switch (check.type) {
     case 'argocd_application':
-      return evaluateArgoApplicationCheck(check, token, ca, kubernetesRequestTimeoutMs)
+      return evaluateArgoApplicationCheck(check, token, ca, kubernetesRequestTimeoutMs, dependencies)
     case 'http':
-      return evaluateHttpCheck(check, httpCheckTimeoutMs)
+      return evaluateHttpCheck(check, httpCheckTimeoutMs, dependencies)
     case 'knative_service':
-      return evaluateKnativeServiceCheck(check, token, ca, kubernetesRequestTimeoutMs)
+      return evaluateKnativeServiceCheck(check, token, ca, kubernetesRequestTimeoutMs, dependencies)
     case 'kubernetes_resource':
-      return evaluateKubernetesResourceCheck(check, token, ca, kubernetesRequestTimeoutMs)
+      return evaluateKubernetesResourceCheck(check, token, ca, kubernetesRequestTimeoutMs, dependencies)
   }
 }
 
-const fetchOpenPromotionPrCount = (
+const fetchOpenPromotionPrCountLive = (
   repo: string,
   defaultBranch: string,
   promotionBranchPrefix: string,
@@ -537,6 +558,32 @@ const fetchOpenPromotionPrCount = (
   })
 }
 
+export const TargetHealthDependenciesLiveLayer = Layer.succeed(TargetHealthDependencies, {
+  now: Effect.sync(() => new Date()),
+  readServiceAccountToken: readOptionalFile(TOKEN_PATH),
+  readServiceAccountCa: readOptionalFile(CA_PATH),
+  githubToken: Effect.sync(() => process.env.GH_TOKEN?.trim() || process.env.GITHUB_TOKEN?.trim() || null),
+  requestKubernetes: requestKubernetesLive,
+  fetchHttpStatus: (url, timeoutMs) =>
+    Effect.tryPromise({
+      try: async () => {
+        const controller = new AbortController()
+        const timeout = setTimeout(() => {
+          controller.abort(`http check timed out after ${timeoutMs}ms`)
+        }, timeoutMs)
+
+        try {
+          const response = await fetch(url, { signal: controller.signal })
+          return response.status
+        } finally {
+          clearTimeout(timeout)
+        }
+      },
+      catch: (error) => new OrchestratorError('target_health_check_failed', `failed to fetch ${url}`, error),
+    }),
+  fetchOpenPromotionPrCount: fetchOpenPromotionPrCountLive,
+} satisfies TargetHealthDependenciesDefinition)
+
 export interface TargetHealthServiceDefinition {
   readonly evaluatePreDispatch: Effect.Effect<TargetHealthSummary, never>
 }
@@ -551,6 +598,7 @@ export const makeTargetHealthLayer = (logger: Logger) =>
     TargetHealthService,
     Effect.gen(function* () {
       const workflow = yield* WorkflowService
+      const dependencies = yield* TargetHealthDependencies
       const memoryRef = yield* Ref.make<TargetHealthMemory>({ lastReadyAtMs: null })
       const targetLogger = logger.child({ component: 'target-health' })
       const githubRequestTimeoutMs = readPositiveNumber(
@@ -574,13 +622,15 @@ export const makeTargetHealthLayer = (logger: Logger) =>
         evaluatePreDispatch: workflow.current.pipe(
           Effect.flatMap(({ config }) =>
             Effect.gen(function* () {
-              const checkedAt = new Date().toISOString()
-              const token = (yield* readOptionalFile(TOKEN_PATH)) ?? ''
-              const ca = (yield* readOptionalFile(CA_PATH)) ?? ''
-              const githubToken = process.env.GH_TOKEN?.trim() || process.env.GITHUB_TOKEN?.trim() || null
+              const checkedAtDate = yield* dependencies.now
+              const checkedAt = checkedAtDate.toISOString()
+              const checkedAtMs = checkedAtDate.getTime()
+              const token = (yield* dependencies.readServiceAccountToken) ?? ''
+              const ca = (yield* dependencies.readServiceAccountCa) ?? ''
+              const githubToken = yield* dependencies.githubToken
 
               const checks = yield* Effect.forEach(config.health.preDispatch, (check) =>
-                evaluateCheck(check, token, ca, httpCheckTimeoutMs, kubernetesRequestTimeoutMs).pipe(
+                evaluateCheck(check, token, ca, httpCheckTimeoutMs, kubernetesRequestTimeoutMs, dependencies).pipe(
                   Effect.catchAll((error) =>
                     Effect.succeed({
                       name: check.name,
@@ -593,18 +643,20 @@ export const makeTargetHealthLayer = (logger: Logger) =>
                 ),
               )
 
-              const promotionPrCount = yield* fetchOpenPromotionPrCount(
-                config.target.repo,
-                config.target.defaultBranch,
-                config.release.promotionBranchPrefix,
-                githubToken,
-                githubRequestTimeoutMs,
-              ).pipe(
-                Effect.catchAll((error) => {
-                  targetLogger.log('warn', 'target_health_github_query_failed', toLogError(error))
-                  return Effect.succeed(-1)
-                }),
-              )
+              const promotionPrCount = yield* dependencies
+                .fetchOpenPromotionPrCount(
+                  config.target.repo,
+                  config.target.defaultBranch,
+                  config.release.promotionBranchPrefix,
+                  githubToken,
+                  githubRequestTimeoutMs,
+                )
+                .pipe(
+                  Effect.catchAll((error) => {
+                    targetLogger.log('warn', 'target_health_github_query_failed', toLogError(error))
+                    return Effect.succeed(-1)
+                  }),
+                )
 
               const openPromotionPr = promotionPrCount > 0
               const hardError = promotionPrCount < 0 ? 'failed to evaluate open promotion pull requests' : null
@@ -618,7 +670,7 @@ export const makeTargetHealthLayer = (logger: Logger) =>
               } satisfies TargetHealthSummary
 
               if (summary.readyForDispatch) {
-                yield* Ref.set(memoryRef, { lastReadyAtMs: Date.parse(checkedAt) })
+                yield* Ref.set(memoryRef, { lastReadyAtMs: checkedAtMs })
                 return summary
               }
 
@@ -629,7 +681,7 @@ export const makeTargetHealthLayer = (logger: Logger) =>
                 summary.checks.some((check) => !check.ok) &&
                 summary.checks.every((check) => check.ok || isTransientTargetCheckFailure(check))
               const withinGraceWindow =
-                memory.lastReadyAtMs !== null && Date.now() - memory.lastReadyAtMs <= transientGraceMs
+                memory.lastReadyAtMs !== null && checkedAtMs - memory.lastReadyAtMs <= transientGraceMs
 
               if (!allFailuresTransient || !withinGraceWindow) {
                 return summary
@@ -651,14 +703,19 @@ export const makeTargetHealthLayer = (logger: Logger) =>
           ),
           Effect.catchAll((error) => {
             targetLogger.log('warn', 'target_health_evaluation_failed', toLogError(error))
-            return Effect.succeed({
-              checkedAt: new Date().toISOString(),
-              readyForDispatch: false,
-              openPromotionPr: false,
-              promotionPrCount: 0,
-              checks: [],
-              lastError: error.message,
-            } satisfies TargetHealthSummary)
+            return dependencies.now.pipe(
+              Effect.map(
+                (checkedAtDate) =>
+                  ({
+                    checkedAt: checkedAtDate.toISOString(),
+                    readyForDispatch: false,
+                    openPromotionPr: false,
+                    promotionPrCount: 0,
+                    checks: [],
+                    lastError: error.message,
+                  }) satisfies TargetHealthSummary,
+              ),
+            )
           }),
         ),
       } satisfies TargetHealthServiceDefinition
