@@ -16,6 +16,7 @@ from urllib.request import urlopen
 SCHEMA_VERSION = 'torghut.trading-readiness-verification.v1'
 ROUTE_REACQUISITION_BOARD_SCHEMA_VERSION = 'torghut.route-reacquisition-board.v1'
 ROUTE_REACQUISITION_BOOK_SCHEMA_VERSION = 'torghut.route-reacquisition-book.v1'
+DOC29_LIVE_SCALE_GATE = 'live_scale_observed'
 _MISSING_QUANT_REASONS = {
     'quant_health_fetch_failed',
     'quant_health_missing',
@@ -96,6 +97,19 @@ def _load_status_url(url: str, *, timeout_seconds: float) -> dict[str, Any]:
     if not isinstance(payload, Mapping):
         raise ValueError(f'json_object_required:{url}')
     return {str(key): value for key, value in cast(Mapping[str, Any], payload).items()}
+
+
+def _load_optional_json_object(
+    *,
+    path: Path | None,
+    url: str | None,
+    timeout_seconds: float,
+) -> dict[str, Any] | None:
+    if path is not None:
+        return _load_json_object(path)
+    if url:
+        return _load_status_url(url, timeout_seconds=timeout_seconds)
+    return None
 
 
 def _dimension_by_name(proof_floor: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
@@ -201,16 +215,134 @@ def _paper_route_probe_summary(
     }
 
 
+def _completion_gate(
+    completion_status: Mapping[str, Any], gate_id: str
+) -> Mapping[str, Any]:
+    for raw_gate in _sequence(completion_status.get('gates')):
+        gate = _mapping(raw_gate)
+        if _text(gate.get('gate_id')) == gate_id:
+            return gate
+    return {}
+
+
+def _runtime_ledger_summary(gate: Mapping[str, Any]) -> Mapping[str, Any]:
+    return _mapping(gate.get('runtime_ledger_summary'))
+
+
+def _runtime_ledger_refs(gate: Mapping[str, Any], key: str) -> Sequence[object]:
+    refs = _mapping(gate.get('db_row_refs'))
+    return _sequence(refs.get(key))
+
+
+def _add_runtime_ledger_profit_proof_checks(
+    checks: dict[str, dict[str, Any]],
+    *,
+    completion_status: Mapping[str, Any] | None,
+    min_runtime_ledger_net_pnl: Decimal,
+) -> None:
+    completion_present = completion_status is not None
+    _add_check(
+        checks,
+        'completion_status_present',
+        passed=completion_present,
+        observed=completion_present,
+        expected=True,
+    )
+    if completion_status is None:
+        return
+
+    gate = _completion_gate(completion_status, DOC29_LIVE_SCALE_GATE)
+    summary = _runtime_ledger_summary(gate)
+    ledger_refs = _runtime_ledger_refs(gate, 'strategy_runtime_ledger_buckets')
+    unbacked_refs = _runtime_ledger_refs(
+        gate,
+        'runtime_ledger_unbacked_hypothesis_metric_windows',
+    )
+    gate_status = _text(gate.get('status'))
+    blocked_reason = _text(gate.get('blocked_reason'))
+    _add_check(
+        checks,
+        'doc29_live_scale_gate_satisfied',
+        passed=gate_status == 'satisfied' and not blocked_reason,
+        observed={'status': gate_status, 'blocked_reason': blocked_reason or None},
+        expected={'status': 'satisfied', 'blocked_reason': None},
+    )
+    _add_check(
+        checks,
+        'runtime_ledger_db_refs_present',
+        passed=len(ledger_refs) > 0,
+        observed=len(ledger_refs),
+        expected='>0',
+        detail=list(ledger_refs),
+    )
+    _add_check(
+        checks,
+        'runtime_ledger_unbacked_windows_empty',
+        passed=len(unbacked_refs) == 0,
+        observed=len(unbacked_refs),
+        expected=0,
+        detail=list(unbacked_refs),
+    )
+    _add_check(
+        checks,
+        'runtime_ledger_bucket_count',
+        passed=_int(summary.get('runtime_ledger_bucket_count')) > 0,
+        observed=summary.get('runtime_ledger_bucket_count'),
+        expected='>0',
+    )
+    _add_check(
+        checks,
+        'runtime_ledger_fill_count',
+        passed=_int(summary.get('runtime_ledger_fill_count')) > 0,
+        observed=summary.get('runtime_ledger_fill_count'),
+        expected='>0',
+    )
+    _add_check(
+        checks,
+        'runtime_ledger_closed_trade_count',
+        passed=_int(summary.get('runtime_ledger_closed_trade_count')) > 0,
+        observed=summary.get('runtime_ledger_closed_trade_count'),
+        expected='>0',
+    )
+    _add_check(
+        checks,
+        'runtime_ledger_filled_notional',
+        passed=_decimal_positive(summary.get('runtime_ledger_filled_notional')),
+        observed=summary.get('runtime_ledger_filled_notional'),
+        expected='>0',
+    )
+    net_pnl = _decimal(summary.get('runtime_ledger_net_strategy_pnl_after_costs'))
+    _add_check(
+        checks,
+        'runtime_ledger_net_pnl_target',
+        passed=net_pnl is not None and net_pnl >= min_runtime_ledger_net_pnl,
+        observed=str(net_pnl) if net_pnl is not None else None,
+        expected=f'>={min_runtime_ledger_net_pnl}',
+    )
+    _add_check(
+        checks,
+        'runtime_ledger_post_cost_expectancy_positive',
+        passed=_decimal_positive(
+            summary.get('runtime_ledger_post_cost_expectancy_bps')
+        ),
+        observed=summary.get('runtime_ledger_post_cost_expectancy_bps'),
+        expected='>0',
+    )
+
+
 def evaluate_trading_readiness(
     status: Mapping[str, Any],
     *,
+    completion_status: Mapping[str, Any] | None = None,
     profile: str = 'paper',
     min_routeable_symbols: int = 2,
     min_decisions: int = 0,
     min_orders: int = 0,
+    min_runtime_ledger_net_pnl: Decimal = Decimal('0'),
     require_market_open: bool = True,
     require_quant_fresh: bool = True,
     require_paper_route_probe_candidate: bool = False,
+    require_runtime_ledger_profit_proof: bool = False,
 ) -> dict[str, Any]:
     """Return a strict readiness verdict from a Torghut trading status payload."""
 
@@ -516,6 +648,13 @@ def evaluate_trading_readiness(
         expected=f'>={min_orders}',
     )
 
+    if require_runtime_ledger_profit_proof:
+        _add_runtime_ledger_profit_proof_checks(
+            checks,
+            completion_status=completion_status,
+            min_runtime_ledger_net_pnl=min_runtime_ledger_net_pnl,
+        )
+
     failed_checks = [key for key, value in checks.items() if not value['passed']]
     return {
         'schema_version': SCHEMA_VERSION,
@@ -524,6 +663,11 @@ def evaluate_trading_readiness(
         'failed_checks': failed_checks,
         'checks': checks,
         'paper_route_probe': paper_route_probe,
+        'completion_profit_proof': {
+            'required': require_runtime_ledger_profit_proof,
+            'gate_id': DOC29_LIVE_SCALE_GATE,
+            'min_runtime_ledger_net_pnl': str(min_runtime_ledger_net_pnl),
+        },
     }
 
 
@@ -536,18 +680,38 @@ def _parser() -> argparse.ArgumentParser:
     source.add_argument(
         '--status-url', help='URL returning a /trading/status JSON payload.'
     )
+    completion_source = parser.add_mutually_exclusive_group(required=False)
+    completion_source.add_argument(
+        '--completion-file',
+        type=Path,
+        help='Path to a /trading/completion/doc29 JSON payload.',
+    )
+    completion_source.add_argument(
+        '--completion-url',
+        help='URL returning a /trading/completion/doc29 JSON payload.',
+    )
     parser.add_argument(
         '--profile', choices=('paper', 'live', 'either'), default='paper'
     )
     parser.add_argument('--min-routeable-symbols', type=int, default=2)
     parser.add_argument('--min-decisions', type=int, default=0)
     parser.add_argument('--min-orders', type=int, default=0)
+    parser.add_argument(
+        '--min-runtime-ledger-net-pnl',
+        default='0',
+        help='Minimum runtime-ledger net strategy PnL after costs required when runtime proof is required.',
+    )
     parser.add_argument('--allow-closed-session', action='store_true')
     parser.add_argument('--allow-informational-quant', action='store_true')
     parser.add_argument(
         '--require-paper-route-probe-candidate',
         action='store_true',
         help='Require a bounded paper-route probe candidate in route_reacquisition_book.',
+    )
+    parser.add_argument(
+        '--require-runtime-ledger-profit-proof',
+        action='store_true',
+        help='Require doc29 live-scale runtime-ledger proof from /trading/completion/doc29.',
     )
     parser.add_argument('--timeout-seconds', type=float, default=10.0)
     return parser
@@ -562,16 +726,31 @@ def main(argv: Sequence[str] | None = None) -> int:
             str(args.status_url), timeout_seconds=args.timeout_seconds
         )
     )
+    completion_status = _load_optional_json_object(
+        path=args.completion_file,
+        url=args.completion_url,
+        timeout_seconds=args.timeout_seconds,
+    )
+    min_runtime_ledger_net_pnl = _decimal(args.min_runtime_ledger_net_pnl)
+    if min_runtime_ledger_net_pnl is None:
+        raise SystemExit(
+            f'--min-runtime-ledger-net-pnl must be decimal, got {args.min_runtime_ledger_net_pnl!r}'
+        )
     result = evaluate_trading_readiness(
         status,
+        completion_status=completion_status,
         profile=str(args.profile),
         min_routeable_symbols=max(0, int(args.min_routeable_symbols)),
         min_decisions=max(0, int(args.min_decisions)),
         min_orders=max(0, int(args.min_orders)),
+        min_runtime_ledger_net_pnl=min_runtime_ledger_net_pnl,
         require_market_open=not bool(args.allow_closed_session),
         require_quant_fresh=not bool(args.allow_informational_quant),
         require_paper_route_probe_candidate=bool(
             args.require_paper_route_probe_candidate
+        ),
+        require_runtime_ledger_profit_proof=bool(
+            args.require_runtime_ledger_profit_proof
         ),
     )
     result['evaluated_at'] = datetime.now(timezone.utc).isoformat()

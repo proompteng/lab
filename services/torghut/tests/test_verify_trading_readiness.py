@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from threading import Thread
@@ -120,6 +121,45 @@ def _ready_status() -> dict[str, object]:
     }
 
 
+def _completion_status(
+    *,
+    gate_status: str = 'satisfied',
+    blocked_reason: str | None = None,
+    net_pnl: str = '600',
+    expectancy_bps: str = '12.5',
+    ledger_refs: list[str] | None = None,
+    unbacked_refs: list[str] | None = None,
+) -> dict[str, object]:
+    return {
+        'doc_id': 'doc29',
+        'summary': {'all_satisfied': gate_status == 'satisfied'},
+        'gates': [
+            {
+                'gate_id': verifier.DOC29_LIVE_SCALE_GATE,
+                'status': gate_status,
+                'blocked_reason': blocked_reason,
+                'candidate_id': 'cand-1',
+                'db_row_refs': {
+                    'strategy_runtime_ledger_buckets': ledger_refs
+                    if ledger_refs is not None
+                    else ['bucket-1'],
+                    'runtime_ledger_unbacked_hypothesis_metric_windows': unbacked_refs
+                    if unbacked_refs is not None
+                    else [],
+                },
+                'runtime_ledger_summary': {
+                    'runtime_ledger_bucket_count': 1,
+                    'runtime_ledger_fill_count': 4,
+                    'runtime_ledger_closed_trade_count': 2,
+                    'runtime_ledger_filled_notional': '50000',
+                    'runtime_ledger_net_strategy_pnl_after_costs': net_pnl,
+                    'runtime_ledger_post_cost_expectancy_bps': expectancy_bps,
+                },
+            }
+        ],
+    }
+
+
 class _JsonHandler(BaseHTTPRequestHandler):
     payload: ClassVar[object] = {}
 
@@ -167,6 +207,60 @@ class TestVerifyTradingReadiness(TestCase):
 
         self.assertTrue(result['ok'])
         self.assertEqual(result['failed_checks'], [])
+
+    def test_runtime_ledger_profit_proof_can_be_required_from_completion_status(
+        self,
+    ) -> None:
+        result = evaluate_trading_readiness(
+            _ready_status(),
+            completion_status=_completion_status(),
+            profile='paper',
+            min_routeable_symbols=2,
+            min_runtime_ledger_net_pnl=Decimal('500'),
+            require_runtime_ledger_profit_proof=True,
+        )
+
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['failed_checks'], [])
+        self.assertEqual(
+            result['completion_profit_proof']['gate_id'],
+            verifier.DOC29_LIVE_SCALE_GATE,
+        )
+
+    def test_runtime_ledger_profit_proof_fails_closed_on_missing_or_weak_completion(
+        self,
+    ) -> None:
+        missing = evaluate_trading_readiness(
+            _ready_status(),
+            min_runtime_ledger_net_pnl=Decimal('500'),
+            require_runtime_ledger_profit_proof=True,
+        )
+        self.assertFalse(missing['ok'])
+        self.assertIn('completion_status_present', missing['failed_checks'])
+
+        weak = evaluate_trading_readiness(
+            _ready_status(),
+            completion_status=_completion_status(
+                gate_status='blocked',
+                blocked_reason='runtime_ledger_profit_proof_missing',
+                net_pnl='499.99',
+                expectancy_bps='0',
+                ledger_refs=[],
+                unbacked_refs=['window-1'],
+            ),
+            min_runtime_ledger_net_pnl=Decimal('500'),
+            require_runtime_ledger_profit_proof=True,
+        )
+
+        self.assertFalse(weak['ok'])
+        for check_name in (
+            'doc29_live_scale_gate_satisfied',
+            'runtime_ledger_db_refs_present',
+            'runtime_ledger_unbacked_windows_empty',
+            'runtime_ledger_net_pnl_target',
+            'runtime_ledger_post_cost_expectancy_positive',
+        ):
+            self.assertIn(check_name, weak['failed_checks'])
 
     def test_live_and_either_profiles_use_live_floor_states_and_market_window(
         self,
@@ -457,3 +551,42 @@ class TestVerifyTradingReadiness(TestCase):
             exit_code = main(['--status-file', str(status_path)])
 
         self.assertEqual(exit_code, 1)
+
+    def test_cli_accepts_completion_file_for_runtime_ledger_profit_proof(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            status_path = Path(tmp_dir) / 'status.json'
+            completion_path = Path(tmp_dir) / 'completion.json'
+            status_path.write_text(json.dumps(_ready_status()), encoding='utf-8')
+            completion_path.write_text(
+                json.dumps(_completion_status()), encoding='utf-8'
+            )
+
+            exit_code = main(
+                [
+                    '--status-file',
+                    str(status_path),
+                    '--completion-file',
+                    str(completion_path),
+                    '--require-runtime-ledger-profit-proof',
+                    '--min-runtime-ledger-net-pnl',
+                    '500',
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+
+    def test_cli_rejects_non_decimal_runtime_ledger_profit_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            status_path = Path(tmp_dir) / 'status.json'
+            status_path.write_text(json.dumps(_ready_status()), encoding='utf-8')
+
+            with self.assertRaisesRegex(SystemExit, 'must be decimal'):
+                main(
+                    [
+                        '--status-file',
+                        str(status_path),
+                        '--require-runtime-ledger-profit-proof',
+                        '--min-runtime-ledger-net-pnl',
+                        'not-a-number',
+                    ]
+                )
