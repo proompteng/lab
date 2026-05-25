@@ -9,6 +9,7 @@ on:
       - 'packages/design/**'
       - 'packages/scripts/src/synthesis/**'
       - 'argocd/applications/synthesis/**'
+      - 'argocd/applications/argocd/base/image-updater-product.yaml'
       - 'argocd/applicationsets/product.yaml'
       - '.github/workflows/synthesis-ci.yml'
   pull_request:
@@ -17,6 +18,7 @@ on:
       - 'packages/design/**'
       - 'packages/scripts/src/synthesis/**'
       - 'argocd/applications/synthesis/**'
+      - 'argocd/applications/argocd/base/image-updater-product.yaml'
       - 'argocd/applicationsets/product.yaml'
       - '.github/workflows/synthesis-ci.yml'
 

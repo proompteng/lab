@@ -38,6 +38,19 @@ spec:
           manifestTargets:
             kustomize:
               name: registry.ide-newton.ts.net/lab/app
+    - namePattern: synthesis
+      writeBackConfig:
+        method: git:secret:argocd/image-updater-git-ssh
+        gitConfig:
+          repository: git@github.com:proompteng/lab.git
+          branch: main:release/{{.SHA256}}
+          writeBackTarget: kustomization:/argocd/applications/synthesis
+      images:
+        - alias: synthesis
+          imageName: registry.ide-newton.ts.net/lab/synthesis:0.x
+          manifestTargets:
+            kustomize:
+              name: registry.ide-newton.ts.net/lab/synthesis
     - namePattern: cms
       writeBackConfig:
         method: git:secret:argocd/image-updater-git-ssh
