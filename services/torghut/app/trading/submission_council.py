@@ -2387,6 +2387,17 @@ def _runtime_hypothesis_ids_for_gate_scope(
     }
 
 
+def _runtime_ledger_hypothesis_ids_for_gate_scope(
+    runtime_ledger_candidates: Sequence[Mapping[str, object]],
+) -> set[str]:
+    return {
+        hypothesis_id
+        for candidate in runtime_ledger_candidates
+        for hypothesis_id in [str(candidate.get("hypothesis_id") or "").strip()]
+        if hypothesis_id
+    }
+
+
 def _candidate_reason_codes_for_gate_scope(
     evaluated_tuples: Sequence[Mapping[str, object]],
     *,
@@ -3116,6 +3127,11 @@ def build_live_submission_gate_payload(
     paper_probation_scope_hypothesis_ids = _runtime_hypothesis_ids_for_gate_scope(
         runtime_items,
         eligibility_key="paper_probation_eligible",
+    )
+    paper_probation_scope_hypothesis_ids.update(
+        _runtime_ledger_hypothesis_ids_for_gate_scope(
+            runtime_ledger_paper_probation_candidates
+        )
     )
     if (
         promotion_eligible_total > 0 or claimed_promotion_eligible_total > 0

@@ -514,6 +514,7 @@ class TestSubmissionCouncil(TestCase):
                 candidate_id: str,
                 strategy_id: str,
                 strategy_family: str,
+                segment_dependencies: list[str] | None = None,
             ) -> None:
                 self.hypothesis_id = hypothesis_id
                 self._payload = {
@@ -523,7 +524,7 @@ class TestSubmissionCouncil(TestCase):
                     "strategy_family": strategy_family,
                     "lane_id": strategy_family,
                     "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
-                    "segment_dependencies": [],
+                    "segment_dependencies": list(segment_dependencies or []),
                 }
 
             def model_dump(self, *, mode: str = "json") -> dict[str, object]:
@@ -545,6 +546,13 @@ class TestSubmissionCouncil(TestCase):
                     candidate_id="c88421d619759b2cfaa6f4d0",
                     strategy_id="microbar_cross_sectional_pairs_v1@research",
                     strategy_family="microbar_cross_sectional_pairs",
+                ),
+                _RegistryItem(
+                    hypothesis_id="H-REV-01",
+                    candidate_id="rev-candidate",
+                    strategy_id="microbar_prev_day_open45_reversal_long_top1_chip_v1@paper",
+                    strategy_family="event_reversion",
+                    segment_dependencies=["market-context"],
                 ),
             ],
         )
@@ -627,6 +635,9 @@ class TestSubmissionCouncil(TestCase):
                         last_autonomy_promotion_action=None,
                         drift_live_promotion_eligible=False,
                         last_market_context_freshness_seconds=45,
+                        last_market_context_domain_states={"news": "stale"},
+                        market_context_alert_active=True,
+                        market_context_alert_reason="market_context_stale",
                         metrics=SimpleNamespace(
                             feature_batch_rows_total=9,
                             feature_null_rate={"price": 0.0},
@@ -650,7 +661,36 @@ class TestSubmissionCouncil(TestCase):
                     empirical_jobs_status={"ready": True, "status": "healthy"},
                     dspy_runtime_status={"mode": "inactive"},
                     quant_health_status=self._healthy_quant_status(),
-                    promotion_certificate_evidence=[],
+                    promotion_certificate_evidence=[
+                        {
+                            "hypothesis_id": "H-PAIRS-01",
+                            "metric_window": self._metric_window(
+                                observed_stage="paper",
+                                run_id="pairs-paper-window",
+                                candidate_id="c88421d619759b2cfaa6f4d0",
+                                hypothesis_id="H-PAIRS-01",
+                            ),
+                            "promotion_decision": self._promotion_decision(
+                                run_id="pairs-paper-window",
+                                candidate_id="c88421d619759b2cfaa6f4d0",
+                                hypothesis_id="H-PAIRS-01",
+                            ),
+                        },
+                        {
+                            "hypothesis_id": "H-REV-01",
+                            "metric_window": self._metric_window(
+                                observed_stage="paper",
+                                run_id="rev-paper-window",
+                                candidate_id="rev-candidate",
+                                hypothesis_id="H-REV-01",
+                            ),
+                            "promotion_decision": self._promotion_decision(
+                                run_id="rev-paper-window",
+                                candidate_id="rev-candidate",
+                                hypothesis_id="H-REV-01",
+                            ),
+                        },
+                    ],
                     session=session,
                 )
 
@@ -672,6 +712,9 @@ class TestSubmissionCouncil(TestCase):
         self.assertIn(
             "paper_probation_evidence_collection_only", gate["blocked_reasons"]
         )
+        self.assertNotIn("segment_market-context_blocked", gate["blocked_reasons"])
+        self.assertNotIn("market_context_stale", gate["blocked_reasons"])
+        self.assertNotIn("market_context_domain_news_stale", gate["blocked_reasons"])
         self.assertEqual(len(paper_candidates), 1)
         self.assertEqual(paper_candidates[0]["hypothesis_id"], "H-PAIRS-01")
         self.assertEqual(
