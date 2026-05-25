@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { __private } from '../build-image'
 
@@ -98,5 +101,28 @@ describe('agents build-image helpers', () => {
     expect(() => __private.parsePruneScopes('@proompteng/agents,@proompteng/jangar')).toThrow(
       'Agents images must not prune or package @proompteng/jangar',
     )
+  })
+
+  it('removes nested node_modules from pruned Docker contexts', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agents-prune-node-modules-'))
+    try {
+      const agentsNodeModules = join(dir, 'full/services/agents/node_modules')
+      const nestedNodeModules = join(dir, 'json/packages/cx-tools/node_modules')
+      const sourceDirectory = join(dir, 'full/services/agents/src')
+      mkdirSync(agentsNodeModules, { recursive: true })
+      mkdirSync(nestedNodeModules, { recursive: true })
+      mkdirSync(sourceDirectory, { recursive: true })
+      symlinkSync('../../../node_modules/.bun/yaml@2.9.0/node_modules/yaml', join(agentsNodeModules, 'yaml'))
+      writeFileSync(join(nestedNodeModules, 'placeholder'), '')
+      writeFileSync(join(sourceDirectory, 'index.ts'), 'export {}\n')
+
+      __private.removeNestedNodeModules(dir)
+
+      expect(existsSync(agentsNodeModules)).toBeFalse()
+      expect(existsSync(nestedNodeModules)).toBeFalse()
+      expect(existsSync(sourceDirectory)).toBeTrue()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

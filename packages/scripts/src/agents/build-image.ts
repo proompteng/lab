@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { copyFileSync, cpSync, existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
@@ -69,6 +69,28 @@ const parsePruneScopes = (value: string | undefined, target?: string): string[] 
   return normalizedScopes
 }
 
+const removeNestedNodeModules = (root: string) => {
+  if (!existsSync(root)) return
+
+  const directories = [root]
+  while (directories.length > 0) {
+    const current = directories.pop()
+    if (!current) continue
+
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+
+      const entryPath = resolve(current, entry.name)
+      if (entry.name === 'node_modules') {
+        rmSync(entryPath, { recursive: true, force: true })
+        continue
+      }
+
+      directories.push(entryPath)
+    }
+  }
+}
+
 const parseCacheMode = (value: string | undefined): DockerCacheMode | undefined => {
   if (!value) return undefined
   const normalized = value.trim().toLowerCase()
@@ -108,6 +130,9 @@ const createPrunedContext = async (target?: string): Promise<{ dir: string; clea
       cpSync(cxToolsSource, resolve(dir, 'full/packages/cx-tools'), { recursive: true })
       cpSync(cxToolsSource, resolve(dir, 'json/packages/cx-tools'), { recursive: true })
     }
+
+    removeNestedNodeModules(resolve(dir, 'full'))
+    removeNestedNodeModules(resolve(dir, 'json'))
 
     return { dir, cleanup }
   } catch (error) {
@@ -235,4 +260,5 @@ export const __private = {
   parsePlatforms,
   parsePruneScopes,
   resolveBuildConfiguration,
+  removeNestedNodeModules,
 }
