@@ -48,6 +48,7 @@ from scripts.local_intraday_tsmom_replay import (
     _quote_quality_status,
     _record_capital_snapshot,
     _record_trace_for_funnel,
+    _resolve_repo_root,
     _reconcile_pending_order_before_immediate_fill,
     _resolve_passed_trace_block_reason,
     _resolve_pending_fill_price,
@@ -61,6 +62,39 @@ from scripts.local_intraday_tsmom_replay import (
 
 
 class TestLocalIntradayTsmomReplay(TestCase):
+    def test_resolve_repo_root_accepts_container_app_layout(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "app"
+            (root / "app").mkdir(parents=True)
+            (root / "scripts").mkdir()
+            script_path = root / "scripts" / "local_intraday_tsmom_replay.py"
+            script_path.touch()
+
+            self.assertEqual(_resolve_repo_root(script_path), root.resolve())
+
+    def test_resolve_repo_root_keeps_legacy_parent_fallback(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            script_path = root / "one" / "two" / "three" / "four" / "script.py"
+            script_path.parent.mkdir(parents=True)
+            script_path.touch()
+
+            self.assertEqual(
+                _resolve_repo_root(script_path), script_path.resolve().parents[3]
+            )
+
+    def test_default_strategy_configmap_prefers_runtime_env_path(self) -> None:
+        from scripts import local_intraday_tsmom_replay as replay
+
+        with patch.dict(
+            os.environ,
+            {"TRADING_STRATEGY_CONFIG_PATH": "/etc/torghut/strategies.yaml"},
+        ):
+            self.assertEqual(
+                replay.default_strategy_configmap_path(),
+                Path("/etc/torghut/strategies.yaml"),
+            )
+
     def _signal(self, *, bid: str, ask: str, price: str) -> SignalEnvelope:
         return SignalEnvelope(
             event_ts=datetime(2026, 3, 27, 17, 30, 24, tzinfo=timezone.utc),
