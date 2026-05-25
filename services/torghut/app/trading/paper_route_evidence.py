@@ -500,6 +500,23 @@ def _runtime_window_import_health_gate(
                 return text, source
         return "false", "missing"
 
+    def reason_value(
+        default: str,
+        selected_source: str,
+        *items: tuple[str, object],
+    ) -> str:
+        for source, value in items:
+            if source != selected_source:
+                continue
+            text = _safe_text(value)
+            if text is not None:
+                return text
+        for _, value in items:
+            text = _safe_text(value)
+            if text is not None:
+                return text
+        return default
+
     dependency_quorum_decision, dependency_quorum_source = text_value(
         ("target_plan", target.get("dependency_quorum_decision")),
         (
@@ -524,6 +541,26 @@ def _runtime_window_import_health_gate(
         ("target_plan.runtime_window_import_health_gate", nested_gate.get("drift_ok")),
         ("live_submission_gate", live_submission_gate.get("drift_ok")),
     )
+    continuity_reason = reason_value(
+        "continuity_ok" if continuity_ok == "true" else "continuity_not_ok",
+        continuity_source,
+        ("target_plan", target.get("continuity_reason")),
+        (
+            "target_plan.runtime_window_import_health_gate",
+            nested_gate.get("continuity_reason"),
+        ),
+        ("live_submission_gate", live_submission_gate.get("continuity_reason")),
+    )
+    drift_reason = reason_value(
+        "drift_ok" if drift_ok == "true" else "drift_not_ok",
+        drift_source,
+        ("target_plan", target.get("drift_reason")),
+        (
+            "target_plan.runtime_window_import_health_gate",
+            nested_gate.get("drift_reason"),
+        ),
+        ("live_submission_gate", live_submission_gate.get("drift_reason")),
+    )
 
     blockers: list[str] = []
     promotion_blockers: list[str] = []
@@ -547,8 +584,10 @@ def _runtime_window_import_health_gate(
         "dependency_quorum_source": dependency_quorum_source,
         "continuity_ok": continuity_ok,
         "continuity_source": continuity_source,
+        "continuity_reason": continuity_reason,
         "drift_ok": drift_ok,
         "drift_source": drift_source,
+        "drift_reason": drift_reason,
         "ready": not blockers,
         "blockers": blockers,
         "promotion_blockers": promotion_blockers,
@@ -560,6 +599,8 @@ def _runtime_window_import_health_gate_summary(
 ) -> dict[str, object]:
     blockers: list[str] = []
     promotion_blockers: list[str] = []
+    continuity_reasons: list[str] = []
+    drift_reasons: list[str] = []
     ready_count = 0
     for target in targets:
         gate = _as_mapping(target.get("runtime_window_import_health_gate"))
@@ -567,6 +608,12 @@ def _runtime_window_import_health_gate_summary(
             ready_count += 1
         blockers.extend(_unique_text_items(gate.get("blockers")))
         promotion_blockers.extend(_unique_text_items(gate.get("promotion_blockers")))
+        continuity_reason = _safe_text(gate.get("continuity_reason"))
+        if continuity_reason is not None:
+            continuity_reasons.append(continuity_reason)
+        drift_reason = _safe_text(gate.get("drift_reason"))
+        if drift_reason is not None:
+            drift_reasons.append(drift_reason)
     return {
         "schema_version": "torghut.runtime-window-import-health-gate-summary.v1",
         "source": "paper_route_runtime_window_targets",
@@ -576,6 +623,8 @@ def _runtime_window_import_health_gate_summary(
         "blocked_target_count": max(0, len(targets) - ready_count),
         "blockers": _unique_text_items(blockers),
         "promotion_blockers": _unique_text_items(promotion_blockers),
+        "continuity_reasons": _unique_text_items(continuity_reasons),
+        "drift_reasons": _unique_text_items(drift_reasons),
     }
 
 
@@ -696,7 +745,9 @@ def _next_paper_route_runtime_window_targets(
             "source_kind": "paper_route_probe_runtime_observed",
             "dependency_quorum_decision": health_gate["dependency_quorum_decision"],
             "continuity_ok": health_gate["continuity_ok"],
+            "continuity_reason": health_gate["continuity_reason"],
             "drift_ok": health_gate["drift_ok"],
+            "drift_reason": health_gate["drift_reason"],
             "runtime_window_import_health_gate": health_gate,
             "runtime_window_import_health_gate_blockers": health_gate_blockers,
             "runtime_window_import_promotion_blockers": (

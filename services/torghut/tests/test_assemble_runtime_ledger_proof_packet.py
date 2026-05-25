@@ -621,12 +621,16 @@ class TestRuntimeLedgerProofPacket(TestCase):
         assert isinstance(plan, dict)
         target = plan["targets"][0]
         assert isinstance(target, dict)
+        target["continuity_reason"] = "signal_continuity_nominal"
         target["drift_ok"] = "false"
+        target["drift_reason"] = "drift_live_promotion_ineligible"
         target["runtime_window_import_health_gate"] = {
             "schema_version": "torghut.runtime-window-import-health-gate.v1",
             "dependency_quorum_decision": "allow",
             "continuity_ok": "true",
+            "continuity_reason": "signal_continuity_nominal",
             "drift_ok": "false",
+            "drift_reason": "drift_live_promotion_ineligible",
             "blockers": [],
             "promotion_blockers": [],
         }
@@ -649,6 +653,16 @@ class TestRuntimeLedgerProofPacket(TestCase):
         self.assertEqual(health_gate["blocked_target_count"], 0)
         self.assertEqual(health_gate["blockers"], [])
         self.assertEqual(health_gate["promotion_blockers"], ["drift_not_ok"])
+        self.assertEqual(
+            health_gate["continuity_reasons"], ["signal_continuity_nominal"]
+        )
+        self.assertEqual(
+            health_gate["drift_reasons"], ["drift_live_promotion_ineligible"]
+        )
+        self.assertEqual(
+            health_gate["targets"][0]["drift_reason"],
+            "drift_live_promotion_ineligible",
+        )
 
     def test_packet_blocks_non_authoritative_import_and_weak_daily_profit(self) -> None:
         result = packet.build_runtime_ledger_proof_packet(

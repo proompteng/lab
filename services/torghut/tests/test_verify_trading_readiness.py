@@ -751,12 +751,16 @@ class TestVerifyTradingReadiness(TestCase):
             paper_route_evidence=_paper_route_evidence(
                 import_ready=True,
                 target_overrides={
+                    "continuity_reason": "signal_continuity_nominal",
                     "drift_ok": "false",
+                    "drift_reason": "drift_live_promotion_ineligible",
                     "runtime_window_import_health_gate": {
                         "schema_version": "torghut.runtime-window-import-health-gate.v1",
                         "dependency_quorum_decision": "allow",
                         "continuity_ok": "true",
+                        "continuity_reason": "signal_continuity_nominal",
                         "drift_ok": "false",
+                        "drift_reason": "drift_live_promotion_ineligible",
                         "blockers": [],
                         "promotion_blockers": ["drift_checks_not_ok"],
                     },
@@ -775,6 +779,15 @@ class TestVerifyTradingReadiness(TestCase):
         self.assertEqual(health_gate["blocked_target_count"], 0)
         self.assertEqual(health_gate["blockers"], [])
         self.assertEqual(health_gate["promotion_blockers"], ["drift_checks_not_ok"])
+        self.assertEqual(
+            health_gate["continuity_reasons"], ["signal_continuity_nominal"]
+        )
+        self.assertEqual(
+            health_gate["drift_reasons"], ["drift_live_promotion_ineligible"]
+        )
+        target = result["paper_route_target_plan"]["targets"][0]
+        self.assertEqual(target["continuity_reason"], "signal_continuity_nominal")
+        self.assertEqual(target["drift_reason"], "drift_live_promotion_ineligible")
 
     def test_paper_route_target_plan_synthesizes_drift_promotion_blocker(
         self,
