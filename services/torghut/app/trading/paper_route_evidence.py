@@ -790,6 +790,10 @@ def _runtime_ledger_summary(
     *,
     hypothesis_id: str | None,
     candidate_id: str | None,
+    observed_stage: str | None,
+    account_label: str | None,
+    strategy_name: str | None,
+    strategy_family: str | None,
     window_start: datetime,
     window_end: datetime,
 ) -> dict[str, object]:
@@ -805,6 +809,16 @@ def _runtime_ledger_summary(
     )
     stmt = stmt.where(StrategyRuntimeLedgerBucket.bucket_started_at <= window_end)
     stmt = stmt.where(StrategyRuntimeLedgerBucket.bucket_ended_at >= window_start)
+    if observed_stage:
+        stmt = stmt.where(StrategyRuntimeLedgerBucket.observed_stage == observed_stage)
+    if account_label:
+        stmt = stmt.where(StrategyRuntimeLedgerBucket.account_label == account_label)
+    if strategy_name:
+        stmt = stmt.where(
+            StrategyRuntimeLedgerBucket.runtime_strategy_name == strategy_name
+        )
+    if strategy_family:
+        stmt = stmt.where(StrategyRuntimeLedgerBucket.strategy_family == strategy_family)
     rows = list(session.execute(stmt.limit(50)).scalars())
     filled_notional = sum((row.filled_notional for row in rows), Decimal("0"))
     net_pnl = sum((row.net_strategy_pnl_after_costs for row in rows), Decimal("0"))
@@ -831,6 +845,14 @@ def _runtime_ledger_summary(
             if filled_notional > 0
             else Decimal("0")
         ),
+        "filters": {
+            "hypothesis_id": hypothesis_id,
+            "candidate_id": candidate_id,
+            "observed_stage": observed_stage,
+            "account_label": account_label,
+            "strategy_name": strategy_name,
+            "strategy_family": strategy_family,
+        },
         "latest_bucket_ended_at": _isoformat(rows[0].bucket_ended_at if rows else None),
         "db_row_refs": [str(row.id) for row in rows],
         "blockers": sorted(
@@ -1005,6 +1027,10 @@ def _target_audit(
         session,
         hypothesis_id=hypothesis_id,
         candidate_id=candidate_id,
+        observed_stage=cast(str | None, target.get("observed_stage")),
+        account_label=cast(str | None, target.get("account_label")),
+        strategy_name=cast(str | None, target.get("strategy_name")),
+        strategy_family=cast(str | None, target.get("strategy_family")),
         window_start=window_start,
         window_end=window_end,
     )

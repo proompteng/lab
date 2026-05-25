@@ -923,3 +923,115 @@ class TestPaperRouteEvidenceAudit(TestCase):
             payload["summary"]["promotion_authority"]["reason"],
             "paper_route_evidence_audit_observability_only",
         )
+
+    def test_runtime_ledger_summary_is_scoped_to_target_stage_account_and_strategy(
+        self,
+    ) -> None:
+        now = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        window_start = now - timedelta(hours=6)
+        strategy_name = "paper-route-scoped-ledger"
+        with Session(self.engine) as session:
+            for suffix, observed_stage, account_label, runtime_strategy_name in (
+                ("wrong-stage", "live", "paper", strategy_name),
+                ("wrong-account", "paper", "other-paper", strategy_name),
+                ("wrong-strategy", "paper", "paper", "different-paper-route"),
+            ):
+                session.add(
+                    StrategyRuntimeLedgerBucket(
+                        run_id=f"paper-route-{suffix}",
+                        candidate_id="candidate-scoped-ledger",
+                        hypothesis_id="H-SCOPED-LEDGER",
+                        observed_stage=observed_stage,
+                        bucket_started_at=window_start,
+                        bucket_ended_at=now,
+                        account_label=account_label,
+                        runtime_strategy_name=runtime_strategy_name,
+                        strategy_family="microbar_pairs",
+                        fill_count=2,
+                        decision_count=1,
+                        submitted_order_count=1,
+                        closed_trade_count=1,
+                        open_position_count=0,
+                        filled_notional=Decimal("200"),
+                        gross_strategy_pnl=Decimal("12"),
+                        cost_amount=Decimal("2"),
+                        net_strategy_pnl_after_costs=Decimal("10"),
+                        post_cost_expectancy_bps=Decimal("500"),
+                        ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+                        pnl_basis="realized_strategy_pnl_after_explicit_costs",
+                        execution_policy_hash_counts={"policy-a": 1},
+                        cost_model_hash_counts={"cost-a": 1},
+                        lineage_hash_counts={"lineage-a": 1},
+                        blockers_json=[],
+                    )
+                )
+            session.commit()
+
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "promotion_eligible_total": 0,
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-SCOPED-LEDGER",
+                                "candidate_id": "candidate-scoped-ledger",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": strategy_name,
+                                "account_label": "paper",
+                                "window_start": window_start.isoformat(),
+                                "window_end": now.isoformat(),
+                                "paper_probation_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                                "max_notional": "0",
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL"],
+                        "paper_route_probe_active_symbols": [],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": False,
+                        "next_session_max_notional": "25",
+                        "eligible_symbol_count": 1,
+                        "blocking_reasons": ["market_session_closed"],
+                    },
+                },
+                generated_at=now,
+            )
+
+        runtime_ledger = payload["targets"][0]["runtime_ledger"]
+        self.assertEqual(
+            runtime_ledger["filters"],
+            {
+                "hypothesis_id": "H-SCOPED-LEDGER",
+                "candidate_id": "candidate-scoped-ledger",
+                "observed_stage": "paper",
+                "account_label": "paper",
+                "strategy_name": strategy_name,
+                "strategy_family": "microbar_pairs",
+            },
+        )
+        self.assertEqual(runtime_ledger["bucket_count"], 0)
+        self.assertEqual(runtime_ledger["evidence_grade_bucket_count"], 0)
+        self.assertIn(
+            "runtime_ledger_bucket_missing",
+            payload["targets"][0]["readiness"]["evidence_collection_blockers"],
+        )
+        self.assertIn(
+            "runtime_ledger_evidence_grade_bucket_missing",
+            payload["targets"][0]["readiness"]["evidence_collection_blockers"],
+        )
