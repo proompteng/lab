@@ -1989,8 +1989,17 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertIsNotNone(payload)
         assert payload is not None
         self.assertEqual(payload["target_count"], 2)
-        self.assertEqual(payload["proof_status"], "ok")
-        self.assertEqual(payload["proof_blockers"], [])
+        self.assertEqual(payload["proof_status"], "blocked")
+        blocker_codes = [item["blocker"] for item in payload["proof_blockers"]]
+        self.assertEqual(
+            blocker_codes,
+            [
+                "runtime_window_import_promotion_decision_not_allowed",
+                "runtime_observation_missing",
+                "runtime_window_import_promotion_decision_not_allowed",
+                "runtime_observation_missing",
+            ],
+        )
         self.assertEqual(
             [item["hypothesis_id"] for item in payload["imports"]],
             ["H-TSMOM-01", "H-MICRO-01"],
@@ -2004,6 +2013,9 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertIn("torghut-chip-full-day-20260505-4c330ce9-r1", joined)
         self.assertIn("--delay-adjusted-depth-stress-report-ref", joined)
         self.assertIn("/proof/h-micro-delay-depth.json", joined)
+        self.assertIn("--dependency-quorum-decision missing", joined)
+        self.assertIn("--continuity-ok false", joined)
+        self.assertIn("--drift-ok false", joined)
 
     def test_runtime_window_import_uses_latest_source_activity_window_when_unpinned(
         self,
@@ -2961,13 +2973,16 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertIsNotNone(payload)
         assert payload is not None
         self.assertEqual(payload["proof_status"], "blocked")
-        self.assertEqual(
-            payload["proof_blockers"][0]["blocker"],
-            "delay_adjusted_depth_stress_report_ref_missing",
+        blocker_codes = [item["blocker"] for item in payload["proof_blockers"]]
+        self.assertIn("delay_adjusted_depth_stress_report_ref_missing", blocker_codes)
+        self.assertIn(
+            "runtime_window_import_promotion_decision_not_allowed",
+            blocker_codes,
         )
+        self.assertIn("runtime_observation_missing", blocker_codes)
         self.assertEqual(
             [item["proof_status"] for item in payload["imports"]],
-            ["ok", "blocked"],
+            ["blocked", "blocked"],
         )
 
     def test_runtime_window_import_reports_missing_required_delay_depth_ref(

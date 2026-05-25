@@ -16,6 +16,7 @@ from sqlalchemy.pool import StaticPool
 from app.models import Base, StrategyRuntimeLedgerBucket
 from scripts.import_hypothesis_runtime_windows import (
     EXECUTION_ELIGIBLE_DECISION_STATUSES,
+    POST_COST_BASIS_EXECUTION_RECONSTRUCTION,
     POST_COST_BASIS_RUNTIME_LEDGER,
     POST_COST_BASIS_SIMULATION_REPORT,
     POST_COST_BASIS_TCA_PROXY,
@@ -794,9 +795,13 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(
             rows[0]["post_cost_expectancy_basis"],
-            POST_COST_BASIS_RUNTIME_LEDGER,
+            POST_COST_BASIS_EXECUTION_RECONSTRUCTION,
         )
-        self.assertEqual(rows[0]["post_cost_promotion_eligible"], True)
+        self.assertEqual(rows[0]["post_cost_promotion_eligible"], False)
+        self.assertEqual(
+            rows[0]["promotion_blocker"],
+            "execution_reconstruction_not_runtime_ledger_proof",
+        )
         self.assertEqual(rows[0]["realized_net_pnl"], Decimal("0.70"))
         self.assertEqual(
             rows[0]["post_cost_expectancy_bps"],
@@ -864,12 +869,16 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         )
 
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["post_cost_promotion_eligible"], True)
+        self.assertEqual(rows[0]["post_cost_promotion_eligible"], False)
         self.assertEqual(rows[0]["realized_net_pnl"], Decimal("0.70"))
         bucket = rows[0]["runtime_ledger_bucket"]
         self.assertIsInstance(bucket, dict)
         assert isinstance(bucket, dict)
-        self.assertEqual(bucket["blockers"], [])
+        self.assertEqual(
+            bucket["blockers"],
+            ["execution_reconstruction_not_runtime_ledger_proof"],
+        )
+        self.assertEqual(bucket["pnl_basis"], POST_COST_BASIS_EXECUTION_RECONSTRUCTION)
         self.assertGreaterEqual(len(bucket["execution_policy_hash_counts"]), 1)
         self.assertGreaterEqual(len(bucket["cost_model_hash_counts"]), 1)
         self.assertGreaterEqual(len(bucket["lineage_hash_counts"]), 1)
@@ -901,6 +910,14 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["post_cost_promotion_eligible"], False)
         self.assertIsNone(rows[0]["post_cost_expectancy_bps"])
+        self.assertEqual(
+            rows[0]["post_cost_expectancy_basis"],
+            POST_COST_BASIS_EXECUTION_RECONSTRUCTION,
+        )
+        self.assertIn(
+            "execution_reconstruction_not_runtime_ledger_proof",
+            rows[0]["runtime_ledger_blockers"],
+        )
         self.assertIn("explicit_cost_missing", rows[0]["runtime_ledger_blockers"])
         self.assertIn("cost_basis_missing", rows[0]["runtime_ledger_blockers"])
 

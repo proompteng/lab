@@ -682,6 +682,60 @@ class TestRuntimeWindowImport(TestCase):
             decision.payload_json["runtime_ledger_filled_notional"], "10100"
         )
 
+    def test_persist_observed_runtime_windows_blocks_missing_health_gate_evidence(
+        self,
+    ) -> None:
+        buckets = build_observed_runtime_buckets(
+            bucket_ranges=[
+                (
+                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    6,
+                )
+            ],
+            decision_times=[datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
+            execution_times=[datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+            tca_rows=[
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("1"),
+                    "post_cost_expectancy_bps": Decimal("40"),
+                    "runtime_ledger_bucket": _runtime_ledger_bucket(),
+                    **_runtime_pnl_basis(),
+                }
+            ],
+            continuity_ok=False,
+            drift_ok=False,
+            dependency_quorum_decision="missing",
+        )
+
+        with self.session_local() as session:
+            summary = persist_observed_runtime_windows(
+                session=session,
+                run_id="import-live-health-gates",
+                candidate_id="cand-health-gates",
+                hypothesis_id="H-CONT-01",
+                observed_stage="live",
+                strategy_family="intraday_continuation",
+                source_manifest_ref="config/trading/hypotheses/h-cont-01.json",
+                buckets=buckets,
+                runtime_observation_payload={
+                    "dataset_snapshot_ref": "torghut-runtime-window-health-gates",
+                    "source_kind": "live_runtime_observed",
+                },
+            )
+
+        self.assertFalse(summary["promotion_allowed"])
+        self.assertIn(
+            "evidence_continuity_not_ok",
+            summary["promotion_blocking_reasons"],
+        )
+        self.assertIn("drift_checks_not_ok", summary["promotion_blocking_reasons"])
+        self.assertIn(
+            "dependency_quorum_not_allow",
+            summary["promotion_blocking_reasons"],
+        )
+
     def test_persist_observed_runtime_windows_does_not_promote_bucket_early(
         self,
     ) -> None:

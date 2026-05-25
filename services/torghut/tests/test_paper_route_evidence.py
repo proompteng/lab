@@ -557,6 +557,138 @@ class TestPaperRouteEvidenceAudit(TestCase):
             payload["targets"][0]["readiness"]["evidence_collection_blockers"],
         )
 
+    def test_current_paper_route_probe_symbols_extend_next_window_target_scope(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        strategy_name = "next-window-paper-route-symbol-refresh"
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name=strategy_name,
+                description="paper route source activity from refreshed probe symbols",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL", "AMZN", "INTC"],
+                created_at=window_start,
+                updated_at=window_start,
+            )
+            session.add(strategy)
+            session.flush()
+            decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="paper",
+                symbol="INTC",
+                timeframe="1Min",
+                decision_json={"action": "buy", "qty": "1"},
+                rationale="refreshed probe symbol fixture",
+                status="executed",
+                created_at=window_start + timedelta(minutes=5),
+                executed_at=window_start + timedelta(minutes=6),
+            )
+            session.add(decision)
+            session.flush()
+            execution = Execution(
+                trade_decision_id=decision.id,
+                alpaca_account_label="paper",
+                alpaca_order_id="refreshed-probe-order-1",
+                client_order_id="refreshed-probe-client-1",
+                symbol="INTC",
+                side="buy",
+                order_type="limit",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("100"),
+                status="filled",
+                raw_order={},
+                created_at=window_start + timedelta(minutes=6),
+                updated_at=window_start + timedelta(minutes=6),
+                last_update_at=window_start + timedelta(minutes=6),
+            )
+            session.add(execution)
+            session.flush()
+            session.add(
+                ExecutionTCAMetric(
+                    execution_id=execution.id,
+                    trade_decision_id=decision.id,
+                    strategy_id=strategy.id,
+                    alpaca_account_label="paper",
+                    symbol="INTC",
+                    side="buy",
+                    arrival_price=Decimal("99"),
+                    avg_fill_price=Decimal("100"),
+                    filled_qty=Decimal("1"),
+                    signed_qty=Decimal("1"),
+                    slippage_bps=Decimal("5"),
+                    shortfall_notional=Decimal("1"),
+                    realized_shortfall_bps=Decimal("5"),
+                    churn_qty=Decimal("0"),
+                    churn_ratio=Decimal("0"),
+                    computed_at=window_start + timedelta(minutes=7),
+                    created_at=window_start + timedelta(minutes=7),
+                    updated_at=window_start + timedelta(minutes=7),
+                )
+            )
+            session.commit()
+
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": True,
+                    "reason": "non_live_mode",
+                    "blocked_reasons": [],
+                    "promotion_eligible_total": 0,
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-REFRESHED-PROBE",
+                                "candidate_id": "candidate-refreshed-probe",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": strategy_name,
+                                "account_label": "paper",
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                                "paper_probation_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                                "max_notional": "0",
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": False,
+                        "next_session_max_notional": "25",
+                        "eligible_symbol_count": 3,
+                        "eligible_symbols": ["AMZN", "AAPL", "INTC"],
+                        "active_symbols": [],
+                        "blocking_reasons": ["market_session_closed"],
+                    },
+                },
+                generated_at=window_start - timedelta(days=2),
+            )
+
+        target = payload["targets"][0]["target"]
+        source_activity = payload["targets"][0]["source_activity"]
+        self.assertEqual(target["paper_route_probe_symbols"], ["AAPL", "AMZN", "INTC"])
+        self.assertEqual(source_activity["symbols"], ["AAPL", "AMZN", "INTC"])
+        self.assertFalse(source_activity["missing"])
+        self.assertEqual(source_activity["decision_count"], 1)
+        self.assertEqual(source_activity["execution_count"], 1)
+        self.assertEqual(source_activity["filled_execution_count"], 1)
+        self.assertEqual(source_activity["tca_sample_count"], 1)
+
     def test_source_activity_is_scoped_to_target_account_and_probe_symbols(
         self,
     ) -> None:

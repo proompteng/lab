@@ -38,6 +38,9 @@ EXECUTION_ELIGIBLE_DECISION_STATUSES = (
     "partially_filled",
 )
 POST_COST_BASIS_RUNTIME_LEDGER = POST_COST_PNL_BASIS
+POST_COST_BASIS_EXECUTION_RECONSTRUCTION = (
+    "execution_reconstructed_pnl_after_explicit_costs"
+)
 POST_COST_BASIS_SIMULATION_REPORT = "simulation_report_net_pnl"
 POST_COST_BASIS_TCA_PROXY = "tca_shortfall_proxy"
 RUNTIME_LEDGER_ARTIFACT_SCHEMAS = frozenset(
@@ -90,9 +93,9 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--delay-adjusted-depth-stress-report-ref", default="")
-    parser.add_argument("--dependency-quorum-decision", default="allow")
-    parser.add_argument("--continuity-ok", default="true")
-    parser.add_argument("--drift-ok", default="true")
+    parser.add_argument("--dependency-quorum-decision", default="")
+    parser.add_argument("--continuity-ok", default="")
+    parser.add_argument("--drift-ok", default="")
     parser.add_argument("--json", action="store_true")
     return parser.parse_args()
 
@@ -738,12 +741,24 @@ def _build_realized_strategy_pnl_rows(
     ):
         if bucket.closed_trade_count <= 0 and not bucket.blockers:
             continue
-        realized_rows.append(
-            _runtime_ledger_tca_row_from_bucket(
-                bucket=bucket,
-                computed_at=unique_times[-1],
-            )
+        row = _runtime_ledger_tca_row_from_bucket(
+            bucket=bucket,
+            computed_at=unique_times[-1],
         )
+        row["post_cost_expectancy_basis"] = POST_COST_BASIS_EXECUTION_RECONSTRUCTION
+        row["post_cost_promotion_eligible"] = False
+        row["promotion_blocker"] = "execution_reconstruction_not_runtime_ledger_proof"
+        blockers = list(row.get("runtime_ledger_blockers") or [])
+        if "execution_reconstruction_not_runtime_ledger_proof" not in blockers:
+            blockers.append("execution_reconstruction_not_runtime_ledger_proof")
+        row["runtime_ledger_blockers"] = blockers
+        bucket_payload = row.get("runtime_ledger_bucket")
+        if isinstance(bucket_payload, Mapping):
+            bucket_payload = dict(bucket_payload)
+            bucket_payload["blockers"] = blockers
+            bucket_payload["pnl_basis"] = POST_COST_BASIS_EXECUTION_RECONSTRUCTION
+            row["runtime_ledger_bucket"] = bucket_payload
+        realized_rows.append(row)
     return realized_rows
 
 
@@ -1609,7 +1624,7 @@ def main() -> int:
         tca_rows=tca_rows,
         continuity_ok=_flag(args.continuity_ok),
         drift_ok=_flag(args.drift_ok),
-        dependency_quorum_decision=args.dependency_quorum_decision.strip() or "allow",
+        dependency_quorum_decision=args.dependency_quorum_decision.strip() or "missing",
     )
     evidence_provenance = (
         "paper_runtime_observed"

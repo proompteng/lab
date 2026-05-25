@@ -245,6 +245,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--runtime-window-source-kind", default="paper_runtime_observed"
     )
+    parser.add_argument("--runtime-window-dependency-quorum-decision", default="")
+    parser.add_argument("--runtime-window-continuity-ok", default="")
+    parser.add_argument("--runtime-window-drift-ok", default="")
     parser.add_argument("--json", action="store_true")
     return parser.parse_args()
 
@@ -367,6 +370,9 @@ class RuntimeWindowImportTarget:
     source_manifest_ref: str
     source_kind: str
     delay_adjusted_depth_stress_report_ref: str
+    dependency_quorum_decision: str = ""
+    continuity_ok: str = ""
+    drift_ok: str = ""
     window_start: str = ""
     window_end: str = ""
     artifact_refs: tuple[str, ...] = ()
@@ -571,6 +577,15 @@ def _registry_runtime_window_targets(
                 ).strip()
                 or "paper_runtime_observed",
                 delay_adjusted_depth_stress_report_ref="",
+                dependency_quorum_decision=str(
+                    getattr(args, "runtime_window_dependency_quorum_decision", "") or ""
+                ).strip(),
+                continuity_ok=str(
+                    getattr(args, "runtime_window_continuity_ok", "") or ""
+                ).strip(),
+                drift_ok=str(
+                    getattr(args, "runtime_window_drift_ok", "") or ""
+                ).strip(),
                 window_start="",
                 window_end="",
             )
@@ -684,6 +699,12 @@ def _runtime_window_targets_from_plan(
                 "delay_adjusted_depth_stress_report_ref",
                 "runtime_window_delay_adjusted_depth_stress_report_ref",
             ),
+            dependency_quorum_decision=value(
+                "dependency_quorum_decision",
+                "runtime_window_dependency_quorum_decision",
+            ),
+            continuity_ok=value("continuity_ok", "runtime_window_continuity_ok"),
+            drift_ok=value("drift_ok", "runtime_window_drift_ok"),
             window_start=str(payload.get("window_start") or "").strip(),
             window_end=str(payload.get("window_end") or "").strip(),
             artifact_refs=_runtime_window_target_artifact_refs(payload),
@@ -1278,15 +1299,46 @@ def _runtime_window_import_payload_proof_blockers(
         reasons = _as_text_list(payload.get("promotion_blocking_reasons"))
         for reason in reasons or ["runtime_window_import_not_promotion_allowed"]:
             add_blocker(reason)
+    elif "promotion_allowed" not in payload:
+        legacy_decision = _as_text(payload.get("promotion_decision"))
+        if legacy_decision is not None and legacy_decision.lower() != "allowed":
+            add_blocker("runtime_window_import_promotion_decision_not_allowed")
+        else:
+            add_blocker("runtime_window_import_promotion_allowed_missing")
 
     runtime_observation = _as_dict(payload.get("runtime_observation"))
-    if runtime_observation.get("authoritative") is False:
+    if not runtime_observation:
+        add_blocker("runtime_observation_missing")
+    elif runtime_observation.get("authoritative") is not True:
         add_blocker(
             _as_text(runtime_observation.get("authority_reason"))
             or "runtime_observation_not_authoritative"
         )
 
     return blockers
+
+
+def _runtime_window_import_health_gate_args(
+    *,
+    target: RuntimeWindowImportTarget,
+    runtime_manifest: Mapping[str, Any],
+) -> tuple[str, str, str]:
+    dependency_quorum_decision = (
+        _as_text(target.dependency_quorum_decision)
+        or _as_text(runtime_manifest.get("dependency_quorum_decision"))
+        or "missing"
+    )
+    continuity_ok = (
+        _as_text(target.continuity_ok)
+        or _as_text(runtime_manifest.get("continuity_ok"))
+        or "false"
+    )
+    drift_ok = (
+        _as_text(target.drift_ok)
+        or _as_text(runtime_manifest.get("drift_ok"))
+        or "false"
+    )
+    return dependency_quorum_decision, continuity_ok, drift_ok
 
 
 def _run_runtime_window_import_target(
@@ -1386,6 +1438,12 @@ def _run_runtime_window_import_target(
                 runtime_manifest=runtime_manifest,
             )
         )
+    dependency_quorum_decision, continuity_ok, drift_ok = (
+        _runtime_window_import_health_gate_args(
+            target=target,
+            runtime_manifest=runtime_manifest,
+        )
+    )
     command = [
         sys.executable,
         "scripts/import_hypothesis_runtime_windows.py",
@@ -1420,11 +1478,11 @@ def _run_runtime_window_import_target(
         "--artifact-ref",
         str(manifest_path),
         "--dependency-quorum-decision",
-        "allow",
+        dependency_quorum_decision,
         "--continuity-ok",
-        "true",
+        continuity_ok,
         "--drift-ok",
-        "true",
+        drift_ok,
         "--json",
     ]
     for artifact_ref in target.artifact_refs:
