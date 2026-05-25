@@ -830,6 +830,15 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--generated-at", default=None)
     parser.add_argument("--timeout-seconds", type=float, default=10.0)
     parser.add_argument("--output-file", type=Path, default=None)
+    parser.add_argument(
+        "--allow-blocked-exit-zero",
+        action="store_true",
+        help=(
+            "Exit 0 after writing a blocked/waiting packet. Source load and "
+            "schema errors still fail; this is for scheduled evidence collection "
+            "where a blocked verdict is expected proof state, not job failure."
+        ),
+    )
     return parser
 
 
@@ -924,7 +933,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.output_file.parent.mkdir(parents=True, exist_ok=True)
         args.output_file.write_text(body + "\n", encoding="utf-8")
     print(body)
-    return 0 if packet["ok"] else 1
+    return 0 if packet["ok"] or args.allow_blocked_exit_zero else 1
 
 
 if __name__ == "__main__":

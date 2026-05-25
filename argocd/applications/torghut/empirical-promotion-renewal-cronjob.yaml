@@ -39,6 +39,8 @@ spec:
                 - |
                   set -euo pipefail
                   cd /app
+                  RENEWAL_OUTPUT=/tmp/torghut-empirical-renewal/runtime-window-renewal.json
+                  PROOF_PACKET_OUTPUT=/tmp/torghut-empirical-renewal/runtime-ledger-proof-packet.json
                   /opt/venv/bin/python scripts/renew_latest_empirical_promotion_jobs.py \
                     --output-dir /tmp/torghut-empirical-renewal \
                     --strategy-spec-ref intraday_tsmom_v2@research \
@@ -58,7 +60,15 @@ spec:
                     --runtime-window-source-dsn-env SIM_DB_DSN \
                     --runtime-window-dataset-snapshot-ref portfolio-profit-autoresearch-500-v1 \
                     --runtime-window-source-manifest-ref config/trading/hypotheses/h-tsmom-01.json \
-                    --json
+                    --json \
+                    | tee "${RENEWAL_OUTPUT}"
+                  /opt/venv/bin/python scripts/assemble_runtime_ledger_proof_packet.py \
+                    --status-service-base-url http://torghut.torghut.svc.cluster.local \
+                    --paper-route-service-base-url http://torghut-sim.torghut.svc.cluster.local \
+                    --completion-service-base-url http://torghut.torghut.svc.cluster.local \
+                    --runtime-window-import-file "${RENEWAL_OUTPUT}" \
+                    --output-file "${PROOF_PACKET_OUTPUT}" \
+                    --allow-blocked-exit-zero
               env:
                 - name: DB_DSN
                   valueFrom:

@@ -453,6 +453,50 @@ class TestRuntimeLedgerProofPacket(TestCase):
                 payload["promotion_authority"]["blocking_reasons"],
             )
 
+    def test_cli_can_write_blocked_packet_without_failing_scheduled_collection(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            status_path = tmp_path / "status.json"
+            paper_path = tmp_path / "paper.json"
+            import_path = tmp_path / "import.json"
+            completion_path = tmp_path / "completion.json"
+            output_path = tmp_path / "packet.json"
+            status_path.write_text(json.dumps(_status()), encoding="utf-8")
+            paper_path.write_text(json.dumps(_paper_route_evidence()), encoding="utf-8")
+            import_path.write_text(
+                json.dumps(
+                    _runtime_import(
+                        proof_status="blocked",
+                        proof_blockers=["runtime_ledger_pnl_basis_missing"],
+                    )
+                ),
+                encoding="utf-8",
+            )
+            completion_path.write_text(json.dumps(_completion()), encoding="utf-8")
+
+            exit_code = packet.main(
+                [
+                    "--status-file",
+                    str(status_path),
+                    "--paper-route-evidence-file",
+                    str(paper_path),
+                    "--runtime-window-import-file",
+                    str(import_path),
+                    "--completion-file",
+                    str(completion_path),
+                    "--output-file",
+                    str(output_path),
+                    "--allow-blocked-exit-zero",
+                ]
+            )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["verdict"], "blocked")
+            self.assertFalse(payload["promotion_authority"]["allowed"])
+
     def test_cli_can_emit_waiting_packet_before_import_outputs_exist(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
