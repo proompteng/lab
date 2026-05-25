@@ -1,0 +1,36 @@
+name: synthesis
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'apps/synthesis/**'
+      - 'packages/design/**'
+      - 'packages/scripts/src/synthesis/**'
+      - 'argocd/applications/synthesis/**'
+      - 'argocd/applicationsets/product.yaml'
+      - '.github/workflows/synthesis-ci.yml'
+  pull_request:
+    paths:
+      - 'apps/synthesis/**'
+      - 'packages/design/**'
+      - 'packages/scripts/src/synthesis/**'
+      - 'argocd/applications/synthesis/**'
+      - 'argocd/applicationsets/product.yaml'
+      - '.github/workflows/synthesis-ci.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    uses: ./.github/workflows/common-monorepo.yml
+    with:
+      install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter synthesis --filter @proompteng/design --filter @proompteng/scripts
+      lint-command: bun run --filter synthesis lint
+      oxlint-command: bun run --cwd apps/synthesis lint:oxlint
+      oxlint-type-command: bun run --cwd apps/synthesis lint:oxlint:type
+      test-command: bun run --filter synthesis test
+      build-command: bun run --filter synthesis build
