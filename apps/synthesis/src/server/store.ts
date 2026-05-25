@@ -220,6 +220,7 @@ class InMemorySynthesisStore implements SynthesisStore {
       postedAt: toIso(input.postedAt) ?? existing?.postedAt ?? null,
       observedAt: toIso(input.observedAt) ?? timestamp,
       observedText: input.observedText,
+      mediaUrls: input.mediaUrls.length ? input.mediaUrls : (existing?.mediaUrls ?? []),
       summary: input.summary,
       whyValuable: input.whyValuable ?? null,
       evidence: input.evidence,
@@ -391,6 +392,7 @@ type ItemRow = {
   posted_at: Date | string | null
   last_observed_at: Date | string
   observed_text: string
+  media_urls: unknown
   summary: string
   why_valuable: string | null
   evidence: unknown
@@ -428,6 +430,7 @@ const mapItemRow = (row: ItemRow): SynthesisItem => ({
   postedAt: toIso(row.posted_at),
   observedAt: toIso(row.last_observed_at) ?? nowIso(),
   observedText: row.observed_text,
+  mediaUrls: parseJsonArray(row.media_urls),
   summary: row.summary,
   whyValuable: row.why_valuable,
   evidence: parseJsonArray(row.evidence),
@@ -525,12 +528,13 @@ class PostgresSynthesisStore implements SynthesisStore {
 
       const result = await client.query<{ id: string }>(
         `INSERT INTO synthesis_items (
-          id, run_id, x_post_key, summary, why_valuable, evidence, topic_tags, score, confidence,
+          id, run_id, x_post_key, media_urls, summary, why_valuable, evidence, topic_tags, score, confidence,
           engagement_recommendation, engagement_status, reply_text
         )
-        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, 'none', $11)
+        VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, 'none', $12)
         ON CONFLICT (x_post_key) DO UPDATE SET
           run_id = EXCLUDED.run_id,
+          media_urls = EXCLUDED.media_urls,
           summary = EXCLUDED.summary,
           why_valuable = EXCLUDED.why_valuable,
           evidence = EXCLUDED.evidence,
@@ -545,6 +549,7 @@ class PostgresSynthesisStore implements SynthesisStore {
           randomUUID(),
           runId,
           canonical.postKey,
+          JSON.stringify(input.mediaUrls),
           input.summary,
           input.whyValuable ?? null,
           JSON.stringify(input.evidence),
@@ -752,7 +757,7 @@ class PostgresSynthesisStore implements SynthesisStore {
 
   private itemSelectSql(alias: string) {
     return `${alias}.id, ${alias}.run_id, p.canonical_url, p.x_post_id, p.author_handle, p.author_name, p.posted_at,
-      p.last_observed_at, p.observed_text, ${alias}.summary, ${alias}.why_valuable, ${alias}.evidence,
+      p.last_observed_at, p.observed_text, ${alias}.media_urls, ${alias}.summary, ${alias}.why_valuable, ${alias}.evidence,
       ${alias}.topic_tags, ${alias}.score, ${alias}.confidence, ${alias}.engagement_recommendation,
       ${alias}.engagement_status, ${alias}.reply_text, ${alias}.created_at, ${alias}.updated_at`
   }
@@ -790,6 +795,7 @@ class PostgresSynthesisStore implements SynthesisStore {
         id text PRIMARY KEY,
         run_id text NOT NULL REFERENCES synthesis_runs(id) ON DELETE CASCADE,
         x_post_key text NOT NULL UNIQUE REFERENCES x_posts(id) ON DELETE CASCADE,
+        media_urls jsonb NOT NULL DEFAULT '[]'::jsonb,
         summary text NOT NULL,
         why_valuable text,
         evidence jsonb NOT NULL DEFAULT '[]'::jsonb,
@@ -804,6 +810,8 @@ class PostgresSynthesisStore implements SynthesisStore {
         created_at timestamptz NOT NULL DEFAULT now(),
         updated_at timestamptz NOT NULL DEFAULT now()
       );
+
+      ALTER TABLE synthesis_items ADD COLUMN IF NOT EXISTS media_urls jsonb NOT NULL DEFAULT '[]'::jsonb;
 
       CREATE TABLE IF NOT EXISTS engagement_actions (
         id text PRIMARY KEY,

@@ -10,6 +10,7 @@ export const Route = createRootRoute({
       { name: 'viewport', content: 'width=device-width, initial-scale=1' },
       { title: 'Synthesis' },
     ],
+    links: [{ rel: 'icon', href: 'data:,' }],
   }),
   component: RootComponent,
 })
@@ -24,7 +25,7 @@ function RootComponent() {
 
 function RootDocument({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" className="dark" suppressHydrationWarning>
       <head>
         <HeadContent />
       </head>

@@ -31,6 +31,7 @@ export const SubmitItemInputSchema = z
     postedAt: z.string().trim().min(1).max(80).optional(),
     observedAt: z.string().trim().min(1).max(80).optional(),
     observedText: z.string().trim().min(1).max(12_000),
+    mediaUrls: z.array(z.string().trim().min(1).max(1_000_000)).max(8).default([]),
     summary: z.string().trim().min(1).max(2_000),
     whyValuable: z.string().trim().max(1_200).optional(),
     evidence: z.array(z.string().trim().min(1).max(500)).max(12).default([]),
@@ -115,6 +116,7 @@ export type SynthesisItem = {
   postedAt: string | null
   observedAt: string
   observedText: string
+  mediaUrls: string[]
   summary: string
   whyValuable: string | null
   evidence: string[]
