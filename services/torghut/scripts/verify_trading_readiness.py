@@ -17,6 +17,14 @@ SCHEMA_VERSION = 'torghut.trading-readiness-verification.v1'
 ROUTE_REACQUISITION_BOARD_SCHEMA_VERSION = 'torghut.route-reacquisition-board.v1'
 ROUTE_REACQUISITION_BOOK_SCHEMA_VERSION = 'torghut.route-reacquisition-book.v1'
 DOC29_LIVE_SCALE_GATE = 'live_scale_observed'
+_RUNTIME_LEDGER_TRADING_DAY_KEYS = (
+    'runtime_ledger_observed_trading_day_count',
+    'runtime_ledger_trading_day_count',
+    'observed_trading_day_count',
+    'trading_day_count',
+    'runtime_ledger_session_count',
+    'session_count',
+)
 _MISSING_QUANT_REASONS = {
     'quant_health_fetch_failed',
     'quant_health_missing',
@@ -234,11 +242,22 @@ def _runtime_ledger_refs(gate: Mapping[str, Any], key: str) -> Sequence[object]:
     return _sequence(refs.get(key))
 
 
+def _runtime_ledger_trading_day_count(
+    summary: Mapping[str, Any],
+) -> tuple[int, str | None]:
+    for key in _RUNTIME_LEDGER_TRADING_DAY_KEYS:
+        if key in summary:
+            return _int(summary.get(key)), key
+    return 0, None
+
+
 def _add_runtime_ledger_profit_proof_checks(
     checks: dict[str, dict[str, Any]],
     *,
     completion_status: Mapping[str, Any] | None,
     min_runtime_ledger_net_pnl: Decimal,
+    min_runtime_ledger_trading_days: int,
+    min_runtime_ledger_daily_net_pnl: Decimal,
 ) -> None:
     completion_present = completion_status is not None
     _add_check(
@@ -304,6 +323,17 @@ def _add_runtime_ledger_profit_proof_checks(
         observed=summary.get('runtime_ledger_closed_trade_count'),
         expected='>0',
     )
+    trading_day_count, trading_day_count_key = _runtime_ledger_trading_day_count(
+        summary
+    )
+    _add_check(
+        checks,
+        'runtime_ledger_observed_trading_days',
+        passed=trading_day_count >= min_runtime_ledger_trading_days,
+        observed=trading_day_count,
+        expected=f'>={min_runtime_ledger_trading_days}',
+        detail={'source_key': trading_day_count_key},
+    )
     _add_check(
         checks,
         'runtime_ledger_filled_notional',
@@ -318,6 +348,24 @@ def _add_runtime_ledger_profit_proof_checks(
         passed=net_pnl is not None and net_pnl >= min_runtime_ledger_net_pnl,
         observed=str(net_pnl) if net_pnl is not None else None,
         expected=f'>={min_runtime_ledger_net_pnl}',
+    )
+    daily_net_pnl = (
+        net_pnl / Decimal(trading_day_count)
+        if net_pnl is not None and trading_day_count > 0
+        else None
+    )
+    daily_net_pnl_required = min_runtime_ledger_daily_net_pnl > 0
+    _add_check(
+        checks,
+        'runtime_ledger_daily_net_pnl_target',
+        passed=not daily_net_pnl_required
+        or (
+            daily_net_pnl is not None
+            and daily_net_pnl >= min_runtime_ledger_daily_net_pnl
+        ),
+        observed=str(daily_net_pnl) if daily_net_pnl is not None else None,
+        expected=f'>={min_runtime_ledger_daily_net_pnl}',
+        detail={'trading_day_count': trading_day_count},
     )
     _add_check(
         checks,
@@ -339,6 +387,8 @@ def evaluate_trading_readiness(
     min_decisions: int = 0,
     min_orders: int = 0,
     min_runtime_ledger_net_pnl: Decimal = Decimal('0'),
+    min_runtime_ledger_trading_days: int = 0,
+    min_runtime_ledger_daily_net_pnl: Decimal = Decimal('0'),
     require_market_open: bool = True,
     require_quant_fresh: bool = True,
     require_paper_route_probe_candidate: bool = False,
@@ -653,6 +703,8 @@ def evaluate_trading_readiness(
             checks,
             completion_status=completion_status,
             min_runtime_ledger_net_pnl=min_runtime_ledger_net_pnl,
+            min_runtime_ledger_trading_days=min_runtime_ledger_trading_days,
+            min_runtime_ledger_daily_net_pnl=min_runtime_ledger_daily_net_pnl,
         )
 
     failed_checks = [key for key, value in checks.items() if not value['passed']]
@@ -667,6 +719,8 @@ def evaluate_trading_readiness(
             'required': require_runtime_ledger_profit_proof,
             'gate_id': DOC29_LIVE_SCALE_GATE,
             'min_runtime_ledger_net_pnl': str(min_runtime_ledger_net_pnl),
+            'min_runtime_ledger_trading_days': min_runtime_ledger_trading_days,
+            'min_runtime_ledger_daily_net_pnl': str(min_runtime_ledger_daily_net_pnl),
         },
     }
 
@@ -700,6 +754,17 @@ def _parser() -> argparse.ArgumentParser:
         '--min-runtime-ledger-net-pnl',
         default='0',
         help='Minimum runtime-ledger net strategy PnL after costs required when runtime proof is required.',
+    )
+    parser.add_argument(
+        '--min-runtime-ledger-trading-days',
+        type=int,
+        default=0,
+        help='Minimum observed runtime-ledger trading days required when runtime proof is required.',
+    )
+    parser.add_argument(
+        '--min-runtime-ledger-daily-net-pnl',
+        default='0',
+        help='Minimum runtime-ledger net strategy PnL after costs per observed trading day.',
     )
     parser.add_argument('--allow-closed-session', action='store_true')
     parser.add_argument('--allow-informational-quant', action='store_true')
@@ -736,6 +801,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise SystemExit(
             f'--min-runtime-ledger-net-pnl must be decimal, got {args.min_runtime_ledger_net_pnl!r}'
         )
+    min_runtime_ledger_daily_net_pnl = _decimal(args.min_runtime_ledger_daily_net_pnl)
+    if min_runtime_ledger_daily_net_pnl is None:
+        raise SystemExit(
+            '--min-runtime-ledger-daily-net-pnl must be decimal, '
+            f'got {args.min_runtime_ledger_daily_net_pnl!r}'
+        )
     result = evaluate_trading_readiness(
         status,
         completion_status=completion_status,
@@ -744,6 +815,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         min_decisions=max(0, int(args.min_decisions)),
         min_orders=max(0, int(args.min_orders)),
         min_runtime_ledger_net_pnl=min_runtime_ledger_net_pnl,
+        min_runtime_ledger_trading_days=max(
+            0, int(args.min_runtime_ledger_trading_days)
+        ),
+        min_runtime_ledger_daily_net_pnl=min_runtime_ledger_daily_net_pnl,
         require_market_open=not bool(args.allow_closed_session),
         require_quant_fresh=not bool(args.allow_informational_quant),
         require_paper_route_probe_candidate=bool(

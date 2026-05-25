@@ -127,9 +127,22 @@ def _completion_status(
     blocked_reason: str | None = None,
     net_pnl: str = '600',
     expectancy_bps: str = '12.5',
+    trading_day_count: int | None = 25,
     ledger_refs: list[str] | None = None,
     unbacked_refs: list[str] | None = None,
 ) -> dict[str, object]:
+    runtime_ledger_summary: dict[str, object] = {
+        'runtime_ledger_bucket_count': 1,
+        'runtime_ledger_fill_count': 4,
+        'runtime_ledger_closed_trade_count': 2,
+        'runtime_ledger_filled_notional': '50000',
+        'runtime_ledger_net_strategy_pnl_after_costs': net_pnl,
+        'runtime_ledger_post_cost_expectancy_bps': expectancy_bps,
+    }
+    if trading_day_count is not None:
+        runtime_ledger_summary['runtime_ledger_observed_trading_day_count'] = (
+            trading_day_count
+        )
     return {
         'doc_id': 'doc29',
         'summary': {'all_satisfied': gate_status == 'satisfied'},
@@ -147,14 +160,7 @@ def _completion_status(
                     if unbacked_refs is not None
                     else [],
                 },
-                'runtime_ledger_summary': {
-                    'runtime_ledger_bucket_count': 1,
-                    'runtime_ledger_fill_count': 4,
-                    'runtime_ledger_closed_trade_count': 2,
-                    'runtime_ledger_filled_notional': '50000',
-                    'runtime_ledger_net_strategy_pnl_after_costs': net_pnl,
-                    'runtime_ledger_post_cost_expectancy_bps': expectancy_bps,
-                },
+                'runtime_ledger_summary': runtime_ledger_summary,
             }
         ],
     }
@@ -217,6 +223,8 @@ class TestVerifyTradingReadiness(TestCase):
             profile='paper',
             min_routeable_symbols=2,
             min_runtime_ledger_net_pnl=Decimal('500'),
+            min_runtime_ledger_trading_days=25,
+            min_runtime_ledger_daily_net_pnl=Decimal('20'),
             require_runtime_ledger_profit_proof=True,
         )
 
@@ -245,10 +253,13 @@ class TestVerifyTradingReadiness(TestCase):
                 blocked_reason='runtime_ledger_profit_proof_missing',
                 net_pnl='499.99',
                 expectancy_bps='0',
+                trading_day_count=2,
                 ledger_refs=[],
                 unbacked_refs=['window-1'],
             ),
             min_runtime_ledger_net_pnl=Decimal('500'),
+            min_runtime_ledger_trading_days=25,
+            min_runtime_ledger_daily_net_pnl=Decimal('500'),
             require_runtime_ledger_profit_proof=True,
         )
 
@@ -257,10 +268,49 @@ class TestVerifyTradingReadiness(TestCase):
             'doc29_live_scale_gate_satisfied',
             'runtime_ledger_db_refs_present',
             'runtime_ledger_unbacked_windows_empty',
+            'runtime_ledger_observed_trading_days',
             'runtime_ledger_net_pnl_target',
+            'runtime_ledger_daily_net_pnl_target',
             'runtime_ledger_post_cost_expectancy_positive',
         ):
             self.assertIn(check_name, weak['failed_checks'])
+
+    def test_runtime_ledger_profit_proof_requires_observed_days_and_daily_pnl(
+        self,
+    ) -> None:
+        short_window = evaluate_trading_readiness(
+            _ready_status(),
+            completion_status=_completion_status(
+                net_pnl='15000',
+                trading_day_count=3,
+            ),
+            min_runtime_ledger_net_pnl=Decimal('12500'),
+            min_runtime_ledger_trading_days=25,
+            min_runtime_ledger_daily_net_pnl=Decimal('500'),
+            require_runtime_ledger_profit_proof=True,
+        )
+        self.assertFalse(short_window['ok'])
+        self.assertIn(
+            'runtime_ledger_observed_trading_days',
+            short_window['failed_checks'],
+        )
+
+        weak_daily = evaluate_trading_readiness(
+            _ready_status(),
+            completion_status=_completion_status(
+                net_pnl='600',
+                trading_day_count=25,
+            ),
+            min_runtime_ledger_net_pnl=Decimal('500'),
+            min_runtime_ledger_trading_days=25,
+            min_runtime_ledger_daily_net_pnl=Decimal('500'),
+            require_runtime_ledger_profit_proof=True,
+        )
+        self.assertFalse(weak_daily['ok'])
+        self.assertIn(
+            'runtime_ledger_daily_net_pnl_target',
+            weak_daily['failed_checks'],
+        )
 
     def test_live_and_either_profiles_use_live_floor_states_and_market_window(
         self,
@@ -570,6 +620,10 @@ class TestVerifyTradingReadiness(TestCase):
                     '--require-runtime-ledger-profit-proof',
                     '--min-runtime-ledger-net-pnl',
                     '500',
+                    '--min-runtime-ledger-trading-days',
+                    '25',
+                    '--min-runtime-ledger-daily-net-pnl',
+                    '20',
                 ]
             )
 
@@ -587,6 +641,17 @@ class TestVerifyTradingReadiness(TestCase):
                         str(status_path),
                         '--require-runtime-ledger-profit-proof',
                         '--min-runtime-ledger-net-pnl',
+                        'not-a-number',
+                    ]
+                )
+
+            with self.assertRaisesRegex(SystemExit, 'daily-net-pnl must be decimal'):
+                main(
+                    [
+                        '--status-file',
+                        str(status_path),
+                        '--require-runtime-ledger-profit-proof',
+                        '--min-runtime-ledger-daily-net-pnl',
                         'not-a-number',
                     ]
                 )
