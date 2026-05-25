@@ -16,7 +16,17 @@ from urllib.request import urlopen
 SCHEMA_VERSION = 'torghut.trading-readiness-verification.v1'
 ROUTE_REACQUISITION_BOARD_SCHEMA_VERSION = 'torghut.route-reacquisition-board.v1'
 ROUTE_REACQUISITION_BOOK_SCHEMA_VERSION = 'torghut.route-reacquisition-book.v1'
+NEXT_PAPER_ROUTE_TARGET_PLAN_SCHEMA_VERSION = (
+    'torghut.next-paper-route-runtime-window-targets.v1'
+)
 DOC29_LIVE_SCALE_GATE = 'live_scale_observed'
+REQUIRED_RUNTIME_WINDOW_TARGET_PLAN_FLAGS = (
+    '--runtime-window-import',
+    '--runtime-window-target-plan-url',
+    '--runtime-window-target-plan-exclusive',
+    '--runtime-window-target-plan-required',
+    '--runtime-window-target-plan-settlement-seconds',
+)
 _RUNTIME_LEDGER_TRADING_DAY_KEYS = (
     'runtime_ledger_observed_trading_day_count',
     'runtime_ledger_trading_day_count',
@@ -223,6 +233,111 @@ def _paper_route_probe_summary(
     }
 
 
+def _paper_route_target_plan_summary(
+    paper_route_evidence: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    evidence = paper_route_evidence or {}
+    plan = _mapping(evidence.get('next_paper_route_runtime_window_targets'))
+    targets = [_mapping(target) for target in _sequence(plan.get('targets'))]
+    handoff = _mapping(plan.get('runtime_window_import_handoff'))
+    session_readiness = _mapping(plan.get('session_readiness'))
+    required_flags = {
+        _text(flag) for flag in _sequence(handoff.get('required_flags')) if _text(flag)
+    }
+    missing_required_flags = [
+        flag
+        for flag in REQUIRED_RUNTIME_WINDOW_TARGET_PLAN_FLAGS
+        if flag not in required_flags
+    ]
+    import_blockers = [
+        _text(reason)
+        for reason in (
+            _sequence(handoff.get('import_blockers'))
+            or _sequence(session_readiness.get('import_blockers'))
+        )
+        if _text(reason)
+    ]
+    target_summaries: list[dict[str, Any]] = []
+    missing_identity_count = 0
+    probe_contract_count = 0
+    promotion_blocked_count = 0
+    for target in targets:
+        missing_identity = [
+            field
+            for field in (
+                'hypothesis_id',
+                'candidate_id',
+                'strategy_family',
+                'strategy_name',
+                'account_label',
+                'source_dsn_env',
+                'source_kind',
+                'window_start',
+                'window_end',
+            )
+            if not _text(target.get(field))
+        ]
+        if missing_identity:
+            missing_identity_count += 1
+        probe_symbols = [
+            _text(symbol)
+            for symbol in _sequence(target.get('paper_route_probe_symbols'))
+            if _text(symbol)
+        ]
+        probe_notional_positive = _decimal_positive(
+            target.get('paper_route_probe_next_session_max_notional')
+        )
+        if probe_symbols and probe_notional_positive:
+            probe_contract_count += 1
+        promotion_blocked = (
+            not _bool(target.get('promotion_allowed'))
+            and not _bool(target.get('final_promotion_authorized'))
+            and not _bool(target.get('final_promotion_allowed'))
+            and (_decimal(target.get('max_notional')) or Decimal('0')) == 0
+        )
+        if promotion_blocked:
+            promotion_blocked_count += 1
+        target_summaries.append(
+            {
+                'hypothesis_id': _text(target.get('hypothesis_id')),
+                'candidate_id': _text(target.get('candidate_id')),
+                'strategy_name': _text(target.get('strategy_name')),
+                'account_label': _text(target.get('account_label')),
+                'source_dsn_env': _text(target.get('source_dsn_env')),
+                'source_kind': _text(target.get('source_kind')),
+                'window_start': _text(target.get('window_start')),
+                'window_end': _text(target.get('window_end')),
+                'paper_route_probe_symbols': probe_symbols,
+                'paper_route_probe_next_session_max_notional': _text(
+                    target.get('paper_route_probe_next_session_max_notional')
+                ),
+                'promotion_blocked': promotion_blocked,
+                'missing_identity_fields': missing_identity,
+            }
+        )
+    target_count = _int(plan.get('target_count'), default=len(targets))
+    import_ready = _bool(handoff.get('import_ready')) or _bool(
+        session_readiness.get('import_ready')
+    )
+    return {
+        'present': bool(plan),
+        'schema_version': _text(plan.get('schema_version')),
+        'target_count': target_count,
+        'actual_target_count': len(targets),
+        'skipped_target_count': _int(plan.get('skipped_target_count')),
+        'session_window': _mapping(plan.get('session_window')),
+        'session_readiness_state': _text(session_readiness.get('state')),
+        'import_ready': import_ready,
+        'import_blockers': import_blockers,
+        'required_flags': sorted(required_flags),
+        'missing_required_flags': missing_required_flags,
+        'targets': target_summaries,
+        'missing_identity_count': missing_identity_count,
+        'probe_contract_count': probe_contract_count,
+        'promotion_blocked_count': promotion_blocked_count,
+    }
+
+
 def _completion_gate(
     completion_status: Mapping[str, Any], gate_id: str
 ) -> Mapping[str, Any]:
@@ -382,6 +497,7 @@ def evaluate_trading_readiness(
     status: Mapping[str, Any],
     *,
     completion_status: Mapping[str, Any] | None = None,
+    paper_route_evidence: Mapping[str, Any] | None = None,
     profile: str = 'paper',
     min_routeable_symbols: int = 2,
     min_decisions: int = 0,
@@ -392,6 +508,8 @@ def evaluate_trading_readiness(
     require_market_open: bool = True,
     require_quant_fresh: bool = True,
     require_paper_route_probe_candidate: bool = False,
+    require_paper_route_target_plan: bool = False,
+    require_paper_route_import_ready: bool = False,
     require_runtime_ledger_profit_proof: bool = False,
 ) -> dict[str, Any]:
     """Return a strict readiness verdict from a Torghut trading status payload."""
@@ -401,6 +519,7 @@ def evaluate_trading_readiness(
     proof_floor = _mapping(status.get('proof_floor'))
     dimensions = _dimension_by_name(proof_floor)
     paper_route_probe = _paper_route_probe_summary(status, proof_floor)
+    paper_route_target_plan = _paper_route_target_plan_summary(paper_route_evidence)
 
     mode = _text(status.get('mode') or status.get('trading_mode')).lower()
     if profile in {'paper', 'live'}:
@@ -681,6 +800,103 @@ def evaluate_trading_readiness(
             expected=sorted(allowed_probe_blockers),
         )
 
+    if require_paper_route_target_plan or require_paper_route_import_ready:
+        _add_check(
+            checks,
+            'paper_route_target_plan_present',
+            passed=paper_route_target_plan['present'],
+            observed=paper_route_target_plan['present'],
+            expected=True,
+        )
+        _add_check(
+            checks,
+            'paper_route_target_plan_schema_version',
+            passed=paper_route_target_plan['schema_version']
+            == NEXT_PAPER_ROUTE_TARGET_PLAN_SCHEMA_VERSION,
+            observed=paper_route_target_plan['schema_version'],
+            expected=NEXT_PAPER_ROUTE_TARGET_PLAN_SCHEMA_VERSION,
+        )
+        _add_check(
+            checks,
+            'paper_route_target_plan_targets_present',
+            passed=paper_route_target_plan['target_count'] > 0
+            and paper_route_target_plan['actual_target_count'] > 0,
+            observed={
+                'target_count': paper_route_target_plan['target_count'],
+                'actual_target_count': paper_route_target_plan['actual_target_count'],
+                'skipped_target_count': paper_route_target_plan['skipped_target_count'],
+            },
+            expected={'target_count': '>0', 'actual_target_count': '>0'},
+        )
+        _add_check(
+            checks,
+            'paper_route_target_plan_handoff_flags',
+            passed=not paper_route_target_plan['missing_required_flags'],
+            observed=paper_route_target_plan['required_flags'],
+            expected=list(REQUIRED_RUNTIME_WINDOW_TARGET_PLAN_FLAGS),
+            detail={
+                'missing_required_flags': paper_route_target_plan[
+                    'missing_required_flags'
+                ]
+            },
+        )
+        _add_check(
+            checks,
+            'paper_route_target_plan_target_identity',
+            passed=paper_route_target_plan['missing_identity_count'] == 0
+            and paper_route_target_plan['actual_target_count'] > 0,
+            observed={
+                'missing_identity_count': paper_route_target_plan[
+                    'missing_identity_count'
+                ],
+                'targets': paper_route_target_plan['targets'],
+            },
+            expected={'missing_identity_count': 0},
+        )
+        _add_check(
+            checks,
+            'paper_route_target_plan_probe_contract',
+            passed=paper_route_target_plan['probe_contract_count']
+            == paper_route_target_plan['actual_target_count']
+            and paper_route_target_plan['actual_target_count'] > 0,
+            observed={
+                'probe_contract_count': paper_route_target_plan['probe_contract_count'],
+                'targets': paper_route_target_plan['targets'],
+            },
+            expected='every_target_has_probe_symbols_and_positive_next_notional',
+        )
+        _add_check(
+            checks,
+            'paper_route_target_plan_promotion_blocked',
+            passed=paper_route_target_plan['promotion_blocked_count']
+            == paper_route_target_plan['actual_target_count']
+            and paper_route_target_plan['actual_target_count'] > 0,
+            observed={
+                'promotion_blocked_count': paper_route_target_plan[
+                    'promotion_blocked_count'
+                ],
+                'targets': paper_route_target_plan['targets'],
+            },
+            expected='every_target_zero_notional_and_not_final_promotion',
+        )
+
+    if require_paper_route_import_ready:
+        _add_check(
+            checks,
+            'paper_route_target_plan_import_ready',
+            passed=paper_route_target_plan['import_ready']
+            and not paper_route_target_plan['import_blockers'],
+            observed={
+                'import_ready': paper_route_target_plan['import_ready'],
+                'import_blockers': paper_route_target_plan['import_blockers'],
+                'session_readiness_state': paper_route_target_plan[
+                    'session_readiness_state'
+                ],
+                'session_window': paper_route_target_plan['session_window'],
+            },
+            expected={'import_ready': True, 'import_blockers': []},
+        )
+
     decisions_total = _int(metrics.get('decisions_total'))
     orders_submitted_total = _int(metrics.get('orders_submitted_total'))
     _add_check(
@@ -715,6 +931,7 @@ def evaluate_trading_readiness(
         'failed_checks': failed_checks,
         'checks': checks,
         'paper_route_probe': paper_route_probe,
+        'paper_route_target_plan': paper_route_target_plan,
         'completion_profit_proof': {
             'required': require_runtime_ledger_profit_proof,
             'gate_id': DOC29_LIVE_SCALE_GATE,
@@ -743,6 +960,16 @@ def _parser() -> argparse.ArgumentParser:
     completion_source.add_argument(
         '--completion-url',
         help='URL returning a /trading/completion/doc29 JSON payload.',
+    )
+    paper_route_evidence_source = parser.add_mutually_exclusive_group(required=False)
+    paper_route_evidence_source.add_argument(
+        '--paper-route-evidence-file',
+        type=Path,
+        help='Path to a /trading/paper-route-evidence JSON payload.',
+    )
+    paper_route_evidence_source.add_argument(
+        '--paper-route-evidence-url',
+        help='URL returning a /trading/paper-route-evidence JSON payload.',
     )
     parser.add_argument(
         '--profile', choices=('paper', 'live', 'either'), default='paper'
@@ -774,6 +1001,16 @@ def _parser() -> argparse.ArgumentParser:
         help='Require a bounded paper-route probe candidate in route_reacquisition_book.',
     )
     parser.add_argument(
+        '--require-paper-route-target-plan',
+        action='store_true',
+        help='Require /trading/paper-route-evidence to expose a next-session runtime-window target plan.',
+    )
+    parser.add_argument(
+        '--require-paper-route-import-ready',
+        action='store_true',
+        help='Require the paper-route target plan to be settlement-ready for runtime-window import.',
+    )
+    parser.add_argument(
         '--require-runtime-ledger-profit-proof',
         action='store_true',
         help='Require doc29 live-scale runtime-ledger proof from /trading/completion/doc29.',
@@ -796,6 +1033,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         url=args.completion_url,
         timeout_seconds=args.timeout_seconds,
     )
+    paper_route_evidence = _load_optional_json_object(
+        path=args.paper_route_evidence_file,
+        url=args.paper_route_evidence_url,
+        timeout_seconds=args.timeout_seconds,
+    )
     min_runtime_ledger_net_pnl = _decimal(args.min_runtime_ledger_net_pnl)
     if min_runtime_ledger_net_pnl is None:
         raise SystemExit(
@@ -810,6 +1052,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     result = evaluate_trading_readiness(
         status,
         completion_status=completion_status,
+        paper_route_evidence=paper_route_evidence,
         profile=str(args.profile),
         min_routeable_symbols=max(0, int(args.min_routeable_symbols)),
         min_decisions=max(0, int(args.min_decisions)),
@@ -824,6 +1067,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         require_paper_route_probe_candidate=bool(
             args.require_paper_route_probe_candidate
         ),
+        require_paper_route_target_plan=bool(args.require_paper_route_target_plan),
+        require_paper_route_import_ready=bool(args.require_paper_route_import_ready),
         require_runtime_ledger_profit_proof=bool(
             args.require_runtime_ledger_profit_proof
         ),

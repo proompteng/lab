@@ -166,6 +166,74 @@ def _completion_status(
     }
 
 
+def _paper_route_evidence(
+    *,
+    import_ready: bool = False,
+    import_blockers: list[str] | None = None,
+    required_flags: list[str] | None = None,
+    target_overrides: dict[str, object] | None = None,
+) -> dict[str, object]:
+    blockers = (
+        import_blockers
+        if import_blockers is not None
+        else ([] if import_ready else ['paper_route_session_window_not_open'])
+    )
+    target = {
+        'hypothesis_id': 'H-PAIRS-01',
+        'candidate_id': 'c88421d619759b2cfaa6f4d0',
+        'observed_stage': 'paper',
+        'strategy_family': 'microbar_cross_sectional_pairs',
+        'strategy_name': 'microbar-pairs-vwap-cap-safe',
+        'account_label': 'TORGHUT_SIM',
+        'source_account_label': 'TORGHUT_REPLAY',
+        'source_dsn_env': 'SIM_DB_DSN',
+        'source_kind': 'paper_route_probe_runtime_observed',
+        'dataset_snapshot_ref': 'portfolio-profit-autoresearch-500-v1',
+        'source_manifest_ref': 'config/trading/hypotheses/h-pairs-01.json',
+        'window_start': '2026-05-26T13:30:00+00:00',
+        'window_end': '2026-05-26T20:00:00+00:00',
+        'paper_route_probe_symbols': ['AAPL', 'AMZN'],
+        'paper_route_probe_next_session_max_notional': '25',
+        'promotion_allowed': False,
+        'final_promotion_authorized': False,
+        'final_promotion_allowed': False,
+        'max_notional': '0',
+    }
+    if target_overrides:
+        target.update(target_overrides)
+    flags = required_flags or list(verifier.REQUIRED_RUNTIME_WINDOW_TARGET_PLAN_FLAGS)
+    return {
+        'schema_version': 'torghut.paper-route-evidence.v1',
+        'next_paper_route_runtime_window_targets': {
+            'schema_version': verifier.NEXT_PAPER_ROUTE_TARGET_PLAN_SCHEMA_VERSION,
+            'target_count': 1,
+            'skipped_target_count': 0,
+            'session_window': {
+                'start': '2026-05-26T13:30:00+00:00',
+                'end': '2026-05-26T20:00:00+00:00',
+            },
+            'session_readiness': {
+                'state': 'import_ready' if import_ready else 'waiting_for_session_open',
+                'import_ready': import_ready,
+                'import_blockers': blockers,
+            },
+            'runtime_window_import_handoff': {
+                'runner': 'scripts/renew_latest_empirical_promotion_jobs.py',
+                'target_plan_endpoint': '/trading/paper-route-evidence',
+                'required_flags': flags,
+                'source_dsn_env': 'SIM_DB_DSN',
+                'account_label': 'TORGHUT_SIM',
+                'observed_stage': 'paper',
+                'import_ready': import_ready,
+                'import_blockers': blockers,
+                'promotion_allowed': False,
+                'final_promotion_authorized': False,
+            },
+            'targets': [target],
+        },
+    }
+
+
 class _JsonHandler(BaseHTTPRequestHandler):
     payload: ClassVar[object] = {}
 
@@ -529,6 +597,77 @@ class TestVerifyTradingReadiness(TestCase):
         self.assertEqual(
             result['paper_route_probe']['blocking_reasons'], ['market_session_closed']
         )
+
+    def test_paper_route_target_plan_can_be_required_before_session_open(self) -> None:
+        status = _ready_status()
+        metrics = status['metrics']
+        assert isinstance(metrics, dict)
+        metrics['market_session_open'] = 0
+
+        result = evaluate_trading_readiness(
+            status,
+            paper_route_evidence=_paper_route_evidence(),
+            require_market_open=False,
+            require_paper_route_target_plan=True,
+        )
+
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['paper_route_target_plan']['target_count'], 1)
+        self.assertEqual(
+            result['paper_route_target_plan']['import_blockers'],
+            ['paper_route_session_window_not_open'],
+        )
+        self.assertEqual(
+            result['paper_route_target_plan']['missing_required_flags'], []
+        )
+        self.assertEqual(result['paper_route_target_plan']['missing_identity_count'], 0)
+
+    def test_paper_route_target_plan_fails_closed_on_missing_handoff_or_identity(
+        self,
+    ) -> None:
+        result = evaluate_trading_readiness(
+            _ready_status(),
+            paper_route_evidence=_paper_route_evidence(
+                required_flags=['--runtime-window-import'],
+                target_overrides={
+                    'strategy_name': '',
+                    'paper_route_probe_symbols': [],
+                    'promotion_allowed': True,
+                    'max_notional': '25',
+                },
+            ),
+            require_paper_route_target_plan=True,
+        )
+
+        self.assertFalse(result['ok'])
+        self.assertIn('paper_route_target_plan_handoff_flags', result['failed_checks'])
+        self.assertIn(
+            'paper_route_target_plan_target_identity', result['failed_checks']
+        )
+        self.assertIn('paper_route_target_plan_probe_contract', result['failed_checks'])
+        self.assertIn(
+            'paper_route_target_plan_promotion_blocked', result['failed_checks']
+        )
+
+    def test_paper_route_import_ready_is_separate_from_target_plan_presence(
+        self,
+    ) -> None:
+        waiting = evaluate_trading_readiness(
+            _ready_status(),
+            paper_route_evidence=_paper_route_evidence(),
+            require_paper_route_target_plan=True,
+            require_paper_route_import_ready=True,
+        )
+        self.assertFalse(waiting['ok'])
+        self.assertIn('paper_route_target_plan_import_ready', waiting['failed_checks'])
+
+        ready = evaluate_trading_readiness(
+            _ready_status(),
+            paper_route_evidence=_paper_route_evidence(import_ready=True),
+            require_paper_route_target_plan=True,
+            require_paper_route_import_ready=True,
+        )
+        self.assertTrue(ready['ok'], ready)
 
     def test_required_paper_route_probe_candidate_fails_without_bounded_candidate(
         self,

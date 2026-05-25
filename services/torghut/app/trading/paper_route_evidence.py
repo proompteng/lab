@@ -60,6 +60,15 @@ def _as_sequence(value: object) -> Sequence[object]:
     return ()
 
 
+def _unique_text_items(value: object) -> list[str]:
+    items: list[str] = []
+    for raw_item in _as_sequence(value):
+        item = str(raw_item).strip()
+        if item and item not in items:
+            items.append(item)
+    return items
+
+
 def _as_mapping_items(value: object) -> list[dict[str, Any]]:
     return [
         _as_mapping(cast(object, item))
@@ -378,23 +387,13 @@ def _target_identity(target: Mapping[str, Any]) -> dict[str, object]:
         "promotion_allowed": False,
         "final_promotion_allowed": False,
         "max_notional": _safe_text(target.get("max_notional")) or "0",
-        "final_promotion_blockers": [
-            str(item).strip()
-            for item in _as_sequence(target.get("final_promotion_blockers"))
-            if str(item).strip()
-        ],
-        "candidate_blockers": [
-            str(item).strip()
-            for item in _as_sequence(target.get("candidate_blockers"))
-            if str(item).strip()
-        ],
-        "runtime_ledger_target_metadata_blockers": [
-            str(item).strip()
-            for item in _as_sequence(
-                target.get("runtime_ledger_target_metadata_blockers")
-            )
-            if str(item).strip()
-        ],
+        "final_promotion_blockers": _unique_text_items(
+            target.get("final_promotion_blockers")
+        ),
+        "candidate_blockers": _unique_text_items(target.get("candidate_blockers")),
+        "runtime_ledger_target_metadata_blockers": _unique_text_items(
+            target.get("runtime_ledger_target_metadata_blockers")
+        ),
     }
 
 
@@ -540,14 +539,12 @@ def _next_paper_route_runtime_window_targets(
                 "paper_route_runtime_ledger_import_pending",
                 "live_runtime_ledger_required",
             ],
-            "candidate_blockers": [
-                "paper_route_runtime_ledger_import_pending",
-                *[
-                    str(item).strip()
-                    for item in _as_sequence(target.get("candidate_blockers"))
-                    if str(item).strip()
-                ],
-            ],
+            "candidate_blockers": _unique_text_items(
+                [
+                    "paper_route_runtime_ledger_import_pending",
+                    *_unique_text_items(target.get("candidate_blockers")),
+                ]
+            ),
             "runtime_ledger_target_metadata_blockers": [
                 "paper_route_runtime_ledger_import_pending",
                 "live_runtime_ledger_required",
