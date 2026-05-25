@@ -446,6 +446,73 @@ class TestWhitepaperCandidateCompiler(TestCase):
             )
         )
 
+    def test_alphacrafter_factor_loop_claims_compile_to_executable_overlay(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-arxiv-2605.05580",
+            claims=[
+                {
+                    "claim_id": "adaptive-factor-to-execution-loop",
+                    "claim_type": "portfolio_construction",
+                    "claim_text": (
+                        "AlphaCrafter adaptive factor-to-execution loops combine continuous "
+                        "factor mining, adaptive factor screening, and risk-constrained execution."
+                    ),
+                    "data_requirements": [
+                        "continuous_factor_mining",
+                        "factor_pool_expansion",
+                        "adaptive_factor_screener",
+                        "regime_adaptive_factor_ensemble",
+                        "risk_constrained_execution",
+                    ],
+                    "confidence": "0.74",
+                },
+                {
+                    "claim_id": "adaptive-loop-runtime-ledger-validation",
+                    "claim_type": "validation_requirement",
+                    "claim_text": (
+                        "Agentic factor discovery and screening can only rank replay candidates; "
+                        "promotion still requires walk-forward replay, explicit costs, and "
+                        "runtime-ledger proof."
+                    ),
+                    "data_requirements": [
+                        "portfolio_replay",
+                        "walk_forward_replay",
+                        "transaction_cost_stress",
+                        "post_cost_net_pnl",
+                        "runtime_ledger_profit_proof",
+                    ],
+                    "confidence": "0.76",
+                },
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        self.assertTrue(compilation.executable_specs)
+        self.assertFalse(
+            [
+                blocker
+                for blocker in compilation.blockers
+                if blocker.reason == "required_features_missing_from_family_template"
+            ]
+        )
+        self.assertTrue(
+            all(
+                "adaptive_factor_to_execution_loop"
+                in spec.parameter_space.get("mechanism_overlay_ids", [])
+                for spec in compilation.executable_specs
+            )
+        )
+        self.assertTrue(
+            all(
+                spec.promotion_contract.get("rejects_agentic_search_only_promotion")
+                for spec in compilation.executable_specs
+            )
+        )
+
     def test_may_2026_toxicity_and_options_aliases_compile_to_runtime_families(
         self,
     ) -> None:

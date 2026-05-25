@@ -958,6 +958,99 @@ class TestMlxTrainingData(TestCase):
         self.assertEqual(features["paper_promotion_requires_count"], 3.0)
         self.assertEqual(features["paper_promotion_rejects_count"], 1.0)
 
+    def test_training_rows_encode_adaptive_factor_loop_contract(self) -> None:
+        spec = CandidateSpec(
+            schema_version="torghut.candidate-spec.v1",
+            candidate_spec_id="spec-alphacrafter-factor-loop",
+            hypothesis_id="H-ALPHACRAFTER",
+            family_template_id="microbar_cross_sectional_pairs_v1",
+            candidate_kind="configuration",
+            runtime_family="microbar_cross_sectional_pairs",
+            runtime_strategy_name="microbar-cross-sectional-pairs-v1",
+            feature_contract={
+                "source_claims": [
+                    {
+                        "claim_id": "adaptive-factor-to-execution-loop",
+                        "claim_type": "portfolio_construction",
+                        "confidence": "0.74",
+                        "data_requirements": [
+                            "continuous_factor_mining",
+                            "factor_pool_expansion",
+                            "adaptive_factor_screener",
+                            "regime_adaptive_factor_ensemble",
+                            "risk_constrained_execution",
+                        ],
+                    }
+                ],
+                "validation_requirements": [
+                    {
+                        "claim_id": "adaptive-loop-runtime-ledger-validation",
+                        "data_requirements": [
+                            "portfolio_replay",
+                            "walk_forward_replay",
+                            "transaction_cost_stress",
+                            "post_cost_net_pnl",
+                            "runtime_ledger_profit_proof",
+                        ],
+                    }
+                ],
+                "mechanism_overlays": [
+                    {
+                        "overlay_id": "adaptive_factor_to_execution_loop",
+                        "required_evidence": [
+                            "continuous_factor_mining",
+                            "factor_pool_expansion",
+                            "adaptive_factor_screener",
+                            "regime_adaptive_factor_ensemble",
+                            "risk_constrained_execution",
+                            "portfolio_replay",
+                            "walk_forward_replay",
+                            "transaction_cost_stress",
+                            "post_cost_net_pnl",
+                            "runtime_ledger_profit_proof",
+                        ],
+                    }
+                ],
+            },
+            parameter_space={
+                "mechanism_overlay_ids": ["adaptive_factor_to_execution_loop"]
+            },
+            strategy_overrides={
+                "max_notional_per_trade": "25000",
+                "max_position_pct_equity": "0.25",
+                "params": {
+                    "capital_profile": "initial_equity_cash_constrained_1x",
+                    "max_entries_per_session": "2",
+                    "max_gross_exposure_pct_equity": "1.0",
+                },
+            },
+            objective={"target_net_pnl_per_day": "500"},
+            hard_vetoes={"required_min_daily_notional": "250000"},
+            expected_failure_modes=(),
+            promotion_contract={
+                "requires_adaptive_factor_to_execution_loop": True,
+                "requires_risk_constrained_execution": True,
+                "requires_runtime_ledger_profit_proof": True,
+                "rejects_agentic_search_only_promotion": True,
+                "rejects_static_one_shot_factor_mining": True,
+            },
+        )
+
+        rows = build_mlx_training_rows(candidate_specs=[spec], evidence_bundles=[])
+        features = rows[0].to_payload()["features"]
+
+        self.assertEqual(
+            features["paper_overlay_adaptive_factor_to_execution_loop"], 1.0
+        )
+        self.assertEqual(features["paper_requires_adaptive_factor_screener"], 1.0)
+        self.assertEqual(features["paper_requires_continuous_factor_mining"], 1.0)
+        self.assertEqual(
+            features["paper_requires_risk_constrained_execution_loop"], 1.0
+        )
+        self.assertEqual(features["paper_requires_portfolio_replay"], 1.0)
+        self.assertEqual(features["paper_promotion_requires_count"], 3.0)
+        self.assertEqual(features["paper_promotion_rejects_count"], 2.0)
+
     def test_training_rows_encode_crumbling_quote_overlay_contract(self) -> None:
         spec = CandidateSpec(
             schema_version="torghut.candidate-spec.v1",

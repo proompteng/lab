@@ -17,7 +17,7 @@ from app.trading.discovery.objectives import (
     deployable_proof_failed_gate_count,
 )
 
-MLX_RANKER_SCHEMA_VERSION = "torghut.mlx-ranker.v6"
+MLX_RANKER_SCHEMA_VERSION = "torghut.mlx-ranker.v7"
 
 _MECHANISM_OVERLAY_IDS = (
     "cluster_lob_event_clustering",
@@ -26,6 +26,7 @@ _MECHANISM_OVERLAY_IDS = (
     "mpc_dynamic_execution_schedule",
     "alpha_decay_predictability_stress",
     "friction_aware_regime_conditioned_policy",
+    "adaptive_factor_to_execution_loop",
     "regime_weighted_conformal_cost_buffer",
     "risk_aware_trading_portfolio_optimization",
     "double_selection_factor_screen",
@@ -76,6 +77,9 @@ _PAPER_CONTRACT_FEATURE_NAMES = (
     "paper_requires_cost_misspecification_stress",
     "paper_requires_liquidity_proxy_cost_calibration",
     "paper_requires_scenario_level_inference",
+    "paper_requires_adaptive_factor_screener",
+    "paper_requires_continuous_factor_mining",
+    "paper_requires_risk_constrained_execution_loop",
     "paper_requires_portfolio_replay",
     "paper_requires_market_risk_var",
     "paper_requires_market_sensitivity_constraints",
@@ -541,6 +545,30 @@ def _paper_contract_feature_values(spec: CandidateSpec) -> Mapping[str, float]:
                 "scenario_level_inference",
                 "multiple_testing_correction",
                 "bootstrap_confidence_interval",
+            ),
+        ),
+        "paper_requires_adaptive_factor_screener": _requirement_present(
+            contract_requirements,
+            (
+                "adaptive_factor_screener",
+                "regime_adaptive_factor_ensemble",
+                "factor_pool_expansion",
+            ),
+        ),
+        "paper_requires_continuous_factor_mining": _requirement_present(
+            contract_requirements,
+            (
+                "continuous_factor_mining",
+                "factor_pool_expansion",
+                "continuous_candidate_refresh",
+            ),
+        ),
+        "paper_requires_risk_constrained_execution_loop": _requirement_present(
+            contract_requirements,
+            (
+                "risk_constrained_execution",
+                "adaptive_factor_to_execution_loop",
+                "factor_to_execution_loop",
             ),
         ),
         "paper_requires_portfolio_replay": _requirement_present(

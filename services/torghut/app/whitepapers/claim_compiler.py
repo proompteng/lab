@@ -2029,6 +2029,62 @@ RECENT_WHITEPAPER_SEEDS: tuple[WhitepaperResearchSource, ...] = (
             },
         ),
     ),
+    WhitepaperResearchSource(
+        run_id="seed-arxiv-2605-05580",
+        title="AlphaCrafter: A Full-Stack Multi-Agent Framework for Cross-Sectional Quantitative Trading",
+        source_url="https://arxiv.org/abs/2605.05580",
+        published_at="2026-05-07",
+        claims=(
+            {
+                "claim_id": "adaptive-factor-to-execution-loop",
+                "claim_type": "portfolio_construction",
+                "claim_text": (
+                    "AlphaCrafter-style adaptive factor-to-execution loops combine continuous "
+                    "factor mining, adaptive factor screening, and risk-constrained execution "
+                    "instead of treating alpha discovery as a one-shot static search."
+                ),
+                "asset_scope": "us_equities_cross_section",
+                "horizon_scope": "cross_sectional_portfolio",
+                "expected_direction": "positive",
+                "data_requirements": [
+                    "continuous_factor_mining",
+                    "factor_pool_expansion",
+                    "adaptive_factor_screener",
+                    "regime_adaptive_factor_ensemble",
+                    "risk_constrained_execution",
+                ],
+                "confidence": "0.74",
+            },
+            {
+                "claim_id": "adaptive-loop-runtime-ledger-validation",
+                "claim_type": "validation_requirement",
+                "claim_text": (
+                    "Agentic factor discovery and screening can only rank replay candidates; "
+                    "promotion still requires walk-forward replay, explicit costs, and "
+                    "runtime-ledger/live-paper proof."
+                ),
+                "asset_scope": "us_equities_cross_section",
+                "horizon_scope": "cross_sectional_portfolio_validation",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "portfolio_replay",
+                    "walk_forward_replay",
+                    "transaction_cost_stress",
+                    "post_cost_net_pnl",
+                    "runtime_ledger_profit_proof",
+                ],
+                "confidence": "0.76",
+            },
+        ),
+        claim_relations=(
+            {
+                "relation_id": "adaptive-factor-loop-requires-ledger-validation",
+                "relation_type": "requires_validation",
+                "source_claim_id": "adaptive-loop-runtime-ledger-validation",
+                "target_claim_id": "adaptive-factor-to-execution-loop",
+            },
+        ),
+    ),
 )
 
 

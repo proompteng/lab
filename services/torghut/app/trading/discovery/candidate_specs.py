@@ -3634,6 +3634,73 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
 
     if has_any(
         (
+            "alphacrafter",
+            "adaptive factor-to-execution",
+            "factor-to-execution",
+            "adaptive factor screener",
+            "continuous factor mining",
+            "factor pool expansion",
+            "regime-adaptive factor",
+            "regime adaptive factor",
+            "risk-constrained execution",
+            "risk constrained execution",
+            "continuous candidate refresh",
+            "miner screener trader",
+            "factor discovery loop",
+            "closed-loop cross-sectional trading",
+        )
+    ):
+        overlay_ids.append("adaptive_factor_to_execution_loop")
+        overlay_contracts.append(
+            {
+                "overlay_id": "adaptive_factor_to_execution_loop",
+                "required_evidence": [
+                    "continuous_factor_mining",
+                    "factor_pool_expansion",
+                    "adaptive_factor_screener",
+                    "regime_adaptive_factor_ensemble",
+                    "risk_constrained_execution",
+                    "portfolio_replay",
+                    "walk_forward_replay",
+                    "transaction_cost_stress",
+                    "post_cost_net_pnl",
+                    "runtime_ledger_profit_proof",
+                ],
+                "rank_metric": "adaptive_factor_loop_post_cost_net_pnl_per_day",
+                "evidence_policy": (
+                    "adaptive_factor_loop_is_search_prefilter_not_promotion_proof"
+                ),
+            }
+        )
+        hard_vetoes.update(
+            {
+                "required_adaptive_factor_to_execution_loop": True,
+                "required_continuous_factor_mining": True,
+                "required_adaptive_factor_screener": True,
+                "required_regime_adaptive_factor_ensemble": True,
+                "required_risk_constrained_execution": True,
+                "required_post_cost_replay": True,
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_adaptive_factor_to_execution_loop": True,
+                "requires_continuous_factor_mining": True,
+                "requires_adaptive_factor_screener": True,
+                "requires_regime_adaptive_factor_ensemble": True,
+                "requires_risk_constrained_execution": True,
+                "requires_portfolio_replay": True,
+                "requires_post_cost_net_pnl": True,
+                "requires_runtime_ledger_profit_proof": True,
+                "rejects_agentic_search_only_promotion": True,
+                "rejects_factor_screen_only_promotion": True,
+                "rejects_static_one_shot_factor_mining": True,
+                "risk_policy": "adaptive_factor_to_execution_loop_validation_only",
+            }
+        )
+
+    if has_any(
+        (
             "regime-weighted conformal",
             "regime weighted conformal",
             "regime_weighted_conformal",
