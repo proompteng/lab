@@ -2,7 +2,6 @@ import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-r
 import type { ReactNode } from 'react'
 
 import '../index.css'
-import { TooltipProvider } from '@proompteng/design/ui'
 
 export const Route = createRootRoute({
   head: () => ({
@@ -25,12 +24,12 @@ function RootComponent() {
 
 function RootDocument({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className="dark" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <head>
         <HeadContent />
       </head>
-      <body className="h-dvh overflow-hidden bg-neutral-950 text-neutral-100">
-        <TooltipProvider>{children}</TooltipProvider>
+      <body className="h-dvh overflow-hidden bg-[#f4f1ea] text-[#201c18]">
+        {children}
         <Scripts />
       </body>
     </html>
