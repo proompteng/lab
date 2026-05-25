@@ -3,8 +3,9 @@ import { useEffect, useState } from 'react'
 
 import { fetchPrimitiveResource } from '../control-plane/api-client'
 import { findPrimitiveDefinition } from '../control-plane/registry'
+import { ControlPlanePage } from '../components/control-plane/control-plane-page'
 import { Alert, AlertDescription } from '../components/ui/alert'
-import { Badge } from '../components/ui/badge'
+import { Skeleton } from '../components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 
 export const Route = createFileRoute('/primitives/$kind/$namespace/$name')({
@@ -35,16 +36,7 @@ function PrimitiveDetailPage() {
   }
 
   return (
-    <div className="mx-auto flex max-w-7xl flex-col gap-6 p-4 md:p-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-semibold tracking-normal">{name}</h1>
-            <Badge variant="outline">{primitive.display.label}</Badge>
-          </div>
-          <p className="text-sm text-muted-foreground">{namespace}</p>
-        </div>
-      </div>
+    <ControlPlanePage>
       {error ? (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
@@ -56,16 +48,57 @@ function PrimitiveDetailPage() {
           <TabsTrigger value="status">Status</TabsTrigger>
         </TabsList>
         <TabsContent value="manifest" className="rounded-md border bg-background">
-          <pre className="max-h-[70vh] overflow-auto p-4 text-xs leading-relaxed">
-            {resource ? JSON.stringify(resource, null, 2) : 'Loading...'}
-          </pre>
+          {resource ? (
+            <pre className="max-h-[70vh] overflow-auto p-4 text-xs leading-relaxed">
+              {JSON.stringify(resource, null, 2)}
+            </pre>
+          ) : (
+            <ManifestSkeleton />
+          )}
         </TabsContent>
         <TabsContent value="status" className="rounded-md border bg-background">
-          <pre className="max-h-[70vh] overflow-auto p-4 text-xs leading-relaxed">
-            {resource ? JSON.stringify((resource.status as unknown) ?? {}, null, 2) : 'Loading...'}
-          </pre>
+          {resource ? (
+            <pre className="max-h-[70vh] overflow-auto p-4 text-xs leading-relaxed">
+              {JSON.stringify((resource.status as unknown) ?? {}, null, 2)}
+            </pre>
+          ) : (
+            <ManifestSkeleton />
+          )}
         </TabsContent>
       </Tabs>
+    </ControlPlanePage>
+  )
+}
+
+function ManifestSkeleton() {
+  return (
+    <div className="p-4 font-mono text-xs leading-relaxed">
+      <CodeSkeletonLine prefix="{" width="w-0" />
+      <CodeSkeletonLine indent={1} prefix='"apiVersion":' width="w-36" />
+      <CodeSkeletonLine indent={1} prefix='"kind":' width="w-24" />
+      <CodeSkeletonLine indent={1} prefix='"metadata": {' width="w-0" />
+      <CodeSkeletonLine indent={2} prefix='"name":' width="w-44" />
+      <CodeSkeletonLine indent={2} prefix='"namespace":' width="w-28" />
+      <CodeSkeletonLine indent={1} prefix="}," width="w-0" />
+      <CodeSkeletonLine indent={1} prefix='"spec": {' width="w-0" />
+      <CodeSkeletonLine indent={2} prefix='"agentRef":' width="w-40" />
+      <CodeSkeletonLine indent={2} prefix='"parameters":' width="w-56" />
+      <CodeSkeletonLine indent={1} prefix="}," width="w-0" />
+      <CodeSkeletonLine indent={1} prefix='"status": {' width="w-0" />
+      <CodeSkeletonLine indent={2} prefix='"conditions":' width="w-48" />
+      <CodeSkeletonLine indent={1} prefix="}" width="w-0" />
+      <CodeSkeletonLine prefix="}" width="w-0" />
+    </div>
+  )
+}
+
+function CodeSkeletonLine({ indent = 0, prefix, width }: { indent?: number; prefix: string; width: string }) {
+  const indentClass = indent === 2 ? 'pl-8' : indent === 1 ? 'pl-4' : ''
+
+  return (
+    <div className={`flex min-h-5 items-center gap-2 ${indentClass}`}>
+      <span className="text-muted-foreground">{prefix}</span>
+      {width === 'w-0' ? null : <Skeleton className={`h-3 ${width} max-w-full`} />}
     </div>
   )
 }

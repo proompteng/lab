@@ -1,9 +1,34 @@
 import { Link, useLocation } from '@tanstack/react-router'
-import { BoxesIcon, ChevronRightIcon, Layers3Icon } from 'lucide-react'
+import {
+  BotIcon,
+  BoxesIcon,
+  CalendarClockIcon,
+  CirclePlayIcon,
+  DatabaseIcon,
+  FileTextIcon,
+  FolderIcon,
+  GitBranchIcon,
+  GitPullRequestIcon,
+  HomeIcon,
+  KeyRoundIcon,
+  ListChecksIcon,
+  NetworkIcon,
+  PackageIcon,
+  PlusIcon,
+  PlugZapIcon,
+  RadioIcon,
+  SendIcon,
+  ShieldCheckIcon,
+  TerminalIcon,
+  WalletCardsIcon,
+  WorkflowIcon,
+  WrenchIcon,
+  type LucideIcon,
+} from 'lucide-react'
 import { Fragment, type ReactNode } from 'react'
 
-import { findPrimitiveDefinition, primitiveRegistry } from '../../control-plane/registry'
-import type { ControlPlanePrimitiveRegistryEntry } from '../../control-plane/primitive-registry.generated'
+import { getPrimitiveGroups } from '../../control-plane/primitive-groups'
+import { findPrimitiveDefinition } from '../../control-plane/registry'
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -12,7 +37,6 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from '../ui/breadcrumb'
-import { Separator } from '../ui/separator'
 import {
   Sidebar,
   SidebarContent,
@@ -28,27 +52,50 @@ import {
   SidebarRail,
   SidebarTrigger,
 } from '../ui/sidebar'
+import { Button } from '../ui/button'
 import { TooltipProvider } from '../ui/tooltip'
 
 type BreadcrumbEntry = {
   label: string
   to?: string
+  icon?: LucideIcon
 }
 
-const groupedPrimitives = primitiveRegistry.reduce(
-  (groups, entry) => {
-    const category = entry.display.category
-    groups[category] ??= []
-    groups[category].push(entry)
-    return groups
-  },
-  {} as Record<string, ControlPlanePrimitiveRegistryEntry[]>,
-)
+type HeaderPrimaryAction = {
+  label: string
+  kind: string
+}
+
+const primitiveSidebarIcons: Record<string, LucideIcon> = {
+  agent: BotIcon,
+  'agent-provider': PlugZapIcon,
+  'agent-run': CirclePlayIcon,
+  'implementation-source': GitBranchIcon,
+  'implementation-spec': FileTextIcon,
+  'version-control-provider': GitPullRequestIcon,
+  workspace: FolderIcon,
+  orchestration: WorkflowIcon,
+  'orchestration-run': ListChecksIcon,
+  schedule: CalendarClockIcon,
+  swarm: NetworkIcon,
+  tool: WrenchIcon,
+  'tool-run': TerminalIcon,
+  signal: RadioIcon,
+  'signal-delivery': SendIcon,
+  memory: DatabaseIcon,
+  artifact: PackageIcon,
+  'approval-policy': ShieldCheckIcon,
+  budget: WalletCardsIcon,
+  'secret-binding': KeyRoundIcon,
+}
 
 const breadcrumbEntries = (pathname: string): BreadcrumbEntry[] => {
   const segments = pathname.split('/').filter(Boolean)
-  const entries: BreadcrumbEntry[] = [{ label: 'Primitives', to: '/primitives' }]
+  if (segments.length === 0) return [{ label: 'Home', icon: HomeIcon }]
+  const entries: BreadcrumbEntry[] = [{ label: 'Home', to: '/', icon: HomeIcon }]
   if (segments[0] !== 'primitives') return entries
+
+  entries.push({ label: 'Primitives', to: '/primitives' })
 
   const primitive = findPrimitiveDefinition(segments[1])
   if (primitive) {
@@ -68,51 +115,71 @@ const breadcrumbEntries = (pathname: string): BreadcrumbEntry[] => {
   return entries
 }
 
+const headerPrimaryAction = (pathname: string): HeaderPrimaryAction | null => {
+  const segments = pathname.split('/').filter(Boolean)
+  if (segments.length === 0) {
+    return { label: 'AgentRun', kind: 'agent-run' }
+  }
+  if (segments[0] !== 'primitives' || !segments[1] || segments[2] === 'new') return null
+  const primitive = findPrimitiveDefinition(segments[1])
+  return primitive ? { label: 'New', kind: primitive.display.pathSegment } : null
+}
+
 export function ControlPlaneShell({ children }: { children: ReactNode }) {
   const location = useLocation()
+  const [sectionSegment, primitiveSegment] = location.pathname.split('/').filter(Boolean)
   const entries = breadcrumbEntries(location.pathname)
+  const primaryAction = headerPrimaryAction(location.pathname)
+  const sidebarGroups = getPrimitiveGroups()
 
   return (
     <TooltipProvider delayDuration={150}>
       <SidebarProvider>
-        <Sidebar collapsible="icon">
+        <Sidebar collapsible="icon" className="group-data-[side=left]:!border-r-0">
           <SidebarHeader>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton size="lg" asChild>
-                  <Link to="/primitives">
-                    <div className="flex aspect-square size-8 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground">
-                      <BoxesIcon className="size-4" />
-                    </div>
-                    <div className="grid flex-1 text-left text-sm leading-tight">
-                      <span className="truncate font-medium">Agents</span>
-                      <span className="truncate text-xs text-muted-foreground">Control plane</span>
-                    </div>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
+            <div className="flex items-center gap-1 group-data-[collapsible=icon]:justify-center">
+              <SidebarMenu className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
+                <SidebarMenuItem>
+                  <SidebarMenuButton size="default" asChild>
+                    <Link to="/">
+                      <BoxesIcon />
+                      <div className="grid flex-1 text-left text-sm leading-tight">
+                        <span className="truncate font-medium">Agents</span>
+                      </div>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+              <SidebarTrigger className="shrink-0" />
+            </div>
           </SidebarHeader>
           <SidebarContent>
-            {Object.entries(groupedPrimitives).map(([category, entries]) => (
-              <SidebarGroup key={category}>
-                <SidebarGroupLabel>{category}</SidebarGroupLabel>
+            {sidebarGroups.map((group) => (
+              <SidebarGroup key={group.label} className="px-2 py-1">
+                <SidebarGroupLabel className="h-6 px-2 text-[0.68rem] font-medium uppercase tracking-normal">
+                  {group.label}
+                </SidebarGroupLabel>
                 <SidebarGroupContent>
                   <SidebarMenu>
-                    {entries.map((entry) => (
-                      <SidebarMenuItem key={entry.kind}>
-                        <SidebarMenuButton
-                          asChild
-                          isActive={location.pathname.startsWith(`/primitives/${entry.display.pathSegment}`)}
-                          tooltip={entry.display.label}
-                        >
-                          <Link to="/primitives/$kind" params={{ kind: entry.display.pathSegment }}>
-                            <Layers3Icon className="size-4" />
-                            <span>{entry.display.label}</span>
-                          </Link>
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
-                    ))}
+                    {group.entries.map((entry) => {
+                      const PrimitiveIcon = primitiveSidebarIcons[entry.display.pathSegment] ?? BoxesIcon
+                      return (
+                        <SidebarMenuItem key={entry.kind}>
+                          <SidebarMenuButton
+                            asChild
+                            isActive={sectionSegment === 'primitives' && primitiveSegment === entry.display.pathSegment}
+                            size="sm"
+                            tooltip={entry.display.label}
+                            className="rounded-md bg-transparent hover:bg-sidebar-accent/60 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground"
+                          >
+                            <Link to="/primitives/$kind" params={{ kind: entry.display.pathSegment }}>
+                              <PrimitiveIcon className="size-4" />
+                              <span>{entry.display.label}</span>
+                            </Link>
+                          </SidebarMenuButton>
+                        </SidebarMenuItem>
+                      )
+                    })}
                   </SidebarMenu>
                 </SidebarGroupContent>
               </SidebarGroup>
@@ -121,32 +188,70 @@ export function ControlPlaneShell({ children }: { children: ReactNode }) {
           <SidebarRail />
         </Sidebar>
         <SidebarInset>
-          <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-background px-4">
-            <SidebarTrigger className="-ml-1" />
-            <Separator orientation="vertical" className="mr-2 data-vertical:h-4" />
-            <Breadcrumb>
-              <BreadcrumbList>
-                {entries.map((entry, index) => (
-                  <Fragment key={`${entry.label}-${index}`}>
-                    {index > 0 ? <BreadcrumbSeparator className="hidden md:block" /> : null}
-                    <BreadcrumbItem>
-                      {entry.to && index < entries.length - 1 ? (
-                        <BreadcrumbLink asChild>
-                          <a href={entry.to}>{entry.label}</a>
-                        </BreadcrumbLink>
-                      ) : (
-                        <BreadcrumbPage>{entry.label}</BreadcrumbPage>
-                      )}
-                    </BreadcrumbItem>
-                  </Fragment>
-                ))}
-              </BreadcrumbList>
-            </Breadcrumb>
-            <ChevronRightIcon className="ml-auto hidden size-4 text-muted-foreground sm:block" />
+          <header className="flex h-12 shrink-0 items-center gap-3 border-b bg-background px-4">
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <Breadcrumb className="min-w-0">
+                <BreadcrumbList>
+                  {entries.map((entry, index) => (
+                    <BreadcrumbEntryView
+                      key={`${entry.label}-${index}`}
+                      entry={entry}
+                      index={index}
+                      entries={entries}
+                    />
+                  ))}
+                </BreadcrumbList>
+              </Breadcrumb>
+            </div>
+            {primaryAction ? (
+              <Button asChild size="sm">
+                <Link to="/primitives/$kind/new" params={{ kind: primaryAction.kind }}>
+                  <PlusIcon data-icon="inline-start" />
+                  {primaryAction.label}
+                </Link>
+              </Button>
+            ) : null}
           </header>
-          <main className="min-w-0 flex-1 bg-muted/20">{children}</main>
+          <main className="min-w-0 flex-1 bg-background">{children}</main>
         </SidebarInset>
       </SidebarProvider>
     </TooltipProvider>
+  )
+}
+
+function BreadcrumbEntryView({
+  entry,
+  index,
+  entries,
+}: {
+  entry: BreadcrumbEntry
+  index: number
+  entries: BreadcrumbEntry[]
+}) {
+  const Icon = entry.icon
+  const content = Icon ? (
+    <>
+      <Icon className="size-4" aria-hidden="true" />
+      <span className="sr-only">{entry.label}</span>
+    </>
+  ) : (
+    entry.label
+  )
+
+  return (
+    <Fragment>
+      {index > 0 ? <BreadcrumbSeparator className="hidden md:block" /> : null}
+      <BreadcrumbItem>
+        {entry.to && index < entries.length - 1 ? (
+          <BreadcrumbLink asChild>
+            <a href={entry.to} aria-label={Icon ? entry.label : undefined}>
+              {content}
+            </a>
+          </BreadcrumbLink>
+        ) : (
+          <BreadcrumbPage aria-label={Icon ? entry.label : undefined}>{content}</BreadcrumbPage>
+        )}
+      </BreadcrumbItem>
+    </Fragment>
   )
 }
