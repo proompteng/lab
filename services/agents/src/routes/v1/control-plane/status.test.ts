@@ -122,6 +122,11 @@ describe('control-plane status route', () => {
         schema_version: 'agents.controller-ingestion-settlement.v1',
         namespace: 'platform',
       },
+      authority_provenance_settlement: {
+        schema_version: 'jangar.authority-provenance-settlement.v1',
+        namespace: 'platform',
+        evidence_mode: 'shadow',
+      },
       workflows: { active_job_runs: 2, data_confidence: 'high' },
       rollout_health: { status: 'healthy', observed_deployments: 2 },
       watch_reliability: { status: 'healthy', observed_streams: 1, total_events: 4 },
@@ -141,6 +146,12 @@ describe('control-plane status route', () => {
       service: 'agents',
       runtime_kits: expect.arrayContaining([expect.objectContaining({ kit_class: 'serving' })]),
       admission_passports: expect.arrayContaining([expect.objectContaining({ consumer_class: 'serving' })]),
+      authority_provenance_settlement: expect.objectContaining({
+        action_class_decisions: expect.arrayContaining([
+          expect.objectContaining({ action_class: 'deploy_widen' }),
+          expect.objectContaining({ action_class: 'merge_ready' }),
+        ]),
+      }),
       controllers: expect.arrayContaining([expect.objectContaining({ name: 'agents-controller' })]),
       database: expect.any(Object),
     })

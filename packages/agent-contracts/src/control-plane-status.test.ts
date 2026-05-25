@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  buildAuthorityProvenanceSettlement,
   buildControlPlaneControllerIngestionSettlement,
   isControlPlaneHeartbeatFresh,
   type AgentRunIngestionStatus,
   type ControlPlaneControllerWitnessQuorum,
   type ControlPlaneRolloutHealth,
+  type ControlPlaneWatchReliability,
   type ControlPlaneSourceServingSnapshot,
   type DatabaseStatus,
+  type WorkflowsReliabilityStatus,
 } from './control-plane-status'
 import type { ExecutionTrustStatus } from './execution-trust'
 
@@ -86,6 +89,31 @@ const rolloutHealth = (overrides: Partial<ControlPlaneRolloutHealth> = {}): Cont
   ...overrides,
 })
 
+const watchReliability = (overrides: Partial<ControlPlaneWatchReliability> = {}): ControlPlaneWatchReliability => ({
+  status: 'healthy',
+  window_minutes: 15,
+  observed_streams: 1,
+  total_events: 10,
+  total_errors: 0,
+  total_restarts: 0,
+  streams: [],
+  ...overrides,
+})
+
+const workflows = (overrides: Partial<WorkflowsReliabilityStatus> = {}): WorkflowsReliabilityStatus => ({
+  active_job_runs: 1,
+  recent_failed_jobs: 0,
+  backoff_limit_exceeded_jobs: 0,
+  window_minutes: 60,
+  top_failure_reasons: [],
+  data_confidence: 'high',
+  collection_errors: 0,
+  collected_namespaces: 1,
+  target_namespaces: 1,
+  message: 'workflow runtime evidence is current',
+  ...overrides,
+})
+
 const sourceServing = (
   overrides: Partial<ControlPlaneSourceServingSnapshot> = {},
 ): ControlPlaneSourceServingSnapshot => ({
@@ -119,6 +147,64 @@ const buildSettlement = (
     database: database(),
     rolloutHealth: rolloutHealth(),
     sourceServing: sourceServing(),
+    ...overrides,
+  })
+
+const buildAuthoritySettlement = (overrides: Partial<Parameters<typeof buildAuthorityProvenanceSettlement>[0]> = {}) =>
+  buildAuthorityProvenanceSettlement({
+    now,
+    namespace: 'agents',
+    database: database(),
+    controllerWitness: controllerWitness(),
+    agentRunIngestion: agentRunIngestion(),
+    watchReliability: watchReliability(),
+    workflows: workflows(),
+    rolloutHealth: rolloutHealth(),
+    runtimeKits: [
+      {
+        runtime_kit_id: 'runtime-kit:serving:1',
+        kit_class: 'serving',
+        subject_ref: 'agents:/v1/control-plane/status',
+        component_digest: 'runtime-kit-digest:serving',
+        image_ref: 'registry.ide-newton.ts.net/lab/agents-control-plane:test@sha256:abc',
+        workspace_contract_version: 'agents.runtime-kit.v1',
+        decision: 'healthy',
+        observed_at: now.toISOString(),
+        fresh_until: freshUntil,
+        reason_codes: [],
+        producer_revision: 'test',
+        components: [],
+      },
+    ],
+    admissionPassports: [
+      {
+        admission_passport_id: 'passport:serving:1',
+        consumer_class: 'serving',
+        authority_session_id: 'authority-session:test',
+        recovery_case_set_digest: 'recovery-case-set:test',
+        runtime_kit_set_digest: 'runtime-kit-set:serving',
+        required_runtime_kits: ['runtime-kit:serving:1'],
+        decision: 'allow',
+        required_subjects: [],
+        issued_at: now.toISOString(),
+        fresh_until: freshUntil,
+        reason_codes: [],
+        producer_revision: 'test',
+      },
+    ],
+    projectionWatermarks: [
+      {
+        projection_watermark_id: 'projection-watermark:deploy:1',
+        consumer_key: 'deploy_verification',
+        recovery_warrant_id: 'recovery-warrant:serving:1',
+        source_ref: 'agents:/v1/control-plane/status',
+        projection_digest: 'projection-digest:deploy',
+        status: 'fresh',
+        observed_at: now.toISOString(),
+        expires_at: freshUntil,
+        reason_codes: [],
+      },
+    ],
     ...overrides,
   })
 
@@ -186,5 +272,41 @@ describe('control-plane status contracts', () => {
     expect(settlement.decision).toBe('allow')
     expect(settlement.source_serving_material_status).toBe('allow')
     expect(settlement.reason_codes).toEqual([])
+  })
+
+  it('builds a verifier-compatible authority provenance settlement', () => {
+    const settlement = buildAuthoritySettlement()
+
+    expect(settlement).toMatchObject({
+      schema_version: 'jangar.authority-provenance-settlement.v1',
+      evidence_mode: 'shadow',
+      settlement_state: 'settled',
+      winning_authority: 'controller_heartbeat',
+      reentry_windows: [],
+    })
+    expect(settlement.fresh_until).toBe('2026-05-20T12:01:00.000Z')
+    expect(settlement.action_class_decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ action_class: 'deploy_widen', decision: 'allow' }),
+        expect.objectContaining({ action_class: 'merge_ready', decision: 'allow' }),
+      ]),
+    )
+  })
+
+  it('holds deploy widening when authority provenance has split evidence', () => {
+    const settlement = buildAuthoritySettlement({
+      database: database({ status: 'unknown', message: 'database projection is not evaluated' }),
+    })
+
+    expect(settlement.settlement_state).toBe('settled_with_split')
+    expect(settlement.action_class_decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_class: 'deploy_widen',
+          decision: 'hold',
+          reason_codes: expect.arrayContaining(['database_unknown']),
+        }),
+      ]),
+    )
   })
 })
