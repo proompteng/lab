@@ -4,25 +4,17 @@ import {
   ArrowUpRight,
   CheckCircle2,
   Clock3,
-  ExternalLink,
   Filter,
   Home,
   MessageCircle,
+  Radar,
   RefreshCw,
   Search,
-  Sparkles,
   ThumbsUp,
   X,
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import type {
-  AnchorHTMLAttributes,
-  ButtonHTMLAttributes,
-  HTMLAttributes,
-  InputHTMLAttributes,
-  ReactNode,
-  UIEvent,
-} from 'react'
+import type { ButtonHTMLAttributes, HTMLAttributes, InputHTMLAttributes, ReactNode, UIEvent } from 'react'
 import type { FeedResponse, SynthesisItem } from '~/server/schema'
 
 export const Route = createFileRoute('/')({
@@ -57,15 +49,6 @@ function Button({
   return <button className={buttonClass(variant, size, className)} {...props} />
 }
 
-function AnchorButton({
-  className,
-  variant = 'ghost',
-  size = 'default',
-  ...props
-}: AnchorHTMLAttributes<HTMLAnchorElement> & { variant?: ButtonVariant; size?: ButtonSize }) {
-  return <a className={buttonClass(variant, size, className)} {...props} />
-}
-
 function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
@@ -75,6 +58,24 @@ function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
       )}
       {...props}
     />
+  )
+}
+
+function HorizontalScrollArea({
+  className,
+  children,
+  ...props
+}: HTMLAttributes<HTMLDivElement> & { children: ReactNode }) {
+  return (
+    <div
+      className={cx(
+        'min-w-0 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
+        className,
+      )}
+      {...props}
+    >
+      {children}
+    </div>
   )
 }
 
@@ -120,8 +121,6 @@ function App() {
   const [tag, setTag] = useState('all')
   const [query, setQuery] = useState('')
   const [minScore, setMinScore] = useState(0.65)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [mobileDetailOpen, setMobileDetailOpen] = useState(false)
 
   const feed = useInfiniteQuery({
     queryKey: ['synthesis-feed', tag, minScore],
@@ -143,10 +142,6 @@ function App() {
     )
   }, [loadedItems, query])
 
-  const selectedItem = items.find((item) => item.id === selectedId) ?? items[0] ?? null
-  const highSignalCount = loadedItems.filter((item) => item.score >= 0.85).length
-  const queuedCount = loadedItems.filter((item) => item.engagementStatus === 'queued').length
-
   const fetchNextPage = () => {
     if (feed.hasNextPage && !feed.isFetchingNextPage) {
       void feed.fetchNextPage()
@@ -160,11 +155,11 @@ function App() {
   }
 
   return (
-    <main className="grid h-dvh w-full grid-cols-1 overflow-hidden bg-black text-[#e7e9ea] xl:grid-cols-[244px_minmax(0,640px)_minmax(340px,1fr)]">
+    <main className="grid h-dvh w-full grid-cols-1 overflow-hidden bg-black text-[#e7e9ea] xl:grid-cols-[244px_minmax(0,640px)_minmax(0,1fr)]">
       <aside className="hidden min-h-0 justify-end border-r border-[#2f3336] bg-black xl:flex">
         <div className="flex w-[244px] flex-col px-2 py-3">
           <div className="mb-2 flex size-12 items-center justify-center rounded-full">
-            <Sparkles className="size-7" />
+            <Radar className="size-7" />
           </div>
           <nav className="grid gap-1">
             <RailButton active icon={<Home className="size-6" />}>
@@ -209,23 +204,23 @@ function App() {
                 className="pl-11"
               />
             </div>
+            <label className="flex h-11 shrink-0 items-center gap-2 rounded-full bg-[#202327] px-3 text-[#71767b]">
+              <Filter className="size-4" />
+              <input
+                aria-label="Minimum score"
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                value={minScore}
+                onChange={(event) => setMinScore(Number(event.target.value))}
+                className="h-1.5 w-20 accent-[#1d9bf0] sm:w-28"
+              />
+              <span className="w-6 text-right text-xs font-semibold">{formatScore(minScore)}</span>
+            </label>
           </div>
 
-          <div className="-mx-4 mt-3 flex gap-1 overflow-x-auto border-t border-[#2f3336] px-4 pt-2">
-            {['all', ...defaultTags].map((value) => (
-              <button
-                key={value}
-                type="button"
-                className={cx(
-                  'shrink-0 rounded-full px-3 py-2 text-sm font-semibold tracking-normal transition-colors hover:bg-[#080808]',
-                  tag === value ? 'text-[#1d9bf0]' : 'text-[#e7e9ea]',
-                )}
-                onClick={() => setTag(value)}
-              >
-                {value}
-              </button>
-            ))}
-          </div>
+          <TopicTabs tag={tag} setTag={setTag} />
         </header>
 
         <ScrollArea className="flex-1" onScroll={loadMoreIfNeeded}>
@@ -247,15 +242,7 @@ function App() {
           ) : (
             <>
               {items.map((item) => (
-                <FeedPost
-                  key={item.id}
-                  item={item}
-                  selected={selectedItem?.id === item.id}
-                  onSelect={() => {
-                    setSelectedId(item.id)
-                    setMobileDetailOpen(true)
-                  }}
-                />
+                <FeedPost key={item.id} item={item} />
               ))}
               <InfiniteFooter
                 hasNextPage={Boolean(feed.hasNextPage)}
@@ -266,25 +253,6 @@ function App() {
           )}
         </ScrollArea>
       </section>
-
-      <aside className="hidden min-h-0 bg-black xl:flex">
-        <div className="w-full max-w-[400px] px-5 py-3">
-          <FeedControls
-            minScore={minScore}
-            setMinScore={setMinScore}
-            loadedItems={loadedItems}
-            highSignalCount={highSignalCount}
-            queuedCount={queuedCount}
-          />
-          {selectedItem ? <DetailPane item={selectedItem} /> : null}
-        </div>
-      </aside>
-
-      {mobileDetailOpen && selectedItem ? (
-        <div className="fixed inset-0 z-50 flex flex-col bg-black xl:hidden">
-          <DetailPane item={selectedItem} onClose={() => setMobileDetailOpen(false)} />
-        </div>
-      ) : null}
     </main>
   )
 }
@@ -304,54 +272,36 @@ function RailButton({ active, icon, children }: { active?: boolean; icon: ReactN
   )
 }
 
-function FeedControls({
-  minScore,
-  setMinScore,
-  loadedItems,
-  highSignalCount,
-  queuedCount,
-}: {
-  minScore: number
-  setMinScore: (value: number) => void
-  loadedItems: SynthesisItem[]
-  highSignalCount: number
-  queuedCount: number
-}) {
+function TopicTabs({ tag, setTag }: { tag: string; setTag: (value: string) => void }) {
   return (
-    <section className="border-b border-[#2f3336] pb-5">
-      <h2 className="text-xl font-bold tracking-normal">Synthesis</h2>
-      <p className="mt-2 text-sm leading-6 text-[#71767b]">
-        {loadedItems.length} loaded · {highSignalCount} high signal · {queuedCount} queued
-      </p>
-      <label className="mt-5 block">
-        <span className="flex items-center justify-between text-sm">
-          <span className="font-semibold">Minimum score</span>
-          <span className="text-[#71767b]">{minScore.toFixed(2)}</span>
-        </span>
-        <input
-          aria-label="Minimum score"
-          type="range"
-          min="0"
-          max="1"
-          step="0.05"
-          value={minScore}
-          onChange={(event) => setMinScore(Number(event.target.value))}
-          className="mt-3 h-2 w-full accent-[#1d9bf0]"
-        />
-      </label>
-    </section>
+    <HorizontalScrollArea className="-mx-4 mt-3 border-t border-[#2f3336]">
+      <div role="tablist" aria-label="Topic filters" className="flex min-w-max px-4">
+        {['all', ...defaultTags].map((value) => (
+          <button
+            key={value}
+            type="button"
+            role="tab"
+            aria-selected={tag === value}
+            className={cx(
+              'relative h-12 shrink-0 px-4 text-[15px] font-semibold tracking-normal transition-colors hover:bg-[#080808]',
+              tag === value ? 'text-[#e7e9ea]' : 'text-[#71767b]',
+            )}
+            onClick={() => setTag(value)}
+          >
+            <span>{value}</span>
+            {tag === value ? (
+              <span className="absolute inset-x-4 bottom-0 h-1 rounded-full bg-[#1d9bf0]" aria-hidden="true" />
+            ) : null}
+          </button>
+        ))}
+      </div>
+    </HorizontalScrollArea>
   )
 }
 
-function FeedPost({ item, selected, onSelect }: { item: SynthesisItem; selected: boolean; onSelect: () => void }) {
+function FeedPost({ item }: { item: SynthesisItem }) {
   return (
-    <article
-      className={cx(
-        'cursor-pointer border-b border-[#2f3336] px-4 py-4 hover:bg-[#080808]',
-        selected && 'bg-white/[0.03]',
-      )}
-      onClick={onSelect}
-    >
+    <article className="border-b border-[#2f3336] px-4 py-4 transition-colors hover:bg-[#080808]">
       <div className="flex gap-3">
         <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[#202327] text-sm font-bold text-[#e7e9ea]">
           {(item.authorHandle?.[0] ?? 'x').toUpperCase()}
@@ -393,10 +343,15 @@ function FeedPost({ item, selected, onSelect }: { item: SynthesisItem; selected:
               <ThumbsUp className="size-4" />
               {item.engagementRecommendation === 'like' ? 'like queued' : 'like'}
             </span>
-            <span className="inline-flex items-center gap-2 text-sm">
+            <a
+              href={item.originalUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-2 text-sm transition-colors hover:text-[#1d9bf0]"
+            >
               <ArrowUpRight className="size-4" />
               original
-            </span>
+            </a>
           </div>
         </div>
       </div>
@@ -437,90 +392,5 @@ function TimelineSkeleton() {
         </div>
       </div>
     </div>
-  )
-}
-
-function DetailPane({ item, onClose }: { item: SynthesisItem; onClose?: () => void }) {
-  return (
-    <div className="flex min-h-0 flex-1 flex-col bg-black xl:border-b xl:border-[#2f3336]">
-      <header className="border-b border-[#2f3336] px-4 py-4 xl:px-0">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-[#71767b]">
-              {item.authorHandle ? `@${item.authorHandle}` : '@synthesis'}
-            </p>
-            <h2 className="mt-1 text-xl font-bold tracking-normal">Post detail</h2>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <AnchorButton
-              href={item.originalUrl}
-              target="_blank"
-              rel="noreferrer"
-              size="icon"
-              aria-label="Open original post"
-            >
-              <ExternalLink className="size-5" />
-            </AnchorButton>
-            {onClose ? (
-              <Button size="icon" variant="ghost" onClick={onClose} aria-label="Close detail">
-                <X className="size-5" />
-              </Button>
-            ) : null}
-          </div>
-        </div>
-        <p className="mt-3 text-sm leading-6 text-[#71767b]">
-          score {formatScore(item.score)} · confidence {formatScore(item.confidence)} · {item.engagementStatus}
-        </p>
-      </header>
-
-      <ScrollArea className="flex-1 px-4 py-4 xl:px-0">
-        <div className="grid gap-5">
-          <DetailSection title="Summary">
-            <p className="text-[15px] leading-6">{item.summary}</p>
-          </DetailSection>
-
-          {item.whyValuable ? (
-            <DetailSection title="Why it matters">
-              <p className="text-[15px] leading-6 text-[#d6d9db]">{item.whyValuable}</p>
-            </DetailSection>
-          ) : null}
-
-          {item.evidence.length ? (
-            <DetailSection title="Evidence">
-              <ul className="grid gap-2 text-sm leading-6 text-[#d6d9db]">
-                {item.evidence.map((line) => (
-                  <li key={line} className="border-l border-[#2f3336] pl-3">
-                    {line}
-                  </li>
-                ))}
-              </ul>
-            </DetailSection>
-          ) : null}
-
-          <DetailSection title="Observed post">
-            <p className="whitespace-pre-wrap border-l border-[#2f3336] pl-3 text-sm leading-6 text-[#d6d9db]">
-              {item.observedText}
-            </p>
-          </DetailSection>
-
-          <DetailSection title="Actions">
-            <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm text-[#71767b]">
-              <span>{item.engagementRecommendation}</span>
-              {item.replyText ? <span>reply: {item.replyText}</span> : null}
-              <span>run {item.runId.slice(0, 8)}</span>
-            </div>
-          </DetailSection>
-        </div>
-      </ScrollArea>
-    </div>
-  )
-}
-
-function DetailSection({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section>
-      <h3 className="mb-2 text-sm font-bold text-[#71767b]">{title}</h3>
-      {children}
-    </section>
   )
 }
