@@ -32,6 +32,9 @@ PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION = "torghut.paper-route-evidence.v1"
 NEXT_PAPER_ROUTE_RUNTIME_WINDOW_TARGETS_SCHEMA_VERSION = (
     "torghut.next-paper-route-runtime-window-targets.v1"
 )
+PAPER_ROUTE_RUNTIME_WINDOW_IMPORT_AUDIT_SCHEMA_VERSION = (
+    "torghut.paper-route-runtime-window-import-audit.v1"
+)
 DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS = 72
 DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT = 20
 PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL = "TORGHUT_SIM"
@@ -1136,6 +1139,132 @@ def _target_audit(
     }
 
 
+def _runtime_window_import_audit(
+    *,
+    next_targets: Mapping[str, object],
+    target_audits: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    session_readiness = _as_mapping(next_targets.get("session_readiness"))
+    import_blockers = _unique_text_items(session_readiness.get("import_blockers"))
+    source_missing_reasons = sorted(
+        {
+            str(reason).strip()
+            for audit in target_audits
+            for reason in _as_sequence(
+                _as_mapping(audit.get("source_activity")).get("missing_reasons")
+            )
+            if str(reason).strip()
+        }
+    )
+    runtime_ledger_blockers = sorted(
+        {
+            str(blocker).strip()
+            for audit in target_audits
+            for blocker in _as_sequence(
+                _as_mapping(audit.get("runtime_ledger")).get("blockers")
+            )
+            if str(blocker).strip()
+        }
+    )
+    current_target_count = len(target_audits)
+    targets_with_source_activity = sum(
+        int(not bool(_as_mapping(audit.get("source_activity")).get("missing")))
+        for audit in target_audits
+    )
+    targets_with_runtime_ledger = sum(
+        int(_safe_int(_as_mapping(audit.get("runtime_ledger")).get("bucket_count")) > 0)
+        for audit in target_audits
+    )
+    targets_with_evidence_grade_runtime_ledger = sum(
+        int(
+            _safe_int(
+                _as_mapping(audit.get("runtime_ledger")).get(
+                    "evidence_grade_bucket_count"
+                )
+            )
+            > 0
+        )
+        for audit in target_audits
+    )
+    targets_with_promotion_decision = sum(
+        int(
+            _safe_int(
+                _as_mapping(audit.get("promotion_decisions")).get("decision_count")
+            )
+            > 0
+        )
+        for audit in target_audits
+    )
+    import_ready = bool(session_readiness.get("import_ready"))
+    session_state = _safe_text(session_readiness.get("state")) or "unknown"
+    blockers: list[str]
+    if current_target_count <= 0:
+        state = "paper_probation_import_plan_missing"
+        next_action = "repair_runtime_ledger_paper_probation_import_plan"
+        blockers = ["paper_probation_import_plan_missing"]
+    elif not import_ready:
+        state = session_state
+        next_action = {
+            "waiting_for_session_open": "wait_for_regular_session_open",
+            "collecting_session_evidence": "collect_paper_route_activity_until_close",
+            "window_closed_settlement_pending": "wait_for_settlement_before_import",
+            "window_closed_import_blocked": "repair_paper_route_probe_before_import",
+        }.get(session_state, "wait_for_runtime_window_import_readiness")
+        blockers = import_blockers
+    elif targets_with_source_activity < current_target_count:
+        state = "import_due_source_activity_missing"
+        next_action = "inspect_paper_route_source_activity_before_import"
+        blockers = ["paper_route_source_activity_missing", *source_missing_reasons]
+    elif targets_with_runtime_ledger < current_target_count:
+        state = "import_due_runtime_ledger_missing"
+        next_action = "run_or_inspect_runtime_window_import"
+        blockers = ["runtime_ledger_bucket_missing"]
+    elif targets_with_evidence_grade_runtime_ledger < current_target_count:
+        state = "runtime_ledger_imported_but_not_evidence_grade"
+        next_action = "repair_runtime_ledger_bucket_authority_or_candidate"
+        blockers = [
+            "runtime_ledger_evidence_grade_bucket_missing",
+            *runtime_ledger_blockers,
+        ]
+    else:
+        state = "runtime_ledger_ready_for_gate_review"
+        next_action = "review_runtime_ledger_profit_gates"
+        blockers = []
+    return {
+        "schema_version": PAPER_ROUTE_RUNTIME_WINDOW_IMPORT_AUDIT_SCHEMA_VERSION,
+        "state": state,
+        "next_action": next_action,
+        "session_state": session_state,
+        "session_window": _as_mapping(next_targets.get("session_window")),
+        "settlement_ready_at": session_readiness.get("settlement_ready_at"),
+        "import_ready": import_ready,
+        "blockers": sorted(dict.fromkeys(blockers)),
+        "counts": {
+            "source_plan_target_count": current_target_count,
+            "next_runtime_window_target_count": _safe_int(
+                next_targets.get("target_count")
+            ),
+            "targets_with_source_activity": targets_with_source_activity,
+            "targets_with_runtime_ledger": targets_with_runtime_ledger,
+            "targets_with_evidence_grade_runtime_ledger": (
+                targets_with_evidence_grade_runtime_ledger
+            ),
+            "targets_with_promotion_decision": targets_with_promotion_decision,
+        },
+        "promotion_authority": {
+            "allowed": False,
+            "reason": "runtime_window_import_audit_observability_only",
+            "requires": [
+                "runtime_ledger_live_or_live_paper_required",
+                "post_cost_pnl_basis_required",
+                "filled_notional_required",
+                "closed_round_trips_required",
+                "lineage_hashes_required",
+            ],
+        },
+    }
+
+
 def build_paper_route_evidence_audit(
     session: Session,
     *,
@@ -1163,6 +1292,15 @@ def build_paper_route_evidence_audit(
         )
         for target in targets
     ]
+    next_targets = _next_paper_route_runtime_window_targets(
+        targets=targets,
+        probe=probe,
+        generated_at=resolved_generated_at,
+    )
+    runtime_window_import_audit = _runtime_window_import_audit(
+        next_targets=next_targets,
+        target_audits=target_audits,
+    )
     summary_blockers = sorted(
         {
             str(blocker)
@@ -1206,13 +1344,8 @@ def build_paper_route_evidence_audit(
             },
         },
         "paper_route_probe": probe,
-        "next_paper_route_runtime_window_targets": (
-            _next_paper_route_runtime_window_targets(
-                targets=targets,
-                probe=probe,
-                generated_at=resolved_generated_at,
-            )
-        ),
+        "next_paper_route_runtime_window_targets": next_targets,
+        "runtime_window_import_audit": runtime_window_import_audit,
         "summary": {
             "target_count": len(targets),
             "target_with_source_activity_count": sum(
@@ -1223,6 +1356,17 @@ def build_paper_route_evidence_audit(
                 int(
                     _safe_int(
                         _as_mapping(audit.get("runtime_ledger")).get("bucket_count")
+                    )
+                    > 0
+                )
+                for audit in target_audits
+            ),
+            "target_with_evidence_grade_runtime_ledger_count": sum(
+                int(
+                    _safe_int(
+                        _as_mapping(audit.get("runtime_ledger")).get(
+                            "evidence_grade_bucket_count"
+                        )
                     )
                     > 0
                 )
@@ -1284,6 +1428,7 @@ def build_paper_route_evidence_audit(
                 "reason": "paper_route_evidence_audit_observability_only",
                 "blockers": summary_blockers,
             },
+            "runtime_window_import_audit_state": runtime_window_import_audit["state"],
             "blockers": summary_blockers,
         },
         "targets": target_audits,
@@ -1294,5 +1439,6 @@ __all__ = [
     "DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS",
     "NEXT_PAPER_ROUTE_RUNTIME_WINDOW_TARGETS_SCHEMA_VERSION",
     "PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION",
+    "PAPER_ROUTE_RUNTIME_WINDOW_IMPORT_AUDIT_SCHEMA_VERSION",
     "build_paper_route_evidence_audit",
 ]
