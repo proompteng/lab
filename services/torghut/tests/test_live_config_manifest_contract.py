@@ -864,6 +864,30 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--runtime-window-observed-stage paper", args)
         self.assertIn("--runtime-window-source-dsn-env SIM_DB_DSN", args)
         self.assertNotIn("--runtime-window-source-dsn-env DB_DSN", args)
+        self.assertIn(
+            "RENEWAL_OUTPUT=/tmp/torghut-empirical-renewal/runtime-window-renewal.json",
+            args,
+        )
+        self.assertIn(
+            "PROOF_PACKET_OUTPUT=/tmp/torghut-empirical-renewal/runtime-ledger-proof-packet.json",
+            args,
+        )
+        self.assertIn("scripts/assemble_runtime_ledger_proof_packet.py", args)
+        self.assertIn(
+            "--status-service-base-url http://torghut.torghut.svc.cluster.local",
+            args,
+        )
+        self.assertIn(
+            "--paper-route-service-base-url http://torghut-sim.torghut.svc.cluster.local",
+            args,
+        )
+        self.assertIn(
+            "--completion-service-base-url http://torghut.torghut.svc.cluster.local",
+            args,
+        )
+        self.assertIn('--runtime-window-import-file "${RENEWAL_OUTPUT}"', args)
+        self.assertIn('--output-file "${PROOF_PACKET_OUTPUT}"', args)
+        self.assertIn("--allow-blocked-exit-zero", args)
 
     def test_migration_job_prepares_sim_database_before_sim_upgrade(self) -> None:
         manifest = _load_yaml_mapping(
