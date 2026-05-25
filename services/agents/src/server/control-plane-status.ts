@@ -1,6 +1,9 @@
 import { Context, Data, Effect, Layer } from 'effect'
 
-import { buildControlPlaneControllerIngestionSettlement } from '@proompteng/agent-contracts'
+import {
+  buildAuthorityProvenanceSettlement,
+  buildControlPlaneControllerIngestionSettlement,
+} from '@proompteng/agent-contracts'
 import type { ExecutionTrustStatus } from '@proompteng/agent-contracts'
 import { buildControllerWitnessQuorum } from '@proompteng/agent-contracts'
 import { assessAgentRunIngestion, getAgentsControllerHealth, type AgentsControllerHealth } from './agents-controller'
@@ -16,7 +19,6 @@ import { createControlPlaneWatchReliabilityService } from './control-plane-watch
 import type {
   AgentsControlPlaneStatus,
   ComponentStatus,
-  ControlPlaneControllerWitnessQuorum,
   ControlPlaneRolloutHealth,
   ControlPlaneWatchReliability,
   ControllerStatus,
@@ -375,6 +377,19 @@ export const buildAgentsControlPlaneStatus = (
     database,
     rolloutHealth,
   })
+  const authorityProvenanceSettlement = buildAuthorityProvenanceSettlement({
+    now,
+    namespace,
+    database,
+    controllerWitness,
+    agentRunIngestion,
+    watchReliability,
+    workflows: runtimeEvidence?.workflows ?? unknownWorkflows(),
+    rolloutHealth,
+    runtimeKits: runtimeAdmission.runtimeKits,
+    admissionPassports: runtimeAdmission.admissionPassports,
+    projectionWatermarks: runtimeAdmission.projectionWatermarks,
+  })
 
   return {
     service: input.service ?? resolveRuntimeServiceName(),
@@ -388,6 +403,7 @@ export const buildAgentsControlPlaneStatus = (
     agentrun_ingestion: agentRunIngestion,
     control_plane_controller_witness: controllerWitness,
     controller_ingestion_settlement: controllerIngestionSettlement,
+    authority_provenance_settlement: authorityProvenanceSettlement,
     runtime_kits: runtimeAdmission.runtimeKits,
     admission_passports: runtimeAdmission.admissionPassports,
     serving_passport_id: runtimeAdmission.servingPassportId,

@@ -534,6 +534,293 @@ export const buildControlPlaneControllerIngestionSettlement = (
   }
 }
 
+const AUTHORITY_PROVENANCE_SETTLEMENT_SCHEMA_VERSION = 'jangar.authority-provenance-settlement.v1' as const
+const AUTHORITY_PROVENANCE_SETTLEMENT_TTL_SECONDS = 60
+
+export type AuthorityProvenanceSettlementMode = 'observe' | 'shadow' | 'hold' | 'enforce'
+
+export type AuthorityProvenanceSettlementState =
+  | 'settled'
+  | 'settled_with_split'
+  | 'repairable_split'
+  | 'hold'
+  | 'block'
+
+export type AuthorityProvenanceWinningAuthority =
+  | 'agents_control_plane'
+  | 'controller_heartbeat'
+  | 'kubernetes_rollout'
+  | 'database_projection'
+  | 'none'
+
+export type AuthorityProvenanceSurfaceStatus = 'current' | 'split' | 'unknown' | 'stale' | 'blocked'
+
+export type AuthorityProvenanceSurface = {
+  surface: string
+  authority: AuthorityProvenanceWinningAuthority
+  status: AuthorityProvenanceSurfaceStatus
+  settlement_state: AuthorityProvenanceSettlementState
+  reason_codes: string[]
+  evidence_refs: string[]
+  rollback_target: string
+}
+
+export type AuthorityProvenanceActionDecisionValue = 'allow' | 'repair_only' | 'hold' | 'block'
+
+export type AuthorityProvenanceActionDecision = {
+  action_class: string
+  decision: AuthorityProvenanceActionDecisionValue
+  reason_codes: string[]
+  evidence_refs: string[]
+  rollback_target: string
+}
+
+export type AuthorityProvenanceReentryWindow = {
+  reentry_window_id: string
+  action_class: string
+  stage: string
+  max_dispatches: number
+  max_runtime_seconds: number
+  required_receipts: string[]
+  expires_at: string
+}
+
+export type AuthorityProvenanceSettlement = {
+  schema_version: typeof AUTHORITY_PROVENANCE_SETTLEMENT_SCHEMA_VERSION
+  evidence_mode: AuthorityProvenanceSettlementMode
+  settlement_id: string
+  generated_at: string
+  fresh_until: string
+  namespace: string
+  surfaces: AuthorityProvenanceSurface[]
+  winning_authority: AuthorityProvenanceWinningAuthority
+  settlement_state: AuthorityProvenanceSettlementState
+  action_class_decisions: AuthorityProvenanceActionDecision[]
+  reentry_windows: AuthorityProvenanceReentryWindow[]
+  rollback_target: string
+  handoff_summary: string
+}
+
+export type BuildAuthorityProvenanceSettlementInput = {
+  now: Date
+  namespace: string
+  mode?: AuthorityProvenanceSettlementMode
+  database: DatabaseStatus
+  controllerWitness: ControlPlaneControllerWitnessQuorum
+  agentRunIngestion: AgentRunIngestionStatus
+  watchReliability: ControlPlaneWatchReliability
+  workflows: WorkflowsReliabilityStatus
+  rolloutHealth: ControlPlaneRolloutHealth
+  runtimeKits: RuntimeKitStatus[]
+  admissionPassports: AdmissionPassportStatus[]
+  projectionWatermarks: ProjectionWatermarkStatus[]
+}
+
+const AUTHORITY_ACTION_CLASSES = [
+  'serve_readonly',
+  'dispatch_repair',
+  'dispatch_normal',
+  'deploy_widen',
+  'merge_ready',
+] as const
+
+const surfaceState = (status: AuthorityProvenanceSurfaceStatus): AuthorityProvenanceSettlementState => {
+  if (status === 'blocked') return 'block'
+  if (status === 'stale') return 'hold'
+  if (status === 'split') return 'repairable_split'
+  if (status === 'unknown') return 'settled_with_split'
+  return 'settled'
+}
+
+const authoritySurface = (input: {
+  surface: string
+  authority: AuthorityProvenanceWinningAuthority
+  status: AuthorityProvenanceSurfaceStatus
+  reasonCodes?: string[]
+  evidenceRefs?: string[]
+  rollbackTarget: string
+}): AuthorityProvenanceSurface => ({
+  surface: input.surface,
+  authority: input.authority,
+  status: input.status,
+  settlement_state: surfaceState(input.status),
+  reason_codes: input.reasonCodes ?? [],
+  evidence_refs: input.evidenceRefs ?? [],
+  rollback_target: input.rollbackTarget,
+})
+
+const statusFromHealth = (status: string): AuthorityProvenanceSurfaceStatus => {
+  if (status === 'healthy') return 'current'
+  if (status === 'degraded') return 'blocked'
+  if (status === 'disabled') return 'unknown'
+  return 'unknown'
+}
+
+const buildAuthoritySurfaces = (input: BuildAuthorityProvenanceSettlementInput): AuthorityProvenanceSurface[] => {
+  let controllerStatus: AuthorityProvenanceSurfaceStatus = 'split'
+  if (input.controllerWitness.decision === 'block') {
+    controllerStatus = 'blocked'
+  } else if (input.controllerWitness.decision === 'allow') {
+    controllerStatus = 'current'
+  }
+  const runtimeAdmissionHealthy =
+    input.runtimeKits.some((kit) => kit.kit_class === 'serving' && kit.decision === 'healthy') &&
+    input.admissionPassports.some((passport) => passport.consumer_class === 'serving' && passport.decision === 'allow')
+
+  return [
+    authoritySurface({
+      surface: 'controller_heartbeat',
+      authority: 'controller_heartbeat',
+      status: controllerStatus,
+      reasonCodes: input.controllerWitness.reason_codes,
+      evidenceRefs: [input.controllerWitness.quorum_id, ...input.controllerWitness.witness_refs],
+      rollbackTarget: input.controllerWitness.rollback_target ?? 'restore controller heartbeat authority',
+    }),
+    authoritySurface({
+      surface: 'agentrun_ingestion',
+      authority: 'agents_control_plane',
+      status: statusFromHealth(input.agentRunIngestion.status),
+      reasonCodes:
+        input.agentRunIngestion.status === 'healthy' ? [] : [`agentrun_ingestion_${input.agentRunIngestion.status}`],
+      evidenceRefs: ['agents:/v1/control-plane/status#agentrun_ingestion'],
+      rollbackTarget: 'restore AgentRun watch ingestion before widening deploy authority',
+    }),
+    authoritySurface({
+      surface: 'watch_epoch',
+      authority: 'agents_control_plane',
+      status: statusFromHealth(input.watchReliability.status),
+      reasonCodes:
+        input.watchReliability.status === 'healthy' ? [] : [`watch_reliability_${input.watchReliability.status}`],
+      evidenceRefs: ['agents:/v1/control-plane/status#watch_reliability'],
+      rollbackTarget: 'restore control-plane watch reliability before widening deploy authority',
+    }),
+    authoritySurface({
+      surface: 'workflow_runtime',
+      authority: 'agents_control_plane',
+      status: input.workflows.data_confidence === 'high' ? 'current' : 'unknown',
+      reasonCodes:
+        input.workflows.data_confidence === 'high' ? [] : [`workflow_evidence_${input.workflows.data_confidence}`],
+      evidenceRefs: ['agents:/v1/control-plane/status#workflows'],
+      rollbackTarget: 'restore workflow runtime evidence before widening deploy authority',
+    }),
+    authoritySurface({
+      surface: 'database_schema',
+      authority: 'database_projection',
+      status: statusFromHealth(input.database.status),
+      reasonCodes: input.database.status === 'healthy' ? [] : [`database_${input.database.status}`],
+      evidenceRefs: ['agents:/v1/control-plane/status#database'],
+      rollbackTarget: 'restore database projection evidence before widening deploy authority',
+    }),
+    authoritySurface({
+      surface: 'kubernetes_rollout',
+      authority: 'kubernetes_rollout',
+      status: statusFromHealth(input.rolloutHealth.status),
+      reasonCodes: input.rolloutHealth.status === 'healthy' ? [] : [`rollout_health_${input.rolloutHealth.status}`],
+      evidenceRefs: input.rolloutHealth.deployments.map((deployment) => {
+        return `deployment:${deployment.namespace}/${deployment.name}`
+      }),
+      rollbackTarget: 'restore healthy Agents rollout before widening deploy authority',
+    }),
+    authoritySurface({
+      surface: 'runtime_admission',
+      authority: 'agents_control_plane',
+      status: runtimeAdmissionHealthy ? 'current' : 'split',
+      reasonCodes: runtimeAdmissionHealthy ? [] : ['runtime_admission_not_fully_allowed'],
+      evidenceRefs: [
+        ...input.runtimeKits.map((kit) => kit.runtime_kit_id),
+        ...input.admissionPassports.map((passport) => passport.admission_passport_id),
+        ...input.projectionWatermarks.map((watermark) => watermark.projection_watermark_id),
+      ],
+      rollbackTarget: 'restore serving runtime admission before widening deploy authority',
+    }),
+  ]
+}
+
+const settlementStateFromSurfaces = (surfaces: AuthorityProvenanceSurface[]): AuthorityProvenanceSettlementState => {
+  if (surfaces.some((surface) => surface.settlement_state === 'block')) return 'block'
+  if (surfaces.some((surface) => surface.settlement_state === 'hold')) return 'hold'
+  if (surfaces.some((surface) => surface.settlement_state === 'repairable_split')) return 'repairable_split'
+  if (surfaces.some((surface) => surface.settlement_state === 'settled_with_split')) return 'settled_with_split'
+  return 'settled'
+}
+
+const winningAuthorityFromSurfaces = (surfaces: AuthorityProvenanceSurface[]): AuthorityProvenanceWinningAuthority => {
+  const current = surfaces.find((surface) => surface.status === 'current')
+  return current?.authority ?? 'none'
+}
+
+const authorityDecision = (input: {
+  actionClass: (typeof AUTHORITY_ACTION_CLASSES)[number]
+  settlementState: AuthorityProvenanceSettlementState
+  surfaces: AuthorityProvenanceSurface[]
+}): AuthorityProvenanceActionDecision => {
+  const reasonCodes = uniqueStrings(input.surfaces.flatMap((surface) => surface.reason_codes))
+  const evidenceRefs = uniqueStrings(input.surfaces.flatMap((surface) => surface.evidence_refs))
+  const rollbackTarget = 'restore Agents authority provenance settlement before widening deploy authority'
+  let decision: AuthorityProvenanceActionDecisionValue = 'hold'
+
+  if (input.settlementState === 'block') {
+    decision = 'block'
+  } else if (input.actionClass === 'serve_readonly') {
+    decision = input.settlementState === 'hold' ? 'hold' : 'allow'
+  } else if (input.actionClass === 'dispatch_repair') {
+    decision = input.settlementState === 'repairable_split' ? 'repair_only' : 'hold'
+    if (input.settlementState === 'settled' || input.settlementState === 'settled_with_split') {
+      decision = 'allow'
+    }
+  } else if (input.settlementState === 'settled') {
+    decision = 'allow'
+  }
+
+  return {
+    action_class: input.actionClass,
+    decision,
+    reason_codes: decision === 'allow' ? [] : reasonCodes,
+    evidence_refs: evidenceRefs,
+    rollback_target: rollbackTarget,
+  }
+}
+
+export const buildAuthorityProvenanceSettlement = (
+  input: BuildAuthorityProvenanceSettlementInput,
+): AuthorityProvenanceSettlement => {
+  const surfaces = buildAuthoritySurfaces(input)
+  const settlementState = settlementStateFromSurfaces(surfaces)
+  const winningAuthority = winningAuthorityFromSurfaces(surfaces)
+  const actionClassDecisions = AUTHORITY_ACTION_CLASSES.map((actionClass) =>
+    authorityDecision({ actionClass, settlementState, surfaces }),
+  )
+  const freshUntil = addSeconds(input.now, AUTHORITY_PROVENANCE_SETTLEMENT_TTL_SECONDS).toISOString()
+  const settlementId = `authority-provenance-settlement:${input.namespace}:${hashJson({
+    schema_version: AUTHORITY_PROVENANCE_SETTLEMENT_SCHEMA_VERSION,
+    settlement_state: settlementState,
+    winning_authority: winningAuthority,
+    surfaces: surfaces.map((surface) => ({
+      surface: surface.surface,
+      status: surface.status,
+      reason_codes: surface.reason_codes,
+    })),
+  })}`
+
+  return {
+    schema_version: AUTHORITY_PROVENANCE_SETTLEMENT_SCHEMA_VERSION,
+    evidence_mode: input.mode ?? 'shadow',
+    settlement_id: settlementId,
+    generated_at: input.now.toISOString(),
+    fresh_until: freshUntil,
+    namespace: input.namespace,
+    surfaces,
+    winning_authority: winningAuthority,
+    settlement_state: settlementState,
+    action_class_decisions: actionClassDecisions,
+    reentry_windows: [],
+    rollback_target: 'restore Agents authority provenance settlement evidence',
+    handoff_summary: `authority provenance ${settlementState}; deploy_widen=${
+      actionClassDecisions.find((decision) => decision.action_class === 'deploy_widen')?.decision ?? 'hold'
+    }`,
+  }
+}
+
 export type NamespaceStatus = {
   namespace: string
   status: 'healthy' | 'degraded'
@@ -563,6 +850,7 @@ export type AgentsControlPlaneStatus = {
   agentrun_ingestion: AgentRunIngestionStatus
   control_plane_controller_witness: ControlPlaneControllerWitnessQuorum
   controller_ingestion_settlement: ControlPlaneControllerIngestionSettlement
+  authority_provenance_settlement: AuthorityProvenanceSettlement
   runtime_kits: RuntimeKitStatus[]
   admission_passports: AdmissionPassportStatus[]
   serving_passport_id: string | null

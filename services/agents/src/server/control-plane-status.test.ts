@@ -192,6 +192,19 @@ describe('buildAgentsControlPlaneStatus', () => {
       rollout_health_status: 'healthy',
     })
     expect(JSON.stringify(status.controller_ingestion_settlement)).not.toMatch(/torghut|jangar/i)
+    expect(status.authority_provenance_settlement).toMatchObject({
+      schema_version: 'jangar.authority-provenance-settlement.v1',
+      evidence_mode: 'shadow',
+      settlement_state: 'settled_with_split',
+      winning_authority: 'controller_heartbeat',
+      namespace: 'agents',
+    })
+    expect(status.authority_provenance_settlement.action_class_decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ action_class: 'deploy_widen', decision: 'hold' }),
+        expect.objectContaining({ action_class: 'merge_ready', decision: 'hold' }),
+      ]),
+    )
     expect(status.watch_reliability).toMatchObject({
       status: 'healthy',
       observed_streams: 1,
