@@ -190,7 +190,7 @@ describe('supporting primitives controller', () => {
         spec: {
           agentRef: { name: 'demo-agent' },
           runtime: { type: 'job' },
-          parameters: { prompt: 'ship it' },
+          parameters: { objective: 'ship it' },
         },
       },
     })
