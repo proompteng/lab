@@ -1,14 +1,33 @@
 import { Context, Effect, Layer, ManagedRuntime } from 'effect'
 
 import {
+  ackAgentRunTerminalEventViaAgentsService,
+  fetchAgentRunFromAgentsService,
+  fetchAgentRunLogsFromAgentsService,
+  fetchAgentRunResourcesFromAgentsService,
+  fetchAgentRunsFromAgentsService,
+  fetchAgentRunTerminalEventsFromAgentsService,
   MAX_MEMORY_NOTE_CONTENT_CHARS,
   MAX_MEMORY_NOTE_QUERY_CHARS,
   MAX_MEMORY_NOTE_SUMMARY_CHARS,
   parsePersistMemoryNoteInput,
   parseRetrieveMemoryNotesInput,
+  resolveAgentsServiceBaseUrl,
+  submitAgentRunRerunToAgentsService,
+  submitAgentRunToAgentsService,
+  type AgentsAgentRunGetInput,
+  type AgentsAgentRunListInput,
+  type AgentsAgentRunLogsInput,
+  type AgentsAgentRunResourceListInput,
+  type AgentsAgentRunRerunSubmitInput,
+  type AgentsAgentRunSubmitInput,
+  type AgentsAgentRunTerminalEventAckInput,
+  type AgentsAgentRunTerminalEventsListInput,
   type AgentsMemoryNoteRecord,
   type AgentsPersistMemoryNoteInput,
   type AgentsRetrieveMemoryNotesInput,
+  type AgentsServiceJsonResult,
+  type EnvSource,
 } from '@proompteng/agent-contracts'
 
 import { createPostgresMemoriesStore, type MemoriesStore } from './memory-notes-store'
@@ -40,12 +59,25 @@ export type MemoryNotesMcpService = {
   retrieve: (input: AgentsRetrieveMemoryNotesInput) => Effect.Effect<AgentsMemoryNoteRecord[], Error>
 }
 
+export type AgentRunsMcpService = {
+  create: (input: AgentsAgentRunSubmitInput) => Effect.Effect<unknown, Error>
+  list: (input: AgentsAgentRunListInput) => Effect.Effect<unknown, Error>
+  get: (input: AgentsAgentRunGetInput) => Effect.Effect<unknown, Error>
+  listResources: (input: AgentsAgentRunResourceListInput) => Effect.Effect<unknown, Error>
+  getLogs: (input: AgentsAgentRunLogsInput) => Effect.Effect<unknown, Error>
+  listTerminalEvents: (input: AgentsAgentRunTerminalEventsListInput) => Effect.Effect<unknown, Error>
+  ackTerminalEvent: (input: AgentsAgentRunTerminalEventAckInput) => Effect.Effect<unknown, Error>
+  rerun: (input: AgentsAgentRunRerunSubmitInput) => Effect.Effect<unknown, Error>
+}
+
 export class MemoryNotesMcp extends Context.Tag('agents/MemoryNotesMcp')<MemoryNotesMcp, MemoryNotesMcpService>() {}
+export class AgentRunsMcp extends Context.Tag('agents/AgentRunsMcp')<AgentRunsMcp, AgentRunsMcpService>() {}
 
 const MCP_SESSION_HEADER = 'Mcp-Session-Id'
 const MCP_PROTOCOL_VERSION = '2024-11-05'
-const MCP_SERVER_INFO = { name: 'agents-memory-notes', version: '0.1.0' } as const
-const MCP_CONFIG_RESOURCE_URI = 'memories://config'
+const MCP_SERVER_INFO = { name: 'agents-control-plane', version: '0.2.0' } as const
+const MCP_CONFIG_RESOURCE_URI = 'agents://config'
+const DEFAULT_AGENT_RUN_NAMESPACE = 'agents'
 
 const jsonResponse = (payload: unknown, init: ResponseInit = {}) =>
   new Response(JSON.stringify(payload), {
@@ -108,6 +140,131 @@ const toolsListResult = {
         additionalProperties: false,
       },
     },
+    {
+      name: 'create_agent_run',
+      description: 'Create a real AgentRun through the Agents v1 API. Requires an idempotent deliveryId.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          deliveryId: { type: 'string', description: 'Required idempotency key for the AgentRun submission' },
+          payload: { type: 'object', description: 'AgentRun submission payload accepted by POST /v1/agent-runs' },
+          dryRun: { type: ['string', 'boolean'], description: 'Optional dryRun query value' },
+        },
+        required: ['deliveryId', 'payload'],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'list_agent_runs',
+      description: 'List AgentRun projection records by agent name or status.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          agentName: { type: 'string', description: 'Optional Agent name filter' },
+          statuses: { type: 'array', items: { type: 'string' }, description: 'Optional status filters' },
+          limit: { type: 'integer', description: 'Max results (default 50, max 500)', minimum: 1, maximum: 500 },
+        },
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'get_agent_run',
+      description: 'Get one AgentRun projection record and its live Kubernetes resource when available.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Required AgentRun projection id' },
+          namespace: { type: 'string', description: 'Optional Kubernetes namespace, defaults to agents' },
+        },
+        required: ['id'],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'list_agent_run_resources',
+      description: 'List live Kubernetes AgentRun resources through the typed v1 resource endpoint.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          namespace: { type: 'string', description: 'Optional namespace, defaults to agents' },
+          labelSelector: { type: 'string', description: 'Optional Kubernetes label selector' },
+          phase: { type: 'string', description: 'Optional AgentRun status.phase filter' },
+          runtime: { type: 'string', description: 'Optional spec.runtime.type filter' },
+          limit: { type: 'integer', description: 'Max results (max 500)', minimum: 1, maximum: 500 },
+        },
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'get_agent_run_logs',
+      description: 'Fetch a non-streaming AgentRun log snapshot. Use tailLines for last-N-line reads.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Required AgentRun Kubernetes resource name' },
+          namespace: { type: 'string', description: 'Required Kubernetes namespace' },
+          pod: { type: 'string', description: 'Optional selected pod name' },
+          container: { type: 'string', description: 'Optional selected container name' },
+          tailLines: {
+            type: 'integer',
+            description: 'Optional log tail line count (max 5000)',
+            minimum: 1,
+            maximum: 5000,
+          },
+        },
+        required: ['name', 'namespace'],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'list_agent_run_terminal_events',
+      description: 'List derived terminal AgentRun completion events for a consumer.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          namespace: { type: 'string', description: 'Optional namespace, defaults to agents' },
+          runIdPrefix: { type: 'string', description: 'Optional runId prefix filter' },
+          consumer: { type: 'string', description: 'Optional consumer name used for ack filtering' },
+          includeAcked: { type: 'boolean', description: 'Include events already acked by the consumer' },
+          limit: { type: 'integer', description: 'Max results (default 100, max 500)', minimum: 1, maximum: 500 },
+        },
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'ack_agent_run_terminal_event',
+      description: 'Ack a terminal AgentRun event for a consumer after it has been processed.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          eventId: { type: 'string', description: 'Required namespace/name/uid/phase terminal event id' },
+          consumer: { type: 'string', description: 'Required consumer name' },
+          outcome: { type: 'string', description: 'Optional processing outcome' },
+          message: { type: 'string', description: 'Optional processing note' },
+          receiptRef: { type: 'string', description: 'Optional durable receipt reference' },
+          annotations: {
+            type: 'object',
+            description: 'Optional extra annotations to patch onto the AgentRun resource',
+          },
+        },
+        required: ['eventId', 'consumer'],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'rerun_agent_run',
+      description: 'Submit an idempotent rerun for an existing AgentRun projection id.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          agentRunId: { type: 'string', description: 'Required parent AgentRun projection id' },
+          deliveryId: { type: 'string', description: 'Required idempotency key for the rerun' },
+          payload: { type: 'object', description: 'Rerun payload accepted by POST /v1/agent-runs/{id}/reruns' },
+        },
+        required: ['agentRunId', 'deliveryId', 'payload'],
+        additionalProperties: false,
+      },
+    },
   ],
 } as const
 
@@ -115,8 +272,8 @@ const resourcesListResult = {
   resources: [
     {
       uri: MCP_CONFIG_RESOURCE_URI,
-      name: 'Agents memory MCP config',
-      description: 'Server metadata and defaults for the Agents memory note tools.',
+      name: 'Agents MCP config',
+      description: 'Server metadata and defaults for Agents memory and AgentRun tools.',
       mimeType: 'application/json',
     },
   ],
@@ -156,11 +313,187 @@ const parseResourceReadParams = (params: unknown): { uri: string } | JsonRpcErro
   return { uri }
 }
 
+type ParsedToolInput<T> =
+  | {
+      ok: true
+      value: T
+    }
+  | {
+      ok: false
+      message: string
+    }
+
+const okInput = <T>(value: T): ParsedToolInput<T> => ({ ok: true, value })
+const badInput = <T>(message: string): ParsedToolInput<T> => ({ ok: false, message })
+
+const optionalString = (args: Record<string, unknown>, key: string) => {
+  const value = args[key]
+  if (value == null) return null
+  if (typeof value !== 'string') throw new Error(`${key} must be a string`)
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : null
+}
+
+const requiredString = (args: Record<string, unknown>, key: string) => {
+  const value = optionalString(args, key)
+  if (!value) throw new Error(`${key} is required`)
+  return value
+}
+
+const optionalInteger = (args: Record<string, unknown>, key: string, max: number) => {
+  const value = args[key]
+  if (value == null) return null
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    throw new Error(`${key} must be a positive number`)
+  }
+  return Math.min(Math.floor(value), max)
+}
+
+const optionalBoolean = (args: Record<string, unknown>, key: string) => {
+  const value = args[key]
+  if (value == null) return null
+  if (typeof value !== 'boolean') throw new Error(`${key} must be a boolean`)
+  return value
+}
+
+const optionalStringArray = (args: Record<string, unknown>, key: string) => {
+  const value = args[key]
+  if (value == null) return null
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string')) {
+    throw new Error(`${key} must be an array of strings`)
+  }
+  return value.map((entry) => entry.trim()).filter((entry) => entry.length > 0)
+}
+
+const requiredRecord = (args: Record<string, unknown>, key: string) => {
+  const value = args[key]
+  if (!isRecord(value)) throw new Error(`${key} must be an object`)
+  return value
+}
+
+const optionalStringNullMap = (args: Record<string, unknown>, key: string) => {
+  const value = args[key]
+  if (value == null) return null
+  if (!isRecord(value)) throw new Error(`${key} must be an object`)
+  const output: Record<string, string | null> = {}
+  for (const [entryKey, entryValue] of Object.entries(value)) {
+    if (entryValue === null || typeof entryValue === 'string') {
+      output[entryKey] = entryValue
+      continue
+    }
+    throw new Error(`${key}.${entryKey} must be a string or null`)
+  }
+  return output
+}
+
+const parseWithErrors = <T>(parse: () => T): ParsedToolInput<T> => {
+  try {
+    return okInput(parse())
+  } catch (error) {
+    return badInput(error instanceof Error ? error.message : String(error))
+  }
+}
+
+const parseCreateAgentRunInput = (args: Record<string, unknown>) =>
+  parseWithErrors<AgentsAgentRunSubmitInput>(() => {
+    const rawDryRun = args.dryRun
+    let dryRun: string | null
+    if (typeof rawDryRun === 'boolean') {
+      dryRun = rawDryRun ? 'true' : 'false'
+    } else if (rawDryRun == null) {
+      dryRun = null
+    } else {
+      dryRun = requiredString(args, 'dryRun')
+    }
+    return {
+      deliveryId: requiredString(args, 'deliveryId'),
+      payload: requiredRecord(args, 'payload'),
+      dryRun,
+    }
+  })
+
+const parseListAgentRunsInput = (args: Record<string, unknown>) =>
+  parseWithErrors<AgentsAgentRunListInput>(() => ({
+    agentName: optionalString(args, 'agentName'),
+    statuses: optionalStringArray(args, 'statuses'),
+    limit: optionalInteger(args, 'limit', 500),
+  }))
+
+const parseGetAgentRunInput = (args: Record<string, unknown>) =>
+  parseWithErrors<AgentsAgentRunGetInput>(() => ({
+    id: requiredString(args, 'id'),
+    namespace: optionalString(args, 'namespace') ?? DEFAULT_AGENT_RUN_NAMESPACE,
+  }))
+
+const parseListAgentRunResourcesInput = (args: Record<string, unknown>) =>
+  parseWithErrors<AgentsAgentRunResourceListInput>(() => ({
+    namespace: optionalString(args, 'namespace') ?? DEFAULT_AGENT_RUN_NAMESPACE,
+    labelSelector: optionalString(args, 'labelSelector'),
+    phase: optionalString(args, 'phase'),
+    runtime: optionalString(args, 'runtime'),
+    limit: optionalInteger(args, 'limit', 500),
+  }))
+
+const parseGetAgentRunLogsInput = (args: Record<string, unknown>) =>
+  parseWithErrors<AgentsAgentRunLogsInput>(() => ({
+    name: requiredString(args, 'name'),
+    namespace: requiredString(args, 'namespace'),
+    pod: optionalString(args, 'pod'),
+    container: optionalString(args, 'container'),
+    tailLines: optionalInteger(args, 'tailLines', 5000),
+  }))
+
+const parseListTerminalEventsInput = (args: Record<string, unknown>) =>
+  parseWithErrors<AgentsAgentRunTerminalEventsListInput>(() => ({
+    namespace: optionalString(args, 'namespace') ?? DEFAULT_AGENT_RUN_NAMESPACE,
+    runIdPrefix: optionalString(args, 'runIdPrefix'),
+    consumer: optionalString(args, 'consumer'),
+    includeAcked: optionalBoolean(args, 'includeAcked'),
+    limit: optionalInteger(args, 'limit', 500),
+  }))
+
+const parseAckTerminalEventInput = (args: Record<string, unknown>) =>
+  parseWithErrors<AgentsAgentRunTerminalEventAckInput>(() => ({
+    eventId: requiredString(args, 'eventId'),
+    consumer: requiredString(args, 'consumer'),
+    outcome: optionalString(args, 'outcome'),
+    message: optionalString(args, 'message'),
+    receiptRef: optionalString(args, 'receiptRef'),
+    annotations: optionalStringNullMap(args, 'annotations'),
+  }))
+
+const parseRerunAgentRunInput = (args: Record<string, unknown>) =>
+  parseWithErrors<AgentsAgentRunRerunSubmitInput>(() => ({
+    agentRunId: requiredString(args, 'agentRunId'),
+    deliveryId: requiredString(args, 'deliveryId'),
+    payload: requiredRecord(args, 'payload'),
+  }))
+
 const toolError = (id: JsonRpcId, message: string, data?: unknown): JsonRpcResponse =>
   asJsonRpcError(id, { code: -32000, message, data })
 
 const invalidParams = (id: JsonRpcId, message: string, data?: unknown): JsonRpcResponse =>
   asJsonRpcError(id, { code: -32602, message, data })
+
+const resolveAgentsMcpEnv = (env: EnvSource = process.env): EnvSource => ({
+  ...env,
+  AGENTS_SERVICE_CLIENT_NAME: env.AGENTS_SERVICE_CLIENT_NAME ?? 'agents-mcp',
+})
+
+const agentsResultEffect = <T>(
+  toolName: string,
+  run: () => Promise<AgentsServiceJsonResult<T>>,
+): Effect.Effect<T, Error> =>
+  Effect.tryPromise({
+    try: run,
+    catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+  }).pipe(
+    Effect.flatMap((result) => {
+      if (result.ok) return Effect.succeed(result.body)
+      return Effect.fail(new Error(result.error ?? `Agents service returned HTTP ${result.status}`))
+    }),
+    Effect.mapError((error) => new Error(`${toolName} failed: ${error.message}`)),
+  )
 
 const buildConfigResource = (request: Request) => {
   const endpoint = new URL(request.url).toString()
@@ -174,11 +507,14 @@ const buildConfigResource = (request: Request) => {
         endpoint,
         tools: toolsListResult.tools,
         defaults: {
-          namespace: 'default',
+          memoryNamespace: 'default',
+          agentRunNamespace: DEFAULT_AGENT_RUN_NAMESPACE,
+          agentsServiceBaseUrl: resolveAgentsServiceBaseUrl(resolveAgentsMcpEnv()),
           limits: {
             maxContentChars: MAX_MEMORY_NOTE_CONTENT_CHARS,
             maxQueryChars: MAX_MEMORY_NOTE_QUERY_CHARS,
             maxSummaryChars: MAX_MEMORY_NOTE_SUMMARY_CHARS,
+            maxAgentRunLogTailLines: 5000,
           },
         },
       },
@@ -188,9 +524,16 @@ const buildConfigResource = (request: Request) => {
   }
 }
 
+const successToolResponse = (id: JsonRpcId, baseUrl: URL, toolName: string, result: unknown) =>
+  asJsonRpcResponse(
+    id,
+    toTextToolResult(JSON.stringify({ ok: true, result, mcp: { server: baseUrl.origin, tool: toolName } }, null, 2)),
+  )
+
 const handleToolCallEffect = (request: Request, id: JsonRpcId, toolName: string, args: Record<string, unknown>) =>
   Effect.gen(function* () {
     const memories = yield* MemoryNotesMcp
+    const agents = yield* AgentRunsMcp
     const baseUrl = new URL(request.url)
 
     if (toolName === 'persist_memory') {
@@ -229,6 +572,70 @@ const handleToolCallEffect = (request: Request, id: JsonRpcId, toolName: string,
           ),
         ),
       )
+    }
+
+    if (toolName === 'create_agent_run') {
+      const parsed = parseCreateAgentRunInput(args)
+      if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
+      const result = yield* Effect.either(agents.create(parsed.value))
+      if (result._tag === 'Left') return toolError(id, result.left.message, { tool: toolName })
+      return successToolResponse(id, baseUrl, toolName, result.right)
+    }
+
+    if (toolName === 'list_agent_runs') {
+      const parsed = parseListAgentRunsInput(args)
+      if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
+      const result = yield* Effect.either(agents.list(parsed.value))
+      if (result._tag === 'Left') return toolError(id, result.left.message, { tool: toolName })
+      return successToolResponse(id, baseUrl, toolName, result.right)
+    }
+
+    if (toolName === 'get_agent_run') {
+      const parsed = parseGetAgentRunInput(args)
+      if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
+      const result = yield* Effect.either(agents.get(parsed.value))
+      if (result._tag === 'Left') return toolError(id, result.left.message, { tool: toolName })
+      return successToolResponse(id, baseUrl, toolName, result.right)
+    }
+
+    if (toolName === 'list_agent_run_resources') {
+      const parsed = parseListAgentRunResourcesInput(args)
+      if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
+      const result = yield* Effect.either(agents.listResources(parsed.value))
+      if (result._tag === 'Left') return toolError(id, result.left.message, { tool: toolName })
+      return successToolResponse(id, baseUrl, toolName, result.right)
+    }
+
+    if (toolName === 'get_agent_run_logs') {
+      const parsed = parseGetAgentRunLogsInput(args)
+      if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
+      const result = yield* Effect.either(agents.getLogs(parsed.value))
+      if (result._tag === 'Left') return toolError(id, result.left.message, { tool: toolName })
+      return successToolResponse(id, baseUrl, toolName, result.right)
+    }
+
+    if (toolName === 'list_agent_run_terminal_events') {
+      const parsed = parseListTerminalEventsInput(args)
+      if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
+      const result = yield* Effect.either(agents.listTerminalEvents(parsed.value))
+      if (result._tag === 'Left') return toolError(id, result.left.message, { tool: toolName })
+      return successToolResponse(id, baseUrl, toolName, result.right)
+    }
+
+    if (toolName === 'ack_agent_run_terminal_event') {
+      const parsed = parseAckTerminalEventInput(args)
+      if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
+      const result = yield* Effect.either(agents.ackTerminalEvent(parsed.value))
+      if (result._tag === 'Left') return toolError(id, result.left.message, { tool: toolName })
+      return successToolResponse(id, baseUrl, toolName, result.right)
+    }
+
+    if (toolName === 'rerun_agent_run') {
+      const parsed = parseRerunAgentRunInput(args)
+      if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
+      const result = yield* Effect.either(agents.rerun(parsed.value))
+      if (result._tag === 'Left') return toolError(id, result.left.message, { tool: toolName })
+      return successToolResponse(id, baseUrl, toolName, result.right)
     }
 
     return asJsonRpcError(id, { code: -32601, message: `Unknown tool: ${toolName}` })
@@ -356,7 +763,32 @@ export const MemoryNotesMcpLive = Layer.succeed(MemoryNotesMcp, {
   retrieve: (input) => withStore((store) => store.retrieve(input)),
 } satisfies MemoryNotesMcpService)
 
-const handlerRuntime = ManagedRuntime.make(MemoryNotesMcpLive)
+export const AgentRunsMcpLive = Layer.succeed(AgentRunsMcp, {
+  create: (input) =>
+    agentsResultEffect('create_agent_run', () => submitAgentRunToAgentsService(input, resolveAgentsMcpEnv())),
+  list: (input) =>
+    agentsResultEffect('list_agent_runs', () => fetchAgentRunsFromAgentsService(input, resolveAgentsMcpEnv())),
+  get: (input) =>
+    agentsResultEffect('get_agent_run', () => fetchAgentRunFromAgentsService(input, resolveAgentsMcpEnv())),
+  listResources: (input) =>
+    agentsResultEffect('list_agent_run_resources', () =>
+      fetchAgentRunResourcesFromAgentsService(input, resolveAgentsMcpEnv()),
+    ),
+  getLogs: (input) =>
+    agentsResultEffect('get_agent_run_logs', () => fetchAgentRunLogsFromAgentsService(input, resolveAgentsMcpEnv())),
+  listTerminalEvents: (input) =>
+    agentsResultEffect('list_agent_run_terminal_events', () =>
+      fetchAgentRunTerminalEventsFromAgentsService(input, resolveAgentsMcpEnv()),
+    ),
+  ackTerminalEvent: (input) =>
+    agentsResultEffect('ack_agent_run_terminal_event', () =>
+      ackAgentRunTerminalEventViaAgentsService(input, resolveAgentsMcpEnv()),
+    ),
+  rerun: (input) =>
+    agentsResultEffect('rerun_agent_run', () => submitAgentRunRerunToAgentsService(input, resolveAgentsMcpEnv())),
+} satisfies AgentRunsMcpService)
+
+const handlerRuntime = ManagedRuntime.make(Layer.mergeAll(MemoryNotesMcpLive, AgentRunsMcpLive))
 
 export const handleMcpRequest = (request: Request): Promise<Response> =>
   handlerRuntime.runPromise(handleMcpRequestEffect(request))

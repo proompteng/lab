@@ -45,6 +45,17 @@ export type AgentsAgentRunListResult = {
 export type AgentsAgentRunResource = Record<string, unknown>
 export type AgentsAgentRunResourceListInput = AgentsResourceListInput
 
+export type AgentsAgentRunGetInput = {
+  id: string
+  namespace?: string | null
+}
+
+export type AgentsAgentRunGetResult = {
+  ok: boolean
+  agentRun: AgentsAgentRunListItem | Record<string, unknown>
+  resource: Record<string, unknown> | null
+}
+
 export type AgentsAgentRunResourcesResult = {
   ok: boolean
   kind?: 'AgentRun' | string | null
@@ -93,6 +104,21 @@ export const fetchAgentRunsFromAgentsService = async (
   env: EnvSource = process.env,
 ): Promise<AgentsServiceJsonResult<AgentsAgentRunListResult>> =>
   runAgentsJsonPromise(fetchAgentRunsFromAgentsServiceEffect(input, env))
+
+const encodePathSegment = (value: string) => encodeURIComponent(value)
+
+export const fetchAgentRunFromAgentsServiceEffect = (input: AgentsAgentRunGetInput, env: EnvSource = process.env) => {
+  const targetUrl = buildAgentsServiceUrl(`/v1/agent-runs/${encodePathSegment(input.id)}`, env)
+  const namespace = input.namespace?.trim()
+  if (namespace) targetUrl.searchParams.set('namespace', namespace)
+  return fetchAgentsJsonEffect<AgentsAgentRunGetResult>(servicePath(targetUrl), env)
+}
+
+export const fetchAgentRunFromAgentsService = async (
+  input: AgentsAgentRunGetInput,
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<AgentsAgentRunGetResult>> =>
+  runAgentsJsonPromise(fetchAgentRunFromAgentsServiceEffect(input, env))
 
 export const fetchAgentRunResourcesFromAgentsServiceEffect = (
   input: AgentsAgentRunResourceListInput = {},

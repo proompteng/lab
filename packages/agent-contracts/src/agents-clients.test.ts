@@ -1,7 +1,12 @@
 import { Effect } from 'effect'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { fetchAgentRunResourcesFromAgentsService, patchAgentRunAnnotationsViaAgentsService } from './agent-runs-client'
+import { fetchAgentRunLogsFromAgentsService } from './agent-run-logs-client'
+import {
+  fetchAgentRunFromAgentsService,
+  fetchAgentRunResourcesFromAgentsService,
+  patchAgentRunAnnotationsViaAgentsService,
+} from './agent-runs-client'
 import { fetchAgentRunsFromAgentsService, submitAgentRunToAgentsService } from './agent-runs-client'
 import { submitAgentMessagesToAgentsService } from './agent-messages-client'
 import { buildAgentsDependencyHealth, fetchAgentsHealthFromAgentsService } from './agents-health-client'
@@ -382,6 +387,88 @@ describe('agents typed service clients', () => {
             payload: {},
           },
         ],
+      },
+    })
+  })
+
+  it('gets one AgentRun projection through the Agents service boundary', async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          agentRun: { id: 'run/1', externalRunId: 'demo-run' },
+          resource: { kind: 'AgentRun', metadata: { name: 'demo-run' } },
+        }),
+        {
+          headers: { 'content-type': 'application/json' },
+          status: 200,
+        },
+      )
+    })
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+
+    const result = await fetchAgentRunFromAgentsService(
+      { id: 'run/1', namespace: 'agents' },
+      { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
+    )
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
+    expect(url.toString()).toBe('http://agents.test/v1/agent-runs/run%2F1?namespace=agents')
+    expect(init.method).toBe('GET')
+    expect(result).toEqual({
+      ok: true,
+      status: 200,
+      body: {
+        ok: true,
+        agentRun: { id: 'run/1', externalRunId: 'demo-run' },
+        resource: { kind: 'AgentRun', metadata: { name: 'demo-run' } },
+      },
+    })
+  })
+
+  it('fetches AgentRun log tails through the control-plane logs endpoint', async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          name: 'demo-run',
+          namespace: 'agents',
+          pods: [{ name: 'demo-run-pod', phase: 'Succeeded', containers: [{ name: 'agent-runner', type: 'main' }] }],
+          pod: 'demo-run-pod',
+          container: 'agent-runner',
+          tailLines: 5,
+          logs: 'line-1\nline-2\nline-3\nline-4\nline-5\n',
+        }),
+        {
+          headers: { 'content-type': 'application/json' },
+          status: 200,
+        },
+      )
+    })
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+
+    const result = await fetchAgentRunLogsFromAgentsService(
+      { name: 'demo-run', namespace: 'agents', tailLines: 5 },
+      { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
+    )
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
+    expect(url.toString()).toBe('http://agents.test/v1/control-plane/logs?name=demo-run&namespace=agents&tailLines=5')
+    expect(init.method).toBe('GET')
+    expect(result).toEqual({
+      ok: true,
+      status: 200,
+      body: {
+        ok: true,
+        name: 'demo-run',
+        namespace: 'agents',
+        pods: [{ name: 'demo-run-pod', phase: 'Succeeded', containers: [{ name: 'agent-runner', type: 'main' }] }],
+        pod: 'demo-run-pod',
+        container: 'agent-runner',
+        tailLines: 5,
+        logs: 'line-1\nline-2\nline-3\nline-4\nline-5\n',
       },
     })
   })
