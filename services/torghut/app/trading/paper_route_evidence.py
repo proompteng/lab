@@ -526,6 +526,7 @@ def _runtime_window_import_health_gate(
     )
 
     blockers: list[str] = []
+    promotion_blockers: list[str] = []
     if dependency_quorum_source == "missing":
         blockers.append("runtime_window_import_dependency_quorum_missing")
     elif dependency_quorum_decision != "allow":
@@ -535,9 +536,9 @@ def _runtime_window_import_health_gate(
     elif continuity_ok != "true":
         blockers.append("evidence_continuity_not_ok")
     if drift_source == "missing":
-        blockers.append("runtime_window_import_drift_missing")
+        promotion_blockers.append("runtime_window_import_drift_missing")
     elif drift_ok != "true":
-        blockers.append("drift_checks_not_ok")
+        promotion_blockers.append("drift_checks_not_ok")
 
     return {
         "schema_version": "torghut.runtime-window-import-health-gate.v1",
@@ -550,6 +551,7 @@ def _runtime_window_import_health_gate(
         "drift_source": drift_source,
         "ready": not blockers,
         "blockers": blockers,
+        "promotion_blockers": promotion_blockers,
     }
 
 
@@ -557,12 +559,14 @@ def _runtime_window_import_health_gate_summary(
     targets: Sequence[Mapping[str, object]],
 ) -> dict[str, object]:
     blockers: list[str] = []
+    promotion_blockers: list[str] = []
     ready_count = 0
     for target in targets:
         gate = _as_mapping(target.get("runtime_window_import_health_gate"))
         if bool(gate.get("ready")):
             ready_count += 1
         blockers.extend(_unique_text_items(gate.get("blockers")))
+        promotion_blockers.extend(_unique_text_items(gate.get("promotion_blockers")))
     return {
         "schema_version": "torghut.runtime-window-import-health-gate-summary.v1",
         "source": "paper_route_runtime_window_targets",
@@ -571,6 +575,7 @@ def _runtime_window_import_health_gate_summary(
         "ready_target_count": ready_count,
         "blocked_target_count": max(0, len(targets) - ready_count),
         "blockers": _unique_text_items(blockers),
+        "promotion_blockers": _unique_text_items(promotion_blockers),
     }
 
 
@@ -673,6 +678,9 @@ def _next_paper_route_runtime_window_targets(
             live_submission_gate=live_submission_gate,
         )
         health_gate_blockers = _unique_text_items(health_gate.get("blockers"))
+        health_gate_promotion_blockers = _unique_text_items(
+            health_gate.get("promotion_blockers")
+        )
         planned_target: dict[str, object] = {
             "hypothesis_id": hypothesis_id,
             "candidate_id": candidate_id,
@@ -691,6 +699,9 @@ def _next_paper_route_runtime_window_targets(
             "drift_ok": health_gate["drift_ok"],
             "runtime_window_import_health_gate": health_gate,
             "runtime_window_import_health_gate_blockers": health_gate_blockers,
+            "runtime_window_import_promotion_blockers": (
+                health_gate_promotion_blockers
+            ),
             "window_start": _isoformat(window_start),
             "window_end": _isoformat(window_end),
             "paper_route_probe_symbols": target_probe_symbols,
@@ -729,6 +740,7 @@ def _next_paper_route_runtime_window_targets(
                     "paper_route_runtime_ledger_import_pending",
                     *_unique_text_items(target.get("candidate_blockers")),
                     *health_gate_blockers,
+                    *health_gate_promotion_blockers,
                 ]
             ),
             "runtime_ledger_target_metadata_blockers": _unique_text_items(
@@ -736,6 +748,7 @@ def _next_paper_route_runtime_window_targets(
                     "paper_route_runtime_ledger_import_pending",
                     "live_runtime_ledger_required",
                     *health_gate_blockers,
+                    *health_gate_promotion_blockers,
                 ]
             ),
             "handoff": "next_paper_route_runtime_window_import",

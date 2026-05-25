@@ -743,6 +743,72 @@ class TestVerifyTradingReadiness(TestCase):
         )
         self.assertTrue(ready["ok"], ready)
 
+    def test_paper_route_target_plan_allows_drift_only_evidence_collection(
+        self,
+    ) -> None:
+        result = evaluate_trading_readiness(
+            _ready_status(),
+            paper_route_evidence=_paper_route_evidence(
+                import_ready=True,
+                target_overrides={
+                    "drift_ok": "false",
+                    "runtime_window_import_health_gate": {
+                        "schema_version": "torghut.runtime-window-import-health-gate.v1",
+                        "dependency_quorum_decision": "allow",
+                        "continuity_ok": "true",
+                        "drift_ok": "false",
+                        "blockers": [],
+                        "promotion_blockers": ["drift_checks_not_ok"],
+                    },
+                    "runtime_window_import_health_gate_blockers": [],
+                },
+            ),
+            require_paper_route_target_plan=True,
+            require_paper_route_import_ready=True,
+        )
+
+        self.assertTrue(result["ok"], result)
+        health_gate = result["paper_route_target_plan"][
+            "runtime_window_import_health_gate"
+        ]
+        self.assertEqual(health_gate["ready_target_count"], 1)
+        self.assertEqual(health_gate["blocked_target_count"], 0)
+        self.assertEqual(health_gate["blockers"], [])
+        self.assertEqual(health_gate["promotion_blockers"], ["drift_checks_not_ok"])
+
+    def test_paper_route_target_plan_synthesizes_drift_promotion_blocker(
+        self,
+    ) -> None:
+        result = evaluate_trading_readiness(
+            _ready_status(),
+            paper_route_evidence=_paper_route_evidence(
+                import_ready=True,
+                target_overrides={
+                    "drift_ok": "false",
+                    "runtime_window_import_health_gate": {
+                        "schema_version": "torghut.runtime-window-import-health-gate.v1",
+                        "dependency_quorum_decision": "allow",
+                        "continuity_ok": "true",
+                        "drift_ok": "false",
+                        "blockers": [],
+                        "promotion_blockers": [],
+                    },
+                    "runtime_window_import_health_gate_blockers": [],
+                },
+            ),
+            require_paper_route_target_plan=True,
+            require_paper_route_import_ready=True,
+        )
+
+        self.assertTrue(result["ok"], result)
+        health_gate = result["paper_route_target_plan"][
+            "runtime_window_import_health_gate"
+        ]
+        self.assertEqual(health_gate["ready_target_count"], 1)
+        self.assertEqual(health_gate["blocked_target_count"], 0)
+        self.assertEqual(health_gate["blockers"], [])
+        self.assertEqual(health_gate["promotion_blockers"], ["drift_not_ok"])
+
     def test_paper_route_target_plan_requires_runtime_import_health_gate(
         self,
     ) -> None:

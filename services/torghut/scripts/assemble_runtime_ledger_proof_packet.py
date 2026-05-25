@@ -482,6 +482,7 @@ def _runtime_window_import_health_gate_summary(
 ) -> dict[str, Any]:
     plan_gate = _mapping(plan.get("runtime_window_import_health_gate"))
     blockers = _text_list(plan_gate.get("blockers"))
+    promotion_blockers = _text_list(plan_gate.get("promotion_blockers"))
     target_summaries: list[dict[str, Any]] = []
     ready_count = 0
     for index, target in enumerate(targets):
@@ -490,6 +491,13 @@ def _runtime_window_import_health_gate_summary(
             target.get("runtime_window_import_health_gate_blockers")
         )
         _extend_unique(target_blockers, _text_list(gate.get("blockers")))
+        target_promotion_blockers = _text_list(
+            target.get("runtime_window_import_promotion_blockers")
+        )
+        _extend_unique(
+            target_promotion_blockers,
+            _text_list(gate.get("promotion_blockers")),
+        )
         dependency_quorum_decision = _text(
             target.get("dependency_quorum_decision")
             or gate.get("dependency_quorum_decision")
@@ -504,12 +512,13 @@ def _runtime_window_import_health_gate_summary(
             _extend_unique(target_blockers, ["dependency_quorum_not_allow"])
         if not _health_gate_bool(continuity_ok):
             _extend_unique(target_blockers, ["continuity_not_ok"])
-        if not _health_gate_bool(drift_ok):
-            _extend_unique(target_blockers, ["drift_not_ok"])
+        if not _health_gate_bool(drift_ok) and not target_promotion_blockers:
+            _extend_unique(target_promotion_blockers, ["drift_not_ok"])
         ready = not target_blockers
         if ready:
             ready_count += 1
         _extend_unique(blockers, target_blockers)
+        _extend_unique(promotion_blockers, target_promotion_blockers)
         target_summaries.append(
             {
                 "index": index,
@@ -520,6 +529,7 @@ def _runtime_window_import_health_gate_summary(
                 "drift_ok": _text(drift_ok),
                 "ready": ready,
                 "blockers": target_blockers,
+                "promotion_blockers": target_promotion_blockers,
             }
         )
     target_count = len(targets)
@@ -531,6 +541,7 @@ def _runtime_window_import_health_gate_summary(
         "blocked_target_count": max(0, target_count - ready_count),
         "ready": target_count > 0 and ready_count == target_count and not blockers,
         "blockers": blockers,
+        "promotion_blockers": promotion_blockers,
         "targets": target_summaries,
     }
 

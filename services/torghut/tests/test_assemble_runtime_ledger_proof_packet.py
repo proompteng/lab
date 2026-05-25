@@ -615,6 +615,41 @@ class TestRuntimeLedgerProofPacket(TestCase):
         self.assertEqual(health_gate["ready_target_count"], 0)
         self.assertEqual(health_gate["blocked_target_count"], 1)
 
+    def test_packet_treats_drift_only_as_promotion_not_import_blocker(self) -> None:
+        evidence = _paper_route_evidence(import_ready=True)
+        plan = evidence["next_paper_route_runtime_window_targets"]
+        assert isinstance(plan, dict)
+        target = plan["targets"][0]
+        assert isinstance(target, dict)
+        target["drift_ok"] = "false"
+        target["runtime_window_import_health_gate"] = {
+            "schema_version": "torghut.runtime-window-import-health-gate.v1",
+            "dependency_quorum_decision": "allow",
+            "continuity_ok": "true",
+            "drift_ok": "false",
+            "blockers": [],
+            "promotion_blockers": [],
+        }
+        target["runtime_window_import_health_gate_blockers"] = []
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            paper_route_evidence=evidence,
+            runtime_window_import=_runtime_import(),
+            completion_status=_completion(),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertTrue(result["ok"], result)
+        health_gate = result["evidence"]["paper_route_target_plan"][
+            "runtime_window_import_health_gate"
+        ]
+        self.assertTrue(health_gate["ready"])
+        self.assertEqual(health_gate["ready_target_count"], 1)
+        self.assertEqual(health_gate["blocked_target_count"], 0)
+        self.assertEqual(health_gate["blockers"], [])
+        self.assertEqual(health_gate["promotion_blockers"], ["drift_not_ok"])
+
     def test_packet_blocks_non_authoritative_import_and_weak_daily_profit(self) -> None:
         result = packet.build_runtime_ledger_proof_packet(
             _status(),

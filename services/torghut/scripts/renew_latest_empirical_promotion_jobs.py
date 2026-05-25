@@ -60,6 +60,7 @@ RUNTIME_WINDOW_TARGET_METADATA_KEYS = (
     "drift_ok",
     "runtime_window_import_health_gate",
     "runtime_window_import_health_gate_blockers",
+    "runtime_window_import_promotion_blockers",
     "window_start",
     "window_end",
     "max_notional",

@@ -3446,9 +3446,12 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(gate["dependency_quorum_decision"], "allow")
         self.assertEqual(gate["continuity_ok"], "true")
         self.assertEqual(gate["drift_ok"], "false")
-        self.assertEqual(gate["blockers"], ["drift_checks_not_ok"])
+        self.assertEqual(gate["blockers"], [])
+        self.assertTrue(gate["ready"])
+        self.assertEqual(gate["promotion_blockers"], ["drift_checks_not_ok"])
+        self.assertEqual(result["runtime_window_import_health_gate_blockers"], [])
         self.assertEqual(
-            result["runtime_window_import_health_gate_blockers"],
+            result["runtime_window_import_promotion_blockers"],
             ["drift_checks_not_ok"],
         )
 
