@@ -552,6 +552,12 @@ const waitForDeploymentRollout = async (namespace: string, deployment: string, t
   }
 }
 
+const waitForOptionalDeploymentRollout = async (namespace: string, deployment: string, timeoutFlag: string) => {
+  const exists = await execCapture(['kubectl', '-n', namespace, 'get', 'deployment', deployment, '-o', 'name'])
+  if (exists.exitCode !== 0) return
+  await waitForDeploymentRollout(namespace, deployment, timeoutFlag)
+}
+
 const runDiagnosticsCommand = async (cmd: string[]) => {
   const exitCode = await runInherit(cmd)
   if (exitCode !== 0) {
@@ -849,6 +855,7 @@ const main = async () => {
 
   await run('helm', helmArgs)
   await waitForDeploymentRollout(namespace, releaseName, timeoutFlag)
+  await waitForOptionalDeploymentRollout(namespace, `${releaseName}-controllers`, timeoutFlag)
 
   await run(
     'kubectl',

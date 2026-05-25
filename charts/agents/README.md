@@ -150,7 +150,12 @@ kubectl -n agents get deploy,svc,pods
 
 kubectl -n agents port-forward svc/agents 8080:80
 curl -sf http://127.0.0.1:8080/health
+curl -sf http://127.0.0.1:8080/ready
 ```
+
+The same HTTP Service exposes the TanStack Start control-plane UI at `/`, existing `/v1/*` APIs, and the `/mcp`
+endpoint. If you expose `svc/agents` through an ingress or Tailscale Service, route all three surfaces to the
+same HTTP port.
 
 Run the chart smoke examples from the published package:
 
@@ -186,6 +191,7 @@ You do not need to understand every CRD before installing the chart. These are t
 The chart installs:
 
 - Agents control-plane `Deployment` and HTTP `Service`
+- TanStack Start control-plane UI served by the same HTTP `Service` as `/v1/*` and `/mcp`
 - Optional gRPC `Service`
 - Optional controllers deployment for reconciliation/runtime work
 - Optional metrics `Service`, `ServiceMonitor`, and Grafana dashboard ConfigMap

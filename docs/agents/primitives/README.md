@@ -28,12 +28,16 @@ These documents describe:
 Agents remains the control plane for every primitive documented here. External callers should interact with
 Agents APIs; Jangar consumes those APIs for domain-specific surfaces.
 
+The TanStack Start operator UI for listing, inspecting, and creating these primitives is documented in
+[`../control-plane-ui.md`](../control-plane-ui.md).
+
 ## Documents
 
 - `agent.md`
 - `memory.md`
 - `orchestration.md`
 - `supporting-primitives.md`
+- `../control-plane-ui.md`
 
 Jangar-specific primitive consumers remain under `docs/jangar/primitives/`:
 

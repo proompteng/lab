@@ -342,6 +342,13 @@ const objectAt = (value: unknown, key: string) =>
   value && typeof value === 'object' ? ((value as Record<string, unknown>)[key] as unknown) : undefined
 
 describe('scheduled AgentRun templates', () => {
+  it('enables the CI controller deployment so workflow smoke AgentRuns are reconciled', () => {
+    const values = readYamlObjects('scripts/agents/values-ci.yaml')[0]
+    const controllers = objectAt(values, 'controllers')
+
+    expect(objectAt(controllers, 'enabled')).toBe(true)
+  })
+
   it('requires every checked-in AgentProvider fixture to declare a normalized adapter', () => {
     const agentProviderFiles = [
       'argocd/applications/agents/agents-primitives-agentprovider.yaml',

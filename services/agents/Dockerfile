@@ -146,6 +146,7 @@ ARG AGENTS_BUILD_CI=false
 ENV NODE_OPTIONS=${AGENTS_BUILD_NODE_OPTIONS}
 ENV CI=${AGENTS_BUILD_CI}
 RUN bun run tsc
+RUN bun run build
 
 FROM agents-tools AS agents-deps-prod
 WORKDIR /app
@@ -187,6 +188,7 @@ RUN mkdir -p /app/packages/agent-contracts/node_modules \
   && ln -sf /app/node_modules/effect /app/packages/agent-contracts/node_modules/effect
 WORKDIR /app/services/agents
 COPY --from=agents-build /app/services/agents/package.json ./package.json
+COPY --from=agents-build /app/services/agents/.output ./.output
 COPY --from=agents-build /app/services/agents/src ./src
 COPY --from=agents-build /app/services/agents/scripts ./scripts
 
@@ -202,7 +204,7 @@ ENV AGENTS_CONTROLLER_ENABLED=0 \
 ENV AGENTS_VERSION=${AGENTS_VERSION} \
   AGENTS_COMMIT=${AGENTS_COMMIT}
 
-CMD ["bun", "run", "src/server/index.ts"]
+CMD ["bun", "run", "start"]
 
 FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS controller
 ARG AGENTS_VERSION=""

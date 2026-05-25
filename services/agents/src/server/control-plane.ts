@@ -1,5 +1,3 @@
-import { readFile } from 'node:fs/promises'
-
 import { resolveBooleanFeatureToggle } from './feature-flags'
 import { createAgentsHealthHandler } from './health'
 import { createAgentsHttpRuntime, type AgentsHttpRuntime } from './http-runtime'
@@ -28,6 +26,7 @@ type RouteSourceSpec = {
 
 type ControlPlaneRuntimeOptions = {
   routeSources?: RouteSourceSpec[]
+  enableWebSocket?: boolean
 }
 
 const routeSources: RouteSourceSpec[] = [
@@ -292,13 +291,6 @@ const renderMetrics = async () => ({
   body: renderAgentsPrometheusMetrics(),
 })
 
-const loadRouteSources = async (sources: RouteSourceSpec[]) => {
-  const entries = await Promise.all(
-    sources.map(async (source) => [source.file, await readFile(source.sourceUrl, 'utf8')]),
-  )
-  return Object.fromEntries(entries)
-}
-
 const configureRuntimeDependencies = () => {
   configureAgentsControllerRuntime({
     createPrimitivesStore,
@@ -394,7 +386,7 @@ export const createAgentsControlPlaneRuntime = async (
   const sources = options.routeSources ?? routeSources
   const runtime = await createAgentsHttpRuntime({
     routeModules: Object.fromEntries(sources.map((source) => [source.file, source.load])),
-    routeSources: await loadRouteSources(sources),
+    enableWebSocket: options.enableWebSocket,
     serveClient: false,
     metrics: {
       enabled: isMetricsEnabled,
