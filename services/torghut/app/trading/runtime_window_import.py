@@ -644,6 +644,9 @@ def _runtime_promotion_blocking_reasons(
     average_slippage: Decimal,
     average_post_cost: Decimal,
     latest_three_budget_ok: bool,
+    all_continuity_ok: bool,
+    all_drift_ok: bool,
+    dependency_quorum_allowed: bool,
     manifest: HypothesisManifest,
     budget: Decimal,
 ) -> list[str]:
@@ -664,6 +667,12 @@ def _runtime_promotion_blocking_reasons(
         reasons.append("slippage_budget_exceeded")
     if not latest_three_budget_ok:
         reasons.append("recent_slippage_budget_exceeded")
+    if not all_continuity_ok:
+        reasons.append("evidence_continuity_not_ok")
+    if not all_drift_ok:
+        reasons.append("drift_checks_not_ok")
+    if not dependency_quorum_allowed:
+        reasons.append("dependency_quorum_not_allow")
     if total_post_cost_promotion_sample_count <= 0:
         reasons.append("post_cost_pnl_basis_missing")
     if (
@@ -1103,6 +1112,22 @@ def persist_observed_runtime_windows(
         if sorted_buckets
         else False
     )
+    all_continuity_ok = (
+        all(bucket.continuity_ok for bucket in sorted_buckets)
+        if sorted_buckets
+        else False
+    )
+    all_drift_ok = (
+        all(bucket.drift_ok for bucket in sorted_buckets) if sorted_buckets else False
+    )
+    dependency_quorum_allowed = (
+        all(
+            str(bucket.dependency_quorum_decision or "").strip().lower() == "allow"
+            for bucket in sorted_buckets
+        )
+        if sorted_buckets
+        else False
+    )
     (
         runtime_ledger_average_post_cost,
         runtime_ledger_net_strategy_pnl_after_costs,
@@ -1140,6 +1165,9 @@ def persist_observed_runtime_windows(
         average_slippage=average_slippage,
         average_post_cost=average_post_cost,
         latest_three_budget_ok=latest_three_budget_ok,
+        all_continuity_ok=all_continuity_ok,
+        all_drift_ok=all_drift_ok,
+        dependency_quorum_allowed=dependency_quorum_allowed,
         manifest=manifest,
         budget=budget,
     )

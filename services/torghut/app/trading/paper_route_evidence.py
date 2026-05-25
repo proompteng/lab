@@ -330,15 +330,34 @@ def _paper_route_probe_symbols(probe: Mapping[str, object]) -> list[str]:
     return symbols
 
 
-def _target_probe_symbols(
-    target: Mapping[str, object],
-    probe: Mapping[str, object],
-) -> list[str]:
+def _declared_target_probe_symbols(target: Mapping[str, object]) -> list[str]:
     symbols: list[str] = []
     for item in _as_sequence(target.get("paper_route_probe_symbols")):
         symbol = str(item).strip().upper()
         if symbol and symbol not in symbols:
             symbols.append(symbol)
+    return symbols
+
+
+def _target_uses_current_probe_scope(target: Mapping[str, object]) -> bool:
+    source_kind = _safe_text(target.get("source_kind"))
+    handoff = _safe_text(target.get("handoff"))
+    return (
+        source_kind == "paper_route_probe_runtime_observed"
+        or handoff == "next_paper_route_runtime_window_import"
+        or bool(_as_mapping(target.get("paper_route_runtime_import_handoff")))
+    )
+
+
+def _target_probe_symbols(
+    target: Mapping[str, object],
+    probe: Mapping[str, object],
+) -> list[str]:
+    symbols = _declared_target_probe_symbols(target)
+    if _target_uses_current_probe_scope(target):
+        for symbol in _paper_route_probe_symbols(probe):
+            if symbol not in symbols:
+                symbols.append(symbol)
     if symbols:
         return symbols
     return _paper_route_probe_symbols(probe)
@@ -351,7 +370,11 @@ def _next_session_probe_notional(probe: Mapping[str, object]) -> str:
     return _decimal_text(probe.get("effective_max_notional"))
 
 
-def _target_identity(target: Mapping[str, Any]) -> dict[str, object]:
+def _target_identity(
+    target: Mapping[str, Any],
+    *,
+    probe: Mapping[str, object],
+) -> dict[str, object]:
     source_promotion_allowed = bool(target.get("promotion_allowed"))
     source_final_promotion_allowed = bool(
         target.get("final_promotion_allowed")
@@ -370,11 +393,7 @@ def _target_identity(target: Mapping[str, Any]) -> dict[str, object]:
         "dataset_snapshot_ref": _safe_text(target.get("dataset_snapshot_ref")),
         "window_start": _safe_text(target.get("window_start")),
         "window_end": _safe_text(target.get("window_end")),
-        "paper_route_probe_symbols": [
-            str(item).strip()
-            for item in _as_sequence(target.get("paper_route_probe_symbols"))
-            if str(item).strip()
-        ],
+        "paper_route_probe_symbols": _target_probe_symbols(target, probe),
         "runtime_ledger_bucket_ref": _safe_text(
             target.get("runtime_ledger_bucket_ref")
         ),
@@ -1007,7 +1026,7 @@ def _target_audit(
     generated_at: datetime,
     lookback_hours: int,
 ) -> dict[str, object]:
-    target = _target_identity(raw_target)
+    target = _target_identity(raw_target, probe=probe)
     window_start, window_end = _target_window(
         target,
         generated_at=generated_at,
