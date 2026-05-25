@@ -1,12 +1,12 @@
 import { Link, Outlet, createFileRoute, useLocation } from '@tanstack/react-router'
-import { PlusIcon, RefreshCwIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { fetchPrimitiveResources, type PrimitiveResourceSummary } from '../control-plane/api-client'
 import { findPrimitiveDefinition } from '../control-plane/registry'
+import { ControlPlanePage } from '../components/control-plane/control-plane-page'
 import { Alert, AlertDescription } from '../components/ui/alert'
 import { Badge } from '../components/ui/badge'
-import { Button } from '../components/ui/button'
+import { Skeleton } from '../components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
 
 export const Route = createFileRoute('/primitives/$kind')({
@@ -63,28 +63,7 @@ function PrimitiveListPage() {
   }
 
   return (
-    <div className="mx-auto flex max-w-7xl flex-col gap-6 p-4 md:p-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-semibold tracking-normal">{primitive.display.label}</h1>
-            <Badge variant="outline">{primitive.plural}</Badge>
-          </div>
-          <p className="text-sm text-muted-foreground">{primitive.group}</p>
-        </div>
-        <div className="flex gap-2">
-          <Button type="button" variant="outline" size="icon" onClick={() => void load()} disabled={loading}>
-            <RefreshCwIcon className="size-4" />
-            <span className="sr-only">Refresh</span>
-          </Button>
-          <Button asChild>
-            <Link to="/primitives/$kind/new" params={{ kind: primitive.display.pathSegment }}>
-              <PlusIcon className="size-4" />
-              New
-            </Link>
-          </Button>
-        </div>
-      </div>
+    <ControlPlanePage>
       {error ? (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
@@ -137,15 +116,30 @@ function PrimitiveListPage() {
               </TableRow>
             ) : null}
             {loading ? (
-              <TableRow>
-                <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
-                  Loading...
-                </TableCell>
-              </TableRow>
+              <>
+                {Array.from({ length: 8 }).map((_, index) => (
+                  <TableRow key={index}>
+                    <TableCell>
+                      <Skeleton className="h-4 w-[240px] max-w-full" />
+                    </TableCell>
+                    <TableCell>
+                      <Skeleton className="h-4 w-24" />
+                    </TableCell>
+                    <TableCell>
+                      <Skeleton className="h-5 w-20 rounded-full" />
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex justify-end">
+                        <Skeleton className="h-4 w-36" />
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </>
             ) : null}
           </TableBody>
         </Table>
       </div>
-    </div>
+    </ControlPlanePage>
   )
 }
