@@ -6,7 +6,7 @@ spec:
   template:
     metadata:
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-05-25T17:52:32Z"
+        kubectl.kubernetes.io/restartedAt: "2026-05-25T20:37:39Z"
     spec:
       serviceAccountName: symphony-jangar
       containers:
