@@ -234,6 +234,31 @@ def _paper_route_evidence(
     }
 
 
+def _runtime_ledger_proof_packet(
+    *,
+    allowed: bool = True,
+    blockers: list[str] | None = None,
+) -> dict[str, object]:
+    blocking_reasons = blockers or (
+        [] if allowed else ['runtime_ledger_daily_net_pnl_below_target']
+    )
+    return {
+        'schema_version': verifier.RUNTIME_LEDGER_PROOF_PACKET_SCHEMA_VERSION,
+        'ok': allowed,
+        'verdict': 'promotion_authority_allowed' if allowed else 'blocked',
+        'promotion_authority': {
+            'allowed': allowed,
+            'reason': 'runtime_ledger_live_paper_post_cost_proof_satisfied'
+            if allowed
+            else 'runtime_ledger_live_paper_post_cost_proof_blocked',
+            'blocking_reasons': blocking_reasons,
+            'failed_checks': []
+            if allowed
+            else ['runtime_ledger_post_cost_profit_target'],
+        },
+    }
+
+
 class _JsonHandler(BaseHTTPRequestHandler):
     payload: ClassVar[object] = {}
 
@@ -342,6 +367,44 @@ class TestVerifyTradingReadiness(TestCase):
             'runtime_ledger_post_cost_expectancy_positive',
         ):
             self.assertIn(check_name, weak['failed_checks'])
+
+    def test_runtime_ledger_proof_packet_can_be_required_as_final_authority(
+        self,
+    ) -> None:
+        result = evaluate_trading_readiness(
+            _ready_status(),
+            runtime_ledger_proof_packet=_runtime_ledger_proof_packet(),
+            require_runtime_ledger_proof_packet=True,
+        )
+
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['failed_checks'], [])
+        self.assertEqual(
+            result['runtime_ledger_proof_packet']['schema_version'],
+            verifier.RUNTIME_LEDGER_PROOF_PACKET_SCHEMA_VERSION,
+        )
+
+    def test_runtime_ledger_proof_packet_fails_closed_when_blocked(self) -> None:
+        result = evaluate_trading_readiness(
+            _ready_status(),
+            runtime_ledger_proof_packet=_runtime_ledger_proof_packet(
+                allowed=False,
+                blockers=['runtime_ledger_daily_net_pnl_below_target'],
+            ),
+            require_runtime_ledger_proof_packet=True,
+        )
+
+        self.assertFalse(result['ok'])
+        self.assertIn(
+            'runtime_ledger_proof_packet_authority',
+            result['failed_checks'],
+        )
+        self.assertEqual(
+            result['checks']['runtime_ledger_proof_packet_authority']['observed'][
+                'blocking_reasons'
+            ],
+            ['runtime_ledger_daily_net_pnl_below_target'],
+        )
 
     def test_runtime_ledger_profit_proof_requires_observed_days_and_daily_pnl(
         self,
