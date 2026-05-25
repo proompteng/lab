@@ -95,6 +95,33 @@ const toIso = (value: Date | string | null | undefined) => {
 
 const nowIso = () => new Date().toISOString()
 
+type FeedCursor = {
+  createdAt: string
+  id: string
+}
+
+const encodeFeedCursor = (item: SynthesisItem) =>
+  Buffer.from(JSON.stringify({ createdAt: item.createdAt, id: item.id } satisfies FeedCursor)).toString('base64url')
+
+const decodeFeedCursor = (cursor: string | undefined): FeedCursor | null => {
+  if (!cursor) return null
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'))
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      !Array.isArray(parsed) &&
+      typeof (parsed as FeedCursor).createdAt === 'string' &&
+      typeof (parsed as FeedCursor).id === 'string'
+    ) {
+      return parsed as FeedCursor
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
 const parseJsonArray = (value: unknown): string[] => {
   if (Array.isArray(value)) return value.map(String)
   if (typeof value === 'string') {
@@ -228,14 +255,25 @@ class InMemorySynthesisStore implements SynthesisStore {
   }
 
   async listFeed(input: ListFeedInput): Promise<FeedResponse> {
-    const items = [...this.items.values()]
+    const cursor = decodeFeedCursor(input.cursor)
+    const matching = [...this.items.values()]
       .filter((item) => (input.tag ? item.topicTags.includes(input.tag.toLowerCase()) : true))
       .filter((item) => (input.minScore == null ? true : item.score >= input.minScore))
       .filter((item) => (input.engagementStatus ? item.engagementStatus === input.engagementStatus : true))
-      .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
-      .slice(0, input.limit)
+      .sort((left, right) => {
+        const createdAtDiff = Date.parse(right.createdAt) - Date.parse(left.createdAt)
+        return createdAtDiff || right.id.localeCompare(left.id)
+      })
+      .filter((item) => {
+        if (!cursor) return true
+        const itemTime = Date.parse(item.createdAt)
+        const cursorTime = Date.parse(cursor.createdAt)
+        return itemTime < cursorTime || (itemTime === cursorTime && item.id < cursor.id)
+      })
+    const items = matching.slice(0, input.limit)
+    const nextCursor = matching.length > input.limit && items.length ? encodeFeedCursor(items[items.length - 1]) : null
 
-    return { items, fetchedAt: nowIso() }
+    return { items, nextCursor, fetchedAt: nowIso() }
   }
 
   async getItem(id: string): Promise<SynthesisItem | null> {
@@ -557,6 +595,7 @@ class PostgresSynthesisStore implements SynthesisStore {
     await this.ensureSchema()
     const where: string[] = []
     const values: unknown[] = []
+    const cursor = decodeFeedCursor(input.cursor)
     if (input.tag) {
       values.push(input.tag.toLowerCase())
       where.push(`i.topic_tags ? $${values.length}`)
@@ -569,18 +608,25 @@ class PostgresSynthesisStore implements SynthesisStore {
       values.push(input.engagementStatus)
       where.push(`i.engagement_status = $${values.length}`)
     }
-    values.push(input.limit)
+    if (cursor) {
+      values.push(cursor.createdAt, cursor.id)
+      where.push(`(i.created_at, i.id) < ($${values.length - 1}::timestamptz, $${values.length})`)
+    }
+    values.push(input.limit + 1)
     const result = await this.pool.query<ItemRow>(
       `SELECT ${this.itemSelectSql('i')}
        FROM synthesis_items i
        JOIN x_posts p ON p.id = i.x_post_key
        ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-       ORDER BY i.created_at DESC
+       ORDER BY i.created_at DESC, i.id DESC
        LIMIT $${values.length}`,
       values,
     )
+    const rows = result.rows.map(mapItemRow)
+    const items = rows.slice(0, input.limit)
     return {
-      items: result.rows.map(mapItemRow),
+      items,
+      nextCursor: rows.length > input.limit && items.length ? encodeFeedCursor(items[items.length - 1]) : null,
       fetchedAt: nowIso(),
     }
   }

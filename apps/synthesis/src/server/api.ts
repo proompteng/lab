@@ -18,6 +18,7 @@ const parseFeedQuery = (request: Request) => {
   const url = new URL(request.url)
   const parsed = ListFeedInputSchema.safeParse({
     limit: url.searchParams.get('limit') ?? undefined,
+    cursor: url.searchParams.get('cursor') ?? undefined,
     tag: url.searchParams.get('tag') ?? undefined,
     minScore: url.searchParams.get('minScore') ?? undefined,
     engagementStatus: url.searchParams.get('engagementStatus') ?? undefined,

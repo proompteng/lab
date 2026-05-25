@@ -52,6 +52,7 @@ export const SubmitBatchInputSchema = z
 export const ListFeedInputSchema = z
   .object({
     limit: z.coerce.number().int().min(1).max(100).default(40),
+    cursor: z.string().trim().min(1).max(240).optional(),
     tag: z.string().trim().min(1).max(60).optional(),
     minScore: z.coerce.number().min(0).max(1).optional(),
     engagementStatus: EngagementStatusSchema.optional(),
@@ -168,5 +169,6 @@ export type NextEngagementResult = {
 
 export type FeedResponse = {
   items: SynthesisItem[]
+  nextCursor: string | null
   fetchedAt: string
 }
