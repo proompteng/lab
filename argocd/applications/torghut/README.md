@@ -135,6 +135,25 @@ Use the replay runner for deterministic plan output and optional scripted actuat
 python3 services/torghut/scripts/ta_replay_runner.py --replay-id 2026-02-13-torghut-ops --mode plan
 ```
 
+For profitability-proof replay work, run both read-only preflights and inspect the machine-readable
+`replay_feasibility` verdict before any actuation:
+
+```bash
+python3 services/torghut/scripts/ta_replay_runner.py \
+  --replay-id proof-coverage-check \
+  --mode plan \
+  --json \
+  --check-clickhouse-coverage \
+  --check-kafka-retention \
+  --required-trading-days 25
+```
+
+When the preflights are supplied to `--mode apply`, the helper now fails closed unless
+`replay_feasibility.non_destructive_replay_admission` is `true`. If `exact_replay_capture_ready` is already `true`,
+capture exact replay/runtime-ledger artifacts instead of replaying. If the verdict is blocked by source retention,
+missing preflights, or ClickHouse TTL, do not start replay; wait for new signal days, restore an archive-backed source,
+or capture artifacts through an approved archive path.
+
 To execute the same steps with kubectl patches (non-destructive mode only):
 
 ```bash

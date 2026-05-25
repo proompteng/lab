@@ -203,11 +203,34 @@ Before manual replay execution, run:
 python3 services/torghut/scripts/ta_replay_runner.py --replay-id <REPLAY_ID> --mode plan
 ```
 
+For profitability-proof replay or exact-replay repair, include the read-only ClickHouse coverage and Kafka retention
+preflights:
+
+```bash
+python3 services/torghut/scripts/ta_replay_runner.py \
+  --replay-id <REPLAY_ID> \
+  --mode plan \
+  --json \
+  --check-clickhouse-coverage \
+  --check-kafka-retention \
+  --required-trading-days 25
+```
+
+The resulting `replay_feasibility` object is the admission contract:
+
+- `exact_replay_capture_ready=true`: current ClickHouse TA coverage is already sufficient; capture exact replay/runtime
+  ledger artifacts instead of replaying.
+- `non_destructive_replay_admission=true`: source retention and ClickHouse TTL preflights allow a bounded
+  non-destructive replay.
+- Any blocked status: do not start replay; follow `required_actions` first. If these preflights are supplied to
+  `--mode apply`, the helper fails closed before patching Kubernetes unless `non_destructive_replay_admission=true`.
+
 The helper prints:
 
 - current TA replay state read from running cluster config,
 - planned `TA_GROUP_ID` and `TA_AUTO_OFFSET_RESET`,
-- exact sequence for non-destructive replay mode.
+- exact sequence for non-destructive replay mode,
+- optional coverage, retention, and replay-feasibility verdicts.
 
 Execute the planned sequence with explicit human confirmation:
 

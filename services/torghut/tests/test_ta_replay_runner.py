@@ -126,6 +126,22 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
             },
         ).__dict__
 
+    def _complete_coverage(self) -> dict[str, object]:
+        return {
+            "schema_version": "torghut.ta-replay-coverage-preflight.v1",
+            "status": "ok",
+            "blockers": [],
+            "summary": {
+                "required_trading_days": 25,
+                "ta_signals_days": 25,
+                "ta_microbars_days": 25,
+                "missing_signal_days_vs_required": 0,
+                "microbar_only_day_count": 0,
+            },
+            "tables": [],
+            "day_gaps": [],
+        }
+
     def _kafka_retention(self) -> dict[str, object]:
         return {
             "schema_version": "torghut.kafka-retention-preflight.v1",
@@ -150,6 +166,30 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
                     "retention_days": 7.0,
                 },
             ],
+        }
+
+    def _passing_kafka_retention(
+        self, *, required_calendar_days: int = 7
+    ) -> dict[str, object]:
+        topics = []
+        for role, topic_name in runner.DEFAULT_KAFKA_RETENTION_TOPICS.items():
+            topics.append(
+                {
+                    "role": role,
+                    "topic": topic_name,
+                    "retention_days": 30.0,
+                    "ready": "True",
+                }
+            )
+        return {
+            "schema_version": "torghut.kafka-retention-preflight.v1",
+            "status": "ok",
+            "blockers": [],
+            "summary": {
+                "required_trading_days": 5,
+                "required_calendar_days": required_calendar_days,
+            },
+            "topics": topics,
         }
 
     def test_load_clickhouse_coverage_flags_signal_shortfall_and_microbar_only_days(
@@ -372,6 +412,81 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
         self.assertEqual(
             payload["kafka_retention"]["status"], "insufficient_source_retention"
         )
+        self.assertEqual(
+            payload["replay_feasibility"]["status"],
+            "blocked_source_retention_or_missing_preflight",
+        )
+        self.assertFalse(
+            payload["replay_feasibility"]["non_destructive_replay_admission"]
+        )
+        self.assertIn(
+            "do_not_start_ta_replay_until_preflight_passes",
+            payload["replay_feasibility"]["required_actions"],
+        )
+
+    def test_replay_feasibility_allows_current_exact_capture_when_window_complete(
+        self,
+    ) -> None:
+        feasibility = runner._build_replay_feasibility(
+            coverage=self._complete_coverage(),
+            kafka_retention=self._kafka_retention(),
+            required_trading_days=25,
+            required_calendar_days=35,
+        )
+
+        assert feasibility is not None
+        self.assertEqual(feasibility["status"], "current_clickhouse_window_complete")
+        self.assertTrue(feasibility["ok"])
+        self.assertTrue(feasibility["exact_replay_capture_ready"])
+        self.assertFalse(feasibility["non_destructive_replay_admission"])
+        self.assertIn(
+            "capture_exact_replay_runtime_ledger_artifacts",
+            feasibility["required_actions"],
+        )
+
+    def test_replay_feasibility_allows_replay_when_sources_and_ttl_pass(self) -> None:
+        feasibility = runner._build_replay_feasibility(
+            coverage=self._coverage(),
+            kafka_retention=self._passing_kafka_retention(required_calendar_days=7),
+            required_trading_days=5,
+            required_calendar_days=7,
+        )
+
+        assert feasibility is not None
+        self.assertEqual(feasibility["status"], "source_replay_feasible")
+        self.assertTrue(feasibility["ok"])
+        self.assertFalse(feasibility["exact_replay_capture_ready"])
+        self.assertTrue(feasibility["non_destructive_replay_admission"])
+        self.assertIn(
+            "run_non_destructive_ta_replay_in_bounded_window",
+            feasibility["required_actions"],
+        )
+
+    def test_replay_feasibility_blocks_replay_when_clickhouse_ttl_is_short(
+        self,
+    ) -> None:
+        feasibility = runner._build_replay_feasibility(
+            coverage=self._coverage(),
+            kafka_retention=self._passing_kafka_retention(required_calendar_days=35),
+            required_trading_days=25,
+            required_calendar_days=35,
+        )
+
+        assert feasibility is not None
+        self.assertEqual(
+            feasibility["status"],
+            "source_replay_possible_but_clickhouse_ttl_blocks_durable_window",
+        )
+        self.assertFalse(feasibility["ok"])
+        self.assertFalse(feasibility["non_destructive_replay_admission"])
+        self.assertIn(
+            "clickhouse_ttl_shortfall:ta_signals:14<35",
+            feasibility["blockers"],
+        )
+        self.assertIn(
+            "avoid_using_clickhouse_ttl_window_as_durable_proof",
+            feasibility["required_actions"],
+        )
 
     def test_text_plan_renders_coverage_preflight_summary(self) -> None:
         output = io.StringIO()
@@ -400,6 +515,17 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
                 dry_run=True,
                 warnings=[],
                 kafka_retention=self._kafka_retention(),
+                replay_feasibility={
+                    "status": "blocked_source_retention_or_missing_preflight",
+                    "exact_replay_capture_ready": False,
+                    "non_destructive_replay_admission": False,
+                    "current_window_complete": False,
+                    "source_replay_possible": False,
+                    "clickhouse_ttl_sufficient": False,
+                    "required_actions": [
+                        "do_not_start_ta_replay_until_preflight_passes"
+                    ],
+                },
             )
 
         text = output.getvalue()
@@ -407,6 +533,9 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
         self.assertIn("required-calendar-days: 35", text)
         self.assertIn("trades: 7.0d (torghut.trades.v1)", text)
         self.assertIn("retention_shortfall:trades:7<35", text)
+        self.assertIn("Replay feasibility:", text)
+        self.assertIn("non-destructive-replay-admission: False", text)
+        self.assertIn("do_not_start_ta_replay_until_preflight_passes", text)
 
     def test_replay_state_and_plan_helpers_cover_edge_branches(self) -> None:
         with patch.object(runner.shutil, "which", return_value=None):
@@ -607,18 +736,17 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
 
         with patch.object(runner, "_kubectl_merge_patch", side_effect=capture_patch):
             with patch.object(runner, "_load_state", return_value=applied_state):
-                with patch.object(
-                    runner,
-                    "_clickhouse_query",
-                    side_effect=[_TABLE_COVERAGE_TSV, _DAY_GAP_TSV],
-                ):
-                    with redirect_stdout(output):
-                        exit_code = runner._handle_apply_mode(
-                            args=self._args(json=False, verify=True),
-                            state=self._state(),
-                            plan=self._plan(),
-                            warnings=["planned warning"],
-                        )
+                with redirect_stdout(output):
+                    exit_code = runner._handle_apply_mode(
+                        args=self._args(
+                            json=False,
+                            verify=True,
+                            check_clickhouse_coverage=False,
+                        ),
+                        state=self._state(),
+                        plan=self._plan(),
+                        warnings=["planned warning"],
+                    )
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(
@@ -627,6 +755,40 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
         )
         self.assertIn("Patch complete.", output.getvalue())
         self.assertIn("restart_nonce_advanced: ok", output.getvalue())
+
+    def test_apply_mode_blocks_before_patching_when_feasibility_rejects(self) -> None:
+        output = io.StringIO()
+        with patch.object(
+            runner,
+            "_kubectl_get_kafka_topics_json",
+            return_value=_KAFKA_TOPICS_JSON,
+        ):
+            with patch.object(runner, "_kubectl_merge_patch") as merge_patch:
+                with redirect_stdout(output):
+                    exit_code = runner._handle_apply_mode(
+                        args=self._args(
+                            json=True,
+                            check_clickhouse_coverage=False,
+                            check_kafka_retention=True,
+                        ),
+                        state=self._state(),
+                        plan=self._plan(),
+                        warnings=[],
+                    )
+
+        self.assertEqual(exit_code, 1)
+        merge_patch.assert_not_called()
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["status"], "blocked")
+        self.assertEqual(payload["mode"], "apply")
+        self.assertEqual(
+            payload["replay_feasibility"]["status"],
+            "blocked_source_retention_or_missing_preflight",
+        )
+        self.assertIn(
+            "apply blocked by replay_feasibility",
+            payload["warnings"][0],
+        )
 
     def test_clickhouse_query_builds_request_and_wraps_url_errors(self) -> None:
         class FakeResponse:
