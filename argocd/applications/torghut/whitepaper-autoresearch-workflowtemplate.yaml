@@ -88,6 +88,8 @@ spec:
         value: '2'
       - name: allowStaleTape
         value: 'false'
+      - name: selectionOnly
+        value: 'false'
       - name: persistResults
         value: 'true'
   templates:
@@ -130,6 +132,7 @@ spec:
           - name: replayTapePreviewTopK
           - name: replayTapePreviewMinRows
           - name: allowStaleTape
+          - name: selectionOnly
           - name: persistResults
       container:
         image: registry.ide-newton.ts.net/lab/torghut@sha256:9ff870b9a1b8514bdd5997bc06ef462b2b089d2aa09898835dd6f80466c20a5b
@@ -263,6 +266,9 @@ spec:
             fi
             if [ "{{inputs.parameters.allowStaleTape}}" = "true" ]; then
               SCRIPT_ARGS+=(--allow-stale-tape)
+            fi
+            if [ "{{inputs.parameters.selectionOnly}}" = "true" ]; then
+              SCRIPT_ARGS+=(--selection-only)
             fi
             if [ "{{inputs.parameters.persistResults}}" = "true" ]; then
               SCRIPT_ARGS+=(--persist-results)

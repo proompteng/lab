@@ -123,11 +123,13 @@ describe('Torghut manifest scheduling', () => {
     expect(JSON.stringify(template)).toContain('--real-replay-shard-timeout-seconds')
     expect(JSON.stringify(template)).toContain('--real-replay-shard-workers')
     expect(JSON.stringify(template)).toContain('--feedback-block-reaudit-slots')
+    expect(JSON.stringify(template)).toContain('--selection-only')
     expect(parameterValue(manifest, 'maxCandidates')).toBe('128')
     expect(parameterValue(manifest, 'topK')).toBe('64')
     expect(parameterValue(manifest, 'explorationSlots')).toBe('48')
     expect(parameterValue(manifest, 'feedbackBlockReauditSlots')).toBe('32')
     expect(parameterValue(manifest, 'portfolioSizeMin')).toBe('3')
+    expect(parameterValue(manifest, 'selectionOnly')).toBe('false')
   })
 
   it('bounds whitepaper autoresearch real replay so profit runs emit evidence before timeout', () => {
