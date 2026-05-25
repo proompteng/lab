@@ -59,9 +59,10 @@ def _paper_route_evidence(
     *,
     import_ready: bool = True,
     import_blockers: list[str] | None = None,
+    import_audit: dict[str, object] | None = None,
 ) -> dict[str, object]:
     blockers = import_blockers if import_blockers is not None else []
-    return {
+    payload: dict[str, object] = {
         "schema_version": "torghut.paper-route-evidence.v1",
         "next_paper_route_runtime_window_targets": {
             "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
@@ -109,6 +110,33 @@ def _paper_route_evidence(
             ],
         },
     }
+    if import_audit is not None:
+        payload["runtime_window_import_audit"] = import_audit
+    else:
+        payload["runtime_window_import_audit"] = {
+            "schema_version": "torghut.paper-route-runtime-window-import-audit.v1",
+            "state": "runtime_ledger_ready_for_gate_review"
+            if import_ready
+            else "waiting_for_session_open",
+            "next_action": "review_runtime_ledger_profit_gates"
+            if import_ready
+            else "wait_for_regular_session_open",
+            "import_ready": import_ready,
+            "blockers": blockers,
+            "counts": {
+                "source_plan_target_count": 1,
+                "next_runtime_window_target_count": 1,
+                "targets_with_source_activity": 1 if import_ready else 0,
+                "targets_with_runtime_ledger": 1 if import_ready else 0,
+                "targets_with_evidence_grade_runtime_ledger": 1 if import_ready else 0,
+                "targets_with_promotion_decision": 1 if import_ready else 0,
+            },
+            "promotion_authority": {
+                "allowed": False,
+                "reason": "runtime_window_import_audit_observability_only",
+            },
+        }
+    return payload
 
 
 def _runtime_import(
@@ -447,6 +475,94 @@ class TestRuntimeLedgerProofPacket(TestCase):
             result["checks"]["runtime_window_import_proof"]["observed"][
                 "runtime_import_due"
             ]
+        )
+
+    def test_packet_blocks_with_source_activity_audit_before_generic_import_missing(
+        self,
+    ) -> None:
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            paper_route_evidence=_paper_route_evidence(
+                import_ready=True,
+                import_audit={
+                    "schema_version": (
+                        "torghut.paper-route-runtime-window-import-audit.v1"
+                    ),
+                    "state": "import_due_source_activity_missing",
+                    "next_action": "inspect_paper_route_source_activity_before_import",
+                    "import_ready": True,
+                    "blockers": [
+                        "paper_route_source_activity_missing",
+                        "source_decisions_missing",
+                        "source_executions_missing",
+                        "source_tca_missing",
+                    ],
+                    "counts": {
+                        "source_plan_target_count": 1,
+                        "next_runtime_window_target_count": 1,
+                        "targets_with_source_activity": 0,
+                        "targets_with_runtime_ledger": 0,
+                        "targets_with_evidence_grade_runtime_ledger": 0,
+                        "targets_with_promotion_decision": 0,
+                    },
+                },
+            ),
+            completion_status=_completion(),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["verdict"], "blocked")
+        self.assertIn(
+            "paper_route_source_activity",
+            result["promotion_authority"]["failed_checks"],
+        )
+        self.assertIn(
+            "paper_route_source_activity_missing",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+        self.assertIn(
+            "source_decisions_missing",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+        self.assertIn(
+            "inspect_paper_route_source_activity_before_import",
+            result["required_actions"],
+        )
+        self.assertEqual(
+            result["checks"]["runtime_window_import_proof"]["observed"][
+                "import_audit_state"
+            ],
+            "import_due_source_activity_missing",
+        )
+        self.assertEqual(
+            result["evidence"]["paper_route_runtime_window_import_audit"]["state"],
+            "import_due_source_activity_missing",
+        )
+
+    def test_packet_requires_import_audit_when_paper_route_import_is_due(
+        self,
+    ) -> None:
+        paper = _paper_route_evidence(import_ready=True)
+        paper.pop("runtime_window_import_audit")
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            paper_route_evidence=paper,
+            runtime_window_import=_runtime_import(),
+            completion_status=_completion(),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["verdict"], "blocked")
+        self.assertIn(
+            "runtime_window_import_audit_missing",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+        self.assertIn(
+            "inspect_paper_route_evidence_audit",
+            result["required_actions"],
         )
 
     def test_packet_blocks_when_paper_route_import_health_gate_is_not_ready(

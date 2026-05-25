@@ -232,6 +232,26 @@ The helper prints:
 - exact sequence for non-destructive replay mode,
 - optional coverage, retention, and replay-feasibility verdicts.
 
+## Runtime-ledger proof packet after the paper-route window
+
+The scheduled `torghut-empirical-promotion-renewal` CronJob is the canonical post-window proof conductor. It runs after
+the live paper-route target plan says the session is closed and settled, then writes a durable
+`runtime-ledger-proof-packet.json`.
+
+Read these fields before deciding the next action:
+
+- `checks.paper_route_runtime_window_import_audit`: proves `/trading/paper-route-evidence` included the current
+  `runtime_window_import_audit` when import was due.
+- `checks.paper_route_source_activity`: distinguishes missing paper-route decisions/executions/TCA from a later
+  runtime-ledger import failure.
+- `evidence.paper_route_runtime_window_import_audit`: carries the audit state, next action, blockers, and source/ledger
+  counts from the live service.
+
+If the packet reports `paper_route_source_activity_missing`, `source_decisions_missing`, `source_executions_missing`, or
+`source_tca_missing`, repair the paper-route source activity before replaying or rerunning ledger import. If source
+activity is present but runtime ledger counts are missing, then inspect `renew_latest_empirical_promotion_jobs.py`
+runtime-window import output and the DB-backed runtime-ledger buckets. Neither case authorizes promotion by itself.
+
 Execute the planned sequence with explicit human confirmation:
 
 ```bash
