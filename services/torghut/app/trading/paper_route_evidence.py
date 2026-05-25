@@ -35,10 +35,19 @@ NEXT_PAPER_ROUTE_RUNTIME_WINDOW_TARGETS_SCHEMA_VERSION = (
 PAPER_ROUTE_RUNTIME_WINDOW_IMPORT_AUDIT_SCHEMA_VERSION = (
     "torghut.paper-route-runtime-window-import-audit.v1"
 )
+RUNTIME_LEDGER_PROOF_PACKET_HANDOFF_SCHEMA_VERSION = (
+    "torghut.runtime-ledger-proof-packet-handoff.v1"
+)
 DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS = 72
 DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT = 20
 PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL = "TORGHUT_SIM"
 PAPER_ROUTE_RUNTIME_IMPORT_SETTLEMENT_SECONDS = 3600
+DEFAULT_TORGHUT_SERVICE_BASE_URL = "http://torghut.torghut.svc.cluster.local"
+RUNTIME_LEDGER_PROOF_PACKET_OUTPUT_FILE = "artifacts/runtime-ledger-proof-packet.json"
+RUNTIME_WINDOW_IMPORT_OUTPUT_FILE = "artifacts/runtime-window-import.json"
+MIN_RUNTIME_LEDGER_PROOF_NET_PNL = "500"
+MIN_RUNTIME_LEDGER_PROOF_DAILY_NET_PNL = "500"
+MIN_RUNTIME_LEDGER_PROOF_TRADING_DAYS = 1
 US_EQUITIES_TIMEZONE = "America/New_York"
 US_EQUITIES_OPEN = time(hour=9, minute=30)
 US_EQUITIES_CLOSE = time(hour=16, minute=0)
@@ -1265,6 +1274,121 @@ def _runtime_window_import_audit(
     }
 
 
+def _runtime_ledger_proof_packet_handoff(
+    *,
+    next_targets: Mapping[str, object],
+    runtime_window_import_audit: Mapping[str, object],
+) -> dict[str, object]:
+    runtime_import_handoff = _as_mapping(
+        next_targets.get("runtime_window_import_handoff")
+    )
+    session_readiness = _as_mapping(next_targets.get("session_readiness"))
+    import_ready = bool(
+        session_readiness.get("import_ready")
+        or runtime_import_handoff.get("import_ready")
+        or runtime_window_import_audit.get("import_ready")
+    )
+    import_blockers = _unique_text_items(session_readiness.get("import_blockers")) + [
+        blocker
+        for blocker in _unique_text_items(runtime_import_handoff.get("import_blockers"))
+        if blocker not in _unique_text_items(session_readiness.get("import_blockers"))
+    ]
+    base_args = [
+        "uv",
+        "run",
+        "--frozen",
+        "python",
+        "scripts/assemble_runtime_ledger_proof_packet.py",
+        "--service-base-url",
+        "$TORGHUT_SERVICE_BASE_URL",
+        "--min-runtime-ledger-net-pnl",
+        MIN_RUNTIME_LEDGER_PROOF_NET_PNL,
+        "--min-runtime-ledger-daily-net-pnl",
+        MIN_RUNTIME_LEDGER_PROOF_DAILY_NET_PNL,
+        "--min-runtime-ledger-trading-days",
+        str(MIN_RUNTIME_LEDGER_PROOF_TRADING_DAYS),
+        "--output-file",
+        RUNTIME_LEDGER_PROOF_PACKET_OUTPUT_FILE,
+    ]
+    authority_args = [
+        *base_args[:-2],
+        "--runtime-window-import-file",
+        RUNTIME_WINDOW_IMPORT_OUTPUT_FILE,
+        "--completion-url",
+        "$TORGHUT_SERVICE_BASE_URL/trading/completion/doc29",
+        "--output-file",
+        RUNTIME_LEDGER_PROOF_PACKET_OUTPUT_FILE,
+    ]
+    return {
+        "schema_version": RUNTIME_LEDGER_PROOF_PACKET_HANDOFF_SCHEMA_VERSION,
+        "source": "paper_route_evidence_audit",
+        "purpose": "assemble_runtime_ledger_live_paper_proof_packet",
+        "promotion_allowed": False,
+        "final_promotion_authorized": False,
+        "promotion_gate": "runtime_ledger_live_or_live_paper_required",
+        "service_base_url_env": "TORGHUT_SERVICE_BASE_URL",
+        "default_service_base_url": DEFAULT_TORGHUT_SERVICE_BASE_URL,
+        "source_endpoints": {
+            "status": "/trading/status",
+            "paper_route_evidence": "/trading/paper-route-evidence",
+            "completion_doc29": "/trading/completion/doc29",
+        },
+        "targets": {
+            "min_runtime_ledger_net_pnl_after_costs": (
+                MIN_RUNTIME_LEDGER_PROOF_NET_PNL
+            ),
+            "min_runtime_ledger_daily_net_pnl_after_costs": (
+                MIN_RUNTIME_LEDGER_PROOF_DAILY_NET_PNL
+            ),
+            "min_runtime_ledger_trading_days": MIN_RUNTIME_LEDGER_PROOF_TRADING_DAYS,
+        },
+        "runtime_window": {
+            "import_ready": import_ready,
+            "import_blockers": sorted(dict.fromkeys(import_blockers)),
+            "session_window": _as_mapping(next_targets.get("session_window")),
+            "settlement_ready_at": session_readiness.get("settlement_ready_at"),
+            "target_count": _safe_int(next_targets.get("target_count")),
+            "import_audit_state": _safe_text(runtime_window_import_audit.get("state"))
+            or "unknown",
+            "import_audit_next_action": _safe_text(
+                runtime_window_import_audit.get("next_action")
+            )
+            or "inspect_packet_checks_and_repair_failed_proof_dimension",
+        },
+        "required_inputs": {
+            "status": {
+                "endpoint": "/trading/status",
+                "required": True,
+            },
+            "paper_route_evidence": {
+                "endpoint": "/trading/paper-route-evidence",
+                "required": True,
+            },
+            "runtime_window_import": {
+                "output_file": RUNTIME_WINDOW_IMPORT_OUTPUT_FILE,
+                "required_when": "runtime_window.import_ready",
+                "producer": "scripts/renew_latest_empirical_promotion_jobs.py",
+            },
+            "completion_doc29": {
+                "endpoint": "/trading/completion/doc29",
+                "required_when": "runtime_window.import_ready",
+            },
+        },
+        "commands": {
+            "waiting_packet": {
+                "argv": base_args,
+                "expected_verdict": "waiting_for_runtime_window",
+            },
+            "authority_packet_after_import": {
+                "argv": authority_args,
+                "expected_verdict": "promotion_authority_allowed",
+                "allowed_only_if_packet_ok": True,
+            },
+        },
+        "runtime_window_import_handoff": runtime_import_handoff,
+    }
+
+
 def build_paper_route_evidence_audit(
     session: Session,
     *,
@@ -1300,6 +1424,10 @@ def build_paper_route_evidence_audit(
     runtime_window_import_audit = _runtime_window_import_audit(
         next_targets=next_targets,
         target_audits=target_audits,
+    )
+    proof_packet_handoff = _runtime_ledger_proof_packet_handoff(
+        next_targets=next_targets,
+        runtime_window_import_audit=runtime_window_import_audit,
     )
     summary_blockers = sorted(
         {
@@ -1346,6 +1474,7 @@ def build_paper_route_evidence_audit(
         "paper_route_probe": probe,
         "next_paper_route_runtime_window_targets": next_targets,
         "runtime_window_import_audit": runtime_window_import_audit,
+        "runtime_ledger_proof_packet_handoff": proof_packet_handoff,
         "summary": {
             "target_count": len(targets),
             "target_with_source_activity_count": sum(
@@ -1440,5 +1569,6 @@ __all__ = [
     "NEXT_PAPER_ROUTE_RUNTIME_WINDOW_TARGETS_SCHEMA_VERSION",
     "PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION",
     "PAPER_ROUTE_RUNTIME_WINDOW_IMPORT_AUDIT_SCHEMA_VERSION",
+    "RUNTIME_LEDGER_PROOF_PACKET_HANDOFF_SCHEMA_VERSION",
     "build_paper_route_evidence_audit",
 ]
