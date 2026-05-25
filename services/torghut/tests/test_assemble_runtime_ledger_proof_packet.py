@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import tempfile
+from argparse import Namespace
 from decimal import Decimal
 from pathlib import Path
 from unittest import TestCase
+from unittest.mock import patch
 
 from scripts import assemble_runtime_ledger_proof_packet as packet
 
@@ -148,6 +150,21 @@ def _completion(
 
 
 class TestRuntimeLedgerProofPacket(TestCase):
+    def test_scalar_normalizers_handle_runtime_json_variants(self) -> None:
+        self.assertTrue(packet._bool(Decimal('1')))
+        self.assertFalse(packet._bool(0))
+        self.assertTrue(packet._bool('allowed'))
+        self.assertFalse(packet._bool(object()))
+
+        self.assertEqual(packet._int(True), 1)
+        self.assertEqual(packet._int(4.9), 4)
+        self.assertEqual(packet._int(Decimal('7')), 7)
+        self.assertEqual(packet._int('8.0'), 8)
+        self.assertEqual(packet._int('bad', default=-1), -1)
+
+        self.assertEqual(packet._decimal(Decimal('12.5')), Decimal('12.5'))
+        self.assertIsNone(packet._decimal('not-a-number'))
+
     def test_packet_allows_only_complete_post_cost_runtime_ledger_proof(self) -> None:
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
@@ -225,6 +242,167 @@ class TestRuntimeLedgerProofPacket(TestCase):
             result['promotion_authority']['blocking_reasons'],
         )
 
+    def test_packet_blocks_incomplete_identity_unbacked_refs_and_lifecycle_gaps(self) -> None:
+        paper = _paper_route_evidence()
+        target = paper['next_paper_route_runtime_window_targets']['targets'][0]
+        assert isinstance(target, dict)
+        target['candidate_id'] = ''
+        completion = _completion(
+            status='blocked',
+            net_pnl='bad',
+            trading_days=0,
+            expectancy_bps='0',
+            ledger_refs=[],
+            unbacked_refs=['hypothesis_metric_windows:H-PAIRS-01:2026-05-26'],
+        )
+        gate = completion['gates'][0]
+        assert isinstance(gate, dict)
+        gate['blocking_reasons'] = ['live_scale_runtime_ledger_summary_incomplete']
+        gate['blocked_reason'] = 'live_canary_not_satisfied'
+        summary = gate['runtime_ledger_summary']
+        assert isinstance(summary, dict)
+        summary['runtime_ledger_bucket_count'] = 0
+        summary['runtime_ledger_fill_count'] = 0
+        summary['runtime_ledger_closed_trade_count'] = 0
+        summary['runtime_ledger_filled_notional'] = '0'
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(blockers=['simple_submit_disabled']),
+            paper_route_evidence=paper,
+            runtime_window_import={'runtime_window_import': _runtime_import()},
+            completion_status=completion,
+            min_runtime_ledger_net_pnl=Decimal('500'),
+            min_runtime_ledger_daily_net_pnl=Decimal('500'),
+            min_runtime_ledger_trading_days=1,
+            generated_at='2026-05-26T21:05:00+00:00',
+        )
+
+        blockers = result['promotion_authority']['blocking_reasons']
+        self.assertEqual(result['verdict'], 'blocked')
+        self.assertIn('simple_submit_disabled', blockers)
+        self.assertIn('paper_route_target_identity_incomplete', blockers)
+        self.assertIn('live_scale_runtime_ledger_summary_incomplete', blockers)
+        self.assertIn('live_canary_not_satisfied', blockers)
+        self.assertIn('runtime_ledger_db_refs_missing_or_unbacked', blockers)
+        self.assertIn('runtime_ledger_bucket_count_zero', blockers)
+        self.assertIn('runtime_ledger_fill_count_zero', blockers)
+        self.assertIn('runtime_ledger_closed_trade_count_zero', blockers)
+        self.assertIn('runtime_ledger_filled_notional_missing', blockers)
+        self.assertIn('runtime_ledger_post_cost_expectancy_not_positive', blockers)
+        self.assertIn('runtime_ledger_net_pnl_below_target', blockers)
+        self.assertIn('runtime_ledger_trading_days_below_target', blockers)
+        self.assertIn('runtime_ledger_daily_net_pnl_below_target', blockers)
+        self.assertIn(
+            'keep_promotion_blocked_until_live_gate_and_proof_floor_pass',
+            result['required_actions'],
+        )
+        self.assertIn(
+            'repair_runtime_ledger_lifecycle_cost_or_lineage_evidence',
+            result['required_actions'],
+        )
+        self.assertIn(
+            'collect_or_improve_post_cost_runtime_profit_evidence',
+            result['required_actions'],
+        )
+
+    def test_packet_waits_on_target_level_settlement_blocker(self) -> None:
+        paper = _paper_route_evidence()
+        target = paper['next_paper_route_runtime_window_targets']['targets'][0]
+        assert isinstance(target, dict)
+        target['paper_route_session_import_blockers'] = [
+            'paper_route_session_settlement_pending'
+        ]
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            paper_route_evidence=paper,
+            generated_at='2026-05-26T20:01:00+00:00',
+        )
+
+        self.assertEqual(result['verdict'], 'waiting_for_runtime_window')
+        self.assertEqual(
+            result['promotion_authority']['blocking_reasons'],
+            ['paper_route_session_settlement_pending'],
+        )
+        self.assertEqual(
+            result['required_actions'],
+            ['wait_for_paper_route_settlement_grace'],
+        )
+
+    def test_packet_accepts_alternate_runtime_plan_and_completion_gate_shapes(self) -> None:
+        paper = _paper_route_evidence()
+        plan = paper.pop('next_paper_route_runtime_window_targets')
+        assert isinstance(plan, dict)
+        paper['runtime_window_import_plan'] = plan
+        completion_gate = _completion()['gates'][0]
+
+        result = packet.build_runtime_ledger_proof_packet(
+            {'mode': 'paper', 'running': True, 'live_gate': {'allowed': True}},
+            paper_route_evidence=paper,
+            runtime_window_import={
+                'status': 'ok',
+                'proof_status': 'ok',
+                'candidate_id': 'c88421d619759b2cfaa6f4d0',
+                'summary': {
+                    'runtime_observation': {
+                        'authoritative': True,
+                    },
+                },
+            },
+            completion_status={
+                'gates_by_id': {
+                    packet.DOC29_LIVE_SCALE_GATE: completion_gate,
+                },
+            },
+            generated_at='2026-05-26T21:05:00+00:00',
+        )
+
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['evidence']['paper_route_target_plan']['target_count'], 1)
+        self.assertEqual(
+            result['evidence']['runtime_window_import'][
+                'authoritative_observation_count'
+            ],
+            1,
+        )
+
+    def test_packet_preserves_string_proof_blockers_from_runtime_imports(self) -> None:
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import={
+                'proof_status': 'blocked',
+                'proof_blockers': ['runtime_ledger_bucket_missing'],
+                'imports': [
+                    {
+                        'proof_status': 'blocked',
+                        'proof_blockers': ['runtime_ledger_pnl_basis_missing'],
+                        'summary': {
+                            'runtime_observation': {
+                                'authoritative': False,
+                            },
+                        },
+                    }
+                ],
+            },
+            completion_status=_completion(),
+            generated_at='2026-05-26T21:05:00+00:00',
+        )
+
+        self.assertFalse(result['ok'])
+        self.assertIn(
+            'runtime_ledger_bucket_missing',
+            result['promotion_authority']['blocking_reasons'],
+        )
+        self.assertIn(
+            'runtime_ledger_pnl_basis_missing',
+            result['promotion_authority']['blocking_reasons'],
+        )
+        self.assertIn(
+            'run_runtime_window_import_from_paper_route_target_plan',
+            result['required_actions'],
+        )
+
     def test_cli_writes_packet_and_returns_nonzero_for_blocked_packet(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -300,3 +478,84 @@ class TestRuntimeLedgerProofPacket(TestCase):
             self.assertEqual(exit_code, 1)
             payload = json.loads(output_path.read_text(encoding='utf-8'))
             self.assertEqual(payload['verdict'], 'waiting_for_runtime_window')
+
+    def test_cli_rejects_missing_duplicate_and_invalid_sources(self) -> None:
+        with self.assertRaisesRegex(SystemExit, 'exactly_one_status_source_required'):
+            packet.main([])
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            status_path = tmp_path / 'status.json'
+            paper_path = tmp_path / 'paper.json'
+            status_path.write_text(json.dumps(_status()), encoding='utf-8')
+            paper_path.write_text(json.dumps(_paper_route_evidence()), encoding='utf-8')
+
+            with self.assertRaisesRegex(
+                SystemExit, '--min-runtime-ledger-net-pnl must be decimal'
+            ):
+                packet.main(
+                    [
+                        '--status-file',
+                        str(status_path),
+                        '--paper-route-evidence-file',
+                        str(paper_path),
+                        '--min-runtime-ledger-net-pnl',
+                        'bad',
+                    ]
+                )
+            with self.assertRaisesRegex(
+                SystemExit, '--min-runtime-ledger-daily-net-pnl must be decimal'
+            ):
+                packet.main(
+                    [
+                        '--status-file',
+                        str(status_path),
+                        '--paper-route-evidence-file',
+                        str(paper_path),
+                        '--min-runtime-ledger-daily-net-pnl',
+                        'bad',
+                    ]
+                )
+            with self.assertRaisesRegex(
+                SystemExit, 'exactly_one_paper_route_evidence_source_required'
+            ):
+                packet._required_source_args(
+                    Namespace(
+                        status_file=status_path,
+                        status_url=None,
+                        paper_route_evidence_file=paper_path,
+                        paper_route_evidence_url='http://example.invalid/paper.json',
+                    )
+                )
+
+    def test_json_loaders_require_objects_and_support_urls(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            bad_path = Path(tmp_dir) / 'bad.json'
+            bad_path.write_text(json.dumps(['not', 'an', 'object']), encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'json_object_required'):
+                packet._load_json_object(bad_path)
+
+        class _Response:
+            def __init__(self, body: object) -> None:
+                self.body = body
+
+            def __enter__(self) -> '_Response':
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps(self.body).encode('utf-8')
+
+        with patch.object(packet, 'urlopen', return_value=_Response({'ok': True})):
+            self.assertEqual(
+                packet._load_json_url('http://example.invalid/status.json', timeout_seconds=1),
+                {'ok': True},
+            )
+        with patch.object(packet, 'urlopen', return_value=_Response(['bad'])):
+            with self.assertRaisesRegex(ValueError, 'json_object_required'):
+                packet._load_json_url(
+                    'http://example.invalid/status.json',
+                    timeout_seconds=1,
+                )

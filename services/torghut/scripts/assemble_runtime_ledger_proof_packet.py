@@ -370,6 +370,13 @@ def _required_actions(blockers: Sequence[str], *, verdict: str) -> list[str]:
             _extend_unique(
                 actions, ['run_runtime_window_import_from_paper_route_target_plan']
             )
+        elif blocker in {
+            'runtime_ledger_net_pnl_below_target',
+            'runtime_ledger_daily_net_pnl_below_target',
+        }:
+            _extend_unique(
+                actions, ['collect_or_improve_post_cost_runtime_profit_evidence']
+            )
         elif blocker.startswith('runtime_ledger_') or blocker in {
             'filled_notional_missing',
             'closed_round_trip_missing',
@@ -380,12 +387,9 @@ def _required_actions(blockers: Sequence[str], *, verdict: str) -> list[str]:
                 actions, ['repair_runtime_ledger_lifecycle_cost_or_lineage_evidence']
             )
         elif blocker in {
-            'runtime_ledger_net_pnl_below_target',
-            'runtime_ledger_daily_net_pnl_below_target',
+            'runtime_ledger_trading_days_below_target',
         }:
-            _extend_unique(
-                actions, ['collect_or_improve_post_cost_runtime_profit_evidence']
-            )
+            _extend_unique(actions, ['collect_more_runtime_ledger_trading_days'])
         elif blocker in {'simple_submit_disabled', 'live_submission_gate_not_allowed'}:
             _extend_unique(
                 actions, ['keep_promotion_blocked_until_live_gate_and_proof_floor_pass']
