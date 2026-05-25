@@ -161,7 +161,12 @@ describe('Agents MCP handler', () => {
 
     const list = await post(service, { jsonrpc: '2.0', id: 2, method: 'tools/list' })
     expect(list.response.status).toBe(200)
-    expect(list.json?.result?.tools?.map((tool: { name: string }) => tool.name)).toEqual(
+    const tools = list.json?.result?.tools as Array<{
+      name: string
+      description?: string
+      inputSchema?: { properties?: Record<string, unknown> }
+    }>
+    expect(tools.map((tool) => tool.name)).toEqual(
       expect.arrayContaining([
         'persist_memory',
         'retrieve_memory',
@@ -175,6 +180,9 @@ describe('Agents MCP handler', () => {
         'rerun_agent_run',
       ]),
     )
+    const createTool = tools.find((tool) => tool.name === 'create_agent_run')
+    expect(createTool?.description).toContain('secretBindingRef')
+    expect(createTool?.inputSchema?.properties?.secretBindingRef).toBeDefined()
   })
 
   it('supports resources/list + resources/templates/list', async () => {
@@ -387,6 +395,162 @@ describe('Agents MCP handler', () => {
       },
     ])
     expect(calls.rerun).toEqual([{ agentRunId: 'run-1', deliveryId: 'rerun-1', payload: { reason: 'mcp smoke' } }])
+  })
+
+  it('injects create_agent_run secretBindingRef into payload policy', async () => {
+    const { service } = makeService()
+    const { service: agentRunsService, calls } = makeAgentRunsService()
+
+    const create = await post(
+      service,
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'create_agent_run',
+          arguments: {
+            deliveryId: 'delivery-with-secrets',
+            secretBindingRef: 'codex-github-token',
+            payload: {
+              agentRef: { name: 'codex-agent' },
+              implementation: { text: 'Implement the requested change.' },
+              runtime: { type: 'job' },
+              secrets: ['github-token', 'codex-auth'],
+              parameters: {
+                repository: 'proompteng/lab',
+                base: 'main',
+                head: 'codex/demo',
+                stage: 'implementation',
+              },
+            },
+          },
+        },
+      },
+      {},
+      agentRunsService,
+    )
+
+    expect(create.response.status).toBe(200)
+    expect(calls.create).toEqual([
+      {
+        deliveryId: 'delivery-with-secrets',
+        payload: {
+          agentRef: { name: 'codex-agent' },
+          implementation: { text: 'Implement the requested change.' },
+          runtime: { type: 'job' },
+          secrets: ['github-token', 'codex-auth'],
+          parameters: {
+            repository: 'proompteng/lab',
+            base: 'main',
+            head: 'codex/demo',
+            stage: 'implementation',
+          },
+          policy: { secretBindingRef: 'codex-github-token' },
+        },
+        dryRun: null,
+      },
+    ])
+  })
+
+  it('rejects create_agent_run submissions that request secrets without a SecretBinding', async () => {
+    const { service } = makeService()
+    const { service: agentRunsService, calls } = makeAgentRunsService()
+
+    const create = await post(
+      service,
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'create_agent_run',
+          arguments: {
+            deliveryId: 'delivery-missing-binding',
+            payload: {
+              agentRef: { name: 'codex-agent' },
+              implementation: { text: 'Implement the requested change.' },
+              runtime: { type: 'job' },
+              secrets: ['github-token'],
+            },
+          },
+        },
+      },
+      {},
+      agentRunsService,
+    )
+
+    expect(create.response.status).toBe(200)
+    expect(create.json?.error?.code).toBe(-32602)
+    expect(create.json?.error?.message).toContain('payload.policy.secretBindingRef is required')
+    expect(calls.create).toEqual([])
+  })
+
+  it('rejects create_agent_run VCS credential requests without a SecretBinding', async () => {
+    const { service } = makeService()
+    const { service: agentRunsService, calls } = makeAgentRunsService()
+
+    const create = await post(
+      service,
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'create_agent_run',
+          arguments: {
+            deliveryId: 'delivery-missing-vcs-binding',
+            payload: {
+              agentRef: { name: 'codex-agent' },
+              implementation: { text: 'Implement the requested change.' },
+              runtime: { type: 'job' },
+              vcsRef: { name: 'github' },
+              vcsPolicy: { required: true, mode: 'read-write' },
+            },
+          },
+        },
+      },
+      {},
+      agentRunsService,
+    )
+
+    expect(create.response.status).toBe(200)
+    expect(create.json?.error?.code).toBe(-32602)
+    expect(create.json?.error?.message).toContain('payload.policy.secretBindingRef is required')
+    expect(calls.create).toEqual([])
+  })
+
+  it('rejects create_agent_run prompt parameters before calling the AgentRun API', async () => {
+    const { service } = makeService()
+    const { service: agentRunsService, calls } = makeAgentRunsService()
+
+    const create = await post(
+      service,
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'create_agent_run',
+          arguments: {
+            deliveryId: 'delivery-prompt',
+            payload: {
+              agentRef: { name: 'codex-agent' },
+              implementationSpecRef: { name: 'demo-spec' },
+              runtime: { type: 'job' },
+              parameters: { prompt: 'do the thing' },
+            },
+          },
+        },
+      },
+      {},
+      agentRunsService,
+    )
+
+    expect(create.response.status).toBe(200)
+    expect(create.json?.error?.code).toBe(-32602)
+    expect(create.json?.error?.message).toContain('payload.parameters.prompt is not allowed')
+    expect(calls.create).toEqual([])
   })
 
   it('returns JSON-RPC tool errors when the underlying service fails', async () => {
