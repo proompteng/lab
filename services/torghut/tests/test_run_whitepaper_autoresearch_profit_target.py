@@ -803,6 +803,12 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         template = template_path.read_text()
 
         self.assertIn("name: feedbackEvidenceJsonlB64", template)
+        self.assertIn("name: candidateSpecsJsonlB64", template)
+        self.assertIn("name: candidateSpecsConfigMapName", template)
+        self.assertIn("name: candidateSpecsConfigMapKey", template)
+        self.assertIn("--candidate-specs", template)
+        self.assertIn("TORGHUT_WHITEPAPER_CANDIDATE_SPECS_JSONL_B64", template)
+        self.assertIn("TORGHUT_WHITEPAPER_CANDIDATE_SPECS_CONFIGMAP_PATH", template)
         self.assertIn("name: feedbackEvidenceConfigMapName", template)
         self.assertIn("name: feedbackEvidenceConfigMapKey", template)
         self.assertIn("--feedback-evidence-jsonl", template)
@@ -811,8 +817,13 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertIn("TORGHUT_WHITEPAPER_SOURCE_JSONL_B64", template)
         self.assertIn('--epoch-id "${RUN_ID}"', template)
         self.assertIn("name: feedback-evidence", template)
+        self.assertIn("name: candidate-specs", template)
         self.assertNotIn(
             "printf '%s' \"{{inputs.parameters.feedbackEvidenceJsonlB64}}\"",
+            template,
+        )
+        self.assertNotIn(
+            "printf '%s' \"{{inputs.parameters.candidateSpecsJsonlB64}}\"",
             template,
         )
         self.assertNotIn(
@@ -9011,15 +9022,15 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertEqual(
             day_action["recommended_coverage_probe"],
-            remediation["recent_trading_days"][
-                "clickhouse_coverage_probe_queries"
-            ]["signal_microbar_coverage"],
+            remediation["recent_trading_days"]["clickhouse_coverage_probe_queries"][
+                "signal_microbar_coverage"
+            ],
         )
         self.assertEqual(
             day_action["recommended_day_gap_probe"],
-            remediation["recent_trading_days"][
-                "clickhouse_coverage_probe_queries"
-            ]["signal_microbar_day_gap"],
+            remediation["recent_trading_days"]["clickhouse_coverage_probe_queries"][
+                "signal_microbar_day_gap"
+            ],
         )
 
     def test_remediation_surfaces_stale_tape_shortfall(self) -> None:

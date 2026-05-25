@@ -28,6 +28,12 @@ spec:
         value: /tmp/torghut-whitepaper-autoresearch
       - name: sourceJsonlB64
         value: ''
+      - name: candidateSpecsJsonlB64
+        value: ''
+      - name: candidateSpecsConfigMapName
+        value: torghut-whitepaper-autoresearch-candidate-specs
+      - name: candidateSpecsConfigMapKey
+        value: candidate-specs.jsonl
       - name: feedbackEvidenceJsonlB64
         value: ''
       - name: feedbackEvidenceConfigMapName
@@ -102,6 +108,9 @@ spec:
           - name: runId
           - name: outputRoot
           - name: sourceJsonlB64
+          - name: candidateSpecsJsonlB64
+          - name: candidateSpecsConfigMapName
+          - name: candidateSpecsConfigMapKey
           - name: feedbackEvidenceJsonlB64
           - name: feedbackEvidenceConfigMapName
           - name: feedbackEvidenceConfigMapKey
@@ -159,6 +168,10 @@ spec:
             value: /etc/torghut/strategies.yaml
           - name: TORGHUT_WHITEPAPER_SOURCE_JSONL_B64
             value: "{{inputs.parameters.sourceJsonlB64}}"
+          - name: TORGHUT_WHITEPAPER_CANDIDATE_SPECS_JSONL_B64
+            value: "{{inputs.parameters.candidateSpecsJsonlB64}}"
+          - name: TORGHUT_WHITEPAPER_CANDIDATE_SPECS_CONFIGMAP_PATH
+            value: /var/run/torghut-candidate-specs/candidate-specs.jsonl
           - name: TORGHUT_WHITEPAPER_FEEDBACK_EVIDENCE_JSONL_B64
             value: "{{inputs.parameters.feedbackEvidenceJsonlB64}}"
           - name: TORGHUT_WHITEPAPER_FEEDBACK_EVIDENCE_CONFIGMAP_PATH
@@ -169,6 +182,9 @@ spec:
             readOnly: true
           - name: feedback-evidence
             mountPath: /var/run/torghut-feedback
+            readOnly: true
+          - name: candidate-specs
+            mountPath: /var/run/torghut-candidate-specs
             readOnly: true
         resources:
           requests:
@@ -191,6 +207,7 @@ spec:
             OUTPUT_DIR="${OUTPUT_ROOT%/}/${RUN_ID}"
             WORKDIR=/tmp/torghut-whitepaper-autoresearch-workflow
             SOURCE_JSONL="${WORKDIR}/sources.jsonl"
+            CANDIDATE_SPECS_JSONL="${WORKDIR}/candidate-specs.jsonl"
             FEEDBACK_EVIDENCE_JSONL="${WORKDIR}/feedback-evidence.jsonl"
             mkdir -p "${WORKDIR}" "${OUTPUT_DIR}"
 
@@ -231,6 +248,13 @@ spec:
             if [ -n "${TORGHUT_WHITEPAPER_SOURCE_JSONL_B64}" ]; then
               printf '%s' "${TORGHUT_WHITEPAPER_SOURCE_JSONL_B64}" | base64 -d > "${SOURCE_JSONL}"
               SCRIPT_ARGS+=(--source-jsonl "${SOURCE_JSONL}")
+            fi
+            if [ -s "${TORGHUT_WHITEPAPER_CANDIDATE_SPECS_CONFIGMAP_PATH:-}" ]; then
+              cp "${TORGHUT_WHITEPAPER_CANDIDATE_SPECS_CONFIGMAP_PATH}" "${CANDIDATE_SPECS_JSONL}"
+              SCRIPT_ARGS+=(--candidate-specs "${CANDIDATE_SPECS_JSONL}")
+            elif [ -n "${TORGHUT_WHITEPAPER_CANDIDATE_SPECS_JSONL_B64}" ]; then
+              printf '%s' "${TORGHUT_WHITEPAPER_CANDIDATE_SPECS_JSONL_B64}" | base64 -d > "${CANDIDATE_SPECS_JSONL}"
+              SCRIPT_ARGS+=(--candidate-specs "${CANDIDATE_SPECS_JSONL}")
             fi
             if [ -s "${TORGHUT_WHITEPAPER_FEEDBACK_EVIDENCE_CONFIGMAP_PATH:-}" ]; then
               cp "${TORGHUT_WHITEPAPER_FEEDBACK_EVIDENCE_CONFIGMAP_PATH}" "${FEEDBACK_EVIDENCE_JSONL}"
@@ -292,6 +316,13 @@ spec:
             items:
               - key: "{{inputs.parameters.feedbackEvidenceConfigMapKey}}"
                 path: feedback-evidence.jsonl
+        - name: candidate-specs
+          configMap:
+            name: "{{inputs.parameters.candidateSpecsConfigMapName}}"
+            optional: true
+            items:
+              - key: "{{inputs.parameters.candidateSpecsConfigMapKey}}"
+                path: candidate-specs.jsonl
       outputs:
         artifacts:
           - name: whitepaper-autoresearch-output
