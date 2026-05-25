@@ -303,8 +303,6 @@ spec:
               value: "60"
             - name: JANGAR_MARKET_CONTEXT_NEWS_MAX_FRESHNESS_SECONDS
               value: "300"
-            - name: JANGAR_MARKET_CONTEXT_FUNDAMENTALS_MAX_FRESHNESS_SECONDS
-              value: "86400"
             - name: JANGAR_MARKET_CONTEXT_REGIME_MAX_FRESHNESS_SECONDS
               value: "120"
             - name: JANGAR_MARKET_CONTEXT_NEWS_URL

@@ -54,7 +54,7 @@ describe('market-context run lifecycle routes', () => {
       ok: true,
       requestId: 'req-1',
       symbol: 'AAPL',
-      domain: 'fundamentals',
+      domain: 'news',
       status: 'started',
     })
 
@@ -62,7 +62,7 @@ describe('market-context run lifecycle routes', () => {
     const response = await postMarketContextRunStartHandler(
       new Request('http://localhost/api/torghut/market-context/runs/start', {
         method: 'POST',
-        body: JSON.stringify({ symbol: 'AAPL', domain: 'fundamentals' }),
+        body: JSON.stringify({ symbol: 'AAPL', domain: 'news' }),
       }),
     )
 
@@ -70,7 +70,7 @@ describe('market-context run lifecycle routes', () => {
     expect(recordTorghutMarketContextRunEvent).toHaveBeenCalledWith({
       endpoint: 'start',
       outcome: 'accepted',
-      domain: 'fundamentals',
+      domain: 'news',
     })
   })
 
@@ -195,7 +195,7 @@ describe('market-context run lifecycle routes', () => {
     ingestMarketContextProviderResult.mockResolvedValueOnce({
       ok: true,
       symbol: 'AAPL',
-      domain: 'fundamentals',
+      domain: 'news',
       runStatus: 'succeeded',
       requestId: 'legacy-req-4',
       context: {
@@ -217,7 +217,7 @@ describe('market-context run lifecycle routes', () => {
           metadata: { lifecycleSource: 'legacy-helper' },
           payload: {
             symbol: 'AAPL',
-            domain: 'fundamentals',
+            domain: 'news',
             asOfUtc: '2026-02-28T00:00:00.000Z',
             sourceCount: 2,
             qualityScore: 0.8,
@@ -235,7 +235,7 @@ describe('market-context run lifecycle routes', () => {
     expect(ingestMarketContextProviderResult).toHaveBeenCalledWith({
       requestId: 'legacy-req-4',
       symbol: 'AAPL',
-      domain: 'fundamentals',
+      domain: 'news',
       asOfUtc: '2026-02-28T00:00:00.000Z',
       sourceCount: 2,
       qualityScore: 0.8,
@@ -249,7 +249,7 @@ describe('market-context run lifecycle routes', () => {
     expect(recordTorghutMarketContextRunEvent).toHaveBeenCalledWith({
       endpoint: 'finalize',
       outcome: 'accepted',
-      domain: 'fundamentals',
+      domain: 'news',
     })
   })
 
@@ -257,7 +257,7 @@ describe('market-context run lifecycle routes', () => {
     isMarketContextIngestAuthorized.mockResolvedValueOnce(true)
     ingestMarketContextProviderResult.mockResolvedValueOnce({
       ok: true,
-      domain: 'fundamentals',
+      domain: 'news',
       runStatus: 'partial',
       requestId: 'batch-req-4',
       batch: {
@@ -272,7 +272,7 @@ describe('market-context run lifecycle routes', () => {
       new Request('http://localhost/api/torghut/market-context/runs/finalize', {
         method: 'POST',
         body: JSON.stringify({
-          domain: 'fundamentals',
+          domain: 'news',
           runStatus: 'partial',
           items: [{ symbol: 'AAPL', payload: {} }],
         }),
@@ -283,7 +283,7 @@ describe('market-context run lifecycle routes', () => {
     expect(recordTorghutMarketContextRunEvent).toHaveBeenCalledWith({
       endpoint: 'finalize',
       outcome: 'accepted',
-      domain: 'fundamentals',
+      domain: 'news',
     })
   })
 

@@ -80,6 +80,8 @@ export type TorghutMarketContextHealth = {
   overallState: 'ok' | 'degraded' | 'down'
 }
 
+const RETIRED_FUNDAMENTALS_MAX_FRESHNESS_SECONDS = 0
+
 export type MarketContextOptions = {
   asOf?: Date
   maxStalenessSeconds?: number
@@ -486,7 +488,7 @@ const emptyDomain = (params: {
 
 const externalDomain = (params: {
   now: Date
-  domain: 'fundamentals' | 'news'
+  domain: 'news'
   maxFreshnessSeconds: number
   response: ExternalDomainResponse | null
 }): MarketContextDomain => {
@@ -586,7 +588,7 @@ export const getTorghutMarketContext = async (
       fundamentals: emptyDomain({
         now,
         domain: 'fundamentals',
-        maxFreshnessSeconds: settings.fundamentalsMaxFreshnessSeconds,
+        maxFreshnessSeconds: RETIRED_FUNDAMENTALS_MAX_FRESHNESS_SECONDS,
         provider: 'feature_disabled',
       }),
       news: emptyDomain({
@@ -668,7 +670,7 @@ export const getTorghutMarketContext = async (
     fundamentals: emptyDomain({
       now,
       domain: 'fundamentals',
-      maxFreshnessSeconds: settings.fundamentalsMaxFreshnessSeconds,
+      maxFreshnessSeconds: RETIRED_FUNDAMENTALS_MAX_FRESHNESS_SECONDS,
       provider: 'fundamentals_provider_retired',
     }),
     news: externalDomain({
