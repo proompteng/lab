@@ -43,7 +43,6 @@ export type MarketContextRuntimeConfig = {
   cacheSeconds: number
   maxStalenessSeconds: number
   providerTimeoutMs: number
-  fundamentalsSourceUrl: string
   newsSourceUrl: string
   technicalsMaxFreshnessSeconds: number
   fundamentalsMaxFreshnessSeconds: number
@@ -86,7 +85,6 @@ export const resolveMarketContextRuntimeConfig = (env: EnvSource = process.env):
   cacheSeconds: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_CACHE_SECONDS, 60),
   maxStalenessSeconds: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_MAX_STALENESS_SECONDS, 300),
   providerTimeoutMs: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_PROVIDER_TIMEOUT_MS, 10_000),
-  fundamentalsSourceUrl: normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_FUNDAMENTALS_URL) ?? '',
   newsSourceUrl: normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_NEWS_URL) ?? '',
   technicalsMaxFreshnessSeconds: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_TECHNICALS_MAX_FRESHNESS_SECONDS, 60),
   fundamentalsMaxFreshnessSeconds: parsePositiveInt(
@@ -146,7 +144,6 @@ export const resolveMarketContextIngestAuthConfig = (env: EnvSource = process.en
 
 export const validateMarketContextConfig = (env: EnvSource = process.env) => {
   const runtime = resolveMarketContextRuntimeConfig(env)
-  if (runtime.fundamentalsSourceUrl) new URL(runtime.fundamentalsSourceUrl)
   if (runtime.newsSourceUrl) new URL(runtime.newsSourceUrl)
   new URL(runtime.batchTradingStatusUrl)
   new URL(runtime.onDemandDispatchCallbackUrl)

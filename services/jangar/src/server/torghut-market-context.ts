@@ -41,7 +41,7 @@ export type TorghutMarketContextBundle = {
 }
 
 type ProviderHealthSignal = {
-  provider: 'fundamentals' | 'news'
+  provider: 'news'
   configured: boolean
   lastAttemptAt: string | null
   lastSuccessAt: string | null
@@ -130,19 +130,7 @@ type CacheEntry = {
 
 const cache = new Map<string, CacheEntry>()
 
-const providerHealth = new Map<'fundamentals' | 'news', ProviderHealthSignal>([
-  [
-    'fundamentals',
-    {
-      provider: 'fundamentals',
-      configured: false,
-      lastAttemptAt: null,
-      lastSuccessAt: null,
-      lastError: null,
-      consecutiveFailures: 0,
-      latencyMs: null,
-    },
-  ],
+const providerHealth = new Map<'news', ProviderHealthSignal>([
   [
     'news',
     {
@@ -232,7 +220,7 @@ const coerceCitations = (value: unknown): MarketContextCitation[] => {
 }
 
 const recordProviderAttempt = (
-  provider: 'fundamentals' | 'news',
+  provider: 'news',
   params: { configured: boolean; success: boolean; error?: string; latencyMs: number },
 ) => {
   const previous = providerHealth.get(provider)
@@ -381,7 +369,7 @@ type ExternalDomainResponse = {
 }
 
 const fetchExternalDomainResponse = async (params: {
-  provider: 'fundamentals' | 'news'
+  provider: 'news'
   symbol: string
   now: Date
   sourceUrl: string
@@ -661,22 +649,13 @@ export const getTorghutMarketContext = async (
     })
   }
 
-  const [fundamentalsResponse, newsResponse] = await Promise.all([
-    fetchExternalDomainResponse({
-      provider: 'fundamentals',
-      symbol,
-      now,
-      sourceUrl: settings.fundamentalsSourceUrl,
-      timeoutMs: settings.providerTimeoutMs,
-    }),
-    fetchExternalDomainResponse({
-      provider: 'news',
-      symbol,
-      now,
-      sourceUrl: settings.newsSourceUrl,
-      timeoutMs: settings.providerTimeoutMs,
-    }),
-  ])
+  const newsResponse = await fetchExternalDomainResponse({
+    provider: 'news',
+    symbol,
+    now,
+    sourceUrl: settings.newsSourceUrl,
+    timeoutMs: settings.providerTimeoutMs,
+  })
 
   const domains = {
     technicals: technicalDomain({
@@ -686,11 +665,11 @@ export const getTorghutMarketContext = async (
       sourceError: settings.requireTechnicalsSourceHealth ? signalSourceError : null,
       sourceLatencyMs: signalSourceLatencyMs,
     }),
-    fundamentals: externalDomain({
+    fundamentals: emptyDomain({
       now,
       domain: 'fundamentals',
       maxFreshnessSeconds: settings.fundamentalsMaxFreshnessSeconds,
-      response: fundamentalsResponse,
+      provider: 'fundamentals_provider_retired',
     }),
     news: externalDomain({
       now,

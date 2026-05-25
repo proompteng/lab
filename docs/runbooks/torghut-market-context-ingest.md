@@ -11,7 +11,10 @@ Use this runbook for alerts:
 - `JangarTorghutMarketContextBatchFailureRateHigh`
 - `JangarTorghutMarketContextSkippedDuringMarketHours`
 
-These failures block fundamentals/news snapshot persistence and can keep Torghut market context below the trading quality gate.
+These failures block market-context snapshot persistence and can keep Torghut market context below the trading quality gate.
+
+Torghut fundamentals AgentRun collection is retired. Do not restore the old `torghut-market-context-fundamentals-*`
+Schedules, Agent, or AgentRun templates during incident response.
 
 ## Quick Checks
 
@@ -37,7 +40,7 @@ Expected:
 
 ```bash
 kubectl get pods -n agents -o custom-columns=NAME:.metadata.name,SA:.spec.serviceAccountName \
-  --no-headers | rg 'torghut-market-context-(fundamentals|news)-'
+  --no-headers | rg 'torghut-market-context-news-'
 ```
 
 4. Confirm callback failures are not 401:
@@ -48,21 +51,12 @@ kubectl logs -n agents job/<latest-market-context-job> --tail=200
 
 Search for callback `curl` failures and HTTP codes.
 
-5. Confirm pre-open probe schedules exist and target probe templates:
+5. Confirm retired fundamentals schedules are absent:
 
 ```bash
-kubectl get schedules.schedules.proompteng.ai -n agents | rg 'torghut-market-context-.*preopen-probe'
-kubectl get agentrun -n agents torghut-market-context-fundamentals-preopen-probe-template -o yaml | rg 'reason: pre_open_probe'
-kubectl get agentrun -n agents torghut-market-context-news-preopen-probe-template -o yaml | rg 'reason: pre_open_probe'
+kubectl get schedules.schedules.proompteng.ai -n agents | rg 'torghut-market-context-fundamentals-' || true
+kubectl get cronjobs -n agents | rg 'torghut-market-context-fundamentals-' || true
 ```
-
-6. Confirm fundamentals has intraday recovery cadence, not a single fragile open attempt:
-
-```bash
-kubectl get schedule -n agents torghut-market-context-fundamentals-batch -o jsonpath='{.spec.cron}{"\n"}'
-```
-
-Expected: `35 9-15/2 * * 1-5`.
 
 ## Data Plane Verification
 
@@ -70,7 +64,6 @@ Expected: `35 9-15/2 * * 1-5`.
 
 ```bash
 kubectl exec -n jangar deploy/jangar -c app -- sh -c 'curl -sS "http://127.0.0.1:8080/api/torghut/market-context/providers/news?symbol=NVDA" | jq'
-kubectl exec -n jangar deploy/jangar -c app -- sh -c 'curl -sS "http://127.0.0.1:8080/api/torghut/market-context/providers/fundamentals?symbol=NVDA" | jq'
 ```
 
 2. Validate snapshots are persisted:

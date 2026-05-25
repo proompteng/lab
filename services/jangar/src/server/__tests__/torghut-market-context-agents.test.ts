@@ -302,7 +302,7 @@ describe('torghut market-context agent helpers', () => {
       activeRun: null,
       dispatchState: {
         lastDispatchedAt: new Date('2026-05-07T19:54:00.000Z'),
-        lastRunName: 'torghut-market-context-fundamentals-nvda-abcde',
+        lastRunName: 'torghut-market-context-news-nvda-abcde',
       },
       cooldownSeconds: 900,
       now: new Date('2026-05-07T20:00:00.000Z'),
@@ -311,6 +311,6 @@ describe('torghut market-context agent helpers', () => {
     expect(decision.shouldDispatch).toBe(false)
     expect(decision.attempted).toBe(true)
     expect(decision.reason).toBe('dispatch_cooldown')
-    expect(decision.runName).toBe('torghut-market-context-fundamentals-nvda-abcde')
+    expect(decision.runName).toBe('torghut-market-context-news-nvda-abcde')
   })
 })

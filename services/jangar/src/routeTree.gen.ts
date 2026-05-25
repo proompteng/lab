@@ -87,7 +87,6 @@ import { Route as ApiTorghutMarketContextRunsFinalizeRouteImport } from './route
 import { Route as ApiTorghutMarketContextRunsEvidenceRouteImport } from './routes/api/torghut/market-context/runs/evidence'
 import { Route as ApiTorghutMarketContextRunsRequestIdRouteImport } from './routes/api/torghut/market-context/runs/$requestId'
 import { Route as ApiTorghutMarketContextProvidersNewsRouteImport } from './routes/api/torghut/market-context/providers/news'
-import { Route as ApiTorghutMarketContextProvidersFundamentalsRouteImport } from './routes/api/torghut/market-context/providers/fundamentals'
 import { Route as ApiTorghutDecisionEngineRunsIdRouteImport } from './routes/api/torghut/decision-engine/runs/$id'
 import { Route as ApiOpenwebuiRichUiRenderRenderIdRouteImport } from './routes/api/openwebui/rich-ui/render/$renderId'
 import { Route as ApiTorghutTradingControlPlaneQuantStreamRouteImport } from './routes/api/torghut/trading/control-plane/quant/stream'
@@ -530,12 +529,6 @@ const ApiTorghutMarketContextProvidersNewsRoute =
     path: '/api/torghut/market-context/providers/news',
     getParentRoute: () => rootRouteImport,
   } as any)
-const ApiTorghutMarketContextProvidersFundamentalsRoute =
-  ApiTorghutMarketContextProvidersFundamentalsRouteImport.update({
-    id: '/api/torghut/market-context/providers/fundamentals',
-    path: '/api/torghut/market-context/providers/fundamentals',
-    getParentRoute: () => rootRouteImport,
-  } as any)
 const ApiTorghutDecisionEngineRunsIdRoute =
   ApiTorghutDecisionEngineRunsIdRouteImport.update({
     id: '/$id',
@@ -723,7 +716,6 @@ export interface FileRoutesByFullPath {
   '/api/whitepapers/$runId/': typeof ApiWhitepapersRunIdIndexRoute
   '/api/openwebui/rich-ui/render/$renderId': typeof ApiOpenwebuiRichUiRenderRenderIdRoute
   '/api/torghut/decision-engine/runs/$id': typeof ApiTorghutDecisionEngineRunsIdRoute
-  '/api/torghut/market-context/providers/fundamentals': typeof ApiTorghutMarketContextProvidersFundamentalsRoute
   '/api/torghut/market-context/providers/news': typeof ApiTorghutMarketContextProvidersNewsRoute
   '/api/torghut/market-context/runs/$requestId': typeof ApiTorghutMarketContextRunsRequestIdRoute
   '/api/torghut/market-context/runs/evidence': typeof ApiTorghutMarketContextRunsEvidenceRoute
@@ -821,7 +813,6 @@ export interface FileRoutesByTo {
   '/api/whitepapers/$runId': typeof ApiWhitepapersRunIdIndexRoute
   '/api/openwebui/rich-ui/render/$renderId': typeof ApiOpenwebuiRichUiRenderRenderIdRoute
   '/api/torghut/decision-engine/runs/$id': typeof ApiTorghutDecisionEngineRunsIdRoute
-  '/api/torghut/market-context/providers/fundamentals': typeof ApiTorghutMarketContextProvidersFundamentalsRoute
   '/api/torghut/market-context/providers/news': typeof ApiTorghutMarketContextProvidersNewsRoute
   '/api/torghut/market-context/runs/$requestId': typeof ApiTorghutMarketContextRunsRequestIdRoute
   '/api/torghut/market-context/runs/evidence': typeof ApiTorghutMarketContextRunsEvidenceRoute
@@ -922,7 +913,6 @@ export interface FileRoutesById {
   '/api/whitepapers/$runId/': typeof ApiWhitepapersRunIdIndexRoute
   '/api/openwebui/rich-ui/render/$renderId': typeof ApiOpenwebuiRichUiRenderRenderIdRoute
   '/api/torghut/decision-engine/runs/$id': typeof ApiTorghutDecisionEngineRunsIdRoute
-  '/api/torghut/market-context/providers/fundamentals': typeof ApiTorghutMarketContextProvidersFundamentalsRoute
   '/api/torghut/market-context/providers/news': typeof ApiTorghutMarketContextProvidersNewsRoute
   '/api/torghut/market-context/runs/$requestId': typeof ApiTorghutMarketContextRunsRequestIdRoute
   '/api/torghut/market-context/runs/evidence': typeof ApiTorghutMarketContextRunsEvidenceRoute
@@ -1024,7 +1014,6 @@ export interface FileRouteTypes {
     | '/api/whitepapers/$runId/'
     | '/api/openwebui/rich-ui/render/$renderId'
     | '/api/torghut/decision-engine/runs/$id'
-    | '/api/torghut/market-context/providers/fundamentals'
     | '/api/torghut/market-context/providers/news'
     | '/api/torghut/market-context/runs/$requestId'
     | '/api/torghut/market-context/runs/evidence'
@@ -1122,7 +1111,6 @@ export interface FileRouteTypes {
     | '/api/whitepapers/$runId'
     | '/api/openwebui/rich-ui/render/$renderId'
     | '/api/torghut/decision-engine/runs/$id'
-    | '/api/torghut/market-context/providers/fundamentals'
     | '/api/torghut/market-context/providers/news'
     | '/api/torghut/market-context/runs/$requestId'
     | '/api/torghut/market-context/runs/evidence'
@@ -1222,7 +1210,6 @@ export interface FileRouteTypes {
     | '/api/whitepapers/$runId/'
     | '/api/openwebui/rich-ui/render/$renderId'
     | '/api/torghut/decision-engine/runs/$id'
-    | '/api/torghut/market-context/providers/fundamentals'
     | '/api/torghut/market-context/providers/news'
     | '/api/torghut/market-context/runs/$requestId'
     | '/api/torghut/market-context/runs/evidence'
@@ -1309,7 +1296,6 @@ export interface RootRouteChildren {
   ApiTorghutMarketContextIndexRoute: typeof ApiTorghutMarketContextIndexRoute
   ApiWhitepapersRunIdIndexRoute: typeof ApiWhitepapersRunIdIndexRoute
   ApiOpenwebuiRichUiRenderRenderIdRoute: typeof ApiOpenwebuiRichUiRenderRenderIdRoute
-  ApiTorghutMarketContextProvidersFundamentalsRoute: typeof ApiTorghutMarketContextProvidersFundamentalsRoute
   ApiTorghutMarketContextProvidersNewsRoute: typeof ApiTorghutMarketContextProvidersNewsRoute
   ApiTorghutMarketContextRunsRequestIdRoute: typeof ApiTorghutMarketContextRunsRequestIdRoute
   ApiTorghutMarketContextRunsEvidenceRoute: typeof ApiTorghutMarketContextRunsEvidenceRoute
@@ -1873,13 +1859,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiTorghutMarketContextProvidersNewsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/torghut/market-context/providers/fundamentals': {
-      id: '/api/torghut/market-context/providers/fundamentals'
-      path: '/api/torghut/market-context/providers/fundamentals'
-      fullPath: '/api/torghut/market-context/providers/fundamentals'
-      preLoaderRoute: typeof ApiTorghutMarketContextProvidersFundamentalsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/api/torghut/decision-engine/runs/$id': {
       id: '/api/torghut/decision-engine/runs/$id'
       path: '/$id'
@@ -2268,8 +2247,6 @@ const rootRouteChildren: RootRouteChildren = {
   ApiTorghutMarketContextIndexRoute: ApiTorghutMarketContextIndexRoute,
   ApiWhitepapersRunIdIndexRoute: ApiWhitepapersRunIdIndexRoute,
   ApiOpenwebuiRichUiRenderRenderIdRoute: ApiOpenwebuiRichUiRenderRenderIdRoute,
-  ApiTorghutMarketContextProvidersFundamentalsRoute:
-    ApiTorghutMarketContextProvidersFundamentalsRoute,
   ApiTorghutMarketContextProvidersNewsRoute:
     ApiTorghutMarketContextProvidersNewsRoute,
   ApiTorghutMarketContextRunsRequestIdRoute:

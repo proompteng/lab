@@ -37,24 +37,15 @@ const extractInputFileContent = (manifest: string, path: string): string => {
 }
 
 describe('torghut market-context AgentProvider manifest', () => {
-  it('retries fundamentals batches during the regular market session', async () => {
+  it('does not declare fundamentals market-context AgentRun resources', async () => {
     const manifest = await readFile(torghutAgentsDomainManifestPath('torghut-market-context-batch.yaml'), 'utf8')
+    const agentRunsManifest = await readFile(torghutAgentsDomainManifestPath('torghut-agentruns.yaml'), 'utf8')
+    const kustomization = await readFile(torghutAgentsDomainManifestPath('kustomization.yaml'), 'utf8')
 
-    expect(manifest).toContain('name: torghut-market-context-fundamentals-batch')
-    expect(manifest).toContain('cron: "35 9-15/2 * * 1-5"')
-  })
-
-  it('marks fundamentals preopen probes as no-VCS batch tasks', async () => {
-    const manifest = await readFile(torghutAgentsDomainManifestPath('torghut-market-context-batch.yaml'), 'utf8')
-
-    for (const templateName of ['torghut-market-context-fundamentals-preopen-probe-template']) {
-      const start = manifest.indexOf(`name: ${templateName}`)
-      expect(start).toBeGreaterThanOrEqual(0)
-      const nextDocument = manifest.indexOf('\n---', start)
-      const section = manifest.slice(start, nextDocument === -1 ? undefined : nextDocument)
-      expect(section).toContain('executionMode: batch_task')
-      expect(section).toContain('provider: codex-spark')
-    }
+    expect(manifest).not.toMatch(/torghut-market-context-fundamentals/)
+    expect(agentRunsManifest).not.toMatch(/torghut-market-context-fundamentals/)
+    expect(kustomization).not.toContain('torghut-fundamentals-agent.yaml')
+    expect(kustomization).not.toContain('torghut-fundamentals-agent-system-prompt-configmap.yaml')
   })
 
   it('does not schedule news market-context jobs', async () => {

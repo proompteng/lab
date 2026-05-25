@@ -40,9 +40,9 @@ Evaluate gates on active market sessions only.
 
 - Batch failure ratio (`failed|partial`) <= `0.40` over 30m.
 - `skipped_market_closed` outcome is zero in market-open windows.
-- Pre-open probe schedules exist and execute before open:
+- Retired fundamentals AgentRun schedules stay absent:
   - `torghut-market-context-fundamentals-preopen-probe`
-  - `torghut-market-context-news-preopen-probe`
+  - `torghut-market-context-fundamentals-batch`
 
 ## Hard rollback triggers
 

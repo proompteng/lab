@@ -307,8 +307,6 @@ spec:
               value: "86400"
             - name: JANGAR_MARKET_CONTEXT_REGIME_MAX_FRESHNESS_SECONDS
               value: "120"
-            - name: JANGAR_MARKET_CONTEXT_FUNDAMENTALS_URL
-              value: http://jangar.jangar.svc.cluster.local/api/torghut/market-context/providers/fundamentals
             - name: JANGAR_MARKET_CONTEXT_NEWS_URL
               value: http://jangar.jangar.svc.cluster.local/api/torghut/market-context/providers/news
             - name: JANGAR_MARKET_CONTEXT_BATCH_REQUIRE_OPEN_SESSION
