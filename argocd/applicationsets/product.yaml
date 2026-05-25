@@ -229,7 +229,7 @@ spec:
                 renderWithLovely: false
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
-                automation: auto
+                automation: manual
                 enabled: "true"
               - name: torghut
                 path: argocd/applications/torghut

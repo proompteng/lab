@@ -7,7 +7,8 @@ metadata:
     app.kubernetes.io/name: sag
     app.kubernetes.io/part-of: lab
 spec:
-  replicas: 1
+  # Disable the SAG runtime while keeping the Argo application and CNPG state intact.
+  replicas: 0
   strategy:
     type: RollingUpdate
     rollingUpdate:
