@@ -143,7 +143,20 @@ const assertRepairOnlyZeroNotionalReadyz = (readyz: JsonObject, digest: JsonObje
   }
 }
 
-const targetIdentity = (target: unknown, label: string): string => {
+type PaperRouteTargetEnvelope = {
+  identity: string
+  probeSymbols: string[]
+  maxNotional: string
+}
+
+const uniqueSortedSymbols = (value: unknown, label: string): string[] => {
+  const symbols = requireArray(value, label)
+    .map((symbol) => formatScalar(symbol, '').trim().toUpperCase())
+    .filter(Boolean)
+  return [...new Set(symbols)].sort()
+}
+
+const targetEnvelope = (target: unknown, label: string): PaperRouteTargetEnvelope => {
   const targetObject = requireObject(target, label)
   const hypothesisId = formatScalar(targetObject.hypothesis_id, '')
   const candidateId = formatScalar(targetObject.candidate_id, '')
@@ -153,7 +166,16 @@ const targetIdentity = (target: unknown, label: string): string => {
   if (!hypothesisId || !candidateId || !strategyName || !windowStart || !windowEnd) {
     throw new Error(`${label} missing target identity fields`)
   }
-  return [hypothesisId, candidateId, strategyName, windowStart, windowEnd].join('|')
+  const identity = [hypothesisId, candidateId, strategyName, windowStart, windowEnd].join('|')
+  const probeSymbols = uniqueSortedSymbols(targetObject.paper_route_probe_symbols, `${label} paper_route_probe_symbols`)
+  if (probeSymbols.length === 0) {
+    throw new Error(`${label} paper_route_probe_symbols must not be empty`)
+  }
+  return {
+    identity,
+    probeSymbols,
+    maxNotional: formatScalar(targetObject.paper_route_probe_next_session_max_notional, '0'),
+  }
 }
 
 const requireNotTrue = (value: unknown, label: string) => {
@@ -162,7 +184,10 @@ const requireNotTrue = (value: unknown, label: string) => {
   }
 }
 
-const parsePaperRouteTargets = (evidence: unknown, label: string): { targetCount: number; identities: Set<string> } => {
+const parsePaperRouteTargets = (
+  evidence: unknown,
+  label: string,
+): { targetCount: number; targetsByIdentity: Map<string, PaperRouteTargetEnvelope> } => {
   const payload = requireObject(evidence, `${label} payload`)
   const schemaVersion = formatScalar(payload.schema_version, 'missing')
   if (schemaVersion !== PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION) {
@@ -192,9 +217,17 @@ const parsePaperRouteTargets = (evidence: unknown, label: string): { targetCount
     requireNotTrue(targetObject.final_promotion_allowed, `${label} target ${index} final_promotion_allowed`)
     requireNotTrue(targetObject.final_promotion_authorized, `${label} target ${index} final_promotion_authorized`)
   })
-  return {
-    targetCount,
-    identities: new Set(targets.map((target, index) => targetIdentity(target, `${label} target ${index}`))),
+  const targetsByIdentity = new Map<string, PaperRouteTargetEnvelope>()
+  targets.forEach((target, index) => {
+    const envelope = targetEnvelope(target, `${label} target ${index}`)
+    targetsByIdentity.set(envelope.identity, envelope)
+  })
+  return { targetCount, targetsByIdentity }
+}
+
+const requireSameList = (left: string[], right: string[], label: string) => {
+  if (left.length !== right.length || left.some((value, index) => value !== right[index])) {
+    throw new Error(`${label}: expected ${left.join(',') || 'none'}, got ${right.join(',') || 'none'}`)
   }
 }
 
@@ -207,9 +240,25 @@ const validatePaperRouteMirror = (
   if (liveTargets.targetCount > 0 && simTargets.targetCount === 0) {
     throw new Error('torghut-sim paper-route target plan is empty while live torghut exposes targets')
   }
-  const missingSimTargets = [...liveTargets.identities].filter((identity) => !simTargets.identities.has(identity))
+  const missingSimTargets = [...liveTargets.targetsByIdentity.keys()].filter(
+    (identity) => !simTargets.targetsByIdentity.has(identity),
+  )
   if (missingSimTargets.length > 0) {
     throw new Error(`torghut-sim paper-route target plan missing live target(s): ${missingSimTargets.join(', ')}`)
+  }
+  for (const [identity, liveEnvelope] of liveTargets.targetsByIdentity) {
+    const simEnvelope = simTargets.targetsByIdentity.get(identity)
+    if (!simEnvelope) continue
+    requireSameList(
+      liveEnvelope.probeSymbols,
+      simEnvelope.probeSymbols,
+      `torghut-sim paper-route target symbols differ from live target ${identity}`,
+    )
+    if (simEnvelope.maxNotional !== liveEnvelope.maxNotional) {
+      throw new Error(
+        `torghut-sim paper-route target notional differs from live target ${identity}: expected ${liveEnvelope.maxNotional}, got ${simEnvelope.maxNotional}`,
+      )
+    }
   }
   return { liveTargetCount: liveTargets.targetCount, simTargetCount: simTargets.targetCount }
 }

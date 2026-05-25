@@ -370,6 +370,11 @@ def _declared_target_probe_symbols(target: Mapping[str, object]) -> list[str]:
 
 
 def _target_uses_current_probe_scope(target: Mapping[str, object]) -> bool:
+    if (
+        _safe_text(target.get("paper_route_probe_scope_authority"))
+        == "external_target_plan"
+    ):
+        return False
     source_kind = _safe_text(target.get("source_kind"))
     handoff = _safe_text(target.get("handoff"))
     return (
@@ -513,6 +518,12 @@ def _next_paper_route_runtime_window_targets(
     skipped_targets: list[dict[str, object]] = []
     planned_keys: set[tuple[object, ...]] = set()
     for target in targets:
+        target_probe_symbols = _target_probe_symbols(target, probe)
+        target_probe_ready = (
+            bool(probe.get("configured_enabled"))
+            and _safe_decimal(next_notional) > 0
+            and bool(target_probe_symbols)
+        )
         hypothesis_id = _safe_text(target.get("hypothesis_id"))
         candidate_id = _safe_text(target.get("candidate_id"))
         strategy_family = _safe_text(target.get("strategy_family"))
@@ -529,14 +540,14 @@ def _next_paper_route_runtime_window_targets(
             )
             if value is None
         ]
-        if missing or not probe_ready:
+        if missing or not target_probe_ready:
             reasons = list(missing)
-            if not probe_ready:
+            if not target_probe_ready:
                 if not bool(probe.get("configured_enabled")):
                     reasons.append("paper_route_probe_disabled")
                 if _safe_decimal(next_notional) <= 0:
                     reasons.append("paper_route_probe_notional_missing")
-                if not probe_symbols:
+                if not target_probe_symbols:
                     reasons.append("paper_route_probe_symbol_missing")
             skipped_targets.append(
                 {
@@ -563,8 +574,8 @@ def _next_paper_route_runtime_window_targets(
             "source_kind": "paper_route_probe_runtime_observed",
             "window_start": _isoformat(window_start),
             "window_end": _isoformat(window_end),
-            "paper_route_probe_symbols": probe_symbols,
-            "paper_route_probe_symbol_count": len(probe_symbols),
+            "paper_route_probe_symbols": target_probe_symbols,
+            "paper_route_probe_symbol_count": len(target_probe_symbols),
             "paper_route_probe_next_session_max_notional": next_notional,
             "paper_route_probe_window_start": _isoformat(window_start),
             "paper_route_probe_window_end": _isoformat(window_end),
@@ -617,7 +628,7 @@ def _next_paper_route_runtime_window_targets(
             planned_target["source_manifest_ref"],
             planned_target["window_start"],
             planned_target["window_end"],
-            tuple(probe_symbols),
+            tuple(target_probe_symbols),
         )
         if planned_key in planned_keys:
             skipped_targets.append(

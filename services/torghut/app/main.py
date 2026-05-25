@@ -4566,6 +4566,14 @@ def _merge_external_paper_route_target_plan(
         return gate
     if _paper_route_target_plan_targets(external_plan):
         merged_plan = dict(external_plan)
+        merged_targets: list[dict[str, Any]] = []
+        for raw_target in _paper_route_target_plan_targets(external_plan):
+            target = dict(raw_target)
+            target["paper_route_target_plan_source"] = "external_target_plan_url"
+            if target.get("paper_route_probe_symbols"):
+                target["paper_route_probe_scope_authority"] = "external_target_plan"
+            merged_targets.append(target)
+        merged_plan["targets"] = merged_targets
         merged_plan["promotion_allowed"] = False
         merged_plan["final_promotion_allowed"] = False
         merged_plan["final_promotion_authorized"] = False
