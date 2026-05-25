@@ -3,22 +3,60 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { Effect, Layer, ManagedRuntime } from 'effect'
 import * as Stream from 'effect/Stream'
 
+import { OrchestratorError } from './errors'
 import { createLogger } from './logger'
 import {
   isEffectivelySyncedAfterSuccessfulOperation,
   makeTargetHealthLayer,
+  TargetHealthDependencies,
+  type TargetHealthDependenciesDefinition,
   TargetHealthService,
 } from './target-health'
 import { makeTestConfig } from './test-fixtures'
 import { WorkflowService } from './workflow'
 
-const originalFetch = globalThis.fetch
-
 afterEach(() => {
-  globalThis.fetch = originalFetch
-  delete process.env.GH_TOKEN
   delete process.env.SYMPHONY_TRANSIENT_HEALTH_GRACE_MS
 })
+
+const makeTargetHealthDependencies = (
+  overrides: Partial<TargetHealthDependenciesDefinition> = {},
+): TargetHealthDependenciesDefinition => ({
+  now: Effect.succeed(new Date('2026-05-25T06:33:39.000Z')),
+  readServiceAccountToken: Effect.succeed(''),
+  readServiceAccountCa: Effect.succeed(''),
+  githubToken: Effect.succeed('test-token'),
+  requestKubernetes: (_method, path) =>
+    Effect.fail(new OrchestratorError('target_health_check_failed', `unexpected kubernetes request ${path}`)),
+  fetchHttpStatus: (url) =>
+    Effect.fail(new OrchestratorError('target_health_check_failed', `unexpected http health request ${url}`)),
+  fetchOpenPromotionPrCount: () => Effect.succeed(0),
+  ...overrides,
+})
+
+const makeTargetHealthRuntime = (
+  config: ReturnType<typeof makeTestConfig>,
+  dependencies: TargetHealthDependenciesDefinition,
+) =>
+  ManagedRuntime.make(
+    makeTargetHealthLayer(createLogger({ test: 'target-health' })).pipe(
+      Layer.provide(Layer.succeed(TargetHealthDependencies, dependencies)),
+      Layer.provide(
+        Layer.succeed(WorkflowService, {
+          current: Effect.succeed({
+            definition: { config: {}, promptTemplate: '' },
+            config,
+          }),
+          config: Effect.succeed(config),
+          reload: Effect.succeed({
+            definition: { config: {}, promptTemplate: '' },
+            config,
+          }),
+          changes: Stream.empty,
+        }),
+      ),
+    ),
+  )
 
 describe('target health resilience', () => {
   test('treats short-lived HTTP health failures as transient after a recent healthy check', async () => {
@@ -43,45 +81,21 @@ describe('target health resilience', () => {
     })
 
     let livezRequests = 0
-    process.env.GH_TOKEN = 'test-token'
+    let nowMs = Date.parse('2026-05-25T06:33:39.000Z')
     process.env.SYMPHONY_TRANSIENT_HEALTH_GRACE_MS = '60000'
 
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
-      const url = input instanceof Request ? input.url : String(input)
-      if (url.includes('/pulls?state=open')) {
-        return new Response(JSON.stringify([]), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        })
-      }
-      if (url === 'https://symphony.example.test/livez') {
+    const dependencies = makeTargetHealthDependencies({
+      now: Effect.sync(() => new Date(nowMs)),
+      fetchHttpStatus: (url) => {
+        expect(url).toBe('https://symphony.example.test/livez')
         livezRequests += 1
-        if (livezRequests === 1) {
-          return new Response('', { status: 200 })
-        }
-        throw new Error('temporary connection reset')
-      }
-      throw new Error(`unexpected fetch: ${url}`)
-    }) as typeof fetch
-
-    const runtime = ManagedRuntime.make(
-      makeTargetHealthLayer(createLogger({ test: 'target-health' })).pipe(
-        Layer.provide(
-          Layer.succeed(WorkflowService, {
-            current: Effect.succeed({
-              definition: { config: {}, promptTemplate: '' },
-              config,
-            }),
-            config: Effect.succeed(config),
-            reload: Effect.succeed({
-              definition: { config: {}, promptTemplate: '' },
-              config,
-            }),
-            changes: Stream.empty,
-          }),
-        ),
-      ),
-    )
+        if (livezRequests === 1) return Effect.succeed(200)
+        return Effect.fail(
+          new OrchestratorError('target_health_check_failed', `failed to fetch ${url}`, 'temporary connection reset'),
+        )
+      },
+    })
+    const runtime = makeTargetHealthRuntime(config, dependencies)
 
     try {
       await runtime.runPromise(
@@ -91,11 +105,51 @@ describe('target health resilience', () => {
           expect(healthy.readyForDispatch).toBe(true)
           expect(healthy.lastError).toBeNull()
 
+          nowMs += 1_000
           const transient = yield* targetHealth.evaluatePreDispatch
           expect(transient.readyForDispatch).toBe(true)
           expect(transient.lastError).toBeNull()
           expect(transient.checks[0]?.ok).toBe(false)
           expect(transient.checks[0]?.message).toContain('transient observation:')
+        }),
+      )
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  test('uses injected promotion pull request dependency when computing readiness', async () => {
+    const config = makeTestConfig({
+      health: { preDispatch: [] },
+      release: { promotionBranchPrefix: 'codex/release-' },
+      target: { repo: 'proompteng/lab', defaultBranch: 'main' },
+    })
+    let callCount = 0
+    const dependencies = makeTargetHealthDependencies({
+      githubToken: Effect.succeed('injected-token'),
+      fetchOpenPromotionPrCount: (repo, defaultBranch, promotionBranchPrefix, token, timeoutMs) =>
+        Effect.sync(() => {
+          callCount += 1
+          expect(repo).toBe('proompteng/lab')
+          expect(defaultBranch).toBe('main')
+          expect(promotionBranchPrefix).toBe('codex/release-')
+          expect(token).toBe('injected-token')
+          expect(timeoutMs).toBe(15_000)
+          return 2
+        }),
+    })
+    const runtime = makeTargetHealthRuntime(config, dependencies)
+
+    try {
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const targetHealth = yield* TargetHealthService
+          const summary = yield* targetHealth.evaluatePreDispatch
+          expect(summary.readyForDispatch).toBe(false)
+          expect(summary.openPromotionPr).toBe(true)
+          expect(summary.promotionPrCount).toBe(2)
+          expect(summary.lastError).toBeNull()
+          expect(callCount).toBe(1)
         }),
       )
     } finally {
