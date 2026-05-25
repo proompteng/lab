@@ -887,6 +887,11 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertIn('--runtime-window-import-file "${RENEWAL_OUTPUT}"', args)
         self.assertIn('--output-file "${PROOF_PACKET_OUTPUT}"', args)
+        self.assertIn(
+            "--artifact-prefix 'runtime-ledger-proof-packets/{run_id}'",
+            args,
+        )
+        self.assertIn("--require-artifact-upload", args)
         self.assertIn("--allow-blocked-exit-zero", args)
 
     def test_migration_job_prepares_sim_database_before_sim_upgrade(self) -> None:

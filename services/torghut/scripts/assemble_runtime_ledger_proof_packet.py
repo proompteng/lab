@@ -11,12 +11,13 @@ make the packet promotable by themselves.
 from __future__ import annotations
 
 import argparse
+import os
 import json
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol, cast
 from urllib.parse import urljoin
 from urllib.request import urlopen
 
@@ -29,6 +30,18 @@ DEFAULT_MIN_RUNTIME_LEDGER_TRADING_DAYS = 1
 STATUS_ENDPOINT = "/trading/status"
 PAPER_ROUTE_EVIDENCE_ENDPOINT = "/trading/paper-route-evidence"
 COMPLETION_DOC29_ENDPOINT = "/trading/completion/doc29"
+ARTIFACT_SCHEMA_VERSION = "torghut.runtime-ledger-proof-packet-artifact.v1"
+
+
+class _ObjectStoreClient(Protocol):
+    def put_object(
+        self,
+        *,
+        bucket: str,
+        key: str,
+        body: bytes,
+        content_type: str,
+    ) -> Mapping[str, Any]: ...
 
 
 def _utc_now() -> str:
@@ -138,6 +151,148 @@ def _load_json_url(url: str, *, timeout_seconds: float) -> dict[str, Any]:
     if not isinstance(payload, Mapping):
         raise ValueError(f"json_object_required:{url}")
     return {str(key): value for key, value in cast(Mapping[str, Any], payload).items()}
+
+
+def _ceph_client_from_env() -> tuple[_ObjectStoreClient | None, str]:
+    endpoint = os.getenv("TORGHUT_EMPIRICAL_CEPH_ENDPOINT", "").strip()
+    bucket_host = os.getenv("TORGHUT_EMPIRICAL_CEPH_BUCKET_HOST", "").strip()
+    bucket_port = os.getenv("TORGHUT_EMPIRICAL_CEPH_BUCKET_PORT", "").strip()
+    access_key = (
+        os.getenv("TORGHUT_EMPIRICAL_CEPH_ACCESS_KEY", "").strip()
+        or os.getenv(
+            "AWS_ACCESS_KEY_ID",
+            "",
+        ).strip()
+    )
+    secret_key = (
+        os.getenv(
+            "TORGHUT_EMPIRICAL_CEPH_SECRET_KEY",
+            "",
+        ).strip()
+        or os.getenv(
+            "AWS_SECRET_ACCESS_KEY",
+            "",
+        ).strip()
+    )
+    bucket = (
+        os.getenv("TORGHUT_EMPIRICAL_CEPH_BUCKET", "").strip()
+        or os.getenv(
+            "BUCKET_NAME",
+            "",
+        ).strip()
+        or "torghut-empirical-artifacts"
+    )
+    if not endpoint and bucket_host:
+        scheme = (
+            "https"
+            if os.getenv("TORGHUT_EMPIRICAL_CEPH_USE_TLS", "").strip() == "true"
+            else "http"
+        )
+        endpoint = f"{scheme}://{bucket_host}"
+        if bucket_port:
+            endpoint = f"{endpoint}:{bucket_port}"
+    if not endpoint or not access_key or not secret_key:
+        return None, bucket
+    from app.whitepapers.workflow import CephS3Client
+
+    return (
+        CephS3Client(
+            endpoint=endpoint,
+            access_key=access_key,
+            secret_key=secret_key,
+            region=os.getenv("TORGHUT_EMPIRICAL_CEPH_REGION", "us-east-1").strip()
+            or "us-east-1",
+            timeout_seconds=max(
+                int(os.getenv("TORGHUT_EMPIRICAL_CEPH_TIMEOUT_SECONDS", "20") or "20"),
+                1,
+            ),
+        ),
+        bucket,
+    )
+
+
+def _safe_artifact_path_part(value: object, *, default: str) -> str:
+    text = _text(value, default)
+    cleaned = "".join(
+        char if char.isalnum() or char in {"-", "_", "."} else "-" for char in text
+    ).strip("-._")
+    return cleaned or default
+
+
+def _runtime_window_import_run_id(raw_payload: Mapping[str, Any] | None) -> str:
+    payload = _mapping(raw_payload)
+    candidates = [
+        payload.get("run_id"),
+        _mapping(payload.get("runtime_window_import")).get("run_id"),
+        _mapping(payload.get("runtime_window_import")).get(
+            "runtime_window_import_run_id"
+        ),
+    ]
+    for candidate in candidates:
+        text = _text(candidate)
+        if text:
+            return _safe_artifact_path_part(text, default="unknown-run")
+    return "unknown-run"
+
+
+def _resolve_artifact_prefix(
+    raw_prefix: str,
+    *,
+    runtime_window_import: Mapping[str, Any] | None,
+    generated_at: str,
+) -> str:
+    run_id = _runtime_window_import_run_id(runtime_window_import)
+    generated_at_part = _safe_artifact_path_part(generated_at, default="unknown-time")
+    prefix = raw_prefix.format(run_id=run_id, generated_at=generated_at_part)
+    return "/".join(
+        _safe_artifact_path_part(part, default="artifact")
+        for part in prefix.split("/")
+        if part.strip("/")
+    )
+
+
+def _artifact_key(*, prefix: str, artifact_name: str) -> str:
+    name = _safe_artifact_path_part(
+        artifact_name, default="runtime-ledger-proof-packet.json"
+    )
+    return "/".join(part.strip("/") for part in (prefix, name) if part.strip("/"))
+
+
+def _attach_and_upload_artifact(
+    packet: dict[str, Any],
+    *,
+    artifact_prefix: str,
+    artifact_name: str,
+    require_artifact_upload: bool,
+    runtime_window_import: Mapping[str, Any] | None,
+) -> bytes:
+    client, bucket = _ceph_client_from_env()
+    if client is None and require_artifact_upload:
+        raise SystemExit("runtime_ledger_proof_artifact_upload_not_configured")
+    prefix = _resolve_artifact_prefix(
+        artifact_prefix,
+        runtime_window_import=runtime_window_import,
+        generated_at=_text(packet.get("generated_at"), _utc_now()),
+    )
+    key = _artifact_key(prefix=prefix, artifact_name=artifact_name)
+    packet["artifact"] = {
+        "schema_version": ARTIFACT_SCHEMA_VERSION,
+        "uri": f"s3://{bucket}/{key}" if client is not None else None,
+        "bucket": bucket,
+        "key": key,
+        "content_type": "application/json",
+        "uploaded": client is not None,
+        "upload_required": require_artifact_upload,
+    }
+    encoded = json.dumps(packet, indent=2, sort_keys=True).encode("utf-8")
+    if client is not None:
+        client.put_object(
+            bucket=bucket,
+            key=key,
+            body=encoded,
+            content_type="application/json",
+        )
+    return encoded
 
 
 def _load_optional_json_object(
@@ -831,6 +986,28 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout-seconds", type=float, default=10.0)
     parser.add_argument("--output-file", type=Path, default=None)
     parser.add_argument(
+        "--artifact-prefix",
+        default="",
+        help=(
+            "Optional object-store prefix for durable proof packet upload. "
+            "Supports {run_id} from the runtime-window import payload and "
+            "{generated_at} from the packet timestamp."
+        ),
+    )
+    parser.add_argument(
+        "--artifact-name",
+        default="runtime-ledger-proof-packet.json",
+        help="Object-store file name for --artifact-prefix uploads.",
+    )
+    parser.add_argument(
+        "--require-artifact-upload",
+        action="store_true",
+        help=(
+            "Fail closed when --artifact-prefix is set but empirical artifact "
+            "object-store credentials are unavailable."
+        ),
+    )
+    parser.add_argument(
         "--allow-blocked-exit-zero",
         action="store_true",
         help=(
@@ -928,11 +1105,25 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.completion_file, args.completion_url
             ),
         }
-    body = json.dumps(packet, indent=2, sort_keys=True)
+    artifact_prefix = _text(args.artifact_prefix)
+    encoded_body = (
+        _attach_and_upload_artifact(
+            packet,
+            artifact_prefix=artifact_prefix,
+            artifact_name=_text(
+                args.artifact_name,
+                "runtime-ledger-proof-packet.json",
+            ),
+            require_artifact_upload=bool(args.require_artifact_upload),
+            runtime_window_import=runtime_window_import,
+        )
+        if artifact_prefix
+        else json.dumps(packet, indent=2, sort_keys=True).encode("utf-8")
+    )
     if args.output_file is not None:
         args.output_file.parent.mkdir(parents=True, exist_ok=True)
-        args.output_file.write_text(body + "\n", encoding="utf-8")
-    print(body)
+        args.output_file.write_bytes(encoded_body + b"\n")
+    print(encoded_body.decode("utf-8"))
     return 0 if packet["ok"] or args.allow_blocked_exit_zero else 1
 
 

@@ -402,6 +402,20 @@ class TestPaperRouteEvidenceAudit(TestCase):
         ]
         self.assertIn("--runtime-window-import-file", authority_argv)
         self.assertIn("artifacts/runtime-window-import.json", authority_argv)
+        self.assertIn("--artifact-prefix", authority_argv)
+        self.assertIn("runtime-ledger-proof-packets/{run_id}", authority_argv)
+        self.assertIn("--require-artifact-upload", authority_argv)
+        self.assertTrue(
+            proof_handoff["commands"]["authority_packet_after_import"][
+                "requires_durable_artifact_upload"
+            ]
+        )
+        self.assertEqual(
+            proof_handoff["required_inputs"]["durable_artifact_upload"][
+                "artifact_prefix"
+            ],
+            "runtime-ledger-proof-packets/{run_id}",
+        )
         self.assertEqual(
             proof_handoff["required_inputs"]["runtime_window_import"]["required_when"],
             "runtime_window.import_ready",
@@ -562,6 +576,11 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertTrue(
             import_handoff["commands"]["authority_packet_after_import"][
                 "allowed_only_if_packet_ok"
+            ]
+        )
+        self.assertTrue(
+            import_handoff["commands"]["authority_packet_after_import"][
+                "requires_durable_artifact_upload"
             ]
         )
 
