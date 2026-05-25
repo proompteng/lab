@@ -185,7 +185,7 @@ describe('orchestration controller', () => {
                 with: {
                   implementation: JSON.stringify({
                     summary: 'Codex rerun',
-                    text: '{{prompt}}',
+                    text: '{{codexPrompt}}',
                     source: { provider: 'github', externalId: '{{repository}}#{{issueNumber}}' },
                   }),
                   runtime: JSON.stringify({ type: 'job', config: { serviceAccountName: 'agents-sa' } }),
@@ -194,7 +194,7 @@ describe('orchestration controller', () => {
                   policy: JSON.stringify({ secretBindingRef: 'codex-github-token' }),
                   vcsRef: 'github',
                   vcsPolicy: JSON.stringify({ required: true, mode: 'read-write' }),
-                  goal: JSON.stringify({ objective: '{{prompt}}', tokenBudget: 250000 }),
+                  goal: JSON.stringify({ objective: '{{codexPrompt}}', tokenBudget: 250000 }),
                   ttlSecondsAfterFinished: '86400',
                 },
               },
@@ -212,7 +212,7 @@ describe('orchestration controller', () => {
       metadata: { name: 'codex-rerun-run', namespace: 'agents', generation: 1 },
       spec: {
         orchestrationRef: { name: 'codex-rerun' },
-        parameters: { repository: 'proompteng/lab', issueNumber: '7152', prompt: 'fix it' },
+        parameters: { repository: 'proompteng/lab', issueNumber: '7152', codexPrompt: 'fix it' },
       },
     }
 
@@ -224,7 +224,7 @@ describe('orchestration controller', () => {
     expect(spec.agentRef).toEqual({ name: 'codex-agent' })
     expect(spec.implementation).toEqual({
       summary: 'Codex rerun',
-      text: '{{prompt}}',
+      text: '{{codexPrompt}}',
       source: { provider: 'github', externalId: '{{repository}}#{{issueNumber}}' },
     })
     expect(spec.runtime).toEqual({ type: 'job', config: { serviceAccountName: 'agents-sa' } })
@@ -233,7 +233,7 @@ describe('orchestration controller', () => {
     expect(spec.policy).toEqual({ secretBindingRef: 'codex-github-token' })
     expect(spec.vcsRef).toEqual({ name: 'github' })
     expect(spec.vcsPolicy).toEqual({ required: true, mode: 'read-write' })
-    expect(spec.goal).toEqual({ objective: '{{prompt}}', tokenBudget: 250000 })
+    expect(spec.goal).toEqual({ objective: '{{codexPrompt}}', tokenBudget: 250000 })
     expect(spec.ttlSecondsAfterFinished).toBe(86400)
   })
 
