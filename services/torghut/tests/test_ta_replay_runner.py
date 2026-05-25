@@ -4,6 +4,7 @@ import json
 import os
 import sys
 from contextlib import redirect_stdout
+from subprocess import CompletedProcess
 from unittest import TestCase
 from unittest.mock import patch
 from urllib.error import URLError
@@ -22,6 +23,58 @@ _DAY_GAP_TSV = """trading_day\tsignal_rows\tmicrobar_rows
 2026-05-07\t0\t66008
 """
 
+_KAFKA_TOPICS_JSON = {
+    "apiVersion": "v1",
+    "kind": "List",
+    "items": [
+        {
+            "metadata": {"name": "torghut.trades.v1"},
+            "spec": {
+                "partitions": 3,
+                "replicas": 3,
+                "config": {"retention.ms": 604800000},
+            },
+            "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+        },
+        {
+            "metadata": {"name": "torghut.quotes.v1"},
+            "spec": {
+                "partitions": 3,
+                "replicas": 3,
+                "config": {"retention.ms": "604800000"},
+            },
+            "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+        },
+        {
+            "metadata": {"name": "torghut.bars.1m.v1"},
+            "spec": {
+                "partitions": 3,
+                "replicas": 3,
+                "config": {"retention.ms": 2592000000},
+            },
+            "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+        },
+        {
+            "metadata": {"name": "torghut.ta.bars.1s.v1"},
+            "spec": {
+                "partitions": 1,
+                "replicas": 3,
+                "config": {"retention.ms": 1209600000},
+            },
+            "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+        },
+        {
+            "metadata": {"name": "torghut.ta.signals.v1"},
+            "spec": {
+                "partitions": 1,
+                "replicas": 3,
+                "config": {"retention.ms": 1209600000},
+            },
+            "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+        },
+    ],
+}
+
 
 class TestTaReplayRunnerCoveragePreflight(TestCase):
     def _args(self, **overrides: object) -> argparse.Namespace:
@@ -30,6 +83,7 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
             "verify": False,
             "json": True,
             "check_clickhouse_coverage": True,
+            "check_kafka_retention": False,
             "clickhouse_http_url": "http://clickhouse.test:8123",
             "clickhouse_username": "torghut",
             "clickhouse_password": "secret",
@@ -37,6 +91,9 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
             "clickhouse_timeout_seconds": 5,
             "coverage_day_limit": 40,
             "required_trading_days": 25,
+            "required_calendar_days": 0,
+            "kafka_topic_namespace": "kafka",
+            "kafka_retention_topic": [],
         }
         values.update(overrides)
         return argparse.Namespace(**values)
@@ -69,6 +126,32 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
             },
         ).__dict__
 
+    def _kafka_retention(self) -> dict[str, object]:
+        return {
+            "schema_version": "torghut.kafka-retention-preflight.v1",
+            "status": "insufficient_source_retention",
+            "blockers": [
+                "retention_shortfall:trades:7<35",
+                "retention_shortfall:quotes:7<35",
+            ],
+            "summary": {
+                "required_trading_days": 25,
+                "required_calendar_days": 35,
+            },
+            "topics": [
+                {
+                    "role": "trades",
+                    "topic": "torghut.trades.v1",
+                    "retention_days": 7.0,
+                },
+                {
+                    "role": "quotes",
+                    "topic": "torghut.quotes.v1",
+                    "retention_days": 7.0,
+                },
+            ],
+        }
+
     def test_load_clickhouse_coverage_flags_signal_shortfall_and_microbar_only_days(
         self,
     ) -> None:
@@ -90,6 +173,152 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
             coverage["summary"]["microbar_only_days"],
             ["2026-05-08", "2026-05-07"],
         )
+
+    def test_load_kafka_retention_flags_source_shortfall_for_proof_window(
+        self,
+    ) -> None:
+        with patch.object(
+            runner,
+            "_kubectl_get_kafka_topics_json",
+            return_value=_KAFKA_TOPICS_JSON,
+        ):
+            retention = runner._load_kafka_retention(
+                self._args(
+                    check_clickhouse_coverage=False,
+                    check_kafka_retention=True,
+                )
+            )
+
+        assert retention is not None
+        self.assertEqual(retention["status"], "insufficient_source_retention")
+        self.assertEqual(retention["summary"]["required_calendar_days"], 35)
+        self.assertIn("retention_shortfall:trades:7<35", retention["blockers"])
+        self.assertIn("retention_shortfall:quotes:7<35", retention["blockers"])
+        self.assertIn("retention_shortfall:bars1m:30<35", retention["blockers"])
+        self.assertIn("retention_shortfall:ta_signals:14<35", retention["blockers"])
+        trades = next(
+            topic for topic in retention["topics"] if topic["role"] == "trades"
+        )
+        self.assertEqual(trades["retention_days"], 7.0)
+
+    def test_load_kafka_retention_handles_missing_not_ready_and_overrides(
+        self,
+    ) -> None:
+        payload = {
+            "items": [
+                {
+                    "metadata": {"name": "custom.trades"},
+                    "spec": {"config": {"retention.ms": "bad"}},
+                    "status": {"conditions": [{"type": "Ready", "status": "False"}]},
+                }
+            ]
+        }
+        with patch.object(
+            runner,
+            "_kubectl_get_kafka_topics_json",
+            return_value=payload,
+        ):
+            retention = runner._load_kafka_retention(
+                self._args(
+                    check_clickhouse_coverage=False,
+                    check_kafka_retention=True,
+                    kafka_retention_topic=["trades=custom.trades"],
+                    required_calendar_days=7,
+                )
+            )
+
+        assert retention is not None
+        self.assertEqual(retention["status"], "insufficient_source_retention")
+        self.assertIn(
+            "kafka_topic_not_ready:trades:custom.trades:False", retention["blockers"]
+        )
+        self.assertIn("retention_missing:trades:custom.trades", retention["blockers"])
+        self.assertIn(
+            "kafka_topic_missing:quotes:torghut.quotes.v1", retention["blockers"]
+        )
+
+        self.assertEqual(runner._required_calendar_days_from_trading_days(25), 35)
+        self.assertEqual(
+            runner._parse_kafka_retention_topic_overrides(["trades=custom.trades"])[
+                "trades"
+            ],
+            "custom.trades",
+        )
+        with self.assertRaisesRegex(SystemExit, "role=topic"):
+            runner._parse_kafka_retention_topic_overrides(["bad"])
+        with self.assertRaisesRegex(SystemExit, "unknown kafka retention topic role"):
+            runner._parse_kafka_retention_topic_overrides(["bad=topic"])
+        with self.assertRaisesRegex(SystemExit, "cannot be empty"):
+            runner._parse_kafka_retention_topic_overrides(["trades="])
+
+    def test_kafka_retention_helpers_cover_kubectl_and_json_edges(self) -> None:
+        with patch.object(
+            runner,
+            "_run_kubectl",
+            return_value=CompletedProcess(
+                args=[], returncode=0, stdout='{"items": []}'
+            ),
+        ) as run_kubectl:
+            payload = runner._kubectl_get_kafka_topics_json("kafka", ["topic-a"])
+
+        self.assertEqual(payload, {"items": []})
+        self.assertEqual(
+            run_kubectl.call_args.args[0],
+            [
+                "-n",
+                "kafka",
+                "get",
+                "kafkatopic",
+                "topic-a",
+                "-o",
+                "json",
+                "--ignore-not-found=true",
+            ],
+        )
+        self.assertEqual(
+            runner._kafka_topic_items_by_name(
+                {"metadata": {"name": "single-topic"}, "spec": {}}
+            ),
+            {"single-topic": {"metadata": {"name": "single-topic"}, "spec": {}}},
+        )
+        self.assertEqual(runner._kafka_topic_items_by_name({"items": [None, {}]}), {})
+        self.assertEqual(runner._kafka_topic_ready_status({}), "unknown")
+        self.assertEqual(
+            runner._kafka_topic_ready_status({"status": {"conditions": "bad"}}),
+            "unknown",
+        )
+        self.assertEqual(runner._kafka_topic_config({}), {})
+        self.assertTrue(
+            runner._topic_role_has_blocker(
+                "kafka_topic_not_ready:trades:topic:False", "trades"
+            )
+        )
+        self.assertFalse(
+            runner._topic_role_has_blocker(
+                "kafka_topic_not_ready:quotes:topic:False", "trades"
+            )
+        )
+
+    def test_load_kafka_retention_can_pass_when_required_window_is_available(
+        self,
+    ) -> None:
+        with patch.object(
+            runner,
+            "_kubectl_get_kafka_topics_json",
+            return_value=_KAFKA_TOPICS_JSON,
+        ):
+            retention = runner._load_kafka_retention(
+                self._args(
+                    check_clickhouse_coverage=False,
+                    check_kafka_retention=True,
+                    required_trading_days=1,
+                    required_calendar_days=1,
+                )
+            )
+
+        assert retention is not None
+        self.assertEqual(retention["status"], "ok")
+        self.assertEqual(retention["blockers"], [])
 
     def test_plan_json_embeds_coverage_preflight(self) -> None:
         output = io.StringIO()
@@ -116,6 +345,34 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
             payload["coverage"]["summary"]["missing_signal_days_vs_required"], 16
         )
 
+    def test_plan_json_embeds_kafka_retention_preflight(self) -> None:
+        output = io.StringIO()
+        with patch.object(
+            runner,
+            "_kubectl_get_kafka_topics_json",
+            return_value=_KAFKA_TOPICS_JSON,
+        ):
+            with redirect_stdout(output):
+                exit_code = runner._handle_plan_mode(
+                    args=self._args(
+                        check_clickhouse_coverage=False,
+                        check_kafka_retention=True,
+                    ),
+                    state=self._state(),
+                    plan=self._plan(),
+                    warnings=[],
+                )
+
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(
+            payload["kafka_retention"]["schema_version"],
+            "torghut.kafka-retention-preflight.v1",
+        )
+        self.assertEqual(
+            payload["kafka_retention"]["status"], "insufficient_source_retention"
+        )
+
     def test_text_plan_renders_coverage_preflight_summary(self) -> None:
         output = io.StringIO()
         with redirect_stdout(output):
@@ -132,6 +389,24 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
         self.assertIn("Coverage preflight:", text)
         self.assertIn("missing-signal-days-vs-required: 16", text)
         self.assertIn("Use --mode=apply --confirm REPLAY_TA_CANARY", text)
+
+    def test_text_plan_renders_kafka_retention_preflight_summary(self) -> None:
+        output = io.StringIO()
+        with redirect_stdout(output):
+            runner._print_plan_text(
+                self._state(),
+                self._plan(),
+                "torghut",
+                dry_run=True,
+                warnings=[],
+                kafka_retention=self._kafka_retention(),
+            )
+
+        text = output.getvalue()
+        self.assertIn("Kafka retention preflight:", text)
+        self.assertIn("required-calendar-days: 35", text)
+        self.assertIn("trades: 7.0d (torghut.trades.v1)", text)
+        self.assertIn("retention_shortfall:trades:7<35", text)
 
     def test_verify_text_mode_renders_coverage_and_failed_checks(self) -> None:
         state = runner.ReplayState(
@@ -289,10 +564,17 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
             "--replay-id",
             "proof",
             "--check-clickhouse-coverage",
+            "--check-kafka-retention",
             "--required-trading-days",
             "25",
+            "--required-calendar-days",
+            "35",
             "--coverage-day-limit",
             "12",
+            "--kafka-topic-namespace",
+            "market-data",
+            "--kafka-retention-topic",
+            "trades=torghut.trades.replay",
             "--clickhouse-timeout-seconds",
             "3",
         ]
@@ -309,7 +591,11 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
         self.assertEqual(parsed.replay_id, "proof")
         self.assertTrue(parsed.check_clickhouse_coverage)
         self.assertEqual(parsed.required_trading_days, 25)
+        self.assertEqual(parsed.required_calendar_days, 35)
         self.assertEqual(parsed.coverage_day_limit, 12)
+        self.assertTrue(parsed.check_kafka_retention)
+        self.assertEqual(parsed.kafka_topic_namespace, "market-data")
+        self.assertEqual(parsed.kafka_retention_topic, ["trades=torghut.trades.replay"])
         self.assertEqual(parsed.clickhouse_timeout_seconds, 3)
         self.assertEqual(parsed.clickhouse_http_url, "http://env-clickhouse:8123")
         self.assertEqual(parsed.clickhouse_username, "env-user")
