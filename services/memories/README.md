@@ -21,7 +21,7 @@ Default base URL selection:
 
 - In Kubernetes namespace `agents`: `http://agents`
 - In any other Kubernetes namespace: `http://agents.agents.svc.cluster.local`
-- Outside Kubernetes: `https://agents.k8s.proompteng.ai`
+- Outside Kubernetes: `http://agents.ide-newton.ts.net`
 
 Override the base URL by setting `MEMORIES_AGENTS_URL` (or `AGENTS_SERVICE_BASE_URL` / `MEMORIES_BASE_URL`).
 For debugging Kubernetes auto-detection, you can set `MEMORIES_K8S_NAMESPACE`.

@@ -43,7 +43,7 @@ export function parseCliFlags(argv: string[] = []) {
   return flags
 }
 
-export const DEFAULT_AGENTS_BASE_URL = 'https://agents.k8s.proompteng.ai'
+export const DEFAULT_AGENTS_BASE_URL = 'http://agents.ide-newton.ts.net'
 export const DEFAULT_K8S_AGENTS_BASE_URL = 'http://agents.agents.svc.cluster.local'
 export const DEFAULT_K8S_SAME_NAMESPACE_AGENTS_BASE_URL = 'http://agents'
 
