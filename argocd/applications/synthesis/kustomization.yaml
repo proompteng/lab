@@ -9,5 +9,5 @@ resources:
   - networkpolicy.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/synthesis
-    newTag: latest
+    newTag: main
     newName: registry.ide-newton.ts.net/lab/synthesis
