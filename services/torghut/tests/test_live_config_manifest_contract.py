@@ -783,7 +783,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--max-batches 1", args)
         self.assertIn("--apply", args)
 
-    def test_empirical_promotion_renewal_imports_live_paper_plan_from_sim_service_and_db(
+    def test_empirical_promotion_renewal_imports_authoritative_live_paper_plan_and_sim_db(
         self,
     ) -> None:
         spec, container = _load_cronjob_container(
@@ -845,12 +845,12 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("scripts/renew_latest_empirical_promotion_jobs.py", args)
         self.assertIn(
             "--runtime-window-target-plan-url "
-            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence",
+            "http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence",
             args,
         )
         self.assertNotIn(
             "--runtime-window-target-plan-url "
-            "http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence",
             args,
         )
         self.assertIn("--runtime-window-target-plan-exclusive", args)
@@ -878,6 +878,10 @@ class TestLiveConfigManifestContract(TestCase):
             args,
         )
         self.assertIn(
+            "--paper-route-service-base-url http://torghut.torghut.svc.cluster.local",
+            args,
+        )
+        self.assertNotIn(
             "--paper-route-service-base-url http://torghut-sim.torghut.svc.cluster.local",
             args,
         )
