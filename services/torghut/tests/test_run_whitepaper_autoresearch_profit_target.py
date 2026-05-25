@@ -869,6 +869,13 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertIn("activeDeadlineSeconds: 9000", template)
         self.assertIn("name: allowStaleTape\n        value: 'false'", template)
+        self.assertIn("name: selectionOnly\n        value: 'false'", template)
+        self.assertIn("name: selectionOnly", template)
+        self.assertIn(
+            'if [ "{{inputs.parameters.selectionOnly}}" = "true" ]; then',
+            template,
+        )
+        self.assertIn("SCRIPT_ARGS+=(--selection-only)", template)
         self.assertNotIn("value: '2026-04-24'", template)
         self.assertNotIn("value: '2026-05-01'", template)
 
