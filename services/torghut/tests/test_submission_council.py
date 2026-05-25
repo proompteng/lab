@@ -3398,6 +3398,104 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(equity_source["symbols"], 6)
         self.assertEqual(equity_source["source_ref"], "torghut.ta_signals")
 
+    def test_build_live_submission_gate_payload_exports_runtime_window_health_inputs(
+        self,
+    ) -> None:
+        result = build_live_submission_gate_payload(
+            SimpleNamespace(
+                last_autonomy_promotion_eligible=False,
+                last_autonomy_promotion_action=None,
+                drift_live_promotion_eligible=False,
+                last_signal_continuity_state="expected_market_closed_staleness",
+                last_signal_continuity_reason="cursor_tail_stable",
+                last_signal_continuity_actionable=False,
+                signal_continuity_alert_active=False,
+                signal_continuity_alert_reason=None,
+                last_market_context_freshness_seconds=45,
+                metrics=SimpleNamespace(
+                    feature_batch_rows_total=9,
+                    feature_null_rate={"price": 0.0},
+                    feature_staleness_ms_p95=250,
+                    feature_duplicate_ratio=0.0,
+                    decision_state_total={},
+                ),
+            ),
+            hypothesis_summary={
+                "promotion_eligible_total": 0,
+                "capital_stage_totals": {"shadow": 1},
+                "dependency_quorum": {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+            },
+            empirical_jobs_status={"ready": True, "status": "healthy"},
+            quant_health_status=self._healthy_quant_status(),
+        )
+
+        self.assertEqual(result["continuity_ok"], "true")
+        self.assertEqual(result["continuity_source"], "signal_continuity")
+        self.assertEqual(
+            result["continuity_reason"], "expected_market_closed_staleness"
+        )
+        self.assertEqual(result["drift_ok"], "false")
+        self.assertEqual(result["drift_source"], "drift_live_promotion_eligible")
+        self.assertEqual(result["drift_reason"], "drift_live_promotion_ineligible")
+        gate = result["runtime_window_import_health_gate"]
+        self.assertEqual(gate["source"], "live_submission_gate")
+        self.assertEqual(gate["dependency_quorum_decision"], "allow")
+        self.assertEqual(gate["continuity_ok"], "true")
+        self.assertEqual(gate["drift_ok"], "false")
+        self.assertEqual(gate["blockers"], ["drift_checks_not_ok"])
+        self.assertEqual(
+            result["runtime_window_import_health_gate_blockers"],
+            ["drift_checks_not_ok"],
+        )
+
+    def test_build_live_submission_gate_payload_blocks_runtime_window_on_signal_alert(
+        self,
+    ) -> None:
+        result = build_live_submission_gate_payload(
+            SimpleNamespace(
+                last_autonomy_promotion_eligible=False,
+                last_autonomy_promotion_action=None,
+                drift_live_promotion_eligible=True,
+                last_signal_continuity_state="signal_lag_exceeded",
+                last_signal_continuity_reason="signal_lag_exceeded",
+                last_signal_continuity_actionable=True,
+                signal_continuity_alert_active=True,
+                signal_continuity_alert_reason="signal_lag_exceeded",
+                last_market_context_freshness_seconds=45,
+                metrics=SimpleNamespace(
+                    feature_batch_rows_total=9,
+                    feature_null_rate={"price": 0.0},
+                    feature_staleness_ms_p95=250,
+                    feature_duplicate_ratio=0.0,
+                    decision_state_total={},
+                ),
+            ),
+            hypothesis_summary={
+                "promotion_eligible_total": 0,
+                "capital_stage_totals": {"shadow": 1},
+                "dependency_quorum": {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+            },
+            empirical_jobs_status={"ready": True, "status": "healthy"},
+            quant_health_status=self._healthy_quant_status(),
+        )
+
+        self.assertEqual(result["continuity_ok"], "false")
+        self.assertEqual(result["continuity_source"], "signal_continuity")
+        self.assertEqual(result["continuity_reason"], "signal_lag_exceeded")
+        self.assertEqual(result["drift_ok"], "true")
+        self.assertEqual(
+            result["runtime_window_import_health_gate"]["blockers"],
+            ["evidence_continuity_not_ok"],
+        )
+
     def test_build_live_submission_gate_payload_fails_closed_on_empty_quant_evidence(
         self,
     ) -> None:
