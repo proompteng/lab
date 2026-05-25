@@ -35,6 +35,7 @@ NEXT_PAPER_ROUTE_RUNTIME_WINDOW_TARGETS_SCHEMA_VERSION = (
 DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS = 72
 DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT = 20
 PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL = "TORGHUT_SIM"
+PAPER_ROUTE_RUNTIME_IMPORT_SETTLEMENT_SECONDS = 3600
 US_EQUITIES_TIMEZONE = "America/New_York"
 US_EQUITIES_OPEN = time(hour=9, minute=30)
 US_EQUITIES_CLOSE = time(hour=16, minute=0)
@@ -238,9 +239,13 @@ def _paper_route_session_readiness(
     window_start: datetime,
     window_end: datetime,
     probe_ready: bool,
+    settlement_seconds: int,
 ) -> dict[str, object]:
+    settlement_seconds = max(0, int(settlement_seconds))
+    settlement_ready_at = window_end + timedelta(seconds=settlement_seconds)
     window_open = window_start <= generated_at <= window_end
     window_closed = generated_at > window_end
+    settlement_ready = generated_at >= settlement_ready_at
     import_blockers: list[str] = []
     if generated_at < window_start:
         state = "waiting_for_session_open"
@@ -248,6 +253,9 @@ def _paper_route_session_readiness(
     elif window_open:
         state = "collecting_session_evidence"
         import_blockers.append("paper_route_session_window_not_closed")
+    elif not settlement_ready:
+        state = "window_closed_settlement_pending"
+        import_blockers.append("paper_route_session_settlement_pending")
     else:
         state = "window_closed_import_ready"
     if not probe_ready:
@@ -261,8 +269,11 @@ def _paper_route_session_readiness(
         },
         "window_open": window_open,
         "window_closed": window_closed,
+        "settlement_seconds": settlement_seconds,
+        "settlement_ready": settlement_ready,
+        "settlement_ready_at": _isoformat(settlement_ready_at),
         "probe_ready": probe_ready,
-        "import_ready": window_closed and probe_ready,
+        "import_ready": window_closed and settlement_ready and probe_ready,
         "seconds_until_window_start": _seconds_until(
             generated_at=generated_at,
             target=window_start,
@@ -270,6 +281,10 @@ def _paper_route_session_readiness(
         "seconds_until_window_end": _seconds_until(
             generated_at=generated_at,
             target=window_end,
+        ),
+        "seconds_until_import_ready": _seconds_until(
+            generated_at=generated_at,
+            target=settlement_ready_at,
         ),
         "import_blockers": import_blockers,
     }
@@ -450,6 +465,7 @@ def _next_paper_route_runtime_window_targets(
         window_start=window_start,
         window_end=window_end,
         probe_ready=probe_ready,
+        settlement_seconds=PAPER_ROUTE_RUNTIME_IMPORT_SETTLEMENT_SECONDS,
     )
     import_ready = bool(session_readiness.get("import_ready"))
     import_blockers = [
@@ -467,6 +483,8 @@ def _next_paper_route_runtime_window_targets(
             "--runtime-window-target-plan-required",
             "--runtime-window-target-plan-settlement-seconds",
         ],
+        "target_plan_settlement_seconds": PAPER_ROUTE_RUNTIME_IMPORT_SETTLEMENT_SECONDS,
+        "settlement_ready_at": session_readiness.get("settlement_ready_at"),
         "source_dsn_env": "SIM_DB_DSN",
         "account_label": PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
         "observed_stage": "paper",
@@ -541,7 +559,10 @@ def _next_paper_route_runtime_window_targets(
             or "unknown",
             "paper_route_session_import_ready": import_ready,
             "paper_route_session_import_blockers": import_blockers,
-            "paper_route_runtime_window_import_not_before": _isoformat(window_end),
+            "paper_route_runtime_window_import_not_before": _safe_text(
+                session_readiness.get("settlement_ready_at")
+            )
+            or _isoformat(window_end),
             "paper_route_runtime_import_handoff": import_handoff,
             "paper_probation_authorized": True,
             "paper_probation_authorization_scope": "evidence_collection_only",
@@ -837,7 +858,9 @@ def _runtime_ledger_summary(
             StrategyRuntimeLedgerBucket.runtime_strategy_name == strategy_name
         )
     if strategy_family:
-        stmt = stmt.where(StrategyRuntimeLedgerBucket.strategy_family == strategy_family)
+        stmt = stmt.where(
+            StrategyRuntimeLedgerBucket.strategy_family == strategy_family
+        )
     rows = list(session.execute(stmt.limit(50)).scalars())
     filled_notional = sum((row.filled_notional for row in rows), Decimal("0"))
     net_pnl = sum((row.net_strategy_pnl_after_costs for row in rows), Decimal("0"))

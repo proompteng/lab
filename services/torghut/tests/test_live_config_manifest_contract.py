@@ -791,6 +791,29 @@ class TestLiveConfigManifestContract(TestCase):
         )
 
         self.assertEqual(spec.get("schedule"), "23 8,21 * * *")
+        self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
+        self.assertEqual(spec.get("startingDeadlineSeconds"), 900)
+        job_spec = cast(
+            Mapping[str, object],
+            cast(Mapping[str, object], spec.get("jobTemplate", {})).get("spec", {}),
+        )
+        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 900)
+        resources = cast(Mapping[str, object], container.get("resources", {}))
+        self.assertEqual(
+            resources,
+            {
+                "requests": {
+                    "cpu": "100m",
+                    "memory": "256Mi",
+                    "ephemeral-storage": "256Mi",
+                },
+                "limits": {
+                    "cpu": "1",
+                    "memory": "1Gi",
+                    "ephemeral-storage": "2Gi",
+                },
+            },
+        )
         env = {
             item.get("name"): item
             for item in cast(list[Mapping[str, object]], container.get("env", []))
