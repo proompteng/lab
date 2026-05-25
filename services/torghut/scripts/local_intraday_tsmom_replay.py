@@ -78,10 +78,28 @@ _EXACT_REPLAY_LEDGER_ROWS_SCHEMA_VERSION = "torghut.exact_replay_ledger.rows.v1"
 _REPLAY_LEDGER_ACCOUNT_LABEL = "TORGHUT_REPLAY"
 _REPLAY_COST_BASIS = "local_replay_transaction_cost_model"
 _REPLAY_LEDGER_SOURCE = "local_intraday_tsmom_replay"
-_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _resolve_repo_root(script_path: Path) -> Path:
+    resolved = script_path.resolve()
+    for candidate in (resolved.parent, *resolved.parents):
+        if (candidate / "argocd").is_dir() and (
+            candidate / "services" / "torghut"
+        ).is_dir():
+            return candidate
+    for candidate in (resolved.parent, *resolved.parents):
+        if (candidate / "app").is_dir() and (candidate / "scripts").is_dir():
+            return candidate
+    parents = resolved.parents
+    return parents[3] if len(parents) > 3 else parents[-1]
+
+
+_REPO_ROOT = _resolve_repo_root(Path(__file__))
 
 
 def default_strategy_configmap_path() -> Path:
+    if strategy_config_path := os.environ.get("TRADING_STRATEGY_CONFIG_PATH"):
+        return Path(strategy_config_path)
     return _REPO_ROOT / "argocd/applications/torghut/strategy-configmap.yaml"
 
 
