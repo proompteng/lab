@@ -139,12 +139,79 @@ Rules:
 
 - `spec.goal.objective` is required when `spec.goal` is present. It must be a non-empty string.
 - `spec.goal.tokenBudget` is optional. If set, it must be a positive integer.
+- To run with a goal and no token budget, omit `spec.goal.tokenBudget` entirely. Do not set it to `0`, `null`, or an
+  empty string.
 - Do not put the goal in `spec.parameters.prompt`; that field is rejected and would also override the task prompt model.
 - Do not put persistent Codex goal fields in `spec.parameters`; the controller only reads goal data from
   top-level `spec.goal`.
 - Runs that need Alpaca tools should add the allowed `alpaca-mcp` Secret to `spec.secrets`. That secret must contain
   `ALPACA_API_KEY` and `ALPACA_SECRET_KEY`; Codex provider images already include the `alpaca-mcp-server` binary and
   provider config.
+
+### Goal Without A Token Budget
+
+Use this form when the run needs persistent goal state, but should not have a fixed token budget.
+
+```yaml
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: codex-goal-no-budget-smoke-20260525
+  namespace: agents
+spec:
+  agentRef:
+    name: codex-spark-agent
+  implementation:
+    inline:
+      text: |
+        Verify the goal-aware runner path without a token budget.
+        Inspect the generated run payload and report the goal object.
+  goal:
+    objective: Verify Codex goal support without an explicit token budget.
+  ttlSecondsAfterFinished: 7200
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/agentrun-goal-no-budget-smoke-20260525
+    stage: verification
+  runtime:
+    type: workflow
+  secrets:
+    - codex-openai-key
+  workflow:
+    steps:
+      - name: verify
+        parameters:
+          stage: verify
+        timeoutSeconds: 1800
+  workload:
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1024Mi
+```
+
+After apply, verify that the generated payload contains the objective and does not contain `tokenBudget`:
+
+```bash
+RUN=codex-goal-no-budget-smoke-20260525
+
+CM=$(kubectl -n agents get cm -l agents.proompteng.ai/agent-run="$RUN" \
+  -o jsonpath='{.items[0].metadata.name}')
+
+kubectl -n agents get cm "$CM" -o jsonpath='{.data.run\.json}' | jq '.goal'
+kubectl -n agents get cm "$CM" -o jsonpath='{.data.run\.json}' | jq '.goal | has("tokenBudget")'
+```
+
+Expected payload shape:
+
+```json
+{
+  "objective": "Verify Codex goal support without an explicit token budget."
+}
+```
+
+The `has("tokenBudget")` check should print `false`.
 
 After apply, verify the controller materialized the goal into the generated run payload:
 
