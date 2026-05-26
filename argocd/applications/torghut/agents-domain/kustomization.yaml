@@ -16,8 +16,5 @@ resources:
   - torghut-health-agent.yaml
   - torghut-health-secretbinding.yaml
   - torghut-market-context-agentprovider.yaml
-  - torghut-news-agent.yaml
-  - torghut-news-agent-system-prompt-configmap.yaml
   - torghut-agentruns.yaml
-  - torghut-market-context-batch.yaml
   - torghut-market-context-priorityclass.yaml

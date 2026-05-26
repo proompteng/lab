@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { parseAllDocuments } from 'yaml'
 
@@ -82,7 +82,10 @@ describe('Agents domain scheduled AgentRun templates', () => {
   })
 
   it('does not schedule market-context refresh AgentRuns', () => {
-    const manifests = readYamlObjects('argocd/applications/torghut/agents-domain/torghut-market-context-batch.yaml')
+    expect(
+      existsSync(resolve(process.cwd(), 'argocd/applications/torghut/agents-domain/torghut-market-context-batch.yaml')),
+    ).toBe(false)
+    const manifests = readYamlObjects('argocd/applications/torghut/agents-domain/kustomization.yaml')
     const scheduleTargets = manifests
       .filter((manifest) => manifest.kind === 'Schedule')
       .map((schedule) => objectAt(objectAt(objectAt(schedule, 'spec'), 'targetRef'), 'name'))
@@ -163,11 +166,7 @@ describe('Agents domain scheduled AgentRun templates', () => {
   })
 
   it('keeps scheduled template retention aligned with the swarm brownout window', () => {
-    const manifestPaths = [
-      ...swarmAgentRunTemplatePaths,
-      ...swarmInstancePaths,
-      'argocd/applications/torghut/agents-domain/torghut-market-context-batch.yaml',
-    ]
+    const manifestPaths = [...swarmAgentRunTemplatePaths, ...swarmInstancePaths]
     const manifests = manifestPaths.flatMap(readYamlObjects)
     const scheduledTemplateNames = new Set<string>()
     for (const schedule of manifests.filter((manifest) => manifest.kind === 'Schedule')) {
