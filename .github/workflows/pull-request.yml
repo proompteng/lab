@@ -7,6 +7,10 @@ on:
       - 'packages/**'
       - 'services/**'
 
+permissions:
+  contents: read
+  pull-requests: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -25,31 +29,40 @@ jobs:
       codex: ${{ steps.filter.outputs.codex }}
       discord: ${{ steps.filter.outputs.discord }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: dorny/paths-filter@v3
+      - name: Check changed files
         id: filter
-        with:
-          filters: |
-            proompteng:
-              - 'apps/landing/**'
-            app:
-              - 'apps/app/**'
-            cms:
-              - 'apps/cms/**'
-            bonjour:
-              - 'services/bonjour/**'
-            docs:
-              - 'apps/docs/**'
-            kitty-krew:
-              - 'apps/kitty-krew/**'
-            reviseur:
-              - 'apps/reviseur/**'
-            codex:
-              - 'packages/codex/**'
-            discord:
-              - 'packages/discord/**'
-            packages:
-              - 'packages/**'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          changed_files="$(mktemp)"
+          gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}/files" \
+            --paginate \
+            --jq '.[].filename' > "${changed_files}"
+
+          output_flag() {
+            local name="$1"
+            local regex="$2"
+            local value=false
+            if grep -Eq "${regex}" "${changed_files}"; then
+              value=true
+            fi
+            echo "${name}=${value}" >> "$GITHUB_OUTPUT"
+          }
+
+          output_flag proompteng '^apps/landing/'
+          output_flag app '^apps/app/'
+          output_flag cms '^apps/cms/'
+          output_flag bonjour '^services/bonjour/'
+          output_flag docs '^apps/docs/'
+          output_flag kitty-krew '^apps/kitty-krew/'
+          output_flag reviseur '^apps/reviseur/'
+          output_flag codex '^packages/codex/'
+          output_flag discord '^packages/discord/'
 
   docs:
     needs: check_changed_files

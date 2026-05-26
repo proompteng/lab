@@ -21,24 +21,22 @@ jobs:
     name: Validate PR title
     runs-on: ubuntu-latest
     steps:
-      - uses: amannn/action-semantic-pull-request@v6
+      - name: Validate PR title
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          # Keep aligned with commitlint.config.cjs
-          types: |
-            build
-            chore
-            ci
-            docs
-            feat
-            fix
-            perf
-            refactor
-            revert
-            style
-            test
-          requireScope: false
-          subjectPattern: ^[a-z].+
-          subjectPatternError: >-
-            The subject must start with a lowercase letter and describe the change.
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+
+          allowed_types='build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test'
+          title_pattern="^(${allowed_types})(\\([a-z0-9._/-]+\\))?!?: [a-z].+"
+
+          if [[ "${PR_TITLE}" =~ ${title_pattern} ]]; then
+            echo "PR title is semantic: ${PR_TITLE}"
+            exit 0
+          fi
+
+          echo "PR title must match '<type>(<optional-scope>): <lowercase subject>'."
+          echo "Allowed types: ${allowed_types//|/, }"
+          echo "Actual title: ${PR_TITLE}"
+          exit 1

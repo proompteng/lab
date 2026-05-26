@@ -54,35 +54,58 @@ jobs:
     name: Changed-file plan
     runs-on: ubuntu-latest
     outputs:
-      service: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.service }}
-      manifests: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.manifests }}
+      service: ${{ steps.filter.outputs.service }}
+      manifests: ${{ steps.filter.outputs.manifests }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
       - name: Check changed Torghut paths
-        uses: dorny/paths-filter@v3
         id: filter
-        with:
-          filters: |
-            service:
-              - 'services/torghut/**'
-              - 'packages/scripts/src/torghut/**'
-              - 'packages/scripts/src/shared/**'
-              - '.github/workflows/torghut-ci.yml'
-              - '.github/workflows/torghut-build-push.yaml'
-              - '.github/workflows/torghut-deploy-automerge.yml'
-              - '.github/workflows/torghut-post-deploy-verify.yml'
-              - '.github/workflows/torghut-release.yml'
-              - '.github/workflows/torghut-ta-build-push.yaml'
-              - '.github/workflows/torghut-ta-release.yml'
-              - '.github/workflows/torghut-ws-build-push.yaml'
-              - '.github/workflows/torghut-ws-release.yml'
-              - 'package.json'
-              - 'bun.lock'
-            manifests:
-              - 'argocd/applications/torghut/**'
-              - 'argocd/applications/torghut-options/**'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            {
+              echo "service=true"
+              echo "manifests=true"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          changed_files="$(mktemp)"
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}/files" \
+              --paginate \
+              --jq '.[].filename' > "${changed_files}"
+          else
+            gh api "repos/${GH_REPO}/compare/${BEFORE_SHA}...${HEAD_SHA}" \
+              --jq '.files[].filename' > "${changed_files}"
+          fi
+
+          matches_any() {
+            local regex="$1"
+            grep -Eq "${regex}" "${changed_files}"
+          }
+
+          service=false
+          manifests=false
+          if matches_any '^(services/torghut/|packages/scripts/src/torghut/|packages/scripts/src/shared/|\.github/workflows/torghut-(ci|build-push|deploy-automerge|post-deploy-verify|release|ta-build-push|ta-release|ws-build-push|ws-release)\.yml$|\.github/workflows/torghut-build-push\.yaml$|package\.json$|bun\.lock$)'; then
+            service=true
+          fi
+          if matches_any '^argocd/applications/(torghut|torghut-options)/'; then
+            manifests=true
+          fi
+
+          {
+            echo "service=${service}"
+            echo "manifests=${manifests}"
+          } >> "$GITHUB_OUTPUT"
 
   release-manifests:
     name: Release manifest changes

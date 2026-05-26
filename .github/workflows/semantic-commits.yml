@@ -2,6 +2,7 @@ name: Semantic Commits
 
 permissions:
   contents: read
+  pull-requests: read
 
 on:
   pull_request:
@@ -21,11 +22,37 @@ jobs:
     name: Lint commit messages
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-      - uses: wagoid/commitlint-github-action@v6
-        with:
-          configFile: commitlint.config.cjs
+      - name: Lint commit messages
+        shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          allowed_types='build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test'
+          subject_pattern="^(${allowed_types})(\\([a-z0-9._/-]+\\))?!?: [a-z].+"
+
+          subjects_file="$(mktemp)"
+          gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}/commits" \
+            --paginate \
+            --jq '.[] | .commit.message | split("\n")[0]' > "${subjects_file}"
+
+          if [ ! -s "${subjects_file}" ]; then
+            echo "No commits found for pull request ${PR_NUMBER}."
+            exit 1
+          fi
+
+          failed=0
+          while IFS= read -r subject; do
+            if [[ "${subject}" =~ ${subject_pattern} ]]; then
+              echo "ok: ${subject}"
+            else
+              echo "invalid conventional commit subject: ${subject}"
+              failed=1
+            fi
+          done < "${subjects_file}"
+
+          exit "${failed}"
