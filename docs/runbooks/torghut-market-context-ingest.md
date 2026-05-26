@@ -13,8 +13,9 @@ Use this runbook for alerts:
 
 These failures block market-context snapshot persistence and can keep Torghut market context below the trading quality gate.
 
-Torghut fundamentals AgentRun collection is retired. Do not restore the old `torghut-market-context-fundamentals-*`
-Schedules, Agent, or AgentRun templates during incident response.
+Torghut fundamentals and news AgentRun collection are retired. Do not restore the old
+`torghut-market-context-fundamentals-*` or `torghut-market-context-news-*` Schedules, Agents, or AgentRun templates
+during incident response.
 
 ## Quick Checks
 
@@ -36,14 +37,15 @@ Expected:
 - `JANGAR_MARKET_CONTEXT_INGEST_ALLOWED_SERVICE_ACCOUNT_PREFIXES=system:serviceaccount:agents:agents-sa`
 - `JANGAR_MARKET_CONTEXT_INGEST_TOKEN` unset/empty
 
-3. Confirm market-context jobs run with explicit `agents-sa`:
+3. Confirm retired market-context AgentRun resources are absent:
 
 ```bash
-kubectl get pods -n agents -o custom-columns=NAME:.metadata.name,SA:.spec.serviceAccountName \
-  --no-headers | rg 'torghut-market-context-news-'
+kubectl get schedules.schedules.proompteng.ai -n agents | rg 'torghut-market-context-(fundamentals|news)-' || true
+kubectl get agents.agents.proompteng.ai,implementationspecs.agents.proompteng.ai -n agents \
+  | rg 'torghut-(fundamentals|news)-agent|torghut-market-context-(fundamentals|news)-' || true
 ```
 
-4. Confirm callback failures are not 401:
+4. Confirm callback failures are not 401 for any remaining non-retired market-context caller:
 
 ```bash
 kubectl logs -n agents job/<latest-market-context-job> --tail=200
@@ -51,11 +53,10 @@ kubectl logs -n agents job/<latest-market-context-job> --tail=200
 
 Search for callback `curl` failures and HTTP codes.
 
-5. Confirm retired fundamentals schedules are absent:
+5. Confirm orphaned retired pods are not accumulating:
 
 ```bash
-kubectl get schedules.schedules.proompteng.ai -n agents | rg 'torghut-market-context-fundamentals-' || true
-kubectl get cronjobs -n agents | rg 'torghut-market-context-fundamentals-' || true
+kubectl get pods -n agents --no-headers | rg 'torghut-market-context-(fundamentals|news)-' || true
 ```
 
 ## Data Plane Verification

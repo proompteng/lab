@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -37,24 +37,18 @@ const extractInputFileContent = (manifest: string, path: string): string => {
 }
 
 describe('torghut market-context AgentProvider manifest', () => {
-  it('does not declare fundamentals market-context AgentRun resources', async () => {
-    const manifest = await readFile(torghutAgentsDomainManifestPath('torghut-market-context-batch.yaml'), 'utf8')
+  it('does not declare fundamentals or news market-context AgentRun resources', async () => {
     const agentRunsManifest = await readFile(torghutAgentsDomainManifestPath('torghut-agentruns.yaml'), 'utf8')
     const kustomization = await readFile(torghutAgentsDomainManifestPath('kustomization.yaml'), 'utf8')
 
-    expect(manifest).not.toMatch(/torghut-market-context-fundamentals/)
+    expect(agentRunsManifest).not.toMatch(/torghut-market-context-news/)
     expect(agentRunsManifest).not.toMatch(/torghut-market-context-fundamentals/)
     expect(kustomization).not.toContain('torghut-fundamentals-agent.yaml')
     expect(kustomization).not.toContain('torghut-fundamentals-agent-system-prompt-configmap.yaml')
-  })
-
-  it('does not schedule news market-context jobs', async () => {
-    const manifest = await readFile(torghutAgentsDomainManifestPath('torghut-market-context-batch.yaml'), 'utf8')
-
-    expect(manifest).not.toMatch(/^  name: torghut-market-context-news-preopen-probe-template$/m)
-    expect(manifest).not.toMatch(/^  name: torghut-market-context-news-batch-template$/m)
-    expect(manifest).not.toMatch(/^  name: torghut-market-context-news-preopen-probe$/m)
-    expect(manifest).not.toMatch(/^  name: torghut-market-context-news-batch$/m)
+    expect(kustomization).not.toContain('torghut-news-agent.yaml')
+    expect(kustomization).not.toContain('torghut-news-agent-system-prompt-configmap.yaml')
+    expect(kustomization).not.toContain('torghut-market-context-batch.yaml')
+    await expect(access(torghutAgentsDomainManifestPath('torghut-market-context-batch.yaml'))).rejects.toThrow()
   })
 
   it('uses a bearer token for lifecycle start/progress requests', async () => {
