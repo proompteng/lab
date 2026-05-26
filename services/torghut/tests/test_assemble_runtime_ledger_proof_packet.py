@@ -765,6 +765,21 @@ class TestRuntimeLedgerProofPacket(TestCase):
         )
 
         self.assertTrue(result["ok"], result)
+        self.assertTrue(result["post_cost_proof_authority"]["allowed"], result)
+        self.assertFalse(result["promotion_authority"]["allowed"], result)
+        self.assertFalse(result["capital_promotion_authority"]["allowed"], result)
+        self.assertIn(
+            "paper_route_promotion_health_gate",
+            result["promotion_authority"]["failed_checks"],
+        )
+        self.assertIn(
+            "drift_not_ok",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+        self.assertIn(
+            "repair_runtime_window_import_health_gate",
+            result["required_actions"],
+        )
         health_gate = result["evidence"]["paper_route_target_plan"][
             "runtime_window_import_health_gate"
         ]
