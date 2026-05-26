@@ -165,12 +165,8 @@ const isInlineImageUrl = (url: string) =>
   url.startsWith('/api/assets/') ||
   /pbs\.twimg\.com|twimg\.com|\.(png|jpe?g|webp|gif|avif)(\?|$)/i.test(url)
 
-const mediaUrlsForItem = (item: SynthesisItem) => {
-  const urls = new Set<string>()
-  for (const attachment of item.attachments) {
-    if (isMediaLikeUrl(attachment.assetUrl)) urls.add(attachment.assetUrl)
-  }
-  return [...urls]
+const mediaAttachmentsForItem = (item: SynthesisItem) => {
+  return item.attachments.filter((attachment) => isMediaLikeUrl(attachment.assetUrl))
 }
 
 const feedMinScore = 0.65
@@ -362,8 +358,8 @@ function FeedPost({
   selected: boolean
   onSelect: (id: string) => void
 }) {
-  const mediaUrls = mediaUrlsForItem(item)
-  const inlineImage = mediaUrls.find(isInlineImageUrl)
+  const mediaAttachments = mediaAttachmentsForItem(item)
+  const inlineImage = mediaAttachments.find((attachment) => isInlineImageUrl(attachment.assetUrl))
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault()
@@ -402,9 +398,14 @@ function FeedPost({
 
           {inlineImage ? (
             <div className="mt-3 overflow-hidden rounded-md border border-[#2f3336] bg-[#080808]">
-              <img src={inlineImage} alt="" className="max-h-64 w-full object-cover" loading="lazy" />
+              <img
+                src={inlineImage.assetUrl}
+                alt={inlineImage.alt ?? inlineImage.label ?? ''}
+                className="max-h-64 w-full object-cover"
+                loading="lazy"
+              />
             </div>
-          ) : mediaUrls.length ? (
+          ) : mediaAttachments.length ? (
             <div className="mt-3 inline-flex items-center gap-2 rounded-md border border-[#2f3336] px-2 py-1 text-xs text-[#71767b]">
               <ImageIcon className="size-3.5" />
               media
@@ -470,7 +471,7 @@ function DetailPanel({ item }: { item: SynthesisItem | null }) {
 }
 
 function DetailContent({ item }: { item: SynthesisItem }) {
-  const mediaUrls = mediaUrlsForItem(item)
+  const mediaAttachments = mediaAttachmentsForItem(item)
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-5 px-5 py-5">
@@ -572,29 +573,36 @@ function DetailContent({ item }: { item: SynthesisItem }) {
         </div>
       </Section>
 
-      {mediaUrls.length ? (
+      {mediaAttachments.length ? (
         <Section title="Attachments">
           <div className="grid gap-3">
-            {mediaUrls.map((url) =>
-              isInlineImageUrl(url) ? (
-                <img
-                  key={url}
-                  src={url}
-                  alt=""
-                  className="max-h-[520px] w-full rounded-md border border-[#2f3336] object-contain"
-                  loading="lazy"
-                />
+            {mediaAttachments.map((attachment) =>
+              isInlineImageUrl(attachment.assetUrl) ? (
+                <figure key={attachment.id} className="overflow-hidden rounded-md border border-[#2f3336] bg-[#080808]">
+                  <img
+                    src={attachment.assetUrl}
+                    alt={attachment.alt ?? attachment.label ?? ''}
+                    className="max-h-[520px] w-full object-contain"
+                    loading="lazy"
+                  />
+                  {attachment.label || attachment.alt ? (
+                    <figcaption className="border-t border-[#2f3336] px-3 py-2 text-sm leading-6 text-[#a6a6a6]">
+                      {attachment.label ? <p className="font-semibold text-[#e7e9ea]">{attachment.label}</p> : null}
+                      {attachment.alt ? <p>{attachment.alt}</p> : null}
+                    </figcaption>
+                  ) : null}
+                </figure>
               ) : (
                 <a
-                  key={url}
-                  href={url}
+                  key={attachment.id}
+                  href={attachment.assetUrl}
                   target="_blank"
                   rel="noreferrer"
                   className="flex items-center justify-between gap-3 rounded-md border border-[#2f3336] bg-[#080808] px-3 py-2 text-sm text-[#e7e9ea] transition-colors hover:border-[#1d9bf0]/60"
                 >
                   <span className="inline-flex min-w-0 items-center gap-2">
                     <ImageIcon className="size-4 shrink-0 text-[#1d9bf0]" />
-                    <span className="truncate">{url}</span>
+                    <span className="truncate">{attachment.label ?? attachment.assetUrl}</span>
                   </span>
                   <ExternalLink className="size-4 shrink-0 text-[#71767b]" />
                 </a>

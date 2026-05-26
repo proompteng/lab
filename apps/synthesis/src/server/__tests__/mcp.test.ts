@@ -116,7 +116,13 @@ describe('synthesis MCP', () => {
                 observedText: 'semi stack integration notes with actionable edge ai packaging detail',
               },
             ],
-            attachments: [{ kind: 'source_image', data: 'data:image/png;base64,AAAA' }],
+            attachments: [
+              {
+                kind: 'source_image',
+                data: 'data:image/png;base64,AAAA',
+                alt: 'screenshot labels packaging and board integration as the edge AI bottleneck',
+              },
+            ],
             dedupeKey: 'theme:edge-ai-packaging',
             topicTags: ['semis', 'ai agents'],
             score: 0.91,
@@ -193,7 +199,13 @@ describe('synthesis MCP', () => {
                 sources: [{ title: 'Synthesis asset route', url: 'https://synthesis.test/api/assets/example' }],
               },
             ],
-            attachments: [{ kind: 'source_image', url: 'https://pbs.twimg.com/media/browser-agent.jpg' }],
+            attachments: [
+              {
+                kind: 'source_image',
+                url: 'https://pbs.twimg.com/media/browser-agent.jpg',
+                alt: 'browser screenshot shows an authenticated agent workflow with saved source media',
+              },
+            ],
             generatedAttachments: [{ kind: 'generated_infographic', data: 'data:image/png;base64,AAAA' }],
             dedupeKey: 'theme:browser-agent-workflows',
             whyValuable: 'It converts two overlapping posts into one concrete product-design direction.',

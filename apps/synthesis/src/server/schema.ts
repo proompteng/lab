@@ -70,6 +70,13 @@ export const AttachmentInputSchema = z
         path: ['url'],
       })
     }
+    if ((value.kind === 'source_image' || value.kind === 'source_screenshot') && !value.alt?.trim()) {
+      context.addIssue({
+        code: 'custom',
+        message: 'source media attachments require alt text with extracted visual information',
+        path: ['alt'],
+      })
+    }
   })
 
 export const SubmitItemInputSchema = z

@@ -126,7 +126,10 @@ const toolsListResult = {
                 data: { type: 'string' },
                 sourceUrl: { type: 'string' },
                 mimeType: { type: 'string' },
-                alt: { type: 'string' },
+                alt: {
+                  type: 'string',
+                  description: 'Required for source media; concise extracted visual information from the image.',
+                },
                 label: { type: 'string' },
               },
               required: ['kind'],
@@ -143,7 +146,7 @@ const toolsListResult = {
                 data: { type: 'string' },
                 sourceUrl: { type: 'string' },
                 mimeType: { type: 'string' },
-                alt: { type: 'string' },
+                alt: { type: 'string', description: 'Concise description of the generated infographic.' },
                 label: { type: 'string' },
               },
               required: ['kind'],
@@ -291,6 +294,7 @@ const buildConfigResource = (request: Request) => ({
         assets: {
           sourceMediaMustBeAttachments: true,
           objectStorageBackedWhenConfigured: true,
+          sourceMediaRequiresExtractedVisualNotes: true,
         },
       },
       tools: toolsListResult.tools,

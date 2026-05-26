@@ -41,6 +41,7 @@ const submitItemRequest = (runId: string, index: number) =>
           url: `https://pbs.twimg.com/media/example-${index}.jpg`,
           sourceUrl: `https://x.com/example/status/${1000 + index}`,
           mimeType: 'image/jpeg',
+          alt: `timeline chart ${index} shows the semis/devtools signal captured for synthesis`,
         },
       ],
       dedupeKey: `theme:semis-devtools-${index}`,
@@ -182,6 +183,7 @@ describe('synthesis REST auth', () => {
               url: 'https://pbs.twimg.com/media/hbm-1.jpg',
               sourceUrl: 'https://x.com/example/status/2001',
               mimeType: 'image/jpeg',
+              alt: 'chart text highlights HBM allocation pressure moving into packaging capacity',
             },
           ],
           generatedAttachments: [
