@@ -427,13 +427,13 @@ data:
         strategy_id: microbar_cross_sectional_pairs_v1@research
         strategy_type: microbar_cross_sectional_long_v1
         version: 1.0.0
-        description: Research-only microbar cross-sectional continuation/reversal candidate used by the whitepaper autoresearch harness.
-        enabled: false
+        description: Paper-only H-PAIRS microbar cross-sectional continuation sleeve for the runtime-ledger proof lane; production approval blocked pending live-paper runtime evidence, version=1.0.0
+        enabled: true
         base_timeframe: "1Sec"
         universe_type: microbar_cross_sectional_pairs_v1
-        universe_symbols: ["NVDA", "AAPL", "AMZN", "GOOGL", "AVGO", "AMD", "ORCL", "INTC"]
-        max_notional_per_trade: 50000
-        max_position_pct_equity: 6.0
+        universe_symbols: ["AAPL", "AMZN"]
+        max_notional_per_trade: 31590
+        max_position_pct_equity: 1.0
         params:
           entry_minute_after_open: "60"
           exit_minute_after_open: "120"
@@ -441,10 +441,11 @@ data:
           rank_feature: "cross_section_vwap_w5m_rank"
           selection_mode: "continuation"
           top_n: "2"
-          max_gross_exposure_pct_equity: "6.0"
+          max_gross_exposure_pct_equity: "2.0"
           max_pair_legs: "2"
           max_entries_per_session: "1"
           entry_cooldown_seconds: "600"
+          position_isolation_mode: "per_strategy"
       - name: microbar-volume-continuation-long-top2-v11
         strategy_id: microbar_volume_continuation_long_top2@prod
         strategy_type: microbar_cross_sectional_long_v1
