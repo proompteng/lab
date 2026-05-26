@@ -744,6 +744,116 @@ def test_execution_tca_route_universe_uses_widest_hypothesis_guardrail() -> None
     assert receipt["blocking_reasons"] == []
 
 
+def test_execution_tca_route_universe_uses_adverse_signed_shortfall() -> None:
+    receipt = build_profitability_proof_floor_receipt(
+        account_label="TORGHUT_SIM",
+        torghut_revision="torghut-sim-00757",
+        trading_mode="paper",
+        market_session_open=True,
+        live_submission_gate={
+            "allowed": True,
+            "reason": "non_live_mode",
+            "blocked_reasons": [],
+            "capital_stage": "paper",
+        },
+        hypothesis_payload={
+            "summary": {
+                "hypotheses_total": 2,
+                "promotion_eligible_total": 2,
+                "rollback_required_total": 0,
+                "state_totals": {"promotion_eligible": 2},
+            },
+            "items": [
+                {
+                    "hypothesis_id": "H-PAIRS-01",
+                    "reasons": [],
+                    "promotion_contract": {"max_avg_abs_slippage_bps": "8"},
+                },
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "reasons": [],
+                    "promotion_contract": {"max_avg_abs_slippage_bps": "12"},
+                },
+            ],
+        },
+        empirical_jobs_status=_healthy_empirical_jobs(),
+        quant_evidence=_healthy_quant_evidence(),
+        market_context_status=_healthy_market_context(),
+        tca_summary={
+            **_fresh_tca_summary(avg_abs_slippage_bps="28"),
+            "scope_symbols": ["AAPL", "NVDA", "ORCL"],
+            "scope_symbol_count": 3,
+            "symbol_breakdown": [
+                {
+                    "symbol": "AAPL",
+                    "order_count": 1,
+                    "avg_abs_slippage_bps": "28.05213012",
+                    "avg_realized_shortfall_bps": "-28.05213012",
+                    "max_abs_slippage_bps": "28.05213012",
+                    "last_computed_at": NOW.isoformat(),
+                },
+                {
+                    "symbol": "NVDA",
+                    "order_count": 1,
+                    "avg_abs_slippage_bps": "25",
+                    "avg_realized_shortfall_bps": "25",
+                    "max_abs_slippage_bps": "25",
+                    "last_computed_at": NOW.isoformat(),
+                },
+                {
+                    "symbol": "ORCL",
+                    "order_count": 0,
+                    "avg_abs_slippage_bps": None,
+                    "avg_realized_shortfall_bps": None,
+                    "max_abs_slippage_bps": None,
+                    "last_computed_at": None,
+                },
+            ],
+        },
+        simple_lane_status=_simple_lane_status(),
+        now=NOW,
+    )
+
+    tca_dimension = next(
+        item
+        for item in receipt["proof_dimensions"]
+        if item["dimension"] == "execution_tca"
+    )
+    source_ref = cast(Mapping[str, Any], tca_dimension["source_ref"])
+    symbol_routes = cast(Mapping[str, Any], source_ref["symbol_routes"])
+
+    assert tca_dimension["state"] == "pass"
+    assert tca_dimension["reason"] == "execution_tca_route_universe_exclusions_applied"
+    assert source_ref["aggregate_reason"] == "execution_tca_slippage_guardrail_exceeded"
+    assert symbol_routes["route_slippage_guardrail_bps"] == "12"
+    assert symbol_routes["routeable_symbol_count"] == 1
+    assert symbol_routes["routeable_symbols"][0]["symbol"] == "AAPL"
+    assert (
+        symbol_routes["routeable_symbols"][0]["avg_abs_slippage_bps"]
+        == "28.05213012"
+    )
+    assert (
+        symbol_routes["routeable_symbols"][0]["avg_realized_shortfall_bps"]
+        == "-28.05213012"
+    )
+    assert symbol_routes["routeable_symbols"][0]["route_adverse_slippage_bps"] == "0"
+    assert (
+        symbol_routes["routeable_symbols"][0]["route_slippage_basis"]
+        == "signed_realized_shortfall_bps"
+    )
+    assert symbol_routes["blocked_symbol_count"] == 1
+    assert symbol_routes["blocked_symbols"][0]["symbol"] == "NVDA"
+    assert symbol_routes["blocked_symbols"][0]["route_adverse_slippage_bps"] == "25"
+
+    route_book = cast(Mapping[str, Any], receipt["route_reacquisition_book"])
+    route_summary = cast(Mapping[str, Any], route_book["summary"])
+    route_records = cast(list[Mapping[str, Any]], route_book["records"])
+    assert route_summary["candidate_symbols"] == ["AAPL"]
+    aapl_record = next(item for item in route_records if item["symbol"] == "AAPL")
+    assert aapl_record["state"] == "routeable"
+    assert aapl_record["route_adverse_slippage_bps"] == "0"
+
+
 def test_execution_tca_route_universe_requires_symbol_filter_before_unblock() -> None:
     simple_lane_status = {
         **_simple_lane_status(),
