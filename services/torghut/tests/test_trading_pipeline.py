@@ -3718,6 +3718,87 @@ class TestTradingPipeline(TestCase):
             payload = cast(dict[str, Any], decisions[0].decision_json)
             self.assertEqual(payload.get("action"), "buy")
 
+    def test_simple_pipeline_paper_route_exit_helpers_cover_filter_edges(
+        self,
+    ) -> None:
+        from app import config
+
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_paper_route_probe_enabled = True
+
+        decision = StrategyDecision(
+            strategy_id=str(uuid4()),
+            symbol="AAPL",
+            event_ts=datetime(2026, 3, 26, 14, 0, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="sell",
+            qty=Decimal("2"),
+            rationale="paper-route-exit-edge",
+            params={
+                "price": Decimal("100"),
+                "paper_route_probe_exit": {"mode": "not-paper-route-exit"},
+            },
+        )
+        self.assertIsNone(
+            SimpleTradingPipeline._paper_route_probe_exit_metadata(decision)
+        )
+
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        pipeline._is_market_session_open = lambda _now=None: False  # type: ignore[method-assign]
+        with (
+            patch(
+                "app.trading.scheduler.simple_pipeline.trading_now",
+                return_value=datetime(2026, 3, 26, 14, 0, tzinfo=timezone.utc),
+            ),
+            self.session_local() as session,
+        ):
+            self.assertEqual(
+                pipeline._paper_route_probe_exit_decisions(session=session), []
+            )
+
+        non_exit_decision = decision.model_copy(
+            update={"params": {"price": Decimal("100")}}
+        )
+        self.assertIs(
+            SimpleTradingPipeline._prepare_paper_route_probe_exit_position(
+                [{"symbol": "AAPL", "qty": "1", "side": "long"}],
+                non_exit_decision,
+            ),
+            non_exit_decision,
+        )
+
+        exit_decision = decision.model_copy(
+            update={
+                "params": {
+                    "price": Decimal("100"),
+                    "paper_route_probe_exit": {"mode": "paper_route_exit"},
+                    "simple_lane": {"quantity_resolution": {}},
+                }
+            }
+        )
+        prepared = SimpleTradingPipeline._prepare_paper_route_probe_exit_position(
+            [{"symbol": "AAPL", "qty": "1", "side": "long"}],
+            exit_decision,
+        )
+        assert prepared is not None
+        self.assertEqual(prepared.qty, Decimal("1"))
+        metadata = cast(dict[str, Any], prepared.params["paper_route_probe_exit"])
+        self.assertEqual(metadata["qty_capped_to_position"], True)
+        self.assertEqual(metadata["broker_position_qty"], "1")
+
     def test_simple_pipeline_proof_floor_includes_paper_route_probe_settings(
         self,
     ) -> None:
