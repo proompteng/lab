@@ -21,6 +21,7 @@ from app.models import (
 from app.trading.paper_route_evidence import (
     RUNTIME_LEDGER_PROOF_PACKET_HANDOFF_SCHEMA_VERSION,
     _next_regular_equities_session_window,
+    _paper_route_probe_summary,
     build_paper_route_evidence_audit,
 )
 
@@ -1306,6 +1307,22 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 generated_at=window_start - timedelta(days=2),
             )
 
+        probe = payload["paper_route_probe"]
+        self.assertEqual(probe["eligible_symbols"], ["AAPL", "AMZN"])
+        self.assertEqual(probe["eligible_symbol_count"], 2)
+        self.assertEqual(probe["raw_eligible_symbols"], ["AMZN", "AAPL", "INTC"])
+        self.assertEqual(probe["out_of_scope_symbols"], ["INTC"])
+        self.assertEqual(probe["missing_scope_symbols"], [])
+        self.assertEqual(probe["target_plan_source"], "external_target_plan_url")
+        self.assertTrue(probe["target_plan_scope_applied"])
+        self.assertEqual(probe["target_plan_scope_symbols"], ["AAPL", "AMZN"])
+        plan_probe = payload["next_paper_route_runtime_window_targets"][
+            "paper_route_probe"
+        ]
+        self.assertEqual(plan_probe["symbols"], ["AAPL", "AMZN"])
+        self.assertEqual(plan_probe["raw_symbols"], ["AMZN", "AAPL", "INTC"])
+        self.assertEqual(plan_probe["out_of_scope_symbols"], ["INTC"])
+        self.assertTrue(plan_probe["target_plan_scope_applied"])
         next_target = payload["next_paper_route_runtime_window_targets"]["targets"][0]
         self.assertEqual(next_target["paper_route_probe_symbols"], ["AAPL", "AMZN"])
         self.assertEqual(
@@ -1317,6 +1334,64 @@ class TestPaperRouteEvidenceAudit(TestCase):
             next_audit_target["paper_route_probe_symbols"], ["AAPL", "AMZN"]
         )
         self.assertNotIn("INTC", next_audit_target["paper_route_probe_symbols"])
+
+    def test_external_target_plan_probe_reports_missing_scope_and_plan_error(
+        self,
+    ) -> None:
+        probe = _paper_route_probe_summary(
+            {
+                "schema_version": "torghut.route-reacquisition-book.v1",
+                "state": "repair_only",
+                "paper_route_probe": {
+                    "configured_enabled": True,
+                    "active": False,
+                    "eligible_symbols": ["AAPL"],
+                    "active_symbols": ["AAPL"],
+                    "blocking_reasons": ["market_session_closed"],
+                },
+            },
+            target_plan={
+                "targets": [
+                    {
+                        "paper_route_probe_symbols": " AAPL, AMZN ",
+                    }
+                ]
+            },
+            target_plan_source="external_target_plan_url",
+            target_plan_error="external_target_plan_fetch_failed",
+        )
+
+        self.assertEqual(probe["eligible_symbols"], ["AAPL"])
+        self.assertEqual(probe["target_plan_scope_symbols"], ["AAPL", "AMZN"])
+        self.assertEqual(probe["missing_scope_symbols"], ["AMZN"])
+        self.assertIn("external_target_plan_fetch_failed", probe["blocking_reasons"])
+        self.assertIn("external_target_plan_symbols_missing", probe["blocking_reasons"])
+
+    def test_external_target_plan_probe_fail_closes_without_scope_symbols(
+        self,
+    ) -> None:
+        probe = _paper_route_probe_summary(
+            {
+                "schema_version": "torghut.route-reacquisition-book.v1",
+                "state": "repair_only",
+                "paper_route_probe": {
+                    "configured_enabled": True,
+                    "active": False,
+                    "eligible_symbols": ["AAPL", "AMZN"],
+                    "active_symbols": ["AAPL"],
+                    "blocking_reasons": [],
+                },
+            },
+            target_plan={"targets": [{"paper_route_probe_symbols": []}]},
+            target_plan_source="external_target_plan_url",
+        )
+
+        self.assertEqual(probe["eligible_symbols"], [])
+        self.assertEqual(probe["active_symbols"], [])
+        self.assertEqual(probe["out_of_scope_symbols"], ["AAPL", "AMZN"])
+        self.assertEqual(
+            probe["blocking_reasons"], ["external_target_plan_probe_symbols_missing"]
+        )
 
     def test_source_activity_is_scoped_to_target_account_and_probe_symbols(
         self,
