@@ -2954,6 +2954,41 @@ class TestTradingPipeline(TestCase):
             rationale="paper-route-retry-filter",
             params={"price": Decimal("100")},
         )
+        self.assertIsNone(
+            SimpleTradingPipeline._paper_route_probe_exit_minute_value(None)
+        )
+        self.assertIsNone(
+            SimpleTradingPipeline._paper_route_probe_exit_minute_value("")
+        )
+        self.assertEqual(
+            SimpleTradingPipeline._paper_route_probe_exit_minute_value("close"),
+            390,
+        )
+        self.assertIsNone(
+            SimpleTradingPipeline._paper_route_probe_exit_minute_value("bad")
+        )
+        self.assertEqual(
+            SimpleTradingPipeline._paper_route_probe_exit_minute_value(
+                Decimal("42.8")
+            ),
+            42,
+        )
+        self.assertIsNone(
+            SimpleTradingPipeline._paper_route_probe_exit_minute_value(object())
+        )
+        self.assertEqual(
+            SimpleTradingPipeline._paper_route_probe_exit_minute_after_open(
+                decision=decision.model_copy(
+                    update={
+                        "params": {
+                            "price": Decimal("100"),
+                            "exit_minute_after_open": "45",
+                        }
+                    }
+                )
+            ),
+            45,
+        )
         old_row = TradeDecision(
             strategy_id=strategy_id,
             alpaca_account_label="paper",
@@ -2999,6 +3034,14 @@ class TestTradingPipeline(TestCase):
         config.settings.trading_simple_paper_route_probe_retry_batch_limit = 2
         config.settings.trading_simple_paper_route_probe_retry_attempt_limit = 2
         with self.session_local() as session:
+            self.assertIsNone(
+                pipeline._paper_route_probe_strategy(
+                    session=session,
+                    decision=decision.model_copy(
+                        update={"strategy_id": "not-a-valid-uuid"}
+                    ),
+                )
+            )
             strategy = Strategy(
                 name="simple-paper-proof-floor-retry-filter",
                 description=(
@@ -3923,6 +3966,30 @@ class TestTradingPipeline(TestCase):
                 decision=decision,
             )
         )
+
+        exit_bound_strategy = Strategy(
+            name="paper-route-exit-bound",
+            description=(
+                "paper route exit-bound fixture\n[catalog_metadata]\n"
+                + json.dumps({"params": {"exit_minute_after_open": "120"}})
+            ),
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=["NVDA"],
+            max_notional_per_trade=Decimal("1000"),
+        )
+        with patch(
+            "app.trading.scheduler.simple_pipeline.trading_now",
+            return_value=datetime(2026, 3, 26, 15, 31, tzinfo=timezone.utc),
+        ):
+            self.assertIsNone(
+                pipeline._paper_route_probe_context(
+                    proof_floor=proof_floor,
+                    decision=decision,
+                    strategy=exit_bound_strategy,
+                )
+            )
 
         no_route_reason_floor = {
             **proof_floor,
