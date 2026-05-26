@@ -6,7 +6,7 @@ import {
   SubmitItemInputSchema,
 } from './schema'
 import { assetResponseForAttachment } from './assets'
-import { createCompanyDataProvider } from './company'
+import { CompanyProfileHintSchema } from './company'
 import { getSynthesisStore } from './store'
 import { requireAuthorized } from './auth'
 import { badRequest, jsonResponse, notFound, readJson } from './http'
@@ -83,16 +83,33 @@ export const handleListFeed = async (request: Request) => {
 }
 
 export const handleGetCompany = async (_request: Request, symbol: string) => {
-  const provider = createCompanyDataProvider()
-  if (!provider) {
-    return jsonResponse({ error: 'company market data provider is not configured' }, { status: 503 })
+  try {
+    const store = getSynthesisStore()
+    const existing = await store.getCompanyProfile(symbol)
+    const company = existing ?? (await store.prefillCompany({ symbol }))
+    return jsonResponse({ company })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'company profile unavailable'
+    if (message.startsWith('unsupported company symbol')) return badRequest(message)
+    if (message.includes('companyName is required')) return notFound(`company profile unavailable for ${symbol}`)
+    return jsonResponse({ error: message }, { status: 502 })
   }
+}
+
+export const handlePrefillCompany = async (request: Request, symbol: string) => {
+  const unauthorized = requireAuthorized(request)
+  if (unauthorized) return unauthorized
+
+  const raw = await request.json().catch(() => ({}))
+  const parsed = CompanyProfileHintSchema.safeParse({ ...(isRecord(raw) ? raw : {}), symbol })
+  if (!parsed.success) return badRequest('invalid company prefill request body')
 
   try {
-    return jsonResponse({ company: await provider.getCompanyAnalysis(symbol) })
+    return jsonResponse({ company: await getSynthesisStore().prefillCompany(parsed.data) }, { status: 201 })
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'company analysis unavailable'
+    const message = error instanceof Error ? error.message : 'company profile unavailable'
     if (message.startsWith('unsupported company symbol')) return badRequest(message)
+    if (message.includes('companyName is required')) return notFound(`company profile unavailable for ${symbol}`)
     return jsonResponse({ error: message }, { status: 502 })
   }
 }

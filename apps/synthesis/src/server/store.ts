@@ -1,9 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { Pool, type PoolClient } from 'pg'
 
+import { extractCompanySymbols, normalizeCompanySymbols } from '~/lib/company-symbols'
 import { deriveTopicTagsFromItemContent } from '~/lib/tags'
 
 import { materializeAttachments, normalizeAttachmentInputs } from './assets'
+import { enrichCompanyProfile, type CompanyProfile, type CompanyProfileHintInput } from './company'
 import {
   buildEmbeddingText,
   cosineSimilarity,
@@ -36,6 +38,9 @@ export type SynthesisStore = {
   listFeed(input: ListFeedInput): Promise<FeedResponse>
   getItem(id: string): Promise<SynthesisItem | null>
   getAttachment(id: string): Promise<SynthesisAttachment | null>
+  getCompanyProfile(symbol: string): Promise<CompanyProfile | null>
+  upsertCompanyProfile(profile: CompanyProfile): Promise<CompanyProfile>
+  prefillCompany(input: CompanyProfileHintInput): Promise<CompanyProfile>
   recordFeedback(input: RecordFeedbackInput): Promise<FeedbackEvent>
 }
 
@@ -163,6 +168,7 @@ type NormalizedSubmitItem = {
   summary: string
   whyValuable: string | null
   evidence: string[]
+  companySymbols: string[]
   topicTags: string[]
   score: number
   confidence: number
@@ -199,6 +205,8 @@ const mergeAttachments = (left: SynthesisAttachment[], right: SynthesisAttachmen
   return [...attachments.values()]
 }
 
+const mergeCompanySymbols = (left: string[], right: string[]) => normalizeCompanySymbols([...left, ...right])
+
 const digestKey = (value: string) => createHash('sha256').update(value).digest('base64url').slice(0, 24)
 
 const embeddingBackfillLimit = () => {
@@ -224,6 +232,19 @@ const normalizeSubmitItem = async (input: SubmitItemInput): Promise<NormalizedSu
     }),
   )
   const generatedAttachments = attachments.filter((attachment) => attachment.generated)
+  const derivedSymbols = extractCompanySymbols(
+    [
+      input.title,
+      input.synthesis,
+      input.whyValuable,
+      ...input.takeaways,
+      ...input.topicTags,
+      ...sourcePosts.flatMap((source) => [source.observedText, source.authorHandle, source.authorName]),
+      ...input.factChecks.flatMap((factCheck) => [factCheck.claim, factCheck.explanation]),
+    ]
+      .filter(Boolean)
+      .join(' '),
+  )
 
   return {
     runId: input.runId,
@@ -239,6 +260,7 @@ const normalizeSubmitItem = async (input: SubmitItemInput): Promise<NormalizedSu
     summary: input.synthesis,
     whyValuable: input.whyValuable,
     evidence: input.factChecks.map((factCheck) => `${factCheck.status}: ${factCheck.claim}`),
+    companySymbols: normalizeCompanySymbols([...input.companySymbols, ...derivedSymbols]),
     topicTags: deriveTopicTagsFromItemContent({
       title: input.title,
       synthesis: input.synthesis,
@@ -265,6 +287,7 @@ class InMemorySynthesisStore implements SynthesisStore {
   private posts = new Map<string, CanonicalXPost & { observedText: string }>()
   private itemByDedupeKey = new Map<string, string>()
   private items = new Map<string, SynthesisItem>()
+  private companyProfiles = new Map<string, CompanyProfile>()
   private embeddingVectors = new Map<string, number[]>()
   private feedbackEvents = new Map<string, FeedbackEvent>()
   private interestWeights = new Map<string, number>()
@@ -303,6 +326,7 @@ class InMemorySynthesisStore implements SynthesisStore {
     const sourcePosts = mergeSourcePosts(existing?.sourcePosts ?? [], normalized.sourcePosts)
     const attachments = mergeAttachments(existing?.attachments ?? [], normalized.attachments)
     const generatedAttachments = attachments.filter((attachment) => attachment.generated)
+    const companySymbols = mergeCompanySymbols(existing?.companySymbols ?? [], normalized.companySymbols)
     const embeddingRecord = await createSynthesisEmbedding(
       buildEmbeddingText({
         title: normalized.title,
@@ -338,6 +362,7 @@ class InMemorySynthesisStore implements SynthesisStore {
       attachments,
       generatedAttachments,
       embedding: embeddingMetadata(embeddingRecord),
+      companySymbols,
       topicTags: normalized.topicTags,
       score: normalized.score,
       confidence: normalized.confidence,
@@ -348,6 +373,7 @@ class InMemorySynthesisStore implements SynthesisStore {
     this.itemByDedupeKey.set(normalized.dedupeKey, item.id)
     this.items.set(item.id, item)
     this.embeddingVectors.set(item.id, embeddingRecord.embedding)
+    await this.prefillCompanySymbols(companySymbols)
 
     return {
       item,
@@ -409,6 +435,29 @@ class InMemorySynthesisStore implements SynthesisStore {
     return null
   }
 
+  async getCompanyProfile(symbol: string): Promise<CompanyProfile | null> {
+    const normalized = normalizeCompanySymbols([symbol])[0]
+    if (!normalized) throw new Error(`unsupported company symbol: ${symbol}`)
+    return this.companyProfiles.get(normalized) ?? null
+  }
+
+  async upsertCompanyProfile(profile: CompanyProfile): Promise<CompanyProfile> {
+    this.companyProfiles.set(profile.symbol, profile)
+    return profile
+  }
+
+  async prefillCompany(input: CompanyProfileHintInput): Promise<CompanyProfile> {
+    const profile = await enrichCompanyProfile(input)
+    return this.upsertCompanyProfile(profile)
+  }
+
+  private async prefillCompanySymbols(symbols: string[]) {
+    for (const symbol of symbols) {
+      if (this.companyProfiles.has(symbol)) continue
+      await this.prefillCompany({ symbol }).catch(() => undefined)
+    }
+  }
+
   async recordFeedback(input: RecordFeedbackInput): Promise<FeedbackEvent> {
     const item = this.items.get(input.id)
     if (!item) throw new Error(`Unknown synthesis item: ${input.id}`)
@@ -458,6 +507,7 @@ type ItemRow = {
   embedding_dimension: number | string | null
   embedding_input_hash: string | null
   embedding_created_at: Date | string | null
+  company_symbols: unknown
   topic_tags: unknown
   score: number | string
   confidence: number | string
@@ -548,6 +598,7 @@ const mapItemRow = (row: ItemRow): SynthesisItem => {
             createdAt: toIso(row.embedding_created_at) ?? nowIso(),
           }
         : null,
+    companySymbols: normalizeCompanySymbols(parseJsonArray(row.company_symbols)),
     topicTags,
     score: Number(row.score),
     confidence: Number(row.confidence),
@@ -651,6 +702,7 @@ class PostgresSynthesisStore implements SynthesisStore {
       const sourcePosts = mergeSourcePosts(existing?.sourcePosts ?? [], normalized.sourcePosts)
       const attachments = mergeAttachments(existing?.attachments ?? [], normalized.attachments)
       const generatedAttachments = attachments.filter((attachment) => attachment.generated)
+      const companySymbols = mergeCompanySymbols(existing?.companySymbols ?? [], normalized.companySymbols)
       const embeddingRecord = await createSynthesisEmbedding(
         buildEmbeddingText({
           title: normalized.title,
@@ -666,11 +718,11 @@ class PostgresSynthesisStore implements SynthesisStore {
       const result = await client.query<{ id: string }>(
         `INSERT INTO synthesis_items (
           id, run_id, x_post_key, dedupe_key, title, synthesis, takeaways, source_posts, fact_checks, attachments,
-          generated_attachments, media_urls, summary, why_valuable, evidence, topic_tags, score, confidence
+          generated_attachments, media_urls, summary, why_valuable, evidence, company_symbols, topic_tags, score, confidence
         )
         VALUES (
           $1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb,
-          $13, $14, $15::jsonb, $16::jsonb, $17, $18
+          $13, $14, $15::jsonb, $16::jsonb, $17::jsonb, $18, $19
         )
         ON CONFLICT (dedupe_key) DO UPDATE SET
           run_id = EXCLUDED.run_id,
@@ -685,6 +737,7 @@ class PostgresSynthesisStore implements SynthesisStore {
           summary = EXCLUDED.summary,
           why_valuable = EXCLUDED.why_valuable,
           evidence = EXCLUDED.evidence,
+          company_symbols = EXCLUDED.company_symbols,
           topic_tags = EXCLUDED.topic_tags,
           score = EXCLUDED.score,
           confidence = EXCLUDED.confidence,
@@ -706,6 +759,7 @@ class PostgresSynthesisStore implements SynthesisStore {
           normalized.summary,
           normalized.whyValuable,
           JSON.stringify(normalized.evidence),
+          JSON.stringify(companySymbols),
           JSON.stringify(normalized.topicTags),
           normalized.score,
           normalized.confidence,
@@ -745,6 +799,16 @@ class PostgresSynthesisStore implements SynthesisStore {
         )
       }
 
+      await client.query(`DELETE FROM synthesis_item_companies WHERE item_id = $1`, [result.rows[0].id])
+      for (const symbol of companySymbols) {
+        await client.query(
+          `INSERT INTO synthesis_item_companies (item_id, symbol)
+           VALUES ($1, $2)
+           ON CONFLICT (item_id, symbol) DO NOTHING`,
+          [result.rows[0].id, symbol],
+        )
+      }
+
       await this.upsertEmbedding(client, result.rows[0].id, embeddingRecord)
 
       const itemResult = await client.query<ItemRow>(
@@ -753,6 +817,7 @@ class PostgresSynthesisStore implements SynthesisStore {
       )
       const item = mapItemRow(itemResult.rows[0])
       await client.query('COMMIT')
+      await this.prefillCompanySymbols(item.companySymbols)
       return { item }
     } catch (error) {
       await client.query('ROLLBACK')
@@ -845,6 +910,35 @@ class PostgresSynthesisStore implements SynthesisStore {
     return result.rows[0] ? mapAttachmentRow(result.rows[0]) : null
   }
 
+  async getCompanyProfile(symbol: string): Promise<CompanyProfile | null> {
+    await this.ensureSchema()
+    const normalized = normalizeCompanySymbols([symbol])[0]
+    if (!normalized) throw new Error(`unsupported company symbol: ${symbol}`)
+    const result = await this.pool.query<{ profile: unknown }>(
+      `SELECT profile FROM synthesis_company_profiles WHERE symbol = $1`,
+      [normalized],
+    )
+    return result.rows[0]?.profile ? (result.rows[0].profile as CompanyProfile) : null
+  }
+
+  async upsertCompanyProfile(profile: CompanyProfile): Promise<CompanyProfile> {
+    await this.ensureSchema()
+    await this.pool.query(
+      `INSERT INTO synthesis_company_profiles (symbol, profile, updated_at)
+       VALUES ($1, $2::jsonb, $3::timestamptz)
+       ON CONFLICT (symbol) DO UPDATE SET
+         profile = EXCLUDED.profile,
+         updated_at = EXCLUDED.updated_at`,
+      [profile.symbol, JSON.stringify(profile), profile.updatedAt],
+    )
+    return profile
+  }
+
+  async prefillCompany(input: CompanyProfileHintInput): Promise<CompanyProfile> {
+    const profile = await enrichCompanyProfile(input)
+    return this.upsertCompanyProfile(profile)
+  }
+
   async recordFeedback(input: RecordFeedbackInput): Promise<FeedbackEvent> {
     await this.ensureSchema()
     const item = await this.getItem(input.id)
@@ -881,7 +975,7 @@ class PostgresSynthesisStore implements SynthesisStore {
       ${alias}.takeaways, ${alias}.source_posts, ${alias}.fact_checks, ${alias}.attachments,
       ${alias}.generated_attachments, p.canonical_url, p.x_post_id, p.author_handle, p.author_name, p.posted_at,
       p.last_observed_at, p.observed_text, ${alias}.media_urls, ${alias}.summary, ${alias}.why_valuable,
-      ${alias}.evidence, ${alias}.topic_tags, ${alias}.score, ${alias}.confidence, ${alias}.created_at,
+      ${alias}.evidence, ${alias}.company_symbols, ${alias}.topic_tags, ${alias}.score, ${alias}.confidence, ${alias}.created_at,
       ${alias}.updated_at, e.model AS embedding_model, e.dimension AS embedding_dimension,
       e.input_hash AS embedding_input_hash, e.created_at AS embedding_created_at`
   }
@@ -912,6 +1006,14 @@ class PostgresSynthesisStore implements SynthesisStore {
         embeddingRecord.createdAt,
       ],
     )
+  }
+
+  private async prefillCompanySymbols(symbols: string[]) {
+    for (const symbol of symbols) {
+      const existing = await this.getCompanyProfile(symbol).catch(() => null)
+      if (existing) continue
+      await this.prefillCompany({ symbol }).catch(() => undefined)
+    }
   }
 
   private async backfillMissingTopicTags() {
@@ -1018,6 +1120,7 @@ class PostgresSynthesisStore implements SynthesisStore {
         summary text NOT NULL,
         why_valuable text,
         evidence jsonb NOT NULL DEFAULT '[]'::jsonb,
+        company_symbols jsonb NOT NULL DEFAULT '[]'::jsonb,
         topic_tags jsonb NOT NULL DEFAULT '[]'::jsonb,
         score double precision NOT NULL CHECK (score >= 0 AND score <= 1),
         confidence double precision NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
@@ -1034,6 +1137,7 @@ class PostgresSynthesisStore implements SynthesisStore {
       ALTER TABLE synthesis_items ADD COLUMN IF NOT EXISTS fact_checks jsonb NOT NULL DEFAULT '[]'::jsonb;
       ALTER TABLE synthesis_items ADD COLUMN IF NOT EXISTS attachments jsonb NOT NULL DEFAULT '[]'::jsonb;
       ALTER TABLE synthesis_items ADD COLUMN IF NOT EXISTS generated_attachments jsonb NOT NULL DEFAULT '[]'::jsonb;
+      ALTER TABLE synthesis_items ADD COLUMN IF NOT EXISTS company_symbols jsonb NOT NULL DEFAULT '[]'::jsonb;
       ALTER TABLE synthesis_items DROP COLUMN IF EXISTS engagement_recommendation;
       ALTER TABLE synthesis_items DROP COLUMN IF EXISTS engagement_status;
       ALTER TABLE synthesis_items DROP COLUMN IF EXISTS reply_text;
@@ -1079,6 +1183,19 @@ class PostgresSynthesisStore implements SynthesisStore {
         created_at timestamptz NOT NULL DEFAULT now()
       );
 
+      CREATE TABLE IF NOT EXISTS synthesis_company_profiles (
+        symbol text PRIMARY KEY,
+        profile jsonb NOT NULL,
+        updated_at timestamptz NOT NULL DEFAULT now()
+      );
+
+      CREATE TABLE IF NOT EXISTS synthesis_item_companies (
+        item_id text NOT NULL REFERENCES synthesis_items(id) ON DELETE CASCADE,
+        symbol text NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (item_id, symbol)
+      );
+
       DROP TABLE IF EXISTS engagement_actions;
 
       CREATE TABLE IF NOT EXISTS feedback_events (
@@ -1110,6 +1227,7 @@ class PostgresSynthesisStore implements SynthesisStore {
       CREATE INDEX IF NOT EXISTS synthesis_item_sources_x_post_idx ON synthesis_item_sources (x_post_key);
       CREATE INDEX IF NOT EXISTS synthesis_attachments_item_idx ON synthesis_attachments (item_id);
       CREATE INDEX IF NOT EXISTS synthesis_item_embeddings_model_idx ON synthesis_item_embeddings (model, dimension);
+      CREATE INDEX IF NOT EXISTS synthesis_item_companies_symbol_idx ON synthesis_item_companies (symbol);
     `)
     await this.backfillMissingTopicTags()
     await this.backfillMissingEmbeddings()

@@ -65,6 +65,7 @@ describe('synthesis MCP', () => {
     const submitTool = toolsPayload.result.tools.find((tool: { name: string }) => tool.name === 'synthesis_submit_item')
 
     expect(toolNames).toContain('synthesis_submit_item')
+    expect(toolNames).toContain('synthesis_prefill_company')
     expect(toolNames).not.toContain('synthesis_next_engagement')
     expect(toolNames).not.toContain('synthesis_record_engagement_result')
     expect(submitTool.inputSchema.required).toEqual([
@@ -82,6 +83,7 @@ describe('synthesis MCP', () => {
     expect(submitTool.inputSchema.properties.engagementRecommendation).toBeUndefined()
     expect(submitTool.inputSchema.properties.replyText).toBeUndefined()
     expect(submitTool.inputSchema.properties.embedding).toBeUndefined()
+    expect(submitTool.inputSchema.properties.companySymbols).toBeDefined()
 
     const resourceResponse = await handleMcpRequest(rpc('resources/read', { uri: 'synthesis://config' }))
     const resourcePayload = await resourceResponse.json()
@@ -141,6 +143,20 @@ describe('synthesis MCP', () => {
     const feedPayload = await parseToolJson(await handleMcpRequest(callTool('synthesis_list_feed', { limit: 10 })))
     expect(feedPayload.items).toHaveLength(1)
     expect(feedPayload.items[0].id).toBe(submitPayload.item.id)
+  })
+
+  test('prefills a Synthesis-owned company profile through MCP', async () => {
+    const headers = { authorization: `Bearer ${token}` }
+    const payload = await parseToolJson(
+      await handleMcpRequest(callTool('synthesis_prefill_company', { symbol: 'NVDA' }, headers)),
+    )
+
+    expect(payload.company).toMatchObject({
+      symbol: 'NVDA',
+      companyName: 'NVIDIA Corporation',
+      industry: 'Semiconductors',
+    })
+    expect(payload.company.dataSources.length).toBeGreaterThan(0)
   })
 
   test('rejects old submit arguments at the MCP boundary', async () => {
