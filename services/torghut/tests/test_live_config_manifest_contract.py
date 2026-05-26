@@ -878,11 +878,11 @@ class TestLiveConfigManifestContract(TestCase):
             args,
         )
         self.assertIn(
-            "--paper-route-service-base-url http://torghut.torghut.svc.cluster.local",
+            "--paper-route-service-base-url http://torghut-sim.torghut.svc.cluster.local",
             args,
         )
         self.assertNotIn(
-            "--paper-route-service-base-url http://torghut-sim.torghut.svc.cluster.local",
+            "--paper-route-service-base-url http://torghut.torghut.svc.cluster.local",
             args,
         )
         self.assertIn(

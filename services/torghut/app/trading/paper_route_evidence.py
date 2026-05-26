@@ -44,7 +44,7 @@ PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL = "TORGHUT_SIM"
 PAPER_ROUTE_RUNTIME_IMPORT_SETTLEMENT_SECONDS = 3600
 DEFAULT_TORGHUT_LIVE_SERVICE_BASE_URL = "http://torghut.torghut.svc.cluster.local"
 DEFAULT_TORGHUT_PAPER_ROUTE_SERVICE_BASE_URL = (
-    "http://torghut.torghut.svc.cluster.local"
+    "http://torghut-sim.torghut.svc.cluster.local"
 )
 RUNTIME_LEDGER_PROOF_PACKET_OUTPUT_FILE = "artifacts/runtime-ledger-proof-packet.json"
 RUNTIME_WINDOW_IMPORT_OUTPUT_FILE = "artifacts/runtime-window-import.json"
@@ -1597,7 +1597,7 @@ def _runtime_ledger_proof_packet_handoff(
         ),
         "source_service_authority": {
             "status": "live_torghut_service",
-            "paper_route_evidence": "live_torghut_service",
+            "paper_route_evidence": "torghut_sim_service",
             "completion_doc29": "live_torghut_service",
         },
         "source_endpoints": {
