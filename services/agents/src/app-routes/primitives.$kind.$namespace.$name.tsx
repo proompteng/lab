@@ -2,7 +2,9 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 
 import { fetchPrimitiveResource } from '../control-plane/api-client'
+import { isAgentRunDetailKind } from '../control-plane/agentrun-detail'
 import { findPrimitiveDefinition } from '../control-plane/registry'
+import { AgentRunDetailPage } from '../components/control-plane/agentrun-detail'
 import { ControlPlanePage } from '../components/control-plane/control-plane-page'
 import { Alert, AlertDescription } from '../components/ui/alert'
 import { Skeleton } from '../components/ui/skeleton'
@@ -20,6 +22,8 @@ function PrimitiveDetailPage() {
 
   useEffect(() => {
     if (!primitive) return
+    setResource(null)
+    setError(null)
     fetchPrimitiveResource(primitive.display.pathSegment, namespace, name)
       .then((response) => setResource(response.resource))
       .catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))
@@ -37,35 +41,39 @@ function PrimitiveDetailPage() {
 
   return (
     <ControlPlanePage>
-      {error ? (
+      {!isAgentRunDetailKind(primitive.display.pathSegment) && error ? (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       ) : null}
-      <Tabs defaultValue="manifest" className="w-full">
-        <TabsList>
-          <TabsTrigger value="manifest">Manifest</TabsTrigger>
-          <TabsTrigger value="status">Status</TabsTrigger>
-        </TabsList>
-        <TabsContent value="manifest" className="rounded-md border bg-background">
-          {resource ? (
-            <pre className="max-h-[70vh] overflow-auto p-4 text-xs leading-relaxed">
-              {JSON.stringify(resource, null, 2)}
-            </pre>
-          ) : (
-            <ManifestSkeleton />
-          )}
-        </TabsContent>
-        <TabsContent value="status" className="rounded-md border bg-background">
-          {resource ? (
-            <pre className="max-h-[70vh] overflow-auto p-4 text-xs leading-relaxed">
-              {JSON.stringify((resource.status as unknown) ?? {}, null, 2)}
-            </pre>
-          ) : (
-            <ManifestSkeleton />
-          )}
-        </TabsContent>
-      </Tabs>
+      {isAgentRunDetailKind(primitive.display.pathSegment) ? (
+        <AgentRunDetailPage resource={resource} error={error} />
+      ) : (
+        <Tabs defaultValue="manifest" className="w-full">
+          <TabsList>
+            <TabsTrigger value="manifest">Manifest</TabsTrigger>
+            <TabsTrigger value="status">Status</TabsTrigger>
+          </TabsList>
+          <TabsContent value="manifest" className="rounded-md border bg-background">
+            {resource ? (
+              <pre className="max-h-[70vh] overflow-auto p-4 text-xs leading-relaxed">
+                {JSON.stringify(resource, null, 2)}
+              </pre>
+            ) : (
+              <ManifestSkeleton />
+            )}
+          </TabsContent>
+          <TabsContent value="status" className="rounded-md border bg-background">
+            {resource ? (
+              <pre className="max-h-[70vh] overflow-auto p-4 text-xs leading-relaxed">
+                {JSON.stringify((resource.status as unknown) ?? {}, null, 2)}
+              </pre>
+            ) : (
+              <ManifestSkeleton />
+            )}
+          </TabsContent>
+        </Tabs>
+      )}
     </ControlPlanePage>
   )
 }
