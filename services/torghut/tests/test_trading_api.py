@@ -7125,7 +7125,7 @@ class TestTradingApi(TestCase):
             "skipped_target_count": 0,
             "promotion_allowed": False,
             "final_promotion_allowed": False,
-            "targets": [target],
+            "targets": [{**target, "paper_route_probe_symbols": ["AAPL", "AMZN"]}],
         }
         try:
             if hasattr(app.state, "trading_scheduler"):
@@ -7741,6 +7741,13 @@ class TestTradingApi(TestCase):
                 response = self.client.get("/trading/paper-route-evidence")
             self.assertEqual(response.status_code, 200)
             payload = response.json()
+            probe = payload["paper_route_probe"]
+            self.assertEqual(probe["eligible_symbols"], ["AAPL", "AMZN"])
+            self.assertEqual(probe["raw_eligible_symbols"], ["AAPL", "AMZN", "INTC"])
+            self.assertEqual(probe["out_of_scope_symbols"], ["INTC"])
+            self.assertEqual(probe["target_plan_source"], "external_target_plan_url")
+            self.assertTrue(probe["target_plan_scope_applied"])
+            self.assertEqual(probe["target_plan_scope_symbols"], ["AAPL", "AMZN"])
             next_target = payload["next_paper_route_runtime_window_targets"]["targets"][
                 0
             ]

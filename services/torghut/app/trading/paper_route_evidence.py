@@ -320,10 +320,14 @@ def _paper_route_session_readiness(
 
 def _paper_route_probe_summary(
     route_reacquisition_book: Mapping[str, Any],
+    *,
+    target_plan: Mapping[str, Any] | None = None,
+    target_plan_source: str | None = None,
+    target_plan_error: str | None = None,
 ) -> dict[str, object]:
     summary = _as_mapping(route_reacquisition_book.get("summary"))
     probe = _as_mapping(route_reacquisition_book.get("paper_route_probe"))
-    eligible_symbols = [
+    raw_eligible_symbols = [
         str(item).strip()
         for item in _as_sequence(
             probe.get("eligible_symbols")
@@ -331,7 +335,7 @@ def _paper_route_probe_summary(
         )
         if str(item).strip()
     ]
-    active_symbols = [
+    raw_active_symbols = [
         str(item).strip()
         for item in _as_sequence(
             probe.get("active_symbols")
@@ -344,6 +348,39 @@ def _paper_route_probe_summary(
         for item in _as_sequence(probe.get("blocking_reasons"))
         if str(item).strip()
     ]
+    target_plan_scope_symbols = _target_plan_probe_scope_symbols(target_plan or {})
+    target_plan_scope_applied = (
+        target_plan_source == "external_target_plan_url"
+        and bool(target_plan_scope_symbols)
+    )
+    eligible_symbols = raw_eligible_symbols
+    active_symbols = raw_active_symbols
+    out_of_scope_symbols: list[str] = []
+    missing_scope_symbols: list[str] = []
+    if target_plan_source == "external_target_plan_url":
+        if target_plan_error:
+            blocking_reasons.append(target_plan_error)
+        if target_plan_scope_symbols:
+            eligible_symbols, out_of_scope_symbols, missing_scope_symbols = (
+                _scope_probe_symbols_to_target_plan(
+                    raw_eligible_symbols,
+                    scope_symbols=target_plan_scope_symbols,
+                )
+            )
+            active_symbols, _out_of_scope_active_symbols, _missing_active_symbols = (
+                _scope_probe_symbols_to_target_plan(
+                    raw_active_symbols,
+                    scope_symbols=target_plan_scope_symbols,
+                )
+            )
+            if missing_scope_symbols:
+                blocking_reasons.append("external_target_plan_symbols_missing")
+        else:
+            eligible_symbols = []
+            active_symbols = []
+            out_of_scope_symbols = raw_eligible_symbols
+            blocking_reasons.append("external_target_plan_probe_symbols_missing")
+
     return {
         "schema_version": _safe_text(route_reacquisition_book.get("schema_version"))
         or "missing",
@@ -354,13 +391,73 @@ def _paper_route_probe_summary(
         or "0",
         "next_session_max_notional": _safe_text(probe.get("next_session_max_notional"))
         or "0",
-        "eligible_symbol_count": _safe_int(
-            probe.get("eligible_symbol_count") or len(eligible_symbols)
-        ),
+        "eligible_symbol_count": len(eligible_symbols)
+        if target_plan_source == "external_target_plan_url"
+        else _safe_int(probe.get("eligible_symbol_count") or len(eligible_symbols)),
         "eligible_symbols": eligible_symbols,
         "active_symbols": active_symbols,
         "blocking_reasons": blocking_reasons,
+        "target_plan_source": target_plan_source,
+        "target_plan_scope_applied": target_plan_scope_applied,
+        "target_plan_scope_symbols": target_plan_scope_symbols,
+        "raw_eligible_symbols": raw_eligible_symbols,
+        "raw_active_symbols": raw_active_symbols,
+        "out_of_scope_symbols": out_of_scope_symbols,
+        "missing_scope_symbols": missing_scope_symbols,
     }
+
+
+def _target_plan_probe_scope_symbols(target_plan: Mapping[str, Any]) -> list[str]:
+    symbols: list[str] = []
+    for target in _as_mapping_items(target_plan.get("targets")):
+        raw_symbols = target.get("paper_route_probe_symbols")
+        values: Sequence[object]
+        if isinstance(raw_symbols, str):
+            values = raw_symbols.split(",")
+        else:
+            values = _as_sequence(raw_symbols)
+        for raw_symbol in values:
+            symbol = str(raw_symbol).strip().upper()
+            if symbol and symbol not in symbols:
+                symbols.append(symbol)
+    return symbols
+
+
+def _target_plan_source(target_plan: Mapping[str, Any]) -> str | None:
+    for target in _as_mapping_items(target_plan.get("targets")):
+        source = _safe_text(target.get("paper_route_target_plan_source"))
+        if source:
+            return source
+    return None
+
+
+def _scope_probe_symbols_to_target_plan(
+    symbols: Sequence[str],
+    *,
+    scope_symbols: Sequence[str],
+) -> tuple[list[str], list[str], list[str]]:
+    symbol_by_upper = {
+        str(symbol).strip().upper(): str(symbol).strip() for symbol in symbols
+    }
+    scoped_symbols = [
+        str(scope_symbol).strip().upper()
+        for scope_symbol in scope_symbols
+        if str(scope_symbol).strip().upper() in symbol_by_upper
+    ]
+    scope_symbol_set = {
+        str(scope_symbol).strip().upper() for scope_symbol in scope_symbols
+    }
+    out_of_scope_symbols = [
+        str(symbol).strip()
+        for symbol in symbols
+        if str(symbol).strip() and str(symbol).strip().upper() not in scope_symbol_set
+    ]
+    missing_scope_symbols = [
+        str(scope_symbol).strip().upper()
+        for scope_symbol in scope_symbols
+        if str(scope_symbol).strip().upper() not in symbol_by_upper
+    ]
+    return scoped_symbols, out_of_scope_symbols, missing_scope_symbols
 
 
 def _paper_route_probe_symbols(probe: Mapping[str, object]) -> list[str]:
@@ -878,6 +975,28 @@ def _next_paper_route_runtime_window_targets(
             "blocking_reasons": [
                 str(item).strip()
                 for item in _as_sequence(probe.get("blocking_reasons"))
+                if str(item).strip()
+            ],
+            "target_plan_source": _safe_text(probe.get("target_plan_source")),
+            "target_plan_scope_applied": bool(probe.get("target_plan_scope_applied")),
+            "target_plan_scope_symbols": [
+                str(item).strip()
+                for item in _as_sequence(probe.get("target_plan_scope_symbols"))
+                if str(item).strip()
+            ],
+            "raw_symbols": [
+                str(item).strip()
+                for item in _as_sequence(probe.get("raw_eligible_symbols"))
+                if str(item).strip()
+            ],
+            "out_of_scope_symbols": [
+                str(item).strip()
+                for item in _as_sequence(probe.get("out_of_scope_symbols"))
+                if str(item).strip()
+            ],
+            "missing_scope_symbols": [
+                str(item).strip()
+                for item in _as_sequence(probe.get("missing_scope_symbols"))
                 if str(item).strip()
             ],
         },
@@ -1687,7 +1806,17 @@ def build_paper_route_evidence_audit(
         live_submission_gate.get("runtime_ledger_paper_probation_import_plan")
     )
     targets = _as_mapping_items(plan.get("targets"))[: max(0, target_limit)]
-    probe = _paper_route_probe_summary(route_reacquisition_book)
+    probe = _paper_route_probe_summary(
+        route_reacquisition_book,
+        target_plan=plan,
+        target_plan_source=_safe_text(
+            live_submission_gate.get("paper_route_target_plan_source")
+        )
+        or _target_plan_source(plan),
+        target_plan_error=_safe_text(
+            live_submission_gate.get("paper_route_target_plan_error")
+        ),
+    )
     target_audits = [
         _target_audit(
             session,
