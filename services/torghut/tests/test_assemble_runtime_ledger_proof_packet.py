@@ -184,9 +184,29 @@ def _completion(
     net_pnl: str = "650",
     trading_days: int = 1,
     expectancy_bps: str = "13",
+    drawdown_pct: str | None = "0.04",
+    best_day_share: str | None = "0.20",
+    symbol_concentration_share: str | None = "0.35",
     ledger_refs: list[str] | None = None,
     unbacked_refs: list[str] | None = None,
 ) -> dict[str, object]:
+    runtime_ledger_summary: dict[str, object] = {
+        "runtime_ledger_bucket_count": 1,
+        "runtime_ledger_fill_count": 4,
+        "runtime_ledger_closed_trade_count": 2,
+        "runtime_ledger_filled_notional": "50000",
+        "runtime_ledger_net_strategy_pnl_after_costs": net_pnl,
+        "runtime_ledger_post_cost_expectancy_bps": expectancy_bps,
+        "runtime_ledger_observed_trading_day_count": trading_days,
+    }
+    if drawdown_pct is not None:
+        runtime_ledger_summary["runtime_ledger_max_drawdown_pct_equity"] = drawdown_pct
+    if best_day_share is not None:
+        runtime_ledger_summary["runtime_ledger_best_day_share"] = best_day_share
+    if symbol_concentration_share is not None:
+        runtime_ledger_summary["runtime_ledger_symbol_concentration_share"] = (
+            symbol_concentration_share
+        )
     return {
         "doc_id": "doc29",
         "summary": {"all_satisfied": status == "satisfied"},
@@ -195,15 +215,7 @@ def _completion(
                 "gate_id": packet.DOC29_LIVE_SCALE_GATE,
                 "status": status,
                 "candidate_id": "c88421d619759b2cfaa6f4d0",
-                "runtime_ledger_summary": {
-                    "runtime_ledger_bucket_count": 1,
-                    "runtime_ledger_fill_count": 4,
-                    "runtime_ledger_closed_trade_count": 2,
-                    "runtime_ledger_filled_notional": "50000",
-                    "runtime_ledger_net_strategy_pnl_after_costs": net_pnl,
-                    "runtime_ledger_post_cost_expectancy_bps": expectancy_bps,
-                    "runtime_ledger_observed_trading_day_count": trading_days,
-                },
+                "runtime_ledger_summary": runtime_ledger_summary,
                 "db_row_refs": {
                     "strategy_runtime_ledger_buckets": ledger_refs
                     if ledger_refs is not None
@@ -330,6 +342,16 @@ class TestRuntimeLedgerProofPacket(TestCase):
                 "daily_net_pnl_after_costs"
             ],
             "650",
+        )
+        self.assertEqual(
+            result["checks"]["runtime_ledger_risk_quality"]["observed"][
+                "drawdown_pct_equity"
+            ],
+            "0.04",
+        )
+        self.assertEqual(
+            result["target"]["max_runtime_ledger_drawdown_pct_equity"],
+            "0.08",
         )
 
     def test_cli_uploads_durable_proof_packet_artifact_with_runtime_run_id(
@@ -729,6 +751,86 @@ class TestRuntimeLedgerProofPacket(TestCase):
         self.assertIn(
             "runtime_ledger_daily_net_pnl_below_target",
             result["promotion_authority"]["blocking_reasons"],
+        )
+
+    def test_packet_blocks_missing_runtime_ledger_risk_quality_when_import_due(
+        self,
+    ) -> None:
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=_runtime_import(),
+            completion_status=_completion(
+                drawdown_pct=None,
+                best_day_share=None,
+                symbol_concentration_share=None,
+            ),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["verdict"], "blocked")
+        self.assertIn(
+            "runtime_ledger_risk_quality",
+            result["promotion_authority"]["failed_checks"],
+        )
+        self.assertIn(
+            "runtime_ledger_drawdown_pct_equity_missing",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+        self.assertIn(
+            "runtime_ledger_best_day_share_missing",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+        self.assertIn(
+            "runtime_ledger_symbol_concentration_share_missing",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+        self.assertIn(
+            "improve_runtime_ledger_drawdown_concentration_or_position_sizing",
+            result["required_actions"],
+        )
+        self.assertEqual(
+            result["checks"]["runtime_ledger_risk_quality"]["observed"][
+                "drawdown_pct_equity"
+            ],
+            None,
+        )
+
+    def test_packet_blocks_excessive_runtime_ledger_risk_quality(self) -> None:
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=_runtime_import(),
+            completion_status=_completion(
+                drawdown_pct="0.13",
+                best_day_share="0.40",
+                symbol_concentration_share="0.75",
+            ),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["verdict"], "blocked")
+        self.assertIn(
+            "runtime_ledger_drawdown_pct_equity_above_limit",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+        self.assertIn(
+            "runtime_ledger_best_day_share_above_limit",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+        self.assertIn(
+            "runtime_ledger_symbol_concentration_share_above_limit",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+        self.assertEqual(
+            result["checks"]["runtime_ledger_risk_quality"]["expected"],
+            {
+                "max_drawdown_pct_equity": "0.08",
+                "max_best_day_share": "0.25",
+                "max_symbol_concentration_share": "0.5",
+            },
         )
 
     def test_packet_blocks_incomplete_identity_unbacked_refs_and_lifecycle_gaps(
